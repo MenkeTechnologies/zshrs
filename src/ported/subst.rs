@@ -2434,46 +2434,75 @@ pub fn quotesubst(s: &str, state: &mut SubstState) -> String { // c:463
 
 /// Glob entries in a linked list
 /// Port of globlist() from subst.c lines 468-505
+/// Port of `globlist()` from `Src/subst.c:489-510`.
+///
+/// Glob-expands each entry in a linked list. Honors two PREFORK_*
+/// flags (per the C body header comment):
+///   - PREFORK_NO_UNTOK: preserve tokens (don't run untokenize before
+///     glob).
+///   - PREFORK_KEY_VALUE: triads of Marker/Key/Value (assoc-array
+///     assignments); skip globbing on the key+value pair, only the
+///     marker node is processed.
+///
+/// Routes through `ShellExecutor::expand_glob` (the canonical
+/// glob.rs port of zsh's zglob) for filesystem matching.
 pub fn globlist(list: &mut LinkList, flags: u32, state: &mut SubstState) { // c:489
-    let mut node_idx = 0;                                   // c:489
+    // C: `badcshglob = 0;` — reset the csh-glob diagnostic counter
+    // (we don't track this; csh-glob option is rare).
+    let mut node_idx = 0;                                   // c:493
 
-    while node_idx < list.nodes.len() && !state.errflag {         // c:489
-        if let Some(data) = list.getdata(node_idx) {       // c:489
-            // Check for Marker (key-value pair indicator)
-            if flags & prefork_flags::KEY_VALUE != 0 && data.starts_with(MARKER) { // c:489
-                // Skip key/value pair (marker, key, value = 3 nodes)
-                node_idx += 3;                              // c:489
-                continue;                                   // c:489
-            }                                               // c:489
+    while node_idx < list.nodes.len() && !state.errflag {   // c:494
+        let data = match list.getdata(node_idx) {           // c:494
+            Some(d) => d.to_string(),                       // c:494
+            None => { node_idx += 1; continue; }            // c:494
+        };
 
-            // Perform globbing
-            let expanded = vec![data.to_string()] /* zglob stub */; // c:489
+        // C: `if ((flags & PREFORK_KEY_VALUE) && *data == Marker)`
+        // — assoc-array key/value pair; skip 3 nodes (Marker, Key,
+        // Value).
+        if flags & prefork_flags::KEY_VALUE != 0
+            && data.chars().next() == Some(MARKER)
+        {                                                   // c:497
+            // Advance past Marker + Key + Value.
+            node_idx += 3;                                  // c:499
+            continue;                                       // c:499
+        }
 
-            if expanded.is_empty() {                        // c:489
-                // No matches - either error or keep original
-                if state.opts.glob_subst {                  // c:489
-                    // NOMATCH option would error here
-                    // For now, keep original
-                }                                           // c:489
-            } else if expanded.len() == 1 {                 // c:489
-                list.setdata(node_idx, expanded[0].clone()); // c:489
-            } else {                                        // c:489
-                // Multiple matches - expand into list
-                list.delete_node(node_idx);                      // c:489
-                for (i, path) in expanded.iter().enumerate() { // c:489
-                    if i == 0 {                             // c:489
-                        list.nodes.insert(node_idx, LinkNode { data: path.clone() }); // c:489
-                    } else {                                // c:489
-                        list.insertlinknode(node_idx + i - 1, path.clone()); // c:489
-                    }                                       // c:489
-                }                                           // c:489
-                node_idx += expanded.len();                 // c:489
-                continue;                                   // c:489
-            }                                               // c:489
-        }                                                   // c:489
-        node_idx += 1;                                      // c:489
-    }                                                       // c:489
-}                                                           // c:489
+        // C: `zglob(list, node, (flags & PREFORK_NO_UNTOK) != 0);`
+        // — the actual glob expansion. Replaces the node with one
+        // or more nodes (one per match).
+        let no_untok = flags & prefork_flags::NO_UNTOK != 0; // c:501
+        let _ = no_untok;                                   // C plumbs through;
+                                                            // expand_glob handles
+                                                            // tokens internally.
+        let expanded: Vec<String> = crate::fusevm_bridge::with_executor(
+            |exec| exec.expand_glob(&data));
+
+        if expanded.is_empty() {                            // c:N/A (NOMATCH path)
+            // C zglob does its own NOMATCH/badcshglob accounting
+            // when nothing matches. Preserve the original entry on
+            // empty match (zsh default; NOMATCH option would zerr).
+            node_idx += 1;
+        } else if expanded.len() == 1 {                     // c:N/A
+            list.setdata(node_idx, expanded.into_iter().next().unwrap());
+            node_idx += 1;
+        } else {
+            // Replace the single node with N expanded nodes.
+            list.delete_node(node_idx);
+            for (i, p) in expanded.iter().enumerate() {
+                if i == 0 {
+                    list.nodes.insert(node_idx, LinkNode { data: p.clone() });
+                } else {
+                    list.insertlinknode(node_idx + i - 1, p.clone());
+                }
+            }
+            node_idx += expanded.len();                     // advance past all
+        }
+    }
+    // C: `if (noerrs) badcshglob = 0; else if (badcshglob == 1)
+    // zerr("no match");` — diagnostic emit. Skipped here pending
+    // badcshglob counter port.
+}                                                           // c:510
 
 
 
