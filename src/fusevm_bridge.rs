@@ -7390,14 +7390,26 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             // Direct port of Src/pattern.c addbackref +
                             // pat_pure_m which sets both views.
                             let mut arr = Vec::with_capacity(caps.len());
+                            let mut begins = Vec::with_capacity(caps.len());
+                            let mut ends = Vec::with_capacity(caps.len());
                             for i in 1..caps.len() {
-                                arr.push(
-                                    caps.get(i)
-                                        .map(|m| m.as_str().to_string())
-                                        .unwrap_or_default(),
-                                );
+                                if let Some(m) = caps.get(i) {
+                                    arr.push(m.as_str().to_string());
+                                    begins.push((m.start() + 1).to_string());
+                                    ends.push(m.end().to_string());
+                                } else {
+                                    arr.push(String::new());
+                                    begins.push("0".to_string());
+                                    ends.push("0".to_string());
+                                }
                             }
                             exec.arrays.insert("match".to_string(), arr);
+                            // mbegin/mend arrays — 1-based start
+                            // and end positions of each capture
+                            // group. Direct port of zsh's
+                            // pat_pure_m population.
+                            exec.arrays.insert("mbegin".to_string(), begins);
+                            exec.arrays.insert("mend".to_string(), ends);
                             if let Some(m0) = caps.get(0) {
                                 exec.variables
                                     .insert("MATCH".to_string(), m0.as_str().to_string());
