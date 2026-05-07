@@ -502,50 +502,92 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
     }                                                       // c:100
 }                                                           // c:100
 
-/// Perform $'...' quoting
-/// Port of stringsubstquote() from subst.c lines 194-224
+/// Port of `stringsubstquote()` from `Src/subst.c:206-233`.
+///
+/// Implements `$'...'` ANSI-C-style quoted-string substitution. The
+/// C signature is `char *stringsubstquote(char *strstart, char **pstrdpos)`
+/// — it returns the new full string (with the `$'…'` segment replaced
+/// by the unescaped content) and updates `*pstrdpos` to point past
+/// the replacement.
+///
+/// Rust signature: `(strstart, strdpos) -> (String, usize)` — same
+/// data, returned as a tuple instead of an in-out pointer.
+///
+/// C body:
+///   1. `strsub = getkeystring(strdpos+2, &len, GETKEYS_DOLLARS_QUOTE, NULL)`
+///      — calls utils.c's getkeystring with the dollars-quote flag,
+///      which walks chars until an unescaped `'` and returns the
+///      unescaped contents.
+///   2. `len += 2` — account for the `$'` prefix.
+///   3. Concat the prefix (strstart..strdpos), strsub, and the
+///      suffix (strdpos+len..). Special case: empty `$''` returns
+///      a Nularg sentinel so it doesn't get elided downstream.
+///   4. Set *pstrdpos to point past the substituted region.
 fn stringsubstquote(strstart: &str, strdpos: usize) -> (String, usize) { // c:206
-    let chars: Vec<char> = strstart.chars().collect();      // c:206
+    let chars: Vec<char> = strstart.chars().collect();      // c:208
 
-    // Find the content between $' and '
-    let start = strdpos + 2; // Skip $'                     // c:206
-    let mut end = start;                                    // c:206
-    let mut escaped = false;                                // c:206
+    // C: `getkeystring(strdpos+2, &len, GETKEYS_DOLLARS_QUOTE, NULL)`.
+    // Rust's getkeystring doesn't take a stop-at-unquoted-` flag, so
+    // we walk the quoted region manually first, then unescape the
+    // captured content. Same observable behavior: dollar-quoted
+    // chars get C-escape-processed, unescaped `'` terminates.
+    let start = strdpos + 2;                                // c:209 (strdpos+2)
+    let mut end = start;                                    // c:209
+    let mut escaped = false;                                // c:209
 
-    while end < chars.len() {                               // c:206
-        if escaped {                                        // c:206
-            escaped = false;                                // c:206
-            end += 1;                                       // c:206
-            continue;                                       // c:206
-        }                                                   // c:206
-        if chars[end] == '\\' {                             // c:206
-            escaped = true;                                 // c:206
-            end += 1;                                       // c:206
-            continue;                                       // c:206
-        }                                                   // c:206
-        if chars[end] == '\'' {                             // c:206
-            break;                                          // c:206
-        }                                                   // c:206
-        end += 1;                                           // c:206
-    }                                                       // c:206
+    while end < chars.len() {                               // c:209
+        if escaped {                                        // c:209
+            escaped = false;                                // c:209
+            end += 1;                                       // c:209
+            continue;                                       // c:209
+        }
+        if chars[end] == '\\' {                             // c:209
+            escaped = true;                                 // c:209
+            end += 1;                                       // c:209
+            continue;                                       // c:209
+        }
+        if chars[end] == '\'' { break; }                    // c:209 (unescaped close)
+        end += 1;
+    }
 
-    // Process escape sequences
-    let content: String = chars[start..end].iter().collect(); // c:206
-    let (processed, _processed_len) = crate::ported::utils::getkeystring(&content);                 // c:206
+    // C: `getkeystring` returns the unescaped content (strsub) +
+    // length consumed. Rust calls getkeystring on the captured
+    // content slice; consumed count is the slice length plus the
+    // wrapping `$'` and `'`.
+    let content: String = chars[start..end].iter().collect();
+    let (strsub, _) = crate::ported::utils::getkeystring(&content); // c:211
 
-    // Build result
-    let prefix: String = chars[..strdpos].iter().collect(); // c:206
-    let suffix: String = if end + 1 < chars.len() {         // c:206
-        chars[end + 1..].iter().collect()                   // c:206
-    } else {                                                // c:206
-        String::new()                                       // c:206
-    };                                                      // c:206
+    // C: `len += 2;` — caller's len now includes the leading `$'`
+    // (Rust mirrors via end+1 below).
 
-    let result = format!("{}{}{}", prefix, processed, suffix); // c:206
-    let new_pos = strdpos + processed.len();                // c:206
+    // C: `if (strstart != strdpos)` — there's a prefix, so concat
+    // prefix + strsub + suffix. Rust always concats; empty prefix
+    // is benign.
+    let prefix: String = chars[..strdpos].iter().collect(); // c:215
+    let suffix: String = if end + 1 < chars.len() {         // c:216 (strdpos[len] check)
+        chars[end + 1..].iter().collect()                   // c:217
+    } else {
+        String::new()                                       // c:218
+    };
 
-    (result, new_pos)                                       // c:206
-}                                                           // c:206
+    // C: empty `$''` special case — `strret = dupstring(nulstring);`
+    // returns the NULARG sentinel string so the empty quote doesn't
+    // get elided by stringsubst's word-walk.
+    let strret = if strsub.is_empty() && prefix.is_empty() && suffix.is_empty() { // c:226
+        // Nularg = '\u{8b}' per zsh.h. Emit as a single-char string
+        // so downstream code recognises the empty-quote sentinel.
+        "\u{8b}".to_string()                                // c:227
+    } else {
+        format!("{}{}{}", prefix, strsub, suffix)           // c:215-220
+    };
+
+    // C: `*pstrdpos = strret + (strdpos - strstart) + strlen(strsub);`
+    // — sets the in-out pointer to one past the unescaped content
+    // in the new string. Rust returns the equivalent index.
+    let new_pos = prefix.chars().count() + strret.chars().count().saturating_sub(prefix.chars().count() + suffix.chars().count()); // c:230
+
+    (strret, new_pos)                                       // c:232
+}                                                           // c:233
 
 
 
