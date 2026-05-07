@@ -242,7 +242,17 @@ pub struct SubstState {                                     // c:100
     /// SubstState so chained modifiers (`${var:s/x/y/:&}`) and
     /// later refs in the same shell session both see it. Committed
     /// back to ShellExecutor in commit_to_executor.
-    pub last_subst: Option<(String, String)>,               // c:4531
+    /// Third element encodes the anchor mode the source modifier
+    /// recorded:
+    ///   0 = `:s` — literal, non-anchored (`replace`/`replacen`)
+    ///   1 = `:S` with `#X` head-anchored
+    ///   2 = `:S` with `X%` tail-anchored
+    ///   3 = `:S` no anchor (S-style mid-string match)
+    /// Direct port of subst.c:4675 `case '&':` which sets
+    /// `c = hsubpatopt ? 'S' : 's'` — the replay must remember the
+    /// hsubpatopt bit, otherwise a `:S/#hdr/H/:&` chain re-replays
+    /// as a literal "#hdr" search instead of the head-anchor form.
+    pub last_subst: Option<(String, String, u8)>,           // c:4531
     /// SUB_* flag bits accumulated by `(M)/(R)/(B)/(E)/(N)/(S)`
     /// in the flag-loop. Direct port of subst.c:2169-2199. Read
     /// by getmatch / igetmatch and the BUILTIN_PARAM_REPLACE /
@@ -4305,7 +4315,24 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
             } else {
                 result.replacen(eff_pat.as_str(), repl.as_str(), 1)
             };
-            state.last_subst = Some((pat.clone(), repl.clone())); // c:4673
+            // Record the post-anchor-strip form + anchor mode so a
+            // subsequent `:&` can replay the same shape. Storing
+            // `eff_pat` (not `pat`) avoids re-stripping `#`/`%` on
+            // replay; the `mode` byte encodes whether the original
+            // `:S` form was head-, tail-, or non-anchored.
+            // C: subst.c:4673 saves hsubl/hsubr; hsubpatopt bit is
+            // implicit from the modifier letter recorded by
+            // `case '&'`.
+            let mode: u8 = if modifier == 's' {
+                0
+            } else if anchor_head {
+                1
+            } else if anchor_tail {
+                2
+            } else {
+                3
+            };
+            state.last_subst = Some((eff_pat.clone(), repl.clone(), mode)); // c:4673
             // `:s` on word-each (`:w` / `:W:sep`) splits, applies,
             // rejoins. Pull through the same code path :& uses
             // below by deferring to a shared `apply_subst` closure.
@@ -4321,24 +4348,53 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
             continue;                                       // c:4675
         }                                                   // c:4685
 
-        // `:&` repeats the last `:s` substitution. Per Src/subst.c
-        // modify's `case '&':`. No-op if no prior `:s` in this
-        // chain (or pass — state.last_subst persists from prior
-        // calls via from_executor / commit_to_executor).
+        // `:&` repeats the last `:s`/`:S` substitution. Per
+        // Src/subst.c:4675 `case '&':` — `c = hsubpatopt ? 'S' :
+        // 's'`. The `mode` byte stored alongside (pat, repl) by
+        // the s/S arm tells which anchor disposition to replay:
+        //   0 = `:s` literal,  1 = `:S` head (`#X`),
+        //   2 = `:S` tail (`X%`), 3 = `:S` no-anchor.
+        // No-op if no prior `:s` in this chain (or pass — state.
+        // last_subst persists across calls via
+        // from_executor / commit_to_executor).
         if modifier == '&' {                                // c:4531
-            if let Some((p, r)) = state.last_subst.clone() { // c:4531
+            if let Some((p, r, mode)) = state.last_subst.clone() { // c:4531
+                let apply = |w: &str| -> String {           // c:4531
+                    match mode {                            // c:4675
+                        1 => {                              // c:4665 head-anchored
+                            if w.starts_with(p.as_str()) {
+                                format!("{}{}", r, &w[p.len()..])
+                            } else { w.to_string() }
+                        }
+                        2 => {                              // c:4665 tail-anchored
+                            if w.ends_with(p.as_str()) {
+                                format!("{}{}", &w[..w.len() - p.len()], r)
+                            } else { w.to_string() }
+                        }
+                        // mode 0 (`:s`) and mode 3 (`:S` no
+                        // anchor) both replay as a non-anchored
+                        // replacement. The `:s`/`:S` distinction
+                        // for inner-string matches is implemented
+                        // by glob-vs-literal in the original arm;
+                        // the replay uses the literal path until
+                        // we wire glob into modify().
+                        _ => {                              // c:4665 non-anchored
+                            if gbal {
+                                w.replace(p.as_str(), r.as_str())
+                            } else {
+                                w.replacen(p.as_str(), r.as_str(), 1)
+                            }
+                        }
+                    }
+                };
                 if wall {                                   // c:4531
                     let separator = sep.as_deref().unwrap_or(" "); // c:4531
                     let words: Vec<&str> = result.split(separator).collect(); // c:4531
-                    let modified: Vec<String> = words.iter().map(|w| { // c:4531
-                        if gbal { w.replace(p.as_str(), r.as_str()) }    // c:4531
-                        else { w.replacen(p.as_str(), r.as_str(), 1) }   // c:4531
-                    }).collect();                            // c:4531
+                    let modified: Vec<String> = words.iter().map(|w| apply(w)).collect();
                     result = modified.join(separator);      // c:4531
                 } else {                                    // c:4531
-                    result = if gbal { result.replace(p.as_str(), r.as_str()) } // c:4531
-                             else { result.replacen(p.as_str(), r.as_str(), 1) }; // c:4531
-                }                                            // c:4531
+                    result = apply(&result);                // c:4531
+                }                                           // c:4531
             }                                               // c:4531
             continue;                                       // c:4531
         }                                                   // c:4531

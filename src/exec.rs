@@ -472,7 +472,7 @@ pub struct ShellExecutor {
     /// Direct port of `hsubl` / `hsubr` globals in Src/hist.c.
     /// SubstState mirrors / commits this so all paramsubst calls
     /// share the most recent value.
-    pub last_subst: Option<(String, String)>,
+    pub last_subst: Option<(String, String, u8)>,
     /// SUB_* flag bits set per paramsubst call by the (M)/(R)/(B)/
     /// (E)/(N)/(S) flag-loop arms. Read by BUILTIN_PARAM_FILTER /
     /// REPLACE / STRIP to alter their match disposition. Direct
