@@ -123,8 +123,82 @@ pub struct LinkList {                                       // c:100
 }                                                           // c:100
 
 impl LinkList {                                             // c:100
+    /// Port of zsh.h LinkList init (the C struct is initialized via
+    /// `LinkList l = (LinkList) zhalloc(sizeof(*l)); l->list.first = NULL;`).
+    pub fn new() -> Self {                                  // zsh.h:560
+        LinkList {                                          // zsh.h:560
+            nodes: VecDeque::new(),                         // zsh.h:560
+            flags: 0,                                       // zsh.h:560
+        }                                                   // zsh.h:560
+    }                                                       // zsh.h:560
 
+    /// Construct a single-element list. Mirrors the common C idiom
+    /// `addlinknode(newlinklist(), s)` used by `prefork()` to seed
+    /// the substitution pipeline.
+    pub fn from_string(s: &str) -> Self {                   // zsh.h:580
+        let mut list = LinkList::new();                     // zsh.h:580
+        list.nodes.push_back(LinkNode {                     // zsh.h:580
+            data: s.to_string(),                            // zsh.h:580
+        });                                                 // zsh.h:580
+        list                                                // zsh.h:580
+    }                                                       // zsh.h:580
 
+    /// Port of `firstnode(X)` macro from zsh.h:576.
+    pub fn first_node(&self) -> Option<usize> {             // zsh.h:576
+        if self.nodes.is_empty() {                          // zsh.h:576
+            None                                            // zsh.h:576
+        } else {                                            // zsh.h:576
+            Some(0)                                         // zsh.h:576
+        }                                                   // zsh.h:576
+    }                                                       // zsh.h:576
+
+    /// Port of `getdata(X)` macro from zsh.h:586.
+    pub fn get_data(&self, idx: usize) -> Option<&str> {    // zsh.h:586
+        self.nodes.get(idx).map(|n| n.data.as_str())        // zsh.h:586
+    }                                                       // zsh.h:586
+
+    /// Port of `setdata(X,Y)` macro from zsh.h:587.
+    pub fn set_data(&mut self, idx: usize, data: String) {  // zsh.h:587
+        if let Some(node) = self.nodes.get_mut(idx) {       // zsh.h:587
+            node.data = data;                               // zsh.h:587
+        }                                                   // zsh.h:587
+    }                                                       // zsh.h:587
+
+    /// Port of `insertlinknode(X,Y,Z)` macro family from zsh.h:580.
+    /// Inserts after the given index; returns the new node's index.
+    pub fn insert_after(&mut self, idx: usize, data: String) -> usize { // zsh.h:580
+        self.nodes.insert(idx + 1, LinkNode { data });      // zsh.h:580
+        idx + 1                                             // zsh.h:580
+    }                                                       // zsh.h:580
+
+    /// Port of `delete_node` family — the zsh.h macro chain that
+    /// excises a node from a doubly-linked list. Index-based here.
+    pub fn remove(&mut self, idx: usize) {                  // zsh.h:580
+        if idx < self.nodes.len() {                         // zsh.h:580
+            self.nodes.remove(idx);                         // zsh.h:580
+        }                                                   // zsh.h:580
+    }                                                       // zsh.h:580
+
+    /// Port of `nextnode(X)` macro from zsh.h:588.
+    pub fn next_node(&self, idx: usize) -> Option<usize> {  // zsh.h:588
+        if idx + 1 < self.nodes.len() {                     // zsh.h:588
+            Some(idx + 1)                                   // zsh.h:588
+        } else {                                            // zsh.h:588
+            None                                            // zsh.h:588
+        }                                                   // zsh.h:588
+    }                                                       // zsh.h:588
+
+    /// Port of `empty(X)` macro from zsh.h:583.
+    pub fn is_empty(&self) -> bool {                        // zsh.h:583
+        self.nodes.is_empty()                               // zsh.h:583
+    }                                                       // zsh.h:583
+
+    /// Idiomatic length — zsh has no LL_LEN macro; callers walked
+    /// the list manually. Provided here for convenience over the
+    /// underlying `VecDeque`.
+    pub fn len(&self) -> usize {                            // zsh.h:583
+        self.nodes.len()                                    // zsh.h:583
+    }                                                       // zsh.h:583
 
 
 
