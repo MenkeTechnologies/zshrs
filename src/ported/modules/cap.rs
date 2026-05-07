@@ -147,49 +147,6 @@ pub fn get_file_caps(_path: &str) -> io::Result<String> {
     ))
 }
 
-/// Set a file's POSIX.1e capability set from a text representation.
-/// Port of the `cap_from_text()` + `cap_set_file()` pair the C
-/// source's `bin_setcap()` (Src/Modules/cap.c:91) calls per file
-/// argument — backs `setcap STRING FILE...`.
-#[cfg(all(target_os = "linux", feature = "libcap"))]
-pub fn set_file_caps(cap_string: &str, path: &str) -> io::Result<()> {
-    use std::ffi::CString;
-
-    let cap_c = CString::new(cap_string)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid capability string"))?;
-    let path_c = CString::new(path)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
-
-    unsafe {
-        let caps = ffi::cap_from_text(cap_c.as_ptr());
-        if caps.is_null() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid capability string",
-            ));
-        }
-
-        let result = ffi::cap_set_file(path_c.as_ptr(), caps);
-        ffi::cap_free(caps);
-
-        if result != 0 {
-            return Err(io::Error::last_os_error());
-        }
-    }
-
-    Ok(())
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/cap.c`.
-#[cfg(not(all(target_os = "linux", feature = "libcap")))]
-pub fn set_file_caps(_cap_string: &str, _path: &str) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "capabilities not supported (build with --features libcap on Linux)",
-    ))
-}
-
 /// `cap` builtin entry point.
 /// Port of `bin_cap()` from Src/Modules/cap.c:36. With no args
 /// prints `cap_get_proc()`; with one arg calls `cap_set_proc()` on
@@ -236,7 +193,9 @@ pub fn bin_getcap(args: &[&str]) -> (i32, String) {
 /// `setcap` builtin entry point.
 /// Port of `bin_setcap()` from Src/Modules/cap.c:91. Applies the
 /// shared capability string (first arg) to every remaining file
-/// argument.
+/// argument. The per-file `cap_from_text()` + `cap_set_file()` +
+/// `cap_free()` triple is inlined per the C source's loop body —
+/// no helper function in C, no helper function here.
 pub fn bin_setcap(args: &[&str]) -> (i32, String) {
     if args.len() < 2 {
         return (
@@ -250,7 +209,51 @@ pub fn bin_setcap(args: &[&str]) -> (i32, String) {
     let mut output = String::new();
 
     for file in &args[1..] {
-        if let Err(e) = set_file_caps(cap_string, file) {
+        // Per-file body is the inlined `cap_from_text` /
+        // `cap_set_file` / `cap_free` triple from the C source's
+        // loop at Src/Modules/cap.c:91. The Linux+libcap path
+        // calls real libcap; everything else returns Unsupported.
+        let result: io::Result<()> = {
+            #[cfg(all(target_os = "linux", feature = "libcap"))]
+            {
+                use std::ffi::CString;
+                let cap_c = CString::new(cap_string).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "invalid capability string")
+                });
+                let path_c = CString::new(*file).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "invalid path")
+                });
+                match (cap_c, path_c) {
+                    (Ok(cap_c), Ok(path_c)) => unsafe {
+                        let caps = ffi::cap_from_text(cap_c.as_ptr());
+                        if caps.is_null() {
+                            Err(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                "invalid capability string",
+                            ))
+                        } else {
+                            let rc = ffi::cap_set_file(path_c.as_ptr(), caps);
+                            ffi::cap_free(caps);
+                            if rc != 0 {
+                                Err(io::Error::last_os_error())
+                            } else {
+                                Ok(())
+                            }
+                        }
+                    },
+                    (Err(e), _) | (_, Err(e)) => Err(e),
+                }
+            }
+            #[cfg(not(all(target_os = "linux", feature = "libcap")))]
+            {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "capabilities not supported (build with --features libcap on Linux)",
+                ))
+            }
+        };
+
+        if let Err(e) = result {
             output.push_str(&format!("setcap: {}: {}\n", file, e));
             status = 1;
         }
