@@ -2265,9 +2265,59 @@ fn paramsubst(                                              // c:1625
                     value = raw_value.clone();                   // c:3870
                 }
             } else if let Some(rep) = r.strip_prefix("//") {  // c:3870 (global replace)
-                let parts: Vec<&str> = rep.splitn(2, '/').collect();
-                let pat = singsub(parts[0], state);
-                let repl = parts.get(1).map(|s| singsub(s, state)).unwrap_or_default();
+                // Split on first un-escaped `/` so `\/` stays
+                // literal in pat. The bridge's BUILTIN_EXPAND_TEXT
+                // mode-0 prep inserts NUL (`\x00`) before each
+                // backslash-escaped special (`\$` → `\0$`,
+                // `\\` → `\0\`, `\/` → bridge doesn't escape `/`
+                // so it arrives raw `\/`). We recognize:
+                //   NUL+X        → literal X (next char protected)
+                //   `\` + `/`    → literal `/` (raw backslash escape
+                //                  in pat — different from `/`
+                //                  separator)
+                // Direct port of Src/subst.c:3884 parsesub which
+                // distinguishes `\X` from `X` via the BNULL marker
+                // (our analog is the NUL marker).
+                let split_unescaped = |s: &str| -> (String, String) {
+                    let cv: Vec<char> = s.chars().collect();
+                    let mut pat_buf = String::new();
+                    let mut i = 0;
+                    while i < cv.len() {
+                        let c = cv[i];
+                        // NUL marker (or BNULL): next char is
+                        // literal, including `/` (no separator).
+                        if (c == '\x00' || c == '\u{9f}') && i + 1 < cv.len() {
+                            // The next char is whatever was
+                            // backslash-escaped in source. For pat
+                            // matching we want it literal. Push the
+                            // char with a backslash prefix so the
+                            // glob matcher treats meta chars as
+                            // literal too.
+                            pat_buf.push('\\');
+                            pat_buf.push(cv[i + 1]);
+                            i += 2;
+                            continue;
+                        }
+                        // Raw backslash escapes a `/` to keep it
+                        // out of the pat/repl split. Drop the
+                        // backslash, keep the `/`.
+                        if c == '\\' && i + 1 < cv.len() && cv[i + 1] == '/' {
+                            pat_buf.push(cv[i + 1]);
+                            i += 2;
+                            continue;
+                        }
+                        if c == '/' {
+                            let rest: String = cv[i + 1..].iter().collect();
+                            return (pat_buf, rest);
+                        }
+                        pat_buf.push(c);
+                        i += 1;
+                    }
+                    (pat_buf, String::new())
+                };
+                let (raw_pat, raw_repl) = split_unescaped(rep);
+                let pat = singsub(&raw_pat, state);
+                let repl = singsub(&raw_repl, state);
                 // Per-element replace for arrays — zsh treats each
                 // element as a separate match target, preserving the
                 // array shape. \${(@)arr//pat/repl} keeps element
