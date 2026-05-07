@@ -2575,8 +2575,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             }
                         }
                         if let Some((start_s, end_s)) = idx.split_once(',') {
-                            let s_opt = crate::params::parse_subscript_index(exec, start_s);
-                            let e_opt = crate::params::parse_subscript_index(exec, end_s);
+                            // Inline subscript-int parse (was a
+                            // `parse_subscript_index` helper). Each
+                            // side: trim, parse as int, fall back to
+                            // arith eval. Empty trim → None →
+                            // ignore. Mirrors getarg's mathevalarg
+                            // path (params.c:1567).
+                            let parse_one = |s: &str, exec: &mut ShellExecutor| -> Option<i64> {
+                                let t = s.trim();
+                                if t.is_empty() { return None; }
+                                if let Ok(i) = t.parse::<i64>() { return Some(i); }
+                                Some(exec.eval_arith_expr(t))
+                            };
+                            let s_opt = parse_one(start_s, exec);
+                            let e_opt = parse_one(end_s, exec);
                             if let (Some(s), Some(e)) = (s_opt, e_opt) {
                                 return Value::str(scalar.chars().skip(s as usize).take((e as usize).saturating_sub(s as usize) + 1).collect::<String>());
                             }
@@ -2616,8 +2628,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // remains an array. Detect via in_dq_context which the
                 // BUILTIN_EXPAND_TEXT mode-1 wrapper bumps.
                 if let Some((start_s, end_s)) = idx.split_once(',') {
-                    let start = crate::params::parse_subscript_index(exec, start_s);
-                    let end = crate::params::parse_subscript_index(exec, end_s);
+                    // Inline subscript-int parse — mirrors getarg's
+                    // mathevalarg fallback (params.c:1567).
+                    let parse_one = |s: &str, exec: &mut ShellExecutor| -> Option<i64> {
+                        let t = s.trim();
+                        if t.is_empty() { return None; }
+                        if let Ok(i) = t.parse::<i64>() { return Some(i); }
+                        Some(exec.eval_arith_expr(t))
+                    };
+                    let start = parse_one(start_s, exec);
+                    let end = parse_one(end_s, exec);
                     if let (Some(s), Some(e)) = (start, end) {
                         // KSH_ARRAYS: indices are 0-based, so shift
                         // positive values up by 1 before the (1-based)

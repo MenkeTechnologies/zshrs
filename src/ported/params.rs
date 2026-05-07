@@ -3746,32 +3746,35 @@ pub fn uniqarray(arr: Vec<String>) -> Vec<String> {
     arr.into_iter().filter(|s| seen.insert(s.clone())).collect()
 }
 
-/// Parse a subscript expression like `[1]`, `[1,5]`, `[@]`, `[*]`
-pub fn parse_subscript(subscript: &str, ksh_arrays: bool) -> Option<SubscriptIndex> {
+/// Parse a subscript expression like `[1]`, `[1,5]`, `[@]`, `[*]`.
+/// Direct port of the trivial-int branch of `getindex`/`getarg`
+/// (Src/params.c:1367 / 2001) — `mathevalarg` parses the int.
+pub fn parse_subscript(subscript: &str, _ksh_arrays: bool) -> Option<SubscriptIndex> {
     let s = subscript.trim();
 
     if s == "@" || s == "*" {
         return Some(SubscriptIndex::all());
     }
 
+    // Inline int-parse (was a `parse_index_value` helper). Empty
+    // → None matches getarg's "no digits" early-return. Trim each
+    // side independently so `[ 1 , 5 ]` parses.
     if let Some(comma_pos) = s.find(',') {
-        let start_str = s[..comma_pos].trim();
-        let end_str = s[comma_pos + 1..].trim();
-        let start = parse_index_value(start_str, ksh_arrays)?;
-        let end = parse_index_value(end_str, ksh_arrays)?;
+        let l = s[..comma_pos].trim();
+        let r = s[comma_pos + 1..].trim();
+        if l.is_empty() || r.is_empty() {
+            return None;
+        }
+        let start = l.parse::<i64>().ok()?;
+        let end = r.parse::<i64>().ok()?;
         return Some(SubscriptIndex::range(start, end));
     }
 
-    let idx = parse_index_value(s, ksh_arrays)?;
-    Some(SubscriptIndex::single(idx))
-}
-
-fn parse_index_value(s: &str, _ksh_arrays: bool) -> Option<i64> {
-    let s = s.trim();
     if s.is_empty() {
         return None;
     }
-    s.parse::<i64>().ok()
+    let idx = s.parse::<i64>().ok()?;
+    Some(SubscriptIndex::single(idx))
 }
 
 /// Slice an indexed array using zsh 1-based inclusive semantics.
@@ -3862,26 +3865,6 @@ pub fn setarrvalue(arr: &mut Vec<String>, start: i64, end: i64, val: Vec<String>
     }
 }
 
-/// Get single array element by index (handles ksh_arrays)
-pub fn get_array_element(arr: &[String], idx: i64, ksh_arrays: bool) -> Option<String> {
-    let len = arr.len() as i64;
-    let actual_idx = if idx < 0 {
-        let adj = len + idx;
-        if adj < 0 {
-            return None;
-        }
-        adj as usize
-    } else if ksh_arrays {
-        idx as usize
-    } else {
-        if idx > 0 {
-            (idx - 1) as usize
-        } else {
-            return None;
-        }
-    };
-    arr.get(actual_idx).cloned()
-}
 
 
 /// Simple glob match for parameter scanning
@@ -4136,87 +4119,6 @@ pub fn strgetfn(table: &ParamTable, name: &str, lower: bool, upper: bool) -> Opt
     } else {
         val
     })
-}
-
-// ---------------------------------------------------------------------------
-// Subscript flag parsing (from getarg subscription flags)
-// ---------------------------------------------------------------------------
-
-/// Parse subscription flags from (flags) prefix
-pub fn parse_subscription_flags(s: &str) -> (SubscriptFlags, &str) {
-    let mut flags = SubscriptFlags {
-        num: 1,
-        ..SubscriptFlags::default()
-    };
-
-    if !s.starts_with('(') {
-        return (flags, s);
-    }
-
-    let chars = s[1..].char_indices();
-    let mut end_pos = 0;
-
-    for (pos, c) in chars {
-        match c {
-            ')' => {
-                end_pos = pos + 2; // +1 for '(' offset, +1 for ')'
-                break;
-            }
-            'r' => {
-                flags.reverse = true;
-                flags.down = false;
-                flags.index = false;
-                flags.key_match = false;
-            }
-            'R' => {
-                flags.reverse = true;
-                flags.down = true;
-                flags.index = false;
-                flags.key_match = false;
-            }
-            'k' => {
-                flags.key_match = true;
-                flags.reverse = true;
-                flags.down = false;
-                flags.index = false;
-            }
-            'K' => {
-                flags.key_match = true;
-                flags.reverse = true;
-                flags.down = true;
-                flags.index = false;
-            }
-            'i' => {
-                flags.reverse = true;
-                flags.index = true;
-                flags.down = false;
-                flags.key_match = false;
-            }
-            'I' => {
-                flags.reverse = true;
-                flags.index = true;
-                flags.down = true;
-                flags.key_match = false;
-            }
-            'w' => {
-                flags.word = true;
-            }
-            'f' => {
-                flags.word = true;
-                flags.separator = Some("\n".to_string());
-            }
-            'e' => {
-                flags.quote_arg = true;
-            }
-            _ => {}
-        }
-    }
-
-    if end_pos > 0 && end_pos <= s.len() {
-        (flags, &s[end_pos..])
-    } else {
-        (flags, s)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4582,18 +4484,6 @@ mod tests {
         assert_eq!(s, "1_234_567");
     }
 
-    #[test]
-    fn test_subscription_flags() {
-        let (flags, rest) = parse_subscription_flags("(r)3");
-        assert!(flags.reverse);
-        assert!(!flags.down);
-        assert_eq!(rest, "3");
-
-        let (flags, _) = parse_subscription_flags("(I)foo");
-        assert!(flags.reverse);
-        assert!(flags.down);
-        assert!(flags.index);
-    }
 }
 
 // ===========================================================
@@ -6402,20 +6292,6 @@ pub(crate) fn assoc_subscript_flag(map: &IndexMap<String, String>, flags: &str, 
         }
     }
     Value::str("")
-}
-/// Parse a single subscript-side index. Accepts plain integers (fast
-/// path) and falls back to arithmetic eval for bare variable names
-/// and expressions (`i`, `i+1`, `len-1`, etc.). Returns None when
-/// the input is empty (caller treats it as "no slice").
-pub(crate) fn parse_subscript_index(exec: &mut ShellExecutor, s: &str) -> Option<i64> {
-    let trimmed = s.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    if let Ok(i) = trimmed.parse::<i64>() {
-        return Some(i);
-    }
-    Some(exec.eval_arith_expr(trimmed))
 }
 // END moved-from-exec-rs (free fns)
 
