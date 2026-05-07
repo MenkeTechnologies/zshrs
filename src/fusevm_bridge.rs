@@ -6548,6 +6548,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let op = vm.pop().to_int() as u8;
         let pattern_raw = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // SUB_M flag: \${(M)var#pat} returns the matched portion
+        // instead of the stripped result. Read+consume per the
+        // BUILTIN_PARAM_REPLACE convention. R/B/E/N less common on
+        // strip paths; route only M for now. Direct port of
+        // subst.c:2171 SUB_MATCH bit + getmatch dispatch.
+        let sub_match = with_executor(|exec| {
+            let m = (exec.sub_flags & 0x0008) != 0;
+            exec.sub_flags = 0;
+            m
+        });
         // Pattern may contain `$var` / `$(cmd)` / `$((expr))` — zsh
         // expands these before applying the strip. Was emitted as-is.
         let pattern = with_executor(|exec| exec.singsub(&pattern_raw));
@@ -6569,46 +6579,68 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let strip_one = |v: &str, op: u8, pattern: &str| -> String {
             let chars: Vec<char> = v.chars().collect();
             let n = chars.len();
+            // (M) inverted-disposition helper: when sub_match is set,
+            // return the MATCHED portion instead of the post-strip
+            // string. Used by zsh idioms like \${(M)path#*/} which
+            // returns the leading "/segment" rather than the rest.
+            // Direct port of getmatch's SUB_MATCH branch — it picks
+            // the matched-portion view from the same scan.
             match op {
                 0 => {
                     // shortest prefix strip — try k = 0, 1, ...
                     for k in 0..=n {
                         let prefix: String = chars[..k].iter().collect();
                         if ShellExecutor::glob_match_static(&prefix, pattern) {
-                            return chars[k..].iter().collect();
+                            return if sub_match {            // c:2171
+                                prefix                       // c:2171
+                            } else {                         // c:2171
+                                chars[k..].iter().collect()
+                            };
                         }
                     }
-                    v.to_string()
+                    if sub_match { String::new() } else { v.to_string() } // c:2171
                 }
                 1 => {
                     // longest prefix strip — try k = n down to 0
                     for k in (0..=n).rev() {
                         let prefix: String = chars[..k].iter().collect();
                         if ShellExecutor::glob_match_static(&prefix, pattern) {
-                            return chars[k..].iter().collect();
+                            return if sub_match {            // c:2171
+                                prefix                       // c:2171
+                            } else {                         // c:2171
+                                chars[k..].iter().collect()
+                            };
                         }
                     }
-                    v.to_string()
+                    if sub_match { String::new() } else { v.to_string() } // c:2171
                 }
                 2 => {
                     // shortest suffix strip
                     for k in 0..=n {
                         let suffix: String = chars[n - k..].iter().collect();
                         if ShellExecutor::glob_match_static(&suffix, pattern) {
-                            return chars[..n - k].iter().collect();
+                            return if sub_match {            // c:2171
+                                suffix                       // c:2171
+                            } else {                         // c:2171
+                                chars[..n - k].iter().collect()
+                            };
                         }
                     }
-                    v.to_string()
+                    if sub_match { String::new() } else { v.to_string() } // c:2171
                 }
                 3 => {
                     // longest suffix strip
                     for k in (0..=n).rev() {
                         let suffix: String = chars[n - k..].iter().collect();
                         if ShellExecutor::glob_match_static(&suffix, pattern) {
-                            return chars[..n - k].iter().collect();
+                            return if sub_match {            // c:2171
+                                suffix                       // c:2171
+                            } else {                         // c:2171
+                                chars[..n - k].iter().collect()
+                            };
                         }
                     }
-                    v.to_string()
+                    if sub_match { String::new() } else { v.to_string() } // c:2171
                 }
                 _ => v.to_string(),
             }
