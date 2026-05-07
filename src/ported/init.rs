@@ -507,21 +507,6 @@ pub fn set_pwd_env(state: &mut ShellState) {
     env::set_var("OLDPWD", &state.oldpwd);
 }
 
-/// Run logout scripts (from init.c run_exit_scripts counterpart)
-/// Run shutdown / exit-trap scripts.
-/// Port of the exit-trap dispatch inside `zexit()` (Src/init.c)
-/// — fires `TRAPEXIT`/`zshexit` hooks before tearing down.
-pub fn run_exit_scripts(state: &mut ShellState) {
-    if state.options.login {
-        if state.options.rcs && state.options.global_rcs {
-            source(state, "/etc/zlogout");
-        }
-        if state.options.rcs && !state.options.privileged {
-            sourcehome(state, ".zlogout");
-        }
-    }
-}
-
 /// Close the shell (from init.c zexit)
 /// Terminate the shell with an exit status.
 /// Port of `zexit()` (Src/init.c) — runs exit traps, flushes
@@ -548,16 +533,6 @@ pub fn init_shout(state: &mut ShellState) {
             state.shtty = -1;
         }
     }
-}
-
-/// Set up the hash tables (from init.c init_hashtable equivalent)
-/// Initialize the global hash tables (params, aliases, ...).
-/// Port of the `createhash*()` calls inside `setupvals()`
-/// (Src/init.c:1014) — Rust uses lazy-init slots so this is a
-/// no-op shim for parity.
-pub fn init_hashtable() {
-    // In Rust, hash tables are managed by the exec module
-    // This is a placeholder for compatibility
 }
 
 /// Set up options from emulation mode (from init.c setupvals emulation portion)
@@ -629,13 +604,6 @@ pub fn is_login_shell(argv0: &str) -> bool {
 }
 
 /// Get the ZDOTDIR
-/// Resolve `$ZDOTDIR` (or `$HOME` fallback).
-/// Port of the `ZDOTDIR ? ZDOTDIR : HOME` lookup
-/// `sourcehome()` (Src/init.c:1679) inlines.
-pub fn get_zdotdir() -> String {
-    env::var("ZDOTDIR").unwrap_or_else(|_| env::var("HOME").unwrap_or_else(|_| ".".to_string()))
-}
-
 /// Full initialization sequence (from init.c zsh_main)
 /// Top-level shell initialization driver.
 /// Port of `zsh_main()` from Src/init.c:1855 — parses argv,
