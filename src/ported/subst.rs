@@ -2736,10 +2736,15 @@ fn paramsubst(                                              // c:1625
         let splat_range = subscript_str.as_deref()
             .map(|s| s.contains(','))
             .unwrap_or(false);                                 // c:3950
+        // Assoc bare-name splat: `$assoc[@]` returns values, `$assoc[*]`
+        // returns values too. Per zsh, `(@k)assoc` returns keys; for
+        // bare `$assoc[@]` without (k), values is the convention.
+        let splat_assoc = (splat_full || splat_range)        // c:3950
+            && state.assoc_arrays.contains_key(&var_name);   // c:3950
         if !qt                                                // c:3950
             && pf_flags & prefork_flags::SINGLE == 0          // c:3950
             && (subscript_str.is_none() || splat_full || splat_range) // c:3950
-            && state.arrays.contains_key(&var_name)           // c:3950
+            && (state.arrays.contains_key(&var_name) || splat_assoc)  // c:3950
         {                                                     // c:3950
             // Pull the actual array slice for range form so
             // splat uses the slice elements (not the full arr).
@@ -2753,7 +2758,12 @@ fn paramsubst(                                              // c:1625
                     } else { None }
                 } else { None }
             } else { None };
-            if let Some(arr) = slice_arr.or_else(|| state.arrays.get(&var_name).cloned()) {
+            // Assoc fallback when var isn't in arrays.
+            let assoc_vals: Option<Vec<String>> = if splat_assoc { // c:3950
+                state.assoc_arrays.get(&var_name)            // c:3950
+                    .map(|m| m.values().cloned().collect())  // c:3950
+            } else { None };                                 // c:3950
+            if let Some(arr) = slice_arr.or(assoc_vals).or_else(|| state.arrays.get(&var_name).cloned()) {
                 let prefix: String = chars[..start_pos].iter().collect(); // c:3950
                 let suffix: String = chars[pos..].iter().collect();        // c:3950
                 let mut nodes: Vec<String> = Vec::with_capacity(arr.len()); // c:3950
