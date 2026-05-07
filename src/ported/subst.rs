@@ -1707,9 +1707,27 @@ fn paramsubst(                                              // c:1625
                 else { value = String::new(); }
             } else if let Some(alt) = r.strip_prefix('+') {   // c:3296
                 if is_set { value = singsub(alt, state); } else { value = String::new(); }
-            } else if let Some(msg) = r.strip_prefix(":?") {  // c:3193
+            } else if let Some(msg) = r.strip_prefix(":?") {  // c:3193 (:?msg)
                 if !is_set || raw_value.is_empty() {
-                    eprintln!("{}: {}", var_name, singsub(msg, state));
+                    let m = if msg.is_empty() {              // c:3193
+                        "parameter null or not set".to_string() // c:3193
+                    } else {                                  // c:3193
+                        singsub(msg, state)                   // c:3193
+                    };                                        // c:3193
+                    eprintln!("{}: {}", var_name, m);
+                    state.errflag = true;
+                }
+            } else if let Some(msg) = r.strip_prefix('?') {  // c:3193 (?msg — not-set only)
+                // Same as :? but trigger ONLY on unset (not on
+                // empty). Direct port of subst.c case '?' which
+                // only checks `vunset` (not `(vunset || !*val)`).
+                if !is_set {
+                    let m = if msg.is_empty() {              // c:3193
+                        "parameter not set".to_string()       // c:3193
+                    } else {                                  // c:3193
+                        singsub(msg, state)                   // c:3193
+                    };                                        // c:3193
+                    eprintln!("{}: {}", var_name, m);
                     state.errflag = true;
                 }
             } else if let Some(rep) = r.strip_prefix("//") {  // c:3870 (global replace)
