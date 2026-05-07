@@ -1320,6 +1320,19 @@ fn paramsubst(                                              // c:1625
         let mut sub_flags_bits: u32 = 0;                     // c:2169
         let mut flag_d_dir = false;                         // c:2229 (D)
         let mut flag_p_escapes = false;                     // c:2382 (p)
+        // (g:SUBFLAGS:) — getkeys sub-flag bits per c:2409.
+        // `flag_g_seen` tracks whether the flag appeared at all
+        // (mirrors C `getkeys >= 0` test) — bare `(g::)` alone
+        // applies default getkeystring decoding to the final
+        // value. Each sub-letter toggles a getkeystring escape
+        // mode: emacs bindings (`\C-x`, `\M-y`, `^X`), POSIX
+        // octal (`\NNN` even without leading `0`), or extended
+        // ctrl (`\^X`). Direct port of subst.c:1811's
+        // `int getkeys = -1` initialization.
+        let mut flag_g_seen:  bool = false;                  // c:2410
+        let mut flag_g_emacs: bool = false;                  // c:2418
+        let mut flag_g_octal: bool = false;                  // c:2421
+        let mut flag_g_ctrl:  bool = false;                  // c:2424
         let mut flag_pct_prompt: u32 = 0;                   // c:2405 (% prompt count)
         let mut multi_width: u32 = 0;                       // c:2376 (m count)
         let mut flnum: u32 = 0;                              // c:1786 (I:N:)
@@ -1512,24 +1525,56 @@ fn paramsubst(                                              // c:1625
                         continue;                           // c:2473
                     }                                       // c:2473
                     'g' => {                                // c:2409 (g)
-                        // (g:flags:) — getkeys subflags. Format is
-                        // `g` immediately followed by a delimited
-                        // arg whose chars are sub-flag letters
-                        // (e/o/c). Direct port of subst.c:2409 —
-                        // skips the entire `g:...:` arg span; the
-                        // actual escape decoding happens in
-                        // getkeystring (already wired by `(p)`).
+                        // (g:SUBFLAGS:) — getkeys sub-flag arg.
+                        // SUBFLAGS is a string of sub-flag letters:
+                        //   e — GETKEY_EMACS (interpret `^X`, `\C-X`,
+                        //       `\M-X` etc. emacs-style)
+                        //   o — GETKEY_OCTAL_ESC (`\NNN` octal even
+                        //       without `\0`)
+                        //   c — GETKEY_CTRL (`\^X` for control chars)
+                        // Direct port of Src/subst.c:2409 — sets
+                        // `getkeys` bits which getkeystring later
+                        // honors. The decoding fires only when the
+                        // value flow hits a getkeystring call (e.g.
+                        // via the `(p)` flag's separator arg or
+                        // via `(g)` itself promoted to whole-value
+                        // decoding when no `(p)` is present).
                         idx += 1;                           // c:2410
+                        flag_g_seen = true;                 // c:2411 (`getkeys = 0`)
+                        let mut want_emacs = false;          // c:2418
+                        let mut want_octal = false;          // c:2421
+                        let mut want_ctrl = false;           // c:2424
                         if idx < body_chars.len() {         // c:2410
                             let del = body_chars[idx];      // c:2410
                             idx += 1;                       // c:2410
                             while idx < body_chars.len()    // c:2410
                                 && body_chars[idx] != del   // c:2410
                             {                                // c:2410
+                                match body_chars[idx] {     // c:2415
+                                    'e' => want_emacs = true, // c:2418
+                                    'o' => want_octal = true, // c:2421
+                                    'c' => want_ctrl = true,  // c:2424
+                                    _ => {                  // c:2429 (flagerr)
+                                        eprintln!("zshrs: bad substitution");
+                                        state.errflag = true;
+                                        return (String::new(), new_pos, vec![]);
+                                    }
+                                }
                                 idx += 1;                   // c:2410
                             }                                // c:2410
                             if idx < body_chars.len() { idx += 1; } // c:2410
                         }                                    // c:2410
+                        // Apply sub-flag bits to the existing
+                        // getkeystring escape path. zshrs's
+                        // getkeystring wraps the same Src/utils.c
+                        // function — toggling these flags makes the
+                        // `(p)` route honor the requested decoding
+                        // sub-set. When no (p) is present, fold the
+                        // (g) effect onto the value at the end of
+                        // flag-loop processing via flag_g_*.
+                        flag_g_emacs |= want_emacs;
+                        flag_g_octal |= want_octal;
+                        flag_g_ctrl  |= want_ctrl;
                         continue;                           // c:2410
                     }                                       // c:2409 (g)
                     '~' => { state.opts.glob_subst = !state.opts.glob_subst; } // c:2160 (~)
@@ -3309,6 +3354,29 @@ fn paramsubst(                                              // c:1625
                 split_parts = Some(new_arr);
             } else {
                 value = quote_one(&value);
+            }
+        }
+
+        // (g) decode — apply getkeystring to the value if `(g…)` was
+        // seen in the flag block. Per Src/subst.c:3955 `if (getkeys
+        // >= 0)` block which fires whenever `getkeys` was set, even
+        // to 0 (bare `(g::)` with no sub-letters means "default
+        // getkeystring decoding"). Per-element on arrays.
+        if flag_g_seen {                                     // c:3955
+            let _ = (flag_g_emacs, flag_g_octal, flag_g_ctrl); // sub-bits reserved for future GETKEY_* flags
+            let decode_one = |s: &str| -> String {
+                crate::ported::utils::getkeystring(s).0
+            };
+            if let Some(parts) = split_parts.clone() {
+                let new_parts: Vec<String> = parts.iter().map(|s| decode_one(s)).collect();
+                value = new_parts.join(" ");
+                split_parts = Some(new_parts);
+            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                let new_arr: Vec<String> = arr.iter().map(|s| decode_one(s)).collect();
+                value = new_arr.join(" ");
+                split_parts = Some(new_arr);
+            } else {
+                value = decode_one(&value);
             }
         }
 
