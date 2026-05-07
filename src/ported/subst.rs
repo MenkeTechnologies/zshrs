@@ -2017,12 +2017,23 @@ fn paramsubst(                                              // c:1625
         // Apply post-processing flags to the substituted value.
         // C lines 3950-4070 — case mods, quoting, etc.
         if flag_typeinfo {                                  // c:2807
-            // ${(t)var} — emit type tag.
+            // ${(t)var} — emit type tag. var_attrs takes
+            // precedence (carries typeset flags); fall back to
+            // synthesized tag from the storage table the value
+            // lives in. Direct port of subst.c:2814 wantt arm
+            // which checks paramtab + storage shape.
             value = state.var_attrs.get(&var_name)          // c:2814
                 .map(|attr| attr.format_zsh())              // c:2825
                 .unwrap_or_else(|| {
-                    if is_set { "scalar".to_string() }
-                    else { String::new() }
+                    if state.assoc_arrays.contains_key(&var_name) {
+                        "association".to_string()           // c:2814
+                    } else if state.arrays.contains_key(&var_name) {
+                        "array".to_string()                  // c:2814
+                    } else if is_set {
+                        "scalar".to_string()
+                    } else {
+                        String::new()
+                    }
                 });
         }
         if flag_lower { value = value.to_lowercase(); }     // c:2197
