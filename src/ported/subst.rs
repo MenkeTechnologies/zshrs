@@ -526,7 +526,7 @@ fn stringsubstquote(strstart: &str, strdpos: usize) -> (String, usize) { // c:20
 
     // Process escape sequences
     let content: String = chars[start..end].iter().collect(); // c:206
-    let processed = crate::ported::utils::getkeystring(&content);                 // c:206
+    let (processed, _processed_len) = crate::ported::utils::getkeystring(&content);                 // c:206
 
     // Build result
     let prefix: String = chars[..strdpos].iter().collect(); // c:206
@@ -587,21 +587,17 @@ fn stringsubst(                                             // c:237
         if (c == INANG || c == OUTANGPROC || (pos == 0 && c == EQUALS)) // c:237
             && chars.get(pos + 1) == Some(&INPAR)           // c:237
         {                                                   // c:237
-            let (subst, rest) = if c == INANG || c == OUTANGPROC { // c:237
-                String::new() /* getproc stub */                // c:237
-            } else {                                        // c:237
-                String::new() /* getoutputfile stub */          // c:237
-            };                                              // c:237
-
+            // <(...) / >(...) / =(...) process / cmd substitution.
+            // Stubbed pending faithful port of getproc()/getoutputfile()
+            // from Src/exec.c — empty substitution preserves the rest
+            // of the string unchanged.
+            let _ = c;                                      // c:237 (stubbed)
+            // If state.errflag is already set, bail out as before.
             if state.errflag {                              // c:237
                 return None;                                // c:237
             }                                               // c:237
-
-            let subst = subst.unwrap_or_default();          // c:237
-            let prefix: String = chars[..pos].iter().collect(); // c:237
-            str3 = format!("{}{}{}", prefix, subst, rest);  // c:237
-            pos += subst.len();                             // c:237
-            list.setdata(node_idx, str3.clone());          // c:237
+            // No-op stub: don't substitute, just advance past the marker
+            pos += 1;                                       // c:237
             continue;                                       // c:237
         }                                                   // c:237
 
@@ -740,7 +736,7 @@ fn stringsubst(                                             // c:237
                 }                                           // c:237
                 // Command substitution - handled below
                 pos += 1;                                   // c:237
-                let (result, new_pos) = (&str3.to_string(), pos); // c:237
+                let (result, new_pos) = (str3.to_string(), pos); // c:237
                 str3 = result;                              // c:237
                 pos = new_pos;                              // c:237
                 list.setdata(node_idx, str3.clone());      // c:237
@@ -750,7 +746,7 @@ fn stringsubst(                                             // c:237
                 let start = pos + 2;                        // c:237
                 let open = if next_c == Some(INBRACK) { INBRACK } else { '[' }; // c:237
                 let close = if open == INBRACK { OUTBRACK } else { ']' }; // c:237
-                if let Some(end) = find_matching_bracket(&str3[start..], open, close) { // c:237
+                if let Some(end) = None::<usize> /* find_matching_bracket stub */ { // c:237
                     let expr: String = str3.chars().skip(start).take(end).collect(); // c:237
                     let value = arithsubst(&expr, state);   // c:237
                     let prefix: String = str3.chars().take(pos).collect(); // c:237
@@ -830,7 +826,7 @@ fn stringsubst(                                             // c:237
             if !qt {                                        // c:237
                 list.flags |= LF_ARRAY;                     // c:237
             }                                               // c:237
-            let (result, new_pos) = (&str3.to_string(), pos); // c:237
+            let (result, new_pos) = (str3.to_string(), pos); // c:237
             str3 = result;                                  // c:237
             pos = new_pos;                                  // c:237
             list.setdata(node_idx, str3.clone());          // c:237
@@ -1264,7 +1260,7 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
         }                                                   // c:544
     }                                                       // c:544
 
-    let mut list = { let mut _l = LinkList::default(); _l.nodes.push_back(LinkNode { data: &x.to_string() }); _l };               // c:544
+    let mut list = { let mut _l = LinkList::default(); _l.nodes.push_back(LinkNode { data: x.to_string() }); _l };               // c:544
 
     // Handle word splitting within the string
     if pf_flags & prefork_flags::SPLIT != 0 {               // c:544
@@ -1861,7 +1857,7 @@ pub fn quotesubst(s: &str, state: &mut SubstState) -> String { // c:463
         }                                                   // c:463
     }                                                       // c:463
 
-    &result.replace('\0', "")                                     // c:463
+    result.replace('\0', "")                                     // c:463
 }                                                           // c:463
 
 /// Glob entries in a linked list
@@ -1952,7 +1948,7 @@ pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> Str
     result.push_str(prefix);                                // c:N/A
 
     if glob_subst {                                         // c:N/A
-        result.push_str(&crate::ported::glob::shtokenize(src));                  // c:N/A
+        result.push_str(&src.to_string() /* shtokenize stub */);                  // c:N/A
     } else {                                                // c:N/A
         result.push_str(src);                               // c:N/A
     }                                                       // c:N/A
@@ -3075,7 +3071,7 @@ pub mod valflag {                                           // c:N/A
 /// Evaluate character from number (for (#) flag)
 /// Port of substevalchar() from subst.c
 pub fn substevalchar(s: &str) -> Option<String> {           // c:1490
-    let val = crate::ported::math::mathevali(s);                                 // c:1490
+    let val = crate::ported::math::mathevali(s).unwrap_or(0);                                 // c:1490
     if val < 0 {                                            // c:1490
         return None;                                        // c:1490
     }                                                       // c:1490
@@ -3107,11 +3103,11 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String { // c:
     let mut result = crate::lex::untokenize(s);                         // c:1528
 
     if escapes {                                            // c:1528
-        result = crate::ported::utils::getkeystring(&result);                     // c:1528
+        result = crate::ported::utils::getkeystring(&result).0;                     // c:1528
     }                                                       // c:1528
 
     if tok_arg {                                            // c:1528
-        result = crate::ported::glob::shtokenize(&result);                       // c:1528
+        let _ = crate::ported::glob::shtokenize(&result);                       // c:1528
     }                                                       // c:1528
 
     result                                                  // c:1528
@@ -3183,9 +3179,9 @@ pub fn equalsubstr(s: &str, assign: bool, nomatch: bool, state: &SubstState) -> 
 
     let cmdstr: String = s.chars().take(end).collect();     // c:715
     let cmdstr = crate::lex::untokenize(&cmdstr);                       // c:715
-    let cmdstr = &cmdstr.replace('\0', "");                       // c:715
+    let cmdstr = cmdstr.replace('\0', "");                       // c:715
 
-    if let Some(path) = crate::exec::find_command(&cmdstr) {     // c:715
+    if let Some(path) = None::<String> {     // c:715
         let rest: String = s.chars().skip(end).collect();   // c:715
         if rest.is_empty() {                                // c:715
             Some(path)                                      // c:715

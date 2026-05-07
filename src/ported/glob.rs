@@ -4172,7 +4172,7 @@ impl crate::ported::exec::ShellExecutor {
 
         // Check for extended glob patterns: ?(pat), *(pat), +(pat), @(pat), !(pat)
         if self.has_extglob_pattern(&glob_pattern) {
-            let expanded = self.expand_extglob(&glob_pattern);
+            let expanded = self.expand_glob(&glob_pattern);
             return self.filter_by_qualifiers(expanded, &qualifiers);
         }
 
