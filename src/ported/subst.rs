@@ -3063,7 +3063,15 @@ fn paramsubst(                                              // c:1625
                 }                                            // c:1625
             }                                                // c:1625
         } else {                                            // c:1625
-            state.variables.get(&var_name).cloned().unwrap_or_default()               // c:1625
+            // No subscript: scalar → assoc-values → array fallback.
+            // zsh resolves `$assoc` (bare, no subscript) to the
+            // values joined; `$arr` to elements joined. Direct
+            // port of getstrvalue dispatch.
+            state.variables.get(&var_name).cloned()
+                .or_else(|| state.arrays.get(&var_name).map(|a| a.join(" ")))
+                .or_else(|| state.assoc_arrays.get(&var_name)
+                    .map(|m| m.values().cloned().collect::<Vec<_>>().join(" ")))
+                .unwrap_or_default()                         // c:1625
         };                                                  // c:1625
 
         // Handle word splitting
