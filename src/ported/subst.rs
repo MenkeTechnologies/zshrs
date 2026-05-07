@@ -1577,14 +1577,44 @@ fn paramsubst(                                              // c:1625
         // arm runs so the next paramsubst sees a clean slate.
         state.sub_flags = sub_flags_bits;                    // c:2169
         // ${#var} — length-of operator at start of brace (after flags).
-        let length_op = body_chars.get(idx).copied() == Some('#'); // c:2128
+        // Per Src/subst.c:2570-2588 `case '#'`. The leading `#` is
+        // the length operator IF the following char starts a valid
+        // name. Special-name handling per the C source's chained
+        // condition:
+        //   - cc identifier-start char (alpha/_/digit) — name path
+        //   - cc in `*@?$-` (single-char specials) — name path
+        //   - cc==':' followed by `-` (`${#:-foo}`) — name path
+        //   - cc=='#' AND s[2]=='}' — `${##}` is length of `$#`
+        //     (the "Me And My Squiggle" comment in subst.c:2580).
+        // For `${##X}` (X is anything other than `}`), the leading
+        // `#` is NOT length-op; name is `#`, op is `#X` strip-prefix.
         let post_flags_start = idx;
-        if length_op {
-            let next = body_chars.get(idx + 1).copied().unwrap_or('\0');
-            if next.is_ascii_alphabetic() || next == '_' || next == '@' || next == '*' {
+        let length_op = if body_chars.get(idx).copied() == Some('#') {
+            let next = body_chars.get(idx + 1).copied();
+            let after_next = body_chars.get(idx + 2).copied();
+            let next_is_name_start = match next {
+                Some(c) if c.is_ascii_alphanumeric() => true,
+                Some(c) if matches!(c, '_' | '@' | '*' | '?' | '!' | '$' | '-') => true,
+                // ${##} (the "Me And My Squiggle" special form per
+                // subst.c:2580) — `#` followed by `}` ONLY. Any other
+                // trailing chars (`${##X}`, `${##""}`) mean the second
+                // `#` is the strip operator, not the var name. Test
+                // for "no more chars" (None), not '\0' which can be
+                // a real NUL marker (e.g. DQ-marker prep inserts \0
+                // before each `"` so `${##""}` body is `## \0 " \0 "`
+                // and the previous '\0' fallback false-positived).
+                Some('#') if after_next.is_none() => true,
+                _ => false,
+            };
+            if next_is_name_start {
                 idx += 1; // skip the leading #
+                true
+            } else {
+                false
             }
-        }
+        } else {
+            false
+        };
         // ${...$(...)...} / ${...${var}...} / ${...$((...))...} —
         // subexp arm. Port of subst.c:2637-2729. When the body has a
         // nested $-form at the name position, run it through singsub
@@ -1956,10 +1986,24 @@ fn paramsubst(                                              // c:1625
             // No subscript — scalar / array / assoc / magic-assoc
             // fallthrough. Direct port of getstrvalue dispatch which
             // checks each storage shape in priority order.
+            // Special single-char names (`#`, `?`, `!`, `$`, `*`, `@`,
+            // `0`, `-`) live on the executor, not in `variables`. Fall
+            // back to `exec.get_variable` so `${##}` (length of `$#`)
+            // and similar specials resolve correctly. Direct port of
+            // Src/params.c::getstrvalue's special-name dispatch.
+            let is_special_name = var_name.len() == 1
+                && matches!(
+                    var_name.chars().next().unwrap_or('\0'),
+                    '#' | '?' | '!' | '$' | '*' | '@' | '0' | '-'
+                );
             state.variables.get(&var_name).cloned()
                 .or_else(|| state.arrays.get(&var_name).map(|a| a.join(" ")))
                 .or_else(|| state.assoc_arrays.get(&var_name)
                     .map(|m| m.values().cloned().collect::<Vec<_>>().join(" ")))
+                .or_else(|| if is_special_name {
+                    crate::fusevm_bridge::with_executor(|exec|
+                        Some(exec.get_variable(&var_name)))
+                } else { None })
                 .or_else(|| crate::fusevm_bridge::with_executor(|exec|
                     exec.get_special_array_value(&var_name, "@")))
                 .unwrap_or_default()
@@ -2006,7 +2050,24 @@ fn paramsubst(                                              // c:1625
             } else {
                 raw_value.chars().count()                   // c:2128 (scalar char-count)
             };
-            return (n.to_string(), new_pos, vec![]);
+            // Splice the count back into the surrounding string per
+            // the convention used by `${...}` arms below — the caller
+            // (stringsubst) reads the linknode by index, not the
+            // returned `new_str`. Returning `(n, new_pos, vec![])`
+            // (as this arm did before) caused stringsubst to clear
+            // the linknode because its `new_nodes.is_empty()` branch
+            // sets data to "". Without this fix, `${##}` lost the
+            // computed count.
+            let n_str = n.to_string();
+            let prefix: String = chars[..start_pos].iter().collect();
+            let suffix: String = if new_pos < chars.len() {
+                chars[new_pos..].iter().collect()
+            } else {
+                String::new()
+            };
+            let full = format!("{}{}{}", prefix, n_str, suffix);
+            let new_pos_in_full = prefix.chars().count() + n_str.chars().count();
+            return (full.clone(), new_pos_in_full, vec![full]);
         }
 
         // (k) keys / (v) values on assoc — fold the assoc into a
