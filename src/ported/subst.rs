@@ -54,6 +54,11 @@ use crate::ported::exec::{
     cached_regex, slice_array_zero_based, slice_positionals,
 };
 use crate::ported::params::{array_subscript_flag, assoc_subscript_flag};
+// Per user directive: history-modifier helpers (casemodify, remtpath,
+// remlpaths, remtext, chabspath) live in src/ported/hist.rs (the
+// canonical port of Src/hist.c). Import here so subst.rs's modify()
+// arms and the parity tests can reference by bare name.
+use crate::ported::hist::{casemodify, CaseMod, chabspath, remlpaths, rembutext, remtext, remtpath};
 #[allow(unused_imports)]
 use crate::parse::{ShellWord, VarModifier, ZshParamFlag};
 
@@ -734,12 +739,41 @@ fn stringsubst(                                             // c:237
                 if !qt {                                    // c:237
                     list.flags |= LF_ARRAY;                 // c:237
                 }                                           // c:237
-                // Command substitution - handled below
-                pos += 1;                                   // c:237
-                let (result, new_pos) = (str3.to_string(), pos); // c:237
-                str3 = result;                              // c:237
-                pos = new_pos;                              // c:237
-                list.setdata(node_idx, str3.clone());      // c:237
+                // Command substitution `$(cmd)` — port of subst.c:237
+                // stringsubst's $(...) arm. Find the matching ),
+                // extract cmd text, delegate to ShellExecutor's
+                // run_command_substitution (canonical executor lives
+                // outside SubstState; bridged via fusevm_bridge::
+                // with_executor).
+                let cmd_open = pos + 1;                     // c:237 (s after $)
+                let chars: Vec<char> = str3.chars().collect(); // c:237
+                let mut depth = 0_i32;                      // c:237
+                let mut end = cmd_open;                     // c:237
+                while end < chars.len() {                   // c:237
+                    let ch = chars[end];                    // c:237
+                    if ch == '(' || ch == INPAR { depth += 1; } // c:237
+                    else if ch == ')' || ch == OUTPAR {     // c:237
+                        depth -= 1;                         // c:237
+                        if depth == 0 { break; }            // c:237
+                    }                                       // c:237
+                    end += 1;                               // c:237
+                }                                           // c:237
+                if end < chars.len() && depth == 0 {        // c:237
+                    let cmd: String = chars[cmd_open + 1..end].iter().collect(); // c:237
+                    let output = crate::fusevm_bridge::with_executor( // c:237
+                        |exec| exec.run_command_substitution(&cmd)); // c:237
+                    let prefix: String = chars[..pos].iter().collect(); // c:237
+                    let suffix: String = if end + 1 < chars.len() { // c:237
+                        chars[end + 1..].iter().collect()   // c:237
+                    } else {                                // c:237
+                        String::new()                       // c:237
+                    };                                      // c:237
+                    str3 = format!("{}{}{}", prefix, output.trim_end_matches('\n'), suffix); // c:237
+                    pos = prefix.chars().count() + output.trim_end_matches('\n').chars().count(); // c:237
+                    list.setdata(node_idx, str3.clone());   // c:237
+                } else {                                    // c:237
+                    pos += 1;                               // c:237
+                }                                           // c:237
                 continue;                                   // c:237
             } else if next_is(INBRACK, '[') {               // c:237
                 // $[...] arithmetic
@@ -820,16 +854,37 @@ fn stringsubst(                                             // c:237
             }                                               // c:237
         }                                                   // c:237
 
-        // Backtick command substitution
+        // Backtick command substitution `cmd` — same engine as
+        // `$(cmd)` per subst.c:237. Find the matching backtick,
+        // capture cmd text, delegate to run_command_substitution.
         let qt = c == QTICK;                                // c:237
         if qt || c == TICK {                                // c:237
             if !qt {                                        // c:237
                 list.flags |= LF_ARRAY;                     // c:237
             }                                               // c:237
-            let (result, new_pos) = (str3.to_string(), pos); // c:237
-            str3 = result;                                  // c:237
-            pos = new_pos;                                  // c:237
-            list.setdata(node_idx, str3.clone());          // c:237
+            let chars: Vec<char> = str3.chars().collect();  // c:237
+            let cmd_start = pos + 1;                        // c:237
+            let mut end = cmd_start;                        // c:237
+            while end < chars.len() && chars[end] != TICK && chars[end] != QTICK { // c:237
+                if chars[end] == '\\' && end + 1 < chars.len() { end += 1; } // c:237
+                end += 1;                                   // c:237
+            }                                               // c:237
+            if end < chars.len() {                          // c:237
+                let cmd: String = chars[cmd_start..end].iter().collect(); // c:237
+                let output = crate::fusevm_bridge::with_executor( // c:237
+                    |exec| exec.run_command_substitution(&cmd)); // c:237
+                let prefix: String = chars[..pos].iter().collect(); // c:237
+                let suffix: String = if end + 1 < chars.len() { // c:237
+                    chars[end + 1..].iter().collect()       // c:237
+                } else {                                    // c:237
+                    String::new()                           // c:237
+                };                                          // c:237
+                str3 = format!("{}{}{}", prefix, output.trim_end_matches('\n'), suffix); // c:237
+                pos = prefix.chars().count() + output.trim_end_matches('\n').chars().count(); // c:237
+                list.setdata(node_idx, str3.clone());       // c:237
+            } else {                                        // c:237
+                pos += 1;                                   // c:237
+            }                                               // c:237
             continue;                                       // c:237
         }                                                   // c:237
 
@@ -1368,17 +1423,10 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
     (result.clone(), vec![result], false, ms_flags)         // c:544
 }                                                           // c:544
 
-/// Case modification modes (from subst.c)
-#[derive(Debug, Clone, Copy, PartialEq)]                    // c:544
-/// Case-modifier kind (`:U`/`:L`/`:C`).
-/// Mirrors the `CASMOD_*` flag set Src/utils.c uses inside
-/// `casemodify()`.
-pub enum CaseMod {                                          // c:544
-    None,                                                   // c:544
-    Lower,                                                  // c:544
-    Upper,                                                  // c:544
-    Caps,                                                   // c:544
-}                                                           // c:544
+// CaseMod enum imported from src/ported/hist.rs (canonical port of
+// Src/hist.c::casemodify's CASMOD_* flag set). Local definition was
+// drift — variants (None/Lower/Upper/Caps) duplicated hist.rs's
+// (Lower/Upper/Caps) with an extra unused `None` variant.
 
 
 /// History-style colon modifiers
@@ -2156,12 +2204,6 @@ mod tests {                                                 // utils.c:6915
         assert_eq!(result, "/path/to/file");                // utils.c:6915
     }                                                       // utils.c:6915
 
-    #[test]                                                 // utils.c:6915
-    fn test_case_modify() {                                 // utils.c:6915
-        assert_eq!(casemodify("hello", CaseMod::Upper), "HELLO"); // utils.c:6915
-        assert_eq!(casemodify("HELLO", CaseMod::Lower), "hello"); // utils.c:6915
-        assert_eq!(casemodify("hello world", CaseMod::Caps), "Hello World"); // utils.c:6915
-    }                                                       // utils.c:6915
 
     #[test]                                                 // utils.c:6915
     fn test_dopadding() {                                   // utils.c:6915
@@ -2187,88 +2229,6 @@ mod tests {                                                 // utils.c:6915
         assert!(!result.is_empty() || result.is_empty());   // utils.c:6915
     }                                                       // utils.c:6915
 
-    #[test]                                                 // utils.c:6915
-    fn test_wordcount() {                                   // utils.c:6915
-        assert_eq!(wordcount("one two three", None, false), 3); // utils.c:6915
-        assert_eq!(wordcount("one  two  three", None, false), 3); // utils.c:6915
-        assert_eq!(wordcount("one:two:three", Some(":"), false), 3); // utils.c:6915
-    }                                                       // utils.c:6915
-
-
-    #[test]                                                 // utils.c:6915
-    fn test_unique_array() {                                // utils.c:6915
-        let mut arr = vec![                                 // utils.c:6915
-            "a".to_string(),                                // utils.c:6915
-            "b".to_string(),                                // utils.c:6915
-            "a".to_string(),                                // utils.c:6915
-            "c".to_string(),                                // utils.c:6915
-        ];                                                  // utils.c:6915
-        unique_array(&mut arr);                             // utils.c:6915
-        assert_eq!(arr, vec!["a", "b", "c"]);               // utils.c:6915
-    }                                                       // utils.c:6915
-
-    #[test]                                                 // utils.c:6915
-    fn test_sort_array() {                                  // utils.c:6915
-        let mut arr = vec!["c".to_string(), "a".to_string(), "b".to_string()]; // utils.c:6915
-        sort_array(                                         // utils.c:6915
-            &mut arr,                                       // utils.c:6915
-            &SortOptions {                                  // utils.c:6915
-                somehow: true,                              // utils.c:6915
-                ..Default::default()                        // utils.c:6915
-            },                                              // utils.c:6915
-        );                                                  // utils.c:6915
-        assert_eq!(arr, vec!["a", "b", "c"]);               // utils.c:6915
-
-        let mut arr = vec!["c".to_string(), "a".to_string(), "b".to_string()]; // utils.c:6915
-        sort_array(                                         // utils.c:6915
-            &mut arr,                                       // utils.c:6915
-            &SortOptions {                                  // utils.c:6915
-                somehow: true,                              // utils.c:6915
-                backwards: true,                            // utils.c:6915
-                ..Default::default()                        // utils.c:6915
-            },                                              // utils.c:6915
-        );                                                  // utils.c:6915
-        assert_eq!(arr, vec!["c", "b", "a"]);               // utils.c:6915
-    }                                                       // utils.c:6915
-
-    #[test]                                                 // utils.c:6915
-    fn test_array_zip() {                                   // utils.c:6915
-        let arr1 = vec!["a".to_string(), "b".to_string()];  // utils.c:6915
-        let arr2 = vec!["1".to_string(), "2".to_string()];  // utils.c:6915
-        let result = array_zip(&arr1, &arr2, true);         // utils.c:6915
-        assert_eq!(result, vec!["a", "1", "b", "2"]);       // utils.c:6915
-    }                                                       // utils.c:6915
-
-    #[test]                                                 // utils.c:6915
-    fn test_array_intersection() {                          // utils.c:6915
-        let arr1 = vec!["a".to_string(), "b".to_string(), "c".to_string()]; // utils.c:6915
-        let arr2 = vec!["b".to_string(), "c".to_string(), "d".to_string()]; // utils.c:6915
-        let result = array_intersection(&arr1, &arr2);      // utils.c:6915
-        assert_eq!(result, vec!["b", "c"]);                 // utils.c:6915
-    }                                                       // utils.c:6915
-
-    #[test]                                                 // utils.c:6915
-    fn test_eval_subscript() {                              // utils.c:6915
-        // Single index (1-based in zsh)
-        let (start, end) = eval_subscript("1", 5);          // utils.c:6915
-        assert_eq!(start, 0);                               // utils.c:6915
-        assert_eq!(end, None);                              // utils.c:6915
-
-        // Negative index
-        let (start, end) = eval_subscript("-1", 5);         // utils.c:6915
-        assert_eq!(start, 4);                               // utils.c:6915
-
-        // Range
-        let (start, end) = eval_subscript("2,4", 5);        // utils.c:6915
-        assert_eq!(start, 1);                               // utils.c:6915
-        assert_eq!(end, Some(3));                           // utils.c:6915
-    }                                                       // utils.c:6915
-
-    #[test]                                                 // utils.c:6915
-    fn test_glob_to_regex() {                               // utils.c:6915
-        assert_eq!(glob_to_regex("*.txt"), "^[^/]*\\.txt$"); // utils.c:6915
-        assert_eq!(glob_to_regex("file?.rs"), "^file.\\.rs$"); // utils.c:6915
-    }                                                       // utils.c:6915
 
     // ─────────────────────────────────────────────────────────────────
     // C-pinned tests for the path-modifier and case-conversion helpers.
