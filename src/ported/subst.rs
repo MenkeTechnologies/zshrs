@@ -2599,35 +2599,41 @@ fn paramsubst(                                              // c:1625
             value = parts.len().to_string();                // c:2281
         }
 
-        if flag_qmin {                                       // c:2245 (q-)
-            // (q-) — single-quote ONLY if value contains a char
-            // that needs quoting (whitespace or shell metachar).
-            // Plain alphanumeric values pass through unmodified.
-            // Direct port of QT_SINGLE_OPTIONAL.
-            let needs = value.chars().any(|c| {
-                c.is_whitespace()
-                    || matches!(c, '*' | '?' | '[' | ']' | '(' | ')' | '|' | '&' | ';'
-                                | '<' | '>' | '$' | '`' | '\\' | '"' | '\'' | '#' | '~')
-            });
-            if needs {
-                value = crate::ported::utils::quotestring(   // c:2245
-                    &value, crate::ported::utils::QuoteType::Single);
+        // Quote flags operate per-element when array-shaped — direct
+        // port of subst.c quotemod arm which iterates aval.
+        let quote_one = |s: &str| -> String {                // c:2237
+            if flag_qmin {                                   // c:2245 (q-)
+                let needs = s.chars().any(|c| {
+                    c.is_whitespace()
+                        || matches!(c, '*' | '?' | '[' | ']' | '(' | ')' | '|' | '&' | ';'
+                                    | '<' | '>' | '$' | '`' | '\\' | '"' | '\'' | '#' | '~')
+                });
+                if needs {
+                    crate::ported::utils::quotestring(s, crate::ported::utils::QuoteType::Single)
+                } else { s.to_string() }
+            } else if flag_qplus {                           // c:2245 (q+)
+                crate::ported::utils::quotestring(s, crate::ported::utils::QuoteType::Dollars)
+            } else if flag_qcount > 0 {                      // c:2237
+                match flag_qcount {
+                    1 => crate::ported::utils::quotestring(s, crate::ported::utils::QuoteType::Backslash),
+                    2 => crate::ported::utils::quotestring(s, crate::ported::utils::QuoteType::Single),
+                    3 => crate::ported::utils::quotestring(s, crate::ported::utils::QuoteType::Double),
+                    _ => crate::ported::utils::quotestring(s, crate::ported::utils::QuoteType::Dollars),
+                }
+            } else { s.to_string() }
+        };
+        if flag_qmin || flag_qplus || flag_qcount > 0 {      // c:2237
+            if let Some(parts) = split_parts.clone() {       // c:2237
+                let new_parts: Vec<String> = parts.iter().map(|s| quote_one(s)).collect();
+                value = new_parts.join(" ");
+                split_parts = Some(new_parts);
+            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                let new_arr: Vec<String> = arr.iter().map(|s| quote_one(s)).collect();
+                value = new_arr.join(" ");
+                split_parts = Some(new_arr);
+            } else {
+                value = quote_one(&value);
             }
-        } else if flag_qplus {                               // c:2245 (q+)
-            // (q+) — print -V style, like single quote but
-            // smarter for control chars (uses $'…' for them).
-            // Approximate via Dollars for now since QuoteType
-            // doesn't have a dedicated QuotedZputs variant.
-            value = crate::ported::utils::quotestring(       // c:2245
-                &value, crate::ported::utils::QuoteType::Dollars);
-        } else if flag_qcount > 0 {                          // c:2237
-            // (q)/(qq)/(qqq)/(qqqq) — quote per count.
-            value = match flag_qcount {
-                1 => crate::ported::utils::quotestring(&value, crate::ported::utils::QuoteType::Backslash),
-                2 => crate::ported::utils::quotestring(&value, crate::ported::utils::QuoteType::Single),
-                3 => crate::ported::utils::quotestring(&value, crate::ported::utils::QuoteType::Double),
-                _ => crate::ported::utils::quotestring(&value, crate::ported::utils::QuoteType::Dollars),
-            };
         }
 
         // Reconstruct the full str3 with the brace expansion applied
