@@ -2230,6 +2230,40 @@ fn paramsubst(                                              // c:1625
                     eprintln!("{}: {}", var_name, m);
                     state.errflag = true;
                 }
+            } else if let Some(rep) = r.strip_prefix(":/") {  // c:3870 (whole-element replace)
+                // ${arr:/PAT/REPL} — replace entire elements that
+                // match PAT with REPL. For arrays: per-element
+                // whole-match test, replace matching elements with
+                // REPL. For scalars: replace the entire value if it
+                // matches.
+                // Per Src/subst.c:3870 SUB_GLOBAL with anchor-both
+                // (start AND end fixed): the pattern must consume
+                // the whole element. Different from `//` which is
+                // sliding-window mid-element replace.
+                let parts: Vec<&str> = rep.splitn(2, '/').collect();
+                let pat = singsub(parts[0], state);
+                let repl = parts
+                    .get(1)
+                    .map(|s| singsub(s, state))
+                    .unwrap_or_default();
+                if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                    let new_arr: Vec<String> = arr
+                        .into_iter()
+                        .map(|elem| {
+                            if crate::exec::ShellExecutor::glob_match_static(&elem, &pat) {
+                                repl.clone()
+                            } else {
+                                elem
+                            }
+                        })
+                        .collect();
+                    value = new_arr.join(" ");                  // c:3870
+                    split_parts = Some(new_arr);                // c:3870
+                } else if crate::exec::ShellExecutor::glob_match_static(&raw_value, &pat) {
+                    value = repl;                                // c:3870
+                } else {
+                    value = raw_value.clone();                   // c:3870
+                }
             } else if let Some(rep) = r.strip_prefix("//") {  // c:3870 (global replace)
                 let parts: Vec<&str> = rep.splitn(2, '/').collect();
                 let pat = singsub(parts[0], state);
