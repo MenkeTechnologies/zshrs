@@ -1261,7 +1261,6 @@ fn paramsubst(                                              // c:1625
                 idx += 1;
             }
         }
-        let _ = (flag_at, flag_keys, flag_values, flag_arrlen, flag_p_indirect); // suppress unused for now
         // ${#var} — length-of operator at start of brace (after flags).
         let length_op = body_chars.get(idx).copied() == Some('#'); // c:2128
         let post_flags_start = idx;
@@ -1504,10 +1503,25 @@ fn paramsubst(                                              // c:1625
 
         // (k) keys / (v) values on assoc — fold the assoc into a
         // joined string. Port of subst.c:2247-2270.
+        // Magic-assoc fallback (aliases / functions / options / etc.)
+        // mirrors the bytecode-VM path: when the name isn't in
+        // assoc_arrays, route through the function_names / alias_names
+        // sets. Direct port of zsh's per-magic-table getfn dispatch.
         let mut value: String;                              // c:2247
         if flag_keys {                                      // c:2247
             value = state.assoc_arrays.get(&var_name)       // c:2247
                 .map(|m| m.keys().cloned().collect::<Vec<_>>().join(" ")) // c:2247
+                .or_else(|| {                               // c:2247
+                    match var_name.as_str() {               // c:2247
+                        "aliases" => Some(                  // c:2247
+                            state.alias_names.iter().cloned().collect::<Vec<_>>().join(" ")), // c:2247
+                        "functions" | "dis_functions" => Some( // c:2247
+                            state.function_names.iter().cloned().collect::<Vec<_>>().join(" ")), // c:2247
+                        "commands" => Some(                 // c:2247
+                            state.command_names.iter().cloned().collect::<Vec<_>>().join(" ")), // c:2247
+                        _ => None,                          // c:2247
+                    }                                        // c:2247
+                })                                          // c:2247
                 .unwrap_or_default();
         } else if flag_values {                             // c:2256
             value = state.assoc_arrays.get(&var_name)       // c:2256
