@@ -1833,6 +1833,14 @@ fn paramsubst(                                              // c:1625
                     value = singsub(default, state);
                     state.variables.insert(var_name.clone(), value.clone());
                 }
+            } else if let Some(default) = r.strip_prefix('=') {   // c:3245 (= — assign on unset only)
+                // Same as := but trigger ONLY on unset (not on
+                // empty). Direct port of subst.c case '=' which
+                // only checks vunset, not !*val.
+                if !is_set {
+                    value = singsub(default, state);
+                    state.variables.insert(var_name.clone(), value.clone());
+                }
             } else if let Some(alt) = r.strip_prefix(":+") {  // c:3296
                 if is_set && !raw_value.is_empty() { value = singsub(alt, state); }
                 else { value = String::new(); }
