@@ -10676,50 +10676,136 @@ pub(crate) mod paramsubst_inline {                          // glob.c:2276
         Caps,                                                   // c:1731
     }                                                       // c:1731
 
-    // Bits for `flags` — subst.c uses the SUB_* macros from zsh.h.
-    // subst.c:1718-1720 — `int flags = 0;`
-    pub(crate) mod sub_flags {                                  // c:1718
-        pub const MATCH: u32 = 1 << 0;     // (M)               // c:1718
-        pub const REST: u32 = 1 << 1;      // (R)               // c:1718
-        pub const BIND: u32 = 1 << 2;      // (B)               // c:1718
-        pub const EIND: u32 = 1 << 3;      // (E)               // c:1718
-        pub const LEN: u32 = 1 << 4;       // (N)               // c:1718
-        pub const SUBSTR: u32 = 1 << 5;    // (S)               // c:1718
-        pub const EGLOB: u32 = 1 << 6;     // (*)               // c:1718
-    }                                                       // c:1718
+    // Bits for `flags` — direct port of SUB_* macros.
+    // zsh.h:1981-1996 — verbatim hex values, do not "tidy" into 1<<N
+    // sequences (the wrong-bit drift in top-level subst.rs comes from
+    // exactly that mistake).
+    pub(crate) mod sub_flags {                                  // zsh.h:1981
+        pub const END:     u32 = 0x0001;   // % or %%           // zsh.h:1981
+        pub const LONG:    u32 = 0x0002;   // doubled # or %    // zsh.h:1982
+        pub const SUBSTR:  u32 = 0x0004;   // (S)               // zsh.h:1983
+        pub const MATCH:   u32 = 0x0008;   // (M)               // zsh.h:1984
+        pub const REST:    u32 = 0x0010;   // (R)               // zsh.h:1985
+        pub const BIND:    u32 = 0x0020;   // (B)               // zsh.h:1986
+        pub const EIND:    u32 = 0x0040;   // (E)               // zsh.h:1987
+        pub const LEN:     u32 = 0x0080;   // (N)               // zsh.h:1988
+        pub const ALL:     u32 = 0x0100;   // match whole str   // zsh.h:1989
+        pub const GLOBAL:  u32 = 0x0200;   // ${..//..}         // zsh.h:1990
+        pub const DOSUBST: u32 = 0x0400;   // repl needs subst  // zsh.h:1991
+        pub const RETFAIL: u32 = 0x0800;   // status 0 if no match // zsh.h:1992
+        pub const START:   u32 = 0x1000;   // anchor at start   // zsh.h:1993
+        pub const LIST:    u32 = 0x2000;   // return list       // zsh.h:1995
+        pub const EGLOB:   u32 = 0x4000;   // (*) extended glob // zsh.h:1996
+    }                                                       // zsh.h:1996
 
-    // Bits for `sortit` — subst.c uses SORTIT_* macros.
-    // subst.c:1727-1728 — `int sortit = SORTIT_ANYOLDHOW, indord = 0;`
-    pub(crate) mod sortit_flags {                               // c:1727
-        pub const ANYOLDHOW: u32 = 0;                           // c:1727
-        pub const SOMEHOW: u32 = 1;                             // c:1727
-        pub const BACKWARDS: u32 = 2;                           // c:1727
-        pub const IGNORING_CASE: u32 = 4;                       // c:1727
-        pub const NUMERICALLY: u32 = 8;                         // c:1727
-        pub const NUMERICALLY_SIGNED: u32 = 16;                 // c:1727
-    }                                                       // c:1727
+    // Bits for `sortit` — direct port of SORTIT_* enum.
+    // zsh.h:2992-3008.
+    pub(crate) mod sortit_flags {                               // zsh.h:2992
+        pub const ANYOLDHOW:           u32 = 0;                 // zsh.h:2993
+        pub const IGNORING_CASE:       u32 = 1;                 // zsh.h:2994
+        pub const NUMERICALLY:         u32 = 2;                 // zsh.h:2995
+        pub const NUMERICALLY_SIGNED:  u32 = 4;                 // zsh.h:2996
+        pub const BACKWARDS:           u32 = 8;                 // zsh.h:2997
+        pub const IGNORING_BACKSLASHES: u32 = 16;               // zsh.h:3002
+        pub const SOMEHOW:             u32 = 32;                // zsh.h:3007
+    }                                                       // zsh.h:3008
 
-    // Bits for `hkeys` / `hvals` — SCANPM_* from zsh.h.
-    pub(crate) mod scanpm_flags {                               // c:1727
-        pub const WANTKEYS: u32 = 1 << 0;                       // c:1727
-        pub const WANTVALS: u32 = 1 << 1;                       // c:1727
-        pub const NONAMEREF: u32 = 1 << 2;                      // c:1727
-    }                                                       // c:1727
+    // Bits for `hkeys`/`hvals` and the wider scanflags arg of fetchvalue.
+    // Direct port of SCANPM_* from zsh.h:1953-1973.
+    pub(crate) mod scanpm_flags {                               // zsh.h:1953
+        pub const WANTVALS:   u32 = 1 <<  0;                    // zsh.h:1953
+        pub const WANTKEYS:   u32 = 1 <<  1;                    // zsh.h:1954
+        pub const WANTINDEX:  u32 = 1 <<  2;                    // zsh.h:1955
+        pub const MATCHKEY:   u32 = 1 <<  3;                    // zsh.h:1956
+        pub const MATCHVAL:   u32 = 1 <<  4;                    // zsh.h:1957
+        pub const MATCHMANY:  u32 = 1 <<  5;                    // zsh.h:1958
+        pub const ASSIGNING:  u32 = 1 <<  6;                    // zsh.h:1959
+        pub const KEYMATCH:   u32 = 1 <<  7;                    // zsh.h:1960
+        pub const DQUOTED:    u32 = 1 <<  8;                    // zsh.h:1961
+        pub const ARRONLY:    u32 = 1 <<  9;                    // zsh.h:1965
+        pub const CHECKING:   u32 = 1 << 10;                    // zsh.h:1969
+        pub const NOEXEC:     u32 = 1 << 11;                    // zsh.h:1970
+        pub const NONAMESPC:  u32 = 1 << 12;                    // zsh.h:1971
+        pub const NONAMEREF:  u32 = 1 << 13;                    // zsh.h:1972
+        pub const ISVAR_AT:   u32 = 1 << 14;                    // zsh.h:1973
+    }                                                       // zsh.h:1973
 
-    // LEXFLAGS_* from zsh.h, used by (z)/(Z) flags.
-    pub(crate) mod lexflags {                                   // c:1727
-        pub const ACTIVE: u32 = 1 << 0;                         // c:1727
-        pub const COMMENTS_KEEP: u32 = 1 << 1;                  // c:1727
-        pub const COMMENTS_STRIP: u32 = 1 << 2;                 // c:1727
-        pub const NEWLINE: u32 = 1 << 3;                        // c:1727
-    }                                                       // c:1727
+    // LEXFLAGS_* — direct port of zsh.h:2293-2315 hex values.
+    pub(crate) mod lexflags {                                   // zsh.h:2293
+        pub const ACTIVE:         u32 = 0x0001;                 // zsh.h:2293
+        pub const ZLE:            u32 = 0x0002;                 // zsh.h:2299
+        pub const COMMENTS_KEEP:  u32 = 0x0004;                 // zsh.h:2303
+        pub const COMMENTS_STRIP: u32 = 0x0008;                 // zsh.h:2307
+        pub const NEWLINE:        u32 = 0x0010;                 // zsh.h:2315
+    }                                                       // zsh.h:2315
 
-    // GETKEY_* from zsh.h, used by (g) flag.
-    pub(crate) mod getkey {                                     // c:1727
-        pub const EMACS: u32 = 1 << 0;                          // c:1727
-        pub const OCTAL_ESC: u32 = 1 << 1;                      // c:1727
-        pub const CTRL: u32 = 1 << 2;                           // c:1727
-    }                                                       // c:1727
+    // GETKEY_* — direct port of zsh.h:3143-3166.
+    pub(crate) mod getkey {                                     // zsh.h:3143
+        pub const OCTAL_ESC:       u32 = 1 << 0;                // zsh.h:3143
+        pub const EMACS:           u32 = 1 << 1;                // zsh.h:3150
+        pub const CTRL:            u32 = 1 << 2;                // zsh.h:3152
+        pub const DOLLAR_QUOTE:    u32 = 1 << 4;                // zsh.h:3156
+        pub const BACKSLASH_MINUS: u32 = 1 << 5;                // zsh.h:3158
+        pub const UPDATE_OFFSET:   u32 = 1 << 7;                // zsh.h:3166
+    }                                                       // zsh.h:3166
+
+    // PM_* parameter type+modifier bits — direct port of zsh.h:1878-1944.
+    // Top-level subst.rs::pm_flags has wrong bit values (// c:N/A); it's
+    // the legacy paramsubst path's flag set and dies at parity-collapse.
+    // Use this module for any new paramsubst_port arm.
+    pub(crate) mod pm_flags {                                   // zsh.h:1878
+        pub const SCALAR:         u32 = 0;                      // zsh.h:1878
+        pub const ARRAY:          u32 = 1 <<  0;                // zsh.h:1879
+        pub const INTEGER:        u32 = 1 <<  1;                // zsh.h:1880
+        pub const EFLOAT:         u32 = 1 <<  2;                // zsh.h:1881
+        pub const FFLOAT:         u32 = 1 <<  3;                // zsh.h:1882
+        pub const HASHED:         u32 = 1 <<  4;                // zsh.h:1883
+        // PM_TYPE(X) mask — zsh.h:1885 macro. Used to extract the
+        // type bits from a flags word.
+        pub const TYPE_MASK:      u32 = ARRAY | INTEGER | EFLOAT | FFLOAT | HASHED | NAMEREF; // zsh.h:1885
+        pub const LEFT:           u32 = 1 <<  5;                // zsh.h:1888
+        pub const RIGHT_B:        u32 = 1 <<  6;                // zsh.h:1889
+        pub const RIGHT_Z:        u32 = 1 <<  7;                // zsh.h:1890
+        pub const LOWER:          u32 = 1 <<  8;                // zsh.h:1891
+        pub const UPPER:          u32 = 1 <<  9;                // zsh.h:1895
+        pub const READONLY:       u32 = 1 << 10;                // zsh.h:1898
+        pub const TAGGED:         u32 = 1 << 11;                // zsh.h:1899
+        pub const EXPORTED:       u32 = 1 << 12;                // zsh.h:1900
+        pub const UNIQUE:         u32 = 1 << 13;                // zsh.h:1905
+        pub const HIDE:           u32 = 1 << 14;                // zsh.h:1908
+        pub const HIDEVAL:        u32 = 1 << 15;                // zsh.h:1910
+        pub const TIED:           u32 = 1 << 16;                // zsh.h:1912
+        pub const TAGGED_LOCAL:   u32 = 1 << 16;                // zsh.h:1913 (sibling of TIED)
+        pub const SPECIAL:        u32 = 1 << 20;                // zsh.h:1922
+        pub const DECLARED:       u32 = 1 << 22;                // zsh.h:1928
+        pub const UNSET:          u32 = 1 << 24;                // zsh.h:1930
+        pub const NAMEREF:        u32 = 1 << 30;                // zsh.h:1944
+    }                                                       // zsh.h:1944
+
+    // VALFLAG_* — direct port of zsh.h:758-760 enum.
+    pub(crate) mod valflag_flags {                              // zsh.h:758
+        pub const INV:   u32 = 0x0001;                          // zsh.h:758
+        pub const EMPTY: u32 = 0x0002;                          // zsh.h:759
+        pub const SUBST: u32 = 0x0004;                          // zsh.h:760
+    }                                                       // zsh.h:760
+
+    // PREFORK_* deliberately NOT redefined here. Top-level
+    // subst.rs::prefork_flags (line 113) has wrong bit values per
+    // zsh.h:2020-2046, but `paramsubst_port`'s `pf_flags` argument is
+    // wired through legacy callers (prefork, stringsubst) that pass
+    // pf_flags built with the TOP-LEVEL constants. Mismatching the bit
+    // values here would silently misinterpret the caller's flags.
+    // Cross-module bit-value contract: keep using `super::prefork_flags`
+    // until top-level is fixed (a separate commit that touches every
+    // legacy-paramsubst call site) OR until legacy paramsubst dies at
+    // parity-collapse, whichever comes first.
+
+    // MULTSUB_* — direct port of zsh.h:2050-2065 enum.
+    pub(crate) mod multsub_flags {                              // zsh.h:2050
+        pub const WS_AT_START: u32 = 1;                         // zsh.h:2055
+        pub const WS_AT_END:   u32 = 2;                         // zsh.h:2060
+        pub const PARAM_NAME:  u32 = 4;                         // zsh.h:2065
+    }                                                       // zsh.h:2065
 
     /// Result of the C-style `goto flagerr` exit from the flag-parsing loop.
     /// subst.c:2504-2530 — labelled block that emits `error in flags near
