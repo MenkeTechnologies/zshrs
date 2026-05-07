@@ -221,6 +221,13 @@ pub struct SubstState {                                     // c:100
     /// right_zeros / lower / upper / unique / hide / hideval / tied).
     /// Backs `${(t)name}` and `${(Pt)name}` per Src/subst.c:2807-2854.
     pub var_attrs: std::collections::HashMap<String, crate::exec::VarAttr>, // c:2807
+    /// Dirstack snapshot — backs `~+N` / `~-N` expansion via
+    /// `dstackent()`. Mirrors `dirstack` in `zsh.h` which subst.c
+    /// reads through `firstnode()` / `nextnode()` walks.
+    pub dirstack: Vec<String>,                              // c:4902
+    /// PUSHDMINUS option flag — flips the meaning of `~+N` vs `~-N`.
+    /// Direct port of `isset(PUSHDMINUS)` at Src/subst.c:4906.
+    pub pushdminus: bool,                                   // c:4906
 }                                                           // c:2807
 
 impl SubstState {                                           // c:2807
@@ -266,6 +273,14 @@ impl SubstState {                                           // c:2807
             command_names,
             alias_names,
             var_attrs: exec.var_attrs.clone(),
+            // C: dirstack global (Src/zsh.h). zshrs stores PathBufs;
+            // SubstState wants strings for `~+N` rendering.
+            dirstack: exec
+                .dir_stack
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect(),                                 // c:4902
+            pushdminus: exec.options.get("PUSHDMINUS").copied().unwrap_or(false), // c:4906
         }
     }
 
@@ -2285,17 +2300,22 @@ pub fn filesubstr(s: &str, assign: bool, state: &SubstState) -> Option<String> {
                 let val: i32 = chars[dstart..p].iter().collect::<String>()
                     .parse().unwrap_or(0);
                 let val = if neg { -val } else { val };
-                // dstackent — pull from state's dirstack snapshot
-                // (placeholder — real dstack lives on ShellExecutor;
-                // for now use PWD for `~0`).
-                if val == 0 {
-                    let pwd = state.variables.get("PWD").cloned()
-                        .or_else(|| std::env::var("PWD").ok())
-                        .unwrap_or_default();
+                let pwd = state.variables.get("PWD").cloned()
+                    .or_else(|| std::env::var("PWD").ok())
+                    .unwrap_or_default();
+                // Direct port of subst.c filesub's tilde-+/- arm:
+                // dstackent(ch, val) → pwd or stack entry.
+                let entry = dstackent(            // c:4902
+                    if neg { '-' } else { '+' },  // c:4902
+                    val,                          // c:4902
+                    &state.dirstack,              // c:4902
+                    &pwd,                         // c:4902
+                    state.pushdminus,             // c:4906
+                );
+                if let Some(dir) = entry {
                     let suffix: String = chars[p..].iter().collect();
-                    return Some(format!("{}{}", pwd, suffix));
+                    return Some(format!("{}{}", dir, suffix));
                 }
-                // Non-zero dstack — would need cross-state plumbing
                 return None;
             }
         }
