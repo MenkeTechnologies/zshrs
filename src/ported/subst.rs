@@ -2666,7 +2666,28 @@ fn paramsubst(                                              // c:1625
         if flag_d_dir {                                     // c:2229
             let home_opt = state.variables.get("HOME").cloned()
                 .or_else(|| std::env::var("HOME").ok());
+            // Pull named-dirs (~name) hash into a [(name, path)]
+            // sorted by path-length-descending so the LONGEST match
+            // wins (zsh canonical: most-specific tilde-contraction).
+            // Direct port of subst.c → modify dir-handling which
+            // walks the nameddirtab in length-desc order.
+            let mut named: Vec<(String, String)> = crate::fusevm_bridge::with_executor(|exec| {
+                exec.named_dirs.iter()
+                    .map(|(k, v)| (k.clone(), v.to_string_lossy().into_owned()))
+                    .collect()
+            });
+            named.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
             let dir_one = |s: &str| -> String {              // c:2229
+                // Try named-dirs first (most specific wins).
+                for (name, path) in &named {                 // c:2229
+                    if !path.is_empty() && s.starts_with(path.as_str()) {
+                        let r = &s[path.len()..];
+                        if r.is_empty() || r.starts_with('/') {
+                            return format!("~{}{}", name, r);
+                        }
+                    }
+                }
+                // Fall back to $HOME contraction.
                 if let Some(ref h) = home_opt {              // c:2229
                     if !h.is_empty() && s.starts_with(h.as_str()) { // c:2229
                         let r = &s[h.len()..];               // c:2229
