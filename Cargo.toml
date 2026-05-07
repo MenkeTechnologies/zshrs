@@ -2,7 +2,7 @@
 name = "zshrs"
 version.workspace = true
 edition = "2021"
-description = "The first compiled Unix shell — bytecode VM, worker pool, AOP intercept, SQLite caching"
+description = "The first compiled Unix shell — bytecode VM, worker pool, AOP intercept, Rkyv caching"
 license = "MIT"
 authors = ["MenkeTechnologies"]
 repository = "https://github.com/MenkeTechnologies/zshrs"

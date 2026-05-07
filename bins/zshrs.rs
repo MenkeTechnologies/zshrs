@@ -51,10 +51,11 @@ Parity modes (caches OFF, daemon OFF — match the named reference shell
 byte-for-byte; every `source` re-runs the file fresh, every echo re-fires):
   --zsh        identical-behaviour drop-in for /bin/zsh (compat-test entrypoint)
   --bash       identical-behaviour drop-in for /bin/bash
+  --ksh        identical-behaviour drop-in for /bin/ksh (ksh-93)
   --posix      identical-behaviour drop-in for /bin/sh (Bourne / dash)
   --zsh-compat alias of --zsh (legacy spelling)
 
-Default mode (no flag) is full zshrs: rkyv script_cache + SQLite plugin_cache
+Default mode (no flag) is full zshrs: rkyv script_cache + plugin_cache
 + daemon enabled. Use the parity flags for compat testing or when caching
 behavior is unwanted.
 
@@ -359,6 +360,12 @@ pub enum ShellMode {
     /// no daemon. Used for `zshrs --bash script.sh` parity tests against
     /// /bin/bash.
     Bash,
+    /// ksh-93 drop-in — Korn-shell semantics. Applies the same option
+    /// presets that `emulate ksh` would (`ksharrays`, `kshglob`,
+    /// `shwordsplit`, `posixbuiltins`, `kshoptionprint`, `promptbang`,
+    /// etc.). zsh-only extensions disabled. No caches, no daemon. Used
+    /// for `zshrs --ksh script.ksh` parity tests against /bin/ksh.
+    Ksh,
     /// POSIX sh / Bourne strict — only POSIX builtins, no zsh / bash
     /// extensions, no arrays, no `[[`, no extended globbing, no SQLite
     /// caches, no worker pool, no daemon. Used for parity tests against
@@ -385,6 +392,10 @@ pub fn is_zsh_mode() -> bool {
 
 pub fn is_bash_mode() -> bool {
     matches!(shell_mode(), ShellMode::Bash)
+}
+
+pub fn is_ksh_mode() -> bool {
+    matches!(shell_mode(), ShellMode::Ksh)
 }
 
 pub fn is_posix_mode() -> bool {
@@ -581,6 +592,9 @@ pub fn zshrs_main() {
     } else if args.iter().any(|a| a == "--bash") {
         unsafe { SHELL_MODE = ShellMode::Bash; }
         true
+    } else if args.iter().any(|a| a == "--ksh") {
+        unsafe { SHELL_MODE = ShellMode::Ksh; }
+        true
     } else if args.iter().any(|a| a == "--zsh" || a == "--zsh-compat") {
         unsafe { SHELL_MODE = ShellMode::Zsh; }
         true
@@ -675,6 +689,7 @@ pub fn zshrs_main() {
             if a == "--zsh-compat"
                 || a == "--zsh"
                 || a == "--bash"
+                || a == "--ksh"
                 || a == "--posix"
                 || a == "-f"
                 || a == "--no-rcs"
@@ -709,6 +724,9 @@ pub fn zshrs_main() {
         executor.bash_compat = is_bash_mode();
         if is_posix_mode() {
             executor.enter_posix_mode();
+        }
+        if is_ksh_mode() {
+            executor.enter_ksh_mode();
         }
         if xtrace {
             executor.options.insert("xtrace".to_string(), true);
@@ -1276,6 +1294,9 @@ fn run_non_interactive() {
     if is_posix_mode() {
         executor.enter_posix_mode();
     }
+    if is_ksh_mode() {
+        executor.enter_ksh_mode();
+    }
     // Apply -x / -v from argv. Same wiring as the `-c` and
     // script-file paths — without this, `cmd | zshrs -x` (stdin
     // pipe, no -c, no script) silently runs without xtrace because
@@ -1778,6 +1799,9 @@ fn run_interactive() {
     executor.bash_compat = is_bash_mode();
     if is_posix_mode() {
         executor.enter_posix_mode();
+    }
+    if is_ksh_mode() {
+        executor.enter_ksh_mode();
     }
 
     // Determine shell type from invocation per zshall(1)

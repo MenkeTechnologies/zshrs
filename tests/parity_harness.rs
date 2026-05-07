@@ -4,7 +4,7 @@
 //! 1. Invoke `zsh -fc 'zcompile out.zwc input.zsh'` to produce wordcode.
 //! 2. Decode the `.zwc` via `src/zwc_decode.rs::decode_zwc_first` and
 //!    render to canonical sexp.
-//! 3. Parse the same source via `src/parser.rs::ZshParser::parse` and
+//! 3. Parse the same source via `src/parse::ZshParser::parse` and
 //!    render to canonical sexp via `src/ast_sexp.rs::ast_to_sexp`.
 //! 4. Assert byte-equal sexp strings.
 //!
@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use zsh::ast_sexp::ast_to_sexp;
-use zsh::parser::ZshParser;
+use zsh::parse::ZshParser;
 use zsh::zwc_decode::{decode_zwc_first, wc_to_sexp};
 
 fn corpus_dir() -> PathBuf {

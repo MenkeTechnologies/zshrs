@@ -1,4 +1,4 @@
-//! Lexer parity harness: lock `src/lexer.rs` to `src/zsh/Src/lex.c`.
+//! Lexer parity harness: lock `src/lex` to `src/zsh/Src/lex.c`.
 //!
 //! For each `tests/lexer_corpus/*.zsh`:
 //!   1. Invoke `zsh` with the `zsh/zshrs_dump` module loaded and run
@@ -13,13 +13,13 @@
 //!   3. Render both streams to identical canonical form
 //!      (`TOKNAME\tTOKSTR\n` per token); diff byte-for-byte.
 //!
-//! Failures pinpoint exact lex.c → lexer.rs divergences with the
+//! Failures pinpoint exact lex.c → lex divergences with the
 //! original input + both streams + first-divergence pointer.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use zsh::lexer::ZshLexer;
+use zsh::lex::ZshLexer;
 use zsh::tokens::LexTok;
 
 fn corpus_dir() -> PathBuf {
@@ -205,7 +205,7 @@ fn dump_via_zshrs(src: &str) -> String {
         // `"`, BNULL → `\` via the `ztokens` table (lex.c:38). zshrs's
         // plain `untokenize` strips them; `untokenize_preserve_quotes`
         // matches C behavior. Use the latter for parity.
-        let plain = zsh::lexer::untokenize_preserve_quotes(raw);
+        let plain = zsh::lex::untokenize_preserve_quotes(raw);
         out.push_str(tok_name(tok));
         out.push('\t');
         out.push_str(&plain);

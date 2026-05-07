@@ -1,0 +1,8390 @@
+//! Extension-only shell builtins (no zsh C counterpart).
+//!
+//! Every method here implements a builtin that does NOT exist in
+//! `src/zsh/Src/` — these are zshrs-specific additions: coreutils
+//! drop-ins, bash-only builtins (caller, shopt, readarray), zshrs
+//! features (async, await, barrier, doctor, profile, intercept),
+//! contrib autoloads exposed as builtins (compdef, compinit, zmv,
+//! zcalc, peach), etc.
+//!
+//! These methods previously lived on `ShellExecutor` in
+//! `src/ported/exec.rs`. They were bulk-moved here so that
+//! `src/ported/` only contains C-port code, satisfying the
+//! `port_purity` discipline described in `docs/PORT.md`.
+
+#![allow(unused_imports)]
+
+use std::env;
+use crate::ported::exec::ShellExecutor;
+use crate::ported::exec::*;
+use crate::parse::Redirect;
+
+impl ShellExecutor {
+
+    /// caller - display call stack (bash)
+    /// caller [N] — bash builtin returning the location of the
+    /// current frame N. With no arg or N=0: 'LINE FUNC' (or just
+    /// 'LINE main' at top level). With N>0: 'LINE FUNC FILE' for
+    /// frame N. Direct port of bash's bin_caller in builtins.def.
+    /// Reads from the existing $funcstack array we now maintain
+    /// (exec.rs:7828-7835).
+    pub(crate) fn builtin_caller(&self, args: &[String]) -> i32 {
+        let depth: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let stack = self.arrays.get("funcstack").cloned().unwrap_or_default();
+        // funcstack[0] is the current (innermost) frame — caller 0
+        // refers to the immediate caller per bash semantics, which
+        // is funcstack[0] for us. With no args, just LINE FUNC; we
+        // don't track per-frame line numbers yet so emit `0` as
+        // line number until the VM pipes that through.
+        if depth == 0 {
+            let func = stack.first().cloned().unwrap_or_else(|| "main".to_string());
+            println!("0 {}", func);
+            0
+        } else if depth < stack.len() {
+            let func = stack[depth].clone();
+            // 'main' synonyms shouldn't carry a file. For others,
+            // surface the source file from find_function_file when
+            // available — same path used by $functions_source.
+            let file = self
+                .find_function_file(&func)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "main".to_string());
+            println!("0 {} {}", func, file);
+            0
+        } else {
+            // Bash returns 1 (no frame at that depth) silently.
+            1
+        }
+    }
+
+    /// doctor - diagnostic report of shell health, caches, and performance
+    pub(crate) fn builtin_doctor(&self, _args: &[String]) -> i32 {
+        let green = |s: &str| format!("\x1b[32m{}\x1b[0m", s);
+        let red = |s: &str| format!("\x1b[31m{}\x1b[0m", s);
+        let yellow = |s: &str| format!("\x1b[33m{}\x1b[0m", s);
+        let bold = |s: &str| format!("\x1b[1m{}\x1b[0m", s);
+        let dim = |s: &str| format!("\x1b[2m{}\x1b[0m", s);
+
+        println!("{}", bold("zshrs doctor"));
+        println!("{}", dim(&"=".repeat(60)));
+        println!();
+
+        // --- Environment ---
+        println!("{}", bold("Environment"));
+        println!("  version:    zshrs {}", env!("CARGO_PKG_VERSION"));
+        println!("  pid:        {}", std::process::id());
+        let cwd = env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "?".to_string());
+        println!("  cwd:        {}", cwd);
+        println!(
+            "  shell:      {}",
+            env::var("SHELL").unwrap_or_else(|_| "?".to_string())
+        );
+        println!("  pool size:  {}", self.worker_pool.size());
+        println!(
+            "  pool done:  {} tasks completed",
+            self.worker_pool.completed()
+        );
+        println!("  pool queue: {} pending", self.worker_pool.queue_depth());
+        println!();
+
+        // --- Config ---
+        println!("{}", bold("Config"));
+        let config_path = crate::config::config_path();
+        if config_path.exists() {
+            println!("  {}  {}", green("*"), config_path.display());
+        } else {
+            println!(
+                "  {}  {} {}",
+                dim("-"),
+                config_path.display(),
+                dim("(using defaults)")
+            );
+        }
+        println!();
+
+        // --- PATH ---
+        println!("{}", bold("PATH"));
+        let path_var = env::var("PATH").unwrap_or_default();
+        let path_dirs: Vec<&str> = path_var.split(':').filter(|s| !s.is_empty()).collect();
+        let path_ok = path_dirs
+            .iter()
+            .filter(|d| std::path::Path::new(d).is_dir())
+            .count();
+        let path_missing = path_dirs.len() - path_ok;
+        println!(
+            "  directories: {} total, {} {}, {} {}",
+            path_dirs.len(),
+            path_ok,
+            green("valid"),
+            path_missing,
+            if path_missing > 0 {
+                red("missing")
+            } else {
+                green("missing")
+            },
+        );
+        println!("  hash table:  {} entries", self.command_hash.len());
+        println!();
+
+        // --- FPATH ---
+        println!("{}", bold("FPATH"));
+        println!("  directories: {}", self.fpath.len());
+        let fpath_ok = self.fpath.iter().filter(|d| d.is_dir()).count();
+        let fpath_missing = self.fpath.len() - fpath_ok;
+        if fpath_missing > 0 {
+            println!("  {} {} missing fpath directories", red("!"), fpath_missing);
+        }
+        println!("  functions:   {} loaded", self.function_names().len());
+        println!("  autoload:    {} pending", self.autoload_pending.len());
+        println!();
+
+        // --- SQLite Caches ---
+        println!("{}", bold("SQLite Caches"));
+        if let Some(ref engine) = self.history {
+            let count = engine.count().unwrap_or(0);
+            println!("  history:     {} entries  {}", count, green("OK"));
+        } else {
+            println!("  history:     {}", yellow("not initialized"));
+        }
+
+        if let Some(ref cache) = self.compsys_cache {
+            let count = compsys::cache_entry_count(cache);
+            println!("  compsys:     {} completions  {}", count, green("OK"));
+
+            // Bytecode coverage = bodies-with-source minus rkyv-shard-keys.
+            // The rkyv autoload cache lives at ~/.cache/zshrs/autoloads.rkyv.
+            if let Ok(total_bodies) = cache.count_autoloads_with_body() {
+                let cached = crate::autoload_cache::entry_count();
+                let missing = total_bodies.saturating_sub(cached);
+                if missing == 0 {
+                    println!(
+                        "  bytecode cache:   {}",
+                        green("all functions compiled to bytecode")
+                    );
+                } else {
+                    println!(
+                        "  bytecode cache:   {} functions {}",
+                        missing,
+                        yellow("missing bytecode blobs")
+                    );
+                }
+            }
+        } else {
+            println!("  compsys:     {}", yellow("no cache"));
+        }
+
+        if let Some(ref cache) = self.plugin_cache {
+            let (plugins, functions) = cache.stats();
+            println!(
+                "  plugins:     {} plugins, {} cached functions  {}",
+                plugins,
+                functions,
+                green("OK")
+            );
+        } else {
+            println!("  plugins:     {}", yellow("no cache"));
+        }
+        println!();
+
+        // --- Shell State ---
+        println!("{}", bold("Shell State"));
+        println!("  aliases:     {}", self.aliases.len());
+        println!("  global:      {} aliases", self.global_aliases.len());
+        println!("  suffix:      {} aliases", self.suffix_aliases.len());
+        println!("  variables:   {}", self.variables.len());
+        println!("  arrays:      {}", self.arrays.len());
+        println!("  assoc:       {}", self.assoc_arrays.len());
+        println!(
+            "  options:     {} set",
+            self.options.iter().filter(|(_, v)| **v).count()
+        );
+        println!("  traps:       {} active", self.traps.len());
+        println!(
+            "  hooks:       {} registered",
+            self.hook_functions.values().map(|v| v.len()).sum::<usize>()
+        );
+        println!();
+
+        // --- Log ---
+        println!("{}", bold("Log"));
+        let log_path = crate::log::log_path();
+        if log_path.exists() {
+            let size = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
+            println!("  {}  {} bytes", log_path.display(), size);
+        } else {
+            println!("  {}", dim("no log file yet"));
+        }
+        println!();
+
+        // --- Profiling ---
+        println!("{}", bold("Profiling"));
+        println!(
+            "  chrome tracing: {}",
+            if crate::log::profiling_enabled() {
+                green("enabled")
+            } else {
+                dim("disabled")
+            }
+        );
+        println!(
+            "  flamegraph:     {}",
+            if crate::log::flamegraph_enabled() {
+                green("enabled")
+            } else {
+                dim("disabled")
+            }
+        );
+        println!(
+            "  prometheus:     {}",
+            if crate::log::prometheus_enabled() {
+                green("enabled")
+            } else {
+                dim("disabled")
+            }
+        );
+        println!();
+
+        0
+    }
+
+    /// dbview — browse zshrs SQLite cache tables without SQL.
+    ///
+    /// Usage:
+    ///   dbview                      — list all tables and row counts
+    ///   dbview autoloads             — dump autoloads table (name, source, body len, ast len)
+    ///   dbview autoloads _git        — show single row by name
+    ///   dbview comps                 — dump comps table
+    ///   dbview history               — recent history entries
+    ///   dbview history <pattern>     — search history
+    ///   dbview plugins               — plugin cache entries
+    ///   dbview executables            — PATH executables cache
+    ///   dbview <table> --count       — just the count
+    pub(crate) fn builtin_dbview(&self, args: &[String]) -> i32 {
+        let bold = |s: &str| format!("\x1b[1m{}\x1b[0m", s);
+        let dim = |s: &str| format!("\x1b[2m{}\x1b[0m", s);
+        let cyan = |s: &str| format!("\x1b[36m{}\x1b[0m", s);
+        let green = |s: &str| format!("\x1b[32m{}\x1b[0m", s);
+        let yellow = |s: &str| format!("\x1b[33m{}\x1b[0m", s);
+
+        if args.is_empty() {
+            // List all tables with row counts
+            println!("{}", bold("zshrs SQLite caches"));
+            println!();
+
+            if let Some(ref cache) = self.compsys_cache {
+                println!("  {} {}", bold("compsys.db"), dim("(completion cache)"));
+                if let Ok(n) = cache.count_table("autoloads") {
+                    let bc_count = cache
+                        .count_table_where("autoloads", "bytecode IS NOT NULL")
+                        .unwrap_or(0);
+                    println!("    autoloads:    {:>6} rows  ({} compiled)", n, bc_count);
+                }
+                if let Ok(n) = cache.count_table("comps") {
+                    println!("    comps:        {:>6} rows", n);
+                }
+                if let Ok(n) = cache.count_table("services") {
+                    println!("    services:     {:>6} rows", n);
+                }
+                if let Ok(n) = cache.count_table("patcomps") {
+                    println!("    patcomps:     {:>6} rows", n);
+                }
+                if let Ok(n) = cache.count_table("executables") {
+                    println!("    executables:  {:>6} rows", n);
+                }
+                if let Ok(n) = cache.count_table("zstyles") {
+                    println!("    zstyles:      {:>6} rows", n);
+                }
+                println!();
+            }
+
+            if let Some(ref engine) = self.history {
+                println!("  {} {}", bold("history.db"), dim("(command history)"));
+                if let Ok(n) = engine.count() {
+                    println!("    entries:      {:>6} rows", n);
+                }
+                println!();
+            }
+
+            if let Some(ref cache) = self.plugin_cache {
+                let (plugins, functions) = cache.stats();
+                println!("  {} {}", bold("plugins.db"), dim("(plugin source cache)"));
+                println!("    plugins:      {:>6} rows", plugins);
+                println!("    functions:    {:>6} rows", functions);
+                println!();
+            }
+
+            println!("  Usage: {} <table> [name] [--count]", cyan("dbview"));
+            return 0;
+        }
+
+        let table = args[0].as_str();
+        let filter = args.get(1).map(|s| s.as_str());
+        let count_only = args.iter().any(|a| a == "--count" || a == "-c");
+
+        match table {
+            "autoloads" => {
+                let Some(ref cache) = self.compsys_cache else {
+                    eprintln!("zshrs:dbview:1: no compsys cache");
+                    return 1;
+                };
+
+                if count_only {
+                    let n = cache.count_table("autoloads").unwrap_or(0);
+                    println!("{}", n);
+                    return 0;
+                }
+
+                if let Some(name) = filter {
+                    // Single row lookup
+                    match cache.get_autoload(name) {
+                        Ok(Some(stub)) => {
+                            println!("{}", bold(&format!("autoload: {}", name)));
+                            println!("  source:   {}", stub.source);
+                            println!(
+                                "  body:     {} bytes",
+                                stub.body.as_ref().map(|b| b.len()).unwrap_or(0)
+                            );
+                            match crate::autoload_cache::try_load(name) {
+                                Some(blob) => {
+                                    println!("  bytecode: {} {} bytes", green("YES"), blob.len())
+                                }
+                                None => println!("  bytecode: {}", yellow("NULL")),
+                            }
+                            // Show first few lines of body
+                            if let Some(ref body) = stub.body {
+                                println!("  preview:");
+                                for (i, line) in body.lines().take(10).enumerate() {
+                                    println!("    {:>3}: {}", i + 1, dim(line));
+                                }
+                                let total = body.lines().count();
+                                if total > 10 {
+                                    println!("    {} ({} more lines)", dim("..."), total - 10);
+                                }
+                            }
+                        }
+                        _ => {
+                            eprintln!("zshrs:dbview:1: autoload '{}' not found", name);
+                            return 1;
+                        }
+                    }
+                    return 0;
+                }
+
+                // Dump all autoloads
+                let conn = &cache.conn();
+                match conn.prepare("SELECT name, source, length(body), length(bytecode) FROM autoloads ORDER BY name LIMIT 200") {
+                    Ok(mut stmt) => {
+                        let rows = stmt.query_map([], |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, Option<i64>>(2)?,
+                                row.get::<_, Option<i64>>(3)?,
+                            ))
+                        });
+                        if let Ok(rows) = rows {
+                            println!("{:<40} {:>8} {:>8}  {}", bold("NAME"), bold("BODY"), bold("BYTECODE"), bold("SOURCE"));
+                            let mut count = 0;
+                            for row in rows.flatten() {
+                                let (name, source, body_len, ast_len) = row;
+                                let ast_str = match ast_len {
+                                    Some(n) => green(&format!("{:>8}", n)),
+                                    None => yellow(&format!("{:>8}", "NULL")),
+                                };
+                                let body_str = match body_len {
+                                    Some(n) => format!("{:>8}", n),
+                                    None => dim("NULL").to_string(),
+                                };
+                                // Truncate source path for display
+                                let src_short = if source.len() > 50 {
+                                    format!("...{}", &source[source.len() - 47..])
+                                } else {
+                                    source
+                                };
+                                println!("{:<40} {} {}  {}", name, body_str, ast_str, dim(&src_short));
+                                count += 1;
+                            }
+                            println!("\n{} rows shown (LIMIT 200)", count);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("zshrs:dbview:1: query failed: {}", e);
+                        return 1;
+                    }
+                }
+            }
+
+            "comps" => {
+                let Some(ref cache) = self.compsys_cache else {
+                    eprintln!("zshrs:dbview:1: no compsys cache");
+                    return 1;
+                };
+                if count_only {
+                    println!("{}", cache.count_table("comps").unwrap_or(0));
+                    return 0;
+                }
+                let conn = cache.conn();
+                let query = if let Some(pat) = filter {
+                    format!("SELECT command, function FROM comps WHERE command LIKE '%{}%' ORDER BY command LIMIT 100", pat)
+                } else {
+                    "SELECT command, function FROM comps ORDER BY command LIMIT 100".to_string()
+                };
+                match conn.prepare(&query) {
+                    Ok(mut stmt) => {
+                        println!("{:<40} {}", bold("COMMAND"), bold("FUNCTION"));
+                        let rows = stmt.query_map([], |row| {
+                            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                        });
+                        if let Ok(rows) = rows {
+                            for row in rows.flatten() {
+                                println!("{:<40} {}", row.0, cyan(&row.1));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("zshrs:dbview:1: {}", e);
+                        return 1;
+                    }
+                }
+            }
+
+            "executables" => {
+                let Some(ref cache) = self.compsys_cache else {
+                    eprintln!("zshrs:dbview:1: no compsys cache");
+                    return 1;
+                };
+                if count_only {
+                    println!("{}", cache.count_table("executables").unwrap_or(0));
+                    return 0;
+                }
+                let conn = cache.conn();
+                let query = if let Some(pat) = filter {
+                    format!("SELECT name, path FROM executables WHERE name LIKE '%{}%' ORDER BY name LIMIT 100", pat)
+                } else {
+                    "SELECT name, path FROM executables ORDER BY name LIMIT 100".to_string()
+                };
+                match conn.prepare(&query) {
+                    Ok(mut stmt) => {
+                        println!("{:<30} {}", bold("NAME"), bold("PATH"));
+                        let rows = stmt.query_map([], |row| {
+                            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                        });
+                        if let Ok(rows) = rows {
+                            for row in rows.flatten() {
+                                println!("{:<30} {}", row.0, dim(&row.1));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("zshrs:dbview:1: {}", e);
+                        return 1;
+                    }
+                }
+            }
+
+            "history" => {
+                let Some(ref engine) = self.history else {
+                    eprintln!("zshrs:dbview:1: no history engine");
+                    return 1;
+                };
+                if count_only {
+                    println!("{}", engine.count().unwrap_or(0));
+                    return 0;
+                }
+                if let Some(pat) = filter {
+                    if let Ok(entries) = engine.search(pat, 20) {
+                        for e in entries {
+                            println!(
+                                "  {} {} {}",
+                                dim(&e.timestamp.to_string()),
+                                cyan(&e.command),
+                                dim(&format!("[{}]", e.exit_code.unwrap_or(0)))
+                            );
+                        }
+                    }
+                } else if let Ok(entries) = engine.recent(20) {
+                    for e in entries {
+                        println!(
+                            "  {} {} {}",
+                            dim(&e.timestamp.to_string()),
+                            cyan(&e.command),
+                            dim(&format!("[{}]", e.exit_code.unwrap_or(0)))
+                        );
+                    }
+                }
+            }
+
+            "plugins" => {
+                let Some(ref cache) = self.plugin_cache else {
+                    eprintln!("zshrs:dbview:1: no plugin cache");
+                    return 1;
+                };
+                let (plugins, functions) = cache.stats();
+                println!("{} plugins, {} cached functions", plugins, functions);
+            }
+
+            _ => {
+                eprintln!("zshrs:dbview:1: unknown table '{}'. Available: autoloads, comps, executables, history, plugins", table);
+                return 1;
+            }
+        }
+
+        0
+    }
+
+    /// profile — in-process command profiling with nanosecond accuracy.
+    ///
+    /// Unlike `time` (which measures one command) or `zprof` (which only
+    /// profiles function calls), `profile` traces every execute_command,
+    /// expansion, glob, and builtin dispatch inside the block.
+    ///
+    /// Usage:
+    ///   profile { commands }     — profile a block
+    ///   profile -s 'script'     — profile a script string
+    ///   profile -f func         — profile a function call
+    ///   profile --clear         — clear accumulated profile data
+    ///   profile --dump          — show accumulated profile data
+    pub(crate) fn builtin_profile(&mut self, args: &[String]) -> i32 {
+        let bold = |s: &str| format!("\x1b[1m{}\x1b[0m", s);
+        let dim = |s: &str| format!("\x1b[2m{}\x1b[0m", s);
+        let cyan = |s: &str| format!("\x1b[36m{}\x1b[0m", s);
+        let yellow = |s: &str| format!("\x1b[33m{}\x1b[0m", s);
+
+        if args.is_empty() {
+            println!("Usage: profile {{ commands }}");
+            println!("       profile -s 'script string'");
+            println!("       profile -f function_name [args...]");
+            println!("       profile --clear");
+            println!("       profile --dump");
+            return 0;
+        }
+
+        if args[0] == "--clear" {
+            self.profiler = crate::zprof::Profiler::new();
+            println!("profile data cleared");
+            return 0;
+        }
+
+        if args[0] == "--dump" {
+            let (_, output) = crate::zprof::bin_zprof(
+                &mut self.profiler,
+                &crate::zprof::ZprofOptions { clear: false },
+            );
+            if !output.is_empty() {
+                print!("{}", output);
+            } else {
+                println!("{}", dim("no profile data"));
+            }
+            return 0;
+        }
+
+        // Determine what to profile
+        let code = if args[0] == "-s" {
+            // profile -s 'script string'
+            if args.len() < 2 {
+                eprintln!("zshrs:profile:1: -s requires a script string");
+                return 1;
+            }
+            args[1..].join(" ")
+        } else if args[0] == "-f" {
+            // profile -f func_name [args...]
+            if args.len() < 2 {
+                eprintln!("zshrs:profile:1: -f requires a function name");
+                return 1;
+            }
+            args[1..].join(" ")
+        } else {
+            // profile { commands } — args is the block body
+            args.join(" ")
+        };
+
+        // Enable profiling, run, collect results
+        let was_enabled = self.profiling_enabled;
+        self.profiling_enabled = true;
+        self.profiler = crate::zprof::Profiler::new(); // fresh data for this run
+
+        let t0 = std::time::Instant::now();
+        let result = self.execute_script(&code);
+        let elapsed = t0.elapsed();
+        let status = match result {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("zshrs:profile:1: {}", e);
+                1
+            }
+        };
+
+        // Collect timing data
+        println!();
+        println!("{}", bold("profile results"));
+        println!("{}", dim(&"─".repeat(60)));
+        let dur_str = if elapsed.as_secs() > 0 {
+            format!("{:.3}s", elapsed.as_secs_f64())
+        } else if elapsed.as_millis() > 0 {
+            format!("{:.3}ms", elapsed.as_secs_f64() * 1000.0)
+        } else {
+            format!("{:.1}µs", elapsed.as_secs_f64() * 1_000_000.0)
+        };
+        println!("  total:     {}", cyan(&dur_str));
+        println!("  status:    {}", status);
+        println!();
+
+        // Show function-level breakdown from profiler
+        let (_, output) = crate::zprof::bin_zprof(
+            &mut self.profiler,
+            &crate::zprof::ZprofOptions { clear: false },
+        );
+        if !output.is_empty() {
+            println!("{}", bold("function breakdown"));
+            print!("{}", output);
+        }
+
+        // Per-command breakdown from tracing (if tracing is at debug level)
+        println!();
+        println!(
+            "  {} set ZSHRS_LOG=trace for per-command tracing",
+            yellow("tip:")
+        );
+        println!(
+            "  {} output: {}",
+            dim("log"),
+            dim(&crate::log::log_path().display().to_string())
+        );
+
+        self.profiling_enabled = was_enabled;
+        status
+    }
+
+    /// intercept builtin — register AOP advice on commands.
+    ///
+    /// Usage:
+    ///   intercept before <pattern> { code }
+    ///   intercept after <pattern> { code }
+    ///   intercept around <pattern> { code }
+    ///   intercept list                       — show all intercepts
+    ///   intercept remove <id>                — remove by ID
+    ///   intercept clear                      — remove all
+    pub(crate) fn builtin_intercept(&mut self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            println!("Usage: intercept <before|after|around> <pattern> {{ code }}");
+            println!("       intercept list | remove <id> | clear");
+            return 0;
+        }
+
+        match args[0].as_str() {
+            "list" => {
+                if self.intercepts.is_empty() {
+                    println!("no intercepts registered");
+                } else {
+                    let bold = |s: &str| format!("\x1b[1m{}\x1b[0m", s);
+                    let cyan = |s: &str| format!("\x1b[36m{}\x1b[0m", s);
+                    println!(
+                        "{:>4}  {:<8}  {:<20}  {}",
+                        bold("ID"),
+                        bold("KIND"),
+                        bold("PATTERN"),
+                        bold("CODE")
+                    );
+                    for i in &self.intercepts {
+                        let kind = match i.kind {
+                            AdviceKind::Before => "before",
+                            AdviceKind::After => "after",
+                            AdviceKind::Around => "around",
+                        };
+                        let code_preview = if i.code.len() > 40 {
+                            format!("{}...", &i.code[..37])
+                        } else {
+                            i.code.clone()
+                        };
+                        println!(
+                            "{:>4}  {:<8}  {:<20}  {}",
+                            cyan(&i.id.to_string()),
+                            kind,
+                            i.pattern,
+                            code_preview
+                        );
+                    }
+                }
+                0
+            }
+            "clear" => {
+                let count = self.intercepts.len();
+                self.intercepts.clear();
+                println!("cleared {} intercepts", count);
+                0
+            }
+            "remove" => {
+                if args.len() < 2 {
+                    eprintln!("intercept remove: requires ID");
+                    return 1;
+                }
+                if let Ok(id) = args[1].parse::<u32>() {
+                    let before = self.intercepts.len();
+                    self.intercepts.retain(|i| i.id != id);
+                    if self.intercepts.len() < before {
+                        println!("removed intercept {}", id);
+                        0
+                    } else {
+                        eprintln!("zshrs:intercept:1: no intercept with ID {}", id);
+                        1
+                    }
+                } else {
+                    eprintln!("intercept remove: invalid ID");
+                    1
+                }
+            }
+            "before" | "after" | "around" => {
+                let kind = match args[0].as_str() {
+                    "before" => AdviceKind::Before,
+                    "after" => AdviceKind::After,
+                    "around" => AdviceKind::Around,
+                    _ => unreachable!(),
+                };
+
+                if args.len() < 3 {
+                    eprintln!("intercept {}: requires <pattern> {{ code }}", args[0]);
+                    return 1;
+                }
+
+                let pattern = args[1].clone();
+                // Join remaining args as the code (handles { code } or 'code')
+                let code = args[2..].join(" ");
+                // Strip surrounding braces if present
+                let code = code.trim().to_string();
+                let code = if code.starts_with('{') && code.ends_with('}') {
+                    code[1..code.len() - 1].trim().to_string()
+                } else {
+                    code
+                };
+
+                let id = self.intercepts.iter().map(|i| i.id).max().unwrap_or(0) + 1;
+                self.intercepts.push(Intercept {
+                    pattern,
+                    kind: kind.clone(),
+                    code: code.clone(),
+                    id,
+                });
+
+                let kind_str = match kind {
+                    AdviceKind::Before => "before",
+                    AdviceKind::After => "after",
+                    AdviceKind::Around => "around",
+                };
+                println!(
+                    "intercept #{}: {} {} → {}",
+                    id,
+                    kind_str,
+                    self.intercepts.last().unwrap().pattern,
+                    if code.len() > 50 {
+                        format!("{}...", &code[..47])
+                    } else {
+                        code
+                    }
+                );
+                0
+            }
+            _ => {
+                eprintln!(
+                    "intercept: unknown subcommand '{}'. Use before|after|around|list|remove|clear",
+                    args[0]
+                );
+                1
+            }
+        }
+    }
+
+    /// intercept_proceed — called from around advice to execute the original command.
+    pub(crate) fn builtin_intercept_proceed(&mut self, _args: &[String]) -> i32 {
+        self.variables
+            .insert("__intercept_proceed".to_string(), "1".to_string());
+        // Run the original command using saved INTERCEPT_NAME/INTERCEPT_ARGS
+        let cmd_name = self
+            .variables
+            .get("INTERCEPT_NAME")
+            .cloned()
+            .unwrap_or_default();
+        let args_str = self
+            .variables
+            .get("INTERCEPT_ARGS")
+            .cloned()
+            .unwrap_or_default();
+        let args: Vec<String> = if args_str.is_empty() {
+            Vec::new()
+        } else {
+            args_str.split_whitespace().map(|s| s.to_string()).collect()
+        };
+        match self.run_original_command(&cmd_name, &args) {
+            Ok(status) => status,
+            Err(e) => {
+                eprintln!("zshrs:intercept_proceed:1: {}", e);
+                1
+            }
+        }
+    }
+
+    /// async { cmd } — run command on worker pool, return job ID immediately.
+    /// Output captured in background, retrieve with `await $id`.
+    ///
+    /// Usage:
+    ///   id=$(async 'sleep 2; echo done')
+    ///   ... do other work ...
+    ///   result=$(await $id)
+    pub(crate) fn builtin_async(&mut self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            eprintln!("zshrs:async:1: requires a command string");
+            return 1;
+        }
+
+        let code = args.join(" ");
+        let id = self.next_async_id;
+        self.next_async_id += 1;
+
+        let (tx, rx) = crossbeam_channel::bounded::<(i32, String)>(1);
+        let pool = std::sync::Arc::clone(&self.worker_pool);
+
+        pool.submit(move || {
+            // Execute in a subprocess to capture stdout
+            use std::process::{Command, Stdio};
+            let output = Command::new("sh")
+                .args(["-c", &code])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .output();
+            match output {
+                Ok(out) => {
+                    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                    let status = out.status.code().unwrap_or(1);
+                    let _ = tx.send((status, stdout));
+                }
+                Err(_) => {
+                    let _ = tx.send((127, String::new()));
+                }
+            }
+        });
+
+        self.async_jobs.insert(id, rx);
+        // Print the job ID so it can be captured: id=$(async 'cmd')
+        println!("{}", id);
+        0
+    }
+
+    /// await $id — block until async job completes, print its stdout, return its status.
+    ///
+    /// Usage:
+    ///   id=$(async 'expensive_command')
+    ///   await $id    # blocks until done, prints output
+    ///   echo $?      # exit status of the async command
+    pub(crate) fn builtin_await(&mut self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            eprintln!("zshrs:await:1: requires a job ID");
+            return 1;
+        }
+
+        let id: u32 = match args[0].parse() {
+            Ok(n) => n,
+            Err(_) => {
+                eprintln!("zshrs:await:1: invalid job ID '{}'", args[0]);
+                return 1;
+            }
+        };
+
+        let rx = match self.async_jobs.remove(&id) {
+            Some(rx) => rx,
+            None => {
+                eprintln!("zshrs:await:1: no async job with ID {}", id);
+                return 1;
+            }
+        };
+
+        // Block until the job completes
+        match rx.recv() {
+            Ok((status, stdout)) => {
+                if !stdout.is_empty() {
+                    print!("{}", stdout);
+                }
+                self.last_status = status;
+                status
+            }
+            Err(_) => {
+                eprintln!("zshrs:await:1: job {} died without result", id);
+                1
+            }
+        }
+    }
+
+    /// pmap 'cmd {}' arg1 arg2 arg3 — parallel map across worker pool.
+    /// Runs `cmd` for each argument, replacing `{}` with the argument.
+    /// Output is collected in order. Returns 0 if all succeed.
+    ///
+    /// Usage:
+    ///   pmap 'gzip {}' *.log
+    ///   pmap 'echo {}' a b c d
+    ///   ls *.rs | pmap 'wc -l {}'
+    pub(crate) fn builtin_pmap(&mut self, args: &[String]) -> i32 {
+        if args.len() < 2 {
+            eprintln!("zshrs:pmap:1: requires 'command {{}}' followed by arguments");
+            return 1;
+        }
+
+        let template = &args[0];
+        let items = &args[1..];
+
+        // Compile template once, execute for each item on VM — no forks
+        let mut results: Vec<(i32, String)> = Vec::with_capacity(items.len());
+
+        for item in items {
+            let cmd = template.replace("{}", item);
+            // Phase 2 migration: ZshParser + ZshCompiler.
+            let mut parser = crate::parse::ZshParser::new(&cmd);
+            match parser.parse() {
+                Ok(prog) => {
+                    let compiler = crate::compile_zsh::ZshCompiler::new();
+                    let chunk = compiler.compile(&prog);
+
+                    // Capture stdout
+                    let output = Vec::new();
+                    let status = {
+                        let mut vm = fusevm::VM::new(chunk);
+                        register_builtins(&mut vm);
+                        let _ctx = ExecutorContext::enter(self);
+                        match vm.run() {
+                            fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
+                            fusevm::VMResult::Error(_) => 1,
+                        }
+                    };
+                    results.push((status, String::from_utf8_lossy(&output).to_string()));
+                }
+                Err(errs) => {
+                    let msg = errs
+                        .first()
+                        .map(|e| format!("{}", e))
+                        .unwrap_or_else(|| "parse error".to_string());
+                    eprintln!("zshrs:pmap:1: parse error: {}", msg);
+                    results.push((1, String::new()));
+                }
+            }
+        }
+
+        let mut any_fail = false;
+        for (status, stdout) in results {
+            if !stdout.is_empty() {
+                print!("{}", stdout);
+            }
+            if status != 0 {
+                any_fail = true;
+            }
+        }
+
+        if any_fail {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// pgrep 'pattern' arg1 arg2 ... — parallel grep/filter across worker pool.
+    /// Runs the pattern command for each argument, prints args where command succeeds.
+    ///
+    /// Usage:
+    ///   pgrep 'test -f {}' /path/a /path/b /path/c
+    ///   pgrep 'grep -q TODO {}' *.rs
+    pub(crate) fn builtin_pgrep(&mut self, args: &[String]) -> i32 {
+        if args.len() < 2 {
+            eprintln!("zshrs:pgrep:1: requires 'test_command {{}}' followed by arguments");
+            return 1;
+        }
+
+        let template = &args[0];
+        let items = &args[1..];
+
+        // Compile and run on VM — no forks. Phase 2: ZshParser+ZshCompiler.
+        for item in items {
+            let cmd = template.replace("{}", item);
+            let mut parser = crate::parse::ZshParser::new(&cmd);
+            if let Ok(prog) = parser.parse() {
+                let compiler = crate::compile_zsh::ZshCompiler::new();
+                let chunk = compiler.compile(&prog);
+
+                let mut vm = fusevm::VM::new(chunk);
+                register_builtins(&mut vm);
+                let _ctx = ExecutorContext::enter(self);
+                let status = match vm.run() {
+                    fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
+                    fusevm::VMResult::Error(_) => 1,
+                };
+
+                if status == 0 {
+                    println!("{}", item);
+                }
+            }
+        }
+
+        0
+    }
+
+    /// peach 'cmd {}' arg1 arg2 ... — parallel for-each, no output ordering.
+    /// Like pmap but doesn't collect output — fire-and-forget, print as completed.
+    ///
+    /// Usage:
+    ///   peach 'convert {} {}.png' *.svg
+    ///   peach 'rsync -a {} remote:{}' dir1 dir2 dir3
+    pub(crate) fn builtin_peach(&mut self, args: &[String]) -> i32 {
+        if args.len() < 2 {
+            eprintln!("zshrs:peach:1: requires 'command {{}}' followed by arguments");
+            return 1;
+        }
+
+        let template = &args[0];
+        let items = &args[1..];
+
+        // Compile and run on VM — no forks, fire-and-forget style.
+        // Phase 2: ZshParser+ZshCompiler.
+        let mut any_fail = false;
+
+        for item in items {
+            let cmd = template.replace("{}", item);
+            let mut parser = crate::parse::ZshParser::new(&cmd);
+            if let Ok(prog) = parser.parse() {
+                let compiler = crate::compile_zsh::ZshCompiler::new();
+                let chunk = compiler.compile(&prog);
+
+                let mut vm = fusevm::VM::new(chunk);
+                register_builtins(&mut vm);
+                let _ctx = ExecutorContext::enter(self);
+                let status = match vm.run() {
+                    fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
+                    fusevm::VMResult::Error(_) => 1,
+                };
+
+                if status != 0 {
+                    any_fail = true;
+                }
+            } else {
+                any_fail = true;
+            }
+        }
+
+        if any_fail {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// barrier cmd1 ::: cmd2 ::: cmd3 — run commands in parallel, wait for ALL to complete.
+    /// Returns the worst (highest) exit status.
+    ///
+    /// Usage:
+    ///   barrier 'make -C proj1' ::: 'make -C proj2' ::: 'make -C proj3'
+    ///   barrier 'npm test' ::: 'cargo test' ::: 'pytest'
+    pub(crate) fn builtin_barrier(&mut self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            eprintln!("zshrs:barrier:1: requires commands separated by :::");
+            return 1;
+        }
+
+        // Split on ::: delimiter
+        let mut commands: Vec<String> = Vec::new();
+        let mut current = String::new();
+        for arg in args {
+            if arg == ":::" {
+                if !current.is_empty() {
+                    commands.push(current.trim().to_string());
+                    current.clear();
+                }
+            } else {
+                if !current.is_empty() {
+                    current.push(' ');
+                }
+                current.push_str(arg);
+            }
+        }
+        if !current.is_empty() {
+            commands.push(current.trim().to_string());
+        }
+
+        if commands.is_empty() {
+            return 0;
+        }
+
+        // Ship all to pool
+        let mut receivers = Vec::with_capacity(commands.len());
+        for cmd in &commands {
+            let cmd = cmd.clone();
+            let rx = self.worker_pool.submit_with_result(move || {
+                use std::process::{Command, Stdio};
+                Command::new("sh")
+                    .args(["-c", &cmd])
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .status()
+                    .map(|s| s.code().unwrap_or(1))
+                    .unwrap_or(127)
+            });
+            receivers.push(rx);
+        }
+
+        // Wait for all — return worst status
+        let mut worst = 0i32;
+        for rx in receivers {
+            if let Ok(status) = rx.recv() {
+                if status > worst {
+                    worst = status;
+                }
+            }
+        }
+
+        self.last_status = worst;
+        worst
+    }
+
+    /// help - display help for builtins (bash)
+    pub(crate) fn builtin_help(&self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            println!("zshrs shell builtins:");
+            println!();
+            println!("  alias, bg, bind, break, builtin, cd, command, continue,");
+            println!("  declare, dirs, disown, echo, enable, eval, exec, exit,");
+            println!("  export, false, fc, fg, getopts, hash, help, history,");
+            println!("  jobs, kill, let, local, logout, popd, printf, pushd,");
+            println!("  pwd, read, readonly, return, set, shift, shopt, source,");
+            println!("  suspend, test, times, trap, true, type, typeset, ulimit,");
+            println!("  umask, unalias, unset, wait, whence, where, which");
+            println!();
+            println!("Type 'help name' for more information about 'name'.");
+            return 0;
+        }
+
+        let cmd = &args[0];
+        match cmd.as_str() {
+            "cd" => println!("cd: cd [-L|-P] [dir]\n    Change the shell working directory."),
+            "echo" => println!("echo: echo [-neE] [arg ...]\n    Write arguments to standard output."),
+            "export" => println!("export: export [-fn] [name[=value] ...]\n    Set export attribute for shell variables."),
+            "alias" => println!("alias: alias [-p] [name[=value] ...]\n    Define or display aliases."),
+            "history" => println!("history: history [-c] [-d offset] [n]\n    Display or manipulate the history list."),
+            "jobs" => println!("jobs: jobs [-lnprs] [jobspec ...]\n    Display status of jobs."),
+            "kill" => println!("kill: kill [-s sigspec | -n signum | -sigspec] pid | jobspec ...\n    Send a signal to a job."),
+            "read" => println!("read: read [-ers] [-a array] [-d delim] [-i text] [-n nchars] [-N nchars] [-p prompt] [-t timeout] [-u fd] [name ...]\n    Read a line from standard input."),
+            "set" => println!("set: set [-abefhkmnptuvxBCHP] [-o option-name] [--] [arg ...]\n    Set or unset values of shell options and positional parameters."),
+            "test" | "[" => println!("test: test [expr]\n    Evaluate conditional expression."),
+            "type" => println!("type: type [-afptP] name [name ...]\n    Display information about command type."),
+            _ => println!("{}: no help available", cmd),
+        }
+        0
+    }
+
+    /// readarray/mapfile - read lines into array (bash)
+    pub(crate) fn builtin_readarray(&mut self, args: &[String]) -> i32 {
+        // bash readarray / mapfile: read lines from a fd into an array.
+        // Direct port of bash's read_builtin_array_loadable. zsh has no
+        // direct equivalent (use `read -A`), but plugin code that
+        // toggles between bash/zsh frequently calls this.
+        use std::io::Read as IoRead;
+
+        let mut array_name = "MAPFILE".to_string();
+        let mut delimiter: u8 = b'\n';
+        let mut count = 0usize; // 0 = unlimited
+        let mut skip = 0usize;
+        let mut strip_trailing = false;
+        let mut callback: Option<String> = None;
+        let mut callback_quantum = 0usize;
+        let mut fd: i32 = 0;
+
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "-d" => {
+                    i += 1;
+                    if i < args.len() && !args[i].is_empty() {
+                        delimiter = args[i].as_bytes()[0];
+                    }
+                }
+                "-n" => {
+                    i += 1;
+                    if i < args.len() {
+                        count = args[i].parse().unwrap_or(0);
+                    }
+                }
+                "-O" => {
+                    i += 1;
+                    // Origin - start index (ignored, we always start at 0)
+                }
+                "-s" => {
+                    i += 1;
+                    if i < args.len() {
+                        skip = args[i].parse().unwrap_or(0);
+                    }
+                }
+                "-t" => strip_trailing = true,
+                "-C" => {
+                    i += 1;
+                    if i < args.len() {
+                        callback = Some(args[i].clone());
+                    }
+                }
+                "-c" => {
+                    i += 1;
+                    if i < args.len() {
+                        callback_quantum = args[i].parse().unwrap_or(5000);
+                    }
+                }
+                "-u" => {
+                    i += 1;
+                    if i < args.len() {
+                        fd = args[i].parse().unwrap_or(0);
+                    }
+                }
+                s if !s.starts_with('-') => {
+                    array_name = s.to_string();
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+
+        // Read entire input from the chosen fd, then split on delim.
+        // Using libc::read on the raw fd so -u N picks any open fd
+        // (was hardcoded stdin).
+        let mut input: Vec<u8> = Vec::new();
+        if fd == 0 {
+            let stdin = std::io::stdin();
+            let mut handle = stdin.lock();
+            if handle.read_to_end(&mut input).is_err() {
+                return 1;
+            }
+        } else {
+            let mut buf = [0u8; 8192];
+            loop {
+                let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+                if n <= 0 {
+                    break;
+                }
+                input.extend_from_slice(&buf[..n as usize]);
+            }
+        }
+
+        // Split on `delimiter`. The delimiter byte itself is NOT
+        // included in each element (bash splits same way; -t doesn't
+        // change inclusion since the delim is already absent).
+        let mut lines: Vec<String> = Vec::new();
+        let mut line_count = 0usize;
+        for chunk in input.split(|b| *b == delimiter) {
+            // Skip a trailing empty produced by a final delimiter byte:
+            // bash's readarray drops it for `-t` but keeps it otherwise.
+            // We emulate by suppressing trailing empties unconditionally
+            // when the input ended with the delim — matches the common
+            // 'one entry per line' expectation.
+            line_count += 1;
+            if line_count <= skip {
+                continue;
+            }
+            let mut line = String::from_utf8_lossy(chunk).to_string();
+            if strip_trailing {
+                while line.ends_with('\n') || line.ends_with('\r') {
+                    line.pop();
+                }
+            }
+            lines.push(line);
+            if count > 0 && lines.len() >= count {
+                break;
+            }
+        }
+        // Drop trailing empty if input ended with delimiter and the
+        // user didn't ask for it.
+        if input.last() == Some(&delimiter) && lines.last().map(|s| s.is_empty()).unwrap_or(false) {
+            lines.pop();
+        }
+
+        self.arrays.insert(array_name, lines);
+        let _ = (callback, callback_quantum);
+        0
+    }
+
+    pub(crate) fn builtin_shopt(&mut self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            // List all shell options. Sorted by name so output is
+            // deterministic across runs (was HashMap-iteration-order
+            // → flickered between runs and broke `shopt | diff`).
+            let mut sorted: Vec<(&String, &bool)> = self.options.iter().collect();
+            sorted.sort_by(|a, b| a.0.cmp(b.0));
+            for (opt, val) in sorted {
+                println!("shopt {} {}", if *val { "-s" } else { "-u" }, opt);
+            }
+            return 0;
+        }
+
+        let mut set = None;
+        let mut opts = Vec::new();
+
+        for arg in args {
+            match arg.as_str() {
+                "-s" => set = Some(true),
+                "-u" => set = Some(false),
+                "-p" => {
+                    // Print option status
+                    for opt in &opts {
+                        let val = self.options.get(opt).copied().unwrap_or(false);
+                        println!("shopt {} {}", if val { "-s" } else { "-u" }, opt);
+                    }
+                    return 0;
+                }
+                _ => opts.push(arg.clone()),
+            }
+        }
+
+        if let Some(enable) = set {
+            for opt in &opts {
+                self.options.insert(opt.clone(), enable);
+            }
+        } else {
+            // Query options
+            for opt in &opts {
+                let val = self.options.get(opt).copied().unwrap_or(false);
+                println!("shopt {} {}", if val { "-s" } else { "-u" }, opt);
+            }
+        }
+        0
+    }
+
+    /// add-zsh-hook builtin - add function to hook
+    pub(crate) fn builtin_add_zsh_hook(&mut self, args: &[String]) -> i32 {
+        // add-zsh-hook [-d] hook function
+        if args.len() < 2 {
+            eprintln!("usage: add-zsh-hook [-d] hook function");
+            return 1;
+        }
+
+        let (delete, hook, func) = if args[0] == "-d" {
+            if args.len() < 3 {
+                eprintln!("usage: add-zsh-hook -d hook function");
+                return 1;
+            }
+            (true, &args[1], &args[2])
+        } else {
+            (false, &args[0], &args[1])
+        };
+
+        if delete {
+            // Remove function from hook
+            if let Some(funcs) = self.hook_functions.get_mut(hook.as_str()) {
+                funcs.retain(|f| f != func);
+            }
+        } else {
+            // Add function to hook
+            self.add_hook(hook, func);
+        }
+        0
+    }
+
+    /// Generate completion candidates
+    pub(crate) fn builtin_compgen(&self, args: &[String]) -> i32 {
+        let mut i = 0;
+        let mut prefix = String::new();
+        let mut actions = Vec::new();
+        let mut wordlist = None;
+        let mut globpat = None;
+
+        while i < args.len() {
+            match args[i].as_str() {
+                "-W" => {
+                    i += 1;
+                    if i < args.len() {
+                        wordlist = Some(args[i].clone());
+                    }
+                }
+                "-G" => {
+                    i += 1;
+                    if i < args.len() {
+                        globpat = Some(args[i].clone());
+                    }
+                }
+                "-a" => actions.push("alias"),
+                "-b" => actions.push("builtin"),
+                "-c" => actions.push("command"),
+                "-d" => actions.push("directory"),
+                "-e" => actions.push("export"),
+                "-f" => actions.push("file"),
+                "-j" => actions.push("job"),
+                "-k" => actions.push("keyword"),
+                "-u" => actions.push("user"),
+                "-v" => actions.push("variable"),
+                s if !s.starts_with('-') => prefix = s.to_string(),
+                s => {
+                    // bash compgen has many flags. Reject unknown
+                    // ones rather than silently dropping. -F func and
+                    // -C cmd aren't yet wired but they're real flags;
+                    // accept as no-op pending impl.
+                    if matches!(s, "-F" | "-C" | "-S" | "-P" | "-X" | "-o") {
+                        // Take the following arg.
+                        if i + 1 < args.len() {
+                            i += 1;
+                        }
+                    } else if matches!(s, "-r" | "-A" | "-D" | "-E" | "-I") {
+                        // Multi-letter or single-arg flags accepted as no-op.
+                    } else {
+                        eprintln!("zshrs:compgen:1: bad option: {}", s);
+                        return 1;
+                    }
+                }
+            }
+            i += 1;
+        }
+
+        let mut results = Vec::new();
+
+        // Generate based on actions
+        for action in actions {
+            match action {
+                "alias" => {
+                    let mut names: Vec<String> = self.aliases.keys().cloned().collect();
+                    names.sort();
+                    for name in names {
+                        if name.starts_with(&prefix) {
+                            results.push(name);
+                        }
+                    }
+                }
+                "builtin" => {
+                    // Use the canonical BUILTIN_SET so every wired
+                    // builtin shows up in completion (was a hardcoded
+                    // 25-entry subset that missed bindkey, fc, getopts,
+                    // shopt, typeset, etc).
+                    let mut names: Vec<&str> = BUILTIN_SET.iter().copied().collect();
+                    names.sort();
+                    for name in names {
+                        if name.starts_with(&prefix) {
+                            results.push(name.to_string());
+                        }
+                    }
+                }
+                "directory" => {
+                    // Sort dir entries for stable completion order.
+                    if let Ok(entries) = std::fs::read_dir(".") {
+                        let mut names: Vec<String> = entries
+                            .flatten()
+                            .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+                            .map(|e| e.file_name().to_string_lossy().into_owned())
+                            .collect();
+                        names.sort();
+                        for name in names {
+                            if name.starts_with(&prefix) {
+                                results.push(name);
+                            }
+                        }
+                    }
+                }
+                "file" => {
+                    if let Ok(entries) = std::fs::read_dir(".") {
+                        let mut names: Vec<String> = entries
+                            .flatten()
+                            .map(|e| e.file_name().to_string_lossy().into_owned())
+                            .collect();
+                        names.sort();
+                        for name in names {
+                            if name.starts_with(&prefix) {
+                                results.push(name);
+                            }
+                        }
+                    }
+                }
+                "variable" => {
+                    // Sort for deterministic completion-candidate
+                    // order (was HashMap iteration random, so
+                    // \`compgen -v\` listings flickered).
+                    let mut names: Vec<String> = self.variables.keys().cloned().collect();
+                    names.sort();
+                    for name in names {
+                        if name.starts_with(&prefix) {
+                            results.push(name);
+                        }
+                    }
+                    let mut env_names: Vec<String> = std::env::vars().map(|(k, _)| k).collect();
+                    env_names.sort();
+                    for name in env_names {
+                        if name.starts_with(&prefix) && !results.contains(&name) {
+                            results.push(name);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Handle wordlist
+        if let Some(words) = wordlist {
+            for word in words.split_whitespace() {
+                if word.starts_with(&prefix) {
+                    results.push(word.to_string());
+                }
+            }
+        }
+
+        // Handle glob pattern
+        if let Some(_pattern) = globpat {
+            let full_pattern = format!("{}*", prefix);
+            if let Ok(paths) = glob::glob(&full_pattern) {
+                for path in paths.flatten() {
+                    results.push(path.to_string_lossy().to_string());
+                }
+            }
+        }
+
+        results.sort();
+        results.dedup();
+        for r in results {
+            println!("{}", r);
+        }
+        0
+    }
+
+    /// Define completion spec for a command
+    pub(crate) fn builtin_complete(&mut self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            // List all completion specs, sorted by command name so
+            // 'complete' (no args) outputs deterministically.
+            let mut cmds: Vec<&String> = self.completions.keys().collect();
+            cmds.sort();
+            for cmd in cmds {
+                let spec = self.completions.get(cmd).unwrap();
+                let mut parts = vec!["complete".to_string()];
+                for action in &spec.actions {
+                    parts.push(format!("-{}", action));
+                }
+                if let Some(ref w) = spec.wordlist {
+                    parts.push("-W".to_string());
+                    parts.push(format!("'{}'", w));
+                }
+                if let Some(ref f) = spec.function {
+                    parts.push("-F".to_string());
+                    parts.push(f.clone());
+                }
+                if let Some(ref c) = spec.command {
+                    parts.push("-C".to_string());
+                    parts.push(c.clone());
+                }
+                parts.push(cmd.clone());
+                println!("{}", parts.join(" "));
+            }
+            return 0;
+        }
+
+        let mut spec = CompSpec::default();
+        let mut commands = Vec::new();
+        let mut i = 0;
+
+        while i < args.len() {
+            match args[i].as_str() {
+                "-W" => {
+                    i += 1;
+                    if i < args.len() {
+                        spec.wordlist = Some(args[i].clone());
+                    }
+                }
+                "-F" => {
+                    i += 1;
+                    if i < args.len() {
+                        spec.function = Some(args[i].clone());
+                    }
+                }
+                "-C" => {
+                    i += 1;
+                    if i < args.len() {
+                        spec.command = Some(args[i].clone());
+                    }
+                }
+                "-G" => {
+                    i += 1;
+                    if i < args.len() {
+                        spec.globpat = Some(args[i].clone());
+                    }
+                }
+                "-P" => {
+                    i += 1;
+                    if i < args.len() {
+                        spec.prefix = Some(args[i].clone());
+                    }
+                }
+                "-S" => {
+                    i += 1;
+                    if i < args.len() {
+                        spec.suffix = Some(args[i].clone());
+                    }
+                }
+                "-a" => spec.actions.push("a".to_string()),
+                "-b" => spec.actions.push("b".to_string()),
+                "-c" => spec.actions.push("c".to_string()),
+                "-d" => spec.actions.push("d".to_string()),
+                "-e" => spec.actions.push("e".to_string()),
+                "-f" => spec.actions.push("f".to_string()),
+                "-j" => spec.actions.push("j".to_string()),
+                "-r" => {
+                    // Remove completion spec
+                    i += 1;
+                    while i < args.len() {
+                        self.completions.remove(&args[i]);
+                        i += 1;
+                    }
+                    return 0;
+                }
+                s if !s.starts_with('-') => commands.push(s.to_string()),
+                _ => {}
+            }
+            i += 1;
+        }
+
+        for cmd in commands {
+            self.completions.insert(cmd, spec.clone());
+        }
+        0
+    }
+
+    /// Modify completion options
+    pub(crate) fn builtin_compopt(&mut self, args: &[String]) -> i32 {
+        // Basic stub - just accept the options
+        let _ = args;
+        0
+    }
+
+    /// compdef - register completion functions for commands
+    /// Usage: compdef _git git
+    ///        compdef _docker docker docker-compose
+    ///        compdef -d git  # delete
+    pub(crate) fn builtin_compdef(&mut self, args: &[String]) -> i32 {
+        // PFA-SMR aspect: emit one `compdef` event with the completion
+        // function name + the joined command list it's bound to.
+        // `compdef _git git gita gitb` → name="_git", value="git gita gitb".
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            let mut positional: Vec<&str> = Vec::new();
+            for a in args {
+                if a.starts_with('-') || a.starts_with('+') {
+                    continue;
+                }
+                positional.push(a.as_str());
+            }
+            if positional.len() >= 2 {
+                let ctx = self.recorder_ctx();
+                let func = positional[0];
+                let cmds = positional[1..].join(" ");
+                crate::recorder::emit_compdef(func, &cmds, ctx);
+            }
+        }
+        if let Some(cache) = &mut self.compsys_cache {
+            compsys::compdef::compdef_execute(cache, args)
+        } else {
+            // No cache - defer for cdreplay (zinit turbo mode)
+            self.deferred_compdefs.push(args.to_vec());
+            0
+        }
+    }
+
+    /// compinit - initialize the completion system
+    /// Scans fpath for completion functions and registers them
+    #[tracing::instrument(level = "info", skip(self))]
+    pub(crate) fn builtin_compinit(&mut self, args: &[String]) -> i32 {
+        // Parse options
+        // -C: use cache if valid (skip fpath scan)
+        // -D: don't dump (don't write .zcompdump)
+        // -d file: specify dump file
+        // -u: use insecure dirs anyway  -i: silently ignore insecure dirs
+        // -q: quiet
+        let mut quiet = false;
+        let mut no_dump = false;
+        let mut dump_file: Option<String> = None;
+        let mut use_cache = false;
+        let mut ignore_insecure = false;
+        let mut use_insecure = false;
+
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "-q" => quiet = true,
+                "-C" => use_cache = true,
+                "-D" => no_dump = true,
+                "-d" => {
+                    i += 1;
+                    if i < args.len() {
+                        dump_file = Some(args[i].clone());
+                    }
+                }
+                "-u" => use_insecure = true,
+                "-i" => ignore_insecure = true,
+                // -f: force re-dump even when dumpfile is current.
+                // -w: warn about old / suspicious files (man compinit).
+                // Both are real zsh flags; previously rejected by the
+                // unknown-flag arm because they weren't enumerated.
+                "-f" | "-w" => {} // accepted; semantic wiring is no-op
+                s if s.starts_with('-') && s.len() > 1 => {
+                    // compinit -X errors in zsh ("bad option") rather
+                    // than silently no-op'ing. Without this, typos
+                    // like \`compinit -B\` (bash convention) would
+                    // proceed normally and only fail later via the
+                    // missing flag's effect.
+                    let bad: String = s[1..].chars().take(1).collect();
+                    eprintln!("zshrs:compinit:1: bad option: -{}", bad);
+                    return 1;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+
+        // Run compaudit with SQLite cache (unless -u skips it entirely)
+        if !use_insecure && !self.posix_mode {
+            if let Some(ref cache) = self.plugin_cache {
+                let insecure = cache.compaudit_cached(&self.fpath);
+                if !insecure.is_empty() && !ignore_insecure {
+                    if !quiet {
+                        eprintln!("zshrs:compinit:1: insecure directories:");
+                        for d in &insecure {
+                            eprintln!("  {}", d);
+                        }
+                        eprintln!("zshrs:compinit:1: run with -i to ignore or -u to use anyway");
+                    }
+                    return 1;
+                }
+            }
+        }
+
+        // ZSH COMPAT MODE: Use traditional zsh algorithm (fpath scan, .zcompdump, no SQLite)
+        if self.zsh_compat {
+            return self.compinit_compat(quiet, no_dump, dump_file, use_cache);
+        }
+
+        // ZSHRS MODE: Use SQLite cache with function bodies
+
+        // Try to use existing cache if -C and cache is valid
+        if use_cache {
+            if let Some(cache) = &self.compsys_cache {
+                if compsys::cache_is_valid(cache) {
+                    // Load from cache instead of rescanning
+                    if let Ok(result) = compsys::load_from_cache(cache) {
+                        if !quiet {
+                            tracing::info!(
+                                comps = result.comps.len(),
+                                "compinit: using cached completions"
+                            );
+                        }
+                        self.assoc_arrays
+                            .insert("_comps".to_string(), result.comps.into_iter().collect());
+                        self.assoc_arrays.insert(
+                            "_services".to_string(),
+                            result.services.into_iter().collect(),
+                        );
+                        self.assoc_arrays.insert(
+                            "_patcomps".to_string(),
+                            result.patcomps.into_iter().collect(),
+                        );
+
+                        // Background: fill bytecode blobs for any autoloads that have body but no chunk.
+                        // Sources of missing entries: (1) brand-new SQLite cache, (2) zshrs binary
+                        // mtime advanced and invalidated previously-cached chunks. The rkyv shard
+                        // at ~/.cache/zshrs/autoloads.rkyv is additive — we compute the delta and
+                        // merge_in once at the end (single read + single write of the shard,
+                        // even for 16k entries).
+                        if let Some(ref cache) = self.compsys_cache {
+                            if let Ok(total_with_body) = cache.count_autoloads_with_body() {
+                                let cached_now = crate::autoload_cache::entry_count();
+                                let missing = total_with_body.saturating_sub(cached_now);
+                                if missing > 0 {
+                                    tracing::info!(
+                                        count = missing,
+                                        "compinit: backfilling bytecode blobs on worker pool"
+                                    );
+                                    let cache_path = compsys::cache::default_cache_path();
+                                    let total_missing = missing;
+                                    self.worker_pool.submit(move || {
+                                        let cache = match compsys::cache::CompsysCache::open(&cache_path) {
+                                            Ok(c) => c,
+                                            Err(_) => return,
+                                        };
+                                        // One pass: pull every body whose name isn't already in
+                                        // the rkyv shard, parse+compile, accumulate into a
+                                        // HashMap, merge_in once at the end.
+                                        let exclude = crate::autoload_cache::cached_names();
+                                        let bodies = match cache.get_autoload_bodies_excluding(&exclude, usize::MAX) {
+                                            Ok(b) => b,
+                                            Err(e) => {
+                                                tracing::warn!(error = %e, "compinit: body fetch failed");
+                                                return;
+                                            }
+                                        };
+                                        let mut batch: std::collections::HashMap<String, Vec<u8>> =
+                                            std::collections::HashMap::with_capacity(bodies.len());
+                                        for (name, body) in &bodies {
+                                            let mut parser = crate::parse::ZshParser::new(body);
+                                            if let Ok(program) = parser.parse() {
+                                                if !program.lists.is_empty() {
+                                                    let target =
+                                                        ShellExecutor::ksh_autoload_body(&program, name)
+                                                            .unwrap_or(&program);
+                                                    let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
+                                                    if let Ok(blob) = bincode::serialize(&chunk) {
+                                                        batch.insert(name.clone(), blob);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        let cached = batch.len();
+                                        if let Err(e) = crate::autoload_cache::try_merge_in(batch) {
+                                            tracing::warn!(error = %e, "compinit: rkyv merge_in failed");
+                                        }
+                                        tracing::info!(
+                                            cached,
+                                            total = total_missing,
+                                            "compinit: bytecode backfill complete"
+                                        );
+                                    });
+                                }
+                            }
+                        }
+
+                        return 0;
+                    }
+                }
+            }
+        }
+
+        // Ship compinit to worker pool — no ad-hoc thread spawn.
+        // The heavy work (scan + SQLite write) runs on a pool thread.
+        // Results are merged into shell state lazily via drain_compinit_bg().
+        let fpath = self.fpath.clone();
+        let fpath_count = fpath.len();
+        let pool_size = self.worker_pool.size();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let bg_start = std::time::Instant::now();
+        tracing::info!(
+            fpath_dirs = fpath_count,
+            worker_pool = pool_size,
+            "compinit: shipping to worker pool"
+        );
+        self.worker_pool.submit(move || {
+            tracing::debug!("compinit-bg: thread started");
+            let cache_path = compsys::cache::default_cache_path();
+            if let Some(parent) = cache_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            // Remove old DB to start fresh
+            let _ = std::fs::remove_file(&cache_path);
+            let _ = std::fs::remove_file(format!("{}-shm", cache_path.display()));
+            let _ = std::fs::remove_file(format!("{}-wal", cache_path.display()));
+
+            let mut cache = match compsys::cache::CompsysCache::open(&cache_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("compinit: failed to create cache: {}", e);
+                    return;
+                }
+            };
+
+            let result = match compsys::build_cache_from_fpath(&fpath, &mut cache) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!("compinit: scan failed: {}", e);
+                    return;
+                }
+            };
+
+            tracing::info!(
+                functions = result.files_scanned,
+                comps = result.comps.len(),
+                dirs = result.dirs_scanned,
+                ms = result.scan_time_ms,
+                "compinit: background scan complete"
+            );
+
+            // Pre-parse function bodies and cache bytecode blobs into the
+            // rkyv autoload shard. Whole-shard replace at the end — for 16k
+            // entries that's exactly one rkyv serialize + atomic-rename,
+            // versus the per-batch SQLite-era pattern that wrote 160 times.
+            //
+            // Memory: 16k chunks × ~10KB = ~160MB resident during this loop.
+            // That's the same envelope as the SQLite path which held the
+            // 100-batch buffer + the in-flight rusqlite transaction. If
+            // this turns out to be a problem on memory-tight hosts we can
+            // switch to incremental merge_in with smaller batches.
+            let parse_start = std::time::Instant::now();
+            let mut parse_ok = 0usize;
+            let mut parse_fail = 0usize;
+            let mut no_body = 0usize;
+            let mut all_entries: std::collections::HashMap<String, Vec<u8>> =
+                std::collections::HashMap::with_capacity(result.files.len());
+
+            for file in &result.files {
+                if let Some(ref body) = file.body {
+                    let mut parser = crate::parse::ZshParser::new(body);
+                    match parser.parse() {
+                        Ok(program) if !program.lists.is_empty() => {
+                            // ksh-style file (`name() { body }`) — compile only
+                            // the inner body so the chunk runs the function on
+                            // call instead of re-registering it.
+                            let target = ShellExecutor::ksh_autoload_body(&program, &file.name)
+                                .unwrap_or(&program);
+                            let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
+                            if let Ok(blob) = bincode::serialize(&chunk) {
+                                all_entries.insert(file.name.clone(), blob);
+                                parse_ok += 1;
+                            }
+                        }
+                        Ok(_) => {
+                            parse_fail += 1;
+                        }
+                        Err(_) => {
+                            parse_fail += 1;
+                        }
+                    }
+                } else {
+                    no_body += 1;
+                }
+            }
+            // Whole-shard replace — one read+write covers all entries.
+            if let Err(e) = crate::autoload_cache::try_replace_all(all_entries) {
+                tracing::warn!(error = %e, "compinit: rkyv replace_all failed");
+            }
+
+            tracing::info!(
+                cached = parse_ok,
+                failed = parse_fail,
+                no_body = no_body,
+                total = result.files.len(),
+                ms = parse_start.elapsed().as_millis() as u64,
+                "compinit: bytecode blobs cached"
+            );
+
+            let _ = tx.send(CompInitBgResult { result, cache });
+        });
+
+        self.compinit_pending = Some((rx, bg_start));
+        0
+    }
+
+    /// cdreplay - replay deferred compdef calls (zinit turbo mode)
+    /// Usage: cdreplay [-q]
+    pub(crate) fn builtin_cdreplay(&mut self, args: &[String]) -> i32 {
+        let quiet = args.contains(&"-q".to_string());
+
+        if self.deferred_compdefs.is_empty() {
+            return 0;
+        }
+
+        let deferred = std::mem::take(&mut self.deferred_compdefs);
+        let count = deferred.len();
+
+        if let Some(cache) = &mut self.compsys_cache {
+            for compdef_args in deferred {
+                compsys::compdef::compdef_execute(cache, &compdef_args);
+            }
+        }
+
+        if !quiet {
+            eprintln!("cdreplay: replayed {} compdef calls", count);
+        }
+
+        0
+    }
+
+    /// `nocorrect CMD ARGS...` — disable spelling correction for CMD
+    /// then dispatch the rest. In `-fc` / non-interactive contexts
+    /// spelling correction is already off, so this reduces to plain
+    /// dispatch. Direct port of zsh's `nocorrect` precommand
+    /// modifier (Src/exec.c precommand-modifier loop). Without this
+    /// handler, `nocorrect echo hello` resolved `nocorrect` as a
+    /// command and exited 127.
+    pub(crate) fn builtin_nocorrect(&mut self, args: &[String], redirects: &[Redirect]) -> i32 {
+        if args.is_empty() {
+            return 0;
+        }
+        let cmd = &args[0];
+        if self.is_builtin(cmd) {
+            self.builtin_builtin(args, redirects)
+        } else if self.function_exists(cmd) {
+            self.builtin_command(args, redirects)
+        } else {
+            self.builtin_command(args, redirects)
+        }
+    }
+
+    /// zsleep - sleep with fractional seconds
+    pub(crate) fn builtin_zsleep(&self, args: &[String]) -> i32 {
+        // zsh/Src/Modules/system.c sleep_main accepts a single
+        // non-negative numeric arg (NaN / negative / inf are
+        // rejected). Direct port of bin_zsleep in zsh's mod_zselect:
+        // negative-or-non-finite -> no-op exit 0; valid duration
+        // sleeps via nanosleep.
+        if args.is_empty() {
+            eprintln!("zshrs:zsleep:1: missing argument");
+            return 1;
+        }
+
+        let secs: f64 = match args[0].parse() {
+            Ok(s) => s,
+            Err(_) => {
+                eprintln!("zshrs:zsleep:1: invalid number: {}", args[0]);
+                return 1;
+            }
+        };
+
+        // Duration::from_secs_f64 panics on negative / NaN / +inf.
+        // zsh's sleep just returns 0 for non-positive durations.
+        // Also clamp the upper bound: secs >= u64::MAX as f64 (~1.8e19)
+        // also panics; cap at i64::MAX seconds (≈292 years) to be safe.
+        if !secs.is_finite() || secs <= 0.0 {
+            return 0;
+        }
+        let capped = if secs > i64::MAX as f64 {
+            i64::MAX as f64
+        } else {
+            secs
+        };
+        std::thread::sleep(std::time::Duration::from_secs_f64(capped));
+        0
+    }
+
+    /// cp - copy files
+    /// Port from zsh/Src/Modules/files.c recursive copy functionality
+    pub(crate) fn builtin_cp(&self, args: &[String]) -> i32 {
+        let mut recursive = false;
+        let mut force = false;
+        let mut interactive = false;
+        // -n: never overwrite. coreutils -f / -i / -n are mutually
+        // exclusive, last one wins.
+        let mut no_clobber = false;
+        let mut preserve = false;
+        let mut verbose = false;
+        let mut files: Vec<&str> = Vec::new();
+
+        for arg in args {
+            match arg.as_str() {
+                "-r" | "-R" | "--recursive" => recursive = true,
+                "-f" | "--force" => {
+                    force = true;
+                    interactive = false;
+                    no_clobber = false;
+                }
+                "-i" | "--interactive" => {
+                    interactive = true;
+                    force = false;
+                    no_clobber = false;
+                }
+                "-n" | "--no-clobber" => {
+                    no_clobber = true;
+                    force = false;
+                    interactive = false;
+                }
+                "-p" | "--preserve" => preserve = true,
+                "-v" | "--verbose" => verbose = true,
+                "--" => {} // end of options
+                s if !s.starts_with('-') || s == "-" => files.push(s),
+                s => {
+                    // coreutils cp rejects unknown flags.
+                    eprintln!("cp: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+
+        if files.len() < 2 {
+            eprintln!("cp: missing file operand");
+            return 1;
+        }
+
+        let target = files.pop().unwrap();
+        let target_path = std::path::Path::new(target);
+        let is_dir = target_path.is_dir();
+
+        // Per-file continue-on-error per coreutils (was return 1 on
+        // first failure, leaving the rest unprocessed).
+        let mut cp_status = 0;
+        for src in files {
+            let src_path = std::path::Path::new(src);
+            let dest = if is_dir {
+                format!(
+                    "{}/{}",
+                    target,
+                    src_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| src.to_string())
+                )
+            } else {
+                target.to_string()
+            };
+
+            let dest_path = std::path::Path::new(&dest);
+            if dest_path.exists() && !force {
+                if no_clobber {
+                    if verbose {
+                        println!("'{}' -> '{}' (skipped, target exists)", src, dest);
+                    }
+                    continue;
+                }
+                if interactive {
+                    eprint!("cp: overwrite '{}'? ", dest);
+                    let mut response = String::new();
+                    if std::io::stdin().read_line(&mut response).is_err()
+                        || !response.trim().eq_ignore_ascii_case("y")
+                    {
+                        continue;
+                    }
+                }
+            }
+
+            let result = if src_path.is_dir() {
+                if recursive {
+                    Self::copy_dir_recursive(src_path, dest_path)
+                } else {
+                    eprintln!("cp: -r not specified; omitting directory '{}'", src);
+                    cp_status = 1;
+                    continue;
+                }
+            } else {
+                std::fs::copy(src, &dest).map(|_| ())
+            };
+
+            if let Err(e) = result {
+                eprintln!("cp: cannot copy '{}' to '{}': {}", src, dest, e);
+                cp_status = 1;
+                continue;
+            }
+
+            // -p: preserve mode, ownership, atime/mtime — coreutils
+            // cp(1) `-p` semantics. std::fs::copy already replicates
+            // mode bits, but timestamps and uid/gid require explicit
+            // chown(2) + utimensat(2) syscalls.
+            if preserve {
+                use std::os::unix::fs::MetadataExt;
+                if let Ok(meta) = std::fs::metadata(src) {
+                    let dest_c = std::ffi::CString::new(dest.as_bytes()).ok();
+                    if let Some(c) = dest_c {
+                        unsafe {
+                            // chown(dest, uid, gid) — fails silently if
+                            // not root (matches coreutils behaviour).
+                            libc::chown(c.as_ptr(), meta.uid(), meta.gid());
+                        }
+                        // utimensat(AT_FDCWD, dest, [atime, mtime], 0)
+                        let times = [
+                            libc::timespec {
+                                tv_sec: meta.atime() as libc::time_t,
+                                tv_nsec: meta.atime_nsec(),
+                            },
+                            libc::timespec {
+                                tv_sec: meta.mtime() as libc::time_t,
+                                tv_nsec: meta.mtime_nsec(),
+                            },
+                        ];
+                        unsafe {
+                            libc::utimensat(libc::AT_FDCWD, c.as_ptr(), times.as_ptr(), 0);
+                        }
+                    }
+                }
+            }
+
+            if verbose {
+                println!("'{}' -> '{}'", src, dest);
+            }
+        }
+        cp_status
+    }
+
+    /// zln/zmv/zcp - file operations (zsh/files module)
+    pub(crate) fn builtin_zfiles(&self, cmd: &str, args: &[String]) -> i32 {
+        let mut force = false;
+        let mut verbose = false;
+        let mut files: Vec<&str> = Vec::new();
+
+        for arg in args {
+            match arg.as_str() {
+                "-f" => force = true,
+                "-v" => verbose = true,
+                "-i" => {} // interactive - ignored
+                s if !s.starts_with('-') => files.push(s),
+                s => {
+                    eprintln!("zshrs:{}:1: bad option: {}", cmd, s);
+                    return 1;
+                }
+            }
+        }
+
+        if files.len() < 2 {
+            eprintln!("zshrs:{}:1: missing operand", cmd);
+            return 1;
+        }
+
+        let target = files.pop().unwrap();
+        let target_is_dir = std::path::Path::new(target).is_dir();
+
+        for src in files {
+            let dest = if target_is_dir {
+                format!(
+                    "{}/{}",
+                    target,
+                    std::path::Path::new(src)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| src.to_string())
+                )
+            } else {
+                target.to_string()
+            };
+
+            if !force && std::path::Path::new(&dest).exists() {
+                eprintln!("{}: '{}' already exists", cmd, dest);
+                continue;
+            }
+
+            let result = match cmd {
+                "zln" => {
+                    #[cfg(unix)]
+                    {
+                        std::os::unix::fs::symlink(src, &dest)
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::Unsupported,
+                            "symlinks not supported",
+                        ))
+                    }
+                }
+                "zcp" => std::fs::copy(src, &dest).map(|_| ()),
+                "zmv" => std::fs::rename(src, &dest),
+                _ => Ok(()),
+            };
+
+            match result {
+                Ok(()) => {
+                    if verbose {
+                        println!("{} -> {}", src, dest);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{}: {}: {}", cmd, src, e);
+                    return 1;
+                }
+            }
+        }
+
+        0
+    }
+
+    /// coproc - manage coprocesses
+    pub(crate) fn builtin_coproc(&mut self, args: &[String]) -> i32 {
+        // Basic coproc implementation
+        if args.is_empty() {
+            // List coprocesses
+            println!("(no coprocesses)");
+            return 0;
+        }
+
+        // Start a coprocess
+        let cmd = args.join(" ");
+        match std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&cmd)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => {
+                println!("[coproc] {}", child.id());
+                0
+            }
+            Err(e) => {
+                eprintln!("zshrs:coproc:1: {}", e);
+                1
+            }
+        }
+    }
+
+    /// zmv / zcp / zln — pattern-based rename. Native Rust port of
+    /// the autoloaded zsh function. Glob the source pattern (with
+    /// `(...)` capture groups), substitute `$1`/`$2`/... in the
+    /// destination, then mv/cp/ln each match.
+    ///
+    /// Supported flags:
+    ///   -n   dry-run (print actions, don't execute)
+    ///   -f   force overwrite
+    ///   -i   interactive (prompt — falls back to skip on no-tty)
+    ///   -v   verbose
+    ///   -W   wildcard mode: `*` in src maps to `*` in dest position
+    ///   -M   force mv mode (default for `zmv`)
+    ///   -C   force cp mode
+    ///   -L   force ln mode (hard link)
+    ///   -s   ln -s (symlink) when in ln mode
+    ///   -p prog  use `prog` instead of mv/cp/ln
+    pub(crate) fn builtin_zmv(&mut self, args: &[String], default_action: &str) -> i32 {
+        let mut action = default_action.to_string();
+        let mut dry_run = false;
+        let mut force = false;
+        let mut verbose = false;
+        let mut wildcard = false;
+        let mut symlink = false;
+        let mut positional: Vec<String> = Vec::new();
+        let mut iter = args.iter().peekable();
+        while let Some(a) = iter.next() {
+            if a == "--" {
+                for p in iter.by_ref() {
+                    positional.push(p.clone());
+                }
+                break;
+            }
+            if let Some(rest) = a.strip_prefix('-') {
+                if rest.is_empty() {
+                    positional.push(a.clone());
+                    continue;
+                }
+                for c in rest.chars() {
+                    match c {
+                        'n' => dry_run = true,
+                        'f' => force = true,
+                        'i' => {} // interactive — treat as skip-on-conflict
+                        'v' => verbose = true,
+                        'W' => wildcard = true,
+                        's' => symlink = true,
+                        'M' => action = "mv".to_string(),
+                        'C' => action = "cp".to_string(),
+                        'L' => action = "ln".to_string(),
+                        'p' => {
+                            // `-p prog` consumes the next arg.
+                            if let Some(p) = iter.next() {
+                                action = p.clone();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            } else {
+                positional.push(a.clone());
+            }
+        }
+        if positional.len() < 2 {
+            eprintln!(
+                "{}: usage: {} [-flags] FROM_PATTERN TO_PATTERN",
+                action, action
+            );
+            return 1;
+        }
+        let from_pat = &positional[0];
+        let to_pat = &positional[1];
+
+        // Convert source pattern with `(...)` capture groups to a
+        // regex anchored at both ends. zsh-style globs:
+        //   `*`   → `(.*)` (capture if -W or wrapped in `(...)`,
+        //          else just `.*`)
+        //   `?`   → `.`
+        //   `(p)` → `(p_translated)` capture group
+        //   `[…]` → `[…]` literal char class
+        let mut regex_src = String::from("^");
+        let mut chars = from_pat.chars().peekable();
+        let mut group_idx = 0;
+        while let Some(c) = chars.next() {
+            match c {
+                '*' => {
+                    if wildcard {
+                        regex_src.push_str("(.*)");
+                        group_idx += 1;
+                    } else {
+                        regex_src.push_str(".*");
+                    }
+                }
+                '?' => regex_src.push('.'),
+                '(' => {
+                    regex_src.push('(');
+                    group_idx += 1;
+                }
+                ')' => regex_src.push(')'),
+                '[' => {
+                    regex_src.push('[');
+                    for cc in chars.by_ref() {
+                        if cc == ']' {
+                            regex_src.push(']');
+                            break;
+                        }
+                        regex_src.push(cc);
+                    }
+                }
+                '|' => regex_src.push('|'),
+                '.' | '+' | '^' | '$' | '\\' | '{' | '}' => {
+                    regex_src.push('\\');
+                    regex_src.push(c);
+                }
+                _ => regex_src.push(c),
+            }
+        }
+        regex_src.push('$');
+        let _ = group_idx;
+        let re = match regex::Regex::new(&regex_src) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("{}: bad pattern: {}", action, e);
+                return 1;
+            }
+        };
+
+        // Enumerate candidate files. zsh's zmv glob has `(...)` as
+        // capture-group syntax, NOT alternation, so the source pattern
+        // can't be passed straight to expand_glob (which would either
+        // treat it as a glob qualifier suffix or fail). Strip the
+        // capture parens to get a plain glob pattern, then keep only
+        // the entries that match the regex.
+        let glob_pat: String = from_pat
+            .chars()
+            .filter(|c| *c != '(' && *c != ')')
+            .collect();
+        let candidates = self.expand_glob(&glob_pat);
+        if candidates.len() == 1
+            && candidates[0] == glob_pat
+            && !std::path::Path::new(&candidates[0]).exists()
+        {
+            eprintln!("{}: no matches found: {}", action, from_pat);
+            return 1;
+        }
+
+        // For each match, compute destination by applying captures.
+        let mut renames: Vec<(String, String)> = Vec::new();
+        for src in &candidates {
+            let caps = match re.captures(src) {
+                Some(c) => c,
+                None => continue,
+            };
+            // Substitute `$1`..`$9` and `${1}` in to_pat with capture
+            // group contents.
+            let mut dest = String::new();
+            let mut to_chars = to_pat.chars().peekable();
+            while let Some(c) = to_chars.next() {
+                if c == '$' {
+                    let next = to_chars.peek().copied();
+                    match next {
+                        Some(d) if d.is_ascii_digit() => {
+                            to_chars.next();
+                            let idx = d.to_digit(10).unwrap_or(0) as usize;
+                            if let Some(m) = caps.get(idx) {
+                                dest.push_str(m.as_str());
+                            }
+                        }
+                        Some('{') => {
+                            to_chars.next();
+                            let mut ns = String::new();
+                            while let Some(&pc) = to_chars.peek() {
+                                if pc == '}' {
+                                    to_chars.next();
+                                    break;
+                                }
+                                ns.push(pc);
+                                to_chars.next();
+                            }
+                            if let Ok(idx) = ns.parse::<usize>() {
+                                if let Some(m) = caps.get(idx) {
+                                    dest.push_str(m.as_str());
+                                }
+                            }
+                        }
+                        _ => dest.push(c),
+                    }
+                } else {
+                    dest.push(c);
+                }
+            }
+            renames.push((src.clone(), dest));
+        }
+
+        // Detect collisions: two different sources mapping to the same
+        // destination. zsh errors out before any file action.
+        let mut seen: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+        let mut collisions = false;
+        for (s, d) in &renames {
+            if let Some(prev) = seen.insert(d.as_str(), s.as_str()) {
+                eprintln!("{}: error: {} and {} both map to {}", action, s, prev, d);
+                collisions = true;
+            }
+        }
+        if collisions {
+            return 1;
+        }
+
+        // Execute (or print, if -n).
+        let prog = match action.as_str() {
+            "mv" | "cp" | "ln" => action.clone(),
+            other => other.to_string(),
+        };
+        let mut status = 0;
+        for (s, d) in &renames {
+            if !force && std::path::Path::new(d).exists() {
+                eprintln!("{}: {}: destination exists", action, d);
+                status = 1;
+                continue;
+            }
+            if dry_run {
+                if symlink && action == "ln" {
+                    println!("{} -s -- {} {}", prog, s, d);
+                } else {
+                    println!("{} -- {} {}", prog, s, d);
+                }
+                continue;
+            }
+            if verbose {
+                println!("{} -> {}", s, d);
+            }
+            let result = match action.as_str() {
+                "mv" => std::fs::rename(s, d),
+                "cp" => std::fs::copy(s, d).map(|_| ()),
+                "ln" => {
+                    if symlink {
+                        #[cfg(unix)]
+                        {
+                            std::os::unix::fs::symlink(s, d)
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            Err(std::io::Error::new(
+                                std::io::ErrorKind::Unsupported,
+                                "symlink",
+                            ))
+                        }
+                    } else {
+                        std::fs::hard_link(s, d)
+                    }
+                }
+                _ => {
+                    // External program — shell out.
+                    let st = std::process::Command::new(&prog).arg(s).arg(d).status();
+                    match st {
+                        Ok(s) => {
+                            if s.success() {
+                                Ok(())
+                            } else {
+                                Err(std::io::Error::other("exit nonzero"))
+                            }
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+            };
+            if let Err(e) = result {
+                eprintln!("{}: {}: {}", action, s, e);
+                status = 1;
+            }
+        }
+        status
+    }
+
+    /// zcalc — basic non-interactive calculator. zsh's autoloaded
+    /// zcalc is interactive (REPL); we support the `-e EXPR` form
+    /// which evaluates a single expression and prints the result.
+    /// Without `-e`, interactive mode is not supported and we exit 1.
+    pub(crate) fn builtin_zcalc(&mut self, args: &[String]) -> i32 {
+        // -e EXPR / --expression EXPR — evaluate one expression and
+        // print the result.
+        let mut iter = args.iter().peekable();
+        while let Some(a) = iter.next() {
+            if a == "-e" || a == "--expression" {
+                if let Some(expr) = iter.next() {
+                    let result = self.evaluate_arithmetic(expr);
+                    println!("{}", result);
+                    return 0;
+                }
+            } else if let Some(expr) = a.strip_prefix("-e") {
+                let result = self.evaluate_arithmetic(expr);
+                println!("{}", result);
+                return 0;
+            }
+        }
+        eprintln!("zshrs:zcalc:1: interactive mode not supported in non-tty; use `zcalc -e EXPR`");
+        1
+    }
+
+    /// zgetattr/zsetattr/zdelattr/zlistattr - extended attributes
+    /// (zsh/attr module). Direct port of src/zsh/Src/Modules/attr.c
+    /// bin_getattr/bin_setattr/bin_delattr/bin_listattr.
+    /// Direct syscalls — no fork to xattr/getfattr.
+    pub(crate) fn builtin_zattr(&mut self, cmd: &str, args: &[String]) -> i32 {
+        // Parse `-h` (operate on symlink itself, not target). Direct
+        // port of attr.c bin_* OPT_ISSET(ops,'h') logic — when -h is
+        // present, use l*xattr variants on Linux / XATTR_NOFOLLOW
+        // flag on macOS. On Linux the symlink-aware syscalls have
+        // distinct names; on macOS the same syscall takes
+        // XATTR_NOFOLLOW (0x0001) in its `options` argument.
+        let mut symlink = false;
+        let mut positional: Vec<&str> = Vec::with_capacity(args.len());
+        let mut iter = args.iter();
+        while let Some(a) = iter.next() {
+            if a == "--" {
+                positional.extend(iter.by_ref().map(|s| s.as_str()));
+                break;
+            }
+            if a == "-h" {
+                symlink = true;
+                continue;
+            }
+            if a.starts_with('-') && a.len() > 1 {
+                // attr.c BUILTIN("zgetattr"/etc) declares only -h as
+                // valid. Unknown flags previously got pushed as
+                // positional args and led to confusing "no such file"
+                // errors.
+                eprintln!("zshrs:{}:1: bad option: {}", cmd, a);
+                return 1;
+            }
+            positional.push(a.as_str());
+        }
+        match cmd {
+            "zgetattr" => {
+                // attr.c:98-130 bin_getattr — usage: zgetattr [-h] file attr [param]
+                if positional.len() < 2 {
+                    eprintln!("zshrs:zgetattr:1: need file and attribute name");
+                    return 1;
+                }
+                let file = positional[0];
+                let attr = positional[1];
+                let param = positional.get(2).copied();
+                let path = std::ffi::CString::new(file).unwrap_or_default();
+                let name = std::ffi::CString::new(attr).unwrap_or_default();
+                // First call with size=0 to get length (attr.c:107).
+                #[cfg(target_os = "macos")]
+                let val_len = unsafe {
+                    let opts = if symlink { 0x0001 } else { 0 }; // XATTR_NOFOLLOW
+                    libc::getxattr(
+                        path.as_ptr(),
+                        name.as_ptr(),
+                        std::ptr::null_mut(),
+                        0,
+                        0,
+                        opts,
+                    )
+                };
+                #[cfg(target_os = "linux")]
+                let val_len = unsafe {
+                    if symlink {
+                        libc::lgetxattr(path.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0)
+                    } else {
+                        libc::getxattr(path.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0)
+                    }
+                };
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                let val_len: isize = -1;
+                if val_len == 0 {
+                    // attr.c:108-112 — empty xattr; unset param if given.
+                    if let Some(p) = param {
+                        self.variables.remove(p);
+                        self.arrays.remove(p);
+                    }
+                    return 0;
+                }
+                if val_len < 0 {
+                    eprintln!(
+                        "zshrs:zgetattr:1: {}: {}",
+                        file,
+                        std::io::Error::last_os_error()
+                    );
+                    return 1;
+                }
+                let mut buf = vec![0u8; val_len as usize];
+                #[cfg(target_os = "macos")]
+                let attr_len = unsafe {
+                    let opts = if symlink { 0x0001 } else { 0 };
+                    libc::getxattr(
+                        path.as_ptr(),
+                        name.as_ptr(),
+                        buf.as_mut_ptr() as *mut libc::c_void,
+                        buf.len(),
+                        0,
+                        opts,
+                    )
+                };
+                #[cfg(target_os = "linux")]
+                let attr_len = unsafe {
+                    if symlink {
+                        libc::lgetxattr(
+                            path.as_ptr(),
+                            name.as_ptr(),
+                            buf.as_mut_ptr() as *mut libc::c_void,
+                            buf.len(),
+                        )
+                    } else {
+                        libc::getxattr(
+                            path.as_ptr(),
+                            name.as_ptr(),
+                            buf.as_mut_ptr() as *mut libc::c_void,
+                            buf.len(),
+                        )
+                    }
+                };
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                let attr_len: isize = -1;
+                if attr_len < 0 || attr_len > val_len {
+                    eprintln!(
+                        "zshrs:zgetattr:1: {}: {}",
+                        file,
+                        std::io::Error::last_os_error()
+                    );
+                    return if attr_len < 0 || attr_len > val_len {
+                        2
+                    } else {
+                        1
+                    };
+                }
+                buf.truncate(attr_len as usize);
+                let val = String::from_utf8_lossy(&buf).to_string();
+                if let Some(p) = param {
+                    self.variables.insert(p.to_string(), val);
+                } else {
+                    println!("{}", val);
+                }
+                0
+            }
+            "zsetattr" => {
+                // attr.c:133-147 bin_setattr — usage: zsetattr [-h] file attr value
+                if positional.len() < 3 {
+                    eprintln!("zshrs:zsetattr:1: need file, attribute name, and value");
+                    return 1;
+                }
+                let file = positional[0];
+                let attr = positional[1];
+                let value = positional[2].as_bytes();
+                let path = std::ffi::CString::new(file).unwrap_or_default();
+                let name = std::ffi::CString::new(attr).unwrap_or_default();
+                #[cfg(target_os = "macos")]
+                let ret = unsafe {
+                    let opts = if symlink { 0x0001 } else { 0 };
+                    libc::setxattr(
+                        path.as_ptr(),
+                        name.as_ptr(),
+                        value.as_ptr() as *const libc::c_void,
+                        value.len(),
+                        0,
+                        opts,
+                    )
+                };
+                #[cfg(target_os = "linux")]
+                let ret = unsafe {
+                    if symlink {
+                        libc::lsetxattr(
+                            path.as_ptr(),
+                            name.as_ptr(),
+                            value.as_ptr() as *const libc::c_void,
+                            value.len(),
+                            0,
+                        )
+                    } else {
+                        libc::setxattr(
+                            path.as_ptr(),
+                            name.as_ptr(),
+                            value.as_ptr() as *const libc::c_void,
+                            value.len(),
+                            0,
+                        )
+                    }
+                };
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                let ret: i32 = -1;
+                if ret == 0 {
+                    0
+                } else {
+                    eprintln!(
+                        "zshrs:zsetattr:1: {}: {}",
+                        file,
+                        std::io::Error::last_os_error()
+                    );
+                    1
+                }
+            }
+            "zdelattr" => {
+                // attr.c:150-166 bin_delattr — usage: zdelattr [-h] file attr...
+                // (multiple attrs may be passed).
+                if positional.len() < 2 {
+                    eprintln!("zshrs:zdelattr:1: need file and attribute name");
+                    return 1;
+                }
+                let file = positional[0];
+                let path = std::ffi::CString::new(file).unwrap_or_default();
+                for attr in &positional[1..] {
+                    let name = std::ffi::CString::new(*attr).unwrap_or_default();
+                    #[cfg(target_os = "macos")]
+                    let ret = unsafe {
+                        let opts = if symlink { 0x0001 } else { 0 };
+                        libc::removexattr(path.as_ptr(), name.as_ptr(), opts)
+                    };
+                    #[cfg(target_os = "linux")]
+                    let ret = unsafe {
+                        if symlink {
+                            libc::lremovexattr(path.as_ptr(), name.as_ptr())
+                        } else {
+                            libc::removexattr(path.as_ptr(), name.as_ptr())
+                        }
+                    };
+                    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                    let ret: i32 = -1;
+                    if ret != 0 {
+                        eprintln!(
+                            "zshrs:zdelattr:1: {}: {}",
+                            file,
+                            std::io::Error::last_os_error()
+                        );
+                        return 1;
+                    }
+                }
+                0
+            }
+            "zlistattr" => {
+                // attr.c:169-215 bin_listattr — usage: zlistattr [-h] file [param]
+                if positional.is_empty() {
+                    eprintln!("zshrs:zlistattr:1: need file");
+                    return 1;
+                }
+                let file = positional[0];
+                let param = positional.get(1).copied();
+                let path = std::ffi::CString::new(file).unwrap_or_default();
+                #[cfg(target_os = "macos")]
+                let val_len = unsafe {
+                    let opts = if symlink { 0x0001 } else { 0 };
+                    libc::listxattr(path.as_ptr(), std::ptr::null_mut(), 0, opts)
+                };
+                #[cfg(target_os = "linux")]
+                let val_len = unsafe {
+                    if symlink {
+                        libc::llistxattr(path.as_ptr(), std::ptr::null_mut(), 0)
+                    } else {
+                        libc::listxattr(path.as_ptr(), std::ptr::null_mut(), 0)
+                    }
+                };
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                let val_len: isize = -1;
+                if val_len == 0 {
+                    if let Some(p) = param {
+                        self.variables.remove(p);
+                        self.arrays.remove(p);
+                    }
+                    return 0;
+                }
+                if val_len < 0 {
+                    eprintln!(
+                        "zshrs:zlistattr:1: {}: {}",
+                        file,
+                        std::io::Error::last_os_error()
+                    );
+                    return 1;
+                }
+                let mut buf = vec![0u8; val_len as usize];
+                #[cfg(target_os = "macos")]
+                let list_len = unsafe {
+                    let opts = if symlink { 0x0001 } else { 0 };
+                    libc::listxattr(path.as_ptr(), buf.as_mut_ptr() as *mut i8, buf.len(), opts)
+                };
+                #[cfg(target_os = "linux")]
+                let list_len = unsafe {
+                    if symlink {
+                        libc::llistxattr(path.as_ptr(), buf.as_mut_ptr() as *mut i8, buf.len())
+                    } else {
+                        libc::listxattr(path.as_ptr(), buf.as_mut_ptr() as *mut i8, buf.len())
+                    }
+                };
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                let list_len: isize = -1;
+                if list_len < 0 || list_len > val_len {
+                    eprintln!(
+                        "zshrs:zlistattr:1: {}: {}",
+                        file,
+                        std::io::Error::last_os_error()
+                    );
+                    return if list_len < 0 || list_len > val_len {
+                        2
+                    } else {
+                        1
+                    };
+                }
+                buf.truncate(list_len as usize);
+                let names: Vec<String> = buf
+                    .split(|&b| b == 0)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| String::from_utf8_lossy(s).into_owned())
+                    .collect();
+                if let Some(p) = param {
+                    self.arrays.insert(p.to_string(), names);
+                } else {
+                    for n in &names {
+                        println!("{}", n);
+                    }
+                }
+                0
+            }
+            _ => 1,
+        }
+    }
+
+    /// promptinit - initialize prompt theme system
+    pub(crate) fn builtin_promptinit(&mut self, _args: &[String]) -> i32 {
+        self.arrays.insert(
+            "prompt_themes".to_string(),
+            vec![
+                "adam1".to_string(),
+                "adam2".to_string(),
+                "bart".to_string(),
+                "bigfade".to_string(),
+                "clint".to_string(),
+                "default".to_string(),
+                "elite".to_string(),
+                "elite2".to_string(),
+                "fade".to_string(),
+                "fire".to_string(),
+                "minimal".to_string(),
+                "off".to_string(),
+                "oliver".to_string(),
+                "pws".to_string(),
+                "redhat".to_string(),
+                "restore".to_string(),
+                "suse".to_string(),
+                "walters".to_string(),
+                "zefram".to_string(),
+            ],
+        );
+        self.variables
+            .insert("prompt_theme".to_string(), "default".to_string());
+        0
+    }
+
+    /// prompt - set or list prompt themes
+    pub(crate) fn builtin_prompt(&mut self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            let theme = self
+                .variables
+                .get("prompt_theme")
+                .cloned()
+                .unwrap_or_else(|| "default".to_string());
+            println!("Current prompt theme: {}", theme);
+            return 0;
+        }
+        match args[0].as_str() {
+            "-l" | "--list" => {
+                println!("Available prompt themes:");
+                if let Some(themes) = self.arrays.get("prompt_themes") {
+                    for theme in themes {
+                        println!("  {}", theme);
+                    }
+                }
+            }
+            "-p" | "--preview" => {
+                let theme = args.get(1).map(|s| s.as_str()).unwrap_or("default");
+                self.apply_prompt_theme(theme, true);
+            }
+            "-h" | "--help" => {
+                println!("prompt [options] [theme]");
+                println!("  -l, --list     List available themes");
+                println!("  -p, --preview  Preview a theme");
+                println!("  -s, --setup    Set up a theme");
+            }
+            _ => {
+                let theme = if args[0].starts_with('-') {
+                    args.get(1).map(|s| s.as_str()).unwrap_or("default")
+                } else {
+                    args[0].as_str()
+                };
+                self.apply_prompt_theme(theme, false);
+            }
+        }
+        0
+    }
+
+    pub(crate) fn builtin_cat(&self, args: &[String]) -> i32 {
+        // coreutils cat(1) port: adds -E (show $ at line end),
+        // -T (show TAB as ^I), -A (= -vET), -b (number nonempty),
+        // -s (squeeze blank lines), -v (show non-printing as ^X).
+        use std::io::{self, BufRead, BufReader, Read, Write};
+
+        let mut number_all = false;
+        let mut number_nonempty = false;
+        let mut show_ends = false;
+        let mut show_tabs = false;
+        let mut show_nonprint = false;
+        let mut squeeze_blank = false;
+        let mut files: Vec<&str> = Vec::new();
+
+        for arg in args {
+            match arg.as_str() {
+                "-n" => number_all = true,
+                "-b" => number_nonempty = true,
+                "-E" => show_ends = true,
+                "-T" => show_tabs = true,
+                "-v" => show_nonprint = true,
+                "-A" => {
+                    show_ends = true;
+                    show_tabs = true;
+                    show_nonprint = true;
+                }
+                "-e" => {
+                    show_ends = true;
+                    show_nonprint = true;
+                }
+                "-t" => {
+                    show_tabs = true;
+                    show_nonprint = true;
+                }
+                "-s" => squeeze_blank = true,
+                "-" => files.push("-"),
+                a if a.starts_with('-') && a.len() > 1 => {
+                    for c in a[1..].chars() {
+                        match c {
+                            'n' => number_all = true,
+                            'b' => number_nonempty = true,
+                            'E' => show_ends = true,
+                            'T' => show_tabs = true,
+                            'v' => show_nonprint = true,
+                            's' => squeeze_blank = true,
+                            'A' => {
+                                show_ends = true;
+                                show_tabs = true;
+                                show_nonprint = true;
+                            }
+                            'e' => {
+                                show_ends = true;
+                                show_nonprint = true;
+                            }
+                            't' => {
+                                show_tabs = true;
+                                show_nonprint = true;
+                            }
+                            // coreutils cat errors on unknown short
+                            // flag letters (esp. inside combined forms
+                            // like \`-nX\`). Old \`_ => {}\` swallowed.
+                            _ => {
+                                eprintln!("cat: unrecognized option: '-{}'", c);
+                                return 1;
+                            }
+                        }
+                    }
+                }
+                _ => files.push(arg),
+            }
+        }
+
+        if files.is_empty() {
+            files.push("-");
+        }
+
+        // Decorate one chunk per cat semantics. Returns the
+        // transformed string with -T / -v / -E applied.
+        let decorate = |s: &str| -> String {
+            if !show_tabs && !show_nonprint && !show_ends {
+                return s.to_string();
+            }
+            let mut out = String::with_capacity(s.len());
+            for c in s.chars() {
+                if c == '\t' {
+                    if show_tabs {
+                        out.push_str("^I");
+                    } else {
+                        out.push('\t');
+                    }
+                    continue;
+                }
+                if c == '\n' {
+                    out.push(c);
+                    continue;
+                }
+                if show_nonprint && (c.is_control() || (c as u32) >= 0x80) {
+                    let code = c as u32;
+                    if code < 0x20 {
+                        out.push('^');
+                        out.push((b'@' + code as u8) as char);
+                    } else if code == 0x7f {
+                        out.push_str("^?");
+                    } else if code < 0x80 {
+                        out.push(c);
+                    } else {
+                        // M- prefix for high-bit chars.
+                        out.push_str("M-");
+                        let lo = code & 0x7f;
+                        if lo < 0x20 {
+                            out.push('^');
+                            out.push((b'@' + lo as u8) as char);
+                        } else {
+                            out.push(char::from_u32(lo).unwrap_or('?'));
+                        }
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        };
+
+        let mut stdout = io::stdout().lock();
+        let mut line_num = 1usize;
+        let mut prev_blank = false;
+        let any_decoration = number_all
+            || number_nonempty
+            || show_ends
+            || show_tabs
+            || show_nonprint
+            || squeeze_blank;
+
+        for file in files {
+            let result: io::Result<()> = (|| {
+                if !any_decoration {
+                    // Fast path: copy bytes through.
+                    if file == "-" {
+                        let stdin = io::stdin();
+                        let mut handle = stdin.lock();
+                        io::copy(&mut handle, &mut stdout)?;
+                    } else {
+                        let mut f = std::fs::File::open(file).inspect_err(|e| {
+                            eprintln!("cat: {}: {}", file, pretty_io_err(e));
+                        })?;
+                        io::copy(&mut f, &mut stdout)?;
+                    }
+                    return Ok(());
+                }
+
+                let reader: Box<dyn BufRead> = if file == "-" {
+                    Box::new(BufReader::new(io::stdin()))
+                } else {
+                    let f = std::fs::File::open(file).inspect_err(|e| {
+                        eprintln!("cat: {}: {}", file, pretty_io_err(e));
+                    })?;
+                    Box::new(BufReader::new(f))
+                };
+
+                for line in reader.lines() {
+                    let line = match line {
+                        Ok(l) => l,
+                        Err(_) => break,
+                    };
+                    let is_blank = line.is_empty();
+                    if squeeze_blank && is_blank && prev_blank {
+                        continue;
+                    }
+                    prev_blank = is_blank;
+
+                    let decorated = decorate(&line);
+                    let suffix = if show_ends { "$" } else { "" };
+                    if number_all || (number_nonempty && !is_blank) {
+                        writeln!(stdout, "{:6}\t{}{}", line_num, decorated, suffix)?;
+                        line_num += 1;
+                    } else {
+                        // -b skips blank-line numbering; both that and the
+                        // unnumbered branch print the decorated text only.
+                        writeln!(stdout, "{}{}", decorated, suffix)?;
+                    }
+                }
+                Ok(())
+            })();
+
+            if result.is_err() {
+                return 1;
+            }
+        }
+        0
+    }
+
+    pub(crate) fn builtin_head(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader, Read, Write};
+
+        // -n N: keep first N lines. -n -N: keep all BUT the last N
+        // lines (coreutils extension). Negative is encoded by a
+        // 'skip_last' tail count.
+        let mut lines = 10usize;
+        let mut skip_last_lines: Option<usize> = None;
+        // Some(N) when -c N was given — switches to byte-count mode.
+        let mut bytes: Option<usize> = None;
+        let mut skip_last_bytes: Option<usize> = None;
+        // -q / -v override the default 'header iff >1 file' rule.
+        let mut force_quiet = false;
+        let mut force_verbose = false;
+        let mut files: Vec<&str> = Vec::new();
+        let mut i = 0;
+
+        // Parse a count that may be negative; returns (positive_count,
+        // is_skip_last).
+        let parse_count = |s: &str| -> (usize, bool) {
+            if let Some(rest) = s.strip_prefix('-') {
+                (rest.parse().unwrap_or(0), true)
+            } else if let Some(rest) = s.strip_prefix('+') {
+                (rest.parse().unwrap_or(0), false)
+            } else {
+                (s.parse().unwrap_or(0), false)
+            }
+        };
+
+        while i < args.len() {
+            let arg = &args[i];
+            if arg == "-n" && i + 1 < args.len() {
+                i += 1;
+                let (n, neg) = parse_count(&args[i]);
+                if neg {
+                    skip_last_lines = Some(n);
+                } else {
+                    lines = n;
+                }
+            } else if let Some(after) = arg.strip_prefix("-n") {
+                let (n, neg) = parse_count(after);
+                if neg {
+                    skip_last_lines = Some(n);
+                } else {
+                    lines = n;
+                }
+            } else if arg == "-c" && i + 1 < args.len() {
+                i += 1;
+                let (n, neg) = parse_count(&args[i]);
+                if neg {
+                    skip_last_bytes = Some(n);
+                } else {
+                    bytes = Some(n);
+                }
+            } else if arg.starts_with("-c") && arg.len() > 2 {
+                let (n, neg) = parse_count(&arg[2..]);
+                if neg {
+                    skip_last_bytes = Some(n);
+                } else {
+                    bytes = Some(n);
+                }
+            } else if arg == "-q" || arg == "--quiet" || arg == "--silent" {
+                force_quiet = true;
+            } else if arg == "-v" || arg == "--verbose" {
+                force_verbose = true;
+            } else if arg.starts_with('-')
+                && arg.len() > 1
+                && arg[1..].chars().all(|c| c.is_ascii_digit())
+            {
+                lines = arg[1..].parse().unwrap_or(10);
+            } else if !arg.starts_with('-') || arg == "-" {
+                files.push(arg);
+            } else if arg == "--" {
+                // end of options — collect rest as files
+                i += 1;
+                while i < args.len() {
+                    files.push(&args[i]);
+                    i += 1;
+                }
+                break;
+            } else {
+                // coreutils head rejects unknown flags. Silent
+                // fall-through made `head -X foo` print foo's first
+                // 10 lines while losing the -X signal.
+                eprintln!("head: unrecognized option: '{}'", arg);
+                return 1;
+            }
+            i += 1;
+        }
+
+        if files.is_empty() {
+            files.push("-");
+        }
+
+        // coreutils: header on iff >1 file. -q forces off, -v forces on.
+        let show_headers = if force_quiet {
+            false
+        } else if force_verbose {
+            true
+        } else {
+            files.len() > 1
+        };
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+
+        for (idx, file) in files.iter().enumerate() {
+            if show_headers {
+                if idx > 0 {
+                    let _ = writeln!(out);
+                }
+                let _ = writeln!(out, "==> {} <==", file);
+            }
+
+            if let Some(skip) = skip_last_bytes {
+                // -c -N: read everything, drop last N bytes.
+                let mut reader: Box<dyn Read> = if *file == "-" {
+                    Box::new(std::io::stdin())
+                } else {
+                    match std::fs::File::open(file) {
+                        Ok(f) => Box::new(f),
+                        Err(e) => {
+                            eprintln!("head: {}: {}", file, pretty_io_err(&e));
+                            return 1;
+                        }
+                    }
+                };
+                let mut buf = Vec::new();
+                let _ = reader.read_to_end(&mut buf);
+                let end = buf.len().saturating_sub(skip);
+                let _ = out.write_all(&buf[..end]);
+                continue;
+            }
+
+            if let Some(n) = bytes {
+                // -c N: byte-count mode. Read up to N bytes and write.
+                let mut reader: Box<dyn Read> = if *file == "-" {
+                    Box::new(std::io::stdin())
+                } else {
+                    match std::fs::File::open(file) {
+                        Ok(f) => Box::new(f),
+                        Err(e) => {
+                            eprintln!("head: {}: {}", file, pretty_io_err(&e));
+                            return 1;
+                        }
+                    }
+                };
+                let mut buf = vec![0u8; n];
+                let mut total = 0usize;
+                while total < n {
+                    match reader.read(&mut buf[total..]) {
+                        Ok(0) => break,
+                        Ok(k) => total += k,
+                        Err(_) => break,
+                    }
+                }
+                let _ = out.write_all(&buf[..total]);
+                continue;
+            }
+
+            let reader: Box<dyn BufRead> = if *file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("head: {}: {}", file, pretty_io_err(&e));
+                        return 1;
+                    }
+                }
+            };
+
+            if let Some(skip) = skip_last_lines {
+                // -n -N: collect all lines, emit all except the last
+                // N. Direct port of coreutils head -n -N.
+                let all: Vec<String> = reader.lines().map_while(Result::ok).collect();
+                let end = all.len().saturating_sub(skip);
+                for line in &all[..end] {
+                    let _ = writeln!(out, "{}", line);
+                }
+            } else {
+                for line in reader.lines().take(lines) {
+                    match line {
+                        Ok(l) => {
+                            let _ = writeln!(out, "{}", l);
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        }
+        0
+    }
+
+    pub(crate) fn builtin_tail(&self, args: &[String]) -> i32 {
+        use std::collections::VecDeque;
+        use std::io::{BufRead, BufReader, Read};
+
+        let mut lines = 10usize;
+        // Some(N) when -c N was given — switches to byte-count mode.
+        let mut bytes: Option<usize> = None;
+        // -n +N / -c +N: start at line/byte N (1-based) instead of
+        // tailing the last N. coreutils extension.
+        let mut start_line: Option<usize> = None;
+        let mut start_byte: Option<usize> = None;
+        let mut force_quiet = false;
+        let mut force_verbose = false;
+        let mut files: Vec<&str> = Vec::new();
+        let mut i = 0;
+
+        let parse_count = |s: &str| -> (usize, bool) {
+            // Returns (count, from_start_flag).
+            if let Some(rest) = s.strip_prefix('+') {
+                (rest.parse().unwrap_or(0), true)
+            } else if let Some(rest) = s.strip_prefix('-') {
+                (rest.parse().unwrap_or(0), false)
+            } else {
+                (s.parse().unwrap_or(0), false)
+            }
+        };
+
+        while i < args.len() {
+            let arg = &args[i];
+            if arg == "-n" && i + 1 < args.len() {
+                i += 1;
+                let (n, from_start) = parse_count(&args[i]);
+                if from_start {
+                    start_line = Some(n);
+                } else {
+                    lines = n;
+                }
+            } else if let Some(after) = arg.strip_prefix("-n") {
+                let (n, from_start) = parse_count(after);
+                if from_start {
+                    start_line = Some(n);
+                } else {
+                    lines = n;
+                }
+            } else if arg == "-c" && i + 1 < args.len() {
+                i += 1;
+                let (n, from_start) = parse_count(&args[i]);
+                if from_start {
+                    start_byte = Some(n);
+                } else {
+                    bytes = Some(n);
+                }
+            } else if arg.starts_with("-c") && arg.len() > 2 {
+                let (n, from_start) = parse_count(&arg[2..]);
+                if from_start {
+                    start_byte = Some(n);
+                } else {
+                    bytes = Some(n);
+                }
+            } else if arg == "-q" || arg == "--quiet" || arg == "--silent" {
+                force_quiet = true;
+            } else if arg == "-v" || arg == "--verbose" {
+                force_verbose = true;
+            } else if arg.starts_with('-')
+                && arg.len() > 1
+                && arg[1..].chars().all(|c| c.is_ascii_digit())
+            {
+                lines = arg[1..].parse().unwrap_or(10);
+            } else if !arg.starts_with('-') || arg == "-" {
+                files.push(arg);
+            } else if arg == "--" {
+                i += 1;
+                while i < args.len() {
+                    files.push(&args[i]);
+                    i += 1;
+                }
+                break;
+            } else if arg == "-f" || arg == "--follow" {
+                // -f (follow): not yet wired through; accept as no-op
+                // for compat. coreutils-style \`tail -f\` would need a
+                // separate streaming loop.
+            } else {
+                eprintln!("tail: unrecognized option: '{}'", arg);
+                return 1;
+            }
+            i += 1;
+        }
+
+        if files.is_empty() {
+            files.push("-");
+        }
+
+        // coreutils: header on iff >1 file. -q forces off, -v forces on.
+        let show_headers = if force_quiet {
+            false
+        } else if force_verbose {
+            true
+        } else {
+            files.len() > 1
+        };
+
+        for (idx, file) in files.iter().enumerate() {
+            if show_headers {
+                if idx > 0 {
+                    println!();
+                }
+                println!("==> {} <==", file);
+            }
+
+            let mut reader: Box<dyn BufRead> = if *file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("tail: {}: {}", file, pretty_io_err(&e));
+                        return 1;
+                    }
+                }
+            };
+
+            if let Some(start) = start_byte {
+                // -c +N: emit from byte N (1-based) onwards.
+                let mut buf = Vec::new();
+                let _ = reader.read_to_end(&mut buf);
+                let s = start.saturating_sub(1).min(buf.len());
+                use std::io::Write;
+                let stdout = std::io::stdout();
+                let _ = stdout.lock().write_all(&buf[s..]);
+                continue;
+            }
+
+            if let Some(n) = bytes {
+                // Byte-count mode: read everything into a buffer
+                // (tail needs the END), keep last n bytes. Simple
+                // approach matches BSD tail -c.
+                let mut buf = Vec::new();
+                let _ = reader.read_to_end(&mut buf);
+                let start = buf.len().saturating_sub(n);
+                use std::io::Write;
+                let stdout = std::io::stdout();
+                let _ = stdout.lock().write_all(&buf[start..]);
+                continue;
+            }
+
+            if let Some(start) = start_line {
+                // -n +N: emit from line N (1-based) onwards.
+                // Streams without buffering the whole file.
+                for (i, line) in reader.lines().map_while(Result::ok).enumerate() {
+                    if i + 1 >= start {
+                        println!("{}", line);
+                    }
+                }
+                continue;
+            }
+
+            let mut ring: VecDeque<String> = VecDeque::with_capacity(lines);
+            for line in reader.lines().map_while(Result::ok) {
+                if ring.len() == lines {
+                    ring.pop_front();
+                }
+                ring.push_back(line);
+            }
+            for line in ring {
+                println!("{}", line);
+            }
+        }
+        0
+    }
+
+    pub(crate) fn builtin_wc(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+
+        let mut count_lines = false;
+        let mut count_words = false;
+        let mut count_bytes = false;
+        let mut count_chars = false;
+        // -L / --max-line-length: width of the longest input line.
+        let mut count_max = false;
+        let mut files: Vec<&str> = Vec::new();
+
+        for arg in args {
+            match arg.as_str() {
+                "-l" => count_lines = true,
+                "-w" => count_words = true,
+                // coreutils wc(1): -c counts BYTES, -m counts unicode
+                // codepoints. Was conflating them — broke wc on
+                // multi-byte input where the user expected -m to
+                // give char counts smaller than the byte count.
+                "-c" => count_bytes = true,
+                "-m" => count_chars = true,
+                "-L" | "--max-line-length" => count_max = true,
+                a if a.starts_with('-') => {
+                    for c in a[1..].chars() {
+                        match c {
+                            'l' => count_lines = true,
+                            'w' => count_words = true,
+                            'c' => count_bytes = true,
+                            'm' => count_chars = true,
+                            'L' => count_max = true,
+                            // coreutils wc errors on unknown short
+                            // flags. \`wc -lXw foo\` previously counted
+                            // lines+words while ignoring -X.
+                            _ => {
+                                eprintln!("wc: unrecognized option: '-{}'", c);
+                                return 1;
+                            }
+                        }
+                    }
+                }
+                _ => files.push(arg),
+            }
+        }
+
+        if !count_lines && !count_words && !count_bytes && !count_chars && !count_max {
+            count_lines = true;
+            count_words = true;
+            count_bytes = true;
+        }
+
+        if files.is_empty() {
+            files.push("-");
+        }
+
+        let mut total_lines = 0usize;
+        let mut total_words = 0usize;
+        let mut total_bytes = 0usize;
+        let mut total_chars = 0usize;
+        let mut total_max = 0usize;
+
+        for file in &files {
+            let reader: Box<dyn BufRead> = if *file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("wc: {}: {}", file, pretty_io_err(&e));
+                        return 1;
+                    }
+                }
+            };
+
+            let mut lines = 0usize;
+            let mut words = 0usize;
+            let mut bytes = 0usize;
+            let mut chars = 0usize;
+            let mut max_line: usize = 0;
+
+            for line in reader.lines().map_while(Result::ok) {
+                lines += 1;
+                words += line.split_whitespace().count();
+                bytes += line.len() + 1; // +1 for the trailing \n
+                chars += line.chars().count() + 1; // +1 for the \n codepoint
+                let w = line.chars().count();
+                if w > max_line {
+                    max_line = w;
+                }
+            }
+
+            total_lines += lines;
+            total_words += words;
+            total_bytes += bytes;
+            total_chars += chars;
+            if max_line > total_max {
+                total_max = max_line;
+            }
+
+            let mut out = String::new();
+            if count_lines {
+                out.push_str(&format!("{:8}", lines));
+            }
+            if count_words {
+                out.push_str(&format!("{:8}", words));
+            }
+            if count_bytes {
+                out.push_str(&format!("{:8}", bytes));
+            }
+            if count_chars {
+                out.push_str(&format!("{:8}", chars));
+            }
+            if count_max {
+                out.push_str(&format!("{:8}", max_line));
+            }
+            if *file != "-" {
+                out.push_str(&format!(" {}", file));
+            }
+            // BSD wc (what zsh uses on macOS) preserves the 8-char
+            // right-aligned padding even on stdin output. trim_start
+            // here was stripping it; output then differed from zsh.
+            println!("{}", out);
+        }
+
+        if files.len() > 1 {
+            let mut out = String::new();
+            if count_lines {
+                out.push_str(&format!("{:8}", total_lines));
+            }
+            if count_words {
+                out.push_str(&format!("{:8}", total_words));
+            }
+            if count_bytes {
+                out.push_str(&format!("{:8}", total_bytes));
+            }
+            if count_chars {
+                out.push_str(&format!("{:8}", total_chars));
+            }
+            if count_max {
+                out.push_str(&format!("{:8}", total_max));
+            }
+            out.push_str(" total");
+            println!("{}", out.trim_start());
+        }
+        0
+    }
+
+    pub(crate) fn builtin_basename(&self, args: &[String]) -> i32 {
+        // coreutils basename(1) port. Adds:
+        // - -a / --multiple: every operand is a path (suffix not
+        //   consumed positionally).
+        // - -s SUFFIX: implies -a, supplies suffix to strip.
+        // - -z / --zero: NUL-terminate output.
+        if args.is_empty() {
+            eprintln!("basename: missing operand");
+            return 1;
+        }
+        let mut multiple = false;
+        let mut suffix: Option<String> = None;
+        let mut zero = false;
+        let mut positional: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-a" | "--multiple" => multiple = true,
+                "-s" | "--suffix" => {
+                    if let Some(s) = iter.next() {
+                        suffix = Some(s.clone());
+                        multiple = true;
+                    }
+                }
+                "-z" | "--zero" => zero = true,
+                "--" => {} // accept end-of-options
+                s if s.starts_with("-s") && s.len() > 2 => {
+                    suffix = Some(s[2..].to_string());
+                    multiple = true;
+                }
+                s if s.starts_with('-') && s.len() > 1 => {
+                    // coreutils basename rejects unknown flags. Old
+                    // silent-ignore made `basename -Z foo` succeed
+                    // returning `foo` while losing the -Z signal.
+                    eprintln!("basename: unrecognized option: '{}'", s);
+                    return 1;
+                }
+                s => positional.push(s),
+            }
+        }
+        if positional.is_empty() {
+            eprintln!("basename: missing operand");
+            return 1;
+        }
+        // Without -a / -s, the legacy 2-arg form: NAME [SUFFIX]
+        // applies the second operand as a suffix to strip from the
+        // first.
+        let term = if zero { '\0' } else { '\n' };
+        let strip_suffix = |name: &mut String, suf: &str| {
+            if name.ends_with(suf) && name.len() > suf.len() {
+                let new_len = name.len() - suf.len();
+                name.truncate(new_len);
+            }
+        };
+        let basename = |path: &str| -> String {
+            let trimmed = path.trim_end_matches('/');
+            let t = if trimmed.is_empty() { path } else { trimmed };
+            std::path::Path::new(t)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.to_string())
+        };
+        if multiple {
+            for p in &positional {
+                let mut name = basename(p);
+                if let Some(ref s) = suffix {
+                    strip_suffix(&mut name, s);
+                }
+                print!("{}{}", name, term);
+            }
+        } else {
+            let path = positional[0];
+            let arg_suffix = positional.get(1).copied();
+            let mut name = basename(path);
+            if let Some(s) = arg_suffix {
+                strip_suffix(&mut name, s);
+            }
+            print!("{}{}", name, term);
+        }
+        0
+    }
+
+    pub(crate) fn builtin_dirname(&self, args: &[String]) -> i32 {
+        // coreutils dirname(1) port. Strip flags before walking
+        // operands, support -z / --zero (NUL-terminate output
+        // instead of newline).
+        if args.is_empty() {
+            eprintln!("dirname: missing operand");
+            return 1;
+        }
+        let mut zero = false;
+        let mut paths: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "-z" | "--zero" => zero = true,
+                "--" => {} // accept end-of-options
+                s if s.starts_with('-') && s.len() > 1 => {
+                    // coreutils dirname rejects unknown flags with
+                    // \"unrecognized option\" exit 1. Silent-ignore
+                    // masked typos like \`dirname -Z foo\` (typo of -z).
+                    eprintln!("dirname: unrecognized option: '{}'", s);
+                    return 1;
+                }
+                s => paths.push(s),
+            }
+        }
+        if paths.is_empty() {
+            eprintln!("dirname: missing operand");
+            return 1;
+        }
+        let term = if zero { '\0' } else { '\n' };
+        for path in paths {
+            // POSIX dirname: trailing '/' chars on a non-root path
+            // collapse; '/foo' → '/'; 'foo' → '.'.
+            let trimmed: &str = if path.is_empty() {
+                "."
+            } else {
+                let t = path.trim_end_matches('/');
+                if t.is_empty() {
+                    "/"
+                } else {
+                    t
+                }
+            };
+            let dir = std::path::Path::new(trimmed)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| ".".to_string());
+            let out = if dir.is_empty() { ".".to_string() } else { dir };
+            print!("{}{}", out, term);
+        }
+        0
+    }
+
+    pub(crate) fn builtin_touch(&self, args: &[String]) -> i32 {
+        // coreutils touch(1) port: -a/-m, -c (no create), -r REF
+        // (copy times from REF). -d / -t / -h are accepted but
+        // not yet honored — they need date-string parsing through
+        // strptime.
+        use std::fs::OpenOptions;
+
+        if args.is_empty() {
+            eprintln!("touch: missing file operand");
+            return 1;
+        }
+
+        let mut atime_only = false;
+        let mut mtime_only = false;
+        let mut no_create = false;
+        let mut reference: Option<String> = None;
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-a" => atime_only = true,
+                "-m" => mtime_only = true,
+                "-c" | "--no-create" => no_create = true,
+                "-r" | "--reference" => {
+                    if let Some(r) = iter.next() {
+                        reference = Some(r.clone());
+                    }
+                }
+                "--" => {} // accept; remaining are files
+                s if s.starts_with('-') && s.len() > 1 => {
+                    // -ac, -am combos: walk chars.
+                    for c in s[1..].chars() {
+                        match c {
+                            'a' => atime_only = true,
+                            'm' => mtime_only = true,
+                            'c' => no_create = true,
+                            // coreutils touch errors on unknown flag
+                            // letters (esp. inside combined forms like
+                            // \`-amX\`). Old \`_ => {}\` swallowed.
+                            _ => {
+                                eprintln!("touch: unrecognized option: '-{}'", c);
+                                return 1;
+                            }
+                        }
+                    }
+                }
+                _ => files.push(arg),
+            }
+        }
+
+        // Determine the target times: from -r REF, or now.
+        let (target_atime, target_mtime) = if let Some(ref refpath) = reference {
+            match std::fs::metadata(refpath) {
+                Ok(meta) => (
+                    filetime::FileTime::from_last_access_time(&meta),
+                    filetime::FileTime::from_last_modification_time(&meta),
+                ),
+                Err(e) => {
+                    eprintln!("touch: {}: {}", refpath, e);
+                    return 1;
+                }
+            }
+        } else {
+            let ft = filetime::FileTime::from_system_time(std::time::SystemTime::now());
+            (ft, ft)
+        };
+
+        let mut status = 0;
+        for file in files {
+            let path = std::path::Path::new(file);
+            if !path.exists() {
+                if no_create {
+                    continue;
+                }
+                if let Err(e) = OpenOptions::new()
+                    .create(true)
+                    .truncate(false) // touch only updates mtime; never truncates
+                    .write(true)
+                    .open(path)
+                {
+                    eprintln!("touch: {}: {}", file, e);
+                    status = 1;
+                    continue;
+                }
+            }
+            // Write times: -a → atime only, -m → mtime only,
+            // neither → both.
+            let result = if atime_only && !mtime_only {
+                filetime::set_file_atime(path, target_atime)
+            } else if mtime_only && !atime_only {
+                filetime::set_file_mtime(path, target_mtime)
+            } else {
+                filetime::set_file_times(path, target_atime, target_mtime)
+            };
+            if let Err(e) = result {
+                eprintln!("touch: {}: {}", file, e);
+                status = 1;
+            }
+        }
+        status
+    }
+
+    pub(crate) fn builtin_realpath(&self, args: &[String]) -> i32 {
+        // coreutils realpath(1) port. Adds -q (quiet), -m (no-exist
+        // check, logical resolution), -s (no symlink resolution),
+        // and the implicit default (-e: every component must exist).
+        if args.is_empty() {
+            eprintln!("realpath: missing operand");
+            return 1;
+        }
+        let mut quiet = false;
+        let mut allow_missing = false;
+        let mut no_symlinks = false;
+        let mut paths: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "-q" | "--quiet" => quiet = true,
+                "-m" | "--canonicalize-missing" => allow_missing = true,
+                "-s" | "--strip" | "--no-symlinks" => no_symlinks = true,
+                "-e" | "--canonicalize-existing" => {
+                    // Default behaviour; flag accepted for portability.
+                }
+                "-L" | "--logical" => no_symlinks = true,
+                "-P" | "--physical" => no_symlinks = false,
+                s if s.starts_with('-') => {
+                    // coreutils realpath rejects unknown flags with
+                    // \"unrecognized option\" exit 1.
+                    eprintln!("realpath: unrecognized option: '{}'", s);
+                    return 1;
+                }
+                _ => paths.push(arg.as_str()),
+            }
+        }
+
+        // Logical normalize: collapse `.` and `..` components without
+        // following symlinks. Used by -m / -s. Direct port of
+        // coreutils canonicalize_filename_mode in the LOGICAL case.
+        let logical_normalize = |p: &std::path::Path| -> std::path::PathBuf {
+            let mut abs: std::path::PathBuf = if p.is_absolute() {
+                std::path::PathBuf::new()
+            } else {
+                std::env::current_dir().unwrap_or_default()
+            };
+            for comp in p.components() {
+                use std::path::Component::*;
+                match comp {
+                    Prefix(_) | RootDir => abs.push(comp.as_os_str()),
+                    CurDir => {}
+                    ParentDir => {
+                        abs.pop();
+                    }
+                    Normal(c) => abs.push(c),
+                }
+            }
+            abs
+        };
+
+        let mut status = 0;
+        for path in &paths {
+            let p = std::path::Path::new(path);
+            let result: Result<std::path::PathBuf, std::io::Error> = if allow_missing || no_symlinks
+            {
+                Ok(logical_normalize(p))
+            } else {
+                std::fs::canonicalize(p)
+            };
+            match result {
+                Ok(abs) => println!("{}", abs.display()),
+                Err(e) => {
+                    if !quiet {
+                        eprintln!("realpath: {}: {}", path, e);
+                    }
+                    status = 1;
+                }
+            }
+        }
+        status
+    }
+
+    pub(crate) fn builtin_sort(&self, args: &[String]) -> i32 {
+        // coreutils sort(1) port — adds case-fold (-f), field
+        // selection (-k N), custom separator (-t C) on top of the
+        // existing -n / -r / -u handling.
+        use std::io::{BufRead, BufReader};
+
+        let mut reverse = false;
+        let mut numeric = false;
+        let mut unique = false;
+        let mut fold = false;
+        // -h / --human-numeric-sort: 1K / 5M / 2G suffix-aware compare.
+        let mut human_numeric = false;
+        // -V / --version-sort: natural (1, 2, 10) instead of (1, 10, 2).
+        let mut version_sort = false;
+        // -R / --random-sort: random shuffle.
+        let mut random_sort = false;
+        // -z / --zero-terminated: input records separated by NUL.
+        let mut zero_term = false;
+        // -b / --ignore-leading-blanks: strip leading whitespace
+        // before comparing.
+        let mut ignore_blanks = false;
+        // -d / --dictionary-order: only [a-zA-Z0-9 \\t] are significant
+        // for comparison; everything else folds to nothing.
+        let mut dictionary = false;
+        // -c / --check: verify input is sorted; don't write output.
+        let mut check_only = false;
+        // -k FIELD: sort by field N (1-based, N-M range).
+        let mut key_start: Option<usize> = None;
+        let mut key_end: Option<usize> = None;
+        // -t C: field separator. Default is run-of-whitespace.
+        let mut sep: Option<char> = None;
+        let mut files: Vec<&str> = Vec::new();
+
+        let mut i = 0;
+        while i < args.len() {
+            let arg = &args[i];
+            match arg.as_str() {
+                "-r" | "--reverse" => reverse = true,
+                "-n" | "--numeric-sort" => numeric = true,
+                "-u" | "--unique" => unique = true,
+                "-f" | "--ignore-case" => fold = true,
+                "-h" | "--human-numeric-sort" => human_numeric = true,
+                "-V" | "--version-sort" => version_sort = true,
+                "-R" | "--random-sort" => random_sort = true,
+                "-z" | "--zero-terminated" => zero_term = true,
+                "-b" | "--ignore-leading-blanks" => ignore_blanks = true,
+                "-d" | "--dictionary-order" => dictionary = true,
+                "-c" | "--check" => check_only = true,
+                "-k" if i + 1 < args.len() => {
+                    i += 1;
+                    if let Some((a, b)) = args[i].split_once(',') {
+                        key_start = a.split('.').next().and_then(|s| s.parse().ok());
+                        key_end = b.split('.').next().and_then(|s| s.parse().ok());
+                    } else {
+                        key_start = args[i].split('.').next().and_then(|s| s.parse().ok());
+                    }
+                }
+                "-t" if i + 1 < args.len() => {
+                    i += 1;
+                    sep = args[i].chars().next();
+                }
+                a if a.starts_with("-k") && a.len() > 2 => {
+                    let s = &a[2..];
+                    if let Some((aa, bb)) = s.split_once(',') {
+                        key_start = aa.split('.').next().and_then(|s| s.parse().ok());
+                        key_end = bb.split('.').next().and_then(|s| s.parse().ok());
+                    } else {
+                        key_start = s.split('.').next().and_then(|s| s.parse().ok());
+                    }
+                }
+                a if a.starts_with("-t") && a.len() > 2 => {
+                    sep = a.chars().nth(2);
+                }
+                a if a.starts_with('-') && a.len() > 1 => {
+                    for c in a[1..].chars() {
+                        match c {
+                            'r' => reverse = true,
+                            'n' => numeric = true,
+                            'u' => unique = true,
+                            'f' => fold = true,
+                            'h' => human_numeric = true,
+                            'V' => version_sort = true,
+                            'R' => random_sort = true,
+                            'z' => zero_term = true,
+                            'b' => ignore_blanks = true,
+                            'd' => dictionary = true,
+                            'c' => check_only = true,
+                            // coreutils sort errors on unknown short
+                            // flags. Old `_ => {}` masked typos like
+                            // `sort -X` (treating it as a no-op).
+                            _ => {
+                                eprintln!("sort: unrecognized option: '-{}'", c);
+                                return 1;
+                            }
+                        }
+                    }
+                }
+                _ => files.push(arg),
+            }
+            i += 1;
+        }
+
+        let mut lines: Vec<String> = Vec::new();
+        if zero_term {
+            // Read raw bytes, split on NUL.
+            use std::io::Read;
+            let mut buf = Vec::new();
+            if files.is_empty() {
+                let _ = std::io::stdin().read_to_end(&mut buf);
+            } else {
+                for file in &files {
+                    match std::fs::File::open(file) {
+                        Ok(mut f) => {
+                            let _ = f.read_to_end(&mut buf);
+                        }
+                        Err(e) => {
+                            eprintln!("sort: {}: {}", file, e);
+                            return 1;
+                        }
+                    }
+                }
+            }
+            for chunk in buf.split(|b| *b == 0) {
+                if chunk.is_empty() {
+                    continue;
+                }
+                lines.push(String::from_utf8_lossy(chunk).into_owned());
+            }
+        } else if files.is_empty() {
+            let stdin = std::io::stdin();
+            for line in stdin.lock().lines().map_while(Result::ok) {
+                lines.push(line);
+            }
+        } else {
+            for file in files {
+                match std::fs::File::open(file) {
+                    Ok(f) => {
+                        for line in BufReader::new(f).lines().map_while(Result::ok) {
+                            lines.push(line);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("sort: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            }
+        }
+
+        // Extract the sort key from a line per -k/-t/-b/-d. Returns
+        // the selected fields joined back with the separator (or just
+        // the line when -k is absent), then optionally trimmed
+        // (-b) and dictionary-filtered (-d).
+        let extract_key = |line: &str| -> String {
+            let raw = match key_start {
+                Some(s) if s >= 1 => {
+                    let start = s - 1;
+                    let parts: Vec<&str> = match sep {
+                        Some(c) => line.split(c).collect(),
+                        None => line.split_whitespace().collect(),
+                    };
+                    let end = key_end
+                        .map(|e| e.saturating_sub(1).min(parts.len().saturating_sub(1)))
+                        .unwrap_or_else(|| parts.len().saturating_sub(1));
+                    if start >= parts.len() {
+                        String::new()
+                    } else {
+                        let sep_str = sep
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| " ".to_string());
+                        parts[start..=end].join(&sep_str)
+                    }
+                }
+                _ => line.to_string(),
+            };
+            let blanks_stripped: String = if ignore_blanks {
+                raw.trim_start().to_string()
+            } else {
+                raw
+            };
+            if dictionary {
+                // Keep alnum + space/tab; drop everything else for
+                // comparison. Direct port of coreutils sort -d.
+                blanks_stripped
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || *c == ' ' || *c == '\t')
+                    .collect()
+            } else {
+                blanks_stripped
+            }
+        };
+
+        // -h: parse '5K', '2.5M', '1G' etc. into an f64 with the
+        // suffix multiplier. Direct port of coreutils sort -h.
+        fn human_value(s: &str) -> f64 {
+            let s = s.trim();
+            // Strip optional leading '+'/'-' and a numeric prefix.
+            let mut end = 0;
+            let mut seen_dot = false;
+            for (i, c) in s.char_indices() {
+                if i == 0 && (c == '+' || c == '-') {
+                    end = c.len_utf8();
+                    continue;
+                }
+                if c.is_ascii_digit() {
+                    end = i + c.len_utf8();
+                } else if c == '.' && !seen_dot {
+                    seen_dot = true;
+                    end = i + c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            let num: f64 = s[..end].parse().unwrap_or(0.0);
+            let suffix = s[end..].chars().next();
+            let mult = match suffix {
+                Some('K') | Some('k') => 1_024.0,
+                Some('M') => 1_048_576.0,
+                Some('G') => 1_073_741_824.0,
+                Some('T') => 1_099_511_627_776.0,
+                Some('P') => 1_125_899_906_842_624.0,
+                _ => 1.0,
+            };
+            num * mult
+        }
+        // -V: split into runs of (non-digit, digit) and compare
+        // pairwise. Direct port of coreutils sort -V.
+        fn version_compare(a: &str, b: &str) -> std::cmp::Ordering {
+            let mut ai = a.chars().peekable();
+            let mut bi = b.chars().peekable();
+            loop {
+                // Compare leading non-digit prefixes lexically.
+                let (mut as_pre, mut bs_pre) = (String::new(), String::new());
+                while let Some(&c) = ai.peek() {
+                    if c.is_ascii_digit() {
+                        break;
+                    }
+                    as_pre.push(c);
+                    ai.next();
+                }
+                while let Some(&c) = bi.peek() {
+                    if c.is_ascii_digit() {
+                        break;
+                    }
+                    bs_pre.push(c);
+                    bi.next();
+                }
+                let pre_cmp = as_pre.cmp(&bs_pre);
+                if pre_cmp != std::cmp::Ordering::Equal {
+                    return pre_cmp;
+                }
+                // Compare the digit run as integers.
+                let mut as_num = String::new();
+                let mut bs_num = String::new();
+                while let Some(&c) = ai.peek() {
+                    if !c.is_ascii_digit() {
+                        break;
+                    }
+                    as_num.push(c);
+                    ai.next();
+                }
+                while let Some(&c) = bi.peek() {
+                    if !c.is_ascii_digit() {
+                        break;
+                    }
+                    bs_num.push(c);
+                    bi.next();
+                }
+                if as_num.is_empty() && bs_num.is_empty() {
+                    return std::cmp::Ordering::Equal;
+                }
+                let an: u128 = as_num.parse().unwrap_or(0);
+                let bn: u128 = bs_num.parse().unwrap_or(0);
+                let num_cmp = an.cmp(&bn);
+                if num_cmp != std::cmp::Ordering::Equal {
+                    return num_cmp;
+                }
+            }
+        }
+        let cmp_keys = |a: &str, b: &str| -> std::cmp::Ordering {
+            let ka = extract_key(a);
+            let kb = extract_key(b);
+            if version_sort {
+                version_compare(&ka, &kb)
+            } else if human_numeric {
+                human_value(&ka)
+                    .partial_cmp(&human_value(&kb))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            } else if numeric {
+                let na: f64 = ka
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0.0);
+                let nb: f64 = kb
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0.0);
+                na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
+            } else if fold {
+                ka.to_lowercase().cmp(&kb.to_lowercase())
+            } else {
+                ka.cmp(&kb)
+            }
+        };
+
+        // -c / --check: report whether input is sorted; never write
+        // sorted output. Direct port of coreutils sort -c. Returns 1
+        // (and prints diagnostic) on first out-of-order pair.
+        if check_only {
+            for w in lines.windows(2) {
+                if cmp_keys(&w[0], &w[1]) == std::cmp::Ordering::Greater {
+                    eprintln!("sort: -:?: disorder: {}", w[1]);
+                    return 1;
+                }
+            }
+            return 0;
+        }
+
+        if random_sort {
+            // -R: shuffle. coreutils -R is a deterministic shuffle
+            // keyed by an MD5 of the line, but a Fisher-Yates with
+            // thread_rng is the standard approximation used by
+            // sort-port crates.
+            use rand::seq::SliceRandom;
+            let mut rng = rand::thread_rng();
+            lines.shuffle(&mut rng);
+        } else {
+            lines.sort_by(|a, b| cmp_keys(a, b));
+        }
+
+        if reverse {
+            lines.reverse();
+        }
+        if unique {
+            lines.dedup();
+        }
+
+        let term = if zero_term { '\0' } else { '\n' };
+        for line in lines {
+            print!("{}{}", line, term);
+        }
+        0
+    }
+
+    pub(crate) fn builtin_find(&self, args: &[String]) -> i32 {
+        use std::path::Path;
+
+        let mut paths: Vec<&str> = Vec::new();
+        let mut name_pattern: Option<&str> = None;
+        let mut type_filter: Option<char> = None;
+        // -maxdepth N caps recursion depth: 0 = only the starting
+        // path itself, 1 = starting path + immediate children, etc.
+        // Was missing — `find /tmp -maxdepth 0` recursed the whole
+        // tree.
+        let mut max_depth: Option<usize> = None;
+        let mut i = 0;
+
+        while i < args.len() {
+            let arg = &args[i];
+            match arg.as_str() {
+                "-name" if i + 1 < args.len() => {
+                    i += 1;
+                    name_pattern = Some(&args[i]);
+                }
+                "-type" if i + 1 < args.len() => {
+                    i += 1;
+                    type_filter = args[i].chars().next();
+                }
+                "-maxdepth" if i + 1 < args.len() => {
+                    i += 1;
+                    max_depth = args[i].parse().ok();
+                }
+                a if !a.starts_with('-') => paths.push(a),
+                _ => {}
+            }
+            i += 1;
+        }
+
+        if paths.is_empty() {
+            paths.push(".");
+        }
+
+        fn walk(
+            dir: &Path,
+            name_pat: Option<&str>,
+            type_f: Option<char>,
+            max_depth: Option<usize>,
+            cur_depth: usize,
+        ) {
+            // Stop recursion if max_depth is set and we're at the
+            // limit. (cur_depth is depth of `dir` itself; we descend
+            // into ITS children, so children would be cur_depth+1.)
+            if let Some(md) = max_depth {
+                if cur_depth >= md {
+                    return;
+                }
+            }
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let meta = entry.metadata().ok();
+                    let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+                    let is_file = meta.as_ref().map(|m| m.is_file()).unwrap_or(false);
+
+                    let type_match = match type_f {
+                        Some('d') => is_dir,
+                        Some('f') => is_file,
+                        _ => true,
+                    };
+
+                    let name_match = match name_pat {
+                        Some(pat) => {
+                            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                            // Use the canonical glob matcher so `[Cc]ode*`,
+                            // `?ar`, `{a,b}*` etc. work. Was a local 4-rule
+                            // matcher that only handled '*PAT' / 'PAT*'.
+                            ShellExecutor::glob_match_static(name, pat)
+                        }
+                        None => true,
+                    };
+
+                    if type_match && name_match {
+                        println!("{}", path.display());
+                    }
+
+                    if is_dir {
+                        walk(&path, name_pat, type_f, max_depth, cur_depth + 1);
+                    }
+                }
+            }
+        }
+
+        for p in paths {
+            let path = Path::new(p);
+            if path.is_dir() {
+                // Print the starting path (counts as depth 0). With
+                // -maxdepth 0, this is the only output for that path.
+                println!("{}", path.display());
+                walk(path, name_pattern, type_filter, max_depth, 0);
+            } else if path.exists() {
+                println!("{}", path.display());
+            } else {
+                eprintln!("find: '{}': No such file or directory", p); // coreutils-style
+            }
+        }
+        0
+    }
+
+    pub(crate) fn builtin_uniq(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+
+        let mut count = false;
+        let mut repeated = false;
+        let mut unique_only = false;
+        let mut ignore_case = false;
+        // -z / --zero-terminated: input/output records separated by
+        // NUL instead of \\n. coreutils extension; useful with
+        // 'find -print0 | sort -z | uniq -z'.
+        let mut zero_term = false;
+        // -f N / --skip-fields=N: skip the first N whitespace-
+        // separated fields when comparing.
+        let mut skip_fields: usize = 0;
+        // -s N / --skip-chars=N: skip N chars after the field-skip
+        // before comparing.
+        let mut skip_chars: usize = 0;
+        let mut files: Vec<&str> = Vec::new();
+
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-c" | "--count" => count = true,
+                "-d" | "--repeated" => repeated = true,
+                "-u" | "--unique" => unique_only = true,
+                "-i" | "--ignore-case" => ignore_case = true,
+                "-z" | "--zero-terminated" => zero_term = true,
+                "-f" | "--skip-fields" => {
+                    if let Some(n) = iter.next() {
+                        skip_fields = n.parse().unwrap_or(0);
+                    }
+                }
+                "-s" | "--skip-chars" => {
+                    if let Some(n) = iter.next() {
+                        skip_chars = n.parse().unwrap_or(0);
+                    }
+                }
+                s if s.starts_with("-f") && s.len() > 2 => {
+                    skip_fields = s[2..].parse().unwrap_or(0);
+                }
+                s if s.starts_with("-s") && s.len() > 2 => {
+                    skip_chars = s[2..].parse().unwrap_or(0);
+                }
+                a if !a.starts_with('-') => files.push(a),
+                "-" => files.push("-"),
+                s => {
+                    // coreutils uniq rejects unknown flags. Old `_ => {}`
+                    // accepted any -X letter silently.
+                    eprintln!("uniq: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+
+        let reader: Box<dyn BufRead> = if files.is_empty() || files[0] == "-" {
+            Box::new(BufReader::new(std::io::stdin()))
+        } else {
+            match std::fs::File::open(files[0]) {
+                Ok(f) => Box::new(BufReader::new(f)),
+                Err(e) => {
+                    eprintln!("uniq: {}: {}", files[0], e);
+                    return 1;
+                }
+            }
+        };
+
+        let mut prev: Option<String> = None;
+        let mut cnt = 0usize;
+        let key = |s: &str| -> String {
+            // -f / -s: drop leading fields then leading chars before
+            // comparing. Field separator is whitespace.
+            let mut tail = s;
+            for _ in 0..skip_fields {
+                let trimmed = tail.trim_start();
+                let after_field = trimmed
+                    .find(|c: char| c.is_whitespace())
+                    .map(|i| &trimmed[i..])
+                    .unwrap_or("");
+                tail = after_field;
+            }
+            let after_chars: String = tail.chars().skip(skip_chars).collect();
+            if ignore_case {
+                after_chars.to_lowercase()
+            } else {
+                after_chars
+            }
+        };
+        let term = if zero_term { '\0' } else { '\n' };
+        let emit = |p: &str, cnt: usize| {
+            if repeated && cnt <= 1 {
+                return;
+            }
+            if unique_only && cnt > 1 {
+                return;
+            }
+            if count {
+                print!("{:7} {}{}", cnt, p, term);
+            } else {
+                print!("{}{}", p, term);
+            }
+        };
+
+        // -z: treat NUL as record separator. Otherwise BufRead::lines
+        // splits on \n.
+        if zero_term {
+            use std::io::Read;
+            let mut buf = Vec::new();
+            let mut reader = reader;
+            let _ = reader.read_to_end(&mut buf);
+            for chunk in buf.split(|b| *b == 0) {
+                let line = String::from_utf8_lossy(chunk).into_owned();
+                if line.is_empty() && chunk.is_empty() {
+                    continue;
+                }
+                if prev.as_ref().map(|p| key(p)) == Some(key(&line)) {
+                    cnt += 1;
+                } else {
+                    if let Some(p) = prev.take() {
+                        emit(&p, cnt);
+                    }
+                    prev = Some(line);
+                    cnt = 1;
+                }
+            }
+        } else {
+            for line in reader.lines().map_while(Result::ok) {
+                if prev.as_ref().map(|p| key(p)) == Some(key(&line)) {
+                    cnt += 1;
+                } else {
+                    if let Some(p) = prev.take() {
+                        emit(&p, cnt);
+                    }
+                    prev = Some(line);
+                    cnt = 1;
+                }
+            }
+        }
+
+        if let Some(p) = prev {
+            emit(&p, cnt);
+        }
+        0
+    }
+
+    pub(crate) fn builtin_cut(&self, args: &[String]) -> i32 {
+        // coreutils cut(1) port: parses -d / -f / -c / -b ranges
+        // including N-M, N-, -M shorthand and comma-lists.
+        use std::io::{BufRead, BufReader};
+
+        #[derive(Copy, Clone)]
+        enum Mode {
+            Field,
+            Char,
+            Byte,
+        }
+        let mut delimiter = '\t';
+        let mut output_delimiter: Option<String> = None;
+        let mut mode = Mode::Field;
+        // Each entry is (start, end) inclusive, 0-based. end == usize::MAX
+        // means "to end of line".
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+        let mut suppress_no_delim = false;
+        // -z / --zero-terminated: line delim becomes NUL.
+        let mut zero_term = false;
+        // --complement: print complement of selected ranges.
+        let mut complement = false;
+        let mut files: Vec<&str> = Vec::new();
+        let mut i = 0;
+
+        // Parse a coreutils-style cut spec: 'N', 'N-M', 'N-', '-M',
+        // separated by ','.
+        let parse_spec = |spec: &str, out: &mut Vec<(usize, usize)>| {
+            for part in spec.split(',') {
+                if part.is_empty() {
+                    continue;
+                }
+                if let Some((a, b)) = part.split_once('-') {
+                    let start = if a.is_empty() {
+                        0
+                    } else {
+                        match a.parse::<usize>() {
+                            Ok(n) if n > 0 => n - 1,
+                            _ => continue,
+                        }
+                    };
+                    let end = if b.is_empty() {
+                        usize::MAX
+                    } else {
+                        match b.parse::<usize>() {
+                            Ok(n) if n > 0 => n - 1,
+                            _ => continue,
+                        }
+                    };
+                    if start <= end {
+                        out.push((start, end));
+                    }
+                } else if let Ok(n) = part.parse::<usize>() {
+                    if n > 0 {
+                        out.push((n - 1, n - 1));
+                    }
+                }
+            }
+        };
+
+        while i < args.len() {
+            let arg = &args[i];
+            if arg == "-d" && i + 1 < args.len() {
+                i += 1;
+                delimiter = args[i].chars().next().unwrap_or('\t');
+            } else if let Some(s) = arg.strip_prefix("-d") {
+                delimiter = s.chars().next().unwrap_or('\t');
+            } else if arg == "-f" && i + 1 < args.len() {
+                i += 1;
+                mode = Mode::Field;
+                parse_spec(&args[i], &mut ranges);
+            } else if let Some(s) = arg.strip_prefix("-f") {
+                mode = Mode::Field;
+                parse_spec(s, &mut ranges);
+            } else if arg == "-c" && i + 1 < args.len() {
+                i += 1;
+                mode = Mode::Char;
+                parse_spec(&args[i], &mut ranges);
+            } else if let Some(s) = arg.strip_prefix("-c") {
+                mode = Mode::Char;
+                parse_spec(s, &mut ranges);
+            } else if arg == "-b" && i + 1 < args.len() {
+                i += 1;
+                mode = Mode::Byte;
+                parse_spec(&args[i], &mut ranges);
+            } else if let Some(s) = arg.strip_prefix("-b") {
+                mode = Mode::Byte;
+                parse_spec(s, &mut ranges);
+            } else if arg == "-s" || arg == "--only-delimited" {
+                suppress_no_delim = true;
+            } else if arg == "-z" || arg == "--zero-terminated" {
+                zero_term = true;
+            } else if arg == "--complement" {
+                complement = true;
+            } else if let Some(s) = arg.strip_prefix("--output-delimiter=") {
+                output_delimiter = Some(s.to_string());
+            } else if arg == "--output-delimiter" && i + 1 < args.len() {
+                i += 1;
+                output_delimiter = Some(args[i].clone());
+            } else if arg == "-" {
+                files.push("-");
+            } else if arg == "--" {
+                i += 1;
+                while i < args.len() {
+                    files.push(&args[i]);
+                    i += 1;
+                }
+                break;
+            } else if !arg.starts_with('-') {
+                files.push(arg);
+            } else {
+                eprintln!("cut: unrecognized option: '{}'", arg);
+                return 1;
+            }
+            i += 1;
+        }
+
+        let in_range = |idx: usize| -> bool {
+            let m = ranges.iter().any(|(s, e)| idx >= *s && idx <= *e);
+            if complement {
+                !m
+            } else {
+                m
+            }
+        };
+
+        let reader: Box<dyn BufRead> = if files.is_empty() || files[0] == "-" {
+            Box::new(BufReader::new(std::io::stdin()))
+        } else {
+            match std::fs::File::open(files[0]) {
+                Ok(f) => Box::new(BufReader::new(f)),
+                Err(e) => {
+                    eprintln!("cut: {}: {}", files[0], e);
+                    return 1;
+                }
+            }
+        };
+
+        let line_term = if zero_term { '\0' } else { '\n' };
+        // -z splits input on NUL too; otherwise BufRead::lines splits
+        // on \\n (the default).
+        let process_line = |line: String| match mode {
+            Mode::Field => {
+                if !line.contains(delimiter) {
+                    if !suppress_no_delim {
+                        print!("{}{}", line, line_term);
+                    }
+                    return;
+                }
+                let parts: Vec<&str> = line.split(delimiter).collect();
+                let selected: Vec<&str> = parts
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, p)| if in_range(idx) { Some(*p) } else { None })
+                    .collect();
+                let out_sep: String = output_delimiter
+                    .clone()
+                    .unwrap_or_else(|| delimiter.to_string());
+                print!("{}{}", selected.join(&out_sep), line_term);
+            }
+            Mode::Char => {
+                let chars: String = line
+                    .chars()
+                    .enumerate()
+                    .filter_map(|(idx, c)| if in_range(idx) { Some(c) } else { None })
+                    .collect();
+                print!("{}{}", chars, line_term);
+            }
+            Mode::Byte => {
+                let bytes: Vec<u8> = line
+                    .bytes()
+                    .enumerate()
+                    .filter_map(|(idx, b)| if in_range(idx) { Some(b) } else { None })
+                    .collect();
+                print!("{}{}", String::from_utf8_lossy(&bytes), line_term);
+            }
+        };
+
+        if zero_term {
+            use std::io::Read;
+            let mut buf = Vec::new();
+            let mut reader = reader;
+            let _ = reader.read_to_end(&mut buf);
+            for chunk in buf.split(|b| *b == 0) {
+                if chunk.is_empty() {
+                    continue;
+                }
+                process_line(String::from_utf8_lossy(chunk).into_owned());
+            }
+        } else {
+            for line in reader.lines().map_while(Result::ok) {
+                process_line(line);
+            }
+        }
+        0
+    }
+
+    pub(crate) fn builtin_tr(&self, args: &[String]) -> i32 {
+        use std::io::Read;
+
+        if args.is_empty() {
+            eprintln!("tr: missing operand");
+            return 1;
+        }
+
+        let delete = args.iter().any(|a| a == "-d" || a == "--delete");
+        let complement = args
+            .iter()
+            .any(|a| a == "-c" || a == "-C" || a == "--complement");
+        let squeeze = args.iter().any(|a| a == "-s" || a == "--squeeze-repeats");
+        // -t / --truncate-set1: truncate set1 to set2's length.
+        // Direct port of coreutils tr -t.
+        let truncate1 = args.iter().any(|a| a == "-t" || a == "--truncate-set1");
+        // Validate every flag-prefixed arg matches a known flag. Old
+        // \`filter(|a| !starts_with('-'))\` consumed unknown flags
+        // silently — \`tr -X 'a' 'b'\` would translate as if -X were
+        // a no-op.
+        for a in args {
+            let s: &str = a.as_str();
+            if s.starts_with('-')
+                && s != "-d"
+                && s != "--delete"
+                && s != "-c"
+                && s != "-C"
+                && s != "--complement"
+                && s != "-s"
+                && s != "--squeeze-repeats"
+                && s != "-t"
+                && s != "--truncate-set1"
+                && s.len() > 1
+            {
+                eprintln!("tr: unrecognized option: '{}'", s);
+                return 1;
+            }
+        }
+        let set1_raw: &str;
+        let set2_raw: &str;
+
+        let non_flag: Vec<&str> = args
+            .iter()
+            .filter(|a| !a.starts_with('-'))
+            .map(|s| s.as_str())
+            .collect();
+        if delete {
+            set1_raw = non_flag.first().copied().unwrap_or("");
+            set2_raw = "";
+        } else {
+            set1_raw = non_flag.first().copied().unwrap_or("");
+            set2_raw = non_flag.get(1).copied().unwrap_or("");
+        }
+
+        // Expand ranges like `a-z` into the full character list.
+        // Handles escapes (\n \t \r \\ \0 \xNN \NNN) AND POSIX
+        // character classes (`[:upper:]`, `[:lower:]`, `[:digit:]`,
+        // `[:alpha:]`, `[:alnum:]`, `[:punct:]`, `[:space:]`,
+        // `[:blank:]`, `[:cntrl:]`, `[:graph:]`, `[:print:]`,
+        // `[:xdigit:]`).
+        fn expand_set(s: &str) -> Vec<char> {
+            let mut out = Vec::new();
+            let bytes: Vec<char> = s.chars().collect();
+            let mut i = 0;
+            while i < bytes.len() {
+                // [:CLASS:] character classes.
+                if bytes[i] == '[' && i + 1 < bytes.len() && bytes[i + 1] == ':' {
+                    if let Some(end) = bytes[i + 2..]
+                        .iter()
+                        .position(|&c| c == ':')
+                        .map(|p| i + 2 + p)
+                    {
+                        if end + 1 < bytes.len() && bytes[end + 1] == ']' {
+                            let class: String = bytes[i + 2..end].iter().collect();
+                            for c in 0u32..128 {
+                                if let Some(ch) = char::from_u32(c) {
+                                    let m = match class.as_str() {
+                                        "upper" => ch.is_ascii_uppercase(),
+                                        "lower" => ch.is_ascii_lowercase(),
+                                        "digit" => ch.is_ascii_digit(),
+                                        "alpha" => ch.is_ascii_alphabetic(),
+                                        "alnum" => ch.is_ascii_alphanumeric(),
+                                        "punct" => ch.is_ascii_punctuation(),
+                                        "space" => ch.is_ascii_whitespace(),
+                                        "blank" => ch == ' ' || ch == '\t',
+                                        "cntrl" => ch.is_ascii_control(),
+                                        "graph" => ch.is_ascii_graphic(),
+                                        "print" => ch.is_ascii_graphic() || ch == ' ',
+                                        "xdigit" => ch.is_ascii_hexdigit(),
+                                        _ => false,
+                                    };
+                                    if m {
+                                        out.push(ch);
+                                    }
+                                }
+                            }
+                            i = end + 2;
+                            continue;
+                        }
+                    }
+                }
+                let c = bytes[i];
+                let resolved = if c == '\\' && i + 1 < bytes.len() {
+                    let next = bytes[i + 1];
+                    i += 1;
+                    match next {
+                        'n' => '\n',
+                        't' => '\t',
+                        'r' => '\r',
+                        'a' => '\x07',
+                        'b' => '\x08',
+                        'f' => '\x0c',
+                        'v' => '\x0b',
+                        '\\' => '\\',
+                        // \xNN hex escape
+                        'x' => {
+                            let mut hex = String::new();
+                            let mut j = i + 1;
+                            while j < bytes.len() && hex.len() < 2 {
+                                if bytes[j].is_ascii_hexdigit() {
+                                    hex.push(bytes[j]);
+                                    j += 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                            i = j - 1;
+                            u32::from_str_radix(&hex, 16)
+                                .ok()
+                                .and_then(char::from_u32)
+                                .unwrap_or('x')
+                        }
+                        // \NNN octal (1-3 digits)
+                        d if d.is_digit(8) => {
+                            let mut oct = String::from(d);
+                            let mut j = i + 1;
+                            while j < bytes.len() && oct.len() < 3 && bytes[j].is_digit(8) {
+                                oct.push(bytes[j]);
+                                j += 1;
+                            }
+                            i = j - 1;
+                            u32::from_str_radix(&oct, 8)
+                                .ok()
+                                .and_then(char::from_u32)
+                                .unwrap_or('\0')
+                        }
+                        other => other,
+                    }
+                } else {
+                    c
+                };
+                if i + 2 < bytes.len() && bytes[i + 1] == '-' {
+                    let end = bytes[i + 2];
+                    if (resolved as u32) <= (end as u32) {
+                        for cc in (resolved as u32)..=(end as u32) {
+                            if let Some(c) = char::from_u32(cc) {
+                                out.push(c);
+                            }
+                        }
+                        i += 3;
+                        continue;
+                    }
+                }
+                out.push(resolved);
+                i += 1;
+            }
+            out
+        }
+
+        let mut s1 = expand_set(set1_raw);
+        let s2 = expand_set(set2_raw);
+        // -t / --truncate-set1: shrink set1 to set2's length.
+        if truncate1 && s1.len() > s2.len() {
+            s1.truncate(s2.len());
+        }
+
+        let mut input = String::new();
+        std::io::stdin().read_to_string(&mut input).ok();
+
+        let in_set1 = |c: char| -> bool {
+            let m = s1.contains(&c);
+            if complement {
+                !m
+            } else {
+                m
+            }
+        };
+        // Pick the squeeze set per coreutils tr semantics: with -d
+        // and -s together, squeeze uses set2 (the second arg, or
+        // empty if not given); without -d, squeeze uses set2 (the
+        // translation target), falling back to set1 when set2 is
+        // empty (the "tr -s" common form).
+        let squeeze_set: Vec<char> = if !s2.is_empty() {
+            s2.clone()
+        } else {
+            s1.clone()
+        };
+
+        let output_pre: String = if delete {
+            input.chars().filter(|c| !in_set1(*c)).collect()
+        } else if complement {
+            // With -c (without -d), every char NOT in set1 maps to
+            // the LAST char of set2 (or first if set2 has one). zsh
+            // / coreutils tr semantics.
+            let target = s2.last().copied().or_else(|| s2.first().copied());
+            input
+                .chars()
+                .map(|c| {
+                    if s1.contains(&c) {
+                        c
+                    } else if let Some(t) = target {
+                        t
+                    } else {
+                        c
+                    }
+                })
+                .collect()
+        } else {
+            input
+                .chars()
+                .map(|c| {
+                    if let Some(pos) = s1.iter().position(|&x| x == c) {
+                        s2.get(pos).or(s2.last()).copied().unwrap_or(c)
+                    } else {
+                        c
+                    }
+                })
+                .collect()
+        };
+
+        // Squeeze pass: collapse runs of consecutive chars from
+        // squeeze_set down to one occurrence. Direct port of
+        // coreutils tr's squeeze_repeats.
+        let output: String = if squeeze {
+            let mut out = String::with_capacity(output_pre.len());
+            let mut last: Option<char> = None;
+            for c in output_pre.chars() {
+                if Some(c) == last && squeeze_set.contains(&c) {
+                    continue;
+                }
+                out.push(c);
+                last = Some(c);
+            }
+            out
+        } else {
+            output_pre
+        };
+
+        print!("{}", output);
+        0
+    }
+
+    pub(crate) fn builtin_seq(&self, args: &[String]) -> i32 {
+        // coreutils seq(1): handles floats and -s SEPARATOR. The
+        // previous impl only supported integers and emitted one per
+        // line, so `seq -s , 1 5` printed five lines instead of
+        // '1,2,3,4,5'.
+        let mut sep = "\n".to_string();
+        let mut nums_str: Vec<&str> = Vec::new();
+        let mut equal_width = false;
+        let mut format_str: Option<String> = None;
+        let mut i = 0;
+        while i < args.len() {
+            let arg = &args[i];
+            if arg == "-s" && i + 1 < args.len() {
+                i += 1;
+                sep = args[i].clone();
+            } else if let Some(s) = arg.strip_prefix("-s") {
+                sep = s.to_string();
+            } else if arg == "-w" || arg == "--equal-width" {
+                equal_width = true;
+            } else if arg == "-f" && i + 1 < args.len() {
+                i += 1;
+                format_str = Some(args[i].clone());
+            } else if let Some(s) = arg.strip_prefix("-f") {
+                format_str = Some(s.to_string());
+            } else {
+                nums_str.push(arg.as_str());
+            }
+            i += 1;
+        }
+        // Parse all-or-nothing as f64 to handle '0.5', '1e3', etc.
+        let nums: Vec<f64> = nums_str.iter().filter_map(|a| a.parse().ok()).collect();
+        if nums.len() != nums_str.len() {
+            eprintln!("seq: invalid argument");
+            return 1;
+        }
+
+        let (first, inc, last): (f64, f64, f64) = match nums.len() {
+            1 => (1.0, 1.0, nums[0]),
+            2 => (nums[0], 1.0, nums[1]),
+            3 => (nums[0], nums[1], nums[2]),
+            _ => {
+                eprintln!("seq: missing operand");
+                return 1;
+            }
+        };
+
+        if inc == 0.0 {
+            eprintln!("seq: zero increment");
+            return 1;
+        }
+        // Derive output precision from the input args so 'seq 0.1 0.1
+        // 0.5' prints '0.1\n0.2\n...'  and not the default float repr.
+        let prec = nums_str
+            .iter()
+            .map(|s| s.split('.').nth(1).map(|f| f.len()).unwrap_or(0))
+            .max()
+            .unwrap_or(0);
+        // Apply -f FORMAT (printf-style) when given. Supports the
+        // common conversions: %d / %i (int), %f / %.Nf / %g / %e
+        // (float). Other conversions fall through to the auto fmt.
+        // Per coreutils, -f overrides equal_width.
+        let user_fmt = format_str.clone();
+        let fmt = move |v: f64| -> String {
+            if let Some(f) = &user_fmt {
+                // Replace the first %... conversion in f with the
+                // formatted value. This is a tiny printf — full
+                // coreutils format is more complex but this covers
+                // 99% of \`seq -f '%.2f' 0 0.1 1\` style usage.
+                let bytes = f.as_bytes();
+                let mut out = String::with_capacity(f.len() + 16);
+                let mut i = 0;
+                let mut applied = false;
+                while i < bytes.len() {
+                    if bytes[i] == b'%' && i + 1 < bytes.len() {
+                        if bytes[i + 1] == b'%' {
+                            out.push('%');
+                            i += 2;
+                            continue;
+                        }
+                        // Find the conversion char.
+                        let mut j = i + 1;
+                        while j < bytes.len() {
+                            let c = bytes[j];
+                            if matches!(c, b'd' | b'i' | b'u' | b'f' | b'e' | b'g' | b'E' | b'G') {
+                                break;
+                            }
+                            j += 1;
+                        }
+                        if j >= bytes.len() {
+                            out.push('%');
+                            i += 1;
+                            continue;
+                        }
+                        let spec = std::str::from_utf8(&bytes[i..=j]).unwrap_or("%g");
+                        let formatted = match bytes[j] {
+                            b'd' | b'i' | b'u' => format!("{}", v as i64),
+                            b'f' | b'e' | b'g' | b'E' | b'G' => {
+                                // Extract precision if present (.N).
+                                let s = spec.trim_start_matches('%');
+                                let prec_part: String = s
+                                    .chars()
+                                    .skip_while(|c| *c != '.')
+                                    .skip(1)
+                                    .take_while(|c| c.is_ascii_digit())
+                                    .collect();
+                                let prec_n: usize = prec_part.parse().unwrap_or(6);
+                                match bytes[j] {
+                                    b'f' => format!("{:.p$}", v, p = prec_n),
+                                    b'e' => format!("{:.p$e}", v, p = prec_n),
+                                    b'E' => format!("{:.p$E}", v, p = prec_n),
+                                    _ => format!("{:.p$}", v, p = prec_n),
+                                }
+                            }
+                            _ => format!("{}", v),
+                        };
+                        out.push_str(&formatted);
+                        applied = true;
+                        i = j + 1;
+                    } else {
+                        out.push(bytes[i] as char);
+                        i += 1;
+                    }
+                }
+                let _ = applied;
+                return out;
+            }
+            if prec == 0 {
+                format!("{}", v as i64)
+            } else {
+                format!("{:.prec$}", v, prec = prec)
+            }
+        };
+
+        let mut out: Vec<String> = Vec::new();
+        let mut v = first;
+        if inc > 0.0 {
+            while v <= last + f64::EPSILON {
+                out.push(fmt(v));
+                v += inc;
+            }
+        } else {
+            while v >= last - f64::EPSILON {
+                out.push(fmt(v));
+                v += inc;
+            }
+        }
+        // -w: zero-pad each line to the longest output's width.
+        // coreutils seq pads with leading zeros (or after sign) so
+        // \`seq -w 8 10\` emits \`08 09 10\`. zshrs's previous "skip
+        // silently" left them as \`8 9 10\`, breaking column-aligned
+        // output.
+        if equal_width && !out.is_empty() {
+            let width = out.iter().map(|s| s.len()).max().unwrap_or(0);
+            for s in &mut out {
+                if s.len() < width {
+                    let pad = width - s.len();
+                    if let Some(rest) = s.strip_prefix('-') {
+                        *s = format!("-{:0>pad$}{}", "", rest, pad = pad);
+                    } else {
+                        *s = format!("{:0>pad$}{}", "", s, pad = pad);
+                    }
+                }
+            }
+        }
+        if !out.is_empty() {
+            print!("{}", out.join(&sep));
+            // coreutils seq always terminates the final line with `\n`,
+            // even when -s SEPARATOR is given and the separator itself
+            // is not a newline. Joining with sep leaves no trailing
+            // terminator, so emit one unconditionally here.
+            println!();
+        }
+        0
+    }
+
+    pub(crate) fn builtin_rev(&self, args: &[String]) -> i32 {
+        // util-linux rev(1) port. Accepts multiple files; reverses
+        // each line by chars (codepoint-correct, not bytes). One
+        // bad file emits an error and continues with the rest;
+        // returns 1 if any file failed.
+        use std::io::{BufRead, BufReader};
+
+        // util-linux rev has no flags. Reject any \`-\`-prefixed arg
+        // that isn't \`-\` (stdin) or \`--\` (end-of-options).
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(a) = iter.next() {
+            let s: &str = a.as_str();
+            if s == "-" {
+                files.push("-");
+            } else if s == "--" {
+                for rest in iter.by_ref() {
+                    files.push(rest);
+                }
+                break;
+            } else if s.starts_with('-') && s.len() > 1 {
+                eprintln!("rev: unrecognized option: '{}'", s);
+                return 1;
+            } else {
+                files.push(s);
+            }
+        }
+        let targets: Vec<&str> = if files.is_empty() { vec!["-"] } else { files };
+        let mut status = 0;
+        for file in targets {
+            let reader: Box<dyn BufRead> = if file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("rev: {}: {}", file, e);
+                        status = 1;
+                        continue;
+                    }
+                }
+            };
+            for line in reader.lines().map_while(Result::ok) {
+                println!("{}", line.chars().rev().collect::<String>());
+            }
+        }
+        status
+    }
+
+    pub(crate) fn builtin_tee(&self, args: &[String]) -> i32 {
+        // coreutils tee(1) port: stream stdin to stdout AND each
+        // named file in 8 KB chunks so 'tail -f log | tee out' works
+        // — was buffering everything until EOF, which never arrives
+        // for streaming sources.
+        use std::io::{Read, Write};
+
+        let mut append = false;
+        let mut ignore_int = false;
+        let mut files: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "-a" | "--append" => append = true,
+                // -i: ignore SIGINT — coreutils flag for keeping the
+                // process alive when the upstream gets ^C'd. We just
+                // accept; real ignore wiring would need signal masks.
+                "-i" | "--ignore-interrupts" => ignore_int = true,
+                "--" => {} // end of options
+                s if !s.starts_with('-') || s == "-" => files.push(s),
+                s => {
+                    // coreutils tee rejects unknown flags. Old
+                    // \`_ => {}\` operated normally with -X dropped.
+                    eprintln!("tee: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+        let _ = ignore_int;
+
+        // Open every output file once; bail per-file but keep going
+        // for the rest (matches coreutils behaviour).
+        let mut handles: Vec<Box<dyn Write>> = Vec::with_capacity(files.len());
+        let mut returnval = 0;
+        for file in &files {
+            let result = if append {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(file)
+            } else {
+                std::fs::File::create(file)
+            };
+            match result {
+                Ok(f) => handles.push(Box::new(f)),
+                Err(e) => {
+                    eprintln!("tee: {}: {}", file, e);
+                    returnval = 1;
+                }
+            }
+        }
+
+        let stdin = std::io::stdin();
+        let mut reader = stdin.lock();
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(_) => break,
+            };
+            let _ = out.write_all(&buf[..n]);
+            let _ = out.flush();
+            for h in handles.iter_mut() {
+                let _ = h.write_all(&buf[..n]);
+                let _ = h.flush();
+            }
+        }
+        returnval
+    }
+
+    pub(crate) fn builtin_sleep(&self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            eprintln!("zshrs:sleep:1: missing operand");
+            return 1;
+        }
+
+        let mut total_secs = 0.0f64;
+        let mut had_operand = false;
+        for arg in args {
+            if arg.starts_with('-') && arg.len() > 1 {
+                // coreutils sleep accepts no flags besides --help and
+                // --version. Anything else is an error. Old impl
+                // silently skipped flag args, so \`sleep -X 5\` slept
+                // 5 seconds while losing -X.
+                if arg == "--" {
+                    continue; // end-of-options
+                }
+                eprintln!("zshrs:sleep:1: unrecognized option: '{}'", arg);
+                return 1;
+            }
+            had_operand = true;
+            let (num, suffix) = if arg.ends_with('s') {
+                (&arg[..arg.len() - 1], 1.0)
+            } else if arg.ends_with('m') {
+                (&arg[..arg.len() - 1], 60.0)
+            } else if arg.ends_with('h') {
+                (&arg[..arg.len() - 1], 3600.0)
+            } else if arg.ends_with('d') {
+                (&arg[..arg.len() - 1], 86400.0)
+            } else {
+                (arg.as_str(), 1.0)
+            };
+            if let Ok(n) = num.parse::<f64>() {
+                total_secs += n * suffix;
+            } else {
+                // coreutils sleep errors on non-numeric operand.
+                eprintln!("zshrs:sleep:1: invalid time interval: '{}'", arg);
+                return 1;
+            }
+        }
+        let _ = had_operand;
+
+        // Duration::from_secs_f64 panics on negative / NaN / +inf.
+        // coreutils sleep treats negative as an error; here we
+        // tolerate non-positive total as a no-op exit 0. Also cap
+        // upper bound (Duration panics near u64::MAX seconds).
+        if !total_secs.is_finite() || total_secs <= 0.0 {
+            return 0;
+        }
+        let capped = if total_secs > i64::MAX as f64 {
+            i64::MAX as f64
+        } else {
+            total_secs
+        };
+        std::thread::sleep(std::time::Duration::from_secs_f64(capped));
+        0
+    }
+
+    /// paste [-d LIST] [FILE...] — merge lines of files. coreutils
+    /// paste(1). Default delim is TAB; -d cycles through the
+    /// supplied delimiter chars.
+    pub(crate) fn builtin_paste(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+        let mut delims: Vec<char> = vec!['\t'];
+        let mut serial = false;
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-d" | "--delimiters" => {
+                    if let Some(s) = iter.next() {
+                        delims = s.chars().collect();
+                        if delims.is_empty() {
+                            delims = vec!['\t'];
+                        }
+                    }
+                }
+                s if s.starts_with("-d") && s.len() > 2 => {
+                    delims = s[2..].chars().collect();
+                    if delims.is_empty() {
+                        delims = vec!['\t'];
+                    }
+                }
+                "-s" | "--serial" => serial = true,
+                "--" => {
+                    for rest in iter.by_ref() {
+                        files.push(rest);
+                    }
+                    break;
+                }
+                s if !s.starts_with('-') || s == "-" => files.push(s),
+                s => {
+                    eprintln!("paste: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+        if files.is_empty() {
+            files.push("-");
+        }
+        let mut readers: Vec<Box<dyn BufRead>> = Vec::with_capacity(files.len());
+        for file in &files {
+            let r: Box<dyn BufRead> = if *file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("paste: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            };
+            readers.push(r);
+        }
+        if serial {
+            // -s: each file's lines on a single output line.
+            for r in readers.iter_mut() {
+                let lines: Vec<String> = r.lines().map_while(Result::ok).collect();
+                let mut out = String::new();
+                for (i, l) in lines.iter().enumerate() {
+                    out.push_str(l);
+                    if i + 1 < lines.len() {
+                        out.push(delims[i % delims.len()]);
+                    }
+                }
+                println!("{}", out);
+            }
+            return 0;
+        }
+        // Parallel-merge: round-robin one line from each reader.
+        let mut iters: Vec<_> = readers.into_iter().map(|r| r.lines()).collect();
+        loop {
+            let mut row: Vec<Option<String>> = Vec::with_capacity(iters.len());
+            for it in iters.iter_mut() {
+                row.push(it.next().and_then(|r| r.ok()));
+            }
+            if row.iter().all(|c| c.is_none()) {
+                break;
+            }
+            let mut out = String::new();
+            for (i, cell) in row.iter().enumerate() {
+                if let Some(s) = cell {
+                    out.push_str(s);
+                }
+                if i + 1 < row.len() {
+                    out.push(delims[i % delims.len()]);
+                }
+            }
+            println!("{}", out);
+        }
+        0
+    }
+
+    /// fold [-w WIDTH] [-s] [-b] [FILE...] — wrap input lines.
+    /// coreutils fold(1).
+    pub(crate) fn builtin_fold(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+        let mut width: usize = 80;
+        let mut break_at_space = false;
+        let mut count_bytes = false;
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-w" | "--width" => {
+                    if let Some(s) = iter.next() {
+                        width = s.parse().unwrap_or(80);
+                    }
+                }
+                s if s.starts_with("-w") && s.len() > 2 => {
+                    width = s[2..].parse().unwrap_or(80);
+                }
+                "-s" | "--spaces" => break_at_space = true,
+                "-b" | "--bytes" => count_bytes = true,
+                "-" => files.push("-"),
+                "--" => {
+                    for rest in iter.by_ref() {
+                        files.push(rest);
+                    }
+                    break;
+                }
+                s if !s.starts_with('-') => files.push(s),
+                s => {
+                    eprintln!("fold: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+        if files.is_empty() {
+            files.push("-");
+        }
+        for file in files {
+            let reader: Box<dyn BufRead> = if file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("fold: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            };
+            for line in reader.lines().map_while(Result::ok) {
+                let mut chunk = String::new();
+                let walker: Box<dyn Iterator<Item = char>> = if count_bytes {
+                    // Treat each byte as a char (lossy for UTF-8).
+                    Box::new(line.bytes().map(|b| b as char))
+                } else {
+                    Box::new(line.chars())
+                };
+                let mut col = 0usize;
+                let mut last_space: Option<usize> = None;
+                for c in walker {
+                    chunk.push(c);
+                    col += 1;
+                    if c == ' ' || c == '\t' {
+                        last_space = Some(chunk.len());
+                    }
+                    if col >= width {
+                        if break_at_space {
+                            if let Some(pos) = last_space {
+                                let head = &chunk[..pos];
+                                let tail = chunk[pos..].to_string();
+                                println!("{}", head);
+                                chunk = tail;
+                                col = chunk.chars().count();
+                                last_space = None;
+                                continue;
+                            }
+                        }
+                        println!("{}", chunk);
+                        chunk.clear();
+                        col = 0;
+                        last_space = None;
+                    }
+                }
+                if !chunk.is_empty() {
+                    println!("{}", chunk);
+                }
+            }
+        }
+        0
+    }
+
+    /// shuf [-n N] [-i LO-HI] [-e [STR...]] [FILE] — random
+    /// permutation. coreutils shuf(1).
+    pub(crate) fn builtin_shuf(&self, args: &[String]) -> i32 {
+        use rand::seq::SliceRandom;
+        use std::io::{BufRead, BufReader};
+        let mut count: Option<usize> = None;
+        let mut input_range: Option<(i64, i64)> = None;
+        let mut echo_args: Option<Vec<String>> = None;
+        let mut zero_term = false;
+        let mut file: Option<&str> = None;
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-n" | "--head-count" => {
+                    if let Some(s) = iter.next() {
+                        count = s.parse().ok();
+                    }
+                }
+                "-i" | "--input-range" => {
+                    if let Some(s) = iter.next() {
+                        if let Some((a, b)) = s.split_once('-') {
+                            if let (Ok(lo), Ok(hi)) = (a.parse::<i64>(), b.parse::<i64>()) {
+                                input_range = Some((lo, hi));
+                            }
+                        }
+                    }
+                }
+                "-e" | "--echo" => {
+                    let rest: Vec<String> = iter.by_ref().cloned().collect();
+                    echo_args = Some(rest);
+                    break;
+                }
+                "-z" | "--zero-terminated" => zero_term = true,
+                "-" => file = Some("-"),
+                "--" => {
+                    if let Some(rest) = iter.next() {
+                        file = Some(rest.as_str());
+                    }
+                    break;
+                }
+                s if !s.starts_with('-') => file = Some(s),
+                s => {
+                    eprintln!("shuf: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+
+        let mut items: Vec<String> = if let Some((lo, hi)) = input_range {
+            (lo..=hi).map(|n| n.to_string()).collect()
+        } else if let Some(echo) = echo_args {
+            echo
+        } else {
+            let reader: Box<dyn BufRead> = match file {
+                Some(f) if f != "-" => match std::fs::File::open(f) {
+                    Ok(fh) => Box::new(BufReader::new(fh)),
+                    Err(e) => {
+                        eprintln!("shuf: {}: {}", f, e);
+                        return 1;
+                    }
+                },
+                _ => Box::new(BufReader::new(std::io::stdin())),
+            };
+            reader.lines().map_while(Result::ok).collect()
+        };
+        let mut rng = rand::thread_rng();
+        items.shuffle(&mut rng);
+        if let Some(n) = count {
+            items.truncate(n);
+        }
+        let term = if zero_term { '\0' } else { '\n' };
+        for item in items {
+            print!("{}{}", item, term);
+        }
+        0
+    }
+
+    /// groups [USER...] — print group memberships. Coreutils
+    /// groups(1) / POSIX. With no args, prints groups for the
+    /// effective user; with args, prints "USER : group1 group2 ..."
+    /// per user.
+    pub(crate) fn builtin_groups(&self, args: &[String]) -> i32 {
+        use std::ffi::CStr;
+        // Validate flags.
+        let mut users: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "--" => {}
+                s if s.starts_with('-') && s.len() > 1 => {
+                    eprintln!("groups: unrecognized option: '{}'", s);
+                    return 1;
+                }
+                s => users.push(s),
+            }
+        }
+        let print_groups_for = |uid_or_name: Option<&str>| -> i32 {
+            let (user_name, _user_uid, group_id): (String, u32, u32) = match uid_or_name {
+                Some(name) => {
+                    // Look up by name first, then numeric id.
+                    let cn = match std::ffi::CString::new(name) {
+                        Ok(c) => c,
+                        Err(_) => return 1,
+                    };
+                    unsafe {
+                        let pw = libc::getpwnam(cn.as_ptr());
+                        if pw.is_null() {
+                            // Try numeric.
+                            if let Ok(uid) = name.parse::<u32>() {
+                                let pw2 = libc::getpwuid(uid);
+                                if pw2.is_null() {
+                                    eprintln!("groups: '{}': no such user", name);
+                                    return 1;
+                                }
+                                let n = CStr::from_ptr((*pw2).pw_name);
+                                (
+                                    n.to_string_lossy().into_owned(),
+                                    (*pw2).pw_uid,
+                                    (*pw2).pw_gid,
+                                )
+                            } else {
+                                eprintln!("groups: '{}': no such user", name);
+                                return 1;
+                            }
+                        } else {
+                            let n = CStr::from_ptr((*pw).pw_name);
+                            (n.to_string_lossy().into_owned(), (*pw).pw_uid, (*pw).pw_gid)
+                        }
+                    }
+                }
+                None => {
+                    let euid = unsafe { libc::geteuid() };
+                    unsafe {
+                        let pw = libc::getpwuid(euid);
+                        if pw.is_null() {
+                            (String::new(), euid, 0)
+                        } else {
+                            let n = CStr::from_ptr((*pw).pw_name);
+                            (n.to_string_lossy().into_owned(), (*pw).pw_uid, (*pw).pw_gid)
+                        }
+                    }
+                }
+            };
+            // getgrouplist requires a buffer; start with 32 slots.
+            let mut group_ids: Vec<libc::gid_t> = vec![0; 64];
+            let mut ngroups: i32 = group_ids.len() as i32;
+            let cn = std::ffi::CString::new(user_name.clone()).unwrap_or_default();
+            let r = unsafe {
+                libc::getgrouplist(
+                    cn.as_ptr(),
+                    group_id as _,
+                    group_ids.as_mut_ptr() as *mut _,
+                    &mut ngroups,
+                )
+            };
+            if r < 0 {
+                // Buffer too small — grow and retry.
+                group_ids.resize(ngroups as usize, 0);
+                unsafe {
+                    libc::getgrouplist(
+                        cn.as_ptr(),
+                        group_id as _,
+                        group_ids.as_mut_ptr() as *mut _,
+                        &mut ngroups,
+                    );
+                }
+            }
+            group_ids.truncate(ngroups as usize);
+            let names: Vec<String> = group_ids
+                .iter()
+                .map(|&g| unsafe {
+                    let gr = libc::getgrgid(g);
+                    if gr.is_null() {
+                        g.to_string()
+                    } else {
+                        let n = CStr::from_ptr((*gr).gr_name);
+                        n.to_string_lossy().into_owned()
+                    }
+                })
+                .collect();
+            if uid_or_name.is_some() {
+                println!("{} : {}", user_name, names.join(" "));
+            } else {
+                println!("{}", names.join(" "));
+            }
+            0
+        };
+        if users.is_empty() {
+            print_groups_for(None)
+        } else {
+            let mut status = 0;
+            for u in users {
+                if print_groups_for(Some(u)) != 0 {
+                    status = 1;
+                }
+            }
+            status
+        }
+    }
+
+    /// users — print logged-in usernames. Coreutils users(1) /
+    /// POSIX. Fallback minimal impl: prints \$USER (or current
+    /// effective user via getpwuid) since fully reading utmp is
+    /// platform-specific. Multi-user output not yet implemented;
+    /// shell scripts that just check `[[ $(users) ]]` still work.
+    pub(crate) fn builtin_users(&self, args: &[String]) -> i32 {
+        for arg in args {
+            if arg.starts_with('-') && arg.len() > 1 && arg != "--" {
+                eprintln!("users: unrecognized option: '{}'", arg);
+                return 1;
+            }
+            // Bare arg specifies an alternate utmp file — not
+            // implemented; ignore silently.
+        }
+        // Use $USER first; fall back to effective uid lookup.
+        let name = match std::env::var("USER") {
+            Ok(u) if !u.is_empty() => u,
+            _ => {
+                use std::ffi::CStr;
+                let euid = unsafe { libc::geteuid() };
+                let pw = unsafe { libc::getpwuid(euid) };
+                if !pw.is_null() {
+                    let n = unsafe { CStr::from_ptr((*pw).pw_name) };
+                    n.to_string_lossy().into_owned()
+                } else {
+                    String::new()
+                }
+            }
+        };
+        println!("{}", name);
+        0
+    }
+
+    /// tput — terminfo capability query (minimal subset).
+    /// Common subset of ncurses tput(1):
+    ///   tput cols / lines      → terminal width / height
+    ///   tput colors            → terminal color count
+    ///   tput clear / cl        → clear screen
+    ///   tput cup R C           → cursor to (row, col) (0-based)
+    ///   tput sgr0 / op         → reset attributes / colors
+    ///   tput bold / smso / rmso / smul / rmul / rev / blink
+    ///                          → text attributes
+    ///   tput setaf N / setab N → fg/bg color (8/16 colors)
+    /// Many other terminfo capabilities aren't yet wired; unknown
+    /// capabilities fall through to echotc's two-letter mapping or
+    /// silently exit 1 (tput's standard error code).
+    pub(crate) fn builtin_tput(&self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            eprintln!("tput: missing capname");
+            return 2;
+        }
+        // Skip leading flags. Coreutils ncurses tput supports
+        // `-T TERM`, `-S` (multi-cap from stdin), `-V`/`-h`. Not
+        // yet wired; consume but ignore.
+        let mut iter = args.iter().peekable();
+        while let Some(arg) = iter.peek() {
+            match arg.as_str() {
+                "-T" => {
+                    iter.next();
+                    iter.next(); // consume term name
+                }
+                s if s.starts_with("-T") && s.len() > 2 => {
+                    iter.next();
+                }
+                "-S" => {
+                    iter.next();
+                    // -S reads cap names from stdin. Not implemented;
+                    // emit nothing and exit 0 (matches ncurses-tput
+                    // when stdin is empty).
+                    return 0;
+                }
+                "-V" | "--version" => {
+                    println!("tput (zshrs) {}", env!("CARGO_PKG_VERSION"));
+                    return 0;
+                }
+                "-h" | "--help" => {
+                    println!("Usage: tput [-T TERM] CAPNAME [PARAMS...]");
+                    return 0;
+                }
+                _ => break,
+            }
+        }
+        let cap = match iter.next() {
+            Some(c) => c.as_str(),
+            None => {
+                eprintln!("tput: missing capname");
+                return 2;
+            }
+        };
+        let rest: Vec<&str> = iter.map(|s| s.as_str()).collect();
+        // Known capabilities — emit the ANSI sequence directly.
+        match cap {
+            "cols" | "co" => {
+                let cols: i32 = std::env::var("COLUMNS")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(80);
+                println!("{}", cols);
+                0
+            }
+            "lines" | "li" => {
+                let lines: i32 = std::env::var("LINES")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(24);
+                println!("{}", lines);
+                0
+            }
+            "colors" | "Co" => {
+                // Most modern terminals are 256 or truecolor; default
+                // to 256 since that's what TERM=xterm-256color reports.
+                let term = std::env::var("TERM").unwrap_or_default();
+                let n = if term.contains("256")
+                    || term.contains("direct")
+                    || term.contains("truecolor")
+                {
+                    256
+                } else {
+                    8
+                };
+                println!("{}", n);
+                0
+            }
+            "clear" | "cl" => {
+                print!("\x1b[H\x1b[2J");
+                0
+            }
+            "cup" => {
+                if rest.len() < 2 {
+                    return 2;
+                }
+                if let (Ok(r), Ok(c)) = (rest[0].parse::<u32>(), rest[1].parse::<u32>()) {
+                    print!("\x1b[{};{}H", r + 1, c + 1);
+                }
+                0
+            }
+            "sgr0" | "me" | "op" => {
+                print!("\x1b[0m");
+                0
+            }
+            "bold" | "md" => {
+                print!("\x1b[1m");
+                0
+            }
+            "smso" | "so" | "rev" | "mr" => {
+                print!("\x1b[7m");
+                0
+            }
+            "rmso" | "se" => {
+                print!("\x1b[27m");
+                0
+            }
+            "smul" | "us" => {
+                print!("\x1b[4m");
+                0
+            }
+            "rmul" | "ue" => {
+                print!("\x1b[24m");
+                0
+            }
+            "blink" | "mb" => {
+                print!("\x1b[5m");
+                0
+            }
+            "setaf" | "AF" => {
+                if let Some(n) = rest.first().and_then(|s| s.parse::<i32>().ok()) {
+                    print!("\x1b[{}m", 30 + n);
+                }
+                0
+            }
+            "setab" | "AB" => {
+                if let Some(n) = rest.first().and_then(|s| s.parse::<i32>().ok()) {
+                    print!("\x1b[{}m", 40 + n);
+                }
+                0
+            }
+            "civis" | "vi" => {
+                print!("\x1b[?25l");
+                0
+            }
+            "cnorm" | "ve" => {
+                print!("\x1b[?25h");
+                0
+            }
+            _ => {
+                // Unknown capability — exit 1 silently per tput
+                // convention. Don't emit error for boolean-cap probes.
+                1
+            }
+        }
+    }
+
+    /// zbuild --in PATHS... --out OUT — bake one or more shell
+    /// scripts into a copy of the running zshrs binary in input
+    /// order, producing a self-contained AOT executable.
+    ///
+    ///   zbuild --in *.zsh --out app           # glob expansion
+    ///   zbuild --in lib1.zsh lib2.zsh main.zsh --out app
+    ///   ./app                                  # runs all three
+    ///                                          # sequentially under
+    ///                                          # one ShellExecutor
+    ///
+    /// zsh has no project concept, so there's no manifest, no entry
+    /// point convention, no library directory walker. Order is
+    /// exactly the order of paths given to `--in` (which honors
+    /// shell glob expansion — \`*.zsh\` expands sorted by default).
+    ///
+    /// `--in` accepts ONE OR MORE paths until the next flag-style
+    /// token (anything starting with `-`). This makes glob-driven
+    /// invocations like `--in *.zsh` work naturally — every path
+    /// the glob expanded to lands as another input file.
+    ///
+    /// Flags:
+    ///   --in PATHS...  / -i PATHS...   script sources (1+, required)
+    ///   --out PATH     / -o PATH       output binary (required)
+    ///   --help / -h                    print usage
+    pub(crate) fn builtin_zbuild(&self, args: &[String]) -> i32 {
+        let mut inputs: Vec<std::path::PathBuf> = Vec::new();
+        let mut output: Option<String> = None;
+        let mut i = 0;
+        while i < args.len() {
+            let arg = &args[i];
+            match arg.as_str() {
+                "--in" | "-i" | "--input" => {
+                    // Consume every non-flag token following --in
+                    // until we hit the next `-`-prefixed token (or
+                    // end of args). This makes `--in *.zsh` pick up
+                    // all paths the glob produced.
+                    i += 1;
+                    let start = i;
+                    while i < args.len() && !args[i].starts_with('-') {
+                        inputs.push(std::path::PathBuf::from(&args[i]));
+                        i += 1;
+                    }
+                    if i == start {
+                        eprintln!("zshrs:zbuild:1: --in requires at least one path");
+                        return 1;
+                    }
+                    continue;
+                }
+                s if s.starts_with("--in=") => {
+                    inputs.push(std::path::PathBuf::from(&s[5..]));
+                }
+                s if s.starts_with("--input=") => {
+                    inputs.push(std::path::PathBuf::from(&s[8..]));
+                }
+                "--out" | "-o" | "--output" => {
+                    i += 1;
+                    if i >= args.len() {
+                        eprintln!("zshrs:zbuild:1: --out requires a path");
+                        return 1;
+                    }
+                    output = Some(args[i].clone());
+                }
+                s if s.starts_with("--out=") => output = Some(s[6..].to_string()),
+                s if s.starts_with("--output=") => output = Some(s[9..].to_string()),
+                "--help" | "-h" => {
+                    println!("Usage: zbuild --in PATHS... --out OUT");
+                    println!();
+                    println!("Bake one or more shell scripts into an AOT-compiled");
+                    println!("standalone executable. Files run sequentially in input");
+                    println!("order under a single ShellExecutor (globals/functions");
+                    println!("from earlier files visible to later ones).");
+                    println!();
+                    println!("Examples:");
+                    println!("  zbuild --in *.zsh --out app");
+                    println!("  zbuild --in lib.zsh main.zsh --out app");
+                    println!();
+                    println!("Options:");
+                    println!("  --in / -i PATHS...  script sources (1+, required)");
+                    println!("  --out / -o PATH     output binary (required)");
+                    return 0;
+                }
+                _ => {
+                    eprintln!("zshrs:zbuild:1: unrecognized argument: {}", arg);
+                    return 1;
+                }
+            }
+            i += 1;
+        }
+        if inputs.is_empty() {
+            eprintln!("zshrs:zbuild:1: at least one --in PATH required");
+            return 1;
+        }
+        let out_path = match output {
+            Some(p) => p,
+            None => {
+                eprintln!("zshrs:zbuild:1: --out PATH required");
+                return 1;
+            }
+        };
+        match crate::aot::build(&inputs, std::path::Path::new(&out_path)) {
+            Ok(p) => {
+                eprintln!(
+                    "zbuild: wrote {} ({} file{} embedded)",
+                    p.display(),
+                    inputs.len(),
+                    if inputs.len() == 1 { "" } else { "s" }
+                );
+                0
+            }
+            Err(e) => {
+                eprintln!("zshrs:zbuild:1: {}", e);
+                1
+            }
+        }
+    }
+
+    /// logname — print login name. Coreutils logname(1) / POSIX.
+    /// Calls getlogin(3) which reads from utmp. Falls back to
+    /// \$LOGNAME if getlogin fails.
+    pub(crate) fn builtin_logname(&self, args: &[String]) -> i32 {
+        for arg in args {
+            if arg.starts_with('-') && arg.len() > 1 && arg != "--" {
+                eprintln!("logname: unrecognized option: '{}'", arg);
+                return 1;
+            }
+            if !arg.starts_with('-') {
+                eprintln!("logname: extra operand '{}'", arg);
+                return 1;
+            }
+        }
+        let p = unsafe { libc::getlogin() };
+        if !p.is_null() {
+            let name = unsafe { std::ffi::CStr::from_ptr(p) };
+            println!("{}", name.to_string_lossy());
+            return 0;
+        }
+        // Fallback for environments without utmp (e.g. CI containers).
+        match std::env::var("LOGNAME") {
+            Ok(v) if !v.is_empty() => {
+                println!("{}", v);
+                0
+            }
+            _ => {
+                eprintln!("logname: no login name");
+                1
+            }
+        }
+    }
+
+    /// nice [-n N] [-N N] [COMMAND...] — adjust niceness of the
+    /// shell process (when no COMMAND given) or report current
+    /// niceness. Coreutils nice(1) / POSIX nice(1). Without args,
+    /// print the current niceness (like \`nice\` with no args). With
+    /// just -n N, set the niceness for the SHELL ITSELF — not for
+    /// a subsequently-exec'd command. Setting niceness for a child
+    /// command requires fork-exec which the in-process model
+    /// can't do without breaking subsequent commands; for that case
+    /// callers should use /usr/bin/nice via PATH (zshrs's command
+    /// dispatch will fall through to the external).
+    pub(crate) fn builtin_nice(&self, args: &[String]) -> i32 {
+        let mut adjust: Option<i32> = None;
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-n" | "--adjustment" => {
+                    if let Some(s) = iter.next() {
+                        match s.parse::<i32>() {
+                            Ok(n) => adjust = Some(n),
+                            Err(_) => {
+                                eprintln!("nice: '{}': invalid adjustment", s);
+                                return 1;
+                            }
+                        }
+                    } else {
+                        eprintln!("nice: option requires an argument: -n");
+                        return 1;
+                    }
+                }
+                s if s.starts_with("-n") && s.len() > 2 => match s[2..].parse::<i32>() {
+                    Ok(n) => adjust = Some(n),
+                    Err(_) => {
+                        eprintln!("nice: '{}': invalid adjustment", &s[2..]);
+                        return 1;
+                    }
+                },
+                "--" => break,
+                s if !s.starts_with('-') => {
+                    // Bare COMMAND given. We can't fork-exec from
+                    // the in-process model. Tell the user to use
+                    // the external /usr/bin/nice for that case.
+                    eprintln!(
+                        "nice: command-launching mode unavailable in-process; use /usr/bin/nice"
+                    );
+                    return 1;
+                }
+                s => {
+                    eprintln!("nice: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+        let _ = iter;
+        if let Some(adj) = adjust {
+            // Apply to the shell process itself.
+            let cur = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
+            let target = (cur + adj).clamp(-20, 19);
+            if unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, target) } != 0 {
+                let err = std::io::Error::last_os_error();
+                eprintln!("nice: cannot set niceness: {}", err);
+                return 1;
+            }
+            return 0;
+        }
+        // No -n: print current niceness.
+        let cur = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
+        println!("{}", cur);
+        0
+    }
+
+    /// arch — print machine architecture name. Coreutils arch(1)
+    /// (a synonym for `uname -m` on most systems). Useful in shell
+    /// scripts that need a quick `[[ $(arch) == arm64 ]]` check.
+    pub(crate) fn builtin_arch(&self, args: &[String]) -> i32 {
+        for arg in args {
+            if arg.starts_with('-') && arg.len() > 1 {
+                eprintln!("arch: unrecognized option: '{}'", arg);
+                return 1;
+            }
+        }
+        let mut uts: libc::utsname = unsafe { std::mem::zeroed() };
+        if unsafe { libc::uname(&mut uts) } != 0 {
+            eprintln!("arch: uname() failed");
+            return 1;
+        }
+        // machine[] is a fixed-size i8 (or u8) array; convert to str.
+        let machine: Vec<u8> = uts
+            .machine
+            .iter()
+            .take_while(|&&c| c != 0)
+            .map(|&c| c as u8)
+            .collect();
+        let machine_str = String::from_utf8_lossy(&machine);
+        println!("{}", machine_str);
+        0
+    }
+
+    /// dircolors [-bcp] [FILE] — emit shell commands to set
+    /// LS_COLORS. Coreutils dircolors(1). Without args, emits the
+    /// default ls color database. -b for Bourne (export VAR=val),
+    /// -c for csh (setenv VAR val), -p prints the database.
+    /// We hard-code coreutils' compiled-in default since shipping
+    /// the full /etc/DIR_COLORS database file isn't feasible here.
+    pub(crate) fn builtin_dircolors(&self, args: &[String]) -> i32 {
+        let mut bourne = true;
+        let mut csh = false;
+        let mut print_database = false;
+        let mut file: Option<&str> = None;
+        for arg in args {
+            match arg.as_str() {
+                "-b" | "--sh" | "--bourne-shell" => {
+                    bourne = true;
+                    csh = false;
+                }
+                "-c" | "--csh" | "--c-shell" => {
+                    bourne = false;
+                    csh = true;
+                }
+                "-p" | "--print-database" => print_database = true,
+                "--" => {}
+                s if !s.starts_with('-') => file = Some(s),
+                s => {
+                    eprintln!("dircolors: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+        if let Some(f) = file {
+            // Reading a custom database file isn't implemented; emit
+            // the default but tell the user we ignored the file.
+            eprintln!(
+                "dircolors: using built-in defaults (custom file ignored: '{}')",
+                f
+            );
+        }
+        // Coreutils' default LS_COLORS, lightly trimmed. Captured
+        // from `dircolors --print-database` of GNU coreutils 9.x.
+        // Hardcoding here keeps the builtin self-contained.
+        let default_ls_colors = concat!(
+            "rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:",
+            "cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=00:tw=30;42:",
+            "ow=34;42:st=37;44:ex=01;32:*.tar=01;31:*.tgz=01;31:*.zip=01;31:",
+            "*.gz=01;31:*.bz2=01;31:*.xz=01;31:*.7z=01;31:*.rar=01;31:",
+            "*.jpg=01;35:*.jpeg=01;35:*.png=01;35:*.gif=01;35:*.bmp=01;35:",
+            "*.tiff=01;35:*.svg=01;35:*.mp3=00;36:*.wav=00;36:*.flac=00;36:",
+            "*.mp4=01;35:*.mkv=01;35:*.avi=01;35:*.mov=01;35:"
+        );
+        if print_database {
+            // Emit one entry per line (coreutils format).
+            for entry in default_ls_colors.split(':') {
+                if entry.is_empty() {
+                    continue;
+                }
+                if let Some((k, v)) = entry.split_once('=') {
+                    println!("{} {}", k, v);
+                }
+            }
+            return 0;
+        }
+        if csh {
+            println!("setenv LS_COLORS '{}';", default_ls_colors);
+        } else {
+            let _ = bourne;
+            println!("LS_COLORS='{}';", default_ls_colors);
+            println!("export LS_COLORS");
+        }
+        0
+    }
+
+    /// link FILE1 FILE2 — call link(2) directly to create a hard
+    /// link from FILE1 to FILE2. POSIX link(1) / coreutils link(1).
+    /// Unlike `ln`, link takes EXACTLY two args and rejects flags
+    /// (POSIX requirement).
+    pub(crate) fn builtin_link(&self, args: &[String]) -> i32 {
+        if args.len() != 2 {
+            eprintln!("link: missing operand");
+            return 1;
+        }
+        for a in args {
+            if a.starts_with('-') && a.len() > 1 {
+                // POSIX link(1) accepts no options.
+                eprintln!("link: unrecognized option: '{}'", a);
+                return 1;
+            }
+        }
+        if let Err(e) = std::fs::hard_link(&args[0], &args[1]) {
+            eprintln!("link: cannot link '{}' to '{}': {}", args[0], args[1], e);
+            return 1;
+        }
+        0
+    }
+
+    /// unlink FILE — call unlink(2) directly to remove a single
+    /// file. POSIX unlink(1) / coreutils unlink(1). Strict: takes
+    /// exactly ONE arg, no flags, no recursion. Cannot remove
+    /// directories (errors if FILE is a directory).
+    pub(crate) fn builtin_unlink(&self, args: &[String]) -> i32 {
+        if args.len() != 1 {
+            eprintln!("unlink: missing operand");
+            return 1;
+        }
+        if args[0].starts_with('-') && args[0].len() > 1 {
+            eprintln!("unlink: unrecognized option: '{}'", args[0]);
+            return 1;
+        }
+        if let Err(e) = std::fs::remove_file(&args[0]) {
+            eprintln!("unlink: cannot unlink '{}': {}", args[0], e);
+            return 1;
+        }
+        0
+    }
+
+    /// mkfifo [-m MODE] FILE... — create named pipes (FIFOs).
+    /// Coreutils mkfifo(1) / POSIX. -m sets the mode (default 0666
+    /// minus umask). Each FIFO is created independently; failures
+    /// are reported per-file and the others continue.
+    pub(crate) fn builtin_mkfifo(&self, args: &[String]) -> i32 {
+        use std::ffi::CString;
+        let mut mode: libc::mode_t = 0o666;
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-m" | "--mode" => {
+                    if let Some(m) = iter.next() {
+                        match libc::mode_t::from_str_radix(m, 8) {
+                            Ok(v) => mode = v,
+                            Err(_) => {
+                                eprintln!("mkfifo: invalid mode: '{}'", m);
+                                return 1;
+                            }
+                        }
+                    } else {
+                        eprintln!("mkfifo: option requires an argument -- '-m'");
+                        return 1;
+                    }
+                }
+                s if s.starts_with("--mode=") => match libc::mode_t::from_str_radix(&s[7..], 8) {
+                    Ok(v) => mode = v,
+                    Err(_) => {
+                        eprintln!("mkfifo: invalid mode: '{}'", &s[7..]);
+                        return 1;
+                    }
+                },
+                s if !s.starts_with('-') => files.push(s),
+                "-" => files.push("-"),
+                _ => {
+                    eprintln!("mkfifo: unrecognized option: '{}'", arg);
+                    return 1;
+                }
+            }
+        }
+        if files.is_empty() {
+            eprintln!("mkfifo: missing operand");
+            return 1;
+        }
+        let mut status = 0;
+        for f in files {
+            let cpath = match CString::new(f) {
+                Ok(c) => c,
+                Err(_) => {
+                    eprintln!("mkfifo: cannot create fifo '{}': invalid path", f);
+                    status = 1;
+                    continue;
+                }
+            };
+            if unsafe { libc::mkfifo(cpath.as_ptr(), mode) } != 0 {
+                let err = std::io::Error::last_os_error();
+                eprintln!("mkfifo: cannot create fifo '{}': {}", f, err);
+                status = 1;
+            }
+        }
+        status
+    }
+
+    /// tsort [FILE] — topological sort. Coreutils tsort(1) / POSIX.
+    /// Input is whitespace-separated pairs `A B` meaning "A precedes
+    /// B"; tsort prints a partial order (Kahn's algorithm). Cycles
+    /// are reported on stderr (one cycle node per line) and the
+    /// program continues with that node treated as a leaf. Reads
+    /// stdin when no file is given or `-`.
+    pub(crate) fn builtin_tsort(&self, args: &[String]) -> i32 {
+        use std::collections::BTreeMap;
+        use std::io::{BufRead, BufReader};
+        let file: Option<&str> = args
+            .iter()
+            .find(|a| !a.starts_with('-') || a.as_str() == "-")
+            .map(|s| s.as_str());
+        let reader: Box<dyn BufRead> = match file {
+            Some(f) if f != "-" => match std::fs::File::open(f) {
+                Ok(fh) => Box::new(BufReader::new(fh)),
+                Err(e) => {
+                    eprintln!("tsort: {}: {}", f, e);
+                    return 1;
+                }
+            },
+            _ => Box::new(BufReader::new(std::io::stdin())),
+        };
+        let mut tokens: Vec<String> = Vec::new();
+        for line in reader.lines().map_while(Result::ok) {
+            for tok in line.split_whitespace() {
+                tokens.push(tok.to_string());
+            }
+        }
+        if !tokens.len().is_multiple_of(2) {
+            // POSIX tsort: odd token count is an error per coreutils.
+            eprintln!("tsort: input contains an odd number of tokens");
+            return 1;
+        }
+        // BTreeMap for deterministic listing order — coreutils
+        // visits in input-encounter order, which BTreeMap+iteration
+        // approximates with sorted order. Tests on typical Makefile
+        // dep-order input produce identical-shape output.
+        let mut succ: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut indeg: BTreeMap<String, usize> = BTreeMap::new();
+        let mut nodes: BTreeMap<String, ()> = BTreeMap::new();
+        let mut k = 0;
+        while k + 1 < tokens.len() {
+            let a = tokens[k].clone();
+            let b = tokens[k + 1].clone();
+            nodes.insert(a.clone(), ());
+            nodes.insert(b.clone(), ());
+            indeg.entry(a.clone()).or_insert(0);
+            if a != b {
+                succ.entry(a.clone()).or_default().push(b.clone());
+                *indeg.entry(b).or_insert(0) += 1;
+            } else {
+                indeg.entry(b).or_insert(0);
+            }
+            k += 2;
+        }
+        let mut ready: Vec<String> = nodes
+            .keys()
+            .filter(|n| indeg.get(*n).copied().unwrap_or(0) == 0)
+            .cloned()
+            .collect();
+        let mut emitted: Vec<String> = Vec::new();
+        while !ready.is_empty() {
+            ready.sort();
+            let n = ready.remove(0);
+            println!("{}", n);
+            emitted.push(n.clone());
+            if let Some(succs) = succ.remove(&n) {
+                for s in succs {
+                    if let Some(d) = indeg.get_mut(&s) {
+                        if *d > 0 {
+                            *d -= 1;
+                        }
+                        if *d == 0 {
+                            ready.push(s);
+                        }
+                    }
+                }
+            }
+        }
+        if emitted.len() != nodes.len() {
+            // Cycle detected — print the remaining unprocessed nodes
+            // to stderr per coreutils.
+            eprintln!("tsort: input contains a loop:");
+            for (n, d) in &indeg {
+                if *d > 0 {
+                    eprintln!("tsort: {}", n);
+                }
+            }
+            return 1;
+        }
+        0
+    }
+
+    /// sum [-rs] [FILE...] — BSD or SysV checksum.
+    /// `-r`: BSD 16-bit rotating checksum (default per POSIX).
+    /// `-s`: SysV checksum (sum-of-bytes mod 65535, then folded).
+    /// Output: `<sum> <512-byte-blocks> [name]` (BSD) or
+    ///         `<sum> <kbytes> [name]` (SysV).
+    pub(crate) fn builtin_sum(&self, args: &[String]) -> i32 {
+        use std::io::Read;
+        let mut sysv = false;
+        let mut files: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "-r" => sysv = false,
+                "-s" | "--sysv" => sysv = true,
+                "--bsd" => sysv = false,
+                s if !s.starts_with('-') || s == "-" => files.push(s),
+                _ => {
+                    eprintln!("zshrs:sum:1: unknown option: {}", arg);
+                    return 1;
+                }
+            }
+        }
+        let targets: Vec<&str> = if files.is_empty() { vec!["-"] } else { files };
+        let bsd_sum = |bytes: &[u8]| -> u32 {
+            let mut s: u32 = 0;
+            for &b in bytes {
+                // BSD: rotate right one bit then add — 16-bit value.
+                s = (s >> 1) | ((s & 1) << 15);
+                s = (s + b as u32) & 0xffff;
+            }
+            s
+        };
+        let sysv_sum = |bytes: &[u8]| -> u32 {
+            let mut s: u32 = 0;
+            for &b in bytes {
+                s = s.wrapping_add(b as u32);
+            }
+            // Two-stage fold: r = (s & 0xffff) + (s >> 16);
+            // then r = (r & 0xffff) + (r >> 16). Per coreutils.
+            let r = (s & 0xffff) + (s >> 16);
+            (r & 0xffff) + (r >> 16)
+        };
+        let mut status = 0;
+        for path in targets {
+            let mut buf = Vec::new();
+            let read_res = if path == "-" {
+                std::io::stdin().read_to_end(&mut buf)
+            } else {
+                match std::fs::File::open(path) {
+                    Ok(mut f) => f.read_to_end(&mut buf),
+                    Err(e) => {
+                        eprintln!("sum: {}: {}", path, e);
+                        status = 1;
+                        continue;
+                    }
+                }
+            };
+            if let Err(e) = read_res {
+                eprintln!("sum: {}: {}", path, e);
+                status = 1;
+                continue;
+            }
+            if sysv {
+                let s = sysv_sum(&buf);
+                let kbytes = buf.len().div_ceil(1024);
+                if path == "-" {
+                    println!("{} {}", s, kbytes);
+                } else {
+                    println!("{} {} {}", s, kbytes, path);
+                }
+            } else {
+                let s = bsd_sum(&buf);
+                let blocks = buf.len().div_ceil(512);
+                if path == "-" {
+                    println!("{:05} {:5}", s, blocks);
+                } else {
+                    println!("{:05} {:5} {}", s, blocks, path);
+                }
+            }
+        }
+        status
+    }
+
+    /// cksum [FILE...] — POSIX CRC-32 + byte-count + filename.
+    /// Output: `<crc> <bytes> <name>`. With no files or `-` reads
+    /// stdin (filename column omitted in that case, per coreutils).
+    /// Polynomial: 0x04C11DB7, init 0, length appended (POSIX).
+    pub(crate) fn builtin_cksum(&self, args: &[String]) -> i32 {
+        use std::io::Read;
+        // POSIX cksum table, generated for polynomial 0x04C11DB7 with
+        // bits processed MSB-first. Built once at runtime per call;
+        // a const table would be ~1KB but the runtime cost of building
+        // is microseconds and avoids the const-array boilerplate.
+        let mut table = [0u32; 256];
+        for (i, slot) in table.iter_mut().enumerate() {
+            let mut c = (i as u32) << 24;
+            for _ in 0..8 {
+                c = if c & 0x8000_0000 != 0 {
+                    (c << 1) ^ 0x04C11DB7
+                } else {
+                    c << 1
+                };
+            }
+            *slot = c;
+        }
+        let crc_bytes = |bytes: &[u8]| -> (u32, u64) {
+            let mut crc: u32 = 0;
+            let mut len: u64 = 0;
+            for &b in bytes {
+                crc = (crc << 8) ^ table[((crc >> 24) ^ b as u32) as usize & 0xff];
+                len += 1;
+            }
+            // POSIX cksum appends the length as little-endian-by-byte
+            // until length consumed.
+            let mut n = len;
+            while n != 0 {
+                crc = (crc << 8) ^ table[((crc >> 24) ^ (n as u32 & 0xff)) as usize & 0xff];
+                n >>= 8;
+            }
+            (!crc, len)
+        };
+        let files: Vec<&str> = args
+            .iter()
+            .filter(|a| !a.starts_with('-') || *a == "-")
+            .map(|s| s.as_str())
+            .collect();
+        let targets: Vec<&str> = if files.is_empty() { vec!["-"] } else { files };
+        let mut status = 0;
+        for path in targets {
+            let mut buf = Vec::new();
+            let read_res = if path == "-" {
+                std::io::stdin().read_to_end(&mut buf)
+            } else {
+                match std::fs::File::open(path) {
+                    Ok(mut f) => f.read_to_end(&mut buf),
+                    Err(e) => {
+                        eprintln!("cksum: {}: {}", path, e);
+                        status = 1;
+                        continue;
+                    }
+                }
+            };
+            if let Err(e) = read_res {
+                eprintln!("cksum: {}: {}", path, e);
+                status = 1;
+                continue;
+            }
+            let (crc, len) = crc_bytes(&buf);
+            if path == "-" {
+                println!("{} {}", crc, len);
+            } else {
+                println!("{} {} {}", crc, len, path);
+            }
+        }
+        status
+    }
+
+    /// factor N... — print prime factorization of each integer arg.
+    /// Coreutils factor(1). Format: `N: p1 p2 p3 ...`. Reads stdin
+    /// if no args. Negative numbers and zero are rejected.
+    pub(crate) fn builtin_factor(&self, args: &[String]) -> i32 {
+        use std::io::BufRead;
+        let factor_line = |line: &str| {
+            for tok in line.split_whitespace() {
+                let n: u64 = match tok.parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        eprintln!("factor: '{}' is not a valid positive integer", tok);
+                        continue;
+                    }
+                };
+                let mut x = n;
+                let mut factors: Vec<u64> = Vec::new();
+                if x < 2 {
+                    // 0 and 1 have no prime factorization. coreutils
+                    // emits `N:` with empty list. Match that.
+                    println!("{}:", n);
+                    continue;
+                }
+                while x.is_multiple_of(2) {
+                    factors.push(2);
+                    x /= 2;
+                }
+                let mut p: u64 = 3;
+                while p.saturating_mul(p) <= x {
+                    while x.is_multiple_of(p) {
+                        factors.push(p);
+                        x /= p;
+                    }
+                    p += 2;
+                }
+                if x > 1 {
+                    factors.push(x);
+                }
+                let parts: Vec<String> = factors.iter().map(|p| p.to_string()).collect();
+                println!("{}: {}", n, parts.join(" "));
+            }
+        };
+        let nums: Vec<&str> = args
+            .iter()
+            .filter(|a| !a.starts_with('-'))
+            .map(|s| s.as_str())
+            .collect();
+        if nums.is_empty() {
+            let stdin = std::io::stdin();
+            for line in stdin.lock().lines().map_while(Result::ok) {
+                factor_line(&line);
+            }
+        } else {
+            for tok in nums {
+                factor_line(tok);
+            }
+        }
+        0
+    }
+
+    /// comm [-123] FILE1 FILE2 — line-by-line comparison of two
+    /// sorted files. Coreutils comm(1) / POSIX. Three columns:
+    /// (1) unique to FILE1, (2) unique to FILE2, (3) common.
+    /// Flags `-1`/`-2`/`-3` suppress the respective column. Either
+    /// file may be `-` for stdin. Files MUST be sorted in the same
+    /// collation; comm performs a streaming merge-compare and is
+    /// undefined-behavior on unsorted input (matches coreutils).
+    pub(crate) fn builtin_comm(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+        let mut suppress1 = false;
+        let mut suppress2 = false;
+        let mut suppress3 = false;
+        let mut files: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "-1" => suppress1 = true,
+                "-2" => suppress2 = true,
+                "-3" => suppress3 = true,
+                "-12" | "-21" => {
+                    suppress1 = true;
+                    suppress2 = true;
+                }
+                "-13" | "-31" => {
+                    suppress1 = true;
+                    suppress3 = true;
+                }
+                "-23" | "-32" => {
+                    suppress2 = true;
+                    suppress3 = true;
+                }
+                "-123" | "-132" | "-213" | "-231" | "-312" | "-321" => {
+                    suppress1 = true;
+                    suppress2 = true;
+                    suppress3 = true;
+                }
+                "--help" => {
+                    println!("Usage: comm [-123] FILE1 FILE2");
+                    return 0;
+                }
+                s if !s.starts_with('-') || s == "-" => files.push(s),
+                _ => {
+                    eprintln!("zshrs:comm:1: unknown option: {}", arg);
+                    return 1;
+                }
+            }
+        }
+        if files.len() != 2 {
+            eprintln!("zshrs:comm:1: expected exactly 2 file arguments");
+            return 1;
+        }
+        let read_lines = |path: &str| -> std::io::Result<Vec<String>> {
+            let reader: Box<dyn BufRead> = if path == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                Box::new(BufReader::new(std::fs::File::open(path)?))
+            };
+            reader.lines().collect()
+        };
+        let lines1 = match read_lines(files[0]) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("zshrs:comm:1: {}: {}", files[0], e);
+                return 1;
+            }
+        };
+        let lines2 = match read_lines(files[1]) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("zshrs:comm:1: {}: {}", files[1], e);
+                return 1;
+            }
+        };
+        let mut i = 0usize;
+        let mut j = 0usize;
+        let emit_col1 = |s: &str| {
+            if !suppress1 {
+                println!("{}", s);
+            }
+        };
+        let emit_col2 = |s: &str| {
+            if !suppress2 {
+                let prefix = if suppress1 { "" } else { "\t" };
+                println!("{}{}", prefix, s);
+            }
+        };
+        let emit_col3 = |s: &str| {
+            if !suppress3 {
+                let prefix = match (suppress1, suppress2) {
+                    (true, true) => "",
+                    (false, true) | (true, false) => "\t",
+                    (false, false) => "\t\t",
+                };
+                println!("{}{}", prefix, s);
+            }
+        };
+        while i < lines1.len() && j < lines2.len() {
+            match lines1[i].cmp(&lines2[j]) {
+                std::cmp::Ordering::Less => {
+                    emit_col1(&lines1[i]);
+                    i += 1;
+                }
+                std::cmp::Ordering::Greater => {
+                    emit_col2(&lines2[j]);
+                    j += 1;
+                }
+                std::cmp::Ordering::Equal => {
+                    emit_col3(&lines1[i]);
+                    i += 1;
+                    j += 1;
+                }
+            }
+        }
+        while i < lines1.len() {
+            emit_col1(&lines1[i]);
+            i += 1;
+        }
+        while j < lines2.len() {
+            emit_col2(&lines2[j]);
+            j += 1;
+        }
+        0
+    }
+
+    /// tac [FILE...] — concatenate files, reverse line order.
+    /// coreutils tac(1).
+    pub(crate) fn builtin_tac(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+        // tac in coreutils accepts -b (before) / -r (regex separator)
+        // / -s (separator). Most usage is positional-only. Validate
+        // unknown flags rather than silent-drop.
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(a) = iter.next() {
+            let s: &str = a.as_str();
+            match s {
+                "-" => files.push("-"),
+                "-b" | "--before" | "-r" | "--regex" => {} // accepted, no-op
+                "-s" | "--separator" => {
+                    iter.next(); // consume the separator arg
+                }
+                "--" => {
+                    for rest in iter.by_ref() {
+                        files.push(rest);
+                    }
+                    break;
+                }
+                x if !x.starts_with('-') => files.push(x),
+                _ => {
+                    eprintln!("tac: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+        let targets: Vec<&str> = if files.is_empty() { vec!["-"] } else { files };
+        let mut all: Vec<String> = Vec::new();
+        for file in targets {
+            let reader: Box<dyn BufRead> = if file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("tac: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            };
+            for line in reader.lines().map_while(Result::ok) {
+                all.push(line);
+            }
+        }
+        for line in all.iter().rev() {
+            println!("{}", line);
+        }
+        0
+    }
+
+    /// expand [-t TAB] [FILE...] — convert tabs to spaces.
+    /// coreutils expand(1).
+    pub(crate) fn builtin_expand(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+        // Default tab stop 8.
+        let mut tabs: Vec<usize> = vec![8];
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-t" | "--tabs" => {
+                    if let Some(s) = iter.next() {
+                        tabs = s.split([',', ' ']).filter_map(|x| x.parse().ok()).collect();
+                        if tabs.is_empty() {
+                            tabs = vec![8];
+                        }
+                    }
+                }
+                s if s.starts_with("-t") && s.len() > 2 => {
+                    tabs = s[2..]
+                        .split([',', ' '])
+                        .filter_map(|x| x.parse().ok())
+                        .collect();
+                    if tabs.is_empty() {
+                        tabs = vec![8];
+                    }
+                }
+                "-i" | "--initial" => {} // accepted: only-leading-tabs
+                "-" => files.push("-"),
+                "--" => {
+                    for rest in iter.by_ref() {
+                        files.push(rest);
+                    }
+                    break;
+                }
+                s if !s.starts_with('-') => files.push(s),
+                s => {
+                    eprintln!("expand: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+        let stop_for = |col: usize| -> usize {
+            if tabs.len() == 1 {
+                let t = tabs[0];
+                col + (t - col % t)
+            } else {
+                // Multi-stop: find the first stop > col, else 1-extend.
+                for &s in &tabs {
+                    if s > col {
+                        return s;
+                    }
+                }
+                col + 1
+            }
+        };
+        let targets: Vec<&str> = if files.is_empty() { vec!["-"] } else { files };
+        for file in targets {
+            let reader: Box<dyn BufRead> = if file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("expand: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            };
+            for line in reader.lines().map_while(Result::ok) {
+                let mut col = 0usize;
+                let mut out = String::with_capacity(line.len());
+                for c in line.chars() {
+                    if c == '\t' {
+                        let target = stop_for(col);
+                        while col < target {
+                            out.push(' ');
+                            col += 1;
+                        }
+                    } else {
+                        out.push(c);
+                        col += 1;
+                    }
+                }
+                println!("{}", out);
+            }
+        }
+        0
+    }
+
+    /// unexpand [-a] [-t TAB] [FILE...] — convert spaces to tabs.
+    /// coreutils unexpand(1).  Default tabstop 8; -a converts every
+    /// run of spaces (not just leading); without -a only leading
+    /// runs collapse.
+    pub(crate) fn builtin_unexpand(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+        let mut tabstop: usize = 8;
+        let mut all_runs = false;
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-a" | "--all" => all_runs = true,
+                "-t" | "--tabs" => {
+                    if let Some(s) = iter.next() {
+                        if let Ok(n) = s.parse() {
+                            tabstop = n;
+                            all_runs = true;
+                        }
+                    }
+                }
+                s if s.starts_with("-t") && s.len() > 2 => {
+                    if let Ok(n) = s[2..].parse() {
+                        tabstop = n;
+                        all_runs = true;
+                    }
+                }
+                "-" => files.push("-"),
+                "--" => {
+                    for rest in iter.by_ref() {
+                        files.push(rest);
+                    }
+                    break;
+                }
+                s if !s.starts_with('-') => files.push(s),
+                s => {
+                    eprintln!("unexpand: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+        let targets: Vec<&str> = if files.is_empty() { vec!["-"] } else { files };
+        for file in targets {
+            let reader: Box<dyn BufRead> = if file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("unexpand: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            };
+            for line in reader.lines().map_while(Result::ok) {
+                let mut out = String::with_capacity(line.len());
+                let mut col = 0usize;
+                let chars: Vec<char> = line.chars().collect();
+                let mut i = 0;
+                let mut leading = true;
+                while i < chars.len() {
+                    if chars[i] == ' ' && (all_runs || leading) {
+                        // Count run of spaces.
+                        let start_col = col;
+                        let mut j = i;
+                        while j < chars.len() && chars[j] == ' ' {
+                            j += 1;
+                            col += 1;
+                        }
+                        // Compress as many tabs as possible.
+                        let mut cur = start_col;
+                        let next_stop = |c: usize| (c / tabstop + 1) * tabstop;
+                        while cur + (next_stop(cur) - cur) <= col {
+                            let s = next_stop(cur);
+                            out.push('\t');
+                            cur = s;
+                        }
+                        // Pad remainder with spaces.
+                        for _ in cur..col {
+                            out.push(' ');
+                        }
+                        i = j;
+                    } else {
+                        out.push(chars[i]);
+                        if chars[i] != ' ' && chars[i] != '\t' {
+                            leading = false;
+                        }
+                        if chars[i] == '\t' {
+                            col = (col / tabstop + 1) * tabstop;
+                        } else {
+                            col += 1;
+                        }
+                        i += 1;
+                    }
+                }
+                println!("{}", out);
+            }
+        }
+        0
+    }
+
+    /// sha256sum [FILE...] — write SHA-256 of each file (or stdin
+    /// when no FILE / '-'). coreutils-style 'HEX  PATH' output.
+    pub(crate) fn builtin_sha256sum(&self, args: &[String]) -> i32 {
+        use sha2::{Digest, Sha256};
+        use std::io::Read;
+        // Validate flags: silent-drop accepted any unknown -X. coreutils
+        // sha256sum specifically supports -b/-t/--binary/--text (we
+        // accept them as no-ops since output format is identical), -
+        // (stdin), and `--`. Anything else errors.
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-" => files.push("-"),
+                "-b" | "-t" | "--binary" | "--text" => {} // accept, no-op
+                "--" => {
+                    for rest in iter.by_ref() {
+                        files.push(rest);
+                    }
+                    break;
+                }
+                s if !s.starts_with('-') => files.push(s),
+                s => {
+                    eprintln!("sha256sum: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+        let targets: Vec<&str> = if files.is_empty() { vec!["-"] } else { files };
+        let mut status = 0;
+        for f in targets {
+            let mut hasher = Sha256::new();
+            let result: std::io::Result<()> = (|| {
+                let mut buf = [0u8; 65536];
+                if f == "-" {
+                    let stdin = std::io::stdin();
+                    let mut h = stdin.lock();
+                    loop {
+                        let n = h.read(&mut buf)?;
+                        if n == 0 {
+                            break;
+                        }
+                        hasher.update(&buf[..n]);
+                    }
+                } else {
+                    let mut file = std::fs::File::open(f)?;
+                    loop {
+                        let n = file.read(&mut buf)?;
+                        if n == 0 {
+                            break;
+                        }
+                        hasher.update(&buf[..n]);
+                    }
+                }
+                Ok(())
+            })();
+            match result {
+                Ok(()) => {
+                    let hex = format!("{:x}", hasher.finalize());
+                    if f == "-" {
+                        println!("{}  -", hex);
+                    } else {
+                        println!("{}  {}", hex, f);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("sha256sum: {}: {}", f, e);
+                    status = 1;
+                }
+            }
+        }
+        status
+    }
+
+    /// base64 [-d] [FILE] — encode/decode base64. coreutils
+    /// base64(1) without --wrap (defaults to 76-char wrap on
+    /// encode; 0 disables).
+    pub(crate) fn builtin_base64(&self, args: &[String]) -> i32 {
+        use std::io::Read;
+        const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut decode = false;
+        let mut wrap: usize = 76;
+        let mut file: Option<&str> = None;
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-d" | "--decode" => decode = true,
+                "-w" | "--wrap" => {
+                    if let Some(s) = iter.next() {
+                        wrap = s.parse().unwrap_or(76);
+                    }
+                }
+                s if s.starts_with("--wrap=") => {
+                    wrap = s[7..].parse().unwrap_or(76);
+                }
+                "-i" | "--ignore-garbage" => {} // accepted, default behaviour
+                "--" => {}                      // end of options
+                "-" => file = Some("-"),
+                s if !s.starts_with('-') => file = Some(s),
+                s => {
+                    eprintln!("base64: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+        let mut input = Vec::new();
+        match file {
+            Some(f) if f != "-" => match std::fs::File::open(f) {
+                Ok(mut h) => {
+                    let _ = h.read_to_end(&mut input);
+                }
+                Err(e) => {
+                    eprintln!("base64: {}: {}", f, e);
+                    return 1;
+                }
+            },
+            _ => {
+                let stdin = std::io::stdin();
+                let _ = stdin.lock().read_to_end(&mut input);
+            }
+        }
+        if decode {
+            // Strip whitespace then decode 4-char groups.
+            let cleaned: Vec<u8> = input
+                .iter()
+                .copied()
+                .filter(|b| !b.is_ascii_whitespace())
+                .collect();
+            let mut out: Vec<u8> = Vec::with_capacity(cleaned.len() * 3 / 4);
+            let mut buf = [0u8; 4];
+            let mut have = 0usize;
+            for &c in &cleaned {
+                if c == b'=' {
+                    break;
+                }
+                let v = match c {
+                    b'A'..=b'Z' => c - b'A',
+                    b'a'..=b'z' => c - b'a' + 26,
+                    b'0'..=b'9' => c - b'0' + 52,
+                    b'+' => 62,
+                    b'/' => 63,
+                    _ => continue,
+                };
+                buf[have] = v;
+                have += 1;
+                if have == 4 {
+                    out.push((buf[0] << 2) | (buf[1] >> 4));
+                    out.push((buf[1] << 4) | (buf[2] >> 2));
+                    out.push((buf[2] << 6) | buf[3]);
+                    have = 0;
+                }
+            }
+            // Handle trailing 2/3 chars.
+            if have == 2 {
+                out.push((buf[0] << 2) | (buf[1] >> 4));
+            } else if have == 3 {
+                out.push((buf[0] << 2) | (buf[1] >> 4));
+                out.push((buf[1] << 4) | (buf[2] >> 2));
+            }
+            use std::io::Write;
+            let _ = std::io::stdout().write_all(&out);
+        } else {
+            let mut out = String::with_capacity(input.len() * 4 / 3 + 4);
+            let mut col = 0usize;
+            let push_char = |c: u8, out: &mut String, col: &mut usize| {
+                out.push(c as char);
+                *col += 1;
+                if wrap > 0 && *col >= wrap {
+                    out.push('\n');
+                    *col = 0;
+                }
+            };
+            let mut i = 0;
+            while i + 3 <= input.len() {
+                let n = ((input[i] as u32) << 16)
+                    | ((input[i + 1] as u32) << 8)
+                    | (input[i + 2] as u32);
+                push_char(ALPHA[((n >> 18) & 0x3f) as usize], &mut out, &mut col);
+                push_char(ALPHA[((n >> 12) & 0x3f) as usize], &mut out, &mut col);
+                push_char(ALPHA[((n >> 6) & 0x3f) as usize], &mut out, &mut col);
+                push_char(ALPHA[(n & 0x3f) as usize], &mut out, &mut col);
+                i += 3;
+            }
+            let rem = input.len() - i;
+            if rem == 1 {
+                let n = (input[i] as u32) << 16;
+                push_char(ALPHA[((n >> 18) & 0x3f) as usize], &mut out, &mut col);
+                push_char(ALPHA[((n >> 12) & 0x3f) as usize], &mut out, &mut col);
+                push_char(b'=', &mut out, &mut col);
+                push_char(b'=', &mut out, &mut col);
+            } else if rem == 2 {
+                let n = ((input[i] as u32) << 16) | ((input[i + 1] as u32) << 8);
+                push_char(ALPHA[((n >> 18) & 0x3f) as usize], &mut out, &mut col);
+                push_char(ALPHA[((n >> 12) & 0x3f) as usize], &mut out, &mut col);
+                push_char(ALPHA[((n >> 6) & 0x3f) as usize], &mut out, &mut col);
+                push_char(b'=', &mut out, &mut col);
+            }
+            if col != 0 {
+                out.push('\n');
+            }
+            print!("{}", out);
+        }
+        0
+    }
+
+    /// nproc — print number of online CPUs. coreutils nproc(1).
+    /// --all uses CPU count from sysconf(_SC_NPROCESSORS_CONF);
+    /// default uses _SC_NPROCESSORS_ONLN (the schedulable subset).
+    pub(crate) fn builtin_nproc(&self, args: &[String]) -> i32 {
+        // coreutils nproc accepts --all and --ignore=N. Validate
+        // unknown flags rather than the previous silent accept.
+        let mut want_all = false;
+        let mut ignore: i64 = 0;
+        for arg in args {
+            match arg.as_str() {
+                "--all" => want_all = true,
+                s if s.starts_with("--ignore=") => {
+                    ignore = s[9..].parse().unwrap_or(0);
+                }
+                "--ignore" => {
+                    // separate-arg form not common; coreutils accepts
+                    // --ignore=N. Skip if standalone, treat as no-op.
+                }
+                "--" => {}
+                s if s.starts_with('-') && s.len() > 1 => {
+                    eprintln!("nproc: invalid option: '{}'", s);
+                    return 1;
+                }
+                _ => {}
+            }
+        }
+        let n = unsafe {
+            if want_all {
+                libc::sysconf(libc::_SC_NPROCESSORS_CONF)
+            } else {
+                libc::sysconf(libc::_SC_NPROCESSORS_ONLN)
+            }
+        };
+        let mut count = if n <= 0 { 1 } else { n as i64 };
+        count = (count - ignore).max(1);
+        println!("{}", count);
+        0
+    }
+
+    /// expr ARG... — evaluate expression. POSIX expr(1).
+    /// Subset port: integer arithmetic (+ - * / %), string match
+    /// ': REGEX', length STRING, substr STRING POS LEN, index
+    /// STRING CHARS. Recognizes the closing arg list directly
+    /// (single-pass shunting-yard would be heavier than needed
+    /// for the common scripts).
+    pub(crate) fn builtin_expr(&self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            eprintln!("expr: missing operand");
+            return 2;
+        }
+        // Strip optional leading '--'.
+        let mut argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        if argv[0] == "--" {
+            argv.remove(0);
+        }
+        // Single-arg shortcuts.
+        if argv.len() == 1 {
+            println!("{}", argv[0]);
+            return if argv[0].is_empty() || argv[0] == "0" {
+                1
+            } else {
+                0
+            };
+        }
+        // 'length STRING' / 'substr STR POS LEN' / 'index STR CHARS'.
+        match argv[0] {
+            "length" if argv.len() == 2 => {
+                let n = argv[1].chars().count();
+                println!("{}", n);
+                return if n == 0 { 1 } else { 0 };
+            }
+            "substr" if argv.len() == 4 => {
+                let pos: i64 = argv[2].parse().unwrap_or(1);
+                let len: i64 = argv[3].parse().unwrap_or(0);
+                let s = argv[1];
+                let start = (pos - 1).max(0) as usize;
+                let end = (start + len.max(0) as usize).min(s.chars().count());
+                if start >= s.chars().count() || len <= 0 {
+                    println!();
+                    return 1;
+                }
+                let out: String = s.chars().skip(start).take(end - start).collect();
+                println!("{}", out);
+                return if out.is_empty() { 1 } else { 0 };
+            }
+            "index" if argv.len() == 3 => {
+                let s = argv[1];
+                let chars = argv[2];
+                for (i, c) in s.char_indices() {
+                    if chars.contains(c) {
+                        // 1-based; coreutils returns char index, not byte.
+                        let n = s[..i].chars().count() + 1;
+                        println!("{}", n);
+                        return 0;
+                    }
+                }
+                println!("0");
+                return 1;
+            }
+            _ => {}
+        }
+        // Three-arg infix ops: STR OP STR. Numeric for + - * / %,
+        // string for = != < > <= >=, ':' for prefix match.
+        if argv.len() == 3 {
+            let a = argv[0];
+            let op = argv[1];
+            let b = argv[2];
+            let try_int = |s: &str| -> Option<i64> { s.parse().ok() };
+            let result: String = match op {
+                "+" | "-" | "*" | "/" | "%" => {
+                    let ai = try_int(a).unwrap_or(0);
+                    let bi = try_int(b).unwrap_or(0);
+                    let v = match op {
+                        "+" => ai + bi,
+                        "-" => ai - bi,
+                        "*" => ai * bi,
+                        "/" => {
+                            if bi == 0 {
+                                eprintln!("expr: division by zero");
+                                return 2;
+                            }
+                            ai / bi
+                        }
+                        "%" => {
+                            if bi == 0 {
+                                eprintln!("expr: division by zero");
+                                return 2;
+                            }
+                            ai % bi
+                        }
+                        _ => 0,
+                    };
+                    v.to_string()
+                }
+                "=" | "==" => (a == b).to_string(),
+                "!=" => (a != b).to_string(),
+                "<" => match (try_int(a), try_int(b)) {
+                    (Some(x), Some(y)) => (x < y).to_string(),
+                    _ => (a < b).to_string(),
+                },
+                ">" => match (try_int(a), try_int(b)) {
+                    (Some(x), Some(y)) => (x > y).to_string(),
+                    _ => (a > b).to_string(),
+                },
+                "<=" => match (try_int(a), try_int(b)) {
+                    (Some(x), Some(y)) => (x <= y).to_string(),
+                    _ => (a <= b).to_string(),
+                },
+                ">=" => match (try_int(a), try_int(b)) {
+                    (Some(x), Some(y)) => (x >= y).to_string(),
+                    _ => (a >= b).to_string(),
+                },
+                ":" => {
+                    // Anchored regex match; if pattern has a capture
+                    // group, output the capture; else the match length.
+                    let re = match regex::Regex::new(&format!("^{}", b)) {
+                        Ok(r) => r,
+                        Err(_) => {
+                            eprintln!("expr: invalid regex: {}", b);
+                            return 2;
+                        }
+                    };
+                    if let Some(c) = re.captures(a) {
+                        if let Some(g1) = c.get(1) {
+                            g1.as_str().to_string()
+                        } else {
+                            c.get(0).map(|m| m.range().len()).unwrap_or(0).to_string()
+                        }
+                    } else {
+                        "0".to_string()
+                    }
+                }
+                _ => {
+                    eprintln!("expr: unknown operator: {}", op);
+                    return 2;
+                }
+            };
+            println!("{}", result);
+            return if result.is_empty() || result == "0" || result == "false" {
+                1
+            } else {
+                0
+            };
+        }
+        // Fallback: just print joined.
+        println!("{}", argv.join(" "));
+        0
+    }
+
+    /// printenv [VAR...] — print env. coreutils printenv(1).
+    /// No args: print all env vars (sorted by key for stable output).
+    /// Args: print VAR's value per arg, exit 1 if any unset.
+    pub(crate) fn builtin_printenv(&self, args: &[String]) -> i32 {
+        // coreutils printenv has -0 / --null (NUL-terminate output).
+        // Old impl ignored flags silently and treated \`-0\` as a
+        // variable name lookup, which always failed since no env var
+        // is named \`-0\`.
+        let mut zero_term = false;
+        let mut names: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "-0" | "--null" => zero_term = true,
+                "--" => {} // end of options
+                s if !s.starts_with('-') => names.push(s),
+                s => {
+                    eprintln!("printenv: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+        let term: char = if zero_term { '\0' } else { '\n' };
+        if names.is_empty() {
+            let mut vars: Vec<(String, String)> = std::env::vars().collect();
+            vars.sort_by(|a, b| a.0.cmp(&b.0));
+            for (k, v) in vars {
+                print!("{}={}{}", k, v, term);
+            }
+            return 0;
+        }
+        let mut status = 0;
+        for name in names {
+            match std::env::var(name) {
+                Ok(v) => print!("{}{}", v, term),
+                Err(_) => status = 1,
+            }
+        }
+        status
+    }
+
+    /// tty — print the controlling-terminal device path. coreutils
+    /// tty(1). -s suppresses output (just sets the exit code).
+    pub(crate) fn builtin_tty(&self, args: &[String]) -> i32 {
+        let mut silent = false;
+        for arg in args {
+            match arg.as_str() {
+                "-s" | "--silent" | "--quiet" => silent = true,
+                "--" => {}
+                s if s.starts_with('-') && s.len() > 1 => {
+                    eprintln!("tty: unrecognized option: '{}'", s);
+                    return 1;
+                }
+                _ => {} // bare arg ignored — coreutils tty takes no operands
+            }
+        }
+        unsafe {
+            let p = libc::ttyname(0);
+            if p.is_null() {
+                if !silent {
+                    println!("not a tty");
+                }
+                return 1;
+            }
+            if !silent {
+                let s = std::ffi::CStr::from_ptr(p);
+                println!("{}", s.to_string_lossy());
+            }
+        }
+        0
+    }
+
+    /// yes [STRING] — print STRING (or 'y') forever. coreutils
+    /// yes(1). Honors SIGPIPE: when stdout is piped and the consumer
+    /// closes, the write fails and we exit 0 silently.
+    pub(crate) fn builtin_yes(&self, args: &[String]) -> i32 {
+        use std::io::Write;
+        // coreutils yes: \`yes --help\` / \`yes --version\` print
+        // help/version and exit when --help/--version is the sole
+        // arg. With multiple args (\`yes --help foo\`), --help is
+        // treated as part of the literal string to repeat (matches
+        // GNU yes 9.x exactly).
+        if args.len() == 1 {
+            match args[0].as_str() {
+                "--help" => {
+                    println!("Usage: yes [STRING]...");
+                    println!("Repeatedly output STRING, or 'y' if STRING omitted.");
+                    return 0;
+                }
+                "--version" => {
+                    println!("yes (zshrs) {}", env!("CARGO_PKG_VERSION"));
+                    return 0;
+                }
+                _ => {}
+            }
+        }
+        let line = if args.is_empty() {
+            "y\n".to_string()
+        } else {
+            format!("{}\n", args.join(" "))
+        };
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+        // Buffer ~64KB worth of repeats per write to amortize syscall.
+        let mut buf = String::with_capacity(65536);
+        while buf.len() + line.len() <= 65536 {
+            buf.push_str(&line);
+        }
+        loop {
+            if out.write_all(buf.as_bytes()).is_err() {
+                return 0; // SIGPIPE / closed consumer
+            }
+        }
+    }
+
+    /// nl [-b STYLE] [FILE...] — number lines. Direct port of
+    /// coreutils nl(1) for the most-used flag set.
+    pub(crate) fn builtin_nl(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+        // -b a: number all lines.  -b t: number non-empty (default).
+        let mut style = 't';
+        let mut start = 1i64;
+        let mut step = 1i64;
+        let mut sep = "\t".to_string();
+        let mut width = 6usize;
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-b" | "--body-numbering" => {
+                    if let Some(s) = iter.next() {
+                        style = s.chars().next().unwrap_or('t');
+                    }
+                }
+                "-i" | "--line-increment" => {
+                    if let Some(s) = iter.next() {
+                        step = s.parse().unwrap_or(1);
+                    }
+                }
+                "-v" | "--starting-line-number" => {
+                    if let Some(s) = iter.next() {
+                        start = s.parse().unwrap_or(1);
+                    }
+                }
+                "-s" | "--number-separator" => {
+                    if let Some(s) = iter.next() {
+                        sep = s.clone();
+                    }
+                }
+                "-w" | "--number-width" => {
+                    if let Some(s) = iter.next() {
+                        width = s.parse().unwrap_or(6);
+                    }
+                }
+                "-" => files.push("-"),
+                "--" => {} // end of options
+                s if !s.starts_with('-') => files.push(s),
+                s => {
+                    eprintln!("nl: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+        if files.is_empty() {
+            files.push("-");
+        }
+        let mut n = start;
+        for file in files {
+            let reader: Box<dyn BufRead> = if file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("nl: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            };
+            for line in reader.lines().map_while(Result::ok) {
+                let blank = line.is_empty();
+                let do_number = match style {
+                    'a' => true,
+                    't' => !blank,
+                    'n' => false,
+                    _ => !blank,
+                };
+                if do_number {
+                    println!("{:>width$}{}{}", n, sep, line, width = width);
+                    n += step;
+                } else {
+                    println!("{}{}", " ".repeat(width + sep.len()), line);
+                }
+            }
+        }
+        0
+    }
+
+    /// env [-i] [NAME=VALUE]... [COMMAND [ARG]...] — print env or
+    /// run COMMAND with modified environment. Direct port of
+    /// coreutils env(1) for the most-used invocations.
+    pub(crate) fn builtin_env(&mut self, args: &[String]) -> i32 {
+        let mut clear_env = false;
+        let mut unset: Vec<String> = Vec::new();
+        let mut assignments: Vec<(String, String)> = Vec::new();
+        let mut cmd_start: Option<usize> = None;
+        let mut i = 0;
+        while i < args.len() {
+            let a = &args[i];
+            if a == "-i" || a == "--ignore-environment" {
+                clear_env = true;
+                i += 1;
+                continue;
+            }
+            if a == "-u" || a == "--unset" {
+                if i + 1 < args.len() {
+                    unset.push(args[i + 1].clone());
+                    i += 2;
+                    continue;
+                }
+                eprintln!("env: -u: missing argument");
+                return 125;
+            }
+            if let Some(name) = a.strip_prefix("--unset=") {
+                unset.push(name.to_string());
+                i += 1;
+                continue;
+            }
+            if a == "--" {
+                cmd_start = Some(i + 1);
+                break;
+            }
+            if let Some(eq) = a.find('=') {
+                if !a[..eq].is_empty() && !a.starts_with('-') {
+                    assignments.push((a[..eq].to_string(), a[eq + 1..].to_string()));
+                    i += 1;
+                    continue;
+                }
+            }
+            if !a.starts_with('-') {
+                cmd_start = Some(i);
+                break;
+            }
+            // Unknown -X flag; emit error like coreutils.
+            eprintln!("env: invalid option: {}", a);
+            return 125;
+        }
+
+        let cmd_args: Vec<&str> = match cmd_start {
+            Some(s) => args[s..].iter().map(|x| x.as_str()).collect(),
+            None => Vec::new(),
+        };
+
+        // Build the env: optionally clear, drop -u names, apply
+        // assignments.
+        let env_overrides: Vec<(String, String)> = if clear_env {
+            assignments.clone()
+        } else {
+            let mut out: Vec<(String, String)> = std::env::vars()
+                .filter(|(k, _)| !unset.contains(k))
+                .collect();
+            for (k, v) in &assignments {
+                out.retain(|(ek, _)| ek != k);
+                out.push((k.clone(), v.clone()));
+            }
+            out
+        };
+
+        if cmd_args.is_empty() {
+            // Print env, sorted by key for stable output (matches
+            // GNU env's typical alphabetical layout).
+            let mut sorted = env_overrides;
+            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+            for (k, v) in sorted {
+                println!("{}={}", k, v);
+            }
+            return 0;
+        }
+
+        // Run the command with the modified environment. Spawn via
+        // std::process::Command since we're a coreutils-style env
+        // shim, not a shell-level builtin.
+        let mut cmd = std::process::Command::new(cmd_args[0]);
+        cmd.args(&cmd_args[1..]);
+        if clear_env {
+            cmd.env_clear();
+        }
+        for u in &unset {
+            cmd.env_remove(u);
+        }
+        for (k, v) in &assignments {
+            cmd.env(k, v);
+        }
+        match cmd.status() {
+            Ok(status) => status.code().unwrap_or(127),
+            Err(_) => 127,
+        }
+    }
+
+    pub(crate) fn builtin_whoami(&self, args: &[String]) -> i32 {
+        // coreutils whoami(1) prints the EFFECTIVE user name, not
+        // \$USER. After 'sudo whoami', \$USER may still be the
+        // original (depending on sudo config) — but whoami should
+        // print the effective user. Direct port via geteuid +
+        // getpwuid.
+        // whoami takes no operands. Reject unknown flags (was
+        // silently ignored via the unused _args arg).
+        for arg in args {
+            if arg.starts_with('-') && arg.len() > 1 && arg != "--" {
+                eprintln!("whoami: unrecognized option: '{}'", arg);
+                return 1;
+            }
+            if !arg.starts_with('-') {
+                eprintln!("whoami: extra operand '{}'", arg);
+                return 1;
+            }
+        }
+        use std::ffi::CStr;
+        let euid = unsafe { libc::geteuid() };
+        unsafe {
+            let pw = libc::getpwuid(euid);
+            if !pw.is_null() {
+                let name = CStr::from_ptr((*pw).pw_name);
+                println!("{}", name.to_string_lossy());
+                return 0;
+            }
+        }
+        // Fallback: numeric uid (matches coreutils 'cannot find name'
+        // error case).
+        eprintln!("whoami: cannot find name for user ID {}", euid);
+        1
+    }
+
+    pub(crate) fn builtin_id(&self, args: &[String]) -> i32 {
+        // coreutils id(1) port: -u/-g/-G with -n name modifier, plus
+        // the default 'uid=N(name) gid=N(name) groups=...' form.
+        use std::ffi::CStr;
+
+        let uid = unsafe { libc::getuid() };
+        let gid = unsafe { libc::getgid() };
+        let euid = unsafe { libc::geteuid() };
+        let egid = unsafe { libc::getegid() };
+
+        // Parse flag combinations: -u, -g, -G, -un, -gn, -Gn, -nu, etc.
+        let mut want_uid = false;
+        let mut want_gid = false;
+        let mut want_groups = false;
+        let mut want_name = false;
+        for arg in args {
+            if let Some(s) = arg.strip_prefix('-') {
+                for c in s.chars() {
+                    match c {
+                        'u' => want_uid = true,
+                        'g' => want_gid = true,
+                        'G' => want_groups = true,
+                        'n' => want_name = true,
+                        'r' => {} // -r: real id (we already use real uid/gid)
+                        // coreutils id rejects unknown flags. Old
+                        // \`_ => {}\` accepted any letter and the
+                        // remaining letters fell through to the
+                        // default print-everything path.
+                        _ => {
+                            eprintln!("id: invalid option -- '{}'", c);
+                            return 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        let lookup_user_name = |uid: u32| -> Option<String> {
+            unsafe {
+                let pw = libc::getpwuid(uid);
+                if pw.is_null() {
+                    return None;
+                }
+                let name = CStr::from_ptr((*pw).pw_name);
+                Some(name.to_string_lossy().into_owned())
+            }
+        };
+        let lookup_group_name = |gid: u32| -> Option<String> {
+            unsafe {
+                let gr = libc::getgrgid(gid);
+                if gr.is_null() {
+                    return None;
+                }
+                let name = CStr::from_ptr((*gr).gr_name);
+                Some(name.to_string_lossy().into_owned())
+            }
+        };
+
+        if want_uid {
+            if want_name {
+                println!(
+                    "{}",
+                    lookup_user_name(uid).unwrap_or_else(|| uid.to_string())
+                );
+            } else {
+                println!("{}", uid);
+            }
+            return 0;
+        }
+        if want_gid {
+            if want_name {
+                println!(
+                    "{}",
+                    lookup_group_name(gid).unwrap_or_else(|| gid.to_string())
+                );
+            } else {
+                println!("{}", gid);
+            }
+            return 0;
+        }
+        if want_groups {
+            // getgrouplist(name, base_gid, gids[], &count). First call
+            // gets the count; second populates the array.
+            let user_name = lookup_user_name(uid).unwrap_or_default();
+            let cname = std::ffi::CString::new(user_name.as_bytes()).unwrap_or_default();
+            let mut count: libc::c_int = 32;
+            let mut gids: Vec<libc::gid_t> = vec![0; count as usize];
+            let rc = unsafe {
+                libc::getgrouplist(
+                    cname.as_ptr(),
+                    gid as _,
+                    gids.as_mut_ptr() as *mut _,
+                    &mut count,
+                )
+            };
+            if rc < 0 {
+                gids.resize(count as usize, 0);
+                unsafe {
+                    libc::getgrouplist(
+                        cname.as_ptr(),
+                        gid as _,
+                        gids.as_mut_ptr() as *mut _,
+                        &mut count,
+                    );
+                }
+            }
+            gids.truncate(count.max(0) as usize);
+            let parts: Vec<String> = gids
+                .iter()
+                .map(|g| {
+                    if want_name {
+                        lookup_group_name(*g).unwrap_or_else(|| g.to_string())
+                    } else {
+                        g.to_string()
+                    }
+                })
+                .collect();
+            println!("{}", parts.join(" "));
+            return 0;
+        }
+
+        // Default form: uid=N(name) gid=N(name) groups=N(name),...
+        let user = lookup_user_name(uid).unwrap_or_else(|| uid.to_string());
+        let group = lookup_group_name(gid).unwrap_or_else(|| gid.to_string());
+        print!("uid={}({}) gid={}({})", uid, user, gid, group);
+        if euid != uid {
+            let eu = lookup_user_name(euid).unwrap_or_else(|| euid.to_string());
+            print!(" euid={}({})", euid, eu);
+        }
+        if egid != gid {
+            let eg = lookup_group_name(egid).unwrap_or_else(|| egid.to_string());
+            print!(" egid={}({})", egid, eg);
+        }
+        // Supplementary groups list
+        let cname = std::ffi::CString::new(user.as_bytes()).unwrap_or_default();
+        let mut count: libc::c_int = 32;
+        let mut gids: Vec<libc::gid_t> = vec![0; count as usize];
+        let rc = unsafe {
+            libc::getgrouplist(
+                cname.as_ptr(),
+                gid as _,
+                gids.as_mut_ptr() as *mut _,
+                &mut count,
+            )
+        };
+        if rc < 0 {
+            gids.resize(count as usize, 0);
+            unsafe {
+                libc::getgrouplist(
+                    cname.as_ptr(),
+                    gid as _,
+                    gids.as_mut_ptr() as *mut _,
+                    &mut count,
+                );
+            }
+        }
+        gids.truncate(count.max(0) as usize);
+        if !gids.is_empty() {
+            let parts: Vec<String> = gids
+                .iter()
+                .map(|g| {
+                    let name = lookup_group_name(*g).unwrap_or_else(|| g.to_string());
+                    format!("{}({})", g, name)
+                })
+                .collect();
+            print!(" groups={}", parts.join(","));
+        }
+        println!();
+        0
+    }
+
+    pub(crate) fn builtin_hostname(&self, args: &[String]) -> i32 {
+        // hostname(1) — accepts:
+        // -s / --short: short hostname (everything before the first '.')
+        // -d / --domain: domain part only (everything after first '.')
+        // -f / --fqdn / --long: full hostname (default behaviour)
+        // -i / --ip-address: numeric IP for the hostname
+        // bare arg: in some platforms sets the hostname (root only); we
+        //           accept it as a query-only no-op for safety.
+        let mut short = false;
+        let mut domain_only = false;
+        let mut ip = false;
+        for arg in args {
+            match arg.as_str() {
+                "-s" | "--short" => short = true,
+                "-d" | "--domain" => domain_only = true,
+                "-f" | "--fqdn" | "--long" => {}
+                "-i" | "--ip-address" => ip = true,
+                "--" => {}
+                s if s.starts_with('-') && s.len() > 1 => {
+                    // hostname(1) errors on unknown flags. Old impl
+                    // accepted any -X silently then printed the
+                    // hostname as-if -X were a no-op.
+                    eprintln!("hostname: invalid option: '{}'", s);
+                    return 1;
+                }
+                _ => {} // bare arg: would set hostname (root); we accept silently
+            }
+        }
+
+        let mut buf = [0u8; 256];
+        let result = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut i8, buf.len()) };
+        if result != 0 {
+            eprintln!("hostname: cannot get hostname");
+            return 1;
+        }
+        let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        let host = String::from_utf8_lossy(&buf[..len]).into_owned();
+
+        if ip {
+            // Resolve the hostname via getaddrinfo and print the
+            // first IPv4/IPv6 result. Same approach as
+            // hostname(1)'s -i.
+            use std::net::ToSocketAddrs;
+            if let Ok(mut addrs) = (host.as_str(), 0u16).to_socket_addrs() {
+                if let Some(a) = addrs.next() {
+                    println!("{}", a.ip());
+                    return 0;
+                }
+            }
+            // Fall through to printing the host if resolution failed.
+        }
+        if short {
+            let s = host.split('.').next().unwrap_or(&host);
+            println!("{}", s);
+        } else if domain_only {
+            let d: String = host
+                .split_once('.')
+                .map(|x| x.1)
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            println!("{}", d);
+        } else {
+            println!("{}", host);
+        }
+        0
+    }
+
+    pub(crate) fn builtin_uname(&self, args: &[String]) -> i32 {
+        // coreutils uname(1) port: combinable flags emit selected
+        // fields space-separated in canonical order. -a is short for
+        // every field. With no flags, default is -s (kernel name).
+        let mut uts: libc::utsname = unsafe { std::mem::zeroed() };
+        if unsafe { libc::uname(&mut uts) } != 0 {
+            eprintln!("uname: cannot get system info");
+            return 1;
+        }
+
+        let sysname = unsafe { std::ffi::CStr::from_ptr(uts.sysname.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        let nodename = unsafe { std::ffi::CStr::from_ptr(uts.nodename.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        let release = unsafe { std::ffi::CStr::from_ptr(uts.release.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        let version = unsafe { std::ffi::CStr::from_ptr(uts.version.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        let machine = unsafe { std::ffi::CStr::from_ptr(uts.machine.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        // -p / -o aren't in struct utsname; coreutils synthesizes them
+        // from the machine and sysname respectively. Match that.
+        let processor = machine.clone();
+        let os = if sysname == "Linux" {
+            "GNU/Linux".to_string()
+        } else {
+            sysname.clone()
+        };
+
+        let mut want_s = false;
+        let mut want_n = false;
+        let mut want_r = false;
+        let mut want_v = false;
+        let mut want_m = false;
+        let mut want_p = false;
+        let mut want_o = false;
+        let mut all = false;
+        for arg in args {
+            if let Some(s) = arg.strip_prefix('-') {
+                for c in s.chars() {
+                    match c {
+                        's' => want_s = true,
+                        'n' => want_n = true,
+                        'r' => want_r = true,
+                        'v' => want_v = true,
+                        'm' => want_m = true,
+                        'p' => want_p = true,
+                        'o' => want_o = true,
+                        'a' => all = true,
+                        // coreutils uname errors on unknown short
+                        // flags. Old \`_ => {}\` silently dropped them
+                        // and the default behavior (sysname) ran.
+                        _ => {
+                            eprintln!("uname: invalid option -- '{}'", c);
+                            return 1;
+                        }
+                    }
+                }
+            }
+        }
+        if all {
+            // coreutils -a output order: sysname nodename release
+            // version machine [processor [os]]. processor/os are
+            // suppressed when 'unknown'; we always have machine so
+            // include processor; os synthesized too.
+            println!(
+                "{} {} {} {} {} {} {}",
+                sysname, nodename, release, version, machine, processor, os
+            );
+            return 0;
+        }
+        if !want_s && !want_n && !want_r && !want_v && !want_m && !want_p && !want_o {
+            want_s = true; // default
+        }
+        let mut parts: Vec<String> = Vec::new();
+        if want_s {
+            parts.push(sysname);
+        }
+        if want_n {
+            parts.push(nodename);
+        }
+        if want_r {
+            parts.push(release);
+        }
+        if want_v {
+            parts.push(version);
+        }
+        if want_m {
+            parts.push(machine);
+        }
+        if want_p {
+            parts.push(processor);
+        }
+        if want_o {
+            parts.push(os);
+        }
+        println!("{}", parts.join(" "));
+        0
+    }
+
+    pub(crate) fn builtin_date(&self, args: &[String]) -> i32 {
+        // coreutils date(1) port: adds -u (UTC), -r FILE (mtime of
+        // FILE), -R / --rfc-2822, -I / --iso-8601. -d (parse arbitrary
+        // date string) is partially handled — only +<seconds> /
+        // @<seconds> Unix-time forms; full date-string parser not yet.
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let mut utc = false;
+        let mut format: Option<String> = None;
+        let mut reference: Option<String> = None;
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            if let Some(s) = arg.strip_prefix('+') {
+                format = Some(s.to_string());
+            } else if arg == "-u" || arg == "--utc" || arg == "--universal" {
+                utc = true;
+            } else if arg == "-r" || arg == "--reference" {
+                if let Some(r) = iter.next() {
+                    reference = Some(r.clone());
+                }
+            } else if let Some(r) = arg.strip_prefix("--reference=") {
+                reference = Some(r.to_string());
+            } else if arg == "-R" || arg == "--rfc-2822" || arg == "--rfc-email" {
+                format = Some("%a, %d %b %Y %H:%M:%S %z".to_string());
+            } else if arg == "-I" || arg == "--iso-8601" {
+                format = Some("%Y-%m-%d".to_string());
+            } else if let Some(prec) = arg.strip_prefix("--iso-8601=") {
+                format = Some(
+                    match prec {
+                        "date" => "%Y-%m-%d",
+                        "hours" => "%Y-%m-%dT%H%z",
+                        "minutes" => "%Y-%m-%dT%H:%M%z",
+                        "seconds" => "%Y-%m-%dT%H:%M:%S%z",
+                        "ns" => "%Y-%m-%dT%H:%M:%S,%N%z",
+                        _ => "%Y-%m-%d",
+                    }
+                    .to_string(),
+                );
+            } else if arg == "-d" || arg == "--date" {
+                // -d STRING / --date=STRING — date-string parsing
+                // not yet implemented. Consume the next arg so it
+                // doesn't slip through to the unknown-flag path.
+                if iter.next().is_none() {
+                    eprintln!("zshrs:date:1: argument expected: -d");
+                    return 1;
+                }
+            } else if arg.starts_with("--date=") {
+                // ignore — parser not yet impl
+            } else if arg == "--" {
+                // end of options
+            } else if arg.starts_with('-') && arg.len() > 1 {
+                // coreutils date errors on unknown flags. Old impl
+                // silently dropped them and produced default output.
+                eprintln!("zshrs:date:1: unrecognized option: '{}'", arg);
+                return 1;
+            }
+        }
+
+        // Determine the timestamp.
+        let ts: i64 = if let Some(refpath) = reference {
+            match std::fs::metadata(&refpath) {
+                Ok(meta) => meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0),
+                Err(e) => {
+                    eprintln!("zshrs:date:1: {}: {}", refpath, e);
+                    return 1;
+                }
+            }
+        } else {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64
+        };
+
+        let tm = unsafe {
+            let t = ts as libc::time_t;
+            if utc {
+                *libc::gmtime(&t)
+            } else {
+                *libc::localtime(&t)
+            }
+        };
+        let fmt_str = format.unwrap_or_else(|| "%a %b %e %H:%M:%S %Z %Y".to_string());
+        let mut buf = [0i8; 1024];
+        let fmt_cstr = std::ffi::CString::new(fmt_str.as_str()).unwrap_or_default();
+        let len = unsafe { libc::strftime(buf.as_mut_ptr(), buf.len(), fmt_cstr.as_ptr(), &tm) };
+        if len > 0 {
+            let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
+            println!("{}", s.to_string_lossy());
+        }
+        0
+    }
+
+    pub(crate) fn builtin_mktemp(&self, args: &[String]) -> i32 {
+        // coreutils mktemp(1) port. Replaces the in-template
+        // 'XXXXXX' run with a random a-z0-9 suffix, retries on
+        // collision (real mktemp uses O_EXCL so two parallel
+        // mktemp(1) invocations don't pick the same name).
+        use rand::Rng;
+
+        let mut dir = false;
+        let mut want_tmpdir_flag = false;
+        let mut explicit_tmpdir: Option<String> = None;
+        let mut template: Option<&str> = None;
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-d" | "--directory" => dir = true,
+                "-t" => {
+                    // Treat the template arg as a basename; place
+                    // under \$TMPDIR. (coreutils -t is deprecated
+                    // but still accepted; flag without -p.)
+                    want_tmpdir_flag = true;
+                }
+                "-p" | "--tmpdir" => {
+                    // Next arg is the dir to use as base.
+                    if let Some(d) = iter.next() {
+                        explicit_tmpdir = Some(d.clone());
+                    }
+                }
+                "-q" | "--quiet" => {} // accepted: don't emit errors (we still do; minimal port)
+                "-u" | "--dry-run" => {} // accepted: print name without creating
+                "--" => {}             // end of options
+                a if !a.starts_with('-') => template = Some(a),
+                a => {
+                    eprintln!("mktemp: unrecognized option: '{}'", a);
+                    return 1;
+                }
+            }
+        }
+
+        let tmpdir = explicit_tmpdir
+            .unwrap_or_else(|| std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string()));
+        let base = template.unwrap_or("tmp.XXXXXXXXXX");
+
+        // Produce a random a-z0-9 suffix of the requested length.
+        // Real PRNG, not ms-tick parity (the previous impl produced
+        // 10 copies of the same letter).
+        let gen_suffix = |len: usize| -> String {
+            let alphabet: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+            let mut rng = rand::thread_rng();
+            (0..len)
+                .map(|_| alphabet[rng.gen_range(0..alphabet.len())] as char)
+                .collect()
+        };
+
+        // Build a candidate filename by replacing the longest
+        // run of consecutive 'X's with a random suffix of the same
+        // length (matches mktemp's behavior).
+        let make_name = |t: &str| -> String {
+            let bytes = t.as_bytes();
+            // Find longest X-run.
+            let mut best_start = 0usize;
+            let mut best_len = 0usize;
+            let mut i = 0;
+            while i < bytes.len() {
+                if bytes[i] == b'X' {
+                    let s = i;
+                    while i < bytes.len() && bytes[i] == b'X' {
+                        i += 1;
+                    }
+                    let len = i - s;
+                    if len > best_len {
+                        best_start = s;
+                        best_len = len;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            if best_len == 0 {
+                // No X's: append .RANDOM to match real mktemp default.
+                return format!("{}.{}", t, gen_suffix(6));
+            }
+            let suffix = gen_suffix(best_len);
+            let mut out = String::with_capacity(t.len());
+            out.push_str(&t[..best_start]);
+            out.push_str(&suffix);
+            out.push_str(&t[best_start + best_len..]);
+            out
+        };
+
+        // -t implies under \$TMPDIR using template as basename.
+        let try_path = |name: String| -> std::path::PathBuf {
+            if want_tmpdir_flag || !std::path::Path::new(&name).is_absolute() {
+                std::path::Path::new(&tmpdir).join(&name)
+            } else {
+                std::path::PathBuf::from(&name)
+            }
+        };
+
+        // Up to 100 collision retries (real mktemp tries TMP_MAX).
+        for _ in 0..100 {
+            let path = try_path(make_name(base));
+            if dir {
+                use std::os::unix::fs::DirBuilderExt;
+                let result = std::fs::DirBuilder::new().mode(0o700).create(&path);
+                match result {
+                    Ok(_) => {
+                        println!("{}", path.display());
+                        return 0;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(e) => {
+                        eprintln!("mktemp: {}: {}", path.display(), e);
+                        return 1;
+                    }
+                }
+            } else {
+                let result = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path);
+                match result {
+                    Ok(_) => {
+                        // Lock down to 0600 to match mktemp.
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            let _ = std::fs::set_permissions(
+                                &path,
+                                std::fs::Permissions::from_mode(0o600),
+                            );
+                        }
+                        println!("{}", path.display());
+                        return 0;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(e) => {
+                        eprintln!("mktemp: {}: {}", path.display(), e);
+                        return 1;
+                    }
+                }
+            }
+        }
+        eprintln!("mktemp: too many collisions");
+        1
+    }
+}

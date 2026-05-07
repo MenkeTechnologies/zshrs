@@ -1585,7 +1585,7 @@ _arguments $opts
     fn test_glob_matches() {
         assert!(glob_matches("git-*", "git-commit"));
         assert!(glob_matches("*-compose", "docker-compose"));
-        assert!(glob_matches("*.rs", "main.rs"));
+        assert!(glob_matches("*.rs", "zle_main"));
         assert!(!glob_matches("git-*", "docker-compose"));
         assert!(glob_matches("???", "abc"));
         assert!(!glob_matches("???", "abcd"));

@@ -19,19 +19,26 @@
 #![allow(deprecated)]
 #![allow(unexpected_cfgs)]
 
-pub mod aot;
-pub mod arith_compiler;
-pub mod autoload_cache;
-pub mod script_cache;
-pub mod compat;
-pub mod compile_zsh;
-pub mod completion;
-pub mod cond;
-pub mod config;
-pub mod context;
-pub mod canonical_apply;
-pub mod overlay_snapshot;
-pub mod daemon_presence;
+pub mod extensions;
+pub mod ported;
+
+// Back-compat: re-export every ported submodule at the crate root so
+// historical call sites (`crate::exec::`, `crate::subst::`,
+// `crate::zle::`, `crate::modules::`, `crate::builtins::`, etc.)
+// continue to resolve unchanged after the physical move into
+// `src/ported/`. New code should prefer `crate::ported::<name>`.
+pub use ported::*;
+
+#[path = "extensions/aot.rs"] pub mod aot;
+#[path = "extensions/arith_compiler.rs"] pub mod arith_compiler;
+#[path = "extensions/autoload_cache.rs"] pub mod autoload_cache;
+#[path = "extensions/script_cache.rs"] pub mod script_cache;
+#[path = "extensions/compile_zsh.rs"] pub mod compile_zsh;
+#[path = "extensions/completion.rs"] pub mod completion;
+#[path = "extensions/config.rs"] pub mod config;
+#[path = "extensions/canonical_apply.rs"] pub mod canonical_apply;
+#[path = "extensions/overlay_snapshot.rs"] pub mod overlay_snapshot;
+#[path = "extensions/daemon_presence.rs"] pub mod daemon_presence;
 // Daemon lives in the `zshrs-daemon` workspace crate. Re-export it as `daemon`
 // so existing `crate::daemon::...` (in exec.rs) and `zsh::daemon::...` (in bins,
 // integration tests) paths keep resolving without churn.
@@ -61,36 +68,19 @@ pub mod daemon {
         }
     }
 }
-pub mod exec;
-pub mod fds;
-pub mod fish_features;
-pub mod ast_sexp;
-pub mod glob;
+#[path = "extensions/ext_builtins.rs"] pub mod ext_builtins;
+#[path = "extensions/fds.rs"] pub mod fds;
+#[path = "extensions/fish_features.rs"] pub mod fish_features;
+#[path = "extensions/ast_sexp.rs"] pub mod ast_sexp;
 // `tokens`, `lexer`, `parser` live in the standalone `zshrs-parse` crate
 // so the daemon can use them too. Re-export so existing call sites
 // (`crate::tokens::...`, `zsh::lexer::...`, etc.) keep resolving without
 // touching consumers.
-pub use zshrs_parse::lexer;
-pub use zshrs_parse::parser;
+pub use zshrs_parse::lex;
+pub use zshrs_parse::parse;
 pub use zshrs_parse::tokens;
-pub mod hashnameddir;
-pub mod hashtable;
-pub mod hist;
-pub mod history;
-pub mod init;
-pub mod input;
-pub mod jobs;
-pub mod linklist;
-pub mod log;
-pub mod loop_port;
-pub mod math;
-pub mod mem;
-pub mod modentry;
-pub mod module;
-/// Ports of zsh's loadable modules (`Src/Modules/*.c`).
-/// Each child mirrors a single C source file; see
-/// `src/modules/mod.rs` for the index.
-pub mod modules;
+#[path = "extensions/history.rs"] pub mod history;
+#[path = "extensions/log.rs"] pub mod log;
 // Backwards-compat flat re-exports — call sites that still write
 // `crate::datetime::…`, `crate::stat::…`, etc. resolve to the
 // `crate::modules::<modname>` ports without churn. New code should
@@ -129,40 +119,30 @@ pub use modules::zprof;
 pub use modules::zpty;
 pub use modules::zselect;
 pub use modules::zutil;
-pub mod options;
-pub mod params;
-pub mod pattern;
-pub mod plugin_cache;
-pub mod prompt;
+#[path = "extensions/plugin_cache.rs"] pub mod plugin_cache;
+#[path = "extensions/recorder.rs"] pub mod recorder_ext;
+#[path = "extensions/intercepts.rs"] pub mod intercepts;
+#[path = "extensions/hooks.rs"] pub mod hooks_ext;
+#[path = "extensions/compinit_bg.rs"] pub mod compinit_bg;
+pub mod fusevm_bridge;
 // Plugin-Framework-Agnostic State-Modification Recorder. Entire module
 // is `#![cfg(feature = "recorder")]` so it disappears from the default
 // `zshrs` build at the rustc-expansion stage. See docs/RECORDER.md.
 #[cfg(feature = "recorder")]
 pub mod recorder;
-pub mod regex_mod;
-pub mod signals;
-pub mod sort;
-pub mod string_port;
-pub mod stringsort;
-pub mod subscript;
-// `pub mod subst` removed — the adhoc `subst.rs` was a parallel
-// re-implementation of paramsubst that bypassed `subst_port.rs`
-// (the actual C port). Per the "subst_port is the only paramsubst"
-// directive, the adhoc file is deleted; `casemodify` / `CaseMod`
-// (the only utilities other code imported from `subst::`) now live
-// in `subst_port`.
-pub mod subst_port;
-pub mod text;
-pub mod utils;
-pub mod worker;
-pub mod zle;
-pub mod zwc;
-pub mod zwc_decode;
-/// Ports of zsh's core builtins from `Src/builtin.c` (and other
-/// non-`Src/Modules/` sites). Distinct from `crate::modules`.
-pub mod builtins;
+#[path = "extensions/regex_mod.rs"] pub mod regex_mod;
+#[path = "extensions/stringsort.rs"] pub mod stringsort;
+#[path = "extensions/subscript.rs"] pub mod subscript;
+#[path = "extensions/worker.rs"] pub mod worker;
+#[path = "extensions/zwc.rs"] pub mod zwc;
+#[path = "extensions/zwc_decode.rs"] pub mod zwc_decode;
 // Backwards-compat re-export so `crate::rlimits::…` keeps resolving.
 pub use builtins::rlimits;
+
+// Top-level shell executor state + fusevm bridge glue. Not a port of
+// any single Src/*.c file — `Src/exec.c` is replaced by the fusevm
+// bytecode VM (see src/fusevm_bridge.rs).
+pub mod exec;
 
 pub use exec::ShellExecutor;
 pub use fish_features::{
@@ -195,8 +175,8 @@ pub use fish_features::{
     KillRing,
     ValidationStatus,
 };
-pub use lexer::ZshLexer;
-pub use parser::ZshParser;
+pub use lex::ZshLexer;
+pub use parse::ZshParser;
 pub use tokens::{char_tokens, LexTok};
 
 // ── Stryke integration hook ──

@@ -570,7 +570,7 @@ fn test_functions() {
     println!("\n--- Testing functions module ---");
 
     // Test glob matching
-    assert!(functions::glob_match("*.rs", "main.rs"));
+    assert!(functions::glob_match("*.rs", "zle_main"));
     assert!(functions::glob_match("foo*", "foobar"));
     assert!(functions::glob_match("*.txt", "readme.txt"));
     assert!(!functions::glob_match("*.rs", "main.txt"));
