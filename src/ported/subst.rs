@@ -2472,10 +2472,25 @@ fn paramsubst(                                              // c:1625
         // :# filter arm (which runs much earlier) can populate it
         // for the auto-splat block. No-op if not set later.
         if let Some(ref sp) = spsep {                       // c:3950
-            let parts: Vec<String> = if sp.is_empty() {
-                value.chars().map(|c| c.to_string()).collect()
+            // Per-element split when source is an array — each
+            // element splits independently and the results
+            // flat-concat. Direct port of subst.c's spsep arm
+            // which iterates aval per-element.
+            let split_one = |s: &str| -> Vec<String> {
+                if sp.is_empty() {
+                    s.chars().map(|c| c.to_string()).collect()
+                } else {
+                    s.split(sp.as_str()).map(String::from).collect()
+                }
+            };
+            let parts: Vec<String> = if let Some(prev) = split_parts.clone() {
+                // Already-split source (e.g. earlier filter/operator);
+                // re-split each piece.
+                prev.iter().flat_map(|s| split_one(s)).collect()
+            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                arr.iter().flat_map(|s| split_one(s)).collect()
             } else {
-                value.split(sp.as_str()).map(String::from).collect()
+                split_one(&value)
             };
             // zsh: split result is space-joined for scalar context;
             // multsub-aware caller handles full multi-node splat
