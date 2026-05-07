@@ -6548,15 +6548,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let op = vm.pop().to_int() as u8;
         let pattern_raw = vm.pop().to_str();
         let name = vm.pop().to_str();
-        // SUB_M flag: \${(M)var#pat} returns the matched portion
-        // instead of the stripped result. Read+consume per the
-        // BUILTIN_PARAM_REPLACE convention. R/B/E/N less common on
-        // strip paths; route only M for now. Direct port of
-        // subst.c:2171 SUB_MATCH bit + getmatch dispatch.
-        let sub_match = with_executor(|exec| {
+        // SUB_M / SUB_S flags. M = return matched portion (vs strip
+        // result). S = search anywhere instead of anchored to start
+        // (#/##) or end (%/%%). Direct port of subst.c:2171/2186
+        // SUB_MATCH / SUB_SUBSTR bits + getmatch dispatch.
+        let (sub_match, sub_substr) = with_executor(|exec| {
             let m = (exec.sub_flags & 0x0008) != 0;
+            let s = (exec.sub_flags & 0x0004) != 0;
             exec.sub_flags = 0;
-            m
+            (m, s)
         });
         // Pattern may contain `$var` / `$(cmd)` / `$((expr))` — zsh
         // expands these before applying the strip. Was emitted as-is.
@@ -6579,6 +6579,55 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let strip_one = |v: &str, op: u8, pattern: &str| -> String {
             let chars: Vec<char> = v.chars().collect();
             let n = chars.len();
+            // (S) substring search: instead of anchoring to start
+            // (#/##) or end (%/%%), find the shortest/longest match
+            // ANYWHERE in v, and either return it (sub_match) or
+            // remove it (default — keep parts before+after the match).
+            // Direct port of subst.c:2186 SUB_SUBSTR bit which
+            // getmatch routes through pat_substr_match.
+            if sub_substr {                                  // c:2186
+                let longest = matches!(op, 1 | 3);          // c:2186 (## / %% want longest)
+                let mut best: Option<(usize, usize)> = None; // c:2186 (start, end in chars)
+                // Slide a window across v; for each start index
+                // try every (longest|shortest) length that matches.
+                for start in 0..=n {                        // c:2186
+                    let end_iter: Box<dyn Iterator<Item = usize>> = if longest { // c:2186
+                        Box::new((start..=n).rev())          // c:2186
+                    } else {                                 // c:2186
+                        Box::new(start..=n)                  // c:2186
+                    };                                       // c:2186
+                    for end in end_iter {                    // c:2186
+                        let sub: String = chars[start..end].iter().collect(); // c:2186
+                        if ShellExecutor::glob_match_static(&sub, pattern) { // c:2186
+                            // (S) prefers the leftmost match
+                            // for # / ##, and the rightmost for
+                            // % / %%. # / ## scan left-to-right;
+                            // % / %% mirror by walking start
+                            // backward at the outer level — but
+                            // since the outer loop is L-to-R, we
+                            // record EVERY match and pick the
+                            // last one for %/%%, first for #/##.
+                            let suffix_op = matches!(op, 2 | 3); // c:2186
+                            if best.is_none() || suffix_op {  // c:2186
+                                best = Some((start, end));   // c:2186
+                            }                                 // c:2186
+                            if !suffix_op { break; }          // c:2186 (#/## stop at first)
+                        }                                    // c:2186
+                    }                                        // c:2186
+                    if best.is_some() && !matches!(op, 2 | 3) { break; } // c:2186
+                }                                            // c:2186
+                if let Some((s, e)) = best {                 // c:2186
+                    let matched: String = chars[s..e].iter().collect(); // c:2186
+                    if sub_match {                           // c:2171
+                        return matched;                      // c:2171
+                    }                                        // c:2171
+                    let mut out = String::new();             // c:2186
+                    out.extend(chars[..s].iter());           // c:2186
+                    out.extend(chars[e..].iter());           // c:2186
+                    return out;                              // c:2186
+                }                                            // c:2186
+                return if sub_match { String::new() } else { v.to_string() }; // c:2186
+            }                                                // c:2186
             // (M) inverted-disposition helper: when sub_match is set,
             // return the MATCHED portion instead of the post-strip
             // string. Used by zsh idioms like \${(M)path#*/} which
