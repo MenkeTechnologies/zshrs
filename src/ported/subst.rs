@@ -2369,20 +2369,40 @@ fn paramsubst(                                              // c:1625
             );
         }
 
-        // (e) eval — re-substitute the result. Port of subst.c:2268
-        // + post-processing block. Single-pass: run singsub on the
-        // value once.
+        // (e) eval — re-substitute the result. Per-element on arrays.
+        // Direct port of subst.c:2268 eval bit which iterates aval.
         if flag_eval {                                      // c:2268
-            value = singsub(&value, state);                 // c:2268
+            if let Some(parts) = split_parts.clone() {
+                let new_parts: Vec<String> = parts.iter().map(|s| singsub(s, state)).collect();
+                value = new_parts.join(" ");
+                split_parts = Some(new_parts);
+            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                let new_arr: Vec<String> = arr.iter().map(|s| singsub(s, state)).collect();
+                value = new_arr.join(" ");
+                split_parts = Some(new_arr);
+            } else {
+                value = singsub(&value, state);             // c:2268
+            }
         }
 
         // (%) prompt-expand — interpret %F{red}, %~, %n, %{...%},
-        // etc. Stack count >=2 enables PROMPT_BANG/PROMPT_SUBST
-        // expansion too (zsh subst.c:3983 < 2 path). Direct port
-        // of subst.c:2405 / 3977 presc handling.
+        // etc. Per-element on arrays. Direct port of subst.c:2405 /
+        // 3977 presc handling.
         if flag_pct_prompt > 0 {                            // c:2405
-            value = crate::fusevm_bridge::with_executor(    // c:3977
-                |exec| exec.expand_prompt_string(&value));  // c:3977
+            let prompt_one = |s: &str| -> String {
+                crate::fusevm_bridge::with_executor(|exec| exec.expand_prompt_string(s))
+            };
+            if let Some(parts) = split_parts.clone() {
+                let new_parts: Vec<String> = parts.iter().map(|s| prompt_one(s)).collect();
+                value = new_parts.join(" ");
+                split_parts = Some(new_parts);
+            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                let new_arr: Vec<String> = arr.iter().map(|s| prompt_one(s)).collect();
+                value = new_arr.join(" ");
+                split_parts = Some(new_arr);
+            } else {
+                value = prompt_one(&value);                 // c:3977
+            }
         }                                                    // c:2405
 
         // (z)/(Z:cCn:) — shell-tokenize the value into a list of
