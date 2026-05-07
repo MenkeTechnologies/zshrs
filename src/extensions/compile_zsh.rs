@@ -2632,6 +2632,22 @@ impl ZshCompiler {
         self.builder.emit(Op::LoadInt(mode as i64), 0);
         self.builder
             .emit(Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_TEXT, 2), 0);
+        // Brace expansion on the bridge-text path. Words like
+        // `X{1,2,3}Y` that don't have $/`/$( fall through here
+        // (split_word_segments returns Some([Literal]) but the
+        // segment-fast path's BRACE_EXPAND only fires for words
+        // that ALSO have an Expansion segment). Without this the
+        // brace expansion never runs and `print X{1,2,3}Y` returns
+        // the literal text. Direct port of subst.c:166 where
+        // xpandbraces fires AFTER prefork's expansion pass.
+        let preserved_str = preserved.as_str();
+        if !preserved_str.is_empty()
+            && (preserved_str.contains('{') || preserved_str.contains('\u{87}'))
+            && self.dq_context_depth == 0
+        {
+            self.builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_BRACE_EXPAND, 0), 0);
+        }
     }
 
     // ── Control flow ────────────────────────────────────────────────

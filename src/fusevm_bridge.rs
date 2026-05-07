@@ -4538,7 +4538,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_BRACE_EXPAND, |vm, _argc| {
         let s = vm.pop().to_str();
-        let parts = with_executor(|exec| vec![s.to_string()]);
+        // Direct call to the canonical brace expander (port of
+        // Src/glob.c::xpandbraces at glob.rs:1678). Was stubbed
+        // as `vec![s]` — every `print X{1,2,3}Y` returned literal.
+        let brace_ccl = with_executor(|exec|
+            exec.options.get("braceccl").copied().unwrap_or(false));
+        let parts = crate::ported::glob::expand_braces(&s, brace_ccl);
         if parts.len() == 1 {
             fusevm::Value::str(parts.into_iter().next().unwrap_or_default())
         } else {
@@ -8013,15 +8018,17 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn brace_expand(&mut self, s: &str) -> Vec<String> {
-        // Default to the existing string expansion + whitespace split since
-        // expand_string already handles brace expansion as part of literal
-        // substitution. Returns single-element vec if no braces.
-        let expanded = with_executor(|exec| exec.singsub(s));
-        if expanded.contains(' ') {
-            expanded.split(' ').map(String::from).collect()
-        } else {
-            vec![expanded]
-        }
+        // Direct call to the canonical brace expander
+        // (Src/glob.c::xpandbraces port at glob.rs:1678). Was
+        // routing through singsub which uses PREFORK_SINGLE — that
+        // flag explicitly suppresses brace expansion in subst.c:166,
+        // so `print X{1,2,3}Y` returned the literal string.
+        //
+        // brace_ccl: respect the BRACE_CCL option which the bracket-
+        // class form `{a-z}` requires. Pull from executor options.
+        let brace_ccl = with_executor(|exec|
+            exec.options.get("braceccl").copied().unwrap_or(false));
+        crate::ported::glob::expand_braces(s, brace_ccl)
     }
 
     fn str_match(&mut self, s: &str, pattern: &str) -> bool {
