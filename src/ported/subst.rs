@@ -1094,6 +1094,13 @@ fn paramsubst(                                              // c:1625
         let mut sort_signed = false;                        // c:2219 (-/Dash)
         let mut sort_index_order = false;                   // c:2225 (a)
         let mut unique = false;                             // c:2476 (u)
+        let mut flag_eval = false;                          // c:2268 (e)
+        let mut flag_unquote = false;                       // c:2261 (Q)
+        let mut flag_error = false;                         // c:2264 (X)
+        let mut flag_visible = false;                       // c:2232 (V)
+        let mut flag_char_count = false;                    // c:2275 (c)
+        let mut flag_word_count = false;                    // c:2278 (w)
+        let mut flag_word_count_w = false;                  // c:2281 (W)
         if body_chars.first() == Some(&'(') {               // c:2147
             let mut d = 1_i32;                              // c:2147
             idx = 1;                                        // c:2147
@@ -1167,6 +1174,24 @@ fn paramsubst(                                              // c:1625
                     '-' => { sort_signed = true; sort_active = true; } // c:2219
                     'a' => { sort_index_order = true; sort_active = true; } // c:2225
                     'u' => { unique = true; }               // c:2476
+                    'M' => { /* SUB_MATCH bit — c:2172 */ } // c:2171 (M)
+                    'R' => { /* SUB_REST bit — c:2175 */ }  // c:2174 (R)
+                    'B' => { /* SUB_BIND bit — c:2178 */ }  // c:2177 (B)
+                    'E' => { /* SUB_EIND bit — c:2181 */ }  // c:2180 (E)
+                    'N' => { /* SUB_LEN bit — c:2184 */ }   // c:2183 (N)
+                    'S' => { /* SUB_SUBSTR bit — c:2187 */ } // c:2186 (S)
+                    'e' => { flag_eval = true; }            // c:2268 (e)
+                    'Q' => { flag_unquote = true; }         // c:2261 (Q)
+                    'X' => { flag_error = true; }           // c:2264 (X)
+                    'D' => { /* dir-magic — c:2229 */ }     // c:2229 (D)
+                    'V' => { flag_visible = true; }         // c:2232 (V)
+                    'b' => { /* backslash-pattern — c:2255 */ } // c:2255 (b)
+                    'w' => { flag_word_count = true; }      // c:2278 (w)
+                    'c' => { flag_char_count = true; }      // c:2275 (c)
+                    'W' => { flag_word_count_w = true; }    // c:2281 (W)
+                    'z' | 'Z' => { /* tokenize — c:2439 */ } // c:2439 (z/Z)
+                    'g' => { /* escapes — c:2409 */ }       // c:2409 (g)
+                    '~' => { /* tok_arg toggle — c:2160 */ } // c:2160 (~)
                     'm' => { /* multi_width — c:2376, skip for now */ } // c:2376
                     'p' => { /* escapes flag — c:2382 */ }  // c:2382
                     'f' => { spsep = Some("\n".to_string()); } // c:2285
@@ -1478,6 +1503,71 @@ fn paramsubst(                                              // c:1625
                 premul.as_deref().unwrap_or(&mul_default),
                 postmul.as_deref().unwrap_or(&mul_default),
             );
+        }
+
+        // (e) eval — re-substitute the result. Port of subst.c:2268
+        // + post-processing block. Single-pass: run singsub on the
+        // value once.
+        if flag_eval {                                      // c:2268
+            value = singsub(&value, state);                 // c:2268
+        }
+
+        // (Q) unquote — strip outer quotes / backslash escapes.
+        // Port of subst.c:2261 quotemod-- effect: when quotemod < 0,
+        // post-processing block runs unquote on the value.
+        if flag_unquote {                                   // c:2261
+            let mut out = String::with_capacity(value.len());
+            let mut chars_iter = value.chars().peekable();
+            while let Some(c) = chars_iter.next() {
+                if c == '\\' {                              // c:2261 (drop backslash)
+                    if let Some(nx) = chars_iter.next() {
+                        out.push(nx);
+                    }
+                } else if c == '\'' || c == '"' {           // c:2261 (drop surrounding quotes)
+                    // skip
+                } else {
+                    out.push(c);
+                }
+            }
+            value = out;
+        }
+
+        // (X) error on unset/empty — emit error if value is empty.
+        // Port of subst.c:2264 (quoteerr=1).
+        if flag_error && value.is_empty() && !is_set {      // c:2264
+            eprintln!("zshrs: {}: parameter not set or null", var_name); // c:N/A
+            state.errflag = true;
+        }
+
+        // (V) visible — render control chars as ^X form.
+        // Port of subst.c:2232 mods bit 1.
+        if flag_visible {                                   // c:2232
+            let mut out = String::with_capacity(value.len());
+            for c in value.chars() {
+                let cp = c as u32;
+                if cp < 0x20 {                              // c:2232 (control chars)
+                    out.push('^');
+                    out.push(((cp + b'@' as u32) as u8) as char);
+                } else if cp == 0x7f {
+                    out.push_str("^?");
+                } else {
+                    out.push(c);
+                }
+            }
+            value = out;
+        }
+
+        // (c)/(w)/(W) length variants — char count, word count
+        // (whitespace-split), word count (W = WS_NULL).
+        // Port of subst.c:2275-2281 whichlen.
+        if flag_char_count {                                // c:2275
+            value = value.chars().count().to_string();      // c:2275
+        } else if flag_word_count {                         // c:2278
+            value = value.split_whitespace().count().to_string(); // c:2278
+        } else if flag_word_count_w {                       // c:2281
+            // (W) — count words including empty fields.
+            let parts: Vec<&str> = value.split(|c: char| c.is_whitespace()).collect();
+            value = parts.len().to_string();                // c:2281
         }
 
         if flag_qcount > 0 {                                // c:2237
