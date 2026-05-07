@@ -1125,8 +1125,20 @@ fn paramsubst(                                              // c:1625
                 break;
             }
         }
-        let var_name: String = body_chars[name_start..idx].iter().collect();
+        let mut var_name: String = body_chars[name_start..idx].iter().collect();
         let rest: String = body_chars[idx..].iter().collect();
+
+        // (P) indirect: var_name's VALUE becomes the new var name.
+        // Port of subst.c:2730+ aspar arm. Single level — multi-level
+        // indirect via ${(P)${(P)x}} requires the recursive paramsubst
+        // to land first.
+        if flag_p_indirect {                                // c:2730
+            let target = state.variables.get(&var_name).cloned()
+                .or_else(|| state.arrays.get(&var_name).map(|a| a.join(" ")))
+                .unwrap_or_default();
+            var_name = target;                              // c:2741 (val = idbeg = getstrvalue(v))
+        }
+
         // Look up var
         let raw_value: String = state.variables.get(&var_name).cloned()
             .or_else(|| state.arrays.get(&var_name).map(|a| a.join(" ")))
@@ -1134,11 +1146,48 @@ fn paramsubst(                                              // c:1625
         let is_set = state.variables.contains_key(&var_name)
             || state.arrays.contains_key(&var_name)
             || state.assoc_arrays.contains_key(&var_name);
+
+        // (#)var → element count of array/assoc (or char count of
+        // scalar). Port of subst.c:2128 length_op fast path.
         if length_op {                                      // c:2128
             let _ = post_flags_start;
-            return (raw_value.chars().count().to_string(), new_pos, vec![]);
+            let n = if let Some(arr) = state.arrays.get(&var_name) {
+                arr.len()                                   // c:2128 (array len)
+            } else if let Some(map) = state.assoc_arrays.get(&var_name) {
+                map.len()                                   // c:2128 (assoc len)
+            } else {
+                raw_value.chars().count()                   // c:2128 (scalar char-count)
+            };
+            return (n.to_string(), new_pos, vec![]);
         }
-        let mut value = raw_value.clone();
+
+        // (k) keys / (v) values on assoc — fold the assoc into a
+        // joined string. Port of subst.c:2247-2270.
+        let mut value: String;                              // c:2247
+        if flag_keys {                                      // c:2247
+            value = state.assoc_arrays.get(&var_name)       // c:2247
+                .map(|m| m.keys().cloned().collect::<Vec<_>>().join(" ")) // c:2247
+                .unwrap_or_default();
+        } else if flag_values {                             // c:2256
+            value = state.assoc_arrays.get(&var_name)       // c:2256
+                .map(|m| m.values().cloned().collect::<Vec<_>>().join(" ")) // c:2256
+                .unwrap_or_default();
+        } else if flag_arrlen {                             // c:2265 (alt to leading #)
+            // (#) flag on array → element count.
+            value = state.arrays.get(&var_name)
+                .map(|a| a.len().to_string())
+                .or_else(|| state.assoc_arrays.get(&var_name).map(|m| m.len().to_string()))
+                .unwrap_or_else(|| raw_value.chars().count().to_string());
+        } else if flag_at {                                 // c:2167
+            // (@) array splat — preserve element shape via space-join.
+            // For full splat into multiple result_nodes, the
+            // multsub-aware caller handles it; we emit space-joined here.
+            value = state.arrays.get(&var_name)
+                .map(|a| a.join(" "))
+                .unwrap_or_else(|| raw_value.clone());
+        } else {                                            // c:N/A
+            value = raw_value.clone();
+        }
         if !rest.is_empty() {
             let r = rest.as_str();
             if let Some(default) = r.strip_prefix(":-") {     // c:3193
