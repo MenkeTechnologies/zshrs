@@ -2352,21 +2352,34 @@ fn paramsubst(                                              // c:1625
         }
 
         // (l:N::PRE:) / (r:N::POST:) padding — apply via dopadding.
-        // Port of subst.c flag-loop l/r interaction with subst.c:893
-        // dopadding. zsh: prenum=N pads to width N; STR1=premul (rep),
-        // STR2=preone (one-time before STR1 reps).
+        // Per-element on arrays so each element gets padded
+        // independently. Direct port of subst.c flag-loop l/r
+        // interacting with isarr branch which pads aval per-element.
         if prenum > 0 || postnum > 0 {                      // c:2319/2330
             let mul_default = " ".to_string();              // c:907 (def = " ")
-            value = dopadding(
-                &value,
-                prenum.max(0) as usize,
-                postnum.max(0) as usize,
-                preone.as_deref(),
-                postone.as_deref(),
-                premul.as_deref().unwrap_or(&mul_default),
-                postmul.as_deref().unwrap_or(&mul_default),
-                multi_width as i32,                         // c:2376 (m)
-            );
+            let pad_one = |s: &str| -> String {              // c:893
+                dopadding(
+                    s,
+                    prenum.max(0) as usize,
+                    postnum.max(0) as usize,
+                    preone.as_deref(),
+                    postone.as_deref(),
+                    premul.as_deref().unwrap_or(&mul_default),
+                    postmul.as_deref().unwrap_or(&mul_default),
+                    multi_width as i32,                     // c:2376 (m)
+                )
+            };
+            if let Some(parts) = split_parts.clone() {
+                let new_parts: Vec<String> = parts.iter().map(|s| pad_one(s)).collect();
+                value = new_parts.join(" ");
+                split_parts = Some(new_parts);
+            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                let new_arr: Vec<String> = arr.iter().map(|s| pad_one(s)).collect();
+                value = new_arr.join(" ");
+                split_parts = Some(new_arr);
+            } else {
+                value = pad_one(&value);
+            }
         }
 
         // (e) eval — re-substitute the result. Per-element on arrays.
