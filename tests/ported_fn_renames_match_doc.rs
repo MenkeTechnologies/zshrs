@@ -114,6 +114,36 @@ fn find_mismatches_in(file: &PathBuf, out: &mut Vec<Mismatch>) {
             continue;
         }
 
+        // Reset pending cite when we hit a non-fn top-level
+        // declaration (struct/enum/trait/impl/static/const/type/
+        // mod/use). The cite was for that item, not for some later
+        // fn. Without this, a cite above `pub struct BgStatus`
+        // leaked forward to the next fn declaration and falsely
+        // reported a mismatch.
+        let raw_trimmed = trimmed
+            .strip_prefix("pub(crate) ")
+            .or_else(|| trimmed.strip_prefix("pub(super) "))
+            .unwrap_or_else(|| trimmed.strip_prefix("pub ").unwrap_or(trimmed));
+        if pending_c_name.is_some() {
+            let starts_decl = raw_trimmed.starts_with("struct ")
+                || raw_trimmed.starts_with("enum ")
+                || raw_trimmed.starts_with("trait ")
+                || raw_trimmed.starts_with("impl ")
+                || raw_trimmed.starts_with("impl<")
+                || raw_trimmed.starts_with("static ")
+                || raw_trimmed.starts_with("const ")
+                || raw_trimmed.starts_with("type ")
+                || raw_trimmed.starts_with("mod ")
+                || raw_trimmed.starts_with("use ")
+                || raw_trimmed.starts_with("union ")
+                || raw_trimmed.starts_with("macro_rules!")
+                || raw_trimmed.starts_with("extern ");
+            if starts_decl {
+                pending_c_name = None;
+                continue;
+            }
+        }
+
         // `fn NAME(` or `pub fn NAME(` etc — at module level only.
         let s = trimmed
             .strip_prefix("pub(crate) ")

@@ -2408,26 +2408,6 @@ pub fn hasspecial(s: &str) -> bool {
     s.chars().any(is_special)
 }
 
-/// Print/format time in HH:MM:SS (from utils.c printhhmmss)
-pub fn printhhmmss(secs: f64) -> String {
-    let total_secs = secs as u64;
-    let hours = total_secs / 3600;
-    let mins = (total_secs % 3600) / 60;
-    let s = total_secs % 60;
-    let frac = secs - total_secs as f64;
-    if hours > 0 {
-        format!(
-            "{}:{:02}:{:02}.{:03}",
-            hours,
-            mins,
-            s,
-            (frac * 1000.0) as u64
-        )
-    } else {
-        format!("{}:{:02}.{:03}", mins, s, (frac * 1000.0) as u64)
-    }
-}
-
 /// Get or set the file creation mask (wrapper over umask)
 pub fn getumask_value() -> u32 {
     #[cfg(unix)]

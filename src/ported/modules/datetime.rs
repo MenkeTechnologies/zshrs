@@ -212,29 +212,6 @@ pub fn bin_strftime(args: &[&str], options: &StrftimeOptions) -> (i32, String) {
 
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/datetime.c`.
-/// Format a duration in human-readable form.
-/// zshrs-original convenience — no direct counterpart in
-/// Src/Modules/datetime.c; closest in spirit to the `%*` time
-/// formatting prompt-expansion C zsh uses for elapsed-time blocks.
-pub fn format_duration(seconds: u64) -> String {
-    let days = seconds / 86400;
-    let hours = (seconds % 86400) / 3600;
-    let mins = (seconds % 3600) / 60;
-    let secs = seconds % 60;
-
-    if days > 0 {
-        format!("{}d {}h {}m {}s", days, hours, mins, secs)
-    } else if hours > 0 {
-        format!("{}h {}m {}s", hours, mins, secs)
-    } else if mins > 0 {
-        format!("{}m {}s", mins, secs)
-    } else {
-        format!("{}s", secs)
-    }
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/datetime.c`.
 /// Get current date/time info as a hashmap (for TZ-aware operations).
 /// zshrs-original convenience — bundles the output_strftime fields that
 /// `output_strftime()` in Src/Modules/datetime.c emits one at a time
@@ -333,14 +310,6 @@ mod tests {
     fn test_strftime_epoch() {
         let result = output_strftime("%s", Some(1700000000), None).unwrap();
         assert_eq!(result, "1700000000");
-    }
-
-    #[test]
-    fn test_format_duration() {
-        assert_eq!(format_duration(45), "45s");
-        assert_eq!(format_duration(90), "1m 30s");
-        assert_eq!(format_duration(3661), "1h 1m 1s");
-        assert_eq!(format_duration(90061), "1d 1h 1m 1s");
     }
 
     #[test]
