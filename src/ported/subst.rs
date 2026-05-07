@@ -1132,6 +1132,7 @@ fn paramsubst(                                              // c:1625
         let mut flag_word_count_w = false;                  // c:2281 (W)
         let mut flag_b_pattern = false;                     // c:2255 (b)
         let mut flag_d_dir = false;                         // c:2229 (D)
+        let mut flag_p_escapes = false;                     // c:2382 (p)
         if body_chars.first() == Some(&'(') {               // c:2147
             let mut d = 1_i32;                              // c:2147
             idx = 1;                                        // c:2147
@@ -1224,7 +1225,7 @@ fn paramsubst(                                              // c:1625
                     'g' => { /* escapes — c:2409 */ }       // c:2409 (g)
                     '~' => { /* tok_arg toggle — c:2160 */ } // c:2160 (~)
                     'm' => { /* multi_width — c:2376, skip for now */ } // c:2376
-                    'p' => { /* escapes flag — c:2382 */ }  // c:2382
+                    'p' => { flag_p_escapes = true; }       // c:2382
                     'f' => { spsep = Some("\n".to_string()); } // c:2285
                     'F' => { sep = Some("\n".to_string()); }   // c:2289
                     '0' => { spsep = Some("\u{0}".to_string()); } // c:2293 (split on NUL)
@@ -1242,6 +1243,15 @@ fn paramsubst(                                              // c:1625
                             idx += 1;
                         }
                         let arg: String = body_chars[s_start..idx].iter().collect(); // c:2308
+                        // (p) flag: backslash-escapes in the separator
+                        // arg get decoded (`\n` → newline, `\t` → tab,
+                        // `\xNN`, `\NNN`, `\\`, `\'`, etc.). Direct
+                        // port of `getkeystring()`'s GETKEY_DOLLAR_QUOTE
+                        // path which subst.c routes the (s::) arg
+                        // through when escapes==1.
+                        let arg = if flag_p_escapes {       // c:2382
+                            crate::ported::utils::getkeystring(&arg).0 // c:2382
+                        } else { arg };                     // c:2382
                         if is_split { spsep = Some(arg); } else { sep = Some(arg); } // c:2309-2313
                         if idx < body_chars.len() { idx += 1; } // skip closing del
                         continue;                           // c:2317 (loop continues from idx)
