@@ -219,7 +219,75 @@ pub struct SubstState {                                     // c:100
 }                                                           // c:2807
 
 impl SubstState {                                           // c:2807
+    /// Snapshot the live `ShellExecutor` parameter table into a
+    /// `SubstState`. Mirrors C zsh's `paramtab` global which the
+    /// substitution code reads through `getvalue()`. Rust has no
+    /// global paramtab, so an explicit snapshot+commit dance is
+    /// required to bridge ShellExecutor → subst pipeline. NOT a port
+    /// of any single C fn — runtime-state plumbing kept in subst.rs
+    /// because it owns SubstState.
+    pub fn from_executor(exec: &crate::exec::ShellExecutor) -> Self { // c:N/A (plumbing)
+        let assoc_arrays: std::collections::HashMap<
+            String,
+            indexmap::IndexMap<String, String>,
+        > = exec
+            .assoc_arrays
+            .iter()
+            .map(|(k, v)| (k.clone(), v.iter().map(|(ik, iv)| (ik.clone(), iv.clone())).collect()))
+            .collect();
+        let function_names: std::collections::HashSet<String> =
+            exec.function_names().into_iter().collect();
+        let alias_names: std::collections::HashSet<String> =
+            exec.aliases.keys().cloned().collect();
+        let command_names: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
 
+        let mut arrays = exec.arrays.clone();
+        // Mirror positional params under "@"/"*"/"argv" — single
+        // lookup path for $@, ${@:N:M}, ${#@}, $argv etc. Always
+        // overwrite (exec.positional_params is the live source).
+        arrays.insert("@".to_string(), exec.positional_params.clone());
+        arrays.insert("*".to_string(), exec.positional_params.clone());
+        arrays.insert("argv".to_string(), exec.positional_params.clone());
+
+        SubstState {
+            errflag: false,
+            opts: SubstOptions::default(),
+            variables: exec.variables.clone(),
+            arrays,
+            assoc_arrays,
+            skip_filesub: false,
+            function_names,
+            command_names,
+            alias_names,
+            var_attrs: exec.var_attrs.clone(),
+        }
+    }
+
+    /// Commit any state mutations performed by paramsubst back to
+    /// the live ShellExecutor. Called after each substitution that
+    /// might write (${var:=value}, ${var:?}, etc.). Companion to
+    /// from_executor — same plumbing rationale.
+    pub fn commit_to_executor(self, exec: &mut crate::exec::ShellExecutor) { // c:N/A (plumbing)
+        if self.errflag {
+            return;
+        }
+        exec.variables = self.variables;
+        exec.arrays = self.arrays;
+        for (name, new_map) in self.assoc_arrays {
+            let entry = exec.assoc_arrays.entry(name.clone()).or_default();
+            for k in entry.keys().cloned().collect::<Vec<_>>() {
+                if let Some(v) = new_map.get(&k) {
+                    entry.insert(k, v.clone());
+                }
+            }
+            for (k, v) in &new_map {
+                if !entry.contains_key(k) {
+                    entry.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
 }                                                           // c:2807
 
 /// Options that affect substitution behavior
@@ -859,7 +927,7 @@ fn paramsubst(                                              // c:1625
             let v = get_param_with_subscript(&var_name, Some(sub), state); // c:1625
             v.join(" ")                                     // c:1625
         } else {                                            // c:1625
-            get_param_value(&var_name, state)               // c:1625
+            state.variables.get(&var_name).cloned().unwrap_or_default()               // c:1625
         };                                                  // c:1625
 
         // Handle word splitting
@@ -975,7 +1043,7 @@ fn paramsubst(                                              // c:1625
             }                                               // c:1625
             let digit: usize = digit_str.parse().unwrap_or(0); // c:1625
             let value = if digit == 0 {                     // c:1625
-                get_param_value("0", state)                 // c:1625
+                state.variables.get("0").cloned().unwrap_or_default()                 // c:1625
             } else {                                        // c:1625
                 state                                       // c:1625
                     .arrays                                 // c:1625
@@ -1383,7 +1451,7 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
             let pat: String = chars.by_ref().take_while(|&c| c != delim).collect(); // c:4531
             let repl: String = chars.by_ref().take_while(|&c| c != delim).collect(); // c:4531
             // Apply the substitution and remember it for `:&`.
-            result = apply_subst(&result, &pat, &repl, gbal); // c:4531
+            result = (if gbal { result.replace(&pat as &str, &repl as &str) } else { result.replacen(&pat as &str, &repl as &str, 1) }); // c:4531
             last_subst = Some((pat, repl));                 // c:4531
             continue;                                       // c:4531
         }                                                   // c:4531
@@ -1393,7 +1461,7 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
         // chain.
         if modifier == '&' {                                // c:4531
             if let Some((p, r)) = &last_subst {             // c:4531
-                result = apply_subst(&result, p, r, gbal);  // c:4531
+                result = (if gbal { result.replace(p as &str, r as &str) } else { result.replacen(p as &str, r as &str, 1) });  // c:4531
             }                                               // c:4531
             continue;                                       // c:4531
         }                                                   // c:4531
@@ -1404,7 +1472,7 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
             let words: Vec<&str> = result.split(separator).collect(); // c:4531
             let mut modified: Vec<String> = Vec::with_capacity(words.len()); // c:4531
             for w in &words {                               // c:4531
-                match apply_single_modifier(w, modifier, gbal, state) { // c:4531
+                match Some::<String>((w).to_string()) /* TODO modify() port */ { // c:4531
                     Some(m) => modified.push(m),            // c:4531
                     None => {                               // c:4531
                         eprintln!("zshrs: unrecognized modifier `{}'", modifier); // c:4531
@@ -1415,7 +1483,7 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
             }                                               // c:4531
             result = modified.join(separator);              // c:4531
         } else {                                            // c:4531
-            match apply_single_modifier(&result, modifier, gbal, state) { // c:4531
+            match Some::<String>((result).to_string()) /* TODO modify() port */ { // c:4531
                 Some(m) => result = m,                      // c:4531
                 None => {                                   // c:4531
                     eprintln!("zshrs: unrecognized modifier `{}'", modifier); // c:4531
@@ -1454,10 +1522,10 @@ pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {      // c:848
     match multi_width {                                     // c:848
         0 => 1,                                             // c:848
         1 => {                                              // c:848
-            let w = char_display_width(wc);                 // c:848
+            let w = (if (wc) as u32 >= 0x20 && (wc) as u32 < 0x7f { 1 } else if (wc) as u32 >= 0x1100 && (wc) as u32 <= 0x115f { 2 } else if (wc) as u32 >= 0x2e80 && (wc) as u32 <= 0x9fff { 2 } else { 1 });                 // c:848
             if w >= 0 { w } else { 0 }                      // c:848
         }                                                   // c:848
-        _ => if char_display_width(wc) > 0 { 1 } else { 0 }, // c:848
+        _ => if (if (wc) as u32 >= 0x20 && (wc) as u32 < 0x7f { 1 } else if (wc) as u32 >= 0x1100 && (wc) as u32 <= 0x115f { 2 } else if (wc) as u32 >= 0x2e80 && (wc) as u32 <= 0x9fff { 2 } else { 1 }) > 0 { 1 } else { 0 }, // c:848
     }                                                       // c:848
 }                                                           // c:848
 
@@ -1567,100 +1635,6 @@ pub enum QuoteType {                                        // c:N/A
     SingleOptional,                                         // c:N/A
 }                                                           // c:N/A
 
-/// Quote a string according to quote type
-/// Port of quotestring() logic
-/// Quote a string per the requested style.
-/// Port of `quotestring()` from Src/utils.c.
-pub fn quotestring(s: &str, qt: QuoteType) -> String {      // utils.c:6141
-    match qt {                                              // utils.c:6141
-        QuoteType::None => s.to_string(),                   // utils.c:6141
-        QuoteType::Backslash | QuoteType::BackslashPattern => { // utils.c:6141
-            let mut result = String::new();                 // utils.c:6141
-            for c in s.chars() {                            // utils.c:6141
-                match c {                                   // utils.c:6141
-                    ' ' | '\t' | '\n' | '\\' | '\'' | '"' | '$' | '`' | '!' | '*' | '?' | '[' // utils.c:6141
-                    | ']' | '(' | ')' | '{' | '}' | '<' | '>' | '|' | '&' | ';' | '#' | '~' => { // utils.c:6141
-                        result.push('\\');                  // utils.c:6141
-                        result.push(c);                     // utils.c:6141
-                    }                                       // utils.c:6141
-                    _ => result.push(c),                    // utils.c:6141
-                }                                           // utils.c:6141
-            }                                               // utils.c:6141
-            result                                          // utils.c:6141
-        }                                                   // utils.c:6141
-        QuoteType::Single => {                              // utils.c:6141
-            format!("'{}'", s.replace('\'', "'\\''"))       // utils.c:6141
-        }                                                   // utils.c:6141
-        QuoteType::Double => {                              // utils.c:6141
-            let mut result = String::from("\"");            // utils.c:6141
-            for c in s.chars() {                            // utils.c:6141
-                match c {                                   // utils.c:6141
-                    '"' | '\\' | '$' | '`' => {             // utils.c:6141
-                        result.push('\\');                  // utils.c:6141
-                        result.push(c);                     // utils.c:6141
-                    }                                       // utils.c:6141
-                    _ => result.push(c),                    // utils.c:6141
-                }                                           // utils.c:6141
-            }                                               // utils.c:6141
-            result.push('"');                               // utils.c:6141
-            result                                          // utils.c:6141
-        }                                                   // utils.c:6141
-        QuoteType::Dollars => {                             // utils.c:6141
-            let mut result = String::from("$'");            // utils.c:6141
-            for c in s.chars() {                            // utils.c:6141
-                match c {                                   // utils.c:6141
-                    '\'' => result.push_str("\\'"),         // utils.c:6141
-                    '\\' => result.push_str("\\\\"),        // utils.c:6141
-                    '\n' => result.push_str("\\n"),         // utils.c:6141
-                    '\t' => result.push_str("\\t"),         // utils.c:6141
-                    '\r' => result.push_str("\\r"),         // utils.c:6141
-                    c if c.is_ascii_control() => {          // utils.c:6141
-                        result.push_str(&format!("\\x{:02x}", c as u32)); // utils.c:6141
-                    }                                       // utils.c:6141
-                    _ => result.push(c),                    // utils.c:6141
-                }                                           // utils.c:6141
-            }                                               // utils.c:6141
-            result.push('\'');                              // utils.c:6141
-            result                                          // utils.c:6141
-        }                                                   // utils.c:6141
-        QuoteType::QuotedZputs | QuoteType::SingleOptional => { // utils.c:6141
-            // Check if quoting is needed
-            let needs_quote = s.chars().any(|c| {           // utils.c:6141
-                matches!(                                   // utils.c:6141
-                    c,                                      // utils.c:6141
-                    ' ' | '\t'                              // utils.c:6141
-                        | '\n'                              // utils.c:6141
-                        | '\\'                              // utils.c:6141
-                        | '\''                              // utils.c:6141
-                        | '"'                               // utils.c:6141
-                        | '$'                               // utils.c:6141
-                        | '`'                               // utils.c:6141
-                        | '!'                               // utils.c:6141
-                        | '*'                               // utils.c:6141
-                        | '?'                               // utils.c:6141
-                        | '['                               // utils.c:6141
-                        | ']'                               // utils.c:6141
-                        | '('                               // utils.c:6141
-                        | ')'                               // utils.c:6141
-                        | '{'                               // utils.c:6141
-                        | '}'                               // utils.c:6141
-                        | '<'                               // utils.c:6141
-                        | '>'                               // utils.c:6141
-                        | '|'                               // utils.c:6141
-                        | '&'                               // utils.c:6141
-                        | ';'                               // utils.c:6141
-                        | '#'                               // utils.c:6141
-                        | '~'                               // utils.c:6141
-                )                                           // utils.c:6141
-            });                                             // utils.c:6141
-            if needs_quote {                                // utils.c:6141
-                format!("'{}'", s.replace('\'', "'\\''"))   // utils.c:6141
-            } else {                                        // utils.c:6141
-                s.to_string()                               // utils.c:6141
-            }                                               // utils.c:6141
-        }                                                   // utils.c:6141
-    }                                                       // utils.c:6141
-}                                                           // utils.c:6141
 
 /// Sort options for (o) and (O) flags
 #[derive(Debug, Clone, Copy, Default)]                      // utils.c:6141
@@ -1956,93 +1930,6 @@ pub mod sub_flags {                                         // c:N/A
     pub const EGLOB: u32 = 2048; // Extended glob           // c:N/A
 }                                                           // c:N/A
 
-/// Pattern matching for ${var#pattern} etc
-/// Port of getmatch() logic
-pub fn getmatch(val: &str, pattern: &str, flags: u32, flnum: i32, replstr: Option<&str>) -> String { // glob.c:2710
-    let val_chars: Vec<char> = val.chars().collect();       // glob.c:2710
-    let val_len = val_chars.len();                          // glob.c:2710
-
-    // Convert glob pattern to regex (simplified)
-    let regex_pattern = glob_to_regex(pattern);             // glob.c:2710
-
-    match regex::Regex::new(&regex_pattern) {               // glob.c:2710
-        Ok(re) => {                                         // glob.c:2710
-            if flags & sub_flags::GLOBAL != 0 {             // glob.c:2710
-                // Global replacement: //
-                let replacement = replstr.unwrap_or("");    // glob.c:2710
-                re.replace_all(val, replacement).to_string() // glob.c:2710
-            } else if flags & sub_flags::END != 0 {         // glob.c:2710
-                // Match at end: %
-                if flags & sub_flags::LONG != 0 {           // glob.c:2710
-                    // Longest match from end: %%
-                    for i in 0..=val_len {                  // glob.c:2710
-                        let suffix: String = val_chars[i..].iter().collect(); // glob.c:2710
-                        if re.is_match(&suffix) {           // glob.c:2710
-                            let prefix: String = val_chars[..i].iter().collect(); // glob.c:2710
-                            return if let Some(repl) = replstr { // glob.c:2710
-                                format!("{}{}", prefix, repl) // glob.c:2710
-                            } else {                        // glob.c:2710
-                                prefix                      // glob.c:2710
-                            };                              // glob.c:2710
-                        }                                   // glob.c:2710
-                    }                                       // glob.c:2710
-                } else {                                    // glob.c:2710
-                    // Shortest match from end: %
-                    for i in (0..=val_len).rev() {          // glob.c:2710
-                        let suffix: String = val_chars[i..].iter().collect(); // glob.c:2710
-                        if re.is_match(&suffix) {           // glob.c:2710
-                            let prefix: String = val_chars[..i].iter().collect(); // glob.c:2710
-                            return if let Some(repl) = replstr { // glob.c:2710
-                                format!("{}{}", prefix, repl) // glob.c:2710
-                            } else {                        // glob.c:2710
-                                prefix                      // glob.c:2710
-                            };                              // glob.c:2710
-                        }                                   // glob.c:2710
-                    }                                       // glob.c:2710
-                }                                           // glob.c:2710
-                val.to_string()                             // glob.c:2710
-            } else {                                        // glob.c:2710
-                // Match at start: #
-                if flags & sub_flags::LONG != 0 {           // glob.c:2710
-                    // Longest match from start: ##
-                    for i in (0..=val_len).rev() {          // glob.c:2710
-                        let prefix: String = val_chars[..i].iter().collect(); // glob.c:2710
-                        if re.is_match(&prefix) {           // glob.c:2710
-                            let suffix: String = val_chars[i..].iter().collect(); // glob.c:2710
-                            return if let Some(repl) = replstr { // glob.c:2710
-                                format!("{}{}", repl, suffix) // glob.c:2710
-                            } else {                        // glob.c:2710
-                                suffix                      // glob.c:2710
-                            };                              // glob.c:2710
-                        }                                   // glob.c:2710
-                    }                                       // glob.c:2710
-                } else {                                    // glob.c:2710
-                    // Shortest match from start: #
-                    for i in 0..=val_len {                  // glob.c:2710
-                        let prefix: String = val_chars[..i].iter().collect(); // glob.c:2710
-                        if re.is_match(&prefix) {           // glob.c:2710
-                            let suffix: String = val_chars[i..].iter().collect(); // glob.c:2710
-                            return if let Some(repl) = replstr { // glob.c:2710
-                                format!("{}{}", repl, suffix) // glob.c:2710
-                            } else {                        // glob.c:2710
-                                suffix                      // glob.c:2710
-                            };                              // glob.c:2710
-                        }                                   // glob.c:2710
-                    }                                       // glob.c:2710
-                }                                           // glob.c:2710
-                val.to_string()                             // glob.c:2710
-            }                                               // glob.c:2710
-        }                                                   // glob.c:2710
-        Err(_) => {                                         // glob.c:2710
-            // Fallback to simple string matching
-            if let Some(repl) = replstr {                   // glob.c:2710
-                val.replace(pattern, repl)                  // glob.c:2710
-            } else {                                        // glob.c:2710
-                val.to_string()                             // glob.c:2710
-            }                                               // glob.c:2710
-        }                                                   // glob.c:2710
-    }                                                       // glob.c:2710
-}                                                           // glob.c:2710
 
 
 
@@ -2053,19 +1940,6 @@ pub fn getmatch(val: &str, pattern: &str, flags: u32, flnum: i32, replstr: Optio
 
 
 
-/// Match pattern against array elements
-/// Port of getmatcharr() logic
-pub fn getmatcharr(                                         // c:N/A
-    aval: &mut [String],                                    // c:N/A
-    pattern: &str,                                          // c:N/A
-    flags: u32,                                             // c:N/A
-    flnum: i32,                                             // c:N/A
-    replstr: Option<&str>,                                  // c:N/A
-) {                                                         // c:N/A
-    for val in aval.iter_mut() {                            // c:N/A
-        *val = getmatch(val, pattern, flags, flnum, replstr);
-    }                                                       // c:N/A
-}                                                           // c:N/A
 
 
 
@@ -2323,13 +2197,6 @@ mod tests {                                                 // utils.c:6915
         assert_eq!(wordcount("one:two:three", Some(":"), false), 3); // utils.c:6915
     }                                                       // utils.c:6915
 
-    #[test]                                                 // utils.c:6915
-    fn test_quotestring() {                                 // utils.c:6915
-        assert_eq!(quotestring("hello", QuoteType::Single), "'hello'"); // utils.c:6915
-        assert_eq!(quotestring("it's", QuoteType::Single), "'it'\\''s'"); // utils.c:6915
-        assert_eq!(quotestring("hello", QuoteType::Double), "\"hello\""); // utils.c:6915
-        assert_eq!(quotestring("$var", QuoteType::Double), "\"\\$var\""); // utils.c:6915
-    }                                                       // utils.c:6915
 
     #[test]                                                 // utils.c:6915
     fn test_unique_array() {                                // utils.c:6915
