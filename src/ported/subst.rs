@@ -1261,6 +1261,16 @@ fn paramsubst(                                              // c:1625
         let mut flag_z_keep_comments = false;                // c:2450 (Zc)
         let mut flag_z_strip_comments = false;               // c:2456 (ZC)
         let mut flag_z_newline_ws = false;                   // c:2461 (Zn)
+        // Bare-tilde shortcut: \${~var} / \${~~var} are zsh shorthand
+        // for \${(~)var}. Per subst.c around line 2079, the lexer
+        // strips a leading '~' / '~~' off the body and toggles
+        // tok_arg / globsubst before flag-loop processing. Eat them
+        // here so the rest of the body parses as if we'd written
+        // \${(~)var}.
+        while body_chars.get(idx).copied() == Some('~') {    // c:2079
+            state.opts.glob_subst = !state.opts.glob_subst;  // c:2160
+            idx += 1;                                        // c:2079
+        }                                                    // c:2079
         if body_chars.first() == Some(&'(') {               // c:2147
             let mut d = 1_i32;                              // c:2147
             idx = 1;                                        // c:2147
