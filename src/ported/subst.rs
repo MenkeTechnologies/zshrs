@@ -3649,7 +3649,7 @@ pub fn paramsubst(                                          // c:1625
                     let lo: i64 = lo.trim().parse().unwrap_or(1); // c:3950
                     let hi: i64 = hi.trim().parse().unwrap_or(0); // c:3950
                     state.arrays.get(&var_name)              // c:3950
-                        .map(|arr| crate::ported::params::slice_indexed_array(arr, lo, hi))
+                        .map(|arr| crate::ported::params::getarrvalue(arr, lo, hi))
                         .unwrap_or_default()
                 } else if let Some(arr) = state.arrays.get(&var_name) {
                     arr.clone()                              // c:3950 (@ / *)
@@ -3819,7 +3819,7 @@ pub fn paramsubst(                                          // c:1625
                     // port of getarrvalue's range arm.
                     let lo: i64 = lo.trim().parse().unwrap_or(1); // c:1625
                     let hi: i64 = hi.trim().parse().unwrap_or(arr.len() as i64); // c:1625
-                    crate::ported::params::slice_indexed_array(arr, lo, hi).join(" ") // c:1625
+                    crate::ported::params::getarrvalue(arr, lo, hi).join(" ") // c:1625
                 } else if let Ok(idx) = sub.parse::<i32>() { // c:1625
                     let n = arr.len() as i32;               // c:1625
                     let i = if idx < 0 { n + idx } else { idx - 1 }; // c:1625
@@ -3851,7 +3851,7 @@ pub fn paramsubst(                                          // c:1625
                     let lo: i64 = lo.trim().parse().unwrap_or(1); // c:1625
                     let hi: i64 = hi.trim().parse().unwrap_or(chars_v.len() as i64); // c:1625
                     let chars_arr: Vec<String> = chars_v.iter().map(|c| c.to_string()).collect(); // c:1625
-                    crate::ported::params::slice_indexed_array(&chars_arr, lo, hi).concat() // c:1625
+                    crate::ported::params::getarrvalue(&chars_arr, lo, hi).concat() // c:1625
                 } else if let Ok(idx) = sub.parse::<i32>() { // c:1625
                     let n = chars_v.len() as i32;           // c:1625
                     let i = if idx < 0 { n + idx } else { idx - 1 }; // c:1625
@@ -3932,7 +3932,7 @@ pub fn paramsubst(                                          // c:1625
                         let lo: i64 = lo.trim().parse().unwrap_or(1); // c:3950
                         let hi: i64 = hi.trim().parse().unwrap_or(0); // c:3950
                         state.arrays.get(&var_name).map(|arr|
-                            crate::ported::params::slice_indexed_array(arr, lo, hi))
+                            crate::ported::params::getarrvalue(arr, lo, hi))
                     } else { None }
                 } else { None }
             } else { None };

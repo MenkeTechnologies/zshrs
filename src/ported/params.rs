@@ -3487,6 +3487,143 @@ pub fn unsetparam_pm(table: &mut ParamTable, name: &str) -> bool {
     table.unset(name)
 }
 
+/// Empty special-hash sentinel.
+/// Port of `shempty()` from Src/params.c:1166. The C source uses
+/// it as a no-op getfn callback for special hashes that need an
+/// addressable function pointer but no actual work. Provided here
+/// so future callers that match the C source's signature can call
+/// it directly.
+pub fn shempty() {}
+
+/// Set scalar parameter.
+/// Port of `setsparam()` from Src/params.c:3350 — single-line
+/// wrapper around `assignsparam(s, val, ASSPM_WARN)`. ASSPM_WARN
+/// is a no-op in our port (no global "warn on creation" tracking
+/// yet); the call shape is preserved so subst.rs can call this
+/// where C calls setsparam.
+pub fn setsparam(
+    variables: &mut std::collections::HashMap<String, String>,
+    arrays: &mut std::collections::HashMap<String, Vec<String>>,
+    assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
+    name: &str,
+    val: &str,
+) {
+    assignsparam(variables, arrays, assoc_arrays, name, None, val);
+}
+
+/// Set integer parameter.
+/// Port of `setiparam()` from Src/params.c:3765. The C source
+/// constructs an `mnumber` and calls `assignnparam(s, mnval,
+/// ASSPM_WARN)`; assignnparam dispatches on integer-vs-float plus
+/// existing param type. Until assignnparam is fully ported, we
+/// stringify and route through assignsparam — matches behavior
+/// when target is scalar or not yet defined (the common case).
+///
+/// TODO: when assignnparam is ported (params.c:3664, 72 lines),
+/// route through it for proper PM_INTEGER promotion + base/width
+/// preservation.
+pub fn setiparam(
+    variables: &mut std::collections::HashMap<String, String>,
+    arrays: &mut std::collections::HashMap<String, Vec<String>>,
+    assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
+    name: &str,
+    val: i64,
+) {
+    assignsparam(variables, arrays, assoc_arrays, name, None, &val.to_string());
+}
+
+/// Set integer parameter without forcing PM_INTEGER promotion.
+/// Port of `setiparam_no_convert()` from Src/params.c:3781. C
+/// source comment: "If the target is already an integer, this
+/// gets converted back. Low technology rules." It uses convbase
+/// to render decimal then calls assignsparam. Same effect here.
+pub fn setiparam_no_convert(
+    variables: &mut std::collections::HashMap<String, String>,
+    arrays: &mut std::collections::HashMap<String, Vec<String>>,
+    assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
+    name: &str,
+    val: i64,
+) {
+    assignsparam(variables, arrays, assoc_arrays, name, None, &val.to_string());
+}
+
+/// Retrieve scalar parameter as string.
+/// Port of `getsparam()` from Src/params.c:3076. C calls
+/// `getvalue(&vbuf, &s, 0)` then `getstrvalue(v)`; getvalue does
+/// per-name dispatch through gsu->getfn callbacks for special /
+/// magic-assoc params. Until getvalue is ported, we read directly
+/// from the HashMap. Returns None for unset.
+pub fn getsparam(
+    variables: &std::collections::HashMap<String, String>,
+    arrays: &std::collections::HashMap<String, Vec<String>>,
+    name: &str,
+) -> Option<String> {
+    if let Some(s) = variables.get(name) {
+        return Some(s.clone());
+    }
+    // C's getvalue auto-joins arrays as scalar via getstrvalue
+    // when the param is array-typed. Mirror with IFS-first-char
+    // join when only an array entry exists.
+    arrays.get(name).map(|a| a.join(" "))
+}
+
+/// Retrieve integer parameter.
+/// Port of `getiparam()` from Src/params.c:3044. C: getvalue +
+/// getintvalue. Our adaptation reads the scalar string and parses;
+/// returns 0 on missing or unparseable, matching getintvalue's
+/// failure-returns-0 convention (params.c:2601).
+pub fn getiparam(
+    variables: &std::collections::HashMap<String, String>,
+    arrays: &std::collections::HashMap<String, Vec<String>>,
+    name: &str,
+) -> i64 {
+    getsparam(variables, arrays, name)
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0)
+}
+
+/// Retrieve numeric (int-or-float) parameter.
+/// Port of `getnparam()` from Src/params.c:3058. C returns an
+/// `mnumber` (tagged int/float union); our adaptation returns
+/// `(i64, f64, bool)` where the bool is true for float. Unset
+/// returns `(0, 0.0, false)`, matching the MN_INTEGER zero
+/// fallback in the C source's not-found branch.
+pub fn getnparam(
+    variables: &std::collections::HashMap<String, String>,
+    arrays: &std::collections::HashMap<String, Vec<String>>,
+    name: &str,
+) -> (i64, f64, bool) {
+    let s = match getsparam(variables, arrays, name) {
+        Some(s) => s,
+        None => return (0, 0.0, false),
+    };
+    if s.contains('.') || s.contains('e') || s.contains('E') {
+        if let Ok(f) = s.parse::<f64>() {
+            return (f as i64, f, true);
+        }
+    }
+    if let Ok(i) = s.parse::<i64>() {
+        return (i, i as f64, false);
+    }
+    (0, 0.0, false)
+}
+
+/// Unset a parameter from all storage.
+/// Port of `unsetparam()` from Src/params.c:3819. C uses a single
+/// HashTable; our SubstState-style storage spans variables /
+/// arrays / assoc_arrays, so removal must touch all three to be
+/// thorough (matches `unsetparam_pm`'s flag-aware tear-down).
+pub fn unsetparam(
+    variables: &mut std::collections::HashMap<String, String>,
+    arrays: &mut std::collections::HashMap<String, Vec<String>>,
+    assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
+    name: &str,
+) {
+    variables.remove(name);
+    arrays.remove(name);
+    assoc_arrays.remove(name);
+}
+
 /// Check if parameter is readonly
 /// Check whether a parameter has `PM_READONLY`.
 /// Equivalent to the `pm->node.flags & PM_READONLY` test
@@ -3649,20 +3786,62 @@ fn parse_index_value(s: &str, _ksh_arrays: bool) -> Option<i64> {
     s.parse::<i64>().ok()
 }
 
-/// Get array element with subscript handling (from params.c getarrvalue)
+/// Slice an indexed array using zsh 1-based inclusive semantics.
+/// Port of `getarrvalue()` from Src/params.c:2548 — the slice
+/// branch that resolves the start/end pair into a Vec. Negative
+/// indices count from the end (`-1` is the last element);
+/// out-of-range bounds collapse to empty (`${a[5,10]}` on len=3
+/// returns empty, not clamped); `start > end` returns empty.
+///
+/// 0 has asymmetric meaning per C source's getarrvalue:
+///   start=0 → "before first element" → resolved to 1
+///   end=0   → "before first element" → empty slice
 pub fn getarrvalue(arr: &[String], start: i64, end: i64) -> Vec<String> {
     let len = arr.len() as i64;
     if len == 0 {
         return Vec::new();
     }
-    let start = if start < 0 { len + start + 1 } else { start };
-    let end = if end < 0 { len + end + 1 } else { end };
-    let start = (start.max(1) - 1) as usize;
-    let end = end.min(len) as usize;
-    if start >= end || start >= arr.len() {
+    // Out-of-range starts (positive past len, or negative below
+    // -len) collapse to empty per Src/params.c getarrvalue's
+    // slice-resolution branches.
+    if start > len {
         return Vec::new();
     }
-    arr[start..end].to_vec()
+    if end < 0 && (len + end + 1) < 1 {
+        return Vec::new();
+    }
+    if start < 0 && end < 0 && start > end {
+        return Vec::new();
+    }
+    if start < 0 && start < -len {
+        return Vec::new();
+    }
+    let resolve_start = |i: i64| -> i64 {
+        if i < 0 {
+            (len + i + 1).max(1)
+        } else if i == 0 {
+            1
+        } else {
+            i.min(len)
+        }
+    };
+    let resolve_end = |i: i64| -> i64 {
+        if i < 0 {
+            (len + i + 1).max(0)
+        } else if i == 0 {
+            0
+        } else {
+            i.min(len)
+        }
+    };
+    let s = resolve_start(start);
+    let e = resolve_end(end);
+    if e < 1 || s > e {
+        return Vec::new();
+    }
+    let s_idx = (s - 1) as usize;
+    let e_idx = e as usize;
+    arr[s_idx..e_idx.min(arr.len())].to_vec()
 }
 
 /// Set array element with subscript handling (from params.c setarrvalue)
@@ -6278,67 +6457,6 @@ pub(crate) fn parse_subscript_index(exec: &mut ShellExecutor, s: &str) -> Option
         return Some(i);
     }
     Some(exec.eval_arith_expr(trimmed))
-}
-/// Slice an indexed array using zsh 1-based inclusive semantics.
-/// Negative indices count from the end (`-1` is the last element).
-/// Out-of-range bounds clamp to the array; `start > end` returns empty.
-pub(crate) fn slice_indexed_array(arr: &[String], start: i64, end: i64) -> Vec<String> {
-    let len = arr.len() as i64;
-    if len == 0 {
-        return Vec::new();
-    }
-    // Out-of-range starts (positive past len, or negative below first
-    // element) collapse to empty in zsh — `a=(a b c); print ${a[5,10]}`
-    // is empty, not the trailing element clamped down.
-    if start > len {
-        return Vec::new();
-    }
-    if end < 0 && (len + end + 1) < 1 {
-        return Vec::new();
-    }
-    if start < 0 && end < 0 && start > end {
-        return Vec::new();
-    }
-    // Negative start below `-len` empties — zsh treats the slice as
-    // entirely out of range. `${a[-5,-1]}` with len=3 returns
-    // nothing because the lower bound is past the array's start.
-    // Without this check we clamped start up to 1 and returned the
-    // entire array.
-    if start < 0 && start < -len {
-        return Vec::new();
-    }
-    // zsh treats 0 differently for start vs end of a slice:
-    //   start=0 → "before first element" → resolved to 1 (first index).
-    //   end=0   → "before first element" → empty slice (no elements
-    //             from start to "before first" can exist).
-    // Earlier this resolver mapped 0→1 for both sides, so `${a[1,0]}`
-    // and `${a[0,0]}` returned the first element instead of empty.
-    let resolve_start = |i: i64| -> i64 {
-        if i < 0 {
-            (len + i + 1).max(1)
-        } else if i == 0 {
-            1
-        } else {
-            i.min(len)
-        }
-    };
-    let resolve_end = |i: i64| -> i64 {
-        if i < 0 {
-            (len + i + 1).max(0)
-        } else if i == 0 {
-            0
-        } else {
-            i.min(len)
-        }
-    };
-    let s = resolve_start(start);
-    let e = resolve_end(end);
-    if e < 1 || s > e {
-        return Vec::new();
-    }
-    let s_idx = (s - 1) as usize;
-    let e_idx = e as usize;
-    arr[s_idx..e_idx.min(arr.len())].to_vec()
 }
 // END moved-from-exec-rs (free fns)
 

@@ -2328,7 +2328,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let e_opt: Option<i64> = e_str.trim().parse().ok();
                 if let (Some(s), Some(e)) = (s_opt, e_opt) {
                     return Value::Array(
-                        slice_indexed_array(&arr, s, e)
+                        getarrvalue(&arr, s, e)
                             .into_iter()
                             .map(Value::str)
                             .collect(),
@@ -2626,7 +2626,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         let ksh = exec.options.get("ksharrays").copied().unwrap_or(false);
                         let s = if ksh && s >= 0 { s + 1 } else { s };
                         let e = if ksh && e >= 0 { e + 1 } else { e };
-                        let sliced = slice_indexed_array(&arr, s, e);
+                        let sliced = getarrvalue(&arr, s, e);
                         // (@) flag in surrounding chain overrides DQ-join
                         // — always splat to Value::Array so the caller's
                         // (@)-aware splat path emits each element as its

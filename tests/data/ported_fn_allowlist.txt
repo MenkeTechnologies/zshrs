@@ -181,7 +181,6 @@ parse_subscript_flags
 array_subscript_flag
 assoc_subscript_flag
 parse_subscript_index
-slice_indexed_array
 
 apply_deltochar
 apply_hist_modifier
