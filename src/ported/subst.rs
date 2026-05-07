@@ -3440,20 +3440,67 @@ pub fn substevalchar(s: &str) -> Option<String> {           // c:1490
 
 /// Check for colon subscript in parameter expansion
 /// Port of check_colon_subscript() from subst.c
+/// Port of `check_colon_subscript()` from `Src/subst.c:1566-1597`.
+///
+/// Detects a `${var:OFFSET[:LEN]}` substring shape vs a history
+/// modifier or other postfix. Returns `Some((subscript_expr, rest))`
+/// when the input looks like a colon-substring (offset evaluable as
+/// math), `None` otherwise.
+///
+/// C signature: `char *check_colon_subscript(char *str, char **endp)`.
+/// Rust returns the parsed (subscript, remainder) pair.
 pub fn check_colon_subscript(s: &str) -> Option<(String, String)> { // c:1566
-    // Could this be a modifier (or empty)?
-    if s.is_empty() || s.starts_with(|c: char| c.is_ascii_alphabetic()) || s.starts_with('&') { // c:1566
-        return None;                                        // c:1566
-    }                                                       // c:1566
+    // C: `if (!*str || ialpha(*str) || *str == '&') return NULL;`
+    // — empty, alphabetic (i.e. a modifier letter), or `&` (history-
+    // modifier `:&`) → not a subscript.
+    if s.is_empty()                                         // c:1571
+        || s.starts_with(|c: char| c.is_ascii_alphabetic()) // c:1571
+        || s.starts_with('&')                               // c:1571
+    {
+        return None;                                        // c:1572
+    }
 
-    if s.starts_with(':') {                                 // c:1566
-        return Some(("0".to_string(), s.to_string()));      // c:1566
-    }                                                       // c:1566
+    // C: `if (*str == ':') { *endp = str; return dupstring("0"); }`
+    // — bare `::` shape: subscript is "0" and end points at the
+    // current position (no chars consumed).
+    if s.starts_with(':') {                                 // c:1574
+        return Some(("0".to_string(), s.to_string()));      // c:1576
+    }
 
-    // Parse subscript expression
-    let (expr, rest) = (s.to_string(), "".to_string());                // c:1566
-    Some((expr, rest))                                      // c:1566
-}                                                           // c:1566
+    // C: `*endp = parse_subscript(str, 0, ':');` — find a balanced
+    // subscript expression terminated by `:`. Falls back to
+    // `'\0'` (end-of-string) if no trailing `:` found.
+    //
+    // Rust port: walk chars tracking bracket/paren depth, stop at
+    // unbalanced `:` or end of string.
+    let chars: Vec<char> = s.chars().collect();             // c:1579
+    let mut depth: i32 = 0;                                 // c:1579
+    let mut end: Option<usize> = None;                      // c:1579
+    for (i, &c) in chars.iter().enumerate() {               // c:1579
+        match c {                                           // c:1579
+            '[' | '\u{91}' /* Inbrack */ => depth += 1,     // c:1579
+            ']' | '\u{92}' /* Outbrack */ => depth -= 1,    // c:1579
+            '(' | '\u{85}' /* Inpar */ => depth += 1,       // c:1579
+            ')' | '\u{86}' /* Outpar */ => depth -= 1,      // c:1579
+            ':' if depth == 0 => { end = Some(i); break; }  // c:1579
+            _ => {}
+        }
+    }
+    let end = end.unwrap_or(s.len());                       // c:1582 (fallthrough '\0')
+    let expr: String = chars[..end].iter().collect();       // c:1583
+
+    // C lines 1585-1591: `parsestr` + `singsub` + `remnulargs` +
+    // `untokenize` on the captured expression.
+    let parsed = subst_parse_str(&expr, false, true)?;      // c:1587
+    let mut tmp_state = SubstState::default();              // c:1589
+    let expanded = singsub(&parsed, &mut tmp_state);        // c:1589
+    if tmp_state.errflag { return None; }                   // c:1590
+    let stripped = expanded.replace('\u{0}', "");           // c:1590
+    let untoked = crate::lex::untokenize(&stripped);        // c:1591
+
+    let rest: String = chars[end..].iter().collect();       // c:1593
+    Some((untoked, rest))                                   // c:1596
+}                                                           // c:1597
 
 
 /// Untokenize and escape string for flag argument
