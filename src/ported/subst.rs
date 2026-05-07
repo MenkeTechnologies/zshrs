@@ -1217,7 +1217,7 @@ fn paramsubst(                                              // c:1625
         let mut flag_typeinfo = false;                      // c:2807 (t)
         let mut flag_keys = false;                          // c:2247 (k)
         let mut flag_values = false;                        // c:2256 (v)
-        let mut flag_arrlen = false;                        // c:2265 (#)
+        let mut flag_evalchar = false;                      // c:1673 (#) char-eval
         // (l:N::PRE:) left-pad / (r:N::POST:) right-pad parsed values.
         // Port of subst.c:2319-2375 l/r flag arm.
         let mut prenum: i64 = 0;                            // c:1776 (zlong prenum)
@@ -1306,7 +1306,7 @@ fn paramsubst(                                              // c:1625
                     't' => { flag_typeinfo = true; }        // c:2807
                     'k' => { flag_keys = true; }            // c:2247
                     'v' => { flag_values = true; }          // c:2256
-                    '#' => { flag_arrlen = true; }          // c:2265
+                    '#' => { flag_evalchar = true; }        // c:1673 (# evalchar)
                     'l' | 'r' => {                          // c:2319 (l/r pad)
                         // Consume `:N:STR1:STR2:` form.
                         // C: `s++; del0 = s; num = get_intarg(&s, &dellen);`
@@ -1861,12 +1861,6 @@ fn paramsubst(                                              // c:1625
             value = state.assoc_arrays.get(&var_name)       // c:2256
                 .map(|m| m.values().cloned().collect::<Vec<_>>().join(" ")) // c:2256
                 .unwrap_or_default();
-        } else if flag_arrlen {                             // c:2265 (alt to leading #)
-            // (#) flag on array → element count.
-            value = state.arrays.get(&var_name)
-                .map(|a| a.len().to_string())
-                .or_else(|| state.assoc_arrays.get(&var_name).map(|m| m.len().to_string()))
-                .unwrap_or_else(|| raw_value.chars().count().to_string());
         } else if flag_at {                                 // c:2167
             // (@) array splat — preserve element shape via space-join.
             // For full splat into multiple result_nodes, the
@@ -2456,6 +2450,26 @@ fn paramsubst(                                              // c:1625
                 value = pad_one(&value);
             }
         }
+
+        // (#) evalchar — interpret each value as a math expression
+        // and emit the char with that codepoint. Direct port of
+        // subst.c:1673 evalchar arm + substevalchar.
+        if flag_evalchar {                                  // c:1673
+            let eval_one = |s: &str| -> String {
+                substevalchar(s.trim()).unwrap_or_default()
+            };
+            if let Some(parts) = split_parts.clone() {
+                let new_parts: Vec<String> = parts.iter().map(|s| eval_one(s)).collect();
+                value = new_parts.join(" ");
+                split_parts = Some(new_parts);
+            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                let new_arr: Vec<String> = arr.iter().map(|s| eval_one(s)).collect();
+                value = new_arr.join(" ");
+                split_parts = Some(new_arr);
+            } else {
+                value = eval_one(&value);
+            }
+        }                                                    // c:1673
 
         // (e) eval — re-substitute the result. Per-element on arrays.
         // Direct port of subst.c:2268 eval bit which iterates aval.
