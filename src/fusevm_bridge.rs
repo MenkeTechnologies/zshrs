@@ -4601,6 +4601,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_REGEX_MATCH, |vm, _argc| {
         let pat = vm.pop().to_str();
         let s = vm.pop().to_str();
+        // Same untokenize before regex compile as ZshrsHost::regex_match
+        // — SNULL/DQ markers from quoted patterns must be stripped
+        // before the regex engine sees them. Direct port of
+        // bin_test/cond_match's untokenize() call.
+        let pat = crate::lex::untokenize(&pat);
+        let s = crate::lex::untokenize(&s);
         let mut cache = REGEX_CACHE.lock();
         let matched = if let Some(re) = cache.get(&pat) {
             re.is_match(&s)
