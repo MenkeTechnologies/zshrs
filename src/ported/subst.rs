@@ -724,16 +724,38 @@ fn stringsubst(                                             // c:237
             && chars.get(pos + 1) == Some(&INPAR)           // c:237
         {                                                   // c:237
             // <(...) / >(...) / =(...) process / cmd substitution.
-            // Stubbed pending faithful port of getproc()/getoutputfile()
-            // from Src/exec.c — empty substitution preserves the rest
-            // of the string unchanged.
-            let _ = c;                                      // c:237 (stubbed)
-            // If state.errflag is already set, bail out as before.
+            // The full port (getproc / getoutputfile) needs fork/exec
+            // and lives in Src/exec.c. Until that lands, skip the
+            // marker AND its parenthesized body so subsequent passes
+            // don't misinterpret the inner text as bare param/cmd
+            // substitution. Direct port of subst.c:248-274 layout —
+            // C calls getproc/getoutputfile then memcpy's the result;
+            // the no-op port still has to consume the same span.
             if state.errflag {                              // c:237
                 return None;                                // c:237
             }                                               // c:237
-            // No-op stub: don't substitute, just advance past the marker
-            pos += 1;                                       // c:237
+            // Walk the matching close paren — depth-tracked so
+            // nested `<(echo $(...))` skips correctly. Includes the
+            // INANG/OUTANGPROC/EQUALS marker char itself.
+            let start = pos;                                // c:237
+            pos += 2;                                       // c:237 (skip marker + INPAR)
+            let mut depth = 1_i32;                          // c:237
+            while pos < chars.len() && depth > 0 {          // c:237
+                let ch = chars[pos];                        // c:237
+                if ch == INPAR { depth += 1; }              // c:237
+                else if ch == OUTPAR { depth -= 1; }        // c:237
+                pos += 1;                                   // c:237
+            }                                                // c:237
+            // Excise the entire span (was producing junk output
+            // for `cat <(echo a) <(echo b)` because the half-skipped
+            // `(echo a)` parsed as cmd-subst).
+            let str_chars: Vec<char> = str3.chars().collect(); // c:237
+            let mut new_str = String::with_capacity(str_chars.len());
+            new_str.extend(str_chars[..start].iter());      // c:237
+            new_str.extend(str_chars[pos..].iter());        // c:237
+            str3 = new_str;                                 // c:237
+            list.setdata(node_idx, str3.clone());            // c:237
+            pos = start;                                    // c:237
             continue;                                       // c:237
         }                                                   // c:237
 
