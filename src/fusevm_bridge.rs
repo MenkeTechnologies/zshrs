@@ -5127,7 +5127,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let arr_assoc_data = with_executor(|exec| {
             sync_status(exec);
             let in_dq = exec.in_dq_context > 0;
+            // KSH_ARRAYS: bare `$arr` returns ONLY arr[0] (zero-
+            // based first-element-only semantics). Direct port of
+            // Src/params.c getstrvalue's KSH_ARRAYS gate which
+            // returns aval[0] instead of the whole array.
+            let ksh_arrays = exec.options.get("ksharrays").copied().unwrap_or(false);
             if let Some(arr) = exec.arrays.get(&name) {
+                if ksh_arrays {
+                    return Some((vec![arr.first().cloned().unwrap_or_default()], in_dq));
+                }
                 return Some((arr.clone(), in_dq));
             }
             if let Some(map) = exec.assoc_arrays.get(&name) {
@@ -5137,6 +5145,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .iter()
                     .filter_map(|k| map.get(*k).cloned())
                     .collect();
+                if ksh_arrays {
+                    return Some((vec![values.into_iter().next().unwrap_or_default()], in_dq));
+                }
                 return Some((values, in_dq));
             }
             None
