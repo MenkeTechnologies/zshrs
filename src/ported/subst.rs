@@ -2107,6 +2107,7 @@ fn paramsubst(                                              // c:1625
                         None => arr.iter().skip(lo).cloned().collect(), // c:715
                     };
                     value = kept.join(" ");                  // c:715
+                    split_parts = Some(kept);                // c:715 (auto-splat slice)
                 } else {
                     let total = raw_value.chars().count() as i64;
                     let start = if off < 0 { (total + off).max(0) } else { off.min(total) } as usize;
