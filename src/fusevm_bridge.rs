@@ -7003,7 +7003,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // output (trailing newlines stripped per POSIX cmd-sub semantics).
     vm.register_builtin(BUILTIN_CMD_SUBST_TEXT, |vm, _argc| {
         let cmd = vm.pop().to_str();
-        let result = with_executor(|exec| exec.run_command_substitution(&cmd));
+        // Inherit live $? into the inner shell so cmd-subst sees the
+        // parent's most recent exit. Same rationale as the mode-3
+        // backtick path above.
+        let live_status = vm.last_status;
+        let result = with_executor(|exec| {
+            exec.last_status = live_status;
+            exec.run_command_substitution(&cmd)
+        });
         // Mirror run_command_substitution's exec.last_status side
         // effect into the VM's live counter so a containing
         // assignment's BUILTIN_SET_VAR — which reads vm.last_status
@@ -7029,6 +7036,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_EXPAND_TEXT, |vm, _argc| {
         let mode = vm.pop().to_int() as u8;
         let text = vm.pop().to_str();
+        // Sync vm.last_status → exec.last_status so cmd-subst (mode 3)
+        // and any nested $? reads inside singsub see the live `$?`
+        // from the most recent VM op. Without this, cmd-subst inside
+        // arg-eval saw a stale exec.last_status that was zeroed at
+        // the start of the current statement. Direct port of zsh's
+        // pre-cmdsubst lastval propagation per Src/exec.c:4770.
+        let live_status = vm.last_status;
         with_executor(|exec| match mode {
             // Mode 1 = DoubleQuoted (argument context).
             // Mode 5 = DoubleQuoted in scalar-assignment context.
@@ -7100,6 +7114,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 } else {
                     text.as_str()
                 };
+                // Apply the live VM status before running the inner
+                // shell so the inherited $? matches zsh's lastval
+                // propagation.
+                exec.last_status = live_status;
                 let captured = exec.run_command_substitution(inner);
                 let trimmed = captured.trim_end_matches('\n');
                 if exec.in_dq_context > 0 {

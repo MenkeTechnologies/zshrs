@@ -1699,6 +1699,15 @@ impl ShellExecutor {
                 let mut vm = fusevm::VM::new(chunk);
                 register_builtins(&mut vm);
                 vm.set_shell_host(Box::new(ZshrsHost));
+                // Seed inner $? with the outer's last_status so the
+                // sub-shell inherits the parent's exit code. Direct
+                // port of Src/exec.c:4783 around execcmd_exec — the
+                // child inherits `lastval` at fork time, so `false;
+                // echo $(echo $?)` reads 1, not the freshly-zeroed
+                // sub-VM default. Without this, every cmd-subst
+                // started with $?==0 regardless of the parent's
+                // last command.
+                vm.last_status = self.last_status;
                 let _ctx = ExecutorContext::enter(self);
                 let _ = vm.run();
                 cmd_status = Some(vm.last_status);
@@ -1715,8 +1724,15 @@ impl ShellExecutor {
         // value for callers that don't have a SetStatus(0) overwrite
         // (echo, test, etc.). Bare assignment paths still get the
         // SetStatus(0) from compile_simple — that's a separate gap.
+        // Empty cmd-subst (`\`\``, `$()`) resets status to 0 per
+        // Src/exec.c — the inner ran no command so the "last
+        // command's exit" is the implicit success of "did nothing".
+        // Without this branch, a prior command's non-zero status
+        // leaked through the empty cmd-subst.
         if let Some(status) = cmd_status {
             self.last_status = status;
+        } else {
+            self.last_status = 0;
         }
 
         // Flush any buffered Rust-side stdout so it reaches the pipe
