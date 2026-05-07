@@ -1180,6 +1180,14 @@ fn paramsubst(                                              // c:1625
             }                                               // c:1885
             end += 1;                                       // c:1885
         }                                                   // c:1885
+        // No closing `}` — emit "bad substitution" and bail.
+        // Direct port of zsh's zerr("closing brace missing") at
+        // subst.c around line 1885.
+        if end >= chars.len() || depth != 0 {
+            eprintln!("zshrs: closing brace missing");      // c:1885
+            state.errflag = true;                           // c:1885
+            return (String::new(), chars.len(), vec![]);    // c:1885
+        }
         let body: String = chars[pos..end].iter().collect(); // c:1885
         let new_pos = if end < chars.len() { end + 1 } else { end };
         let body_chars: Vec<char> = body.chars().collect();
