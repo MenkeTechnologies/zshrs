@@ -55,15 +55,6 @@ pub fn zerrmsg(msg: &str, errno: Option<i32>) {
     }
 }
 
-/// Check if a path is a directory
-/// Check whether a path is a directory.
-/// Port of the `S_ISDIR` test inline in Src/utils.c (no
-/// dedicated function — used wherever a path-vs-dir check is
-/// needed).
-pub fn is_directory(path: &str) -> bool {
-    Path::new(path).is_dir()
-}
-
 /// Check if a file exists and is executable
 /// Check whether a path is executable.
 /// Port of the `access(X_OK)` test inline in Src/utils.c
@@ -84,51 +75,6 @@ pub fn is_executable(path: &str) -> bool {
     }
 }
 
-/// Expand tilde in a path
-/// Expand `~user` and `~+`/`~-` shorthands in a path.
-/// Port of `unmeta_named_dir()` / `gethnameddir()` chain from
-/// Src/utils.c (around `equalsplit()` line 3000-ish) — same
-/// `~`/`~+N`/`~-N`/`~user` precedence.
-pub fn unmeta_named_dir(path: &str) -> String {
-    if !path.starts_with('~') {
-        return path.to_string();
-    }
-
-    let (user, rest) = if let Some(pos) = path[1..].find('/') {
-        (&path[1..pos + 1], &path[pos + 1..])
-    } else {
-        (&path[1..], "")
-    };
-
-    if user.is_empty() {
-        if let Ok(home) = std::env::var("HOME") {
-            return format!("{}{}", home, rest);
-        }
-    } else {
-        #[cfg(unix)]
-        {
-            if let Some(dir) = get_user_home(user) {
-                return format!("{}{}", dir, rest);
-            }
-        }
-    }
-
-    path.to_string()
-}
-
-#[cfg(unix)]
-fn get_user_home(user: &str) -> Option<String> {
-    use std::ffi::CString;
-    unsafe {
-        let c_user = CString::new(user).ok()?;
-        let pw = libc::getpwnam(c_user.as_ptr());
-        if pw.is_null() {
-            return None;
-        }
-        let dir = std::ffi::CStr::from_ptr((*pw).pw_dir);
-        dir.to_str().ok().map(|s| s.to_string())
-    }
-}
 
 /// Nicely format a string for display (escape unprintable chars)
 /// Render a control character as a printable form.
@@ -233,26 +179,6 @@ pub fn is_float(s: &str) -> bool {
 pub fn zsleep(seconds: f64) {
     let duration = std::time::Duration::from_secs_f64(seconds);
     std::thread::sleep(duration);
-}
-
-/// Write a string to a file descriptor
-/// Write a string to an fd with EINTR retry.
-/// Port of the `zwrite()`-style loop Src/utils.c uses for
-/// retry-safe writes (around `write_loop()`).
-pub fn write_to_fd(fd: i32, data: &str) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::FromRawFd;
-        let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
-        write!(file, "{}", data)?;
-        std::mem::forget(file); // Don't close the fd
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (fd, data);
-        Err(io::Error::new(io::ErrorKind::Unsupported, "Not supported"))
-    }
 }
 
 /// Close a file descriptor
@@ -387,15 +313,6 @@ fn is_special(c: char) -> bool {
     )
 }
 
-/// Check if character is a pattern character
-/// Port from ipattern() macro in zsh.h
-fn is_pattern(c: char) -> bool {
-    matches!(
-        c,
-        '*' | '?' | '[' | ']' | '<' | '>' | '(' | ')' | '|' | '#' | '^' | '~'
-    )
-}
-
 /// Quote a string according to the specified type
 /// Port from zsh/Src/utils.c quotestring() (lines 6141-6452)
 /// Quote a string per the requested bslashquote style.
@@ -422,7 +339,10 @@ pub fn quotestring(s: &str, quote_type: QuoteType) -> String {
             // Only bslashquote pattern characters (lines 6242-6247)
             let mut result = String::with_capacity(s.len() * 2);
             for c in s.chars() {
-                if is_pattern(c) {
+                if matches!(
+                    c,
+                    '*' | '?' | '[' | ']' | '<' | '>' | '(' | ')' | '|' | '#' | '^' | '~'
+                ) {
                     result.push('\\');
                 }
                 result.push(c);
@@ -979,26 +899,6 @@ pub fn ztrsub(t: &str, s: &str) -> usize {
     ztrlen(&t[..t.len().saturating_sub(s.len())])
 }
 
-/// Get home directory for user by name (from utils.c getpwnam handling)
-pub fn get_user_home_by_name(username: &str) -> Option<String> {
-    #[cfg(unix)]
-    {
-        use std::ffi::CString;
-        let c_user = CString::new(username).ok()?;
-        let pwd = unsafe { libc::getpwnam(c_user.as_ptr()) };
-        if pwd.is_null() {
-            return None;
-        }
-        let home = unsafe { std::ffi::CStr::from_ptr((*pwd).pw_dir) };
-        home.to_str().ok().map(|s| s.to_string())
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = username;
-        None
-    }
-}
-
 /// Get username from UID (from utils.c getpwuid handling)
 pub fn statuidprint(uid: u32) -> Option<String> {
     #[cfg(unix)]
@@ -1035,16 +935,6 @@ pub fn get_groupname(gid: u32) -> Option<String> {
     }
 }
 
-/// Compare strings case-insensitively (from utils.c zstricmp)
-pub fn zstricmp(s1: &str, s2: &str) -> std::cmp::Ordering {
-    s1.to_lowercase().cmp(&s2.to_lowercase())
-}
-
-/// Find needle in haystack (from utils.c zstrstr)
-pub fn zstrstr(haystack: &str, needle: &str) -> Option<usize> {
-    haystack.find(needle)
-}
-
 /// String duplicate (from utils.c ztrdup)
 pub fn ztrdup(s: &str) -> String {
     s.to_string()
@@ -1070,124 +960,6 @@ pub fn bicat(s1: &str, s2: &str) -> String {
     format!("{}{}", s1, s2)
 }
 
-/// Numeric string comparison (from utils.c nstrncmp)
-pub fn nstrcmp(s1: &str, s2: &str) -> std::cmp::Ordering {
-    let n1: i64 = s1.parse().unwrap_or(0);
-    let n2: i64 = s2.parse().unwrap_or(0);
-    n1.cmp(&n2)
-}
-
-/// Inverted numeric comparison (from utils.c invnstrncmp)
-pub fn invnstrcmp(s1: &str, s2: &str) -> std::cmp::Ordering {
-    nstrcmp(s2, s1)
-}
-
-/// Check if string ends with suffix (from utils.c)
-pub fn str_ends_with(s: &str, suffix: &str) -> bool {
-    s.ends_with(suffix)
-}
-
-/// Check if string starts with prefix
-pub fn str_starts_with(s: &str, prefix: &str) -> bool {
-    s.starts_with(prefix)
-}
-
-/// Get basename of path (from utils.c)
-pub fn zbasename(path: &str) -> &str {
-    std::path::Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(path)
-}
-
-/// Get dirname of path (from utils.c)
-pub fn zdirname(path: &str) -> &str {
-    std::path::Path::new(path)
-        .parent()
-        .and_then(|p| p.to_str())
-        .unwrap_or(".")
-}
-
-/// Check if character is a simple word character (from utils.c)
-pub fn is_word_char_simple(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
-}
-
-/// Get next word boundary (from utils.c)
-pub fn next_word_boundary(s: &str, pos: usize) -> usize {
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = pos;
-
-    while i < chars.len() && is_word_char_simple(chars[i]) {
-        i += 1;
-    }
-    while i < chars.len() && !is_word_char_simple(chars[i]) {
-        i += 1;
-    }
-    i
-}
-
-/// Get previous word boundary (from utils.c)
-pub fn prev_word_boundary(s: &str, pos: usize) -> usize {
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = pos.min(chars.len());
-
-    while i > 0 && !is_word_char_simple(chars[i - 1]) {
-        i -= 1;
-    }
-    while i > 0 && is_word_char_simple(chars[i - 1]) {
-        i -= 1;
-    }
-    i
-}
-
-/// Path normalization (from utils.c xsymlink handling)
-pub fn normalize_path(path: &str) -> String {
-    let mut components: Vec<&str> = Vec::new();
-    let absolute = path.starts_with('/');
-
-    for part in path.split('/') {
-        match part {
-            "" | "." => continue,
-            ".." => {
-                if !components.is_empty() && components.last() != Some(&"..") {
-                    components.pop();
-                } else if !absolute {
-                    components.push("..");
-                }
-            }
-            _ => components.push(part),
-        }
-    }
-
-    let result = components.join("/");
-    if absolute {
-        format!("/{}", result)
-    } else if result.is_empty() {
-        ".".to_string()
-    } else {
-        result
-    }
-}
-
-/// Check access with effective UID (from utils.c eaccess)
-pub fn eaccess(path: &str, mode: i32) -> bool {
-    #[cfg(unix)]
-    {
-        use std::ffi::CString;
-        let c_path = match CString::new(path) {
-            Ok(p) => p,
-            Err(_) => return false,
-        };
-        unsafe { libc::access(c_path.as_ptr(), mode) == 0 }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (path, mode);
-        false
-    }
-}
-
 /// Word count for strings
 pub fn wordcount(s: &str) -> usize {
     s.split_whitespace().count()
@@ -1196,11 +968,6 @@ pub fn wordcount(s: &str) -> usize {
 /// Character count for strings
 pub fn charcount(s: &str) -> usize {
     s.chars().count()
-}
-
-/// Line count for strings
-pub fn linecount(s: &str) -> usize {
-    s.lines().count()
 }
 
 /// Join array with delimiter (from utils.c zjoin)
@@ -1235,18 +1002,6 @@ pub fn iwsep(c: char) -> bool {
 /// Check if character needs metafication
 pub fn imeta(c: char) -> bool {
     (c as u32) < 32 || c == '\x7f' || c == '\u{83}'
-}
-
-/// Get nice representation of control character
-pub fn nicechar_ctrl(c: char) -> String {
-    let c_byte = c as u8;
-    if c_byte < 32 {
-        format!("^{}", (c_byte + 64) as char)
-    } else if c_byte == 127 {
-        "^?".to_string()
-    } else {
-        c.to_string()
-    }
 }
 
 /// Format time struct (from utils.c ztrftime)
@@ -1287,31 +1042,6 @@ pub fn ztrftime(fmt: &str, time: std::time::SystemTime) -> String {
     }
 }
 
-/// Get current time formatted
-pub fn current_time_fmt(fmt: &str) -> String {
-    ztrftime(fmt, std::time::SystemTime::now())
-}
-
-/// Print-safe string representation
-pub fn printsafe(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    for c in s.chars() {
-        if c.is_control() {
-            if c == '\n' {
-                result.push_str("\\n");
-            } else if c == '\t' {
-                result.push_str("\\t");
-            } else if c == '\r' {
-                result.push_str("\\r");
-            } else {
-                result.push_str(&format!("\\x{:02x}", c as u32));
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
 
 /// Escape string for shell
 pub fn shescape(s: &str) -> String {
@@ -2103,20 +1833,6 @@ pub fn inittyptab() {
     // Rust handles character classification natively
 }
 
-/// Skip whitespace separators from IFS (port helper, with custom IFS)
-pub fn skipwsep_ifs<'a>(s: &'a str, ifs: &str) -> &'a str {
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i] as char;
-        if !ifs.contains(c) || !c.is_ascii_whitespace() {
-            break;
-        }
-        i += 1;
-    }
-    &s[i..]
-}
-
 /// Find a separator in string (from utils.c findsep)
 pub fn findsep(s: &str, sep: Option<&str>) -> Option<usize> {
     match sep {
@@ -2125,63 +1841,6 @@ pub fn findsep(s: &str, sep: Option<&str>) -> Option<usize> {
         None => {
             // Default: split on whitespace
             s.find(|c: char| c.is_ascii_whitespace())
-        }
-    }
-}
-
-/// Count words in string (from utils.c wordcount - extended version)
-pub fn wordcount_sep(s: &str, sep: Option<&str>) -> usize {
-    wordcount_sep_mul(s, sep, false)
-}
-
-/// Word count with the `mul` flag from src/zsh/Src/utils.c:3879-3914
-/// `wordcount`. Direct port:
-///   - With sep != None and mul=true: count BOUNDARY-defined fields,
-///     including empty fields between consecutive separators
-///     (`a::b` with sep=`:` returns 3, not 2).
-///   - With sep != None and mul=false: count fields, but each
-///     separator chunk only adds one new field if there's a
-///     character between this separator and the next — empty
-///     fields between consecutive separators don't increment the
-///     count (matches zsh's `${(w)#name}` default semantics).
-///   - With sep == None: split on IFS-equivalent whitespace.
-///
-/// `mul` corresponds to the `getlen > 3` argument flag from
-/// src/zsh/Src/subst.c:3864 / 3869 — `${(W)#name}` sets it.
-pub fn wordcount_sep_mul(s: &str, sep: Option<&str>, mul: bool) -> usize {
-    match sep {
-        Some(sep) if !sep.is_empty() => {
-            // utils.c:3883-3888 — start at r=1, increment for each
-            // separator boundary that has either non-empty content
-            // OR mul=1 (counting empties).
-            let mut r = 1usize;
-            let mut rest = s;
-            while let Some(pos) = rest.find(sep) {
-                let head = &rest[..pos];
-                rest = &rest[pos + sep.len()..];
-                if !head.is_empty() || mul {
-                    // Per utils.c:3887-3888 the increment also
-                    // requires that something follows — `sl ||
-                    // *(s + sl)` — so the trailing separator
-                    // doesn't double-count.
-                    if !rest.is_empty() || !head.is_empty() {
-                        r += 1;
-                    }
-                }
-            }
-            // Special case: if there were NO separators at all,
-            // r==1 is still correct (single field). If the input
-            // was empty and we never entered the loop, r==1 is
-            // technically wrong (should be 0). Match the C version's
-            // initialization of r=1 — empty input returns 1.
-            r
-        }
-        _ => {
-            // utils.c:3889-3911 — IFS-based count. mul / non-mul both
-            // currently fall through to plain whitespace split until we
-            // wire the multibyte locale path.
-            let _ = mul;
-            s.split_whitespace().count()
         }
     }
 }
@@ -2385,23 +2044,6 @@ pub fn quotedzputs(s: &str) -> String {
     result
 }
 
-/// Nice format for string display (from utils.c mb_niceformat)
-pub fn niceformat(s: &str) -> String {
-    let mut result = String::new();
-    for c in s.chars() {
-        if c.is_ascii_control() {
-            result.push_str(&nicechar(c));
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
-
-/// Check if nice formatting is needed (from utils.c is_mb_niceformat)
-pub fn is_niceformat(s: &str) -> bool {
-    s.chars().any(|c| c.is_ascii_control())
-}
 
 /// Check for special characters that need quoting (from utils.c hasspecial)
 pub fn hasspecial(s: &str) -> bool {
@@ -2673,15 +2315,6 @@ pub struct TimedFn {
     pub when: i64,
 }
 
-/// Pre-prompt processing (from utils.c preprompt)
-pub fn preprompt_actions() {
-    // In Rust, this is handled by the exec loop:
-    // - Check mail
-    // - Run precmd hooks
-    // - Update terminal title
-    // - Check for background job notifications
-}
-
 /// Check mail paths (from utils.c checkmailpath)
 pub fn checkmailpath(paths: &[String]) -> Vec<String> {
     let mut messages = Vec::new();
@@ -2951,12 +2584,12 @@ pub fn metalen(s: &str, len: usize) -> usize {
 
 /// Dup string nicely (from utils.c nicedup)
 pub fn nicedup(s: &str) -> String {
-    niceformat(s)
+    sb_niceformat(s)
 }
 
 /// Count nice string length (from utils.c niceztrlen)
 pub fn niceztrlen(s: &str) -> usize {
-    niceformat(s).len()
+    sb_niceformat(s).len()
 }
 
 /// Duplicate and double-bslashquote a string (from utils.c dquotedztrdup)
@@ -3114,13 +2747,6 @@ mod tests {
 
         let result = split_quoted("\"double quoted\" value");
         assert_eq!(result, vec!["double quoted", "value"]);
-    }
-
-    #[test]
-    fn test_expand_tilde() {
-        // Just test that it doesn't crash - actual expansion depends on env
-        let result = unmeta_named_dir("~/test");
-        assert!(!result.starts_with('~') || result == "~/test");
     }
 
     #[test]
@@ -3333,12 +2959,20 @@ pub fn mb_charlenconv(s: &str, pos: usize) -> usize {
 
 /// Single-byte nice format (from utils.c sb_niceformat)
 pub fn sb_niceformat(s: &str) -> String {
-    niceformat(s)
+    let mut result = String::new();
+    for c in s.chars() {
+        if c.is_ascii_control() {
+            result.push_str(&nicechar(c));
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }
 
 /// Check if single-byte needs nice format (from utils.c is_sb_niceformat)
 pub fn is_sb_niceformat(s: &str) -> bool {
-    is_niceformat(s)
+    s.chars().any(|c| c.is_ascii_control())
 }
 
 /// Expand tabs to spaces (from utils.c zexpandtabs)
@@ -3472,7 +3106,7 @@ pub fn hmkarray(s: &str) -> Vec<String> {
 
 /// Nice-format and duplicate string (from utils.c nicedupstring)
 pub fn nicedupstring(s: &str) -> String {
-    niceformat(s)
+    sb_niceformat(s)
 }
 
 /// Check mail file status (from utils.c mailstat)
