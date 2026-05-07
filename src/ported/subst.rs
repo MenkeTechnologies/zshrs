@@ -1430,6 +1430,12 @@ fn paramsubst(                                              // c:1625
                 if !is_set || raw_value.is_empty() { value = singsub(default, state); }
             } else if let Some(default) = r.strip_prefix('-') { // c:3193
                 if !is_set { value = singsub(default, state); }
+            } else if let Some(default) = r.strip_prefix("::=") { // c:3245 (unconditional assign)
+                // `${var::=value}` — zsh extension. Always store
+                // value (after expansion) regardless of whether var
+                // was set/empty. Returns the stored value.
+                value = singsub(default, state);
+                state.variables.insert(var_name.clone(), value.clone());
             } else if let Some(default) = r.strip_prefix(":=") { // c:3245
                 if !is_set || raw_value.is_empty() {
                     value = singsub(default, state);
