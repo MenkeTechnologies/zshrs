@@ -6955,7 +6955,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Both pattern and replacement get parameter / cmd-subst /
         // arith expansion before use (zsh semantics — `${s/$pat/X}`
         // resolves $pat).
+        // Untokenize before pattern compile — zsh's lexer leaves
+        // SNULL/DQ markers and meta-encoded metachars in the
+        // pattern stream. regex::Regex::new errors on those bytes,
+        // and even when it compiles, it matches against tokenized
+        // text rather than the user's literal pattern. Direct port
+        // of bin_test's `untokenize(pattern)` call before patcompile.
         let pattern = with_executor(|exec| exec.singsub(&pattern_raw));
+        let pattern = crate::lex::untokenize(&pattern);
         // Replacement: parameter-substitute `$VAR` / `${VAR}` only,
         // BUT preserve a leading `~` literal. Per zsh, the
         // replacement in `${var/#pat/~}` is NOT tilde-expanded
@@ -6963,6 +6970,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // — used by p10k, oh-my-zsh, etc. — would produce the
         // un-canonicalized path).
         let repl = with_executor(|exec| expand_no_tilde(exec, &repl_raw));
+        let repl = crate::lex::untokenize(&repl);
         // Strip backslash escapes from the pattern. zsh: `\X` in a
         // ${var/pat/repl} pattern means "literal X" — the backslash
         // is removed and X is used as a literal char (regardless of
