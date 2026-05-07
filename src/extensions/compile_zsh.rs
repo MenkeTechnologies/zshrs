@@ -1888,6 +1888,34 @@ impl ZshCompiler {
             }
         }
 
+        // Fast path: `${^NAME}` — forced RC_EXPAND_PARAM distribution.
+        // zsh: `print IF${^arr}THEN` for `arr=(a b c)` produces
+        // `IFaTHEN IFbTHEN IFcTHEN` regardless of the rcexpandparam
+        // option setting. The `^` flag explicitly enables the
+        // cartesian product over surrounding text. Direct port of
+        // Src/subst.c:1875 `case Hat: nojoin = 1; aspar = 1`.
+        // Emit as BUILTIN_ARRAY_ALL so the value lands on the stack
+        // as Value::Array; the surrounding word's CONCAT_DISTRIBUTE
+        // (segment fast-path detected via is_distribute_expansion)
+        // does the actual splicing.
+        if !has_bnull && untoked.starts_with("${^") && untoked.ends_with('}') {
+            let inner = &untoked[3..untoked.len() - 1];
+            let bare = inner
+                .strip_suffix("[@]")
+                .or_else(|| inner.strip_suffix("[*]"))
+                .unwrap_or(inner);
+            let valid = !bare.is_empty()
+                && bare.chars().next().map(|c| c == '_' || c.is_ascii_alphabetic()).unwrap_or(false)
+                && bare.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
+            if valid {
+                let idx = self.builder.add_constant(Value::str(bare));
+                self.builder.emit(Op::LoadConst(idx), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_ALL, 1), 0);
+                return;
+            }
+        }
+
         // Fast path: `${=NAME}` (forced IFS-split) and `${==NAME}`
         // (force NO-split). Direct port of src/zsh/Src/subst.c:2558-2569
         // — leading `=` sets `spbreak = 2` which forces split on IFS
@@ -2495,7 +2523,12 @@ impl ZshCompiler {
                 let concat_builtin = if has_splice_seg {
                     Some(crate::exec::BUILTIN_CONCAT_SPLICE)
                 } else if has_distribute_seg {
-                    Some(crate::exec::BUILTIN_CONCAT_DISTRIBUTE)
+                    // `${^arr}` / `${(@)arr}` etc — distribution is
+                    // explicit at the source level, not gated on the
+                    // rcexpandparam option. Use the FORCED variant so
+                    // a Value::Array on the stack always distributes
+                    // cartesian with the surrounding text.
+                    Some(crate::exec::BUILTIN_CONCAT_DISTRIBUTE_FORCED)
                 } else {
                     // Pure scalars OR `${arr}` plain — runtime check via
                     // BUILTIN_CONCAT_DISTRIBUTE (handles scalar fast path
