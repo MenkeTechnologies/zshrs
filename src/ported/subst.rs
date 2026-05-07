@@ -1181,6 +1181,21 @@ fn stringsubst(                                             // c:237
 
 /// Parameter substitution
 /// Port of paramsubst() from subst.c lines 1600-4922 (THIS IS THE BIG ONE)
+/// Public wrapper that lets the fusevm bridge call paramsubst
+/// directly when a `${(...)…}` form arrives at BUILTIN_BRIDGE_BRACE_
+/// ARRAY. Returns the per-element node list so the caller can choose
+/// between scalar and Array shape.
+pub fn paramsubst_bridge(
+    s: &str,
+    start_pos: usize,
+    qt: bool,
+    pf_flags: u32,
+    ret_flags: &mut u32,
+    state: &mut SubstState,
+) -> (String, usize, Vec<String>) {
+    paramsubst(s, start_pos, qt, pf_flags, ret_flags, state)
+}
+
 fn paramsubst(                                              // c:1625
     s: &str,                                                // c:1625
     start_pos: usize,                                       // c:1625
