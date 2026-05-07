@@ -468,6 +468,11 @@ pub struct ShellExecutor {
     /// `(t)` parameter flag can return the canonical zsh type string
     /// (`integer`, `float`, `scalar-left`, `scalar-readonly-export`, …).
     pub var_attrs: std::collections::HashMap<String, VarAttr>,
+    /// Last `:s/X/Y/` history-modifier pair, replayed by `:&`.
+    /// Direct port of `hsubl` / `hsubr` globals in Src/hist.c.
+    /// SubstState mirrors / commits this so all paramsubst calls
+    /// share the most recent value.
+    pub last_subst: Option<(String, String)>,
     /// Stack for `local` variable save/restore (name, old_value).
     pub local_save_stack: Vec<(String, Option<String>)>,
     /// Parallel stack for `local arr=(...)` array save/restore.
@@ -850,6 +855,7 @@ impl ShellExecutor {
             comp_isuffix: String::new(),
             readonly_vars: std::collections::HashSet::new(),
             var_attrs: std::collections::HashMap::new(),
+            last_subst: None,
             local_save_stack: Vec::new(),
             local_array_save_stack: Vec::new(),
             local_assoc_save_stack: Vec::new(),

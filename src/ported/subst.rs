@@ -228,6 +228,12 @@ pub struct SubstState {                                     // c:100
     /// PUSHDMINUS option flag — flips the meaning of `~+N` vs `~-N`.
     /// Direct port of `isset(PUSHDMINUS)` at Src/subst.c:4906.
     pub pushdminus: bool,                                   // c:4906
+    /// Last `:s/X/Y/` substitution pair, replayed by `:&`. Direct
+    /// port of `hsubl` / `hsubr` globals in Src/hist.c. Lives on
+    /// SubstState so chained modifiers (`${var:s/x/y/:&}`) and
+    /// later refs in the same shell session both see it. Committed
+    /// back to ShellExecutor in commit_to_executor.
+    pub last_subst: Option<(String, String)>,               // c:4531
 }                                                           // c:2807
 
 impl SubstState {                                           // c:2807
@@ -281,6 +287,7 @@ impl SubstState {                                           // c:2807
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect(),                                 // c:4902
             pushdminus: exec.options.get("PUSHDMINUS").copied().unwrap_or(false), // c:4906
+            last_subst: exec.last_subst.clone(),            // c:4531 (hsubl/hsubr)
         }
     }
 
@@ -306,6 +313,13 @@ impl SubstState {                                           // c:2807
                     entry.insert(k.clone(), v.clone());
                 }
             }
+        }
+        // Persist hsubl/hsubr equivalents so a later `:&` modifier
+        // in a separate paramsubst call replays the most recent
+        // `:s` from this session. Matches C zsh's global-pair
+        // persistence (Src/hist.c hsubl/hsubr).
+        if self.last_subst.is_some() {                      // c:4531
+            exec.last_subst = self.last_subst;              // c:4531
         }
     }
 }                                                           // c:2807
@@ -2728,12 +2742,9 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
 pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c:4531
     let mut result = s.to_string();                         // c:4531
     let mut chars: std::iter::Peekable<std::str::Chars> = modifiers.chars().peekable(); // c:4531
-    // C zsh stores the last `:s/x/y/` substitution in the global
-    // `hsubl` / `hsubr` (Src/hist.c). The `:&` modifier repeats it.
-    // zshrs uses thread-local state on `SubstState` for the duration
-    // of one substitution chain — same persistence as C between
-    // chained modifiers in a single `${var:s/x/y/:&}` expression.
-    let mut last_subst: Option<(String, String)> = None;    // c:4531
+    // hsubl/hsubr now live on SubstState (which mirrors them
+    // back to ShellExecutor on commit). Reads the latest value
+    // observed in this pass; writes a new pair after each `:s`.
 
     while chars.peek() == Some(&':') {                      // c:4531
         chars.next(); // consume ':'                        // c:4531
@@ -2846,16 +2857,40 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
             } else {
                 result.replacen(pat.as_str(), repl.as_str(), 1)
             };
-            last_subst = Some((pat, repl));                 // c:4673
+            state.last_subst = Some((pat.clone(), repl.clone())); // c:4673
+            // `:s` on word-each (`:w` / `:W:sep`) splits, applies,
+            // rejoins. Pull through the same code path :& uses
+            // below by deferring to a shared `apply_subst` closure.
+            if wall {                                       // c:4665
+                let separator = sep.as_deref().unwrap_or(" "); // c:4665
+                let words: Vec<&str> = result.split(separator).collect(); // c:4665
+                let modified: Vec<String> = words.iter().map(|w| {       // c:4665
+                    if gbal { w.replace(pat.as_str(), repl.as_str()) }   // c:4665
+                    else { w.replacen(pat.as_str(), repl.as_str(), 1) }  // c:4665
+                }).collect();                                // c:4665
+                result = modified.join(separator);          // c:4665
+            }                                                // c:4665
             continue;                                       // c:4675
         }                                                   // c:4685
 
         // `:&` repeats the last `:s` substitution. Per Src/subst.c
         // modify's `case '&':`. No-op if no prior `:s` in this
-        // chain.
+        // chain (or pass — state.last_subst persists from prior
+        // calls via from_executor / commit_to_executor).
         if modifier == '&' {                                // c:4531
-            if let Some((p, r)) = &last_subst {             // c:4531
-                result = if gbal { result.replace(p as &str, r as &str) } else { result.replacen(p as &str, r as &str, 1) };  // c:4531
+            if let Some((p, r)) = state.last_subst.clone() { // c:4531
+                if wall {                                   // c:4531
+                    let separator = sep.as_deref().unwrap_or(" "); // c:4531
+                    let words: Vec<&str> = result.split(separator).collect(); // c:4531
+                    let modified: Vec<String> = words.iter().map(|w| { // c:4531
+                        if gbal { w.replace(p.as_str(), r.as_str()) }    // c:4531
+                        else { w.replacen(p.as_str(), r.as_str(), 1) }   // c:4531
+                    }).collect();                            // c:4531
+                    result = modified.join(separator);      // c:4531
+                } else {                                    // c:4531
+                    result = if gbal { result.replace(p.as_str(), r.as_str()) } // c:4531
+                             else { result.replacen(p.as_str(), r.as_str(), 1) }; // c:4531
+                }                                            // c:4531
             }                                               // c:4531
             continue;                                       // c:4531
         }                                                   // c:4531
