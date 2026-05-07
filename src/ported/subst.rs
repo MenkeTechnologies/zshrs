@@ -3876,7 +3876,7 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
     // C lines 555-563: PREFORK_SPLIT — skip leading IFS whitespace,
     // mark MULTSUB_WS_AT_START.
     let ifs = state.variables.get("IFS").cloned()
-        .unwrap_or_else(|| " \t\n".to_string());            // c:N/A (state plumb)
+        .unwrap_or_else(|| " \t\n\0".to_string());          // c:N/A (zsh default IFS includes NUL)
     let is_ifs_sep = |c: char| -> bool {                    // c:556
         ifs.contains(c)                                     // c:556
     };
