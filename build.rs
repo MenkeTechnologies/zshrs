@@ -54,8 +54,16 @@ fn main() {
     let allowlist: HashSet<String> = fs::read_to_string(&allowlist_path)
         .unwrap_or_default()
         .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| {
+            // Strip inline `#` comment so entries like
+            // `name   # justification` parse to just `name`.
+            let l = match l.find('#') {
+                Some(i) => &l[..i],
+                None => l,
+            };
+            l.trim()
+        })
+        .filter(|l| !l.is_empty())
         .map(|l| l.to_string())
         .collect();
 

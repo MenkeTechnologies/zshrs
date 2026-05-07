@@ -260,8 +260,16 @@ fn ported_fns_match_c_source() {
     });
     let allowlist: HashSet<String> = allowlist_src
         .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| {
+            // Strip inline `# justification` so `name # comment`
+            // parses to just `name`.
+            let l = match l.find('#') {
+                Some(i) => &l[..i],
+                None => l,
+            };
+            l.trim()
+        })
+        .filter(|l| !l.is_empty())
         .map(|l| l.to_string())
         .collect();
 
