@@ -782,10 +782,9 @@ fn stringsubst(                                             // c:237
                 let close = if open == INBRACK { OUTBRACK } else { ']' }; // c:237
                 if let Some(end) = None::<usize> /* find_matching_bracket stub */ { // c:237
                     let expr: String = str3.chars().skip(start).take(end).collect(); // c:237
-                    let value = arithsubst(&expr, state);   // c:237
                     let prefix: String = str3.chars().take(pos).collect(); // c:237
                     let suffix: String = str3.chars().skip(start + end + 1).collect(); // c:237
-                    str3 = format!("{}{}{}", prefix, value, suffix); // c:237
+                    str3 = arithsubst(&expr, &prefix, &suffix, state); // c:237
                     list.setdata(node_idx, str3.clone());  // c:237
                     continue;                               // c:237
                 } else {                                    // c:237
@@ -1627,20 +1626,86 @@ fn filesub(s: &str, flags: u32, state: &mut SubstState) -> String { // c:667
 
 
 
-fn arithsubst(expr: &str, _state: &mut SubstState) -> String { // c:4485
-    // Port of `arithsubst()` from Src/subst.c:4485 — delegates to
-    // the math module's full expression evaluator (zsh's
-    // `matheval()` from Src/math.c, ported in `crate::math`).
-    // The C source is itself a thin wrapper over the math
-    // expression engine; we route through the same engine so
-    // subscripts, ternary, bitwise, comparison, and float ops
-    // all flow through one evaluator.
-    match crate::math::matheval(expr) {                     // c:4485
-        Ok(crate::math::MathNum::Integer(n)) => n.to_string(), // c:4485
-        Ok(crate::math::MathNum::Float(f)) => f.to_string(), // c:4485
-        Ok(crate::math::MathNum::Unset) | Err(_) => "0".to_string(), // c:4485
-    }                                                       // c:4485
-}                                                           // c:4485
+/// Port of `arithsubst()` from `Src/subst.c:4485-4509`.
+///
+/// C body: param-substitute the expression first (`singsub(&a)`),
+/// evaluate as math, then format the integer/float result honoring
+/// `outputradix` and `outputunderscore` options; concatenate the
+/// caller-supplied `prefix` (`*bptr`) + result + `rest` and return.
+///
+/// Rust signature changed from `(char *a, char **bptr, char *rest)`
+/// to `(expr, prefix, rest, state) -> String` because Rust strings
+/// own their storage; the caller now consumes the returned String
+/// directly instead of the C in-out buffer protocol.
+fn arithsubst(expr: &str, prefix: &str, rest: &str, state: &mut SubstState) -> String { // c:4485
+    // C: `singsub(&a);` — parameter-substitute the math expression
+    // before evaluation. Without this `${(($n+1))}` won't see $n.
+    let expanded = singsub(expr, state);                    // c:4490
+
+    // C: `v = matheval(a);` — evaluate via Src/math.c::matheval.
+    let v = match crate::math::matheval(&expanded) {        // c:4491
+        Ok(n) => n,                                         // c:4491
+        Err(_) => crate::math::MathNum::Unset,              // c:4491
+    };                                                      // c:4491
+
+    // C ladder lines 4492-4499: float-with-no-radix → convfloat,
+    // else cast float to int and convbase. zshrs collapses both
+    // through Display + a `outputradix` shell-option check.
+    let outputradix = state.variables.get("OUTPUT_RADIX")
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(0);                                      // c:4492
+    let b: String = match v {                               // c:4492
+        crate::math::MathNum::Float(f) if outputradix == 0 => { // c:4492
+            // QT_FLOAT — let Display handle it; zsh's
+            // convfloat_underscore is the underscore-grouped form,
+            // skipped here pending OUTPUT_UNDERSCORE port.
+            format!("{}", f)                                // c:4493
+        }                                                   // c:4493
+        crate::math::MathNum::Float(f) => {                 // c:4495
+            // Integer cast + convbase per radix.
+            let l = f as i64;                               // c:4496
+            convbase_to_string(l, outputradix as u32)       // c:4497
+        }                                                   // c:4497
+        crate::math::MathNum::Integer(n) => {               // c:4498
+            convbase_to_string(n, outputradix as u32)       // c:4498
+        }                                                   // c:4498
+        crate::math::MathNum::Unset => "0".to_string(),     // c:4498
+    };                                                      // c:4499
+
+    // C: `t = *bptr = hcalloc(...); …; strcat(t, rest);` — concat
+    // prefix + b + rest. Returns pointer past prefix+b (where rest
+    // begins). Rust returns the full string.
+    format!("{}{}{}", prefix, b, rest)                      // c:4501-4509
+}                                                           // c:4509
+
+/// Port of `convbase_underscore()` family from Src/utils.c — render
+/// integer in given radix. Radix 0 = base 10. Underscore-grouping
+/// pending OUTPUT_UNDERSCORE option.
+fn convbase_to_string(n: i64, radix: u32) -> String {       // utils.c
+    if radix == 0 || radix == 10 {                          // utils.c
+        return n.to_string();                               // utils.c
+    }
+    let neg = n < 0;                                        // utils.c
+    let abs = if neg { (n as i128).wrapping_neg() as u128 } else { n as u128 };
+    let s = match radix {                                   // utils.c
+        2 => format!("2#{:b}", abs),                        // utils.c
+        8 => format!("8#{:o}", abs),                        // utils.c
+        16 => format!("16#{:X}", abs),                      // utils.c
+        r if (2..=36).contains(&r) => {                     // utils.c
+            let digits = "0123456789abcdefghijklmnopqrstuvwxyz".as_bytes(); // utils.c
+            let mut tmp = abs;                              // utils.c
+            let mut buf = String::new();                    // utils.c
+            if tmp == 0 { buf.push('0'); }                  // utils.c
+            while tmp > 0 {                                 // utils.c
+                buf.push(digits[(tmp % r as u128) as usize] as char); // utils.c
+                tmp /= r as u128;                           // utils.c
+            }
+            format!("{}#{}", r, buf.chars().rev().collect::<String>()) // utils.c
+        }
+        _ => n.to_string(),                                 // utils.c
+    };
+    if neg { format!("-{}", s) } else { s }                 // utils.c
+}                                                           // utils.c
 
 
 /// Multsub flags (from subst.c)
