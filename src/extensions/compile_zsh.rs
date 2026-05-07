@@ -1888,6 +1888,52 @@ impl ZshCompiler {
             }
         }
 
+        // Fast path: `${~NAME}` — forced GLOB_SUBST on the value.
+        // Per Src/subst.c:2596 `case '~': globsubst = 2`. The `~`
+        // flag promotes the value's glob metachars from literal to
+        // pattern, so e.g. `str=*.txt; print ${~str}` expands the
+        // value as a filesystem glob. Emit GET_VAR + GLOB_EXPAND so
+        // the runtime applies expand_glob to the resulting scalar.
+        // Without this, `${~str}` left the value's `*`/`?`/`[]`
+        // unexpanded.
+        if !has_bnull && untoked.starts_with("${~") && untoked.ends_with('}') {
+            let inner = &untoked[3..untoked.len() - 1];
+            // `${~~name}` toggles globsubst OFF — pass through as
+            // bare ${name} (handled by braced_var_ref above; this
+            // arm only fires if we get here, which means name has
+            // no special chars to interfere). Detected by leading
+            // `~` after the first.
+            if let Some(rest) = inner.strip_prefix('~') {
+                // Double-tilde — no-op flag, just emit bare name.
+                let valid = !rest.is_empty()
+                    && rest.chars().next().map(|c| c == '_' || c.is_ascii_alphabetic()).unwrap_or(false)
+                    && rest.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
+                if valid {
+                    let idx = self.builder.add_constant(Value::str(rest));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                    self.builder.emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
+                    return;
+                }
+            } else {
+                let valid = !inner.is_empty()
+                    && inner.chars().next().map(|c| c == '_' || c.is_ascii_alphabetic()).unwrap_or(false)
+                    && inner.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
+                if valid {
+                    let idx = self.builder.add_constant(Value::str(inner));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                    self.builder.emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
+                    // Apply glob expansion to the resulting scalar.
+                    // BUILTIN_GLOB_EXPAND pops a string, runs
+                    // expand_glob (filesystem matching), pushes
+                    // Value::Array (or single-element on no-match
+                    // depending on NOMATCH option).
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_GLOB_EXPAND, 0), 0);
+                    return;
+                }
+            }
+        }
+
         // Fast path: `${^NAME}` — forced RC_EXPAND_PARAM distribution.
         // zsh: `print IF${^arr}THEN` for `arr=(a b c)` produces
         // `IFaTHEN IFbTHEN IFcTHEN` regardless of the rcexpandparam
