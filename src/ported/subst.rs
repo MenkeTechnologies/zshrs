@@ -3380,6 +3380,98 @@ fn paramsubst(                                              // c:1625
             }
         }
 
+        // (D) named-dir substitution and (V) visible-char rendering
+        // per Src/subst.c:4155-4166. (D) replaces the path prefix
+        // with `~name` for each named directory; (V) renders
+        // non-printable bytes as `^X` / `\n` / `\t` / `\M-X`. Both
+        // apply per-element when array-shaped.
+        if flag_d_dir || flag_visible {                      // c:4155
+            let render_d = |s: &str| -> String {
+                if !flag_d_dir { return s.to_string(); }
+                // Replace $HOME with `~`; replace each named-dir
+                // path with `~name`. Direct port of substnamedir.
+                let mut out = s.to_string();
+                if let Ok(home) = std::env::var("HOME") {
+                    if !home.is_empty() && out.starts_with(&home) {
+                        out = format!("~{}", &out[home.len()..]);
+                    }
+                }
+                // Named-dir entries from the executor — longest-
+                // prefix-first to avoid shallow-prefix shadowing.
+                crate::fusevm_bridge::with_executor(|exec| {
+                    let mut entries: Vec<(String, std::path::PathBuf)> =
+                        exec.named_dirs.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                    entries.sort_by_key(|(_, p)| std::cmp::Reverse(p.as_os_str().len()));
+                    for (name, path) in &entries {
+                        let path_s = path.to_string_lossy();
+                        if !path_s.is_empty() && out.starts_with(path_s.as_ref()) {
+                            out = format!("~{}{}", name, &out[path_s.len()..]);
+                            break;
+                        }
+                    }
+                });
+                out
+            };
+            let render_v = |s: &str| -> String {
+                if !flag_visible { return s.to_string(); }
+                // Direct port of nicechar / nicedupstring per
+                // Src/utils.c:462 — render non-printables as
+                // `\n`, `\t`, `^X`, `\M-X`, `^?` etc.
+                let mut out = String::with_capacity(s.len());
+                for ch in s.chars() {
+                    let code = ch as u32;
+                    if (0x20..=0x7e).contains(&code) {
+                        out.push(ch);
+                    } else if code == 0x7f {
+                        out.push('^');
+                        out.push('?');
+                    } else if code == 0x0a {
+                        out.push('\\');
+                        out.push('n');
+                    } else if code == 0x09 {
+                        out.push('\\');
+                        out.push('t');
+                    } else if code < 0x20 {
+                        out.push('^');
+                        out.push((b'@' + (code as u8)) as char);
+                    } else if code < 0x100 {
+                        // High-bit byte → `\M-X`
+                        out.push_str("\\M-");
+                        let stripped = code & 0x7f;
+                        if (0x20..=0x7e).contains(&stripped) {
+                            out.push(stripped as u8 as char);
+                        } else if stripped < 0x20 {
+                            out.push('^');
+                            out.push((b'@' + (stripped as u8)) as char);
+                        } else {
+                            out.push('?');
+                        }
+                    } else {
+                        // Multi-byte char above ASCII range — pass through
+                        // (zsh's wcs_nicechar handles this; for now keep
+                        // the codepoint visible as-is).
+                        out.push(ch);
+                    }
+                }
+                out
+            };
+            let pipeline = |s: &str| -> String {
+                let s1 = render_d(s);
+                render_v(&s1)
+            };
+            if let Some(parts) = split_parts.clone() {       // c:4155
+                let new_parts: Vec<String> = parts.iter().map(|s| pipeline(s)).collect();
+                value = new_parts.join(" ");
+                split_parts = Some(new_parts);
+            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                let new_arr: Vec<String> = arr.iter().map(|s| pipeline(s)).collect();
+                value = new_arr.join(" ");
+                split_parts = Some(new_arr);
+            } else {
+                value = pipeline(&value);
+            }
+        }
+
         // ${=name} forced split — promote scalar value to multi-word
         // splat per Src/subst.c:3902 `force_split = !ssub && spbreak`.
         // Suppressed when ssub (paramsubst called with PREFORK_SINGLE,

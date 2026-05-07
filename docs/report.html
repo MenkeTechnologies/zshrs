@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <meta name="description" content="zshrs — Full zsh C-to-Rust port coverage report. 91 C files, 147,233 C lines, 208,696 Rust lines, 3,059 tests.">
+  <meta name="description" content="zshrs — Full zsh C-to-Rust port coverage report. 94 C files, 147,656 C lines, 318,571 Rust lines, 4,290 #[test] funcs. Strict-port src/ported/ (89) + non-port src/extensions/ (31) split enforced by tests/port_purity.rs.">
   <title>zshrs — Port Coverage Report</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -84,7 +84,7 @@
             <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
           </nav>
           <p style="margin:0.35rem 0 0;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text-dim);letter-spacing:0.03em;opacity:0.75;">
-            zsh/Src/*.c &rarr; zsh/src/*.rs &middot; 91 C files (32 core + 24 ZLE + 33 modules + 2 Builtins) &middot; 147,233 C lines &middot; 208,696 Rust lines &middot; 189 files &middot; 3,059 tests
+            src/zsh/Src/*.c &rarr; src/ported/*.rs &middot; 94 C files (33 core + 24 ZLE + 35 modules + 2 Builtins) &middot; 147,656 C lines &middot; 318,571 Rust lines &middot; 386 .rs files (4-crate workspace) &middot; 4,290 <code>#[test]</code> funcs &middot; <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PORT.md" style="color:var(--cyan);">PORT.md</a> ruleset &middot; <code>tests/port_purity.rs</code> enforces strict-port purity
           </p>
         </div>
         <div class="tutorial-toolbar">

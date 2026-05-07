@@ -3691,6 +3691,52 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         St::A(a) => St::A(a.into_iter().map(|s| visible(&s)).collect()),
                     };
                 }
+                'D' => {
+                    // (D) named-directory substitution per
+                    // Src/subst.c:4155 (`mods & 1`) → substnamedir.
+                    // Replace $HOME prefix with `~` and any longer
+                    // named-dir match with `~name`. Per-element on
+                    // arrays, longest-prefix-first to avoid shallow
+                    // shadowing (a `~zpwr=/Users/wizard/zpwr`
+                    // override beats the bare `~=/Users/wizard`).
+                    let render_d = |s: &str| -> String {
+                        with_executor(|exec| {
+                            let mut out = s.to_string();
+                            // First the longer named dirs.
+                            let mut entries: Vec<(String, std::path::PathBuf)> = exec
+                                .named_dirs
+                                .iter()
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect();
+                            entries.sort_by_key(|(_, p)| std::cmp::Reverse(p.as_os_str().len()));
+                            for (name, path) in &entries {
+                                let path_s = path.to_string_lossy();
+                                if !path_s.is_empty() && out.starts_with(path_s.as_ref()) {
+                                    return format!(
+                                        "~{}{}",
+                                        name,
+                                        &out[path_s.len()..]
+                                    );
+                                }
+                            }
+                            // Then $HOME — only if no named-dir matched.
+                            if let Some(home) = exec.variables.get("HOME").cloned() {
+                                if !home.is_empty() && out.starts_with(&home) {
+                                    out = format!("~{}", &out[home.len()..]);
+                                }
+                            } else if let Ok(home) = std::env::var("HOME") {
+                                if !home.is_empty() && out.starts_with(&home) {
+                                    out = format!("~{}", &out[home.len()..]);
+                                }
+                            }
+                            out
+                        })
+                    };
+                    state = match state {
+                        St::S(s) => St::S(render_d(&s)),
+                        St::A(a) => St::A(a.into_iter().map(|s| render_d(&s)).collect()),
+                    };
+                }
                 'P' => {
                     // (P) was already applied as the pre-walker
                     // initial-state transform — see `want_indirect`
