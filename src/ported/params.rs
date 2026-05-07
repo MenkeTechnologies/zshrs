@@ -5883,7 +5883,7 @@ impl crate::ported::exec::ShellExecutor {
             let key_str: String = bytes[key_start..j].iter().collect();
             let trimmed_key = key_str.trim_start();
             let parsed_flag = if trimmed_key.starts_with('(') {
-                parse_subscript_flags(trimmed_key)
+                getarg(trimmed_key)
             } else {
                 None
             };
@@ -6026,7 +6026,7 @@ impl crate::ported::exec::ShellExecutor {
                     // patterns yield an index/key as zsh does.
                     let trimmed_key = key_resolved.trim_start();
                     let parsed_flag = if trimmed_key.starts_with('(') {
-                        parse_subscript_flags(trimmed_key)
+                        getarg(trimmed_key)
                     } else {
                         None
                     };
@@ -6135,11 +6135,33 @@ impl crate::ported::exec::ShellExecutor {
 // Free fns moved verbatim from src/ported/exec.rs.
 // ===========================================================
 // BEGIN moved-from-exec-rs (free fns)
-/// Parse a `(flags)pat` subscript prefix. Returns `Some((flags, pat))`
-/// when `idx` opens with `(` and contains a matching `)` (with no `[` /
-/// `]` inside the flag run, which would mean a literal char class).
-/// Used by BUILTIN_ARRAY_INDEX for `${arr[(r)pat]}` and similar.
-pub(crate) fn parse_subscript_flags(idx: &str) -> Option<(&str, &str)> {
+/// Subscript-argument parser.
+///
+/// Port of `getarg()` from Src/params.c:1367. The C function is a
+/// 618-line monolith that handles the entire `[...]` body of a
+/// subscripted parameter expansion: flag block (`(r/R/k/K/i/I/w/f/e/n/b/p/s)`),
+/// then pattern compile + array/hash/scalar search returning the
+/// resolved index.
+///
+/// Currently ported phases:
+///   - Flag-block parse (c:1389-1480) — extract `(...)` chars,
+///     advance past `)`. Rejects bracket-containing blocks (those
+///     are char-class subscripts, not flag blocks).
+///
+/// TODO (later phases of the port):
+///   - Brace-depth walk to closing `]` (c:1507-1535)
+///   - parsestr + singsub on the subscript body (c:1545-1580)
+///   - Hash key lookup (c:1581-1660)
+///   - mathevalarg integer parse (c:1601-1604)
+///   - Word/separator scalar split (c:1605-1660)
+///   - Pattern compile + array forward/reverse pattry (c:1672-1719)
+///   - Multibyte char-search arm (c:1626-1985)
+///
+/// Until those land, the array/hash search arms live in the
+/// `array_subscript_flag` / `assoc_subscript_flag` helpers (see
+/// allowlist note). Each subsequent phase folds one of those
+/// helpers' bodies INTO this function and removes the helper.
+pub(crate) fn getarg(idx: &str) -> Option<(&str, &str)> {
     let rest = idx.strip_prefix('(')?;
     let end = rest.find(')')?;
     let flags = &rest[..end];
@@ -6149,19 +6171,12 @@ pub(crate) fn parse_subscript_flags(idx: &str) -> Option<(&str, &str)> {
     if flags.is_empty() || flags.contains('[') || flags.contains(']') {
         return None;
     }
-    // Flag set per zshparam(1) "Subscript Flags":
-    //   r/R   reverse search (return matching value)
-    //   i/I   index forms (return numeric index instead)
-    //   e     exact match (no glob)
-    //   k     return matching key (assoc)
-    //   n     numeric (used with r/R for "return Nth match")
-    //   w     word index — split scalar by IFS, then 1-based
-    //   s     followed by `/sep/` — split-by-separator before
-    //         indexing. Validated separately at the dispatch site
-    //         since the body has its own delimiter syntax.
-    // The `s` form's `/sep/` body confuses the simple "alpha
-    // chars only" check, so we accept any flag block whose first
-    // char is `s` and treat the rest as literal.
+    // Flag set per zshparam(1) "Subscript Flags" / params.c:1389-1480
+    // switch: r/R (reverse search), i/I (index forms), e (exact match),
+    // k (return matching key), n (Nth match), w (word index),
+    // s (split-by-separator). The `s` form's `/sep/` body has its own
+    // delimiter syntax — accept any flag block whose first char is `s`
+    // and treat the rest as literal.
     let first = flags.chars().next();
     if first == Some('s') {
         return Some((flags, &rest[end + 1..]));
