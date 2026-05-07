@@ -1462,6 +1462,41 @@ fn paramsubst(                                              // c:1625
                     let suffix: String = raw_value.chars().skip(total - k).collect();
                     if suffix == p { value = raw_value.chars().take(total - k).collect(); break; }
                 }
+            } else if let Some(rhs) = r.strip_prefix(":|") { // c:3540 (set difference)
+                // ${arr:|other} — array set-difference: keep elems
+                // of arr that are NOT in other. Port of subst.c:3540
+                // SUB_DIFFERENCE arm.
+                let arr = state.arrays.get(&var_name).cloned().unwrap_or_default();
+                let other_name = rhs.trim();                 // c:3543
+                let other = state.arrays.get(other_name).cloned().unwrap_or_default();
+                let other_set: std::collections::HashSet<&str> =
+                    other.iter().map(|s| s.as_str()).collect();
+                let kept: Vec<String> = arr.into_iter()
+                    .filter(|s| !other_set.contains(s.as_str()))
+                    .collect();
+                value = kept.join(" ");
+            } else if let Some(rhs) = r.strip_prefix(":*") { // c:3540 (intersect)
+                // ${arr:*other} — array set-intersection.
+                let arr = state.arrays.get(&var_name).cloned().unwrap_or_default();
+                let other_name = rhs.trim();                 // c:3543
+                let other = state.arrays.get(other_name).cloned().unwrap_or_default();
+                let other_set: std::collections::HashSet<&str> =
+                    other.iter().map(|s| s.as_str()).collect();
+                let kept: Vec<String> = arr.into_iter()
+                    .filter(|s| other_set.contains(s.as_str()))
+                    .collect();
+                value = kept.join(" ");
+            } else if let Some(rhs) = r.strip_prefix(":^") { // c:3540 (zip)
+                // ${arr:^other} — interleave two arrays element-by-elem.
+                let arr = state.arrays.get(&var_name).cloned().unwrap_or_default();
+                let other = state.arrays.get(rhs.trim()).cloned().unwrap_or_default();
+                let mut zipped: Vec<String> = Vec::with_capacity(arr.len() + other.len());
+                let n = arr.len().min(other.len());
+                for i in 0..n {
+                    zipped.push(arr[i].clone());
+                    zipped.push(other[i].clone());
+                }
+                value = zipped.join(" ");
             } else if let Some(slice) = r.strip_prefix(':') { // c:715 (substring)
                 let parts: Vec<&str> = slice.splitn(2, ':').collect();
                 let off = singsub(parts[0], state).parse::<i64>().unwrap_or(0);
