@@ -1081,6 +1081,10 @@ fn paramsubst(                                              // c:1625
         let mut postmul: Option<String> = None;             // c:1772 (postmul)
         let mut preone: Option<String> = None;              // c:1772 (preone)
         let mut postone: Option<String> = None;             // c:1772 (postone)
+        // (s::) split / (j::) join separators. Port of
+        // subst.c:2299-2317 s/j flag arm + (f)/(F)/(0) shortcuts.
+        let mut spsep: Option<String> = None;               // c:1766 (spsep — splits result)
+        let mut sep: Option<String> = None;                 // c:1766 (sep — joins arrays)
         if body_chars.first() == Some(&'(') {               // c:2147
             let mut d = 1_i32;                              // c:2147
             idx = 1;                                        // c:2147
@@ -1149,6 +1153,27 @@ fn paramsubst(                                              // c:1625
                     }
                     'm' => { /* multi_width — c:2376, skip for now */ } // c:2376
                     'p' => { /* escapes flag — c:2382 */ }  // c:2382
+                    'f' => { spsep = Some("\n".to_string()); } // c:2285
+                    'F' => { sep = Some("\n".to_string()); }   // c:2289
+                    '0' => { spsep = Some("\u{0}".to_string()); } // c:2293 (split on NUL)
+                    's' | 'j' => {                          // c:2299/2302
+                        // Consume `:STR:` arg.
+                        let is_split = fc == 's';           // c:2300
+                        idx += 1;                           // c:2303 (++s)
+                        if idx >= body_chars.len() { break; }
+                        let del = body_chars[idx];          // c:2303 (get_strarg del)
+                        idx += 1;                           // c:2303
+                        let s_start = idx;
+                        while idx < body_chars.len()
+                            && body_chars[idx] != del
+                        {
+                            idx += 1;
+                        }
+                        let arg: String = body_chars[s_start..idx].iter().collect(); // c:2308
+                        if is_split { spsep = Some(arg); } else { sep = Some(arg); } // c:2309-2313
+                        if idx < body_chars.len() { idx += 1; } // skip closing del
+                        continue;                           // c:2317 (loop continues from idx)
+                    }
                     _ => { /* unhandled flag — swallow per existing behavior */ }
                 }
                 idx += 1;
@@ -1362,6 +1387,32 @@ fn paramsubst(                                              // c:1625
             }
             value = out;
         }
+        // (s::SEP:) split-on-SEP: apply BEFORE dopadding/quote/case
+        // (per zsh order). Port of subst.c flag-loop spsep usage
+        // around line 3950+ (post-fetch split block).
+        if let Some(ref sp) = spsep {                       // c:3950
+            let parts: Vec<String> = if sp.is_empty() {
+                value.chars().map(|c| c.to_string()).collect()
+            } else {
+                value.split(sp.as_str()).map(String::from).collect()
+            };
+            // zsh: split result is space-joined for scalar context;
+            // multsub-aware caller handles full multi-node splat.
+            let join_with = sep.as_deref().unwrap_or(" ");  // c:3950
+            value = parts.join(join_with);
+        } else if let Some(ref sp) = sep {                  // c:3963 (j with no s)
+            // (j:STR:) — re-join an already-array value with STR.
+            // For scalar input it's a no-op; the array case is
+            // handled by the caller's multsub-style splat where
+            // each node gets joined.
+            // Apply when value contains a space or newline (signals
+            // existing splittable form).
+            if value.contains(' ') || value.contains('\n') {
+                let parts: Vec<&str> = value.split_whitespace().collect();
+                value = parts.join(sp);
+            }
+        }
+
         // (l:N::PRE:) / (r:N::POST:) padding — apply via dopadding.
         // Port of subst.c flag-loop l/r interaction with subst.c:893
         // dopadding. zsh: prenum=N pads to width N; STR1=premul (rep),
