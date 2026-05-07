@@ -3928,6 +3928,35 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
                 }
                 'A' => chabspath(w).ok(),                   // c:4585 (:A absolute)
                 'a' => Some(remtpath(w, 0)),                // c:4585 (:a)
+                'P' => {                                    // c:4585 (:P physical)
+                    // :P canonicalizes (resolves symlinks) like
+                    // realpath(3). zsh sets `physical = 1` for the
+                    // chabspath call. std::fs::canonicalize wraps
+                    // the libc realpath.
+                    std::fs::canonicalize(w).ok()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .or_else(|| chabspath(w).ok())
+                }
+                'c' => {                                    // c:4585 (:c command-resolve)
+                    // :c resolves like `which` — search PATH for
+                    // an executable matching `w`. Direct port of
+                    // hist.c case 'c' which calls findcmd.
+                    if w.starts_with('/') || w.starts_with("./") || w.starts_with("../") {
+                        Some(w.to_string())                 // c:4585
+                    } else if let Ok(path) = std::env::var("PATH") {
+                        let mut found = None;
+                        for dir in path.split(':') {
+                            let p = std::path::PathBuf::from(dir).join(w);
+                            if p.is_file() {
+                                found = Some(p.to_string_lossy().into_owned());
+                                break;
+                            }
+                        }
+                        Some(found.unwrap_or_else(|| w.to_string()))
+                    } else {
+                        Some(w.to_string())
+                    }
+                }
                 _ => None,                                  // c:4585 (unrecognized)
             }
         };
