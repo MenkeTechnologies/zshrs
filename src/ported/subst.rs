@@ -1946,17 +1946,14 @@ fn paramsubst(                                              // c:1625
                 if sub == "*" || sub == "@" {               // c:1625
                     arr.join(" ")                            // c:1625
                 } else if let Some((lo, hi)) = sub.split_once(',') { // c:1625
-                    // `$arr[N,M]` range. 1-based, inclusive.
-                    let lo: i32 = lo.trim().parse().unwrap_or(1); // c:1625
-                    let hi: i32 = hi.trim().parse().unwrap_or(arr.len() as i32); // c:1625
-                    let n = arr.len() as i32;               // c:1625
-                    let lo = if lo < 0 { (n + lo + 1).max(1) } else { lo.max(1) } as usize; // c:1625
-                    let hi = if hi < 0 { (n + hi + 1).max(0) } else { hi.min(n).max(0) } as usize; // c:1625
-                    if lo == 0 || lo > arr.len() || lo > hi { // c:1625
-                        String::new()                        // c:1625
-                    } else {                                // c:1625
-                        arr[lo - 1..hi].join(" ")           // c:1625
-                    }                                        // c:1625
+                    // Delegate to the canonical slice helper —
+                    // gets all the negative-wrap / out-of-range
+                    // edge cases right (start > len, start < -len,
+                    // resolve(0)→1, etc.) per the bug-for-bug
+                    // port of getarrvalue's range arm.
+                    let lo: i64 = lo.trim().parse().unwrap_or(1); // c:1625
+                    let hi: i64 = hi.trim().parse().unwrap_or(arr.len() as i64); // c:1625
+                    crate::ported::params::slice_indexed_array(arr, lo, hi).join(" ") // c:1625
                 } else if let Ok(idx) = sub.parse::<i32>() { // c:1625
                     let n = arr.len() as i32;               // c:1625
                     let i = if idx < 0 { n + idx } else { idx - 1 }; // c:1625
@@ -1974,16 +1971,13 @@ fn paramsubst(                                              // c:1625
                 if sub == "*" || sub == "@" {               // c:1625
                     s                                        // c:1625
                 } else if let Some((lo, hi)) = sub.split_once(',') { // c:1625
-                    let lo: i32 = lo.trim().parse().unwrap_or(1); // c:1625
-                    let hi: i32 = hi.trim().parse().unwrap_or(chars_v.len() as i32); // c:1625
-                    let n = chars_v.len() as i32;           // c:1625
-                    let lo = if lo < 0 { (n + lo + 1).max(1) } else { lo.max(1) } as usize; // c:1625
-                    let hi = if hi < 0 { (n + hi + 1).max(0) } else { hi.min(n).max(0) } as usize; // c:1625
-                    if lo == 0 || lo > chars_v.len() || lo > hi { // c:1625
-                        String::new()                        // c:1625
-                    } else {                                 // c:1625
-                        chars_v[lo - 1..hi].iter().collect() // c:1625
-                    }                                        // c:1625
+                    // Reuse the canonical slice helper for
+                    // scalar substring — chars_v is treated as a
+                    // 1-element-per-char "array".
+                    let lo: i64 = lo.trim().parse().unwrap_or(1); // c:1625
+                    let hi: i64 = hi.trim().parse().unwrap_or(chars_v.len() as i64); // c:1625
+                    let chars_arr: Vec<String> = chars_v.iter().map(|c| c.to_string()).collect(); // c:1625
+                    crate::ported::params::slice_indexed_array(&chars_arr, lo, hi).concat() // c:1625
                 } else if let Ok(idx) = sub.parse::<i32>() { // c:1625
                     let n = chars_v.len() as i32;           // c:1625
                     let i = if idx < 0 { n + idx } else { idx - 1 }; // c:1625
