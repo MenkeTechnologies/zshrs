@@ -3681,31 +3681,63 @@ pub const BNULLKEEP: char = '\u{95}'; // Backslash null that stays // c:N/A
 
 /// Equal substitution (=cmd)
 /// Port of equalsubstr() from subst.c lines 706-722
-pub fn equalsubstr(s: &str, assign: bool, nomatch: bool, state: &SubstState) -> Option<String> { // c:715
-    // Find end of command name
-    let end = s                                             // c:715
-        .chars()                                            // c:715
-        .take_while(|&c| c != '\0' && c != INPAR && !(assign && c == ':')) // c:715
-        .count();                                           // c:715
+/// Port of `equalsubstr()` from `Src/subst.c:715-733`.
+///
+/// `=cmd` substitution: looks up `cmd` via findcmd (canonical zsh
+/// PATH walker, ported as ShellExecutor::findcmd). Returns the
+/// expanded path on success, None if not found (with an optional
+/// `zerr` diagnostic when `nomatch` is set).
+///
+/// C body:
+///   1. Walk to end of cmd name (stops at NUL, Inpar, or `:` when
+///      assign — per the isend2 macro).
+///   2. dupstrpfx + untokenize + remnulargs on the cmd portion.
+///   3. findcmd lookup; null → return NULL (with optional zerr).
+///   4. If trailing chars exist (e.g. `=cmd:rest`), concat path
+///      with the suffix.
+pub fn equalsubstr(s: &str, assign: bool, nomatch: bool, _state: &SubstState) -> Option<String> { // c:715
+    // C: `for (pp = str; !isend2(*pp); pp++);` — find end of cmd
+    // name. isend2(c) = !c || c==Inpar || (assign && c==':').
+    let end = s                                             // c:719
+        .chars()                                            // c:719
+        .take_while(|&c| {                                  // c:719
+            c != '\0'                                       // c:719
+                && c != INPAR                               // c:719
+                && c != '\u{85}'                            // c:719 (Inpar token)
+                && !(assign && c == ':')                    // c:719
+        })
+        .count();
 
-    let cmdstr: String = s.chars().take(end).collect();     // c:715
-    let cmdstr = crate::lex::untokenize(&cmdstr);                       // c:715
-    let cmdstr = cmdstr.replace('\0', "");                       // c:715
+    // C: `cmdstr = dupstrpfx(str, pp-str);
+    //     untokenize(cmdstr); remnulargs(cmdstr);`
+    let cmdstr_raw: String = s.chars().take(end).collect(); // c:721
+    let cmdstr = crate::lex::untokenize(&cmdstr_raw);       // c:722
+    let cmdstr = cmdstr.replace('\u{0}', "");               // c:723
 
-    if let Some(path) = None::<String> {     // c:715
-        let rest: String = s.chars().skip(end).collect();   // c:715
-        if rest.is_empty() {                                // c:715
-            Some(path)                                      // c:715
-        } else {                                            // c:715
-            Some(format!("{}{}", path, rest))               // c:715
-        }                                                   // c:715
-    } else {                                                // c:715
-        if nomatch {                                        // c:715
-            eprintln!("{}: not found", cmdstr);             // c:715
-        }                                                   // c:715
-        None                                                // c:715
-    }                                                       // c:715
-}                                                           // c:715
+    // C: `cnam = findcmd(cmdstr, 1, 0)` — `1` is do_hash, `0` is
+    // not-just-builtins. Route through ShellExecutor::findcmd.
+    let cnam = crate::fusevm_bridge::with_executor(         // c:724
+        |exec| exec.findcmd(&cmdstr, true));                // c:724
+
+    match cnam {                                            // c:724
+        Some(path) => {                                     // c:730
+            // C: `if (*pp) return dyncat(cnam, pp); else
+            //     return cnam;`
+            if end < s.chars().count() {                    // c:730
+                let rest: String = s.chars().skip(end).collect(); // c:730
+                Some(format!("{}{}", path, rest))           // c:731
+            } else {
+                Some(path)                                  // c:733
+            }
+        }
+        None => {                                           // c:725
+            if nomatch {                                    // c:725
+                eprintln!("zshrs: {}: not found", cmdstr);  // c:726
+            }
+            None                                            // c:728
+        }
+    }
+}                                                           // c:733
 
 
 
