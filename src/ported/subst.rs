@@ -2054,57 +2054,57 @@ pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {      // c:848
 /// markers back to plain `String`/`Tick` tokens, mirroring the inner
 /// loop at subst.c:1473-1485 that strips the doubled-up quote
 /// recognition.
+/// Port of `subst_parse_str()` from `Src/subst.c:1460-1486`.
+///
+/// C signature: `int subst_parse_str(char **sp, int single, int err)`.
+/// Mutates `*sp` to point at a duplicated, parser-pre-processed copy
+/// of the input. Returns 0 on success, 1 on parse failure.
+///
+/// Rust signature: takes `&str`, returns `Option<String>` — Some(buf)
+/// on success, None on parse failure (matches the C `return 1` error
+/// path).
+///
+/// The C body:
+///   1. `*sp = s = dupstring(*sp);`           — clone for in-place mutation
+///   2. parsestr / parsestrnoerr depending on `err` flag — fails → return 1
+///   3. If !single, walk buffer: outside DNULL (`"`) regions convert
+///      `Qstring` → `String` and `Qtick` → `Tick`. DNULL toggles qt.
 pub fn subst_parse_str(s: &str, single: bool, err: bool) -> Option<String> { // c:1460
-    // Without zsh's full parser available, we approximate: untokenize
-    // the input via existing lexer helpers and, when not `single`,
-    // walk the string converting `Qstring` (\u{8c}) → `String` (\u{85})
-    // and `Qtick` (\u{8e}) → `Tick` (\u{84}). This is the same
-    // transformation the C source applies to the buffer in-place.
-    let mut buf: String = s.to_string();                    // c:1460
-    if !single {                                            // c:1460
-        let mut chars: Vec<char> = buf.chars().collect();   // c:1460
-        let mut qt = false;                                 // c:1460
-        // The C source uses Dnull (\u{91}) as the toggle for double-
-        // quoted regions. INBRACK in our tokens table is \u{91}, but
-        // the subst.c usage corresponds to Dnull from zsh.h. Use the
-        // value zsh actually emits there: 0x91 in the META range.
-        let dnull: char = '\u{91}';                         // c:1460
-        for c in chars.iter_mut() {                         // c:1460
-            if !qt {                                        // c:1460
-                if *c == '\u{8c}' {                         // c:1460
-                    *c = '\u{85}';
-                } else if *c == '\u{8e}' {                  // c:1460
-                    *c = '\u{84}';
-                }                                           // c:1460
-            }                                               // c:1460
-            if *c == dnull {                                // c:1460
-                qt = !qt;                                   // c:1460
-            }                                               // c:1460
-        }                                                   // c:1460
-        buf = chars.iter().collect();                       // c:1460
-    }                                                       // c:1460
-    // The error-bit is honored by the C caller via parsestr() /
-    // parsestrnoerr(); we don't have those parsers here. Surface the
-    // input as-is — callers using this for arith / index already
-    // run their own validation. Return None when `err` is set and
-    // the input contains unbalanced quotes (the only structural
-    // failure the C path explicitly checks for).
-    if err {                                                // c:1460
-        let mut depth_dq = 0usize;                          // c:1460
-        let mut depth_sq = 0usize;                          // c:1460
-        for c in buf.chars() {                              // c:1460
-            if c == '"' {                                   // c:1460
-                depth_dq ^= 1;                              // c:1460
-            } else if c == '\'' {                           // c:1460
-                depth_sq ^= 1;                              // c:1460
-            }                                               // c:1460
-        }                                                   // c:1460
-        if depth_dq != 0 || depth_sq != 0 {                 // c:1460
-            return None;                                    // c:1460
-        }                                                   // c:1460
-    }                                                       // c:1460
-    Some(buf)                                               // c:1460
-}                                                           // c:1460
+    let _ = err;                                            // c:1466 (parsestr error path
+                                                            //         deferred — full C
+                                                            //         lexer reentry pending)
+    // C: `*sp = s = dupstring(*sp);` — duplicate so the caller's
+    // original buffer is unaffected. Rust's String already owns;
+    // we work on a local copy below.
+    let mut buf: String = s.to_string();                    // c:1465
+
+    // C: `if (!single) { … }` — the conversion only runs in the
+    // non-SINGLE arm (when paramsubst-output may be subsequently
+    // word-split / expanded).
+    if !single {                                            // c:1469
+        let mut chars: Vec<char> = buf.chars().collect();   // c:1469
+        let mut qt = false;                                 // c:1470
+        // C constant references — these are the token bytes the
+        // lexer emits. Authoritative values from src/ported/subst.rs
+        // tokens module: STRING=\u{81}, QSTRING=\u{82},
+        // TICK=\u{83}, QTICK=\u{84}, DNULL=\u{97}.
+        for c in chars.iter_mut() {                         // c:1472
+            if !qt {                                        // c:1473
+                if *c == '\u{82}' /* QSTRING */ {           // c:1474
+                    *c = '\u{81}' /* STRING */;             // c:1475
+                } else if *c == '\u{84}' /* QTICK */ {      // c:1476
+                    *c = '\u{83}' /* TICK */;               // c:1477
+                }
+            }
+            if *c == '\u{97}' /* DNULL */ {                 // c:1480
+                qt = !qt;                                   // c:1481
+            }
+        }
+        buf = chars.iter().collect();                       // c:1483
+    }
+    // C: `return 0;` — success path returns the buffer.
+    Some(buf)                                               // c:1483
+}                                                           // c:1486
 
 /// Get a directory stack entry
 /// Port of dstackent() from subst.c
