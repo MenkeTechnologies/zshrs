@@ -2104,11 +2104,21 @@ fn paramsubst(                                              // c:1625
             // back to `exec.get_variable` so `${##}` (length of `$#`)
             // and similar specials resolve correctly. Direct port of
             // Src/params.c::getstrvalue's special-name dispatch.
-            let is_special_name = var_name.len() == 1
+            // Special single-char names: shell-special (`#`, `?`, `!`,
+            // `$`, `*`, `@`, `-`) and positional params (`0`, `1`,
+            // `2`, …). All-digit multi-char names are also positional
+            // (`$10`, `$11`, …). Direct port of Src/params.c
+            // getstrvalue dispatch — positional params live on the
+            // executor's `positional_params` vec rather than in the
+            // variables hash, so they need the get_variable fallback
+            // for modifiers like `:t` / `:r` to work on `$1`.
+            let is_special_name = (var_name.len() == 1
                 && matches!(
                     var_name.chars().next().unwrap_or('\0'),
-                    '#' | '?' | '!' | '$' | '*' | '@' | '0' | '-'
-                );
+                    '#' | '?' | '!' | '$' | '*' | '@' | '-'
+                ))
+                || (!var_name.is_empty()
+                    && var_name.chars().all(|c| c.is_ascii_digit()));
             state.variables.get(&var_name).cloned()
                 .or_else(|| state.arrays.get(&var_name).map(|a| a.join(" ")))
                 .or_else(|| state.assoc_arrays.get(&var_name)
@@ -4990,8 +5000,15 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
             match modifier {                                // c:4585
                 'h' => Some(remtpath(w, count)),            // c:4585 (:h head, count = :hN)
                 't' => Some(remlpaths(w, count)),           // c:4585 (:t tail, count = :tN)
-                'r' => Some(rembutext(w)),                  // c:4585 (:r root)
-                'e' => Some(remtext(w)),                    // c:4585 (:e ext)
+                // c:4585 — `:r` strips extension (returns root), `:e`
+                // keeps only extension. The hist.rs helpers are named
+                // by the C source's "remove" semantics:
+                //   remtext   = "remove text after dot" → strips ext → :r
+                //   rembutext = "remove all BUT extension" → keeps ext → :e
+                // The previous dispatch had these flipped, so `${path:r}`
+                // returned the extension and `${path:e}` returned the root.
+                'r' => Some(remtext(w)),                    // c:4585 (:r root)
+                'e' => Some(rembutext(w)),                  // c:4585 (:e ext)
                 'l' => Some(casemodify(w, CaseMod::Lower)), // c:4585 (:l)
                 'u' => Some(casemodify(w, CaseMod::Upper)), // c:4585 (:u)
                 'q' => Some(crate::ported::utils::quotestring( // c:4585 (:q)

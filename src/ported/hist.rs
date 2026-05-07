@@ -597,21 +597,22 @@ pub fn remlpaths(s: &str, count: i32) -> String {
 
     let parts: Vec<&str> = s.split('/').filter(|p| !p.is_empty()).collect();
 
-    if count == 0 {
-        if let Some(last) = parts.last() {
-            return last.to_string();
-        }
+    // Take the last `count` components (count==0 falls through to
+    // count==1 default — `:t` with no number is one component).
+    // Direct port of Src/hist.c:remlpaths which iterates from the
+    // tail. Earlier the count-exhausts-parts branch returned `s`
+    // unchanged, leaking the leading `/` for paths whose components
+    // are fewer than count: `/just-a-name.zsh` with count=1 came
+    // back as `/just-a-name.zsh` instead of `just-a-name.zsh`.
+    let n = if count == 0 { 1 } else { count as usize };
+    let take_n = n.min(parts.len());
+    if take_n == 0 {
         return String::new();
     }
-
-    if count as usize >= parts.len() {
-        return s.to_string();
-    }
-
     parts
         .iter()
         .rev()
-        .take(count as usize)
+        .take(take_n)
         .rev()
         .copied()
         .collect::<Vec<&str>>()
