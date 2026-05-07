@@ -1872,6 +1872,7 @@ fn paramsubst(                                              // c:1625
             if idx > sub_start {
                 let raw_sub: String = body_chars[sub_start..idx].iter().collect();
                 // Subscript expressions can contain $vars — singsub them.
+                // Subscript expressions can contain $vars — singsub them.
                 subscript = Some(singsub(&raw_sub, state)); // c:2899
             }
             if idx < body_chars.len() { idx += 1; }         // skip ]
@@ -4405,10 +4406,30 @@ fn arithsubst(expr: &str, prefix: &str, rest: &str, state: &mut SubstState) -> S
     let expanded = singsub(expr, state);                    // c:4490
 
     // C: `v = matheval(a);` — evaluate via Src/math.c::matheval.
-    let v = match crate::math::matheval(&expanded) {        // c:4491
-        Ok(n) => n,                                         // c:4491
-        Err(_) => crate::math::MathNum::Unset,              // c:4491
-    };                                                      // c:4491
+    // Route through the executor so the eval has access to the live
+    // variable table; the bare `crate::math::matheval` constructs a
+    // MathEval with empty variables and treats every name as 0,
+    // which broke `\${(\$((i+1)))}`-style nested arith inside
+    // paramsubst (i was visible on state but invisible to the new
+    // MathEval). Direct port of zsh's matheval which reads from
+    // the live param table.
+    let v = crate::fusevm_bridge::try_with_executor(|exec| {
+        // Sync state's variables back so exec sees outer paramsubst
+        // mutations (e.g. `${var=value}` assignments) before eval.
+        for (k, v) in state.variables.iter() {
+            exec.variables.insert(k.clone(), v.clone());
+        }
+        let result_str = exec.evaluate_arithmetic(&expanded);
+        result_str.parse::<i64>()
+            .map(crate::math::MathNum::Integer)
+            .or_else(|_| result_str.parse::<f64>().map(crate::math::MathNum::Float))
+            .unwrap_or(crate::math::MathNum::Unset)
+    }).unwrap_or_else(|| {
+        match crate::math::matheval(&expanded) {
+            Ok(n) => n,
+            Err(_) => crate::math::MathNum::Unset,
+        }
+    });
 
     // C ladder lines 4492-4499: float-with-no-radix → convfloat,
     // else cast float to int and convbase. zshrs collapses both
