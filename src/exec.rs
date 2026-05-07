@@ -291,7 +291,7 @@ pub(crate) fn slice_positionals(exec: &ShellExecutor, offset: i64, length: i64) 
     slice_array_zero_based(&all, offset, length)
 }
 
-use crate::jobs::{continue_job, wait_for_child, wait_for_job, JobState, JobTable};
+use crate::jobs::{JobState, JobTable};
 use crate::parse::{Redirect, RedirectOp, ShellCommand, ShellWord, VarModifier, ZshParamFlag};
 use crate::zwc::ZwcFile;
 use indexmap::IndexMap;

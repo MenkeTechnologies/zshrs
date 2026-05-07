@@ -441,76 +441,6 @@ pub struct JobEntry {
     pub is_current: bool,
 }
 
-/// Send a signal to a process
-#[cfg(unix)]
-/// Send a signal to a process.
-/// Port of the `kill(2)` calls Src/signals.c::`killjb()` issues
-/// per-process when terminating a job.
-pub fn send_signal(pid: i32, sig: nix::sys::signal::Signal) -> Result<(), String> {
-    use nix::sys::signal::kill;
-    use nix::unistd::Pid;
-
-    kill(Pid::from_raw(pid), sig).map_err(|e| e.to_string())
-}
-
-#[cfg(not(unix))]
-pub fn send_signal(_pid: i32, _sig: i32) -> Result<(), String> {
-    Err("Signal sending not supported on this platform".to_string())
-}
-
-/// Continue a stopped job
-#[cfg(unix)]
-/// Continue a stopped process (SIGCONT).
-/// Port of the `bg`/`fg` continuation path (Src/jobs.c
-/// `makerunning()` line 167 + the SIGCONT send `bin_fg()` does
-/// in Src/jobs.c).
-pub fn continue_job(pid: i32) -> Result<(), String> {
-    use nix::sys::signal::{kill, Signal};
-    use nix::unistd::Pid;
-
-    kill(Pid::from_raw(pid), Signal::SIGCONT).map_err(|e| e.to_string())
-}
-
-#[cfg(not(unix))]
-pub fn continue_job(_pid: i32) -> Result<(), String> {
-    Err("Job control not supported on this platform".to_string())
-}
-
-/// Wait for a job to complete
-#[cfg(unix)]
-/// Wait for a child PID and return its exit status.
-/// Port of the `wait4(2)` / `waitpid(2)` loop inside
-/// `update_job()` (Src/jobs.c:460) the C source uses to reap a
-/// known PID.
-pub fn wait_for_job(pid: i32) -> Result<i32, String> {
-    use nix::sys::wait::{waitpid, WaitStatus};
-    use nix::unistd::Pid;
-
-    loop {
-        match waitpid(Pid::from_raw(pid), None) {
-            Ok(WaitStatus::Exited(_, code)) => return Ok(code),
-            Ok(WaitStatus::Signaled(_, sig, _)) => return Ok(128 + sig as i32),
-            Ok(WaitStatus::Stopped(_, _)) => return Ok(128),
-            Ok(_) => continue,
-            Err(nix::errno::Errno::ECHILD) => return Ok(0),
-            Err(e) => return Err(e.to_string()),
-        }
-    }
-}
-
-#[cfg(not(unix))]
-pub fn wait_for_job(_pid: i32) -> Result<i32, String> {
-    Err("Job waiting not supported on this platform".to_string())
-}
-
-/// Wait for a child process
-pub fn wait_for_child(child: &mut Child) -> Result<i32, String> {
-    match child.wait() {
-        Ok(status) => Ok(status.code().unwrap_or(0)),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
 /// Get clock ticks per second (from jobs.c get_clktck lines 720-748)
 /// Get `_SC_CLK_TCK` for time-conversion math.
 /// Port of `get_clktck()` from Src/jobs.c:721.
@@ -774,29 +704,6 @@ pub fn format_process_status(status: i32) -> String {
     }
 }
 
-/// Print job in long format (from jobs.c printjob)
-/// `jobs -l` long-form formatter.
-/// Port of the `lng` branch inside `printjob()`
-/// (Src/jobs.c:1138).
-pub fn format_job_long(
-    job_num: usize,
-    current: bool,
-    pid: i32,
-    status: &str,
-    text: &str,
-) -> String {
-    let marker = if current { '+' } else { '-' };
-    format!("[{}]  {} {:>5} {}  {}", job_num, marker, pid, status, text)
-}
-
-/// Print job in short format
-/// `jobs` short-form formatter.
-/// Port of the default branch of `printjob()` (Src/jobs.c:1138).
-pub fn format_job_short(job_num: usize, current: bool, status: &str, text: &str) -> String {
-    let marker = if current { '+' } else { '-' };
-    format!("[{}]  {} {}  {}", job_num, marker, status, text)
-}
-
 /// Background status tracking (from jobs.c bgstatus)
 /// Cached background-job status (for `wait`/$? lookup).
 /// Port of `update_bg_job()` (Src/jobs.c:677) bookkeeping.
@@ -863,7 +770,7 @@ pub fn waitforpid(pid: i32) -> Option<i32> {
 }
 
 /// Wait for job (from jobs.c zwaitjob lines 1673-1750)
-pub fn waitjob(job: &mut Job) -> Option<i32> {
+pub fn zwaitjob(job: &mut Job) -> Option<i32> {
     if job.procs.is_empty() {
         return Some(0);
     }
@@ -872,7 +779,7 @@ pub fn waitjob(job: &mut Job) -> Option<i32> {
     for proc in &mut job.procs {
         if proc.is_running() {
             if let Some(status) = waitforpid(proc.pid) {
-                proc.status = make_status(status);
+                proc.status = status << 8;
                 last_status = status;
             }
         } else {
@@ -882,16 +789,6 @@ pub fn waitjob(job: &mut Job) -> Option<i32> {
 
     job.stat |= stat::DONE;
     Some(last_status)
-}
-
-/// Make status from exit code
-pub fn make_status(code: i32) -> i32 {
-    code << 8
-}
-
-/// Make status from signal
-pub fn make_signal_status(sig: i32) -> i32 {
-    sig
 }
 
 /// Check if job has pending children (from jobs.c havefiles lines 1604-1616)
@@ -940,108 +837,6 @@ pub fn addproc(job: &mut Job, pid: i32, text: &str, aux: bool) {
     }
 
     job.stat &= !stat::DONE;
-}
-
-/// Kill process group (from jobs.c killjob lines 2040-2085)
-pub fn killjob(job: &Job, sig: i32) -> bool {
-    #[cfg(unix)]
-    {
-        if job.gleader > 0 {
-            let result = unsafe { libc::killpg(job.gleader, sig) };
-            return result == 0;
-        }
-
-        let mut success = true;
-        for proc in &job.procs {
-            if proc.is_running() {
-                let result = unsafe { libc::kill(proc.pid, sig) };
-                if result != 0 {
-                    success = false;
-                }
-            }
-        }
-        success
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (job, sig);
-        false
-    }
-}
-
-/// Continue job in foreground (from jobs.c fg)
-pub fn fg_job(job: &mut Job) -> Option<i32> {
-    #[cfg(unix)]
-    {
-        if (job.stat & stat::STOPPED) != 0 {
-            if job.gleader > 0 {
-                unsafe { libc::killpg(job.gleader, libc::SIGCONT) };
-            } else {
-                for proc in &job.procs {
-                    unsafe { libc::kill(proc.pid, libc::SIGCONT) };
-                }
-            }
-            job.stat &= !stat::STOPPED;
-        }
-
-        waitjob(job)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = job;
-        None
-    }
-}
-
-/// Continue job in background (from jobs.c bg)
-pub fn bg_job(job: &mut Job) -> bool {
-    #[cfg(unix)]
-    {
-        if (job.stat & stat::STOPPED) != 0 {
-            if job.gleader > 0 {
-                unsafe { libc::killpg(job.gleader, libc::SIGCONT) };
-            } else {
-                for proc in &job.procs {
-                    unsafe { libc::kill(proc.pid, libc::SIGCONT) };
-                }
-            }
-            job.stat &= !stat::STOPPED;
-            return true;
-        }
-        false
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = job;
-        false
-    }
-}
-
-/// Disown job (from jobs.c disown)
-pub fn disown_job(job: &mut Job) {
-    job.stat |= stat::DISOWN;
-}
-
-/// Check if all processes in job are done
-pub fn job_is_done(job: &Job) -> bool {
-    (job.stat & stat::DONE) != 0 || job.procs.iter().all(|p| !p.is_running())
-}
-
-/// Check if job is stopped
-pub fn job_is_stopped(job: &Job) -> bool {
-    (job.stat & stat::STOPPED) != 0 || job.procs.iter().any(|p| p.is_stopped())
-}
-
-/// Get job text (combined process commands)
-pub fn get_job_text(job: &Job) -> String {
-    if !job.text.is_empty() {
-        return job.text.clone();
-    }
-    job.procs
-        .iter()
-        .map(|p| p.text.as_str())
-        .collect::<Vec<_>>()
-        .join(" | ")
 }
 
 /// Super job tracking (from jobs.c super_job lines 393-417)
@@ -1228,8 +1023,10 @@ pub fn shelltime() -> ChildTimes {
     ChildTimes::default()
 }
 
-/// Get children's time accounting
-pub fn childtime() -> ChildTimes {
+/// Get children's time accounting.
+/// Port of `get_usage()` from Src/jobs.c — fills `child_usage`
+/// from `getrusage(RUSAGE_CHILDREN)` on supported systems.
+pub fn get_usage() -> ChildTimes {
     #[cfg(unix)]
     {
         let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
@@ -1427,7 +1224,7 @@ pub fn dumptime(job: &Job, format: &str) -> Option<String> {
         total_user,
         total_sys,
         format,
-        &get_job_text(job),
+        &if !job.text.is_empty() { job.text.clone() } else { job.procs.iter().map(|p| p.text.as_str()).collect::<Vec<_>>().join(" | ") },
     ))
 }
 
@@ -1611,7 +1408,7 @@ pub fn printjob(
             job_num,
             marker,
             status_str,
-            get_job_text(job)
+            if !job.text.is_empty() { job.text.clone() } else { job.procs.iter().map(|p| p.text.as_str()).collect::<Vec<_>>().join(" | ") }
         )
     }
 }
@@ -1680,11 +1477,6 @@ pub fn makerunning(job: &mut Job) {
 /// Check if job has any processes (from jobs.c hasprocs)
 pub fn hasprocs(job: &Job) -> bool {
     job.has_procs()
-}
-
-/// Get resource usage info (from jobs.c get_usage)
-pub fn get_usage() -> ChildTimes {
-    childtime()
 }
 
 /// Check current shell signals (from jobs.c check_cursh_sig)
@@ -1968,13 +1760,31 @@ impl crate::ported::exec::ShellExecutor {
         println!("{}", cmd);
 
         // Continue the job
-        if let Err(e) = continue_job(pid) {
+        if let Err(e) = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGCONT).map_err(|e| e.to_string()) {
             eprintln!("zshrs:fg:1: {}", e);
             return 1;
         }
 
         // Wait for it
-        match wait_for_job(pid) {
+        match {
+            // Inline wait_for_job — port of jobs.c::update_job's
+            // waitpid loop (Src/jobs.c:460).
+            use nix::sys::wait::{waitpid, WaitStatus};
+            use nix::unistd::Pid;
+            let result: Result<i32, String>;
+            loop {
+                result = match waitpid(Pid::from_raw(pid), None) {
+                    Ok(WaitStatus::Exited(_, code)) => Ok(code),
+                    Ok(WaitStatus::Signaled(_, sig, _)) => Ok(128 + sig as i32),
+                    Ok(WaitStatus::Stopped(_, _)) => Ok(128),
+                    Ok(_) => continue,
+                    Err(nix::errno::Errno::ECHILD) => Ok(0),
+                    Err(e) => Err(e.to_string()),
+                };
+                break;
+            }
+            result
+        } {
             Ok(status) => {
                 self.jobs.remove(id);
                 status
@@ -2017,7 +1827,7 @@ impl crate::ported::exec::ShellExecutor {
         let pid = job.pid;
         let cmd = job.command.clone();
 
-        if let Err(e) = continue_job(pid) {
+        if let Err(e) = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGCONT).map_err(|e| e.to_string()) {
             eprintln!("zshrs:bg:1: {}", e);
             return 1;
         }
@@ -2029,8 +1839,8 @@ impl crate::ported::exec::ShellExecutor {
     pub(crate) fn bin_kill(&mut self, args: &[String]) -> i32 {
         // kill [ -s signal_name | -n signal_number | -sig ] job ...
         // kill -l [ sig ... ]
-        use crate::jobs::send_signal;
-        use nix::sys::signal::Signal;
+        use nix::sys::signal::{kill, Signal};
+        use nix::unistd::Pid;
 
         if args.is_empty() {
             // zsh: bare `kill` -> `kill:1: not enough arguments` exit 1.
@@ -2282,7 +2092,7 @@ impl crate::ported::exec::ShellExecutor {
                     }
                 };
                 if let Some(job) = self.jobs.get(id) {
-                    if let Err(e) = send_signal(job.pid, sig) {
+                    if let Err(e) = kill(Pid::from_raw(job.pid), sig) {
                         eprintln!("zshrs:kill:1: {}", e);
                         status = 1;
                     }
@@ -2324,7 +2134,7 @@ impl crate::ported::exec::ShellExecutor {
                         eprintln!("zshrs:kill:1: kill {} failed: {}", pid, cleaned);
                         status = 1;
                     }
-                } else if let Err(e) = send_signal(pid as i32, sig) {
+                } else if let Err(e) = kill(Pid::from_raw(pid as i32), sig) {
                     // zsh format: `kill:1: kill PID failed: <reason>`
                     // with the OS error message lowercased and the
                     // `(os error N)` suffix stripped. zshrs's `kill:
@@ -2396,7 +2206,7 @@ impl crate::ported::exec::ShellExecutor {
             for id in ids {
                 if let Some(mut job) = self.jobs.remove(id) {
                     if let Some(ref mut child) = job.child {
-                        let _ = wait_for_child(child);
+                        let _ = child.wait();
                     }
                 }
             }
@@ -2416,7 +2226,7 @@ impl crate::ported::exec::ShellExecutor {
                 };
                 if let Some(mut job) = self.jobs.remove(id) {
                     if let Some(ref mut child) = job.child {
-                        match wait_for_child(child) {
+                        match child.wait().map(|s| s.code().unwrap_or(0)).map_err(|e| e.to_string()) {
                             Ok(s) => status = s,
                             Err(e) => {
                                 eprintln!("zshrs:wait:1: {}", e);
@@ -2479,7 +2289,21 @@ impl crate::ported::exec::ShellExecutor {
                     status = 127;
                     continue;
                 }
-                match wait_for_job(pid as i32) {
+                // Inline wait_for_job — port of jobs.c::update_job's
+                // waitpid loop (Src/jobs.c:460).
+                use nix::sys::wait::{waitpid, WaitStatus};
+                use nix::unistd::Pid;
+                let result: Result<i32, String> = loop {
+                    break match waitpid(Pid::from_raw(pid as i32), None) {
+                        Ok(WaitStatus::Exited(_, code)) => Ok(code),
+                        Ok(WaitStatus::Signaled(_, sig, _)) => Ok(128 + sig as i32),
+                        Ok(WaitStatus::Stopped(_, _)) => Ok(128),
+                        Ok(_) => continue,
+                        Err(nix::errno::Errno::ECHILD) => Ok(0),
+                        Err(e) => Err(e.to_string()),
+                    };
+                };
+                match result {
                     Ok(s) => status = s,
                     Err(e) => {
                         eprintln!("zshrs:wait:1: {}", e);
