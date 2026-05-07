@@ -4230,6 +4230,27 @@ fn is_splice_expansion(s: &str) -> bool {
         if inner.contains("[@]") || inner.contains("[*]") {
             return true;
         }
+        // `${=NAME}` — forced word-split per Src/subst.c:2558. The
+        // resulting words splice with first/last sticking semantics,
+        // same as `${arr[@]}`. Without this, `"split ${=str} wise"`
+        // joined the two split words back into a single arg via
+        // CONCAT_DISTRIBUTE's default-join path.
+        if inner.starts_with('=') && !inner.starts_with("==") {
+            let rest = &inner[1..];
+            // Identifier check — bare `${=name}` only.
+            let bare = rest
+                .strip_suffix("[@]")
+                .or_else(|| rest.strip_suffix("[*]"))
+                .unwrap_or(rest);
+            if !bare.is_empty()
+                && bare.chars().next()
+                    .map(|c| c == '_' || c.is_ascii_alphabetic())
+                    .unwrap_or(false)
+                && bare.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+            {
+                return true;
+            }
+        }
         // `(@)NAME` flag form is the splice equivalent of `[@]` —
         // each element becomes its own arg; surrounding literals
         // should stick to first/last (so `[${(@)a}]` for empty `a`
