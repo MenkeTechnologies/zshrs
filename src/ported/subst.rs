@@ -1131,6 +1131,7 @@ fn paramsubst(                                              // c:1625
         let mut flag_word_count = false;                    // c:2278 (w)
         let mut flag_word_count_w = false;                  // c:2281 (W)
         let mut flag_b_pattern = false;                     // c:2255 (b)
+        let mut flag_d_dir = false;                         // c:2229 (D)
         if body_chars.first() == Some(&'(') {               // c:2147
             let mut d = 1_i32;                              // c:2147
             idx = 1;                                        // c:2147
@@ -1213,7 +1214,7 @@ fn paramsubst(                                              // c:1625
                     'e' => { flag_eval = true; }            // c:2268 (e)
                     'Q' => { flag_unquote = true; }         // c:2261 (Q)
                     'X' => { flag_error = true; }           // c:2264 (X)
-                    'D' => { /* dir-magic — c:2229 */ }     // c:2229 (D)
+                    'D' => { flag_d_dir = true; }           // c:2229 (D)
                     'V' => { flag_visible = true; }         // c:2232 (V)
                     'b' => { flag_b_pattern = true; }       // c:2255 (b)
                     'w' => { flag_word_count = true; }      // c:2278 (w)
@@ -1767,6 +1768,24 @@ fn paramsubst(                                              // c:1625
         if flag_eval {                                      // c:2268
             value = singsub(&value, state);                 // c:2268
         }
+
+        // (D) dir-magic — replace $HOME and any nameddir prefix with
+        // tilde form. Direct port of subst.c:2229 mods bit 1, which
+        // routes through modify()'s tilde-contraction at the end of
+        // the pipeline. Common idiom: `${(D)PWD}` → `~/projects/foo`.
+        // Without ZLE's nameddir hash, this reduces to plain $HOME.
+        if flag_d_dir {                                     // c:2229
+            if let Some(home) = state.variables.get("HOME").cloned() // c:2229
+                .or_else(|| std::env::var("HOME").ok())     // c:2229
+            {                                                // c:2229
+                if !home.is_empty() && value.starts_with(&home) { // c:2229
+                    let rest = &value[home.len()..];        // c:2229
+                    if rest.is_empty() || rest.starts_with('/') { // c:2229
+                        value = format!("~{}", rest);       // c:2229
+                    }                                        // c:2229
+                }                                            // c:2229
+            }                                                // c:2229
+        }                                                    // c:2229
 
         // (b) backslash-quote pattern metachars — output is safe to
         // feed back into a glob/regex context as a literal. Port of
