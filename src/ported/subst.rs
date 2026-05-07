@@ -3817,21 +3817,30 @@ pub fn globlist(list: &mut LinkList, flags: u32, state: &mut SubstState) { // c:
 
 
 
-/// Flags for SUB_* matching (from subst.c)
-pub mod sub_flags {                                         // c:N/A
-    pub const END: u32 = 1; // Match at end                 // c:N/A
-    pub const LONG: u32 = 2; // Longest match               // c:N/A
-    pub const SUBSTR: u32 = 4; // Substring match           // c:N/A
-    pub const MATCH: u32 = 8; // Return match               // c:N/A
-    pub const REST: u32 = 16; // Return rest                // c:N/A
-    pub const BIND: u32 = 32; // Return begin index         // c:N/A
-    pub const EIND: u32 = 64; // Return end index           // c:N/A
-    pub const LEN: u32 = 128; // Return length              // c:N/A
-    pub const ALL: u32 = 256; // Match all (with :)         // c:N/A
-    pub const GLOBAL: u32 = 512; // Global replacement      // c:N/A
-    pub const START: u32 = 1024; // Match at start          // c:N/A
-    pub const EGLOB: u32 = 2048; // Extended glob           // c:N/A
-}                                                           // c:N/A
+/// Flags for SUB_* matching — verbatim port of zsh.h:1981-1996.
+///
+/// Outer-scope mirror of the inner module at the bottom of
+/// subst.rs. Earlier values (`1, 2, 4, …` powers of two) silently
+/// shifted START / EGLOB into the wrong bit positions because
+/// zsh.h has DOSUBST=0x0400 and RETFAIL=0x0800 between LEN=0x0080
+/// and START=0x1000. Use the canonical hex literals here.
+pub mod sub_flags {                                         // zsh.h:1981
+    pub const END: u32 = 0x0001;     // % or %%             // zsh.h:1981
+    pub const LONG: u32 = 0x0002;    // doubled # or %       // zsh.h:1982
+    pub const SUBSTR: u32 = 0x0004;  // (S)                  // zsh.h:1983
+    pub const MATCH: u32 = 0x0008;   // (M)                  // zsh.h:1984
+    pub const REST: u32 = 0x0010;    // (R)                  // zsh.h:1985
+    pub const BIND: u32 = 0x0020;    // (B)                  // zsh.h:1986
+    pub const EIND: u32 = 0x0040;    // (E)                  // zsh.h:1987
+    pub const LEN: u32 = 0x0080;     // (N)                  // zsh.h:1988
+    pub const ALL: u32 = 0x0100;     // match whole str      // zsh.h:1989
+    pub const GLOBAL: u32 = 0x0200;  // ${..//..}            // zsh.h:1990
+    pub const DOSUBST: u32 = 0x0400; // repl needs subst     // zsh.h:1991
+    pub const RETFAIL: u32 = 0x0800; // status 0 if no match // zsh.h:1992
+    pub const START: u32 = 0x1000;   // anchor at start      // zsh.h:1993
+    pub const LIST: u32 = 0x2000;    // return list          // zsh.h:1995
+    pub const EGLOB: u32 = 0x4000;   // (*) extended glob    // zsh.h:1996
+}                                                           // zsh.h:1996
 
 
 
