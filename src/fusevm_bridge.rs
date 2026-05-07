@@ -82,76 +82,12 @@ impl Drop for ExecutorContext {
     }
 }
 
-/// Magic-assoc key lookup for `${(k)NAME}` / `${(v)NAME}` introspection.
-///
-/// Port of zsh's per-module getfn/scanfn dispatch (Src/Modules/parameter.c
-/// + the various magic-assoc tables). Returns the key list for known
-/// magic-assoc names; None for non-magic names (caller falls back to
-/// regular variable lookup).
-pub(crate) fn magic_assoc_keys(name: &str, exec: &ShellExecutor) -> Option<Vec<String>> {
-    match name {
-        "aliases" => Some(exec.aliases.keys().cloned().collect()),
-        "galiases" => Some(exec.global_aliases.keys().cloned().collect()),
-        "saliases" => Some(exec.suffix_aliases.keys().cloned().collect()),
-        "dis_aliases" | "dis_galiases" | "dis_saliases" => Some(Vec::new()),
-        "functions" | "dis_functions" => Some(exec.function_names().into_iter().collect()),
-        "builtins" | "dis_builtins" => {
-            // Static builtin set — port of Src/Modules/parameter.c
-            // scanpmbuiltins which iterates the C builtin table.
-            // Match the same set the BUILTIN_PARAM_FLAG `+commands`
-            // path checks for builtin-ness.
-            let names: &[&str] = &[
-                "echo", "print", "printf", "cd", "pwd", "exit", "return", "true", "false",
-                ":", "test", "[", "local", "private", "declare", "typeset", "export", "unset",
-                "set", "shift", "read", "source", "alias", "unalias", "function", "type",
-                "which", "whence", "command", "builtin", "jobs", "bg", "fg", "wait", "kill",
-                "trap", "eval", "exec", "ulimit", "umask", "getopts", "shopt", "history",
-                "fc", "hash", "rehash", "let", "select", "time", "times", "compdef",
-                "compadd", "complete", "compgen", "zmodload", "zparseopts", "zstyle",
-                "zle", "vared", "zcompile", "autoload",
-            ];
-            Some(names.iter().map(|s| (*s).to_string()).collect())
-        }
-        "reswords" | "dis_reswords" => {
-            // zsh reserved words. Direct port of the static `reswds[]`
-            // table in Src/init.c.
-            let names: &[&str] = &[
-                "do", "done", "esac", "then", "elif", "else", "fi", "for", "case", "if",
-                "while", "function", "repeat", "time", "until", "exec", "command", "select",
-                "coproc", "nocorrect", "foreach", "end", "!", "[[", "{", "}", "declare",
-                "export", "float", "integer", "local", "private", "readonly", "typeset",
-            ];
-            Some(names.iter().map(|s| (*s).to_string()).collect())
-        }
-        "options" => Some(exec.options.keys().cloned().collect()),
-        "commands" => Some(exec.command_hash.keys().cloned().collect()),
-        "jobtexts" | "jobdirs" | "jobstates" => {
-            Some(exec.jobs.iter().map(|(id, _)| id.to_string()).collect())
-        }
-        "dirstack" => {
-            // dirstack is array-typed not assoc — but `${(k)dirstack}`
-            // returns indices, `${(v)dirstack}` returns paths. Treat
-            // it like assoc-of-int-keys for symmetry.
-            Some((0..exec.dir_stack.len()).map(|i| i.to_string()).collect())
-        }
-        "errnos" => {
-            // /usr/include/errno.h names. Static set per zsh's
-            // sigtrapped lookup.
-            Some(crate::modules::system::ERRNO_NAMES
-                .iter().map(|(n, _)| (*n).to_string()).collect())
-        }
-        "sysparams" => {
-            Some(vec!["pid".to_string(), "ppid".to_string(), "procsubstpid".to_string()])
-        }
-        "parameters" => {
-            let mut keys: Vec<String> = exec.variables.keys().cloned().collect();
-            keys.extend(exec.arrays.keys().cloned());
-            keys.extend(exec.assoc_arrays.keys().cloned());
-            Some(keys)
-        }
-        _ => None,
-    }
-}
+/// Re-export of `magic_assoc_keys` — canonical home is
+/// `src/ported/modules/parameter.rs` (port of Src/Modules/parameter.c
+/// per-magic-table getfn dispatch). Kept as a thin alias so existing
+/// `magic_assoc_keys(name, exec)` call sites in this file don't need
+/// path qualifiers.
+pub(crate) use crate::ported::modules::parameter::magic_assoc_keys;
 
 /// Access the current executor from a builtin handler.
 /// # Safety
