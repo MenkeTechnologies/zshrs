@@ -3029,6 +3029,14 @@ fn paramsubst(                                              // c:1625
                 } else {                                    // c:1625
                     String::new()                            // c:1625
                 }                                            // c:1625
+            } else if let Some(magic_val) = crate::fusevm_bridge::with_executor(|exec|
+                exec.get_special_array_value(&var_name, sub)
+            ) {
+                // Magic-assoc lookup — \$aliases[name],
+                // \$functions[name], etc. Mirror of braced-form
+                // fix from bb2b489624. Direct port of zsh's
+                // per-magic-table getfn dispatch.
+                magic_val                                    // c:1625
             } else {                                         // c:1625
                 let s = state.variables.get(&var_name).cloned().unwrap_or_default(); // c:1625
                 let chars_v: Vec<char> = s.chars().collect(); // c:1625
