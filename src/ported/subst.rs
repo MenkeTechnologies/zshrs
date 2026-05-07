@@ -1085,6 +1085,15 @@ fn paramsubst(                                              // c:1625
         // subst.c:2299-2317 s/j flag arm + (f)/(F)/(0) shortcuts.
         let mut spsep: Option<String> = None;               // c:1766 (spsep — splits result)
         let mut sep: Option<String> = None;                 // c:1766 (sep — joins arrays)
+        // (o)/(O)/(i)/(n)/(a)/(u) sort + unique flags. Port of
+        // subst.c:2207-2228 sortit-flag arm.
+        let mut sort_active = false;                        // c:2207 (o)
+        let mut sort_backwards = false;                     // c:2210 (O)
+        let mut sort_case_insensitive = false;              // c:2213 (i)
+        let mut sort_numeric = false;                       // c:2216 (n)
+        let mut sort_signed = false;                        // c:2219 (-/Dash)
+        let mut sort_index_order = false;                   // c:2225 (a)
+        let mut unique = false;                             // c:2476 (u)
         if body_chars.first() == Some(&'(') {               // c:2147
             let mut d = 1_i32;                              // c:2147
             idx = 1;                                        // c:2147
@@ -1151,6 +1160,13 @@ fn paramsubst(                                              // c:1625
                         }
                         continue;                           // c:2374 (loop continues from idx)
                     }
+                    'o' => { sort_active = true; }          // c:2207
+                    'O' => { sort_backwards = true; sort_active = true; } // c:2210
+                    'i' => { sort_case_insensitive = true; sort_active = true; } // c:2213
+                    'n' => { sort_numeric = true; sort_active = true; } // c:2216
+                    '-' => { sort_signed = true; sort_active = true; } // c:2219
+                    'a' => { sort_index_order = true; sort_active = true; } // c:2225
+                    'u' => { unique = true; }               // c:2476
                     'm' => { /* multi_width — c:2376, skip for now */ } // c:2376
                     'p' => { /* escapes flag — c:2382 */ }  // c:2382
                     'f' => { spsep = Some("\n".to_string()); } // c:2285
@@ -1387,6 +1403,40 @@ fn paramsubst(                                              // c:1625
             }
             value = out;
         }
+        // (o)/(O)/(i)/(n)/(a)/(u) sort + unique. Port of
+        // subst.c:4180-4253 array sortit/unique post-processing.
+        // Applies on space-joined value; reassembles after.
+        if sort_active || unique {                          // c:4180
+            let parts: Vec<String> = if let Some(arr) = state.arrays.get(&var_name) {
+                arr.clone()                                 // c:4180 (real array)
+            } else {
+                value.split_whitespace().map(String::from).collect() // c:4180 (whitespace-split)
+            };
+            let mut sorted: Vec<String> = parts;
+            if unique {                                     // c:4253
+                let mut seen = std::collections::HashSet::new();
+                sorted.retain(|s| seen.insert(s.clone()));  // c:4253
+            }
+            if sort_active {                                // c:4180
+                let _ = sort_index_order;                   // c:4194 (a — keep insertion order)
+                if sort_numeric {                           // c:4189
+                    sorted.sort_by(|a, b| {
+                        let na: f64 = a.parse().unwrap_or(0.0); // c:4189
+                        let nb: f64 = b.parse().unwrap_or(0.0); // c:4189
+                        let _ = sort_signed;                // c:4193
+                        na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                } else if sort_case_insensitive {           // c:4187
+                    sorted.sort_by_key(|a| a.to_lowercase());
+                } else {                                    // c:4180 (default)
+                    sorted.sort();
+                }
+                if sort_backwards { sorted.reverse(); }     // c:4191
+            }
+            let join_with = sep.as_deref().unwrap_or(" ");
+            value = sorted.join(join_with);
+        }
+
         // (s::SEP:) split-on-SEP: apply BEFORE dopadding/quote/case
         // (per zsh order). Port of subst.c flag-loop spsep usage
         // around line 3950+ (post-fetch split block).
