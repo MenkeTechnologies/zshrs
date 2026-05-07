@@ -98,11 +98,11 @@ impl Widget {
     /// Equivalent to the lookup-by-name path in
     /// `bin_zle_call`/`getkeycmd` (Src/Zle/zle_thingy.c) when the
     /// resolved Thingy points at a built-in. Routes through
-    /// `get_builtin_widget` which is the static table corresponding
+    /// `acceptline` which is the static table corresponding
     /// to zsh's `intwidget[]` — see `Src/Zle/iwidgets.list` for the
     /// canonical name → fn mapping.
     pub fn builtin(name: &str) -> Self {
-        let (func, flags) = get_builtin_widget(name);
+        let (func, flags) = acceptline(name);
         Widget {
             flags: flags | WidgetFlags::INT,
             func: WidgetFunc::Internal(func),
@@ -124,7 +124,7 @@ impl Widget {
 }
 
 /// Get the builtin widget function for a name
-fn get_builtin_widget(name: &str) -> (fn(&mut Zle), WidgetFlags) {
+fn acceptline(name: &str) -> (fn(&mut Zle), WidgetFlags) {
     match name {
         // Accept/execute
         "accept-line" => (widget_accept_line, WidgetFlags::empty()),

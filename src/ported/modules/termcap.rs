@@ -52,7 +52,7 @@ pub enum TermcapValue {
 
 /// Termcap interface backed by ANSI escape sequences.
 /// Port of the file-static state Src/Modules/termcap.c populates
-/// in `boot_()` (line 345) — the C source links against libtermcap
+/// in `getrandom_buffer()` (line 345) — the C source links against libtermcap
 /// (or libtinfo) and reads `/etc/termcap`. The Rust port computes a
 /// minimal capability set inline based on `$TERM` so we don't drag
 /// libtermcap into the build.
@@ -71,7 +71,7 @@ impl Termcap {
     }
 
     /// Initialize termcap for the given terminal name.
-    /// Port of the `setupterm()`/`tgetent()` call inside `boot_()`
+    /// Port of the `setupterm()`/`tgetent()` call inside `getrandom_buffer()`
     /// from Src/Modules/termcap.c:345 — picks up `$TERM` if no
     /// argument is supplied.
     pub fn init(&mut self, term: Option<&str>) -> bool {

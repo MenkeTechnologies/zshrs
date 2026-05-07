@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 /// Ksh93 special parameters (`${.sh.*}`).
 /// Port of the parameter table Src/Modules/ksh93.c installs in
-/// `setup_()` (line 236) and `boot_()` (line 258) — the C source
+/// `setup_()` (line 236) and `getrandom_buffer()` (line 258) — the C source
 /// registers `.sh.file`, `.sh.lineno`, `.sh.fun`, `.sh.level`,
 /// `.sh.subshell`, `.sh.version`, `.sh.name`, `.sh.subscript`,
 /// `.sh.edchar`, `.sh.edmode`, `.sh.edcol`, `.sh.edtext`,
@@ -151,7 +151,7 @@ impl Ksh93Params {
     /// Port of `ksh93_wrapper()` from `Src/Modules/ksh93.c:143`.
     /// Snapshot every supported `.sh.*` parameter into a name→value map.
     /// Equivalent to scanning the parameter table the C source
-    /// installs in `boot_()` (Src/Modules/ksh93.c:258).
+    /// installs in `getrandom_buffer()` (Src/Modules/ksh93.c:258).
     pub fn to_hash(&self) -> HashMap<String, String> {
         let mut map = HashMap::new();
         for name in &[

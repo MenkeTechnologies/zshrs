@@ -200,7 +200,7 @@ impl Profiler {
     /// of any function in `Src/Modules/zprof.c`.
     /// Enable profiling.
     /// Equivalent to the implicit "loaded" state Src/Modules/zprof.c
-    /// is in after `boot_()` (line 355) installs `zprof_wrapper`.
+    /// is in after `getrandom_buffer()` (line 355) installs `zprof_wrapper`.
     pub fn enable(&mut self) {
         self.enabled = true;
     }

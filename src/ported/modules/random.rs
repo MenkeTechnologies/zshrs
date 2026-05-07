@@ -45,7 +45,7 @@ impl RandomState {
     pub fn get_srandom(&mut self) -> u32 {
         if self.buf_cnt == 0 {                                                  // c:145
             let mut bytes = [0u8; RAND_BUFF_SIZE * 4];                          // c:143
-            if boot_(&mut bytes).is_ok() {                          // c:143
+            if getrandom_buffer(&mut bytes).is_ok() {                          // c:143
                 for (i, chunk) in bytes.chunks_exact(4).enumerate() {           // c:143
                     self.buffer[i] = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);  // c:143
                 }                                                               // c:143
@@ -64,7 +64,7 @@ impl RandomState {
 /// `arc4random_buf(3)` for macOS (BSD-derived), `getrandom(2)` on
 /// Linux, and `/dev/urandom` everywhere else.
 #[cfg(target_os = "macos")]
-pub fn boot_(buf: &mut [u8]) -> io::Result<()> {
+pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {
     unsafe {
         libc::arc4random_buf(buf.as_mut_ptr() as *mut libc::c_void, buf.len());
     }
@@ -74,7 +74,7 @@ pub fn boot_(buf: &mut [u8]) -> io::Result<()> {
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/random.c`.
 #[cfg(target_os = "linux")]
-pub fn boot_(buf: &mut [u8]) -> io::Result<()> {
+pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {
     let mut filled = 0;
 
     while filled < buf.len() {
@@ -100,9 +100,9 @@ pub fn boot_(buf: &mut [u8]) -> io::Result<()> {
     Ok(())
 }
 
-/// Port of `boot_()` from `Src/Modules/random.c:282`.
+/// Port of `getrandom_buffer()` from `Src/Modules/random.c:282`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn boot_(buf: &mut [u8]) -> io::Result<()> {
+pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {
     use std::fs::File;
     use std::io::Read;
 
@@ -119,7 +119,7 @@ pub fn boot_(buf: &mut [u8]) -> io::Result<()> {
 /// 8-element batching `RandomState` provides.
 pub fn get_random_u32() -> u32 {
     let mut buf = [0u8; 4];
-    let _ = boot_(&mut buf);
+    let _ = getrandom_buffer(&mut buf);
     u32::from_ne_bytes(buf)
 }
 
@@ -131,7 +131,7 @@ pub fn get_random_u32() -> u32 {
 /// reads 64 bits at a time when building uniform-real samples.
 pub fn get_random_u64() -> u64 {
     let mut buf = [0u8; 8];
-    let _ = boot_(&mut buf);
+    let _ = getrandom_buffer(&mut buf);
     u64::from_ne_bytes(buf)
 }
 
@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn test_fill_random_bytes() {
         let mut buf = [0u8; 32];
-        boot_(&mut buf).unwrap();
+        getrandom_buffer(&mut buf).unwrap();
         assert!(!buf.iter().all(|&b| b == 0));
     }
 }

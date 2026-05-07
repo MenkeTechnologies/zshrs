@@ -202,7 +202,7 @@ pub fn zhalloc_string(s: &str) -> String {
 
 /// Check if a pointer is within the heap arena.
 /// Port of `zheapptr()` from Src/mem.c:561 — the C source uses it
-/// to tell heap-arena strings from permanent ones (the metafy code
+/// to tell heap-arena strings from permanent ones (the pastebuf code
 /// has different freeing rules). Rust's borrow-checker subsumes
 /// this distinction; the function is kept for call-site parity but
 /// always returns true.

@@ -284,7 +284,7 @@ pub fn extension_enabled(name: &str) -> bool {
 /// vicmd, bar in viins). The `CSI Ps SP q` codes — 1..=6 with `0`
 /// reserved for "default" — are the DECSCUSR specification followed
 /// by every modern terminal.
-pub fn set_cursor_shape(shape: CursorShape) -> String {
+pub fn zle_set_cursorform(shape: CursorShape) -> String {
     match shape {
         CursorShape::Block => "\x1b[2 q".to_string(),
         CursorShape::Underline => "\x1b[4 q".to_string(),
@@ -376,8 +376,8 @@ mod tests {
 
     #[test]
     fn test_cursor_shape() {
-        assert_eq!(set_cursor_shape(CursorShape::Bar), "\x1b[6 q");
-        assert_eq!(set_cursor_shape(CursorShape::Block), "\x1b[2 q");
+        assert_eq!(zle_set_cursorform(CursorShape::Bar), "\x1b[6 q");
+        assert_eq!(zle_set_cursorform(CursorShape::Block), "\x1b[2 q");
     }
 
     #[test]

@@ -370,7 +370,7 @@ impl Zle {
     pub fn vi_set_mark(&mut self, name: char) {
         // Set the historical mark (mirror with self.mark for emacs compat).
         self.mark = self.zlecs;
-        if let Some(idx) = vi_mark_index(name) {
+        if let Some(idx) = viyank(name) {
             self.vi_marks[idx] = Some((self.zlecs, self.history.cursor as i32));
         }
     }
@@ -380,7 +380,7 @@ impl Zle {
     /// `'` / `` ` `` jumps to the implicit "last position" mark; other
     /// characters are rejected.
     pub fn vi_goto_mark(&mut self, name: char) {
-        let idx = match vi_mark_index(name) {
+        let idx = match viyank(name) {
             Some(i) => i,
             None => return,
         };
@@ -721,7 +721,7 @@ impl Zle {
 
 /// Map a vi mark name to its slot index in `Zle::vi_marks`.
 /// `a..z` → 0..25; `'` / `` ` `` → 26 (the implicit last-position mark).
-fn vi_mark_index(name: char) -> Option<usize> {
+fn viyank(name: char) -> Option<usize> {
     if name.is_ascii_lowercase() {
         Some(name as usize - 'a' as usize)
     } else if name == '\'' || name == '`' {

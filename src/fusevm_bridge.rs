@@ -3182,7 +3182,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             let byte = (n as i32 as u32) & 0xFF;
                             // Encode the byte as raw — for high bytes
                             // (0x80-0xFF), wrap with the same UTF-8
-                            // promotion zsh's metafy() uses.
+                            // promotion zsh's pastebuf() uses.
                             return char::from_u32(byte)
                                 .map(|c| c.to_string())
                                 .unwrap_or_default();

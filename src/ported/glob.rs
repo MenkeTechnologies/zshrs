@@ -749,7 +749,7 @@ impl GlobState {
                 }
                 // Times
                 'a' => {
-                    let (unit, op, val) = self.parse_time_spec(&mut chars);
+                    let (unit, op, val) = self.schedgetfn(&mut chars);
                     qs.qualifiers.push(Qualifier::Atime {
                         value: val as i64,
                         unit,
@@ -757,7 +757,7 @@ impl GlobState {
                     });
                 }
                 'm' => {
-                    let (unit, op, val) = self.parse_time_spec(&mut chars);
+                    let (unit, op, val) = self.schedgetfn(&mut chars);
                     qs.qualifiers.push(Qualifier::Mtime {
                         value: val as i64,
                         unit,
@@ -765,7 +765,7 @@ impl GlobState {
                     });
                 }
                 'c' => {
-                    let (unit, op, val) = self.parse_time_spec(&mut chars);
+                    let (unit, op, val) = self.schedgetfn(&mut chars);
                     qs.qualifiers.push(Qualifier::Ctime {
                         value: val as i64,
                         unit,
@@ -904,7 +904,7 @@ impl GlobState {
         (unit, op, val)
     }
 
-    fn parse_time_spec(
+    fn schedgetfn(
         &self,
         chars: &mut std::iter::Peekable<std::str::Chars>,
     ) -> (TimeUnit, RangeOp, u64) {

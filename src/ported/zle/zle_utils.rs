@@ -135,7 +135,7 @@ impl Zle {
 }
 
 /// Metafication helpers (for compatibility with zsh's metafied strings)
-pub fn metafy(s: &str) -> String {
+pub fn pastebuf(s: &str) -> String {
     // In zsh, Meta (0x83) is used to escape special bytes
     // For Rust we typically don't need this, but provide for compatibility
     s.to_string()
@@ -692,12 +692,12 @@ pub enum CutDirection {
 /// that the bindkey command uses for round-trippable output —
 /// distinct from `print_bind` below which uses the human-readable
 /// `^A` / `^[X` form printed in describe-key-briefly etc.
-pub fn bind_ztrdup(seq: &[u8]) -> String {
+pub fn bindztrdup(seq: &[u8]) -> String {
     let mut buf = String::new();
     for &b in seq {
         // Meta bit handling: zsh metafies bytes >= 0x80 by inserting
         // 0x83 (Meta) before a (b ^ 0x20) byte. The C source unwinds
-        // that here; in our Rust model we don't metafy in storage, so
+        // that here; in our Rust model we don't pastebuf in storage, so
         // we treat any byte >= 0x80 as already a M- target.
         let mut c = b;
         if c & 0x80 != 0 {
@@ -856,25 +856,25 @@ mod tests_bindkey_format {
     #[test]
     fn bind_ztrdup_emits_caret_form_for_control_chars() {
         // Ctrl-A → "^A". Mirrors zsh's bindkey -L line for `bindkey '^A'`.
-        assert_eq!(bind_ztrdup(b"\x01"), "^A");
+        assert_eq!(bindztrdup(b"\x01"), "^A");
         // Ctrl-_ → "^_".
-        assert_eq!(bind_ztrdup(b"\x1f"), "^_");
+        assert_eq!(bindztrdup(b"\x1f"), "^_");
         // DEL (0x7f) → "^?".
-        assert_eq!(bind_ztrdup(b"\x7f"), "^?");
+        assert_eq!(bindztrdup(b"\x7f"), "^?");
     }
 
     #[test]
     fn bind_ztrdup_escapes_backslash_and_caret() {
         // '\\' → "\\\\" (escaped per C source's `c == '\\'` branch).
-        assert_eq!(bind_ztrdup(b"\\"), "\\\\");
+        assert_eq!(bindztrdup(b"\\"), "\\\\");
         // '^' → "\\^".
-        assert_eq!(bind_ztrdup(b"^"), "\\^");
+        assert_eq!(bindztrdup(b"^"), "\\^");
     }
 
     #[test]
     fn bind_ztrdup_handles_high_bit_as_meta() {
         // Byte with bit-7 set → "\\M-X" prefix. \\xC1 = M-A.
-        assert_eq!(bind_ztrdup(b"\xC1"), "\\M-A");
+        assert_eq!(bindztrdup(b"\xC1"), "\\M-A");
     }
 
     #[test]
