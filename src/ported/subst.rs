@@ -2948,7 +2948,33 @@ fn paramsubst(                                              // c:1625
             // (zsh treats `$scalar[N]` as char-N of the scalar
             // string, 1-based; `$scalar[N,M]` as substring).
             if let Some(map) = state.assoc_arrays.get(&var_name) { // c:1625
-                map.get(sub).cloned().unwrap_or_default()   // c:1625
+                // Subscript-flag form: (I)/(i)/(R)/(r) on assoc.
+                // Same plumbing as braced path. Direct port of
+                // Src/params.c getarg hash routing.
+                if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
+                    let s = s.trim_start();
+                    let rest = s.strip_prefix('(')?;
+                    let close = rest.find(')')?;
+                    let f = rest[..close].to_string();
+                    let p = rest[close + 1..].to_string();
+                    if f.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b')) {
+                        Some((f, p))
+                    } else { None }
+                })(sub) {
+                    let by_key = flags.contains('I') || flags.contains('i');
+                    let return_all = flags.contains('I') || flags.contains('R');
+                    let mut out: Vec<String> = Vec::new();
+                    for (k, v) in map.iter() {
+                        let hay = if by_key { k.as_str() } else { v.as_str() };
+                        if crate::exec::ShellExecutor::glob_match_static(hay, &pat) {
+                            out.push(if by_key { k.clone() } else { v.clone() });
+                            if !return_all { break; }
+                        }
+                    }
+                    out.join(" ")
+                } else {
+                    map.get(sub).cloned().unwrap_or_default()   // c:1625
+                }
             } else if let Some(arr) = state.arrays.get(&var_name) { // c:1625
                 if sub == "*" || sub == "@" {               // c:1625
                     arr.join(" ")                            // c:1625
