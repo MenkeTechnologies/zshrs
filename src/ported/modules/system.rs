@@ -1,6 +1,6 @@
 //! System I/O builtins - port of Modules/system.c
 //!
-//! Provides sysread, syswrite, sysopen, sysseek, syserror, zsystem builtins.
+//! Provides bin_sysread, bin_syswrite, bin_sysopen, bin_sysseek, bin_syserror, zsystem builtins.
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
@@ -8,9 +8,9 @@ use std::time::{Duration, Instant};
 
 const SYSREAD_BUFSIZE: usize = 8192;
 
-/// Return values for sysread
+/// Return values for bin_sysread
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// `sysread` outcome variants.
+/// `bin_sysread` outcome variants.
 /// Mirrors the integer return values `bin_sysread()` from
 /// Src/Modules/system.c:72 produces: success / EOF / timeout /
 /// error.
@@ -23,9 +23,9 @@ pub enum SysreadResult {
     Eof = 5,
 }
 
-/// Options for sysread
+/// Options for bin_sysread
 #[derive(Debug, Default)]
-/// `sysread` builtin options.
+/// `bin_sysread` builtin options.
 /// Port of the `Options ops` flag bag `bin_sysread()`
 /// (Src/Modules/system.c:72) reads — `-i`/`-o` fd, `-s` size,
 /// `-c` count, `-t` timeout.
@@ -39,10 +39,10 @@ pub struct SysreadOptions {
 }
 
 /// Perform a system read
-/// `sysread` builtin entry point.
+/// `bin_sysread` builtin entry point.
 /// Port of `bin_sysread()` from Src/Modules/system.c:72 — wraps
 /// `read(2)` with optional `select(2)` timeout.
-pub fn sysread(options: &SysreadOptions) -> (SysreadResult, Option<Vec<u8>>, usize) {
+pub fn bin_sysread(options: &SysreadOptions) -> (SysreadResult, Option<Vec<u8>>, usize) {
     let input_fd = options.input_fd.unwrap_or(0);
     let bufsize = options.bufsize.unwrap_or(SYSREAD_BUFSIZE);
 
@@ -51,7 +51,18 @@ pub fn sysread(options: &SysreadOptions) -> (SysreadResult, Option<Vec<u8>>, usi
     #[cfg(unix)]
     {
         if let Some(timeout_secs) = options.timeout {
-            if !wait_for_read(input_fd, timeout_secs) {
+            // Inline poll-with-timeout per c:Modules/system.c:72
+            // bin_sysread — same `pollfd` shape and POLLIN event.
+            let timeout_ms = (timeout_secs * 1000.0) as i32;
+            let ready = unsafe {
+                let mut pfd = libc::pollfd {
+                    fd: input_fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                libc::poll(&mut pfd, 1, timeout_ms) > 0
+            };
+            if !ready {
                 return (SysreadResult::Timeout, None, 0);
             }
         }
@@ -105,26 +116,9 @@ pub fn sysread(options: &SysreadOptions) -> (SysreadResult, Option<Vec<u8>>, usi
     }
 }
 
-/// Port of `bin_sysread()` from `Src/Modules/system.c:72`.
-#[cfg(unix)]
-fn wait_for_read(fd: i32, timeout_secs: f64) -> bool {
-    let timeout_ms = (timeout_secs * 1000.0) as i32;
-
-    unsafe {
-        let mut pfd = libc::pollfd {
-            fd,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-
-        let ret = libc::poll(&mut pfd, 1, timeout_ms);
-        ret > 0
-    }
-}
-
-/// Options for syswrite
+/// Options for bin_syswrite
 #[derive(Debug, Default)]
-/// `syswrite` builtin options.
+/// `bin_syswrite` builtin options.
 /// Port of the `Options ops` flag bag `bin_syswrite()` from
 /// Src/Modules/system.c:238 reads — `-c` count, `-o` fd.
 pub struct SyswriteOptions {
@@ -133,10 +127,10 @@ pub struct SyswriteOptions {
 }
 
 /// Perform a system write
-/// `syswrite` builtin entry point.
+/// `bin_syswrite` builtin entry point.
 /// Port of `bin_syswrite()` from Src/Modules/system.c:238 —
 /// wraps `write(2)` with `EINTR` retry.
-pub fn syswrite(data: &[u8], options: &SyswriteOptions) -> (i32, usize) {
+pub fn bin_syswrite(data: &[u8], options: &SyswriteOptions) -> (i32, usize) {
     let output_fd = options.output_fd.unwrap_or(1);
 
     #[cfg(unix)]
@@ -171,9 +165,9 @@ pub fn syswrite(data: &[u8], options: &SyswriteOptions) -> (i32, usize) {
     }
 }
 
-/// Open options for sysopen
+/// Open options for bin_sysopen
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// `sysopen` flag bits.
+/// `bin_sysopen` flag bits.
 /// Port of the `O_*` set the C source's `bin_sysopen()`
 /// (Src/Modules/system.c:319) maps from `-o` argument tokens to
 /// `open(2)` flag bits.
@@ -224,9 +218,9 @@ impl OpenOpt {
     }
 }
 
-/// Options for sysopen
+/// Options for bin_sysopen
 #[derive(Debug, Default)]
-/// `sysopen` builtin options.
+/// `bin_sysopen` builtin options.
 /// Mirrors the `Options ops` flag bag `bin_sysopen()` reads —
 /// `-r`/`-w`/`-a`/`-u`/`-m` mode bits + the `-o` flag list.
 pub struct SysopenOptions {
@@ -240,11 +234,11 @@ pub struct SysopenOptions {
 }
 
 /// Open a file with system call
-/// `sysopen` builtin entry point.
+/// `bin_sysopen` builtin entry point.
 /// Port of `bin_sysopen()` from Src/Modules/system.c:319 —
 /// wraps `open(2)` with the assembled flag bag and optional
 /// mode.
-pub fn sysopen(path: &str, options: &SysopenOptions) -> Result<i32, String> {
+pub fn bin_sysopen(path: &str, options: &SysopenOptions) -> Result<i32, String> {
     #[cfg(unix)]
     {
         use std::ffi::CString;
@@ -304,13 +298,13 @@ pub fn sysopen(path: &str, options: &SysopenOptions) -> Result<i32, String> {
 
     #[cfg(not(unix))]
     {
-        Err("sysopen not supported on this platform".to_string())
+        Err("bin_sysopen not supported on this platform".to_string())
     }
 }
 
 /// Seek whence options
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-/// `sysseek` whence values.
+/// `bin_sysseek` whence values.
 /// Mirrors the `SEEK_SET` / `SEEK_CUR` / `SEEK_END` constants the
 /// C source's `bin_sysseek()` (Src/Modules/system.c:433) accepts
 /// via the `-w` flag.
@@ -346,9 +340,9 @@ impl SeekWhence {
     }
 }
 
-/// Options for sysseek
+/// Options for bin_sysseek
 #[derive(Debug, Default)]
-/// `sysseek` builtin options.
+/// `bin_sysseek` builtin options.
 /// Port of the `Options ops` flag bag `bin_sysseek()`
 /// (Src/Modules/system.c:433) reads — `-u` fd, `-w` whence.
 pub struct SysseekOptions {
@@ -357,10 +351,10 @@ pub struct SysseekOptions {
 }
 
 /// Seek on a file descriptor
-/// `sysseek` builtin entry point.
+/// `bin_sysseek` builtin entry point.
 /// Port of `bin_sysseek()` from Src/Modules/system.c:433 —
 /// wraps `lseek(2)`.
-pub fn sysseek(offset: i64, options: &SysseekOptions) -> Result<i64, String> {
+pub fn bin_sysseek(offset: i64, options: &SysseekOptions) -> Result<i64, String> {
     let fd = options.fd.unwrap_or(0);
 
     #[cfg(unix)]
@@ -375,7 +369,7 @@ pub fn sysseek(offset: i64, options: &SysseekOptions) -> Result<i64, String> {
 
     #[cfg(not(unix))]
     {
-        Err("sysseek not supported on this platform".to_string())
+        Err("bin_sysseek not supported on this platform".to_string())
     }
 }
 
@@ -640,14 +634,14 @@ pub fn errnosgetfn(errno: i32) -> Option<&'static str> {
 /// Format an `errno`-aware error message.
 /// Port of `bin_syserror()` from Src/Modules/system.c:494 —
 /// wraps `strerror(3)` with an optional caller-supplied prefix.
-pub fn syserror(errno: i32, prefix: &str) -> String {
+pub fn bin_syserror(errno: i32, prefix: &str) -> String {
     let msg = io::Error::from_raw_os_error(errno).to_string();
     format!("{}{}", prefix, msg)
 }
 
-/// Options for zsystem flock
+/// Options for zsystem bin_zsystem_flock
 #[derive(Debug, Default)]
-/// `zsystem flock` options.
+/// `zsystem bin_zsystem_flock` options.
 /// Mirrors the flag bag `bin_zsystem_flock()` from
 /// Src/Modules/system.c:546 reads — `-r`/`-x`/`-e` lock type,
 /// `-t` timeout, `-i` non-blocking, `-f` fd.
@@ -661,10 +655,10 @@ pub struct FlockOptions {
 
 /// Lock a file
 #[cfg(unix)]
-/// `zsystem flock` subcommand entry point.
+/// `zsystem bin_zsystem_flock` subcommand entry point.
 /// Port of `bin_zsystem_flock()` from Src/Modules/system.c:546 —
-/// wraps `flock(2)` (or `fcntl(F_SETLK)` on systems lacking it).
-pub fn flock(path: &str, options: &FlockOptions) -> Result<i32, String> {
+/// wraps `bin_zsystem_flock(2)` (or `fcntl(F_SETLK)` on systems lacking it).
+pub fn bin_zsystem_flock(path: &str, options: &FlockOptions) -> Result<i32, String> {
     use std::ffi::CString;
 
     let flags = if options.read_lock {
@@ -778,11 +772,11 @@ pub fn flock(path: &str, options: &FlockOptions) -> Result<i32, String> {
 
 /// Unlock a file descriptor
 #[cfg(unix)]
-/// Release a lock acquired by `flock()`.
-/// Port of the `flock(LOCK_UN)` path inside
+/// Release a lock acquired by `bin_zsystem_flock()`.
+/// Port of the `bin_zsystem_flock(LOCK_UN)` path inside
 /// `bin_zsystem_flock()` (Src/Modules/system.c:546).
 pub fn funlock(fd: i32) -> Result<(), String> {
-    // See cross-platform note above flock construction in flock_with_options.
+    // See cross-platform note above bin_zsystem_flock construction in flock_with_options.
     #[allow(clippy::unnecessary_cast)]
     let lck = libc::flock {
         l_type: libc::F_UNLCK as i16,
@@ -807,8 +801,8 @@ pub fn funlock(fd: i32) -> Result<(), String> {
 /// `zsystem supports` subcommand entry point.
 /// Port of `bin_zsystem_supports()` from Src/Modules/system.c:781
 /// — reports which `zsystem` subcommands are compiled in.
-pub fn zsystem_supports(feature: &str) -> bool {
-    feature == "supports" || (feature == "flock" && cfg!(unix))
+pub fn bin_zsystem_supports(feature: &str) -> bool {
+    feature == "supports" || (feature == "bin_zsystem_flock" && cfg!(unix))
 }
 
 /// System parameters
@@ -881,16 +875,16 @@ mod tests {
 
     #[test]
     fn test_syserror() {
-        let msg = syserror(2, "prefix: ");
+        let msg = bin_syserror(2, "prefix: ");
         assert!(msg.starts_with("prefix: "));
     }
 
     #[test]
     fn test_zsystem_supports() {
-        assert!(zsystem_supports("supports"));
-        assert!(!zsystem_supports("unknown"));
+        assert!(bin_zsystem_supports("supports"));
+        assert!(!bin_zsystem_supports("unknown"));
         #[cfg(unix)]
-        assert!(zsystem_supports("flock"));
+        assert!(bin_zsystem_supports("bin_zsystem_flock"));
     }
 
     #[test]
@@ -922,7 +916,7 @@ mod tests {
             ..Default::default()
         };
 
-        let fd = sysopen(file_path.to_str().unwrap(), &options).unwrap();
+        let fd = bin_sysopen(file_path.to_str().unwrap(), &options).unwrap();
         assert!(fd >= 0);
 
         unsafe {
@@ -954,7 +948,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (result, data, count) = sysread(&options);
+        let (result, data, count) = bin_sysread(&options);
         unsafe {
             libc::close(fd);
         }
@@ -987,7 +981,7 @@ mod tests {
             whence: SeekWhence::Start,
         };
 
-        let pos = sysseek(5, &options).unwrap();
+        let pos = bin_sysseek(5, &options).unwrap();
         assert_eq!(pos, 5);
 
         let current = math_systell(fd).unwrap();
@@ -1016,7 +1010,7 @@ impl crate::ported::exec::ShellExecutor {
             return 1;
         }
         match args[0].as_str() {
-            "flock" => self.bin_zsystem_flock(&args[1..]),
+            "bin_zsystem_flock" => self.bin_zsystem_flock(&args[1..]),
             "supports" => self.bin_zsystem_supports(&args[1..]),
             _ => {
                 eprintln!("zshrs:zsystem:1: unknown subcommand: {}", args[0]);
@@ -1035,11 +1029,11 @@ impl crate::ported::exec::ShellExecutor {
             return 255;
         }
         match args[0].as_str() {
-            "supports" | "flock" => 0,
+            "supports" | "bin_zsystem_flock" => 0,
             _ => 1,
         }
     }
-    /// zsystem flock - ported from system.c bin_zsystem_flock() lines 546-774
+    /// zsystem bin_zsystem_flock - ported from system.c bin_zsystem_flock() lines 546-774
     pub(crate) fn bin_zsystem_flock(&mut self, args: &[String]) -> i32 {
         #[cfg(unix)]
         {
@@ -1085,7 +1079,7 @@ impl crate::ported::exec::ShellExecutor {
                                     fdvar = Some(args[i].clone());
                                 } else {
                                     eprintln!(
-                                        "zshrs:zsystem:1: flock: option f requires a variable name"
+                                        "zshrs:zsystem:1: bin_zsystem_flock: option f requires a variable name"
                                     );
                                     return 1;
                                 }
@@ -1102,7 +1096,7 @@ impl crate::ported::exec::ShellExecutor {
                                     args[i].clone()
                                 } else {
                                     eprintln!(
-                                        "zshrs:zsystem:1: flock: option t requires a numeric timeout"
+                                        "zshrs:zsystem:1: bin_zsystem_flock: option t requires a numeric timeout"
                                     );
                                     return 1;
                                 }
@@ -1111,7 +1105,7 @@ impl crate::ported::exec::ShellExecutor {
                                 Ok(t) => timeout = Some(t),
                                 Err(_) => {
                                     eprintln!(
-                                        "zshrs:zsystem:1: flock: invalid timeout value: '{}'",
+                                        "zshrs:zsystem:1: bin_zsystem_flock: invalid timeout value: '{}'",
                                         val
                                     );
                                     return 1;
@@ -1132,7 +1126,7 @@ impl crate::ported::exec::ShellExecutor {
                                 i += 1;
                                 if i >= args.len() {
                                     eprintln!(
-                                        "zshrs:zsystem:1: flock: option i requires a numeric retry interval"
+                                        "zshrs:zsystem:1: bin_zsystem_flock: option i requires a numeric retry interval"
                                     );
                                     return 1;
                                 }
@@ -1143,7 +1137,7 @@ impl crate::ported::exec::ShellExecutor {
                                     let us = (n * 1e6).ceil();
                                     if us < 1.0 || us > (i64::MAX as f64 * 0.999) {
                                         eprintln!(
-                                            "zshrs:zsystem:1: flock: invalid interval value: '{}'",
+                                            "zshrs:zsystem:1: bin_zsystem_flock: invalid interval value: '{}'",
                                             val
                                         );
                                         return 1;
@@ -1152,7 +1146,7 @@ impl crate::ported::exec::ShellExecutor {
                                 }
                                 _ => {
                                     eprintln!(
-                                        "zshrs:zsystem:1: flock: invalid interval value: '{}'",
+                                        "zshrs:zsystem:1: bin_zsystem_flock: invalid interval value: '{}'",
                                         val
                                     );
                                     return 1;
@@ -1161,7 +1155,7 @@ impl crate::ported::exec::ShellExecutor {
                             break;
                         }
                         _ => {
-                            eprintln!("zshrs:zsystem:1: flock: unknown option: -{}", c);
+                            eprintln!("zshrs:zsystem:1: bin_zsystem_flock: unknown option: -{}", c);
                             return 1;
                         }
                     }
@@ -1172,7 +1166,7 @@ impl crate::ported::exec::ShellExecutor {
             let filepath = match file {
                 Some(f) => f,
                 None => {
-                    eprintln!("zshrs:zsystem:1: flock: not enough arguments");
+                    eprintln!("zshrs:zsystem:1: bin_zsystem_flock: not enough arguments");
                     return 1;
                 }
             };
@@ -1184,14 +1178,14 @@ impl crate::ported::exec::ShellExecutor {
                 let fd: i32 = match filepath.parse() {
                     Ok(n) => n,
                     Err(_) => {
-                        eprintln!("zshrs:zsystem:1: flock: invalid fd: {}", filepath);
+                        eprintln!("zshrs:zsystem:1: bin_zsystem_flock: invalid fd: {}", filepath);
                         return 1;
                     }
                 };
                 let r = unsafe { libc::close(fd) };
                 if r < 0 {
                     eprintln!(
-                        "zshrs:zsystem:1: flock: file descriptor {} not in use for locking",
+                        "zshrs:zsystem:1: bin_zsystem_flock: file descriptor {} not in use for locking",
                         fd
                     );
                     return 1;
@@ -1209,7 +1203,7 @@ impl crate::ported::exec::ShellExecutor {
             {
                 Ok(f) => f,
                 Err(e) => {
-                    eprintln!("zshrs:zsystem:1: flock: {}: {}", filepath, e);
+                    eprintln!("zshrs:zsystem:1: bin_zsystem_flock: {}: {}", filepath, e);
                     return 1;
                 }
             };
@@ -1225,7 +1219,7 @@ impl crate::ported::exec::ShellExecutor {
             // for cross-platform builds — clippy fires unnecessary_cast
             // on whichever platform already matches.
             #[allow(clippy::unnecessary_cast)]
-            let mut flock = libc::flock {
+            let mut bin_zsystem_flock = libc::flock {
                 l_type: lock_type as i16,
                 l_whence: libc::SEEK_SET as i16,
                 l_start: 0,
@@ -1242,12 +1236,12 @@ impl crate::ported::exec::ShellExecutor {
             let timeout_duration = timeout.map(std::time::Duration::from_secs_f64);
 
             loop {
-                let ret = unsafe { libc::fcntl(file_handle.as_raw_fd(), cmd, &mut flock) };
+                let ret = unsafe { libc::fcntl(file_handle.as_raw_fd(), cmd, &mut bin_zsystem_flock) };
                 if ret == 0 {
                     // Port of system.c:695-701: when -e is NOT set
                     // (cloexec defaults to 1, cleared only by -e), set
                     // FD_CLOEXEC on the lock fd so it doesn't survive
-                    // exec(). Without this, `zsystem flock f; exec ls`
+                    // exec(). Without this, `zsystem bin_zsystem_flock f; exec ls`
                     // leaked the lock fd into the new process.
                     if cloexec {
                         let fd = file_handle.as_raw_fd();
@@ -1270,7 +1264,7 @@ impl crate::ported::exec::ShellExecutor {
                 let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
                 if errno != libc::EACCES && errno != libc::EAGAIN {
                     eprintln!(
-                        "zshrs:zsystem:1: flock: {}: {}",
+                        "zshrs:zsystem:1: bin_zsystem_flock: {}: {}",
                         filepath,
                         std::io::Error::last_os_error()
                     );
@@ -1286,7 +1280,7 @@ impl crate::ported::exec::ShellExecutor {
                     std::thread::sleep(std::time::Duration::from_micros(interval_us));
                 } else {
                     eprintln!(
-                        "zshrs:zsystem:1: flock: {}: {}",
+                        "zshrs:zsystem:1: bin_zsystem_flock: {}: {}",
                         filepath,
                         std::io::Error::last_os_error()
                     );
@@ -1296,11 +1290,11 @@ impl crate::ported::exec::ShellExecutor {
         }
         #[cfg(not(unix))]
         {
-            eprintln!("zshrs:zsystem:1: flock: not supported on this platform");
+            eprintln!("zshrs:zsystem:1: bin_zsystem_flock: not supported on this platform");
             1
         }
     }
-    /// sysread - low-level read (zsh/system module)
+    /// bin_sysread - low-level read (zsh/system module)
     pub(crate) fn bin_sysread(&mut self, args: &[String]) -> i32 {
         // Direct port of zsh/Src/Modules/system.c:72 bin_sysread.
         // Return values per system.c:61-67:
@@ -1326,7 +1320,7 @@ impl crate::ported::exec::ShellExecutor {
                     match args[i].parse::<i32>() {
                         Ok(n) if n >= 0 => infd = n,
                         _ => {
-                            eprintln!("zshrs:sysread:1: integer expected: {}", args[i]);
+                            eprintln!("zshrs:bin_sysread:1: integer expected: {}", args[i]);
                             return 1;
                         }
                     }
@@ -1336,7 +1330,7 @@ impl crate::ported::exec::ShellExecutor {
                     match args[i].parse::<i32>() {
                         Ok(n) if n >= 0 => outfd = n,
                         _ => {
-                            eprintln!("zshrs:sysread:1: integer expected: {}", args[i]);
+                            eprintln!("zshrs:bin_sysread:1: integer expected: {}", args[i]);
                             return 1;
                         }
                     }
@@ -1346,7 +1340,7 @@ impl crate::ported::exec::ShellExecutor {
                     match args[i].parse::<usize>() {
                         Ok(n) => bufsize = n,
                         Err(_) => {
-                            eprintln!("zshrs:sysread:1: integer expected: {}", args[i]);
+                            eprintln!("zshrs:bin_sysread:1: integer expected: {}", args[i]);
                             return 1;
                         }
                     }
@@ -1361,7 +1355,7 @@ impl crate::ported::exec::ShellExecutor {
                     match args[i].parse::<f64>() {
                         Ok(t) => timeout_ms = Some((t * 1000.0) as i32),
                         Err(_) => {
-                            eprintln!("zshrs:sysread:1: invalid timeout: {}", args[i]);
+                            eprintln!("zshrs:bin_sysread:1: invalid timeout: {}", args[i]);
                             return 1;
                         }
                     }
@@ -1444,7 +1438,7 @@ impl crate::ported::exec::ShellExecutor {
             0
         }
     }
-    /// syswrite - low-level write (zsh/system module). Direct port of
+    /// bin_syswrite - low-level write (zsh/system module). Direct port of
     /// zsh/Src/Modules/system.c:238 bin_syswrite. Return values
     /// (system.c:230-234): 0 = success, 1 = bad params, 2 = write error.
     pub(crate) fn bin_syswrite(&mut self, args: &[String]) -> i32 {
@@ -1460,7 +1454,7 @@ impl crate::ported::exec::ShellExecutor {
                     match args[i].parse::<i32>() {
                         Ok(n) if n >= 0 => outfd = n,
                         _ => {
-                            eprintln!("zshrs:syswrite:1: integer expected: {}", args[i]);
+                            eprintln!("zshrs:bin_syswrite:1: integer expected: {}", args[i]);
                             return 1;
                         }
                     }
@@ -1508,7 +1502,7 @@ impl crate::ported::exec::ShellExecutor {
         }
         0
     }
-    /// syserror - get error message (zsh/system module)
+    /// bin_syserror - get error message (zsh/system module)
     pub(crate) fn bin_syserror(&self, args: &[String]) -> i32 {
         let errno = if args.is_empty() {
             // Use last errno
@@ -1521,7 +1515,7 @@ impl crate::ported::exec::ShellExecutor {
         println!("{}", err);
         0
     }
-    /// sysopen - open file descriptor (zsh/system module). Direct port
+    /// bin_sysopen - open file descriptor (zsh/system module). Direct port
     /// of zsh/Src/Modules/system.c:319 bin_sysopen. Return values
     /// (system.c:311-315): 0 = success, 1 = bad params, 2 = open()
     /// error.
@@ -1553,7 +1547,7 @@ impl crate::ported::exec::ShellExecutor {
                     i += 1;
                     let mode_str = &args[i];
                     if !mode_str.chars().all(|c| ('0'..='7').contains(&c)) || mode_str.len() < 3 {
-                        eprintln!("zshrs:sysopen:1: invalid mode {}", mode_str);
+                        eprintln!("zshrs:bin_sysopen:1: invalid mode {}", mode_str);
                         return 1;
                     }
                     perms = u32::from_str_radix(mode_str, 8).unwrap_or(0o666);
@@ -1570,7 +1564,7 @@ impl crate::ported::exec::ShellExecutor {
         let fdvar = match fdvar {
             Some(s) => s,
             None => {
-                eprintln!("zshrs:sysopen:1: file descriptor not specified");
+                eprintln!("zshrs:bin_sysopen:1: file descriptor not specified");
                 return 1;
             }
         };
@@ -1621,7 +1615,7 @@ impl crate::ported::exec::ShellExecutor {
                     #[cfg(target_os = "linux")]
                     "NOATIME" => libc::O_NOATIME,
                     _ => {
-                        eprintln!("zshrs:sysopen:1: unsupported option: {}", tok);
+                        eprintln!("zshrs:bin_sysopen:1: unsupported option: {}", tok);
                         return 1;
                     }
                 };
@@ -1642,7 +1636,7 @@ impl crate::ported::exec::ShellExecutor {
         };
         if fd == -1 {
             let e = std::io::Error::last_os_error();
-            eprintln!("zshrs:sysopen: can't open file {}: {}", filename, e);
+            eprintln!("zshrs:bin_sysopen: can't open file {}: {}", filename, e);
             return 2;
         }
 
@@ -1656,7 +1650,7 @@ impl crate::ported::exec::ShellExecutor {
             }
             if r == -1 {
                 let e = std::io::Error::last_os_error();
-                eprintln!("zshrs:sysopen: dup2 failed: {}", e);
+                eprintln!("zshrs:bin_sysopen: dup2 failed: {}", e);
                 return 2;
             }
             target
@@ -1677,7 +1671,7 @@ impl crate::ported::exec::ShellExecutor {
         }
         0
     }
-    /// sysseek - seek on file descriptor (zsh/system module). Direct
+    /// bin_sysseek - seek on file descriptor (zsh/system module). Direct
     /// port of zsh/Src/Modules/system.c:433 bin_sysseek. Return values
     /// (system.c:425-428): 0 = success, 1 = bad params, 2 = lseek error.
     pub(crate) fn bin_sysseek(&mut self, args: &[String]) -> i32 {
@@ -1693,7 +1687,7 @@ impl crate::ported::exec::ShellExecutor {
                     match args[i].parse::<i32>() {
                         Ok(n) if n >= 0 => fd = n,
                         _ => {
-                            eprintln!("zshrs:sysseek:1: integer expected: {}", args[i]);
+                            eprintln!("zshrs:bin_sysseek:1: integer expected: {}", args[i]);
                             return 1;
                         }
                     }
@@ -1706,7 +1700,7 @@ impl crate::ported::exec::ShellExecutor {
                         "end" | "2" => libc::SEEK_END,
                         "start" | "set" | "0" => libc::SEEK_SET,
                         _ => {
-                            eprintln!("zshrs:sysseek:1: unknown argument to -w: {}", args[i]);
+                            eprintln!("zshrs:bin_sysseek:1: unknown argument to -w: {}", args[i]);
                             return 1;
                         }
                     };
@@ -1720,7 +1714,7 @@ impl crate::ported::exec::ShellExecutor {
         let pos: i64 = match pos_arg.as_deref().and_then(|s| s.parse().ok()) {
             Some(n) => n,
             None => {
-                eprintln!("zshrs:sysseek:1: position required");
+                eprintln!("zshrs:bin_sysseek:1: position required");
                 return 1;
             }
         };

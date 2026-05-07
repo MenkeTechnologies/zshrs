@@ -7,7 +7,7 @@
 //   4. Tears the daemon down by invoking the `daemon stop` op (or kills it).
 //
 // Because each test owns its own cache root, parallel tests don't share state
-// and the singleton flock isn't a hazard within a test. The binary used is the
+// and the singleton bin_zsystem_flock isn't a hazard within a test. The binary used is the
 // just-built target/debug/zshrs.
 
 use std::path::PathBuf;

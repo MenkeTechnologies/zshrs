@@ -229,11 +229,11 @@ pub(crate) static BUILTIN_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|
         "setcap",
         "zftp",
         "zcurses",
-        "sysread",
-        "syswrite",
-        "syserror",
-        "sysopen",
-        "sysseek",
+        "bin_sysread",
+        "bin_syswrite",
+        "bin_syserror",
+        "bin_sysopen",
+        "bin_sysseek",
         "private",
         "zgetattr",
         "zsetattr",
@@ -546,7 +546,7 @@ pub struct ShellExecutor {
     pub named_dirs: HashMap<String, PathBuf>, // name -> path
     // zpty - pseudo-terminal management
     pub zptys: HashMap<String, ZptyState>,
-    // sysopen - file descriptor management
+    // bin_sysopen - file descriptor management
     pub open_fds: HashMap<i32, std::fs::File>,
     pub next_fd: i32,
     // sched - scheduled commands

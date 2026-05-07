@@ -167,7 +167,7 @@ impl ModuleTable {
             (
                 "zsh/system",
                 &[
-                    "sysread", "syswrite", "sysopen", "sysseek", "syserror", "zsystem",
+                    "bin_sysread", "bin_syswrite", "bin_sysopen", "bin_sysseek", "bin_syserror", "zsystem",
                 ][..],
             ),
             ("zsh/termcap", &["echotc"][..]),
