@@ -305,6 +305,12 @@ impl SubstState {                                           // c:2807
     /// from_executor — same plumbing rationale.
     pub fn commit_to_executor(self, exec: &mut crate::exec::ShellExecutor) { // c:N/A (plumbing)
         if self.errflag {
+            // ${var:?msg} / parse failure / etc. — propagate the
+            // error back to the executor as a non-zero $?. Direct
+            // port of zsh's errflag |= ERRFLAG_ERROR which makes
+            // the next prompt see status=1 and (in non-interactive
+            // mode) the shell exits at the next opcheck.
+            exec.last_status = 1;                            // c:3193
             return;
         }
         exec.variables = self.variables;
