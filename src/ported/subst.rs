@@ -2110,22 +2110,49 @@ fn paramsubst(                                              // c:1625
             value = out;                                     // c:2255
         }                                                    // c:2255
 
-        // (Q) unquote — strip outer quotes / backslash escapes.
-        // Port of subst.c:2261 quotemod-- effect: when quotemod < 0,
-        // post-processing block runs unquote on the value.
+        // (Q) unquote — strip outer quotes / backslash escapes /
+        // decode $'…' C-string quoting. Port of subst.c:2261
+        // quotemod-- effect → utils.c::dequotestring which handles
+        // SQ spans (literal), DQ spans (with backslash escapes),
+        // $'…' spans (with full \n / \t / \xNN / \NNN decoding via
+        // getkeystring), and standalone backslash escapes.
         if flag_unquote {                                   // c:2261
+            let chars_v: Vec<char> = value.chars().collect();
             let mut out = String::with_capacity(value.len());
-            let mut chars_iter = value.chars().peekable();
-            while let Some(c) = chars_iter.next() {
+            let mut i = 0_usize;
+            while i < chars_v.len() {
+                let c = chars_v[i];
+                // $'...' C-string quoting: decode escapes via the
+                // canonical getkeystring port.
+                if c == '$' && i + 1 < chars_v.len() && chars_v[i + 1] == '\'' { // c:2261
+                    let body_start = i + 2;
+                    // Find unescaped closing single quote.
+                    let mut j = body_start;
+                    while j < chars_v.len() && chars_v[j] != '\'' {
+                        if chars_v[j] == '\\' && j + 1 < chars_v.len() {
+                            j += 2;
+                        } else {
+                            j += 1;
+                        }
+                    }
+                    let body: String = chars_v[body_start..j].iter().collect();
+                    let (decoded, _) = crate::ported::utils::getkeystring(&body); // c:2261
+                    out.push_str(&decoded);
+                    i = j + 1;                              // c:2261 (skip closing ')
+                    continue;
+                }
                 if c == '\\' {                              // c:2261 (drop backslash)
-                    if let Some(nx) = chars_iter.next() {
-                        out.push(nx);
+                    if i + 1 < chars_v.len() {
+                        out.push(chars_v[i + 1]);
+                        i += 2;
+                        continue;
                     }
                 } else if c == '\'' || c == '"' {           // c:2261 (drop surrounding quotes)
-                    // skip
-                } else {
-                    out.push(c);
+                    i += 1;
+                    continue;
                 }
+                out.push(c);
+                i += 1;
             }
             value = out;
         }
