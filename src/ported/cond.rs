@@ -471,10 +471,52 @@ impl<'a> CondEval<'a> {
     // Option test
 
     fn test_option(&self, name: &str) -> CondResult {
-        // Single character option
+        // Single character option — direct port of zsh's optletters
+        // lookup at Src/options.c:287 / 726. Map shorthand letters
+        // (`-e`, `-x`, etc.) to their full option names.
         if name.len() == 1 {
             let ch = name.chars().next().unwrap();
-            if let Some(opt_name) = short_option_name(ch) {
+            let opt_name = match ch {
+                'a' => Some("allexport"),
+                'B' => Some("braceccl"),
+                'C' => Some("noclobber"),
+                'e' => Some("errexit"),
+                'f' => Some("noglob"),
+                'g' => Some("histignorespace"),
+                'h' => Some("hashcmds"),
+                'H' => Some("histexpand"),
+                'i' => Some("interactive"),
+                'I' => Some("ignoreeof"),
+                'j' => Some("monitor"),
+                'k' => Some("keywordargs"),
+                'l' => Some("login"),
+                'm' => Some("monitor"),
+                'n' => Some("noexec"),
+                'p' => Some("privileged"),
+                'P' => Some("physical"),
+                'r' => Some("restricted"),
+                's' => Some("stdin"),
+                't' => Some("singlecommand"),
+                'u' => Some("nounset"),
+                'v' => Some("verbose"),
+                'w' => Some("chaselinks"),
+                'x' => Some("xtrace"),
+                'X' => Some("listtypes"),
+                'Y' => Some("menucomplete"),
+                'Z' => Some("zle"),
+                '0' => Some("correct"),
+                '1' => Some("printexitvalue"),
+                '2' => Some("autolist"),
+                '3' => Some("autocontinue"),
+                '4' => Some("autoparamslash"),
+                '5' => Some("autopushd"),
+                '6' => Some("autoremoveslash"),
+                '7' => Some("bsdecho"),
+                '8' => Some("nocaseglob"),
+                '9' => Some("cdablevars"),
+                _ => None,
+            };
+            if let Some(opt_name) = opt_name {
                 if let Some(&val) = self.options.get(opt_name) {
                     return CondResult::from_bool(val);
                 }
@@ -505,50 +547,6 @@ impl<'a> CondEval<'a> {
             CondResult::from_bool(pattern_match(pattern, text, true, true))
         }
     }
-}
-
-/// Map single-character option codes to option names
-fn short_option_name(c: char) -> Option<&'static str> {
-    Some(match c {
-        'a' => "allexport",
-        'B' => "braceccl",
-        'C' => "noclobber",
-        'e' => "errexit",
-        'f' => "noglob",
-        'g' => "histignorespace",
-        'h' => "hashcmds",
-        'H' => "histexpand",
-        'i' => "interactive",
-        'I' => "ignoreeof",
-        'j' => "monitor",
-        'k' => "keywordargs",
-        'l' => "login",
-        'm' => "monitor",
-        'n' => "noexec",
-        'p' => "privileged",
-        'P' => "physical",
-        'r' => "restricted",
-        's' => "stdin",
-        't' => "singlecommand",
-        'u' => "nounset",
-        'v' => "verbose",
-        'w' => "chaselinks",
-        'x' => "xtrace",
-        'X' => "listtypes",
-        'Y' => "menucomplete",
-        'Z' => "zle",
-        '0' => "correct",
-        '1' => "printexitvalue",
-        '2' => "autolist",
-        '3' => "autocontinue",
-        '4' => "autoparamslash",
-        '5' => "autopushd",
-        '6' => "autoremoveslash",
-        '7' => "bsdecho",
-        '8' => "nocaseglob",
-        '9' => "cdablevars",
-        _ => return None,
-    })
 }
 
 /// Parsed `[[ ... ]]` expression tree.
@@ -629,12 +627,21 @@ impl<'a> CondParser<'a> {
             return Ok(expr);
         }
 
-        // Check for unary operators
+        // Check for unary operators (file/string tests). Direct port
+        // of Src/cond.c parser's `-X arg` recognizer — every char in
+        // this set takes one operand: `-a` exists, `-d` directory,
+        // `-f` regular file, `-n` non-empty string, `-z` empty
+        // string, `-r/-w/-x` perm bits, etc.
         if let Some(tok) = self.peek() {
             if tok.starts_with('-') && tok.len() == 2 {
                 let op = tok.chars().nth(1).unwrap();
-                // Check if this is a unary file/string test
-                if is_unary_op(op) {
+                if matches!(
+                    op,
+                    'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h'
+                    | 'k' | 'L' | 'n' | 'o' | 'p' | 'r' | 's' | 'S'
+                    | 't' | 'u' | 'v' | 'w' | 'x' | 'z'
+                    | 'G' | 'N' | 'O'
+                ) {
                     self.advance();
                     let arg = self.expect_arg()?;
                     return Ok(CondExpr::Unary(op, arg.to_string()));
@@ -642,11 +649,33 @@ impl<'a> CondParser<'a> {
             }
         }
 
-        // Binary expression: left op right
+        // Binary expression: left op right. Operator dispatch is the
+        // direct port of cond.c's binary-op parser — string and arith
+        // comparators, file-relation tests (-nt/-ot/-ef), and the
+        // regex match `=~` (plus the zsh/regex module's
+        // `-regex-match` per Src/Modules/regex.c:214).
         let left = self.expect_arg()?;
 
         if let Some(op) = self.peek() {
-            if let Some(cond_type) = parse_binary_op(op) {
+            let cond_type = match op {
+                "=" | "==" => Some(CondType::StrEq),
+                "!=" => Some(CondType::StrNeq),
+                "<" => Some(CondType::StrLt),
+                ">" => Some(CondType::StrGt),
+                "-eq" => Some(CondType::Eq),
+                "-ne" => Some(CondType::Ne),
+                "-lt" => Some(CondType::Lt),
+                "-gt" => Some(CondType::Gt),
+                "-le" => Some(CondType::Le),
+                "-ge" => Some(CondType::Ge),
+                "-nt" => Some(CondType::Nt),
+                "-ot" => Some(CondType::Ot),
+                "-ef" => Some(CondType::Ef),
+                "=~" => Some(CondType::Regex),
+                "-regex-match" => Some(CondType::Regex),
+                _ => None,
+            };
+            if let Some(cond_type) = cond_type {
                 self.advance();
                 let right = self.expect_arg()?;
                 return Ok(CondExpr::Binary(
@@ -686,63 +715,6 @@ impl<'a> CondParser<'a> {
     }
 }
 
-fn is_unary_op(c: char) -> bool {
-    matches!(
-        c,
-        'a' | 'b'
-            | 'c'
-            | 'd'
-            | 'e'
-            | 'f'
-            | 'g'
-            | 'h'
-            | 'k'
-            | 'L'
-            | 'n'
-            | 'o'
-            | 'p'
-            | 'r'
-            | 's'
-            | 'S'
-            | 't'
-            | 'u'
-            | 'v'
-            | 'w'
-            | 'x'
-            | 'z'
-            | 'G'
-            | 'N'
-            | 'O'
-    )
-}
-
-fn parse_binary_op(s: &str) -> Option<CondType> {
-    Some(match s {
-        "=" | "==" => CondType::StrEq,
-        "!=" => CondType::StrNeq,
-        "<" => CondType::StrLt,
-        ">" => CondType::StrGt,
-        "-eq" => CondType::Eq,
-        "-ne" => CondType::Ne,
-        "-lt" => CondType::Lt,
-        "-gt" => CondType::Gt,
-        "-le" => CondType::Le,
-        "-ge" => CondType::Ge,
-        "-nt" => CondType::Nt,
-        "-ot" => CondType::Ot,
-        "-ef" => CondType::Ef,
-        "=~" => CondType::Regex,
-        // `-regex-match` from zsh/regex module per
-        // src/zsh/Src/Modules/regex.c:214 — same semantics as
-        // `=~` (POSIX extended regex, sets MATCH/MBEGIN/MEND/
-        // match/mbegin/mend on success). The full host
-        // BUILTIN_REGEX_MATCH path handles capture; cond.rs's
-        // CondType::Regex routes here for the bool test, with
-        // captures applied at the executor side.
-        "-regex-match" => CondType::Regex,
-        _ => return None,
-    })
-}
 
 /// Convenience function to evaluate a test expression
 /// Evaluate a POSIX `test`/`[[` expression.
@@ -750,7 +722,7 @@ fn parse_binary_op(s: &str) -> Option<CondType> {
 /// the `evalcond()` driver from Src/cond.c:70 — the C source's
 /// entry point that the `[[` keyword and the `test`/`[`
 /// builtins both delegate to.
-pub fn eval_test(
+pub fn evalcond(
     args: &[&str],
     options: &HashMap<String, bool>,
     variables: &HashMap<String, String>,
@@ -795,30 +767,30 @@ mod tests {
     #[test]
     fn test_string_empty() {
         let (opts, vars) = empty_maps();
-        assert_eq!(eval_test(&["-z", ""], &opts, &vars, true), 0);
-        assert_eq!(eval_test(&["-z", "hello"], &opts, &vars, true), 1);
-        assert_eq!(eval_test(&["-n", "hello"], &opts, &vars, true), 0);
-        assert_eq!(eval_test(&["-n", ""], &opts, &vars, true), 1);
+        assert_eq!(evalcond(&["-z", ""], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["-z", "hello"], &opts, &vars, true), 1);
+        assert_eq!(evalcond(&["-n", "hello"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["-n", ""], &opts, &vars, true), 1);
     }
 
     #[test]
     fn test_string_compare() {
         let (opts, vars) = empty_maps();
-        assert_eq!(eval_test(&["hello", "=", "hello"], &opts, &vars, true), 0);
-        assert_eq!(eval_test(&["hello", "!=", "world"], &opts, &vars, true), 0);
-        assert_eq!(eval_test(&["abc", "<", "def"], &opts, &vars, true), 0);
-        assert_eq!(eval_test(&["xyz", ">", "abc"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["hello", "=", "hello"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["hello", "!=", "world"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["abc", "<", "def"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["xyz", ">", "abc"], &opts, &vars, true), 0);
     }
 
     #[test]
     fn test_numeric_compare() {
         let (opts, vars) = empty_maps();
-        assert_eq!(eval_test(&["5", "-eq", "5"], &opts, &vars, true), 0);
-        assert_eq!(eval_test(&["5", "-ne", "3"], &opts, &vars, true), 0);
-        assert_eq!(eval_test(&["3", "-lt", "5"], &opts, &vars, true), 0);
-        assert_eq!(eval_test(&["5", "-gt", "3"], &opts, &vars, true), 0);
-        assert_eq!(eval_test(&["5", "-le", "5"], &opts, &vars, true), 0);
-        assert_eq!(eval_test(&["5", "-ge", "5"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["5", "-eq", "5"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["5", "-ne", "3"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["3", "-lt", "5"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["5", "-gt", "3"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["5", "-le", "5"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["5", "-ge", "5"], &opts, &vars, true), 0);
     }
 
     #[test]
@@ -830,9 +802,9 @@ mod tests {
         let (opts, vars) = empty_maps();
         let path_str = file_path.to_str().unwrap();
 
-        assert_eq!(eval_test(&["-e", path_str], &opts, &vars, true), 0);
-        assert_eq!(eval_test(&["-f", path_str], &opts, &vars, true), 0);
-        assert_eq!(eval_test(&["-d", path_str], &opts, &vars, true), 1);
+        assert_eq!(evalcond(&["-e", path_str], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["-f", path_str], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["-d", path_str], &opts, &vars, true), 1);
     }
 
     #[test]
@@ -841,26 +813,26 @@ mod tests {
         let (opts, vars) = empty_maps();
         let path_str = dir.path().to_str().unwrap();
 
-        assert_eq!(eval_test(&["-d", path_str], &opts, &vars, true), 0);
-        assert_eq!(eval_test(&["-f", path_str], &opts, &vars, true), 1);
+        assert_eq!(evalcond(&["-d", path_str], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["-f", path_str], &opts, &vars, true), 1);
     }
 
     #[test]
     fn test_logical_not() {
         let (opts, vars) = empty_maps();
-        assert_eq!(eval_test(&["!", "-z", "hello"], &opts, &vars, true), 0);
-        assert_eq!(eval_test(&["!", "-n", ""], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["!", "-z", "hello"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["!", "-n", ""], &opts, &vars, true), 0);
     }
 
     #[test]
     fn test_logical_and() {
         let (opts, vars) = empty_maps();
         assert_eq!(
-            eval_test(&["-n", "a", "-a", "-n", "b"], &opts, &vars, true),
+            evalcond(&["-n", "a", "-a", "-n", "b"], &opts, &vars, true),
             0
         );
         assert_eq!(
-            eval_test(&["-n", "a", "-a", "-z", "b"], &opts, &vars, true),
+            evalcond(&["-n", "a", "-a", "-z", "b"], &opts, &vars, true),
             1
         );
     }
@@ -869,11 +841,11 @@ mod tests {
     fn test_logical_or() {
         let (opts, vars) = empty_maps();
         assert_eq!(
-            eval_test(&["-z", "a", "-o", "-n", "b"], &opts, &vars, true),
+            evalcond(&["-z", "a", "-o", "-n", "b"], &opts, &vars, true),
             0
         );
         assert_eq!(
-            eval_test(&["-z", "a", "-o", "-z", "b"], &opts, &vars, true),
+            evalcond(&["-z", "a", "-o", "-z", "b"], &opts, &vars, true),
             1
         );
     }
@@ -884,7 +856,7 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("MYVAR".to_string(), "value".to_string());
 
-        assert_eq!(eval_test(&["-v", "MYVAR"], &opts, &vars, true), 0);
-        assert_eq!(eval_test(&["-v", "NOTEXIST"], &opts, &vars, true), 1);
+        assert_eq!(evalcond(&["-v", "MYVAR"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["-v", "NOTEXIST"], &opts, &vars, true), 1);
     }
 }

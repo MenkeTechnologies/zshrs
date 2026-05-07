@@ -1204,61 +1204,7 @@ fn stringsubst(                                             // c:237
 
 /// Parameter substitution
 /// Port of paramsubst() from subst.c lines 1600-4922 (THIS IS THE BIG ONE)
-/// `${(A)var=val}` / `${(AA)var=val}` assignment helper.
-/// Direct port of Src/subst.c:3263+ where `arrasg` controls whether
-/// the value lands in `params` (scalar), `paramsh` (assoc, with
-/// IFS-pair splitting), or `params` as a split array.
-///
-/// arrasg semantics:
-///   0 → scalar assignment (default for `${var=val}`)
-///   1 → array assignment: split val on IFS into elements
-///   2+ → associative-array assignment: split val into key/value
-///        pairs (k1 v1 k2 v2 ...)
-fn store_assign(name: &str, value: &str, arrasg: i32, state: &mut SubstState) { // c:3263
-    if arrasg <= 0 {                                          // c:3263 (scalar)
-        state.variables.insert(name.to_string(), value.to_string());
-        return;
-    }
-    let ifs = state.variables.get("IFS").cloned()
-        .unwrap_or_else(|| " \t\n".to_string());
-    let parts: Vec<String> = value
-        .split(|c: char| ifs.contains(c))
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .collect();
-    if arrasg == 1 {                                          // c:3263 (A — array)
-        state.arrays.insert(name.to_string(), parts);
-        state.variables.remove(name);
-        return;
-    }
-    // arrasg >= 2 (AA — associative): pair up elements.
-    let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
-    let mut iter = parts.into_iter();
-    while let Some(k) = iter.next() {
-        let v = iter.next().unwrap_or_default();
-        map.insert(k, v);
-    }
-    state.assoc_arrays.insert(name.to_string(), map);
-    state.variables.remove(name);
-    state.arrays.remove(name);
-}
-
-/// Public wrapper that lets the fusevm bridge call paramsubst
-/// directly when a `${(...)…}` form arrives at BUILTIN_BRIDGE_BRACE_
-/// ARRAY. Returns the per-element node list so the caller can choose
-/// between scalar and Array shape.
-pub fn paramsubst_bridge(
-    s: &str,
-    start_pos: usize,
-    qt: bool,
-    pf_flags: u32,
-    ret_flags: &mut u32,
-    state: &mut SubstState,
-) -> (String, usize, Vec<String>) {
-    paramsubst(s, start_pos, qt, pf_flags, ret_flags, state)
-}
-
-fn paramsubst(                                              // c:1625
+pub fn paramsubst(                                          // c:1625
     s: &str,                                                // c:1625
     start_pos: usize,                                       // c:1625
     qt: bool,                                               // c:1625
@@ -2299,12 +2245,63 @@ fn paramsubst(                                              // c:1625
                 // `${var::=value}` — zsh extension. Always store
                 // value (after expansion) regardless of whether var
                 // was set/empty. Returns the stored value.
+                // arrasg-aware storage per Src/subst.c:3263 — the
+                // `(A)`/`(AA)` flag promotes scalar storage to array
+                // / associative storage (split val on IFS).
                 value = singsub(default, state);
-                store_assign(&var_name, &value, flag_arrasg, state);
+                if flag_arrasg <= 0 {                              // c:3263 (scalar)
+                    state.variables.insert(var_name.clone(), value.clone());
+                } else {                                            // c:3263 (A/AA)
+                    let ifs = state.variables.get("IFS").cloned()
+                        .unwrap_or_else(|| " \t\n".to_string());
+                    let parts: Vec<String> = value
+                        .split(|c: char| ifs.contains(c))
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .collect();
+                    if flag_arrasg == 1 {                           // c:3263 (A)
+                        state.arrays.insert(var_name.clone(), parts);
+                        state.variables.remove(&var_name);
+                    } else {                                         // c:3263 (AA)
+                        let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+                        let mut iter = parts.into_iter();
+                        while let Some(k) = iter.next() {
+                            let v = iter.next().unwrap_or_default();
+                            map.insert(k, v);
+                        }
+                        state.assoc_arrays.insert(var_name.clone(), map);
+                        state.variables.remove(&var_name);
+                        state.arrays.remove(&var_name);
+                    }
+                }
             } else if let Some(default) = r.strip_prefix(":=") { // c:3245
                 if !is_set || raw_value.is_empty() {
                     value = singsub(default, state);
-                    store_assign(&var_name, &value, flag_arrasg, state);
+                    if flag_arrasg <= 0 {                          // c:3263 (scalar)
+                        state.variables.insert(var_name.clone(), value.clone());
+                    } else {                                        // c:3263 (A/AA)
+                        let ifs = state.variables.get("IFS").cloned()
+                            .unwrap_or_else(|| " \t\n".to_string());
+                        let parts: Vec<String> = value
+                            .split(|c: char| ifs.contains(c))
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string())
+                            .collect();
+                        if flag_arrasg == 1 {                       // c:3263 (A)
+                            state.arrays.insert(var_name.clone(), parts);
+                            state.variables.remove(&var_name);
+                        } else {                                     // c:3263 (AA)
+                            let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+                            let mut iter = parts.into_iter();
+                            while let Some(k) = iter.next() {
+                                let v = iter.next().unwrap_or_default();
+                                map.insert(k, v);
+                            }
+                            state.assoc_arrays.insert(var_name.clone(), map);
+                            state.variables.remove(&var_name);
+                            state.arrays.remove(&var_name);
+                        }
+                    }
                 }
             } else if let Some(default) = r.strip_prefix('=') {   // c:3245 (= — assign on unset only)
                 // Same as := but trigger ONLY on unset (not on
@@ -2312,7 +2309,31 @@ fn paramsubst(                                              // c:1625
                 // only checks vunset, not !*val.
                 if !is_set {
                     value = singsub(default, state);
-                    store_assign(&var_name, &value, flag_arrasg, state);
+                    if flag_arrasg <= 0 {                          // c:3263 (scalar)
+                        state.variables.insert(var_name.clone(), value.clone());
+                    } else {                                        // c:3263 (A/AA)
+                        let ifs = state.variables.get("IFS").cloned()
+                            .unwrap_or_else(|| " \t\n".to_string());
+                        let parts: Vec<String> = value
+                            .split(|c: char| ifs.contains(c))
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string())
+                            .collect();
+                        if flag_arrasg == 1 {                       // c:3263 (A)
+                            state.arrays.insert(var_name.clone(), parts);
+                            state.variables.remove(&var_name);
+                        } else {                                     // c:3263 (AA)
+                            let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+                            let mut iter = parts.into_iter();
+                            while let Some(k) = iter.next() {
+                                let v = iter.next().unwrap_or_default();
+                                map.insert(k, v);
+                            }
+                            state.assoc_arrays.insert(var_name.clone(), map);
+                            state.variables.remove(&var_name);
+                            state.arrays.remove(&var_name);
+                        }
+                    }
                 }
             } else if let Some(alt) = r.strip_prefix(":+") {  // c:3296
                 if is_set && !raw_value.is_empty() { value = singsub(alt, state); }
