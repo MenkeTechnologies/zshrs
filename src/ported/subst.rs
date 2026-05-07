@@ -1673,7 +1673,35 @@ fn paramsubst(                                              // c:1625
         } else if let Some(sub) = subscript.as_deref() {
             // Subscripted lookup: assoc-key, array-index, or slice.
             if let Some(map) = state.assoc_arrays.get(&var_name) { // c:2926 (assoc lookup)
-                map.get(sub).cloned().unwrap_or_default()
+                // Subscript-flag form: (I)pat / (i)pat (search keys
+                // for pattern, return matching key) and (R)pat /
+                // (r)pat (search values, return matching value).
+                // Direct port of Src/params.c getarg's hash-aware
+                // index/match handling.
+                if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
+                    let s = s.trim_start();
+                    let rest = s.strip_prefix('(')?;
+                    let close = rest.find(')')?;
+                    let flags = rest[..close].to_string();
+                    let pat = rest[close + 1..].to_string();
+                    if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b')) {
+                        Some((flags, pat))
+                    } else { None }
+                })(sub) {
+                    let by_key = flags.contains('I') || flags.contains('i');
+                    let return_all = flags.contains('I') || flags.contains('R');
+                    let mut out: Vec<String> = Vec::new();
+                    for (k, v) in map.iter() {
+                        let hay = if by_key { k.as_str() } else { v.as_str() };
+                        if crate::exec::ShellExecutor::glob_match_static(hay, &pat) {
+                            out.push(if by_key { k.clone() } else { v.clone() });
+                            if !return_all { break; }
+                        }
+                    }
+                    out.join(" ")
+                } else {
+                    map.get(sub).cloned().unwrap_or_default()
+                }
             } else if let Some(arr) = state.arrays.get(&var_name) { // c:2926 (array)
                 if sub == "*" || sub == "@" {                // c:2916 (full array)
                     arr.join(" ")
