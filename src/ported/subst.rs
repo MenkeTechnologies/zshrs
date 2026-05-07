@@ -1355,6 +1355,13 @@ fn paramsubst(                                              // c:1625
                                 idx += 1;
                             }
                             let s1: String = body_chars[s1_start..idx].iter().collect();
+                            // (p) flag also applies to STR1/STR2 of
+                            // (l)/(r) — decode \\n / \\t / \\xNN /
+                            // etc. Direct port of subst.c:2336 escape
+                            // dispatch on STR1/STR2 when escapes==1.
+                            let s1 = if flag_p_escapes {
+                                crate::ported::utils::getkeystring(&s1).0
+                            } else { s1 };
                             if is_left { premul = Some(s1); } else { postmul = Some(s1); }
                             if idx < body_chars.len() {     // c:2354
                                 idx += 1; // skip del
@@ -1369,6 +1376,9 @@ fn paramsubst(                                              // c:1625
                                     idx += 1;
                                 }
                                 let s2: String = body_chars[s2_start..idx].iter().collect();
+                                let s2 = if flag_p_escapes {
+                                    crate::ported::utils::getkeystring(&s2).0
+                                } else { s2 };
                                 if is_left { preone = Some(s2); } else { postone = Some(s2); }
                                 if idx < body_chars.len() { idx += 1; } // skip del
                             }
