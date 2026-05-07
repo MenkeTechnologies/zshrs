@@ -1894,6 +1894,51 @@ fn paramsubst(                                              // c:1625
                 let parts: Vec<&str> = rep.splitn(2, '/').collect();
                 let pat = singsub(parts[0], state);
                 let repl = parts.get(1).map(|s| singsub(s, state)).unwrap_or_default();
+                // Per-element replace for arrays — zsh treats each
+                // element as a separate match target, preserving the
+                // array shape. \${(@)arr//pat/repl} keeps element
+                // count, replaces within each. Direct port of
+                // subst.c's getmatcharr path that calls getmatch on
+                // each element separately. Single-shot helper to
+                // avoid duplicating the sliding-window logic.
+                let replace_global = |val: &str| -> String {
+                    let cv: Vec<char> = val.chars().collect();
+                    let nn = cv.len();
+                    let mut o = String::with_capacity(val.len());
+                    let mut q = 0_usize;
+                    while q < nn {
+                        let mut m: Option<usize> = None;
+                        for e in (q + 1..=nn).rev() {
+                            let c: String = cv[q..e].iter().collect();
+                            if crate::exec::ShellExecutor::glob_match_static(&c, &pat) {
+                                m = Some(e); break;
+                            }
+                        }
+                        if let Some(e) = m {
+                            o.push_str(&repl);
+                            q = if e == q { q + 1 } else { e };
+                        } else {
+                            o.push(cv[q]);
+                            q += 1;
+                        }
+                    }
+                    o
+                };
+                let mut handled_array = false;
+                if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                    let new_arr: Vec<String> = arr.iter().map(|e| replace_global(e)).collect();
+                    value = new_arr.join(" ");                // c:3870
+                    split_parts = Some(new_arr);              // c:3870 (auto-splat)
+                    handled_array = true;
+                }
+                if handled_array {
+                    // Skip the scalar fallback below by leaving
+                    // the block early via condition swap. Easier
+                    // than adding a labeled-block — outer chain
+                    // is else-if so falling through to the next
+                    // arm requires the guard.
+                    let _ = handled_array;
+                } else {
                 // Glob-aware sliding-window replace. Was literal-only
                 // (.replace) which broke \${path//*.tmp/.bak}-style
                 // idioms. Direct port of subst.c:3870 SUB_GLOBAL arm
@@ -1921,6 +1966,7 @@ fn paramsubst(                                              // c:1625
                     }                                                // c:3870
                 }                                                    // c:3870
                 value = out;                                         // c:3870
+                } // close handled_array else block
             } else if let Some(rep) = r.strip_prefix('/') {   // c:3870 (single replace)
                 let parts: Vec<&str> = rep.splitn(2, '/').collect();
                 let pat = singsub(parts[0], state);
