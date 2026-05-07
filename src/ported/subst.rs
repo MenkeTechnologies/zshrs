@@ -1204,6 +1204,45 @@ fn stringsubst(                                             // c:237
 
 /// Parameter substitution
 /// Port of paramsubst() from subst.c lines 1600-4922 (THIS IS THE BIG ONE)
+/// `${(A)var=val}` / `${(AA)var=val}` assignment helper.
+/// Direct port of Src/subst.c:3263+ where `arrasg` controls whether
+/// the value lands in `params` (scalar), `paramsh` (assoc, with
+/// IFS-pair splitting), or `params` as a split array.
+///
+/// arrasg semantics:
+///   0 → scalar assignment (default for `${var=val}`)
+///   1 → array assignment: split val on IFS into elements
+///   2+ → associative-array assignment: split val into key/value
+///        pairs (k1 v1 k2 v2 ...)
+fn store_assign(name: &str, value: &str, arrasg: i32, state: &mut SubstState) { // c:3263
+    if arrasg <= 0 {                                          // c:3263 (scalar)
+        state.variables.insert(name.to_string(), value.to_string());
+        return;
+    }
+    let ifs = state.variables.get("IFS").cloned()
+        .unwrap_or_else(|| " \t\n".to_string());
+    let parts: Vec<String> = value
+        .split(|c: char| ifs.contains(c))
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    if arrasg == 1 {                                          // c:3263 (A — array)
+        state.arrays.insert(name.to_string(), parts);
+        state.variables.remove(name);
+        return;
+    }
+    // arrasg >= 2 (AA — associative): pair up elements.
+    let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+    let mut iter = parts.into_iter();
+    while let Some(k) = iter.next() {
+        let v = iter.next().unwrap_or_default();
+        map.insert(k, v);
+    }
+    state.assoc_arrays.insert(name.to_string(), map);
+    state.variables.remove(name);
+    state.arrays.remove(name);
+}
+
 /// Public wrapper that lets the fusevm bridge call paramsubst
 /// directly when a `${(...)…}` form arrives at BUILTIN_BRIDGE_BRACE_
 /// ARRAY. Returns the per-element node list so the caller can choose
@@ -1279,6 +1318,12 @@ fn paramsubst(                                              // c:1625
         let mut flag_qplus = false;                         // c:2245 (q+)
         let mut flag_at = false;                            // c:2167 (@)
         let mut flag_p_indirect = false;                    // c:2295 (P)
+        // (A) — array-assign mode for `${(A)var=val}`. (AA) →
+        // associative-assign: split val into key/value pairs.
+        // Direct port of `int arrasg = 0; case 'A': ++arrasg;`
+        // at subst.c:2161. Counter (not bool) so the AA double-
+        // form is distinguishable.
+        let mut flag_arrasg: i32 = 0;                        // c:1793
         let mut flag_typeinfo = false;                      // c:2807 (t)
         let mut flag_keys = false;                          // c:2247 (k)
         let mut flag_values = false;                        // c:2256 (v)
@@ -1388,6 +1433,7 @@ fn paramsubst(                                              // c:1625
                             flag_qcount += 1;               // c:2252
                         }                                    // c:2253
                     }                                       // c:2253
+                    'A' => { flag_arrasg += 1; }            // c:2161 (A array-assign; AA associative-assign)
                     '@' => { flag_at = true; }              // c:2167
                     'P' => { flag_p_indirect = true; }      // c:2295
                     't' => { flag_typeinfo = true; }        // c:2807
@@ -2233,11 +2279,11 @@ fn paramsubst(                                              // c:1625
                 // value (after expansion) regardless of whether var
                 // was set/empty. Returns the stored value.
                 value = singsub(default, state);
-                state.variables.insert(var_name.clone(), value.clone());
+                store_assign(&var_name, &value, flag_arrasg, state);
             } else if let Some(default) = r.strip_prefix(":=") { // c:3245
                 if !is_set || raw_value.is_empty() {
                     value = singsub(default, state);
-                    state.variables.insert(var_name.clone(), value.clone());
+                    store_assign(&var_name, &value, flag_arrasg, state);
                 }
             } else if let Some(default) = r.strip_prefix('=') {   // c:3245 (= — assign on unset only)
                 // Same as := but trigger ONLY on unset (not on
@@ -2245,7 +2291,7 @@ fn paramsubst(                                              // c:1625
                 // only checks vunset, not !*val.
                 if !is_set {
                     value = singsub(default, state);
-                    state.variables.insert(var_name.clone(), value.clone());
+                    store_assign(&var_name, &value, flag_arrasg, state);
                 }
             } else if let Some(alt) = r.strip_prefix(":+") {  // c:3296
                 if is_set && !raw_value.is_empty() { value = singsub(alt, state); }
