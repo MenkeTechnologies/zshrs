@@ -2368,7 +2368,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // BUILTIN_PARAM_FLAG; (r)/(R)/(i)/(I) on assoc would search
                 // values/keys, supported below.
                 if let Some(map) = exec.assoc_arrays.get(&name) {
-                    if let Some((flags, pat)) = None::<(String, String)> {
+                    if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
+                        // Port of subst.c subscript-flag parser:
+                        // `(I)pat` / `(R)pat` / `(i)pat` / `(r)pat`.
+                        // Returns (flags_chars, pattern_after).
+                        let s = s.trim_start();
+                        let rest = s.strip_prefix('(')?;
+                        let close = rest.find(')')?;
+                        let flags = rest[..close].to_string();
+                        let pat = rest[close + 1..].to_string();
+                        if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b')) {
+                            Some((flags, pat))
+                        } else { None }
+                    })(&idx) {
                         // (v)+(I)/(i): subscript searches keys but
                         // outer wants values. Iterate the assoc and
                         // return values for keys that match `pat`.
@@ -2430,7 +2442,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // also accepts `(ws[chars])` — `s` followed
                         // by a `[chars]` set treated as IFS for this
                         // operation.
-                        if let Some((flags, pat)) = None::<(String, String)> {
+                        if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
+                        // Port of subst.c subscript-flag parser:
+                        // `(I)pat` / `(R)pat` / `(i)pat` / `(r)pat`.
+                        // Returns (flags_chars, pattern_after).
+                        let s = s.trim_start();
+                        let rest = s.strip_prefix('(')?;
+                        let close = rest.find(')')?;
+                        let flags = rest[..close].to_string();
+                        let pat = rest[close + 1..].to_string();
+                        if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b')) {
+                            Some((flags, pat))
+                        } else { None }
+                    })(&idx) {
                             if flags.contains('w') {
                                 if let Ok(n) = pat.parse::<i64>() {
                                     let words: Vec<&str> = scalar.split_whitespace().collect();
