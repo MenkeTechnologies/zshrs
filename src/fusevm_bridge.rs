@@ -2508,7 +2508,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // Subscript flag form: (r)pat / (R)pat / (i)pat / (I)pat
                 // / (e)str / (n:N:)pat. Returns first/last matching value
                 // or first/last matching index per zsh semantics.
-                if let Some((flags, pat)) = None::<(String, String)> {
+                if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
+                    let s = s.trim_start();
+                    let rest = s.strip_prefix('(')?;
+                    let close = rest.find(')')?;
+                    let flags = rest[..close].to_string();
+                    let pat = rest[close + 1..].to_string();
+                    if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b')) {
+                        Some((flags, pat))
+                    } else { None }
+                })(&idx) {
                     return array_subscript_flag(&arr, &flags, &pat);
                 }
 
