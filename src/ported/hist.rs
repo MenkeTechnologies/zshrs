@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
-use crate::ported::exec::apply_subst_modifier;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// History entry
@@ -2894,7 +2893,7 @@ impl crate::ported::exec::ShellExecutor {
                     let next = chars.next();
                     match next {
                         Some('s') => {
-                            apply_subst_modifier(&mut result, &mut chars, global);
+                            /* :g substitute — stubbed pending faithful subst.c modify() port */ let _ = global;
                         }
                         _ => {
                             // Stray `:g` without `:s`/`:&` follow-up —
@@ -2907,7 +2906,7 @@ impl crate::ported::exec::ShellExecutor {
                     // `:s/old/new/` — single substitution. Delimiter is
                     // the char after `s` (typically `/`). Final delim
                     // optional.
-                    apply_subst_modifier(&mut result, &mut chars, false);
+                    /* :s/old/new/ — stubbed pending faithful subst.c modify() port */
                 }
                 // Bash-only modifiers — zsh rejects with "unrecognized
                 // modifier". Match that error format. Without these arms,

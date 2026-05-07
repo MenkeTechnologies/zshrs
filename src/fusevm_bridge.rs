@@ -1642,31 +1642,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // match handling — without this, `${aliases[(I)foo*]}` and
         // friends were passing the literal `(I)foo*` text through
         // as the key.
-        let trimmed = idx.trim_start();
-        if trimmed.starts_with('(') {
-            if let Some((flags, pat)) =
-                None::<(String, String)>
-            {
-                let result = with_executor(|exec| {
-                    let keys = None::<Vec<String>>?;
-                    let pairs: Vec<(String, String)> = keys
-                        .into_iter()
-                        .map(|k| {
-                            let v = exec
-                                .get_special_array_value(name, &k)
-                                .unwrap_or_default();
-                            (k, v)
-                        })
-                        .collect();
-                    Some(crate::subst::apply_assoc_subscript_flags_pub(
-                        &pairs, flags, &pat,
-                    ))
-                });
-                if let Some(matches) = result {
-                    return Some(Value::Array(matches.into_iter().map(Value::str).collect()));
-                }
-            }
-        }
+        // Magic-assoc subscript flags (I)/(R)/etc. — stubbed pending
+        // faithful per-module getfn/scanfn ports from
+        // Src/Modules/parameter.c.
+        let _ = idx.trim_start();
         with_executor(|exec| -> Option<Value> {
             match name {
                 "commands" => {
@@ -2399,7 +2378,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             let return_all = flags.contains('I');
                             let mut out: Vec<String> = Vec::new();
                             for (k, v) in map.iter() {
-                                if ShellExecutor::glob_match_static(k, pat) {
+                                if ShellExecutor::glob_match_static(k, &pat) {
                                     out.push(v.clone());
                                     if !return_all {
                                         break;
@@ -2417,7 +2396,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             let return_all = flags.contains('R');
                             let mut out: Vec<String> = Vec::new();
                             for (k, v) in map.iter() {
-                                if ShellExecutor::glob_match_static(v, pat) {
+                                if ShellExecutor::glob_match_static(v, &pat) {
                                     out.push(k.clone());
                                     if !return_all {
                                         break;
@@ -2426,7 +2405,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             }
                             return Value::str(out.join(" "));
                         }
-                        return assoc_subscript_flag(map, flags, pat);
+                        return assoc_subscript_flag(map, &flags, &pat);
                     }
                     return Value::str(map.get(&idx).cloned().unwrap_or_default());
                 }
@@ -2506,7 +2485,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // / (e)str / (n:N:)pat. Returns first/last matching value
                 // or first/last matching index per zsh semantics.
                 if let Some((flags, pat)) = None::<(String, String)> {
-                    return array_subscript_flag(&arr, flags, pat);
+                    return array_subscript_flag(&arr, &flags, &pat);
                 }
 
                 // Slice form `N,M`: comma separator with int-or-arith
