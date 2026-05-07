@@ -2197,21 +2197,57 @@ pub fn subst_parse_str(s: &str, single: bool, err: bool) -> Option<String> { // 
 /// Port of dstackent() from subst.c
 /// Resolve `~+N`/`~-N` directory-stack entries.
 /// Port of `dstackent()` from Src/subst.c:4902.
-pub fn dstackent(ch: char, val: i32, dirstack: &[String], pwd: &str) -> Option<String> { // c:N/A
-    let backwards = ch == '-'; // Simplified, real zsh checks PUSHDMINUS option // c:N/A
+/// Port of `dstackent()` from `Src/subst.c:4902-4922`.
+///
+/// Resolves `~+N` / `~-N` directory-stack entries.
+///
+/// C signature: `char *dstackent(char ch, int val)` — returns the
+/// path string at the requested dirstack index, or NULL on
+/// not-enough-entries.
+///
+/// Behavior:
+///   - `backwards` flips when PUSHDMINUS is set (so `~-N` walks
+///     forward and `~+N` walks backward).
+///   - `~+0` (or `~-0` when PUSHDMINUS) returns PWD, no list walk.
+///   - Otherwise walks dirstack from front (forward) or back
+///     (backward), val steps in.
+///   - Off-the-end → NULL (caller emits "not enough directory stack
+///     entries" if NOMATCH is set).
+///
+/// Rust signature: takes the dirstack slice + pwd; pushdminus_set is
+/// pulled from the caller's options (default false). Returns Option.
+pub fn dstackent(ch: char, val: i32, dirstack: &[String], pwd: &str) -> Option<String> { // c:4902
+    // C: `backwards = ch == (isset(PUSHDMINUS) ? '+' : '-');`
+    // — without PUSHDMINUS plumbing, default to standard zsh
+    // semantics where `~-N` walks backward (most-recent-first).
+    let pushdminus_set = false;                             // c:4906 (TODO: plumb)
+    let backwards = ch == if pushdminus_set { '+' } else { '-' }; // c:4906
 
-    if !backwards && val == 0 {                             // c:N/A
-        return Some(pwd.to_string());                       // c:N/A
-    }                                                       // c:N/A
+    // C: `if (!backwards && !val--) return pwd;`
+    // Decrement val POST-test so val becomes 0 → return pwd.
+    let mut val = val;                                      // c:4904
+    if !backwards && val == 0 {                             // c:4907
+        return Some(pwd.to_string());                       // c:4908
+    }
+    if !backwards { val -= 1; }                             // c:4907 (post-decrement)
 
-    let idx = if backwards {                                // c:N/A
-        dirstack.len().checked_sub(val as usize)?           // c:N/A
-    } else {                                                // c:N/A
-        (val - 1) as usize                                  // c:N/A
-    };                                                      // c:N/A
+    // C lines 4909-4912: walk dirstack.
+    // backwards: from lastnode, val steps back.
+    // forwards: from firstnode, val steps forward.
+    let n = dirstack.len() as i32;                          // c:4910
+    let idx = if backwards {                                // c:4910
+        // last element is index n-1; val steps back from there.
+        let i = n - val;                                    // c:4910
+        if i < 0 { return None; }                           // c:4913 (n == end)
+        i as usize                                          // c:4910
+    } else {                                                // c:4912
+        if val < 0 || val >= n { return None; }             // c:4913 (n == end)
+        val as usize                                        // c:4912
+    };
 
-    dirstack.get(idx).cloned()                              // c:N/A
-}                                                           // c:N/A
+    // C: `return (char *)getdata(n);`
+    dirstack.get(idx).cloned()                              // c:4920
+}                                                           // c:4922
 
 
 /// Quote types for (q) flag
