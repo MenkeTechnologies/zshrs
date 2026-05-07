@@ -2978,6 +2978,37 @@ fn paramsubst(                                              // c:1625
             } else if let Some(arr) = state.arrays.get(&var_name) { // c:1625
                 if sub == "*" || sub == "@" {               // c:1625
                     arr.join(" ")                            // c:1625
+                } else if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
+                    // (I)/(i)/(R)/(r) on bare $arr[...]. Same as
+                    // braced form. Direct port of params.c getarg
+                    // array-pattern routing.
+                    let s = s.trim_start();
+                    let rest = s.strip_prefix('(')?;
+                    let close = rest.find(')')?;
+                    let f = rest[..close].to_string();
+                    let p = rest[close + 1..].to_string();
+                    if f.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'n' | 'e')) {
+                        Some((f, p))
+                    } else { None }
+                })(sub) {
+                    let return_index = flags.contains('I') || flags.contains('i');
+                    let return_all = flags.contains('I') || flags.contains('R');
+                    let mut out: Vec<String> = Vec::new();
+                    for (idx, elem) in arr.iter().enumerate() {
+                        if crate::exec::ShellExecutor::glob_match_static(elem, &pat) {
+                            if return_index {
+                                out.push((idx + 1).to_string());
+                            } else {
+                                out.push(elem.clone());
+                            }
+                            if !return_all { break; }
+                        }
+                    }
+                    if out.is_empty() && return_index {
+                        (arr.len() + 1).to_string()
+                    } else {
+                        out.join(" ")
+                    }
                 } else if let Some((lo, hi)) = sub.split_once(',') { // c:1625
                     // Delegate to the canonical slice helper —
                     // gets all the negative-wrap / out-of-range
