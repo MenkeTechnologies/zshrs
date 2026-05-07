@@ -7626,7 +7626,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             } else {
                 re
             };
-            eprintln!("DBG regex compile final_re={:?} input_pat={:?}", final_re, pattern);
             regex::Regex::new(&final_re).ok()
         } else {
             None
@@ -7695,7 +7694,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                     ends.push("0".to_string());
                                 }
                             }
-                            eprintln!("DBG match populating arr={:?}", arr);
                             exec.arrays.insert("match".to_string(), arr);
                             // mbegin/mend arrays — 1-based start
                             // and end positions of each capture
