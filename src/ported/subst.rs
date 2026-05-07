@@ -1073,6 +1073,14 @@ fn paramsubst(                                              // c:1625
         let mut flag_keys = false;                          // c:2247 (k)
         let mut flag_values = false;                        // c:2256 (v)
         let mut flag_arrlen = false;                        // c:2265 (#)
+        // (l:N::PRE:) left-pad / (r:N::POST:) right-pad parsed values.
+        // Port of subst.c:2319-2375 l/r flag arm.
+        let mut prenum: i64 = 0;                            // c:1776 (zlong prenum)
+        let mut postnum: i64 = 0;                           // c:1776 (zlong postnum)
+        let mut premul: Option<String> = None;              // c:1772 (premul)
+        let mut postmul: Option<String> = None;             // c:1772 (postmul)
+        let mut preone: Option<String> = None;              // c:1772 (preone)
+        let mut postone: Option<String> = None;             // c:1772 (postone)
         if body_chars.first() == Some(&'(') {               // c:2147
             let mut d = 1_i32;                              // c:2147
             idx = 1;                                        // c:2147
@@ -1091,6 +1099,56 @@ fn paramsubst(                                              // c:1625
                     'k' => { flag_keys = true; }            // c:2247
                     'v' => { flag_values = true; }          // c:2256
                     '#' => { flag_arrlen = true; }          // c:2265
+                    'l' | 'r' => {                          // c:2319 (l/r pad)
+                        // Consume `:N:STR1:STR2:` form.
+                        // C: `s++; del0 = s; num = get_intarg(&s, &dellen);`
+                        let is_left = fc == 'l';            // c:2320
+                        idx += 1;                           // c:2323
+                        if idx >= body_chars.len() { break; }
+                        let del = body_chars[idx];          // c:2324 (del0)
+                        idx += 1;                           // c:2324
+                        // Parse N — digits up to next del.
+                        let mut num_str = String::new();    // c:2326
+                        while idx < body_chars.len()
+                            && body_chars[idx].is_ascii_digit()
+                        {
+                            num_str.push(body_chars[idx]);
+                            idx += 1;
+                        }
+                        let n: i64 = num_str.parse().unwrap_or(0); // c:2326
+                        if is_left { prenum = n; } else { postnum = n; } // c:2329-2331
+                        // Optional STR1 (mul) after another del.
+                        if idx < body_chars.len() && body_chars[idx] == del {
+                            idx += 1;                       // c:2336
+                            let s1_start = idx;             // c:2336
+                            while idx < body_chars.len()
+                                && body_chars[idx] != del
+                            {
+                                idx += 1;
+                            }
+                            let s1: String = body_chars[s1_start..idx].iter().collect();
+                            if is_left { premul = Some(s1); } else { postmul = Some(s1); }
+                            if idx < body_chars.len() {     // c:2354
+                                idx += 1; // skip del
+                            }
+                            // Optional STR2 (one-time) after another del.
+                            if idx < body_chars.len() && body_chars[idx] == del {
+                                idx += 1;                   // c:2360
+                                let s2_start = idx;
+                                while idx < body_chars.len()
+                                    && body_chars[idx] != del
+                                {
+                                    idx += 1;
+                                }
+                                let s2: String = body_chars[s2_start..idx].iter().collect();
+                                if is_left { preone = Some(s2); } else { postone = Some(s2); }
+                                if idx < body_chars.len() { idx += 1; } // skip del
+                            }
+                        }
+                        continue;                           // c:2374 (loop continues from idx)
+                    }
+                    'm' => { /* multi_width — c:2376, skip for now */ } // c:2376
+                    'p' => { /* escapes flag — c:2382 */ }  // c:2382
                     _ => { /* unhandled flag — swallow per existing behavior */ }
                 }
                 idx += 1;
@@ -1304,6 +1362,23 @@ fn paramsubst(                                              // c:1625
             }
             value = out;
         }
+        // (l:N::PRE:) / (r:N::POST:) padding — apply via dopadding.
+        // Port of subst.c flag-loop l/r interaction with subst.c:893
+        // dopadding. zsh: prenum=N pads to width N; STR1=premul (rep),
+        // STR2=preone (one-time before STR1 reps).
+        if prenum > 0 || postnum > 0 {                      // c:2319/2330
+            let mul_default = " ".to_string();              // c:907 (def = " ")
+            value = dopadding(
+                &value,
+                prenum.max(0) as usize,
+                postnum.max(0) as usize,
+                preone.as_deref(),
+                postone.as_deref(),
+                premul.as_deref().unwrap_or(&mul_default),
+                postmul.as_deref().unwrap_or(&mul_default),
+            );
+        }
+
         if flag_qcount > 0 {                                // c:2237
             // (q)/(qq)/(qqq)/(qqqq) — quote per count.
             value = match flag_qcount {
