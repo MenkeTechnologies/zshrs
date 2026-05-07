@@ -175,7 +175,6 @@ charcount
 # Real port = port getarg and route through; until then,
 # allowlisted with TODO. Each marked with the C line range it
 # corresponds to inside getarg's body.
-parse_subscript_flags     # getarg flag parse: params.c:1389-1480
 array_subscript_flag      # getarg array search: params.c:1672-1719
 assoc_subscript_flag      # getarg hash search: params.c:1581-1660
 
