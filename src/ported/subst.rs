@@ -1770,6 +1770,15 @@ fn paramsubst(                                              // c:1625
                 } else {
                     String::new()
                 }
+            } else if let Some(magic_val) = crate::fusevm_bridge::with_executor(|exec|
+                exec.get_special_array_value(&var_name, sub)
+            ) {
+                // Magic-assoc lookup: aliases, functions, options,
+                // commands, jobtexts, etc. Direct port of zsh's
+                // per-magic-table getfn dispatch (Src/Modules/
+                // parameter.c et al.). Was falling through to scalar
+                // char-index which returned empty.
+                magic_val                                    // c:2926
             } else {
                 // Scalar with subscript — char-index access.
                 let s_chars: Vec<char> = state.variables.get(&var_name)
