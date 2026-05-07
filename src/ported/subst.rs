@@ -967,8 +967,19 @@ fn stringsubst(                                             // c:237
                 }                                           // c:237
                 if end < chars.len() && depth == 0 {        // c:237
                     let cmd: String = chars[cmd_open + 1..end].iter().collect(); // c:237
-                    let output = crate::fusevm_bridge::with_executor( // c:237
-                        |exec| exec.run_command_substitution(&cmd)); // c:237
+                    // \$(< file) shorthand — read file contents directly
+                    // without spawning a process. Direct port of subst.c
+                    // around line 250 which checks for the leading
+                    // `<` redirect-only form and calls readoutput
+                    // instead of getoutput.
+                    let trimmed = cmd.trim_start();
+                    let output = if let Some(rest) = trimmed.strip_prefix('<') {
+                        let path = rest.trim();
+                        std::fs::read_to_string(path).unwrap_or_default()
+                    } else {
+                        crate::fusevm_bridge::with_executor( // c:237
+                            |exec| exec.run_command_substitution(&cmd))
+                    };
                     let prefix: String = chars[..pos].iter().collect(); // c:237
                     let suffix: String = if end + 1 < chars.len() { // c:237
                         chars[end + 1..].iter().collect()   // c:237
