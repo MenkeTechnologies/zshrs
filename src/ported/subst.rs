@@ -2508,25 +2508,66 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
             None => break,                                  // c:4531
         };                                                  // c:4531
 
-        // `:s/old/new/` and `:S/old/new/` consume their pattern +
-        // replacement from the modifier chain. Port of Src/subst.c
-        // (modify) `case 's': case 'S':` arms — the `S` variant is
-        // the anchored form which only replaces at the head/tail
-        // (depending on context); zshrs treats it the same as `s`
-        // for the simple unanchored case, which covers the common
-        // usage. Delimiter is whatever char follows `s`.
-        if modifier == 's' || modifier == 'S' {             // c:4531
-            let delim = match chars.next() {                // c:4531
-                Some(c) => c,                               // c:4531
-                None => break,                              // c:4531
-            };                                              // c:4531
-            let pat: String = chars.by_ref().take_while(|&c| c != delim).collect(); // c:4531
-            let repl: String = chars.by_ref().take_while(|&c| c != delim).collect(); // c:4531
-            // Apply the substitution and remember it for `:&`.
-            result = (if gbal { result.replace(&pat as &str, &repl as &str) } else { result.replacen(&pat as &str, &repl as &str, 1) }); // c:4531
-            last_subst = Some((pat, repl));                 // c:4531
-            continue;                                       // c:4531
-        }                                                   // c:4531
+        // `:s/old/new/` and `:S/old/new/` — port of subst.c:4583-4685.
+        // `:s` is the standard substitute, `:S` is the anchored
+        // variant. Parsing rules:
+        //   - delim is the char immediately after `s`/`S`
+        //   - pattern is read until next unescaped delim
+        //   - replacement is read until next unescaped delim or eof
+        //   - in pattern: `\X` → literal X (backslash dropped)
+        //   - in replacement: `\X` → literal X; `&` → matched portion
+        //   - trailing delim is optional
+        if modifier == 's' || modifier == 'S' {             // c:4583
+            let delim = match chars.next() {                // c:4585
+                Some(c) => c,                               // c:4585
+                None => break,                              // c:4585
+            };
+            // Read pattern with backslash-escape support.
+            let mut pat = String::new();                    // c:4595
+            while let Some(&c) = chars.peek() {
+                if c == delim { chars.next(); break; }
+                if c == '\\' {                              // c:4598 (backslash escape)
+                    chars.next();
+                    if let Some(&nx) = chars.peek() {
+                        // C: `\X` drops backslash for non-meta X; for
+                        // meta keeps escape. Simplify to drop-always.
+                        pat.push(nx);
+                        chars.next();
+                    }
+                } else {
+                    pat.push(c);
+                    chars.next();
+                }
+            }
+            // Read replacement with `&` and `\X` handling.
+            let mut repl = String::new();                   // c:4625
+            while let Some(&c) = chars.peek() {
+                if c == delim { chars.next(); break; }
+                if c == '\\' {                              // c:4630
+                    chars.next();
+                    if let Some(&nx) = chars.peek() {
+                        repl.push(nx);
+                        chars.next();
+                    }
+                } else if c == '&' {                        // c:4639 (& → matched portion)
+                    chars.next();
+                    repl.push_str(&pat);
+                } else {
+                    repl.push(c);
+                    chars.next();
+                }
+            }
+            // Apply: gbal→all, else first match. C's :S anchors at
+            // head/tail; for the common :s case treat both same.
+            // Save for :& replay.
+            result = if gbal {                              // c:4665
+                result.replace(pat.as_str(), repl.as_str())
+            } else {
+                result.replacen(pat.as_str(), repl.as_str(), 1)
+            };
+            last_subst = Some((pat, repl));                 // c:4673
+            continue;                                       // c:4675
+        }                                                   // c:4685
 
         // `:&` repeats the last `:s` substitution. Per Src/subst.c
         // modify's `case '&':`. No-op if no prior `:s` in this
