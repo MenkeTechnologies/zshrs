@@ -1623,12 +1623,28 @@ fn paramsubst(                                              // c:1625
 
         // (k) keys / (v) values on assoc — fold the assoc into a
         // joined string. Port of subst.c:2247-2270.
+        // (kv) interleave: when BOTH flags are set, emit alternating
+        // key/value pairs (zsh's "double-flag" form). The order
+        // matters — k-then-v gives [k1 v1 k2 v2], v-then-k gives
+        // [v1 k1 v2 k2], but the flag-loop doesn't preserve order;
+        // we use kv ordering (zsh canonical default).
         // Magic-assoc fallback (aliases / functions / options / etc.)
         // mirrors the bytecode-VM path: when the name isn't in
         // assoc_arrays, route through the function_names / alias_names
         // sets. Direct port of zsh's per-magic-table getfn dispatch.
         let mut value: String;                              // c:2247
-        if flag_keys {                                      // c:2247
+        if flag_keys && flag_values {                        // c:2247 (kv)
+            value = state.assoc_arrays.get(&var_name)        // c:2247
+                .map(|m| {                                   // c:2247
+                    let mut out: Vec<String> = Vec::with_capacity(m.len() * 2); // c:2247
+                    for (k, v) in m {                        // c:2247
+                        out.push(k.clone());                 // c:2247
+                        out.push(v.clone());                 // c:2247
+                    }                                        // c:2247
+                    out.join(" ")                            // c:2247
+                })                                           // c:2247
+                .unwrap_or_default();                        // c:2247
+        } else if flag_keys {                                // c:2247
             value = state.assoc_arrays.get(&var_name)       // c:2247
                 .map(|m| m.keys().cloned().collect::<Vec<_>>().join(" ")) // c:2247
                 .or_else(|| {                               // c:2247
