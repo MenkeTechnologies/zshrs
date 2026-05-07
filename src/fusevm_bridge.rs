@@ -2708,7 +2708,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let result = with_executor(|exec| {
             let mut state = crate::ported::subst::SubstState::from_executor(exec);
             let mut ret_flags = 0u32;
-            let (_full_str, _new_pos, nodes) = crate::ported::subst::paramsubst_bridge(
+            let (_full_str, _new_pos, nodes) = crate::ported::subst::paramsubst(
                 &full,
                 0,
                 false,
