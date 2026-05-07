@@ -2712,12 +2712,29 @@ fn paramsubst(                                              // c:1625
         // Direct port of subst.c:3950 multi-node return.
         let splat_full = subscript_str.as_deref() == Some("@") // c:3950
             || subscript_str.as_deref() == Some("*");          // c:3950
+        // Range subscript like `[1,3]` also produces array-shape
+        // slice — splat in non-DQ.
+        let splat_range = subscript_str.as_deref()
+            .map(|s| s.contains(','))
+            .unwrap_or(false);                                 // c:3950
         if !qt                                                // c:3950
             && pf_flags & prefork_flags::SINGLE == 0          // c:3950
-            && (subscript_str.is_none() || splat_full)        // c:3950
+            && (subscript_str.is_none() || splat_full || splat_range) // c:3950
             && state.arrays.contains_key(&var_name)           // c:3950
         {                                                     // c:3950
-            if let Some(arr) = state.arrays.get(&var_name).cloned() {
+            // Pull the actual array slice for range form so
+            // splat uses the slice elements (not the full arr).
+            let slice_arr: Option<Vec<String>> = if splat_range {
+                if let Some(sub) = subscript_str.as_deref() {
+                    if let Some((lo, hi)) = sub.split_once(',') { // c:3950
+                        let lo: i64 = lo.trim().parse().unwrap_or(1); // c:3950
+                        let hi: i64 = hi.trim().parse().unwrap_or(0); // c:3950
+                        state.arrays.get(&var_name).map(|arr|
+                            crate::ported::params::slice_indexed_array(arr, lo, hi))
+                    } else { None }
+                } else { None }
+            } else { None };
+            if let Some(arr) = slice_arr.or_else(|| state.arrays.get(&var_name).cloned()) {
                 let prefix: String = chars[..start_pos].iter().collect(); // c:3950
                 let suffix: String = chars[pos..].iter().collect();        // c:3950
                 let mut nodes: Vec<String> = Vec::with_capacity(arr.len()); // c:3950
