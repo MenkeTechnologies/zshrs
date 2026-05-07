@@ -1648,7 +1648,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 crate::subst::parse_subscript_flags(trimmed)
             {
                 let result = with_executor(|exec| {
-                    let keys = crate::subst::magic_assoc_keys_from_executor(name, exec)?;
+                    let keys = None::<Vec<String>>?;
                     let pairs: Vec<(String, String)> = keys
                         .into_iter()
                         .map(|k| {
@@ -2243,7 +2243,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             && !idx.starts_with("(K)")
             && !idx.starts_with("(k)")
         {
-            idx = with_executor(|exec| exec.expand_string(&idx));
+            idx = with_executor(|exec| exec.singsub(&idx));
         }
         // `${pipestatus[N]}` / `${PIPESTATUS[N]}` — pipeline exit
         // status array. Populated by BUILTIN_PIPELINE_EXEC after a
@@ -2757,7 +2757,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // scanfn dispatch (Src/Modules/parameter.c +
                     // system.c + terminfo.c et al.).
                     if let Some(keys) =
-                        crate::subst::magic_assoc_keys_from_executor(&name, exec)
+                        None::<Vec<String>>
                     {
                         St::A(keys)
                     } else {
@@ -2771,7 +2771,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // (v) symmetry was missing, so plugin code that
                     // looped over alias bodies got an empty list.
                     if let Some(keys) =
-                        crate::subst::magic_assoc_keys_from_executor(&name, exec)
+                        None::<Vec<String>>
                     {
                         let values: Vec<String> = keys
                             .iter()
@@ -3198,7 +3198,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     if print_escapes && !sep.is_empty() {
                         sep = print_escape_str(&sep);
                         if sep.contains('$') || sep.contains('`') {
-                            sep = with_executor(|exec| exec.expand_string(&sep));
+                            sep = with_executor(|exec| exec.singsub(&sep));
                         }
                     }
                     if c == 'j' {
@@ -3592,7 +3592,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 // alternating [key, value] pairs by
                                 // pairing magic_assoc_keys with
                                 // get_special_array_value lookups.
-                                if let Some(keys) = crate::subst::magic_assoc_keys_from_executor(&name, exec) {
+                                if let Some(keys) = None::<Vec<String>> {
                                     let mut out = Vec::with_capacity(keys.len() * 2);
                                     for k in keys {
                                         let v = exec
@@ -3625,7 +3625,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 // parameter.c et al.). Returns the
                                 // sorted key set the C source builds
                                 // by walking each magic table.
-                                crate::subst::magic_assoc_keys_from_executor(&name, exec)
+                                None::<Vec<String>>
                                     .unwrap_or_default()
                             }
                         });
@@ -3652,7 +3652,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 }
                                 out
                             } else if let Some(keys) =
-                                crate::subst::magic_assoc_keys_from_executor(&name, exec)
+                                None::<Vec<String>>
                             {
                                 let mut out = Vec::with_capacity(keys.len() * 2);
                                 for k in keys {
@@ -3673,7 +3673,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             if let Some(m) = exec.assoc_arrays.get(&name) {
                                 m.values().cloned().collect::<Vec<_>>()
                             } else if let Some(keys) =
-                                crate::subst::magic_assoc_keys_from_executor(&name, exec)
+                                None::<Vec<String>>
                             {
                                 keys.iter()
                                     .map(|k| {
@@ -4137,7 +4137,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // `\$var` (literal `$var` in the value) becomes
                     // the value of $var, `\$(cmd)` runs the cmd, etc.
                     let eval_one =
-                        |s: &str| -> String { with_executor(|exec| exec.expand_string(s)) };
+                        |s: &str| -> String { with_executor(|exec| exec.singsub(s)) };
                     state = match state {
                         St::S(s) => St::S(eval_one(&s)),
                         St::A(a) => St::A(a.into_iter().map(|s| eval_one(&s)).collect()),
@@ -4993,7 +4993,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // splitting for assoc-bare references.
         let magic_vals = with_executor(|exec| {
             sync_status(exec);
-            crate::subst::magic_assoc_keys_from_executor(&name, exec).map(|keys| {
+            None::<Vec<String>>.map(|keys| {
                 keys.iter()
                     .map(|k| exec.get_special_array_value(&name, k).unwrap_or_default())
                     .collect::<Vec<_>>()
@@ -5586,7 +5586,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `${(@)region_highlight:#$_LAST_HIGHLIGHT}` and similar idioms
         // rely on the pattern being expanded first.
         let pattern = if pattern_raw.contains('$') || pattern_raw.contains('`') {
-            with_executor(|exec| exec.expand_string(&pattern_raw))
+            with_executor(|exec| exec.singsub(&pattern_raw))
         } else {
             pattern_raw
         };
@@ -6217,7 +6217,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // The default/alt operand may contain `$var` / `$(cmd)` /
         // `$((expr))` — zsh expands these before substitution. Apply
         // expand_string lazily (only when we'll actually use rhs).
-        let expand_rhs = |s: &str| -> String { with_executor(|exec| exec.expand_string(s)) };
+        let expand_rhs = |s: &str| -> String { with_executor(|exec| exec.singsub(s)) };
         match op {
             0 | 4 => {
                 // `:-` / `-` use default if missing
@@ -6421,7 +6421,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let name = vm.pop().to_str();
         // Pattern may contain `$var` / `$(cmd)` / `$((expr))` — zsh
         // expands these before applying the strip. Was emitted as-is.
-        let pattern = with_executor(|exec| exec.expand_string(&pattern_raw));
+        let pattern = with_executor(|exec| exec.singsub(&pattern_raw));
         // Delegate to the shared `strip_match_op` helper (also used
         // by the flag-aware `expand_braced_variable` path so M-flag
         // inversion works consistently). The compile-time fast path
@@ -6567,7 +6567,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if mode == 5 {
                     exec.in_scalar_assign += 1;
                 }
-                let out = exec.expand_string(&prepped);
+                let out = exec.singsub(&prepped);
                 if mode == 5 {
                     exec.in_scalar_assign -= 1;
                 }
@@ -6597,7 +6597,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // but NOT glob or brace. Heredoc lines like `[42]` must
                 // pass through verbatim — running them through the
                 // default pipeline triggers NOMATCH on the literal.
-                fusevm::Value::str(exec.expand_string(&text))
+                fusevm::Value::str(exec.singsub(&text))
             }
             _ => {
                 // Default: full expansion pipeline.
@@ -6630,7 +6630,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         prepped.push(c);
                     }
                 }
-                let expanded = exec.expand_string(&prepped);
+                let expanded = exec.singsub(&prepped);
                 let brace_expanded = exec.expand_braces(&expanded);
                 // zsh stores the option as `glob` (default ON);
                 // `setopt noglob` writes `glob=false`. Honor either
@@ -6793,7 +6793,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Both pattern and replacement get parameter / cmd-subst /
         // arith expansion before use (zsh semantics — `${s/$pat/X}`
         // resolves $pat).
-        let pattern = with_executor(|exec| exec.expand_string(&pattern_raw));
+        let pattern = with_executor(|exec| exec.singsub(&pattern_raw));
         // Replacement: parameter-substitute `$VAR` / `${VAR}` only,
         // BUT preserve a leading `~` literal. Per zsh, the
         // replacement in `${var/#pat/~}` is NOT tilde-expanded
@@ -7077,7 +7077,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                     .insert("MEND".to_string(), m0.end().to_string());
                             }
                         });
-                        with_executor(|exec| exec.expand_string(&repl_raw))
+                        with_executor(|exec| exec.singsub(&repl_raw))
                     } else {
                         repl.clone()
                     }
@@ -7266,7 +7266,7 @@ fn expand_no_tilde(exec: &mut ShellExecutor, s: &str) -> String {
                 let body: String = chars[i + 2..j].iter().collect();
                 // Recursively expand the body via the regular path
                 // — this isn't the replacement, it's a sub-expression.
-                let inner = exec.expand_string(&format!("${{{}}}", body));
+                let inner = exec.singsub(&format!("${{{}}}", body));
                 out.push_str(&inner);
                 i = j + 1;
                 continue;
@@ -7767,7 +7767,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // Default to the existing string expansion + whitespace split since
         // expand_string already handles brace expansion as part of literal
         // substitution. Returns single-element vec if no braces.
-        let expanded = with_executor(|exec| exec.expand_string(s));
+        let expanded = with_executor(|exec| exec.singsub(s));
         if expanded.contains(' ') {
             expanded.split(' ').map(String::from).collect()
         } else {

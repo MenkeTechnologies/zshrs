@@ -4484,14 +4484,14 @@ impl crate::ported::exec::ShellExecutor {
     /// empty-ness.
     pub(crate) fn array_element_is_set(&mut self, var_name: &str, index: &str) -> bool {
         if self.assoc_arrays.contains_key(var_name) {
-            let key = self.expand_string(index);
+            let key = self.singsub(index);
             return self
                 .assoc_arrays
                 .get(var_name)
                 .map(|a| a.contains_key(&key))
                 .unwrap_or(false);
         }
-        let expanded_index = self.expand_string(index);
+        let expanded_index = self.singsub(index);
         if let Ok(idx) = expanded_index.parse::<i64>() {
             if let Some(arr) = self.arrays.get(var_name) {
                 let len = arr.len() as i64;
@@ -4526,14 +4526,14 @@ impl crate::ported::exec::ShellExecutor {
             return val;
         }
         if self.assoc_arrays.contains_key(var_name) {
-            let key = self.expand_string(index);
+            let key = self.singsub(index);
             return self
                 .assoc_arrays
                 .get(var_name)
                 .and_then(|a| a.get(&key).cloned())
                 .unwrap_or_default();
         }
-        let expanded_index = self.expand_string(index);
+        let expanded_index = self.singsub(index);
         if let Ok(idx) = expanded_index.parse::<i64>() {
             if let Some(arr) = self.arrays.get(var_name) {
                 let pos = if idx > 0 {

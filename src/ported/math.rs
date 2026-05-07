@@ -2170,7 +2170,7 @@ impl crate::ported::exec::ShellExecutor {
         // expand_string would tilde-expand `~` (bitwise NOT in arith
         // context) into "no such user" errors.
         let expr = if expr_pre.contains('$') || expr_pre.contains('`') {
-            self.expand_string(&expr_pre)
+            self.singsub(&expr_pre)
         } else {
             expr_pre
         };
@@ -2546,7 +2546,7 @@ impl crate::ported::exec::ShellExecutor {
     }
     pub(crate) fn eval_arith_expr(&mut self, expr: &str) -> i64 {
         let expr_expanded = if expr.contains('$') || expr.contains('`') {
-            self.expand_string(expr)
+            self.singsub(expr)
         } else {
             expr.to_string()
         };
@@ -2636,7 +2636,7 @@ impl crate::ported::exec::ShellExecutor {
     }
     pub(crate) fn eval_arith_expr_float(&mut self, expr: &str) -> f64 {
         let expr_expanded = if expr.contains('$') || expr.contains('`') {
-            self.expand_string(expr)
+            self.singsub(expr)
         } else {
             expr.to_string()
         };

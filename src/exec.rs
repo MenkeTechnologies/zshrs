@@ -650,6 +650,22 @@ pub struct ShellExecutor {
 }
 
 impl ShellExecutor {
+    /// Single-string substitution via the canonical pipeline. Snapshots
+    /// the executor state into a `SubstState`, runs `singsub` from
+    /// `Src/subst.c:514`, commits any side-effects (assigns inside
+    /// `${var:=default}`, etc.) back to the executor.
+    ///
+    /// Replaces the bot-invented `expand_string` method that was deleted
+    /// in the citation purge (180463e1e7). All call sites that previously
+    /// did `exec.singsub(s)` now do `exec.singsub(s)` and route
+    /// through the C-faithful `singsub`.
+    pub fn singsub(&mut self, s: &str) -> String {
+        let mut state = crate::ported::subst::SubstState::from_executor(self);
+        let r = crate::ported::subst::singsub(s, &mut state);
+        state.commit_to_executor(self);
+        r
+    }
+
     pub fn new() -> Self {
         tracing::debug!("ShellExecutor::new() initializing");
 
@@ -1476,7 +1492,7 @@ impl ShellExecutor {
                     // Untokenize then variable-expand — text-based
                     // word expansion for the spawned argv.
                     let untoked = crate::lex::untokenize(w);
-                    self.expand_string(&untoked)
+                    self.singsub(&untoked)
                 })
                 .collect()
         } else {
@@ -1584,7 +1600,7 @@ impl ShellExecutor {
             // Expand any leading $ / tilde in the filename so
             // `$(< $f)` and `$(< ~/x)` work.
             let resolved = if filename.contains('$') || filename.starts_with('~') {
-                self.expand_string(filename)
+                self.singsub(filename)
             } else {
                 filename.to_string()
             };
@@ -2269,7 +2285,7 @@ impl ShellExecutor {
     /// Get herestring content
     /// Port of getherestr() from exec.c
     pub fn getherestr(&mut self, word: &str) -> String {
-        let expanded = self.expand_string(word);
+        let expanded = self.singsub(word);
         format!("{}\n", expanded)
     }
 
