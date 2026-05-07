@@ -1826,9 +1826,15 @@ fn paramsubst(                                              // c:1625
                 }
             }
         } else {
-            // No subscript — scalar / array / assoc fallthrough.
+            // No subscript — scalar / array / assoc / magic-assoc
+            // fallthrough. Direct port of getstrvalue dispatch which
+            // checks each storage shape in priority order.
             state.variables.get(&var_name).cloned()
                 .or_else(|| state.arrays.get(&var_name).map(|a| a.join(" ")))
+                .or_else(|| state.assoc_arrays.get(&var_name)
+                    .map(|m| m.values().cloned().collect::<Vec<_>>().join(" ")))
+                .or_else(|| crate::fusevm_bridge::with_executor(|exec|
+                    exec.get_special_array_value(&var_name, "@")))
                 .unwrap_or_default()
         };
         let is_set = state.variables.contains_key(&var_name)
