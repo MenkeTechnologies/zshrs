@@ -3585,6 +3585,18 @@ pub fn filesubstr(s: &str, assign: bool, state: &SubstState) -> Option<String> {
         if p > 1 && p < chars.len() && isend(chars[p]) {
             let user: String = chars[1..p].iter().collect();
             let suffix: String = chars[p..].iter().collect();
+            // Named-dir lookup FIRST — `hash -d name=path` registered
+            // names take precedence over OS users (zsh canonical).
+            // Direct port of subst.c filesub which checks
+            // nameddirtab via getnameddir before falling through to
+            // getpwnam.
+            let named = crate::fusevm_bridge::with_executor(|exec| {
+                exec.named_dirs.get(&user)
+                    .map(|p| p.to_string_lossy().into_owned())
+            });
+            if let Some(path) = named {
+                return Some(format!("{}{}", path, suffix));
+            }
             // libc getpwnam — cstring -> pw_dir
             use std::ffi::CString;
             if let Ok(cname) = CString::new(user.clone()) {
