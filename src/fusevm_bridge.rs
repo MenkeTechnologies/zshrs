@@ -91,8 +91,43 @@ impl Drop for ExecutorContext {
 pub(crate) fn magic_assoc_keys(name: &str, exec: &ShellExecutor) -> Option<Vec<String>> {
     match name {
         "aliases" => Some(exec.aliases.keys().cloned().collect()),
+        "galiases" => Some(exec.global_aliases.keys().cloned().collect()),
+        "saliases" => Some(exec.suffix_aliases.keys().cloned().collect()),
+        "dis_aliases" | "dis_galiases" | "dis_saliases" => Some(Vec::new()),
         "functions" | "dis_functions" => Some(exec.function_names().into_iter().collect()),
+        "builtins" | "dis_builtins" => {
+            // Static builtin set — port of Src/Modules/parameter.c
+            // scanpmbuiltins which iterates the C builtin table.
+            // Match the same set the BUILTIN_PARAM_FLAG `+commands`
+            // path checks for builtin-ness.
+            let names: &[&str] = &[
+                "echo", "print", "printf", "cd", "pwd", "exit", "return", "true", "false",
+                ":", "test", "[", "local", "private", "declare", "typeset", "export", "unset",
+                "set", "shift", "read", "source", "alias", "unalias", "function", "type",
+                "which", "whence", "command", "builtin", "jobs", "bg", "fg", "wait", "kill",
+                "trap", "eval", "exec", "ulimit", "umask", "getopts", "shopt", "history",
+                "fc", "hash", "rehash", "let", "select", "time", "times", "compdef",
+                "compadd", "complete", "compgen", "zmodload", "zparseopts", "zstyle",
+                "zle", "vared", "zcompile", "autoload",
+            ];
+            Some(names.iter().map(|s| (*s).to_string()).collect())
+        }
+        "reswords" | "dis_reswords" => {
+            // zsh reserved words. Direct port of the static `reswds[]`
+            // table in Src/init.c.
+            let names: &[&str] = &[
+                "do", "done", "esac", "then", "elif", "else", "fi", "for", "case", "if",
+                "while", "function", "repeat", "time", "until", "exec", "command", "select",
+                "coproc", "nocorrect", "foreach", "end", "!", "[[", "{", "}", "declare",
+                "export", "float", "integer", "local", "private", "readonly", "typeset",
+            ];
+            Some(names.iter().map(|s| (*s).to_string()).collect())
+        }
         "options" => Some(exec.options.keys().cloned().collect()),
+        "commands" => Some(exec.command_hash.keys().cloned().collect()),
+        "jobtexts" | "jobdirs" | "jobstates" => {
+            Some(exec.jobs.iter().map(|(id, _)| id.to_string()).collect())
+        }
         "parameters" => {
             let mut keys: Vec<String> = exec.variables.keys().cloned().collect();
             keys.extend(exec.arrays.keys().cloned());
