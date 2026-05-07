@@ -2435,33 +2435,34 @@ fn paramsubst(                                              // c:1625
                 }
             } else if let Some(rhs) = r.strip_prefix(":|") { // c:3540 (set difference)
                 // ${arr:|other} — array set-difference: keep elems
-                // of arr that are NOT in other. Port of subst.c:3540
-                // SUB_DIFFERENCE arm. Per zsh, the RHS array's
-                // elements are GLOB PATTERNS — so `\${arr:|patterns}`
-                // drops every elem of arr that matches ANY pattern
-                // in `patterns`. Was doing literal-eq via HashSet.
+                // of arr that are NOT literally present in other.
+                // Direct port of subst.c:3522 SUB_DIFFERENCE arm
+                // which builds a hashtable of `compare` (the RHS
+                // array values) and tests presence via
+                // `gethashnode2` — LITERAL key equality, not glob.
+                // An earlier port used `glob_match_static` here,
+                // which made `(bar` (a malformed glob) fail to match
+                // an array element of literal text `(bar`.
                 let arr = state.arrays.get(&var_name).cloned().unwrap_or_default();
                 let other_name = rhs.trim();                 // c:3543
                 let other = state.arrays.get(other_name).cloned().unwrap_or_default();
+                let other_set: std::collections::HashSet<&String> = other.iter().collect();
                 let kept: Vec<String> = arr.into_iter()      // c:3540
-                    .filter(|s| {                            // c:3540
-                        !other.iter().any(|pat|              // c:3540
-                            crate::exec::ShellExecutor::glob_match_static(s, pat)) // c:3540
-                    })                                       // c:3540
+                    .filter(|s| !other_set.contains(s))      // c:3548
                     .collect();
                 value = kept.join(" ");
                 split_parts = Some(kept);                    // c:3540 (auto-splat)
             } else if let Some(rhs) = r.strip_prefix(":*") { // c:3540 (intersect)
                 // ${arr:*other} — array set-intersection — KEEP
-                // elems of arr matching ANY pattern in `other`.
+                // elems of arr literally present in other. Same
+                // hash-based lookup as `:|` per subst.c:3548
+                // `gethashnode2` literal-key path.
                 let arr = state.arrays.get(&var_name).cloned().unwrap_or_default();
                 let other_name = rhs.trim();                 // c:3543
                 let other = state.arrays.get(other_name).cloned().unwrap_or_default();
+                let other_set: std::collections::HashSet<&String> = other.iter().collect();
                 let kept: Vec<String> = arr.into_iter()      // c:3540
-                    .filter(|s| {                            // c:3540
-                        other.iter().any(|pat|               // c:3540
-                            crate::exec::ShellExecutor::glob_match_static(s, pat)) // c:3540
-                    })                                       // c:3540
+                    .filter(|s| other_set.contains(s))       // c:3548
                     .collect();
                 value = kept.join(" ");
                 split_parts = Some(kept);                    // c:3540 (auto-splat)
