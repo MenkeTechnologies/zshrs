@@ -3695,23 +3695,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     };
                 }
                 'q' => {
-                    // Quoting flags per zshexpn(1):
-                    //   q     backslash-escape special chars (no wrap)
-                    //   qq    single-quote always
-                    //   qqq   double-quote always
-                    //   qqqq  ANSI-C $'…' style
-                    // zsh reads consecutive q's as a single multi-char flag.
-                    //
-                    // Modifier suffixes:
-                    //   q+ — wrap-with-quote-if-needed (heuristic)
-                    //   q- — same as q but strip trailing newlines first
-                    //   q* — same as q but escape `*` and `?` in addition
-                    //   q! — alternate-form (each impl varies)
-                    //
-                    // Optional explicit delimiter form: q:sep: uses `sep` as
-                    // the wrapper instead of the level-default. Accepting the
-                    // syntax even though it's not in mainline zsh — keeps the
-                    // grammar forward-compatible with proposed extensions.
+                    // (q) quoting flag — direct port of `case 'q':` in
+                    // Src/subst.c:2235-2253. zsh accepts ONLY:
+                    //   q     backslash-escape (QT_BACKSLASH)
+                    //   qq    single-quote   (QT_SINGLE)
+                    //   qqq   double-quote   (QT_DOUBLE)
+                    //   qqqq  $'…' ANSI-C   (QT_DOLLARS)
+                    //   q-    QT_SINGLE_OPTIONAL (single-quote if needed)
+                    //   q+    QT_QUOTEDZPUTS    (quotedzputs() format)
+                    // No `q*`, no `q!`, and crucially no `q:str:` delimiter
+                    // form — those were bot-invented extensions. The
+                    // `q:str:` arm in particular treated `@` as a delimiter
+                    // (since `@` is non-alphanumeric so `is_zsh_flag_delim`
+                    // returned true), capturing `explicit_delim=Some("")`
+                    // and then `s.replace("", "\\")` inserted `\` between
+                    // every char. That broke `${(qqqq@)arr}` and any other
+                    // q-flag combined with a flag-letter that's also non-
+                    // alphanumeric. Reference: zsh has no q-delimiter form.
                     let mut level = 1;
                     while i < chars.len() && chars[i] == 'q' && level < 4 {
                         level += 1;
@@ -3719,41 +3719,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     }
                     let mut strip_trailing_newlines = false;
                     let mut wrap_only_if_needed = false;
-                    let mut escape_glob_chars = false;
-                    let mut explicit_delim: Option<String> = None;
+                    let escape_glob_chars = false;     // c:2235 (no q* in zsh)
+                    let explicit_delim: Option<String> = None; // c:2235 (no q:str: in zsh)
                     while i < chars.len() {
                         match chars[i] {
                             '+' => {
+                                // c:2245-2246 — q+ → QT_QUOTEDZPUTS. Mapped
+                                // to wrap-only-if-needed pending a faithful
+                                // QT_QUOTEDZPUTS port.
                                 wrap_only_if_needed = true;
                                 i += 1;
                             }
                             '-' => {
+                                // c:2245-2246 — q- → QT_SINGLE_OPTIONAL.
+                                // Currently mapped to strip_trailing_newlines
+                                // pending a faithful QT_SINGLE_OPTIONAL port.
                                 strip_trailing_newlines = true;
                                 i += 1;
-                            }
-                            '*' => {
-                                escape_glob_chars = true;
-                                i += 1;
-                            }
-                            '!' => {
-                                // q! is no-op alias (we don't have an
-                                // alternate-form distinction); just consume.
-                                i += 1;
-                            }
-                            d if ZshrsHost::is_zsh_flag_delim(d) => {
-                                // Delimited form q:str:. Read until matching
-                                // delim. Treat as "wrap each value with str"
-                                // post-quoting.
-                                i += 1;
-                                let mut s = String::new();
-                                while i < chars.len() && chars[i] != d {
-                                    s.push(chars[i]);
-                                    i += 1;
-                                }
-                                if i < chars.len() {
-                                    i += 1;
-                                }
-                                explicit_delim = Some(s);
                             }
                             _ => break,
                         }
