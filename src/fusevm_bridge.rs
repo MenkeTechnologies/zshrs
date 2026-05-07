@@ -6407,8 +6407,62 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // never carries (M) since `parse_param_modifier` rejects
         // flag forms and routes them through the bridge — so always
         // pass `m_flag=false` here.
-        let strip_one =
-            |v: &str, op: u8, pattern: &str| -> String { v.to_string() };
+        // strip_match_op port — direct inline of subst.c:3540's
+        // SUB_MATCH dispatch on the # / ## / % / %% pattern strip
+        // ops. Op codes per ParamModifierKind::Strip:
+        //   0 = `#`  shortest prefix
+        //   1 = `##` longest prefix
+        //   2 = `%`  shortest suffix
+        //   3 = `%%` longest suffix
+        // Pattern matching is currently glob-via-fnmatch from
+        // crate::ported::glob::glob_match_static (handles ?, *, [...]).
+        let strip_one = |v: &str, op: u8, pattern: &str| -> String {
+            let chars: Vec<char> = v.chars().collect();
+            let n = chars.len();
+            match op {
+                0 => {
+                    // shortest prefix strip — try k = 0, 1, ...
+                    for k in 0..=n {
+                        let prefix: String = chars[..k].iter().collect();
+                        if ShellExecutor::glob_match_static(&prefix, pattern) {
+                            return chars[k..].iter().collect();
+                        }
+                    }
+                    v.to_string()
+                }
+                1 => {
+                    // longest prefix strip — try k = n down to 0
+                    for k in (0..=n).rev() {
+                        let prefix: String = chars[..k].iter().collect();
+                        if ShellExecutor::glob_match_static(&prefix, pattern) {
+                            return chars[k..].iter().collect();
+                        }
+                    }
+                    v.to_string()
+                }
+                2 => {
+                    // shortest suffix strip
+                    for k in 0..=n {
+                        let suffix: String = chars[n - k..].iter().collect();
+                        if ShellExecutor::glob_match_static(&suffix, pattern) {
+                            return chars[..n - k].iter().collect();
+                        }
+                    }
+                    v.to_string()
+                }
+                3 => {
+                    // longest suffix strip
+                    for k in (0..=n).rev() {
+                        let suffix: String = chars[n - k..].iter().collect();
+                        if ShellExecutor::glob_match_static(&suffix, pattern) {
+                            return chars[..n - k].iter().collect();
+                        }
+                    }
+                    v.to_string()
+                }
+                _ => v.to_string(),
+            }
+        };
         // `${arr#pat}` / `${arr%pat}` / etc. on an array:
         //   - Unquoted form: iterate per element, preserve array
         //     shape so `print -l` emits one line per element. Direct
