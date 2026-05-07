@@ -3417,6 +3417,7 @@ dependencies = [
 name = "zshrs-parse"
 version = "0.10.9"
 dependencies = [
+ "glob",
  "serde",
 ]
 

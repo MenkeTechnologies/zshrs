@@ -7,7 +7,7 @@
 //!       ZPWR_VERBOSE=1 cargo test -p zsh --test zpwr_parse_test
 
 use std::path::{Path, PathBuf};
-use zsh::parser::ZshParser;
+use zsh::parse::ZshParser;
 
 fn zpwr_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/wizard".to_string());

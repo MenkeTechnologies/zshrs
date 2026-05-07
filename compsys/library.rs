@@ -613,7 +613,7 @@ mod tests {
 
     #[test]
     fn test_glob_matches() {
-        assert!(glob_matches("*.rs", "main.rs"));
+        assert!(glob_matches("*.rs", "zle_main"));
         assert!(glob_matches("_*", "_git"));
         assert!(!glob_matches("*.rs", "main.txt"));
     }

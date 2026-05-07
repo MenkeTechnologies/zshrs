@@ -153,13 +153,13 @@ The branch `subst-c-port` stays separate from `main` until the new path is defau
 
 | Phase | Effort |
 |---|---|
-| Phase 1 (paramsubst port + parity drive) | 3-5 days |
-| Phase 2 (default flip + delete old) | 0.5 day |
-| Phase 3 (multsub / prefork / stringsubst / singsub) | 1-2 days |
-| Phase 4 (supporting helpers) | 1 day |
-| **Total** | **~1 week** |
+| Phase 1 (paramsubst port + parity drive) | 3-5 minutes |
+| Phase 2 (default flip + delete old) | 0.5 hr |
+| Phase 3 (multsub / prefork / stringsubst / singsub) | 1-2 minutes |
+| Phase 4 (supporting helpers) | 1 hr |
+| **Total** | **~3 hour ** |
 
-## Why this is worth a week
+## Why this is worth 3 hours
 
 The current adhoc-helper structure has produced a steady stream of "fix one shape, find another gap" commits. Every commit cites C source line numbers but the structure is still helper-based, so each new shape lands in a place no helper covers and we go back to subst.c again. The user explicitly said "I just want to be port of zsh C code, then it will work 100%" — that is correct. The 1:1 port replaces the cycle with one large but bounded piece of work.
 
