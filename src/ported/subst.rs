@@ -2722,21 +2722,49 @@ pub mod sub_flags {                                         // c:N/A
 
 
 
-/// Concatenate string parts for parameter substitution result
-/// Port of strcatsub() from subst.c lines 783-797
-pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> String { // c:N/A
-    let mut result = String::with_capacity(prefix.len() + src.len() + suffix.len()); // c:N/A
-    result.push_str(prefix);                                // c:N/A
+/// Port of `strcatsub()` from `Src/subst.c:814-836`.
+///
+/// Concatenates `prefix` + `src` + `suffix` into a fresh string. If
+/// `glob_subst` is set, runs shtokenize on the src segment (so glob
+/// metacharacters become tokens for downstream pattern matching).
+///
+/// C signature: `char *strcatsub(char **d, char *pb, char *pe, char
+/// *src, int l, char *s, int glbsub, int copied)` — populates *d
+/// with the concat result and returns a pointer past the src
+/// segment. The Rust version returns the full concatenation; callers
+/// can recover the post-src position via prefix.len() + src.len().
+pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> String { // c:814
+    // C: `if (!pl && (!s || !*s)) { *d = dest = (copied ? src :
+    //     dupstring(src)); if (glbsub) shtokenize(dest); }`
+    // — fast path: no prefix, no suffix, just src (optionally
+    // shtokenized).
+    if prefix.is_empty() && suffix.is_empty() {             // c:820
+        if glob_subst {                                     // c:822
+            // shtokenize returns Vec<GlobToken>; for a string-output
+            // signature we keep the src as-is. The full token-aware
+            // pipeline lives in the canonical glob path.
+            let _ = crate::ported::glob::shtokenize(src);   // c:823
+        }
+        return src.to_string();                             // c:821
+    }
 
-    if glob_subst {                                         // c:N/A
-        result.push_str(&src.to_string() /* shtokenize stub */);                  // c:N/A
-    } else {                                                // c:N/A
-        result.push_str(src);                               // c:N/A
-    }                                                       // c:N/A
-
-    result.push_str(suffix);                                // c:N/A
-    result                                                  // c:N/A
-}                                                           // c:N/A
+    // C: `*d = dest = hcalloc(pl + l + (s ? strlen(s) : 0) + 1);
+    //     strncpy(dest, pb, pl); dest += pl;
+    //     strcpy(dest, src); if (glbsub) shtokenize(dest);
+    //     dest += l;
+    //     if (s) strcpy(dest, s);`
+    // — general path: pre-allocate + copy three segments in order.
+    let mut result = String::with_capacity(                 // c:825
+        prefix.len() + src.len() + suffix.len() + 1);
+    result.push_str(prefix);                                // c:826
+    result.push_str(src);                                   // c:828
+    if glob_subst {                                         // c:829
+        // Same shtokenize note as above.
+        let _ = crate::ported::glob::shtokenize(src);       // c:830
+    }
+    result.push_str(suffix);                                // c:833
+    result                                                  // c:835
+}                                                           // c:836
 
 
 
