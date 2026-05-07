@@ -3507,17 +3507,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 'C' => {
                     // `(C)` — capitalize. Direct port of
                     // src/zsh/Src/hist.c:2239-2256 CASMOD_CAPS via
-                    // crate::subst::casemodify. Treats any non-
+                    // crate::ported::hist::casemodify. Treats any non-
                     // alphanumeric (including punctuation, control
                     // chars, NOT just whitespace) as a word boundary
                     // and lowercases mid-word uppercase letters.
                     state = match state {
                         St::S(s) => {
-                            St::S(crate::subst::casemodify(&s, crate::subst::CaseMod::Caps))
+                            St::S(crate::ported::hist::casemodify(&s, crate::ported::hist::CaseMod::Caps))
                         }
                         St::A(a) => St::A(
                             a.into_iter()
-                                .map(|s| crate::subst::casemodify(&s, crate::subst::CaseMod::Caps))
+                                .map(|s| crate::ported::hist::casemodify(&s, crate::ported::hist::CaseMod::Caps))
                                 .collect(),
                         ),
                     };

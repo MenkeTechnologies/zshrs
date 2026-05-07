@@ -123,28 +123,8 @@ pub struct LinkList {                                       // c:100
 }                                                           // c:100
 
 impl LinkList {                                             // c:100
-    /// Port of zsh.h LinkList init (the C struct is initialized via
-    /// `LinkList l = (LinkList) zhalloc(sizeof(*l)); l->list.first = NULL;`).
-    pub fn new() -> Self {                                  // zsh.h:560
-        LinkList {                                          // zsh.h:560
-            nodes: VecDeque::new(),                         // zsh.h:560
-            flags: 0,                                       // zsh.h:560
-        }                                                   // zsh.h:560
-    }                                                       // zsh.h:560
-
-    /// Construct a single-element list. Mirrors the common C idiom
-    /// `addlinknode(newlinklist(), s)` used by `prefork()` to seed
-    /// the substitution pipeline.
-    pub fn from_string(s: &str) -> Self {                   // zsh.h:580
-        let mut list = LinkList::new();                     // zsh.h:580
-        list.nodes.push_back(LinkNode {                     // zsh.h:580
-            data: s.to_string(),                            // zsh.h:580
-        });                                                 // zsh.h:580
-        list                                                // zsh.h:580
-    }                                                       // zsh.h:580
-
-    /// Port of `firstnode(X)` macro from zsh.h:576.
-    pub fn first_node(&self) -> Option<usize> {             // zsh.h:576
+    /// Port of `firstnode(X)` macro from `src/zsh/Src/zsh.h:576`.
+    pub fn firstnode(&self) -> Option<usize> {              // zsh.h:576
         if self.nodes.is_empty() {                          // zsh.h:576
             None                                            // zsh.h:576
         } else {                                            // zsh.h:576
@@ -152,35 +132,33 @@ impl LinkList {                                             // c:100
         }                                                   // zsh.h:576
     }                                                       // zsh.h:576
 
-    /// Port of `getdata(X)` macro from zsh.h:586.
-    pub fn get_data(&self, idx: usize) -> Option<&str> {    // zsh.h:586
+    /// Port of `getdata(X)` macro from `src/zsh/Src/zsh.h:586`.
+    pub fn getdata(&self, idx: usize) -> Option<&str> {     // zsh.h:586
         self.nodes.get(idx).map(|n| n.data.as_str())        // zsh.h:586
     }                                                       // zsh.h:586
 
-    /// Port of `setdata(X,Y)` macro from zsh.h:587.
-    pub fn set_data(&mut self, idx: usize, data: String) {  // zsh.h:587
+    /// Port of `setdata(X,Y)` macro from `src/zsh/Src/zsh.h:587`.
+    pub fn setdata(&mut self, idx: usize, data: String) {   // zsh.h:587
         if let Some(node) = self.nodes.get_mut(idx) {       // zsh.h:587
             node.data = data;                               // zsh.h:587
         }                                                   // zsh.h:587
     }                                                       // zsh.h:587
 
-    /// Port of `insertlinknode(X,Y,Z)` macro family from zsh.h:580.
-    /// Inserts after the given index; returns the new node's index.
-    pub fn insert_after(&mut self, idx: usize, data: String) -> usize { // zsh.h:580
+    /// Port of `insertlinknode(X,Y,Z)` macro from `src/zsh/Src/zsh.h:580`.
+    pub fn insertlinknode(&mut self, idx: usize, data: String) -> usize { // zsh.h:580
         self.nodes.insert(idx + 1, LinkNode { data });      // zsh.h:580
         idx + 1                                             // zsh.h:580
     }                                                       // zsh.h:580
 
-    /// Port of `delete_node` family — the zsh.h macro chain that
-    /// excises a node from a doubly-linked list. Index-based here.
-    pub fn remove(&mut self, idx: usize) {                  // zsh.h:580
+    /// Port of `delete_node` macro chain in `src/zsh/Src/zsh.h`.
+    pub fn delete_node(&mut self, idx: usize) {             // zsh.h:580
         if idx < self.nodes.len() {                         // zsh.h:580
             self.nodes.remove(idx);                         // zsh.h:580
         }                                                   // zsh.h:580
     }                                                       // zsh.h:580
 
-    /// Port of `nextnode(X)` macro from zsh.h:588.
-    pub fn next_node(&self, idx: usize) -> Option<usize> {  // zsh.h:588
+    /// Port of `nextnode(X)` macro from `src/zsh/Src/zsh.h:588`.
+    pub fn nextnode(&self, idx: usize) -> Option<usize> {   // zsh.h:588
         if idx + 1 < self.nodes.len() {                     // zsh.h:588
             Some(idx + 1)                                   // zsh.h:588
         } else {                                            // zsh.h:588
@@ -188,16 +166,9 @@ impl LinkList {                                             // c:100
         }                                                   // zsh.h:588
     }                                                       // zsh.h:588
 
-    /// Port of `empty(X)` macro from zsh.h:583.
-    pub fn is_empty(&self) -> bool {                        // zsh.h:583
+    /// Port of `empty(X)` macro from `src/zsh/Src/zsh.h:583`.
+    pub fn empty(&self) -> bool {                           // zsh.h:583
         self.nodes.is_empty()                               // zsh.h:583
-    }                                                       // zsh.h:583
-
-    /// Idiomatic length — zsh has no LL_LEN macro; callers walked
-    /// the list manually. Provided here for convenience over the
-    /// underlying `VecDeque`.
-    pub fn len(&self) -> usize {                            // zsh.h:583
-        self.nodes.len()                                    // zsh.h:583
     }                                                       // zsh.h:583
 
 
@@ -271,7 +242,7 @@ pub const NULSTRING: &str = "\u{8F}";                       // c:100
 /// Check for array assignment with entries like [key]=val
 /// Port of keyvalpairelement() from subst.c lines 47-77
 fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> { // c:49
-    let data = list.get_data(node_idx)?;                    // c:49
+    let data = list.getdata(node_idx)?;                    // c:49
     let chars: Vec<char> = data.chars().collect();          // c:49
 
     if chars.is_empty() || chars[0] != INBRACK {            // c:49
@@ -315,9 +286,9 @@ fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> { //
         MARKER.to_string()                                  // c:49
     };                                                      // c:49
 
-    list.set_data(node_idx, marker);                        // c:49
-    let key_idx = list.insert_after(node_idx, key);         // c:49
-    let val_idx = list.insert_after(key_idx, value);        // c:49
+    list.setdata(node_idx, marker);                        // c:49
+    let key_idx = list.insertlinknode(node_idx, key);         // c:49
+    let val_idx = list.insertlinknode(key_idx, value);        // c:49
 
     Some(val_idx)                                           // c:49
 }                                                           // c:49
@@ -335,7 +306,7 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
     let asssub = (flags & prefork_flags::TYPESET != 0) && state.opts.ksh_typeset; // c:100
     let mut iter_count = 0u32;                              // c:100
 
-    while node_idx < list.len() {                           // c:100
+    while node_idx < list.nodes.len() {                           // c:100
         iter_count += 1;                                    // c:100
         if iter_count > 100_000 {                           // c:100
             // Safety cap: if some bug causes prefork's outer loop to
@@ -357,13 +328,13 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
 
         if state.opts.sh_file_expansion {                   // c:100
             // SHFILEEXPANSION - do file substitution first
-            if let Some(data) = list.get_data(node_idx) {   // c:100
+            if let Some(data) = list.getdata(node_idx) {   // c:100
                 let new_data = filesub(                     // c:100
                     data,                                   // c:100
                     flags & (prefork_flags::TYPESET | prefork_flags::ASSIGN), // c:100
                     state,                                  // c:100
                 );                                          // c:100
-                list.set_data(node_idx, new_data);          // c:100
+                list.setdata(node_idx, new_data);          // c:100
             }                                               // c:100
         } else {                                            // c:100
             // Do string substitution
@@ -387,7 +358,7 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
     // Second pass for SHFILEEXPANSION
     if state.opts.sh_file_expansion {                       // c:100
         node_idx = 0;                                       // c:100
-        while node_idx < list.len() {                       // c:100
+        while node_idx < list.nodes.len() {                       // c:100
             if let Some(new_idx) = stringsubst(             // c:100
                 list,                                       // c:100
                 node_idx,                                   // c:100
@@ -405,23 +376,23 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
 
     // Third pass: brace expansion and file substitution
     node_idx = 0;                                           // c:100
-    while node_idx < list.len() {                           // c:100
+    while node_idx < list.nodes.len() {                           // c:100
         if Some(node_idx) == stop_idx {                     // c:100
             keep = false;                                   // c:100
         }                                                   // c:100
 
-        if let Some(data) = list.get_data(node_idx) {       // c:100
+        if let Some(data) = list.getdata(node_idx) {       // c:100
             if !data.is_empty() {                           // c:100
                 // remnulargs
                 let data = remnulargs(data);                // c:100
-                list.set_data(node_idx, data.clone());      // c:100
+                list.setdata(node_idx, data.clone());      // c:100
 
                 // Brace expansion
                 if !state.opts.ignore_braces && (flags & prefork_flags::SINGLE == 0) { // c:100
                     if !keep {                              // c:100
-                        stop_idx = list.next_node(node_idx); // c:100
+                        stop_idx = list.nextnode(node_idx); // c:100
                     }                                       // c:100
-                    while hasbraces(list.get_data(node_idx).unwrap_or("")) { // c:100
+                    while hasbraces(list.getdata(node_idx).unwrap_or("")) { // c:100
                         keep = true;                        // c:100
                         xpandbraces(list, &mut node_idx);   // c:100
                     }                                       // c:100
@@ -432,20 +403,20 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
                 // for `${var/pat/repl}` pattern + replacement
                 // contexts where literal `~` must be preserved.
                 if !state.opts.sh_file_expansion && !state.skip_filesub { // c:100
-                    if let Some(data) = list.get_data(node_idx) { // c:100
+                    if let Some(data) = list.getdata(node_idx) { // c:100
                         let new_data = filesub(             // c:100
                             data,                           // c:100
                             flags & (prefork_flags::TYPESET | prefork_flags::ASSIGN), // c:100
                             state,                          // c:100
                         );                                  // c:100
-                        list.set_data(node_idx, new_data);  // c:100
+                        list.setdata(node_idx, new_data);  // c:100
                     }                                       // c:100
                 }                                           // c:100
             } else if (flags & prefork_flags::SINGLE == 0)  // c:100
                 && (*ret_flags & prefork_flags::KEY_VALUE == 0) // c:100
                 && !keep                                    // c:100
             {                                               // c:100
-                list.remove(node_idx);                      // c:100
+                list.delete_node(node_idx);                      // c:100
                 continue; // Don't increment, we removed    // c:100
             }                                               // c:100
         }                                                   // c:100
@@ -487,7 +458,7 @@ fn stringsubstquote(strstart: &str, strdpos: usize) -> (String, usize) { // c:20
 
     // Process escape sequences
     let content: String = chars[start..end].iter().collect(); // c:206
-    let processed = getkeystring(&content);                 // c:206
+    let processed = crate::ported::utils::getkeystring(&content);                 // c:206
 
     // Build result
     let prefix: String = chars[..strdpos].iter().collect(); // c:206
@@ -519,7 +490,7 @@ fn stringsubst(                                             // c:237
     asssub: bool,                                           // c:237
     state: &mut SubstState,                                 // c:237
 ) -> Option<usize> {                                        // c:237
-    let mut str3 = list.get_data(node_idx)?.to_string();    // c:237
+    let mut str3 = list.getdata(node_idx)?.to_string();    // c:237
     let mut pos = 0;                                        // c:237
 
     // First pass: process substitutions. Loop guard uses CHAR
@@ -562,7 +533,7 @@ fn stringsubst(                                             // c:237
             let prefix: String = chars[..pos].iter().collect(); // c:237
             str3 = format!("{}{}{}", prefix, subst, rest);  // c:237
             pos += subst.len();                             // c:237
-            list.set_data(node_idx, str3.clone());          // c:237
+            list.setdata(node_idx, str3.clone());          // c:237
             continue;                                       // c:237
         }                                                   // c:237
 
@@ -612,7 +583,7 @@ fn stringsubst(                                             // c:237
             };                                              // c:237
             str3 = format!("{}{}{}", prefix, body, suffix); // c:237
             pos += body.chars().count();                    // c:237
-            list.set_data(node_idx, str3.clone());          // c:237
+            list.setdata(node_idx, str3.clone());          // c:237
             continue;                                       // c:237
         }                                                   // c:237
         // Lexer-emitted double-quote marker (`\u{9e}`, DNULL) — strip;
@@ -627,7 +598,7 @@ fn stringsubst(                                             // c:237
                 String::new()                               // c:237
             };                                              // c:237
             str3 = format!("{}{}", prefix, suffix);         // c:237
-            list.set_data(node_idx, str3.clone());          // c:237
+            list.setdata(node_idx, str3.clone());          // c:237
             continue;                                       // c:237
         }                                                   // c:237
         // Lexer BNULL (`\u{9f}`) escapes the next char as literal.
@@ -643,7 +614,7 @@ fn stringsubst(                                             // c:237
             };                                              // c:237
             str3 = format!("{}{}{}", prefix, kept, suffix); // c:237
             pos += 1;                                       // c:237
-            list.set_data(node_idx, str3.clone());          // c:237
+            list.setdata(node_idx, str3.clone());          // c:237
             continue;                                       // c:237
         }                                                   // c:237
         // Literal `'…'` single-quoted span. The lexer normally
@@ -671,7 +642,7 @@ fn stringsubst(                                             // c:237
             };                                              // c:237
             str3 = format!("{}{}{}", prefix, body, suffix); // c:237
             pos += body.chars().count();                    // c:237
-            list.set_data(node_idx, str3.clone());          // c:237
+            list.setdata(node_idx, str3.clone());          // c:237
             continue;                                       // c:237
         }                                                   // c:237
 
@@ -704,7 +675,7 @@ fn stringsubst(                                             // c:237
                 let (result, new_pos) = process_command_subst(&str3, pos, qt, state); // c:237
                 str3 = result;                              // c:237
                 pos = new_pos;                              // c:237
-                list.set_data(node_idx, str3.clone());      // c:237
+                list.setdata(node_idx, str3.clone());      // c:237
                 continue;                                   // c:237
             } else if next_is(INBRACK, '[') {               // c:237
                 // $[...] arithmetic
@@ -717,7 +688,7 @@ fn stringsubst(                                             // c:237
                     let prefix: String = str3.chars().take(pos).collect(); // c:237
                     let suffix: String = str3.chars().skip(start + end + 1).collect(); // c:237
                     str3 = format!("{}{}{}", prefix, value, suffix); // c:237
-                    list.set_data(node_idx, str3.clone());  // c:237
+                    list.setdata(node_idx, str3.clone());  // c:237
                     continue;                               // c:237
                 } else {                                    // c:237
                     state.errflag = true;                   // c:237
@@ -733,7 +704,7 @@ fn stringsubst(                                             // c:237
                 let (new_str, new_pos) = stringsubstquote(&str3, pos); // c:237
                 str3 = new_str;                             // c:237
                 pos = new_pos;                              // c:237
-                list.set_data(node_idx, str3.clone());      // c:237
+                list.setdata(node_idx, str3.clone());      // c:237
                 continue;                                   // c:237
             } else {                                        // c:237
                 // Parameter substitution
@@ -773,13 +744,13 @@ fn stringsubst(                                             // c:237
                 let mut current_idx = node_idx;             // c:237
                 for (i, node_data) in new_nodes.into_iter().enumerate() { // c:237
                     if i == 0 {                             // c:237
-                        list.set_data(current_idx, node_data); // c:237
+                        list.setdata(current_idx, node_data); // c:237
                     } else {                                // c:237
-                        current_idx = list.insert_after(current_idx, node_data); // c:237
+                        current_idx = list.insertlinknode(current_idx, node_data); // c:237
                     }                                       // c:237
                 }                                           // c:237
 
-                str3 = list.get_data(node_idx)?.to_string(); // c:237
+                str3 = list.getdata(node_idx)?.to_string(); // c:237
                 pos = new_pos;                              // c:237
                 continue;                                   // c:237
             }                                               // c:237
@@ -794,7 +765,7 @@ fn stringsubst(                                             // c:237
             let (result, new_pos) = process_backtick_subst(&str3, pos, qt, pf_flags, state); // c:237
             str3 = result;                                  // c:237
             pos = new_pos;                                  // c:237
-            list.set_data(node_idx, str3.clone());          // c:237
+            list.setdata(node_idx, str3.clone());          // c:237
             continue;                                       // c:237
         }                                                   // c:237
 
@@ -1194,7 +1165,7 @@ pub mod multsub_flags {                                     // c:N/A
 /// Single-string substitution.
 /// Port of `singsub()` from Src/subst.c:514.
 pub fn singsub(s: &str, state: &mut SubstState) -> String { // c:514
-    let mut list = LinkList::from_string(s);                // c:514
+    let mut list = { let mut _l = LinkList::default(); _l.nodes.push_back(LinkNode { data: s.to_string() }); _l };                // c:514
     let mut ret_flags = 0u32;                               // c:514
 
     prefork(&mut list, prefork_flags::SINGLE, &mut ret_flags, state); // c:514
@@ -1203,7 +1174,7 @@ pub fn singsub(s: &str, state: &mut SubstState) -> String { // c:514
         return String::new();                               // c:514
     }                                                       // c:514
 
-    list.get_data(0).unwrap_or("").to_string()              // c:514
+    list.getdata(0).unwrap_or("").to_string()              // c:514
 }                                                           // c:514
 
 
@@ -1224,7 +1195,7 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
         }                                                   // c:544
     }                                                       // c:544
 
-    let mut list = LinkList::from_string(&x);               // c:544
+    let mut list = { let mut _l = LinkList::default(); _l.nodes.push_back(LinkNode { data: &x.to_string() }); _l };               // c:544
 
     // Handle word splitting within the string
     if pf_flags & prefork_flags::SPLIT != 0 {               // c:544
@@ -1232,8 +1203,8 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
         let mut in_quote = false;                           // c:544
         let mut in_paren = 0;                               // c:544
 
-        while node_idx < list.len() {                       // c:544
-            if let Some(data) = list.get_data(node_idx) {   // c:544
+        while node_idx < list.nodes.len() {                       // c:544
+            if let Some(data) = list.getdata(node_idx) {   // c:544
                 let chars: Vec<char> = data.chars().collect(); // c:544
                 let mut split_points = Vec::new();          // c:544
                 let mut i = 0;                              // c:544
@@ -1270,7 +1241,7 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
                     let chars: Vec<char> = data_str.chars().collect(); // c:544
                     let mut last = 0;                       // c:544
 
-                    list.remove(node_idx);                  // c:544
+                    list.delete_node(node_idx);                  // c:544
 
                     for (idx, &point) in split_points.iter().enumerate() { // c:544
                         if point > last {                   // c:544
@@ -1278,7 +1249,7 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
                             if idx == 0 {                   // c:544
                                 list.nodes.insert(node_idx, LinkNode { data: segment }); // c:544
                             } else {                        // c:544
-                                list.insert_after(node_idx + idx - 1, segment); // c:544
+                                list.insertlinknode(node_idx + idx - 1, segment); // c:544
                             }                               // c:544
                         }                                   // c:544
                         last = point + 1;                   // c:544
@@ -1289,7 +1260,7 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
                         if split_points.is_empty() {        // c:544
                             list.nodes.insert(node_idx, LinkNode { data: segment }); // c:544
                         } else {                            // c:544
-                            list.insert_after(node_idx + split_points.len() - 1, segment); // c:544
+                            list.insertlinknode(node_idx + split_points.len() - 1, segment); // c:544
                         }                                   // c:544
                     }                                       // c:544
                 }                                           // c:544
@@ -1320,7 +1291,7 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
         }                                                   // c:544
     }                                                       // c:544
 
-    let len = list.len();                                   // c:544
+    let len = list.nodes.len();                                   // c:544
     if len > 1 || (list.flags & LF_ARRAY != 0) {            // c:544
         // Return as array
         let arr: Vec<String> = list.nodes.iter().map(|n| n.data.clone()).collect(); // c:544
@@ -1328,7 +1299,7 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
         return (joined, arr, true, ms_flags);               // c:544
     }                                                       // c:544
 
-    let result = list.get_data(0).unwrap_or("").to_string(); // c:544
+    let result = list.getdata(0).unwrap_or("").to_string(); // c:544
     (result.clone(), vec![result], false, ms_flags)         // c:544
 }                                                           // c:544
 
@@ -1923,8 +1894,8 @@ pub fn quotesubst(s: &str, state: &mut SubstState) -> String { // c:463
 pub fn globlist(list: &mut LinkList, flags: u32, state: &mut SubstState) { // c:489
     let mut node_idx = 0;                                   // c:489
 
-    while node_idx < list.len() && !state.errflag {         // c:489
-        if let Some(data) = list.get_data(node_idx) {       // c:489
+    while node_idx < list.nodes.len() && !state.errflag {         // c:489
+        if let Some(data) = list.getdata(node_idx) {       // c:489
             // Check for Marker (key-value pair indicator)
             if flags & prefork_flags::KEY_VALUE != 0 && data.starts_with(MARKER) { // c:489
                 // Skip key/value pair (marker, key, value = 3 nodes)
@@ -1942,15 +1913,15 @@ pub fn globlist(list: &mut LinkList, flags: u32, state: &mut SubstState) { // c:
                     // For now, keep original
                 }                                           // c:489
             } else if expanded.len() == 1 {                 // c:489
-                list.set_data(node_idx, expanded[0].clone()); // c:489
+                list.setdata(node_idx, expanded[0].clone()); // c:489
             } else {                                        // c:489
                 // Multiple matches - expand into list
-                list.remove(node_idx);                      // c:489
+                list.delete_node(node_idx);                      // c:489
                 for (i, path) in expanded.iter().enumerate() { // c:489
                     if i == 0 {                             // c:489
                         list.nodes.insert(node_idx, LinkNode { data: path.clone() }); // c:489
                     } else {                                // c:489
-                        list.insert_after(node_idx + i - 1, path.clone()); // c:489
+                        list.insertlinknode(node_idx + i - 1, path.clone()); // c:489
                     }                                       // c:489
                 }                                           // c:489
                 node_idx += expanded.len();                 // c:489
@@ -2106,7 +2077,7 @@ pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> Str
     result.push_str(prefix);                                // c:N/A
 
     if glob_subst {                                         // c:N/A
-        result.push_str(&shtokenize(src));                  // c:N/A
+        result.push_str(&crate::ported::glob::shtokenize(src));                  // c:N/A
     } else {                                                // c:N/A
         result.push_str(src);                               // c:N/A
     }                                                       // c:N/A
@@ -2218,7 +2189,7 @@ impl ParamValue {                                           // params.c:2180
 
 
 
-/// GETKEYS_* flags for getkeystring()
+/// GETKEYS_* flags for crate::ported::utils::getkeystring()
 pub mod getkeys_flags {                                     // c:N/A
     pub const DOLLARS_QUOTE: u32 = 1;                       // c:N/A
     pub const SEP: u32 = 2;                                 // c:N/A
@@ -2241,11 +2212,11 @@ mod tests {                                                 // utils.c:6915
 
     #[test]                                                 // utils.c:6915
     fn test_getkeystring() {                                // utils.c:6915
-        assert_eq!(getkeystring("hello"), "hello");         // utils.c:6915
-        assert_eq!(getkeystring("hello\\nworld"), "hello\nworld"); // utils.c:6915
-        assert_eq!(getkeystring("\\t\\r\\n"), "\t\r\n");    // utils.c:6915
-        assert_eq!(getkeystring("\\x41"), "A");             // utils.c:6915
-        assert_eq!(getkeystring("\\u0041"), "A");           // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("hello"), "hello");         // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("hello\\nworld"), "hello\nworld"); // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\t\\r\\n"), "\t\r\n");    // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\x41"), "A");             // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\u0041"), "A");           // utils.c:6915
     }                                                       // utils.c:6915
 
     #[test]                                                 // utils.c:6915
@@ -2587,26 +2558,26 @@ mod tests {                                                 // utils.c:6915
     #[test]                                                 // utils.c:6915
     fn getkeystring_decodes_basic_escapes() {               // utils.c:6915
         // utils.c — \n \t \r \a \b \f \v \\ \' \"
-        assert_eq!(getkeystring("\\n"), "\n");              // utils.c:6915
-        assert_eq!(getkeystring("\\t"), "\t");              // utils.c:6915
-        assert_eq!(getkeystring("\\r"), "\r");              // utils.c:6915
-        assert_eq!(getkeystring("\\\\"), "\\");             // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\n"), "\n");              // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\t"), "\t");              // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\r"), "\r");              // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\\\"), "\\");             // utils.c:6915
         // Trailing literal — no escape consumed.
-        assert_eq!(getkeystring("plain"), "plain");         // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("plain"), "plain");         // utils.c:6915
     }                                                       // utils.c:6915
 
     #[test]                                                 // utils.c:6915
     fn getkeystring_decodes_hex_escape() {                  // utils.c:6915
         // utils.c handles `\xNN` (1-2 hex digits).
-        assert_eq!(getkeystring("\\x41"), "A"); // 0x41 = 'A' // utils.c:6915
-        assert_eq!(getkeystring("\\x7e"), "~");             // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\x41"), "A"); // 0x41 = 'A' // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\x7e"), "~");             // utils.c:6915
     }                                                       // utils.c:6915
 
     #[test]                                                 // utils.c:6915
     fn getkeystring_decodes_unicode_escape() {              // utils.c:6915
         // utils.c `\uNNNN` form for BMP code points.
-        assert_eq!(getkeystring("\\u00e9"), "é");           // utils.c:6915
-        assert_eq!(getkeystring("\\u4e2d"), "中");           // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\u00e9"), "é");           // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\u4e2d"), "中");           // utils.c:6915
     }                                                       // utils.c:6915
 
     // ─── paramsubst — bare ${VAR} ───────────────────────────────────
@@ -3265,14 +3236,14 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> { // c:1566
 /// Untokenize and escape string for flag argument
 /// Port of untok_and_escape() from subst.c
 pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String { // c:1528
-    let mut result = untokenize(s);                         // c:1528
+    let mut result = crate::lex::untokenize(s);                         // c:1528
 
     if escapes {                                            // c:1528
-        result = getkeystring(&result);                     // c:1528
+        result = crate::ported::utils::getkeystring(&result);                     // c:1528
     }                                                       // c:1528
 
     if tok_arg {                                            // c:1528
-        result = shtokenize(&result);                       // c:1528
+        result = crate::ported::glob::shtokenize(&result);                       // c:1528
     }                                                       // c:1528
 
     result                                                  // c:1528
@@ -3343,7 +3314,7 @@ pub fn equalsubstr(s: &str, assign: bool, nomatch: bool, state: &SubstState) -> 
         .count();                                           // c:715
 
     let cmdstr: String = s.chars().take(end).collect();     // c:715
-    let cmdstr = untokenize(&cmdstr);                       // c:715
+    let cmdstr = crate::lex::untokenize(&cmdstr);                       // c:715
     let cmdstr = remnulargs(&cmdstr);                       // c:715
 
     if let Some(path) = findcmd(&cmdstr, true, false) {     // c:715
