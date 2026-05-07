@@ -1088,7 +1088,19 @@ fn paramsubst(                                              // c:1625
                 };
             }
         }
-        return (value, new_pos, vec![]);
+        // Reconstruct the full str3 with the brace expansion applied
+        // — same protocol the simple `$var` arm uses (line 1240).
+        // Caller (stringsubst) re-loads `str3 = list.getdata(node_idx)`
+        // and expects the new full string in node 0.
+        let prefix: String = chars[..start_pos].iter().collect(); // c:1885
+        let suffix: String = if new_pos < chars.len() {     // c:1885
+            chars[new_pos..].iter().collect()               // c:1885
+        } else {                                            // c:1885
+            String::new()                                   // c:1885
+        };                                                  // c:1885
+        let full = format!("{}{}{}", prefix, value, suffix); // c:1885
+        let new_pos_in_full = prefix.chars().count() + value.chars().count();
+        return (full.clone(), new_pos_in_full, vec![full]);
     }                                                       // c:1885
 
     // Simple $var (or $arr[idx] for array-element access — per
