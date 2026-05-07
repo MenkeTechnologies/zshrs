@@ -4693,6 +4693,26 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     let bytes = inner.as_bytes();
     let mut name_end = 0;
     let first = bytes[0];
+    // `${+name}` — set-test. Returns "1" if name is set, "0" if unset.
+    // Direct port of subst.c case '+' at the leading-flag position
+    // (distinct from `${name+rhs}` which is the substitute-if-set
+    // form). Treat as Length-shape but route through a SetTest variant.
+    if first == b'+' && bytes.len() > 1 {
+        let rest = &inner[1..];
+        // Identifier OR identifier with `[…]` subscript.
+        let name_part: String = rest.chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '@' || *c == '*')
+            .collect();
+        if !name_part.is_empty() {
+            // The full "name[idx]" form goes via DefaultFamily op=8
+            // (new SetTest opcode, defined below) so the runtime can
+            // resolve subscript/magic-assoc + emit "1"/"0".
+            return Some(ParamModifier {
+                name: rest.to_string(),
+                kind: ParamModifierKind::DefaultFamily { op: 8, rhs: String::new() },
+            });
+        }
+    }
     // `${#name}` — length form. Special-case: var name follows the `#`.
     // Both scalars (StringLen) and arrays (ARRAY_LENGTH) are supported,
     // dispatched at runtime by ParamModifierKind::Length.

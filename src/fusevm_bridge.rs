@@ -5154,10 +5154,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             return fusevm::Value::Array(items.into_iter().map(fusevm::Value::str).collect());
         }
-        let val = with_executor(|exec| {
+        let (val, in_dq) = with_executor(|exec| {
             sync_status(exec);
-            exec.get_variable(&name)
+            (exec.get_variable(&name), exec.in_dq_context > 0)
         });
+        // Empty unquoted scalar → drop the arg (zsh "remove empty
+        // unquoted words" rule). Returning empty Value::Array makes
+        // pop_args contribute zero items. DQ context keeps the empty
+        // string so "$a" stays a single empty arg. Direct port of
+        // subst.c's elide-empty pass.
+        if val.is_empty() && !in_dq {
+            return fusevm::Value::Array(Vec::new());
+        }
         Value::str(val)
     });
 
@@ -6387,6 +6395,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     fusevm::Value::str(expand_rhs(&rhs))
                 }
             }
+            8 => {
+                // `${+name}` set-test — emits "1" if name is set,
+                // "0" if unset. Direct port of subst.c case '+' at
+                // the leading-flag position (different from `${name+rhs}`).
+                // is_set was computed above and includes positional
+                // params, zsh-special vars, regular vars, arrays,
+                // assocs. Subscripted form `${+arr[i]}` checks if
+                // that specific element is set — handled by name
+                // containing `[…]` and falling through to get_variable
+                // which returns empty for missing → is_set=false.
+                if name.contains('[') {
+                    // Subscripted: ask getter, "set" iff non-empty.
+                    fusevm::Value::str(if !val.is_empty() { "1" } else { "0" })
+                } else {
+                    fusevm::Value::str(if is_set { "1" } else { "0" })
+                }
+            }
             _ => fusevm::Value::str(val),
         }
     });
@@ -6976,7 +7001,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     })
                     .collect();
                 if parts.len() == 1 {
-                    fusevm::Value::str(parts.into_iter().next().unwrap_or_default())
+                    let only = parts.into_iter().next().unwrap_or_default();
+                    // Empty unquoted expansion → drop the arg entirely
+                    // (zsh "remove empty unquoted words" rule). Returning
+                    // an empty Value::Array makes pop_args contribute zero
+                    // items. Direct port of subst.c's empty-elide pass at
+                    // the end of multsub which removes empty linknodes
+                    // from unquoted contexts. Quoted DQ/SQ paths (modes
+                    // 1/2/5) take separate arms above and always emit
+                    // Value::Str so the empty arg survives.
+                    if only.is_empty() {
+                        fusevm::Value::Array(Vec::new())
+                    } else {
+                        fusevm::Value::str(only)
+                    }
                 } else {
                     fusevm::Value::Array(parts.into_iter().map(fusevm::Value::str).collect())
                 }
