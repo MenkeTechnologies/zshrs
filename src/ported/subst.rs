@@ -1971,52 +1971,54 @@ fn paramsubst(                                              // c:1625
                 let parts: Vec<&str> = rep.splitn(2, '/').collect();
                 let pat = singsub(parts[0], state);
                 let repl = parts.get(1).map(|s| singsub(s, state)).unwrap_or_default();
-                if let Some(anchor_pat) = pat.strip_prefix('#') {
-                    // Anchored prefix replace.
-                    let p = anchor_pat.to_string();                  // c:3870
-                    let chars_v: Vec<char> = raw_value.chars().collect(); // c:3870
-                    let n = chars_v.len();                           // c:3870
-                    // Try longest prefix match first.
-                    for end in (0..=n).rev() {                       // c:3870
-                        let cand: String = chars_v[..end].iter().collect(); // c:3870
-                        if crate::exec::ShellExecutor::glob_match_static(&cand, &p) { // c:3870
-                            value = format!("{}{}", repl, chars_v[end..].iter().collect::<String>()); // c:3870
-                            break;                                   // c:3870
-                        }                                            // c:3870
-                    }                                                // c:3870
-                } else if let Some(anchor_pat) = pat.strip_prefix('%') {
-                    // Anchored suffix replace.
-                    let p = anchor_pat.to_string();                  // c:3870
-                    let chars_v: Vec<char> = raw_value.chars().collect(); // c:3870
-                    let n = chars_v.len();                           // c:3870
-                    for start in 0..=n {                             // c:3870
-                        let cand: String = chars_v[start..].iter().collect(); // c:3870
-                        if crate::exec::ShellExecutor::glob_match_static(&cand, &p) { // c:3870
-                            value = format!("{}{}", chars_v[..start].iter().collect::<String>(), repl); // c:3870
-                            break;                                   // c:3870
-                        }                                            // c:3870
-                    }                                                // c:3870
+                // Single-replace helper. Variants: anchor-prefix
+                // (pat starts with `#`), anchor-suffix (`%`), or
+                // unanchored. Returns the post-replacement string.
+                let replace_one = |val: &str| -> String {
+                    if let Some(anchor_pat) = pat.strip_prefix('#') {
+                        let cv: Vec<char> = val.chars().collect();
+                        let nn = cv.len();
+                        for end in (0..=nn).rev() {
+                            let cand: String = cv[..end].iter().collect();
+                            if crate::exec::ShellExecutor::glob_match_static(&cand, anchor_pat) {
+                                return format!("{}{}", repl, cv[end..].iter().collect::<String>());
+                            }
+                        }
+                        val.to_string()
+                    } else if let Some(anchor_pat) = pat.strip_prefix('%') {
+                        let cv: Vec<char> = val.chars().collect();
+                        let nn = cv.len();
+                        for start in 0..=nn {
+                            let cand: String = cv[start..].iter().collect();
+                            if crate::exec::ShellExecutor::glob_match_static(&cand, anchor_pat) {
+                                return format!("{}{}", cv[..start].iter().collect::<String>(), repl);
+                            }
+                        }
+                        val.to_string()
+                    } else {
+                        let cv: Vec<char> = val.chars().collect();
+                        let nn = cv.len();
+                        for start in 0..nn {
+                            for end in (start + 1..=nn).rev() {
+                                let cand: String = cv[start..end].iter().collect();
+                                if crate::exec::ShellExecutor::glob_match_static(&cand, &pat) {
+                                    let mut out = String::with_capacity(val.len());
+                                    out.extend(cv[..start].iter());
+                                    out.push_str(&repl);
+                                    out.extend(cv[end..].iter());
+                                    return out;
+                                }
+                            }
+                        }
+                        val.to_string()
+                    }
+                };
+                if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                    let new_arr: Vec<String> = arr.iter().map(|e| replace_one(e)).collect();
+                    value = new_arr.join(" ");                    // c:3870
+                    split_parts = Some(new_arr);                  // c:3870
                 } else {
-                    // Unanchored single-replace: glob-aware sliding
-                    // window, first match wins.
-                    let chars_v: Vec<char> = raw_value.chars().collect(); // c:3870
-                    let n = chars_v.len();                           // c:3870
-                    let mut found = false;                           // c:3870
-                    'outer: for start in 0..n {                       // c:3870
-                        for end in (start + 1..=n).rev() {            // c:3870
-                            let cand: String = chars_v[start..end].iter().collect(); // c:3870
-                            if crate::exec::ShellExecutor::glob_match_static(&cand, &pat) { // c:3870
-                                let mut out = String::with_capacity(raw_value.len()); // c:3870
-                                out.extend(chars_v[..start].iter()); // c:3870
-                                out.push_str(&repl);                  // c:3870
-                                out.extend(chars_v[end..].iter());    // c:3870
-                                value = out;                          // c:3870
-                                found = true;                         // c:3870
-                                break 'outer;                         // c:3870
-                            }                                         // c:3870
-                        }                                             // c:3870
-                    }                                                 // c:3870
-                    if !found { /* no match — value already = raw_value */ }
+                    value = replace_one(&raw_value);              // c:3870
                 }
             } else if let Some(pat) = r.strip_prefix("##") {  // c:3540 (longest prefix strip)
                 let p = singsub(pat, state);
