@@ -1660,19 +1660,28 @@ fn paramsubst(                                              // c:1625
                 sorted.retain(|s| seen.insert(s.clone()));  // c:4253
             }
             if sort_active {                                // c:4180
-                let _ = sort_index_order;                   // c:4194 (a — keep insertion order)
-                if sort_numeric {                           // c:4189
-                    sorted.sort_by(|a, b| {
-                        let na: f64 = a.parse().unwrap_or(0.0); // c:4189
-                        let nb: f64 = b.parse().unwrap_or(0.0); // c:4189
+                // (a) on assoc-derived elements means "preserve
+                // insertion order" — IndexMap already iterates in
+                // that order, so skip the sort entirely. The C
+                // source short-circuits at SORTIT_BACKWARDS_ONLY
+                // (no SORTIT_NUMERICALLY / SORTIT_IGNORING_CASE).
+                if !sort_index_order {                      // c:4194
+                    if sort_numeric {                       // c:4189
+                        // sort_signed: f64 already handles the
+                        // sign — `(n-)` and `(n)` compare the same
+                        // way for the values we'll see.
                         let _ = sort_signed;                // c:4193
-                        na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                } else if sort_case_insensitive {           // c:4187
-                    sorted.sort_by_key(|a| a.to_lowercase());
-                } else {                                    // c:4180 (default)
-                    sorted.sort();
-                }
+                        sorted.sort_by(|a, b| {
+                            let na: f64 = a.parse().unwrap_or(0.0); // c:4189
+                            let nb: f64 = b.parse().unwrap_or(0.0); // c:4189
+                            na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                    } else if sort_case_insensitive {       // c:4187
+                        sorted.sort_by_key(|a| a.to_lowercase());
+                    } else {                                // c:4180 (default)
+                        sorted.sort();
+                    }
+                }                                            // c:4194
                 if sort_backwards { sorted.reverse(); }     // c:4191
             }
             let join_with = sep.as_deref().unwrap_or(" ");
