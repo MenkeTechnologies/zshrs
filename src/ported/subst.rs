@@ -1234,6 +1234,45 @@ fn paramsubst(                                              // c:1625
         // subexp arm. Port of subst.c:2637-2729. When the body has a
         // nested $-form at the name position, run it through singsub
         // and use the result as the value directly.
+        //
+        // Quoted-form `"..."` wrapper passes through transparently:
+        // `${(@f)"$(...)"}` peels the DQ wrapper and runs the same
+        // subexp recursion on the inside. Per zsh, the wrapper just
+        // suppresses word-splitting on the cmd-subst result; (f) /
+        // (@) flags then re-split as requested.
+        let mut peeled_quotes = false;                       // c:2649
+        if idx + 1 < body_chars.len()                        // c:2649
+            && body_chars[idx] == '"'                        // c:2649
+            && body_chars[idx + 1] == '$'                    // c:2649
+        {                                                    // c:2649
+            // Find matching close quote (depth-tracked over $(...)
+            // and ${...} so nested DQs don't fool us). Direct port
+            // of zsh's QSTRING/STRING dual-pass at subst.c:282.
+            let mut p = idx + 1;                             // c:2649
+            let mut paren_depth = 0_i32;                     // c:2649
+            let mut brace_depth = 0_i32;                     // c:2649
+            while p < body_chars.len() {                     // c:2649
+                let ch = body_chars[p];                      // c:2649
+                match ch {                                   // c:2649
+                    '(' => paren_depth += 1,                 // c:2649
+                    ')' => paren_depth -= 1,                 // c:2649
+                    '{' => brace_depth += 1,                 // c:2649
+                    '}' => brace_depth -= 1,                 // c:2649
+                    '"' if paren_depth == 0 && brace_depth == 0 => { // c:2649
+                        // close quote
+                        idx += 1;                            // skip leading "
+                        // Mark peeled; inner $-form starts at idx now.
+                        peeled_quotes = true;                // c:2649
+                        // Note p is the closing quote position;
+                        // skip it after the inner $-form is consumed.
+                        let _ = p;                           // c:2649
+                        break;                               // c:2649
+                    }                                        // c:2649
+                    _ => {}                                  // c:2649
+                }                                            // c:2649
+                p += 1;                                      // c:2649
+            }                                                // c:2649
+        }                                                    // c:2649
         let subexp_value: Option<String> = if idx < body_chars.len()
             && body_chars[idx] == '$'                       // c:2649
         {
@@ -1274,6 +1313,12 @@ fn paramsubst(                                              // c:1625
             let inner: String = body_chars[start..p].iter().collect(); // c:2671
             let expanded = singsub(&inner, state);          // c:2681
             idx = p;                                        // c:2691
+            // If we peeled a leading `"`, also consume the matching
+            // closing `"` now so the rest of the body (operators,
+            // `}`, etc.) parses normally.
+            if peeled_quotes && idx < body_chars.len() && body_chars[idx] == '"' { // c:2649
+                idx += 1;                                   // c:2649
+            }                                                // c:2649
             Some(expanded)
         } else { None };
 
