@@ -7565,60 +7565,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.set_shell_host(Box::new(ZshrsHost));
 }
 
-/// Base64 decoder used by BUILTIN_REGISTER_COMPILED_FN.
-/// Parameter-only substitution that preserves a leading `~`
-/// literal. Used for the replacement side of `${var/pat/repl}`
-/// where zsh keeps `~` un-tilde-expanded. Resolves `$VAR` and
-/// `${VAR}` references; leaves everything else untouched.
-fn expand_no_tilde(exec: &mut ShellExecutor, s: &str) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        if c == '$' && i + 1 < chars.len() {
-            let nxt = chars[i + 1];
-            if nxt == '{' {
-                // Find matching `}`.
-                let mut depth = 1;
-                let mut j = i + 2;
-                while j < chars.len() && depth > 0 {
-                    match chars[j] {
-                        '{' => depth += 1,
-                        '}' => depth -= 1,
-                        _ => {}
-                    }
-                    if depth == 0 {
-                        break;
-                    }
-                    j += 1;
-                }
-                let body: String = chars[i + 2..j].iter().collect();
-                // Recursively expand the body via the regular path
-                // — this isn't the replacement, it's a sub-expression.
-                let inner = exec.singsub(&format!("${{{}}}", body));
-                out.push_str(&inner);
-                i = j + 1;
-                continue;
-            }
-            if nxt.is_ascii_alphabetic() || nxt == '_' {
-                // `$VAR` form.
-                let mut j = i + 1;
-                while j < chars.len() && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') {
-                    j += 1;
-                }
-                let var: String = chars[i + 1..j].iter().collect();
-                out.push_str(&exec.get_variable(&var));
-                i = j;
-                continue;
-            }
-        }
-        out.push(c);
-        i += 1;
-    }
-    out
-}
-
 impl ZshrsHost {
     /// True iff `c` can be a `(j:…:)` / `(s:…:)` delimiter — non-alphanumeric,
     /// non-underscore. Restricting to punctuation avoids `(jL)` consuming `L`
