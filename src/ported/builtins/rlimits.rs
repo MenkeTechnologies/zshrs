@@ -358,7 +358,7 @@ impl ResourceLimits {
 /// Port of `zstrtorlimt()` from Src/Builtins/rlimits.c:272 — same
 /// `unlimited`/`hard`/`soft`/`Inf` keywords and unit-scaled
 /// numeric form.
-pub fn parse_limit_value(s: &str, info: Option<&ResInfo>) -> Result<LimitValue, String> {
+pub fn zstrtorlimt(s: &str, info: Option<&ResInfo>) -> Result<LimitValue, String> {
     if s == "unlimited" {
         return Ok(LimitValue::Unlimited);
     }
@@ -491,7 +491,7 @@ pub fn bin_limit(
             }
 
             let val_str = args[i + 1];
-            let val = match parse_limit_value(val_str, None) {
+            let val = match zstrtorlimt(val_str, None) {
                 Ok(v) => v,
                 Err(e) => return (1, format!("limit: {}\n", e)),
             };
@@ -531,7 +531,7 @@ pub fn bin_limit(
         }
 
         let val_str = args[i + 1];
-        let val = match parse_limit_value(val_str, Some(info)) {
+        let val = match zstrtorlimt(val_str, Some(info)) {
             Ok(v) => v,
             Err(e) => return (1, format!("limit: {}\n", e)),
         };
@@ -612,7 +612,7 @@ pub fn bin_ulimit(
         }
 
         let info = limits.find_by_res(res);
-        let val = match parse_limit_value(arg, info) {
+        let val = match zstrtorlimt(arg, info) {
             Ok(v) => v,
             Err(e) => return (1, format!("ulimit: {}\n", e)),
         };
@@ -698,7 +698,7 @@ mod tests {
     fn test_parse_limit_unlimited() {
         let info = &KNOWN_RESOURCES[0]; // cputime
         assert_eq!(
-            parse_limit_value("unlimited", Some(info)).unwrap(),
+            zstrtorlimt("unlimited", Some(info)).unwrap(),
             LimitValue::Unlimited
         );
     }
@@ -712,23 +712,23 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            parse_limit_value("60", Some(info)).unwrap(),
+            zstrtorlimt("60", Some(info)).unwrap(),
             LimitValue::Value(60)
         );
         assert_eq!(
-            parse_limit_value("1h", Some(info)).unwrap(),
+            zstrtorlimt("1h", Some(info)).unwrap(),
             LimitValue::Value(3600)
         );
         assert_eq!(
-            parse_limit_value("5m", Some(info)).unwrap(),
+            zstrtorlimt("5m", Some(info)).unwrap(),
             LimitValue::Value(300)
         );
         assert_eq!(
-            parse_limit_value("1:30", Some(info)).unwrap(),
+            zstrtorlimt("1:30", Some(info)).unwrap(),
             LimitValue::Value(3600 + 30 * 60)
         );
         assert_eq!(
-            parse_limit_value("1:30:45", Some(info)).unwrap(),
+            zstrtorlimt("1:30:45", Some(info)).unwrap(),
             LimitValue::Value(3600 + 30 * 60 + 45)
         );
     }
@@ -742,19 +742,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            parse_limit_value("100", Some(info)).unwrap(),
+            zstrtorlimt("100", Some(info)).unwrap(),
             LimitValue::Value(100 * 1024)
         );
         assert_eq!(
-            parse_limit_value("100k", Some(info)).unwrap(),
+            zstrtorlimt("100k", Some(info)).unwrap(),
             LimitValue::Value(100 * 1024)
         );
         assert_eq!(
-            parse_limit_value("10M", Some(info)).unwrap(),
+            zstrtorlimt("10M", Some(info)).unwrap(),
             LimitValue::Value(10 * 1024 * 1024)
         );
         assert_eq!(
-            parse_limit_value("1G", Some(info)).unwrap(),
+            zstrtorlimt("1G", Some(info)).unwrap(),
             LimitValue::Value(1024 * 1024 * 1024)
         );
     }
