@@ -1153,6 +1153,10 @@ fn paramsubst(                                              // c:1625
         let mut flag_p_escapes = false;                     // c:2382 (p)
         let mut multi_width: u32 = 0;                       // c:2376 (m count)
         let mut flnum: u32 = 0;                              // c:1786 (I:N:)
+        let mut flag_z_tokenize = false;                     // c:2439 (z)
+        let mut flag_z_keep_comments = false;                // c:2450 (Zc)
+        let mut flag_z_strip_comments = false;               // c:2456 (ZC)
+        let mut flag_z_newline_ws = false;                   // c:2461 (Zn)
         if body_chars.first() == Some(&'(') {               // c:2147
             let mut d = 1_i32;                              // c:2147
             idx = 1;                                        // c:2147
@@ -1263,7 +1267,34 @@ fn paramsubst(                                              // c:1625
                     'w' => { flag_word_count = true; }      // c:2278 (w)
                     'c' => { flag_char_count = true; }      // c:2275 (c)
                     'W' => { flag_word_count_w = true; }    // c:2281 (W)
-                    'z' | 'Z' => { /* tokenize — c:2439 */ } // c:2439 (z/Z)
+                    'z' => { flag_z_tokenize = true; }      // c:2439 (z)
+                    'Z' => {                                // c:2443 (Z:flags:)
+                        // (Z:cCn:) — shell-tokenize with sub-flags:
+                        //   c: keep comments
+                        //   C: strip comments
+                        //   n: treat newlines as whitespace
+                        // Direct port of subst.c:2443 — skip the
+                        // delimited :flags: arg span; the Rust
+                        // tokenizer (consumer) reads sub-flags at
+                        // dispatch.
+                        flag_z_tokenize = true;             // c:2443
+                        idx += 1;                           // c:2444 (s++)
+                        if idx < body_chars.len() {         // c:2444
+                            let del = body_chars[idx];      // c:2444
+                            idx += 1;                       // c:2444
+                            while idx < body_chars.len()    // c:2444
+                                && body_chars[idx] != del   // c:2444
+                            {                                // c:2444
+                                let ch = body_chars[idx];   // c:2450
+                                if ch == 'c' { flag_z_keep_comments = true; }   // c:2450
+                                else if ch == 'C' { flag_z_strip_comments = true; } // c:2456
+                                else if ch == 'n' { flag_z_newline_ws = true; } // c:2461
+                                idx += 1;                   // c:2444
+                            }                                // c:2444
+                            if idx < body_chars.len() { idx += 1; } // c:2444
+                        }                                    // c:2444
+                        continue;                           // c:2473
+                    }                                       // c:2473
                     'g' => {                                // c:2409 (g)
                         // (g:flags:) — getkeys subflags. Format is
                         // `g` immediately followed by a delimited
@@ -1860,6 +1891,84 @@ fn paramsubst(                                              // c:1625
         if flag_eval {                                      // c:2268
             value = singsub(&value, state);                 // c:2268
         }
+
+        // (z)/(Z:cCn:) — shell-tokenize the value into a list of
+        // words. Direct port of subst.c:2439 LEXFLAGS_ACTIVE +
+        // sub-flags. Simplified port: use whitespace splitting
+        // that respects single/double-quote spans and backslash
+        // escapes, plus optional comment handling. The full lexer
+        // reentry is deferred — this covers the common idioms
+        // \${(z)cmdline} (split a command into words) and
+        // \${(Zn)multiline} (newlines act like spaces).
+        if flag_z_tokenize {                                // c:2439
+            let mut words: Vec<String> = Vec::new();        // c:2439
+            let mut cur = String::new();                     // c:2439
+            let mut in_sq = false;                          // c:2439
+            let mut in_dq = false;                          // c:2439
+            let mut in_comment = false;                     // c:2451
+            let chars_v: Vec<char> = value.chars().collect(); // c:2439
+            let push_word = |w: &mut String, words: &mut Vec<String>| { // c:2439
+                if !w.is_empty() {                          // c:2439
+                    words.push(std::mem::take(w));          // c:2439
+                }                                            // c:2439
+            };                                               // c:2439
+            let mut p = 0_usize;                            // c:2439
+            while p < chars_v.len() {                       // c:2439
+                let ch = chars_v[p];                        // c:2439
+                if in_comment {                             // c:2451
+                    if ch == '\n' {                         // c:2451
+                        in_comment = false;                 // c:2451
+                        if flag_z_keep_comments { cur.push(ch); } // c:2451
+                    } else if flag_z_keep_comments {        // c:2451
+                        cur.push(ch);                       // c:2451
+                    }                                        // c:2451
+                    p += 1;                                 // c:2451
+                    continue;                               // c:2451
+                }                                            // c:2451
+                if in_sq {                                  // c:2439
+                    cur.push(ch);                           // c:2439
+                    if ch == '\'' { in_sq = false; }        // c:2439
+                    p += 1; continue;                        // c:2439
+                }                                            // c:2439
+                if in_dq {                                  // c:2439
+                    cur.push(ch);                           // c:2439
+                    if ch == '\\' && p + 1 < chars_v.len() { // c:2439
+                        p += 1;                              // c:2439
+                        cur.push(chars_v[p]);                // c:2439
+                    } else if ch == '"' {                   // c:2439
+                        in_dq = false;                       // c:2439
+                    }                                        // c:2439
+                    p += 1; continue;                        // c:2439
+                }                                            // c:2439
+                match ch {                                   // c:2439
+                    '\\' if p + 1 < chars_v.len() => {       // c:2439
+                        cur.push(ch);                        // c:2439
+                        p += 1;                              // c:2439
+                        cur.push(chars_v[p]);                // c:2439
+                    }                                        // c:2439
+                    '\'' => { cur.push(ch); in_sq = true; }  // c:2439
+                    '"' => { cur.push(ch); in_dq = true; }   // c:2439
+                    '#' if cur.is_empty() && !flag_z_strip_comments => { // c:2451
+                        // Start of comment word — keep or skip.
+                        in_comment = !flag_z_keep_comments;  // c:2451
+                        if flag_z_keep_comments { cur.push(ch); } // c:2451
+                    }                                        // c:2451
+                    '#' if cur.is_empty() && flag_z_strip_comments => { // c:2456
+                        in_comment = true;                   // c:2456
+                    }                                        // c:2456
+                    '\n' if flag_z_newline_ws => {           // c:2461 (n: nl as ws)
+                        push_word(&mut cur, &mut words);     // c:2461
+                    }                                        // c:2461
+                    c if c.is_whitespace() => {              // c:2439
+                        push_word(&mut cur, &mut words);     // c:2439
+                    }                                        // c:2439
+                    _ => cur.push(ch),                       // c:2439
+                }                                            // c:2439
+                p += 1;                                      // c:2439
+            }                                                // c:2439
+            push_word(&mut cur, &mut words);                // c:2439
+            value = words.join(" ");                        // c:2439
+        }                                                    // c:2473
 
         // (D) dir-magic — replace $HOME and any nameddir prefix with
         // tilde form. Direct port of subst.c:2229 mods bit 1, which
