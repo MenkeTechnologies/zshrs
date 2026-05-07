@@ -791,16 +791,37 @@ pub fn zstrtoul_underscore(s: &str) -> Option<u64> {
 
 /// Convert integer to string with specified base
 /// Port from zsh/Src/utils.c convbase()
-/// Render an integer in an arbitrary base.
-/// Port of the radix-conversion loop in Src/utils.c — also
-/// exposed via `convbase()` in `crate::compat`.
+/// Render an integer in an arbitrary base using zsh's `BASE#DIGITS`
+/// notation (per `setopt CBASES`-off default). Direct port of the
+/// radix-conversion loop in Src/utils.c::convbase.
+///
+/// Format: `2#1010`, `8#777`, `16#FF`, `36#Z`. Negative values
+/// emit a leading `-` before the prefix. Base 0 or 10 returns the
+/// plain decimal string.
 pub fn convbase(val: i64, base: u32) -> String {
-    match base {
-        2 => format!("0b{:b}", val),
-        8 => format!("0{:o}", val),
-        16 => format!("0x{:x}", val),
-        _ => val.to_string(),
+    if base == 0 || base == 10 {
+        return val.to_string();
     }
+    let neg = val < 0;
+    let abs = if neg { (val as i128).wrapping_neg() as u128 } else { val as u128 };
+    let s = match base {
+        2 => format!("2#{:b}", abs),
+        8 => format!("8#{:o}", abs),
+        16 => format!("16#{:X}", abs),
+        r if (2..=36).contains(&r) => {
+            let digits = "0123456789abcdefghijklmnopqrstuvwxyz".as_bytes();
+            let mut tmp = abs;
+            let mut buf = String::new();
+            if tmp == 0 { buf.push('0'); }
+            while tmp > 0 {
+                buf.push(digits[(tmp % r as u128) as usize] as char);
+                tmp /= r as u128;
+            }
+            format!("{}#{}", r, buf.chars().rev().collect::<String>())
+        }
+        _ => val.to_string(),
+    };
+    if neg { format!("-{}", s) } else { s }
 }
 
 /// Set blocking/nonblocking on a file descriptor
