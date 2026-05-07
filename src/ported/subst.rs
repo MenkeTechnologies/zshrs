@@ -1750,35 +1750,58 @@ fn paramsubst(                                              // c:1625
                 }
             } else if let Some(pat) = r.strip_prefix("##") {  // c:3540 (longest prefix strip)
                 let p = singsub(pat, state);
-                let mut k = raw_value.chars().count();
-                while k > 0 {
-                    let prefix: String = raw_value.chars().take(k).collect();
-                    if prefix == p { value = raw_value.chars().skip(k).collect(); break; }
-                    k -= 1;
-                }
+                let total = raw_value.chars().count();
+                // Glob-aware (was literal-only — `${PATH##*/}`
+                // matched nothing because `*/` isn't a literal
+                // string in PATH). Direct port of subst.c's
+                // patmatch routing. Try k=total down to 0.
+                let chars_v: Vec<char> = raw_value.chars().collect(); // c:3540
+                let mut k = total;                               // c:3540
+                loop {                                           // c:3540
+                    let prefix: String = chars_v[..k].iter().collect(); // c:3540
+                    if crate::exec::ShellExecutor::glob_match_static(&prefix, &p) { // c:3540
+                        value = chars_v[k..].iter().collect();   // c:3540
+                        break;                                   // c:3540
+                    }                                            // c:3540
+                    if k == 0 { break; }                          // c:3540
+                    k -= 1;                                       // c:3540
+                }                                                // c:3540
             } else if let Some(pat) = r.strip_prefix('#') {   // c:3540 (shortest prefix strip)
                 let p = singsub(pat, state);
-                let total = raw_value.chars().count();
-                for k in 0..=total {
-                    let prefix: String = raw_value.chars().take(k).collect();
-                    if prefix == p { value = raw_value.chars().skip(k).collect(); break; }
-                }
+                let chars_v: Vec<char> = raw_value.chars().collect(); // c:3540
+                let total = chars_v.len();                       // c:3540
+                for k in 0..=total {                             // c:3540
+                    let prefix: String = chars_v[..k].iter().collect(); // c:3540
+                    if crate::exec::ShellExecutor::glob_match_static(&prefix, &p) { // c:3540
+                        value = chars_v[k..].iter().collect();   // c:3540
+                        break;                                   // c:3540
+                    }                                            // c:3540
+                }                                                // c:3540
             } else if let Some(pat) = r.strip_prefix("%%") {  // c:3540 (longest suffix strip)
                 let p = singsub(pat, state);
-                let total = raw_value.chars().count();
-                let mut k = total;
-                while k > 0 {
-                    let suffix: String = raw_value.chars().skip(total - k).collect();
-                    if suffix == p { value = raw_value.chars().take(total - k).collect(); break; }
-                    k -= 1;
-                }
+                let chars_v: Vec<char> = raw_value.chars().collect(); // c:3540
+                let total = chars_v.len();                       // c:3540
+                let mut k = total;                               // c:3540
+                loop {                                           // c:3540
+                    let suffix: String = chars_v[total - k..].iter().collect(); // c:3540
+                    if crate::exec::ShellExecutor::glob_match_static(&suffix, &p) { // c:3540
+                        value = chars_v[..total - k].iter().collect(); // c:3540
+                        break;                                   // c:3540
+                    }                                            // c:3540
+                    if k == 0 { break; }                          // c:3540
+                    k -= 1;                                       // c:3540
+                }                                                // c:3540
             } else if let Some(pat) = r.strip_prefix('%') {   // c:3540 (shortest suffix strip)
                 let p = singsub(pat, state);
-                let total = raw_value.chars().count();
-                for k in 0..=total {
-                    let suffix: String = raw_value.chars().skip(total - k).collect();
-                    if suffix == p { value = raw_value.chars().take(total - k).collect(); break; }
-                }
+                let chars_v: Vec<char> = raw_value.chars().collect(); // c:3540
+                let total = chars_v.len();                       // c:3540
+                for k in 0..=total {                             // c:3540
+                    let suffix: String = chars_v[total - k..].iter().collect(); // c:3540
+                    if crate::exec::ShellExecutor::glob_match_static(&suffix, &p) { // c:3540
+                        value = chars_v[..total - k].iter().collect(); // c:3540
+                        break;                                   // c:3540
+                    }                                            // c:3540
+                }                                                // c:3540
             } else if let Some(rhs) = r.strip_prefix(":|") { // c:3540 (set difference)
                 // ${arr:|other} — array set-difference: keep elems
                 // of arr that are NOT in other. Port of subst.c:3540
