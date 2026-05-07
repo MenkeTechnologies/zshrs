@@ -1230,6 +1230,34 @@ fn paramsubst(                                              // c:1625
                 idx += 1; // skip the leading #
             }
         }
+        // ${...$(...)...} / ${...${var}...} / ${...$((...))...} —
+        // subexp arm. Port of subst.c:2637-2729. When the body has a
+        // nested $-form at the name position, run it through singsub
+        // and use the result as the value directly.
+        let subexp_value: Option<String> = if idx < body_chars.len()
+            && body_chars[idx] == '$'                       // c:2649
+        {
+            // Find end of nested form: either `$(…)`, `${…}`, or `$((…))`.
+            let inner: String = body_chars[idx..].iter().collect();
+            let expanded = singsub(&inner, state);          // c:2681
+            // Walk past whatever singsub consumed; for safety advance
+            // past matching close paren/brace if found.
+            let mut depth = 0_i32;
+            let mut p = idx;
+            let mut started = false;
+            while p < body_chars.len() {
+                let ch = body_chars[p];
+                if ch == '(' || ch == '{' || ch == '[' { depth += 1; started = true; }
+                else if ch == ')' || ch == '}' || ch == ']' {
+                    depth -= 1;
+                    if started && depth <= 0 { p += 1; break; }
+                }
+                p += 1;
+            }
+            idx = p;
+            Some(expanded)
+        } else { None };
+
         // Walk var-name chars
         let name_start = idx;
         while idx < body_chars.len() {
@@ -1291,7 +1319,11 @@ fn paramsubst(                                              // c:1625
 
         // Look up var (with subscript if present). Port of
         // subst.c:2965 getstrvalue / getarrvalue dispatch.
-        let raw_value: String = if let Some(sub) = subscript.as_deref() {
+        // If subexp_value is set, the value comes from the recursive
+        // $(...)/${...} expansion and we skip var-name lookup.
+        let raw_value: String = if let Some(sv) = subexp_value {
+            sv                                              // c:2681 (subexp result)
+        } else if let Some(sub) = subscript.as_deref() {
             // Subscripted lookup: assoc-key, array-index, or slice.
             if let Some(map) = state.assoc_arrays.get(&var_name) { // c:2926 (assoc lookup)
                 map.get(sub).cloned().unwrap_or_default()
