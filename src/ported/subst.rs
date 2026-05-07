@@ -894,6 +894,54 @@ fn stringsubst(                                             // c:237
                 next_c == Some(tok) || next_c == Some(lit)  // c:237
             };                                              // c:237
 
+            // Detect `$((expr))` arith form FIRST — it's
+            // `$(` + `(expr)` + `)` so naive cmd-subst dispatch
+            // would try to execute `((expr))` as a command. Either
+            // the lexer-tokenized INPARMATH or the literal `((`
+            // sequence routes through the arith path. Direct port
+            // of subst.c's INPARMATH arm at c:237 (see C lines
+            // around 320-360 which check `*++s == Inpar` after
+            // `*s == String`).
+            if next_c == Some(INPARMATH)                    // c:237
+                || (next_c == Some('(') && chars.get(pos + 2).copied() == Some('(')) // c:237
+            {                                                // c:237
+                // Walk to matching `))`, depth-tracked for nested
+                // `$((a + (b * c)))`. Skip the leading `((`.
+                let start = pos + 3;                        // c:237 (past `$((`)
+                let mut depth = 2_i32;                      // c:237 (we've opened 2 parens)
+                let mut p = start;                          // c:237
+                let mut end_off: Option<usize> = None;      // c:237
+                while p < chars.len() {                     // c:237
+                    let ch = chars[p];                      // c:237
+                    if ch == '(' || ch == INPAR { depth += 1; } // c:237
+                    else if ch == ')' || ch == OUTPAR {     // c:237
+                        depth -= 1;                         // c:237
+                        if depth == 0 {                     // c:237
+                            end_off = Some(p);              // c:237 (closing )) at p .. p+1)
+                            break;                          // c:237
+                        }                                    // c:237
+                    }                                        // c:237
+                    p += 1;                                 // c:237
+                }                                            // c:237
+                if let Some(end) = end_off {                // c:237
+                    // Expression text is between start and end-1
+                    // (one inner `)` got consumed by depth=1; the
+                    // outer `)` closes us at depth=0).
+                    let expr: String = chars[start..end - 1].iter().collect(); // c:237
+                    let prefix: String = chars[..pos].iter().collect(); // c:237
+                    let suffix: String = if end + 1 < chars.len() { // c:237
+                        chars[end + 1..].iter().collect()   // c:237
+                    } else {                                // c:237
+                        String::new()                       // c:237
+                    };                                       // c:237
+                    let result_only = arithsubst(&expr, "", "", state); // c:237
+                    str3 = format!("{}{}{}", prefix, result_only, suffix); // c:237
+                    list.setdata(node_idx, str3.clone());   // c:237
+                    pos = prefix.chars().count() + result_only.chars().count(); // c:237
+                    continue;                               // c:237
+                }                                            // c:237
+            }                                                // c:237
+
             if next_is(INPAR, '(') || next_is(INPARMATH, '\0') { // c:237
                 if !qt {                                    // c:237
                     list.flags |= LF_ARRAY;                 // c:237
