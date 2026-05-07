@@ -7089,13 +7089,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // of bin_test's `untokenize(pattern)` call before patcompile.
         let pattern = with_executor(|exec| exec.singsub(&pattern_raw));
         let pattern = crate::lex::untokenize(&pattern);
-        // Replacement: parameter-substitute `$VAR` / `${VAR}` only,
-        // BUT preserve a leading `~` literal. Per zsh, the
-        // replacement in `${var/#pat/~}` is NOT tilde-expanded
-        // (otherwise the very idiom of replacing `$HOME` with `~`
-        // — used by p10k, oh-my-zsh, etc. — would produce the
-        // un-canonicalized path).
-        let repl = with_executor(|exec| expand_no_tilde(exec, &repl_raw));
+        // Replacement: full singsub with skip_filesub so a literal
+        // leading `~` in the replacement reaches the output as-is
+        // (per zsh, `${var/#pat/~}` keeps the tilde — the
+        // p10k / oh-my-zsh idiom of replacing `$HOME` with `~` for
+        // display). Was using a hand-rolled `expand_no_tilde` that
+        // only handled `$VAR` / `${VAR}` references, missing
+        // `$(cmd)` and `$((expr))` in templates like
+        // `\${var//foo/$(date +%s)}`.
+        let repl = with_executor(|exec| exec.singsub_no_tilde(&repl_raw));
         let repl = crate::lex::untokenize(&repl);
         // Strip backslash escapes from the pattern. zsh: `\X` in a
         // ${var/pat/repl} pattern means "literal X" — the backslash
