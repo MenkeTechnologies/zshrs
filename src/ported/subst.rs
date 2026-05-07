@@ -2412,25 +2412,43 @@ pub fn get_intarg(s: &str) -> Option<(i64, &str)> {         // c:1428
 
 
 /// Quote substitution for heredoc tags
-/// Port of quotesubst() from subst.c lines 436-452
-pub fn quotesubst(s: &str, state: &mut SubstState) -> String { // c:463
-    let mut result = s.to_string();                         // c:463
-    let mut pos = 0;                                        // c:463
+/// Port of `quotesubst()` from `Src/subst.c:463-475`.
+///
+/// Simplified version of prefork/singsub that does only the
+/// substitutions appropriate to quoting context — currently just the
+/// $'...' (Snull) form. Used for here-doc end tags. Other expansions
+/// (param-subst, cmd-subst, arith) stay in the text.
+///
+/// The trailing `remnulargs()` strips Bnull tokens so this is
+/// consistent with the other substitution forms (indicating quotes
+/// have been fully processed).
+pub fn quotesubst(s: &str, _state: &mut SubstState) -> String { // c:463
+    let mut result = s.to_string();                         // c:465
+    let mut pos = 0_usize;                                  // c:466
 
-    while pos < result.len() {                              // c:463
-        let chars: Vec<char> = result.chars().collect();    // c:463
-        if pos + 1 < chars.len() && chars[pos] == STRING && chars[pos + 1] == SNULL { // c:463
-            // $'...' quote substitution
-            let (new_str, new_pos) = stringsubstquote(&result, pos); // c:463
-            result = new_str;                               // c:463
-            pos = new_pos;                                  // c:463
-        } else {                                            // c:463
-            pos += 1;                                       // c:463
-        }                                                   // c:463
-    }                                                       // c:463
-
-    result.replace('\0', "")                                     // c:463
-}                                                           // c:463
+    // C: `while (*s) { if (*s == String && s[1] == Snull) …
+    //               else s++; }`
+    loop {                                                  // c:467
+        let chars: Vec<char> = result.chars().collect();    // c:467
+        if pos >= chars.len() { break; }                    // c:467
+        // C lines 468-470: spot $'…' marker and call
+        // stringsubstquote.
+        if pos + 1 < chars.len()                            // c:468
+            && chars[pos] == STRING                         // c:468
+            && chars[pos + 1] == SNULL                      // c:468
+        {
+            let (new_str, new_pos) = stringsubstquote(&result, pos); // c:469
+            result = new_str;                               // c:469
+            pos = new_pos;                                  // c:469
+        } else {                                            // c:471
+            pos += 1;                                       // c:472
+        }                                                   // c:473
+    }
+    // C: `remnulargs(str);` — strip Bnull / NUL tokens. Use the
+    // inline equivalent the rest of subst.rs uses (\u{0} only;
+    // glob.rs's full port operates on Vec<GlobToken>).
+    result.replace('\u{0}', "")                             // c:474
+}                                                           // c:475
 
 /// Glob entries in a linked list
 /// Port of globlist() from subst.c lines 468-505
