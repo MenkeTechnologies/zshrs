@@ -619,6 +619,12 @@ pub struct ShellExecutor {
     /// is a Vec of (fd, saved_dup_fd) pairs taken from `dup(fd)` before the
     /// redirect was applied; `with_redirects_end` `dup2`s them back and closes.
     pub redirect_scope_stack: Vec<Vec<(i32, i32)>>,
+    /// Set by `host_apply_redirect` when a redirect target couldn't be
+    /// opened (permission denied, no such directory, etc). The next
+    /// builtin/command checks this at entry and short-circuits with
+    /// status 1 instead of running. Mirrors zsh's "command skip" on
+    /// redirect failure.
+    pub redirect_failed: bool,
     /// Stdin content set by `Op::HereDoc(idx)` / `Op::HereString` for the next
     /// command/builtin in this VM. Consumed (and cleared) by the next command.
     pub pending_stdin: Option<String>,
@@ -947,6 +953,7 @@ impl ShellExecutor {
             next_async_id: 1,
             defer_stack: Vec::new(),
             redirect_scope_stack: Vec::new(),
+            redirect_failed: false,
             pending_stdin: None,
             functions_compiled: HashMap::new(),
             function_source: HashMap::new(),

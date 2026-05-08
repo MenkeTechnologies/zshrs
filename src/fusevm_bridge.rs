@@ -9320,11 +9320,38 @@ impl crate::ported::exec::ShellExecutor {
                     }
                     return;
                 }
-                if let Ok(file) = std::fs::File::create(target) {
-                    let new_fd = file.into_raw_fd();
-                    unsafe {
-                        libc::dup2(new_fd, fd);
-                        libc::close(new_fd);
+                match std::fs::File::create(target) {
+                    Ok(file) => {
+                        let new_fd = file.into_raw_fd();
+                        unsafe {
+                            libc::dup2(new_fd, fd);
+                            libc::close(new_fd);
+                        }
+                    }
+                    Err(e) => {
+                        // zsh: print error and discard the upcoming
+                        // command's output. Verified against /bin/zsh:
+                        //   echo x > /etc/passwd  → "permission denied:..."
+                        //   echo x > /no/such/dir → "no such file or directory:..."
+                        let msg = match e.kind() {
+                            std::io::ErrorKind::PermissionDenied => "permission denied",
+                            std::io::ErrorKind::NotFound => "no such file or directory",
+                            std::io::ErrorKind::IsADirectory => "is a directory",
+                            _ => "redirect failed",
+                        };
+                        eprintln!("zshrs:1: {}: {}", msg, target);
+                        self.last_status = 1;
+                        self.redirect_failed = true;
+                        if let Ok(devnull) = std::fs::OpenOptions::new()
+                            .write(true)
+                            .open("/dev/null")
+                        {
+                            let new_fd = devnull.into_raw_fd();
+                            unsafe {
+                                libc::dup2(new_fd, fd);
+                                libc::close(new_fd);
+                            }
+                        }
                     }
                 }
             }

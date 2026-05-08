@@ -548,6 +548,10 @@ impl crate::ported::exec::ShellExecutor {
     }
     pub(crate) fn builtin_echo(&mut self, args: &[String], _redirects: &[Redirect]) -> i32 {
         self.dispatch_pending_traps();
+        if self.redirect_failed {
+            self.redirect_failed = false;
+            return 1;
+        }
         let mut newline = true;
         // zsh's default: interpret backslash escapes (\n, \t, \b, etc.)
         // unless `setopt bsd_echo` is on (then `-e` is required).
@@ -8659,6 +8663,10 @@ impl crate::ported::exec::ShellExecutor {
     /// print - zsh print builtin with many options
     pub(crate) fn bin_print(&mut self, args: &[String]) -> i32 {
         self.dispatch_pending_traps();
+        if self.redirect_failed {
+            self.redirect_failed = false;
+            return 1;
+        }
         // print [ -abcDilmnNoOpPrsSz ] [ -u n ] [ -f format ] [ -C cols ]
         //       [ -v name ] [ -xX tabstop ] [ -R [ -en ]] [ arg ... ]
         let mut no_newline = false;
