@@ -172,7 +172,6 @@ set_file_contents
 sfx_len
 shell_word_end_after
 shell_word_start_before
-shell_words
 socket_accept
 socket_connect
 socket_listen

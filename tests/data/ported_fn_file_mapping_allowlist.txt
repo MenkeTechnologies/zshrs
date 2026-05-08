@@ -71,3 +71,4 @@ src/ported/zle/zle_utils.rs::pastebuf
 src/ported/zle/compmatch.rs::parse_cmatcher
 src/ported/utils.rs::isident
 src/ported/zle/zle_refresh.rs::match_colour
+src/ported/zle/zle_word.rs::bufferwords

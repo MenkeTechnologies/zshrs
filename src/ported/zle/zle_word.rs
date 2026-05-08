@@ -22,7 +22,7 @@ impl Zle {
     /// Port of the backward-word scan logic in `backwardword()` at
     /// Src/Zle/zle_word.c:240, parameterised over four word-class
     /// styles: Emacs (iword), Vi (alnum + same-class), Shell
-    /// (bslashquote-aware via shell_words), BlankDelimited (whitespace only).
+    /// (bslashquote-aware via bufferwords), BlankDelimited (whitespace only).
     /// Returns the index of the first char of the located word.
     pub fn find_word_start(&self, style: WordStyle) -> usize {
         let mut pos = self.zlecs;
@@ -166,7 +166,7 @@ fn is_vi_word_char(c: ZleChar) -> bool {
 /// `bufferwords()` actually re-tokenizes those inner regions. The simpler
 /// form is sufficient for ZLE word-motion widgets, which only need
 /// boundary detection.
-pub fn shell_words(line: &[ZleChar]) -> Vec<(usize, usize)> {
+pub fn bufferwords(line: &[ZleChar]) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     let mut i = 0;
     let n = line.len();
@@ -231,7 +231,7 @@ pub fn shell_words(line: &[ZleChar]) -> Vec<(usize, usize)> {
 /// whitespace or at end-of-buffer, returns the start of the previous word
 /// (or 0 if there is none).
 pub(crate) fn shell_word_start_before(line: &[ZleChar], pos: usize) -> usize {
-    let words = shell_words(line);
+    let words = bufferwords(line);
     // Search for the word containing pos.
     for (s, e) in words.iter().rev() {
         if *s <= pos && pos <= *e {
@@ -255,7 +255,7 @@ pub(crate) fn shell_word_start_before(line: &[ZleChar], pos: usize) -> usize {
 /// If `pos` is inside a word, returns that word's end. If `pos` is on
 /// whitespace, returns the end of the next word (or `line.len()` if none).
 pub(crate) fn shell_word_end_after(line: &[ZleChar], pos: usize) -> usize {
-    let words = shell_words(line);
+    let words = bufferwords(line);
     for (s, e) in words {
         if pos >= s && pos < e {
             return e;
@@ -276,27 +276,27 @@ mod tests {
     }
 
     #[test]
-    fn shell_words_splits_on_whitespace() {
+    fn bufferwords_splits_on_whitespace() {
         let line = chars("echo hello world");
-        assert_eq!(shell_words(&line), vec![(0, 4), (5, 10), (11, 16)]);
+        assert_eq!(bufferwords(&line), vec![(0, 4), (5, 10), (11, 16)]);
     }
 
     #[test]
-    fn shell_words_keeps_double_quoted_run_intact() {
+    fn bufferwords_keeps_double_quoted_run_intact() {
         let line = chars(r#"echo "hello world""#);
-        assert_eq!(shell_words(&line), vec![(0, 4), (5, 18)]);
+        assert_eq!(bufferwords(&line), vec![(0, 4), (5, 18)]);
     }
 
     #[test]
-    fn shell_words_keeps_single_quoted_run_intact() {
+    fn bufferwords_keeps_single_quoted_run_intact() {
         let line = chars("a 'b c' d");
-        assert_eq!(shell_words(&line), vec![(0, 1), (2, 7), (8, 9)]);
+        assert_eq!(bufferwords(&line), vec![(0, 1), (2, 7), (8, 9)]);
     }
 
     #[test]
-    fn shell_words_treats_backslash_escape_as_part_of_word() {
+    fn bufferwords_treats_backslash_escape_as_part_of_word() {
         let line = chars(r"foo\ bar baz");
-        assert_eq!(shell_words(&line), vec![(0, 8), (9, 12)]);
+        assert_eq!(bufferwords(&line), vec![(0, 8), (9, 12)]);
     }
 
     #[test]
