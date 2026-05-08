@@ -75,4 +75,6 @@ src/ported/modules/hlgroup.rs::match_colour
 src/ported/zle/zle_refresh.rs::match_colour
 src/ported/zle/zle_word.rs::bufferwords
 src/ported/zle/zle_bindings.rs::bindkey
+src/ported/zle/zle_bindings.rs::getkeystring
+src/ported/zle/zle_bindings.rs::printbind
 src/ported/zle/zle_bindings.rs::bindlistout

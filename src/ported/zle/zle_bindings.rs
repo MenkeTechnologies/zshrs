@@ -16,7 +16,13 @@ use super::zle_thingy::Thingy;
 ///   - `\\M-X` → ESC + X (zsh's meta encoding for the keymap-trie)
 ///   - `\\C-X` → control character
 ///   - everything else → literal byte
-pub fn parse_key_sequence(s: &str) -> Vec<u8> {
+///
+/// Port of `getkeystring()` from Src/utils.c:6915 — `bindkey` calls
+/// it at line 4111 with `GETKEYS_BINDKEY` to convert the user-typed
+/// key spec into the raw byte sequence the keymap trie indexes by.
+/// The C version mutates a buffer in place + writes length via out
+/// pointer; this Rust port returns a fresh `Vec<u8>`.
+pub fn getkeystring(s: &str) -> Vec<u8> {
     let mut result = Vec::new();
     let mut chars = s.chars().peekable();
 
@@ -112,10 +118,11 @@ pub fn parse_key_sequence(s: &str) -> Vec<u8> {
 }
 
 /// Format a raw key-sequence byte slice for human-readable display.
-/// Equivalent to `printbind()` from Src/Zle/zle_utils.c:1283 — used
-/// by `bindkey -L` and the `where-is` widget to show key bindings
-/// in the same `^X` / `\\eX` form parse_key_sequence accepts.
-pub fn format_key_sequence(seq: &[u8]) -> String {
+/// Port of `printbind()` from Src/Zle/zle_utils.c:1283 — used by
+/// `bindkey -L` and the `where-is` widget to show key bindings in the
+/// same `^X` / `\\eX` form `getkeystring` accepts. C signature writes
+/// to a `FILE*` stream; this Rust port returns the formatted `String`.
+pub fn printbind(seq: &[u8]) -> String {
     let mut result = String::new();
     let mut i = 0;
 
@@ -154,7 +161,7 @@ pub fn format_key_sequence(seq: &[u8]) -> String {
 /// is installed. Uses `Arc::make_mut` to copy-on-write the wrapped Keymap so
 /// the mutation respects the existing Arc-shared layout.
 pub fn bindkey(km: &mut KeymapManager, keymap: &str, seq: &str, widget: &str) -> bool {
-    let seq_bytes = parse_key_sequence(seq);
+    let seq_bytes = getkeystring(seq);
     let map = match km.keymaps.get_mut(keymap) {
         Some(m) => m,
         None => return false,
@@ -175,7 +182,7 @@ pub fn bindlistout(km: &KeymapManager, keymap: &str) -> Vec<(String, String)> {
         // Single character bindings
         for (i, thingy) in map.first.iter().enumerate() {
             if let Some(t) = thingy {
-                let seq = format_key_sequence(&[i as u8]);
+                let seq = printbind(&[i as u8]);
                 bindings.push((seq, t.name.clone()));
             }
         }
@@ -183,10 +190,10 @@ pub fn bindlistout(km: &KeymapManager, keymap: &str) -> Vec<(String, String)> {
         // Multi-character bindings
         for (seq, binding) in &map.multi {
             if let Some(t) = &binding.bind {
-                let seq_str = format_key_sequence(seq);
+                let seq_str = printbind(seq);
                 bindings.push((seq_str, t.name.clone()));
             } else if let Some(s) = &binding.str {
-                let seq_str = format_key_sequence(seq);
+                let seq_str = printbind(seq);
                 bindings.push((seq_str, format!("send-string \"{}\"", s)));
             }
         }
@@ -214,14 +221,14 @@ mod tests {
         assert!(bindkey(&mut km, "emacs", "\\ez", "self-insert"));
         // Verify the binding shows up in bindlistout.
         let listed = bindlistout(&km, "emacs");
-        let seq = format_key_sequence(&[0x1b, 0x7a]);
+        let seq = printbind(&[0x1b, 0x7a]);
         assert!(
             listed.iter().any(|(k, v)| k == &seq && v == "self-insert"),
             "bound sequence missing from list: {:?}",
             listed
         );
         // Now remove it (inline of the deleted unbindkey helper).
-        let seq_bytes = parse_key_sequence("\\ez");
+        let seq_bytes = getkeystring("\\ez");
         let map = km.keymaps.get_mut("emacs").unwrap();
         let inner = std::sync::Arc::make_mut(map);
         inner.unbind_seq(&seq_bytes);
