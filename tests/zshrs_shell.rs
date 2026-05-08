@@ -1132,6 +1132,133 @@ fn test_subscript_parity_special_params() {
 }
 
 #[test]
+fn test_subscript_parity_env_and_scope() {
+    // String slicing on $HOME, export propagating to subshell,
+    // subshell can't mutate parent, function-local stays local,
+    // command-sub captures last $? before final cmd.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        print "1:[${HOME:0:5}]"
+        export FOO=parent
+        result=$(/bin/zsh -c "echo \$FOO")
+        print "2:[$result]"
+        sub_change=before
+        ( sub_change=after )
+        print "3:[$sub_change]"
+        fn() {
+          local lv=local-val
+          print "4:[$lv]"
+        }
+        fn
+        print "5:[${lv-unset}]"
+        exit_test=$(false; echo "exit=$?")
+        print "6:[$exit_test]"
+        "#,
+    );
+    let expected = "1:[/User]\n2:[parent]\n3:[before]\n4:[local-val]\n5:[unset]\n6:[exit=1]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_case_patterns_and_loop_control() {
+    // case-pattern globs (prefix, suffix, char-class), continue,
+    // break inside a numeric for loop.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        case foobar in
+          foo*|bar*) print 1:prefix-glob;;
+          *baz*) print 1:contains;;
+        esac
+        case file.txt in
+          *.txt) print 2:txt;;
+          *.log) print 2:log;;
+        esac
+        case 42 in
+          [0-9]) print 3:single;;
+          [0-9][0-9]) print 3:double;;
+          *) print 3:other;;
+        esac
+        for x in apple banana cherry; do
+          case $x in
+            a*) print "$x: starts-a";;
+            *e) print "$x: ends-e";;
+            *) print "$x: other";;
+          esac
+        done
+        for i in 1 2 3 4 5; do
+          if (( i == 3 )); then continue; fi
+          if (( i == 5 )); then break; fi
+          print -n "$i "
+        done
+        print
+        "#,
+    );
+    let expected = "1:prefix-glob\n2:txt\n3:double\napple: starts-a\nbanana: other\ncherry: other\n1 2 4";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_alias_listing() {
+    // alias forms — list, set, and unalias. Empirical against /bin/zsh:
+    //   ll='ls -l' / g='grep -i' / run-help=man (zsh built-in default)
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        alias ll="ls -l"
+        alias g="grep -i"
+        alias 2>&1 | head -3 | sort
+        "#,
+    );
+    assert_eq!(
+        output.trim(),
+        "g='grep -i'\nll='ls -l'\nrun-help=man",
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_subscript_parity_typeset_attribute_print() {
+    // typeset -p attribute display — covers -i, -A, -F, -ra.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        typeset -i n=42
+        typeset -p n
+        typeset -A m
+        m[k]=v
+        typeset -p m
+        typeset -F 3 f=3.14
+        typeset -p f
+        typeset -ra const=(a b c)
+        typeset -p const
+        "#,
+    );
+    let expected = "typeset -i n=42\ntypeset -A m=( [k]=v )\ntypeset -F f=3.140\ntypeset -ar const=( a b c )";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_let_and_arith_assignment() {
+    // `let`, `((expr))`, integer typeset, float typeset, ternary,
+    // array-element arithmetic.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        let x=2+2; print "1:[$x]"
+        ((y=3*4)); print "2:[$y]"
+        print "3:[$((10/3))] [$((10%3))]"
+        typeset -i n=10
+        n=n+5
+        print "4:[$n]"
+        typeset -F 3 f=3.14159
+        print "5:[$f]"
+        print "6:[$((1?100:200))]"
+        a=(10 20 30)
+        print "7:[$((a[2]+5))]"
+        "#,
+    );
+    let expected = "1:[4]\n2:[12]\n3:[3] [1]\n4:[15]\n5:[3.142]\n6:[100]\n7:[25]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
 fn test_subscript_parity_bg_wait_synchronizes() {
     // `(cmd) &; wait` must wait for the bg job before returning.
     // Verified against /bin/zsh:
