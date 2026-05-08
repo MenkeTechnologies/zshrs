@@ -137,7 +137,6 @@ scan_directory
 set_file_contents
 shell_word_end_after
 shell_word_start_before
-strwidth
 visible_width
 zselect
 zformat_recurse
