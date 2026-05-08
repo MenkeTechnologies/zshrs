@@ -82,7 +82,6 @@ errno_str
 # tcp.c). C zsh inlines connect/listen/accept/etc. inside one large
 # bin_ztcp dispatcher; Rust split into modular helpers for testability.
 close_fd
-tcp_connect_timeout
 tcp_listen
 tcp_accept
 tcp_test_accept
