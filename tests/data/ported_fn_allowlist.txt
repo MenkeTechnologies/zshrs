@@ -197,7 +197,6 @@ pfx_len
 print_bind
 pty_close
 pty_kill
-pty_test
 random_real_53
 random_real_max
 random_real_range

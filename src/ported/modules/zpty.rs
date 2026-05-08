@@ -255,31 +255,6 @@ pub fn ptywritestr(fd: RawFd, data: &str) -> io::Result<usize> {
     }
 }
 
-/// Check whether a pty has unread bytes pending.
-/// Port of the `-t` branch of `bin_zpty()` (Src/Modules/zpty.c:773)
-/// — `poll(2)` with zero timeout for non-blocking probe.
-pub fn pty_test(fd: RawFd) -> io::Result<bool> {
-    #[cfg(unix)]
-    {
-        let mut pfd = libc::pollfd {
-            fd,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-
-        let ret = unsafe { libc::poll(&mut pfd, 1, 0) };
-        if ret < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(ret > 0)
-    }
-
-    #[cfg(not(unix))]
-    {
-        Ok(true)
-    }
-}
-
 /// Send a signal to the child process behind a pty.
 /// Port of the `kill()` call inside `deleteptycmd()`
 /// (Src/Modules/zpty.c:490) — the C source sends SIGHUP/SIGTERM
@@ -411,11 +386,26 @@ pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) -> (i3
 
         let name = args[0];
         if let Some(cmd) = cmds.get(name) {
-            match pty_test(cmd.master_fd) {
-                Ok(true) => (0, output),
-                Ok(false) => (1, output),
-                Err(e) => (1, format!("zpty: test failed: {}\n", e)),
+            // Inline of the deleted pty_test helper: poll(2) with zero
+            // timeout (Src/Modules/zpty.c:773 -t branch).
+            #[cfg(unix)]
+            {
+                let mut pfd = libc::pollfd {
+                    fd: cmd.master_fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                let ret = unsafe { libc::poll(&mut pfd, 1, 0) };
+                if ret < 0 {
+                    (1, format!("zpty: test failed: {}\n", io::Error::last_os_error()))
+                } else if ret > 0 {
+                    (0, output)
+                } else {
+                    (1, output)
+                }
             }
+            #[cfg(not(unix))]
+            (0, output)
         } else {
             (1, format!("zpty: no such pty command: {}\n", name))
         }
