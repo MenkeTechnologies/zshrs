@@ -177,26 +177,14 @@ pub struct ZtcpOptions {
     pub target_fd: Option<RawFd>,
 }
 
-/// Connect to a TCP host with timeout on DNS and connect (default 10s).
-/// DNS resolution runs on a background thread so it can't hang the shell.
-/// Connect to a host:port and return (fd, peer, local).
+/// Connect to a host:port and return (fd, peer, local) with a 10s
+/// DNS+connect timeout. DNS resolution runs on a background thread so
+/// a slow resolver can't hang the shell.
+///
 /// Port of `tcp_connect()` from Src/Modules/tcp.c:316 — wraps
 /// `socket(2)` + `connect(2)` and resolves both endpoints.
 pub fn tcp_connect(host: &str, port: u16) -> io::Result<(RawFd, SocketAddr, SocketAddr)> {
-    tcp_connect_timeout(host, port, std::time::Duration::from_secs(10))         // c:316
-}
-
-/// Connect with an explicit timeout.
-/// zshrs convenience over `tcp_connect()` (Src/Modules/tcp.c:316)
-/// reachable from `bin_ztcp` (Src/Modules/tcp.c:342) — the C
-/// source's connect blocks until kernel default timeout; this
-/// exposes a configurable one.
-pub fn tcp_connect_timeout(
-    host: &str,
-    port: u16,
-    timeout: std::time::Duration,
-) -> io::Result<(RawFd, SocketAddr, SocketAddr)> {
-    // DNS resolution on a background thread — can hang for seconds on bad DNS
+    let timeout = std::time::Duration::from_secs(10);
     let addr_str = format!("{}:{}", host, port);
     let (tx, rx) = std::sync::mpsc::channel();
     let dns_str = addr_str.clone();
