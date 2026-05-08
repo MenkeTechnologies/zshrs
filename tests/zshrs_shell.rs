@@ -1198,6 +1198,103 @@ fn test_subscript_parity_case_patterns_and_loop_control() {
 }
 
 #[test]
+fn test_subscript_parity_ifs_read_and_quoted_positional() {
+    // IFS-overriding `read`, array literal with whitespace elements,
+    // \"\$@\" iteration preserving quoted boundaries.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        echo "x,y,z" | IFS=, read a b c
+        print "[$a] [$b] [$c]"
+        arr2=( "with space" without )
+        print "[${arr2[1]}] [${arr2[2]}]"
+        print "len=${#arr2}"
+        set -- "a b" "c d"
+        for x in "$@"; do print "elem:[$x]"; done
+        "#,
+    );
+    let expected = "[x] [y] [z]\n[with space] [without]\nlen=2\nelem:[a b]\nelem:[c d]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_redirect_error_skips_command() {
+    // Empirical bug: zshrs silently let `echo x > /etc/passwd`
+    // fall through to stdout when the redirect target couldn't
+    // be opened. Real zsh emits "permission denied:..." and the
+    // command exits 1 (so `&& cmd` doesn't fire and `|| cmd`
+    // does). Verified:
+    //   /bin/zsh -c 'echo x > /etc/passwd && echo S || echo F'
+    //   zsh:1: permission denied: /etc/passwd
+    //   F
+    let (_, output, stderr) = run_zshrs_parity(
+        r#"echo x > /etc/passwd && echo SUCCESS || echo FAIL"#,
+    );
+    assert_eq!(output.trim(), "FAIL", "stdout: {output:?}");
+    assert!(
+        stderr.contains("permission denied"),
+        "stderr should contain permission denied: {stderr:?}"
+    );
+
+    // No-such-directory variant
+    let (_, output, stderr) = run_zshrs_parity(
+        r#"echo x > /no/such/dir/f && echo SUCCESS || echo FAIL"#,
+    );
+    assert_eq!(output.trim(), "FAIL", "stdout: {output:?}");
+    assert!(
+        stderr.contains("no such file or directory"),
+        "stderr: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_subscript_parity_typeset_attribute_flags() {
+    // local -i (integer), local -F N (float precision), -l (lower),
+    // -u (upper), -L N (left-pad), -R N (right-pad).
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        fn() {
+          local -i n=10
+          n=n+5
+          print "1:[$n]"
+        }
+        fn
+        fn2() {
+          local -F 2 f=3.14159
+          print "2:[$f]"
+        }
+        fn2
+        typeset -l low="HELLO"
+        print "3:[$low]"
+        typeset -u up="hello"
+        print "4:[$up]"
+        typeset -L 5 lp="abc"
+        print "5:[$lp]"
+        typeset -R 5 rp="abc"
+        print "6:[$rp]"
+        "#,
+    );
+    let expected = "1:[15]\n2:[3.14]\n3:[hello]\n4:[HELLO]\n5:[abc  ]\n6:[  abc]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_path_modifiers() {
+    // History-modifier-style path modifiers: :t (tail), :h (head),
+    // :r (root, drop ext), :e (extension).
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        p=/usr/local/bin/cmd.txt
+        print "t:[${p:t}]"
+        print "h:[${p:h}]"
+        print "r:[${p:r}]"
+        print "e:[${p:e}]"
+        "#,
+    );
+    let expected = "t:[cmd.txt]\nh:[/usr/local/bin]\nr:[/usr/local/bin/cmd]\ne:[txt]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
 fn test_subscript_parity_recursive_glob_and_int_array() {
     // ** recursive glob, integer array with arith mutation,
     // hash count + key listing.
