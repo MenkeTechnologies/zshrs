@@ -4653,6 +4653,31 @@ mod tests {
         let out = getarg("(b.5.e)1", None, Some(&h)).expect("Some");
         assert_eq!(val_str(out), "");
     }
+
+    #[test]
+    fn getarg_w_flag_splits_multi_word_array_elements() {
+        // C params.c:1761-1797 — `(w)N` joins array then re-splits by
+        // IFS-default whitespace. arr=("a b" "c d"); (w)2 → "b" not "c d".
+        let arr: Vec<String> = vec!["a b".into(), "c d".into()];
+        let out = getarg("(w)2", Some(&arr), None).expect("Some");
+        assert_eq!(val_str(out), "b");
+    }
+
+    #[test]
+    fn getarg_w_flag_simple_array_indexing_still_works() {
+        let arr: Vec<String> = vec!["one".into(), "two".into(), "three".into()];
+        let out = getarg("(w)2", Some(&arr), None).expect("Some");
+        assert_eq!(val_str(out), "two");
+    }
+
+    #[test]
+    fn getarg_f_flag_splits_by_newline() {
+        // C params.c:1424-1427 — `f` flag aliases `w` with sep="\n".
+        // arr=("a b\nc d"); (f)2 → "c d" (split by \n only, not space).
+        let arr: Vec<String> = vec!["a b\nc d".into()];
+        let out = getarg("(f)2", Some(&arr), None).expect("Some");
+        assert_eq!(val_str(out), "c d");
+    }
 }
 
 // ===========================================================
@@ -6574,10 +6599,25 @@ pub(crate) fn getarg<'a>(
     // pattry(pprog, *p)) return r`.
     if let Some(arr) = arr {
         use fusevm::Value;
-        // `(w)N` on an array is `arr[N]` — the value is already split.
-        if flags.contains('w') {
+        // C params.c:1761-1797 — `(w)N` / `(f)N` word-mode arm.
+        // `getstrvalue(v)` joins the array; `sepsplit` re-splits by
+        // sep (`f` → "\n", `w` → IFS-default whitespace, `s:SEP:`
+        // → user sep), then the Nth split word is returned. So
+        // `arr=("a b" "c d"); ${arr[(w)2]}` → "b" (joined "a b c d",
+        // split → ["a","b","c","d"], pick idx 1).
+        if flags.contains('w') || flags.contains('f') {
             if let Ok(n) = pat.parse::<i64>() {
-                let len = arr.len() as i64;
+                let sep_chars: &[char] = if flags.contains('f') {
+                    &['\n']
+                } else {
+                    &[' ', '\t', '\n']
+                };
+                let joined = arr.join(" ");
+                let words: Vec<&str> = joined
+                    .split(|c: char| sep_chars.contains(&c))
+                    .filter(|w| !w.is_empty())
+                    .collect();
+                let len = words.len() as i64;
                 let idx_into = if n > 0 {
                     (n - 1) as usize
                 } else if n < 0 {
@@ -6590,7 +6630,7 @@ pub(crate) fn getarg<'a>(
                     return Some(GetargOut::Value(Value::str("")));
                 };
                 return Some(GetargOut::Value(
-                    Value::str(arr.get(idx_into).cloned().unwrap_or_default())
+                    Value::str(words.get(idx_into).map(|s| s.to_string()).unwrap_or_default())
                 ));
             }
         }
