@@ -85,9 +85,6 @@ parse_subscript_arith_assign
 parse_subscript_arith_compound
 parse_subscript_arith_pre_inc
 parse_zselect_args
-pcre_compile
-pcre_match
-pcre_study
 set_file_contents
 shell_word_end_after
 shell_word_start_before
