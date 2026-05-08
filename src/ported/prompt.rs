@@ -2260,3 +2260,28 @@ impl crate::ported::exec::ShellExecutor {
     }
 }
 // END moved-from-exec-rs
+
+/// Apply pending text-attribute changes to the terminal.
+/// Port of `applytextattributes()` from Src/prompt.c:1645.
+///
+/// In zsh this diff-syncs `txtcurrentattrs` against
+/// `txtpendingattrs` and emits the minimal termcap sequence
+/// (`tsetcap(TCALLATTRSOFF…)`, `TCBOLDFACEBEG`, etc.) to transition
+/// the terminal between attribute states. The Rust rewrite emits
+/// SGR strings inline via `set_colour_attribute` during prompt
+/// expansion, so this entry exists for ABI parity; terminal-side
+/// attribute syncing happens when the rendered prompt is flushed.
+pub fn applytextattributes(_flags: i32) {}
+
+/// Handle `%>...>` / `%<...<` / `%[truncchar string]` truncation.
+/// Port of `prompttrunc()` from Src/prompt.c:1276.
+///
+/// The C implementation mutates `bv` (the `BufVars` scratch struct
+/// in zsh's prompt expander) to insert a truncation string and
+/// re-run `putpromptchar()` against a width-bounded region. The
+/// Rust port handles truncation inline inside `expand_prompt()`
+/// rather than via this recursive callback; this entry exists for
+/// ABI parity.
+pub fn prompttrunc(_arg: i32, _truncchar: i32, _doprint: i32, _endchar: i32) -> i32 {
+    0
+}
