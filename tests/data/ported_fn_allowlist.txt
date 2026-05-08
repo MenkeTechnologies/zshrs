@@ -84,7 +84,6 @@ matches_watch_pattern
 # kept for ergonomics — zsh C inlines these or uses macros.
 get_term_width
 get_term_height
-shell_quote
 zsh_split_z
 shell_quote_value
 

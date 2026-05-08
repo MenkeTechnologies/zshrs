@@ -30,7 +30,7 @@ use indexmap::IndexMap;
 #[allow(unused_imports)]
 use crate::ported::exec::{
     self, ShellExecutor, BUILTIN_SET,
-    format_int_in_base, shell_quote, shell_quote_value,
+    format_int_in_base, shell_quote_value,
     VarAttr, VarKind,
 };
 use crate::ported::utils::{zerr, zerrnam, zwarn, zwarnnam};
@@ -5664,13 +5664,13 @@ impl crate::ported::exec::ShellExecutor {
             let mut vars: Vec<_> = self.variables.iter().collect();
             vars.sort_by_key(|(k, _)| *k);
             for (k, v) in vars {
-                println!("{}={}", k, shell_quote(v));
+                println!("{}={}", k, crate::ported::utils::quotedzputs(v));
             }
             // Also print arrays
             let mut arrs: Vec<_> = self.arrays.iter().collect();
             arrs.sort_by_key(|(k, _)| *k);
             for (k, v) in arrs {
-                let quoted: Vec<String> = v.iter().map(|s| shell_quote(s)).collect();
+                let quoted: Vec<String> = v.iter().map(|s| crate::ported::utils::quotedzputs(s)).collect();
                 println!("{}=( {} )", k, quoted.join(" "));
             }
             return 0;
@@ -5748,7 +5748,7 @@ impl crate::ported::exec::ShellExecutor {
                         let mut arrs: Vec<_> = self.arrays.iter().collect();
                         arrs.sort_by_key(|(k, _)| *k);
                         for (k, v) in arrs {
-                            let quoted: Vec<String> = v.iter().map(|s| shell_quote(s)).collect();
+                            let quoted: Vec<String> = v.iter().map(|s| crate::ported::utils::quotedzputs(s)).collect();
                             println!("{}=( {} )", k, quoted.join(" "));
                         }
                         return 0;

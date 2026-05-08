@@ -2686,47 +2686,6 @@ pub(crate) fn base64_decode(s: &str) -> Vec<u8> {
 // ===========================================================
 
 
-/// Quote a string for shell output (like zsh's set output)
-pub(crate) fn shell_quote(s: &str) -> String {
-    if s.is_empty() {
-        return "''".to_string();
-    }
-    // Check if quoting is needed
-    let needs_quotes = s.chars().any(|c| {
-        matches!(
-            c,
-            ' ' | '\t'
-                | '\n'
-                | '\''
-                | '"'
-                | '\\'
-                | '$'
-                | '`'
-                | '!'
-                | '*'
-                | '?'
-                | '['
-                | ']'
-                | '{'
-                | '}'
-                | '('
-                | ')'
-                | '<'
-                | '>'
-                | '|'
-                | '&'
-                | ';'
-                | '#'
-                | '~'
-        )
-    });
-    if !needs_quotes {
-        return s.to_string();
-    }
-    // Use single quotes, escaping single quotes as '\''
-    format!("'{}'", s.replace('\'', "'\\''"))
-}
-
 /// Quote a value for typeset -p output (re-executable code)
 /// Uses single quoting only when the value contains special characters
 /// Tokenise a string per zsh's `${(z)var}` semantics: whitespace

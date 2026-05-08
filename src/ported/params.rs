@@ -3165,7 +3165,7 @@ impl ParamTable {
             out.push('=');
             match &param.value {
                 ParamValue::Scalar(s) => {
-                    out.push_str(&shell_quote(s));
+                    out.push_str(&crate::ported::utils::quotedzputs(s));
                 }
                 ParamValue::Integer(i) => {
                     out.push_str(&convbase(*i, param.base as u32));
@@ -3179,7 +3179,7 @@ impl ParamTable {
                         if i > 0 {
                             out.push(' ');
                         }
-                        out.push_str(&shell_quote(elem));
+                        out.push_str(&crate::ported::utils::quotedzputs(elem));
                     }
                     out.push(')');
                 }
@@ -3192,9 +3192,9 @@ impl ParamTable {
                             out.push(' ');
                         }
                         out.push('[');
-                        out.push_str(&shell_quote(k));
+                        out.push_str(&crate::ported::utils::quotedzputs(k));
                         out.push_str("]=");
-                        out.push_str(&shell_quote(v));
+                        out.push_str(&crate::ported::utils::quotedzputs(v));
                     }
                     out.push(')');
                 }
@@ -3879,30 +3879,6 @@ pub fn setarrvalue(arr: &mut Vec<String>, start: i64, end: i64, val: Vec<String>
             }
         }
     }
-}
-
-/// Shell-bslashquote a string for display
-fn shell_quote(s: &str) -> String {
-    if s.is_empty() {
-        return "''".to_string();
-    }
-    // Check if quoting is needed
-    if s.chars()
-        .all(|c| c.is_alphanumeric() || c == '_' || c == '/' || c == '.' || c == '-' || c == ':')
-    {
-        return s.to_string();
-    }
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('\'');
-    for c in s.chars() {
-        if c == '\'' {
-            out.push_str("'\\''");
-        } else {
-            out.push(c);
-        }
-    }
-    out.push('\'');
-    out
 }
 
 // ---------------------------------------------------------------------------

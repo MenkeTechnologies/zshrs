@@ -1106,22 +1106,11 @@ pub fn format_alias(alias: &Alias, print_flags: u32) -> String {
             result.push_str("-- ");
         }
 
-        result.push_str(&format!("{}={}\n", shell_quote(name), shell_quote(text)));
+        result.push_str(&format!("{}={}\n", crate::ported::utils::quotedzputs(name), crate::ported::utils::quotedzputs(text)));
         return result;
     }
 
-    format!("{}={}\n", shell_quote(name), shell_quote(text))
-}
-
-/// Quote a string for shell output
-fn shell_quote(s: &str) -> String {
-    if s.chars()
-        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '/' || c == '.')
-    {
-        s.to_string()
-    } else {
-        format!("'{}'", s.replace('\'', "'\\''"))
-    }
+    format!("{}={}\n", crate::ported::utils::quotedzputs(name), crate::ported::utils::quotedzputs(text))
 }
 
 #[cfg(test)]
