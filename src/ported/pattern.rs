@@ -1845,6 +1845,26 @@ impl crate::ported::exec::ShellExecutor {
 // Free fns moved verbatim from src/ported/exec.rs.
 // ===========================================================
 // BEGIN moved-from-exec-rs (free fns)
+/// Parsed `(#flags)` pattern prefix.
+/// Mirrors the bag of flag bits the C source's `patglobflags` global
+/// (Src/pattern.c:304) accumulates while scanning a pattern's `(#…)`
+/// prefix block.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PatternFlags {
+    /// Pattern body with the `(#…)` prefix stripped off.
+    pub rest: String,
+    /// `(#i)` set / `(#I)` unset — case-insensitive match.
+    pub case_insensitive: bool,
+    /// `(#l)` set — lowercase pattern matches uppercase text too.
+    pub lcmatchuc: bool,
+    /// `(#aN)` — approximate match with up to N edit-distance errors.
+    pub approx: Option<usize>,
+    /// `(#b)`/`(#m)` set / `(#B)`/`(#M)` unset — capture / $MATCH mode.
+    pub backref: bool,
+}
+
+impl PatternFlags {
+
 /// Full pattern-flag parser that also reports the `(#b)` backref-
 /// capture flag in addition to the four flags `parse_pattern_flags`
 /// returns. Used by `BUILTIN_PARAM_REPLACE` to enable
@@ -1853,7 +1873,7 @@ impl crate::ported::exec::ShellExecutor {
 ///            $match[N] holds capture N (1-based), $mbegin / $mend
 ///            hold start/end positions.
 ///   `(#B)` — turn it off (default).
-pub(crate) fn parse_pattern_flags_full(
+pub(crate) fn parse(
     pat: &str,
 ) -> (String, bool, bool, Option<usize>, bool) {
     if !pat.starts_with("(#") {
@@ -1930,6 +1950,9 @@ pub(crate) fn parse_pattern_flags_full(
     }
     (rest.to_string(), case_i, l, approx, backref)
 }
+
+}  // impl PatternFlags
+
 /// Approximate match: returns true if `s` matches `pat` with up to `n`
 /// edit-distance errors. Uses the Wagner-Fischer dynamic-programming
 /// algorithm to compute Levenshtein distance, then compares against

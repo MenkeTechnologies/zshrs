@@ -44,9 +44,7 @@ pub(crate) use crate::ported::math::{
 #[allow(unused_imports)]
 pub(crate) use crate::ported::params::getarrvalue;
 #[allow(unused_imports)]
-pub(crate) use crate::ported::pattern::{
-    parse_pattern_flags_full,
-};
+pub(crate) use crate::ported::pattern::PatternFlags;
 #[allow(unused_imports)]
 // drift imports removed: apply_subst_modifier, slice_scalar, strip_match_op
 #[allow(unused_imports)]

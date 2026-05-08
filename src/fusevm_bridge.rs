@@ -7510,7 +7510,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `regex::Captures` and writes `state.arrays["match"]`
         // before each replacement-string expansion.
         let (pattern, case_insensitive_repl, _l_flag_repl, _approx_repl, backref_mode) =
-            parse_pattern_flags_full(&pattern);
+            crate::ported::pattern::PatternFlags::parse(&pattern);
         // zsh patterns in ${var/pat/repl} support `?`, `*`, `[...]`,
         // anchored `#`/`%` (handled via op codes 2/3). Compile to a
         // regex for the actual matching; falls back to plain string
