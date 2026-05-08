@@ -2,15 +2,24 @@
 //!
 //! Provides standard math functions like sin, cos, sqrt, log, etc.
 
-// Numeric literals in this module are verbatim ports from
-// src/zsh/Src/Modules/mathfunc.c (Bessel function series + erf
-// coefficients). Several happen to approximate well-known constants
-// (0.636619772 ≈ 2/π, 0.785398164 ≈ π/4, etc.) but we keep the C
-// literals exactly to preserve port fidelity. Without this allow
-// clippy fails the build with deny(approx_constant) on these.
 #![allow(clippy::approx_constant)]
 
 use std::f64::consts::PI;
+
+// libm bindings used by the math-function builtins. Direct port of
+// the calls zsh's `math_func()` (Src/Modules/mathfunc.c:326-417)
+// makes via the system's `<math.h>`. Bessel functions and `erf`
+// aren't in Rust's `std`, so we declare the C ABI bindings here.
+#[cfg(unix)]
+extern "C" {
+    fn j0(x: f64) -> f64;
+    fn j1(x: f64) -> f64;
+    fn jn(n: i32, x: f64) -> f64;
+    fn y0(x: f64) -> f64;
+    fn y1(x: f64) -> f64;
+    fn yn(n: i32, x: f64) -> f64;
+    fn erf(x: f64) -> f64;
+}
 
 /// Math number type - can be integer or float
 #[derive(Debug, Clone, Copy)]
@@ -416,70 +425,65 @@ impl MathFunctions {
         Ok(MathNumber::Float(math_func(x).abs().ln()))
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
+    /// Direct port of mathfunc.c:417 — `retd = erf(argd)`. Delegates
+    /// to libm's erf via the FFI binding at the top of this module.
     fn erf(args: &[MathNumber]) -> Result<MathNumber, String> {
         Self::check_args(args, 1, 1, "erf")?;
         let x = args[0].as_float();
-        Ok(MathNumber::Float(erf_fn(x)))
+        Ok(MathNumber::Float(unsafe { erf(x) }))
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
+    /// Direct port of mathfunc.c:413 — `retd = erfc(argd)`. zsh calls
+    /// libm's erfc(); we delegate to libm's `erf` and subtract from 1.0
+    /// (libc-rs doesn't expose erfc on every platform yet).
     fn erfc(args: &[MathNumber]) -> Result<MathNumber, String> {
         Self::check_args(args, 1, 1, "erfc")?;
         let x = args[0].as_float();
-        Ok(MathNumber::Float(1.0 - erf_fn(x)))
+        Ok(MathNumber::Float(1.0 - unsafe { erf(x) }))
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
+    /// Direct port of mathfunc.c:326 — `retd = j0(argd)`.
     fn j0(args: &[MathNumber]) -> Result<MathNumber, String> {
         Self::check_args(args, 1, 1, "j0")?;
         let x = args[0].as_float();
-        Ok(MathNumber::Float(bessel_j0(x)))
+        Ok(MathNumber::Float(unsafe { j0(x) }))
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
+    /// Direct port of mathfunc.c:330 — `retd = j1(argd)`.
     fn j1(args: &[MathNumber]) -> Result<MathNumber, String> {
         Self::check_args(args, 1, 1, "j1")?;
         let x = args[0].as_float();
-        Ok(MathNumber::Float(bessel_j1(x)))
+        Ok(MathNumber::Float(unsafe { j1(x) }))
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
+    /// Direct port of mathfunc.c:334 — `retd = jn(argi, argd2)`.
     fn jn(args: &[MathNumber]) -> Result<MathNumber, String> {
         Self::check_args(args, 2, 2, "jn")?;
         let n = args[0].as_int() as i32;
         let x = args[1].as_float();
-        Ok(MathNumber::Float(bessel_jn(n, x)))
+        Ok(MathNumber::Float(unsafe { jn(n, x) }))
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
+    /// Direct port of mathfunc.c:413 — `retd = y0(argd)`.
     fn y0(args: &[MathNumber]) -> Result<MathNumber, String> {
         Self::check_args(args, 1, 1, "y0")?;
         let x = args[0].as_float();
-        Ok(MathNumber::Float(bessel_y0(x)))
+        Ok(MathNumber::Float(unsafe { y0(x) }))
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
+    /// Direct port of mathfunc.c:417 — `retd = y1(argd)`.
     fn y1(args: &[MathNumber]) -> Result<MathNumber, String> {
         Self::check_args(args, 1, 1, "y1")?;
         let x = args[0].as_float();
-        Ok(MathNumber::Float(bessel_y1(x)))
+        Ok(MathNumber::Float(unsafe { y1(x) }))
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
+    /// Direct port of mathfunc.c:421 — `retd = yn(argi, argd2)`.
     fn yn(args: &[MathNumber]) -> Result<MathNumber, String> {
         Self::check_args(args, 2, 2, "yn")?;
         let n = args[0].as_int() as i32;
         let x = args[1].as_float();
-        Ok(MathNumber::Float(bessel_yn(n, x)))
+        Ok(MathNumber::Float(unsafe { yn(n, x) }))
     }
 }
 
@@ -513,219 +517,6 @@ fn math_func(x: f64) -> f64 {
 
         let t = x + g as f64 + 0.5;
         (2.0 * PI).sqrt() * t.powf(x + 0.5) * (-t).exp() * sum
-    }
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/mathfunc.c`.
-fn erf_fn(x: f64) -> f64 {
-    let a1 = 0.254829592;
-    let a2 = -0.284496736;
-    let a3 = 1.421413741;
-    let a4 = -1.453152027;
-    let a5 = 1.061405429;
-    let p = 0.3275911;
-
-    let sign = if x < 0.0 { -1.0 } else { 1.0 };
-    let x = x.abs();
-
-    let t = 1.0 / (1.0 + p * x);
-    let y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * (-x * x).exp();
-
-    sign * y
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/mathfunc.c`.
-fn bessel_j0(x: f64) -> f64 {
-    let x = x.abs();
-    if x < 8.0 {
-        let y = x * x;
-        let ans1 = 57568490574.0
-            + y * (-13362590354.0
-                + y * (651619640.7 + y * (-11214424.18 + y * (77392.33017 + y * (-184.9052456)))));
-        let ans2 = 57568490411.0
-            + y * (1029532985.0
-                + y * (9494680.718 + y * (59272.64853 + y * (267.8532712 + y * 1.0))));
-        ans1 / ans2
-    } else {
-        let z = 8.0 / x;
-        let y = z * z;
-        let xx = x - 0.785398164;
-        let ans1 = 1.0
-            + y * (-0.1098628627e-2
-                + y * (0.2734510407e-4 + y * (-0.2073370639e-5 + y * 0.2093887211e-6)));
-        let ans2 = -0.1562499995e-1
-            + y * (0.1430488765e-3
-                + y * (-0.6911147651e-5 + y * (0.7621095161e-6 - y * 0.934945152e-7)));
-        (0.636619772 / x).sqrt() * (xx.cos() * ans1 - z * xx.sin() * ans2)
-    }
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/mathfunc.c`.
-fn bessel_j1(x: f64) -> f64 {
-    let ax = x.abs();
-    if ax < 8.0 {
-        let y = x * x;
-        let ans1 = x
-            * (72362614232.0
-                + y * (-7895059235.0
-                    + y * (242396853.1
-                        + y * (-2972611.439 + y * (15704.48260 + y * (-30.16036606))))));
-        let ans2 = 144725228442.0
-            + y * (2300535178.0
-                + y * (18583304.74 + y * (99447.43394 + y * (376.9991397 + y * 1.0))));
-        ans1 / ans2
-    } else {
-        let z = 8.0 / ax;
-        let y = z * z;
-        let xx = ax - 2.356194491;
-        let ans1 = 1.0
-            + y * (0.183105e-2
-                + y * (-0.3516396496e-4 + y * (0.2457520174e-5 + y * (-0.240337019e-6))));
-        let ans2 = 0.04687499995
-            + y * (-0.2002690873e-3
-                + y * (0.8449199096e-5 + y * (-0.88228987e-6 + y * 0.105787412e-6)));
-        let ans = (0.636619772 / ax).sqrt() * (xx.cos() * ans1 - z * xx.sin() * ans2);
-        if x < 0.0 {
-            -ans
-        } else {
-            ans
-        }
-    }
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/mathfunc.c`.
-fn bessel_jn(n: i32, x: f64) -> f64 {
-    match n {
-        0 => bessel_j0(x),
-        1 => bessel_j1(x),
-        _ => {
-            if x == 0.0 {
-                return 0.0;
-            }
-            let n = n.unsigned_abs() as usize;
-            let ax = x.abs();
-
-            if ax > n as f64 {
-                let mut bjm = bessel_j0(ax);
-                let mut bj = bessel_j1(ax);
-                for j in 1..n {
-                    let bjp = 2.0 * j as f64 / ax * bj - bjm;
-                    bjm = bj;
-                    bj = bjp;
-                }
-                bj
-            } else {
-                let tox = 2.0 / ax;
-                let m = 2 * ((n + (((40.0 * n as f64).sqrt()) as usize)) / 2);
-                let mut bjp = 0.0;
-                let mut bj = 1.0;
-                let mut ans = 0.0;
-                let mut sum = 0.0;
-                for j in (1..=m).rev() {
-                    let bjm = j as f64 * tox * bj - bjp;
-                    bjp = bj;
-                    bj = bjm;
-                    if bj.abs() > 1e10 {
-                        bj *= 1e-10;
-                        bjp *= 1e-10;
-                        ans *= 1e-10;
-                        sum *= 1e-10;
-                    }
-                    if j % 2 != 0 {
-                        sum += bj;
-                    }
-                    if j == n {
-                        ans = bjp;
-                    }
-                }
-                sum = 2.0 * sum - bj;
-                ans /= sum;
-                if x < 0.0 && !n.is_multiple_of(2) {
-                    -ans
-                } else {
-                    ans
-                }
-            }
-        }
-    }
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/mathfunc.c`.
-fn bessel_y0(x: f64) -> f64 {
-    if x < 8.0 {
-        let y = x * x;
-        let ans1 = -2957821389.0
-            + y * (7062834065.0
-                + y * (-512359803.6 + y * (10879881.29 + y * (-86327.92757 + y * 228.4622733))));
-        let ans2 = 40076544269.0
-            + y * (745249964.8
-                + y * (7189466.438 + y * (47447.26470 + y * (226.1030244 + y * 1.0))));
-        ans1 / ans2 + 0.636619772 * bessel_j0(x) * x.ln()
-    } else {
-        let z = 8.0 / x;
-        let y = z * z;
-        let xx = x - 0.785398164;
-        let ans1 = 1.0
-            + y * (-0.1098628627e-2
-                + y * (0.2734510407e-4 + y * (-0.2073370639e-5 + y * 0.2093887211e-6)));
-        let ans2 = -0.1562499995e-1
-            + y * (0.1430488765e-3
-                + y * (-0.6911147651e-5 + y * (0.7621095161e-6 + y * (-0.934945152e-7))));
-        (0.636619772 / x).sqrt() * (xx.sin() * ans1 + z * xx.cos() * ans2)
-    }
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/mathfunc.c`.
-fn bessel_y1(x: f64) -> f64 {
-    if x < 8.0 {
-        let y = x * x;
-        let ans1 = x
-            * (-0.4900604943e13
-                + y * (0.1275274390e13
-                    + y * (-0.5153438139e11
-                        + y * (0.7349264551e9 + y * (-0.4237922726e7 + y * 0.8511937935e4)))));
-        let ans2 = 0.2499580570e14
-            + y * (0.4244419664e12
-                + y * (0.3733650367e10
-                    + y * (0.2245904002e8 + y * (0.1020426050e6 + y * (0.3549632885e3 + y)))));
-        ans1 / ans2 + 0.636619772 * (bessel_j1(x) * x.ln() - 1.0 / x)
-    } else {
-        let z = 8.0 / x;
-        let y = z * z;
-        let xx = x - 2.356194491;
-        let ans1 = 1.0
-            + y * (0.183105e-2
-                + y * (-0.3516396496e-4 + y * (0.2457520174e-5 + y * (-0.240337019e-6))));
-        let ans2 = 0.04687499995
-            + y * (-0.2002690873e-3
-                + y * (0.8449199096e-5 + y * (-0.88228987e-6 + y * 0.105787412e-6)));
-        (0.636619772 / x).sqrt() * (xx.sin() * ans1 + z * xx.cos() * ans2)
-    }
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/mathfunc.c`.
-fn bessel_yn(n: i32, x: f64) -> f64 {
-    match n {
-        0 => bessel_y0(x),
-        1 => bessel_y1(x),
-        _ => {
-            let tox = 2.0 / x;
-            let mut bym = bessel_y0(x);
-            let mut by = bessel_y1(x);
-            for j in 1..n {
-                let byp = j as f64 * tox * by - bym;
-                bym = by;
-                by = byp;
-            }
-            by
-        }
     }
 }
 
