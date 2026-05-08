@@ -55,27 +55,6 @@ pub fn zerrmsg(msg: &str, errno: Option<i32>) {
     }
 }
 
-/// Check if a file exists and is executable
-/// Check whether a path is executable.
-/// Port of the `access(X_OK)` test inline in Src/utils.c
-/// `findcmd()` (called from Src/exec.c).
-pub fn is_executable(path: &str) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = std::fs::metadata(path) {
-            let mode = meta.permissions().mode();
-            return meta.is_file() && (mode & 0o111 != 0);
-        }
-        false
-    }
-    #[cfg(not(unix))]
-    {
-        Path::new(path).is_file()
-    }
-}
-
-
 /// Nicely format a string for display (escape unprintable chars)
 /// Render a control character as a printable form.
 /// Port of `nicechar()` from Src/utils.c — same `^X`/`M-X`
@@ -1837,8 +1816,19 @@ pub fn pathprog(prog: &str) -> Option<PathBuf> {
     if let Ok(path_var) = std::env::var("PATH") {
         for dir in path_var.split(':') {
             let full_path = PathBuf::from(dir).join(prog);
-            if let Some(path_str) = full_path.to_str() {
-                if is_executable(path_str) {
+            // Inline of the deleted is_executable helper.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(meta) = std::fs::metadata(&full_path) {
+                    if meta.is_file() && meta.permissions().mode() & 0o111 != 0 {
+                        return Some(full_path);
+                    }
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                if full_path.is_file() {
                     return Some(full_path);
                 }
             }

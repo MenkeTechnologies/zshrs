@@ -286,7 +286,18 @@ impl CmdNameTable {
 
             let path = entry.path();
             let should_add = if self.hash_executables_only {
-                is_executable(&path)
+                // Inline of the deleted is_executable helper.
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    path.metadata()
+                        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+                        .unwrap_or(false)
+                }
+                #[cfg(not(unix))]
+                {
+                    path.is_file()
+                }
             } else {
                 true
             };
@@ -339,27 +350,6 @@ impl Default for CmdNameTable {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Check if a path is executable
-#[cfg(unix)]
-fn is_executable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-
-    if let Ok(meta) = path.metadata() {
-        if !meta.is_file() {
-            return false;
-        }
-        let mode = meta.permissions().mode();
-        mode & 0o111 != 0
-    } else {
-        false
-    }
-}
-
-#[cfg(not(unix))]
-fn is_executable(path: &Path) -> bool {
-    path.is_file()
 }
 
 /// Shell function entry
