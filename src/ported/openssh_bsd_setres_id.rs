@@ -165,53 +165,43 @@ fn errno() -> libc::c_int {
 #[inline]
 fn set_errno(e: libc::c_int) {
     // libc exposes `__errno_location()` on Linux, `__error()` on
-    // macOS, etc. The portable way to set errno from Rust is to call
-    // a libc routine that sets it; here we just assign through the
-    // platform pointer via `std::io::Error` semantics. Since callers
-    // re-read errno immediately via `errno()`, set it by issuing a
-    // syscall guaranteed to fail with the desired value when needed,
-    // or fall back to writing through the raw thread-local.
+    // macOS/BSD. Pick the right thread-local accessor per platform
+    // and write the value directly. The raw fallback uses a Rust
+    // thread-local for exotic targets — callers re-read via
+    // `errno()` which queries `std::io::Error::last_os_error()`.
     unsafe {
-        *errno_ptr() = e;
+        let p: *mut libc::c_int = {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            { libc::__errno_location() }
+            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "dragonfly"))]
+            { libc::__error() }
+            #[cfg(any(target_os = "openbsd", target_os = "netbsd"))]
+            {
+                extern "C" {
+                    fn __errno() -> *mut libc::c_int;
+                }
+                __errno()
+            }
+            #[cfg(not(any(
+                target_os = "linux",
+                target_os = "android",
+                target_os = "macos",
+                target_os = "ios",
+                target_os = "freebsd",
+                target_os = "dragonfly",
+                target_os = "openbsd",
+                target_os = "netbsd",
+            )))]
+            {
+                use std::cell::UnsafeCell;
+                thread_local! {
+                    static ERRNO: UnsafeCell<libc::c_int> = const { UnsafeCell::new(0) };
+                }
+                ERRNO.with(|c| c.get())
+            }
+        };
+        *p = e;
     }
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-unsafe fn errno_ptr() -> *mut libc::c_int {
-    libc::__errno_location()
-}
-
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "dragonfly"))]
-unsafe fn errno_ptr() -> *mut libc::c_int {
-    libc::__error()
-}
-
-#[cfg(any(target_os = "openbsd", target_os = "netbsd"))]
-unsafe fn errno_ptr() -> *mut libc::c_int {
-    extern "C" {
-        fn __errno() -> *mut libc::c_int;
-    }
-    __errno()
-}
-
-#[cfg(not(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "freebsd",
-    target_os = "dragonfly",
-    target_os = "openbsd",
-    target_os = "netbsd",
-)))]
-unsafe fn errno_ptr() -> *mut libc::c_int {
-    // Fallback: leak a thread-local. Callers on exotic targets will
-    // still observe a sensible errno via `std::io::Error`.
-    use std::cell::UnsafeCell;
-    thread_local! {
-        static ERRNO: UnsafeCell<libc::c_int> = const { UnsafeCell::new(0) };
-    }
-    ERRNO.with(|c| c.get())
 }
 
 #[cfg(unix)]

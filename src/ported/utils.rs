@@ -878,24 +878,6 @@ pub fn statuidprint(uid: u32) -> Option<String> {
     }
 }
 
-/// Get group name from GID (from utils.c getgrgid handling)
-pub fn get_groupname(gid: u32) -> Option<String> {
-    #[cfg(unix)]
-    {
-        let grp = unsafe { libc::getgrgid(gid) };
-        if grp.is_null() {
-            return None;
-        }
-        let name = unsafe { std::ffi::CStr::from_ptr((*grp).gr_name) };
-        name.to_str().ok().map(|s| s.to_string())
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = gid;
-        None
-    }
-}
-
 /// String duplicate (from utils.c ztrdup)
 pub fn ztrdup(s: &str) -> String {
     s.to_string()

@@ -70,7 +70,6 @@ get_bounded_random
 # direct errno macros, not function-shaped helpers.
 errno
 set_errno
-errno_ptr
 errno_str
 
 # init.rs argv-parsing / help-text / exe-resolution helpers —
@@ -136,7 +135,6 @@ zexpandtabs_into
 quote_string
 split_quoted
 is_executable
-get_groupname
 
 attr_to_sgr
 bin_random_real
