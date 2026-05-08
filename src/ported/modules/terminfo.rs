@@ -32,25 +32,23 @@ extern "C" {
 }
 
 /// Initialize the terminfo database for the current `$TERM`. Must
-/// be called before any tigetstr/tigetnum/tigetflag query. Direct
-/// port of the `init_term()` call path in zsh's terminfo.c — passes
-/// NULL term name (use `$TERM`) and fd 1 (stdout).
-fn ensure_initialized() -> bool {
+/// Port of `getterminfo()` from `Src/Modules/terminfo.c:135`.
+///
+/// Also drives `bin_echoti` at line 64. Tries `tigetstr` → `tigetnum`
+/// → `tigetflag` in that order — string first, then numeric, then
+/// boolean. Returns `None` for unknown names so the caller can map
+/// to `""`. The terminfo database is initialised lazily via the
+/// `setupterm()` call zsh's setup_/boot_ hook performs at terminfo.c:
+/// init_term path; collapsed into a OnceLock here since zshrs has no
+/// per-module init function shape.
+pub fn getterminfo(name: &str) -> Option<String> {
     use std::sync::OnceLock;
     static INITIALIZED: OnceLock<bool> = OnceLock::new();
-    *INITIALIZED.get_or_init(|| {
+    let ok = *INITIALIZED.get_or_init(|| {
         let mut errret: libc::c_int = 0;
         unsafe { setupterm(std::ptr::null(), 1, &mut errret) == 0 }
-    })
-}
-
-/// Look up a terminfo capability by name. Direct port of
-/// `getterminfo()` from `Src/Modules/terminfo.c:135` (also the
-/// lookup driver behind `bin_echoti` at line 64). Tries string
-/// → numeric → boolean in that order. Returns `None` for unknown
-/// names so the caller can map to `""`.
-pub fn getterminfo(name: &str) -> Option<String> {
-    if !ensure_initialized() {
+    });
+    if !ok {
         return None;
     }
     let cname = std::ffi::CString::new(name).ok()?;

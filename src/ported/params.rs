@@ -4839,7 +4839,7 @@ impl crate::ported::exec::ShellExecutor {
             // Keeping a no-op arm here avoids a spurious "unknown
             // assoc" diagnostic if a caller bypasses
             // magic_assoc_lookup.
-            "termcap" => Some(crate::modules::termcap::lookup(key).unwrap_or_default()),
+            "termcap" => Some(crate::modules::termcap::gettermcap(key).unwrap_or_default()),
 
             // === FUNCTIONS ===
             "functions" => {

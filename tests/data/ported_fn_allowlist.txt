@@ -114,7 +114,6 @@ split_quoted
 
 clone_shell
 color_to_code
-ensure_initialized
 errno_from_name
 extract_ampm
 format_alias_kv
@@ -128,7 +127,6 @@ get_tied_param
 is_emacs_word_char
 is_valid_identifier
 is_vi_word_char
-lookup
 lookup_builtin
 magic_assoc_keys
 mathevalf

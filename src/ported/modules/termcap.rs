@@ -382,30 +382,29 @@ extern "C" {
     fn tgetflag(id: *const libc::c_char) -> libc::c_int;
 }
 
-/// Initialize the termcap database for `$TERM`. Must run before
-/// any tgetstr/tgetnum/tgetflag query. Direct port of `tgetent()`
-/// invocation in `Src/Modules/termcap.c:39` setup_().
-fn ensure_initialized() -> bool {
+/// Port of `gettermcap()` from `Src/Modules/termcap.c:144`.
+///
+/// Look up a termcap two-letter capability `name`. C source tries
+/// `tgetstr` → `tgetnum` → `tgetflag` in that order — string first,
+/// then numeric, then boolean — and stuffs the result into the
+/// PM_UNSET-shielded scalar at termcap.c:155-160. Returns `None` for
+/// unknown names so callers can map to `""`. The lazy-init of the
+/// termcap database (zsh's setup_/boot_ module hooks at termcap.c:39)
+/// is collapsed into a OnceLock inside this fn rather than a separate
+/// init function — modules don't have explicit setup hooks in zshrs.
+pub fn gettermcap(name: &str) -> Option<String> {
     use std::sync::OnceLock;
     static INITIALIZED: OnceLock<bool> = OnceLock::new();
-    *INITIALIZED.get_or_init(|| {
-        // The buffer is unused on modern ncurses but must be supplied.
+    let ok = *INITIALIZED.get_or_init(|| {
+        // tgetent() writes the cap database into the supplied buffer;
+        // modern ncurses ignores it but the prototype requires one.
+        // Direct port of the tgetent call in setup_() at termcap.c:39.
         let mut buf = vec![0i8; 2048];
         let term_name = std::env::var("TERM").unwrap_or_default();
         let cterm = std::ffi::CString::new(term_name).unwrap_or_default();
         unsafe { tgetent(buf.as_mut_ptr(), cterm.as_ptr()) == 1 }
-    })
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/termcap.c`.
-/// Look up a termcap two-letter capability name. Direct port of
-/// `gettermcap()` from `Src/Modules/termcap.c:144`. Tries string
-/// → numeric → boolean in that order. Returns `None` for unknown
-/// names so callers can map to `""` — matches the C source's
-/// PM_UNSET fallback at termcap.c:155-160.
-pub fn lookup(name: &str) -> Option<String> {
-    if !ensure_initialized() {
+    });
+    if !ok {
         return None;
     }
     let cname = std::ffi::CString::new(name).ok()?;
@@ -609,9 +608,9 @@ mod ncurses_smoke {
         // CI environment); just assert non-empty result for the
         // canonical clear-screen capability.
         std::env::set_var("TERM", "xterm-256color");
-        let v = lookup("cl");
+        let v = gettermcap("cl");
         eprintln!("cl = {:?}", v);
-        assert!(v.is_some(), "lookup(cl) returned None; ncurses not initialized?");
+        assert!(v.is_some(), "gettermcap(cl) returned None; ncurses not initialized?");
     }
 }
 
@@ -674,9 +673,6 @@ pub fn finish_() -> i32 {
 // yet covered above. zshrs links modules statically; live
 // state owned by the module's typed struct. Name-parity shims.
 
-/// Port of `gettermcap()` from Src/Modules/termcap.c:144.
-#[allow(non_snake_case)]
-pub fn gettermcap() -> i32 { 0 }
 
 /// Port of `scantermcap()` from Src/Modules/termcap.c:200.
 #[allow(non_snake_case)]
