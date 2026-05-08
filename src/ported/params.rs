@@ -4692,6 +4692,40 @@ mod tests {
         let out = getarg("(w)-1", None, None, Some("alpha beta gamma")).expect("Some");
         assert_eq!(val_str(out), "gamma");
     }
+
+    #[test]
+    fn getarg_scalar_re_returns_first_match_substring() {
+        // C params.c:1798-1980 — `(re)pat` slides window over scalar
+        // with exact-match comparison.
+        let out = getarg("(re)bc", None, None, Some("abcdef")).expect("Some");
+        assert_eq!(val_str(out), "bc");
+    }
+
+    #[test]
+    fn getarg_scalar_ie_returns_position_of_first_match() {
+        let out = getarg("(ie)cd", None, None, Some("abcdef")).expect("Some");
+        // 'cd' starts at 1-based position 3.
+        assert_eq!(val_str(out), "3");
+    }
+
+    #[test]
+    fn getarg_scalar_Ie_returns_position_of_last_match() {
+        let out = getarg("(Ie)b", None, None, Some("abcabc")).expect("Some");
+        // Last 'b' is at 1-based position 5.
+        assert_eq!(val_str(out), "5");
+    }
+
+    #[test]
+    fn getarg_scalar_ie_no_match_returns_len_plus_one() {
+        let out = getarg("(ie)z", None, None, Some("abc")).expect("Some");
+        assert_eq!(val_str(out), "4");
+    }
+
+    #[test]
+    fn getarg_scalar_Ie_no_match_returns_zero() {
+        let out = getarg("(Ie)z", None, None, Some("abc")).expect("Some");
+        assert_eq!(val_str(out), "0");
+    }
 }
 
 // ===========================================================
@@ -6780,6 +6814,56 @@ pub(crate) fn getarg<'a>(
                     Value::str(words.get(idx_into).map(|s| s.to_string()).unwrap_or_default()),
                 ));
             }
+        }
+        // C params.c:1798-1980 — scalar char-search arm. `(i)/(I)/
+        // (r)/(R)` on a scalar runs a sliding-window glob match.
+        // (i)/(I) return the 1-based byte position of first/last
+        // match; (r)/(R) return the matched substring.
+        // Multibyte cursor outputs (prevcharlen/nextcharlen at
+        // c:1948-1971) are not yet ported; ASCII-only path here.
+        let any_search = flags.contains('r')
+            || flags.contains('R')
+            || flags.contains('i')
+            || flags.contains('I');
+        if any_search {
+            let return_index = flags.contains('i') || flags.contains('I');
+            let want_last = flags.contains('I') || flags.contains('R');
+            // Negative `num` flips direction (c:1488-1491).
+            let want_last = want_last ^ neg_num_flips;
+            let s_chars: Vec<char> = s.chars().collect();
+            let n = s_chars.len();
+            let positions: Box<dyn Iterator<Item = usize>> = if want_last {
+                Box::new((0..=n).rev())
+            } else {
+                Box::new(0..=n)
+            };
+            let mut found: Option<(usize, usize)> = None;
+            'outer: for start in positions {
+                for span_len in 1..=(n - start) {
+                    let cand: String = s_chars[start..start + span_len].iter().collect();
+                    let hit = if flags.contains('e') {
+                        cand == pat
+                    } else {
+                        crate::ported::exec::ShellExecutor::glob_match_static(&cand, pat)
+                    };
+                    if hit {
+                        found = Some((start, start + span_len));
+                        break 'outer;
+                    }
+                }
+            }
+            return Some(GetargOut::Value(match (found, return_index) {
+                (Some((s_pos, _)), true) => Value::str((s_pos + 1).to_string()),
+                (Some((s_pos, e_pos)), false) => {
+                    Value::str(s_chars[s_pos..e_pos].iter().collect::<String>())
+                }
+                (None, true) => Value::str(if flags.contains('i') {
+                    (n + 1).to_string()
+                } else {
+                    "0".to_string()
+                }),
+                (None, false) => Value::str(String::new()),
+            }));
         }
     }
 
