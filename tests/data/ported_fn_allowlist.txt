@@ -106,7 +106,6 @@ unescape
 read_lines
 get_term_width
 get_term_height
-is_special
 shell_quote
 zsh_split_z
 normalize_logical
