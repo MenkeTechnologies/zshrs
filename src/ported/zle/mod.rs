@@ -16,6 +16,7 @@
 #[path = "../../extensions/keymaps.rs"] pub mod keymaps;
 #[path = "../../extensions/widgets.rs"] pub mod widgets;
 pub mod zle_bindings;
+pub mod compctl;
 pub mod compcore;
 pub mod complist;
 pub mod compmatch;
