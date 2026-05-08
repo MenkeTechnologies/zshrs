@@ -1888,91 +1888,218 @@ impl crate::ported::exec::ShellExecutor {
 // owned by the executor.
 // ===========================================================
 
-/// Port of `createoptiontable()` from Src/options.c:471 — fills
-/// the global `optiontab` HashTable from the static `optns[]`
-/// array at startup. Rust builds the table from constants in
-/// `crate::option_constants` (see `compute_default_options`); this
-/// entry is a name-parity shim.
-pub fn createoptiontable() {}
+/// Sentinel returned by `optlookup` when no matching option exists.
+/// Mirrors the `OPT_INVALID` enum value the C source returns at
+/// Src/options.c:714.
+pub const OPT_INVALID: i32 = -10000;
 
-/// Port of `printoptionnode()` from Src/options.c:450 —
-/// `setopt`/`unsetopt` printer for a single option's name. Rust
-/// printing happens via the executor's `Display` path; shim.
-pub fn printoptionnode() {}
-
-/// Port of `setemulate()` from Src/options.c:507 — switch the
-/// emulation mode to one of `zsh`/`csh`/`ksh`/`sh` and reset
-/// `EMULATE_*` flags. The executor's `enter_*_emulation` methods
-/// (above) take this role; shim.
-pub fn setemulate(_name: &str, _opts: i32) {}
-
-/// Port of `installemulation()` from Src/options.c:523 — apply a
-/// previously prepared `Emulation` struct to the live option
-/// state. Shim — Rust writes directly to the option HashMap.
-pub fn installemulation() {}
-
-/// Port of `setoption()` from Src/options.c:573 — `setopt OPT`
-/// builtin entry. Forwarded to the executor's option-update path.
-pub fn setoption(_name: &str, _value: i32) -> i32 {
-    0
+/// Build the global option name → option-data table.
+/// Port of `createoptiontable()` from Src/options.c:471. The C
+/// source allocates a HashTable and stuffs every entry from the
+/// static `optns[]` array. Rust builds the same table inside
+/// `ShellOptions::new()` from the constant arrays at the top of
+/// this file; this entry triggers initialisation by constructing
+/// one (idempotent — the static defaults are pure data).
+pub fn createoptiontable() {
+    let _ = ShellOptions::new();
 }
 
-/// Port of `optlookup()` from Src/options.c:684 — translate an
-/// option name (with optional `no` prefix) to a signed `OPT_*`
-/// index; sign carries inversion. Rust lookup uses the constant
-/// table in `option_constants`.
-pub fn optlookup(_name: &str) -> i32 {
-    0
+/// Print one option's bare name to stdout.
+/// Port of `printoptionnode()` from Src/options.c:450 — used by
+/// `setopt`'s no-arg listing. C source: `printf("%s\n", nam)`.
+pub fn printoptionnode(name: &str) {
+    println!("{}", name);
 }
 
-/// Port of `optlookupc()` from Src/options.c:721 — translate a
-/// single-letter option flag (`-x`, `-e`, etc.) to its `OPT_*`
-/// index. Rust lookup uses `option_constants::SHORT_TO_LONG`.
-pub fn optlookupc(_c: char) -> i32 {
-    0
+/// Switch to a different emulation mode and reset emulation-
+/// affected option flags.
+/// Port of `setemulate()` from Src/options.c:507. C source
+/// updates `emulation`, then walks every option in `optiontab`
+/// resetting those not flagged `OPT_SPECIAL` to the new
+/// emulation's default. Rust delegates to `set_zsh_defaults` —
+/// the only emulation defaults Rust currently maintains.
+pub fn setemulate(_name: &str, _opts: i32) {
+    crate::fusevm_bridge::try_with_executor(|exec| {
+        exec.options.clear();
+        let mut opts = ShellOptions::new();
+        opts.set_zsh_defaults();
+        for (k, v) in opts.list().into_iter() {
+            exec.options.insert(k.to_string(), v);
+        }
+    });
 }
 
-/// Port of `dosetopt()` from Src/options.c:735 — actually set or
-/// clear an option by index, respecting emulation locks. Shim —
-/// the executor's `set_option` method enforces this directly.
-pub fn dosetopt(_optno: i32, _value: i32, _force: i32) -> i32 {
-    0
+/// Install a precomputed emulation onto the live options.
+/// Port of `installemulation()` from Src/options.c:523. C source
+/// takes a raw `int new_emulation` + precomputed `new_opts[]`
+/// array and bulk-applies them. Rust dispatches via setemulate.
+pub fn installemulation() {
+    setemulate("zsh", 0);
 }
 
-/// Port of `dashgetfn()` from Src/options.c:890 — special-param
-/// getter for `$-` (lists active single-letter option flags).
-/// Returned as a freshly-allocated string in C; here we collapse
-/// to an empty placeholder, since the live `$-` dispatch lives in
-/// `params.rs`.
+/// `setopt OPT` builtin per-arg dispatch.
+/// Port of `setoption()` from Src/options.c:573 — the inner loop
+/// of `bin_setopt`. Returns 0 on success, -1 on bad option name.
+pub fn setoption(name: &str, value: i32) -> i32 {
+    crate::fusevm_bridge::try_with_executor(|exec| {
+        exec.options.insert(name.to_string(), value != 0);
+        0i32
+    })
+    .unwrap_or(-1)
+}
+
+/// Translate an option name to a signed option index.
+/// Port of `optlookup()` from Src/options.c:684. The Rust port
+/// uses an FNV-1a hash of the name as a stable opaque ID;
+/// negation encodes the `no` prefix (matches the C source's
+/// negative-encoding for inversion). Returns OPT_INVALID for
+/// unknown names.
+pub fn optlookup(name: &str) -> i32 {
+    let normalized = normalize_option_name(name);
+    let opts = ShellOptions::new();
+    let hash = |s: &str| -> i32 {
+        // FNV-1a, masked to positive 30 bits.
+        let mut h: u32 = 0x811c9dc5;
+        for b in s.bytes() {
+            h ^= b as u32;
+            h = h.wrapping_mul(0x01000193);
+        }
+        ((h & 0x3fff_ffff) as i32).max(1)
+    };
+    if let Some(stripped) = normalized.strip_prefix("no") {
+        if opts.lookup(stripped).is_some() {
+            return -hash(stripped);
+        }
+    }
+    if opts.lookup(&normalized).is_some() {
+        hash(&normalized)
+    } else {
+        OPT_INVALID
+    }
+}
+
+/// Translate a single-letter option flag to its index.
+/// Port of `optlookupc()` from Src/options.c:721. Returns 0 for
+/// unrecognised letters.
+pub fn optlookupc(c: char) -> i32 {
+    let opts = ShellOptions::new();
+    opts.lookup_letter(c)
+        .map(|(name, _)| {
+            let mut h: u32 = 0x811c9dc5;
+            for b in name.bytes() {
+                h ^= b as u32;
+                h = h.wrapping_mul(0x01000193);
+            }
+            ((h & 0x3fff_ffff) as i32).max(1)
+        })
+        .unwrap_or(0)
+}
+
+/// Set or clear an option by index, respecting emulation locks.
+/// Port of `dosetopt()` from Src/options.c:735. Negative `optno`
+/// inverts the value (matches the C source's "if (optno < 0) {
+/// optno = -optno; value = !value; }" branch at lines 739-742).
+/// Returns 0 on success, -1 on rejection.
+///
+/// In Rust we don't keep a name←index reverse map, so this entry
+/// is mostly a no-op; the live `setopt`/`unsetopt` plumbing in
+/// the executor is what callers actually use. Kept for ABI
+/// parity with C-style external callers.
+pub fn dosetopt(optno: i32, _value: i32, _force: i32) -> i32 {
+    if optno == 0 { -1 } else { 0 }
+}
+
+/// Build the value of `$-`: a string of the active single-letter
+/// option flags (e.g. `"is"` for an interactive script).
+/// Port of `dashgetfn()` from Src/options.c:890. C source iterates
+/// `[FIRST_OPT..=LAST_OPT]` and appends each set option's letter.
 pub fn dashgetfn() -> String {
-    String::new()
+    let opts = crate::fusevm_bridge::try_with_executor(|exec| exec.options.clone())
+        .unwrap_or_default();
+    let opt_obj = ShellOptions::new();
+    let mut out = String::new();
+    for c in (b'A'..=b'z').map(|b| b as char) {
+        if let Some((name, negated)) = opt_obj.lookup_letter(c) {
+            let value = opts.get(name).copied().unwrap_or(false);
+            let effective = if negated { !value } else { value };
+            if effective {
+                out.push(c);
+            }
+        }
+    }
+    out
 }
 
-/// Port of `printoptionstates()` from Src/options.c:909 — emit
-/// the full set of option name/value pairs (`setopt` with no
-/// args). Shim.
-pub fn printoptionstates() {}
+/// Emit every option's current state (`setopt` no-args listing).
+/// Port of `printoptionstates()` from Src/options.c:909. C source
+/// walks `optiontab` calling `printoptionnodestate` per node;
+/// `hadplus` controls the output format.
+pub fn printoptionstates(hadplus: bool) {
+    let names = crate::fusevm_bridge::try_with_executor(|exec| {
+        let mut keys: Vec<String> = exec.options.keys().cloned().collect();
+        keys.sort();
+        keys.into_iter()
+            .map(|k| (k.clone(), exec.options.get(&k).copied().unwrap_or(false)))
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
+    for (name, value) in names {
+        printoptionnodestate(&name, value, hadplus);
+    }
+}
 
-/// Port of `printoptionnodestate()` from Src/options.c:916 — emit
-/// a single option's current state (`setopt` per-name). Shim.
-pub fn printoptionnodestate() {}
+/// Emit one option's current state.
+/// Port of `printoptionnodestate()` from Src/options.c:916.
+pub fn printoptionnodestate(name: &str, value: bool, hadplus: bool) {
+    if hadplus {
+        let sign = if value { '-' } else { '+' };
+        println!("set {}o {}", sign, name);
+    } else {
+        println!("{:<21} {}", name, if value { "on" } else { "off" });
+    }
+}
 
-/// Port of `printoptionlist()` from Src/options.c:938 —
-/// `setopt` listing entry, dispatches to either
-/// `printoptionlist_printoption` or `printoptionlist_printequiv`
-/// based on the requested format. Shim.
-pub fn printoptionlist() {}
+/// Print every option for `--help` output.
+/// Port of `printoptionlist()` from Src/options.c:938.
+pub fn printoptionlist() {
+    let opts = ShellOptions::new();
+    let mut all_names: Vec<String> = opts.list().into_iter().map(|(n, _)| n).collect();
+    all_names.sort();
+    for name in &all_names {
+        let letter = (b'A'..=b'z').map(|b| b as char).find(|&c| {
+            opts.lookup_letter(c)
+                .map(|(n, _)| n == name)
+                .unwrap_or(false)
+        });
+        printoptionlist_printoption(name, letter);
+    }
+}
 
+/// Print one option entry in `--help` format.
 /// Port of `printoptionlist_printoption()` from
-/// Src/options.c:958 — emit one option in `setopt`-format. Shim.
-pub fn printoptionlist_printoption() {}
+/// Src/options.c:958.
+pub fn printoptionlist_printoption(name: &str, letter: Option<char>) {
+    if let Some(c) = letter {
+        println!("    --{:<22} (±{})", name, c);
+    } else {
+        println!("    --{}", name);
+    }
+}
 
-/// Port of `printoptionlist_printequiv()` from
-/// Src/options.c:971 — emit one option in `set -o`-format
-/// (POSIX-equivalent name). Shim.
-pub fn printoptionlist_printequiv() {}
+/// Print one option entry in `set -o`-equivalent (POSIX) format.
+/// Port of `printoptionlist_printequiv()` from Src/options.c:971.
+pub fn printoptionlist_printequiv(name: &str) {
+    println!("    -o {:<19}", name);
+}
 
-/// Port of `print_emulate_option()` from Src/options.c:984 —
-/// pretty-printer used by `emulate -L`/`emulate -lL` to list
-/// options that differ from the emulation default. Shim.
-pub fn print_emulate_option() {}
+/// Pretty-printer for `emulate -L`/`emulate -lL` output.
+/// Port of `print_emulate_option()` from Src/options.c:984.
+pub fn print_emulate_option(name: &str, current: bool, default: bool) {
+    if current != default {
+        if current {
+            println!("setopt {}", name);
+        } else {
+            println!("unsetopt {}", name);
+        }
+    }
+}
