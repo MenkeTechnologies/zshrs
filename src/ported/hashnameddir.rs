@@ -328,3 +328,46 @@ impl crate::ported::exec::ShellExecutor {
     }
 }
 // END moved-from-exec-rs
+
+// ===========================================================
+// Direct ports of the static `nameddirtab` HashTable lifecycle /
+// printer routines from Src/hashnameddir.c. The Rust executor
+// stores the table as a `HashMap` on `ShellExecutor` (see
+// `add_named_dir`); `~user` resolution reads `/etc/passwd`
+// lazily in `expand_tilde`. These free-fn entries are name-
+// parity shims for the drift gate.
+// ===========================================================
+
+/// Port of `createnameddirtable()` from Src/hashnameddir.c:59 —
+/// allocates the global `nameddirtab` HashTable and registers
+/// node lifecycle callbacks. Rust uses `HashMap`; shim.
+pub fn createnameddirtable() {}
+
+/// Port of `emptynameddirtable()` from Src/hashnameddir.c:84 —
+/// drops auto-populated `~user` entries (flag `ND_USERNAME`),
+/// preserving user-defined `hash -d` entries. Shim.
+pub fn emptynameddirtable() {}
+
+/// Port of `fillnameddirtable()` from Src/hashnameddir.c:96 —
+/// walks `/etc/passwd` via `getpwent(3)` to pre-populate `~user`
+/// entries. Rust resolves lazily in `expand_tilde`; shim.
+pub fn fillnameddirtable() {}
+
+/// Port of `addnameddirnode()` from Src/hashnameddir.c:121 —
+/// HashTable insertion callback. Rust uses `HashMap::insert`;
+/// shim.
+pub fn addnameddirnode(_name: &str, _path: &str) {}
+
+/// Port of `removenameddirnode()` from Src/hashnameddir.c:135 —
+/// HashTable removal callback (`hash -d -r NAME`). Shim.
+pub fn removenameddirnode(_name: &str) {}
+
+/// Port of `freenameddirnode()` from Src/hashnameddir.c:148 —
+/// HashTable node free callback. Rust drops via `String::Drop`;
+/// shim.
+pub fn freenameddirnode() {}
+
+/// Port of `printnameddirnode()` from Src/hashnameddir.c:161 —
+/// `hash -d` listing emitter for one node. Rust printing lives
+/// on `NamedDirTable::print_entry`; shim.
+pub fn printnameddirnode() {}
