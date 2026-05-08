@@ -536,7 +536,7 @@ impl GlobState {
 
         // Parse qualifiers first so a bare-qualifier pattern like `dir(/)`
         // (no wildcard, just a stat-based filter) still enters the expansion
-        // path. Without this, `has_wildcards("dir(/)")` returns false and the
+        // path. Without this, `haswilds("dir(/)")` returns false and the
         // pattern echoes back unfiltered, which defeats the whole point of
         // qualifiers.
         let (pat, quals) = self.parse_qualifiers(pattern);
@@ -545,7 +545,7 @@ impl GlobState {
         // Now check wildcards on the qualifier-stripped pattern. A pure
         // literal with a qualifier (`name(.)`) still needs to enter the
         // scanner so the qualifier filter can run against the literal name.
-        if !has_wildcards(&pat) && self.qualifiers.is_none() {
+        if !haswilds(&pat) && self.qualifiers.is_none() {
             return vec![pattern.to_string()];
         }
 
@@ -1418,7 +1418,7 @@ enum PatternComponent {
 /// Port of the `haswilds()` macro inline in Src/glob.c —
 /// short-circuits `zglob()` so plain literal paths skip the
 /// scanner.
-pub fn has_wildcards(s: &str) -> bool {
+pub fn haswilds(s: &str) -> bool {
     let mut in_bracket = false;
     let mut escape = false;
 
@@ -3322,7 +3322,7 @@ pub enum RedirectType {
 /// Expand redirections with glob patterns (from glob.c xpandredir lines 1690-1770)
 pub fn xpandredir(redir: &Redirect, options: &GlobOptions) -> Vec<Redirect> {
     // Check if target has wildcards
-    if !has_wildcards(&redir.target) {
+    if !haswilds(&redir.target) {
         return vec![redir.clone()];
     }
 
@@ -3408,12 +3408,12 @@ mod tests {
     }
 
     #[test]
-    fn test_has_wildcards() {
-        assert!(has_wildcards("*.txt"));
-        assert!(has_wildcards("file?.txt"));
-        assert!(has_wildcards("file[12].txt"));
-        assert!(!has_wildcards("file.txt"));
-        assert!(!has_wildcards("path/to/file.txt"));
+    fn test_haswilds() {
+        assert!(haswilds("*.txt"));
+        assert!(haswilds("file?.txt"));
+        assert!(haswilds("file[12].txt"));
+        assert!(!haswilds("file.txt"));
+        assert!(!haswilds("path/to/file.txt"));
     }
 
     #[test]

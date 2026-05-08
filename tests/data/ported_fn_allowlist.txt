@@ -94,7 +94,6 @@ approximate_match
 parse_numeric_range
 ksh_extglob_body_to_regex
 expand_posix_char_classes
-has_wildcards
 glob_match_impl
 match_bracket_expr
 scale_time
@@ -117,7 +116,6 @@ glob_match
 # kept for ergonomics — zsh C inlines these or uses macros.
 unescape
 read_lines
-is_identifier
 is_number
 get_term_width
 get_term_height

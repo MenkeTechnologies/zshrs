@@ -69,3 +69,4 @@ src/ported/utils.rs::zgetcwd
 src/ported/zle/zle_main.rs::acceptline
 src/ported/zle/zle_utils.rs::pastebuf
 src/ported/zle/compmatch.rs::parse_cmatcher
+src/ported/utils.rs::isident
