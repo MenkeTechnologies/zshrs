@@ -119,7 +119,6 @@ get_all_langinfo
 get_datetime_info
 get_tied_param
 is_emacs_word_char
-is_valid_identifier
 is_vi_word_char
 magic_assoc_keys
 normalize_option_name
