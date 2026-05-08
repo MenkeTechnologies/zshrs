@@ -107,7 +107,6 @@ read_lines
 get_term_width
 get_term_height
 is_special
-pretty_io_err
 shell_quote
 zsh_split_z
 normalize_logical

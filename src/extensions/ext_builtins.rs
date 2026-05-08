@@ -3128,7 +3128,7 @@ impl ShellExecutor {
                         io::copy(&mut handle, &mut stdout)?;
                     } else {
                         let mut f = std::fs::File::open(file).inspect_err(|e| {
-                            eprintln!("cat: {}: {}", file, pretty_io_err(e));
+                            eprintln!("cat: {}: {}", file, crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0)));
                         })?;
                         io::copy(&mut f, &mut stdout)?;
                     }
@@ -3139,7 +3139,7 @@ impl ShellExecutor {
                     Box::new(BufReader::new(io::stdin()))
                 } else {
                     let f = std::fs::File::open(file).inspect_err(|e| {
-                        eprintln!("cat: {}: {}", file, pretty_io_err(e));
+                        eprintln!("cat: {}: {}", file, crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0)));
                     })?;
                     Box::new(BufReader::new(f))
                 };
@@ -3297,7 +3297,7 @@ impl ShellExecutor {
                     match std::fs::File::open(file) {
                         Ok(f) => Box::new(f),
                         Err(e) => {
-                            eprintln!("head: {}: {}", file, pretty_io_err(&e));
+                            eprintln!("head: {}: {}", file, crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0)));
                             return 1;
                         }
                     }
@@ -3317,7 +3317,7 @@ impl ShellExecutor {
                     match std::fs::File::open(file) {
                         Ok(f) => Box::new(f),
                         Err(e) => {
-                            eprintln!("head: {}: {}", file, pretty_io_err(&e));
+                            eprintln!("head: {}: {}", file, crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0)));
                             return 1;
                         }
                     }
@@ -3341,7 +3341,7 @@ impl ShellExecutor {
                 match std::fs::File::open(file) {
                     Ok(f) => Box::new(BufReader::new(f)),
                     Err(e) => {
-                        eprintln!("head: {}: {}", file, pretty_io_err(&e));
+                        eprintln!("head: {}: {}", file, crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0)));
                         return 1;
                     }
                 }
@@ -3484,7 +3484,7 @@ impl ShellExecutor {
                 match std::fs::File::open(file) {
                     Ok(f) => Box::new(BufReader::new(f)),
                     Err(e) => {
-                        eprintln!("tail: {}: {}", file, pretty_io_err(&e));
+                        eprintln!("tail: {}: {}", file, crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0)));
                         return 1;
                     }
                 }
@@ -3606,7 +3606,7 @@ impl ShellExecutor {
                 match std::fs::File::open(file) {
                     Ok(f) => Box::new(BufReader::new(f)),
                     Err(e) => {
-                        eprintln!("wc: {}: {}", file, pretty_io_err(&e));
+                        eprintln!("wc: {}: {}", file, crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0)));
                         return 1;
                     }
                 }

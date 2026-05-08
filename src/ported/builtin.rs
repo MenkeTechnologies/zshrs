@@ -33,7 +33,7 @@ use crate::ported::exec::{
     format_int_in_base, normalize_logical, shell_quote, shell_quote_value,
     VarAttr, VarKind,
 };
-use crate::ported::utils::{pretty_io_err, zerr, zerrnam, zwarn, zwarnnam};
+use crate::ported::utils::{zerr, zerrnam, zwarn, zwarnnam};
 use crate::ported::text::format_function_body_zsh;
 #[allow(unused_imports)]
 use crate::ported::options::ZSH_OPTIONS_SET;
@@ -1066,7 +1066,7 @@ impl crate::ported::exec::ShellExecutor {
                 Err(e) => {
                     // zsh format: `zshrs:source:1: no such file or
                     // directory: PATH` and exit 127.
-                    let msg = pretty_io_err(&e).to_lowercase();
+                    let msg = crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0)).to_lowercase();
                     zwarnnam("source", &format!("{}: {}", msg, path));
                     127
                 }
@@ -10698,7 +10698,7 @@ impl crate::ported::exec::ShellExecutor {
         // zsh format for missing exec target: `zsh:1: no such file or
         // directory: PATH` (lowercased, no os-error suffix). Strip
         // Rust's wrapping.
-        let msg = pretty_io_err(&err).to_lowercase();
+        let msg = crate::ported::compat::strerror(err.raw_os_error().unwrap_or(0)).to_lowercase();
         zwarn(&format!("{}: {}", msg, cmd));
         // exec failure is fatal in zsh — exit the shell with status 127
         // (not 1) since the target couldn't be found/executed.
@@ -11477,7 +11477,7 @@ impl crate::ported::exec::ShellExecutor {
             Err(e) => {
                 // zsh format: `zshrs:cd:1: no such file or directory: PATH`
                 // (lowercased, no Rust os-error suffix). Exit code stays 1.
-                let msg = pretty_io_err(&e).to_lowercase();
+                let msg = crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0)).to_lowercase();
                 zwarnnam("cd", &format!("{}: {}", msg, path.display()));
                 1
             }
