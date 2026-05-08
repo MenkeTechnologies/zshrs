@@ -2283,18 +2283,227 @@ pub fn histsubchar(c: char, input: &mut crate::ported::input::InputBuffer, hist:
         }
     };
 
-    // TODO: word-designator + modifier-chain parsing
-    // (Src/hist.c:histsubchar middle/end). Currently we substitute
-    // the whole event text. Word desigs (`:N`, `:^`, `:$`, `:*`)
-    // and modifier chain (`:s/x/y/`, `:h`, `:t`, `:r`, `:e`,
-    // `:p`, `:q`, `:Q`, `:l`, `:u`, `:a`, `:A`, `:P`, `:c`)
-    // are already implemented in subst.rs's modifier dispatch
-    // for the `${var:MOD}` form — wire that here in the next pass.
-    let text = entry.text.clone();
+    // Start with the whole event text; word-designator + modifier
+    // chain narrow / transform it from there.
+    let mut text = entry.text.clone();
+
+    // Optional word-designator: `:N`, `:^`, `:$`, `:*`, `:N-M`,
+    // `:N*`. Direct port of subst.c:hist `getargspec` arm. The
+    // colon may be elided for digit/`^`/`$`/`*` per zsh syntax,
+    // but the unambiguous `:` form is what histsubchar handles.
+    let words: Vec<String> = text.split_whitespace().map(|s| s.to_string()).collect();
+    let nwords = words.len();
+    // Peek for `:` followed by a word designator.
+    let next = input.ingetc();
+    let mut applied_designator = false;
+    let mut next_after_desig: Option<char> = None;
+    if next == Some(':') {
+        // Read the designator chars.
+        let d1 = input.ingetc();
+        match d1 {
+            Some('^') => {
+                if !words.is_empty() {
+                    text = words.get(1).cloned().unwrap_or_default();
+                }
+                applied_designator = true;
+            }
+            Some('$') => {
+                if !words.is_empty() {
+                    text = words.last().cloned().unwrap_or_default();
+                }
+                applied_designator = true;
+            }
+            Some('*') => {
+                // All words after the command (1..end).
+                if nwords > 1 {
+                    text = words[1..].join(" ");
+                } else {
+                    text.clear();
+                }
+                applied_designator = true;
+            }
+            Some(d) if d.is_ascii_digit() => {
+                let mut n: usize = d.to_digit(10).unwrap() as usize;
+                while let Some(c2) = input.ingetc() {
+                    if let Some(d2) = c2.to_digit(10) {
+                        n = n * 10 + d2 as usize;
+                    } else {
+                        // `N-M` range form?
+                        if c2 == '-' {
+                            // Read second number (or `*`).
+                            let start = n;
+                            let mut m: usize = 0;
+                            let mut star = false;
+                            while let Some(c3) = input.ingetc() {
+                                if let Some(d3) = c3.to_digit(10) {
+                                    m = m * 10 + d3 as usize;
+                                } else if c3 == '*' {
+                                    star = true;
+                                    break;
+                                } else {
+                                    next_after_desig = Some(c3);
+                                    break;
+                                }
+                            }
+                            let end_idx = if star { nwords.saturating_sub(1) } else { m };
+                            if start < nwords && end_idx >= start {
+                                let stop = end_idx.min(nwords - 1);
+                                text = words[start..=stop].join(" ");
+                            }
+                            applied_designator = true;
+                            // Fall through to modifier-chain
+                            // dispatch below — pending char is in
+                            // next_after_desig.
+                        } else {
+                            next_after_desig = Some(c2);
+                        }
+                        break;
+                    }
+                }
+                if n < nwords {
+                    text = words[n].to_string();
+                }
+                applied_designator = true;
+            }
+            Some(other) => {
+                // Not a designator — push back and treat the `:` as
+                // a modifier.
+                next_after_desig = Some(other);
+            }
+            None => {}
+        }
+    } else if let Some(c2) = next {
+        // No designator at all — push back and apply only modifiers
+        // (which start with `:`, so this push-back is what subsequent
+        // wire_modifiers will see).
+        input.inungetc(c2);
+    }
+    let _ = applied_designator;
+
+    // Inline modifier-chain dispatch — direct port of the `case
+    // ':'` modifier loop in C's histsubchar tail. Each modifier
+    // is one of: `:s/x/y/`, `:&`, `:h`/`:hN`, `:t`/`:tN`, `:r`,
+    // `:e`, `:l`, `:u`, `:p`, `:q`, `:Q`, `:a`, `:A`, `:P`,
+    // `:c`. Body kept inline (no Rust-only helper allowed).
+    let mut peek = next_after_desig;
+    loop {
+        // First char of the chain is `:` — except when `pending`
+        // already holds the start of the next modifier.
+        let leadc = match peek.take() {
+            Some(c) => c,
+            None => match input.ingetc() {
+                Some(c) => c,
+                None => break,
+            },
+        };
+        if leadc != ':' {
+            // Not a modifier — push back and stop.
+            input.inungetc(leadc);
+            break;
+        }
+        // Modifier char.
+        let m = match input.ingetc() {
+            Some(c) => c,
+            None => break,
+        };
+        // Optional digit count for h/t modifiers.
+        let mut count: i32 = 0;
+        if m == 'h' || m == 't' {
+            while let Some(d) = input.ingetc() {
+                if let Some(n) = d.to_digit(10) {
+                    count = count * 10 + n as i32;
+                } else {
+                    input.inungetc(d);
+                    break;
+                }
+            }
+        }
+        // Apply the modifier per Src/subst.c:4585+ dispatch — same
+        // ladder we use in subst.rs::paramsubst's `:MOD` arm.
+        text = match m {
+            'h' => remtpath(&text, count),
+            't' => remlpaths(&text, count),
+            'r' => remtext(&text),
+            'e' => rembutext(&text),
+            'l' => casemodify(&text, CaseMod::Lower),
+            'u' => casemodify(&text, CaseMod::Upper),
+            'q' => quote(&text),
+            'p' => text, // :p — print only (handled by caller)
+            's' => {
+                // `:s/old/new/[g]` substitute. Read delimiter, then
+                // pat, then `/`, then repl, then optional `/`.
+                let delim = match input.ingetc() {
+                    Some(c) => c,
+                    None => break,
+                };
+                let mut pat = String::new();
+                while let Some(c) = input.ingetc() {
+                    if c == delim || c == '\n' { break; }
+                    pat.push(c);
+                }
+                let mut rep = String::new();
+                while let Some(c) = input.ingetc() {
+                    if c == delim || c == '\n' { input.inungetc(c); break; }
+                    rep.push(c);
+                }
+                // Persist on the History? hsubl/hsubr live there but
+                // we have only `&_hist`. Call the in-place subst
+                // helper from this module.
+                subst(&text, &pat, &rep, false)
+            }
+            '&' => {
+                // Replay last :s/x/y/. Without mut access to hist we
+                // can't read hsubl/hsubr — TODO (param histsubchar
+                // signature change to take &mut History).
+                text
+            }
+            'a' | 'A' | 'P' => {
+                // Path canonicalize: try fs canonicalize, fall back
+                // to chabspath. Same as subst.rs's :a/:A/:P arm.
+                std::fs::canonicalize(&text)
+                    .ok()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .or_else(|| chabspath(&text))
+                    .unwrap_or(text)
+            }
+            'Q' => {
+                // Strip backslash + quote chars.
+                let mut out = String::with_capacity(text.len());
+                let mut chs = text.chars().peekable();
+                while let Some(c) = chs.next() {
+                    if c == '\\' { if let Some(nc) = chs.next() { out.push(nc); } }
+                    else if c == '\'' || c == '"' { /* drop quotes */ }
+                    else { out.push(c); }
+                }
+                out
+            }
+            'c' => {
+                // :c — resolve via PATH like `which`.
+                if text.starts_with('/') || text.starts_with("./") || text.starts_with("../") {
+                    text
+                } else if let Ok(path) = std::env::var("PATH") {
+                    let mut found: Option<String> = None;
+                    for dir in path.split(':') {
+                        let p = std::path::PathBuf::from(dir).join(&text);
+                        if p.is_file() {
+                            found = Some(p.to_string_lossy().into_owned());
+                            break;
+                        }
+                    }
+                    found.unwrap_or(text)
+                } else { text }
+            }
+            _ => {
+                // Unknown modifier — push back and stop.
+                input.inungetc(m);
+                input.inungetc(':');
+                break;
+            }
+        };
+    }
+
     let mut chars = text.chars();
     let first = chars.next();
-    // Push back the rest in reverse so subsequent ingetc reads
-    // consume them in order.
     let rest: Vec<char> = chars.collect();
     for c in rest.into_iter().rev() {
         input.inungetc(c);
