@@ -2144,6 +2144,22 @@ pub fn paramsubst(                                          // c:1625
         // the parent param. Without this, `${m[$k]=v}` on a typeset
         // -gA assoc with no key fired the "already set" branch and
         // skipped the assign.
+        // Positional `$N` (`$1`, `$2`, …) is set iff N <= $#. zsh's
+        // getvalue (Src/params.c:1300) routes digit-named lookups to
+        // the pparams (positional) array; vunset = (N > argc). Without
+        // this, `${1:-default}` inside a function with $1 set fired
+        // the default because state.variables had no "1" entry.
+        let is_positional_set = || -> bool {
+            if !var_name.is_empty() && var_name.chars().all(|c| c.is_ascii_digit()) {
+                if let Ok(n) = var_name.parse::<usize>() {
+                    if n == 0 { return true; } // $0 always set
+                    return crate::fusevm_bridge::try_with_executor(|exec| {
+                        n <= exec.positional_params.len()
+                    }).unwrap_or(false);
+                }
+            }
+            false
+        };
         let is_set = if let Some(sub) = subscript.as_deref() {
             used_subexp
                 || state.assoc_arrays.get(&var_name)
@@ -2163,6 +2179,7 @@ pub fn paramsubst(                                          // c:1625
                 || state.variables.contains_key(&var_name)
                 || state.arrays.contains_key(&var_name)
                 || state.assoc_arrays.contains_key(&var_name)
+                || is_positional_set()
         };
 
         // ${+name} short-circuit per subst.c:3600 — return "1"/"0".
@@ -2702,46 +2719,50 @@ pub fn paramsubst(                                          // c:1625
                 }
             } else if let Some(pat) = r.strip_prefix("##") {  // c:3540 (longest prefix strip)
                 let p = singsub(pat, state);
-                // Strip-one helper. op: 0=#, 1=##, 2=%, 3=%%.
-                // Direct port of subst.c:3540 patmatch dispatch.
-                let strip_one = |val: &str, op: u8| -> String {
+                // (M) flag inverts disposition — return matched portion
+                // instead of remainder. Direct port of glob.c:2588 +
+                // glob.c:2617 SUB_MATCH branch in get_match_ret which
+                // copies the matched chars to the result. No-match with
+                // SUB_MATCH yields "" (glob.c:2895 ll==0 → NULL → "").
+                let sub_match = (state.sub_flags & 0x0008) != 0; // c:2171 SUB_MATCH
+                state.sub_flags = 0;                          // c:2169 (consume)
+                let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let nn = cv.len();
-                    match op {
-                        1 => {
-                            let mut k = nn;
-                            loop {
-                                let prefix: String = cv[..k].iter().collect();
-                                if crate::exec::ShellExecutor::glob_match_static(&prefix, &p) {
-                                    return cv[k..].iter().collect();
-                                }
-                                if k == 0 { break; }
-                                k -= 1;
-                            }
-                            val.to_string()
+                    let mut k = nn;
+                    loop {
+                        let prefix: String = cv[..k].iter().collect();
+                        if crate::exec::ShellExecutor::glob_match_static(&prefix, &p) {
+                            return if sub_match { prefix }
+                                   else { cv[k..].iter().collect() };
                         }
-                        _ => val.to_string(),
+                        if k == 0 { break; }
+                        k -= 1;
                     }
+                    if sub_match { String::new() } else { val.to_string() }
                 };
                 if let Some(arr) = state.arrays.get(&var_name).cloned() {
-                    let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e, 1)).collect();
+                    let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
                     value = new_arr.join(" ");                    // c:3540
                     split_parts = Some(new_arr);                  // c:3540
                 } else {
-                    value = strip_one(&raw_value, 1);             // c:3540
+                    value = strip_one(&raw_value);                // c:3540
                 }
             } else if let Some(pat) = r.strip_prefix('#') {   // c:3540 (shortest prefix strip)
                 let p = singsub(pat, state);
+                let sub_match = (state.sub_flags & 0x0008) != 0; // c:2171 SUB_MATCH
+                state.sub_flags = 0;                          // c:2169 (consume)
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
                     for k in 0..=total {
                         let prefix: String = cv[..k].iter().collect();
                         if crate::exec::ShellExecutor::glob_match_static(&prefix, &p) {
-                            return cv[k..].iter().collect();
+                            return if sub_match { prefix }
+                                   else { cv[k..].iter().collect() };
                         }
                     }
-                    val.to_string()
+                    if sub_match { String::new() } else { val.to_string() }
                 };
                 if let Some(arr) = state.arrays.get(&var_name).cloned() {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
@@ -2752,6 +2773,8 @@ pub fn paramsubst(                                          // c:1625
                 }
             } else if let Some(pat) = r.strip_prefix("%%") {  // c:3540 (longest suffix strip)
                 let p = singsub(pat, state);
+                let sub_match = (state.sub_flags & 0x0008) != 0; // c:2171 SUB_MATCH
+                state.sub_flags = 0;                          // c:2169 (consume)
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
@@ -2759,12 +2782,13 @@ pub fn paramsubst(                                          // c:1625
                     loop {
                         let suffix: String = cv[total - k..].iter().collect();
                         if crate::exec::ShellExecutor::glob_match_static(&suffix, &p) {
-                            return cv[..total - k].iter().collect();
+                            return if sub_match { suffix }
+                                   else { cv[..total - k].iter().collect() };
                         }
                         if k == 0 { break; }
                         k -= 1;
                     }
-                    val.to_string()
+                    if sub_match { String::new() } else { val.to_string() }
                 };
                 if let Some(arr) = state.arrays.get(&var_name).cloned() {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
@@ -2775,16 +2799,19 @@ pub fn paramsubst(                                          // c:1625
                 }
             } else if let Some(pat) = r.strip_prefix('%') {   // c:3540 (shortest suffix strip)
                 let p = singsub(pat, state);
+                let sub_match = (state.sub_flags & 0x0008) != 0; // c:2171 SUB_MATCH
+                state.sub_flags = 0;                          // c:2169 (consume)
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
                     for k in 0..=total {
                         let suffix: String = cv[total - k..].iter().collect();
                         if crate::exec::ShellExecutor::glob_match_static(&suffix, &p) {
-                            return cv[..total - k].iter().collect();
+                            return if sub_match { suffix }
+                                   else { cv[..total - k].iter().collect() };
                         }
                     }
-                    val.to_string()
+                    if sub_match { String::new() } else { val.to_string() }
                 };
                 if let Some(arr) = state.arrays.get(&var_name).cloned() {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
