@@ -36,7 +36,8 @@ pub(crate) use crate::ported::builtin::format_alias_kv;
 #[allow(unused_imports)]
 pub(crate) use crate::ported::glob::{expand_glob_alternation, find_top_level_tilde};
 #[allow(unused_imports)]
-pub use crate::ported::math::{convbase as format_int_in_base, underscore_separate_digits};
+pub use crate::ported::math::convbase as format_int_in_base;
+pub use crate::ported::params::convbase_underscore;
 #[allow(unused_imports)]
 pub(crate) use crate::ported::math::{
     parse_subscript_arith_assign, parse_subscript_arith_compound, parse_subscript_arith_pre_inc,
