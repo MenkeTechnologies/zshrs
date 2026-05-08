@@ -77,6 +77,24 @@ parse_assign
 save_state
 restore_state
 
+# rlimits.rs — Rust-only helpers in the faithful port of
+# Src/Builtins/rlimits.c. C uses preprocessor / direct globals where
+# Rust needs runtime helpers:
+#   nlimits — wraps `RLIM_NLIMITS as usize` to abstract the per-libc
+#     return type (`c_int` macOS vs `__rlimit_resource_t` Linux).
+#   ensure_limits_initialized — seeds `LIMITS`/`CURRENT_LIMITS` on
+#     first use; C does this inline in `init_main()` (Src/init.c:1287).
+#   leak_unknown_name — `Box::leak`s the `UNKNOWN-N` placeholder so
+#     `resinfo_T.name` (`&'static str`) holds a stable pointer; C
+#     uses `zalloc(12)` (rlimits.c:207) which is never freed for the
+#     program's lifetime either.
+#   lookup_resinfo — bounds-checked + lock-acquired access to RESINFO;
+#     C inlines `resinfo[lim]->...` everywhere.
+nlimits
+ensure_limits_initialized
+leak_unknown_name
+lookup_resinfo
+
 # math.rs — MathState lifecycle / accessors. The struct mirrors the
 # saved-and-restored locals C `mathevall()` (math.c:367) keeps across
 # recursive entry; in C they are stack locals + module-statics so no
