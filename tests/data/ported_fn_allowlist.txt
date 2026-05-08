@@ -135,8 +135,6 @@ format_limit_display
 format_zsh_float
 get_all_langinfo
 get_datetime_info
-get_file_caps
-get_proc_caps
 get_terminal_size
 get_tied_param
 hist_hasher
@@ -171,7 +169,6 @@ random_real_range
 scan_directory
 select_parse_reply
 set_file_contents
-set_proc_caps
 sfx_len
 shell_word_end_after
 shell_word_start_before
