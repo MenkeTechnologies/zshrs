@@ -119,7 +119,6 @@ quote_string
 split_quoted
 
 bin_random_real
-bind_key
 clone_shell
 color_to_code
 convbaseu

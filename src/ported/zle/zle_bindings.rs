@@ -153,7 +153,7 @@ pub fn format_key_sequence(seq: &[u8]) -> String {
 /// Src/Zle/zle_keymap.c). Returns true if the keymap exists and the binding
 /// is installed. Uses `Arc::make_mut` to copy-on-write the wrapped Keymap so
 /// the mutation respects the existing Arc-shared layout.
-pub fn bind_key(km: &mut KeymapManager, keymap: &str, seq: &str, widget: &str) -> bool {
+pub fn bindkey(km: &mut KeymapManager, keymap: &str, seq: &str, widget: &str) -> bool {
     let seq_bytes = parse_key_sequence(seq);
     let map = match km.keymaps.get_mut(keymap) {
         Some(m) => m,
@@ -201,17 +201,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bind_key_returns_false_for_unknown_keymap() {
+    fn bindkey_returns_false_for_unknown_keymap() {
         let mut km = KeymapManager::new();
-        assert!(!bind_key(&mut km, "no-such-keymap", "^A", "self-insert"));
+        assert!(!bindkey(&mut km, "no-such-keymap", "^A", "self-insert"));
     }
 
     #[test]
-    fn bind_key_then_unbind_round_trips_through_emacs_keymap() {
+    fn bindkey_then_unbind_round_trips_through_emacs_keymap() {
         let mut km = KeymapManager::new();
         // Pick a sequence unlikely to clash with the default emacs map.
         // \M-z = ESC z = bytes 0x1B 0x7A.
-        assert!(bind_key(&mut km, "emacs", "\\ez", "self-insert"));
+        assert!(bindkey(&mut km, "emacs", "\\ez", "self-insert"));
         // Verify the binding shows up in list_bindings.
         let listed = list_bindings(&km, "emacs");
         let seq = format_key_sequence(&[0x1b, 0x7a]);
@@ -220,7 +220,7 @@ mod tests {
             "bound sequence missing from list: {:?}",
             listed
         );
-        // Now remove it (inline of the deleted unbind_key helper).
+        // Now remove it (inline of the deleted unbindkey helper).
         let seq_bytes = parse_key_sequence("\\ez");
         let map = km.keymaps.get_mut("emacs").unwrap();
         let inner = std::sync::Arc::make_mut(map);
