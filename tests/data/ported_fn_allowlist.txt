@@ -170,9 +170,6 @@ set_file_contents
 sfx_len
 shell_word_end_after
 shell_word_start_before
-socket_accept
-socket_connect
-socket_listen
 strwidth
 try_matcher
 underscore_separate_digits

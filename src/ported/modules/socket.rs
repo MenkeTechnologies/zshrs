@@ -36,131 +36,6 @@ impl UnixSocket {
     }
 }
 
-/// Create a listening Unix-domain stream socket bound to `path`.
-/// Port of the `-l` branch of `bin_zsocket()` from
-/// Src/Modules/socket.c:57 — `socket(PF_UNIX, SOCK_STREAM, 0)` →
-/// `bind(2)` → `listen(2, 1)`. Backlog of 1 matches the C source.
-#[cfg(unix)]
-pub fn socket_listen(path: &str) -> io::Result<RawFd> {
-    let fd = unsafe { libc::socket(libc::PF_UNIX, libc::SOCK_STREAM, 0) };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-
-    let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
-    addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
-
-    let path_bytes = path.as_bytes();
-    let max_len = addr.sun_path.len() - 1;
-    let copy_len = path_bytes.len().min(max_len);
-
-    for (i, &byte) in path_bytes[..copy_len].iter().enumerate() {
-        addr.sun_path[i] = byte as libc::c_char;
-    }
-
-    let result = unsafe {
-        libc::bind(
-            fd,
-            &addr as *const _ as *const libc::sockaddr,
-            std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
-        )
-    };
-
-    if result < 0 {
-        let err = io::Error::last_os_error();
-        unsafe { libc::close(fd) };
-        return Err(err);
-    }
-
-    let result = unsafe { libc::listen(fd, 1) };
-    if result < 0 {
-        let err = io::Error::last_os_error();
-        unsafe { libc::close(fd) };
-        return Err(err);
-    }
-
-    Ok(fd)
-}
-
-/// Accept a connection on a listening Unix-domain socket.
-/// Port of the `-a` branch of `bin_zsocket()` from
-/// Src/Modules/socket.c:57 — `accept(2)` with `EINTR` retry, returns
-/// `(connected_fd, peer_path)` so the verbose path can print the
-/// peer the same way the C source does.
-#[cfg(unix)]
-pub fn socket_accept(listen_fd: RawFd) -> io::Result<(RawFd, String)> {
-    let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
-    let mut len: libc::socklen_t = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
-
-    let fd = loop {
-        let result = unsafe {
-            libc::accept(
-                listen_fd,
-                &mut addr as *mut _ as *mut libc::sockaddr,
-                &mut len,
-            )
-        };
-
-        if result < 0 {
-            let err = io::Error::last_os_error();
-            if err.kind() == io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(err);
-        }
-
-        break result;
-    };
-
-    let path = addr
-        .sun_path
-        .iter()
-        .take_while(|&&c| c != 0)
-        .map(|&c| c as u8 as char)
-        .collect::<String>();
-
-    Ok((fd, path))
-}
-
-/// Connect to a Unix-domain socket bound at `path`.
-/// Port of the no-flag branch of `bin_zsocket()` from
-/// Src/Modules/socket.c:57 — `socket(PF_UNIX, SOCK_STREAM, 0)` →
-/// `connect(2)`.
-#[cfg(unix)]
-pub fn socket_connect(path: &str) -> io::Result<RawFd> {
-    let fd = unsafe { libc::socket(libc::PF_UNIX, libc::SOCK_STREAM, 0) };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-
-    let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
-    addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
-
-    let path_bytes = path.as_bytes();
-    let max_len = addr.sun_path.len() - 1;
-    let copy_len = path_bytes.len().min(max_len);
-
-    for (i, &byte) in path_bytes[..copy_len].iter().enumerate() {
-        addr.sun_path[i] = byte as libc::c_char;
-    }
-
-    let result = unsafe {
-        libc::connect(
-            fd,
-            &addr as *const _ as *const libc::sockaddr,
-            std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
-        )
-    };
-
-    if result < 0 {
-        let err = io::Error::last_os_error();
-        unsafe { libc::close(fd) };
-        return Err(err);
-    }
-
-    Ok(fd)
-}
-
 /// `zsocket` builtin entry point.
 /// Port of `bin_zsocket()` from Src/Modules/socket.c:57. Dispatches
 /// between `-l` (listen), `-a` (accept), and the no-flag connect
@@ -176,7 +51,50 @@ pub fn bin_zsocket(args: &[&str], options: &ZsocketOptions) -> (i32, String, Opt
 
         let path = args[0];
 
-        match socket_listen(path) {
+        // Inline of the deleted socket_listen helper (Src/Modules/socket.c:57
+        // -l branch): socket(PF_UNIX) → bind(2) → listen(2, 1).
+        let listen_result = (|| -> io::Result<RawFd> {
+            #[cfg(unix)]
+            {
+                let fd = unsafe { libc::socket(libc::PF_UNIX, libc::SOCK_STREAM, 0) };
+                if fd < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+                addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+                let path_bytes = path.as_bytes();
+                let max_len = addr.sun_path.len() - 1;
+                let copy_len = path_bytes.len().min(max_len);
+                for (i, &byte) in path_bytes[..copy_len].iter().enumerate() {
+                    addr.sun_path[i] = byte as libc::c_char;
+                }
+                let r = unsafe {
+                    libc::bind(
+                        fd,
+                        &addr as *const _ as *const libc::sockaddr,
+                        std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
+                    )
+                };
+                if r < 0 {
+                    let err = io::Error::last_os_error();
+                    unsafe { libc::close(fd) };
+                    return Err(err);
+                }
+                let r = unsafe { libc::listen(fd, 1) };
+                if r < 0 {
+                    let err = io::Error::last_os_error();
+                    unsafe { libc::close(fd) };
+                    return Err(err);
+                }
+                Ok(fd)
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = path;
+                Err(io::Error::new(io::ErrorKind::Unsupported, "no unix sockets"))
+            }
+        })();
+        match listen_result {
             Ok(fd) => {
                 if options.verbose {
                     output.push_str(&format!("{} listener is on fd {}\n", path, fd));
@@ -225,7 +143,46 @@ pub fn bin_zsocket(args: &[&str], options: &ZsocketOptions) -> (i32, String, Opt
             }
         }
 
-        match socket_accept(listen_fd) {
+        // Inline of the deleted socket_accept helper (Src/Modules/socket.c:57
+        // -a branch): accept(2) on the listener with EINTR retry, returning
+        // (fd, peer_path).
+        let accept_result = (|| -> io::Result<(RawFd, String)> {
+            #[cfg(unix)]
+            {
+                let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+                let mut len: libc::socklen_t =
+                    std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+                let fd = loop {
+                    let r = unsafe {
+                        libc::accept(
+                            listen_fd,
+                            &mut addr as *mut _ as *mut libc::sockaddr,
+                            &mut len,
+                        )
+                    };
+                    if r < 0 {
+                        let err = io::Error::last_os_error();
+                        if err.kind() == io::ErrorKind::Interrupted {
+                            continue;
+                        }
+                        return Err(err);
+                    }
+                    break r;
+                };
+                let path = addr
+                    .sun_path
+                    .iter()
+                    .take_while(|&&c| c != 0)
+                    .map(|&c| c as u8 as char)
+                    .collect::<String>();
+                Ok((fd, path))
+            }
+            #[cfg(not(unix))]
+            {
+                Err(io::Error::new(io::ErrorKind::Unsupported, "no unix sockets"))
+            }
+        })();
+        match accept_result {
             Ok((fd, path)) => {
                 if options.verbose {
                     output.push_str(&format!("new connection from {} is on fd {}\n", path, fd));
@@ -245,7 +202,44 @@ pub fn bin_zsocket(args: &[&str], options: &ZsocketOptions) -> (i32, String, Opt
 
         let path = args[0];
 
-        match socket_connect(path) {
+        // Inline of the deleted socket_connect helper (Src/Modules/socket.c:57
+        // no-flag branch): socket(PF_UNIX) → connect(2).
+        let connect_result = (|| -> io::Result<RawFd> {
+            #[cfg(unix)]
+            {
+                let fd = unsafe { libc::socket(libc::PF_UNIX, libc::SOCK_STREAM, 0) };
+                if fd < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+                addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+                let path_bytes = path.as_bytes();
+                let max_len = addr.sun_path.len() - 1;
+                let copy_len = path_bytes.len().min(max_len);
+                for (i, &byte) in path_bytes[..copy_len].iter().enumerate() {
+                    addr.sun_path[i] = byte as libc::c_char;
+                }
+                let r = unsafe {
+                    libc::connect(
+                        fd,
+                        &addr as *const _ as *const libc::sockaddr,
+                        std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
+                    )
+                };
+                if r < 0 {
+                    let err = io::Error::last_os_error();
+                    unsafe { libc::close(fd) };
+                    return Err(err);
+                }
+                Ok(fd)
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = path;
+                Err(io::Error::new(io::ErrorKind::Unsupported, "no unix sockets"))
+            }
+        })();
+        match connect_result {
             Ok(fd) => {
                 if options.verbose {
                     output.push_str(&format!("{} is now on fd {}\n", path, fd));
