@@ -910,7 +910,6 @@ mod tests {
         }
     }
 
-    /// Port of `math_func()` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_list() {
         let funcs = MathFunctions::math_func();
