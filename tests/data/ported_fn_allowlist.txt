@@ -40,7 +40,6 @@ compare_numeric
 # Math function arms extracted from `math_func()` switch
 # (Src/Modules/mathfunc.c:math_func). The C source dispatches to
 # libm directly; the Rust port adds wrappers for portability.
-lgamma_fn
 erf_fn
 bessel_j0
 bessel_j1
@@ -88,8 +87,6 @@ tcp_listen
 tcp_accept
 tcp_test_accept
 resolve_port
-reverse_lookup
-dns_lookup_reverse
 format_addr
 
 # pattern.rs / glob.rs extracted helpers (parse / match-impl / range
@@ -182,7 +179,6 @@ get_file_caps
 get_proc_caps
 get_terminal_size
 get_tied_param
-get_today_midnight
 hist_hasher
 hist_strcmp
 init_completion
@@ -222,7 +218,6 @@ random_real_max
 random_real_range
 scan_directory
 select_parse_reply
-set_bit
 set_file_contents
 set_proc_caps
 sfx_len
