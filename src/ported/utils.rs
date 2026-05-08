@@ -184,22 +184,6 @@ pub fn zclose(fd: i32) {
     }
 }
 
-/// Check if a file descriptor is a tty
-/// Check whether an fd is a TTY.
-/// Port of the `isatty(3)` calls Src/utils.c sprinkles around
-/// the prompt / completion paths.
-pub fn is_tty(fd: i32) -> bool {
-    #[cfg(unix)]
-    unsafe {
-        libc::isatty(fd) != 0
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = fd;
-        false
-    }
-}
-
 /// Get terminal width
 /// Get terminal column count.
 /// Port of the `TIOCGWINSZ` lookup `setupvals()` (Src/init.c)
@@ -1850,8 +1834,13 @@ pub fn zreaddir(path: &str) -> Vec<String> {
 /// Initialize terminal (from utils.c zsetupterm)
 pub fn zsetupterm() -> bool {
     // Rust doesn't need explicit terminal setup like C terminfo
-    // Return true if terminal seems usable
-    is_tty(1)
+    // Return true if stdout is a TTY (replaces utils.c's isatty(1)).
+    #[cfg(unix)]
+    unsafe {
+        libc::isatty(1) != 0
+    }
+    #[cfg(not(unix))]
+    false
 }
 
 /// Delete terminal setup (from utils.c zdeleteterm)

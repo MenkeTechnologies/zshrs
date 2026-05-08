@@ -134,7 +134,6 @@ read_lines
 is_identifier
 is_number
 is_float
-is_tty
 get_term_width
 get_term_height
 is_special
