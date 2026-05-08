@@ -1641,25 +1641,6 @@ pub fn ucs4toutf8(codepoint: u32) -> Option<String> {
     char::from_u32(codepoint).map(|c| c.to_string())
 }
 
-/// Duplicate a string with quoting for display (from utils.c quotedzputs)
-pub fn quotedzputs(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    for c in s.chars() {
-        if c == '\'' {
-            result.push_str("'\\''");
-        } else if ispecial(c) {
-            result.push('\\');
-            result.push(c);
-        } else if c.is_ascii_control() {
-            result.push_str(&format!("$'\\x{:02x}'", c as u8));
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
-
-
 /// Check for special characters that need quoting (from utils.c hasspecial)
 pub fn hasspecial(s: &str) -> bool {
     s.chars().any(ispecial)
@@ -2997,17 +2978,27 @@ pub(crate) fn shell_quote_value(s: &str) -> String {
 // ===========================================================
 // xtrace helpers moved from src/ported/exec.rs.
 // emit_xtrace_text is a direct port of printprompt4()
-// at Src/utils.c:1718-1735; quote_xtrace_arg is its
+// at Src/utils.c:1718-1735; quotedzputs is its
 // argument-formatter companion (zsh formats `set -x` lines via
 // the same utils.c path).
 // ===========================================================
 
-/// Quote one argv element for xtrace output. Direct port of zsh's
-/// `quotedzputs()` (Src/utils.c:6464) → `hasspecial()` check
-/// (Src/utils.c:6072). A token is bare if no char is in SPECCHARS;
-/// otherwise the whole token gets single-quoted with embedded `'`
-/// rewritten to `'\''`. Empty string renders as `''`.
-pub(crate) fn quote_xtrace_arg(s: &str) -> String {
+/// Port of `quotedzputs()` from `Src/utils.c:6464`.
+///
+/// Quote a string for re-readable output (`set -x`, `typeset -p`,
+/// `set` listing, etc.). zsh's algorithm:
+///   1. empty input → `''`
+///   2. no SPECCHARS member → return string unchanged (`dupstring(s)`)
+///   3. otherwise wrap in `'…'` (Bourne style) with embedded `'`
+///      rewritten to `'\''`. RC-style (`isset(RCQUOTES)`) and
+///      multibyte-niceformat branches are not yet ported.
+///
+/// The C signature is `char *quotedzputs(char const *s, FILE *stream)`
+/// — when `stream` is non-NULL it writes there and returns NULL,
+/// otherwise it returns the quoted string. Rust's variant covers only
+/// the `stream==NULL` form (the `set -x` callers all want the string
+/// back, not direct stdout writing).
+pub(crate) fn quotedzputs(s: &str) -> String {
     if s.is_empty() {
         return "''".to_string();
     }
