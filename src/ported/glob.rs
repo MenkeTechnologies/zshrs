@@ -1713,80 +1713,72 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
         return vec![s.to_string()];
     }
 
+    // Inline single-brace expansion — direct port of the per-iteration
+    // brace-scan inside zsh's xpandbraces (Src/glob.c:2276). Walks the
+    // string, finds the first `{`...`}` group, classifies as range
+    // (`a..b`) / comma (`a,b`) / ccl (`[abc]`-style char-class), and
+    // dispatches to the matching expander. Returns Some(parts) on
+    // expansion, None if no brace group or unmatched.
+    let try_expand_one = |s: &str| -> Option<Vec<String>> {
+        let chars: Vec<char> = s.chars().collect();
+        let len = chars.len();
+        let start = chars.iter().position(|&c| c == '{')?;
+        let mut depth = 1;
+        let mut comma_positions = Vec::new();
+        let mut dotdot_pos = None;
+        for i in (start + 1)..len {
+            match chars[i] {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let prefix: String = chars[..start].iter().collect();
+                        let suffix: String = chars[i + 1..].iter().collect();
+                        let content: String = chars[start + 1..i].iter().collect();
+                        if let Some(dp) = dotdot_pos {
+                            if comma_positions.is_empty() {
+                                return expand_range(&prefix, &content, dp, &suffix);
+                            }
+                        }
+                        if !comma_positions.is_empty() {
+                            return expand_comma(&prefix, &content, &comma_positions, &suffix);
+                        }
+                        if brace_ccl && !content.is_empty() {
+                            return expand_ccl(&prefix, &content, &suffix);
+                        }
+                        return None;
+                    }
+                }
+                ',' if depth == 1 => comma_positions.push(i - start - 1),
+                '.' if depth == 1
+                    && i + 1 < len
+                    && chars[i + 1] == '.'
+                    && dotdot_pos.is_none() =>
+                {
+                    dotdot_pos = Some(i - start - 1);
+                }
+                _ => {}
+            }
+        }
+        None
+    };
+
     let mut results = vec![s.to_string()];
     let mut changed = true;
-
     while changed {
         changed = false;
         let mut new_results = Vec::new();
-
         for item in &results {
-            if let Some(expanded) = expand_single_brace(item, brace_ccl) {
+            if let Some(expanded) = try_expand_one(item) {
                 new_results.extend(expanded);
                 changed = true;
             } else {
                 new_results.push(item.clone());
             }
         }
-
         results = new_results;
     }
-
     results
-}
-
-fn expand_single_brace(s: &str, brace_ccl: bool) -> Option<Vec<String>> {
-    let chars: Vec<char> = s.chars().collect();
-    let len = chars.len();
-
-    // Find the first brace
-    let start = chars.iter().position(|&c| c == '{')?;
-    let _ = len;
-
-    // Find matching close brace and contents
-    let mut depth = 1;
-    let mut comma_positions = Vec::new();
-    let mut dotdot_pos = None;
-
-    for i in (start + 1)..len {
-        match chars[i] {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    let prefix: String = chars[..start].iter().collect();
-                    let suffix: String = chars[i + 1..].iter().collect();
-                    let content: String = chars[start + 1..i].iter().collect();
-
-                    // Check for range expansion
-                    if let Some(dp) = dotdot_pos {
-                        if comma_positions.is_empty() {
-                            return expand_range(&prefix, &content, dp, &suffix);
-                        }
-                    }
-
-                    // Comma expansion
-                    if !comma_positions.is_empty() {
-                        return expand_comma(&prefix, &content, &comma_positions, &suffix);
-                    }
-
-                    // brace_ccl expansion
-                    if brace_ccl && !content.is_empty() {
-                        return expand_ccl(&prefix, &content, &suffix);
-                    }
-
-                    return None;
-                }
-            }
-            ',' if depth == 1 => comma_positions.push(i - start - 1),
-            '.' if depth == 1 && i + 1 < len && chars[i + 1] == '.' && dotdot_pos.is_none() => {
-                dotdot_pos = Some(i - start - 1);
-            }
-            _ => {}
-        }
-    }
-
-    None
 }
 
 fn expand_range(

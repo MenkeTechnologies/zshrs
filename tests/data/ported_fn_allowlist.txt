@@ -71,7 +71,6 @@ ksh_extglob_body_to_regex
 expand_posix_char_classes
 glob_match_impl
 match_bracket_expr
-expand_single_brace
 locale_aware_name_cmp
 numeric_string_cmp
 
