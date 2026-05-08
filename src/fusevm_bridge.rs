@@ -7878,6 +7878,45 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
             }
         };
+        // Subscripted form `name[idx]/pat/repl` — apply replacement to
+        // the indexed element only. The subscript was passed through
+        // as part of the name by parse_param_modifier when the body
+        // is a simple subscript (no flag forms / no nested `${...}`).
+        if let Some(lb) = name.find('[') {
+            if name.ends_with(']') {
+                let base = &name[..lb];
+                let sub = &name[lb + 1..name.len() - 1];
+                // Single numeric subscript: read element, apply
+                // replacement, return scalar. Range or assoc-key
+                // forms fall through to the bare-name path.
+                if let Ok(idx) = sub.parse::<i64>() {
+                    let element = with_executor(|exec| {
+                        if let Some(arr) = exec.arrays.get(base) {
+                            let len = arr.len() as i64;
+                            let pos = if idx < 0 { len + idx } else { idx - 1 };
+                            if pos >= 0 && (pos as usize) < arr.len() {
+                                arr[pos as usize].clone()
+                            } else {
+                                String::new()
+                            }
+                        } else {
+                            String::new()
+                        }
+                    });
+                    return fusevm::Value::str(one(element));
+                }
+                // Assoc subscript `name[key]` — read by key.
+                let element = with_executor(|exec| {
+                    exec.assoc_arrays
+                        .get(base)
+                        .and_then(|m| m.get(sub).cloned())
+                        .unwrap_or_default()
+                });
+                if !element.is_empty() {
+                    return fusevm::Value::str(one(element));
+                }
+            }
+        }
         // Array case: per-element replacement (default), or
         // join-then-replace when in DQ context. zsh: `"${a/o/O}"`
         // for `a=(one two three)` joins to "one two three", then

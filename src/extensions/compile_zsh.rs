@@ -4936,6 +4936,8 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     // joined-then-stripped).
     let mut after_name = name_end;
     let mut had_at = at_flag_seen;
+    let mut name = name; // shadow so subscript can be appended below
+    let _ = (&mut name, &mut after_name); // unused-mut suppression
     // Char-aware boundary check — name_end + 3 may land mid-codepoint
     // when the preceding bytes include UTF-8 multi-byte chars (e.g.
     // METATOKEN bytes in lexer-emitted input). `is_char_boundary`
@@ -4952,6 +4954,48 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
             // so the runtime treats it like the unsubscripted
             // `"${a%%pat}"` case).
             after_name = name_end + 3;
+        }
+    }
+    // Generic `[N]` / `[-1]` / `[1,5]` subscript on the name —
+    // passed through as `name[…]` ONLY for shapes the runtime can
+    // resolve (Replace `/pat/repl` / Strip `#`/`##`/`%`/`%%`).
+    // DefaultFamily `:-` etc. doesn't have subscript-aware lookup,
+    // so we keep the old behavior for those (fall through to the
+    // bridge so it can dispatch the indexed read correctly).
+    if after_name == name_end && inner.as_bytes().get(name_end) == Some(&b'[') {
+        let bytes = inner.as_bytes();
+        let mut j = name_end + 1;
+        let mut depth = 1;
+        while j < bytes.len() && depth > 0 {
+            match bytes[j] {
+                b'[' => depth += 1,
+                b']' => {
+                    depth -= 1;
+                    if depth == 0 { break; }
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        if j < bytes.len() && depth == 0 {
+            let sub_end = j + 1;
+            let body = &inner[name_end + 1..j];
+            // Only accept simple subscripts — digits, sign, comma,
+            // identifier chars. Reject `(...)`-flag forms (those
+            // need the full subscript-flag dispatch path).
+            let body_safe = !body.is_empty() && !body.contains('(') && !body.contains('$');
+            // Only accept when the modifier that follows is one we
+            // can route through subscript-aware handlers — Replace
+            // is the only one with subscript-aware lookup in the
+            // runtime currently. DefaultFamily, Strip, and Length
+            // need the bridge path so they get the right element.
+            let after = &inner[sub_end..];
+            let modifier_safe = after.starts_with('/');
+            if body_safe && modifier_safe {
+                let sub = &inner[name_end..sub_end];
+                name.push_str(sub);
+                after_name = sub_end;
+            }
         }
     }
     let rest = &inner[after_name..];
