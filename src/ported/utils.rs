@@ -157,14 +157,6 @@ pub fn is_number(s: &str) -> bool {
     s.chars().all(|c| c.is_ascii_digit())
 }
 
-/// Check if string is a valid floating point number
-/// Check whether a string parses as a floating-point number.
-/// Port of the floating-literal recogniser inside
-/// `mathevall()` (Src/math.c).
-pub fn is_float(s: &str) -> bool {
-    s.parse::<f64>().is_ok()
-}
-
 /// Sleep for a given number of seconds (fractional)
 /// Sleep for a fractional number of seconds.
 /// Port of `zsleep()` from Src/utils.c — wraps `nanosleep(2)`

@@ -128,7 +128,6 @@ is_word_char
 read_lines
 is_identifier
 is_number
-is_float
 get_term_width
 get_term_height
 is_special
