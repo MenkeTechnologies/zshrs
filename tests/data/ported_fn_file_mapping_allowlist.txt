@@ -23,8 +23,6 @@
 
 src/ported/compat.rs::pastebuf
 src/ported/compat.rs::unmetafy
-src/ported/hist.rs::bslashquote
-src/ported/hist.rs::xsymlinks
 src/ported/init.rs::set_pwd_env
 src/ported/mem.rs::appstr
 src/ported/mem.rs::arrdup_max

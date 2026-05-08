@@ -1114,6 +1114,49 @@ pub fn realpath(path: &str) -> Option<String> {
         .map(|p| p.to_string_lossy().to_string())
 }
 
+/// Convert to absolute path, normalising `.` and `..` components.
+/// Port of `xsymlinks()` from Src/utils.c — same `realpath(3)`
+/// fallback the C source uses on systems without it. Does NOT
+/// follow symlinks (matches the `physical = 0` mode in C). The
+/// `:a` modifier and the symlink-resolving `:A`/`:P` modifiers
+/// dispatch through this when the OS-level canonicalize fails
+/// (non-existent paths).
+pub fn xsymlinks(s: &str) -> std::io::Result<String> {
+    if s.is_empty() {
+        return Ok(String::new());
+    }
+
+    let path = if !s.starts_with('/') {
+        let cwd = std::env::current_dir()?;
+        format!("{}/{}", cwd.display(), s)
+    } else {
+        s.to_string()
+    };
+
+    let mut result = Vec::new();
+    for component in path.split('/') {
+        match component {
+            "" | "." => continue,
+            ".." => {
+                if !result.is_empty() && result.last() != Some(&"..") {
+                    result.pop();
+                } else if result.is_empty() && !path.starts_with('/') {
+                    result.push("..");
+                }
+            }
+            c => result.push(c),
+        }
+    }
+
+    if path.starts_with('/') {
+        Ok(format!("/{}", result.join("/")))
+    } else if result.is_empty() {
+        Ok(".".to_string())
+    } else {
+        Ok(result.join("/"))
+    }
+}
+
 /// Check if file exists
 pub fn file_exists(path: &str) -> bool {
     std::path::Path::new(path).exists()
