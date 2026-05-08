@@ -825,6 +825,99 @@ fn test_subscript_parity_variable_expansion_in_subscript() {
     assert_eq!(output.trim(), expected, "got: {output:?}");
 }
 
+#[test]
+fn test_subscript_parity_brace_expansion_basic() {
+    // Brace expansion forms verified against /bin/zsh.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        print {a,b,c}
+        print {1..5}
+        print {a..e}
+        print {01..05}
+        print {5..1}
+        print pre{1,2,3}post
+        print {a,b}{1,2}
+        "#,
+    );
+    let expected = "a b c\n1 2 3 4 5\na b c d e\n01 02 03 04 05\n5 4 3 2 1\npre1post pre2post pre3post\na1 a2 b1 b2";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_param_modifier_default_family() {
+    // ${x:-default} / ${x-default} / ${y:-default} / ${y-default}.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        unset x
+        print "1:[${x:-default}]"
+        print "2:[${x-default}]"
+        y=""
+        print "3:[${y:-default}]"
+        print "4:[${y-default}]"
+        "#,
+    );
+    let expected = "1:[default]\n2:[default]\n3:[default]\n4:[]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_param_modifier_pattern_strip() {
+    // ${var##pat} / ${var%pat} / ${var#pat} / ${var%pat}.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        filename="/usr/local/bin/cmd.txt"
+        print "1:[${filename##*/}]"
+        print "2:[${filename%/*}]"
+        print "3:[${filename#/}]"
+        print "4:[${filename%cmd*}]"
+        "#,
+    );
+    let expected = "1:[cmd.txt]\n2:[/usr/local/bin]\n3:[usr/local/bin/cmd.txt]\n4:[/usr/local/bin/]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_param_modifier_substitute() {
+    // ${var//pat/repl} / ${var/pat/repl} / ${var/#pat/repl} /
+    // ${var/%pat/repl}.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        str="hello world foo bar"
+        print "1:[${str//o/0}]"
+        print "2:[${str/o/0}]"
+        print "3:[${str/#h/H}]"
+        print "4:[${str/%bar/BAR}]"
+        "#,
+    );
+    let expected = "1:[hell0 w0rld f00 bar]\n2:[hell0 world foo bar]\n3:[Hello world foo bar]\n4:[hello world foo BAR]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_arithmetic_expansion() {
+    // Comprehensive arithmetic sweep.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        print "1:$((2+3))"
+        print "2:$((2**10))"
+        print "3:$((10%3))"
+        print "4:$((1<<4))"
+        print "5:$((~5))"
+        print "6:$((!0))"
+        print "7:$((0xFF & 0x0F))"
+        print "8:$((1|2|4))"
+        print "9:$((5>3))"
+        print "10:$((5==5))"
+        print "11:$((1>0 ? 100 : 200))"
+        print "12:$((1.5+2.5))"
+        n=10
+        print "13:$((n*2))"
+        "#,
+    );
+    let expected = "1:5\n2:1024\n3:1\n4:16\n5:-6\n6:1\n7:15\n8:7\n9:1\n10:1\n11:100\n12:4.\n13:20";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
 // ---------------------------------------------------------------------------
 // `typeset -A` two-statement assoc init: declare then array-literal-assign
 // ---------------------------------------------------------------------------
