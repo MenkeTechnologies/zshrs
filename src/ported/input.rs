@@ -598,46 +598,109 @@ mod tests {
 
 // ===========================================================
 // Direct ports of static input-buffer helpers from Src/input.c.
-// The Rust executor stores input buffers as `InputBuffer` (above);
-// these free-fn entries satisfy ABI/name parity for the drift gate.
+// The C source uses file-static globals (`shinbuffer`, `shinbufptr`,
+// `shinsavestack`, `instack`, `inbuf*`); the Rust port mirrors them
+// with a thread-local InputBuffer accessed by these free fns.
 // ===========================================================
 
-/// Port of `shinbufreset()` from Src/input.c:159 — clear the
-/// stdin pushback buffer. Shim.
-pub fn shinbufreset() {}
+thread_local! {
+    /// Singleton InputBuffer mirroring the C source's file-static
+    /// SHIN + input-stack globals. The free-fn ports below all
+    /// dispatch through this so the public ABI matches Src/input.c.
+    static INPUT: std::cell::RefCell<InputBuffer> = std::cell::RefCell::new(InputBuffer::new());
+}
 
-/// Port of `shinbufalloc()` from Src/input.c:171 — allocate the
-/// initial stdin pushback buffer. Shim.
-pub fn shinbufalloc() {}
+/// Reset the SHIN pushback buffer.
+/// Port of `shinbufreset()` from Src/input.c:159 —
+/// `shinbufendptr = shinbufptr = shinbuffer`.
+pub fn shinbufreset() {
+    INPUT.with(|b| b.borrow_mut().shin_buf_reset());
+}
 
-/// Port of `shinbufsave()` from Src/input.c:181 — save the
-/// current stdin pushback buffer state. Shim.
-pub fn shinbufsave() {}
+/// Allocate a fresh SHIN buffer.
+/// Port of `shinbufalloc()` from Src/input.c:171.
+pub fn shinbufalloc() {
+    INPUT.with(|b| b.borrow_mut().shin_buf_alloc());
+}
 
-/// Port of `shinbufrestore()` from Src/input.c:200 — restore a
-/// saved stdin pushback buffer state. Shim.
-pub fn shinbufrestore() {}
+/// Save the current SHIN buffer onto the save stack.
+/// Port of `shinbufsave()` from Src/input.c:181 — push the
+/// existing buffer onto a save-stack and start a fresh one for
+/// nested `eval`/`source` contexts.
+pub fn shinbufsave() {
+    INPUT.with(|b| b.borrow_mut().shin_buf_save());
+}
 
-/// Port of `shingetchar()` from Src/input.c:218 — pull one char
-/// from the stdin pushback buffer. Shim.
-pub fn shingetchar() -> i32 { 0 }
+/// Pop the top of the SHIN save stack back into the live buffer.
+/// Port of `shinbufrestore()` from Src/input.c:200.
+pub fn shinbufrestore() {
+    INPUT.with(|b| b.borrow_mut().shin_buf_restore());
+}
 
-/// Port of `shingetline()` from Src/input.c:267 — pull one line
-/// (up to `\n`) from the stdin pushback. Shim.
-pub fn shingetline() -> String { String::new() }
+/// Read one byte from SHIN; returns -1 on EOF.
+/// Port of `shingetchar()` from Src/input.c:218. C source pulls
+/// from `shinbuffer` first then falls through to `read(2)` on the
+/// SHIN fd; Rust mirrors via the InputBuffer's `shin_getchar`
+/// reading from `std::io::stdin`.
+pub fn shingetchar() -> i32 {
+    use std::io::BufReader;
+    let stdin = std::io::stdin();
+    let mut reader = BufReader::new(stdin.lock());
+    INPUT.with(|b| match b.borrow_mut().shin_getchar(&mut reader) {
+        Some(c) => c as i32,
+        None => -1,
+    })
+}
 
-/// Port of `inputline()` from Src/input.c:366 — read one input
-/// line, expanding aliases / history. Shim.
-pub fn inputline() -> String { String::new() }
+/// Read a full line from SHIN, with `\n` preserved.
+/// Port of `shingetline()` from Src/input.c:267 — calls
+/// `shingetchar` in a loop, metafies high bytes, returns NULL
+/// (`""`) on EOF.
+pub fn shingetline() -> String {
+    use std::io::BufReader;
+    let stdin = std::io::stdin();
+    let mut reader = BufReader::new(stdin.lock());
+    INPUT.with(|b| b.borrow_mut().shin_getline(&mut reader).unwrap_or_default())
+}
 
-/// Port of `stuff()` from Src/input.c:647 — push a string back
-/// onto the input stream (used by alias expansion). Shim.
-pub fn stuff() {}
+/// Read one line into the input stack.
+/// Port of `inputline()` from Src/input.c:366. C source dispatches
+/// between zle / non-zle paths and `shingetline` /
+/// `zleentry(READ)`. Rust port reads via shingetline (no zle yet),
+/// returns "" on EOF and sets lexstop the same way.
+pub fn inputline() -> String {
+    let line = shingetline();
+    if line.is_empty() {
+        INPUT.with(|b| b.borrow_mut().lexstop = true);
+    }
+    line
+}
 
-/// Port of `inpoptop()` from Src/input.c:736 — pop the topmost
-/// input-stack frame. Shim.
-pub fn inpoptop() {}
+/// Stuff a whole file into the input queue.
+/// Port of `stuff()` from Src/input.c:647 — read the file, echo
+/// it to stderr, push onto the input stack.
+pub fn stuff(filename: &str) -> i32 {
+    use std::io::Write;
+    let buf = match std::fs::read_to_string(filename) {
+        Ok(b) => b,
+        Err(_) => return 1,
+    };
+    let _ = std::io::stderr().write_all(buf.as_bytes());
+    let _ = std::io::stderr().flush();
+    INPUT.with(|b| {
+        b.borrow_mut().inpush(&buf, flags::INP_FREE, None);
+    });
+    0
+}
 
-/// Port of `inpopalias()` from Src/input.c:804 — pop one alias-
-/// expansion frame. Shim.
-pub fn inpopalias() {}
+/// Pop the topmost input-stack frame.
+/// Port of `inpoptop()` from Src/input.c:736.
+pub fn inpoptop() {
+    INPUT.with(|b| b.borrow_mut().inpop());
+}
+
+/// Pop all input frames added by alias expansion.
+/// Port of `inpopalias()` from Src/input.c:804.
+pub fn inpopalias() {
+    INPUT.with(|b| b.borrow_mut().inpop_alias());
+}
