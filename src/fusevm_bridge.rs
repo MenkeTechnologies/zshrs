@@ -9258,6 +9258,51 @@ impl crate::ported::exec::ShellExecutor {
     /// Apply a single redirection. The current scope's saved-fd vec gets a
     /// dup of the original fd so it can be restored by `host_redirect_scope_end`.
     /// `op_byte` matches `fusevm::op::redirect_op::*`.
+    /// Apply a file-open result to a redirect fd; on error, emit
+    /// zsh-format diagnostic, set redirect_failed, sink fd to /dev/null.
+    /// Shared between WRITE/APPEND/READ/CLOBBER arms in
+    /// host_apply_redirect to keep the error-handling identical.
+    fn redir_open_or_fail(
+        fd: i32,
+        result: std::io::Result<std::fs::File>,
+        target: &str,
+        last_status: &mut i32,
+        redirect_failed: &mut bool,
+    ) {
+        use std::os::unix::io::IntoRawFd;
+        match result {
+            Ok(file) => {
+                let new_fd = file.into_raw_fd();
+                unsafe {
+                    libc::dup2(new_fd, fd);
+                    libc::close(new_fd);
+                }
+            }
+            Err(e) => {
+                let msg = match e.kind() {
+                    std::io::ErrorKind::PermissionDenied => "permission denied",
+                    std::io::ErrorKind::NotFound => "no such file or directory",
+                    std::io::ErrorKind::IsADirectory => "is a directory",
+                    _ => "redirect failed",
+                };
+                eprintln!("zshrs:1: {}: {}", msg, target);
+                *last_status = 1;
+                *redirect_failed = true;
+                if let Ok(devnull) = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open("/dev/null")
+                {
+                    let new_fd = devnull.into_raw_fd();
+                    unsafe {
+                        libc::dup2(new_fd, fd);
+                        libc::close(new_fd);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn host_apply_redirect(&mut self, fd: u8, op_byte: u8, target: &str) {
         use fusevm::op::redirect_op as r;
         use std::os::unix::io::IntoRawFd;
@@ -9320,71 +9365,43 @@ impl crate::ported::exec::ShellExecutor {
                     }
                     return;
                 }
-                match std::fs::File::create(target) {
-                    Ok(file) => {
-                        let new_fd = file.into_raw_fd();
-                        unsafe {
-                            libc::dup2(new_fd, fd);
-                            libc::close(new_fd);
-                        }
-                    }
-                    Err(e) => {
-                        // zsh: print error and discard the upcoming
-                        // command's output. Verified against /bin/zsh:
-                        //   echo x > /etc/passwd  → "permission denied:..."
-                        //   echo x > /no/such/dir → "no such file or directory:..."
-                        let msg = match e.kind() {
-                            std::io::ErrorKind::PermissionDenied => "permission denied",
-                            std::io::ErrorKind::NotFound => "no such file or directory",
-                            std::io::ErrorKind::IsADirectory => "is a directory",
-                            _ => "redirect failed",
-                        };
-                        eprintln!("zshrs:1: {}: {}", msg, target);
-                        self.last_status = 1;
-                        self.redirect_failed = true;
-                        if let Ok(devnull) = std::fs::OpenOptions::new()
-                            .write(true)
-                            .open("/dev/null")
-                        {
-                            let new_fd = devnull.into_raw_fd();
-                            unsafe {
-                                libc::dup2(new_fd, fd);
-                                libc::close(new_fd);
-                            }
-                        }
-                    }
-                }
+                Self::redir_open_or_fail(
+                    fd,
+                    std::fs::File::create(target),
+                    target,
+                    &mut self.last_status,
+                    &mut self.redirect_failed,
+                );
             }
             r::CLOBBER => {
-                if let Ok(file) = std::fs::File::create(target) {
-                    let new_fd = file.into_raw_fd();
-                    unsafe {
-                        libc::dup2(new_fd, fd);
-                        libc::close(new_fd);
-                    }
-                }
+                Self::redir_open_or_fail(
+                    fd,
+                    std::fs::File::create(target),
+                    target,
+                    &mut self.last_status,
+                    &mut self.redirect_failed,
+                );
             }
             r::APPEND => {
-                if let Ok(file) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(target)
-                {
-                    let new_fd = file.into_raw_fd();
-                    unsafe {
-                        libc::dup2(new_fd, fd);
-                        libc::close(new_fd);
-                    }
-                }
+                Self::redir_open_or_fail(
+                    fd,
+                    std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(target),
+                    target,
+                    &mut self.last_status,
+                    &mut self.redirect_failed,
+                );
             }
             r::READ => {
-                if let Ok(file) = std::fs::File::open(target) {
-                    let new_fd = file.into_raw_fd();
-                    unsafe {
-                        libc::dup2(new_fd, fd);
-                        libc::close(new_fd);
-                    }
-                }
+                Self::redir_open_or_fail(
+                    fd,
+                    std::fs::File::open(target),
+                    target,
+                    &mut self.last_status,
+                    &mut self.redirect_failed,
+                );
             }
             r::READ_WRITE => {
                 if let Ok(file) = std::fs::OpenOptions::new()

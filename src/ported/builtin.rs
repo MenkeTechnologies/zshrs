@@ -371,6 +371,7 @@ impl crate::ported::exec::ShellExecutor {
     /// cd_do_chdir() lines 967-1081, cd_try_chdir() lines 1116-1181
     pub(crate) fn bin_cd(&mut self, args: &[String]) -> i32 {
         self.dispatch_pending_traps();
+        if self.redirect_failed { self.redirect_failed = false; return 1; }
         // cd [ -qsLP ] [ arg ]
         // cd [ -qsLP ] old new
         // cd [ -qsLP ] {+|-}n
@@ -548,10 +549,7 @@ impl crate::ported::exec::ShellExecutor {
     }
     pub(crate) fn builtin_echo(&mut self, args: &[String], _redirects: &[Redirect]) -> i32 {
         self.dispatch_pending_traps();
-        if self.redirect_failed {
-            self.redirect_failed = false;
-            return 1;
-        }
+        if self.redirect_failed { self.redirect_failed = false; return 1; }
         let mut newline = true;
         // zsh's default: interpret backslash escapes (\n, \t, \b, etc.)
         // unless `setopt bsd_echo` is on (then `-e` is required).
@@ -698,6 +696,7 @@ impl crate::ported::exec::ShellExecutor {
     }
     pub(crate) fn bin_unset(&mut self, args: &[String]) -> i32 {
         self.dispatch_pending_traps();
+        if self.redirect_failed { self.redirect_failed = false; return 1; }
         // `unset` with no args is an error in zsh: `not enough arguments`
         // exit 1. zshrs returned 0 silently — masked typo'd unset NAMES.
         if args.is_empty() {
@@ -1220,6 +1219,7 @@ impl crate::ported::exec::ShellExecutor {
     }
     pub(crate) fn bin_test(&mut self, args: &[String]) -> i32 {
         self.dispatch_pending_traps();
+        if self.redirect_failed { self.redirect_failed = false; return 1; }
         if args.is_empty() {
             // zsh: `test` (bare) returns 1 silently; `[` (bare,
             // no closing `]`) errors `[:1: ']' expected` exit 2.
@@ -3365,6 +3365,7 @@ impl crate::ported::exec::ShellExecutor {
     }
     pub(crate) fn bin_read(&mut self, args: &[String]) -> i32 {
         self.dispatch_pending_traps();
+        if self.redirect_failed { self.redirect_failed = false; return 1; }
         // read [ -rszpqAclneE ] [ -t timeout ] [ -d delim ] [ -k [ num ] ] [ -u fd ]
         //      [ name[?prompt] ] [ name ... ]
         use std::io::{BufRead, Read as IoRead};
@@ -4125,6 +4126,7 @@ impl crate::ported::exec::ShellExecutor {
     #[tracing::instrument(level = "debug", skip(self))]
     pub(crate) fn bin_eval(&mut self, args: &[String]) -> i32 {
         self.dispatch_pending_traps();
+        if self.redirect_failed { self.redirect_failed = false; return 1; }
         // builtin.c:6203-6213 — bin_eval joins argv with space, parses,
         // executes; parse failure sets errflag and lastval=errflag (1).
         // The diagnostic prefix on parse error is `zsh:N: parse error
@@ -5739,6 +5741,7 @@ impl crate::ported::exec::ShellExecutor {
     }
     pub(crate) fn bin_set(&mut self, args: &[String]) -> i32 {
         self.dispatch_pending_traps();
+        if self.redirect_failed { self.redirect_failed = false; return 1; }
         // PFA-SMR aspect: emit setopt/unsetopt events for the POSIX
         // `set -o NAME` / `set +o NAME` form. This is the third option
         // syntax (after `setopt NAME` / `unsetopt NAME`); a recorder
@@ -8663,10 +8666,7 @@ impl crate::ported::exec::ShellExecutor {
     /// print - zsh print builtin with many options
     pub(crate) fn bin_print(&mut self, args: &[String]) -> i32 {
         self.dispatch_pending_traps();
-        if self.redirect_failed {
-            self.redirect_failed = false;
-            return 1;
-        }
+        if self.redirect_failed { self.redirect_failed = false; return 1; }
         // print [ -abcDilmnNoOpPrsSz ] [ -u n ] [ -f format ] [ -C cols ]
         //       [ -v name ] [ -xX tabstop ] [ -R [ -en ]] [ arg ... ]
         let mut no_newline = false;
@@ -10568,6 +10568,7 @@ impl crate::ported::exec::ShellExecutor {
     pub(crate) fn builtin_builtin(&mut self, args: &[String], redirects: &[Redirect]) -> i32 {
         // Run builtin, bypassing functions and aliases
         self.dispatch_pending_traps();
+        if self.redirect_failed { self.redirect_failed = false; return 1; }
         if args.is_empty() {
             return 0;
         }

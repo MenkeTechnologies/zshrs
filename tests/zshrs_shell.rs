@@ -1217,6 +1217,38 @@ fn test_subscript_parity_ifs_read_and_quoted_positional() {
 }
 
 #[test]
+fn test_subscript_parity_redirect_error_all_arms() {
+    // The redirect-error gate now applies to >, >>, < (and CLOBBER
+    // via >|). Verified each form against /bin/zsh.
+    let (_, _, stderr) = run_zshrs_parity(
+        r#"
+        echo x >> /etc/passwd
+        echo "1:[$?]"
+        echo y < /no/such/file
+        echo "2:[$?]"
+        "#,
+    );
+    assert!(stderr.contains("permission denied"), "stderr: {stderr:?}");
+    assert!(
+        stderr.contains("no such file or directory"),
+        "stderr: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_subscript_parity_redirect_error_skips_non_print_builtins() {
+    // The redirect_failed flag now also gates cd, unset, test,
+    // read, eval, set, builtin_builtin — not just print/echo.
+    // Verified: `cd /etc > /etc/passwd && S || F` also returns F
+    // (the cd builtin's success doesn't overwrite the failure).
+    let (_, output, stderr) = run_zshrs_parity(
+        r#"cd /etc > /etc/passwd && echo SUCCESS || echo FAIL"#,
+    );
+    assert_eq!(output.trim(), "FAIL", "stdout: {output:?}");
+    assert!(stderr.contains("permission denied"), "stderr: {stderr:?}");
+}
+
+#[test]
 fn test_subscript_parity_redirect_error_skips_command() {
     // Empirical bug: zshrs silently let `echo x > /etc/passwd`
     // fall through to stdout when the redirect target couldn't
