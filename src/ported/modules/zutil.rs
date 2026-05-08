@@ -345,14 +345,23 @@ pub fn zformat_substring(format: &str, specs: &HashMap<char, String>, presence: 
     let bytes: Vec<char> = format.chars().collect();
     let mut out = String::with_capacity(bytes.len() + 16);
     let mut idx = 0;
-    let _ = zformat_recurse(&bytes, &mut idx, &mut out, '\0', &effective, presence, false);
+    let _ = ZFormat::substring(&bytes, &mut idx, &mut out, '\0', &effective, presence, false);
     out
 }
 
+/// Namespace for the recursive zformat walker — distinct from
+/// the public zformat_substring entry point above so the inner
+/// recursion doesn't collide with the outer wrapper's name.
+struct ZFormat;
+
+impl ZFormat {
+
 /// Recursive walker for zformat. Returns the index of the
 /// terminator (`endchar`). idx is mutated in place.
-/// Direct port of zformat_substring (zutil.c:814-952).
-fn zformat_recurse(
+/// Direct port of `zformat_substring()` from Src/Modules/zutil.c:814 —
+/// the recursive descent over the format string with `%c` substitution
+/// and `%(?...)` ternary blocks.
+fn substring(
     bytes: &[char],
     idx: &mut usize,
     out: &mut String,
@@ -463,12 +472,12 @@ fn zformat_recurse(
             // actval, skip the first text. So the FIRST text
             // (between `(` and the delim) is the FALSE branch, the
             // SECOND text (between delim and `)`) is the TRUE.
-            zformat_recurse(bytes, idx, out, endcharl, specs, presence, skip || actval)?;
+            ZFormat::substring(bytes, idx, out, endcharl, specs, presence, skip || actval)?;
             // Skip the delimiter
             if *idx < bytes.len() && bytes[*idx] == endcharl {
                 *idx += 1;
             }
-            zformat_recurse(bytes, idx, out, ')', specs, presence, skip || !actval)?;
+            ZFormat::substring(bytes, idx, out, ')', specs, presence, skip || !actval)?;
             // Skip the closing `)`
             if *idx < bytes.len() && bytes[*idx] == ')' {
                 *idx += 1;
@@ -535,6 +544,8 @@ fn zformat_recurse(
     }
     Some(())
 }
+
+}  // impl ZFormat
 
 /// Option description for zparseopts
 #[derive(Debug, Clone)]
