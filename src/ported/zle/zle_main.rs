@@ -1166,7 +1166,7 @@ impl Zle {
             for (i, opt) in km.first.iter().enumerate() {
                 if let Some(t) = opt {
                     if t.name == widget_name {
-                        bindings.push(format!("{}:{}", name, super::zle_utils::print_bind(&[i as u8])));
+                        bindings.push(format!("{}:{}", name, super::zle_utils::printbind(&[i as u8])));
                     }
                 }
             }
@@ -1175,7 +1175,7 @@ impl Zle {
             for (seq, kb) in &km.multi {
                 if let Some(ref t) = kb.bind {
                     if t.name == widget_name {
-                        bindings.push(format!("{}:{}", name, super::zle_utils::print_bind(seq)));
+                        bindings.push(format!("{}:{}", name, super::zle_utils::printbind(seq)));
                     }
                 }
             }

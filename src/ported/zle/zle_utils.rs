@@ -670,7 +670,7 @@ pub enum CutDirection {
 /// Port of `bindztrdup()` from Src/Zle/zle_utils.c:1238. Produces the
 /// dquoted-friendly form (`\C-a`, `\M-x`, escaped backslashes/carets)
 /// that the bindkey command uses for round-trippable output —
-/// distinct from `print_bind` below which uses the human-readable
+/// distinct from `printbind` below which uses the human-readable
 /// `^A` / `^[X` form printed in describe-key-briefly etc.
 pub fn bindztrdup(seq: &[u8]) -> String {
     let mut buf = String::new();
@@ -700,7 +700,7 @@ pub fn bindztrdup(seq: &[u8]) -> String {
 
 /// Print a key binding for display
 /// Port of printbind() from zle_utils.c
-pub fn print_bind(seq: &[u8]) -> String {
+pub fn printbind(seq: &[u8]) -> String {
     let mut result = String::new();
 
     for &b in seq {
@@ -822,7 +822,7 @@ mod tests_strwidth {
 #[cfg(test)]
 mod tests_bindkey_format {
     use super::bindztrdup;
-    use super::print_bind;
+    use super::printbind;
 
     #[test]
     fn bind_ztrdup_emits_caret_form_for_control_chars() {
@@ -849,10 +849,10 @@ mod tests_bindkey_format {
     }
 
     #[test]
-    fn print_bind_caret_form_matches_describe_key_output() {
+    fn printbind_caret_form_matches_describe_key_output() {
         // `^A`-style display form (distinct from bindkey's escape form).
-        assert_eq!(print_bind(b"\x01"), "^A");
-        assert_eq!(print_bind(b"\x1b"), "^[");
+        assert_eq!(printbind(b"\x01"), "^A");
+        assert_eq!(printbind(b"\x1b"), "^[");
     }
 }
 
@@ -1079,9 +1079,6 @@ pub fn initundo() -> i32 { 0 }
 
 /// Port of `mergeundo()` from Src/Zle/zle_utils.c:1733. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn mergeundo() -> i32 { 0 }
-
-/// Port of `printbind()` from Src/Zle/zle_utils.c:1283. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn printbind() -> i32 { 0 }
 
 /// Port of `redo()` from Src/Zle/zle_utils.c:1661. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn redo() -> i32 { 0 }
