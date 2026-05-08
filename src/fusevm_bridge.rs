@@ -2534,7 +2534,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             // through to char slicing.
                             if flags.starts_with('s') {
                                 if let Ok(i) = pat.parse::<i64>() {
-                                    return Value::str(scalar.chars().skip(i as usize).take((i as usize).saturating_sub(i as usize) + 1).collect::<String>());
+                                    let s_chars: Vec<String> = scalar.chars().map(|c| c.to_string()).collect();
+                                    return Value::str(crate::ported::params::getarrvalue(&s_chars, i, i).concat());
                                 }
                             }
                             // (i)pat / (I)pat / (r)pat / (R)pat on
@@ -2575,13 +2576,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 };
                             }
                         }
+                        // Build a per-char pseudo-array and route slice/index
+                        // through getarrvalue so 1-based inclusive semantics
+                        // and negative-from-end indexing match
+                        // Src/params.c::getstrvalue's char-arm.
+                        let s_chars: Vec<String> = scalar.chars().map(|c| c.to_string()).collect();
                         if let Some((start_s, end_s)) = idx.split_once(',') {
-                            // Inline subscript-int parse (was a
-                            // `parse_subscript_index` helper). Each
-                            // side: trim, parse as int, fall back to
-                            // arith eval. Empty trim → None →
-                            // ignore. Mirrors getarg's mathevalarg
-                            // path (params.c:1567).
                             let parse_one = |s: &str, exec: &mut ShellExecutor| -> Option<i64> {
                                 let t = s.trim();
                                 if t.is_empty() { return None; }
@@ -2590,15 +2590,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             };
                             let s_opt = parse_one(start_s, exec);
                             let e_opt = parse_one(end_s, exec);
-                            if let (Some(s), Some(e)) = (s_opt, e_opt) {
-                                return Value::str(scalar.chars().skip(s as usize).take((e as usize).saturating_sub(s as usize) + 1).collect::<String>());
-                            }
+                            let s_i = s_opt.unwrap_or(1);
+                            let e_i = e_opt.unwrap_or(s_chars.len() as i64);
+                            return Value::str(crate::ported::params::getarrvalue(&s_chars, s_i, e_i).concat());
                         }
                         let i = match idx.parse::<i64>() {
                             Ok(i) => i,
                             Err(_) => exec.eval_arith_expr(&idx),
                         };
-                        return Value::str(scalar.chars().skip(i as usize).take((i as usize).saturating_sub(i as usize) + 1).collect::<String>());
+                        return Value::str(crate::ported::params::getarrvalue(&s_chars, i, i).concat());
                     }
                 };
 

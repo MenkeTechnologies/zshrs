@@ -5410,9 +5410,12 @@ fn braced_subscript_ref(s: &str) -> Option<(&str, &str)> {
     }
     // Special-name positionals `@` and `*` — accept as base so
     // `${@[N,M]}` / `${*[N]}` route through BUILTIN_ARRAY_INDEX which
-    // has a positional-param branch.
+    // has a positional-param branch. Digit-name positionals (`${1[..]}`,
+    // `${10[..]}`) also accepted: BUILTIN_ARRAY_INDEX falls through to
+    // get_variable which resolves positional-N.
     let is_special = base == "@" || base == "*";
-    if !is_special {
+    let is_digit_positional = !base.is_empty() && base.chars().all(|c| c.is_ascii_digit());
+    if !is_special && !is_digit_positional {
         if !base.chars().next()?.is_ascii_alphabetic() && !base.starts_with('_') {
             return None;
         }

@@ -2080,6 +2080,15 @@ pub fn paramsubst(                                          // c:1625
                     } else {
                         String::new()
                     }
+                } else if let Some((lo, hi)) = sub.split_once(',') {
+                    // `${var[N,M]}` scalar char-slice — bug-for-bug port
+                    // of getarrvalue's range arm operating on a per-char
+                    // pseudo-array. Direct port of Src/params.c:1625
+                    // getstrvalue's slice path.
+                    let lo: i64 = lo.trim().parse().unwrap_or(1);
+                    let hi: i64 = hi.trim().parse().unwrap_or(s_chars.len() as i64);
+                    let chars_arr: Vec<String> = s_chars.iter().map(|c| c.to_string()).collect();
+                    crate::ported::params::getarrvalue(&chars_arr, lo, hi).concat()
                 } else {
                     String::new()
                 }
