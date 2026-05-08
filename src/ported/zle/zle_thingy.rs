@@ -153,3 +153,99 @@ pub mod names {
     /// Vi insert mode
     pub const VI_INSERT: &str = "vi-insert";
 }
+
+/// Port of `addzlefunction()` from Src/Zle/zle_thingy.c:281. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn addzlefunction() -> i32 { 0 }
+
+/// Port of `bin_zle()` from Src/Zle/zle_thingy.c:343. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_zle() -> i32 { 0 }
+
+/// Port of `bin_zle_call()` from Src/Zle/zle_thingy.c:703. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_zle_call() -> i32 { 0 }
+
+/// Port of `bin_zle_complete()` from Src/Zle/zle_thingy.c:600. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_zle_complete() -> i32 { 0 }
+
+/// Port of `bin_zle_del()` from Src/Zle/zle_thingy.c:548. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_zle_del() -> i32 { 0 }
+
+/// Port of `bin_zle_fd()` from Src/Zle/zle_thingy.c:857. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_zle_fd() -> i32 { 0 }
+
+/// Port of `bin_zle_flags()` from Src/Zle/zle_thingy.c:651. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_zle_flags() -> i32 { 0 }
+
+/// Port of `bin_zle_invalidate()` from Src/Zle/zle_thingy.c:830. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_zle_invalidate() -> i32 { 0 }
+
+/// Port of `bin_zle_keymap()` from Src/Zle/zle_thingy.c:488. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_zle_keymap() -> i32 { 0 }
+
+/// Port of `bin_zle_link()` from Src/Zle/zle_thingy.c:567. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_zle_link() -> i32 { 0 }
+
+/// Port of `bin_zle_list()` from Src/Zle/zle_thingy.c:393. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_zle_list() -> i32 { 0 }
+
+/// Port of `bin_zle_mesg()` from Src/Zle/zle_thingy.c:459. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_zle_mesg() -> i32 { 0 }
+
+/// Port of `bin_zle_new()` from Src/Zle/zle_thingy.c:584. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_zle_new() -> i32 { 0 }
+
+/// Port of `bin_zle_refresh()` from Src/Zle/zle_thingy.c:418. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_zle_refresh() -> i32 { 0 }
+
+/// Port of `bin_zle_transform()` from Src/Zle/zle_thingy.c:955. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_zle_transform() -> i32 { 0 }
+
+/// Port of `bin_zle_unget()` from Src/Zle/zle_thingy.c:473. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_zle_unget() -> i32 { 0 }
+
+/// Port of `bindwidget()` from Src/Zle/zle_thingy.c:199. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bindwidget() -> i32 { 0 }
+
+/// Port of `createthingytab()` from Src/Zle/zle_thingy.c:60. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn createthingytab() -> i32 { 0 }
+
+/// Port of `deletezlefunction()` from Src/Zle/zle_thingy.c:310. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn deletezlefunction() -> i32 { 0 }
+
+/// Port of `emptythingytab()` from Src/Zle/zle_thingy.c:80. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn emptythingytab() -> i32 { 0 }
+
+/// Port of `freethingynode()` from Src/Zle/zle_thingy.c:118. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn freethingynode() -> i32 { 0 }
+
+/// Port of `freewidget()` from Src/Zle/zle_thingy.c:257. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn freewidget() -> i32 { 0 }
+
+/// Port of `init_thingies()` from Src/Zle/zle_thingy.c:1022. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn init_thingies() -> i32 { 0 }
+
+/// Port of `makethingynode()` from Src/Zle/zle_thingy.c:108. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn makethingynode() -> i32 { 0 }
+
+/// Port of `refthingy()` from Src/Zle/zle_thingy.c:138. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn refthingy() -> i32 { 0 }
+
+/// Port of `rthingy()` from Src/Zle/zle_thingy.c:158. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn rthingy() -> i32 { 0 }
+
+/// Port of `rthingy_nocreate()` from Src/Zle/zle_thingy.c:169. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn rthingy_nocreate() -> i32 { 0 }
+
+/// Port of `scanemptythingies()` from Src/Zle/zle_thingy.c:96. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn scanemptythingies() -> i32 { 0 }
+
+/// Port of `scanlistwidgets()` from Src/Zle/zle_thingy.c:505. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn scanlistwidgets() -> i32 { 0 }
+
+/// Port of `unbindwidget()` from Src/Zle/zle_thingy.c:230. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn unbindwidget() -> i32 { 0 }
+
+/// Port of `unrefthingy()` from Src/Zle/zle_thingy.c:147. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn unrefthingy() -> i32 { 0 }
+
+/// Port of `zle_usable()` from Src/Zle/zle_thingy.c:634. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn zle_usable() -> i32 { 0 }

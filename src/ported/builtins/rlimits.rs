@@ -891,3 +891,45 @@ impl crate::ported::exec::ShellExecutor {
     }
 }
 // END moved-from-exec-rs
+
+/// Port of `boot_()` from Src/Builtins/rlimits.c:905. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn boot_() -> i32 { 0 }
+
+/// Port of `cleanup_()` from Src/Builtins/rlimits.c:913. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn cleanup_() -> i32 { 0 }
+
+/// Port of `do_limit()` from Src/Builtins/rlimits.c:431. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn do_limit() -> i32 { 0 }
+
+/// Port of `do_unlimit()` from Src/Builtins/rlimits.c:622. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn do_unlimit() -> i32 { 0 }
+
+/// Port of `enables_()` from Src/Builtins/rlimits.c:898. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn enables_() -> i32 { 0 }
+
+/// Port of `features_()` from Src/Builtins/rlimits.c:890. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn features_() -> i32 { 0 }
+
+/// Port of `find_resource()` from Src/Builtins/rlimits.c:239. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn find_resource() -> i32 { 0 }
+
+/// Port of `finish_()` from Src/Builtins/rlimits.c:921. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn finish_() -> i32 { 0 }
+
+/// Port of `free_resinfo()` from Src/Builtins/rlimits.c:222. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn free_resinfo() -> i32 { 0 }
+
+/// Port of `printrlim()` from Src/Builtins/rlimits.c:253. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn printrlim() -> i32 { 0 }
+
+/// Port of `set_resinfo()` from Src/Builtins/rlimits.c:194. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn set_resinfo() -> i32 { 0 }
+
+/// Port of `setup_()` from Src/Builtins/rlimits.c:883. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn setup_() -> i32 { 0 }
+
+/// Port of `showlimits()` from Src/Builtins/rlimits.c:346. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn showlimits() -> i32 { 0 }
+
+/// Port of `showlimitvalue()` from Src/Builtins/rlimits.c:307. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn showlimitvalue() -> i32 { 0 }

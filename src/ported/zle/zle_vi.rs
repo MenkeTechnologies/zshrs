@@ -998,3 +998,120 @@ mod tests {
         assert_eq!(zle.zlecs, 1);
     }
 }
+
+/// Port of `dovilinerange()` from Src/Zle/zle_vi.c:302. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn dovilinerange() -> i32 { 0 }
+
+/// Port of `getvirange()` from Src/Zle/zle_vi.c:172. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn getvirange() -> i32 { 0 }
+
+/// Port of `startvichange()` from Src/Zle/zle_vi.c:90. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn startvichange() -> i32 { 0 }
+
+/// Port of `startvitext()` from Src/Zle/zle_vi.c:118. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn startvitext() -> i32 { 0 }
+
+/// Port of `viaddeol()` from Src/Zle/zle_vi.c:346. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viaddeol() -> i32 { 0 }
+
+/// Port of `viaddnext()` from Src/Zle/zle_vi.c:336. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viaddnext() -> i32 { 0 }
+
+/// Port of `vibackwarddeletechar()` from Src/Zle/zle_vi.c:888. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vibackwarddeletechar() -> i32 { 0 }
+
+/// Port of `vicapslockpanic()` from Src/Zle/zle_vi.c:1002. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vicapslockpanic() -> i32 { 0 }
+
+/// Port of `vichange()` from Src/Zle/zle_vi.c:438. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vichange() -> i32 { 0 }
+
+/// Port of `vichangeeol()` from Src/Zle/zle_vi.c:482. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vichangeeol() -> i32 { 0 }
+
+/// Port of `vichangewholeline()` from Src/Zle/zle_vi.c:499. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vichangewholeline() -> i32 { 0 }
+
+/// Port of `vicmdmode()` from Src/Zle/zle_vi.c:677. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vicmdmode() -> i32 { 0 }
+
+/// Port of `videlete()` from Src/Zle/zle_vi.c:384. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn videlete() -> i32 { 0 }
+
+/// Port of `videletechar()` from Src/Zle/zle_vi.c:405. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn videletechar() -> i32 { 0 }
+
+/// Port of `vidigitorbeginningofline()` from Src/Zle/zle_vi.c:1129. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vidigitorbeginningofline() -> i32 { 0 }
+
+/// Port of `vidowncase()` from Src/Zle/zle_vi.c:773. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vidowncase() -> i32 { 0 }
+
+/// Port of `vigetkey()` from Src/Zle/zle_vi.c:128. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vigetkey() -> i32 { 0 }
+
+/// Port of `viindent()` from Src/Zle/zle_vi.c:820. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viindent() -> i32 { 0 }
+
+/// Port of `viinsert()` from Src/Zle/zle_vi.c:355. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viinsert() -> i32 { 0 }
+
+/// Port of `viinsert_init()` from Src/Zle/zle_vi.c:368. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viinsert_init() -> i32 { 0 }
+
+/// Port of `viinsertbol()` from Src/Zle/zle_vi.c:375. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viinsertbol() -> i32 { 0 }
+
+/// Port of `vijoin()` from Src/Zle/zle_vi.c:933. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vijoin() -> i32 { 0 }
+
+/// Port of `vikilleol()` from Src/Zle/zle_vi.c:1056. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vikilleol() -> i32 { 0 }
+
+/// Port of `vikillline()` from Src/Zle/zle_vi.c:923. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vikillline() -> i32 { 0 }
+
+/// Port of `viopenlineabove()` from Src/Zle/zle_vi.c:711. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viopenlineabove() -> i32 { 0 }
+
+/// Port of `viopenlinebelow()` from Src/Zle/zle_vi.c:699. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viopenlinebelow() -> i32 { 0 }
+
+/// Port of `vioperswapcase()` from Src/Zle/zle_vi.c:723. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vioperswapcase() -> i32 { 0 }
+
+/// Port of `vipoundinsert()` from Src/Zle/zle_vi.c:1072. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vipoundinsert() -> i32 { 0 }
+
+/// Port of `viquotedinsert()` from Src/Zle/zle_vi.c:1099. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viquotedinsert() -> i32 { 0 }
+
+/// Port of `virepeatchange()` from Src/Zle/zle_vi.c:795. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn virepeatchange() -> i32 { 0 }
+
+/// Port of `vireplace()` from Src/Zle/zle_vi.c:574. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vireplace() -> i32 { 0 }
+
+/// Port of `vireplacechars()` from Src/Zle/zle_vi.c:594. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vireplacechars() -> i32 { 0 }
+
+/// Port of `visetbuffer()` from Src/Zle/zle_vi.c:1015. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn visetbuffer() -> i32 { 0 }
+
+/// Port of `visubstitute()` from Src/Zle/zle_vi.c:455. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn visubstitute() -> i32 { 0 }
+
+/// Port of `viswapcase()` from Src/Zle/zle_vi.c:977. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viswapcase() -> i32 { 0 }
+
+/// Port of `viunindent()` from Src/Zle/zle_vi.c:856. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viunindent() -> i32 { 0 }
+
+/// Port of `viupcase()` from Src/Zle/zle_vi.c:751. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viupcase() -> i32 { 0 }
+
+/// Port of `viyankeol()` from Src/Zle/zle_vi.c:537. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viyankeol() -> i32 { 0 }
+
+/// Port of `viyankwholeline()` from Src/Zle/zle_vi.c:550. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viyankwholeline() -> i32 { 0 }

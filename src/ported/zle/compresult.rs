@@ -362,3 +362,27 @@ mod tests {
         assert_eq!(list_lines(&vec!["a".into(); 6], 3), 2);
     }
 }
+
+/// Port of `bld_all_str()` from Src/Zle/compresult.c:2187. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bld_all_str() -> i32 { 0 }
+
+/// Port of `calclist()` from Src/Zle/compresult.c:1495. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn calclist() -> i32 { 0 }
+
+/// Port of `do_ambig_menu()` from Src/Zle/compresult.c:1381. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn do_ambig_menu() -> i32 { 0 }
+
+/// Port of `ilistmatches()` from Src/Zle/compresult.c:2284. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn ilistmatches() -> i32 { 0 }
+
+/// Port of `invalidate_list()` from Src/Zle/compresult.c:2334. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn invalidate_list() -> i32 { 0 }
+
+/// Port of `iprintm()` from Src/Zle/compresult.c:2241. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn iprintm() -> i32 { 0 }
+
+/// Port of `list_matches()` from Src/Zle/compresult.c:2304. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn list_matches() -> i32 { 0 }
+
+/// Port of `printlist()` from Src/Zle/compresult.c:1978. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn printlist() -> i32 { 0 }

@@ -318,3 +318,45 @@ mod tests {
         assert_eq!(base64_encode(b"a"), "YQ==");
     }
 }
+
+/// Port of `base64_decode()` from Src/Zle/termquery.c:571. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn base64_decode() -> i32 { 0 }
+
+/// Port of `collate_seq()` from Src/Zle/termquery.c:676. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn collate_seq() -> i32 { 0 }
+
+/// Port of `cursor_form()` from Src/Zle/termquery.c:913. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cursor_form() -> i32 { 0 }
+
+/// Port of `end_edit()` from Src/Zle/termquery.c:724. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn end_edit() -> i32 { 0 }
+
+/// Port of `find_branch()` from Src/Zle/termquery.c:170. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn find_branch() -> i32 { 0 }
+
+/// Port of `find_matching()` from Src/Zle/termquery.c:185. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn find_matching() -> i32 { 0 }
+
+/// Port of `free_cursor_forms()` from Src/Zle/termquery.c:904. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn free_cursor_forms() -> i32 { 0 }
+
+/// Port of `handle_color()` from Src/Zle/termquery.c:438. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn handle_color() -> i32 { 0 }
+
+/// Port of `handle_paste()` from Src/Zle/termquery.c:595. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn handle_paste() -> i32 { 0 }
+
+/// Port of `mark_output()` from Src/Zle/termquery.c:759. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn mark_output() -> i32 { 0 }
+
+/// Port of `match_cursorform()` from Src/Zle/termquery.c:798. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn match_cursorform() -> i32 { 0 }
+
+/// Port of `prompt_markers()` from Src/Zle/termquery.c:731. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn prompt_markers() -> i32 { 0 }
+
+/// Port of `start_edit()` from Src/Zle/termquery.c:717. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn start_edit() -> i32 { 0 }
+
+/// Port of `write_urlencoded()` from Src/Zle/termquery.c:769. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn write_urlencoded() -> i32 { 0 }

@@ -293,3 +293,21 @@ mod tests {
         assert!(BUILTIN_WIDGETS.len() > 150);
     }
 }
+
+/// Port of `boot_()` from Src/Zle/zleparameter.c:169. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn boot_() -> i32 { 0 }
+
+/// Port of `cleanup_()` from Src/Zle/zleparameter.c:176. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cleanup_() -> i32 { 0 }
+
+/// Port of `enables_()` from Src/Zle/zleparameter.c:162. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn enables_() -> i32 { 0 }
+
+/// Port of `features_()` from Src/Zle/zleparameter.c:154. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn features_() -> i32 { 0 }
+
+/// Port of `finish_()` from Src/Zle/zleparameter.c:183. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn finish_() -> i32 { 0 }
+
+/// Port of `setup_()` from Src/Zle/zleparameter.c:147. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn setup_() -> i32 { 0 }

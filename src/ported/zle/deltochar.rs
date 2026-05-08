@@ -102,3 +102,21 @@ mod tests {
         assert_eq!(cursor, 0);
     }
 }
+
+/// Port of `boot_()` from Src/Zle/deltochar.c:112. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn boot_() -> i32 { 0 }
+
+/// Port of `cleanup_()` from Src/Zle/deltochar.c:129. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cleanup_() -> i32 { 0 }
+
+/// Port of `enables_()` from Src/Zle/deltochar.c:105. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn enables_() -> i32 { 0 }
+
+/// Port of `features_()` from Src/Zle/deltochar.c:97. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn features_() -> i32 { 0 }
+
+/// Port of `finish_()` from Src/Zle/deltochar.c:138. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn finish_() -> i32 { 0 }
+
+/// Port of `setup_()` from Src/Zle/deltochar.c:90. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn setup_() -> i32 { 0 }

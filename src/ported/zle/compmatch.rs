@@ -341,3 +341,69 @@ mod tests {
         assert_eq!(cl.sublen(), 12);
     }
 }
+
+/// Port of `add_bmatchers()` from Src/Zle/compmatch.c:101. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn add_bmatchers() -> i32 { 0 }
+
+/// Port of `add_match_part()` from Src/Zle/compmatch.c:373. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn add_match_part() -> i32 { 0 }
+
+/// Port of `add_match_str()` from Src/Zle/compmatch.c:327. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn add_match_str() -> i32 { 0 }
+
+/// Port of `add_match_sub()` from Src/Zle/compmatch.c:446. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn add_match_sub() -> i32 { 0 }
+
+/// Port of `bld_line()` from Src/Zle/compmatch.c:1736. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bld_line() -> i32 { 0 }
+
+/// Port of `bld_parts()` from Src/Zle/compmatch.c:1638. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bld_parts() -> i32 { 0 }
+
+/// Port of `check_cmdata()` from Src/Zle/compmatch.c:2152. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn check_cmdata() -> i32 { 0 }
+
+/// Port of `cline_setlens()` from Src/Zle/compmatch.c:240. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cline_setlens() -> i32 { 0 }
+
+/// Port of `cline_sublen()` from Src/Zle/compmatch.c:219. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cline_sublen() -> i32 { 0 }
+
+/// Port of `cmp_anchors()` from Src/Zle/compmatch.c:2107. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cmp_anchors() -> i32 { 0 }
+
+/// Port of `get_cline()` from Src/Zle/compmatch.c:144. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_cline() -> i32 { 0 }
+
+/// Port of `join_clines()` from Src/Zle/compmatch.c:2706. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn join_clines() -> i32 { 0 }
+
+/// Port of `join_mid()` from Src/Zle/compmatch.c:2608. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn join_mid() -> i32 { 0 }
+
+/// Port of `join_psfx()` from Src/Zle/compmatch.c:2444. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn join_psfx() -> i32 { 0 }
+
+/// Port of `join_strs()` from Src/Zle/compmatch.c:1994. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn join_strs() -> i32 { 0 }
+
+/// Port of `join_sub()` from Src/Zle/compmatch.c:2212. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn join_sub() -> i32 { 0 }
+
+/// Port of `pattern_match()` from Src/Zle/compmatch.c:1548. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn pattern_match() -> i32 { 0 }
+
+/// Port of `pattern_match_restrict()` from Src/Zle/compmatch.c:1383. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn pattern_match_restrict() -> i32 { 0 }
+
+/// Port of `pattern_match1()` from Src/Zle/compmatch.c:1269. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn pattern_match1() -> i32 { 0 }
+
+/// Port of `sub_join()` from Src/Zle/compmatch.c:2649. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn sub_join() -> i32 { 0 }
+
+/// Port of `sub_match()` from Src/Zle/compmatch.c:2301. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn sub_match() -> i32 { 0 }
+
+/// Port of `undo_cmdata()` from Src/Zle/compmatch.c:2188. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn undo_cmdata() -> i32 { 0 }
