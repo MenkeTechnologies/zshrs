@@ -434,6 +434,22 @@ fn test_subscript_flag_I_no_match() {
     assert_eq!(output.trim(), "0", "got: {output:?}");
 }
 
+#[test]
+fn test_subscript_flag_r_implicit_trailing_wildcard() {
+    // C params.c:1668-1685 — non-exact, non-word array search
+    // appends `*` to the user's pattern. So `(r)foo` matches "foobar".
+    let (_, output, _) = run_zshrs("arr=(foobar baz qux); print ${arr[(r)foo]}");
+    assert_eq!(output.trim(), "foobar", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_flag_e_disables_implicit_wildcard() {
+    // (e) means exact — no implicit `*` wrap. `(e)foo` should NOT
+    // match "foobar".
+    let (_, output, _) = run_zshrs("arr=(foobar foo qux); print ${arr[(re)foo]}");
+    assert_eq!(output.trim(), "foo", "got: {output:?}");
+}
+
 // ---------------------------------------------------------------------------
 // `typeset -A` two-statement assoc init: declare then array-literal-assign
 // ---------------------------------------------------------------------------
