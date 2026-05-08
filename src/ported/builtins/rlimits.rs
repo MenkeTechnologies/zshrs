@@ -14,17 +14,19 @@ use libc::{
     RLIMIT_NOFILE, RLIMIT_STACK, RLIM_INFINITY,
 };
 
-/// Resource limit unit type.
-/// Port of the `ZLIMTYPE_*` enum from Src/Builtins/rlimits.c —
-/// `set_resinfo()` (line 194) tags each `RLIMIT_*` with whether
-/// it's measured in KB / blocks / seconds / a count.
+/// Port of `enum zlimtype` from Src/Builtins/rlimits.c. Tags each
+/// `RLIMIT_*` with the scaling unit `printrlim()` (line 253) and
+/// `zstrtorlimt()` (line 272) interpret it under: KB-scaled memory,
+/// raw count, seconds, microseconds, or "unknown" for resources
+/// the build doesn't recognize.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LimitType {
-    Memory,
-    Number,
-    Time,
-    Microseconds,
-    Unknown,
+#[allow(non_camel_case_types)]
+pub enum zlimtype {
+    ZLIMTYPE_MEMORY,
+    ZLIMTYPE_NUMBER,
+    ZLIMTYPE_TIME,
+    ZLIMTYPE_MICROSECONDS,
+    ZLIMTYPE_UNKNOWN,
 }
 
 /// Per-resource metadata.
@@ -37,7 +39,7 @@ pub enum LimitType {
 pub struct ResInfo {
     pub res: i32,
     pub name: &'static str,
-    pub limit_type: LimitType,
+    pub limit_type: zlimtype,
     pub unit: u64,
     pub opt: char,
     pub descr: &'static str,
@@ -55,7 +57,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
     ResInfo {
         res: RLIMIT_CPU as i32,
         name: "cputime",
-        limit_type: LimitType::Time,
+        limit_type: zlimtype::ZLIMTYPE_TIME,
         unit: 1,
         opt: 't',
         descr: "cpu time (seconds)",
@@ -63,7 +65,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
     ResInfo {
         res: RLIMIT_FSIZE as i32,
         name: "filesize",
-        limit_type: LimitType::Memory,
+        limit_type: zlimtype::ZLIMTYPE_MEMORY,
         unit: 512,
         opt: 'f',
         descr: "file size (blocks)",
@@ -71,7 +73,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
     ResInfo {
         res: RLIMIT_DATA as i32,
         name: "datasize",
-        limit_type: LimitType::Memory,
+        limit_type: zlimtype::ZLIMTYPE_MEMORY,
         unit: 1024,
         opt: 'd',
         descr: "data seg size (kbytes)",
@@ -79,7 +81,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
     ResInfo {
         res: RLIMIT_STACK as i32,
         name: "stacksize",
-        limit_type: LimitType::Memory,
+        limit_type: zlimtype::ZLIMTYPE_MEMORY,
         unit: 1024,
         opt: 's',
         descr: "stack size (kbytes)",
@@ -87,7 +89,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
     ResInfo {
         res: RLIMIT_CORE as i32,
         name: "coredumpsize",
-        limit_type: LimitType::Memory,
+        limit_type: zlimtype::ZLIMTYPE_MEMORY,
         unit: 512,
         opt: 'c',
         descr: "core file size (blocks)",
@@ -95,7 +97,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
     ResInfo {
         res: RLIMIT_NOFILE as i32,
         name: "descriptors",
-        limit_type: LimitType::Number,
+        limit_type: zlimtype::ZLIMTYPE_NUMBER,
         unit: 1,
         opt: 'n',
         descr: "file descriptors",
@@ -103,7 +105,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
     ResInfo {
         res: RLIMIT_AS as i32,
         name: "addressspace",
-        limit_type: LimitType::Memory,
+        limit_type: zlimtype::ZLIMTYPE_MEMORY,
         unit: 1024,
         opt: 'v',
         descr: "address space (kbytes)",
@@ -148,14 +150,14 @@ impl LimitValue {
             LimitValue::Value(val) => {
                 if let Some(info) = info {
                     match info.limit_type {
-                        LimitType::Time => {
+                        zlimtype::ZLIMTYPE_TIME => {
                             let hours = val / 3600;
                             let mins = (val / 60) % 60;
                             let secs = val % 60;
                             format!("{}:{:02}:{:02}", hours, mins, secs)
                         }
-                        LimitType::Microseconds => format!("{}us", val),
-                        LimitType::Memory => {
+                        zlimtype::ZLIMTYPE_MICROSECONDS => format!("{}us", val),
+                        zlimtype::ZLIMTYPE_MEMORY => {
                             if *val >= 1024 * 1024 {
                                 format!("{}MB", val / (1024 * 1024))
                             } else {
@@ -366,7 +368,7 @@ pub fn zstrtorlimt(s: &str, info: Option<&ResInfo>) -> Result<LimitValue, String
     let info = info.ok_or("unknown resource type")?;
 
     match info.limit_type {
-        LimitType::Time => {
+        zlimtype::ZLIMTYPE_TIME => {
             if let Some(colon_pos) = s.find(':') {
                 let hours: u64 = s[..colon_pos].parse().map_err(|_| "invalid number")?;
                 let rest = &s[colon_pos + 1..];
@@ -395,7 +397,7 @@ pub fn zstrtorlimt(s: &str, info: Option<&ResInfo>) -> Result<LimitValue, String
                 Ok(LimitValue::Value(val * multiplier))
             }
         }
-        LimitType::Memory => {
+        zlimtype::ZLIMTYPE_MEMORY => {
             let s_lower = s.to_lowercase();
             let (num_str, multiplier) = if s_lower.ends_with('g') {
                 (&s[..s.len() - 1], 1024 * 1024 * 1024)
@@ -700,7 +702,7 @@ mod tests {
     fn test_parse_limit_time() {
         let info = KNOWN_RESOURCES
             .iter()
-            .find(|i| i.limit_type == LimitType::Time)
+            .find(|i| i.limit_type == zlimtype::ZLIMTYPE_TIME)
             .unwrap();
 
         assert_eq!(
@@ -730,7 +732,7 @@ mod tests {
     fn test_parse_limit_memory() {
         let info = KNOWN_RESOURCES
             .iter()
-            .find(|i| i.limit_type == LimitType::Memory)
+            .find(|i| i.limit_type == zlimtype::ZLIMTYPE_MEMORY)
             .unwrap();
 
         assert_eq!(
