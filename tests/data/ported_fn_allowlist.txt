@@ -68,6 +68,15 @@ parse_compound
 parse_pre_inc
 parse_assign
 
+# math.rs save_state/restore_state — Rust-side wrappers for C
+# `mathevall()` (Src/math.c:367)'s xyy* stack-locals save/restore
+# pattern. C inlines the saves directly in mathevall's body; the
+# Rust port factors them into helpers since recursive eval happens
+# from two callsites (callmathfunc arg parsing, getmathparam
+# indirect-string eval) and inlining would duplicate ~17 lines twice.
+save_state
+restore_state
+
 # math.rs — MathState lifecycle / accessors. The struct mirrors the
 # saved-and-restored locals C `mathevall()` (math.c:367) keeps across
 # recursive entry; in C they are stack locals + module-statics so no
