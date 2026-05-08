@@ -73,13 +73,12 @@ matches_watch_pattern
 
 # utils.rs Rust-side stdlib wrappers and zshrs-original helpers
 # kept for ergonomics — zsh C inlines these or uses macros.
-get_term_width
-get_term_height
 
 color_to_code
 format_function_body_zsh
 format_key_sequence
 magic_assoc_keys
+
 parse_key_sequence
 parse_subscript_arith_assign
 parse_subscript_arith_compound
