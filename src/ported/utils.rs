@@ -426,44 +426,6 @@ pub fn quote_string(s: &str) -> String {
     }
 }
 
-/// Split a string respecting quotes
-/// Split a string respecting bslashquote pairs.
-/// Port of the `getshquote()` / `splitstring` routines around
-/// Src/utils.c — used for `${(z)…}` parameter flag.
-pub fn split_quoted(s: &str) -> Vec<String> {
-    let mut result = Vec::new();
-    let mut current = String::new();
-    let mut in_single_quote = false;
-    let mut in_double_quote = false;
-    let mut escape_next = false;
-
-    for c in s.chars() {
-        if escape_next {
-            current.push(c);
-            escape_next = false;
-            continue;
-        }
-
-        match c {
-            '\\' if !in_single_quote => escape_next = true,
-            '\'' if !in_double_quote => in_single_quote = !in_single_quote,
-            '"' if !in_single_quote => in_double_quote = !in_double_quote,
-            ' ' | '\t' if !in_single_quote && !in_double_quote => {
-                if !current.is_empty() {
-                    result.push(std::mem::take(&mut current));
-                }
-            }
-            _ => current.push(c),
-        }
-    }
-
-    if !current.is_empty() {
-        result.push(current);
-    }
-
-    result
-}
-
 /// Split string by separator - port from zsh/Src/utils.c sepsplit() lines 3961-3992
 ///
 /// If sep is None, performs IFS-style word splitting (spacesplit).
@@ -2324,18 +2286,6 @@ mod tests {
         assert_eq!(QuoteType::from_q_count(2), QuoteType::Single);
         assert_eq!(QuoteType::from_q_count(3), QuoteType::Double);
         assert_eq!(QuoteType::from_q_count(4), QuoteType::Dollars);
-    }
-
-    #[test]
-    fn test_split_quoted() {
-        let result = split_quoted("foo bar baz");
-        assert_eq!(result, vec!["foo", "bar", "baz"]);
-
-        let result = split_quoted("'hello world' test");
-        assert_eq!(result, vec!["hello world", "test"]);
-
-        let result = split_quoted("\"double quoted\" value");
-        assert_eq!(result, vec!["double quoted", "value"]);
     }
 
     #[test]
