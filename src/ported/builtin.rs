@@ -30,7 +30,7 @@ use indexmap::IndexMap;
 #[allow(unused_imports)]
 use crate::ported::exec::{
     self, ShellExecutor, BUILTIN_SET,
-    format_int_in_base, shell_quote_value,
+    format_int_in_base,
     VarAttr, VarKind,
 };
 use crate::ported::utils::{zerr, zerrnam, zwarn, zwarnnam};
@@ -632,7 +632,7 @@ impl crate::ported::exec::ShellExecutor {
             keys.sort();
             for k in keys {
                 if let Ok(v) = std::env::var(&k) {
-                    println!("export {}={}", k, shell_quote_value(&v));
+                    println!("export {}={}", k, crate::ported::utils::quotedzputs(&v));
                 }
             }
             return 0;
@@ -2527,7 +2527,7 @@ impl crate::ported::exec::ShellExecutor {
                                 attrs,
                                 name,
                                 arr.iter()
-                                    .map(|v| shell_quote_value(v))
+                                    .map(|v| crate::ported::utils::quotedzputs(v))
                                     .collect::<Vec<_>>()
                                     .join(" ")
                             );
@@ -2538,7 +2538,7 @@ impl crate::ported::exec::ShellExecutor {
                             let formatted: Vec<String> = pairs
                                 .iter()
                                 .map(|(k, v)| {
-                                    format!("[{}]={}", shell_quote_value(k), shell_quote_value(v))
+                                    format!("[{}]={}", crate::ported::utils::quotedzputs(k), crate::ported::utils::quotedzputs(v))
                                 })
                                 .collect();
                             println!("{}{}{}=( {} )", prefix, attrs, name, formatted.join(" "));
@@ -2748,7 +2748,7 @@ impl crate::ported::exec::ShellExecutor {
                             let formatted: Vec<String> = pairs
                                 .iter()
                                 .map(|(k, v)| {
-                                    format!("[{}]={}", shell_quote_value(k), shell_quote_value(v))
+                                    format!("[{}]={}", crate::ported::utils::quotedzputs(k), crate::ported::utils::quotedzputs(v))
                                 })
                                 .collect();
                             println!("{} {}=( {} )", prefix, name, formatted.join(" "));
@@ -2756,11 +2756,11 @@ impl crate::ported::exec::ShellExecutor {
                     } else if is_arr {
                         if let Some(arr) = self.arrays.get(name) {
                             let formatted: Vec<String> =
-                                arr.iter().map(|v| shell_quote_value(v)).collect();
+                                arr.iter().map(|v| crate::ported::utils::quotedzputs(v)).collect();
                             println!("{} {}=( {} )", prefix, name, formatted.join(" "));
                         }
                     } else {
-                        println!("{} {}={}", prefix, name, shell_quote_value(&val));
+                        println!("{} {}={}", prefix, name, crate::ported::utils::quotedzputs(&val));
                     }
                 } else if is_hide_val
                     || self
@@ -2861,7 +2861,7 @@ impl crate::ported::exec::ShellExecutor {
                     let formatted: Vec<String> = pairs
                         .iter()
                         .map(|(k, v)| {
-                            format!("[{}]={}", shell_quote_value(k), shell_quote_value(v))
+                            format!("[{}]={}", crate::ported::utils::quotedzputs(k), crate::ported::utils::quotedzputs(v))
                         })
                         .collect();
                     if formatted.is_empty() {
@@ -2870,11 +2870,11 @@ impl crate::ported::exec::ShellExecutor {
                         println!("{}{}=( {} )", pfx_space, name, formatted.join(" "));
                     }
                 } else if let Some(arr) = self.arrays.get(name) {
-                    let formatted: Vec<String> = arr.iter().map(|v| shell_quote_value(v)).collect();
+                    let formatted: Vec<String> = arr.iter().map(|v| crate::ported::utils::quotedzputs(v)).collect();
                     println!("{}{}=( {} )", pfx_space, name, formatted.join(" "));
                 } else if self.variables.contains_key(name) || env::var(name).is_ok() {
                     let val = self.get_variable(name);
-                    println!("{}{}={}", pfx_space, name, shell_quote_value(&val));
+                    println!("{}{}={}", pfx_space, name, crate::ported::utils::quotedzputs(&val));
                 } else {
                     // zsh emits `<invoked>:1: no such variable: NAME`
                     // to stderr and exits non-zero when the named
@@ -10340,7 +10340,7 @@ impl crate::ported::exec::ShellExecutor {
                 if verbose {
                     println!("{} is an alias for {}", cmd, target);
                 } else {
-                    println!("alias {}={}", cmd, shell_quote_value(target));
+                    println!("alias {}={}", cmd, crate::ported::utils::quotedzputs(target));
                 }
                 return 0;
             }

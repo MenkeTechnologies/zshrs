@@ -2797,45 +2797,6 @@ pub(crate) fn ispwd(pwd: &str) -> bool {
     true
 }
 
-pub(crate) fn shell_quote_value(s: &str) -> String {
-    if s.is_empty() {
-        return "''".to_string();
-    }
-    let needs_quotes = s.chars().any(|c| {
-        matches!(
-            c,
-            ' ' | '\t'
-                | '\n'
-                | '\''
-                | '"'
-                | '\\'
-                | '$'
-                | '`'
-                | '!'
-                | '*'
-                | '?'
-                | '['
-                | ']'
-                | '{'
-                | '}'
-                | '('
-                | ')'
-                | '<'
-                | '>'
-                | '|'
-                | '&'
-                | ';'
-                | '#'
-                | '~'
-                | '^'
-        )
-    });
-    if !needs_quotes {
-        return s.to_string();
-    }
-    format!("'{}'", s.replace('\'', "'\\''"))
-}
-
 // ===========================================================
 // xtrace helpers moved from src/ported/exec.rs.
 // printprompt4 is a direct port of utils.c:1718-1735; quotedzputs
