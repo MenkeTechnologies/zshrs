@@ -113,7 +113,7 @@ impl CompMatch {
 /// This Rust port produces a self-contained `CompState` (with
 /// quoted-string awareness) that the rest of the completion engine
 /// consumes without touching globals.
-pub fn init_completion(buffer: &str, cursor: usize) -> CompState {
+pub fn do_completion(buffer: &str, cursor: usize) -> CompState {
     let mut state = CompState {
         buffer: buffer.to_string(),
         active: true,
@@ -250,8 +250,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_init_completion() {
-        let state = init_completion("git commit -m ", 14);
+    fn test_do_completion() {
+        let state = do_completion("git commit -m ", 14);
         assert_eq!(state.words, vec!["git", "commit", "-m", ""]);
         assert!(state.active);
     }
@@ -339,9 +339,6 @@ pub fn comp_str() -> i32 { 0 }
 
 /// Port of `ctokenize()` from Src/Zle/compcore.c:1366. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn ctokenize() -> i32 { 0 }
-
-/// Port of `do_completion()` from Src/Zle/compcore.c:287. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn do_completion() -> i32 { 0 }
 
 /// Port of `dupmatch()` from Src/Zle/compcore.c:3370. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn dupmatch() -> i32 { 0 }
