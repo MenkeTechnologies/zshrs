@@ -5337,7 +5337,7 @@ impl crate::ported::exec::ShellExecutor {
             keys.sort();
             for name in keys {
                 let value = map.get(name).unwrap();
-                let s = format_alias_kv(name, value);
+                let s = format!("{}={}", crate::ported::utils::quotedzputs(name), crate::ported::utils::quotedzputs(value));
                 if list_form {
                     println!("{}{}", prefix, s);
                 } else {
@@ -5387,7 +5387,7 @@ impl crate::ported::exec::ShellExecutor {
             let mut alias_map = alias_map;
             alias_map.sort_by(|a, b| a.0.cmp(&b.0));
             for (name, value) in alias_map {
-                let formatted = format_alias_kv(&name, &value);
+                let formatted = format!("{}={}", crate::ported::utils::quotedzputs(&name), crate::ported::utils::quotedzputs(&value));
                 if list_form {
                     println!("{}{}", prefix, formatted);
                 } else {
@@ -5469,7 +5469,7 @@ impl crate::ported::exec::ShellExecutor {
                 for name in sorted {
                     if Self::glob_match_static(name, arg.as_str()) {
                         if let Some(value) = alias_map.get(name) {
-                            let formatted = format_alias_kv(name, value);
+                            let formatted = format!("{}={}", crate::ported::utils::quotedzputs(name), crate::ported::utils::quotedzputs(value));
                             if list_form {
                                 println!("{}{}", prefix, formatted);
                             } else {
@@ -12172,31 +12172,6 @@ impl crate::ported::exec::ShellExecutor {
 }
 // END moved-from-exec-rs
 
-// ===========================================================
-// Free fns moved verbatim from src/ported/exec.rs.
-// ===========================================================
-// BEGIN moved-from-exec-rs (free fns)
-/// Format `name=value` for alias listing the way zsh does: bare value
-/// when it's a single safe word, single-quoted (with escaped inner
-/// quotes) when it contains whitespace or shell metachars.
-pub(crate) fn format_alias_kv(name: &str, value: &str) -> String {
-    // zsh quotes the value when it contains shell-meaningful chars
-    // OR an `=` sign — `alias g='x=y'`, not `alias g=x=y` (the
-    // latter wouldn't round-trip back into an alias definition
-    // because the parser would see `g=x` as the alias and `=y` as
-    // a separate arg).
-    let needs_quote = value.is_empty()
-        || value
-            .chars()
-            .any(|c| c.is_whitespace() || "$\"'`\\;|&<>(){}*?#~!=".contains(c));
-    if needs_quote {
-        let escaped = value.replace('\'', "'\\''");
-        format!("{}='{}'", name, escaped)
-    } else {
-        format!("{}={}", name, value)
-    }
-}
-// END moved-from-exec-rs (free fns)
 
 // ===========================================================
 // ksh_autoload_body moved from src/ported/exec.rs.
