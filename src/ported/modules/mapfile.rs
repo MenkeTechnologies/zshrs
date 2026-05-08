@@ -62,7 +62,7 @@ impl Mapfile {
                 "mapfile is read-only",
             ));
         }
-        set_file_contents(filename, contents)
+        setpmmapfile(filename, contents)
     }
 
     /// Unset (delete) a file by filename (key).
@@ -123,7 +123,7 @@ impl Mapfile {
             ));
         }
         for (filename, contents) in files {
-            set_file_contents(filename, contents)?;
+            setpmmapfile(filename, contents)?;
         }
         Ok(())
     }
@@ -187,12 +187,19 @@ pub fn get_contents(filename: &str) -> io::Result<String> {
 }
 
 /// Write file contents using mmap when available.
-/// Port of the write half of `setpmmapfile()` from
-/// Src/Modules/mapfile.c:68 — `ftruncate(2)` to the new length,
-/// `mmap(2, MAP_SHARED)` write, `msync(2)`. C source falls back to
-/// `write(2)` on mmap failure; same here.
+/// Port of `setpmmapfile()` from Src/Modules/mapfile.c:68 —
+/// `open(O_RDWR|O_CREAT)`, `ftruncate(2)` to the new length,
+/// `mmap(2, MAP_SHARED)` write, `msync(MS_SYNC)`, second `ftruncate`
+/// (the C source notes both are needed because mmap rounds to page).
+/// C source's `#ifndef USE_MMAP` branch (line 110-117) does buffered
+/// `fopen`/`putc`/`fclose`; this Rust port falls back to `write_all`
+/// on `MAP_FAILED` for the same effect.
+///
+/// The C signature is `(Param, char*)` — invoked via the param tied
+/// table mechanism. The Rust port takes `(filename, contents)` since
+/// the Param wrapper is a higher-level concern.
 #[cfg(unix)]
-pub fn set_file_contents(filename: &str, contents: &str) -> io::Result<()> {
+pub fn setpmmapfile(filename: &str, contents: &str) -> io::Result<()> {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -241,13 +248,12 @@ pub fn set_file_contents(filename: &str, contents: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/mapfile.c`.
-/// Non-Unix fallback for `set_file_contents` — `mmap(2)` is POSIX-
-/// only. Mirrors the `#ifndef HAVE_MMAP` branch in
-/// Src/Modules/mapfile.c.
+/// Non-Unix fallback for `setpmmapfile` — port of the
+/// `#ifndef USE_MMAP` branch in Src/Modules/mapfile.c:110-117 (the
+/// `fopen`/`putc`/`fclose` arm). Rust `fs::write` collapses that
+/// into a single buffered write.
 #[cfg(not(unix))]
-pub fn set_file_contents(filename: &str, contents: &str) -> io::Result<()> {
+pub fn setpmmapfile(filename: &str, contents: &str) -> io::Result<()> {
     fs::write(filename, contents)
 }
 
@@ -283,7 +289,7 @@ mod tests {
         let test_file = "/tmp/zsh_mapfile_test.txt";
         let content = "Hello, mapfile!";
 
-        let result = set_file_contents(test_file, content);
+        let result = setpmmapfile(test_file, content);
         assert!(result.is_ok());
 
         let read_content = get_contents(test_file).unwrap();
@@ -296,7 +302,7 @@ mod tests {
     fn test_empty_file() {
         let test_file = "/tmp/zsh_mapfile_empty.txt";
 
-        let result = set_file_contents(test_file, "");
+        let result = setpmmapfile(test_file, "");
         assert!(result.is_ok());
 
         let read_content = get_contents(test_file).unwrap();
@@ -372,10 +378,6 @@ pub fn getpmmapfile() -> i32 { 0 }
 /// Port of `scanpmmapfile()` from Src/Modules/mapfile.c:241.
 #[allow(non_snake_case)]
 pub fn scanpmmapfile() -> i32 { 0 }
-
-/// Port of `setpmmapfile()` from Src/Modules/mapfile.c:68.
-#[allow(non_snake_case)]
-pub fn setpmmapfile() -> i32 { 0 }
 
 /// Port of `setpmmapfiles()` from Src/Modules/mapfile.c:141.
 #[allow(non_snake_case)]
