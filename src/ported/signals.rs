@@ -218,7 +218,7 @@ static SIGNAL_QUEUE: SignalQueue = SignalQueue::new();
 static TRAP_QUEUE: SignalQueue = SignalQueue::new();
 
 /// Last signal received
-static LAST_SIGNAL: AtomicI32 = AtomicI32::new(0);
+pub static LAST_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
 /// Trap handler storage.
 /// Port of the `sigtrapped[]`/`sigfuncs[]`/`siglists[]` parallel
