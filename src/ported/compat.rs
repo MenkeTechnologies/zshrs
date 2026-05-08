@@ -323,14 +323,6 @@ pub fn u9_iswprint(c: char) -> bool {
     !c.is_control() && u9_wcwidth(c) >= 0
 }
 
-/// Compute the column width of a UTF-8 string.
-/// zshrs convenience over `u9_wcwidth` — closest C analog is the
-/// per-character width sum the prompt-width logic does in
-/// Src/prompt.c via repeated `WCWIDTH()` calls.
-pub fn strwidth(s: &str) -> usize {
-    unicode_width::UnicodeWidthStr::width(s)
-}
-
 /// Metafy a string (encode bytes the parser would otherwise eat).
 /// Port of `pastebuf()` from Src/utils.c — escapes the high-bit
 /// range zsh's parser reserves (`Meta`+`xor 32`). Most Rust code
@@ -538,12 +530,6 @@ mod tests {
         assert_eq!(u9_wcwidth('a'), 1);
         assert_eq!(u9_wcwidth('中'), 2);
         assert!(u9_wcwidth('\x00') <= 0);
-    }
-
-    #[test]
-    fn test_strwidth() {
-        assert_eq!(strwidth("hello"), 5);
-        assert_eq!(strwidth("中文"), 4);
     }
 
     #[test]
