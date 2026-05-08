@@ -6407,7 +6407,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let arg_strs: Vec<String> = if n_args > 0 && len >= n_args {
                 vm.stack[len - n_args..]
                     .iter()
-                    .map(|v| quote_xtrace_arg(&v.to_str()))
+                    .map(|v| quotedzputs(&v.to_str()))
                     .collect()
             } else {
                 Vec::new()
