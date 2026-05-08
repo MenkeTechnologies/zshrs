@@ -195,7 +195,7 @@ impl RefreshState {
     /// — terminal size queried once, both video buffers allocated,
     /// `need_full_redraw` set so the first paint touches every cell.
     pub fn new() -> Self {
-        let (cols, rows) = get_terminal_size();
+        let (cols, rows) = (crate::ported::utils::get_term_width(), crate::ported::utils::get_term_height());
         RefreshState {
             columns: cols,
             lines: rows,
@@ -212,7 +212,7 @@ impl RefreshState {
     /// after SIGWINCH (the C source calls it from
     /// `adjustwinsize()` in Src/init.c).
     pub fn reset_video(&mut self) {
-        let (cols, rows) = get_terminal_size();
+        let (cols, rows) = (crate::ported::utils::get_term_width(), crate::ported::utils::get_term_height());
         self.columns = cols;
         self.lines = rows;
         self.old_video = Some(VideoBuffer::new(cols, rows));
@@ -255,7 +255,7 @@ impl Zle {
         let stdout = io::stdout();
         let mut handle = stdout.lock();
 
-        let (cols, _rows) = get_terminal_size();
+        let (cols, _rows) = (crate::ported::utils::get_term_width(), crate::ported::utils::get_term_height());
 
         let prompt = self.prompt().to_string();
         let rprompt = self.rprompt().to_string();
@@ -505,18 +505,6 @@ impl Zle {
     /// Port of zwcwrite() from zle_refresh.c
     pub fn zwcwrite(&self, s: &str) {
         print!("{}", s);
-    }
-}
-
-/// Get terminal size
-pub fn get_terminal_size() -> (usize, usize) {
-    unsafe {
-        let mut ws: libc::winsize = std::mem::zeroed();
-        if libc::ioctl(0, libc::TIOCGWINSZ, &mut ws) == 0 {
-            (ws.ws_col as usize, ws.ws_row as usize)
-        } else {
-            (80, 24) // Default
-        }
     }
 }
 
