@@ -873,7 +873,7 @@ impl crate::ported::exec::ShellExecutor {
         }
 
         let push_alias = |delta: &mut PluginDelta,
-                          map: &HashMap<String, String>,
+                          map: &indexmap::IndexMap<String, String>,
                           snap_set: &std::collections::HashSet<String>,
                           kind: AliasKind| {
             let mut keys: Vec<&String> = map.keys().collect();

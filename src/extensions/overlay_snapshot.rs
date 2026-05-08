@@ -187,12 +187,15 @@ pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
     out
 }
 
-/// Serialize a `HashMap<String, String>` as a JSON object.
+/// Serialize a string-keyed map as a JSON object.
 /// zshrs-original convenience for the wire format `enumerate_all_overlays`
 /// produces. No C counterpart.
-fn map_to_json(m: &std::collections::HashMap<String, String>) -> Value {
-    let map: serde_json::Map<String, Value> = m
-        .iter()
+fn map_to_json<'a, I>(iter: I) -> Value
+where
+    I: IntoIterator<Item = (&'a String, &'a String)>,
+{
+    let map: serde_json::Map<String, Value> = iter
+        .into_iter()
         .map(|(k, v)| (k.clone(), Value::String(v.clone())))
         .collect();
     Value::Object(map)

@@ -384,9 +384,9 @@ pub struct ShellExecutor {
     /// a file via `source`/`bin_dot`, it becomes the resolved file
     /// path; otherwise it falls back through `$0` → `$ZSH_ARGZERO`.
     pub scriptname: Option<String>,
-    pub aliases: HashMap<String, String>,
-    pub global_aliases: HashMap<String, String>, // alias -g: expand anywhere
-    pub suffix_aliases: HashMap<String, String>, // alias -s: expand by file extension
+    pub aliases: IndexMap<String, String>,
+    pub global_aliases: IndexMap<String, String>, // alias -g: expand anywhere
+    pub suffix_aliases: IndexMap<String, String>, // alias -s: expand by file extension
     /// Names whose alias is currently mid-expansion. zsh's lexer disables
     /// an alias from re-expanding inside its own body (so `alias ls='ls
     /// -la'` works without infinite recursion). zshrs expands aliases
@@ -789,7 +789,7 @@ impl ShellExecutor {
 
         let mut exec = Self {
             aliases: {
-                let mut a = HashMap::new();
+                let mut a = IndexMap::new();
                 // zsh ships these two aliases compiled-in; visible in
                 // a fresh `zsh -f -c 'alias'`. Adding them so zshrs's
                 // alias listing matches zsh's defaults.
@@ -798,8 +798,8 @@ impl ShellExecutor {
                 a
             },
             scriptname: None,
-            global_aliases: HashMap::new(),
-            suffix_aliases: HashMap::new(),
+            global_aliases: IndexMap::new(),
+            suffix_aliases: IndexMap::new(),
             expanding_aliases: std::collections::HashSet::new(),
             loop_signal: None,
             subshell_snapshots: Vec::new(),
