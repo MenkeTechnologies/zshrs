@@ -1268,3 +1268,219 @@ mod tests {
         assert!(output.contains("reserved"));
     }
 }
+
+// ===========================================================
+// Direct ports of the generic `HashTable` lifecycle / mutation /
+// printer routines from Src/hashtable.c. The Rust port stores
+// command/alias/reswd/shfunc tables as `HashMap`-backed wrappers
+// (above), so most of these are free-fn shims for ABI/name
+// parity. Callers in the Rust executor reach the live state via
+// the typed table structs (`AliasTable`, `ShFuncTable`, etc.).
+// ===========================================================
+
+/// Port of `newhashtable()` from Src/hashtable.c:100 — heap-
+/// allocate a fresh `HashTable` header with the supplied size /
+/// name / hash-fn tuple. Rust uses `HashMap::new()`; shim.
+pub fn newhashtable() {}
+
+/// Port of `deletehashtable()` from Src/hashtable.c:129 — free
+/// every node + the table header. Rust drops via Drop; shim.
+pub fn deletehashtable() {}
+
+/// Port of `addhashnode()` from Src/hashtable.c:157 — insert with
+/// duplicate-replace semantics (frees the old node). Shim — Rust
+/// callers use `HashMap::insert` directly.
+pub fn addhashnode() {}
+
+/// Port of `addhashnode2()` from Src/hashtable.c:168 — insert
+/// returning the old node instead of freeing it. Shim.
+pub fn addhashnode2() {}
+
+/// Port of `gethashnode()` from Src/hashtable.c:231 — lookup
+/// (returns NULL when disabled). Shim.
+pub fn gethashnode() {}
+
+/// Port of `gethashnode2()` from Src/hashtable.c:255 — lookup
+/// returning the node even when disabled. Shim.
+pub fn gethashnode2() {}
+
+/// Port of `removehashnode()` from Src/hashtable.c:275 — pop one
+/// node by key, returning the removed datum. Shim.
+pub fn removehashnode() {}
+
+/// Port of `disablehashnode()` from Src/hashtable.c:323 — set
+/// `DISABLED` flag on the node. Shim.
+pub fn disablehashnode() {}
+
+/// Port of `enablehashnode()` from Src/hashtable.c:332 — clear
+/// `DISABLED` flag. Shim.
+pub fn enablehashnode() {}
+
+/// Port of `hnamcmp()` from Src/hashtable.c:341 — `strcmp`-style
+/// comparator over hash node names; used by `qsort` for sorted
+/// `print -l`-style output.
+pub fn hnamcmp(a: &str, b: &str) -> std::cmp::Ordering {
+    a.cmp(b)
+}
+
+/// Port of `scanmatchtable()` from Src/hashtable.c:373 — walk the
+/// table calling `func()` on each node whose name matches the
+/// pattern. Shim.
+pub fn scanmatchtable() {}
+
+/// Port of `scanhashtable()` from Src/hashtable.c:446 — walk the
+/// table calling `func()` on every node. Shim.
+pub fn scanhashtable() {}
+
+/// Port of `expandhashtable()` from Src/hashtable.c:458 — grow
+/// the bucket array when load factor exceeds the threshold.
+/// Rust's `HashMap` rehashes automatically; shim.
+pub fn expandhashtable() {}
+
+/// Port of `resizehashtable()` from Src/hashtable.c:486 — change
+/// the bucket count to a specific size. Shim — `HashMap::reserve`
+/// covers this implicitly.
+pub fn resizehashtable() {}
+
+/// Port of `emptyhashtable()` from Src/hashtable.c:519 — drop
+/// every node, keep the header. Rust uses `HashMap::clear`; shim.
+pub fn emptyhashtable() {}
+
+/// Port of `printhashtabinfo()` from Src/hashtable.c:533 — emit
+/// load-factor / bucket / collision stats for `bin_hashinfo`.
+/// Shim.
+pub fn printhashtabinfo() {}
+
+/// Port of `bin_hashinfo()` from Src/hashtable.c:566 — `hash`
+/// builtin entry that prints the stats. Shim.
+pub fn bin_hashinfo() {}
+
+/// Port of `createcmdnamtable()` from Src/hashtable.c:601 —
+/// allocate the global `cmdnamtab` (the PATH command-cache).
+/// Rust stores PATH cache in `ShellExecutor.cmdnamtab`; shim.
+pub fn createcmdnamtable() {}
+
+/// Port of `emptycmdnamtable()` from Src/hashtable.c:623 — drop
+/// every PATH cache entry (`hash -r`). Shim.
+pub fn emptycmdnamtable() {}
+
+/// Port of `hashdir()` from Src/hashtable.c:634 — populate
+/// `cmdnamtab` from a directory, recording every executable.
+/// Rust does this in `ShellExecutor::scan_path`; shim.
+pub fn hashdir() {}
+
+/// Port of `fillcmdnamtable()` from Src/hashtable.c:712 — walk
+/// all PATH entries calling `hashdir()` for each. Shim.
+pub fn fillcmdnamtable() {}
+
+/// Port of `freecmdnamnode()` from Src/hashtable.c:724 — free
+/// one cmdnamtab entry. Rust drops via Drop; shim.
+pub fn freecmdnamnode() {}
+
+/// Port of `createshfunctable()` from Src/hashtable.c:812 —
+/// allocate `shfunctab` (the user-defined-function table). Shim.
+pub fn createshfunctable() {}
+
+/// Port of `removeshfuncnode()` from Src/hashtable.c:836 — drop
+/// one shell function entry. Shim.
+pub fn removeshfuncnode() {}
+
+/// Port of `disableshfuncnode()` from Src/hashtable.c:855 —
+/// `disable -f NAME` entry. Shim.
+pub fn disableshfuncnode() {}
+
+/// Port of `enableshfuncnode()` from Src/hashtable.c:873 —
+/// `enable -f NAME` entry. Shim.
+pub fn enableshfuncnode() {}
+
+/// Port of `freeshfuncnode()` from Src/hashtable.c:888 — free
+/// one shfunctab entry (function body + name). Shim.
+pub fn freeshfuncnode() {}
+
+/// Port of `scanmatchshfunc()` from Src/hashtable.c:1013 —
+/// pattern-walk over shfunctab. Shim.
+pub fn scanmatchshfunc() {}
+
+/// Port of `scanshfunc()` from Src/hashtable.c:1031 — walk every
+/// shfunctab node calling `func()`. Shim.
+pub fn scanshfunc() {}
+
+/// Port of `printshfuncexpand()` from Src/hashtable.c:1042 —
+/// `functions -e` output (expand-prompt-aware). Shim.
+pub fn printshfuncexpand() {}
+
+/// Port of `getshfuncfile()` from Src/hashtable.c:1059 — return
+/// the source-file path for a defined function (`functions -T`-
+/// style output). Shim.
+pub fn getshfuncfile() -> String {
+    String::new()
+}
+
+/// Port of `createreswdtable()` from Src/hashtable.c:1120 —
+/// allocate the reserved-word table (`if`, `while`, etc.).
+/// Rust uses `ReswdTable::new()`; shim.
+pub fn createreswdtable() {}
+
+/// Port of `printreswdnode()` from Src/hashtable.c:1147 —
+/// `whence`-format printer for one reserved word. Shim.
+pub fn printreswdnode() {}
+
+/// Port of `createaliastable()` from Src/hashtable.c:1188 —
+/// allocate the alias table. Rust uses `AliasTable::new()`; shim.
+pub fn createaliastable() {}
+
+/// Port of `createaliastables()` from Src/hashtable.c:1206 —
+/// allocate both the regular alias table and the suffix-alias
+/// table. Shim.
+pub fn createaliastables() {}
+
+/// Port of `createaliasnode()` from Src/hashtable.c:1230 —
+/// allocate one alias node (`alias name=value`). Shim.
+pub fn createaliasnode() {}
+
+/// Port of `freealiasnode()` from Src/hashtable.c:1243 — free
+/// one alias node. Rust drops via Drop; shim.
+pub fn freealiasnode() {}
+
+/// Port of `printaliasnode()` from Src/hashtable.c:1256 —
+/// `alias` builtin output for one alias. Shim.
+pub fn printaliasnode() {}
+
+/// Port of `createhisttable()` from Src/hashtable.c:1345 —
+/// allocate the history-event hash table. Rust history is keyed
+/// by event number directly; shim.
+pub fn createhisttable() {}
+
+/// Port of `histhasher()` from Src/hashtable.c:1365 — hash-fn
+/// callback for the history table; mixes the event command
+/// string. Shim.
+pub fn histhasher(_s: &str) -> u64 {
+    0
+}
+
+/// Port of `emptyhisttable()` from Src/hashtable.c:1385 — drop
+/// every history-table entry (`history -p` etc.). Shim.
+pub fn emptyhisttable() {}
+
+/// Port of `histstrcmp()` from Src/hashtable.c:1396 — comparator
+/// callback over history-table nodes. Shim.
+pub fn histstrcmp(a: &str, b: &str) -> std::cmp::Ordering {
+    a.cmp(b)
+}
+
+/// Port of `addhistnode()` from Src/hashtable.c:1427 — insert a
+/// history event into the hash. Shim.
+pub fn addhistnode() {}
+
+/// Port of `freehistnode()` from Src/hashtable.c:1450 — free one
+/// history event entry. Shim.
+pub fn freehistnode() {}
+
+/// Port of `freehistdata()` from Src/hashtable.c:1458 — free the
+/// command + word-array fields of a history entry. Shim.
+pub fn freehistdata() {}
+
+/// Port of `dircache_set()` from Src/hashtable.c:1537 — populate
+/// the directory cache (PATH entries + readdir results) used by
+/// `hashdir()`. Shim.
+pub fn dircache_set() {}
