@@ -164,18 +164,6 @@ pub fn bind_key(km: &mut KeymapManager, keymap: &str, seq: &str, widget: &str) -
     true
 }
 
-/// Remove a binding in a named keymap (port of `bindkey -r` from zle_keymap.c).
-pub fn unbind_key(km: &mut KeymapManager, keymap: &str, seq: &str) -> bool {
-    let seq_bytes = parse_key_sequence(seq);
-    let map = match km.keymaps.get_mut(keymap) {
-        Some(m) => m,
-        None => return false,
-    };
-    let inner = std::sync::Arc::make_mut(map);
-    inner.unbind_seq(&seq_bytes);
-    true
-}
-
 /// Enumerate every (key-sequence, widget-name) pair in `keymap`.
 /// Port of `bindkey -L` listing from Src/Zle/zle_keymap.c (the
 /// listing branch of `bin_bindkey`). Both 1-byte fast-path entries
@@ -232,8 +220,11 @@ mod tests {
             "bound sequence missing from list: {:?}",
             listed
         );
-        // Now remove it.
-        assert!(unbind_key(&mut km, "emacs", "\\ez"));
+        // Now remove it (inline of the deleted unbind_key helper).
+        let seq_bytes = parse_key_sequence("\\ez");
+        let map = km.keymaps.get_mut("emacs").unwrap();
+        let inner = std::sync::Arc::make_mut(map);
+        inner.unbind_seq(&seq_bytes);
         let listed = list_bindings(&km, "emacs");
         assert!(
             !listed.iter().any(|(k, _)| k == &seq),
