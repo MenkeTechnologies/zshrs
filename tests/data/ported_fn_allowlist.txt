@@ -169,15 +169,6 @@ is_executable
 get_groupname
 charcount
 
-# params.rs Rust-side helpers extracted from inlined C code.
-# These are the remaining 3 — all live inside C's getarg
-# (params.c:1367) as inline branches of one large function.
-# Real port = port getarg and route through; until then,
-# allowlisted with TODO. Each marked with the C line range it
-# corresponds to inside getarg's body.
-array_subscript_flag      # getarg array search: params.c:1672-1719
-assoc_subscript_flag      # getarg hash search: params.c:1581-1660
-
 apply_deltochar
 apply_hist_modifier
 apply_word_designator

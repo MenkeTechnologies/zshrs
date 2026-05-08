@@ -42,10 +42,7 @@ pub(crate) use crate::ported::math::{
     parse_subscript_arith_assign, parse_subscript_arith_compound, parse_subscript_arith_pre_inc,
 };
 #[allow(unused_imports)]
-pub(crate) use crate::ported::params::{
-    array_subscript_flag, assoc_subscript_flag,
-    getarrvalue,
-};
+pub(crate) use crate::ported::params::getarrvalue;
 #[allow(unused_imports)]
 pub(crate) use crate::ported::pattern::{
     approximate_match, extendedglob_match, ksh_extglob_body_to_regex, parse_numeric_range,
