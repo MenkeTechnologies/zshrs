@@ -151,6 +151,5 @@ shell_word_start_before
 strwidth
 try_matcher
 visible_width
-zparseopts
 zselect
 zformat_recurse
