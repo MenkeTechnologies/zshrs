@@ -701,6 +701,35 @@ pub fn install_handler(sig: i32) {
     }
 }
 
+/// Install the SIGINT handler if running interactively. Port of
+/// `intr()` from Src/signals.c — wraps `install_handler(SIGINT)`
+/// behind the `interact` flag check. Currently always installs
+/// (interactive mode is the daily-driver case); skip-when-non-
+/// interactive cited as TODO once the global `interact` flag is
+/// wired through.
+pub fn intr() {
+    install_handler(libc::SIGINT);
+}
+
+/// End the current trap scope — restore any traps that were
+/// pushed by `starttrapscope` and run any pending EXIT trap.
+/// Port of `endtrapscope()` from Src/signals.c.
+///
+/// SIMPLIFIED port: the C body manages a `savetraps` linked list
+/// of `struct savetrap` entries and a `sigtrapped[]` parallel
+/// array, with delicate ordering for the exit-trap split-out.
+/// Until the full trap-save infrastructure (savetraps list,
+/// nsigtrapped counter, exit_trap_posix flag, dontsavetrap
+/// counter) lands, this is a no-op stub. The C signature shape
+/// is preserved so callers can be wired up; the work it elides
+/// is cited inline.
+pub fn endtrapscope() {
+    // TODO: walk savetraps for entries with st->local > locallevel,
+    // restore via settrap, decrement nsigtrapped per ZSIG_TRAPPED.
+    // Then run TRAPEXIT if sigtrapped[SIGEXIT] was set and not
+    // intrap. See Src/signals.c endtrapscope body.
+}
+
 /// Number of OS signals zsh tracks.
 /// Port of the `SIGCOUNT` macro from Src/signals.c — used by
 /// `dotrap()` and `printsigtable()` to size the per-signal table.
