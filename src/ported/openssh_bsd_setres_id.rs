@@ -80,28 +80,28 @@ pub unsafe fn setresgid(rgid: libc::gid_t, egid: libc::gid_t, sgid: libc::gid_t)
     let mut saved_errno: libc::c_int;
 
     if rgid != sgid {
-        set_errno(libc::ENOSYS);
+        Errno::set(libc::ENOSYS);
         return -1;
     }
 
     if have_native_setregid() && !broken_setregid() {
         if libc::setregid(rgid, egid) < 0 {
-            saved_errno = errno();
-            zwarnnam("setregid", &format!("to gid {}: {}", rgid as i64, errno_str(saved_errno)));
-            set_errno(saved_errno);
+            saved_errno = Errno::get();
+            zwarnnam("setregid", &format!("to gid {}: {}", rgid as i64, Errno::str(saved_errno)));
+            Errno::set(saved_errno);
             ret = -1;
         }
     } else {
         if libc::setegid(egid) < 0 {
-            saved_errno = errno();
-            zwarnnam("setegid", &format!("to gid {}: {}", egid as i64, errno_str(saved_errno)));
-            set_errno(saved_errno);
+            saved_errno = Errno::get();
+            zwarnnam("setegid", &format!("to gid {}: {}", egid as i64, Errno::str(saved_errno)));
+            Errno::set(saved_errno);
             ret = -1;
         }
         if libc::setgid(rgid) < 0 {
-            saved_errno = errno();
-            zwarnnam("setgid", &format!("to gid {}: {}", rgid as i64, errno_str(saved_errno)));
-            set_errno(saved_errno);
+            saved_errno = Errno::get();
+            zwarnnam("setgid", &format!("to gid {}: {}", rgid as i64, Errno::str(saved_errno)));
+            Errno::set(saved_errno);
             ret = -1;
         }
     }
@@ -125,45 +125,54 @@ pub unsafe fn setresuid(ruid: libc::uid_t, euid: libc::uid_t, suid: libc::uid_t)
     let mut saved_errno: libc::c_int;
 
     if ruid != suid {
-        set_errno(libc::ENOSYS);
+        Errno::set(libc::ENOSYS);
         return -1;
     }
 
     if have_native_setreuid() && !broken_setreuid() {
         if libc::setreuid(ruid, euid) < 0 {
-            saved_errno = errno();
-            zwarnnam("setreuid", &format!("to uid {}: {}", ruid as i64, errno_str(saved_errno)));
-            set_errno(saved_errno);
+            saved_errno = Errno::get();
+            zwarnnam("setreuid", &format!("to uid {}: {}", ruid as i64, Errno::str(saved_errno)));
+            Errno::set(saved_errno);
             ret = -1;
         }
     } else {
         if !seteuid_breaks_setuid() {
             if libc::seteuid(euid) < 0 {
-                saved_errno = errno();
-                zwarnnam("seteuid", &format!("to uid {}: {}", euid as i64, errno_str(saved_errno)));
-                set_errno(saved_errno);
+                saved_errno = Errno::get();
+                zwarnnam("seteuid", &format!("to uid {}: {}", euid as i64, Errno::str(saved_errno)));
+                Errno::set(saved_errno);
                 ret = -1;
             }
         }
         if libc::setuid(ruid) < 0 {
-            saved_errno = errno();
-            zwarnnam("setuid", &format!("to uid {}: {}", ruid as i64, errno_str(saved_errno)));
-            set_errno(saved_errno);
+            saved_errno = Errno::get();
+            zwarnnam("setuid", &format!("to uid {}: {}", ruid as i64, Errno::str(saved_errno)));
+            Errno::set(saved_errno);
             ret = -1;
         }
     }
     ret
 }
 
+/// Namespace for the platform-specific errno reads/writes the
+/// openssh-derived setresuid/setresgid shims need. zsh C uses the raw
+/// `errno` macro directly (since it's a thread-local int via libc); Rust
+/// has to dispatch per-platform because there's no portable mutable
+/// errno accessor in std.
 #[cfg(unix)]
+struct Errno;
+
+#[cfg(unix)]
+impl Errno {
+
 #[inline]
-fn errno() -> libc::c_int {
+fn get() -> libc::c_int {
     std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
 }
 
-#[cfg(unix)]
 #[inline]
-fn set_errno(e: libc::c_int) {
+fn set(e: libc::c_int) {
     // libc exposes `__errno_location()` on Linux, `__error()` on
     // macOS/BSD. Pick the right thread-local accessor per platform
     // and write the value directly. The raw fallback uses a Rust
@@ -204,11 +213,12 @@ fn set_errno(e: libc::c_int) {
     }
 }
 
-#[cfg(unix)]
 #[inline]
-fn errno_str(e: libc::c_int) -> String {
+fn str(e: libc::c_int) -> String {
     std::io::Error::from_raw_os_error(e).to_string()
 }
+
+}  // impl Errno
 
 #[cfg(test)]
 mod tests {
@@ -222,7 +232,7 @@ mod tests {
         unsafe {
             let r = setresgid(1, 2, 3);
             assert_eq!(r, -1);
-            assert_eq!(errno(), libc::ENOSYS);
+            assert_eq!(Errno::get(), libc::ENOSYS);
         }
     }
 
@@ -233,7 +243,7 @@ mod tests {
         unsafe {
             let r = setresuid(1, 2, 3);
             assert_eq!(r, -1);
-            assert_eq!(errno(), libc::ENOSYS);
+            assert_eq!(Errno::get(), libc::ENOSYS);
         }
     }
 

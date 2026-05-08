@@ -40,9 +40,6 @@ is_forked_child
 # wrappers around libc::setres{uid,gid}() with errno save/restore;
 # zsh C has the same shim file (openssh_bsd_setres_id.c) but uses
 # direct errno macros, not function-shaped helpers.
-errno
-set_errno
-errno_str
 
 # init.rs argv-parsing / help-text / exe-resolution helpers —
 # zsh C inlines this work in `parseargs()` and `init_main()`.
