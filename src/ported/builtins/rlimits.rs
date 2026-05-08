@@ -417,14 +417,6 @@ pub fn zstrtorlimt(s: &str, info: Option<&ResInfo>) -> Result<LimitValue, String
     }
 }
 
-/// Format a limit for display (limit builtin style)
-/// Format a limit for `limit` builtin display.
-/// Port of the `printrlim()` (Src/Builtins/rlimits.c:253) +
-/// `showlimitvalue()` (line 307) printers.
-pub fn format_limit_display(name: &str, val: LimitValue, info: Option<&ResInfo>) -> String {
-    format!("{:<16}{}", name, val.format(info))
-}
-
 /// Format a limit for display (ulimit builtin style)
 /// Format a limit for `ulimit` builtin display.
 /// Port of `printulimit()` from Src/Builtins/rlimits.c:386 — same
@@ -462,7 +454,7 @@ pub fn bin_limit(
     if args.is_empty() {
         for (name, val) in limits.list_all(hard) {
             let info = limits.find_by_name(&name);
-            output.push_str(&format_limit_display(&name, val, info));
+            output.push_str(&format!("{:<16}{}", &name, val.format(info)));
             output.push('\n');
         }
         return (0, output);
@@ -521,7 +513,7 @@ pub fn bin_limit(
             match limits.get(info.res) {
                 Ok((soft, hard_val)) => {
                     let val = if hard { hard_val } else { soft };
-                    output.push_str(&format_limit_display(info.name, val, Some(info)));
+                    output.push_str(&format!("{:<16}{}", info.name, val.format(Some(info))));
                     output.push('\n');
                 }
                 Err(e) => return (1, format!("limit: {}\n", e)),
