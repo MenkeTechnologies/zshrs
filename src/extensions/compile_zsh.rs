@@ -4901,7 +4901,16 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
         {
             return None;
         }
-        if !body.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+        // `${#arr[N]}` — length of element N, NOT the array count.
+        // Accept body of form `name[<anything>]` so the runtime
+        // BUILTIN_PARAM_LENGTH handler resolves the subscript first.
+        let bracketed = body.find('[').is_some_and(|i| body.ends_with(']') && i > 0);
+        let bare_name_end = body.find('[').unwrap_or(body.len());
+        let bare = &body[..bare_name_end];
+        if !bare.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+            return None;
+        }
+        if !bracketed && body.len() != bare.len() {
             return None;
         }
         return Some(ParamModifier {
