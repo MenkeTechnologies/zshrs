@@ -317,7 +317,19 @@ pub fn xlistxattr(path: &str, options: &XattrOptions) -> io::Result<Vec<String>>
     }
 
     buf.truncate(result as usize);
-    parse_xattr_list(&buf)
+    // Walk the NUL-terminated name list inline — direct port of the
+    // C loop in bin_listattr (Src/Modules/attr.c:169).
+    let mut names = Vec::new();
+    let mut start = 0;
+    for (i, &byte) in buf.iter().enumerate() {
+        if byte == 0 {
+            if i > start {
+                names.push(String::from_utf8_lossy(&buf[start..i]).into_owned());
+            }
+            start = i + 1;
+        }
+    }
+    Ok(names)
 }
 
 /// Port of `xlistxattr()` from `Src/Modules/attr.c:52`.
@@ -365,7 +377,19 @@ pub fn xlistxattr(path: &str, options: &XattrOptions) -> io::Result<Vec<String>>
     }
 
     buf.truncate(result as usize);
-    parse_xattr_list(&buf)
+    // Walk the NUL-terminated name list inline — direct port of the
+    // C loop in bin_listattr (Src/Modules/attr.c:169).
+    let mut names = Vec::new();
+    let mut start = 0;
+    for (i, &byte) in buf.iter().enumerate() {
+        if byte == 0 {
+            if i > start {
+                names.push(String::from_utf8_lossy(&buf[start..i]).into_owned());
+            }
+            start = i + 1;
+        }
+    }
+    Ok(names)
 }
 
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
@@ -380,26 +404,6 @@ pub fn xlistxattr(_path: &str, _options: &XattrOptions) -> io::Result<Vec<String
 
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/attr.c`.
-/// Split the kernel's NUL-terminated xattr-name buffer into names.
-/// zshrs-original convenience — Src/Modules/attr.c walks the
-/// buffer inline inside `bin_listattr()` (line 169). Factored here
-/// so it can be unit-tested.
-fn parse_xattr_list(buf: &[u8]) -> io::Result<Vec<String>> {
-    let mut names = Vec::new();
-    let mut start = 0;
-
-    for (i, &byte) in buf.iter().enumerate() {
-        if byte == 0 {
-            if i > start {
-                let name = String::from_utf8_lossy(&buf[start..i]).into_owned();
-                names.push(name);
-            }
-            start = i + 1;
-        }
-    }
-
-    Ok(names)
-}
 
 /// `zgetattr` builtin entry point.
 /// Port of `bin_getattr()` from Src/Modules/attr.c:98 — calls
@@ -459,27 +463,6 @@ mod tests {
     fn test_xattr_options_default() {
         let opts = XattrOptions::default();
         assert!(!opts.no_dereference);
-    }
-
-    #[test]
-    fn test_parse_xattr_list_empty() {
-        let buf: &[u8] = &[];
-        let result = parse_xattr_list(buf).unwrap();
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_parse_xattr_list_single() {
-        let buf = b"user.test\0";
-        let result = parse_xattr_list(buf).unwrap();
-        assert_eq!(result, vec!["user.test"]);
-    }
-
-    #[test]
-    fn test_parse_xattr_list_multiple() {
-        let buf = b"user.test1\0user.test2\0user.test3\0";
-        let result = parse_xattr_list(buf).unwrap();
-        assert_eq!(result, vec!["user.test1", "user.test2", "user.test3"]);
     }
 
     #[test]
