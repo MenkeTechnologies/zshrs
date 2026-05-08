@@ -1666,6 +1666,13 @@ pub fn hist_is_in_word(hist: &History) -> bool {
 static LOCKHISTCT: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
 
+/// Mirror of C's `histactive` global (HA_ACTIVE | HA_NOINC |
+/// HA_INWORD bits). The lexer-integrated word-capture fns
+/// (`ihwbegin`/`ihwend`) read this to skip recording when
+/// already inside a word or when history is paused.
+static HISTACTIVE: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+
 /// Live counter for `chwordpos` — the index into the per-line
 /// word-boundary array zsh's lexer fills as it tokenises. Used by
 /// the `ihw*` family. Mirrors C zsh's `chwordpos` global.
@@ -1676,6 +1683,26 @@ static CHWORDPOS: std::sync::atomic::AtomicI32 =
 /// comment that would otherwise be dropped. Mirrors the C global.
 static HIST_KEEP_COMMENT: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+
+/// Per-line input buffer the lexer accumulates into (`chline` in
+/// C). Owned by the parser/lexer in C; in zshrs this is an
+/// auxiliary buffer the history-word machinery reads to slice
+/// out individual words via the `chwords` offset array.
+static CHLINE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// Word-boundary offsets (`chwords` in C) — pairs of (start,end)
+/// byte offsets into CHLINE. The C source uses a flat `short[]`
+/// with even-indexed starts and odd-indexed ends; we store the
+/// same layout as a flat Vec for parity with the index math.
+static CHWORDS: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
+
+/// Stop-history depth (`stophist`). 0 = active, 1 = `setopt
+/// nohistexpand` or `\!` escape, 2 = inside `noglob`/etc. Mirrors
+/// the C global. Used by `ihwbegin`/`ihwend` to skip word
+/// recording during stop-history runs.
+static STOPHIST_FLAG: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
 
 /// Whether the history file is currently locked by this process.
 /// Port of `histfileIsLocked()` from Src/hist.c.
@@ -1883,6 +1910,92 @@ pub fn resizehistents(hist: &mut History) {
             break;
         }
     }
+}
+
+/// Open a new history-word at the current chline position +
+/// `offset`. Port of `ihwbegin()` from Src/hist.c. The C source
+/// pushes the start offset onto chwords[chwordpos++]. Skips when
+/// stop-history is active (level 2), inside-word, or in alias
+/// expansion. Mid-word (chwordpos % 2 != 0) it backs off so the
+/// new word starts cleanly.
+pub fn ihwbegin(offset: i32) {
+    use std::sync::atomic::Ordering;
+    let stop = STOPHIST_FLAG.load(Ordering::SeqCst);
+    let active = HISTACTIVE.load(Ordering::SeqCst);
+    if stop == 2 || (active & HA_INWORD) != 0 {
+        // TODO: also check (inbufflags & (INP_ALIAS|INP_HIST))
+        // == INP_ALIAS — needs the input-stream state port.
+        return;
+    }
+    let pos = CHWORDPOS.load(Ordering::SeqCst);
+    if pos % 2 != 0 {
+        CHWORDPOS.fetch_sub(1, Ordering::SeqCst);
+    }
+    let start = (CHLINE.lock().unwrap().len() as i32 + offset).max(0);
+    let mut words = CHWORDS.lock().unwrap();
+    let idx = CHWORDPOS.load(Ordering::SeqCst) as usize;
+    if words.len() <= idx {
+        words.resize(idx + 1, 0);
+    }
+    words[idx] = start;
+    CHWORDPOS.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Close the currently-open history-word at the current chline
+/// position. Port of `ihwend()` from Src/hist.c. If we'd capture
+/// an empty word (current pos == start), the C source backs off
+/// the start; we mirror that.
+pub fn ihwend() {
+    use std::sync::atomic::Ordering;
+    let stop = STOPHIST_FLAG.load(Ordering::SeqCst);
+    let active = HISTACTIVE.load(Ordering::SeqCst);
+    if stop == 2 || (active & HA_INWORD) != 0 {
+        return;
+    }
+    let pos = CHWORDPOS.load(Ordering::SeqCst);
+    if pos % 2 == 0 {
+        return; // not in a word
+    }
+    let cur = CHLINE.lock().unwrap().len() as i32;
+    let mut words = CHWORDS.lock().unwrap();
+    let start_idx = (pos - 1) as usize;
+    if cur > words[start_idx] {
+        let end_idx = pos as usize;
+        if words.len() <= end_idx {
+            words.resize(end_idx + 1, 0);
+        }
+        words[end_idx] = cur;
+        CHWORDPOS.fetch_add(1, Ordering::SeqCst);
+    } else {
+        // Empty word — back off the start.
+        CHWORDPOS.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Read back the most-recently-captured history word from chline.
+/// Port of `hwget()` from Src/hist.c. Returns `(start_offset,
+/// word_text)` for the word ending at chwordpos-1.
+pub fn hwget() -> Option<(i32, String)> {
+    use std::sync::atomic::Ordering;
+    let pos = CHWORDPOS.load(Ordering::SeqCst);
+    if pos == 0 || pos % 2 != 0 {
+        return None;
+    }
+    let words = CHWORDS.lock().unwrap();
+    let start_idx = (pos - 2) as usize;
+    let end_idx = (pos - 1) as usize;
+    if end_idx >= words.len() {
+        return None;
+    }
+    let start = words[start_idx];
+    let end = words[end_idx];
+    let line = CHLINE.lock().unwrap();
+    let s = start.max(0) as usize;
+    let e = (end.max(0) as usize).min(line.len());
+    if s > e || s >= line.len() {
+        return None;
+    }
+    Some((start, line[s..e].to_string()))
 }
 
 /// Save the active history-substitution context onto a HistStack.
