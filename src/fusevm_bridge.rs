@@ -1204,9 +1204,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             pid => {
                 // Parent: record the PID into `$!` (most recent
                 // backgrounded job's pid). zsh exposes this for any
-                // script that needs `wait $!`.
+                // script that needs `wait $!`. Also register the
+                // bare-pid job so a no-args `wait` can synchronize.
                 with_executor(|exec| {
                     exec.variables.insert("!".to_string(), pid.to_string());
+                    exec.jobs.add_pid_job(
+                        pid,
+                        String::new(),
+                        crate::ported::jobs::JobState::Running,
+                    );
                 });
                 Value::Status(0)
             }

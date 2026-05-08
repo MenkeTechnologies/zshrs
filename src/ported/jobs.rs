@@ -251,6 +251,35 @@ impl JobTable {
         id
     }
 
+    /// Register a backgrounded job that was forked via raw `libc::fork()`
+    /// (no `std::process::Child` wrapper). The wait path then has to
+    /// `waitpid(pid)` instead of `Child::wait()`. Used by
+    /// BUILTIN_RUN_BG so `wait` (no args) can synchronize on it.
+    pub fn add_pid_job(&mut self, pid: i32, command: String, state: JobState) -> usize {
+        let id = self.next_id;
+        self.next_id += 1;
+        let job = JobInfo {
+            id,
+            pid,
+            child: None,
+            command,
+            state,
+            is_current: true,
+        };
+        if let Some(cur_id) = self.current_id {
+            if let Some(j) = self.get_mut_internal(cur_id) {
+                j.is_current = false;
+            }
+        }
+        let slot = self.get_free_slot();
+        if slot >= self.jobs.len() {
+            self.jobs.resize_with(slot + 1, || None);
+        }
+        self.jobs[slot] = Some(job);
+        self.current_id = Some(id);
+        id
+    }
+
     fn get_free_slot(&self) -> usize {
         for (i, slot) in self.jobs.iter().enumerate() {
             if slot.is_none() {
@@ -2202,12 +2231,38 @@ impl crate::ported::exec::ShellExecutor {
     }
     pub(crate) fn builtin_wait(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            // Wait for all jobs
-            let ids: Vec<usize> = self.jobs.list().iter().map(|j| j.id).collect();
-            for id in ids {
+            // Wait for all jobs. Two job-entry shapes coexist:
+            //   - Spawned via `Command::spawn` → has Child, use child.wait()
+            //   - Forked via raw libc::fork (BUILTIN_RUN_BG) → child=None,
+            //     use waitpid(pid) per Src/jobs.c::update_job loop.
+            let entries: Vec<(usize, i32, bool)> = self
+                .jobs
+                .list()
+                .iter()
+                .map(|j| (j.id, j.pid, j.child.is_some()))
+                .collect();
+            for (id, pid, has_child) in entries {
                 if let Some(mut job) = self.jobs.remove(id) {
-                    if let Some(ref mut child) = job.child {
-                        let _ = child.wait();
+                    if has_child {
+                        if let Some(ref mut child) = job.child {
+                            let _ = child.wait();
+                        }
+                    } else if pid > 0 {
+                        #[cfg(unix)]
+                        {
+                            use nix::sys::wait::{waitpid, WaitStatus};
+                            use nix::unistd::Pid;
+                            loop {
+                                match waitpid(Pid::from_raw(pid), None) {
+                                    Ok(WaitStatus::Exited(_, _))
+                                    | Ok(WaitStatus::Signaled(_, _, _))
+                                    | Ok(WaitStatus::Stopped(_, _)) => break,
+                                    Ok(_) => continue,
+                                    Err(_) => break,
+                                }
+                            }
+                        }
+                        let _ = pid;
                     }
                 }
             }

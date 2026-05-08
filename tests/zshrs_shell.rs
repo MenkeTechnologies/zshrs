@@ -1132,6 +1132,25 @@ fn test_subscript_parity_special_params() {
 }
 
 #[test]
+fn test_subscript_parity_bg_wait_synchronizes() {
+    // `(cmd) &; wait` must wait for the bg job before returning.
+    // Verified against /bin/zsh:
+    //   /bin/zsh -c '(print BG) &; wait; print MAIN'  → "BG\nMAIN"
+    //   /bin/zsh -c '(sleep 0.05; print BG) &; wait; print MAIN'
+    //                                                → "BG\nMAIN"
+    // Required wiring: BUILTIN_RUN_BG forks via raw libc::fork
+    // (no std::process::Child wrapper), so wait's no-args path
+    // had to be extended to handle bare-pid job entries via
+    // nix::sys::wait::waitpid.
+    let (_, output, _) = run_zshrs_parity(r#"(print BG) &; wait; print MAIN"#);
+    assert_eq!(output.trim(), "BG\nMAIN", "got: {output:?}");
+
+    let (_, output, _) =
+        run_zshrs_parity(r#"(sleep 0.05; print BG_DELAYED) &; wait; print MAIN_AFTER"#);
+    assert_eq!(output.trim(), "BG_DELAYED\nMAIN_AFTER", "got: {output:?}");
+}
+
+#[test]
 fn test_subscript_parity_pipe_and_subshell() {
     // Pipes, command substitution through pipes, pipefail status,
     // subshell scoping, brace-group scoping. Verified against
