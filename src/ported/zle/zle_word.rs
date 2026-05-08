@@ -30,11 +30,11 @@ impl Zle {
         match style {
             WordStyle::Emacs => {
                 // Skip non-word characters
-                while pos > 0 && !is_emacs_word_char(self.zleline[pos - 1]) {
+                while pos > 0 && !(self.zleline[pos - 1].is_alphanumeric() || self.zleline[pos - 1] == '_') {
                     pos -= 1;
                 }
                 // Skip word characters
-                while pos > 0 && is_emacs_word_char(self.zleline[pos - 1]) {
+                while pos > 0 && (self.zleline[pos - 1].is_alphanumeric() || self.zleline[pos - 1] == '_') {
                     pos -= 1;
                 }
             }
@@ -44,11 +44,11 @@ impl Zle {
                     pos -= 1;
                 }
                 if pos > 0 {
-                    let is_word = is_vi_word_char(self.zleline[pos - 1]);
+                    let is_word = self.zleline[pos - 1].is_alphanumeric() || self.zleline[pos - 1] == '_';
                     // Skip same class of characters
                     while pos > 0 {
                         let c = self.zleline[pos - 1];
-                        if c.is_whitespace() || (is_vi_word_char(c) != is_word) {
+                        if c.is_whitespace() || ((c.is_alphanumeric() || c == '_') != is_word) {
                             break;
                         }
                         pos -= 1;
@@ -90,21 +90,21 @@ impl Zle {
         match style {
             WordStyle::Emacs => {
                 // Skip non-word characters
-                while pos < self.zlell && !is_emacs_word_char(self.zleline[pos]) {
+                while pos < self.zlell && !(self.zleline[pos].is_alphanumeric() || self.zleline[pos] == '_') {
                     pos += 1;
                 }
                 // Skip word characters
-                while pos < self.zlell && is_emacs_word_char(self.zleline[pos]) {
+                while pos < self.zlell && (self.zleline[pos].is_alphanumeric() || self.zleline[pos] == '_') {
                     pos += 1;
                 }
             }
             WordStyle::Vi => {
                 if pos < self.zlell {
-                    let is_word = is_vi_word_char(self.zleline[pos]);
+                    let is_word = self.zleline[pos].is_alphanumeric() || self.zleline[pos] == '_';
                     // Skip same class of characters
                     while pos < self.zlell {
                         let c = self.zleline[pos];
-                        if c.is_whitespace() || (is_vi_word_char(c) != is_word) {
+                        if c.is_whitespace() || ((c.is_alphanumeric() || c == '_') != is_word) {
                             break;
                         }
                         pos += 1;
@@ -142,16 +142,6 @@ impl Zle {
         let end = self.find_word_end(style);
         &self.zleline[start..end]
     }
-}
-
-/// Check if character is an emacs word character
-fn is_emacs_word_char(c: ZleChar) -> bool {
-    c.is_alphanumeric() || c == '_'
-}
-
-/// Check if character is a vi word character (alphanumeric)
-fn is_vi_word_char(c: ZleChar) -> bool {
-    c.is_alphanumeric() || c == '_'
 }
 
 /// Walk `line` left-to-right collecting (start, end_exclusive) ranges of
