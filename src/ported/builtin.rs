@@ -30,7 +30,7 @@ use indexmap::IndexMap;
 #[allow(unused_imports)]
 use crate::ported::exec::{
     self, ShellExecutor, BUILTIN_SET,
-    format_int_in_base, normalize_logical, shell_quote, shell_quote_value,
+    format_int_in_base, shell_quote, shell_quote_value,
     VarAttr, VarKind,
 };
 use crate::ported::utils::{zerr, zerrnam, zwarn, zwarnnam};
@@ -11440,10 +11440,33 @@ impl crate::ported::exec::ShellExecutor {
         // Compute the LOGICAL target — relative paths resolve against
         // the current PWD without realpath. Components like `.` and
         // `..` are normalised lexically (not by following symlinks).
+        // Inline lexical-normalize — direct port of the path-component
+        // walk in fixdir() (Src/builtin.c:1297): drop CurDir, pop on
+        // ParentDir, preserve root/prefix; empty result becomes ".".
+        let normalize_lex = |path: &std::path::Path| -> PathBuf {
+            use std::path::Component;
+            let mut out = PathBuf::new();
+            for comp in path.components() {
+                match comp {
+                    Component::Prefix(_) | Component::RootDir => out.push(comp.as_os_str()),
+                    Component::CurDir => {}
+                    Component::ParentDir => {
+                        if !out.pop() {
+                            out.push("..");
+                        }
+                    }
+                    Component::Normal(c) => out.push(c),
+                }
+            }
+            if out.as_os_str().is_empty() {
+                out.push(".");
+            }
+            out
+        };
         let logical_target: PathBuf = if path.is_absolute() {
-            normalize_logical(&path)
+            normalize_lex(&path)
         } else {
-            normalize_logical(&PathBuf::from(&old_pwd_logical).join(&path))
+            normalize_lex(&PathBuf::from(&old_pwd_logical).join(&path))
         };
 
         // chdir using the logical path (kernel handles symlinks). With

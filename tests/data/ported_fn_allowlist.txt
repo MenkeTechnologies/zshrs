@@ -86,7 +86,6 @@ get_term_width
 get_term_height
 shell_quote
 zsh_split_z
-normalize_logical
 shell_quote_value
 quote_string
 
