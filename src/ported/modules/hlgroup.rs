@@ -250,39 +250,39 @@ mod tests {
 
     #[test]
     fn test_attr_to_escape_bold() {
-        let esc = convertattr("bold");
+        let esc = convertattr("bold", false);
         assert_eq!(esc, "\x1b[1m");
     }
 
     #[test]
     fn test_attr_to_escape_multiple() {
-        let esc = convertattr("bold,underline");
+        let esc = convertattr("bold,underline", false);
         assert!(esc.contains("\x1b[1m"));
         assert!(esc.contains("\x1b[4m"));
     }
 
     #[test]
     fn test_attr_to_escape_fg_color() {
-        let esc = convertattr("fg=red");
+        let esc = convertattr("fg=red", false);
         assert!(esc.contains("31"));
     }
 
     #[test]
     fn test_attr_to_sgr_bold() {
-        let sgr = attr_to_sgr("bold");
+        let sgr = convertattr("bold", true);
         assert_eq!(sgr, "1");
     }
 
     #[test]
     fn test_attr_to_sgr_multiple() {
-        let sgr = attr_to_sgr("bold,underline");
+        let sgr = convertattr("bold,underline", true);
         assert!(sgr.contains("1"));
         assert!(sgr.contains("4"));
     }
 
     #[test]
     fn test_attr_to_sgr_empty() {
-        let sgr = attr_to_sgr("");
+        let sgr = convertattr("", true);
         assert_eq!(sgr, "0");
     }
 
@@ -309,13 +309,13 @@ mod tests {
 
     #[test]
     fn test_color_256() {
-        let esc = convertattr("fg=196");
+        let esc = convertattr("fg=196", false);
         assert!(esc.contains("38;5;196"));
     }
 
     #[test]
     fn test_color_truecolor() {
-        let esc = convertattr("fg=#ff0000");
+        let esc = convertattr("fg=#ff0000", false);
         assert!(esc.contains("38;2;255;0;0"));
     }
 }
