@@ -36,16 +36,6 @@ pub static ANSI_COLORS: [ColorEntry; 16] = [
     ColorEntry::new(255, 255, 255), // 15: bright white
 ];
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/nearcolor.c`.
-/// Calculate squared distance between two colors
-fn color_distance_sq(c1: &ColorEntry, c2: &ColorEntry) -> u32 {
-    let dr = (c1.r as i32) - (c2.r as i32);
-    let dg = (c1.g as i32) - (c2.g as i32);
-    let db = (c1.b as i32) - (c2.b as i32);
-    (dr * dr + dg * dg + db * db) as u32
-}
-
 /// Find the index of the closest 16-colour ANSI palette entry to the
 /// given 24-bit RGB triple.
 /// Port of `getnearestcolor()` from Src/Modules/nearcolor.c. The C source
@@ -53,12 +43,16 @@ fn color_distance_sq(c1: &ColorEntry, c2: &ColorEntry) -> u32 {
 /// downgrade `\\e[38;2;R;G;Bm` truecolor escapes when the active
 /// terminal can't display them.
 pub fn getnearestcolor(r: u8, g: u8, b: u8) -> u8 {
-    let target = ColorEntry::new(r, g, b);
     let mut best_idx = 0u8;
     let mut best_dist = u32::MAX;
 
     for (idx, color) in ANSI_COLORS.iter().enumerate() {
-        let dist = color_distance_sq(&target, color);
+        // Squared RGB distance (inlined from the deleted
+        // color_distance_sq helper); C source uses the same metric.
+        let dr = (r as i32) - (color.r as i32);
+        let dg = (g as i32) - (color.g as i32);
+        let db = (b as i32) - (color.b as i32);
+        let dist = (dr * dr + dg * dg + db * db) as u32;
         if dist < best_dist {
             best_dist = dist;
             best_idx = idx as u8;

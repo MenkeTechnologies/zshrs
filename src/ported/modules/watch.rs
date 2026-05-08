@@ -118,34 +118,13 @@ impl WatchState {
     }
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/watch.c`.
-/// Read utmp entries from the system
-#[cfg(target_os = "linux")]
+/// Read utmp entries via the libc `getutxent(3)` walk that
+/// `watchlog2()` (Src/Modules/watch.c:204) uses on every poll. The
+/// linux/macos paths share identical libc machinery; non-Unix
+/// targets return empty.
 pub fn read_utmp() -> Vec<UtmpEntry> {
-    read_utmp_file("/var/run/utmp")
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/watch.c`.
-#[cfg(target_os = "macos")]
-pub fn read_utmp() -> Vec<UtmpEntry> {
-    read_utmpx()
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/watch.c`.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub fn read_utmp() -> Vec<UtmpEntry> {
-    Vec::new()
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/watch.c`.
-#[cfg(target_os = "macos")]
-fn read_utmpx() -> Vec<UtmpEntry> {
     let mut entries = Vec::new();
-
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     unsafe {
         libc::setutxent();
 
@@ -154,34 +133,25 @@ fn read_utmpx() -> Vec<UtmpEntry> {
             if entry.is_null() {
                 break;
             }
-
             let ut = &*entry;
 
             let user = CStr::from_ptr(ut.ut_user.as_ptr())
                 .to_string_lossy()
                 .into_owned();
-
             let line = CStr::from_ptr(ut.ut_line.as_ptr())
                 .to_string_lossy()
                 .into_owned();
-
             let host = CStr::from_ptr(ut.ut_host.as_ptr())
                 .to_string_lossy()
                 .into_owned();
 
-            let ut_type = ut.ut_type;
-            let session_type = if ut_type == libc::USER_PROCESS {
-                SessionType::UserProcess
-            } else if ut_type == libc::DEAD_PROCESS {
-                SessionType::DeadProcess
-            } else if ut_type == libc::LOGIN_PROCESS {
-                SessionType::LoginProcess
-            } else if ut_type == libc::INIT_PROCESS {
-                SessionType::InitProcess
-            } else if ut_type == libc::BOOT_TIME {
-                SessionType::BootTime
-            } else {
-                SessionType::Unknown
+            let session_type = match ut.ut_type {
+                t if t == libc::USER_PROCESS => SessionType::UserProcess,
+                t if t == libc::DEAD_PROCESS => SessionType::DeadProcess,
+                t if t == libc::LOGIN_PROCESS => SessionType::LoginProcess,
+                t if t == libc::INIT_PROCESS => SessionType::InitProcess,
+                t if t == libc::BOOT_TIME => SessionType::BootTime,
+                _ => SessionType::Unknown,
             };
 
             entries.push(UtmpEntry {
@@ -196,67 +166,6 @@ fn read_utmpx() -> Vec<UtmpEntry> {
 
         libc::endutxent();
     }
-
-    entries
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/watch.c`.
-#[cfg(target_os = "linux")]
-fn read_utmp_file(_path: &str) -> Vec<UtmpEntry> {
-    let mut entries = Vec::new();
-
-    unsafe {
-        libc::setutxent();
-
-        loop {
-            let entry = libc::getutxent();
-            if entry.is_null() {
-                break;
-            }
-
-            let ut = &*entry;
-
-            let user = CStr::from_ptr(ut.ut_user.as_ptr())
-                .to_string_lossy()
-                .into_owned();
-
-            let line = CStr::from_ptr(ut.ut_line.as_ptr())
-                .to_string_lossy()
-                .into_owned();
-
-            let host = CStr::from_ptr(ut.ut_host.as_ptr())
-                .to_string_lossy()
-                .into_owned();
-
-            let ut_type = ut.ut_type;
-            let session_type = if ut_type == libc::USER_PROCESS {
-                SessionType::UserProcess
-            } else if ut_type == libc::DEAD_PROCESS {
-                SessionType::DeadProcess
-            } else if ut_type == libc::LOGIN_PROCESS {
-                SessionType::LoginProcess
-            } else if ut_type == libc::INIT_PROCESS {
-                SessionType::InitProcess
-            } else if ut_type == libc::BOOT_TIME {
-                SessionType::BootTime
-            } else {
-                SessionType::Unknown
-            };
-
-            entries.push(UtmpEntry {
-                user,
-                line,
-                host,
-                time: ut.ut_tv.tv_sec as i64,
-                pid: ut.ut_pid,
-                session_type,
-            });
-        }
-
-        libc::endutxent();
-    }
-
     entries
 }
 
