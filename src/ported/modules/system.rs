@@ -609,17 +609,6 @@ pub const ERRNO_NAMES: &[(&str, i32)] = &[
 ];
 
 /// Get error number from name
-/// Resolve an `ERRNO_NAME` to its integer code.
-/// Port of the errno lookup `bin_syserror()` from
-/// Src/Modules/system.c:494 performs against the C source's
-/// per-platform `errnos[]` table.
-pub fn errno_from_name(name: &str) -> Option<i32> {
-    ERRNO_NAMES
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map(|(_, e)| *e)
-}
-
 /// Get error name from number
 /// Inverse of `errno_from_name`.
 /// Port of `errnosgetfn()` from Src/Modules/system.c:832 — used
@@ -821,14 +810,6 @@ mod tests {
         assert_eq!(SeekWhence::from_str("end"), Some(SeekWhence::End));
         assert_eq!(SeekWhence::from_str("2"), Some(SeekWhence::End));
         assert_eq!(SeekWhence::from_str("invalid"), None);
-    }
-
-    #[test]
-    fn test_errno_from_name() {
-        assert_eq!(errno_from_name("EPERM"), Some(1));
-        assert_eq!(errno_from_name("ENOENT"), Some(2));
-        assert_eq!(errno_from_name("EINVAL"), Some(22));
-        assert_eq!(errno_from_name("INVALID"), None);
     }
 
     #[test]
