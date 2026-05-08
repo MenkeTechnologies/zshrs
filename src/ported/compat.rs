@@ -289,30 +289,6 @@ pub fn convbase(val: i64, base: u32) -> String {
     result.chars().rev().collect()
 }
 
-/// Convert an unsigned integer to a string in an arbitrary base.
-/// Unsigned counterpart of `convbase`.
-pub fn convbaseu(val: u64, base: u32) -> String {
-    if base == 0 || base == 10 {
-        return val.to_string();
-    }
-
-    let mut n = val;
-    let mut result = String::new();
-
-    if n == 0 {
-        return "0".to_string();
-    }
-
-    let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
-    while n > 0 {
-        let digit = (n % base as u64) as usize;
-        result.push(digits[digit] as char);
-        n /= base as u64;
-    }
-
-    result.chars().rev().collect()
-}
-
 /// Get the local hostname.
 /// Port of the `gethostname()` shim from Src/compat.c:64 — the C
 /// source provides this as a fallback for systems that lack the
@@ -527,12 +503,6 @@ mod tests {
         assert_eq!(convbase(8, 2), "1000");
         assert_eq!(convbase(-10, 10), "-10");
         assert_eq!(convbase(0, 16), "0");
-    }
-
-    #[test]
-    fn test_convbaseu() {
-        assert_eq!(convbaseu(255, 16), "ff");
-        assert_eq!(convbaseu(8, 8), "10");
     }
 
     #[test]
