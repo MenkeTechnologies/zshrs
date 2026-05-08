@@ -1290,7 +1290,14 @@ impl GlobState {
             Qualifier::OwnedByGid(gid) => meta.gid() == *gid,
             Qualifier::Size { value, unit, op } => {
                 let size = meta.size();
-                let scaled = scale_size(size, *unit);
+                let scaled = match unit {
+                    SizeUnit::Bytes => size,
+                    SizeUnit::PosixBlocks => size.div_ceil(512),
+                    SizeUnit::Kilobytes => size.div_ceil(1024),
+                    SizeUnit::Megabytes => size.div_ceil(1048576),
+                    SizeUnit::Gigabytes => size.div_ceil(1073741824),
+                    SizeUnit::Terabytes => size.div_ceil(1099511627776),
+                };
                 compare_range(scaled, *value, *op)
             }
             Qualifier::Links { value, op } => compare_range(meta.nlink(), *value, *op),
@@ -1597,17 +1604,6 @@ pub fn file_type(mode: u32) -> char {
         '='
     } else {
         '?'
-    }
-}
-
-fn scale_size(bytes: u64, unit: SizeUnit) -> u64 {
-    match unit {
-        SizeUnit::Bytes => bytes,
-        SizeUnit::PosixBlocks => bytes.div_ceil(512),
-        SizeUnit::Kilobytes => bytes.div_ceil(1024),
-        SizeUnit::Megabytes => bytes.div_ceil(1048576),
-        SizeUnit::Gigabytes => bytes.div_ceil(1073741824),
-        SizeUnit::Terabytes => bytes.div_ceil(1099511627776),
     }
 }
 

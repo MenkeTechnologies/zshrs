@@ -265,16 +265,6 @@ pub fn scan_directory(dir: &str) -> io::Result<Vec<String>> {
     Ok(files)
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/mapfile.c`.
-/// Check if a file exists.
-/// zshrs-original convenience — Src/Modules/mapfile.c implicitly
-/// reports "missing" by returning NULL from `getpmmapfile()`; this
-/// helper exposes the existence check directly.
-pub fn file_exists(filename: &str) -> bool {
-    Path::new(filename).exists()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,8 +327,8 @@ mod tests {
 
     #[test]
     fn test_file_exists() {
-        assert!(file_exists("."));
-        assert!(!file_exists("/nonexistent/path/to/file"));
+        assert!(Path::new(".").exists());
+        assert!(!Path::new("/nonexistent/path/to/file").exists());
     }
 
     #[test]
@@ -349,7 +339,7 @@ mod tests {
         let mf = Mapfile::new();
         let result = mf.unset(test_file);
         assert!(result.is_ok());
-        assert!(!file_exists(test_file));
+        assert!(!Path::new(test_file).exists());
     }
 }
 

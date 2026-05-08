@@ -105,7 +105,6 @@ expand_posix_char_classes
 has_wildcards
 glob_match_impl
 match_bracket_expr
-scale_size
 scale_time
 compare_range
 expand_single_brace
@@ -126,10 +125,6 @@ glob_match
 # kept for ergonomics — zsh C inlines these or uses macros.
 unescape
 is_word_char
-file_exists
-is_file
-is_dir
-file_mtime
 read_lines
 is_identifier
 is_number
