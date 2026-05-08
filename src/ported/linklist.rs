@@ -342,14 +342,6 @@ pub fn hlinklist2array(list: &LinkList<String>) -> Vec<String> {
     list.iter().cloned().collect()
 }
 
-/// Convert a `Vec` to a linked list.
-/// Inverse of `hlinklist2array` / `zlinklist2array` — no direct C
-/// counterpart (the C source builds lists incrementally with
-/// `addlinknode`); this helper batches a one-shot conversion.
-pub fn vec_to_linklist<T>(vec: Vec<T>) -> LinkList<T> {
-    vec.into_iter().collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

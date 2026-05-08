@@ -770,33 +770,6 @@ pub fn bin_zsystem_flock(path: &str, options: &FlockOptions) -> Result<i32, Stri
     }
 }
 
-/// Unlock a file descriptor
-#[cfg(unix)]
-/// Release a lock acquired by `bin_zsystem_flock()`.
-/// Port of the `bin_zsystem_flock(LOCK_UN)` path inside
-/// `bin_zsystem_flock()` (Src/Modules/system.c:546).
-pub fn funlock(fd: i32) -> Result<(), String> {
-    // See cross-platform note above bin_zsystem_flock construction in flock_with_options.
-    #[allow(clippy::unnecessary_cast)]
-    let lck = libc::flock {
-        l_type: libc::F_UNLCK as i16,
-        l_whence: libc::SEEK_SET as i16,
-        l_start: 0,
-        l_len: 0,
-        l_pid: 0,
-    };
-
-    let result = unsafe { libc::fcntl(fd, libc::F_SETLK, &lck) };
-    if result < 0 {
-        Err(io::Error::last_os_error().to_string())
-    } else {
-        unsafe {
-            libc::close(fd);
-        }
-        Ok(())
-    }
-}
-
 /// Check if a zsystem feature is supported
 /// `zsystem supports` subcommand entry point.
 /// Port of `bin_zsystem_supports()` from Src/Modules/system.c:781

@@ -189,14 +189,6 @@ pub fn zcontext_restore_partial(parts: u32) -> Option<ContextStack> {
     CONTEXT_STACK.with(|cs| cs.borrow_mut().restore_partial(parts))
 }
 
-/// Check whether we're at top level (no contexts saved).
-/// Equivalent to the `zcontext_stack == NULL` test the C source's
-/// signal-handler dispatch uses (Src/context.c — implicit checks
-/// after `zcontext_restore()`).
-pub fn zcontext_is_toplevel() -> bool {
-    CONTEXT_STACK.with(|cs| cs.borrow().is_empty())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

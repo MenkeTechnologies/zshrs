@@ -90,43 +90,6 @@ pub fn unambig_data(matches: &[String]) -> String {
         .to_string()
 }
 
-/// Case-insensitive variant of `unambig_data` — returns the common
-/// prefix using the *first* match's casing for any case-folded
-/// match.
-/// Port of the case-insensitive branch of `unambig_data()` from
-/// Src/Zle/compresult.c (the C source toggles based on the
-/// `CASE_HACK` matcher flag).
-pub fn unambig_data_icase(matches: &[String]) -> String {
-    if matches.is_empty() {
-        return String::new();
-    }
-    if matches.len() == 1 {
-        return matches[0].clone();
-    }
-
-    let first = matches[0].to_lowercase();
-    let mut prefix_len = first.len();
-
-    for m in &matches[1..] {
-        let lower = m.to_lowercase();
-        let common = first
-            .chars()
-            .zip(lower.chars())
-            .take_while(|(a, b)| a == b)
-            .count();
-        prefix_len = prefix_len.min(common);
-    }
-
-    // Return using the case from the first match
-    let first = &matches[0];
-    first[..first
-        .char_indices()
-        .nth(prefix_len)
-        .map(|(i, _)| i)
-        .unwrap_or(first.len())]
-        .to_string()
-}
-
 /// Insert the single chosen match, optionally appending a space.
 /// Port of `do_single()` from Src/Zle/compresult.c — fired when
 /// completion produced exactly one match. The trailing space is

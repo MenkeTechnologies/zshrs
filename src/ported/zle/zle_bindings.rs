@@ -5,17 +5,6 @@
 use super::zle_keymap::KeymapManager;
 use super::zle_thingy::Thingy;
 
-/// Populate the canonical default bindings on a fresh KeymapManager.
-/// Equivalent to `default_bindings()` from Src/Zle/zle_keymap.c plus
-/// the per-table default tables (`emacs_keymap[]`, `viins_keymap[]`,
-/// `vicmd_keymap[]` in zle_bindings.c) — combined here as a single
-/// post-construction call instead of split per-keymap setup helpers.
-pub fn init_default_bindings(km: &mut KeymapManager) {
-    // The default bindings are set up in KeymapManager::create_default_keymaps
-    // This function is for additional runtime binding setup
-    let _ = km;
-}
-
 /// Parse a bindkey-style key sequence string into raw bytes.
 ///
 /// Bindkey-vocabulary subset of `getkeystring` (Src/utils.c) —

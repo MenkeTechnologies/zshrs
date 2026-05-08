@@ -275,16 +275,6 @@ pub fn file_exists(filename: &str) -> bool {
     Path::new(filename).exists()
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/mapfile.c`.
-/// Get file size.
-/// zshrs-original convenience — `get_contents()` (Src/Modules/
-/// mapfile.c:167) reads size via `fstat(2)` only as a precursor to
-/// `mmap(2)`. This helper exposes the size as a standalone query.
-pub fn file_size(filename: &str) -> io::Result<u64> {
-    Ok(fs::metadata(filename)?.len())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -439,36 +439,6 @@ pub fn unmetafy_line(s: &str) -> String {
     result
 }
 
-/// Get the command being typed
-/// Port of getcurcmd() from zle_tricky.c
-pub fn get_cur_cmd(line: &[char], cursor: usize) -> Option<String> {
-    // Find start of current simple command
-    let mut cmd_start = 0;
-
-    for (i, &c) in line.iter().enumerate().take(cursor) {
-        if matches!(c, ';' | '|' | '&' | '(' | ')' | '`') {
-            cmd_start = i + 1;
-        }
-    }
-
-    // Skip whitespace
-    while cmd_start < cursor && line[cmd_start].is_whitespace() {
-        cmd_start += 1;
-    }
-
-    // Find end of command word
-    let mut cmd_end = cmd_start;
-    while cmd_end < cursor && !line[cmd_end].is_whitespace() {
-        cmd_end += 1;
-    }
-
-    if cmd_start < cmd_end {
-        Some(line[cmd_start..cmd_end].iter().collect())
-    } else {
-        None
-    }
-}
-
 /// Check if string has real tokens (not escaped)
 /// Port of has_real_token() from zle_tricky.c
 pub fn has_real_token(s: &str) -> bool {

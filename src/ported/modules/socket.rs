@@ -182,21 +182,6 @@ pub fn socket_connect(path: &str) -> io::Result<RawFd> {
     Ok(fd)
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/socket.c`.
-/// Close a socket file descriptor.
-/// Cleanup helper used by every `bin_zsocket()` failure path in
-/// Src/Modules/socket.c:57 — wraps `close(2)` with errno → io::Error
-/// promotion.
-#[cfg(unix)]
-pub fn socket_close(fd: RawFd) -> io::Result<()> {
-    let result = unsafe { libc::close(fd) };
-    if result < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
-
 /// `zsocket` builtin entry point.
 /// Port of `bin_zsocket()` from Src/Modules/socket.c:57. Dispatches
 /// between `-l` (listen), `-a` (accept), and the no-flag connect

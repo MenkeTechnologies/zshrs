@@ -809,37 +809,6 @@ pub fn normalize_option_name(name: &str) -> String {
         .collect()
 }
 
-/// Parse option arguments from setopt/unsetopt
-/// Parse `setopt`/`unsetopt`/`set` argv into typed option ops.
-/// Port of the argument-parsing loop inside `bin_setopt()` from
-/// Src/options.c:580 — same `+x`/`-x` per-letter handling and
-/// `setopt NAME` long-form.
-pub fn parse_option_args(
-    opts: &mut ShellOptions,
-    args: &[&str],
-    is_unset: bool,
-) -> Result<(), Vec<String>> {
-    let mut errors = Vec::new();
-
-    for arg in args {
-        let (name, value) = if let Some(stripped) = arg.strip_prefix("no") {
-            (stripped, is_unset) // "nofoo" with unsetopt means set foo
-        } else {
-            (*arg, !is_unset)
-        };
-
-        if let Err(e) = opts.set(name, value) {
-            errors.push(e);
-        }
-    }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

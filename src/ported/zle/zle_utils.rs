@@ -154,26 +154,6 @@ pub fn strwidth(s: &str) -> usize {
     s.width()
 }
 
-/// Check if character is printable
-pub fn is_printable(c: char) -> bool {
-    !c.is_control() && c != '\x7f'
-}
-
-/// Escape special characters for display
-pub fn escape_for_display(c: char) -> String {
-    if c.is_control() {
-        if c as u32 <= 26 {
-            format!("^{}", (c as u8 + b'@') as char)
-        } else {
-            format!("\\x{:02x}", c as u32)
-        }
-    } else if c == '\x7f' {
-        "^?".to_string()
-    } else {
-        c.to_string()
-    }
-}
-
 /// Undo entry structure
 /// Port of struct change from zle_utils.c
 #[derive(Debug, Clone)]
@@ -740,15 +720,6 @@ pub fn print_bind(seq: &[u8]) -> String {
     }
 
     result
-}
-
-/// Call ZLE hook (freestanding form). The C source `zlecallhook()` from
-/// Src/Zle/zle_utils.c:1755 looks up the named widget via `rthingy_nocreate`
-/// and dispatches it through `execzlefunc`. This Rust freestanding form
-/// has no Zle handle and cannot queue, so it stays a no-op; use
-/// `Zle::call_hook` (below) for the queueing version.
-pub fn zle_call_hook(_name: &str, _args: &[&str]) -> i32 {
-    0
 }
 
 impl Zle {

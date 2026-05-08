@@ -136,25 +136,6 @@ impl LoopState {
     }
 }
 
-/// Get global loop depth.
-/// Returns the live `loops` value (Src/loop.c) for callers that
-/// don't carry a `LoopState` reference.
-pub fn loop_depth() -> i32 {
-    LOOP_DEPTH.load(Ordering::Relaxed)
-}
-
-/// Get global break level.
-/// Returns the live `breaks` value (Src/loop.c).
-pub fn break_level() -> i32 {
-    BREAK_LEVEL.load(Ordering::Relaxed)
-}
-
-/// Get global continue flag.
-/// Returns the live `contflag` value (Src/loop.c).
-pub fn cont_flag() -> i32 {
-    CONT_FLAG.load(Ordering::Relaxed)
-}
-
 /// Select-menu display.
 /// Port of `selectlist()` from Src/loop.c:347 — formats the
 /// numbered menu the C source uses for `select var in words`. Picks

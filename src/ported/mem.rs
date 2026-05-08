@@ -192,14 +192,6 @@ pub fn dupstring_wlen(s: &str, len: usize) -> String {
     s.chars().take(len).collect()
 }
 
-/// Create a heap-allocated string.
-/// Port of the `zhalloc()` + `strcpy()` idiom Src/mem.c:577 callers
-/// use. Distinct from `dupstring` only in the C source's lifetime
-/// tagging; in Rust both produce a `String`.
-pub fn zhalloc_string(s: &str) -> String {
-    s.to_string()
-}
-
 /// Check if a pointer is within the heap arena.
 /// Port of `zheapptr()` from Src/mem.c:561 — the C source uses it
 /// to tell heap-arena strings from permanent ones (the pastebuf code
@@ -253,14 +245,6 @@ pub fn arrlen_le<T>(arr: &[T], n: usize) -> bool {
     arr.len() <= n
 }
 
-/// Check if array length equals n.
-/// zshrs-original convenience — composed from `arrlen_le`/
-/// `arrlen_ge` in C (Src/utils.c:2369). Rust slice .len() makes
-/// this a one-liner.
-pub fn arrlen_eq<T>(arr: &[T], n: usize) -> bool {
-    arr.len() == n
-}
-
 /// Check if array length is greater than n.
 /// Port of `arrlen_gt()` from Src/utils.c:2382.
 pub fn arrlen_gt<T>(arr: &[T], n: usize) -> bool {
@@ -288,21 +272,6 @@ pub fn sepsplit(s: &str, sep: &str, allow_empty: bool) -> Vec<String> {
             .map(|s| s.to_string())
             .collect()
     }
-}
-
-/// Allocate a zeroed byte buffer.
-/// Port of the byte-buffer shape of `zshcalloc()` from Src/mem.c:977
-/// — `vec![0u8; size]` matches the C source's `calloc(1, size)`
-/// equivalent.
-pub fn zshcalloc_buf(size: usize) -> Vec<u8> {
-    vec![0u8; size]
-}
-
-/// Allocate a byte buffer with reserved capacity.
-/// Port of the byte-buffer shape of `zalloc()` from Src/mem.c:959
-/// — uninitialized capacity, matching the C source's `malloc(size)`.
-pub fn zalloc_buf(size: usize) -> Vec<u8> {
-    Vec::with_capacity(size)
 }
 
 /// Duplicate a string to permanent storage.
