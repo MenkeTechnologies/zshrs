@@ -300,7 +300,7 @@ impl Default for MathValue {
 
 /// Math evaluator state.
 /// Port of the per-evaluation locals `mathevall()` (Src/math.c:367)\n/// keeps — input cursor, operator stack, value stack. Drives\n/// `zzlex()` (line 617), `push()` / `pop()` (lines 916/931), and\n/// `op()` / `bop()` (lines 1154/1454).
-pub struct MathEval<'a> {
+pub struct MathState<'a> {
     input: &'a str,
     pos: usize,
     /// Byte position in `input` where the most recently lexed token began
@@ -324,7 +324,7 @@ pub struct MathEval<'a> {
     variables: HashMap<String, MathNum>,
     /// Raw string values for variables whose contents aren't a plain number.
     /// zsh recursively evaluates these as arith expressions on lookup so
-    /// `a="3+2"; $((a))` produces 5. Without this, MathEval saw `a` as
+    /// `a="3+2"; $((a))` produces 5. Without this, MathState saw `a` as
     /// unset → 0.
     string_variables: HashMap<String, String>,
     lastval: i32,
@@ -332,9 +332,9 @@ pub struct MathEval<'a> {
     error: Option<String>,
 }
 
-impl<'a> MathEval<'a> {
+impl<'a> MathState<'a> {
     pub fn new(input: &'a str) -> Self {
-        MathEval {
+        MathState {
             input,
             pos: 0,
             tok_start: 0,
@@ -370,7 +370,7 @@ impl<'a> MathEval<'a> {
             } else if let Ok(f) = v.parse::<f64>() {
                 self.variables.insert(k.clone(), MathNum::Float(f));
             } else if !v.is_empty() {
-                // Non-numeric string — keep raw so get_variable can
+                // Non-numeric string — keep raw so getmathparam can
                 // recursively evaluate it as an arith expression.
                 // zsh: `a="3+2"; $((a))` returns 5.
                 self.string_variables.insert(k.clone(), v.clone());
@@ -431,7 +431,7 @@ impl<'a> MathEval<'a> {
     }
 
     /// Lex a numeric constant
-    fn lex_constant(&mut self) -> MathTok {
+    fn lexconstant(&mut self) -> MathTok {
         let _start = self.pos;
         let mut is_neg = false;
 
@@ -737,7 +737,7 @@ impl<'a> MathEval<'a> {
                         if let Some(next) = self.peek() {
                             if Self::is_digit(next) || next == '.' {
                                 self.pos -= 1; // Put back the -
-                                return self.lex_constant();
+                                return self.lexconstant();
                             }
                         }
                         return MathTok::UMinus;
@@ -992,7 +992,7 @@ impl<'a> MathEval<'a> {
                         || (c == '.' && Self::is_digit(self.peek().unwrap_or('\0')))
                     {
                         self.pos -= c.len_utf8();
-                        return self.lex_constant();
+                        return self.lexconstant();
                     }
 
                     if Self::is_ident_start(c) {
@@ -1074,7 +1074,7 @@ impl<'a> MathEval<'a> {
         if let Some(mv) = self.stack.pop() {
             if matches!(mv.val, MathNum::Unset) {
                 if let Some(ref name) = mv.lval {
-                    return self.get_variable(name);
+                    return self.getmathparam(name);
                 }
             }
             mv.val
@@ -1091,13 +1091,13 @@ impl<'a> MathEval<'a> {
     fn get_value(&self, mv: &MathValue) -> MathNum {
         if matches!(mv.val, MathNum::Unset) {
             if let Some(ref name) = mv.lval {
-                return self.get_variable(name);
+                return self.getmathparam(name);
             }
         }
         mv.val
     }
 
-    fn get_variable(&self, name: &str) -> MathNum {
+    fn getmathparam(&self, name: &str) -> MathNum {
         // Strip array subscript if present
         let base_name = if let Some(bracket) = name.find('[') {
             &name[..bracket]
@@ -1112,7 +1112,7 @@ impl<'a> MathEval<'a> {
         // to one level of indirection — fresh evaluator each call so we
         // don't accidentally pollute self.variables.
         if let Some(raw) = self.string_variables.get(base_name) {
-            let mut sub = MathEval::new(raw);
+            let mut sub = MathState::new(raw);
             sub.variables = self.variables.clone();
             sub.string_variables = self.string_variables.clone();
             // Avoid infinite recursion: drop our own entry so a self-
@@ -1127,7 +1127,7 @@ impl<'a> MathEval<'a> {
         MathNum::Integer(0)
     }
 
-    fn set_variable(&mut self, name: &str, val: MathNum) -> MathNum {
+    fn setmathvar(&mut self, name: &str, val: MathNum) -> MathNum {
         let base_name = if let Some(bracket) = name.find('[') {
             &name[..bracket]
         } else {
@@ -1162,7 +1162,7 @@ impl<'a> MathEval<'a> {
             let mv_a = self.pop_with_lval();
             let a = if matches!(mv_a.val, MathNum::Unset) {
                 if let Some(ref name) = mv_a.lval {
-                    self.get_variable(name)
+                    self.getmathparam(name)
                 } else {
                     MathNum::Integer(0)
                 }
@@ -1340,7 +1340,7 @@ impl<'a> MathEval<'a> {
             // Handle assignment
             if (tp & (OP_E2 | OP_E2IO)) != 0 {
                 if let Some(ref name) = mv_a.lval {
-                    let final_val = self.set_variable(name, result);
+                    let final_val = self.setmathvar(name, result);
                     self.push(final_val, Some(name.clone()));
                 } else {
                     self.error = Some("lvalue required".to_string());
@@ -1365,7 +1365,7 @@ impl<'a> MathEval<'a> {
         let mv = self.pop_with_lval();
         let val = if matches!(mv.val, MathNum::Unset) {
             if let Some(ref name) = mv.lval {
-                self.get_variable(name)
+                self.getmathparam(name)
             } else {
                 MathNum::Integer(0)
             }
@@ -1408,7 +1408,7 @@ impl<'a> MathEval<'a> {
                 } else {
                     MathNum::Integer(val.to_int() + 1)
                 };
-                self.set_variable(name, new_val);
+                self.setmathvar(name, new_val);
                 self.push(val, None); // Return original value
             }
             MathTok::PostMinus => {
@@ -1422,7 +1422,7 @@ impl<'a> MathEval<'a> {
                 } else {
                     MathNum::Integer(val.to_int() - 1)
                 };
-                self.set_variable(name, new_val);
+                self.setmathvar(name, new_val);
                 self.push(val, None);
             }
             MathTok::PrePlus => {
@@ -1436,7 +1436,7 @@ impl<'a> MathEval<'a> {
                 } else {
                     MathNum::Integer(val.to_int() + 1)
                 };
-                self.set_variable(name, new_val);
+                self.setmathvar(name, new_val);
                 self.push(new_val, mv.lval);
             }
             MathTok::PreMinus => {
@@ -1450,7 +1450,7 @@ impl<'a> MathEval<'a> {
                 } else {
                     MathNum::Integer(val.to_int() - 1)
                 };
-                self.set_variable(name, new_val);
+                self.setmathvar(name, new_val);
                 self.push(new_val, mv.lval);
             }
             MathTok::Quest => {
@@ -1484,7 +1484,7 @@ impl<'a> MathEval<'a> {
         let mv = &self.stack[self.stack.len() - 1];
         let val = if matches!(mv.val, MathNum::Unset) {
             if let Some(ref name) = mv.lval {
-                self.get_variable(name)
+                self.getmathparam(name)
             } else {
                 MathNum::Integer(0)
             }
@@ -1508,7 +1508,7 @@ impl<'a> MathEval<'a> {
         self.prec[MathTok::Comma as usize] + 1
     }
 
-    fn check_unary(&mut self) {
+    fn checkunary(&mut self) {
         // Direct port of zsh math.c checkunary() (line 1548).
         // Two roles:
         //   1. Validate that the just-lexed token (`self.mtok`)
@@ -1587,7 +1587,7 @@ impl<'a> MathEval<'a> {
             return;
         }
 
-        self.check_unary();
+        self.checkunary();
 
         while self.prec[self.mtok as usize] <= pc {
             if self.error.is_some() {
@@ -1611,7 +1611,7 @@ impl<'a> MathEval<'a> {
                     let val = if self.noeval > 0 {
                         MathNum::Integer(0)
                     } else {
-                        self.get_variable(&lval)
+                        self.getmathparam(&lval)
                     };
                     self.push(val, Some(lval));
                 }
@@ -1620,7 +1620,7 @@ impl<'a> MathEval<'a> {
                     let val = if self.noeval > 0 {
                         MathNum::Integer(0)
                     } else {
-                        self.call_math_func(&func_call)
+                        self.callmathfunc(&func_call)
                     };
                     self.push(val, None);
                 }
@@ -1722,12 +1722,12 @@ impl<'a> MathEval<'a> {
 
             // After operand (Num, Id, Func, InPar), get next token
             self.mtok = self.zzlex();
-            self.check_unary();
+            self.checkunary();
         }
     }
 
     /// Call a math function
-    fn call_math_func(&mut self, call: &str) -> MathNum {
+    fn callmathfunc(&mut self, call: &str) -> MathNum {
         // Parse function name and args
         let paren = call.find('(').unwrap_or(call.len());
         let name = &call[..paren];
@@ -1747,7 +1747,7 @@ impl<'a> MathEval<'a> {
             args_str
                 .split(',')
                 .filter_map(|s| {
-                    let mut eval = MathEval::new(s.trim());
+                    let mut eval = MathState::new(s.trim());
                     eval.variables = self.variables.clone();
                     eval.evaluate().ok()
                 })
@@ -1886,7 +1886,7 @@ impl<'a> MathEval<'a> {
         let mv = self.stack.pop().unwrap();
         let result = if matches!(mv.val, MathNum::Unset) {
             if let Some(ref name) = mv.lval {
-                self.get_variable(name)
+                self.getmathparam(name)
             } else {
                 MathNum::Integer(0)
             }
@@ -1898,7 +1898,7 @@ impl<'a> MathEval<'a> {
     }
 
     /// Get updated variables after evaluation
-    pub fn get_variables(&self) -> &HashMap<String, MathNum> {
+    pub fn getmathparams(&self) -> &HashMap<String, MathNum> {
         &self.variables
     }
 }
@@ -1907,7 +1907,7 @@ impl<'a> MathEval<'a> {
 /// Top-level math-expression evaluator.
 /// Port of `matheval()` from Src/math.c:1480 — wraps `mathevall()`\n/// (line 367) with the C source's standard error-message\n/// formatting.
 pub fn matheval(expr: &str) -> Result<MathNum, String> {
-    let mut eval = MathEval::new(expr);
+    let mut eval = MathState::new(expr);
     eval.evaluate()
 }
 
@@ -2011,17 +2011,17 @@ mod tests {
         vars.insert("x".to_string(), MathNum::Integer(10));
         vars.insert("y".to_string(), MathNum::Integer(20));
 
-        let mut eval = MathEval::new("x + y").with_variables(vars);
+        let mut eval = MathState::new("x + y").with_variables(vars);
         assert_eq!(eval.evaluate().unwrap().to_int(), 30);
     }
 
     #[test]
     fn test_assignment() {
-        let mut eval = MathEval::new("x = 5");
+        let mut eval = MathState::new("x = 5");
         eval.evaluate().unwrap();
         assert_eq!(eval.variables.get("x").unwrap().to_int(), 5);
 
-        let mut eval2 = MathEval::new("x = 5, x += 3");
+        let mut eval2 = MathState::new("x = 5, x += 3");
         let result = eval2.evaluate().unwrap();
         assert_eq!(result.to_int(), 8);
     }
@@ -2031,11 +2031,11 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("x".to_string(), MathNum::Integer(5));
 
-        let mut eval = MathEval::new("++x").with_variables(vars.clone());
+        let mut eval = MathState::new("++x").with_variables(vars.clone());
         assert_eq!(eval.evaluate().unwrap().to_int(), 6);
         assert_eq!(eval.variables.get("x").unwrap().to_int(), 6);
 
-        let mut eval2 = MathEval::new("x++").with_variables(vars.clone());
+        let mut eval2 = MathState::new("x++").with_variables(vars.clone());
         assert_eq!(eval2.evaluate().unwrap().to_int(), 5);
         assert_eq!(eval2.variables.get("x").unwrap().to_int(), 6);
     }
@@ -2110,7 +2110,7 @@ impl crate::ported::exec::ShellExecutor {
         };
         // Subscripted-array compound-assign / increment / decrement:
         // `((a[i]++))`, `((a[i]+=v))`, `((a[i]-=v))`, etc. Read the
-        // current value, apply the operation, write back. MathEval
+        // current value, apply the operation, write back. MathState
         // can't write through `a[i]` for compound forms (only the
         // bare `=` write was special-cased below), so handle here.
         // Subscript compound op: `((a[i]++))`, `((h[k]+=5))`, etc.
@@ -2328,7 +2328,7 @@ impl crate::ported::exec::ShellExecutor {
         // Pre-resolve dynamic special parameters that aren't in the
         // variables map: $RANDOM, $SECONDS, $EPOCHSECONDS,
         // $EPOCHREALTIME, $LINENO, $PPID, $UID, $EUID, $GID, $EGID.
-        // MathEval looks up names in a static HashMap, so without
+        // MathState looks up names in a static HashMap, so without
         // substitution these would resolve to 0. Inject the current
         // value into a fresh extras HashMap.
         let mut extras = self.variables.clone();
@@ -2349,7 +2349,7 @@ impl crate::ported::exec::ShellExecutor {
                 extras.insert(special.to_string(), v);
             }
         }
-        let mut evaluator = MathEval::new(&expr)
+        let mut evaluator = MathState::new(&expr)
             .with_string_variables(&extras)
             .with_force_float(force_float)
             .with_c_precedences(c_prec)
@@ -2528,7 +2528,7 @@ impl crate::ported::exec::ShellExecutor {
         let c_prec = self.options.get("cprecedences").copied().unwrap_or(false);
         let octal = self.options.get("octalzeroes").copied().unwrap_or(false);
 
-        let mut evaluator = MathEval::new(&expr_expanded)
+        let mut evaluator = MathState::new(&expr_expanded)
             .with_string_variables(&self.variables)
             .with_c_precedences(c_prec)
             .with_octal_zeroes(octal);
@@ -2580,7 +2580,7 @@ impl crate::ported::exec::ShellExecutor {
         let c_prec = self.options.get("cprecedences").copied().unwrap_or(false);
         let octal = self.options.get("octalzeroes").copied().unwrap_or(false);
 
-        let mut evaluator = MathEval::new(&expr_expanded)
+        let mut evaluator = MathState::new(&expr_expanded)
             .with_string_variables(&self.variables)
             .with_force_float(force_float)
             .with_c_precedences(c_prec)

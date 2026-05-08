@@ -15,7 +15,7 @@
 //! re-export alias so existing call-sites continue to compile.
 
 use crate::history::HistoryEngine;
-use crate::math::MathEval;
+use crate::math::MathState;
 use crate::options::ZSH_OPTIONS_SET;
 use crate::pcre::PcreState;
 use crate::prompt::{expand_prompt, PromptContext};
