@@ -2341,6 +2341,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 };
                 return Value::str(arr.get(resolved).cloned().unwrap_or_default());
             }
+            // Subscript-flag form on positional params: route through
+            // getarg with positional_params as the array. Matches
+            // zsh's `${@[(I)pat]}` / `${@[(r)pat]}` semantics.
+            if idx.starts_with('(') {
+                if let Some(crate::ported::params::GetargOut::Value(v)) =
+                    crate::ported::params::getarg(&idx, Some(&arr), None, None)
+                {
+                    return v;
+                }
+            }
         }
         // Magic special-parameter assoc lookups — synthesized from shell
         // state on access. zsh exposes shell-introspection assocs like
