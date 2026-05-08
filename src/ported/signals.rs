@@ -411,11 +411,13 @@ impl TrapHandler {
 /// Global trap handler
 static TRAPS: OnceLock<TrapHandler> = OnceLock::new();
 
-/// Get the global trap handler — singleton accessor for the
-/// `sigtrapped[]` / `sigfuncs[]` arrays Src/signals.c reads in
-/// `gettrapnode()`, `settrap()`, `dotrap()`, `unsettrap()`.
-pub fn traps() -> &'static TrapHandler {
-    TRAPS.get_or_init(TrapHandler::new)
+impl TrapHandler {
+    /// Get the global trap handler — singleton accessor for the
+    /// `sigtrapped[]` / `sigfuncs[]` arrays Src/signals.c reads in
+    /// `gettrapnode()`, `settrap()`, `dotrap()`, `unsettrap()`.
+    pub fn global() -> &'static TrapHandler {
+        TRAPS.get_or_init(TrapHandler::new)
+    }
 }
 
 /// Store the main shell PID to detect forked children.
@@ -502,21 +504,21 @@ extern "C" fn handler(sig: i32) {
     // Src/signals.c:1245). SIGCHLD is no-op because job-control
     // runs on its own path.
     if sig != libc::SIGCHLD {
-        if let Some(action) = traps().get_trap(sig) {
+        if let Some(action) = TrapHandler::global().get_trap(sig) {
             match action {
                 TrapAction::Code(_) => {
-                    traps().in_trap.store(true, Ordering::SeqCst);
+                    TrapHandler::global().in_trap.store(true, Ordering::SeqCst);
                     if sig == SIGEXIT {
-                        traps().in_exit_trap.store(true, Ordering::SeqCst);
+                        TrapHandler::global().in_exit_trap.store(true, Ordering::SeqCst);
                     }
                     if sig == SIGEXIT {
-                        traps().in_exit_trap.store(false, Ordering::SeqCst);
+                        TrapHandler::global().in_exit_trap.store(false, Ordering::SeqCst);
                     }
-                    traps().in_trap.store(false, Ordering::SeqCst);
+                    TrapHandler::global().in_trap.store(false, Ordering::SeqCst);
                 }
                 TrapAction::Function(_) => {
-                    traps().in_trap.store(true, Ordering::SeqCst);
-                    traps().in_trap.store(false, Ordering::SeqCst);
+                    TrapHandler::global().in_trap.store(true, Ordering::SeqCst);
+                    TrapHandler::global().in_trap.store(false, Ordering::SeqCst);
                 }
                 TrapAction::Ignore | TrapAction::Default => {}
             }
@@ -566,19 +568,19 @@ pub fn queue_traps() {
 pub fn unqueue_traps() {
     TRAP_QUEUE.disable();
     while let Some(sig) = TRAP_QUEUE.pop() {
-        if let Some(action) = traps().get_trap(sig) {
+        if let Some(action) = TrapHandler::global().get_trap(sig) {
             // Inline trap dispatch — same body as `dotrap` in
             // Src/signals.c:1245.
             match action {
                 TrapAction::Code(_) | TrapAction::Function(_) => {
-                    traps().in_trap.store(true, Ordering::SeqCst);
+                    TrapHandler::global().in_trap.store(true, Ordering::SeqCst);
                     if sig == SIGEXIT {
-                        traps().in_exit_trap.store(true, Ordering::SeqCst);
+                        TrapHandler::global().in_exit_trap.store(true, Ordering::SeqCst);
                     }
                     if sig == SIGEXIT {
-                        traps().in_exit_trap.store(false, Ordering::SeqCst);
+                        TrapHandler::global().in_exit_trap.store(false, Ordering::SeqCst);
                     }
-                    traps().in_trap.store(false, Ordering::SeqCst);
+                    TrapHandler::global().in_trap.store(false, Ordering::SeqCst);
                 }
                 TrapAction::Ignore | TrapAction::Default => {}
             }
@@ -901,14 +903,14 @@ pub fn dosavetrap(sig: i32, handler: &TrapHandler) -> Option<TrapAction> {
 /// Port of `settrap()` from Src/signals.c:693 — see also
 /// `TrapHandler::set_trap` for the per-handler shape.
 pub fn settrap(sig: i32, action: TrapAction) -> Result<(), String> {
-    let handler = traps();
+    let handler = TrapHandler::global();
     handler.set_trap(sig, action)
 }
 
 /// Unset a trap (top-level entry point).
 /// Port of `unsettrap()` from Src/signals.c:759.
 pub fn unsettrap(sig: i32) {
-    let handler = traps();
+    let handler = TrapHandler::global();
     handler.unset_trap(sig);
 }
 
@@ -916,7 +918,7 @@ pub fn unsettrap(sig: i32) {
 /// Port of `handletrap()` from Src/signals.c:972 — looks up the
 /// trap action without executing it (caller drives execution).
 pub fn handletrap(sig: i32) -> Option<String> {
-    let handler = traps();
+    let handler = TrapHandler::global();
     if let Some(TrapAction::Code(code)) = handler.get_trap(sig) {
         Some(code)
     } else {
@@ -938,7 +940,7 @@ pub fn dotrapargs(sig: i32, handler: &TrapHandler) -> Option<String> {
 /// Port of `dotrap()` from Src/signals.c:1245 — top-level trap
 /// runner.
 pub fn dotrap(sig: i32) -> Option<String> {
-    let handler = traps();
+    let handler = TrapHandler::global();
     dotrapargs(sig, handler)
 }
 
