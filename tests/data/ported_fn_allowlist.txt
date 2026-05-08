@@ -222,6 +222,10 @@ imeta_byte
 unmetafy_dup
 iwsep_byte
 
+# utils.rs realpath — Rust wrapper around libc realpath(3). Not in zsh
+# utils.c (zsh calls libc realpath directly). Kept for callsite shape.
+realpath
+
 # utils.rs zwarn/zerrnam family — module-static get/setters for the
 # C globals scriptname / argzero / errflag / noerrs / locallevel /
 # lineno (declared in Src/init.c, populated by the parser/source/fn
