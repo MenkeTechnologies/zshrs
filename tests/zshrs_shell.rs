@@ -21,6 +21,51 @@ fn zshrs_bin() -> PathBuf {
 
 /// Run a snippet via `zshrs -f -c <code>` with a 5-second timeout.
 /// Returns (status, stdout, stderr).
+/// Run code under `--zsh` parity mode (caches OFF, daemon OFF) so
+/// every parity test compares zshrs against /bin/zsh without any
+/// rkyv/plugin/script_cache interference. Per `zshrs --help`:
+/// "every `source` re-runs the file fresh, every echo re-fires".
+fn run_zshrs_parity(code: &str) -> (i32, String, String) {
+    run_zshrs_with_args(&["--zsh", "-f", "-c", code])
+}
+
+fn run_zshrs_with_args(args: &[&str]) -> (i32, String, String) {
+    let mut child = Command::new(zshrs_bin())
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn zshrs");
+    let timeout = Duration::from_secs(5);
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let out = child.wait_with_output().expect("failed to read output");
+                return (
+                    status.code().unwrap_or(-1),
+                    String::from_utf8_lossy(&out.stdout).to_string(),
+                    String::from_utf8_lossy(&out.stderr).to_string(),
+                );
+            }
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!(
+                        "zshrs timed out after {}s on args: {:?}",
+                        timeout.as_secs(),
+                        args
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => panic!("error waiting for zshrs: {}", e),
+        }
+    }
+}
+
 fn run_zshrs(code: &str) -> (i32, String, String) {
     let mut child = Command::new(zshrs_bin())
         .args(["-f", "-c", code])
@@ -558,7 +603,7 @@ fn test_subscript_flag_at_positional_routes_through_getarg() {
 #[test]
 fn test_subscript_parity_array_math_expr() {
     // Math expressions inside subscripts.
-    let (_, output, _) = run_zshrs(
+    let (_, output, _) = run_zshrs_parity(
         r#"
         arr=(alpha beta gamma delta)
         n=3
@@ -577,7 +622,7 @@ fn test_subscript_parity_array_math_expr() {
 #[test]
 fn test_subscript_parity_array_negative_and_oob() {
     // Out-of-bounds and zero-index edge cases.
-    let (_, output, _) = run_zshrs(
+    let (_, output, _) = run_zshrs_parity(
         r#"
         arr=(a b c d e)
         print "1:[${arr[0]}]"
@@ -594,7 +639,7 @@ fn test_subscript_parity_array_negative_and_oob() {
 #[test]
 fn test_subscript_parity_array_slice_forms() {
     // Slice forms `${arr[start,end]}` including reversed and OOB.
-    let (_, output, _) = run_zshrs(
+    let (_, output, _) = run_zshrs_parity(
         r#"
         arr2=(one two three)
         print "1:[${arr2[2,99]}]"
@@ -609,7 +654,7 @@ fn test_subscript_parity_array_slice_forms() {
 #[test]
 fn test_subscript_parity_scalar_slice_basic() {
     // Scalar `${s[N]}` and `${s[N,M]}` 1-based char indexing.
-    let (_, output, _) = run_zshrs(
+    let (_, output, _) = run_zshrs_parity(
         r#"
         s="abcdefgh"
         print "1:[${s[1]}]"
@@ -628,7 +673,7 @@ fn test_subscript_parity_scalar_slice_basic() {
 #[test]
 fn test_subscript_parity_scalar_slice_multibyte() {
     // Multibyte (UTF-8) scalar slicing — should index by char, not byte.
-    let (_, output, _) = run_zshrs(
+    let (_, output, _) = run_zshrs_parity(
         r#"
         mb="αβγδε"
         print "1:[${mb[1]}]"
@@ -648,7 +693,7 @@ fn test_subscript_parity_scalar_slice_multibyte() {
 #[test]
 fn test_subscript_parity_assoc_quoted_key_with_space() {
     // Hash key with whitespace — bare `[bar baz]` works with no quoting.
-    let (_, output, _) = run_zshrs(
+    let (_, output, _) = run_zshrs_parity(
         r#"
         typeset -A h=(foo 1 "bar baz" 2)
         print "1:[${h[bar baz]}]"
@@ -663,7 +708,7 @@ fn test_subscript_parity_assoc_quoted_key_with_space() {
 fn test_subscript_parity_nested_subscript_in_subscript() {
     // `${arr[${keys[2]}]}` — inner subscript expands first;
     // outer treats result ("b") as math eval → 0 → empty.
-    let (_, output, _) = run_zshrs(
+    let (_, output, _) = run_zshrs_parity(
         r#"
         arr=(one two three)
         keys=(a b c)
@@ -678,7 +723,7 @@ fn test_subscript_parity_assoc_at_splice_sorted() {
     // `${(o)${(v)h}}` and `${(o)${(k)h}}` — sort-then-flatten flag
     // pipeline gives deterministic output even though hash iteration
     // order is implementation-defined.
-    let (_, output, _) = run_zshrs(
+    let (_, output, _) = run_zshrs_parity(
         r#"
         typeset -A h=(a 1 b 2 c 3)
         print "${(o)${(v)h}}"
@@ -691,7 +736,7 @@ fn test_subscript_parity_assoc_at_splice_sorted() {
 #[test]
 fn test_subscript_parity_param_flag_case_conversion() {
     // (U) uppercase / (L) lowercase / (C) capitalize on scalars and arrays.
-    let (_, output, _) = run_zshrs(
+    let (_, output, _) = run_zshrs_parity(
         r#"
         s="Hello World"
         print "1:[${(U)s}]"
@@ -709,7 +754,7 @@ fn test_subscript_parity_param_flag_case_conversion() {
 #[test]
 fn test_subscript_parity_param_flag_array_join() {
     // (j:sep:) joins array with sep.
-    let (_, output, _) = run_zshrs(
+    let (_, output, _) = run_zshrs_parity(
         r#"
         arr=(hello world foo)
         print "1:[${(j:_:)arr}]"
@@ -729,7 +774,7 @@ fn test_subscript_parity_length_of_indexed_element() {
     //                  print "${#arr[$i]}"
     //                done'
     //   2 2 3 4 5
-    let (_, output, _) = run_zshrs(
+    let (_, output, _) = run_zshrs_parity(
         r#"
         arr=(aa bb ccc dddd eeeee)
         for i in 1 2 3 4 5; do
@@ -749,7 +794,7 @@ fn test_subscript_parity_length_of_indexed_element() {
 #[test]
 fn test_subscript_parity_param_flag_split_to_array() {
     // `${(@s/sep/)scalar}` in array-assignment context → splices.
-    let (_, output, _) = run_zshrs(
+    let (_, output, _) = run_zshrs_parity(
         r#"
         multi="a:b:c:d"
         arr2=("${(@s/:/)multi}")
@@ -765,7 +810,7 @@ fn test_subscript_parity_param_flag_split_to_array() {
 fn test_subscript_parity_variable_expansion_in_subscript() {
     // Subscripts with variable expansion — `${arr[(r)$key]}` and
     // `${h[$n]}` / `${h[(k)$n]}` all resolve identically.
-    let (_, output, _) = run_zshrs(
+    let (_, output, _) = run_zshrs_parity(
         r#"
         arr=(foo bar baz)
         key="bar"

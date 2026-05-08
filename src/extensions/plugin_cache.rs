@@ -62,7 +62,7 @@ fn current_binary_mtime() -> Option<i64> {
 
 // Script bytecode caching used to live here behind the BYTECODE_VERSION
 // prefix + script_bytecode SQLite table. It now lives in the rkyv shard at
-// ~/.cache/zshrs/scripts.rkyv (see `crate::script_cache`). The header in
+// ~/.zshrs/scripts.rkyv (see `crate::script_cache`). The header in
 // that shard carries its own version pin (`zshrs_version`) so this prefix
 // byte is no longer needed — a zshrs rebuild silently invalidates all
 // cached entries via `binary_mtime_at_cache`.
@@ -233,7 +233,7 @@ impl PluginCache {
             CREATE INDEX IF NOT EXISTS idx_compaudit_path ON compaudit_cache(path);
 
             -- Migration: legacy script_bytecode table (bytecode now lives in
-            -- the rkyv shard at ~/.cache/zshrs/scripts.rkyv). Drop on open so
+            -- the rkyv shard at ~/.zshrs/scripts.rkyv). Drop on open so
             -- existing DBs reclaim the space and don't carry stale bytecode.
             DROP INDEX IF EXISTS idx_script_bytecode_path;
             DROP TABLE IF EXISTS script_bytecode;
