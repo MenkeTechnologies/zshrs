@@ -219,7 +219,21 @@ fn compare_numeric(a: &str, b: &str, signed_mode: bool) -> Ordering {
 /// point that wraps `qsort()` over `eltpcmp` with the same flag
 /// vocabulary (`SORTIT_NUMERICALLY`, `SORTIT_BACKWARDS`, etc.).
 pub fn strmetasort(arr: &mut [String], sort_flags: u32) {
-    arr.sort_by(|a, b| zstrcmp(a, b, sort_flags));
+    arr.sort_by(|a, b| eltpcmp(
+        &SortElt::new(a), &SortElt::new(b), sort_flags));
+}
+
+/// qsort comparator over `SortElt`. Direct port of `eltpcmp()`
+/// from Src/sort.c — picks the comparison key from each elt
+/// (the `cmp` field, which holds the case-folded / unbackslashed
+/// form prepared by the eltpcmp prep step), then delegates to
+/// `zstrcmp` for the actual comparison. Same flag dispatch.
+///
+/// In C, eltpcmp's signature is `int(*)(const void*, const void*)`
+/// for direct use as a qsort callback. The Rust port takes typed
+/// references — same comparison semantics, idiomatic Rust calling.
+pub fn eltpcmp(a: &SortElt, b: &SortElt, sort_flags: u32) -> Ordering {
+    zstrcmp(&a.cmp, &b.cmp, sort_flags)
 }
 
 #[cfg(test)]
