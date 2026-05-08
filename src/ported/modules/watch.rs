@@ -116,6 +116,77 @@ impl WatchState {
 
         now - self.last_watch > self.log_check_interval
     }
+
+    /// Decide whether an entry should produce a watch event.
+    /// Port of the per-entry filter inside `watchlog()` from
+    /// Src/Modules/watch.c:458 — checks against `$watch` array
+    /// excluding the current user when the list begins with `notme`.
+    pub fn check_entry(&self, entry: &UtmpEntry, current_user: &str) -> bool {
+        if self.watch_list.is_empty() {
+            return false;
+        }
+
+        if self.watch_list.first().map(|s| s.as_str()) == Some("all") {
+            return true;
+        }
+
+        let mut iter = self.watch_list.iter().peekable();
+
+        if iter.peek().map(|s| s.as_str()) == Some("notme") {
+            if entry.user == current_user {
+                return false;
+            }
+            iter.next();
+            if iter.peek().is_none() {
+                return true;
+            }
+        }
+
+        for pattern in iter {
+            // Inline pattern match: `user[@host][%line]` triple-component
+            // form per the watchlog inline scan at watch.c:489-510. Walks
+            // the pattern from left to right, switching to host-arm on `@`
+            // and line-arm on `%`, dispatching each component through
+            // `watchlog_match()`.
+            let mut rest = pattern.as_str();
+            let mut matched = true;
+
+            if !rest.starts_with('@') && !rest.starts_with('%') {
+                let end = rest.find(['@', '%']).unwrap_or(rest.len());
+                let user_pat = &rest[..end];
+                if !watchlog_match(user_pat, &entry.user) {
+                    matched = false;
+                }
+                rest = &rest[end..];
+            }
+
+            while !rest.is_empty() && matched {
+                if let Some(rest1) = rest.strip_prefix('%') {
+                    let end = rest1.find('@').unwrap_or(rest1.len());
+                    let line_pat = &rest1[..end];
+                    if !watchlog_match(line_pat, &entry.line) {
+                        matched = false;
+                    }
+                    rest = &rest1[end..];
+                } else if let Some(rest1) = rest.strip_prefix('@') {
+                    let end = rest1.find('%').unwrap_or(rest1.len());
+                    let host_pat = &rest1[..end];
+                    if !watchlog_match(host_pat, &entry.host) {
+                        matched = false;
+                    }
+                    rest = &rest1[end..];
+                } else {
+                    break;
+                }
+            }
+
+            if matched {
+                return true;
+            }
+        }
+
+        false
+    }
 }
 
 /// Check if a watch pattern matches an entry field
@@ -282,80 +353,6 @@ fn printtime(timestamp: i64, fmt: &str) -> String {
     }
 }
 
-/// Check a watch entry against the watch list
-/// Decide whether an entry should produce a watch event.
-/// Port of the per-entry filter inside `watchlog()` from
-/// Src/Modules/watch.c:458 — checks against `$watch` array
-/// excluding the current user.
-pub fn check_watch_entry(entry: &UtmpEntry, watch_list: &[String], current_user: &str) -> bool {
-    if watch_list.is_empty() {
-        return false;
-    }
-
-    if watch_list.first().map(|s| s.as_str()) == Some("all") {
-        return true;
-    }
-
-    let mut iter = watch_list.iter().peekable();
-
-    if iter.peek().map(|s| s.as_str()) == Some("notme") {
-        if entry.user == current_user {
-            return false;
-        }
-        iter.next();
-        if iter.peek().is_none() {
-            return true;
-        }
-    }
-
-    for pattern in iter {
-        if matches_watch_pattern(pattern, entry) {
-            return true;
-        }
-    }
-
-    false
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/watch.c`.
-fn matches_watch_pattern(pattern: &str, entry: &UtmpEntry) -> bool {
-    let mut rest = pattern;
-    let mut matched = true;
-
-    if !rest.starts_with('@') && !rest.starts_with('%') {
-        let end = rest.find(['@', '%']).unwrap_or(rest.len());
-        let user_pat = &rest[..end];
-        if !watchlog_match(user_pat, &entry.user) {
-            matched = false;
-        }
-        rest = &rest[end..];
-    }
-
-    while !rest.is_empty() && matched {
-        if rest.starts_with('%') {
-            rest = &rest[1..];
-            let end = rest.find('@').unwrap_or(rest.len());
-            let line_pat = &rest[..end];
-            if !watchlog_match(line_pat, &entry.line) {
-                matched = false;
-            }
-            rest = &rest[end..];
-        } else if rest.starts_with('@') {
-            rest = &rest[1..];
-            let end = rest.find('%').unwrap_or(rest.len());
-            let host_pat = &rest[..end];
-            if !watchlog_match(host_pat, &entry.host) {
-                matched = false;
-            }
-            rest = &rest[end..];
-        } else {
-            break;
-        }
-    }
-
-    matched
-}
 
 /// Perform watch check and return login/logout events
 /// Run one tick of the watch loop, returning login/logout events.
@@ -427,7 +424,7 @@ pub fn dowatch(state: &mut WatchState, current_user: &str) -> Vec<(UtmpEntry, bo
 
     for (key, entry) in &new_active {
         if !old_active.contains_key(key)
-            && check_watch_entry(entry, &state.watch_list, current_user)
+            && state.check_entry(entry, current_user)
         {
             events.push((*entry).clone());
             events.last_mut().unwrap();
@@ -436,7 +433,7 @@ pub fn dowatch(state: &mut WatchState, current_user: &str) -> Vec<(UtmpEntry, bo
 
     for (key, entry) in &old_active {
         if !new_active.contains_key(key)
-            && check_watch_entry(entry, &state.watch_list, current_user)
+            && state.check_entry(entry, current_user)
         {
             let logged_out = (*entry).clone();
             events.push(logged_out);
@@ -564,8 +561,9 @@ mod tests {
             session_type: SessionType::UserProcess,
         };
 
-        let watch = vec!["all".to_string()];
-        assert!(check_watch_entry(&entry, &watch, "me"));
+        let mut state = WatchState::new();
+        state.set_watch_list(vec!["all".to_string()]);
+        assert!(state.check_entry(&entry, "me"));
     }
 
     #[test]
@@ -579,14 +577,15 @@ mod tests {
             session_type: SessionType::UserProcess,
         };
 
-        let watch = vec!["notme".to_string()];
-        assert!(!check_watch_entry(&entry, &watch, "me"));
+        let mut state = WatchState::new();
+        state.set_watch_list(vec!["notme".to_string()]);
+        assert!(!state.check_entry(&entry, "me"));
 
         let other = UtmpEntry {
             user: "other".to_string(),
             ..entry.clone()
         };
-        assert!(check_watch_entry(&other, &watch, "me"));
+        assert!(state.check_entry(&other, "me"));
     }
 
     #[test]
@@ -600,10 +599,15 @@ mod tests {
             session_type: SessionType::UserProcess,
         };
 
-        assert!(matches_watch_pattern("admin", &entry));
-        assert!(matches_watch_pattern("admin@server.local", &entry));
-        assert!(matches_watch_pattern("admin%pts/0", &entry));
-        assert!(!matches_watch_pattern("root", &entry));
+        let mut state = WatchState::new();
+        state.set_watch_list(vec!["admin".to_string()]);
+        assert!(state.check_entry(&entry, "me"));
+        state.set_watch_list(vec!["admin@server.local".to_string()]);
+        assert!(state.check_entry(&entry, "me"));
+        state.set_watch_list(vec!["admin%pts/0".to_string()]);
+        assert!(state.check_entry(&entry, "me"));
+        state.set_watch_list(vec!["root".to_string()]);
+        assert!(!state.check_entry(&entry, "me"));
     }
 
     #[test]

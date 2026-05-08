@@ -66,8 +66,6 @@ locale_aware_name_cmp
 
 # watch.rs Rust-side utmp/utmpx readers + format helpers — zsh C
 # inlines this work in `watchlog2` (Src/Modules/watch.c).
-check_watch_entry
-matches_watch_pattern
 
 # utils.rs Rust-side stdlib wrappers and zshrs-original helpers
 # kept for ergonomics — zsh C inlines these or uses macros.
