@@ -61,8 +61,6 @@ resolve_port
 # `pattern.c::patmatch`, and `glob.c`'s sort comparators.
 parse_pattern_flags_full
 expand_posix_char_classes
-glob_match_impl
-match_bracket_expr
 locale_aware_name_cmp
 numeric_string_cmp
 

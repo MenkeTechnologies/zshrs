@@ -1499,10 +1499,17 @@ pub fn matchpat(pattern: &str, text: &str, extended: bool, case_sensitive: bool)
         text.to_lowercase()
     };
 
-    glob_match_impl(&pat, &txt, extended)
+    patmatch(&pat, &txt, extended)
 }
 
-fn glob_match_impl(pattern: &str, text: &str, extended: bool) -> bool {
+/// Recursive `*` / `?` / `[...]` glob matcher. Port of `patmatch()`
+/// from Src/pattern.c:2694 — the C source's main matching engine
+/// that walks a precompiled `Upat` while consuming the input string.
+/// This Rust port works directly on raw pattern + text strings (no
+/// precompile step), but mirrors the same recursive descent: `*` tries
+/// each text suffix, `?` consumes one char, `[...]` dispatches to
+/// `patmatchrange`, and literal chars must match exactly.
+fn patmatch(pattern: &str, text: &str, extended: bool) -> bool {
     let mut pi = pattern.chars().peekable();
     let mut ti = text.chars().peekable();
 
@@ -1521,14 +1528,14 @@ fn glob_match_impl(pattern: &str, text: &str, extended: bool) -> bool {
                     .skip(ti.clone().count().saturating_sub(text.len()))
                 {
                     if i >= pos {
-                        if glob_match_impl(&rest, &text[i..], extended) {
+                        if patmatch(&rest, &text[i..], extended) {
                             return true;
                         }
                         pos = i + 1;
                     }
                 }
                 // Also try matching at end
-                return glob_match_impl(&rest, "", extended);
+                return patmatch(&rest, "", extended);
             }
             '?' => {
                 if ti.next().is_none() {
@@ -1540,7 +1547,7 @@ fn glob_match_impl(pattern: &str, text: &str, extended: bool) -> bool {
                     Some(c) => c,
                     None => return false,
                 };
-                if !match_bracket_expr(&mut pi, tc) {
+                if !patmatchrange(&mut pi, tc) {
                     return false;
                 }
             }
@@ -1574,7 +1581,13 @@ fn glob_match_impl(pattern: &str, text: &str, extended: bool) -> bool {
     ti.peek().is_none()
 }
 
-fn match_bracket_expr(pi: &mut std::iter::Peekable<std::str::Chars>, tc: char) -> bool {
+/// Match a single character against a `[...]` bracket expression.
+/// Port of `patmatchrange()` from Src/pattern.c:3856 — the C variant
+/// scans a pre-compiled range buffer with explicit indices; this Rust
+/// port consumes a peekable iterator over the live pattern string and
+/// returns whether `tc` matches (honoring `[!...]` / `[^...]` negation
+/// and `a-z` ranges, like the C source's range walk at line 3870).
+fn patmatchrange(pi: &mut std::iter::Peekable<std::str::Chars>, tc: char) -> bool {
     let mut chars_in_class = Vec::new();
     let mut negate = false;
     let mut first = true;
