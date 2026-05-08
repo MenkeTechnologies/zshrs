@@ -62,7 +62,6 @@ resolve_port
 parse_pattern_flags_full
 expand_posix_char_classes
 locale_aware_name_cmp
-numeric_string_cmp
 
 # watch.rs Rust-side utmp/utmpx readers + format helpers — zsh C
 # inlines this work in `watchlog2` (Src/Modules/watch.c).
