@@ -1021,7 +1021,7 @@ impl ShellExecutor {
     }
 
     /// Tab expansion — direct port of `zexpandtabs` in zsh/Src/utils.c:5973.
-    /// Moved to `crate::ported::utils::zexpandtabs_into`; re-exported below.
+    /// Moved to `crate::ported::utils::zexpandtabs`; re-exported below.
 
     /// Execute a script file with bytecode caching — skips lex+parse+compile on cache hit.
     /// Bytecode is stored in rkyv keyed by (path, mtime).

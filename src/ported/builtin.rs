@@ -9057,7 +9057,7 @@ impl crate::ported::exec::ShellExecutor {
             let mut result = String::new();
             let mut startpos: i32 = 0;
             for (idx, arg) in processed.iter().enumerate() {
-                let new_pos = crate::ported::utils::zexpandtabs_into(arg, width, startpos, all_tabs, &mut result);
+                let new_pos = crate::ported::utils::zexpandtabs(arg, width, startpos, all_tabs, &mut result);
                 startpos = new_pos;
                 if idx + 1 < processed.len() {
                     if one_per_line {

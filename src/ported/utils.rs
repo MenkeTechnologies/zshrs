@@ -2654,29 +2654,6 @@ pub fn is_sb_niceformat(s: &str) -> bool {
     s.chars().any(|c| c.is_ascii_control())
 }
 
-/// Expand tabs to spaces (from utils.c zexpandtabs)
-pub fn zexpandtabs(s: &str, tabstop: usize) -> String {
-    let tabstop = if tabstop == 0 { 8 } else { tabstop };
-    let mut result = String::with_capacity(s.len());
-    let mut col = 0;
-    for c in s.chars() {
-        if c == '\t' {
-            let spaces = tabstop - (col % tabstop);
-            for _ in 0..spaces {
-                result.push(' ');
-            }
-            col += spaces;
-        } else if c == '\n' {
-            result.push(c);
-            col = 0;
-        } else {
-            result.push(c);
-            col += unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
-        }
-    }
-    result
-}
-
 /// Add unprintable character representation (from utils.c addunprintable)
 pub fn addunprintable(c: char) -> String {
     if c.is_ascii_control() {
@@ -3227,7 +3204,7 @@ pub(crate) fn emit_xtrace_text(cmd_text: &str) {
 /// (those at the start of a line) are expanded; embedded TABs are
 /// emitted verbatim and `startpos` is advanced by one tabstop. When
 /// `all_tabs` is true, every TAB expands. Returns the new `startpos`.
-pub(crate) fn zexpandtabs_into(
+pub(crate) fn zexpandtabs(
     s: &str,
     width: i32,
     startpos: i32,
