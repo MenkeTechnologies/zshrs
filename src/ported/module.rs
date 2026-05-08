@@ -117,6 +117,112 @@ pub struct Wrapper {
     pub module: String,
 }
 
+// =====================================================================
+// Builtin / Conddef / MathFunc / Paramdef descriptors and the
+// `struct features` aggregator from `Src/zsh.h:1440-1571` and
+// `Src/module.c:3279+`.
+//
+// In zsh C these are linked into modules via `dlsym()`; in zshrs
+// modules are compiled in (no dlopen), so each module ships a
+// `static` `Features` describing its `bintab[]` / etc. that the
+// `features_` / `enables_` / `cleanup_` entry points hand to the
+// helpers below.
+// =====================================================================
+
+/// `BINF_ADDED` flag from `Src/zsh.h:1459`. Set when the builtin is
+/// in the runtime hash table.
+pub const BINF_ADDED: u32 = 1 << 3;
+
+/// `CONDF_INFIX` flag from `Src/zsh.h`. Marks an infix `[[ … ]]`
+/// condition (`-eq`, `-ot`, etc.) vs prefix (`-z`, `-n`).
+pub const CONDF_INFIX: u32 = 1;
+
+/// `CONDF_ADDED` flag from `Src/zsh.h`. Set when the condition is
+/// in the runtime hash table.
+pub const CONDF_ADDED: u32 = 1 << 1;
+
+/// `MFF_ADDED` flag from `Src/zsh.h`. Set when the math function is
+/// in the runtime hash table.
+pub const MFF_ADDED: u32 = 1 << 1;
+
+/// Port of `struct builtin` from `Src/zsh.h:1440`.
+///
+/// ```c
+/// struct builtin {
+///     struct hashnode node;       // .nam holds the builtin name
+///     HandlerFunc handlerfunc;
+///     int minargs, maxargs, funcid;
+///     char *optstr, *defopts;
+/// };
+/// ```
+///
+/// The Rust port collapses the embedded `struct hashnode` to two
+/// fields (`name`, `flags`) since zshrs's hashnode infrastructure
+/// isn't ported under this struct — flags and lookup happen
+/// elsewhere.
+#[derive(Debug, Clone, Copy)]
+#[allow(non_snake_case)]
+pub struct Builtin {
+    pub name: &'static str,
+    pub flags: u32,
+    pub minargs: i32,
+    pub maxargs: i32,
+    pub funcid: i32,
+    pub optstr: Option<&'static str>,
+    pub defopts: Option<&'static str>,
+}
+
+/// Port of `struct conddef` from `Src/zsh.h:683`. Placeholder used
+/// only to size `Features.cd_list` arrays — full body pending the
+/// condition-system port.
+#[derive(Debug, Clone, Copy)]
+pub struct Conddef {
+    pub name: &'static str,
+    pub flags: u32,
+}
+
+/// Port of `struct mathfunc` from `Src/zsh.h:111`. Placeholder.
+#[derive(Debug, Clone, Copy)]
+pub struct MathFunc {
+    pub name: &'static str,
+    pub flags: u32,
+}
+
+/// Port of `struct paramdef` from `Src/zsh.h:2082`. Placeholder.
+#[derive(Debug, Clone, Copy)]
+pub struct Paramdef {
+    pub name: &'static str,
+    /// `pm` slot in C — non-null when the param is registered.
+    pub registered: bool,
+}
+
+/// Port of `struct features` from `Src/zsh.h:1553`.
+///
+/// ```c
+/// struct features {
+///     Builtin  bn_list;  int bn_size;
+///     Conddef  cd_list;  int cd_size;
+///     MathFunc mf_list;  int mf_size;
+///     Paramdef pd_list;  int pd_size;
+///     int n_abstract;
+/// };
+/// ```
+///
+/// Each module ships a `static Features` describing the four kinds
+/// of features it provides; `features_` / `enables_` / `cleanup_`
+/// pass it to `featuresarray` / `getfeatureenables` /
+/// `setfeatureenables` / `handlefeatures` to expose to the runtime.
+#[derive(Debug, Clone, Copy)]
+pub struct Features {
+    pub bn_list: &'static [Builtin],
+    pub cd_list: &'static [Conddef],
+    pub mf_list: &'static [MathFunc],
+    pub pd_list: &'static [Paramdef],
+    /// `n_abstract` — placeholder slots for non-concrete features.
+    /// Always 0 in the modules ported so far.
+    pub n_abstract: usize,
+}
+
 impl ModuleTable {
     pub fn new() -> Self {
         let mut table = Self::default();
@@ -1082,10 +1188,37 @@ pub fn features_module() -> i32 {
     0
 }
 
-/// Port of `featuresarray()` from Src/module.c:3279. zshrs links
-/// modules statically; this entry is a name-parity shim.
-pub fn featuresarray() -> usize {
-    0
+/// Port of `featuresarray()` from `Src/module.c:3279`.
+///
+/// Build the feature-name array a module exports. Each entry is
+/// prefixed:
+///   `b:` for builtins,
+///   `c:` / `C:` for prefix / infix conditions,
+///   `f:` for math functions,
+///   `p:` for parameters.
+///
+/// C source uses heap allocation (`zhalloc`) and a NULL terminator;
+/// the Rust port returns a `Vec<String>` (the terminator falls out
+/// of Vec's len). `_m` is the owning `Module` — kept for signature
+/// parity with C; the body doesn't read it.
+pub fn featuresarray(_m: &Module, f: &Features) -> Vec<String> {
+    let mut features = Vec::with_capacity(
+        f.bn_list.len() + f.cd_list.len() + f.mf_list.len() + f.pd_list.len() + f.n_abstract,
+    );
+    for b in f.bn_list {
+        features.push(format!("b:{}", b.name));
+    }
+    for c in f.cd_list {
+        let prefix = if c.flags & CONDF_INFIX != 0 { "C:" } else { "c:" };
+        features.push(format!("{}{}", prefix, c.name));
+    }
+    for m in f.mf_list {
+        features.push(format!("f:{}", m.name));
+    }
+    for p in f.pd_list {
+        features.push(format!("p:{}", p.name));
+    }
+    features
 }
 
 /// Port of `find_module()` from Src/module.c:1659. zshrs links
@@ -1106,10 +1239,29 @@ pub fn finish_module() -> i32 {
     0
 }
 
-/// Port of `getfeatureenables()` from Src/module.c:3314. zshrs links
-/// modules statically; this entry is a name-parity shim.
-pub fn getfeatureenables() -> i32 {
-    0
+/// Port of `getfeatureenables()` from `Src/module.c:3314`.
+///
+/// Return the current enable-bit per feature, in the same order
+/// `featuresarray()` produces. `1` if the feature's `*_ADDED` flag
+/// is set (i.e. it's in the runtime hash table), else `0`. Param
+/// entries return `1` when their `pm` slot is registered.
+pub fn getfeatureenables(_m: &Module, f: &Features) -> Vec<i32> {
+    let mut enables = Vec::with_capacity(
+        f.bn_list.len() + f.cd_list.len() + f.mf_list.len() + f.pd_list.len() + f.n_abstract,
+    );
+    for b in f.bn_list {
+        enables.push(i32::from(b.flags & BINF_ADDED != 0));
+    }
+    for c in f.cd_list {
+        enables.push(i32::from(c.flags & CONDF_ADDED != 0));
+    }
+    for m in f.mf_list {
+        enables.push(i32::from(m.flags & MFF_ADDED != 0));
+    }
+    for p in f.pd_list {
+        enables.push(i32::from(p.registered));
+    }
+    enables
 }
 
 /// Port of `getmathfunc()` from Src/module.c:1283. zshrs links
@@ -1118,10 +1270,27 @@ pub fn getmathfunc() -> i32 {
     0
 }
 
-/// Port of `handlefeatures()` from Src/module.c:3388. zshrs links
-/// modules statically; this entry is a name-parity shim.
-pub fn handlefeatures() -> i32 {
-    0
+/// Port of `handlefeatures()` from `Src/module.c:3388`.
+///
+/// Convenience front-end. C body:
+/// ```c
+/// if (!enables || *enables)
+///     return setfeatureenables(m, f, enables ? *enables : NULL);
+/// *enables = getfeatureenables(m, f);
+/// return 0;
+/// ```
+/// The `enables` out-parameter doubles as input (set values) and
+/// output (read values). Rust port uses `&mut Option<Vec<i32>>` to
+/// match: passing `Some(vec)` sets, passing `None` and writing
+/// `Some(...)` reads.
+pub fn handlefeatures(m: &Module, f: &Features, enables: &mut Option<Vec<i32>>) -> i32 {
+    match enables {
+        Some(e) => setfeatureenables(m, f, Some(e)),
+        None => {
+            *enables = Some(getfeatureenables(m, f));
+            0
+        }
+    }
 }
 
 /// Port of `hpux_dlsym()` from Src/module.c:1530. zshrs links
@@ -1172,21 +1341,84 @@ pub fn require_module() -> i32 {
     0
 }
 
-/// Port of `setconddefs()` from Src/module.c:754. zshrs links
-/// modules statically; this entry is a name-parity shim.
-pub fn setconddefs() -> i32 {
+/// Port of `setbuiltins()` from `Src/module.c:501`.
+///
+/// Add (`e[i] != 0`) or remove (`e[i] == 0`) each builtin in
+/// `binl` from the runtime hash table. Passing `None` for `e`
+/// disables every builtin. C source flips `BINF_ADDED` and inserts
+/// into / removes from `builtintab`; zshrs's static-linkage model
+/// makes the in-memory hash table fixed at build time, so this is
+/// a no-op returning 0 (success). The `enable -n` / `disable`
+/// builtins handle per-name disable through a different path.
+pub fn setbuiltins(_nam: &str, _binl: &[Builtin], _e: Option<&[i32]>) -> i32 {
     0
 }
 
-/// Port of `setfeatureenables()` from Src/module.c:3350. zshrs links
-/// modules statically; this entry is a name-parity shim.
-pub fn setfeatureenables() -> i32 {
+/// Port of `setconddefs()` from `Src/module.c:754`.
+///
+/// Same shape as `setbuiltins` but for conditions. No-op in
+/// zshrs's static-linkage model.
+pub fn setconddefs(_nam: &str, _cdl: &[Conddef], _e: Option<&[i32]>) -> i32 {
     0
 }
 
-/// Port of `setmathfuncs()` from Src/module.c:1374. zshrs links
-/// modules statically; this entry is a name-parity shim.
-pub fn setmathfuncs() -> i32 {
+/// Port of `setfeatureenables()` from `Src/module.c:3350`.
+///
+/// Add or remove the concrete features per the corresponding
+/// element of `e`. C dispatches each feature kind to its own
+/// helper (`setbuiltins`, `setconddefs`, `setmathfuncs`,
+/// `setparamdefs`); zshrs links modules statically so disabling /
+/// enabling individual features at module-cleanup time is a no-op
+/// (`enable -n NAME` / `disable NAME` go through a different path).
+/// Returns 0 (success) — same as C's `ret = 0` no-failure path.
+pub fn setfeatureenables(m: &Module, f: &Features, e: Option<&[i32]>) -> i32 {
+    let mut ret = 0;
+    let mut idx = 0usize;
+    if !f.bn_list.is_empty() {
+        let slice = e.map(|all| &all[idx..idx + f.bn_list.len()]);
+        if setbuiltins(&m.name, f.bn_list, slice) != 0 {
+            ret = 1;
+        }
+        idx += f.bn_list.len();
+    }
+    if !f.cd_list.is_empty() {
+        let slice = e.map(|all| &all[idx..idx + f.cd_list.len()]);
+        if setconddefs(&m.name, f.cd_list, slice) != 0 {
+            ret = 1;
+        }
+        idx += f.cd_list.len();
+    }
+    if !f.mf_list.is_empty() {
+        let slice = e.map(|all| &all[idx..idx + f.mf_list.len()]);
+        if setmathfuncs(&m.name, f.mf_list, slice) != 0 {
+            ret = 1;
+        }
+        idx += f.mf_list.len();
+    }
+    if !f.pd_list.is_empty() {
+        let slice = e.map(|all| &all[idx..idx + f.pd_list.len()]);
+        if setparamdefs(&m.name, f.pd_list, slice) != 0 {
+            ret = 1;
+        }
+        idx += f.pd_list.len();
+    }
+    let _ = idx;
+    ret
+}
+
+/// Port of `setmathfuncs()` from `Src/module.c:1374`.
+///
+/// Same shape as `setbuiltins` but for math functions. No-op in
+/// zshrs's static-linkage model.
+pub fn setmathfuncs(_nam: &str, _mfl: &[MathFunc], _e: Option<&[i32]>) -> i32 {
+    0
+}
+
+/// Port of `setparamdefs()` from `Src/module.c:1165`.
+///
+/// Same shape as `setbuiltins` but for parameter definitions.
+/// No-op in zshrs's static-linkage model.
+pub fn setparamdefs(_nam: &str, _pdl: &[Paramdef], _e: Option<&[i32]>) -> i32 {
     0
 }
 

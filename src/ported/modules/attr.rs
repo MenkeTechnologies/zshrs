@@ -17,6 +17,10 @@
 use std::ffi::CString;
 
 use crate::ported::exec::ShellExecutor;
+use crate::ported::module::{
+    featuresarray, handlefeatures, setfeatureenables, Builtin, Conddef, Features, MathFunc,
+    Module, Paramdef,
+};
 use crate::ported::utils::zwarnnam;
 
 #[cfg(target_os = "macos")]
@@ -390,36 +394,117 @@ pub(crate) fn bin_listattr(s: &mut ShellExecutor, nam: &str, argv: &[String], sy
 }
 
 // =====================================================================
-// Module entry points (attr.c:236-275).
+// Module paraphernalia (attr.c:219-232).
+//
+// Port of:
+//   static struct builtin bintab[] = { … };
+//   static struct features module_features = { bintab, … };
 // =====================================================================
 
-/// Port of `setup_()` from `Src/Modules/attr.c:236`.
-pub fn setup_() -> i32 {
+/// Port of `static struct builtin bintab[]` from `attr.c:219`.
+///
+/// ```c
+/// BUILTIN("zgetattr",  0, bin_getattr,  2, 3,  0, "h", NULL),
+/// BUILTIN("zsetattr",  0, bin_setattr,  3, 3,  0, "h", NULL),
+/// BUILTIN("zdelattr",  0, bin_delattr,  2, -1, 0, "h", NULL),
+/// BUILTIN("zlistattr", 0, bin_listattr, 1, 2,  0, "h", NULL),
+/// ```
+static BINTAB: &[Builtin] = &[
+    Builtin {
+        name: "zgetattr",
+        flags: 0,
+        minargs: 2,
+        maxargs: 3,
+        funcid: 0,
+        optstr: Some("h"),
+        defopts: None,
+    },
+    Builtin {
+        name: "zsetattr",
+        flags: 0,
+        minargs: 3,
+        maxargs: 3,
+        funcid: 0,
+        optstr: Some("h"),
+        defopts: None,
+    },
+    Builtin {
+        name: "zdelattr",
+        flags: 0,
+        minargs: 2,
+        maxargs: -1,
+        funcid: 0,
+        optstr: Some("h"),
+        defopts: None,
+    },
+    Builtin {
+        name: "zlistattr",
+        flags: 0,
+        minargs: 1,
+        maxargs: 2,
+        funcid: 0,
+        optstr: Some("h"),
+        defopts: None,
+    },
+];
+
+/// Port of `static struct features module_features` from `attr.c:226`.
+static MODULE_FEATURES: Features = Features {
+    bn_list: BINTAB,
+    cd_list: &[],
+    mf_list: &[],
+    pd_list: &[],
+    n_abstract: 0,
+};
+
+// =====================================================================
+// Module entry points (attr.c:236-275). All four take `&Module` to
+// match the C `Module m` parameter; the body either returns 0 (when
+// C does) or calls the matching `module.rs` helper with
+// `MODULE_FEATURES`.
+// =====================================================================
+
+/// Port of `setup_()` from `Src/Modules/attr.c:236`. C body: `return 0;`.
+pub fn setup_(_m: &Module) -> i32 {
     0
 }
 
 /// Port of `features_()` from `Src/Modules/attr.c:243`.
-pub fn features_() -> i32 {
+///
+/// ```c
+/// *features = featuresarray(m, &module_features);
+/// return 0;
+/// ```
+pub fn features_(m: &Module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, &MODULE_FEATURES);
     0
 }
 
 /// Port of `enables_()` from `Src/Modules/attr.c:251`.
-pub fn enables_() -> i32 {
-    0
+///
+/// ```c
+/// return handlefeatures(m, &module_features, enables);
+/// ```
+pub fn enables_(m: &Module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, &MODULE_FEATURES, enables)
 }
 
-/// Port of `boot_()` from `Src/Modules/attr.c:258`.
-pub fn boot_() -> i32 {
+/// Port of `boot_()` from `Src/Modules/attr.c:258`. C body: `return 0;`.
+pub fn boot_(_m: &Module) -> i32 {
     0
 }
 
 /// Port of `cleanup_()` from `Src/Modules/attr.c:265`.
-pub fn cleanup_() -> i32 {
-    0
+///
+/// ```c
+/// return setfeatureenables(m, &module_features, NULL);
+/// ```
+pub fn cleanup_(m: &Module) -> i32 {
+    setfeatureenables(m, &MODULE_FEATURES, None)
 }
 
-/// Port of `finish_()` from `Src/Modules/attr.c:272`.
-pub fn finish_() -> i32 {
+/// Port of `finish_()` from `Src/Modules/attr.c:272`. C body: `return 0;`.
+pub fn finish_(_m: &Module) -> i32 {
     0
 }
 
@@ -455,5 +540,43 @@ mod tests {
     fn test_xremovexattr_nonexistent() {
         let r = xremovexattr("/nonexistent/path", "user.test", 0);
         assert!(r < 0);
+    }
+
+    #[test]
+    fn test_features_returns_bintab_names() {
+        let m = Module::new("zsh/attr");
+        let mut features: Vec<String> = Vec::new();
+        let rc = features_(&m, &mut features);
+        assert_eq!(rc, 0);
+        assert_eq!(features.len(), 4);
+        assert_eq!(features[0], "b:zgetattr");
+        assert_eq!(features[1], "b:zsetattr");
+        assert_eq!(features[2], "b:zdelattr");
+        assert_eq!(features[3], "b:zlistattr");
+    }
+
+    #[test]
+    fn test_enables_get_then_set() {
+        let m = Module::new("zsh/attr");
+        // First call: enables == None → populated by getfeatureenables.
+        let mut enables: Option<Vec<i32>> = None;
+        let rc = enables_(&m, &mut enables);
+        assert_eq!(rc, 0);
+        let v = enables.as_ref().unwrap();
+        assert_eq!(v.len(), 4);
+        // BINF_ADDED unset on the static bintab → all zeros until the
+        // module-loader port wires real registration.
+        assert_eq!(v, &vec![0, 0, 0, 0]);
+        // Second call: pass Some(vec) → setfeatureenables path.
+        let rc = enables_(&m, &mut enables);
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_cleanup_returns_zero() {
+        let m = Module::new("zsh/attr");
+        // C: return setfeatureenables(m, &module_features, NULL);
+        // zshrs static-linkage: no-op, returns 0.
+        assert_eq!(cleanup_(&m), 0);
     }
 }
