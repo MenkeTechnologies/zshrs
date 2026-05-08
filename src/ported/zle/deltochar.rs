@@ -43,27 +43,6 @@ pub fn deltochar(
     }
 }
 
-/// Apply the deltochar range to a buffer, returning the trimmed copy
-/// and the cursor position.
-///
-/// Convenience wrapper around `deltochar` that mirrors the
-/// drain-the-range step the C source does inline at the end of
-/// `deltochar()` in Src/Zle/deltochar.c — kept separate here so
-/// callers can inspect the range first.
-pub fn apply_deltochar(
-    buffer: &str,
-    cursor: usize,
-    target: char,
-    direction: i32,
-    inclusive: bool,
-) -> Option<(String, usize)> {
-    let (start, end) = deltochar(buffer, cursor, target, direction, inclusive)?;
-    let mut result = String::with_capacity(buffer.len());
-    result.push_str(&buffer[..start]);
-    result.push_str(&buffer[end..]);
-    Some((result, start))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,9 +76,13 @@ mod tests {
 
     #[test]
     fn test_apply_deltochar() {
-        let (result, cursor) = apply_deltochar("hello world", 0, 'o', 1, true).unwrap();
+        let buffer = "hello world";
+        let (start, end) = deltochar(buffer, 0, 'o', 1, true).unwrap();
+        let mut result = String::with_capacity(buffer.len());
+        result.push_str(&buffer[..start]);
+        result.push_str(&buffer[end..]);
         assert_eq!(result, " world");
-        assert_eq!(cursor, 0);
+        assert_eq!(start, 0);
     }
 }
 

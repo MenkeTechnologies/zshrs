@@ -145,7 +145,6 @@ split_quoted
 is_executable
 get_groupname
 
-apply_deltochar
 attr_to_sgr
 bin_random_real
 bind_key
@@ -163,7 +162,6 @@ format_alias_kv
 format_function_body_zsh
 format_key_sequence
 format_limit_display
-format_sched
 format_zsh_float
 get_all_langinfo
 get_datetime_info

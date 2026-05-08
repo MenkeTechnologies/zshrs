@@ -260,25 +260,6 @@ fn extract_ampm(s: &str) -> (&str, Option<bool>) {
     }
 }
 
-/// Format a scheduled command for the `sched` listing.
-/// Port of the per-entry print loop inside `bin_sched()`
-/// (Src/Builtins/sched.c:150) — same column layout (`%3d %s
-/// %s%s`).
-pub fn format_sched(index: usize, sch: &SchedCmd) -> String {
-    use chrono::{Local, TimeZone};
-
-    let dt = Local
-        .timestamp_opt(sch.time as i64, 0)
-        .single()
-        .map(|dt| dt.format("%a %b %e %k:%M:%S").to_string())
-        .unwrap_or_else(|| format!("{}", sch.time));
-
-    let flagstr = if sch.flags.trash_zle { "-o " } else { "" };
-    let endstr = if sch.cmd.starts_with('-') { "-- " } else { "" };
-
-    format!("{:3} {} {}{}{}", index, dt, flagstr, endstr, sch.cmd)
-}
-
 /// `sched` builtin entry point.
 /// Port of `bin_sched()` from Src/Builtins/sched.c:150.
 /// Dispatches between list (no args), delete (`-N`), and add
@@ -335,8 +316,16 @@ pub fn bin_sched(args: &[&str], scheduler: &mut Scheduler) -> (i32, String) {
     let remaining: Vec<&str> = args_iter.copied().collect();
 
     if remaining.is_empty() {
+        use chrono::{Local, TimeZone};
         for (i, sch) in scheduler.list().iter().enumerate() {
-            output.push_str(&format_sched(i + 1, sch));
+            let dt = Local
+                .timestamp_opt(sch.time as i64, 0)
+                .single()
+                .map(|dt| dt.format("%a %b %e %k:%M:%S").to_string())
+                .unwrap_or_else(|| format!("{}", sch.time));
+            let flagstr = if sch.flags.trash_zle { "-o " } else { "" };
+            let endstr = if sch.cmd.starts_with('-') { "-- " } else { "" };
+            output.push_str(&format!("{:3} {} {}{}{}", i + 1, dt, flagstr, endstr, sch.cmd));
             output.push('\n');
         }
         return (0, output);
