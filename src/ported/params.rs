@@ -4703,12 +4703,22 @@ impl crate::ported::exec::ShellExecutor {
             // `scanpmmapfile()` (line 240).
             "mapfile" => {
                 if key == "@" || key == "*" {
-                    return Some(
-                        crate::modules::mapfile::scan_directory(".")
-                            .ok()
-                            .map(|v| v.join(" "))
-                            .unwrap_or_default(),
-                    );
+                    // Inline readdir loop — direct port of
+                    // scanpmmapfile (Src/Modules/mapfile.c:241).
+                    let mut files: Vec<String> = Vec::new();
+                    if let Ok(rd) = std::fs::read_dir(".") {
+                        for entry in rd.flatten() {
+                            let path = entry.path();
+                            if path.is_file() {
+                                if let Some(name) =
+                                    path.file_name().and_then(|n| n.to_str())
+                                {
+                                    files.push(name.to_string());
+                                }
+                            }
+                        }
+                    }
+                    return Some(files.join(" "));
                 }
                 Some(crate::modules::mapfile::get_contents(key).unwrap_or_default())
             }

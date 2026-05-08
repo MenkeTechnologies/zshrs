@@ -79,12 +79,21 @@ impl Mapfile {
         fs::remove_file(filename)
     }
 
-    /// Scan current directory for files.
-    /// Port of the directory-walk half of `scanpmmapfile()` from
-    /// Src/Modules/mapfile.c:241 — the C source uses a hash-scan
-    /// callback; this returns the key set as a Vec.
+    /// Scan current directory for regular files.
+    /// Direct port of the directory-walk inside `scanpmmapfile()`
+    /// (Src/Modules/mapfile.c:241): readdir + lstat S_ISREG filter.
     pub fn keys(&self) -> io::Result<Vec<String>> {
-        scan_directory(".")
+        let mut files = Vec::new();
+        for entry in fs::read_dir(".")? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    files.push(name.to_string());
+                }
+            }
+        }
+        Ok(files)
     }
 
     /// Get all files in current directory as hash.
@@ -242,29 +251,6 @@ pub fn set_file_contents(filename: &str, contents: &str) -> io::Result<()> {
     fs::write(filename, contents)
 }
 
-/// Scan directory for regular files.
-/// Port of the directory-walk loop inside `scanpmmapfile()` from
-/// Src/Modules/mapfile.c:241 — only regular files are surfaced; the
-/// C source uses `lstat(2)` + `S_ISREG` for the same filter.
-pub fn scan_directory(dir: &str) -> io::Result<Vec<String>> {
-    let mut files = Vec::new();
-
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        if path.is_file() {
-            if let Some(name) = path.file_name() {
-                if let Some(name_str) = name.to_str() {
-                    files.push(name_str.to_string());
-                }
-            }
-        }
-    }
-
-    Ok(files)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,8 +306,9 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_directory() {
-        let files = scan_directory(".");
+    fn test_mapfile_keys_lists_regular_files() {
+        let mf = Mapfile::default();
+        let files = mf.keys();
         assert!(files.is_ok());
     }
 
