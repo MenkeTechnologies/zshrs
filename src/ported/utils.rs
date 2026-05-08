@@ -103,14 +103,6 @@ pub fn nicezputs(s: &str) -> String {
     s.chars().map(nicechar).collect()
 }
 
-/// Check if character is a word character
-/// Check whether a char is part of a word per `$WORDCHARS`.
-/// Port of the `iword()` macro from Src/zsh.h — used by ZLE
-/// movement (Src/Zle/zle_word.c) and substring expansion.
-pub fn is_word_char(c: char, wordchars: &str) -> bool {
-    c.is_alphanumeric() || wordchars.contains(c)
-}
-
 /// Convert character to lowercase
 /// To-lowercase that respects locale.
 /// Port of `tulower()` from Src/utils.c.

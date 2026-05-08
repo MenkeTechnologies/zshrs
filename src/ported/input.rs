@@ -179,7 +179,7 @@ impl InputBuffer {
                     return Some(result);
                 }
                 Some(c) => {
-                    if is_meta(c) {
+                    if imeta(c) {
                         result.push(META);
                         result.push(meta_encode(c));
                     } else {
@@ -392,7 +392,7 @@ impl InputBuffer {
 
     /// Check if current input is from an alias
     /// Look up an active alias frame on the input stack.
-    /// Port of `is_meta()` from Src/input.c:831 — the
+    /// Port of `imeta()` from Src/input.c:831 — the
     /// alias-loop guard the lexer uses to avoid recursing into
     /// the same alias twice.
     pub fn input_has_alias(&self) -> Option<&str> {
@@ -440,7 +440,7 @@ impl InputBuffer {
 pub const META: char = '\u{83}';
 
 /// Check if a character needs meta encoding
-fn is_meta(c: char) -> bool {
+fn imeta(c: char) -> bool {
     let b = c as u32;
     b < 32 || (0x83..=0x9b).contains(&b)
 }
@@ -560,10 +560,10 @@ mod tests {
 
     #[test]
     fn test_meta_encoding() {
-        assert!(is_meta('\x00'));
-        assert!(is_meta('\x1f'));
-        assert!(!is_meta('a'));
-        assert!(!is_meta('Z'));
+        assert!(imeta('\x00'));
+        assert!(imeta('\x1f'));
+        assert!(!imeta('a'));
+        assert!(!imeta('Z'));
 
         let encoded = meta_encode('\x00');
         let decoded = char::from_u32((encoded as u32) ^ 32).unwrap_or(encoded);
