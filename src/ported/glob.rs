@@ -23,7 +23,7 @@ use crate::ported::exec::{
     extract_numeric_ranges, replace_numeric_ranges_with_star,
     with_executor, NumericRange,
 };
-use crate::ported::pattern::{ksh_extglob_body_to_regex, parse_numeric_range, parse_pattern_flags_full};
+use crate::ported::pattern::{parse_numeric_range, parse_pattern_flags_full};
 
 /// Sort specifier flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3737,7 +3737,37 @@ impl crate::ported::exec::ShellExecutor {
                             body.push(pc);
                         }
                     }
-                    let body_re = ksh_extglob_body_to_regex(&body);
+                    // Inline ksh-extglob body -> regex translator.
+                    // Direct port of the tiny per-char dispatch zsh's
+                    // pattern.c does inside its extglob handler — no
+                    // anchors, no (#flags), just glob -> regex chars.
+                    let body_re = {
+                        let mut out = String::new();
+                        let mut chars = body.chars().peekable();
+                        while let Some(c) = chars.next() {
+                            match c {
+                                '|' => out.push('|'),
+                                '*' => out.push_str(".*"),
+                                '?' => out.push('.'),
+                                '[' => {
+                                    out.push('[');
+                                    for cc in chars.by_ref() {
+                                        if cc == ']' {
+                                            out.push(']');
+                                            break;
+                                        }
+                                        out.push(cc);
+                                    }
+                                }
+                                '.' | '+' | '^' | '$' | '\\' | '{' | '}' | '(' | ')' => {
+                                    out.push('\\');
+                                    out.push(c);
+                                }
+                                _ => out.push(c),
+                            }
+                        }
+                        out
+                    };
                     let suffix = match op {
                         '?' => "?",
                         '*' => "*",
