@@ -57,7 +57,8 @@ use crate::ported::exec::{
 // remlpaths, remtext, xsymlinks) live in src/ported/hist.rs (the
 // canonical port of Src/hist.c). Import here so subst.rs's modify()
 // arms and the parity tests can reference by bare name.
-use crate::ported::hist::{casemodify, CaseMod, xsymlinks, remlpaths, rembutext, remtext, remtpath};
+use crate::ported::hist::{casemodify, CaseMod, remlpaths, rembutext, remtext, remtpath};
+use crate::ported::utils::xsymlinks;
 #[allow(unused_imports)]
 use crate::parse::{ShellWord, VarModifier, ZshParamFlag};
 
@@ -5122,16 +5123,48 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
                     }
                     Some(out)
                 }
-                'A' => xsymlinks(w).ok(),                   // c:4585 (:A absolute)
-                'a' => Some(remtpath(w, 0)),                // c:4585 (:a)
-                'P' => {                                    // c:4585 (:P physical)
-                    // :P canonicalizes (resolves symlinks) like
-                    // realpath(3). zsh sets `physical = 1` for the
-                    // xsymlinks call. std::fs::canonicalize wraps
-                    // the libc realpath.
-                    std::fs::canonicalize(w).ok()
-                        .map(|p| p.to_string_lossy().into_owned())
-                        .or_else(|| xsymlinks(w).ok())
+                'a' => xsymlinks(w).ok(),                   // c:4585 (:a absolute, no symlink follow)
+                'A' | 'P' => {                              // c:4585 (:A / :P absolute + resolve symlinks)
+                    // zsh `:A` / `:P` do what realpath(3) does —
+                    // resolve every symlink in the path. xsymlinks
+                    // alone normalises `.` / `..` without following
+                    // links; std::fs::canonicalize REQUIRES the
+                    // entire path to exist. For non-existent leafs
+                    // (common — temp files, pre-mkdir paths), we
+                    // walk component-by-component, canonicalize the
+                    // LONGEST EXISTING prefix, then re-append the
+                    // tail. Mirrors what realpath(3) on Linux/glibc
+                    // does and what zsh's xsymlinks does in C with
+                    // its `physical = 1` walk.
+                    let canon = std::fs::canonicalize(w).ok()
+                        .map(|p| p.to_string_lossy().into_owned());
+                    if let Some(c) = canon {
+                        Some(c)
+                    } else {
+                        // Walk parents to find longest existing prefix.
+                        let mut p = std::path::PathBuf::from(w);
+                        let mut tail: Vec<std::ffi::OsString> = Vec::new();
+                        let resolved_prefix = loop {
+                            if let Ok(rp) = std::fs::canonicalize(&p) {
+                                break Some(rp);
+                            }
+                            match (p.parent().map(|x| x.to_path_buf()), p.file_name().map(|x| x.to_os_string())) {
+                                (Some(parent), Some(file)) if !parent.as_os_str().is_empty() => {
+                                    tail.push(file);
+                                    p = parent;
+                                }
+                                _ => break None,
+                            }
+                        };
+                        if let Some(mut rp) = resolved_prefix {
+                            for t in tail.into_iter().rev() {
+                                rp.push(t);
+                            }
+                            Some(rp.to_string_lossy().into_owned())
+                        } else {
+                            xsymlinks(w).ok()
+                        }
+                    }
                 }
                 'c' => {                                    // c:4585 (:c command-resolve)
                     // :c resolves like `which` — search PATH for

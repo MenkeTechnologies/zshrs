@@ -170,8 +170,6 @@ get_groupname
 charcount
 
 apply_deltochar
-apply_hist_modifier
-apply_word_designator
 arrlen_eq
 attr_to_sgr
 bin_random_real
