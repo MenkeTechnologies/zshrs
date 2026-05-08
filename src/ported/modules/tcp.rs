@@ -124,7 +124,10 @@ impl TcpSessions {
     /// of any function in `Src/Modules/tcp.c`.
     pub fn close_all(&mut self) {
         for (fd, _) in self.sessions.drain() {
-            let _ = close_fd(fd);
+            #[cfg(unix)]
+            unsafe { libc::close(fd); }
+            #[cfg(not(unix))]
+            { let _ = fd; }
         }
     }
 
@@ -138,24 +141,6 @@ impl TcpSessions {
     /// of any function in `Src/Modules/tcp.c`.
     pub fn is_empty(&self) -> bool {
         self.sessions.is_empty()
-    }
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/tcp.c`.
-fn close_fd(fd: RawFd) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        let result = unsafe { libc::close(fd) };
-        if result < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        Ok(())
     }
 }
 
@@ -249,7 +234,18 @@ pub fn tcp_close(sessions: &mut TcpSessions, fd: RawFd, force: bool) -> Result<(
     }                                                                           // c:295
 
     if let Some(_session) = sessions.remove(fd) {                               // c:295
-        close_fd(fd).map_err(|e| format!("connection close failed: {}", e))?;   // c:305
+        // Inline libc close — Src/Modules/tcp.c:305 calls
+        // zclose(fd) which is a thin wrapper over close(2).
+        #[cfg(unix)]
+        {
+            let result = unsafe { libc::close(fd) };
+            if result < 0 {
+                return Err(format!(
+                    "connection close failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+        }
         Ok(())                                                                  // c:295
     } else {                                                                    // c:295
         Err(format!("fd {} not found in tcp table", fd))                        // c:295

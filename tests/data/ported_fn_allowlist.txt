@@ -69,7 +69,6 @@ errno_str
 # tcp.rs Rust-side helpers extracted from `bin_ztcp` (Src/Modules/
 # tcp.c). C zsh inlines connect/listen/accept/etc. inside one large
 # bin_ztcp dispatcher; Rust split into modular helpers for testability.
-close_fd
 resolve_port
 format_addr
 
