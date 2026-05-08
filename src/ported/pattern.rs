@@ -1936,50 +1936,6 @@ pub(crate) fn parse_pattern_flags_full(
 /// the budget. Glob metacharacters in `pat` are NOT honored — zsh's
 /// `(#a)` form combines with literal patterns; combining with `*`/`?`
 /// is rare and not supported here.
-/// Parse a `<lo-hi>` numeric-range glob suffix. Called after the `<`
-/// has already been consumed. Returns `(lo, hi, chars_consumed)` on a
-/// successful parse, `None` otherwise. Both bounds are optional: `<->`
-/// means any integer, `<5->` means ≥5, `<-10>` means ≤10, `<5-10>`
-/// means inclusive 5..=10. Caller advances `chars` past the closing
-/// `>` when this returns `Some`.
-pub(crate) fn parse_numeric_range<I: Iterator<Item = char> + Clone>(
-    chars: &mut std::iter::Peekable<I>,
-) -> Option<(Option<i64>, Option<i64>, usize)> {
-    // Speculative scan into a buffer; only commit (advance the real
-    // iterator) on success.
-    let mut buf = String::new();
-    let peek_iter = chars.clone();
-    for c in peek_iter {
-        buf.push(c);
-        if c == '>' {
-            break;
-        }
-        if buf.len() > 64 {
-            return None;
-        }
-    }
-    if !buf.ends_with('>') {
-        return None;
-    }
-    let inner = &buf[..buf.len() - 1];
-    let (lo_str, hi_str) = inner.split_once('-')?;
-    let lo: Option<i64> = if lo_str.is_empty() {
-        None
-    } else {
-        Some(lo_str.parse().ok()?)
-    };
-    let hi: Option<i64> = if hi_str.is_empty() {
-        None
-    } else {
-        Some(hi_str.parse().ok()?)
-    };
-    // Commit: advance the real iterator past what we consumed.
-    let n = buf.chars().count();
-    for _ in 0..n {
-        chars.next();
-    }
-    Some((lo, hi, n))
-}
 /// Match `s` against zsh-extended glob `pat`. When the `extendedglob`
 /// Translate the body of a ksh-style extglob group `(p1|p2|...)`
 /// into a regex alternation. Each branch is glob-translated by the
