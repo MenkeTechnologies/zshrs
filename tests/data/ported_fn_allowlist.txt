@@ -133,7 +133,6 @@ lookup
 lookup_builtin
 magic_assoc_keys
 mathevalf
-meta_encode
 normalize_option_name
 parse_key_sequence
 parse_subscript_arith_assign
