@@ -302,17 +302,6 @@ pub fn zsh_gethostbyname2(host: &str) -> io::Result<IpAddr> {
 }
 
 /// Format a socket address for display
-/// Render a SocketAddr as `host:port`, optionally
-/// reverse-resolving the host.
-/// Port of the `zsh_inet_ntop()` (Src/Modules/tcp.c:72) +
-/// optional reverse-DNS path the C source uses for
-/// human-readable session listings.
-pub fn format_addr(addr: &SocketAddr, _resolve: bool) -> String {
-    // C source's bin_ztcp -v branch calls gethostbyaddr(3); std lacks
-    // a reverse-DNS API so we always emit numeric form here.
-    format!("{}:{}", addr.ip(), addr.port())
-}
-
 /// Execute ztcp builtin
 /// `ztcp` builtin entry point.
 /// Port of `bin_ztcp()` from Src/Modules/tcp.c:342 — same big
@@ -457,11 +446,11 @@ pub fn bin_ztcp(
         for (_, session) in sessions.iter() {
             let local_str = session
                 .local_addr
-                .map(|a| format_addr(&a, true))
+                .map(|a| format!("{}:{}", a.ip(), a.port()))
                 .unwrap_or_else(|| "?:?".to_string());
             let peer_str = session
                 .peer_addr
-                .map(|a| format_addr(&a, true))
+                .map(|a| format!("{}:{}", a.ip(), a.port()))
                 .unwrap_or_else(|| "?:?".to_string());
 
             if options.list_format {
@@ -588,7 +577,7 @@ mod tests {
     #[test]
     fn test_format_addr() {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
-        let formatted = format_addr(&addr, false);
+        let formatted = format!("{}:{}", addr.ip(), addr.port());
         assert_eq!(formatted, "127.0.0.1:8080");
     }
 
