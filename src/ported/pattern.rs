@@ -1958,11 +1958,13 @@ pub(crate) struct NumericRange {
     pub(crate) hi: Option<i64>,
 }
 
+impl NumericRange {
+
 /// Walk the pattern once, returning each `<N-M>` range in source order.
 /// Skips bracket expressions (`[<…>]`) so the inside-`[]` `<` stays
-/// literal. Caller calls [`replace_numeric_ranges_with_star`] in lockstep
+/// literal. Caller calls [`Self::replace_all_with_star`] in lockstep
 /// to keep counts aligned.
-pub(crate) fn extract_numeric_ranges(pattern: &str) -> Vec<NumericRange> {
+pub(crate) fn extract_all(pattern: &str) -> Vec<NumericRange> {
     let mut ranges = Vec::new();
     let chars: Vec<char> = pattern.chars().collect();
     let mut i = 0;
@@ -2007,10 +2009,10 @@ pub(crate) fn extract_numeric_ranges(pattern: &str) -> Vec<NumericRange> {
     ranges
 }
 
-/// Replace each `<N-M>` (matching `extract_numeric_ranges`) with a `*`
+/// Replace each `<N-M>` (matching `Self::extract_all`) with a `*`
 /// so the underlying glob crate matches any chars at that spot. The
 /// post-filter then narrows to digits in range.
-pub(crate) fn replace_numeric_ranges_with_star(pattern: &str) -> String {
+pub(crate) fn replace_all_with_star(pattern: &str) -> String {
     let mut out = String::with_capacity(pattern.len());
     let chars: Vec<char> = pattern.chars().collect();
     let mut i = 0;
@@ -2051,4 +2053,6 @@ pub(crate) fn replace_numeric_ranges_with_star(pattern: &str) -> String {
     }
     out
 }
+
+}  // impl NumericRange
 

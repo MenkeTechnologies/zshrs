@@ -20,7 +20,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[allow(unused_imports)]
 use crate::ported::exec::{
     self, ShellExecutor,
-    extract_numeric_ranges, replace_numeric_ranges_with_star,
     with_executor, NumericRange,
 };
 use crate::ported::pattern::parse_pattern_flags_full;
@@ -4312,12 +4311,12 @@ impl crate::ported::exec::ShellExecutor {
         // Only fires when the pattern actually contains a `<…-…>` shape
         // — guard with a fast contains() before the regex.
         let numeric_ranges = if glob_pattern.contains('<') {
-            extract_numeric_ranges(&glob_pattern)
+            NumericRange::extract_all(&glob_pattern)
         } else {
             Vec::new()
         };
         let glob_pattern = if !numeric_ranges.is_empty() {
-            replace_numeric_ranges_with_star(&glob_pattern)
+            NumericRange::replace_all_with_star(&glob_pattern)
         } else {
             glob_pattern
         };
@@ -4510,7 +4509,7 @@ impl crate::ported::exec::ShellExecutor {
         // `<` + optional digits + `-` + optional digits + `>` outside
         // any bracket expression.
         let has_numeric_range =
-            body.contains('<') && body.contains('>') && !extract_numeric_ranges(body).is_empty();
+            body.contains('<') && body.contains('>') && !NumericRange::extract_all(body).is_empty();
         has_unescaped_star
             || has_unescaped_question
             || has_bracket_class
