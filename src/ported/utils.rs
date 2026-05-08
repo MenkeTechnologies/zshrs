@@ -1137,9 +1137,57 @@ pub fn zbeep() {
     eprint!("\x07");
 }
 
-/// Convert file mode to octal string (from utils.c mode_to_octal)
-pub fn mode_to_octal(mode: u32) -> String {
-    format!("{:04o}", mode & 0o7777)
+/// Port of `mode_to_octal()` from `Src/utils.c:7634`.
+///
+/// Convert a `mode_t` into the equivalent canonical octal value
+/// by testing each `S_I*` flag explicitly and OR-ing the matching
+/// octal bit. This is NOT just `mode & 07777` — on systems where
+/// the libc `S_IRUSR`/etc. constants don't match the canonical
+/// values (e.g. when zsh runs against a non-POSIX libc),
+/// `mode & 07777` returns the libc representation. The C version
+/// translates to canonical bits explicitly so callers get a stable
+/// portable result.
+///
+/// ```c
+/// int mode_to_octal(mode_t mode)
+/// {
+///     int m = 0;
+///     if (mode & S_ISUID) m |= 04000;
+///     ... (12 bit-by-bit mappings)
+///     return m;
+/// }
+/// ```
+pub fn mode_to_octal(mode: u32) -> i32 {
+    #[cfg(unix)]
+    use libc::{
+        S_IRGRP, S_IROTH, S_IRUSR, S_ISGID, S_ISUID, S_ISVTX, S_IWGRP, S_IWOTH, S_IWUSR, S_IXGRP,
+        S_IXOTH, S_IXUSR,
+    };
+    #[cfg(not(unix))]
+    {
+        // No POSIX permission bits on non-Unix; fall back to a
+        // bit-mask matching the canonical layout.
+        let _ = mode;
+        return 0;
+    }
+    #[cfg(unix)]
+    {
+        let m = mode as u32;
+        let mut o: i32 = 0;
+        if m & S_ISUID as u32 != 0 { o |= 0o4000; }
+        if m & S_ISGID as u32 != 0 { o |= 0o2000; }
+        if m & S_ISVTX as u32 != 0 { o |= 0o1000; }
+        if m & S_IRUSR as u32 != 0 { o |= 0o0400; }
+        if m & S_IWUSR as u32 != 0 { o |= 0o0200; }
+        if m & S_IXUSR as u32 != 0 { o |= 0o0100; }
+        if m & S_IRGRP as u32 != 0 { o |= 0o0040; }
+        if m & S_IWGRP as u32 != 0 { o |= 0o0020; }
+        if m & S_IXGRP as u32 != 0 { o |= 0o0010; }
+        if m & S_IROTH as u32 != 0 { o |= 0o0004; }
+        if m & S_IWOTH as u32 != 0 { o |= 0o0002; }
+        if m & S_IXOTH as u32 != 0 { o |= 0o0001; }
+        o
+    }
 }
 
 /// Go up n directories (from utils.c upchdir)
@@ -2297,6 +2345,101 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn test_mode_to_octal_canonical_bits() {
+        use libc::{S_IRUSR, S_IWUSR, S_IXUSR};
+        // rwx for owner = 0o700.
+        let mode = (S_IRUSR | S_IWUSR | S_IXUSR) as u32;
+        assert_eq!(mode_to_octal(mode), 0o700);
+        // rwx all = 0o777.
+        let all = (S_IRUSR | S_IWUSR | S_IXUSR) as u32 * (1 + 8 + 64);
+        // Use libc constants individually for portability.
+        let m = (libc::S_IRUSR
+            | libc::S_IWUSR
+            | libc::S_IXUSR
+            | libc::S_IRGRP
+            | libc::S_IWGRP
+            | libc::S_IXGRP
+            | libc::S_IROTH
+            | libc::S_IWOTH
+            | libc::S_IXOTH) as u32;
+        assert_eq!(mode_to_octal(m), 0o777);
+        let _ = all;
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_mode_to_octal_setuid_setgid_sticky() {
+        use libc::{S_ISGID, S_ISUID, S_ISVTX};
+        assert_eq!(mode_to_octal(S_ISUID as u32), 0o4000);
+        assert_eq!(mode_to_octal(S_ISGID as u32), 0o2000);
+        assert_eq!(mode_to_octal(S_ISVTX as u32), 0o1000);
+        // All three: 0o7000.
+        let all = (S_ISUID | S_ISGID | S_ISVTX) as u32;
+        assert_eq!(mode_to_octal(all), 0o7000);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_mailstat_plain_file_returns_native_stat() {
+        use std::os::unix::fs::MetadataExt;
+        // Plain file path → MailStat fields mirror native stat,
+        // not the maildir aggregation.
+        let m = mailstat("/etc/hosts");
+        if let Some(st) = m {
+            assert_eq!(st.nlink, std::fs::metadata("/etc/hosts").unwrap().nlink() as u32);
+        }
+    }
+
+    #[test]
+    fn test_mailstat_nonexistent_returns_none() {
+        assert!(mailstat("/nonexistent/path/does/not/exist").is_none());
+    }
+
+    #[test]
+    fn test_mailstat_directory_without_maildir_subdirs() {
+        // /tmp is a directory but not a maildir (no cur/tmp/new) —
+        // returns the partial aggregate (top dir's atime/mtime,
+        // size=0 since cur/ wasn't found before we'd start summing).
+        let m = mailstat("/tmp").expect("/tmp should stat");
+        assert_eq!(m.nlink, 1);
+        assert_eq!(m.size, 0);
+        assert_eq!(m.blocks, 0);
+        // S_IFDIR bit should be cleared, S_IFREG set.
+        #[cfg(unix)]
+        {
+            assert_eq!(m.mode & libc::S_IFDIR as u32, 0);
+            assert_ne!(m.mode & libc::S_IFREG as u32, 0);
+        }
+    }
+
+    #[test]
+    fn test_mailstat_aggregates_maildir() {
+        // Create a temp maildir layout with 2 messages in new/ and 1
+        // in cur/, verify the aggregate.
+        use std::fs;
+        use std::io::Write;
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_mailstat_test_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("cur")).unwrap();
+        fs::create_dir_all(tmp.join("new")).unwrap();
+        fs::create_dir_all(tmp.join("tmp")).unwrap();
+        let mut f = fs::File::create(tmp.join("new").join("msg1")).unwrap();
+        f.write_all(b"hello").unwrap();
+        let mut f = fs::File::create(tmp.join("new").join("msg2")).unwrap();
+        f.write_all(b"world!").unwrap();
+        let mut f = fs::File::create(tmp.join("cur").join("msg3")).unwrap();
+        f.write_all(b"third").unwrap();
+        let m = mailstat(tmp.to_str().unwrap()).expect("maildir should stat");
+        assert_eq!(m.blocks, 3, "3 messages total across new/ + cur/");
+        assert_eq!(m.size, 5 + 6 + 5, "5+6+5 bytes total");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn test_spacesplit() {
         assert_eq!(spacesplit("a b c", false), vec!["a", "b", "c"]);
         assert_eq!(spacesplit("a  b", false), vec!["a", "b"]);
@@ -2723,16 +2866,120 @@ pub fn nicedupstring(s: &str) -> String {
     sb_niceformat(s)
 }
 
-/// Check mail file status (from utils.c mailstat)
-pub fn mailstat(path: &str) -> Option<std::fs::Metadata> {
-    // Check for strstrstrstrstrstrstrstr/strstrstrstrstrstrstrstr format (strstrstrstrstrstrstrstrstrstrstrstrstrstrstrstrstrstrstrstrstrstrstrstr)
-    // First try the path as a Strstrdir
-    let strstrdir = format!("{}/.strstrdir/strstrstr", path);
-    if let Ok(meta) = std::fs::metadata(&strstrdir) {
-        return Some(meta);
+/// Aggregated mail-status fields. Port of the relevant `struct stat`
+/// fields the C `mailstat()` writes into its `*st` out-parameter
+/// (see `Src/utils.c:7676` comment for which fields are emulated).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MailStat {
+    /// Always 1 for maildir aggregates (curses.c:7673).
+    pub nlink: u32,
+    /// Total bytes across all messages in `new/` and `cur/`.
+    pub size: u64,
+    /// Total message count.
+    pub blocks: u64,
+    /// Newest atime across messages.
+    pub atime: i64,
+    /// Newest mtime across messages.
+    pub mtime: i64,
+    /// `S_IFREG` flipped on after `S_IFDIR` was cleared (curses.c:7704).
+    pub mode: u32,
+}
+
+/// Port of `mailstat()` from `Src/utils.c:7685`.
+///
+/// `mailstat` is C's "stat-emulating-a-mail-spool" function: when
+/// `path` is a maildir directory (containing `cur/`, `tmp/`, `new/`
+/// subdirs), it walks `new/` + `cur/` and returns aggregate stats
+/// (total byte size, message count, newest atime/mtime). When the
+/// path is a plain file, returns its native `stat(2)`.
+///
+/// Returns the populated `MailStat` on success; `None` if the
+/// initial `stat(2)` failed entirely.
+pub fn mailstat(path: &str) -> Option<MailStat> {
+    use std::fs;
+    use std::os::unix::fs::MetadataExt;
+    // C: if ((i = stat(path, st)) != 0 || !S_ISDIR(st->st_mode)) return i;
+    let top = fs::metadata(path).ok()?;
+    if !top.is_dir() {
+        // Plain file path — return its native stat fields directly.
+        return Some(MailStat {
+            nlink: top.nlink() as u32,
+            size: top.len(),
+            blocks: top.blocks(),
+            atime: top.atime(),
+            mtime: top.mtime(),
+            mode: top.mode(),
+        });
     }
-    // Then try direct file
-    std::fs::metadata(path).ok()
+    // C lines 7700-7706: clone, force nlink=1, S_IFDIR → S_IFREG.
+    let mut out = MailStat {
+        nlink: 1,
+        size: 0,
+        blocks: 0,
+        atime: top.atime(),
+        mtime: top.mtime(),
+        // C: st_ret.st_mode &= ~S_IFDIR; st_ret.st_mode |= S_IFREG;
+        mode: (top.mode() & !libc::S_IFDIR as u32) | libc::S_IFREG as u32,
+    };
+    // C 7707-7712: stat(path/cur). If absent or not a dir, return early
+    // with the partial out (just the IFREG-coerced root).
+    let cur_meta = match fs::metadata(format!("{}/cur", path)) {
+        Ok(m) if m.is_dir() => m,
+        _ => return Some(out),
+    };
+    out.atime = cur_meta.atime();
+    // C 7715-7722: stat(path/tmp).
+    let tmp_meta = match fs::metadata(format!("{}/tmp", path)) {
+        Ok(m) if m.is_dir() => m,
+        _ => return Some(out),
+    };
+    out.mtime = tmp_meta.mtime();
+    // C 7724-7730: stat(path/new). C overwrites mtime with new/'s mtime.
+    let new_meta = match fs::metadata(format!("{}/new", path)) {
+        Ok(m) if m.is_dir() => m,
+        _ => return Some(out),
+    };
+    out.mtime = new_meta.mtime();
+    // C 7749-7778: walk new/ and cur/, sum size + blocks, track newest
+    // atime / mtime.
+    let mut atime_max: i64 = 0;
+    let mut mtime_max: i64 = 0;
+    for sub in ["new", "cur"] {
+        let dir = format!("{}/{}", path, sub);
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => return Some(out),
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_bytes = name.as_encoded_bytes();
+            // C: if (fn->d_name[0] == '.') continue;
+            if name_bytes.first() == Some(&b'.') {
+                continue;
+            }
+            let st = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            out.size += st.len();
+            out.blocks += 1;
+            // C: if (atime != mtime && atime > atime_max) atime_max = atime;
+            if st.atime() != st.mtime() && st.atime() > atime_max {
+                atime_max = st.atime();
+            }
+            if st.mtime() > mtime_max {
+                mtime_max = st.mtime();
+            }
+        }
+    }
+    // C 7783-7784: if (atime) st_ret.st_atime = atime;
+    if atime_max != 0 {
+        out.atime = atime_max;
+    }
+    if mtime_max != 0 {
+        out.mtime = mtime_max;
+    }
+    Some(out)
 }
 
 // ===========================================================
