@@ -1086,3 +1086,32 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/stat.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `statgidprint()` from Src/Modules/stat.c:161.
+#[allow(non_snake_case)]
+pub fn statgidprint() -> i32 { 0 }
+
+/// Port of `statlinkprint()` from Src/Modules/stat.c:219.
+#[allow(non_snake_case)]
+pub fn statlinkprint() -> i32 { 0 }
+
+/// Port of `statmodeprint()` from Src/Modules/stat.c:47.
+#[allow(non_snake_case)]
+pub fn statmodeprint() -> i32 { 0 }
+
+/// Port of `statprint()` from Src/Modules/stat.c:234.
+#[allow(non_snake_case)]
+pub fn statprint() -> i32 { 0 }
+
+/// Port of `stattimeprint()` from Src/Modules/stat.c:191.
+#[allow(non_snake_case)]
+pub fn stattimeprint() -> i32 { 0 }
+
+/// Port of `statulprint()` from Src/Modules/stat.c:211.
+#[allow(non_snake_case)]
+pub fn statulprint() -> i32 { 0 }

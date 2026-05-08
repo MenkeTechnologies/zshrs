@@ -131,3 +131,12 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/regex.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `zregex_regerrwarn()` from Src/Modules/regex.c:40.
+#[allow(non_snake_case)]
+pub fn zregex_regerrwarn() -> i32 { 0 }

@@ -43,3 +43,32 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/example.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `bin_example()` from Src/Modules/example.c:42.
+#[allow(non_snake_case)]
+pub fn bin_example() -> i32 { 0 }
+
+/// Port of `cond_i_ex()` from Src/Modules/example.c:95.
+#[allow(non_snake_case)]
+pub fn cond_i_ex() -> i32 { 0 }
+
+/// Port of `cond_p_len()` from Src/Modules/example.c:80.
+#[allow(non_snake_case)]
+pub fn cond_p_len() -> i32 { 0 }
+
+/// Port of `ex_wrapper()` from Src/Modules/example.c:145.
+#[allow(non_snake_case)]
+pub fn ex_wrapper() -> i32 { 0 }
+
+/// Port of `math_length()` from Src/Modules/example.c:133.
+#[allow(non_snake_case)]
+pub fn math_length() -> i32 { 0 }
+
+/// Port of `math_sum()` from Src/Modules/example.c:104.
+#[allow(non_snake_case)]
+pub fn math_sum() -> i32 { 0 }

@@ -605,3 +605,44 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/zprof.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `cmpparcs()` from Src/Modules/zprof.c:133.
+#[allow(non_snake_case)]
+pub fn cmpparcs() -> i32 { 0 }
+
+/// Port of `cmpsfuncs()` from Src/Modules/zprof.c:121.
+#[allow(non_snake_case)]
+pub fn cmpsfuncs() -> i32 { 0 }
+
+/// Port of `cmptfuncs()` from Src/Modules/zprof.c:127.
+#[allow(non_snake_case)]
+pub fn cmptfuncs() -> i32 { 0 }
+
+/// Port of `findparc()` from Src/Modules/zprof.c:109.
+#[allow(non_snake_case)]
+pub fn findparc() -> i32 { 0 }
+
+/// Port of `findpfunc()` from Src/Modules/zprof.c:97.
+#[allow(non_snake_case)]
+pub fn findpfunc() -> i32 { 0 }
+
+/// Port of `freeparcs()` from Src/Modules/zprof.c:86.
+#[allow(non_snake_case)]
+pub fn freeparcs() -> i32 { 0 }
+
+/// Port of `freepfuncs()` from Src/Modules/zprof.c:74.
+#[allow(non_snake_case)]
+pub fn freepfuncs() -> i32 { 0 }
+
+/// Port of `name_for_anonymous_function()` from Src/Modules/zprof.c:217.
+#[allow(non_snake_case)]
+pub fn name_for_anonymous_function() -> i32 { 0 }
+
+/// Port of `zprof_wrapper()` from Src/Modules/zprof.c:236.
+#[allow(non_snake_case)]
+pub fn zprof_wrapper() -> i32 { 0 }

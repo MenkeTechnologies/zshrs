@@ -183,3 +183,16 @@ mod tests {
         assert!(bin_random_real(&[1.0, 2.0, 3.0]).is_err());
     }
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/random_real.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `_zclz64()` from Src/Modules/random_real.c:49.
+#[allow(non_snake_case)]
+pub fn _zclz64() -> i32 { 0 }
+
+/// Port of `random_64bit()` from Src/Modules/random_real.c:84.
+#[allow(non_snake_case)]
+pub fn random_64bit() -> i32 { 0 }

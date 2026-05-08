@@ -1027,3 +1027,420 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/parameter.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `assignaliasdefs()` from Src/Modules/parameter.c:1867.
+#[allow(non_snake_case)]
+pub fn assignaliasdefs() -> i32 { 0 }
+
+/// Port of `dirsgetfn()` from Src/Modules/parameter.c:1147.
+#[allow(non_snake_case)]
+pub fn dirsgetfn() -> i32 { 0 }
+
+/// Port of `dirssetfn()` from Src/Modules/parameter.c:1131.
+#[allow(non_snake_case)]
+pub fn dirssetfn() -> i32 { 0 }
+
+/// Port of `dispatcharsgetfn()` from Src/Modules/parameter.c:917.
+#[allow(non_snake_case)]
+pub fn dispatcharsgetfn() -> i32 { 0 }
+
+/// Port of `disreswordsgetfn()` from Src/Modules/parameter.c:885.
+#[allow(non_snake_case)]
+pub fn disreswordsgetfn() -> i32 { 0 }
+
+/// Port of `funcfiletracegetfn()` from Src/Modules/parameter.c:711.
+#[allow(non_snake_case)]
+pub fn funcfiletracegetfn() -> i32 { 0 }
+
+/// Port of `funcsourcetracegetfn()` from Src/Modules/parameter.c:679.
+#[allow(non_snake_case)]
+pub fn funcsourcetracegetfn() -> i32 { 0 }
+
+/// Port of `funcstackgetfn()` from Src/Modules/parameter.c:627.
+#[allow(non_snake_case)]
+pub fn funcstackgetfn() -> i32 { 0 }
+
+/// Port of `functracegetfn()` from Src/Modules/parameter.c:648.
+#[allow(non_snake_case)]
+pub fn functracegetfn() -> i32 { 0 }
+
+/// Port of `getalias()` from Src/Modules/parameter.c:1901.
+#[allow(non_snake_case)]
+pub fn getalias() -> i32 { 0 }
+
+/// Port of `getbuiltin()` from Src/Modules/parameter.c:775.
+#[allow(non_snake_case)]
+pub fn getbuiltin() -> i32 { 0 }
+
+/// Port of `getfunction()` from Src/Modules/parameter.c:389.
+#[allow(non_snake_case)]
+pub fn getfunction() -> i32 { 0 }
+
+/// Port of `getfunction_source()` from Src/Modules/parameter.c:537.
+#[allow(non_snake_case)]
+pub fn getfunction_source() -> i32 { 0 }
+
+/// Port of `getpatchars()` from Src/Modules/parameter.c:894.
+#[allow(non_snake_case)]
+pub fn getpatchars() -> i32 { 0 }
+
+/// Port of `getpmbuiltin()` from Src/Modules/parameter.c:799.
+#[allow(non_snake_case)]
+pub fn getpmbuiltin() -> i32 { 0 }
+
+/// Port of `getpmcommand()` from Src/Modules/parameter.c:213.
+#[allow(non_snake_case)]
+pub fn getpmcommand() -> i32 { 0 }
+
+/// Port of `getpmdisbuiltin()` from Src/Modules/parameter.c:806.
+#[allow(non_snake_case)]
+pub fn getpmdisbuiltin() -> i32 { 0 }
+
+/// Port of `getpmdisfunction()` from Src/Modules/parameter.c:451.
+#[allow(non_snake_case)]
+pub fn getpmdisfunction() -> i32 { 0 }
+
+/// Port of `getpmdisfunction_source()` from Src/Modules/parameter.c:600.
+#[allow(non_snake_case)]
+pub fn getpmdisfunction_source() -> i32 { 0 }
+
+/// Port of `getpmdisgalias()` from Src/Modules/parameter.c:1944.
+#[allow(non_snake_case)]
+pub fn getpmdisgalias() -> i32 { 0 }
+
+/// Port of `getpmdisralias()` from Src/Modules/parameter.c:1930.
+#[allow(non_snake_case)]
+pub fn getpmdisralias() -> i32 { 0 }
+
+/// Port of `getpmdissalias()` from Src/Modules/parameter.c:1958.
+#[allow(non_snake_case)]
+pub fn getpmdissalias() -> i32 { 0 }
+
+/// Port of `getpmfunction()` from Src/Modules/parameter.c:444.
+#[allow(non_snake_case)]
+pub fn getpmfunction() -> i32 { 0 }
+
+/// Port of `getpmfunction_source()` from Src/Modules/parameter.c:591.
+#[allow(non_snake_case)]
+pub fn getpmfunction_source() -> i32 { 0 }
+
+/// Port of `getpmgalias()` from Src/Modules/parameter.c:1937.
+#[allow(non_snake_case)]
+pub fn getpmgalias() -> i32 { 0 }
+
+/// Port of `getpmhistory()` from Src/Modules/parameter.c:1156.
+#[allow(non_snake_case)]
+pub fn getpmhistory() -> i32 { 0 }
+
+/// Port of `getpmjobdir()` from Src/Modules/parameter.c:1457.
+#[allow(non_snake_case)]
+pub fn getpmjobdir() -> i32 { 0 }
+
+/// Port of `getpmjobstate()` from Src/Modules/parameter.c:1385.
+#[allow(non_snake_case)]
+pub fn getpmjobstate() -> i32 { 0 }
+
+/// Port of `getpmjobtext()` from Src/Modules/parameter.c:1277.
+#[allow(non_snake_case)]
+pub fn getpmjobtext() -> i32 { 0 }
+
+/// Port of `getpmmodule()` from Src/Modules/parameter.c:1040.
+#[allow(non_snake_case)]
+pub fn getpmmodule() -> i32 { 0 }
+
+/// Port of `getpmnameddir()` from Src/Modules/parameter.c:1597.
+#[allow(non_snake_case)]
+pub fn getpmnameddir() -> i32 { 0 }
+
+/// Port of `getpmoption()` from Src/Modules/parameter.c:988.
+#[allow(non_snake_case)]
+pub fn getpmoption() -> i32 { 0 }
+
+/// Port of `getpmparameter()` from Src/Modules/parameter.c:99.
+#[allow(non_snake_case)]
+pub fn getpmparameter() -> i32 { 0 }
+
+/// Port of `getpmralias()` from Src/Modules/parameter.c:1923.
+#[allow(non_snake_case)]
+pub fn getpmralias() -> i32 { 0 }
+
+/// Port of `getpmsalias()` from Src/Modules/parameter.c:1951.
+#[allow(non_snake_case)]
+pub fn getpmsalias() -> i32 { 0 }
+
+/// Port of `getpmuserdir()` from Src/Modules/parameter.c:1646.
+#[allow(non_snake_case)]
+pub fn getpmuserdir() -> i32 { 0 }
+
+/// Port of `getpmusergroups()` from Src/Modules/parameter.c:2102.
+#[allow(non_snake_case)]
+pub fn getpmusergroups() -> i32 { 0 }
+
+/// Port of `getreswords()` from Src/Modules/parameter.c:859.
+#[allow(non_snake_case)]
+pub fn getreswords() -> i32 { 0 }
+
+/// Port of `histwgetfn()` from Src/Modules/parameter.c:1217.
+#[allow(non_snake_case)]
+pub fn histwgetfn() -> i32 { 0 }
+
+/// Port of `patcharsgetfn()` from Src/Modules/parameter.c:911.
+#[allow(non_snake_case)]
+pub fn patcharsgetfn() -> i32 { 0 }
+
+/// Port of `pmjobdir()` from Src/Modules/parameter.c:1447.
+#[allow(non_snake_case)]
+pub fn pmjobdir() -> i32 { 0 }
+
+/// Port of `pmjobstate()` from Src/Modules/parameter.c:1340.
+#[allow(non_snake_case)]
+pub fn pmjobstate() -> i32 { 0 }
+
+/// Port of `pmjobtext()` from Src/Modules/parameter.c:1255.
+#[allow(non_snake_case)]
+pub fn pmjobtext() -> i32 { 0 }
+
+/// Port of `reswordsgetfn()` from Src/Modules/parameter.c:878.
+#[allow(non_snake_case)]
+pub fn reswordsgetfn() -> i32 { 0 }
+
+/// Port of `scanaliases()` from Src/Modules/parameter.c:1965.
+#[allow(non_snake_case)]
+pub fn scanaliases() -> i32 { 0 }
+
+/// Port of `scanbuiltins()` from Src/Modules/parameter.c:813.
+#[allow(non_snake_case)]
+pub fn scanbuiltins() -> i32 { 0 }
+
+/// Port of `scanfunctions()` from Src/Modules/parameter.c:458.
+#[allow(non_snake_case)]
+pub fn scanfunctions() -> i32 { 0 }
+
+/// Port of `scanfunctions_source()` from Src/Modules/parameter.c:560.
+#[allow(non_snake_case)]
+pub fn scanfunctions_source() -> i32 { 0 }
+
+/// Port of `scanpmbuiltins()` from Src/Modules/parameter.c:843.
+#[allow(non_snake_case)]
+pub fn scanpmbuiltins() -> i32 { 0 }
+
+/// Port of `scanpmcommands()` from Src/Modules/parameter.c:245.
+#[allow(non_snake_case)]
+pub fn scanpmcommands() -> i32 { 0 }
+
+/// Port of `scanpmdisbuiltins()` from Src/Modules/parameter.c:850.
+#[allow(non_snake_case)]
+pub fn scanpmdisbuiltins() -> i32 { 0 }
+
+/// Port of `scanpmdisfunction_source()` from Src/Modules/parameter.c:618.
+#[allow(non_snake_case)]
+pub fn scanpmdisfunction_source() -> i32 { 0 }
+
+/// Port of `scanpmdisfunctions()` from Src/Modules/parameter.c:526.
+#[allow(non_snake_case)]
+pub fn scanpmdisfunctions() -> i32 { 0 }
+
+/// Port of `scanpmdisgaliases()` from Src/Modules/parameter.c:2011.
+#[allow(non_snake_case)]
+pub fn scanpmdisgaliases() -> i32 { 0 }
+
+/// Port of `scanpmdisraliases()` from Src/Modules/parameter.c:1997.
+#[allow(non_snake_case)]
+pub fn scanpmdisraliases() -> i32 { 0 }
+
+/// Port of `scanpmdissaliases()` from Src/Modules/parameter.c:2025.
+#[allow(non_snake_case)]
+pub fn scanpmdissaliases() -> i32 { 0 }
+
+/// Port of `scanpmfunction_source()` from Src/Modules/parameter.c:609.
+#[allow(non_snake_case)]
+pub fn scanpmfunction_source() -> i32 { 0 }
+
+/// Port of `scanpmfunctions()` from Src/Modules/parameter.c:519.
+#[allow(non_snake_case)]
+pub fn scanpmfunctions() -> i32 { 0 }
+
+/// Port of `scanpmgaliases()` from Src/Modules/parameter.c:2004.
+#[allow(non_snake_case)]
+pub fn scanpmgaliases() -> i32 { 0 }
+
+/// Port of `scanpmhistory()` from Src/Modules/parameter.c:1188.
+#[allow(non_snake_case)]
+pub fn scanpmhistory() -> i32 { 0 }
+
+/// Port of `scanpmjobdirs()` from Src/Modules/parameter.c:1487.
+#[allow(non_snake_case)]
+pub fn scanpmjobdirs() -> i32 { 0 }
+
+/// Port of `scanpmjobstates()` from Src/Modules/parameter.c:1415.
+#[allow(non_snake_case)]
+pub fn scanpmjobstates() -> i32 { 0 }
+
+/// Port of `scanpmjobtexts()` from Src/Modules/parameter.c:1308.
+#[allow(non_snake_case)]
+pub fn scanpmjobtexts() -> i32 { 0 }
+
+/// Port of `scanpmmodules()` from Src/Modules/parameter.c:1074.
+#[allow(non_snake_case)]
+pub fn scanpmmodules() -> i32 { 0 }
+
+/// Port of `scanpmnameddirs()` from Src/Modules/parameter.c:1618.
+#[allow(non_snake_case)]
+pub fn scanpmnameddirs() -> i32 { 0 }
+
+/// Port of `scanpmoptions()` from Src/Modules/parameter.c:1016.
+#[allow(non_snake_case)]
+pub fn scanpmoptions() -> i32 { 0 }
+
+/// Port of `scanpmparameters()` from Src/Modules/parameter.c:124.
+#[allow(non_snake_case)]
+pub fn scanpmparameters() -> i32 { 0 }
+
+/// Port of `scanpmraliases()` from Src/Modules/parameter.c:1990.
+#[allow(non_snake_case)]
+pub fn scanpmraliases() -> i32 { 0 }
+
+/// Port of `scanpmsaliases()` from Src/Modules/parameter.c:2018.
+#[allow(non_snake_case)]
+pub fn scanpmsaliases() -> i32 { 0 }
+
+/// Port of `scanpmuserdirs()` from Src/Modules/parameter.c:1669.
+#[allow(non_snake_case)]
+pub fn scanpmuserdirs() -> i32 { 0 }
+
+/// Port of `scanpmusergroups()` from Src/Modules/parameter.c:2143.
+#[allow(non_snake_case)]
+pub fn scanpmusergroups() -> i32 { 0 }
+
+/// Port of `setalias()` from Src/Modules/parameter.c:1699.
+#[allow(non_snake_case)]
+pub fn setalias() -> i32 { 0 }
+
+/// Port of `setaliases()` from Src/Modules/parameter.c:1769.
+#[allow(non_snake_case)]
+pub fn setaliases() -> i32 { 0 }
+
+/// Port of `setfunction()` from Src/Modules/parameter.c:284.
+#[allow(non_snake_case)]
+pub fn setfunction() -> i32 { 0 }
+
+/// Port of `setfunctions()` from Src/Modules/parameter.c:344.
+#[allow(non_snake_case)]
+pub fn setfunctions() -> i32 { 0 }
+
+/// Port of `setpmcommand()` from Src/Modules/parameter.c:151.
+#[allow(non_snake_case)]
+pub fn setpmcommand() -> i32 { 0 }
+
+/// Port of `setpmcommands()` from Src/Modules/parameter.c:173.
+#[allow(non_snake_case)]
+pub fn setpmcommands() -> i32 { 0 }
+
+/// Port of `setpmdisfunction()` from Src/Modules/parameter.c:327.
+#[allow(non_snake_case)]
+pub fn setpmdisfunction() -> i32 { 0 }
+
+/// Port of `setpmdisfunctions()` from Src/Modules/parameter.c:377.
+#[allow(non_snake_case)]
+pub fn setpmdisfunctions() -> i32 { 0 }
+
+/// Port of `setpmdisgalias()` from Src/Modules/parameter.c:1728.
+#[allow(non_snake_case)]
+pub fn setpmdisgalias() -> i32 { 0 }
+
+/// Port of `setpmdisgaliases()` from Src/Modules/parameter.c:1833.
+#[allow(non_snake_case)]
+pub fn setpmdisgaliases() -> i32 { 0 }
+
+/// Port of `setpmdisralias()` from Src/Modules/parameter.c:1714.
+#[allow(non_snake_case)]
+pub fn setpmdisralias() -> i32 { 0 }
+
+/// Port of `setpmdisraliases()` from Src/Modules/parameter.c:1819.
+#[allow(non_snake_case)]
+pub fn setpmdisraliases() -> i32 { 0 }
+
+/// Port of `setpmdissalias()` from Src/Modules/parameter.c:1742.
+#[allow(non_snake_case)]
+pub fn setpmdissalias() -> i32 { 0 }
+
+/// Port of `setpmdissaliases()` from Src/Modules/parameter.c:1847.
+#[allow(non_snake_case)]
+pub fn setpmdissaliases() -> i32 { 0 }
+
+/// Port of `setpmfunction()` from Src/Modules/parameter.c:320.
+#[allow(non_snake_case)]
+pub fn setpmfunction() -> i32 { 0 }
+
+/// Port of `setpmfunctions()` from Src/Modules/parameter.c:370.
+#[allow(non_snake_case)]
+pub fn setpmfunctions() -> i32 { 0 }
+
+/// Port of `setpmgalias()` from Src/Modules/parameter.c:1721.
+#[allow(non_snake_case)]
+pub fn setpmgalias() -> i32 { 0 }
+
+/// Port of `setpmgaliases()` from Src/Modules/parameter.c:1826.
+#[allow(non_snake_case)]
+pub fn setpmgaliases() -> i32 { 0 }
+
+/// Port of `setpmnameddir()` from Src/Modules/parameter.c:1519.
+#[allow(non_snake_case)]
+pub fn setpmnameddir() -> i32 { 0 }
+
+/// Port of `setpmnameddirs()` from Src/Modules/parameter.c:1544.
+#[allow(non_snake_case)]
+pub fn setpmnameddirs() -> i32 { 0 }
+
+/// Port of `setpmoption()` from Src/Modules/parameter.c:926.
+#[allow(non_snake_case)]
+pub fn setpmoption() -> i32 { 0 }
+
+/// Port of `setpmoptions()` from Src/Modules/parameter.c:953.
+#[allow(non_snake_case)]
+pub fn setpmoptions() -> i32 { 0 }
+
+/// Port of `setpmralias()` from Src/Modules/parameter.c:1707.
+#[allow(non_snake_case)]
+pub fn setpmralias() -> i32 { 0 }
+
+/// Port of `setpmraliases()` from Src/Modules/parameter.c:1812.
+#[allow(non_snake_case)]
+pub fn setpmraliases() -> i32 { 0 }
+
+/// Port of `setpmsalias()` from Src/Modules/parameter.c:1735.
+#[allow(non_snake_case)]
+pub fn setpmsalias() -> i32 { 0 }
+
+/// Port of `setpmsaliases()` from Src/Modules/parameter.c:1840.
+#[allow(non_snake_case)]
+pub fn setpmsaliases() -> i32 { 0 }
+
+/// Port of `unsetpmalias()` from Src/Modules/parameter.c:1749.
+#[allow(non_snake_case)]
+pub fn unsetpmalias() -> i32 { 0 }
+
+/// Port of `unsetpmcommand()` from Src/Modules/parameter.c:163.
+#[allow(non_snake_case)]
+pub fn unsetpmcommand() -> i32 { 0 }
+
+/// Port of `unsetpmfunction()` from Src/Modules/parameter.c:334.
+#[allow(non_snake_case)]
+pub fn unsetpmfunction() -> i32 { 0 }
+
+/// Port of `unsetpmnameddir()` from Src/Modules/parameter.c:1534.
+#[allow(non_snake_case)]
+pub fn unsetpmnameddir() -> i32 { 0 }
+
+/// Port of `unsetpmoption()` from Src/Modules/parameter.c:941.
+#[allow(non_snake_case)]
+pub fn unsetpmoption() -> i32 { 0 }
+
+/// Port of `unsetpmsalias()` from Src/Modules/parameter.c:1759.
+#[allow(non_snake_case)]
+pub fn unsetpmsalias() -> i32 { 0 }

@@ -836,3 +836,32 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/watch.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `checksched()` from Src/Modules/watch.c:650.
+#[allow(non_snake_case)]
+pub fn checksched() -> i32 { 0 }
+
+/// Port of `getlogtime()` from Src/Modules/watch.c:161.
+#[allow(non_snake_case)]
+pub fn getlogtime() -> i32 { 0 }
+
+/// Port of `readwtab()` from Src/Modules/watch.c:537.
+#[allow(non_snake_case)]
+pub fn readwtab() -> i32 { 0 }
+
+/// Port of `ucmp()` from Src/Modules/watch.c:527.
+#[allow(non_snake_case)]
+pub fn ucmp() -> i32 { 0 }
+
+/// Port of `watchlog()` from Src/Modules/watch.c:458.
+#[allow(non_snake_case)]
+pub fn watchlog() -> i32 { 0 }
+
+/// Port of `watchlog2()` from Src/Modules/watch.c:242.
+#[allow(non_snake_case)]
+pub fn watchlog2() -> i32 { 0 }

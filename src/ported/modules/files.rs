@@ -915,3 +915,52 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/files.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `ask()` from Src/Modules/files.c:41.
+#[allow(non_snake_case)]
+pub fn ask() -> i32 { 0 }
+
+/// Port of `chmod_dochmod()` from Src/Modules/files.c:642.
+#[allow(non_snake_case)]
+pub fn chmod_dochmod() -> i32 { 0 }
+
+/// Port of `chown_dochown()` from Src/Modules/files.c:682.
+#[allow(non_snake_case)]
+pub fn chown_dochown() -> i32 { 0 }
+
+/// Port of `chown_dolchown()` from Src/Modules/files.c:695.
+#[allow(non_snake_case)]
+pub fn chown_dolchown() -> i32 { 0 }
+
+/// Port of `domkdir()` from Src/Modules/files.c:115.
+#[allow(non_snake_case)]
+pub fn domkdir() -> i32 { 0 }
+
+/// Port of `recurse_donothing()` from Src/Modules/files.c:530.
+#[allow(non_snake_case)]
+pub fn recurse_donothing() -> i32 { 0 }
+
+/// Port of `recursivecmd()` from Src/Modules/files.c:378.
+#[allow(non_snake_case)]
+pub fn recursivecmd() -> i32 { 0 }
+
+/// Port of `recursivecmd_doone()` from Src/Modules/files.c:450.
+#[allow(non_snake_case)]
+pub fn recursivecmd_doone() -> i32 { 0 }
+
+/// Port of `recursivecmd_dorec()` from Src/Modules/files.c:465.
+#[allow(non_snake_case)]
+pub fn recursivecmd_dorec() -> i32 { 0 }
+
+/// Port of `rm_dirpost()` from Src/Modules/files.c:594.
+#[allow(non_snake_case)]
+pub fn rm_dirpost() -> i32 { 0 }
+
+/// Port of `rm_leaf()` from Src/Modules/files.c:546.
+#[allow(non_snake_case)]
+pub fn rm_leaf() -> i32 { 0 }

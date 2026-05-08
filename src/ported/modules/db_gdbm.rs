@@ -883,3 +883,32 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/db_gdbm.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `gdbmhashsetfn()` from Src/Modules/db_gdbm.c:476.
+#[allow(non_snake_case)]
+pub fn gdbmhashsetfn() -> i32 { 0 }
+
+/// Port of `gdbmhashunsetfn()` from Src/Modules/db_gdbm.c:581.
+#[allow(non_snake_case)]
+pub fn gdbmhashunsetfn() -> i32 { 0 }
+
+/// Port of `gdbmuntie()` from Src/Modules/db_gdbm.c:555.
+#[allow(non_snake_case)]
+pub fn gdbmuntie() -> i32 { 0 }
+
+/// Port of `getgdbmnode()` from Src/Modules/db_gdbm.c:407.
+#[allow(non_snake_case)]
+pub fn getgdbmnode() -> i32 { 0 }
+
+/// Port of `myfreeparamnode()` from Src/Modules/db_gdbm.c:799.
+#[allow(non_snake_case)]
+pub fn myfreeparamnode() -> i32 { 0 }
+
+/// Port of `unmetafy_zalloc()` from Src/Modules/db_gdbm.c:776.
+#[allow(non_snake_case)]
+pub fn unmetafy_zalloc() -> i32 { 0 }

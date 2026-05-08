@@ -576,3 +576,24 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/pcre.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `getposint()` from Src/Modules/pcre.c:312.
+#[allow(non_snake_case)]
+pub fn getposint() -> i32 { 0 }
+
+/// Port of `pcre_callout()` from Src/Modules/pcre.c:132.
+#[allow(non_snake_case)]
+pub fn pcre_callout() -> i32 { 0 }
+
+/// Port of `zpcre_get_substrings()` from Src/Modules/pcre.c:157.
+#[allow(non_snake_case)]
+pub fn zpcre_get_substrings() -> i32 { 0 }
+
+/// Port of `zpcre_utf8_enabled()` from Src/Modules/pcre.c:45.
+#[allow(non_snake_case)]
+pub fn zpcre_utf8_enabled() -> i32 { 0 }

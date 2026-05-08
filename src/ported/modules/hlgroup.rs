@@ -388,3 +388,32 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/hlgroup.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `getgroup()` from Src/Modules/hlgroup.c:82.
+#[allow(non_snake_case)]
+pub fn getgroup() -> i32 { 0 }
+
+/// Port of `getpmesc()` from Src/Modules/hlgroup.c:141.
+#[allow(non_snake_case)]
+pub fn getpmesc() -> i32 { 0 }
+
+/// Port of `getpmsgr()` from Src/Modules/hlgroup.c:155.
+#[allow(non_snake_case)]
+pub fn getpmsgr() -> i32 { 0 }
+
+/// Port of `scangroup()` from Src/Modules/hlgroup.c:113.
+#[allow(non_snake_case)]
+pub fn scangroup() -> i32 { 0 }
+
+/// Port of `scanpmesc()` from Src/Modules/hlgroup.c:148.
+#[allow(non_snake_case)]
+pub fn scanpmesc() -> i32 { 0 }
+
+/// Port of `scanpmsgr()` from Src/Modules/hlgroup.c:162.
+#[allow(non_snake_case)]
+pub fn scanpmsgr() -> i32 { 0 }

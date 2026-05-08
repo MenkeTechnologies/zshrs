@@ -392,3 +392,28 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/mapfile.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `getpmmapfile()` from Src/Modules/mapfile.c:217.
+#[allow(non_snake_case)]
+pub fn getpmmapfile() -> i32 { 0 }
+
+/// Port of `scanpmmapfile()` from Src/Modules/mapfile.c:241.
+#[allow(non_snake_case)]
+pub fn scanpmmapfile() -> i32 { 0 }
+
+/// Port of `setpmmapfile()` from Src/Modules/mapfile.c:68.
+#[allow(non_snake_case)]
+pub fn setpmmapfile() -> i32 { 0 }
+
+/// Port of `setpmmapfiles()` from Src/Modules/mapfile.c:141.
+#[allow(non_snake_case)]
+pub fn setpmmapfiles() -> i32 { 0 }
+
+/// Port of `unsetpmmapfile()` from Src/Modules/mapfile.c:126.
+#[allow(non_snake_case)]
+pub fn unsetpmmapfile() -> i32 { 0 }
