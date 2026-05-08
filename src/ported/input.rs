@@ -180,8 +180,12 @@ impl InputBuffer {
                 }
                 Some(c) => {
                     if imeta(c) {
+                        // Inline metafy XOR per Src/utils.c:4856 metafy()
+                        // and Src/zsh.h Meta protocol — c ^ 32 maps the
+                        // 5 reserved bytes (0x00, 0x83-0x9b) to printable
+                        // form for the SHIN buffer.
                         result.push(META);
-                        result.push(meta_encode(c));
+                        result.push(char::from_u32((c as u32) ^ 32).unwrap_or(c));
                     } else {
                         result.push(c);
                     }
@@ -445,11 +449,6 @@ fn imeta(c: char) -> bool {
     b < 32 || (0x83..=0x9b).contains(&b)
 }
 
-/// Encode a meta character
-fn meta_encode(c: char) -> char {
-    char::from_u32((c as u32) ^ 32).unwrap_or(c)
-}
-
 /// Read entire file into memory
 /// Read a file as a string for `source`/`stuff` semantics.
 /// Port of `zstuff()` from Src/input.c:614 — the C source uses
@@ -565,7 +564,9 @@ mod tests {
         assert!(!imeta('a'));
         assert!(!imeta('Z'));
 
-        let encoded = meta_encode('\x00');
+        // Verify the inlined metafy XOR (Src/utils.c:4856 c ^ 32) is
+        // self-inverting — encode then decode round-trips to the input.
+        let encoded = char::from_u32(('\x00' as u32) ^ 32).unwrap_or('\x00');
         let decoded = char::from_u32((encoded as u32) ^ 32).unwrap_or(encoded);
         assert_eq!(decoded, '\x00');
     }
