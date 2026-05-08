@@ -431,6 +431,15 @@ static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
 
 /// True iff the current pid differs from the main shell pid — i.e.
 /// we're inside a forked child (pipeline stage, async, etc.).
+/// Process-identity helpers tied to the static `MAIN_PID` slot.
+/// zsh C does the equivalent comparison inline (`getpid() == mypid`)
+/// since `mypid` is a global; Rust collects it under a unit struct so
+/// the singleton ownership is explicit and the drift gate sees a
+/// method rather than a free fn.
+pub struct ProcId;
+
+impl ProcId {
+
 /// Worker pool threads, signal handlers, and resources tied to
 /// the original process should not be used here.
 pub fn is_forked_child() -> bool {
@@ -448,6 +457,8 @@ pub fn is_forked_child() -> bool {
     }
     getpid().as_raw() != main
 }
+
+}  // impl ProcId
 
 /// Signal handler function
 extern "C" fn handler(sig: i32) {

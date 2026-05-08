@@ -477,7 +477,7 @@ pub fn zshrs_main() {
     // detect pipeline children (POSIX: only the calling thread
     // survives fork, so worker pools and other thread-bound resources
     // must use serial fallbacks in the child).
-    let _ = zsh::signals::is_forked_child();
+    let _ = zsh::signals::ProcId::is_forked_child();
     let pid = std::process::id();
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())

@@ -26,7 +26,6 @@
 # Rayon worker pool means the signal handler may run in a forked
 # child and must skip touching parent state. Used by glob.rs's parallel
 # expansion path to disable post-fork worker thread access.
-is_forked_child
 
 # Color-distance / 256-palette mapping helpers — extracted from
 # nearcolor module's main lookup logic. zsh C does this inline.
