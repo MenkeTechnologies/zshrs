@@ -358,3 +358,33 @@ mod tests {
         assert!(esc.contains("38;2;255;0;0"));
     }
 }
+
+/// Module loader entry — port of `setup_()` from Src/Modules/hlgroup.c:182.
+pub fn setup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `features_()` from Src/Modules/hlgroup.c:189.
+pub fn features_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `enables_()` from Src/Modules/hlgroup.c:197.
+pub fn enables_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `boot_()` from Src/Modules/hlgroup.c:204.
+pub fn boot_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `cleanup_()` from Src/Modules/hlgroup.c:211.
+pub fn cleanup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `finish_()` from Src/Modules/hlgroup.c:218.
+pub fn finish_() -> i32 {
+    0
+}

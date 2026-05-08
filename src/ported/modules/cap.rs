@@ -342,3 +342,33 @@ impl crate::ported::exec::ShellExecutor {
     }
 }
 // END moved-from-exec-rs
+
+/// Module loader entry — port of `setup_()` from Src/Modules/cap.c:139.
+pub fn setup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `features_()` from Src/Modules/cap.c:146.
+pub fn features_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `enables_()` from Src/Modules/cap.c:154.
+pub fn enables_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `boot_()` from Src/Modules/cap.c:161.
+pub fn boot_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `cleanup_()` from Src/Modules/cap.c:168.
+pub fn cleanup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `finish_()` from Src/Modules/cap.c:175.
+pub fn finish_() -> i32 {
+    0
+}

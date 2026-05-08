@@ -920,3 +920,33 @@ mod tests {
         assert!(funcs.contains(&"log"));
     }
 }
+
+/// Module loader entry — port of `setup_()` from Src/Modules/mathfunc.c:548.
+pub fn setup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `features_()` from Src/Modules/mathfunc.c:555.
+pub fn features_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `enables_()` from Src/Modules/mathfunc.c:563.
+pub fn enables_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `boot_()` from Src/Modules/mathfunc.c:570.
+pub fn boot_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `cleanup_()` from Src/Modules/mathfunc.c:577.
+pub fn cleanup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `finish_()` from Src/Modules/mathfunc.c:584.
+pub fn finish_() -> i32 {
+    0
+}

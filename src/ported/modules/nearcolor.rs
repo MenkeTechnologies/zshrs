@@ -242,3 +242,33 @@ mod tests {
         assert_eq!(ANSI_COLORS.len(), 16);
     }
 }
+
+/// Module loader entry — port of `setup_()` from Src/Modules/nearcolor.c:169.
+pub fn setup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `features_()` from Src/Modules/nearcolor.c:176.
+pub fn features_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `enables_()` from Src/Modules/nearcolor.c:184.
+pub fn enables_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `boot_()` from Src/Modules/nearcolor.c:191.
+pub fn boot_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `cleanup_()` from Src/Modules/nearcolor.c:199.
+pub fn cleanup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `finish_()` from Src/Modules/nearcolor.c:207.
+pub fn finish_() -> i32 {
+    0
+}

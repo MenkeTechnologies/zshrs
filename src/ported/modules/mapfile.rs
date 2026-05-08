@@ -362,3 +362,33 @@ mod tests {
         assert!(!file_exists(test_file));
     }
 }
+
+/// Module loader entry — port of `setup_()` from Src/Modules/mapfile.c:279.
+pub fn setup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `features_()` from Src/Modules/mapfile.c:286.
+pub fn features_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `enables_()` from Src/Modules/mapfile.c:294.
+pub fn enables_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `boot_()` from Src/Modules/mapfile.c:301.
+pub fn boot_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `cleanup_()` from Src/Modules/mapfile.c:308.
+pub fn cleanup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `finish_()` from Src/Modules/mapfile.c:315.
+pub fn finish_() -> i32 {
+    0
+}

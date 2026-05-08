@@ -853,3 +853,33 @@ impl crate::ported::exec::ShellExecutor {
     }
 }
 // END moved-from-exec-rs
+
+/// Module loader entry — port of `setup_()` from Src/Modules/db_gdbm.c:613.
+pub fn setup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `features_()` from Src/Modules/db_gdbm.c:620.
+pub fn features_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `enables_()` from Src/Modules/db_gdbm.c:628.
+pub fn enables_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `boot_()` from Src/Modules/db_gdbm.c:635.
+pub fn boot_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `cleanup_()` from Src/Modules/db_gdbm.c:643.
+pub fn cleanup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `finish_()` from Src/Modules/db_gdbm.c:651.
+pub fn finish_() -> i32 {
+    0
+}

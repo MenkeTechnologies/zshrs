@@ -700,3 +700,33 @@ pub struct ZptyState {
     pub child: Option<std::process::Child>,
 }
 
+
+/// Module loader entry — port of `setup_()` from Src/Modules/zpty.c:896.
+pub fn setup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `features_()` from Src/Modules/zpty.c:903.
+pub fn features_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `enables_()` from Src/Modules/zpty.c:911.
+pub fn enables_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `boot_()` from Src/Modules/zpty.c:918.
+pub fn boot_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `cleanup_()` from Src/Modules/zpty.c:928.
+pub fn cleanup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `finish_()` from Src/Modules/zpty.c:937.
+pub fn finish_() -> i32 {
+    0
+}

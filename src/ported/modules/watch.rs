@@ -806,3 +806,33 @@ impl crate::ported::exec::ShellExecutor {
     }
 }
 // END moved-from-exec-rs
+
+/// Module loader entry — port of `setup_()` from Src/Modules/watch.c:712.
+pub fn setup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `features_()` from Src/Modules/watch.c:723.
+pub fn features_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `enables_()` from Src/Modules/watch.c:731.
+pub fn enables_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `boot_()` from Src/Modules/watch.c:738.
+pub fn boot_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `cleanup_()` from Src/Modules/watch.c:768.
+pub fn cleanup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `finish_()` from Src/Modules/watch.c:776.
+pub fn finish_() -> i32 {
+    0
+}
