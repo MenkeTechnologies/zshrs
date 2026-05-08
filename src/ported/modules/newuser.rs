@@ -136,7 +136,6 @@ mod tests {
         assert!(content.len() < default_zshrc().len());
     }
 
-    /// Port of `getrandom_buffer()` from `Src/Modules/newuser.c:68`.
     #[test]
     fn test_needs_newuser_setup_empty() {
         let temp = std::env::temp_dir().join("zsh_test_newuser_empty");
