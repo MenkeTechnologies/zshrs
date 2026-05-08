@@ -22,7 +22,7 @@ use crate::ported::exec::{
     self, ShellExecutor,
     with_executor, NumericRange,
 };
-use crate::ported::pattern::parse_pattern_flags_full;
+use crate::ported::pattern::PatternFlags;
 
 /// Sort specifier flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3596,7 +3596,7 @@ impl crate::ported::exec::ShellExecutor {
         //          uppercase pattern char is exact-match
         //   (#a<n>) — approximate match: up to <n> errors (Levenshtein
         //          distance, insert/delete/substitute)
-        let (pattern, case_insensitive, l_flag, approx_n, _) = parse_pattern_flags_full(pattern);
+        let (pattern, case_insensitive, l_flag, approx_n, _) = PatternFlags::parse(pattern);
 
         if let Some(n) = approx_n {
             // Inline (#aN) approximate-match — direct port of the
