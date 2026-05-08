@@ -257,6 +257,7 @@ pub fn tcp_close(sessions: &mut TcpSessions, fd: RawFd, force: bool) -> Result<(
 /// Port of the `getservbyname(3)` lookup `bin_ztcp()` does
 /// (Src/Modules/tcp.c:342) — also accepts a bare numeric
 /// string for direct port specification.
+impl TcpSession {
 pub fn resolve_port(service: &str) -> Option<u16> {
     if let Ok(port) = service.parse::<u16>() {
         return Some(port);
@@ -283,6 +284,7 @@ pub fn resolve_port(service: &str) -> Option<u16> {
         None
     }
 }
+}  // impl TcpSession
 
 /// Resolve hostname to IP address
 /// Resolve a hostname to an IP address.
@@ -338,7 +340,7 @@ pub fn bin_ztcp(
             return (1, "ztcp: -l requires an argument\n".to_string());
         }
 
-        let port = match resolve_port(args[0]) {
+        let port = match TcpSession::resolve_port(args[0]) {
             Some(p) => p,
             None => {
                 return (1, "ztcp: bad service name or port number\n".to_string());
@@ -485,7 +487,7 @@ pub fn bin_ztcp(
     } else {
         let host = args[0];
         let port = if args.len() > 1 {
-            resolve_port(args[1]).unwrap_or(23)
+            TcpSession::resolve_port(args[1]).unwrap_or(23)
         } else {
             23
         };
@@ -560,9 +562,9 @@ mod tests {
 
     #[test]
     fn test_resolve_port() {
-        assert_eq!(resolve_port("80"), Some(80));
-        assert_eq!(resolve_port("443"), Some(443));
-        assert_eq!(resolve_port("invalid"), None);
+        assert_eq!(TcpSession::resolve_port("80"), Some(80));
+        assert_eq!(TcpSession::resolve_port("443"), Some(443));
+        assert_eq!(TcpSession::resolve_port("invalid"), None);
     }
 
     #[test]
