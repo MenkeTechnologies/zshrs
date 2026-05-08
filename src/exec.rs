@@ -32,7 +32,6 @@ use std::collections::HashSet;
 // canonical-C-file Rust modules. Existing call-sites in this file (and
 // elsewhere) still reference these unqualified.
 #[allow(unused_imports)]
-pub(crate) use crate::ported::builtin::format_alias_kv;
 #[allow(unused_imports)]
 pub(crate) use crate::ported::glob::{expand_glob_alternation, find_top_level_tilde};
 #[allow(unused_imports)]

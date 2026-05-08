@@ -116,7 +116,6 @@ clone_shell
 color_to_code
 errno_from_name
 extract_ampm
-format_alias_kv
 format_function_body_zsh
 format_key_sequence
 format_limit_display
