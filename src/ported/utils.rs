@@ -1712,11 +1712,41 @@ pub fn privasserted() -> bool {
     false
 }
 
-/// Get the current working directory (port of findpwd/set_pwd_env)
-pub fn findpwd() -> String {
-    std::env::current_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| ".".to_string())
+/// Port of `findpwd()` from `Src/utils.c:792`.
+///
+/// ```c
+/// char *findpwd(char *s)
+/// {
+///     char *t;
+///     if (*s == '/')
+///         return xsymlink(s, 0);
+///     s = tricat((pwd[1]) ? pwd : "", "/", s);
+///     t = xsymlink(s, 0);
+///     zsfree(s);
+///     return t;
+/// }
+/// ```
+///
+/// Resolve `s` to its canonical form. Absolute paths route through
+/// `xsymlink` directly; relative paths get prefixed with the
+/// current `pwd` first.
+///
+/// Signature note: C takes `s: char *`. The previous Rust port had
+/// no parameter (returning the cwd) — completely wrong. New port
+/// matches C: takes `&str`, returns `Option<String>` (xsymlink can
+/// return NULL).
+pub fn findpwd(s: &str) -> Option<String> {
+    if s.starts_with('/') {
+        return xsymlink(s);
+    }
+    // C: pwd[1] checks if pwd starts with anything past the leading
+    // /; non-empty cwd means we use it, else "".
+    let pwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let prefix = if pwd.len() > 1 { pwd } else { String::new() };
+    let combined = format!("{}/{}", prefix, s);
+    xsymlink(&combined)
 }
 
 /// Print directory name with ~ substitution (from utils.c fprintdir)
@@ -2654,9 +2684,86 @@ pub fn dquotedztrdup(s: &str) -> String {
     result
 }
 
-/// Restore saved directory (from utils.c restoredir)
-pub fn restoredir(saved: &str) -> bool {
-    std::env::set_current_dir(saved).is_ok()
+/// Port of `restoredir()` from `Src/utils.c:7565`.
+///
+/// ```c
+/// int restoredir(struct dirsav *d) {
+///     if (d->dirname && *d->dirname == '/')
+///         return chdir(d->dirname);
+///     if (d->dirfd >= 0) {
+///         if (!fchdir(d->dirfd)) {
+///             if (!d->dirname) return 0;
+///             else if (chdir(d->dirname)) {
+///                 close(d->dirfd); d->dirfd = -1; err = -2;
+///             }
+///         } else {
+///             close(d->dirfd); d->dirfd = err = -1;
+///         }
+///     } else if (d->level > 0)
+///         err = upchdir(d->level);
+///     else if (d->level < 0) err = -1;
+///     // dev/ino integrity check ...
+/// }
+/// ```
+///
+/// Restore the cwd captured in `d`. Absolute `dirname` short-
+/// circuits to `chdir`. Otherwise tries `fchdir(dirfd)` (when
+/// supported) then falls through to `upchdir(level)` for the
+/// nested-fn-exit case. Returns 0 on success, non-zero on failure
+/// (matching C's int return).
+///
+/// Signature change: previous Rust port took `saved: &str` and
+/// returned `bool` — different shape from C, missed the dirfd /
+/// level / dev / ino fields entirely.
+pub fn restoredir(d: &mut DirSav) -> i32 {
+    use std::os::unix::fs::MetadataExt;
+
+    // C: if (d->dirname && *d->dirname == '/') return chdir(d->dirname);
+    if let Some(name) = d.dirname.as_ref() {
+        if name.starts_with('/') {
+            return match std::env::set_current_dir(name) {
+                Ok(_) => 0,
+                Err(_) => -1,
+            };
+        }
+    }
+    let mut err: i32 = 0;
+    // C: HAVE_FCHDIR path — try fchdir(dirfd) first.
+    #[cfg(unix)]
+    if d.dirfd >= 0 {
+        let rc = unsafe { libc::fchdir(d.dirfd) };
+        if rc == 0 {
+            if d.dirname.is_none() {
+                return 0;
+            }
+            let name = d.dirname.as_ref().unwrap();
+            if std::env::set_current_dir(name).is_err() {
+                unsafe { libc::close(d.dirfd) };
+                d.dirfd = -1;
+                err = -2;
+            }
+        } else {
+            unsafe { libc::close(d.dirfd) };
+            d.dirfd = -1;
+            err = -1;
+        }
+    } else if d.level > 0 {
+        // C: err = upchdir(d->level);
+        let _ = upchdir(d.level as usize);
+    } else if d.level < 0 {
+        err = -1;
+    }
+    // C: dev/ino integrity check after the chdir/fchdir.
+    if (d.dev != 0 || d.ino != 0) && err == 0 {
+        if let Ok(meta) = std::fs::metadata(".") {
+            if meta.ino() != d.ino || meta.dev() != d.dev {
+                err = -1;
+            }
+        } else {
+            err = -1;
+        }
+    }
+    err
 }
 
 /// Convert float for output (from utils.c convfloat)
@@ -3132,9 +3239,22 @@ pub fn makebangspecial(_yes: bool) {
     // Character type table manipulation - handled by the lexer in Rust
 }
 
-/// Check if wide character is blank (from utils.c wcsiblank)
+/// Port of `wcsiblank()` from `Src/utils.c:4302`.
+///
+/// ```c
+/// mod_export int wcsiblank(wint_t wc) {
+///     if (iswspace(wc) && wc != L'\n')
+///         return 1;
+///     return 0;
+/// }
+/// ```
+///
+/// "wide-character version of the iblank() macro" — true for any
+/// whitespace EXCEPT newline. The previous Rust port included
+/// newline (since `c.is_whitespace()` returns true for '\n') —
+/// wrong for callers that use this to find token boundaries.
 pub fn wcsiblank(c: char) -> bool {
-    c == ' ' || c == '\t' || c.is_whitespace()
+    c.is_whitespace() && c != '\n'
 }
 
 /// Get wide character type (from utils.c wcsitype)
@@ -3209,9 +3329,34 @@ pub fn unmeta_one(s: &str) -> (char, usize) {
     }
 }
 
-/// Get string length counting to end pointer (from utils.c ztrlenend)
+/// Port of `ztrlenend()` from `Src/utils.c:5162`.
+///
+/// ```c
+/// for (l = 0; s < eptr; l++) {
+///     if (*s++ == Meta) s++;  // skip past Meta-escaped pair
+/// }
+/// return l;
+/// ```
+///
+/// Count the unmetafied character length from `s` up to `end`
+/// bytes. Each Meta-escaped pair counts as 1 character.
+/// Previous Rust port called `chars().count()` which counts UTF-8
+/// codepoints, not byte-walked Meta-pairs — wrong semantics.
 pub fn ztrlenend(s: &str, end: usize) -> usize {
-    s[..end.min(s.len())].chars().count()
+    let bytes = s.as_bytes();
+    let cap = end.min(bytes.len());
+    let mut l = 0;
+    let mut i = 0;
+    while i < cap {
+        if bytes[i] == Meta {
+            // Meta sentinel + escaped byte = 1 visible char.
+            i += 2;
+        } else {
+            i += 1;
+        }
+        l += 1;
+    }
+    l
 }
 
 /// Multibyte metachar length with conversion (from utils.c mb_metacharlenconv_r)
@@ -3296,21 +3441,42 @@ pub fn dquotedzputs(s: &str) -> String {
     result
 }
 
-/// Initialize directory save struct (from utils.c init_dirsav)
+/// Port of `struct dirsav` from `Src/zsh.h:1159`.
+///
+/// ```c
+/// struct dirsav {
+///     int dirfd, level;
+///     char *dirname;
+///     dev_t dev;
+///     ino_t ino;
+/// };
+/// ```
+///
+/// The previous Rust port omitted `dev` and `ino` which the
+/// `restoredir` integrity check (utils.c:7592) reads. Adding them
+/// so callers can verify the saved-and-restored cwd matches the
+/// captured device + inode.
 #[derive(Debug, Clone)]
 pub struct DirSav {
     pub dirfd: i32,
-    pub dirname: Option<String>,
     pub level: i32,
+    pub dirname: Option<String>,
+    pub dev: u64,
+    pub ino: u64,
 }
 
+/// Port of `init_dirsav()` from `Src/utils.c:7468`. Initialize a
+/// `DirSav` struct to its empty/default state. C body memset's
+/// the fields to 0 (dirfd to -1).
 pub fn init_dirsav() -> DirSav {
     DirSav {
         dirfd: -1,
+        level: 0,
         dirname: std::env::current_dir()
             .ok()
             .map(|p| p.to_string_lossy().to_string()),
-        level: 0,
+        dev: 0,
+        ino: 0,
     }
 }
 
