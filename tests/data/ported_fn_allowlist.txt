@@ -57,6 +57,5 @@
 # utils.rs Rust-side stdlib wrappers and zshrs-original helpers
 # kept for ergonomics — zsh C inlines these or uses macros.
 
-format_function_body_zsh
 
 zformat_recurse
