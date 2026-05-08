@@ -28,10 +28,6 @@ traps
 # child and must skip touching parent state. Used by glob.rs's parallel
 # expansion path to disable post-fork worker thread access.
 is_forked_child
-# Helper extracted from `printjob` (Src/jobs.c) status-formatting
-# inline block. Used by 2 sites in jobs.rs printjob; inlining
-# would double the 25-line status-decode block.
-format_process_status
 # Inner numeric-compare branch of zstrcmp/eltpcmp — direct port
 # of src/zsh/Src/sort.c:137-172 (the `if (sortnumeric)` block).
 # 100+ lines; inlining into zstrcmp would make it unwieldy.

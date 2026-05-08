@@ -678,34 +678,6 @@ pub fn sigmsg(sig: i32) -> &'static str {
     }
 }
 
-/// Format process status for display (from jobs.c printjob lines 1136-1400)
-pub fn format_process_status(status: i32) -> String {
-    if status == SP_RUNNING {
-        "running".to_string()
-    } else if (status & 0x7f) == 0 {
-        // Exited normally
-        let code = (status >> 8) & 0xff;
-        if code == 0 {
-            "done".to_string()
-        } else {
-            format!("exit {}", code)
-        }
-    } else if (status & 0xff) == 0x7f {
-        // Stopped
-        let sig = (status >> 8) & 0xff;
-        format!("suspended ({})", sigmsg(sig))
-    } else {
-        // Signaled
-        let sig = status & 0x7f;
-        let core = (status >> 7) & 1;
-        if core != 0 {
-            format!("{} (core dumped)", sigmsg(sig))
-        } else {
-            sigmsg(sig).to_string()
-        }
-    }
-}
-
 /// Background status tracking (from jobs.c bgstatus)
 /// Cached background-job status (for `wait`/$? lookup).
 /// Port of `update_bg_job()` (Src/jobs.c:677) bookkeeping.
@@ -1367,6 +1339,33 @@ pub fn printjob(
     cur_job: Option<usize>,
     prev_job: Option<usize>,
 ) -> String {
+    // Inline process-status formatter — mirrors the inline status-decode
+    // block at Src/jobs.c:1136-1400 inside printjob itself. SP_RUNNING
+    // → "running"; WIFEXITED → "done" / "exit N"; WIFSTOPPED → "suspended
+    // (sig)"; WIFSIGNALED → "sig" + " (core dumped)" if WCOREDUMP.
+    let fmt_proc_status = |status: i32| -> String {
+        if status == SP_RUNNING {
+            "running".to_string()
+        } else if (status & 0x7f) == 0 {
+            let code = (status >> 8) & 0xff;
+            if code == 0 {
+                "done".to_string()
+            } else {
+                format!("exit {}", code)
+            }
+        } else if (status & 0xff) == 0x7f {
+            let sig = (status >> 8) & 0xff;
+            format!("suspended ({})", sigmsg(sig))
+        } else {
+            let sig = status & 0x7f;
+            let core = (status >> 7) & 1;
+            if core != 0 {
+                format!("{} (core dumped)", sigmsg(sig))
+            } else {
+                sigmsg(sig).to_string()
+            }
+        }
+    };
     let marker = if Some(job_num) == cur_job {
         '+'
     } else if Some(job_num) == prev_job {
@@ -1377,7 +1376,7 @@ pub fn printjob(
 
     let status_str = if job.is_done() {
         if let Some(last) = job.procs.last() {
-            format_process_status(last.status)
+            fmt_proc_status(last.status)
         } else {
             "done".to_string()
         }
@@ -1390,7 +1389,7 @@ pub fn printjob(
     if long_format {
         let mut lines = Vec::new();
         for (i, proc) in job.procs.iter().enumerate() {
-            let pstatus = format_process_status(proc.status);
+            let pstatus = fmt_proc_status(proc.status);
             if i == 0 {
                 lines.push(format!(
                     "[{}]  {} {:>5} {:16}  {}",
