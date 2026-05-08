@@ -145,6 +145,21 @@ next_pair_lock
 terminal_size
 cbreak
 
+# curses.rs additions for the validation-pipeline rewrite. C
+# dereferences module-static ints/HashTables directly; Rust port
+# wraps each in OnceLock<Mutex<…>> with these get-or-init helpers.
+# zccmd_notavail and sgr_for_attrs substitute libncurses calls
+# (`wattrset`, the curses-internal subcommand stubs) since the
+# zshrs build doesn't link libncurses.
+order_lock
+errno_lock
+colorpairs_lock
+next_cp_lock
+zc_errno_get
+zc_errno_set
+zccmd_notavail
+sgr_for_attrs
+
 # math.rs — MathState lifecycle / accessors. The struct mirrors the
 # saved-and-restored locals C `mathevall()` (math.c:367) keeps across
 # recursive entry; in C they are stack locals + module-statics so no
