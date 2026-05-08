@@ -491,6 +491,29 @@ fn test_subscript_flag_hash_neg_num_xor_semantics() {
     assert_eq!(output.trim(), "[1 1]:[1]", "got: {output:?}");
 }
 
+#[test]
+fn test_subscript_flag_K_hash_no_glob_on_keys() {
+    // C params.c:1707-1709 sets pprog=NULL when keymatch (k/K), so
+    // hash key lookup is EXACT — no glob. Verified with real zsh:
+    //   /bin/zsh -c 'typeset -A h=(alpha 1 beta 2);
+    //                print "[${h[(K)*]}]:[${h[(K)alpha*]}]"'
+    //   []:[]
+    let (_, output, _) = run_zshrs(
+        r#"typeset -A h=(alpha 1 beta 2 gamma 3); print "[${h[(K)*]}]:[${h[(K)alpha*]}]""#,
+    );
+    assert_eq!(output.trim(), "[]:[]", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_flag_k_hash_exact_match_only() {
+    // (k)alpha returns value for exact key "alpha"; (k)* returns
+    // empty (no key literally named "*").
+    let (_, output, _) = run_zshrs(
+        r#"typeset -A h=(alpha 1 beta 2 gamma 3); print "[${h[(k)alpha]}]:[${h[(k)*]}]""#,
+    );
+    assert_eq!(output.trim(), "[1]:[]", "got: {output:?}");
+}
+
 // ---------------------------------------------------------------------------
 // `typeset -A` two-statement assoc init: declare then array-literal-assign
 // ---------------------------------------------------------------------------
