@@ -149,7 +149,7 @@ pub fn selectlist(items: &[String], prompt: &str, columns: usize) -> String {
         columns
     } else {
         // Auto-detect columns based on terminal width
-        let term_width = crate::utils::get_term_width();
+        let term_width = crate::utils::adjustcolumns();
         (term_width / item_width.max(1)).max(1)
     };
 

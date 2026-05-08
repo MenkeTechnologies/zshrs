@@ -195,7 +195,7 @@ impl RefreshState {
     /// — terminal size queried once, both video buffers allocated,
     /// `need_full_redraw` set so the first paint touches every cell.
     pub fn new() -> Self {
-        let (cols, rows) = (crate::ported::utils::get_term_width(), crate::ported::utils::get_term_height());
+        let (cols, rows) = (crate::ported::utils::adjustcolumns(), crate::ported::utils::adjustlines());
         RefreshState {
             columns: cols,
             lines: rows,
@@ -212,7 +212,7 @@ impl RefreshState {
     /// after SIGWINCH (the C source calls it from
     /// `adjustwinsize()` in Src/init.c).
     pub fn reset_video(&mut self) {
-        let (cols, rows) = (crate::ported::utils::get_term_width(), crate::ported::utils::get_term_height());
+        let (cols, rows) = (crate::ported::utils::adjustcolumns(), crate::ported::utils::adjustlines());
         self.columns = cols;
         self.lines = rows;
         self.old_video = Some(VideoBuffer::new(cols, rows));
@@ -255,7 +255,7 @@ impl Zle {
         let stdout = io::stdout();
         let mut handle = stdout.lock();
 
-        let (cols, _rows) = (crate::ported::utils::get_term_width(), crate::ported::utils::get_term_height());
+        let (cols, _rows) = (crate::ported::utils::adjustcolumns(), crate::ported::utils::adjustlines());
 
         let prompt = self.prompt().to_string();
         let rprompt = self.rprompt().to_string();

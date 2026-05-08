@@ -141,11 +141,13 @@ pub fn zclose(fd: i32) {
     }
 }
 
-/// Get terminal width
-/// Get terminal column count.
-/// Port of the `TIOCGWINSZ` lookup `setupvals()` (Src/init.c)
-/// uses to seed `$COLUMNS`.
-pub fn get_term_width() -> usize {
+/// Port of `adjustcolumns()` from Src/utils.c:1856 — TIOCGWINSZ
+/// lookup that seeds `$COLUMNS`. The C variant updates the global
+/// `zterm_columns` and returns whether it changed; this Rust port
+/// returns the column count directly. Falls back to `$COLUMNS` env
+/// var, then 80, mirroring the C source's `tccolumns > 0 ? tccolumns : 80`
+/// fallback at line 1869.
+pub fn adjustcolumns() -> usize {
     #[cfg(unix)]
     {
         unsafe {
@@ -161,11 +163,13 @@ pub fn get_term_width() -> usize {
         .unwrap_or(80)
 }
 
-/// Get terminal height
-/// Get terminal row count.
-/// Port of the `TIOCGWINSZ` lookup `setupvals()` (Src/init.c)
-/// uses to seed `$LINES`.
-pub fn get_term_height() -> usize {
+/// Port of `adjustlines()` from Src/utils.c:1831 — TIOCGWINSZ
+/// lookup that seeds `$LINES`. The C variant updates the global
+/// `zterm_lines` and returns whether it changed; this Rust port
+/// returns the row count directly. Falls back to `$LINES` env var,
+/// then 24, mirroring the C source's `tclines > 0 ? tclines : 24`
+/// fallback at line 1844.
+pub fn adjustlines() -> usize {
     #[cfg(unix)]
     {
         unsafe {
@@ -1165,9 +1169,7 @@ pub fn lchdir(path: &str) -> io::Result<()> {
 
 /// Adjust terminal window size (from utils.c adjustwinsize)
 pub fn adjustwinsize() -> (usize, usize) {
-    let cols = get_term_width();
-    let rows = get_term_height();
-    (cols, rows)
+    (adjustcolumns(), adjustlines())
 }
 
 /// Spelling correction distance (from utils.c spdist, already exists but adding spckword)
@@ -1897,16 +1899,6 @@ pub fn gettyinfo(fd: i32) -> Option<libc::termios> {
 #[cfg(unix)]
 pub fn settyinfo(fd: i32, ti: &libc::termios) -> bool {
     unsafe { libc::tcsetattr(fd, libc::TCSADRAIN, ti) == 0 }
-}
-
-/// Adjust terminal lines (from utils.c adjustlines)
-pub fn adjustlines() -> usize {
-    get_term_height()
-}
-
-/// Adjust terminal columns (from utils.c adjustcolumns)
-pub fn adjustcolumns() -> usize {
-    get_term_width()
 }
 
 /// Check fd table for valid file descriptors (from utils.c check_fd_table)
