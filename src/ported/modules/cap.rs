@@ -1,17 +1,33 @@
-//! Capabilities module - port of Modules/cap.c
+//! POSIX.1e capabilities — port of `Src/Modules/cap.c`.
 //!
-//! Provides POSIX.1e capability manipulation via cap, getcap, setcap builtins.
-//! Requires the `libcap` feature and libcap on Linux
-//! (`apt install libcap-dev` / `dnf install libcap-devel`).
+//! Implements `cap` / `getcap` / `setcap`. Linux-only (libcap);
+//! macOS / BSD have no POSIX.1e capability sets — the stubs return
+//! Unsupported.
+//!
+//! Structure mirrors the C source line-by-line:
+//!   - `bin_cap` (cap.c:36)
+//!   - `bin_getcap` (cap.c:68)
+//!   - `bin_setcap` (cap.c:91)
+//!   - `static struct builtin bintab[]` (cap.c:123)
+//!   - module entries (cap.c:139-178)
 
-use std::io;
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
 
-// libcap FFI — these live in libcap (-lcap), not in libc.
+use crate::ported::module::{
+    featuresarray, handlefeatures, setfeatureenables, Builtin, Features, Module,
+};
+use crate::ported::utils::zwarnnam;
+
+// =====================================================================
+// libcap FFI — declared in `<sys/capability.h>` (libcap), not libc.
+// =====================================================================
+
 #[cfg(all(target_os = "linux", feature = "libcap"))]
 mod ffi {
     use libc::{c_char, c_int, c_void, ssize_t};
 
-    /// Opaque capability state (cap_t is a pointer to this).
+    /// `cap_t` is an opaque pointer in libcap.
     pub type CapT = *mut c_void;
 
     #[link(name = "cap")]
@@ -26,349 +42,365 @@ mod ffi {
     }
 }
 
-/// Get the calling process's POSIX.1e capability set as a text string.
-/// Port of the `cap_get_proc()` + `cap_to_text()` pair the C source's
-/// `bin_cap()` (Src/Modules/cap.c:36) calls when invoked with no
-/// arguments — backs `cap` with no args.
+// =====================================================================
+// Port of `bin_cap()` from Src/Modules/cap.c:36.
+// =====================================================================
+
+/// Port of `bin_cap()` from `Src/Modules/cap.c:36`.
+///
+/// `cap [STRING]`: with `STRING`, parse via `cap_from_text` and
+/// install via `cap_set_proc`; without args, print the current
+/// process's capability set.
 #[cfg(all(target_os = "linux", feature = "libcap"))]
-pub fn cap_get_proc() -> io::Result<String> {
-    use std::ffi::CStr;
+pub(crate) fn bin_cap(nam: &str, argv: &[String], _ops_func: i32) -> i32 {
+    use std::ffi::{CStr, CString};
 
-    unsafe {
-        let caps = ffi::cap_get_proc();
-        if caps.is_null() {
-            return Err(io::Error::last_os_error());
-        }
-
-        let text = ffi::cap_to_text(caps, std::ptr::null_mut());
-        if text.is_null() {
+    let mut ret = 0;
+    if let Some(arg0) = argv.first() {
+        // C: caps = cap_from_text(*argv);
+        let arg_c = match CString::new(arg0.as_str()) {
+            Ok(c) => c,
+            Err(_) => {
+                zwarnnam(nam, "invalid capability string");
+                return 1;
+            }
+        };
+        unsafe {
+            let caps = ffi::cap_from_text(arg_c.as_ptr());
+            if caps.is_null() {
+                zwarnnam(nam, "invalid capability string");
+                return 1;
+            }
+            // C: if (cap_set_proc(caps)) { zwarnnam(...); ret = 1; }
+            if ffi::cap_set_proc(caps) != 0 {
+                zwarnnam(
+                    nam,
+                    &format!("can't change capabilities: {}", std::io::Error::last_os_error()),
+                );
+                ret = 1;
+            }
             ffi::cap_free(caps);
-            return Err(io::Error::last_os_error());
         }
-
-        let result = CStr::from_ptr(text).to_string_lossy().into_owned();
-        ffi::cap_free(text as *mut libc::c_void);
-        ffi::cap_free(caps);
-
-        Ok(result)
+    } else {
+        // C: caps = cap_get_proc(); if (caps) result = cap_to_text(caps, &length);
+        unsafe {
+            let caps = ffi::cap_get_proc();
+            let result = if !caps.is_null() {
+                ffi::cap_to_text(caps, std::ptr::null_mut())
+            } else {
+                std::ptr::null_mut()
+            };
+            if caps.is_null() || result.is_null() {
+                zwarnnam(
+                    nam,
+                    &format!("can't get capabilities: {}", std::io::Error::last_os_error()),
+                );
+                ret = 1;
+            } else {
+                let s = CStr::from_ptr(result).to_string_lossy();
+                println!("{}", s);
+            }
+            if !result.is_null() {
+                ffi::cap_free(result as *mut libc::c_void);
+            }
+            if !caps.is_null() {
+                ffi::cap_free(caps);
+            }
+        }
     }
+    ret
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/cap.c`.
+/// Port of `bin_cap()` — non-Linux stub. C uses `bin_notavail`
+/// (cap.c:115); we mirror the behaviour by emitting the same
+/// "not available on this host" error.
 #[cfg(not(all(target_os = "linux", feature = "libcap")))]
-pub fn cap_get_proc() -> io::Result<String> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "capabilities not supported (build with --features libcap on Linux)",
-    ))
+pub(crate) fn bin_cap(nam: &str, _argv: &[String], _ops_func: i32) -> i32 {
+    zwarnnam(nam, "not available on this host");
+    1
 }
 
-/// Set the calling process's POSIX.1e capability set from a text
-/// representation.
-/// Port of the `cap_from_text()` + `cap_set_proc()` pair the C
-/// source's `bin_cap()` (Src/Modules/cap.c:36) calls when invoked
-/// with one argument — backs `cap STRING`.
+// =====================================================================
+// Port of `bin_getcap()` from Src/Modules/cap.c:68.
+// =====================================================================
+
+/// Port of `bin_getcap()` from `Src/Modules/cap.c:68`.
+///
+/// `getcap FILE...`: print each file's capability set as
+/// `FILE CAPS`. C bails on the first error but iterates the rest;
+/// the Rust port mirrors that exact loop.
 #[cfg(all(target_os = "linux", feature = "libcap"))]
-pub fn cap_set_proc(cap_string: &str) -> io::Result<()> {
+pub(crate) fn bin_getcap(nam: &str, argv: &[String], _ops_func: i32) -> i32 {
+    use std::ffi::{CStr, CString};
+
+    let mut ret = 0;
+    // C: do { ... } while(*++argv);
+    for file in argv {
+        let path_c = match CString::new(file.as_str()) {
+            Ok(c) => c,
+            Err(_) => {
+                zwarnnam(nam, &format!("{}: invalid path", file));
+                ret = 1;
+                continue;
+            }
+        };
+        unsafe {
+            let caps = ffi::cap_get_file(path_c.as_ptr());
+            let result = if !caps.is_null() {
+                ffi::cap_to_text(caps, std::ptr::null_mut())
+            } else {
+                std::ptr::null_mut()
+            };
+            if caps.is_null() || result.is_null() {
+                zwarnnam(nam, &format!("{}: {}", file, std::io::Error::last_os_error()));
+                ret = 1;
+            } else {
+                let s = CStr::from_ptr(result).to_string_lossy();
+                println!("{} {}", file, s);
+            }
+            if !result.is_null() {
+                ffi::cap_free(result as *mut libc::c_void);
+            }
+            if !caps.is_null() {
+                ffi::cap_free(caps);
+            }
+        }
+    }
+    ret
+}
+
+/// Port of `bin_getcap()` — non-Linux stub.
+#[cfg(not(all(target_os = "linux", feature = "libcap")))]
+pub(crate) fn bin_getcap(nam: &str, _argv: &[String], _ops_func: i32) -> i32 {
+    zwarnnam(nam, "not available on this host");
+    1
+}
+
+// =====================================================================
+// Port of `bin_setcap()` from Src/Modules/cap.c:91.
+// =====================================================================
+
+/// Port of `bin_setcap()` from `Src/Modules/cap.c:91`.
+///
+/// `setcap STRING FILE...`: parse `STRING` via `cap_from_text`, then
+/// apply via `cap_set_file` to each remaining file argument. Mirrors
+/// C's loop: free `caps` once at end, advance `argv` per iteration.
+#[cfg(all(target_os = "linux", feature = "libcap"))]
+pub(crate) fn bin_setcap(nam: &str, argv: &[String], _ops_func: i32) -> i32 {
     use std::ffi::CString;
 
-    let cap_c = CString::new(cap_string)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid capability string"))?;
-
+    let mut ret = 0;
+    let cap_str = match argv.first() {
+        Some(s) => s.as_str(),
+        None => {
+            zwarnnam(nam, "invalid capability string");
+            return 1;
+        }
+    };
+    let cap_c = match CString::new(cap_str) {
+        Ok(c) => c,
+        Err(_) => {
+            zwarnnam(nam, "invalid capability string");
+            return 1;
+        }
+    };
     unsafe {
         let caps = ffi::cap_from_text(cap_c.as_ptr());
         if caps.is_null() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid capability string",
-            ));
+            zwarnnam(nam, "invalid capability string");
+            return 1;
         }
-
-        let result = ffi::cap_set_proc(caps);
-        ffi::cap_free(caps);
-
-        if result != 0 {
-            return Err(io::Error::last_os_error());
-        }
-    }
-
-    Ok(())
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/cap.c`.
-#[cfg(not(all(target_os = "linux", feature = "libcap")))]
-pub fn cap_set_proc(_cap_string: &str) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "capabilities not supported (build with --features libcap on Linux)",
-    ))
-}
-
-/// Get a file's POSIX.1e capability set as a text string.
-/// Port of the `cap_get_file()` + `cap_to_text()` pair the C
-/// source's `bin_getcap()` (Src/Modules/cap.c:68) calls per file
-/// argument — backs `getcap FILE...`.
-#[cfg(all(target_os = "linux", feature = "libcap"))]
-pub fn cap_get_file(path: &str) -> io::Result<String> {
-    use std::ffi::{CStr, CString};
-
-    let path_c = CString::new(path)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
-
-    unsafe {
-        let caps = ffi::cap_get_file(path_c.as_ptr());
-        if caps.is_null() {
-            return Err(io::Error::last_os_error());
-        }
-
-        let text = ffi::cap_to_text(caps, std::ptr::null_mut());
-        if text.is_null() {
-            ffi::cap_free(caps);
-            return Err(io::Error::last_os_error());
-        }
-
-        let result = CStr::from_ptr(text).to_string_lossy().into_owned();
-        ffi::cap_free(text as *mut libc::c_void);
-        ffi::cap_free(caps);
-
-        Ok(result)
-    }
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/cap.c`.
-#[cfg(not(all(target_os = "linux", feature = "libcap")))]
-pub fn cap_get_file(_path: &str) -> io::Result<String> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "capabilities not supported (build with --features libcap on Linux)",
-    ))
-}
-
-/// `cap` builtin entry point.
-/// Port of `bin_cap()` from Src/Modules/cap.c:36. With no args
-/// prints `cap_get_proc()`; with one arg calls `cap_set_proc()` on
-/// the parsed capability string.
-pub fn bin_cap(args: &[&str]) -> (i32, String) {
-    if args.is_empty() {
-        match cap_get_proc() {
-            Ok(caps) => (0, format!("{}\n", caps)),
-            Err(e) => (1, format!("cap: {}\n", e)),
-        }
-    } else {
-        match cap_set_proc(args[0]) {
-            Ok(()) => (0, String::new()),
-            Err(e) => (1, format!("cap: {}\n", e)),
-        }
-    }
-}
-
-/// `getcap` builtin entry point.
-/// Port of `bin_getcap()` from Src/Modules/cap.c:68. Reports each
-/// argument's file capabilities; missing-args case matches the C
-/// source's "file required" error.
-pub fn bin_getcap(args: &[&str]) -> (i32, String) {
-    if args.is_empty() {
-        return (1, "getcap: file required\n".to_string());
-    }
-
-    let mut output = String::new();
-    let mut status = 0;
-
-    for file in args {
-        match cap_get_file(file) {
-            Ok(caps) => output.push_str(&format!("{} {}\n", file, caps)),
-            Err(e) => {
-                output.push_str(&format!("getcap: {}: {}\n", file, e));
-                status = 1;
-            }
-        }
-    }
-
-    (status, output)
-}
-
-/// `setcap` builtin entry point.
-/// Port of `bin_setcap()` from Src/Modules/cap.c:91. Applies the
-/// shared capability string (first arg) to every remaining file
-/// argument. The per-file `cap_from_text()` + `cap_set_file()` +
-/// `cap_free()` triple is inlined per the C source's loop body —
-/// no helper function in C, no helper function here.
-pub fn bin_setcap(args: &[&str]) -> (i32, String) {
-    if args.len() < 2 {
-        return (
-            1,
-            "setcap: capability string and file required\n".to_string(),
-        );
-    }
-
-    let cap_string = args[0];
-    let mut status = 0;
-    let mut output = String::new();
-
-    for file in &args[1..] {
-        // Per-file body is the inlined `cap_from_text` /
-        // `cap_set_file` / `cap_free` triple from the C source's
-        // loop at Src/Modules/cap.c:91. The Linux+libcap path
-        // calls real libcap; everything else returns Unsupported.
-        let result: io::Result<()> = {
-            #[cfg(all(target_os = "linux", feature = "libcap"))]
-            {
-                use std::ffi::CString;
-                let cap_c = CString::new(cap_string).map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "invalid capability string")
-                });
-                let path_c = CString::new(*file).map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "invalid path")
-                });
-                match (cap_c, path_c) {
-                    (Ok(cap_c), Ok(path_c)) => unsafe {
-                        let caps = ffi::cap_from_text(cap_c.as_ptr());
-                        if caps.is_null() {
-                            Err(io::Error::new(
-                                io::ErrorKind::InvalidInput,
-                                "invalid capability string",
-                            ))
-                        } else {
-                            let rc = ffi::cap_set_file(path_c.as_ptr(), caps);
-                            ffi::cap_free(caps);
-                            if rc != 0 {
-                                Err(io::Error::last_os_error())
-                            } else {
-                                Ok(())
-                            }
-                        }
-                    },
-                    (Err(e), _) | (_, Err(e)) => Err(e),
+        // C: do { if(cap_set_file(...)) { zwarnnam; ret = 1; } } while(*++argv);
+        for file in &argv[1..] {
+            let path_c = match CString::new(file.as_str()) {
+                Ok(c) => c,
+                Err(_) => {
+                    zwarnnam(nam, &format!("{}: invalid path", file));
+                    ret = 1;
+                    continue;
                 }
+            };
+            if ffi::cap_set_file(path_c.as_ptr(), caps) != 0 {
+                zwarnnam(nam, &format!("{}: {}", file, std::io::Error::last_os_error()));
+                ret = 1;
             }
-            #[cfg(not(all(target_os = "linux", feature = "libcap")))]
-            {
-                Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "capabilities not supported (build with --features libcap on Linux)",
-                ))
-            }
-        };
-
-        if let Err(e) = result {
-            output.push_str(&format!("setcap: {}: {}\n", file, e));
-            status = 1;
         }
+        ffi::cap_free(caps);
+    }
+    ret
+}
+
+/// Port of `bin_setcap()` — non-Linux stub.
+#[cfg(not(all(target_os = "linux", feature = "libcap")))]
+pub(crate) fn bin_setcap(nam: &str, _argv: &[String], _ops_func: i32) -> i32 {
+    zwarnnam(nam, "not available on this host");
+    1
+}
+
+// =====================================================================
+// Module paraphernalia (cap.c:123-135).
+// =====================================================================
+
+/// Port of `static struct builtin bintab[]` from `cap.c:123`.
+///
+/// ```c
+/// BUILTIN("cap",    0, bin_cap,    0,  1, 0, NULL, NULL),
+/// BUILTIN("getcap", 0, bin_getcap, 1, -1, 0, NULL, NULL),
+/// BUILTIN("setcap", 0, bin_setcap, 2, -1, 0, NULL, NULL),
+/// ```
+static BINTAB: &[Builtin] = &[
+    Builtin {
+        name: "cap",
+        flags: 0,
+        minargs: 0,
+        maxargs: 1,
+        funcid: 0,
+        optstr: None,
+        defopts: None,
+    },
+    Builtin {
+        name: "getcap",
+        flags: 0,
+        minargs: 1,
+        maxargs: -1,
+        funcid: 0,
+        optstr: None,
+        defopts: None,
+    },
+    Builtin {
+        name: "setcap",
+        flags: 0,
+        minargs: 2,
+        maxargs: -1,
+        funcid: 0,
+        optstr: None,
+        defopts: None,
+    },
+];
+
+/// Port of `static struct features module_features` from `cap.c:129`.
+static MODULE_FEATURES: Features = Features {
+    bn_list: BINTAB,
+    cd_list: &[],
+    mf_list: &[],
+    pd_list: &[],
+    n_abstract: 0,
+};
+
+// =====================================================================
+// Module entry points (cap.c:139-178).
+// =====================================================================
+
+/// Port of `setup_()` from `Src/Modules/cap.c:139`. C body: `return 0;`.
+pub fn setup_(_m: &Module) -> i32 {
+    0
+}
+
+/// Port of `features_()` from `Src/Modules/cap.c:146`.
+///
+/// ```c
+/// *features = featuresarray(m, &module_features);
+/// return 0;
+/// ```
+pub fn features_(m: &Module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, &MODULE_FEATURES);
+    0
+}
+
+/// Port of `enables_()` from `Src/Modules/cap.c:154`.
+///
+/// ```c
+/// return handlefeatures(m, &module_features, enables);
+/// ```
+pub fn enables_(m: &Module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, &MODULE_FEATURES, enables)
+}
+
+/// Port of `boot_()` from `Src/Modules/cap.c:161`. C body: `return 0;`.
+pub fn boot_(_m: &Module) -> i32 {
+    0
+}
+
+/// Port of `cleanup_()` from `Src/Modules/cap.c:168`.
+///
+/// ```c
+/// return setfeatureenables(m, &module_features, NULL);
+/// ```
+pub fn cleanup_(m: &Module) -> i32 {
+    setfeatureenables(m, &MODULE_FEATURES, None)
+}
+
+/// Port of `finish_()` from `Src/Modules/cap.c:175`. C body: `return 0;`.
+pub fn finish_(_m: &Module) -> i32 {
+    0
+}
+
+// =====================================================================
+// ShellExecutor bridge — sanctioned PORT.md exception. Wires the
+// internal builtin dispatcher to the canonical free fns above.
+// =====================================================================
+
+impl crate::ported::exec::ShellExecutor {
+    /// `cap` builtin entry. Bridge to `bin_cap()` above.
+    pub(crate) fn bin_cap(&self, args: &[String]) -> i32 {
+        bin_cap("cap", args, 0)
     }
 
-    (status, output)
+    /// `getcap` builtin entry. Bridge to `bin_getcap()` above.
+    pub(crate) fn bin_getcap(&self, args: &[String]) -> i32 {
+        bin_getcap("getcap", args, 0)
+    }
+
+    /// `setcap` builtin entry. Bridge to `bin_setcap()` above.
+    pub(crate) fn bin_setcap(&self, args: &[String]) -> i32 {
+        bin_setcap("setcap", args, 0)
+    }
 }
+
+// =====================================================================
+// Tests
+// =====================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_builtin_cap_no_args() {
-        let (status, _) = bin_cap(&[]);
-        #[cfg(not(all(target_os = "linux", feature = "libcap")))]
-        assert_eq!(status, 1);
+    fn test_features_returns_bintab_names() {
+        let m = Module::new("zsh/cap");
+        let mut features: Vec<String> = Vec::new();
+        let rc = features_(&m, &mut features);
+        assert_eq!(rc, 0);
+        assert_eq!(features, vec!["b:cap", "b:getcap", "b:setcap"]);
     }
 
     #[test]
-    fn test_builtin_getcap_no_args() {
-        let (status, _) = bin_getcap(&[]);
-        assert_eq!(status, 1);
+    fn test_enables_get_then_set() {
+        let m = Module::new("zsh/cap");
+        let mut enables: Option<Vec<i32>> = None;
+        let rc = enables_(&m, &mut enables);
+        assert_eq!(rc, 0);
+        let v = enables.as_ref().unwrap();
+        assert_eq!(v.len(), 3);
+        let rc = enables_(&m, &mut enables);
+        assert_eq!(rc, 0);
     }
 
     #[test]
-    fn test_builtin_setcap_no_args() {
-        let (status, _) = bin_setcap(&[]);
-        assert_eq!(status, 1);
+    fn test_cleanup_returns_zero() {
+        let m = Module::new("zsh/cap");
+        assert_eq!(cleanup_(&m), 0);
     }
 
     #[test]
-    fn test_builtin_setcap_missing_file() {
-        let (status, _) = bin_setcap(&["cap_net_admin+ep"]);
-        assert_eq!(status, 1);
+    #[cfg(not(all(target_os = "linux", feature = "libcap")))]
+    fn test_bin_cap_unsupported_on_macos() {
+        // Without libcap, all three bin_* return 1 (notavail).
+        assert_eq!(bin_cap("cap", &[], 0), 1);
+        assert_eq!(bin_getcap("getcap", &["/etc/passwd".into()], 0), 1);
+        assert_eq!(
+            bin_setcap("setcap", &["cap_net_admin+ep".into(), "/tmp/x".into()], 0),
+            1
+        );
     }
-}
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Phase: module-shims
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
-    /// cap / getcap / setcap — Linux capabilities (zsh/Src/Modules/cap.c).
-    /// Routes through src/cap.rs which exposes cap_get_proc,
-    /// cap_set_proc, cap_get_file, set_file_caps. On macOS or
-    /// without the libcap feature, the underlying calls return
-    /// io::Error(Unsupported).
-    /// `cap` builtin — delegates to canonical port at
-    /// `src/ported/modules/cap.rs:197` (`bin_cap()` from
-    /// `Src/Modules/cap.c:36`). The duplicate body that lived here
-    /// previously has been removed; this shim is the only entry
-    /// point exec.rs exposes.
-    pub(crate) fn bin_cap(&self, args: &[String]) -> i32 {
-        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-        let (status, output) = crate::cap::bin_cap(&argv);
-        if !output.is_empty() {
-            if status == 0 { print!("{}", output); } else { eprint!("{}", output); }
-        }
-        status
-    }
-    /// `getcap` builtin — delegates to canonical port at
-    /// `src/ported/modules/cap.rs:215` (`bin_getcap()` from
-    /// `Src/Modules/cap.c:68`).
-    pub(crate) fn bin_getcap(&self, args: &[String]) -> i32 {
-        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-        let (status, output) = crate::cap::bin_getcap(&argv);
-        if !output.is_empty() {
-            if status == 0 { print!("{}", output); } else { eprint!("{}", output); }
-        }
-        status
-    }
-    /// `setcap` builtin — delegates to canonical port at
-    /// `src/ported/modules/cap.rs:240` (`bin_setcap()` from
-    /// `Src/Modules/cap.c:91`).
-    pub(crate) fn bin_setcap(&self, args: &[String]) -> i32 {
-        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-        let (status, output) = crate::cap::bin_setcap(&argv);
-        if !output.is_empty() {
-            if status == 0 { print!("{}", output); } else { eprint!("{}", output); }
-        }
-        status
-    }
-}
-// END moved-from-exec-rs
-
-/// Module loader entry — port of `setup_()` from Src/Modules/cap.c:139.
-pub fn setup_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `features_()` from Src/Modules/cap.c:146.
-pub fn features_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `enables_()` from Src/Modules/cap.c:154.
-pub fn enables_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `boot_()` from Src/Modules/cap.c:161.
-pub fn boot_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `cleanup_()` from Src/Modules/cap.c:168.
-pub fn cleanup_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `finish_()` from Src/Modules/cap.c:175.
-pub fn finish_() -> i32 {
-    0
 }
