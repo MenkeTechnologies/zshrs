@@ -1132,6 +1132,86 @@ fn test_subscript_parity_special_params() {
 }
 
 #[test]
+fn test_subscript_parity_pipe_and_subshell() {
+    // Pipes, command substitution through pipes, pipefail status,
+    // subshell scoping, brace-group scoping. Verified against
+    // /bin/zsh. Excludes `&` background+wait ordering — zshrs
+    // currently interleaves wait differently (tracked separately).
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        echo hello | wc -c
+        echo "1:done"
+        result=$(echo data | tr a-z A-Z)
+        print "2:[$result]"
+        echo "a b c d" | tr " " "\n" | sort | head -2
+        false | true; print "3:status=$?"
+        true | false; print "4:status=$?"
+        (x=hidden; print "5:[$x]"); print "6:[${x-unset}]"
+        { y=visible; print "7:[$y]"; }
+        print "8:[$y]"
+        "#,
+    );
+    // Don't `.trim()` — `wc -c` output has leading spaces that
+    // stripping would corrupt.
+    let stripped_trailing = output.trim_end();
+    let expected = "       6\n1:done\n2:[DATA]\na\nb\n3:status=0\n4:status=1\n5:[hidden]\n6:[unset]\n7:[visible]\n8:[visible]";
+    assert_eq!(stripped_trailing, expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_zsh_specific_features() {
+    // Anonymous function, ${(P)var} indirection, ${var:offset:length},
+    // multi-line array literal, ${1:-default} in function.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        () { print "anon arg: $1"; } hello
+        inner=hello
+        ref=inner
+        print "1:[${(P)ref}]"
+        s=abcde
+        print "2:[${s:1:2}]"
+        arr=(
+          apple
+          banana
+          cherry
+        )
+        print "3:[${#arr}] [${arr[2]}]"
+        fn() { print "${1:-DEFAULT}"; }
+        fn
+        fn explicit
+        "#,
+    );
+    let expected = "anon arg: hello\n1:[hello]\n2:[bc]\n3:[3] [banana]\nDEFAULT\nexplicit";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_conditional_expressions() {
+    // [[ ]] tests: file tests, string ordering, negation, compound,
+    // glob equality, regex match. Verified against /bin/zsh.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        [[ -d /tmp ]] && print "1:dir"
+        [[ -e /etc/passwd ]] && print "2:exists"
+        [[ "abc" < "abd" ]] && print "3:lt"
+        [[ "abc" > "aaa" ]] && print "4:gt"
+        [[ ! -z "x" ]] && print "5:not-empty"
+        [[ 1 -eq 1 && 2 -eq 2 ]] && print "6:and"
+        [[ 1 -eq 1 || 2 -eq 3 ]] && print "7:or"
+        s=""
+        [[ -z "$s" ]] && print "8:empty"
+        s="x"
+        [[ -n "$s" ]] && print "9:nonempty"
+        [[ "abc" == a* ]] && print "10:glob-eq"
+        [[ "abc" != x* ]] && print "11:glob-neq"
+        [[ "test123" =~ "[0-9]+" ]] && print "12:regex"
+        "#,
+    );
+    let expected = "1:dir\n2:exists\n3:lt\n4:gt\n5:not-empty\n6:and\n7:or\n8:empty\n9:nonempty\n10:glob-eq\n11:glob-neq\n12:regex";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
 fn test_subscript_parity_redirection_order_left_to_right() {
     // Redirections process left-to-right. Verified against /bin/zsh:
     //   `>&2 2>file`: fd1 dup'd to current fd2 first, then fd2
