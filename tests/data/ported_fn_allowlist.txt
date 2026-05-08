@@ -118,7 +118,6 @@ quote_xtrace_arg
 emit_xtrace_text
 quote_string
 split_quoted
-is_executable
 
 bin_random_real
 bind_key
