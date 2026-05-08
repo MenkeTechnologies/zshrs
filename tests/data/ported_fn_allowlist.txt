@@ -148,7 +148,6 @@ magic_assoc_keys
 mathevalf
 meta_encode
 normalize_option_name
-parse_caopt
 parse_key_sequence
 parse_subscript_arith_assign
 parse_subscript_arith_compound
