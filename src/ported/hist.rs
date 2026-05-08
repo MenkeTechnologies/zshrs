@@ -2153,6 +2153,234 @@ pub fn hdynread2(stop: char, input: &str) -> (String, usize) {
     (out, consumed)
 }
 
+/// `qbang` flag — set when the lexer sees an escaped bangchar
+/// that originated in a history line (so `\!` round-trips). Mirror
+/// of the C global with the same name.
+static QBANG: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// `lexstop` flag — set by histsubchar / ihgetc on parse error
+/// or EOF to halt the lexer. Mirror of the C global.
+static LEXSTOP: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// `exit_pending` flag — when set, `ihgetc` short-circuits. Mirror
+/// of the C global; flipped by SIGINT/builtin `exit`.
+static EXIT_PENDING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Driver for `!` history substitution.
+///
+/// Port of `histsubchar()` from Src/hist.c (~389 lines). The C
+/// dispatcher reads via `ingetc`/`inungetc` to parse the full
+/// `!` directive: event spec (`!!`, `!N`, `!-N`, `!?str?`,
+/// `!str`), word designator (`:N`, `:^`, `:$`, `:*`,
+/// `:N-M`), and modifier chain (`:s/x/y/`, `:h`, `:t`, `:r`,
+/// `:e`, etc.). Result is the substituted text; the first char
+/// is returned via the `Option<char>` and the rest is pushed
+/// back onto `input` for the lexer to read on subsequent
+/// `ingetc` calls.
+///
+/// SIMPLIFIED Rust port: handles the most common event specs
+/// (`!!`, `!N`, `!-N`, `!str` prefix-search, `!?str?`
+/// substring-search). Word designators and modifier chains are
+/// not yet ported here — they're already handled in
+/// subst.rs's `:` modifier dispatch for the `${var:s/x/y/}`
+/// form, and porting them again as a recursive call into
+/// `subst::modify` is the planned next pass (cited TODO).
+///
+/// Returns:
+///   - `Some(c)` — pass the char on to the lexer (no
+///     substitution happened OR substitution result's first char)
+///   - `None`    — error; caller (ihgetc) sets lexstop+errflag
+pub fn histsubchar(c: char, input: &mut crate::ported::input::InputBuffer, hist: &History) -> Option<char> {
+    // Only `!` triggers substitution. Pass non-bangchar through.
+    if c != hist.bangchar {
+        return Some(c);
+    }
+    // Read the next char to see what kind of `!` this is.
+    let next = match input.ingetc() {
+        Some(c) => c,
+        None => return Some(c), // bare `!` at EOF — pass through
+    };
+    // `! ` (bang space) and `!\n` are not history references —
+    // mirror C's `if (isspace(c) || c == '=' || c == '(' || c
+    // == ')' || c == '|' || c == '&' || c == ';')` early-return.
+    if next.is_whitespace() || matches!(next, '=' | '(' | ')' | '|' | '&' | ';') {
+        input.inungetc(next);
+        return Some(c);
+    }
+    // Look up the event.
+    let resolved: Option<&HistEntry> = match next {
+        '!' => hist.latest(),                              // `!!` — previous
+        d if d.is_ascii_digit() => {
+            // `!N` — absolute event number. Read more digits.
+            let mut n: i64 = (d as i64) - ('0' as i64);
+            while let Some(c2) = input.ingetc() {
+                if let Some(d2) = c2.to_digit(10) {
+                    n = n * 10 + d2 as i64;
+                } else {
+                    input.inungetc(c2);
+                    break;
+                }
+            }
+            quietgethist(hist, n)
+        }
+        '-' => {
+            // `!-N` — N-back from current.
+            let mut n: i64 = 0;
+            while let Some(c2) = input.ingetc() {
+                if let Some(d2) = c2.to_digit(10) {
+                    n = n * 10 + d2 as i64;
+                } else {
+                    input.inungetc(c2);
+                    break;
+                }
+            }
+            if n > 0 {
+                quietgethist(hist, hist.curhist - n + 1)
+            } else {
+                None
+            }
+        }
+        '?' => {
+            // `!?str?` — substring-search. Read until `?` (or
+            // newline/EOF) — direct port of the contained loop
+            // around C's hdynread2 call. We build the string in
+            // place since input.ingetc handles the read.
+            let mut needle = String::new();
+            while let Some(c2) = input.ingetc() {
+                if c2 == '?' || c2 == '\n' { break; }
+                needle.push(c2);
+            }
+            let n = hconsearch(hist, &needle, None);
+            n.and_then(|h| quietgethist(hist, h))
+        }
+        _ => {
+            // `!str` — prefix-search. Walk back via hcomsearch
+            // until first match. Read the rest of the prefix.
+            let mut prefix = String::from(next);
+            while let Some(c2) = input.ingetc() {
+                if c2.is_alphanumeric() || c2 == '_' || c2 == '-' {
+                    prefix.push(c2);
+                } else {
+                    input.inungetc(c2);
+                    break;
+                }
+            }
+            let n = hcomsearch(hist, &prefix);
+            n.and_then(|h| quietgethist(hist, h))
+        }
+    };
+
+    let entry = match resolved {
+        Some(e) => e,
+        None => {
+            herrflush();
+            eprintln!("event not found");
+            LEXSTOP.store(true, std::sync::atomic::Ordering::SeqCst);
+            return None;
+        }
+    };
+
+    // TODO: word-designator + modifier-chain parsing
+    // (Src/hist.c:histsubchar middle/end). Currently we substitute
+    // the whole event text. Word desigs (`:N`, `:^`, `:$`, `:*`)
+    // and modifier chain (`:s/x/y/`, `:h`, `:t`, `:r`, `:e`,
+    // `:p`, `:q`, `:Q`, `:l`, `:u`, `:a`, `:A`, `:P`, `:c`)
+    // are already implemented in subst.rs's modifier dispatch
+    // for the `${var:MOD}` form — wire that here in the next pass.
+    let text = entry.text.clone();
+    let mut chars = text.chars();
+    let first = chars.next();
+    // Push back the rest in reverse so subsequent ingetc reads
+    // consume them in order.
+    let rest: Vec<char> = chars.collect();
+    for c in rest.into_iter().rev() {
+        input.inungetc(c);
+    }
+    first.or(Some(' '))
+}
+
+/// Lexer-side getc that records each char into the chline buffer
+/// and dispatches `!` to history-substitution. Port of `ihgetc()`
+/// from Src/hist.c.
+pub fn ihgetc(input: &mut crate::ported::input::InputBuffer, hist: &History) -> Option<char> {
+    use std::sync::atomic::Ordering;
+    let c = input.ingetc()?;
+    if EXIT_PENDING.load(Ordering::SeqCst) {
+        LEXSTOP.store(true, Ordering::SeqCst);
+        return Some(' ');
+    }
+    QBANG.store(false, Ordering::SeqCst);
+    let inbufflags = input.flags;
+    let in_alias = inbufflags & crate::ported::input::flags::INP_ALIAS != 0;
+    let in_hist = inbufflags & crate::ported::input::flags::INP_HIST != 0;
+    let mut c = c;
+    if hist.stophist == 0 && !in_alias {
+        c = match histsubchar(c, input, hist) {
+            Some(r) => r,
+            None => {
+                LEXSTOP.store(true, Ordering::SeqCst);
+                return Some(' ');
+            }
+        };
+    }
+    if in_hist && hist.stophist == 0 {
+        // `\!` in a history-replayed line should be `!` — peek next.
+        QBANG.store(false, Ordering::SeqCst);
+        if c == '\\' {
+            if let Some(c2) = input.ingetc() {
+                if c2 == hist.bangchar {
+                    QBANG.store(true, Ordering::SeqCst);
+                    c = hist.bangchar;
+                } else {
+                    input.inungetc(c2);
+                }
+            }
+        }
+    } else if hist.stophist != 0 || in_alias {
+        // Escaped bangchar handling — same predicate the C uses.
+        QBANG.store(c == hist.bangchar && hist.stophist < 2, Ordering::SeqCst);
+    }
+    // Record into chline (hwaddc + addtoline both append in C).
+    CHLINE.lock().unwrap().push(c);
+    Some(c)
+}
+
+/// Push a char back onto the input stream and roll the chline
+/// buffer back by one. Port of `ihungetc()` from Src/hist.c.
+/// The C source has elaborate logic around `\` + `\n`
+/// continuations and zlemetacs/zlemetall (line-edit cursor)
+/// adjustments; this port focuses on the chline rollback +
+/// inungetc dispatch — TODOs cited for the line-edit
+/// integration since zshrs uses a different ZLE backend.
+pub fn ihungetc(input: &mut crate::ported::input::InputBuffer, c: char, hist: &History) {
+    use std::sync::atomic::Ordering;
+    if LEXSTOP.load(Ordering::SeqCst) {
+        return;
+    }
+    let inbufflags = input.flags;
+    let in_alias_only = (inbufflags & crate::ported::input::flags::INP_ALIAS) != 0
+        && (inbufflags & crate::ported::input::flags::INP_HIST) == 0;
+    if !in_alias_only {
+        let mut buf = CHLINE.lock().unwrap();
+        if !buf.is_empty() {
+            buf.pop();
+        }
+        QBANG.store(
+            c == hist.bangchar && hist.stophist < 2 && !buf.is_empty()
+                && buf.chars().last() == Some('\\'),
+            Ordering::SeqCst,
+        );
+    } else {
+        QBANG.store(false, Ordering::SeqCst);
+    }
+    input.inungetc(c);
+    // TODO: expanding/zlemetacs/zlemetall adjustments (Src/hist.c
+    // ihungetc body) — needs ZLE-state integration.
+}
+
 /// Save the active history-substitution context onto a HistStack.
 /// Port of `hist_context_save()` from Src/hist.c:248. The C source
 /// stores function-pointer slots (`hgetc`/`hungetc`/`hwaddc` etc.)

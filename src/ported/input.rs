@@ -56,7 +56,7 @@ pub struct InputBuffer {
     /// Position in current buffer
     pos: usize,
     /// Current flags
-    flags: u32,
+    pub flags: u32,
     /// Total characters available
     pub buf_ct: usize,
     /// Whether we're reading from a string
