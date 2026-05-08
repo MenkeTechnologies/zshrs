@@ -261,12 +261,12 @@ impl Zle {
         let rprompt = self.rprompt().to_string();
         let cursor = self.zlecs;
 
-        let prompt_width = visible_width(&prompt);
-        let rprompt_width = visible_width(&rprompt);
+        let prompt_width = countprompt(&prompt);
+        let rprompt_width = countprompt(&rprompt);
         let buffer_before_cursor: String = self.zleline[..cursor.min(self.zleline.len())]
             .iter()
             .collect();
-        let cursor_col = prompt_width + visible_width(&buffer_before_cursor);
+        let cursor_col = prompt_width + countprompt(&buffer_before_cursor);
 
         // Horizontal scroll if the cursor approaches the right edge.
         // Mirrors zle_refresh.c's `winw` clamp logic — without the full
@@ -508,8 +508,14 @@ impl Zle {
     }
 }
 
-/// Calculate visible width of a string (handling ANSI escapes)
-fn visible_width(s: &str) -> usize {
+/// Calculate visible width of a prompt string — port of `countprompt()`
+/// from Src/prompt.c:1140. The C function counts cells while skipping
+/// the `Inpar..Outpar` (zsh's `%{...%}`) invisible-region tokens; this
+/// Rust port skips ANSI escape sequences instead, which is what the
+/// expanded prompt buffer contains by the time the refresh path uses it.
+/// The C variant outputs width AND height via out-pointers; this port
+/// returns width only (the only field the refresh path consumes here).
+fn countprompt(s: &str) -> usize {
     let mut width = 0;
     let mut in_escape = false;
 
@@ -790,10 +796,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_visible_width() {
-        assert_eq!(visible_width("hello"), 5);
-        assert_eq!(visible_width("\x1b[31mhello\x1b[0m"), 5);
-        assert_eq!(visible_width("日本語"), 6); // 3 chars, 2 width each
+    fn test_countprompt() {
+        assert_eq!(countprompt("hello"), 5);
+        assert_eq!(countprompt("\x1b[31mhello\x1b[0m"), 5);
+        assert_eq!(countprompt("日本語"), 6); // 3 chars, 2 width each
     }
 
     #[test]
