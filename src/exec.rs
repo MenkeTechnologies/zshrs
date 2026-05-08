@@ -38,7 +38,7 @@ pub(crate) use crate::ported::glob::{expand_glob_alternation, find_top_level_til
 pub use crate::ported::math::convbase as format_int_in_base;
 pub use crate::ported::params::convbase_underscore;
 #[allow(unused_imports)]
-pub(crate) use crate::ported::math::SubscriptArith;
+pub(crate) use crate::ported::math::{parse_assign, parse_compound, parse_pre_inc};
 #[allow(unused_imports)]
 pub(crate) use crate::ported::params::getarrvalue;
 #[allow(unused_imports)]

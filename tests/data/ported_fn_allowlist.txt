@@ -57,4 +57,15 @@
 # utils.rs Rust-side stdlib wrappers and zshrs-original helpers
 # kept for ergonomics — zsh C inlines these or uses macros.
 
-
+# math.rs — `name[idx]OP rhs` subscript-arith string parsers. zsh C
+# does not pre-parse the assignment text: its `setmathvar()` (math.c:972)
+# walks the `lval` left in place by the lexer/parser, so subscripts
+# fall out of the regular lexer path. zshrs's MathEval (currently still
+# struct-shaped, pending Task #2) sees the raw `((a[i]+=expr))` text
+# and must split it before evaluating; these three parsers do that
+# split. Moving to src/extensions/ once MathEval is migrated to the
+# C-faithful free-fn form, since they will become an extension layer
+# over the C-style mathparse() rather than living inside math.rs.
+parse_compound
+parse_pre_inc
+parse_assign
