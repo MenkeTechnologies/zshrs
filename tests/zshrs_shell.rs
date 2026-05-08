@@ -1056,6 +1056,49 @@ fn test_subscript_parity_trap_exit() {
 }
 
 #[test]
+fn test_subscript_parity_trap_int_and_term() {
+    // INT and TERM traps fire and the script continues. dispatch
+    // hooks live in bin_print/builtin_echo and other common
+    // builtins so non-print commands also poll between operations.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        trap "echo int-handled" INT
+        echo before-int
+        kill -INT $$
+        echo after-int
+        trap "echo term-handled" TERM
+        kill -TERM $$
+        echo last
+        "#,
+    );
+    assert_eq!(
+        output.trim(),
+        "before-int\nint-handled\nafter-int\nterm-handled\nlast",
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_subscript_parity_trap_dispatch_before_cd() {
+    // Dispatch hook is in bin_cd as well as bin_print, so a trap
+    // fired between echo and cd still gets a chance to run.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        trap "echo handled" USR1
+        echo before
+        kill -USR1 $$
+        cd /tmp
+        echo cwd-after
+        "#,
+    );
+    assert_eq!(
+        output.trim(),
+        "before\nhandled\ncwd-after",
+        "got: {output:?}"
+    );
+}
+
+#[test]
 fn test_subscript_parity_trap_reset() {
     // `trap - SIG` resets to default — handler should NOT fire.
     let (_, output, _) = run_zshrs_parity(

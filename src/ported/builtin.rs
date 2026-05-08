@@ -370,6 +370,7 @@ impl crate::ported::exec::ShellExecutor {
     /// Ported from zsh/Src/builtin.c bin_cd() lines 839-859, cd_get_dest() lines 864-957,
     /// cd_do_chdir() lines 967-1081, cd_try_chdir() lines 1116-1181
     pub(crate) fn bin_cd(&mut self, args: &[String]) -> i32 {
+        self.dispatch_pending_traps();
         // cd [ -qsLP ] [ arg ]
         // cd [ -qsLP ] old new
         // cd [ -qsLP ] {+|-}n
@@ -692,6 +693,7 @@ impl crate::ported::exec::ShellExecutor {
         0
     }
     pub(crate) fn bin_unset(&mut self, args: &[String]) -> i32 {
+        self.dispatch_pending_traps();
         // `unset` with no args is an error in zsh: `not enough arguments`
         // exit 1. zshrs returned 0 silently — masked typo'd unset NAMES.
         if args.is_empty() {
@@ -1213,6 +1215,7 @@ impl crate::ported::exec::ShellExecutor {
         final_result
     }
     pub(crate) fn bin_test(&mut self, args: &[String]) -> i32 {
+        self.dispatch_pending_traps();
         if args.is_empty() {
             // zsh: `test` (bare) returns 1 silently; `[` (bare,
             // no closing `]`) errors `[:1: ']' expected` exit 2.
@@ -3357,6 +3360,7 @@ impl crate::ported::exec::ShellExecutor {
         0
     }
     pub(crate) fn bin_read(&mut self, args: &[String]) -> i32 {
+        self.dispatch_pending_traps();
         // read [ -rszpqAclneE ] [ -t timeout ] [ -d delim ] [ -k [ num ] ] [ -u fd ]
         //      [ name[?prompt] ] [ name ... ]
         use std::io::{BufRead, Read as IoRead};
@@ -4116,6 +4120,7 @@ impl crate::ported::exec::ShellExecutor {
     }
     #[tracing::instrument(level = "debug", skip(self))]
     pub(crate) fn bin_eval(&mut self, args: &[String]) -> i32 {
+        self.dispatch_pending_traps();
         // builtin.c:6203-6213 — bin_eval joins argv with space, parses,
         // executes; parse failure sets errflag and lastval=errflag (1).
         // The diagnostic prefix on parse error is `zsh:N: parse error
@@ -5729,6 +5734,7 @@ impl crate::ported::exec::ShellExecutor {
         status
     }
     pub(crate) fn bin_set(&mut self, args: &[String]) -> i32 {
+        self.dispatch_pending_traps();
         // PFA-SMR aspect: emit setopt/unsetopt events for the POSIX
         // `set -o NAME` / `set +o NAME` form. This is the third option
         // syntax (after `setopt NAME` / `unsetopt NAME`); a recorder
