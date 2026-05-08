@@ -546,6 +546,7 @@ impl crate::ported::exec::ShellExecutor {
         }
     }
     pub(crate) fn builtin_echo(&mut self, args: &[String], _redirects: &[Redirect]) -> i32 {
+        self.dispatch_pending_traps();
         let mut newline = true;
         // zsh's default: interpret backslash escapes (\n, \t, \b, etc.)
         // unless `setopt bsd_echo` is on (then `-e` is required).
@@ -5074,7 +5075,82 @@ impl crate::ported::exec::ShellExecutor {
             }
         }
     }
+    /// Poll LAST_SIGNAL atomic; if a signal was caught and a trap
+    /// is registered for it, run the trap action via `execute_script`.
+    /// Called at builtin-dispatch entry so traps fire between commands.
+    /// Direct equivalent of zsh's `dotrap()` poll in the C source's
+    /// main exec loop (Src/exec.c periodically calls dotrap).
+    pub(crate) fn dispatch_pending_traps(&mut self) {
+        #[cfg(unix)]
+        {
+            let sig = crate::ported::signals::LAST_SIGNAL
+                .swap(0, std::sync::atomic::Ordering::SeqCst);
+            if sig == 0 {
+                return;
+            }
+            let name = match sig {
+                n if n == libc::SIGHUP => "HUP",
+                n if n == libc::SIGINT => "INT",
+                n if n == libc::SIGQUIT => "QUIT",
+                n if n == libc::SIGTERM => "TERM",
+                n if n == libc::SIGUSR1 => "USR1",
+                n if n == libc::SIGUSR2 => "USR2",
+                n if n == libc::SIGCHLD => "CHLD",
+                n if n == libc::SIGCONT => "CONT",
+                n if n == libc::SIGTSTP => "TSTP",
+                n if n == libc::SIGALRM => "ALRM",
+                n if n == libc::SIGPIPE => "PIPE",
+                n if n == libc::SIGWINCH => "WINCH",
+                _ => return,
+            };
+            if let Some(action) = self.traps.get(name).cloned() {
+                if !action.is_empty() {
+                    let _ = self.execute_script(&action);
+                }
+            }
+        }
+    }
+
     pub(crate) fn bin_trap(&mut self, args: &[String]) -> i32 {
+        #[cfg(unix)]
+        fn signal_name_to_libc_num(name: &str) -> Option<libc::c_int> {
+            // Shell-only pseudo-signals have no syscall mapping.
+            Some(match name {
+                "HUP" => libc::SIGHUP,
+                "INT" => libc::SIGINT,
+                "QUIT" => libc::SIGQUIT,
+                "ILL" => libc::SIGILL,
+                "TRAP" => libc::SIGTRAP,
+                "ABRT" => libc::SIGABRT,
+                "BUS" => libc::SIGBUS,
+                "FPE" => libc::SIGFPE,
+                // SIGKILL/SIGSTOP can't be caught — bin_trap rejected
+                // them upstream as "undefined signal", so omit here.
+                "USR1" => libc::SIGUSR1,
+                "SEGV" => libc::SIGSEGV,
+                "USR2" => libc::SIGUSR2,
+                "PIPE" => libc::SIGPIPE,
+                "ALRM" => libc::SIGALRM,
+                "TERM" => libc::SIGTERM,
+                "CHLD" => libc::SIGCHLD,
+                "CONT" => libc::SIGCONT,
+                "TSTP" => libc::SIGTSTP,
+                "TTIN" => libc::SIGTTIN,
+                "TTOU" => libc::SIGTTOU,
+                "URG" => libc::SIGURG,
+                "XCPU" => libc::SIGXCPU,
+                "XFSZ" => libc::SIGXFSZ,
+                "VTALRM" => libc::SIGVTALRM,
+                "PROF" => libc::SIGPROF,
+                "WINCH" => libc::SIGWINCH,
+                "IO" => libc::SIGIO,
+                _ => return None,
+            })
+        }
+        #[cfg(not(unix))]
+        fn signal_name_to_libc_num(_name: &str) -> Option<i32> {
+            None
+        }
         // PFA-SMR aspect: emit one `trap` event per (signal, handler).
         // `trap 'cmd' SIG1 SIG2` → 2 records sharing the same handler.
         #[cfg(feature = "recorder")]
@@ -5240,12 +5316,30 @@ impl crate::ported::exec::ShellExecutor {
             if action == "-" {
                 // `trap - SIG` resets to default (delete the entry).
                 self.traps.remove(&sig_name);
+                // Restore default OS-level disposition for non-EXIT
+                // signals (EXIT/ZERR/DEBUG/ERR are shell-only, no
+                // syscall mapping).
+                if let Some(num) = signal_name_to_libc_num(&sig_name) {
+                    #[cfg(unix)]
+                    unsafe {
+                        libc::signal(num, libc::SIG_DFL);
+                    }
+                    let _ = num;
+                }
             } else {
                 // `trap "" SIG` (empty action) is the SIGNAL-IGNORE
                 // form per POSIX — distinct from "reset to default".
                 // Keep the empty string in the table so `trap` lists
                 // it back (zsh: `trap -- '' USR1`).
-                self.traps.insert(sig_name, action.clone());
+                self.traps.insert(sig_name.clone(), action.clone());
+                // Install the OS-level handler so the kernel hands us
+                // the signal instead of killing the process. The
+                // shared `zhandler` records the signal in
+                // LAST_SIGNAL; the main exec loop polls it between
+                // commands and runs the recorded trap action.
+                if let Some(num) = signal_name_to_libc_num(&sig_name) {
+                    crate::ported::signals::install_handler(num);
+                }
             }
         }
 
@@ -8558,6 +8652,7 @@ impl crate::ported::exec::ShellExecutor {
     }
     /// print - zsh print builtin with many options
     pub(crate) fn bin_print(&mut self, args: &[String]) -> i32 {
+        self.dispatch_pending_traps();
         // print [ -abcDilmnNoOpPrsSz ] [ -u n ] [ -f format ] [ -C cols ]
         //       [ -v name ] [ -xX tabstop ] [ -R [ -en ]] [ arg ... ]
         let mut no_newline = false;
@@ -10455,6 +10550,7 @@ impl crate::ported::exec::ShellExecutor {
     }
     pub(crate) fn builtin_builtin(&mut self, args: &[String], redirects: &[Redirect]) -> i32 {
         // Run builtin, bypassing functions and aliases
+        self.dispatch_pending_traps();
         if args.is_empty() {
             return 0;
         }

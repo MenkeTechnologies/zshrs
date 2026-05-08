@@ -1019,6 +1019,56 @@ fn test_subscript_parity_glob_qualifiers() {
 }
 
 #[test]
+fn test_subscript_parity_trap_user_signal() {
+    // `trap 'cmd' USR1; kill -USR1 $$` — handler must fire between
+    // commands. Verified against /bin/zsh:
+    //   /bin/zsh -c 'trap "print usr1-caught" USR1; print before;
+    //                kill -USR1 $$; print after'
+    //   before
+    //   usr1-caught
+    //   after
+    //
+    // Required wiring two pieces in zshrs: (1) bin_trap installs
+    // the OS-level signal handler so the kernel doesn't kill the
+    // process; (2) dispatch_pending_traps polls LAST_SIGNAL at
+    // builtin entry and runs the trap action via execute_script.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        trap "print usr1-caught" USR1
+        print "before"
+        kill -USR1 $$
+        print "after"
+        "#,
+    );
+    assert_eq!(output.trim(), "before\nusr1-caught\nafter", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_trap_exit() {
+    // `trap 'cmd' EXIT` — fires on shell exit.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        trap "print exit-fired" EXIT
+        print "running"
+        "#,
+    );
+    assert_eq!(output.trim(), "running\nexit-fired", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_trap_reset() {
+    // `trap - SIG` resets to default — handler should NOT fire.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        trap "print first" EXIT
+        trap - EXIT
+        print "no-trap-fired"
+        "#,
+    );
+    assert_eq!(output.trim(), "no-trap-fired", "got: {output:?}");
+}
+
+#[test]
 fn test_subscript_parity_special_params() {
     // $? (exit status), numeric $$ / $! / $RANDOM / $SECONDS,
     // $BASHPID (unset in zsh).
