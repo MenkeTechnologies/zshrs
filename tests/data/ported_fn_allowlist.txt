@@ -123,7 +123,6 @@ glob_match
 # utils.rs Rust-side stdlib wrappers and zshrs-original helpers
 # kept for ergonomics — zsh C inlines these or uses macros.
 unescape
-is_word_char
 read_lines
 is_identifier
 is_number
@@ -173,7 +172,6 @@ hist_hasher
 hist_strcmp
 init_completion
 is_emacs_word_char
-is_meta
 is_valid_identifier
 is_vi_word_char
 list_bindings
