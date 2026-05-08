@@ -967,6 +967,78 @@ fn test_subscript_parity_process_substitution() {
 }
 
 #[test]
+fn test_subscript_parity_control_flow() {
+    // for / C-style for / while / until / case / function defs.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        for x in a b c; do print -n "$x "; done; print
+        for ((i=1; i<=3; i++)); do print -n "$i "; done; print
+        n=0; while ((n<3)); do print -n "w$n "; ((n++)); done; print
+        n=0; until ((n>=3)); do print -n "u$n "; ((n++)); done; print
+        case foo in
+          bar) print barmatch;;
+          foo) print foomatch;;
+          *) print other;;
+        esac
+        case zzz in
+          a|b|z*) print zmatch;;
+          *) print no;;
+        esac
+        greet() { print "hi $1"; }
+        greet world
+        fn() { local lx=42; print "in: $lx"; }
+        fn; print "out: ${lx-unset}"
+        "#,
+    );
+    let expected = "a b c \n1 2 3 \nw0 w1 w2 \nu0 u1 u2 \nfoomatch\nzmatch\nhi world\nin: 42\nout: unset";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_glob_qualifiers() {
+    // `*(.)` (regular files), `*(/N)` (dirs only, N=nullglob),
+    // `*.txt(.N)` (regular .txt files only).
+    let tmp = tempdir_for_test();
+    std::fs::write(format!("{}/a.txt", tmp), b"").unwrap();
+    std::fs::write(format!("{}/b.txt", tmp), b"").unwrap();
+    std::fs::write(format!("{}/c.log", tmp), b"").unwrap();
+    std::fs::create_dir(format!("{}/sub", tmp)).unwrap();
+    let (_, output, _) = run_zshrs_parity(&format!(
+        r#"
+        cd {0}
+        print -- ${{(o)$(print *.txt)}}
+        print -- ${{(o)$(print *(.))}}
+        print -- ${{(o)$(print *.txt(.N))}}
+        print -- ${{(o)$(print *(/N))}}
+        "#,
+        tmp
+    ));
+    let expected = "a.txt b.txt\na.txt b.txt c.log\na.txt b.txt\nsub";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_subscript_parity_special_params() {
+    // $? (exit status), numeric $$ / $! / $RANDOM / $SECONDS,
+    // $BASHPID (unset in zsh).
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        true; print "1:[$?]"
+        false; print "2:[$?]"
+        print "3:[$([[ $$ == <-> ]] && echo numeric)]"
+        sleep 0 &
+        print "4:[$([[ $! == <-> ]] && echo numeric)]"
+        print "5:[$([[ $RANDOM == <-> ]] && echo numeric)]"
+        print "6:[$([[ $SECONDS == <-> ]] && echo numeric)]"
+        print "7:[${BASHPID-unset}]"
+        "#,
+    );
+    let expected = "1:[0]\n2:[1]\n3:[numeric]\n4:[numeric]\n5:[numeric]\n6:[numeric]\n7:[unset]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
 fn test_subscript_parity_redirection_order_left_to_right() {
     // Redirections process left-to-right. Verified against /bin/zsh:
     //   `>&2 2>file`: fd1 dup'd to current fd2 first, then fd2
