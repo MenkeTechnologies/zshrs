@@ -23,7 +23,7 @@ use crate::ported::exec::{
     extract_numeric_ranges, replace_numeric_ranges_with_star,
     with_executor, NumericRange,
 };
-use crate::ported::pattern::{approximate_match, ksh_extglob_body_to_regex, parse_numeric_range, parse_pattern_flags_full};
+use crate::ported::pattern::{ksh_extglob_body_to_regex, parse_numeric_range, parse_pattern_flags_full};
 
 /// Sort specifier flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3636,7 +3636,29 @@ impl crate::ported::exec::ShellExecutor {
         let (pattern, case_insensitive, l_flag, approx_n, _) = parse_pattern_flags_full(pattern);
 
         if let Some(n) = approx_n {
-            return approximate_match(s, &pattern, n);
+            // Inline (#aN) approximate-match — direct port of the
+            // Levenshtein-distance check inside patmatch (Src/pattern.c)
+            // when PAT_APPROX is set. m/k bound check skips early when
+            // the strings differ in length by more than the budget;
+            // otherwise standard 2-row DP table.
+            let s_chars: Vec<char> = s.chars().collect();
+            let p_chars: Vec<char> = pattern.chars().collect();
+            let m = s_chars.len();
+            let k = p_chars.len();
+            if m.abs_diff(k) > n {
+                return false;
+            }
+            let mut prev: Vec<usize> = (0..=k).collect();
+            let mut curr: Vec<usize> = vec![0; k + 1];
+            for i in 1..=m {
+                curr[0] = i;
+                for j in 1..=k {
+                    let cost = if s_chars[i - 1] == p_chars[j - 1] { 0 } else { 1 };
+                    curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+                }
+                std::mem::swap(&mut prev, &mut curr);
+            }
+            return prev[k] <= n;
         }
 
         // Build the regex. For (#l) we need to inflate lowercase chars
