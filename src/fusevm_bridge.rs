@@ -1656,7 +1656,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let close = rest.find(')')?;
             let flags = rest[..close].to_string();
             let pat = rest[close + 1..].to_string();
-            if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b')) {
+            if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p')) {
                 Some((flags, pat))
             } else { None }
         })(idx);
@@ -2414,7 +2414,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         let close = rest.find(')')?;
                         let flags = rest[..close].to_string();
                         let pat = rest[close + 1..].to_string();
-                        if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b')) {
+                        if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p')) {
                             Some((flags, pat))
                         } else { None }
                     })(&idx) {
@@ -2456,7 +2456,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         }
                         // Default flag handling — route to getarg's
                         // hash-search arm (params.c:1581-1660).
-                        match crate::ported::params::getarg(&idx, None, Some(map)) {
+                        match crate::ported::params::getarg(&idx, None, Some(map), None) {
                             Some(crate::ported::params::GetargOut::Value(v)) => return v,
                             _ => {}
                         }
@@ -2487,13 +2487,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
                         // Port of subst.c subscript-flag parser:
                         // `(I)pat` / `(R)pat` / `(i)pat` / `(r)pat`.
+                        // Special-case `(s<delim>...<delim>)` per
+                        // params.c:1458-1476 — `s` introduces a
+                        // delimited separator block.
                         // Returns (flags_chars, pattern_after).
                         let s = s.trim_start();
                         let rest = s.strip_prefix('(')?;
                         let close = rest.find(')')?;
                         let flags = rest[..close].to_string();
                         let pat = rest[close + 1..].to_string();
-                        if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b')) {
+                        if flags.starts_with('s') {
+                            return Some((flags, pat));
+                        }
+                        if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p')) {
                             Some((flags, pat))
                         } else { None }
                     })(&idx) {
@@ -2605,14 +2611,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let close = rest.find(')')?;
                     let flags = rest[..close].to_string();
                     let pat = rest[close + 1..].to_string();
-                    if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b')) {
+                    if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p')) {
                         Some((flags, pat))
                     } else { None }
                 })(&idx) {
                     // Route to getarg's array-search arm
                     // (params.c:1672-1719).
                     let _ = (&flags, &pat); // silence unused if any
-                    match crate::ported::params::getarg(&idx, Some(&arr), None) {
+                    match crate::ported::params::getarg(&idx, Some(&arr), None, None) {
                         Some(crate::ported::params::GetargOut::Value(v)) => return v,
                         _ => {}
                     }
