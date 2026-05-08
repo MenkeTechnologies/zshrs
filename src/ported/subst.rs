@@ -2127,10 +2127,33 @@ pub fn paramsubst(                                          // c:1625
         // exists. Without this, `\${\${(M)0:#/*}:-DEFAULT}` always
         // fired the default because the outer paramsubst saw
         // is_set=false (no variable named "${(M)0:#/*}").
-        let is_set = used_subexp
-            || state.variables.contains_key(&var_name)
-            || state.arrays.contains_key(&var_name)
-            || state.assoc_arrays.contains_key(&var_name);
+        // For subscripted access (`${arr[k]:=v}` etc.), is_set must
+        // reflect whether the SUBSCRIPTED slot exists, not the
+        // variable. Direct port of C zsh's getindex behavior: the
+        // Value struct's vunset is set based on slot lookup, not
+        // the parent param. Without this, `${m[$k]=v}` on a typeset
+        // -gA assoc with no key fired the "already set" branch and
+        // skipped the assign.
+        let is_set = if let Some(sub) = subscript.as_deref() {
+            used_subexp
+                || state.assoc_arrays.get(&var_name)
+                    .map(|m| m.contains_key(sub))
+                    .unwrap_or(false)
+                || state.arrays.get(&var_name)
+                    .map(|a| {
+                        sub.parse::<i64>().ok().is_some_and(|i| {
+                            let len = a.len() as i64;
+                            let real = if i < 0 { len + i } else { i - 1 };
+                            real >= 0 && (real as usize) < a.len()
+                        })
+                    })
+                    .unwrap_or(false)
+        } else {
+            used_subexp
+                || state.variables.contains_key(&var_name)
+                || state.arrays.contains_key(&var_name)
+                || state.assoc_arrays.contains_key(&var_name)
+        };
 
         // ${+name} short-circuit per subst.c:3600 — return "1"/"0".
         // Subscripted form `${+arr[i]}` checks whether THAT element is
