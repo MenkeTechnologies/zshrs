@@ -1308,7 +1308,16 @@ impl GlobState {
                     .unwrap()
                     .as_secs() as i64;
                 let diff = now - meta.atime();
-                let scaled = scale_time(diff, *unit);
+                // Inline time-unit scaling — Src/glob.c qualifier
+                // handlers (a/m/c with M/h/d/w suffix) divide inline.
+                let scaled = match unit {
+                    TimeUnit::Seconds => diff,
+                    TimeUnit::Minutes => diff / 60,
+                    TimeUnit::Hours => diff / 3600,
+                    TimeUnit::Days => diff / 86400,
+                    TimeUnit::Weeks => diff / 604800,
+                    TimeUnit::Months => diff / 2592000,
+                };
                 compare_range(scaled as u64, *value as u64, *op)
             }
             Qualifier::Mtime { value, unit, op } => {
@@ -1317,7 +1326,16 @@ impl GlobState {
                     .unwrap()
                     .as_secs() as i64;
                 let diff = now - meta.mtime();
-                let scaled = scale_time(diff, *unit);
+                // Inline time-unit scaling — Src/glob.c qualifier
+                // handlers (a/m/c with M/h/d/w suffix) divide inline.
+                let scaled = match unit {
+                    TimeUnit::Seconds => diff,
+                    TimeUnit::Minutes => diff / 60,
+                    TimeUnit::Hours => diff / 3600,
+                    TimeUnit::Days => diff / 86400,
+                    TimeUnit::Weeks => diff / 604800,
+                    TimeUnit::Months => diff / 2592000,
+                };
                 compare_range(scaled as u64, *value as u64, *op)
             }
             Qualifier::Ctime { value, unit, op } => {
@@ -1326,7 +1344,16 @@ impl GlobState {
                     .unwrap()
                     .as_secs() as i64;
                 let diff = now - meta.ctime();
-                let scaled = scale_time(diff, *unit);
+                // Inline time-unit scaling — Src/glob.c qualifier
+                // handlers (a/m/c with M/h/d/w suffix) divide inline.
+                let scaled = match unit {
+                    TimeUnit::Seconds => diff,
+                    TimeUnit::Minutes => diff / 60,
+                    TimeUnit::Hours => diff / 3600,
+                    TimeUnit::Days => diff / 86400,
+                    TimeUnit::Weeks => diff / 604800,
+                    TimeUnit::Months => diff / 2592000,
+                };
                 compare_range(scaled as u64, *value as u64, *op)
             }
             Qualifier::Mode { yes, no } => {
@@ -1605,17 +1632,6 @@ pub fn file_type(mode: u32) -> char {
         '='
     } else {
         '?'
-    }
-}
-
-fn scale_time(secs: i64, unit: TimeUnit) -> i64 {
-    match unit {
-        TimeUnit::Seconds => secs,
-        TimeUnit::Minutes => secs / 60,
-        TimeUnit::Hours => secs / 3600,
-        TimeUnit::Days => secs / 86400,
-        TimeUnit::Weeks => secs / 604800,
-        TimeUnit::Months => secs / 2592000,
     }
 }
 
