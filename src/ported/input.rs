@@ -212,8 +212,8 @@ impl InputBuffer {
                 self.pos += 1;
                 self.buf_ct = self.buf_ct.saturating_sub(1);
 
-                // Skip internal tokens
-                if is_tok(c) {
+                // Skip internal tokens (range 0x83..=0x9b)
+                if (0x83..=0x9b).contains(&(c as u32)) {
                     continue;
                 }
 
@@ -445,22 +445,8 @@ fn is_meta(c: char) -> bool {
     b < 32 || (0x83..=0x9b).contains(&b)
 }
 
-/// Check if a character is an internal token
-fn is_tok(c: char) -> bool {
-    let b = c as u32;
-    (0x83..=0x9b).contains(&b)
-}
-
 /// Encode a meta character
 fn meta_encode(c: char) -> char {
-    char::from_u32((c as u32) ^ 32).unwrap_or(c)
-}
-
-/// Decode a meta character
-/// Decode a metafied byte to its original.
-/// Port of the `Meta`+`xor 32` reverse the C source's parser
-/// uses across Src/input.c.
-pub fn meta_decode(c: char) -> char {
     char::from_u32((c as u32) ^ 32).unwrap_or(c)
 }
 
@@ -580,7 +566,7 @@ mod tests {
         assert!(!is_meta('Z'));
 
         let encoded = meta_encode('\x00');
-        let decoded = meta_decode(encoded);
+        let decoded = char::from_u32((encoded as u32) ^ 32).unwrap_or(encoded);
         assert_eq!(decoded, '\x00');
     }
 

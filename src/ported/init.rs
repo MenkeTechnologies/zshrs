@@ -184,7 +184,16 @@ pub fn parseargs(args: &[String]) -> (ShellOptions, Option<String>, Vec<String>)
         }
 
         if arg == "--help" {
-            print_help();
+            println!("Usage: zshrs [<options>] [<argument> ...]");
+            println!();
+            println!("Special options:");
+            println!("  --help     show this message, then exit");
+            println!("  --version  show zshrs version number, then exit");
+            println!("  -c         take first argument as a command to execute");
+            println!("  -i         force interactive mode");
+            println!("  -l         treat as login shell");
+            println!("  -s         read commands from stdin");
+            println!("  -o OPTION  set an option by name");
             std::process::exit(0);
         }
 
@@ -210,7 +219,20 @@ pub fn parseargs(args: &[String]) -> (ShellOptions, Option<String>, Vec<String>)
                 'm' => opts.monitor = is_set,
                 'o' => {
                     if let Some(opt_name) = iter.next() {
-                        set_option_by_name(&mut opts, opt_name, is_set);
+                        let name_lower = opt_name.to_lowercase().replace('_', "");
+                        match name_lower.as_str() {
+                            "interactive" => opts.interactive = is_set,
+                            "login" => opts.login = is_set,
+                            "shinstdin" => opts.shin_stdin = is_set,
+                            "zle" | "usezle" => opts.use_zle = is_set,
+                            "monitor" => opts.monitor = is_set,
+                            "hashdirs" => opts.hash_dirs = is_set,
+                            "privileged" => opts.privileged = is_set,
+                            "singlecommand" => opts.single_command = is_set,
+                            "rcs" => opts.rcs = is_set,
+                            "globalrcs" => opts.global_rcs = is_set,
+                            _ => {}
+                        }
                     }
                 }
                 _ => {}
@@ -227,36 +249,6 @@ pub fn parseargs(args: &[String]) -> (ShellOptions, Option<String>, Vec<String>)
     }
 
     (opts, cmd, positional)
-}
-
-fn set_option_by_name(opts: &mut ShellOptions, name: &str, value: bool) {
-    let name_lower = name.to_lowercase().replace('_', "");
-    match name_lower.as_str() {
-        "interactive" => opts.interactive = value,
-        "login" => opts.login = value,
-        "shinstdin" => opts.shin_stdin = value,
-        "zle" | "usezle" => opts.use_zle = value,
-        "monitor" => opts.monitor = value,
-        "hashdirs" => opts.hash_dirs = value,
-        "privileged" => opts.privileged = value,
-        "singlecommand" => opts.single_command = value,
-        "rcs" => opts.rcs = value,
-        "globalrcs" => opts.global_rcs = value,
-        _ => {}
-    }
-}
-
-fn print_help() {
-    println!("Usage: zshrs [<options>] [<argument> ...]");
-    println!();
-    println!("Special options:");
-    println!("  --help     show this message, then exit");
-    println!("  --version  show zshrs version number, then exit");
-    println!("  -c         take first argument as a command to execute");
-    println!("  -i         force interactive mode");
-    println!("  -l         treat as login shell");
-    println!("  -s         read commands from stdin");
-    println!("  -o OPTION  set an option by name");
 }
 
 /// Initialize shell I/O
@@ -393,33 +385,6 @@ pub fn run_init_scripts(state: &mut ShellState) {
 /// zshrs convenience — the closest C analog is `getmypath()`
 /// (Src/init.c:909) which walks `$0`, `$PATH`, then `getcwd(2)`
 /// to identify the executable.
-pub fn get_exe_path() -> Option<PathBuf> {
-    #[cfg(target_os = "linux")]
-    {
-        std::fs::read_link("/proc/self/exe").ok()
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        use std::ffi::CStr;
-        let mut buf = [0u8; libc::PATH_MAX as usize];
-        let mut size = buf.len() as u32;
-        unsafe {
-            if libc::_NSGetExecutablePath(buf.as_mut_ptr() as *mut i8, &mut size) == 0 {
-                let path = CStr::from_ptr(buf.as_ptr() as *const i8);
-                Some(PathBuf::from(path.to_string_lossy().into_owned()))
-            } else {
-                None
-            }
-        }
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        None
-    }
-}
-
 /// Resolve the shell's own executable path.
 /// Port of `getmypath()` from Src/init.c:909-1004 — used on
 /// platforms where the kernel doesn't expose the binary path
@@ -437,8 +402,21 @@ pub fn get_exe_path() -> Option<PathBuf> {
 ///      if it exists.
 pub fn getmypath(name: Option<&str>, cwd: Option<&str>) -> Option<PathBuf> {
     // Try the kernel-supported path first (init.c:914-953).
-    if let Some(p) = get_exe_path() {
+    #[cfg(target_os = "linux")]
+    if let Ok(p) = std::fs::read_link("/proc/self/exe") {
         return Some(p);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::ffi::CStr;
+        let mut buf = [0u8; libc::PATH_MAX as usize];
+        let mut size = buf.len() as u32;
+        unsafe {
+            if libc::_NSGetExecutablePath(buf.as_mut_ptr() as *mut i8, &mut size) == 0 {
+                let path = CStr::from_ptr(buf.as_ptr() as *const i8);
+                return Some(PathBuf::from(path.to_string_lossy().into_owned()));
+            }
+        }
     }
 
     // Fallback to the argv[0]/cwd/$PATH walk (init.c:956-1004).
@@ -595,14 +573,6 @@ pub fn pathprog(prog: &str, path: &[String]) -> Option<PathBuf> {
     None
 }
 
-/// Determine if shell is a login shell from `argv[0]`
-/// Detect whether `argv[0]` indicates a login shell.
-/// Port of the `argv[0][0] == '-'` check inside `parseargs()`
-/// (Src/init.c:263) — same `-zsh` invocation convention.
-pub fn is_login_shell(argv0: &str) -> bool {
-    argv0.starts_with('-')
-}
-
 /// Get the ZDOTDIR
 /// Full initialization sequence (from init.c zsh_main)
 /// Top-level shell initialization driver.
@@ -616,7 +586,7 @@ pub fn zsh_main(args: &[String]) -> ShellState {
 
     // Determine shell name from argv[0]
     if let Some(arg0) = args.first() {
-        if is_login_shell(arg0) {
+        if arg0.starts_with('-') {
             state.options.login = true;
         }
         state.emulate_from_name(arg0);

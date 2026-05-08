@@ -237,25 +237,6 @@ pub fn random_real() -> f64 {
 }
 
 /// Generate a random integer in `[min, max]`.
-/// Port of the integer-bound branch of `math_zrand_int()` from
-/// Src/Modules/random.c:161 — when the range fits in u32 we use
-/// the rejection sampler; otherwise we fall back to a bare
-/// modulo-on-u64 reduction.
-pub fn random_range(min: i64, max: i64) -> i64 {
-    if min >= max {
-        return min;
-    }
-
-    let range = (max - min + 1) as u64;
-
-    if range <= u32::MAX as u64 {
-        min + get_bounded_random(range as u32) as i64
-    } else {
-        let r = get_random_u64() % range;
-        min + r as i64
-    }
-}
-
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/random.c`.
 /// Shuffle a slice in place using Fisher–Yates.
@@ -353,14 +334,6 @@ mod tests {
         for _ in 0..100 {
             let r = random_real();
             assert!((0.0..1.0).contains(&r));
-        }
-    }
-
-    #[test]
-    fn test_random_range() {
-        for _ in 0..100 {
-            let r = random_range(10, 20);
-            assert!((10..=20).contains(&r));
         }
     }
 
