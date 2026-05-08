@@ -96,7 +96,6 @@ patmatch_captures
 parse_pattern_flags_full
 approximate_match
 parse_numeric_range
-extendedglob_match
 ksh_extglob_body_to_regex
 expand_posix_char_classes
 has_wildcards

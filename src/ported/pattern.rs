@@ -2046,19 +2046,6 @@ pub(crate) fn parse_numeric_range<I: Iterator<Item = char> + Clone>(
     Some((lo, hi, n))
 }
 /// Match `s` against zsh-extended glob `pat`. When the `extendedglob`
-/// shell option is set, a leading `^` inverts the match of the rest
-/// of the pattern (zsh negation operator). Falls through to plain
-/// glob_match otherwise.
-pub(crate) fn extendedglob_match(s: &str, pat: &str) -> bool {
-    let extendedglob =
-        with_executor(|exec| exec.options.get("extendedglob").copied().unwrap_or(false));
-    if extendedglob {
-        if let Some(neg) = pat.strip_prefix('^') {
-            return !ShellExecutor::glob_match_static(s, neg);
-        }
-    }
-    ShellExecutor::glob_match_static(s, pat)
-}
 /// Translate the body of a ksh-style extglob group `(p1|p2|...)`
 /// into a regex alternation. Each branch is glob-translated by the
 /// same rules as `glob_match_static` minus the wrapping anchors and

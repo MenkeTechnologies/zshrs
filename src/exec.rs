@@ -45,7 +45,7 @@ pub(crate) use crate::ported::math::{
 pub(crate) use crate::ported::params::getarrvalue;
 #[allow(unused_imports)]
 pub(crate) use crate::ported::pattern::{
-    approximate_match, extendedglob_match, ksh_extglob_body_to_regex, parse_numeric_range,
+    approximate_match, ksh_extglob_body_to_regex, parse_numeric_range,
     parse_pattern_flags_full,
 };
 #[allow(unused_imports)]
