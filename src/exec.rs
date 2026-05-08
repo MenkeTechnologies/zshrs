@@ -56,7 +56,7 @@ pub(crate) use crate::ported::text::format_function_body_zsh;
 pub(crate) use crate::ported::utils::{base64_decode, pretty_io_err};
 #[allow(unused_imports)]
 pub(crate) use crate::ported::utils::{
-    emit_xtrace_text, float_to_hex, ispwd_inherited, normalize_logical, quote_xtrace_arg,
+    emit_xtrace_text, ispwd_inherited, normalize_logical, quote_xtrace_arg,
     shell_quote, shell_quote_value, zsh_split_z,
 };
 

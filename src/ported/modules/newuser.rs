@@ -96,27 +96,6 @@ pub enum SetupChoice {
     Manual,
 }
 
-/// Run the first-run setup wizard.
-/// Port of the `getrandom_buffer()` dispatcher from Src/Modules/newuser.c:68
-/// — the C source autoloads and runs `zsh-newuser-install` which
-/// then writes the chosen template to `~/.zshrc`. This Rust path
-/// inlines the file write directly.
-pub fn run_newuser_setup(home: &Path, choice: SetupChoice) -> std::io::Result<()> {
-    let zshrc = home.join(".zshrc");
-
-    match choice {
-        SetupChoice::Recommended => {
-            std::fs::write(&zshrc, default_zshrc())?;
-        }
-        SetupChoice::Minimal => {
-            std::fs::write(&zshrc, minimal_zshrc())?;
-        }
-        SetupChoice::Exit | SetupChoice::Manual => {}
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

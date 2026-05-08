@@ -610,19 +610,6 @@ pub fn bin_zgdbmpath(param_name: &str) -> Result<String, String> {
 
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/db_gdbm.c`.
-/// Is a given parameter currently tied to GDBM?
-/// zshrs convenience — equivalent to scanning `tied_param_list`
-/// in Src/Modules/db_gdbm.c.
-pub fn is_gdbm_tied(param_name: &str) -> bool {
-    if let Ok(params) = TIED_PARAMS.lock() {
-        params.contains_key(param_name)
-    } else {
-        false
-    }
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/db_gdbm.c`.
 /// Get the live `TiedGdbmParam` for a given name.
 /// zshrs convenience — Src/Modules/db_gdbm.c uses
 /// `getgdbmnode()` (line 407) for the same lookup at the C level.

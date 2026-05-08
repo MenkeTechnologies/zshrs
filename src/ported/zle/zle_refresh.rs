@@ -545,32 +545,6 @@ fn skip_chars(s: &str, n: usize) -> &str {
     &s[byte_idx..]
 }
 
-/// Truncate string to fit within given width
-fn truncate_to_width(s: &str, max_width: usize) -> &str {
-    let mut width = 0;
-    let mut byte_idx = s.len();
-    let mut in_escape = false;
-
-    for (i, c) in s.char_indices() {
-        if in_escape {
-            if c.is_ascii_alphabetic() {
-                in_escape = false;
-            }
-        } else if c == '\x1b' {
-            in_escape = true;
-        } else {
-            let char_width = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-            if width + char_width > max_width {
-                byte_idx = i;
-                break;
-            }
-            width += char_width;
-        }
-    }
-
-    &s[..byte_idx]
-}
-
 /// Region highlight entry
 #[derive(Debug, Clone)]
 pub struct RegionHighlight {

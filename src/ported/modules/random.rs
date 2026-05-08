@@ -236,27 +236,6 @@ pub fn random_real() -> f64 {
     (x >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/random.c`.
-/// Generate a random real in `(0, 1]`.
-/// zshrs-original variant — biases the 53-bit fraction up by half a
-/// ULP so 0.0 is excluded; no direct C zsh counterpart.
-pub fn random_real_exclusive_zero() -> f64 {
-    let x = get_random_u64();
-    ((x >> 11) as f64 + 0.5) * (1.0 / (1u64 << 53) as f64)
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/random.c`.
-/// Generate a random real in `[0, 1]` (inclusive both ends).
-/// zshrs-original variant — divides by `2^53 - 1` instead of `2^53`
-/// so the maximum draw rounds to exactly 1.0; no direct C zsh
-/// counterpart.
-pub fn random_real_inclusive() -> f64 {
-    let x = get_random_u64();
-    (x >> 11) as f64 * (1.0 / ((1u64 << 53) - 1) as f64)
-}
-
 /// Generate a random integer in `[min, max]`.
 /// Port of the integer-bound branch of `math_zrand_int()` from
 /// Src/Modules/random.c:161 — when the range fits in u32 we use

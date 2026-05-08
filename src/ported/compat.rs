@@ -258,12 +258,6 @@ pub fn output64(val: i64) -> String {
     val.to_string()
 }
 
-/// Format a 64-bit unsigned integer for output.
-/// Unsigned counterpart of `output64()` (Src/compat.c:638).
-pub fn output64u(val: u64) -> String {
-    val.to_string()
-}
-
 /// Convert a signed integer to a string in an arbitrary base.
 /// Port of the inner radix-conversion loop `convbase()` in
 /// Src/utils.c (math.c calls it from `bin_print -P`). Bases up

@@ -733,17 +733,6 @@ pub fn getpermtext(cmd: &ShellCommand) -> String {
     TextFormatter::new(TextConfig::default()).format(cmd)
 }
 
-/// Get a permanent textual representation with custom indent
-/// Render a command back as zsh source with explicit start indent.
-/// Port of the third-arg branch of `getpermtext()` from
-/// Src/text.c:279 — the C source's `start_indent` parameter
-/// controls leading whitespace.
-pub fn getpermtext_indent(cmd: &ShellCommand, indent: usize) -> String {
-    TextFormatter::new(TextConfig::default())
-        .with_indent(indent)
-        .format(cmd)
-}
-
 /// Get a representation suitable for job text (abbreviated, single line)
 /// Render a command for `jobs` builtin output.
 /// Port of `getjobtext()` from Src/text.c:315 — single-line,
@@ -758,14 +747,6 @@ pub fn getjobtext(cmd: &ShellCommand) -> String {
 /// by callers that want compact rendering for diagnostics.
 pub fn getsingleline(cmd: &ShellCommand) -> String {
     TextFormatter::new(TextConfig::single_line()).format(cmd)
-}
-
-/// Format a list of commands
-/// Render a sequence of commands.
-/// zshrs convenience — Src/text.c renders each top-level command
-/// individually via `getpermtext()` then joins with newlines.
-pub fn format_commands(cmds: &[ShellCommand], config: TextConfig) -> String {
-    TextFormatter::new(config).format_list(cmds)
 }
 
 #[cfg(test)]

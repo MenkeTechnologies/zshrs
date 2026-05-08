@@ -276,20 +276,6 @@ pub fn ptywritestr(fd: RawFd, data: &str) -> io::Result<usize> {
     }
 }
 
-/// Send EOF (Ctrl-D, byte 0x04) to a pty's master end.
-/// Port of the `-e` branch of `bin_zpty()` (Src/Modules/zpty.c:773).
-pub fn pty_send_eof(fd: RawFd) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        let eof = [4u8];
-        let n = unsafe { libc::write(fd, eof.as_ptr() as *const libc::c_void, 1) };
-        if n < 0 {
-            return Err(io::Error::last_os_error());
-        }
-    }
-    Ok(())
-}
-
 /// Check whether a pty has unread bytes pending.
 /// Port of the `-t` branch of `bin_zpty()` (Src/Modules/zpty.c:773)
 /// — `poll(2)` with zero timeout for non-blocking probe.

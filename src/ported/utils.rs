@@ -958,11 +958,6 @@ pub fn wordcount(s: &str) -> usize {
     s.split_whitespace().count()
 }
 
-/// Character count for strings
-pub fn charcount(s: &str) -> usize {
-    s.chars().count()
-}
-
 /// Join array with delimiter (from utils.c zjoin)
 pub fn zjoin(arr: &[String], delim: char) -> String {
     arr.join(&delim.to_string())
@@ -1172,13 +1167,6 @@ pub fn is_dir(path: &str) -> bool {
     std::path::Path::new(path).is_dir()
 }
 
-/// Check if path is a symlink
-pub fn is_link(path: &str) -> bool {
-    std::fs::symlink_metadata(path)
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false)
-}
-
 /// Get file modification time as seconds since epoch
 pub fn file_mtime(path: &str) -> Option<i64> {
     std::fs::metadata(path)
@@ -1188,32 +1176,11 @@ pub fn file_mtime(path: &str) -> Option<i64> {
         .map(|d| d.as_secs() as i64)
 }
 
-/// Read file contents to string
-pub fn read_file(path: &str) -> Option<String> {
-    std::fs::read_to_string(path).ok()
-}
-
 /// Read file lines
 pub fn read_lines(path: &str) -> Option<Vec<String>> {
     std::fs::read_to_string(path)
         .ok()
         .map(|s| s.lines().map(|l| l.to_string()).collect())
-}
-
-/// Write string to file
-pub fn write_file(path: &str, contents: &str) -> bool {
-    std::fs::write(path, contents).is_ok()
-}
-
-/// Append to file
-pub fn append_file(path: &str, contents: &str) -> bool {
-    use std::io::Write;
-    std::fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(path)
-        .and_then(|mut f| f.write_all(contents.as_bytes()))
-        .is_ok()
 }
 
 /// Create directory
@@ -1254,11 +1221,6 @@ pub fn setenv(name: &str, value: &str) {
 /// Unset environment variable
 pub fn unsetenv(name: &str) {
     std::env::remove_var(name);
-}
-
-/// Get all environment variables
-pub fn environ() -> Vec<(String, String)> {
-    std::env::vars().collect()
 }
 
 /// Get current user ID
@@ -1314,11 +1276,6 @@ pub fn getppid() -> i32 {
     }
     #[cfg(not(unix))]
     0
-}
-
-/// Check if running as root
-pub fn is_root() -> bool {
-    geteuid() == 0
 }
 
 /// Format seconds as HH:MM:SS
@@ -3025,56 +2982,6 @@ pub fn pretty_io_err(e: &std::io::Error) -> String {
 // All correspond to Src/utils.c logic (path/string/bslashquote helpers).
 // ===========================================================
 
-/// Convert float to hex representation (%a/%A format)
-pub(crate) fn float_to_hex(val: f64, uppercase: bool) -> String {
-    if val.is_nan() {
-        return if uppercase { "NAN" } else { "nan" }.to_string();
-    }
-    if val.is_infinite() {
-        return if val > 0.0 {
-            if uppercase {
-                "INF"
-            } else {
-                "inf"
-            }
-        } else {
-            if uppercase {
-                "-INF"
-            } else {
-                "-inf"
-            }
-        }
-        .to_string();
-    }
-    if val == 0.0 {
-        let sign = if val.is_sign_negative() { "-" } else { "" };
-        return if uppercase {
-            format!("{}0X0P+0", sign)
-        } else {
-            format!("{}0x0p+0", sign)
-        };
-    }
-
-    let sign = if val < 0.0 { "-" } else { "" };
-    let abs_val = val.abs();
-    let bits = abs_val.to_bits();
-    let exponent = ((bits >> 52) & 0x7ff) as i32 - 1023;
-    let mantissa = bits & 0xfffffffffffff;
-
-    let hex_mantissa = format!("{:013x}", mantissa);
-    let hex_mantissa = hex_mantissa.trim_end_matches('0');
-    let hex_mantissa = if hex_mantissa.is_empty() {
-        "0"
-    } else {
-        hex_mantissa
-    };
-
-    if uppercase {
-        format!("{}0X1.{}P{:+}", sign, hex_mantissa.to_uppercase(), exponent)
-    } else {
-        format!("{}0x1.{}p{:+}", sign, hex_mantissa, exponent)
-    }
-}
 
 /// Quote a string for shell output (like zsh's set output)
 pub(crate) fn shell_quote(s: &str) -> String {

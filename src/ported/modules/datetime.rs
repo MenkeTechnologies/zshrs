@@ -239,28 +239,6 @@ pub fn get_datetime_info() -> std::collections::HashMap<String, String> {
     info
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/datetime.c`.
-/// Convert a timestamp between local time and UTC.
-/// zshrs-original convenience — no exact counterpart in
-/// Src/Modules/datetime.c, but mirrors the `setenv("TZ", ...)`
-/// dance the C source uses internally before calling
-/// `localtime_r(3)` / `gmtime_r(3)` for `output_strftime`.
-pub fn convert_timezone(timestamp: i64, to_utc: bool) -> i64 {
-    if to_utc {
-        let dt: DateTime<Local> = Local
-            .timestamp_opt(timestamp, 0)
-            .single()
-            .unwrap_or_else(Local::now);
-        dt.with_timezone(&Utc).timestamp()
-    } else {
-        let dt: DateTime<Utc> = Utc
-            .timestamp_opt(timestamp, 0)
-            .single()
-            .unwrap_or_else(Utc::now);
-        dt.with_timezone(&Local).timestamp()
-    }
-}
 
 #[cfg(test)]
 mod tests {
