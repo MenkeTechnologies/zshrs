@@ -2686,14 +2686,19 @@ pub(crate) fn base64_decode(s: &str) -> Vec<u8> {
 // ===========================================================
 
 
-/// Quote a value for typeset -p output (re-executable code)
-/// Uses single quoting only when the value contains special characters
-/// Tokenise a string per zsh's `${(z)var}` semantics: whitespace
-/// separates words; shell metacharacters (`;`, `&`, `|`, `(`, `)`,
-/// `<`, `>`) emit as their own tokens; single/double quoted regions
-/// stay together (with outer quotes stripped). Matches zsh closely
-/// enough for the common "split a command line into tokens" use.
-pub(crate) fn zsh_split_z(s: &str) -> Vec<String> {
+/// Tokenise a string per zsh's `${(z)var}` semantics — port of
+/// `bufferwords()` from Src/lex.c (the function `subst.c::paramsubst()`
+/// dispatches to at Src/subst.c:4181/4186 for the Z-flag arm).
+///
+/// Whitespace separates words; shell metacharacters (`;`, `&`, `|`,
+/// `(`, `)`, `<`, `>`) emit as their own tokens; single/double quoted
+/// regions stay together (with outer quotes stripped).
+///
+/// The C signature is `LinkList bufferwords(LinkList, char*, int*, int)` —
+/// this Rust version takes an owned-Vec output instead of mutating a
+/// LinkList in place, and ignores the cursor-index/flags args (the
+/// `${(z)var}` call site at subst.c:4186 always passes `NULL, 0`).
+pub(crate) fn bufferwords(s: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut cur = String::new();
     let chars: Vec<char> = s.chars().collect();
