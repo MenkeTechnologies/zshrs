@@ -89,7 +89,6 @@ zsh_split_z
 color_to_code
 format_function_body_zsh
 format_key_sequence
-get_tied_param
 magic_assoc_keys
 normalize_option_name
 parse_key_sequence
