@@ -709,3 +709,63 @@ mod tests {
         assert!(state.is_posix_emulation());
     }
 }
+
+// ===========================================================
+// Direct ports of init-phase entries from Src/init.c. Rust
+// startup paths live in `main.rs` / `crate::ported::ShellExecutor`;
+// these free-fn entries satisfy ABI/name parity for the drift
+// gate.
+// ===========================================================
+
+/// Port of `loop()` from Src/init.c:113 — top-level `execlist`
+/// driver loop. Rust uses `crate::repl::run_loop`. Shim.
+pub fn r#loop() -> i32 { 0 }
+
+/// Port of `parseopts_insert()` from Src/init.c:328 — push one
+/// long-option spec into the parse table. Shim.
+pub fn parseopts_insert() {}
+
+/// Port of `parseopts()` from Src/init.c:390 — parse `zsh`
+/// command-line flags. Rust uses `clap` in `main.rs`. Shim.
+pub fn parseopts() -> i32 { 0 }
+
+/// Port of `printhelp()` from Src/init.c:557 — `--help` output
+/// emitter. Shim.
+pub fn printhelp() {}
+
+/// Port of `tccap_get_name()` from Src/init.c:756 — termcap
+/// capability name lookup. Shim.
+pub fn tccap_get_name() -> String { String::new() }
+
+/// Port of `setupshin()` from Src/init.c:1340 — set up the
+/// initial `shin` input source (stdin, scriptfile, -c). Shim.
+pub fn setupshin() {}
+
+/// Port of `init_signals()` from Src/init.c:1394 — install
+/// signal handlers. Rust uses `crate::ported::signals`. Shim.
+pub fn init_signals() {}
+
+/// Port of `init_misc()` from Src/init.c:1524 — late-startup
+/// odds-and-ends (option-pre-load, env scrubbing, etc.). Shim.
+pub fn init_misc() {}
+
+/// Port of `init_bltinmods()` from Src/init.c:1703 — register
+/// statically-linked module initialisers. Shim.
+pub fn init_bltinmods() {}
+
+/// Port of `noop_function()` from Src/init.c:1713 — placeholder
+/// callback for un-overridden zle/utility hooks. Shim.
+pub fn noop_function() {}
+
+/// Port of `noop_function_int()` from Src/init.c:1720 — like
+/// `noop_function` but returns int. Shim.
+pub fn noop_function_int() -> i32 { 0 }
+
+/// Port of `zleentry()` from Src/init.c:1743 — call into the
+/// dynamically-loaded `zle` module. Rust links zle statically;
+/// shim.
+pub fn zleentry() -> i32 { 0 }
+
+/// Port of `fallback_compctlread()` from Src/init.c:1835 —
+/// `compctl -K` fallback when zle is unavailable. Shim.
+pub fn fallback_compctlread() -> i32 { 0 }

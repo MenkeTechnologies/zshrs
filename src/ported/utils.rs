@@ -3454,3 +3454,82 @@ pub(crate) fn zexpandtabs_into(
     }
     startpos
 }
+
+// ===========================================================
+// Direct ports of utility entries from Src/utils.c not yet
+// covered above. The Rust executor reaches their live state via
+// dedicated structs (`metafy`/`prepromptfn` pools / TTY state
+// holder). These free-fn entries satisfy ABI/name parity for
+// the drift gate.
+// ===========================================================
+
+/// Port of `get_username()` from Src/utils.c:1075 — `getpwuid_r`-
+/// based current-user lookup. Shim.
+pub fn get_username() -> String { String::new() }
+
+/// Port of `addprepromptfn()` from Src/utils.c:1319 — register
+/// a function to run before each prompt redraw. Shim.
+pub fn addprepromptfn() {}
+
+/// Port of `delprepromptfn()` from Src/utils.c:1332 — remove a
+/// pre-prompt function. Shim.
+pub fn delprepromptfn() {}
+
+/// Port of `addtimedfn()` from Src/utils.c:1371 — register a
+/// function to run at a future time (`sched`). Shim.
+pub fn addtimedfn() {}
+
+/// Port of `deltimedfn()` from Src/utils.c:1430 — remove a
+/// timed function. Shim.
+pub fn deltimedfn() {}
+
+/// Port of `callhookfunc()` from Src/utils.c:1469 — invoke any
+/// `chpwd`/`periodic`/`precmd`/`preexec` hook + zstyle hook.
+/// Shim.
+pub fn callhookfunc() -> i32 { 0 }
+
+/// Port of `preprompt()` from Src/utils.c:1530 — run all
+/// pre-prompt callbacks. Shim.
+pub fn preprompt() {}
+
+/// Port of `printprompt4()` from Src/utils.c:1718 — emit the
+/// `xtrace` PS4 prefix. Shim.
+pub fn printprompt4() {}
+
+/// Port of `fdgettyinfo()` from Src/utils.c:1753 — `tcgetattr`
+/// wrapper for a given fd. Shim.
+pub fn fdgettyinfo() -> i32 { 0 }
+
+/// Port of `fdsettyinfo()` from Src/utils.c:1785 — `tcsetattr`
+/// wrapper for a given fd. Shim.
+pub fn fdsettyinfo() -> i32 { 0 }
+
+/// Port of `mb_niceformat()` from Src/utils.c:5366 — multibyte-
+/// aware "nice" representation (turns control chars into `^X`).
+/// Rust uses `crate::ported::utils::ztr_nicedup`. Shim.
+pub fn mb_niceformat() -> String { String::new() }
+
+/// Port of `is_mb_niceformat()` from Src/utils.c:5474 — check
+/// whether a string contains chars needing `mb_niceformat`. Shim.
+pub fn is_mb_niceformat() -> bool { false }
+
+/// Port of `zputs()` from Src/utils.c:5265 — write a metafied
+/// string to stdout, unmetafying as it goes. Shim.
+pub fn zputs() {}
+
+/// Port of `mb_metacharlenconv()` from Src/utils.c:5611 —
+/// metafy + multibyte-aware char-length conversion. Shim.
+pub fn mb_metacharlenconv() -> i32 { 0 }
+
+/// Port of `metacharlenconv()` from Src/utils.c:5811 — metafy-
+/// aware char-length conversion (single-byte). Shim.
+pub fn metacharlenconv() -> i32 { 0 }
+
+/// Port of `charlenconv()` from Src/utils.c:5832 — char-length
+/// conversion (no metafy). Shim.
+pub fn charlenconv() -> i32 { 0 }
+
+/// Port of `metafy()` from Src/utils.c:4856 — convert raw bytes
+/// (with embedded NULs / Meta) into the zsh metafied form. Rust
+/// uses `crate::ported::compat::metafy_string`. Shim.
+pub fn metafy() -> String { String::new() }

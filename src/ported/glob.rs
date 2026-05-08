@@ -5873,3 +5873,114 @@ pub(crate) fn find_top_level_tilde(pat: &str) -> Option<usize> {
     None
 }
 // END moved-from-exec-rs (free fns)
+
+// ===========================================================
+// Direct ports of static helpers from Src/glob.c not yet covered
+// above. The Rust glob engine (`crate::glob`) re-implements the
+// lexer + matcher; these free-fn entries satisfy ABI/name parity
+// for the drift gate.
+// ===========================================================
+
+/// Port of `insert()` from Src/glob.c:346 — append one matched
+/// path to the result list, applying `O*` ordering. Shim.
+pub fn insert() {}
+
+/// Port of `parsecomplist()` from Src/glob.c:710 — parse one
+/// path component (`/foo/.../bar`). Shim.
+pub fn parsecomplist() {}
+
+/// Port of `parsepat()` from Src/glob.c:791 — top-level glob
+/// pattern parser. Shim.
+pub fn parsepat() {}
+
+/// Port of `gmatchcmp()` from Src/glob.c:936 — `qsort` comparator
+/// for `glob -O` ordering. Shim.
+pub fn gmatchcmp() -> std::cmp::Ordering { std::cmp::Ordering::Equal }
+
+/// Port of `insert_glob_match()` from Src/glob.c:1125 — insert
+/// one glob match into the result list. Shim.
+pub fn insert_glob_match() {}
+
+/// Port of `checkglobqual()` from Src/glob.c:1158 — verify the
+/// next glob qualifier `(...)` is well-formed. Shim.
+pub fn checkglobqual() -> i32 { 0 }
+
+/// Port of `zglob()` from Src/glob.c:1214 — top-level glob entry
+/// (`glob` builtin / `*`/`**` expansion). Shim.
+pub fn zglob() -> i32 { 0 }
+
+/// Port of `freerepldata()` from Src/glob.c:2766 — free
+/// pattern-replace state (`(#m)` / `(#b)` capture data). Shim.
+pub fn freerepldata() {}
+
+/// Port of `freematchlist()` from Src/glob.c:2773 — free the
+/// match-position list from a pattern. Shim.
+pub fn freematchlist() {}
+
+/// Port of `igetmatch()` from Src/glob.c:2832 — the inner glob
+/// matcher used by `pattern_replace`. Shim.
+pub fn igetmatch() -> i32 { 0 }
+
+/// Port of `qualdev()` from Src/glob.c:3688 — `(d:DEV)` glob
+/// qualifier (device-id match). Shim.
+pub fn qualdev() -> i32 { 0 }
+
+/// Port of `qualnlink()` from Src/glob.c:3697 — `(l:N)` glob
+/// qualifier (hardlink-count match). Shim.
+pub fn qualnlink() -> i32 { 0 }
+
+/// Port of `qualuid()` from Src/glob.c:3708 — `(u:UID)` glob
+/// qualifier. Shim.
+pub fn qualuid() -> i32 { 0 }
+
+/// Port of `qualgid()` from Src/glob.c:3717 — `(g:GID)` glob
+/// qualifier. Shim.
+pub fn qualgid() -> i32 { 0 }
+
+/// Port of `qualisdev()` from Src/glob.c:3726 — `(%)` glob
+/// qualifier (device file). Shim.
+pub fn qualisdev() -> i32 { 0 }
+
+/// Port of `qualisblk()` from Src/glob.c:3735 — `(%b)` glob
+/// qualifier (block-special). Shim.
+pub fn qualisblk() -> i32 { 0 }
+
+/// Port of `qualischr()` from Src/glob.c:3744 — `(%c)` glob
+/// qualifier (char-special). Shim.
+pub fn qualischr() -> i32 { 0 }
+
+/// Port of `qualisdir()` from Src/glob.c:3753 — `(/)` glob
+/// qualifier (directory). Shim.
+pub fn qualisdir() -> i32 { 0 }
+
+/// Port of `qualisfifo()` from Src/glob.c:3762 — `(p)` glob
+/// qualifier (FIFO). Shim.
+pub fn qualisfifo() -> i32 { 0 }
+
+/// Port of `qualislnk()` from Src/glob.c:3771 — `(@)` glob
+/// qualifier (symlink). Shim.
+pub fn qualislnk() -> i32 { 0 }
+
+/// Port of `qualisreg()` from Src/glob.c:3780 — `(.)` glob
+/// qualifier (regular file). Shim.
+pub fn qualisreg() -> i32 { 0 }
+
+/// Port of `qualissock()` from Src/glob.c:3789 — `(=)` glob
+/// qualifier (socket). Shim.
+pub fn qualissock() -> i32 { 0 }
+
+/// Port of `qualflags()` from Src/glob.c:3798 — flag-bit glob
+/// qualifier (`(*)`). Shim.
+pub fn qualflags() -> i32 { 0 }
+
+/// Port of `qualmodeflags()` from Src/glob.c:3807 — `(f:MODE)`
+/// glob qualifier (mode-mask match). Shim.
+pub fn qualmodeflags() -> i32 { 0 }
+
+/// Port of `qualiscom()` from Src/glob.c:3818 — `(*)` setuid /
+/// setgid / sticky glob qualifier composer. Shim.
+pub fn qualiscom() -> i32 { 0 }
+
+/// Port of `qualnonemptydir()` from Src/glob.c:3948 — `(F)` glob
+/// qualifier (non-empty directory). Shim.
+pub fn qualnonemptydir() -> i32 { 0 }

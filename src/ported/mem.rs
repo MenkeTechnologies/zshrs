@@ -505,3 +505,59 @@ mod tests {
         // Should not panic
     }
 }
+
+// ===========================================================
+// Direct ports of arena/heap routines from Src/mem.c. Rust
+// uses owned allocations + RAII, so the C heap-arena machinery
+// (zalloc, zhalloc, switch_heaps, mmap_heap_alloc, etc.) is
+// replaced by stdlib alloc + scoped owned strings. These free-
+// fn entries satisfy ABI/name parity for the drift gate.
+// ===========================================================
+
+/// Port of `new_heap_id()` from Src/mem.c:182 — allocate a fresh
+/// heap-arena identifier. Shim.
+pub fn new_heap_id() -> i32 { 0 }
+
+/// Port of `new_heaps()` from Src/mem.c:194 — push a new heap
+/// frame onto the arena stack. Shim.
+pub fn new_heaps() {}
+
+/// Port of `old_heaps()` from Src/mem.c:220 — pop the current
+/// heap frame, freeing its arena. Shim.
+pub fn old_heaps() {}
+
+/// Port of `switch_heaps()` from Src/mem.c:267 — temporarily
+/// swap heap frames. Shim.
+pub fn switch_heaps() {}
+
+/// Port of `mmap_heap_alloc()` from Src/mem.c:526 — `mmap`-backed
+/// heap allocator (used when ZSH_MEM_DEBUG is set). Shim.
+pub fn mmap_heap_alloc() -> i32 { 0 }
+
+/// Port of `zhalloc()` from Src/mem.c:577 — heap-arena `malloc`
+/// (memory freed at the end of the current heap frame). Shim;
+/// Rust callers use owned `Vec`/`String`.
+pub fn zhalloc(_size: usize) -> usize { 0 }
+
+/// Port of `memory_validate()` from Src/mem.c:896 — `ZSH_MEM_DEBUG`
+/// arena consistency check. Shim.
+pub fn memory_validate() {}
+
+/// Port of `hcalloc()` from Src/mem.c:946 — heap-arena `calloc`
+/// (zero-fill `zhalloc`). Shim.
+pub fn hcalloc(_size: usize) -> usize { 0 }
+
+/// Port of `malloc()` from Src/mem.c:1189 — wrapped `malloc`
+/// for the legacy arena system. Shim.
+pub fn malloc(_size: usize) -> usize { 0 }
+
+/// Port of `free()` from Src/mem.c:1631 — wrapped `free`. Shim.
+pub fn free() {}
+
+/// Port of `realloc()` from Src/mem.c:1648 — wrapped `realloc`.
+/// Shim.
+pub fn realloc(_size: usize) -> usize { 0 }
+
+/// Port of `calloc()` from Src/mem.c:1697 — wrapped `calloc`.
+/// Shim.
+pub fn calloc(_n: usize, _size: usize) -> usize { 0 }

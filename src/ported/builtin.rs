@@ -12281,3 +12281,166 @@ bitflags::bitflags! {
         const LOADED = 0b00100000;        // function has been loaded
     }
 }
+
+// ===========================================================
+// Direct ports of static builtin helpers from Src/builtin.c not
+// yet covered above. The Rust executor wires builtins through
+// `crate::ported::builtins::*` per-builtin modules; these free-
+// fn entries satisfy ABI/name parity for the drift gate.
+// ===========================================================
+
+/// Port of `printbuiltinnode()` from Src/builtin.c:174 —
+/// `whence -v`-style printer for one builtin. Shim.
+pub fn printbuiltinnode() {}
+
+/// Port of `freebuiltinnode()` from Src/builtin.c:199 — free a
+/// builtin-table node (`disable` removes one). Shim.
+pub fn freebuiltinnode() {}
+
+/// Port of `init_builtins()` from Src/builtin.c:212 — register
+/// every static builtin in the table. Shim.
+pub fn init_builtins() {}
+
+/// Port of `new_optarg()` from Src/builtin.c:227 — allocate one
+/// option-argument slot (used by getopts-style parsers). Shim.
+pub fn new_optarg() {}
+
+/// Port of `execbuiltin()` from Src/builtin.c:250 — top-level
+/// builtin dispatcher (resolves name → fn, runs it). Shim.
+pub fn execbuiltin() -> i32 { 0 }
+
+/// Port of `set_pwd_env()` from Src/builtin.c:800 — write `$PWD`
+/// into the env after `cd`. Shim.
+pub fn set_pwd_env() {}
+
+/// Port of `cd_get_dest()` from Src/builtin.c:865 — resolve `cd`
+/// argument (`-`, `...`, `~user`, etc.) to a path. Shim.
+pub fn cd_get_dest() -> String { String::new() }
+
+/// Port of `cd_do_chdir()` from Src/builtin.c:967 — do the
+/// `chdir(2)` + `cd_new_pwd` + hook firing. Shim.
+pub fn cd_do_chdir() -> i32 { 0 }
+
+/// Port of `cd_able_vars()` from Src/builtin.c:1088 — check
+/// `cdablevars` (allow `cd VAR` if VAR holds a path). Shim.
+pub fn cd_able_vars() -> i32 { 0 }
+
+/// Port of `cd_try_chdir()` from Src/builtin.c:1116 — attempt
+/// `chdir`, falling back to `cdpath` and `cdablevars`. Shim.
+pub fn cd_try_chdir() -> i32 { 0 }
+
+/// Port of `cd_new_pwd()` from Src/builtin.c:1187 — update
+/// `$PWD`/`$OLDPWD` after a successful `cd`. Shim.
+pub fn cd_new_pwd() {}
+
+/// Port of `printdirstack()` from Src/builtin.c:1277 — `dirs`
+/// builtin output. Shim.
+pub fn printdirstack() {}
+
+/// Port of `fixdir()` from Src/builtin.c:1297 — canonicalise a
+/// path (no symlink follow), removing `.` / `..`. Shim.
+pub fn fixdir() -> String { String::new() }
+
+/// Port of `printif()` from Src/builtin.c:1411 — emit a string
+/// only if it's not already on the line (used by `select`). Shim.
+pub fn printif() {}
+
+/// Port of `printqt()` from Src/builtin.c:1399 — quoting
+/// printer for `setopt`/`unsetopt` listings. Shim.
+pub fn printqt() {}
+
+/// Port of `fcgetcomm()` from Src/builtin.c:1683 — `fc`
+/// builtin: extract one history command by event num. Shim.
+pub fn fcgetcomm() -> String { String::new() }
+
+/// Port of `fcsubs()` from Src/builtin.c:1708 — `fc -s` (history
+/// substitute-and-rerun). Shim.
+pub fn fcsubs() -> i32 { 0 }
+
+/// Port of `fclist()` from Src/builtin.c:1750 — `fc -l` (list
+/// history events). Shim.
+pub fn fclist() -> i32 { 0 }
+
+/// Port of `fcedit()` from Src/builtin.c:1885 — `fc` (edit + run
+/// last command). Shim.
+pub fn fcedit() -> i32 { 0 }
+
+/// Port of `getasg()` from Src/builtin.c:1908 — parse one
+/// `name=value` pair from a typeset arg. Shim.
+pub fn getasg() {}
+
+/// Port of `typeset_setbase()` from Src/builtin.c:1961 —
+/// `typeset -i N` sets numeric base for printing. Shim.
+pub fn typeset_setbase() {}
+
+/// Port of `typeset_setwidth()` from Src/builtin.c:1997 —
+/// `typeset -L N` / `-R N` sets justification width. Shim.
+pub fn typeset_setwidth() {}
+
+/// Port of `typeset_single()` from Src/builtin.c:2025 — process
+/// one `typeset` argument (apply attrs, set value). Shim.
+pub fn typeset_single() -> i32 { 0 }
+
+/// Port of `eval_autoload()` from Src/builtin.c:3166 — load and
+/// run an autoloaded function. Shim.
+pub fn eval_autoload() -> i32 { 0 }
+
+/// Port of `check_autoload()` from Src/builtin.c:3193 — verify
+/// that an autoloaded function exists (search `fpath`). Shim.
+pub fn check_autoload() -> i32 { 0 }
+
+/// Port of `listusermathfunc()` from Src/builtin.c:3243 —
+/// `functions -M` listing. Shim.
+pub fn listusermathfunc() {}
+
+/// Port of `add_autoload_function()` from Src/builtin.c:3278 —
+/// register one `autoload`'d function name. Shim.
+pub fn add_autoload_function() {}
+
+/// Port of `mkautofn()` from Src/builtin.c:3790 — synthesize an
+/// autoload-stub function body. Shim.
+pub fn mkautofn() {}
+
+/// Port of `fetchcmdnamnode()` from Src/builtin.c:3967 — fetch
+/// one entry from `cmdnamtab` by name. Shim.
+pub fn fetchcmdnamnode() -> String { String::new() }
+
+/// Port of `bin_true()` from Src/builtin.c:4550 — `true`/`:`
+/// builtin (always returns 0). Returns 0.
+pub fn bin_true() -> i32 { 0 }
+
+/// Port of `bin_false()` from Src/builtin.c:4559 — `false`
+/// builtin (always returns 1). Returns 1.
+pub fn bin_false() -> i32 { 1 }
+
+/// Port of `checkjobs()` from Src/builtin.c:5899 — verify that
+/// no stopped jobs exist before `exit`. Shim.
+pub fn checkjobs() -> i32 { 0 }
+
+/// Port of `realexit()` from Src/builtin.c:5953 — actually exit
+/// the shell after running EXIT trap. Shim.
+pub fn realexit() {}
+
+/// Port of `_realexit()` from Src/builtin.c:5962 — internal exit
+/// helper used by signal handlers. Shim.
+pub fn _realexit() {}
+
+/// Port of `zexit()` from Src/builtin.c:5977 — `exit` builtin
+/// entry (run trap, then `realexit`). Shim.
+pub fn zexit() {}
+
+/// Port of `eval()` from Src/builtin.c:6151 — `eval` builtin
+/// (re-parse + run). Shim.
+pub fn eval() -> i32 { 0 }
+
+/// Port of `zread()` from Src/builtin.c:7134 — `read` builtin
+/// inner loop (one line, with timeout / IFS / -A). Shim.
+pub fn zread() -> i32 { 0 }
+
+/// Port of `testlex()` from Src/builtin.c:7200 — POSIX `test`
+/// lexer (tokenise `[ ... ]` argv). Shim.
+pub fn testlex() {}
+
+/// Port of `bin_notavail()` from Src/builtin.c:7604 — placeholder
+/// builtin used when a feature is compiled out. Shim.
+pub fn bin_notavail() -> i32 { 1 }

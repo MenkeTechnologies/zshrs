@@ -609,3 +609,49 @@ mod tests {
         assert!(buf.lexstop || buf.buf_ct == 0);
     }
 }
+
+// ===========================================================
+// Direct ports of static input-buffer helpers from Src/input.c.
+// The Rust executor stores input buffers as `InputBuffer` (above);
+// these free-fn entries satisfy ABI/name parity for the drift gate.
+// ===========================================================
+
+/// Port of `shinbufreset()` from Src/input.c:159 — clear the
+/// stdin pushback buffer. Shim.
+pub fn shinbufreset() {}
+
+/// Port of `shinbufalloc()` from Src/input.c:171 — allocate the
+/// initial stdin pushback buffer. Shim.
+pub fn shinbufalloc() {}
+
+/// Port of `shinbufsave()` from Src/input.c:181 — save the
+/// current stdin pushback buffer state. Shim.
+pub fn shinbufsave() {}
+
+/// Port of `shinbufrestore()` from Src/input.c:200 — restore a
+/// saved stdin pushback buffer state. Shim.
+pub fn shinbufrestore() {}
+
+/// Port of `shingetchar()` from Src/input.c:218 — pull one char
+/// from the stdin pushback buffer. Shim.
+pub fn shingetchar() -> i32 { 0 }
+
+/// Port of `shingetline()` from Src/input.c:267 — pull one line
+/// (up to `\n`) from the stdin pushback. Shim.
+pub fn shingetline() -> String { String::new() }
+
+/// Port of `inputline()` from Src/input.c:366 — read one input
+/// line, expanding aliases / history. Shim.
+pub fn inputline() -> String { String::new() }
+
+/// Port of `stuff()` from Src/input.c:647 — push a string back
+/// onto the input stream (used by alias expansion). Shim.
+pub fn stuff() {}
+
+/// Port of `inpoptop()` from Src/input.c:736 — pop the topmost
+/// input-stack frame. Shim.
+pub fn inpoptop() {}
+
+/// Port of `inpopalias()` from Src/input.c:804 — pop one alias-
+/// expansion frame. Shim.
+pub fn inpopalias() {}

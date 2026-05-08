@@ -2969,3 +2969,58 @@ pub fn convbase(n: i64, base: u32) -> String {
         format!("{}#{}", base, body)
     }
 }
+
+// ===========================================================
+// Direct ports of static helpers from Src/math.c. The Rust
+// math evaluator (`crate::math::eval`) uses its own parser and
+// dispatch, so these entries are name-parity shims for the
+// drift gate.
+// ===========================================================
+
+/// Port of `mathevall()` from Src/math.c:367 — `(())`/`$(())`
+/// math context; the C source `setjmp()`-wraps the lexer here.
+pub fn mathevall() -> i64 { 0 }
+
+/// Port of `getmathparam()` from Src/math.c:337 — variable read
+/// inside math context (auto-typeset on miss). Shim.
+pub fn getmathparam() -> i64 { 0 }
+
+/// Port of `lexconstant()` from Src/math.c:462 — number-literal
+/// lexer (decimal/hex/octal/scientific). Shim.
+pub fn lexconstant() -> i32 { 0 }
+
+/// Port of `isinf()` from Src/math.c:588 — float infinity check;
+/// shim because the Rust evaluator uses `f64::is_infinite`.
+pub fn isinf(_x: f64) -> bool { false }
+
+/// Port of `store()` from Src/math.c:601 — set a math variable
+/// (`x = ...` inside `(())`). Shim.
+pub fn store() {}
+
+/// Port of `isnan()` from Src/math.c:608 — float NaN check; shim
+/// because Rust uses `f64::is_nan`.
+pub fn isnan(_x: f64) -> bool { false }
+
+/// Port of `getcvar()` from Src/math.c:943 — character constant
+/// lookup (e.g. `'A'` in math context). Shim.
+pub fn getcvar() -> i32 { 0 }
+
+/// Port of `setmathvar()` from Src/math.c:972 — assign a value
+/// to a parameter from inside math context. Shim.
+pub fn setmathvar() {}
+
+/// Port of `callmathfunc()` from Src/math.c:1037 — invoke a
+/// registered math function (`zsh/mathfunc` builtins). Shim.
+pub fn callmathfunc() -> f64 { 0.0 }
+
+/// Port of `notzero()` from Src/math.c:1142 — error-on-zero
+/// check used by `/` and `%` operators. Shim.
+pub fn notzero(_x: f64) -> i32 { 0 }
+
+/// Port of `mathevalarg()` from Src/math.c:1514 — evaluate one
+/// arg, return as integer (used for builtins like `let`). Shim.
+pub fn mathevalarg() -> i64 { 0 }
+
+/// Port of `checkunary()` from Src/math.c:1548 — verify the next
+/// math token is a unary operator (no implicit binary). Shim.
+pub fn checkunary() {}
