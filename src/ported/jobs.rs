@@ -8,6 +8,8 @@ use std::env;
 use std::process::Child;
 use std::time::{Duration, Instant};
 
+use crate::ported::utils::zwarnnam;
+
 /// Job status flags
 pub mod stat {
     pub const STOPPED: u32 = 1 << 0; // Job is stopped
@@ -1613,7 +1615,7 @@ impl crate::ported::exec::ShellExecutor {
                         // `jobs:1: -Z requires one argument` exit 1.
                         // zshrs silently ignored `-Z` entirely.
                         'Z' => {
-                            eprintln!("zshrs:jobs:1: -Z requires one argument");
+                            zwarnnam("jobs", "-Z requires one argument");
                             return 1;
                         }
                         // BUILTIN("jobs", ..., "dlpZrs") — only six
@@ -1621,7 +1623,7 @@ impl crate::ported::exec::ShellExecutor {
                         // accepted any letter silently so `jobs -X`
                         // would print all jobs as if -X were a no-op.
                         _ => {
-                            eprintln!("zshrs:jobs:1: bad option: -{}", c);
+                            zwarnnam("jobs", &format!("bad option: -{}", c));
                             return 1;
                         }
                     }
@@ -1653,7 +1655,7 @@ impl crate::ported::exec::ShellExecutor {
         if !job_ids.is_empty() {
             for &requested in &job_ids {
                 if !self.jobs.list().iter().any(|j| j.id == requested) {
-                    eprintln!("zshrs:jobs:1: %{}: no such job", requested);
+                    zwarnnam("jobs", &format!("%{}: no such job", requested));
                     return 1;
                 }
             }
@@ -1727,7 +1729,7 @@ impl crate::ported::exec::ShellExecutor {
         // stdin-tty status: a real interactive shell has a tty on
         // stdin; `-c` mode does not (stdin is piped or empty).
         if !atty::is(atty::Stream::Stdin) {
-            eprintln!("zshrs:fg:1: no job control in this shell.");
+            zwarnnam("fg", "no job control in this shell.");
             return 1;
         }
         let job_id = if let Some(arg) = args.first() {
@@ -1736,7 +1738,7 @@ impl crate::ported::exec::ShellExecutor {
             match s.parse::<usize>() {
                 Ok(id) => Some(id),
                 Err(_) => {
-                    eprintln!("zshrs:fg:1: {}: no such job", arg);
+                    zwarnnam("fg", &format!("{}: no such job", arg));
                     return 1;
                 }
             }
@@ -1746,12 +1748,12 @@ impl crate::ported::exec::ShellExecutor {
 
         let Some(id) = job_id else {
             // Match zsh's diagnostic for non-interactive contexts.
-            eprintln!("zshrs:fg:1: no job control in this shell.");
+            zwarnnam("fg", "no job control in this shell.");
             return 1;
         };
 
         let Some(job) = self.jobs.get(id) else {
-            eprintln!("zshrs:fg:1: %{}: no such job", id);
+            zwarnnam("fg", &format!("%{}: no such job", id));
             return 1;
         };
 
@@ -1761,7 +1763,7 @@ impl crate::ported::exec::ShellExecutor {
 
         // Continue the job
         if let Err(e) = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGCONT).map_err(|e| e.to_string()) {
-            eprintln!("zshrs:fg:1: {}", e);
+            zwarnnam("fg", &format!("{}", e));
             return 1;
         }
 
@@ -1790,7 +1792,7 @@ impl crate::ported::exec::ShellExecutor {
                 status
             }
             Err(e) => {
-                eprintln!("zshrs:fg:1: {}", e);
+                zwarnnam("fg", &format!("{}", e));
                 1
             }
         }
@@ -1798,7 +1800,7 @@ impl crate::ported::exec::ShellExecutor {
     pub(crate) fn builtin_bg(&mut self, args: &[String]) -> i32 {
         // Same no-job-control semantics as `fg` — see comment there.
         if !atty::is(atty::Stream::Stdin) {
-            eprintln!("zshrs:bg:1: no job control in this shell.");
+            zwarnnam("bg", "no job control in this shell.");
             return 1;
         }
         let job_id = if let Some(arg) = args.first() {
@@ -1806,7 +1808,7 @@ impl crate::ported::exec::ShellExecutor {
             match s.parse::<usize>() {
                 Ok(id) => Some(id),
                 Err(_) => {
-                    eprintln!("zshrs:bg:1: {}: no such job", arg);
+                    zwarnnam("bg", &format!("{}: no such job", arg));
                     return 1;
                 }
             }
@@ -1815,12 +1817,12 @@ impl crate::ported::exec::ShellExecutor {
         };
 
         let Some(id) = job_id else {
-            eprintln!("zshrs:bg:1: no job control in this shell.");
+            zwarnnam("bg", "no job control in this shell.");
             return 1;
         };
 
         let Some(job) = self.jobs.get_mut(id) else {
-            eprintln!("zshrs:bg:1: %{}: no such job", id);
+            zwarnnam("bg", &format!("%{}: no such job", id));
             return 1;
         };
 
@@ -1828,7 +1830,7 @@ impl crate::ported::exec::ShellExecutor {
         let cmd = job.command.clone();
 
         if let Err(e) = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGCONT).map_err(|e| e.to_string()) {
-            eprintln!("zshrs:bg:1: {}", e);
+            zwarnnam("bg", &format!("{}", e));
             return 1;
         }
 
@@ -1846,7 +1848,7 @@ impl crate::ported::exec::ShellExecutor {
             // zsh: bare `kill` -> `kill:1: not enough arguments` exit 1.
             // zshrs printed a multi-line bash-style usage banner that
             // didn't match zsh's terse format.
-            eprintln!("zshrs:kill:1: not enough arguments");
+            zwarnnam("kill", "not enough arguments");
             return 1;
         }
 
@@ -1927,14 +1929,14 @@ impl crate::ported::exec::ShellExecutor {
                 // -s signal_name (or numeric signal-by-name)
                 i += 1;
                 if i >= args.len() {
-                    eprintln!("zshrs:kill:1: -s requires an argument");
+                    zwarnnam("kill", "-s requires an argument");
                     return 1;
                 }
                 // zsh: empty signal name -> `kill:1: -: signal name
                 // expected`. zshrs's name lookup of "" produced
                 // "invalid signal:  " (with empty trailing).
                 if args[i].is_empty() {
-                    eprintln!("zshrs:kill:1: -: signal name expected");
+                    zwarnnam("kill", "-: signal name expected");
                     return 1;
                 }
                 // zsh accepts numeric values to `-s` too — `-s 0`
@@ -1946,7 +1948,7 @@ impl crate::ported::exec::ShellExecutor {
                     if let Some((_, _, s)) = signal_map.iter().find(|(_, n, _)| *n == num) {
                         sig = *s;
                     } else {
-                        eprintln!("zshrs:kill:1: invalid signal: {}", args[i]);
+                        zwarnnam("kill", &format!("invalid signal: {}", args[i]));
                         return 1;
                     }
                 } else {
@@ -1957,7 +1959,7 @@ impl crate::ported::exec::ShellExecutor {
                     {
                         sig = *s;
                     } else {
-                        eprintln!("zshrs:kill:1: invalid signal: {}", args[i]);
+                        zwarnnam("kill", &format!("invalid signal: {}", args[i]));
                         return 1;
                     }
                 }
@@ -1965,20 +1967,20 @@ impl crate::ported::exec::ShellExecutor {
                 // -n signal_number
                 i += 1;
                 if i >= args.len() {
-                    eprintln!("zshrs:kill:1: -n requires an argument");
+                    zwarnnam("kill", "-n requires an argument");
                     return 1;
                 }
                 let num: i32 = match args[i].parse() {
                     Ok(n) => n,
                     Err(_) => {
-                        eprintln!("zshrs:kill:1: invalid signal number: {}", args[i]);
+                        zwarnnam("kill", &format!("invalid signal number: {}", args[i]));
                         return 1;
                     }
                 };
                 if let Some((_, _, s)) = signal_map.iter().find(|(_, n, _)| *n == num) {
                     sig = *s;
                 } else {
-                    eprintln!("zshrs:kill:1: invalid signal number: {}", num);
+                    zwarnnam("kill", &format!("invalid signal number: {}", num));
                     return 1;
                 }
             } else if arg.starts_with('-') && arg.len() > 1 {
@@ -1998,7 +2000,7 @@ impl crate::ported::exec::ShellExecutor {
                     } else if let Some((_, _, s)) = signal_map.iter().find(|(_, n, _)| *n == num) {
                         sig = *s;
                     } else {
-                        eprintln!("zshrs:kill:1: invalid signal: {}", arg);
+                        zwarnnam("kill", &format!("invalid signal: {}", arg));
                         return 1;
                     }
                 } else if let Some((_, _, s)) =
@@ -2010,8 +2012,8 @@ impl crate::ported::exec::ShellExecutor {
                     // line `type kill -l for a list of signals`. zshrs
                     // emitted the bash-style `kill: invalid signal:
                     // -FOO` (with the leading dash, no SIG prefix).
-                    eprintln!("zshrs:kill:1: unknown signal: SIG{}", sig_name);
-                    eprintln!("zshrs:kill:1: type kill -l for a list of signals");
+                    zwarnnam("kill", &format!("unknown signal: SIG{}", sig_name));
+                    zwarnnam("kill", "type kill -l for a list of signals");
                     return 1;
                 }
             } else {
@@ -2060,7 +2062,7 @@ impl crate::ported::exec::ShellExecutor {
                             // zsh's diagnostic always uses the SIG prefix
                             // even when the user's input lacked it:
                             // `kill -l XYZ` → `unknown signal: SIGXYZ`.
-                            eprintln!("zshrs:kill:1: unknown signal: SIG{}", sig_name);
+                            zwarnnam("kill", &format!("unknown signal: SIG{}", sig_name));
                         }
                     }
                 }
@@ -2072,7 +2074,7 @@ impl crate::ported::exec::ShellExecutor {
             // zsh: `kill -9` (signal but no pid) -> `kill:1: not enough
             // arguments` exit 1. Match the same terse format used for
             // bare `kill`.
-            eprintln!("zshrs:kill:1: not enough arguments");
+            zwarnnam("kill", "not enough arguments");
             return 1;
         }
 
@@ -2086,18 +2088,18 @@ impl crate::ported::exec::ShellExecutor {
                         // zsh format: `kill:1: job not found:
                         // <name-without-%>`. zshrs's `%abc: no such
                         // job` had the % AND wrong wording.
-                        eprintln!("zshrs:kill:1: job not found: {}", spec);
+                        zwarnnam("kill", &format!("job not found: {}", spec));
                         status = 1;
                         continue;
                     }
                 };
                 if let Some(job) = self.jobs.get(id) {
                     if let Err(e) = kill(Pid::from_raw(job.pid), sig) {
-                        eprintln!("zshrs:kill:1: {}", e);
+                        zwarnnam("kill", &format!("{}", e));
                         status = 1;
                     }
                 } else {
-                    eprintln!("zshrs:kill:1: {}: no such job", arg);
+                    zwarnnam("kill", &format!("{}: no such job", arg));
                     status = 1;
                 }
             } else {
@@ -2108,7 +2110,7 @@ impl crate::ported::exec::ShellExecutor {
                         // zsh: `kill -0 abc` -> `kill:1: illegal pid:
                         // abc` exit 1. zshrs's bash-style `kill: abc:
                         // invalid pid` had no shell-name prefix.
-                        eprintln!("zshrs:kill:1: illegal pid: {}", arg);
+                        zwarnnam("kill", &format!("illegal pid: {}", arg));
                         status = 1;
                         continue;
                     }
@@ -2131,7 +2133,7 @@ impl crate::ported::exec::ShellExecutor {
                             .next()
                             .unwrap_or(&raw)
                             .to_lowercase();
-                        eprintln!("zshrs:kill:1: kill {} failed: {}", pid, cleaned);
+                        zwarnnam("kill", &format!("kill {} failed: {}", pid, cleaned));
                         status = 1;
                     }
                 } else if let Err(e) = kill(Pid::from_raw(pid as i32), sig) {
@@ -2146,7 +2148,7 @@ impl crate::ported::exec::ShellExecutor {
                         .unwrap_or(&raw)
                         .trim()
                         .to_lowercase();
-                    eprintln!("zshrs:kill:1: kill {} failed: {}", pid, cleaned);
+                    zwarnnam("kill", &format!("kill {} failed: {}", pid, cleaned));
                     status = 1;
                 }
             }
@@ -2163,7 +2165,7 @@ impl crate::ported::exec::ShellExecutor {
                 self.jobs.remove(id);
                 return 0;
             }
-            eprintln!("zshrs:disown:1: no current job");
+            zwarnnam("disown", "no current job");
             return 1;
         }
 
@@ -2180,20 +2182,20 @@ impl crate::ported::exec::ShellExecutor {
                 let s = arg.trim_start_matches('%');
                 if let Ok(id) = s.parse::<usize>() {
                     if self.jobs.remove(id).is_none() {
-                        eprintln!("zshrs:disown:1: {}: no such job", arg);
+                        zwarnnam("disown", &format!("{}: no such job", arg));
                         status = 1;
                     }
                 } else {
-                    eprintln!("zshrs:disown:1: {}: no such job", arg);
+                    zwarnnam("disown", &format!("{}: no such job", arg));
                     status = 1;
                 }
             } else if let Ok(id) = arg.parse::<usize>() {
                 if self.jobs.remove(id).is_none() {
-                    eprintln!("zshrs:disown:1: %{}: no such job", id);
+                    zwarnnam("disown", &format!("%{}: no such job", id));
                     status = 1;
                 }
             } else {
-                eprintln!("zshrs:disown:1: job not found: {}", arg);
+                zwarnnam("disown", &format!("job not found: {}", arg));
                 status = 1;
             }
         }
@@ -2219,7 +2221,7 @@ impl crate::ported::exec::ShellExecutor {
                 let id: usize = match spec.parse() {
                     Ok(id) => id,
                     Err(_) => {
-                        eprintln!("zshrs:wait:1: {}: no such job", arg);
+                        zwarnnam("wait", &format!("{}: no such job", arg));
                         status = 127;
                         continue;
                     }
@@ -2229,7 +2231,7 @@ impl crate::ported::exec::ShellExecutor {
                         match child.wait().map(|s| s.code().unwrap_or(0)).map_err(|e| e.to_string()) {
                             Ok(s) => status = s,
                             Err(e) => {
-                                eprintln!("zshrs:wait:1: {}", e);
+                                zwarnnam("wait", &format!("{}", e));
                                 status = 127;
                             }
                         }
@@ -2250,7 +2252,7 @@ impl crate::ported::exec::ShellExecutor {
                         .map(|p| p > 0)
                         .unwrap_or(false);
                     if !bg_was_used {
-                        eprintln!("zshrs:wait:1: {}: no such job", arg);
+                        zwarnnam("wait", &format!("{}: no such job", arg));
                         status = 127;
                     }
                     // else: silent success (a bg job was started; we
@@ -2263,7 +2265,7 @@ impl crate::ported::exec::ShellExecutor {
                 // masking the bad input. NOTE: `wait $!` with no bg
                 // job started doesn't reach this arm because $!
                 // defaults to "0" (the literal pid value), not "".
-                eprintln!("zshrs:wait:1: job not found: ");
+                zwarnnam("wait", "job not found: ");
                 status = 127;
                 continue;
             } else {
@@ -2274,7 +2276,7 @@ impl crate::ported::exec::ShellExecutor {
                         // the first non-PID. zshrs's `continue`
                         // emitted one error per bad arg, exceeding
                         // zsh's diagnostic count for `wait abc def`.
-                        eprintln!("zshrs:wait:1: job not found: {}", arg);
+                        zwarnnam("wait", &format!("job not found: {}", arg));
                         return 127;
                     }
                 };
@@ -2285,7 +2287,7 @@ impl crate::ported::exec::ShellExecutor {
                     == Some(pid)
                     || self.jobs.list().iter().any(|j| j.pid == pid as i32);
                 if !known {
-                    eprintln!("zshrs:wait:1: pid {} is not a child of this shell", pid);
+                    zwarnnam("wait", &format!("pid {} is not a child of this shell", pid));
                     status = 127;
                     continue;
                 }
@@ -2306,7 +2308,7 @@ impl crate::ported::exec::ShellExecutor {
                 match result {
                     Ok(s) => status = s,
                     Err(e) => {
-                        eprintln!("zshrs:wait:1: {}", e);
+                        zwarnnam("wait", &format!("{}", e));
                         status = 127;
                     }
                 }
@@ -2330,14 +2332,14 @@ impl crate::ported::exec::ShellExecutor {
             // Check if we're a login shell (parent is init/PID 1)
             let ppid = getppid();
             if !force && ppid == nix::unistd::Pid::from_raw(1) {
-                eprintln!("zshrs:suspend:1: cannot suspend a login shell");
+                zwarnnam("suspend", "cannot suspend a login shell");
                 return 1;
             }
 
             // Send SIGTSTP to ourselves
             let pid = nix::unistd::getpid();
             if let Err(e) = kill(pid, Signal::SIGTSTP) {
-                eprintln!("zshrs:suspend:1: {}", e);
+                zwarnnam("suspend", &format!("{}", e));
                 return 1;
             }
             0
@@ -2345,7 +2347,7 @@ impl crate::ported::exec::ShellExecutor {
 
         #[cfg(not(unix))]
         {
-            eprintln!("zshrs:suspend:1: not supported on this platform");
+            zwarnnam("suspend", "not supported on this platform");
             1
         }
     }
