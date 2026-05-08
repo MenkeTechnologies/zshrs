@@ -2538,42 +2538,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                     return Value::str(crate::ported::params::getarrvalue(&s_chars, i, i).concat());
                                 }
                             }
-                            // (i)pat / (I)pat / (r)pat / (R)pat on
-                            // scalar — sliding-window glob match.
-                            // (i)/(I) return 1-based char position
-                            // of first/last match (or len+1 / 0 on
-                            // no match). (r)/(R) return the matched
-                            // substring. Direct port of zsh's
-                            // getasub scalar-pattern routing.
-                            if flags.chars().all(|c| matches!(c, 'i' | 'I' | 'r' | 'R')) {
-                                let return_index = flags.contains('i') || flags.contains('I');
-                                let want_last = flags.contains('I') || flags.contains('R');
-                                let s_chars: Vec<char> = scalar.chars().collect();
-                                let n = s_chars.len();
-                                let mut found: Option<(usize, usize)> = None;
-                                let positions: Box<dyn Iterator<Item = usize>> = if want_last {
-                                    Box::new((0..=n).rev())
-                                } else {
-                                    Box::new(0..=n)
-                                };
-                                'outer: for start in positions {
-                                    for len in 1..=(n - start) {
-                                        let cand: String = s_chars[start..start + len].iter().collect();
-                                        if ShellExecutor::glob_match_static(&cand, &pat) {
-                                            found = Some((start, start + len));
-                                            break 'outer;
-                                        }
-                                    }
+                            // (i)/(I)/(r)/(R) on scalar — route
+                            // through getarg's scalar char-search
+                            // arm (params.c:1798-1980). Faithful
+                            // port lives in src/ported/params.rs;
+                            // this branch defers to it to avoid
+                            // duplicated drift.
+                            if flags.chars().all(|c| matches!(c, 'i' | 'I' | 'r' | 'R' | 'e')) {
+                                let _ = &pat;
+                                if let Some(crate::ported::params::GetargOut::Value(v)) =
+                                    crate::ported::params::getarg(&idx, None, None, Some(&scalar))
+                                {
+                                    return v;
                                 }
-                                return match (found, return_index) {
-                                    (Some((s, _)), true) => Value::str((s + 1).to_string()),
-                                    (Some((s, e)), false) => Value::str(s_chars[s..e].iter().collect::<String>()),
-                                    (None, true) => Value::str(
-                                        if flags.contains('i') { (n + 1).to_string() }
-                                        else { "0".to_string() }
-                                    ),
-                                    (None, false) => Value::str(String::new()),
-                                };
                             }
                         }
                         // Build a per-char pseudo-array and route slice/index
