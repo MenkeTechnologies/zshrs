@@ -3035,8 +3035,8 @@ fn widget_select_in_shell_word(zle: &mut Zle) {
     // Port of selectinshellword() from Src/Zle/textobjects.c. Uses the
     // shell-word splitter that respects single/double quotes + escapes.
     let saved = zle.zlecs;
-    let start = super::zle_word::shell_word_start_before(&zle.zleline[..zle.zlell], saved);
-    let end = super::zle_word::shell_word_end_after(&zle.zleline[..zle.zlell], saved);
+    let start = super::zle_word::backwardword(&zle.zleline[..zle.zlell], saved);
+    let end = super::zle_word::forwardword(&zle.zleline[..zle.zlell], saved);
     zle.mark = start;
     zle.zlecs = end;
     zle.region_active = 1;
