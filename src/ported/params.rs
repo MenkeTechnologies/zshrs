@@ -4561,12 +4561,38 @@ mod tests {
     }
 
     #[test]
-    fn getarg_b_flag_parses_without_panic() {
-        // Phase 1 — `b<DELIM>NUM<DELIM>` is parsed; behavioral wiring is
-        // a phase-2 follow-up. Verify it doesn't break the search path.
-        let arr: Vec<String> = vec!["a".into(), "a".into(), "a".into()];
-        let out = getarg("(b.0.e)a", Some(&arr), None).expect("Some");
-        assert_eq!(val_str(out), "a");
+    fn getarg_b_flag_starts_search_at_index() {
+        // C params.c:1748-1760 — `(b.N.e)pat` skips first N-1 elements
+        // forward (parsed value `N`, normalized to `beg = N-1`).
+        let arr: Vec<String> = vec!["x".into(), "y".into(), "x".into(), "y".into()];
+        // Forward, beg=2 (skip first 2) → starts at idx 2 → 'x' at 3.
+        let out = getarg("(b.3.ei)x", Some(&arr), None).expect("Some");
+        assert_eq!(val_str(out), "3");
+    }
+
+    #[test]
+    fn getarg_b_flag_with_R_reverse_from_offset() {
+        // C params.c:1750-1755 — reverse search starting at parsed-1 idx.
+        // arr=(x y x y), beg=2 (parsed 3-1), reverse → walks 2,1,0; first
+        // exact 'x' is at idx 2 → 1-based "3".
+        let arr: Vec<String> = vec!["x".into(), "y".into(), "x".into(), "y".into()];
+        let out = getarg("(b.3.eIR)x", Some(&arr), None).expect("Some");
+        assert_eq!(val_str(out), "3");
+    }
+
+    #[test]
+    fn getarg_b_flag_out_of_bounds_forward_returns_empty() {
+        // c:1746 — beg >= len returns len+1 (empty for value-mode).
+        let arr: Vec<String> = vec!["x".into()];
+        let out = getarg("(b.5.e)x", Some(&arr), None).expect("Some");
+        assert_eq!(val_str(out), "");
+    }
+
+    #[test]
+    fn getarg_b_flag_out_of_bounds_index_mode_returns_len_plus_one() {
+        let arr: Vec<String> = vec!["x".into(), "y".into()];
+        let out = getarg("(b.5.ei)x", Some(&arr), None).expect("Some");
+        assert_eq!(val_str(out), "3");
     }
 }
 
@@ -6402,8 +6428,6 @@ pub(crate) fn getarg<'a>(
     if neg_num_flips {
         num = -num;
     }
-    let _ = has_beg;
-    let _ = beg;
 
     // Phase 3 — hash pattern search arm (c:1581-1660 / 1672-1734).
     // Per C source case-arms:
@@ -6498,10 +6522,45 @@ pub(crate) fn getarg<'a>(
         let return_index = flags.contains('i') || flags.contains('I');
         // c:1488-1491 — negative `num` flips reverse direction.
         let reverse = (flags.contains('R') || flags.contains('I')) ^ neg_num_flips;
+
+        // c:1740-1760 — `b<NUM>` starting offset + bounds checks.
+        // beg is already 0-based after parse (parsed-1 for positive).
+        let len = arr.len() as i64;
+        let mut start = beg;
+        if start < 0 {
+            start += len;
+        }
+        // c:1743-1747 — out-of-bounds returns.
+        if reverse {
+            if start < 0 {
+                return Some(GetargOut::Value(if return_index {
+                    Value::str("0")
+                } else {
+                    Value::str("")
+                }));
+            }
+        } else if start >= len {
+            return Some(GetargOut::Value(if return_index {
+                Value::str((arr.len() + 1).to_string())
+            } else {
+                Value::str("")
+            }));
+        }
+        // c:1750-1751 — reverse w/o explicit b starts from len-1.
+        if reverse && !has_beg {
+            start = len - 1;
+        }
+
         let iter: Box<dyn Iterator<Item = (usize, &String)>> = if reverse {
-            Box::new(arr.iter().enumerate().rev())
+            // c:1752 — `for (p = ta + beg; p >= ta; p--)`: clamp start
+            // into the valid range then walk backwards.
+            let s_idx = if start < 0 { 0 } else { start as usize };
+            let s_idx = s_idx.min(arr.len().saturating_sub(1));
+            Box::new(arr[..=s_idx].iter().enumerate().rev())
         } else {
-            Box::new(arr.iter().enumerate())
+            // c:1757 — `for (p = ta + beg; *p; p++)`: skip first beg.
+            let s_idx = if start < 0 { 0 } else { start as usize };
+            Box::new(arr.iter().enumerate().skip(s_idx))
         };
         // c:1758 — `!--num` skips matches until the Nth.
         let mut remaining = num;
