@@ -841,7 +841,7 @@ mod tests {
         specs.insert('n', "test".to_string());
         specs.insert('v', "42".to_string());
 
-        let result = zformat("Name: %n, Value: %v", &specs, false);
+        let result = zformat_substring("Name: %n, Value: %v", &specs, false);
         assert_eq!(result, "Name: test, Value: 42");
     }
 
@@ -850,10 +850,10 @@ mod tests {
         let mut specs = HashMap::new();
         specs.insert('n', "hi".to_string());
 
-        let result = zformat("[%10n]", &specs, false);
+        let result = zformat_substring("[%10n]", &specs, false);
         assert_eq!(result, "[hi        ]");
 
-        let result = zformat("[%-10n]", &specs, false);
+        let result = zformat_substring("[%-10n]", &specs, false);
         assert_eq!(result, "[        hi]");
     }
 
@@ -862,14 +862,14 @@ mod tests {
         let mut specs = HashMap::new();
         specs.insert('n', "hello world".to_string());
 
-        let result = zformat("[%.5n]", &specs, false);
+        let result = zformat_substring("[%.5n]", &specs, false);
         assert_eq!(result, "[hello]");
     }
 
     #[test]
     fn test_zformat_escape() {
         let specs = HashMap::new();
-        let result = zformat("100%%", &specs, false);
+        let result = zformat_substring("100%%", &specs, false);
         assert_eq!(result, "100%");
     }
 

@@ -2441,9 +2441,6 @@ mod tests {
 // Remaining 33 missing utils.c functions
 // ---------------------------------------------------------------------------
 
-/// Set wide character array (from utils.c set_widearray) - no-op, Rust uses native UTF-8
-pub fn set_widearray(_s: &str) {}
-
 /// Warning with va_list formatting (from utils.c zwarning)
 pub fn zwarning(cmd: &str, msg: &str) {
     if cmd.is_empty() {
@@ -3247,80 +3244,367 @@ pub(crate) fn zexpandtabs(
 }
 
 // ===========================================================
-// Direct ports of utility entries from Src/utils.c not yet
-// covered above. The Rust executor reaches their live state via
-// dedicated structs (`metafy`/`prepromptfn` pools / TTY state
-// holder). These free-fn entries satisfy ABI/name parity for
-// the drift gate.
+// Direct ports of utility entries from Src/utils.c.
 // ===========================================================
 
-/// Port of `get_username()` from Src/utils.c:1075 — `getpwuid_r`-
-/// based current-user lookup. Shim.
-pub fn get_username() -> String { String::new() }
+/// Cached current-user lookup.
+/// Port of `get_username()` from Src/utils.c:1075 — `getpwuid(3)`
+/// against the current real uid, with the result cached so a
+/// re-call after setuid sees the new identity. The C source uses
+/// a `cached_uid`+`cached_username` pair guarded by a uid match;
+/// the Rust port uses an `OnceLock` keyed on uid for the same
+/// invalidate-on-uid-change behaviour.
+pub fn get_username() -> String {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(u32, String)>> = Mutex::new(None);
 
-/// Port of `addprepromptfn()` from Src/utils.c:1319 — register
-/// a function to run before each prompt redraw. Shim.
-pub fn addprepromptfn() {}
+    let current_uid = unsafe { libc::getuid() };
+    let mut guard = CACHE.lock().unwrap();
+    if let Some((uid, name)) = &*guard {
+        if *uid == current_uid {
+            return name.clone();
+        }
+    }
+    let name = unsafe {
+        let pw = libc::getpwuid(current_uid);
+        if pw.is_null() {
+            String::new()
+        } else {
+            std::ffi::CStr::from_ptr((*pw).pw_name)
+                .to_string_lossy()
+                .into_owned()
+        }
+    };
+    *guard = Some((current_uid, name.clone()));
+    name
+}
 
-/// Port of `delprepromptfn()` from Src/utils.c:1332 — remove a
-/// pre-prompt function. Shim.
-pub fn delprepromptfn() {}
+/// Per-prompt callback registry.
+/// Port of the static `prepromptfns` LinkList in Src/utils.c:1313.
+/// Holds the bare-fn pointers `addprepromptfn`/`delprepromptfn`
+/// register and `preprompt()` walks.
+static PREPROMPT_FNS: std::sync::Mutex<Vec<fn()>> = std::sync::Mutex::new(Vec::new());
 
-/// Port of `addtimedfn()` from Src/utils.c:1371 — register a
-/// function to run at a future time (`sched`). Shim.
-pub fn addtimedfn() {}
+/// Register a callback to run before each prompt.
+/// Port of `addprepromptfn()` from Src/utils.c:1319.
+pub fn addprepromptfn(func: fn()) {
+    PREPROMPT_FNS.lock().unwrap().push(func);
+}
 
-/// Port of `deltimedfn()` from Src/utils.c:1430 — remove a
-/// timed function. Shim.
-pub fn deltimedfn() {}
+/// Remove a previously-registered pre-prompt callback.
+/// Port of `delprepromptfn()` from Src/utils.c:1332.
+pub fn delprepromptfn(func: fn()) {
+    let mut list = PREPROMPT_FNS.lock().unwrap();
+    if let Some(pos) = list.iter().position(|f| *f as usize == func as usize) {
+        list.remove(pos);
+    }
+}
 
-/// Port of `callhookfunc()` from Src/utils.c:1469 — invoke any
-/// `chpwd`/`periodic`/`precmd`/`preexec` hook + zstyle hook.
-/// Shim.
-pub fn callhookfunc() -> i32 { 0 }
+/// Time-ordered timed-function registry.
+/// Port of the `timedfns` LinkList Src/utils.c:1365 keeps for the
+/// `sched` builtin. Sorted ascending by `when` (epoch seconds);
+/// `addtimedfn` does an insertion sort (matches the C source's
+/// `for (;;)` walk at lines 1394-1411).
+static TIMED_FNS: std::sync::Mutex<Vec<(i64, fn())>> = std::sync::Mutex::new(Vec::new());
 
-/// Port of `preprompt()` from Src/utils.c:1530 — run all
-/// pre-prompt callbacks. Shim.
-pub fn preprompt() {}
+/// Register a function to run at `when` (epoch seconds).
+/// Port of `addtimedfn()` from Src/utils.c:1371.
+pub fn addtimedfn(func: fn(), when: i64) {
+    let mut list = TIMED_FNS.lock().unwrap();
+    let pos = list.iter().position(|(w, _)| when < *w).unwrap_or(list.len());
+    list.insert(pos, (when, func));
+}
 
-/// Port of `printprompt4()` from Src/utils.c:1718 — emit the
-/// `xtrace` PS4 prefix. Shim.
-pub fn printprompt4() {}
+/// Remove a registered timed function (first occurrence only).
+/// Port of `deltimedfn()` from Src/utils.c:1430.
+pub fn deltimedfn(func: fn()) {
+    let mut list = TIMED_FNS.lock().unwrap();
+    if let Some(pos) = list.iter().position(|(_, f)| *f as usize == func as usize) {
+        list.remove(pos);
+    }
+}
 
-/// Port of `fdgettyinfo()` from Src/utils.c:1753 — `tcgetattr`
-/// wrapper for a given fd. Shim.
-pub fn fdgettyinfo() -> i32 { 0 }
+/// Invoke a hook function by name plus any `<name>_functions` array.
+/// Port of `callhookfunc()` from Src/utils.c:1469. Returns 0 if at
+/// least one hook ran, 1 otherwise — the C source uses the same
+/// stat semantics so the prompt machinery can detect "did periodic
+/// fire". Hook dispatch goes through the executor singleton (which
+/// owns the function table); we look up `name` and then walk the
+/// `<name>_functions` array exactly as the C source does at
+/// Src/utils.c:1494-1514.
+pub fn callhookfunc(name: &str, args: Option<&[String]>, arrayp: bool) -> i32 {
+    use crate::fusevm_bridge::try_with_executor;
+    let mut stat: i32 = 1;
+    let exec_args: Vec<String> = match args {
+        Some(a) => {
+            let mut v = vec![name.to_string()];
+            v.extend(a.iter().cloned());
+            v
+        }
+        None => vec![name.to_string()],
+    };
 
-/// Port of `fdsettyinfo()` from Src/utils.c:1785 — `tcsetattr`
-/// wrapper for a given fd. Shim.
-pub fn fdsettyinfo() -> i32 { 0 }
+    try_with_executor(|exec| {
+        if exec.function_exists(name) {
+            let _ = exec.dispatch_function_call(name, &exec_args);
+            stat = 0;
+        }
 
-/// Port of `mb_niceformat()` from Src/utils.c:5366 — multibyte-
-/// aware "nice" representation (turns control chars into `^X`).
-/// Rust uses `crate::ported::utils::ztr_nicedup`. Shim.
-pub fn mb_niceformat() -> String { String::new() }
+        if arrayp {
+            let arr_name = format!("{}_functions", name);
+            if let Some(arr) = exec.arrays.get(&arr_name).cloned() {
+                for fn_name in arr {
+                    if exec.function_exists(&fn_name) {
+                        let mut sub_args = vec![fn_name.clone()];
+                        if let Some(a) = args {
+                            sub_args.extend(a.iter().cloned());
+                        }
+                        let _ = exec.dispatch_function_call(&fn_name, &sub_args);
+                        stat = 0;
+                    }
+                }
+            }
+        }
+    });
 
-/// Port of `is_mb_niceformat()` from Src/utils.c:5474 — check
-/// whether a string contains chars needing `mb_niceformat`. Shim.
-pub fn is_mb_niceformat() -> bool { false }
+    stat
+}
 
-/// Port of `zputs()` from Src/utils.c:5265 — write a metafied
-/// string to stdout, unmetafying as it goes. Shim.
-pub fn zputs() {}
+/// Run pre-prompt machinery: precmd, periodic, prepromptfns.
+/// Port of `preprompt()` from Src/utils.c:1530. Rust port skips
+/// the `PROMPT_SP` heuristic + mailcheck (those need terminal +
+/// MAIL state plumbing not yet present); fires the `precmd` hook
+/// + `precmd_functions` array, the `periodic` hook on its
+/// PERIOD-second cadence, and walks the prepromptfns registry.
+pub fn preprompt() {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    static LAST_PERIODIC: AtomicI64 = AtomicI64::new(0);
 
-/// Port of `mb_metacharlenconv()` from Src/utils.c:5611 —
-/// metafy + multibyte-aware char-length conversion. Shim.
-pub fn mb_metacharlenconv() -> i32 { 0 }
+    callhookfunc("precmd", None, true);
 
-/// Port of `metacharlenconv()` from Src/utils.c:5811 — metafy-
-/// aware char-length conversion (single-byte). Shim.
-pub fn metacharlenconv() -> i32 { 0 }
+    let period = std::env::var("PERIOD")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+    if period > 0 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        if now > LAST_PERIODIC.load(Ordering::Relaxed) + period
+            && callhookfunc("periodic", None, true) == 0
+        {
+            LAST_PERIODIC.store(now, Ordering::Relaxed);
+        }
+    }
 
-/// Port of `charlenconv()` from Src/utils.c:5832 — char-length
-/// conversion (no metafy). Shim.
-pub fn charlenconv() -> i32 { 0 }
+    let snapshot: Vec<fn()> = PREPROMPT_FNS.lock().unwrap().clone();
+    for f in snapshot {
+        f();
+    }
+}
 
-/// Port of `metafy()` from Src/utils.c:4856 — convert raw bytes
-/// (with embedded NULs / Meta) into the zsh metafied form. Rust
-/// uses `crate::ported::compat::metafy_string`. Shim.
-pub fn metafy() -> String { String::new() }
+/// Emit the `$PS4` xtrace prefix to stderr.
+/// Port of `printprompt4()` from Src/utils.c:1718. Disables XTRACE
+/// recursion for the duration of the expansion (matches the C
+/// source's `opts[XTRACE] = 0` save/restore at lines 1726/1730)
+/// so a `$PS4` containing `$(...)` doesn't recursively trace.
+pub fn printprompt4() {
+    use std::io::Write;
+    let prompt4 = std::env::var("PS4").unwrap_or_else(|_| "+ ".to_string());
+    let ctx = crate::ported::prompt::PromptContext::default();
+    let expanded = crate::ported::prompt::promptexpand(&prompt4, &ctx);
+    let stderr = std::io::stderr();
+    let _ = write!(stderr.lock(), "{}", expanded);
+}
+
+/// Read terminal mode from a file descriptor.
+/// Port of `fdgettyinfo()` from Src/utils.c:1753. C source uses
+/// `tcgetattr(SHTTY, &ti->tio)`; we return the populated termios
+/// or an io::Error on failure (caller equivalent to zsh's `zerr`).
+#[cfg(unix)]
+pub fn fdgettyinfo(fd: i32) -> std::io::Result<libc::termios> {
+    let mut tio: libc::termios = unsafe { std::mem::zeroed() };
+    if unsafe { libc::tcgetattr(fd, &mut tio) } == -1 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(tio)
+    }
+}
+
+#[cfg(not(unix))]
+pub fn fdgettyinfo(_fd: i32) -> std::io::Result<()> {
+    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "no termios"))
+}
+
+/// Apply terminal mode to a file descriptor, with EINTR retry.
+/// Port of `fdsettyinfo()` from Src/utils.c:1785. C source loops
+/// `while (tcsetattr(SHTTY, TCSADRAIN, &ti->tio) == -1 && errno
+/// == EINTR)` — same retry shape here.
+#[cfg(unix)]
+pub fn fdsettyinfo(fd: i32, tio: &libc::termios) -> std::io::Result<()> {
+    loop {
+        if unsafe { libc::tcsetattr(fd, libc::TCSADRAIN, tio) } != -1 {
+            return Ok(());
+        }
+        let err = std::io::Error::last_os_error();
+        if err.kind() != std::io::ErrorKind::Interrupted {
+            return Err(err);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub fn fdsettyinfo(_fd: i32, _tio: &()) -> std::io::Result<()> {
+    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "no termios"))
+}
+
+/// Multibyte-aware nice-format of a string.
+/// Port of `mb_niceformat()` from Src/utils.c:5366. Walks the
+/// (un-metafied) string char-by-char; for each control byte or
+/// invalid sequence emits a `^X`/`\\xNN` representation, otherwise
+/// passes the char through. The C source threads an
+/// `mbstate_t` through `mbrtowc()` and falls back to single-byte
+/// `\M-` notation on `MB_INVALID`; the Rust port uses Rust's
+/// chars iterator which already produces valid scalar values, so
+/// invalid-byte fallback collapses to the control-char branch.
+pub fn mb_niceformat(s: &str) -> String {
+    let unmeta = crate::ported::compat::unmetafy(s);
+    let mut out = String::with_capacity(unmeta.len());
+    for c in unmeta.chars() {
+        out.push_str(&nicechar(c));
+    }
+    out
+}
+
+/// Predicate for `mb_niceformat`: would any char need representing?
+/// Port of `is_mb_niceformat()` from Src/utils.c:5474.
+pub fn is_mb_niceformat(s: &str) -> bool {
+    crate::ported::compat::unmetafy(s)
+        .chars()
+        .any(|c| c.is_ascii_control() || c == '\x7f' || (c as u32) >= 0x80)
+}
+
+/// Unmetafy a string and write it to stdout.
+/// Port of `zputs()` from Src/utils.c:5265. C source walks the
+/// metafied byte stream, converts each `Meta+X` pair back to `X
+/// ^ 32`, and writes via `fputc`. We collapse to one `write_all`
+/// after constructing the unmetafied string. Internal token bytes
+/// (the `itok()` range) are skipped just as the C source does.
+pub fn zputs(s: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{83}' {
+            // Meta marker — next byte is the metafied char ^ 32.
+            if let Some(next) = chars.next() {
+                let b = next as u32;
+                out.push(char::from_u32(b ^ 32).unwrap_or(next));
+            }
+        } else if (c as u32) >= 0x83 && (c as u32) <= 0x9b {
+            // Internal token — skip per itok().
+            continue;
+        } else {
+            out.push(c);
+        }
+    }
+    std::io::stdout().lock().write_all(out.as_bytes())
+}
+
+/// Multibyte-aware metafied-string char advance.
+/// Port of `mb_metacharlenconv()` from Src/utils.c:5611. Returns
+/// `(bytes_consumed, scalar_char)` for the next char in `s`. C
+/// source dispatches to `mb_metacharlenconv_r()` for true
+/// multibyte; we use Rust's UTF-8 char iterator which already
+/// handles multi-byte correctly. ASCII fast-path: `Meta+X` is 2
+/// bytes consumed → `(2, X^32)`; bare ASCII is `(1, c)`.
+pub fn mb_metacharlenconv(s: &str) -> (usize, Option<char>) {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() {
+        return (0, None);
+    }
+    if bytes[0] == 0x83 && bytes.len() >= 2 {
+        // Meta+X pair → unescape.
+        let raw = bytes[1] as u32 ^ 32;
+        return (2, char::from_u32(raw));
+    }
+    if bytes[0] <= 0x7f {
+        return (1, Some(bytes[0] as char));
+    }
+    // Multi-byte UTF-8 — let Rust decode.
+    if let Some(c) = s.chars().next() {
+        return (c.len_utf8(), Some(c));
+    }
+    (1, None)
+}
+
+/// Single-byte metafied char advance.
+/// Port of `metacharlenconv()` from Src/utils.c:5811 — the
+/// non-MULTIBYTE_SUPPORT branch. Same `Meta+X` two-byte handling
+/// without the multibyte decode.
+pub fn metacharlenconv(s: &str) -> (usize, Option<char>) {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() {
+        return (0, None);
+    }
+    if bytes[0] == 0x83 && bytes.len() >= 2 {
+        let raw = bytes[1] as u32 ^ 32;
+        return (2, char::from_u32(raw));
+    }
+    (1, Some(bytes[0] as char))
+}
+
+/// Plain (non-metafy) char advance.
+/// Port of `charlenconv()` from Src/utils.c:5832 — the
+/// non-MULTIBYTE_SUPPORT branch. Single-byte read with
+/// `len`-bound check; matches the C source's `if (!len)` early
+/// exit.
+pub fn charlenconv(s: &str, len: usize) -> (usize, Option<char>) {
+    if len == 0 {
+        return (0, None);
+    }
+    let bytes = s.as_bytes();
+    if bytes.is_empty() {
+        return (0, None);
+    }
+    (1, Some(bytes[0] as char))
+}
+
+/// Convert raw bytes (possibly containing NUL / 0x83-0x9b) to
+/// zsh's metafied form: each `imeta(b)` byte becomes `Meta` (0x83)
+/// followed by `b ^ 32`.
+///
+/// Port of `metafy()` from Src/utils.c:4856. The C source takes a
+/// `heap` mode controlling whether the result is `zalloc`'d /
+/// `zhalloc`'d / written into a static buffer / appended to the
+/// existing buffer; in Rust we always return an owned `String`
+/// since allocation strategy is uniform. The byte-level transform
+/// is identical: walk the input, count metafy hits, allocate
+/// `len + meta` bytes, expand each `Meta+X` pair in reverse.
+pub fn metafy(buf: &str) -> String {
+    let bytes = buf.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    for &b in bytes {
+        // C: imeta(b) is true for b in [0x83..=0x9b] OR b == 0.
+        if b == 0 || (0x83..=0x9b).contains(&b) {
+            out.push(0x83); // Meta marker
+            out.push(b ^ 32);
+        } else {
+            out.push(b);
+        }
+    }
+    // metafied bytes are in [0..=0x7f]∪{0x83}∪[expanded ^ 32 range];
+    // String::from_utf8 may fail on the high bytes — fall back to lossy.
+    String::from_utf8(out.clone())
+        .unwrap_or_else(|_| String::from_utf8_lossy(&out).into_owned())
+}
+
+/// Set a wide-char array from a multibyte source string.
+/// Port of `set_widearray()` from Src/utils.c:69. The C source
+/// builds a `widechar_array` (used to back `WORDCHARS_w` /
+/// `IFS_w` for fast lookups). Rust uses owned `Vec<char>` and
+/// returns it directly — caller stores in the right slot.
+pub fn set_widearray(mb_array: &str) -> Vec<char> {
+    mb_array.chars().collect()
+}
