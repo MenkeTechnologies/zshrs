@@ -61,7 +61,6 @@ resolve_port
 # `pattern.c::patmatch`, and `glob.c`'s sort comparators.
 parse_pattern_flags_full
 parse_numeric_range
-ksh_extglob_body_to_regex
 expand_posix_char_classes
 glob_match_impl
 match_bracket_expr
