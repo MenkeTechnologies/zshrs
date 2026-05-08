@@ -4594,6 +4594,31 @@ mod tests {
         let out = getarg("(b.5.ei)x", Some(&arr), None).expect("Some");
         assert_eq!(val_str(out), "3");
     }
+
+    #[test]
+    fn getarg_hash_neg_num_on_lowercase_r_returns_all() {
+        // C params.c:1488-1491 — neg `num` flips down on `r`,
+        // converting hash search to return-all-matches semantics.
+        let mut h: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+        h.insert("a".into(), "1".into());
+        h.insert("b".into(), "1".into());
+        h.insert("c".into(), "2".into());
+        let out = getarg("(en.-1.r)1", None, Some(&h)).expect("Some");
+        // r + neg = R semantics → all values where pat matches value.
+        assert_eq!(val_str(out), "1 1");
+    }
+
+    #[test]
+    fn getarg_hash_neg_num_on_uppercase_R_returns_single() {
+        // R + neg `num` un-flips back to single-match (r semantics).
+        let mut h: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+        h.insert("a".into(), "1".into());
+        h.insert("b".into(), "1".into());
+        h.insert("c".into(), "2".into());
+        let out = getarg("(en.-1.R)1", None, Some(&h)).expect("Some");
+        // R + neg → r → single first match.
+        assert_eq!(val_str(out), "1");
+    }
 }
 
 // ===========================================================
@@ -6442,8 +6467,11 @@ pub(crate) fn getarg<'a>(
         let exact = flags.contains('e');
         let key_match = flags.contains('k') || flags.contains('K');
         let return_index = flags.contains('i') || flags.contains('I');
-        let return_all = flags.contains('I') || flags.contains('R') || flags.contains('K')
-            || neg_num_flips;
+        // C params.c:1488-1491 — negative `num` flips `down`. Since
+        // R/I/K already set down=1, neg_num XORs the bit (r/i/k +
+        // neg → return_all; R/I/K + neg → single-match again).
+        let is_uppercase = flags.contains('I') || flags.contains('R') || flags.contains('K');
+        let return_all = is_uppercase ^ neg_num_flips;
         if return_all {
             let mut out: Vec<String> = Vec::new();
             for (k, v) in map.iter() {
