@@ -1198,6 +1198,119 @@ fn test_subscript_parity_case_patterns_and_loop_control() {
 }
 
 #[test]
+fn test_subscript_parity_function_return_and_dynamic_scope() {
+    // `return N` skips remaining body and exits with N. zsh has
+    // dynamic scoping: an inner function sees its caller's locals.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        fn() {
+          print "1:before-return"
+          return 42
+          print "1:after-return"
+        }
+        fn
+        print "1:fn-exit-status=$?"
+
+        true; print "2:[$?]"
+        false; print "3:[$?]"
+        (exit 5); print "4:[$?]"
+
+        fn2() {
+          if [[ $1 == "ok" ]]; then return 0; else return 1; fi
+        }
+        fn2 ok && print "5:fn-ok"
+        fn2 fail || print "6:fn-fail"
+
+        outer() {
+          local lv=outer-val
+          inner
+        }
+        inner() {
+          print "7:[${lv-not-visible}]"
+        }
+        outer
+        "#,
+    );
+    let expected = "1:before-return\n1:fn-exit-status=42\n2:[0]\n3:[1]\n4:[5]\n5:fn-ok\n6:fn-fail\n7:[outer-val]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_getopts_loop() {
+    // getopts parses option flags one-at-a-time, sets OPTARG for
+    // arg-taking flags, advances OPTIND through `shift $((OPTIND-1))`.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        parse() {
+          local opt
+          while getopts "ab:c" opt; do
+            case $opt in
+              a) print "1:flag-a";;
+              b) print "1:flag-b=$OPTARG";;
+              c) print "1:flag-c";;
+            esac
+          done
+          shift $((OPTIND-1))
+          print "1:remaining=$*"
+        }
+        parse -a -b val -c rest1 rest2
+        "#,
+    );
+    let expected = "1:flag-a\n1:flag-b=val\n1:flag-c\n1:remaining=rest1 rest2";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_type_whence() {
+    // type / whence -w / whence -p — built-in identification.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        type print 2>&1 | head -1
+        whence -w echo 2>&1
+        whence -p ls 2>&1 | head -1
+        "#,
+    );
+    assert_eq!(
+        output.trim(),
+        "print is a shell builtin\necho: builtin\n/bin/ls",
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_subscript_parity_local_export_unset() {
+    // local in function (with multiple decls + array), export +
+    // unset round-trip, scope of bare assignment without local,
+    // typeset -gA visible from inner functions.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        fn() {
+          local x=local-x y=local-y
+          local arr=(a b c)
+          print "1:[$x] [$y] [${arr[2]}]"
+        }
+        fn
+
+        export EE=value
+        print "2:[$EE]"
+        unset EE
+        print "3:[${EE-unset}]"
+
+        fn2() { z=fn-set; }
+        fn2
+        print "5:[$z]"
+
+        typeset -gA ga
+        ga[k]=v
+        fn3() { print "6:[${ga[k]}]"; }
+        fn3
+        "#,
+    );
+    let expected = "1:[local-x] [local-y] [b]\n2:[value]\n3:[unset]\n5:[fn-set]\n6:[v]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
 fn test_subscript_parity_print_v_no_trailing_newline() {
     // `print -v VAR ...` stores body WITHOUT terminator, regardless
     // of whether `-n` is given. Verified empirically:
