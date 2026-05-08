@@ -121,7 +121,7 @@ pub fn tuupper(c: char) -> char {
 /// Check whether a string is a valid shell identifier.
 /// Port of the `itype_end(...IIDENT)` walk Src/utils.c uses
 /// (around `validident()`).
-pub fn is_identifier(s: &str) -> bool {
+pub fn isident(s: &str) -> bool {
     let mut chars = s.chars();
     match chars.next() {
         Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
@@ -2330,12 +2330,12 @@ mod tests {
     }
 
     #[test]
-    fn test_is_identifier() {
-        assert!(is_identifier("foo"));
-        assert!(is_identifier("_bar"));
-        assert!(is_identifier("baz123"));
-        assert!(!is_identifier("123abc"));
-        assert!(!is_identifier("foo-bar"));
+    fn test_isident() {
+        assert!(isident("foo"));
+        assert!(isident("_bar"));
+        assert!(isident("baz123"));
+        assert!(!isident("123abc"));
+        assert!(!isident("foo-bar"));
     }
 
     #[test]
