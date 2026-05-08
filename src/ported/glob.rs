@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 #[allow(unused_imports)]
 use crate::ported::exec::{
-    self, ShellExecutor, expand_posix_char_classes,
+    self, ShellExecutor,
     extract_numeric_ranges, replace_numeric_ranges_with_star,
     with_executor, NumericRange,
 };
@@ -4259,7 +4259,48 @@ impl crate::ported::exec::ShellExecutor {
         // cntrl, digit, graph, lower, print, punct, space, upper,
         // xdigit. Each translates to ranges like `0-9`/`a-zA-Z`.
         let glob_pattern = if glob_pattern.contains("[:") {
-            expand_posix_char_classes(&glob_pattern)
+            // Inline expansion of `[[:alpha:]]` → `[a-zA-Z]` etc.
+            // Mirrors the inline `[:class:]` switch the C source does
+            // in pattern.c::patmatchrange. Each known class translates
+            // to its standard ASCII range; unknown classes pass through.
+            let s = &glob_pattern;
+            let mut out = String::with_capacity(s.len());
+            let chars: Vec<char> = s.chars().collect();
+            let mut i = 0;
+            while i < chars.len() {
+                if chars[i] == '[' && i + 2 < chars.len() && chars[i + 1] == ':' {
+                    let mut j = i + 2;
+                    while j + 1 < chars.len() && !(chars[j] == ':' && chars[j + 1] == ']') {
+                        j += 1;
+                    }
+                    if j + 1 < chars.len() && chars[j] == ':' && chars[j + 1] == ']' {
+                        let name: String = chars[i + 2..j].iter().collect();
+                        let range = match name.as_str() {
+                            "alpha" => "a-zA-Z",
+                            "alnum" => "a-zA-Z0-9",
+                            "digit" => "0-9",
+                            "xdigit" => "0-9a-fA-F",
+                            "lower" => "a-z",
+                            "upper" => "A-Z",
+                            "space" => " \\t\\n\\r\\v\\f",
+                            "blank" => " \\t",
+                            "cntrl" => "\\x00-\\x1f\\x7f",
+                            "print" => "\\x20-\\x7e",
+                            "graph" => "\\x21-\\x7e",
+                            "punct" => "!-/:-@\\[-`{-~",
+                            _ => "",
+                        };
+                        if !range.is_empty() {
+                            out.push_str(range);
+                            i = j + 2;
+                            continue;
+                        }
+                    }
+                }
+                out.push(chars[i]);
+                i += 1;
+            }
+            out
         } else {
             glob_pattern
         };
