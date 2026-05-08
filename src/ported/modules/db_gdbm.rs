@@ -609,30 +609,17 @@ pub fn bin_zgdbmpath(param_name: &str) -> Result<String, String> {
     Ok(tied.db.path().to_string_lossy().to_string())
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/db_gdbm.c`.
-/// Get the live `TiedGdbmParam` for a given name.
-/// zshrs convenience — Src/Modules/db_gdbm.c uses
-/// `getgdbmnode()` (line 407) for the same lookup at the C level.
-pub fn get_tied_param(param_name: &str) -> Option<Arc<TiedGdbmParam>> {
-    if let Ok(params) = TIED_PARAMS.lock() {
-        params.get(param_name).cloned()
-    } else {
-        None
-    }
-}
-
 /// Read a key from a tied parameter.
 /// Port of `gdbmgetfn()` from Src/Modules/db_gdbm.c:282 — the
 /// `getfn` slot the C source wires for `${db[key]}`.
 pub fn gdbmgetfn(param_name: &str, key: &str) -> Option<String> {
-    get_tied_param(param_name).and_then(|p| p.get(key))
+    TIED_PARAMS.lock().ok().and_then(|m| m.get(param_name).cloned()).and_then(|p| p.get(key))
 }
 
 /// Write a key to a tied parameter.
 /// Port of `gdbmsetfn()` from Src/Modules/db_gdbm.c:347.
 pub fn gdbmsetfn(param_name: &str, key: &str, value: &str) -> Result<(), String> {
-    let param = get_tied_param(param_name)
+    let param = TIED_PARAMS.lock().ok().and_then(|m| m.get(param_name).cloned())
         .ok_or_else(|| format!("not a tied gdbm hash: {}", param_name))?;
     param.set(key, value)
 }
@@ -641,7 +628,7 @@ pub fn gdbmsetfn(param_name: &str, key: &str, value: &str) -> Result<(), String>
 /// Port of `gdbmunsetfn()` from Src/Modules/db_gdbm.c:399 — used
 /// by `unset 'db[key]'`.
 pub fn gdbmunsetfn(param_name: &str, key: &str) -> Result<(), String> {
-    let param = get_tied_param(param_name)
+    let param = TIED_PARAMS.lock().ok().and_then(|m| m.get(param_name).cloned())
         .ok_or_else(|| format!("not a tied gdbm hash: {}", param_name))?;
     param.delete(key)
 }
@@ -650,7 +637,7 @@ pub fn gdbmunsetfn(param_name: &str, key: &str) -> Result<(), String> {
 /// Port of `scangdbmkeys()` from Src/Modules/db_gdbm.c:442 — the
 /// `scanfn` slot the C source wires for `${(k)db}`.
 pub fn scangdbmkeys(param_name: &str) -> Option<Vec<String>> {
-    get_tied_param(param_name).map(|p| p.keys())
+    TIED_PARAMS.lock().ok().and_then(|m| m.get(param_name).cloned()).map(|p| p.keys())
 }
 
 #[cfg(test)]
