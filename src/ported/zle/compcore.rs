@@ -210,7 +210,7 @@ pub fn multiquote(s: &str, in_quotes: bool) -> String {
     if in_quotes {
         s.replace('\\', "\\\\").replace('\'', "\\'")
     } else {
-        crate::utils::quote_string(s)
+        crate::ported::utils::quotedzputs(s)
     }
 }
 

@@ -481,34 +481,6 @@ pub fn sfxlen(s1: &str, s2: &str) -> usize {
         .count()
 }
 
-/// Quote a string for shell
-/// Port of quotestring() from zle_tricky.c
-pub fn quote_string(s: &str, style: QuoteStyle) -> String {
-    match style {
-        QuoteStyle::Single => format!("'{}'", s.replace('\'', "'\\''")),
-        QuoteStyle::Double => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
-        QuoteStyle::Dollar => format!("$'{}'", s.replace('\\', "\\\\").replace('\'', "\\'")),
-        QuoteStyle::Backslash => {
-            let mut result = String::with_capacity(s.len() * 2);
-            for c in s.chars() {
-                if " \t\n\\'\"`$&|;()<>*?[]{}#~".contains(c) {
-                    result.push('\\');
-                }
-                result.push(c);
-            }
-            result
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum QuoteStyle {
-    Single,
-    Double,
-    Dollar,
-    Backslash,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,13 +496,6 @@ mod tests {
     fn test_sfxlen() {
         assert_eq!(sfxlen("testing", "running"), 3);
         assert_eq!(sfxlen("abc", "xyz"), 0);
-    }
-
-    #[test]
-    fn test_quote_string() {
-        assert_eq!(quote_string("hello", QuoteStyle::Single), "'hello'");
-        assert_eq!(quote_string("it's", QuoteStyle::Single), "'it'\\''s'");
-        assert_eq!(quote_string("hello", QuoteStyle::Double), "\"hello\"");
     }
 
     #[test]

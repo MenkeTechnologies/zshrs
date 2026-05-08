@@ -408,24 +408,6 @@ pub fn quotestring(s: &str, quote_type: QuoteType) -> String {
     }
 }
 
-/// Quote a string for safe shell use (convenience wrapper)
-/// Default-mode bslashquote.
-/// Convenience wrapper around `quotestring()` with the most
-/// conservative bslashquote-everything-special mode.
-pub fn quote_string(s: &str) -> String {
-    if s.is_empty() {
-        return "''".to_string();
-    }
-
-    let needs_quotes = s.chars().any(ispecial);
-
-    if !needs_quotes {
-        s.to_string()
-    } else {
-        quotestring(s, QuoteType::Single)
-    }
-}
-
 /// Split string by separator - port from zsh/Src/utils.c sepsplit() lines 3961-3992
 ///
 /// If sep is None, performs IFS-style word splitting (spacesplit).
@@ -2223,10 +2205,10 @@ mod tests {
     }
 
     #[test]
-    fn test_quote_string() {
-        assert_eq!(quote_string("simple"), "simple");
-        assert_eq!(quote_string("has space"), "'has space'");
-        assert_eq!(quote_string("it's"), "'it'\\''s'");
+    fn test_quotedzputs_single_quote_wrap() {
+        assert_eq!(quotedzputs("simple"), "simple");
+        assert_eq!(quotedzputs("has space"), "'has space'");
+        assert_eq!(quotedzputs("it's"), "'it'\\''s'");
     }
 
     #[test]
