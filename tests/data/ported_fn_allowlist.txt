@@ -112,7 +112,6 @@ emit_xtrace_text
 quote_string
 split_quoted
 
-bin_random_real
 clone_shell
 color_to_code
 ensure_initialized
