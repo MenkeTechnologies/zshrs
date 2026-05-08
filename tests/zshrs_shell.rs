@@ -29,6 +29,20 @@ fn run_zshrs_parity(code: &str) -> (i32, String, String) {
     run_zshrs_with_args(&["--zsh", "-f", "-c", code])
 }
 
+/// Create a per-test temp dir under $TMPDIR with a unique name.
+/// Caller is responsible for cleanup (or accept tmpfs cleanup).
+fn tempdir_for_test() -> String {
+    let base = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let path = format!("{}/zshrs-test-{}-{}", base.trim_end_matches('/'), pid, nanos);
+    std::fs::create_dir_all(&path).expect("failed to create tempdir");
+    path
+}
+
 fn run_zshrs_with_args(args: &[&str]) -> (i32, String, String) {
     let mut child = Command::new(zshrs_bin())
         .args(args)
@@ -890,6 +904,96 @@ fn test_subscript_parity_param_modifier_substitute() {
         "#,
     );
     let expected = "1:[hell0 w0rld f00 bar]\n2:[hell0 world foo bar]\n3:[Hello world foo bar]\n4:[hello world foo BAR]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_command_substitution() {
+    // Command substitution: $(cmd), `cmd`, nested, in arith,
+    // multiline preservation, trailing-newline strip.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        print "1:[$(echo hello)]"
+        print "2:[$(echo a; echo b)]"
+        print "3:[`echo legacy`]"
+        print "4:[$(echo $(echo nested))]"
+        n=$(echo 5)
+        print "5:[$((n*2))]"
+        arr=($(echo a b c))
+        print "6:len=${#arr} el=${arr[2]}"
+        x=$(printf "a\n\n\n")
+        print "7:[$x]"
+        "#,
+    );
+    let expected = "1:[hello]\n2:[a\nb]\n3:[legacy]\n4:[nested]\n5:[10]\n6:len=3 el=b\n7:[a]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_heredoc_forms() {
+    // Heredoc: regular, expansion, indented `<<-`, quoted-no-expansion,
+    // here-string `<<<`. All against /bin/zsh 5.9.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+cat <<EOF
+line one
+line two
+EOF
+n=42
+cat <<EOF
+n is $n
+EOF
+cat <<-EOF
+	indented but stripped
+EOF
+cat <<"EOF"
+$n stays literal
+EOF
+cat <<<"hello there"
+"#,
+    );
+    let expected = "line one\nline two\nn is 42\nindented but stripped\n$n stays literal\nhello there";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_process_substitution() {
+    // `<(cmd)` process substitution — feeds command output as a path
+    // suitable for `cat` etc.
+    let (_, output, _) = run_zshrs_parity(
+        r#"cat <(echo proc-sub-test)"#,
+    );
+    assert_eq!(output.trim(), "proc-sub-test", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_redirection_order_left_to_right() {
+    // Redirections process left-to-right. Verified against /bin/zsh:
+    //   `>&2 2>file`: fd1 dup'd to current fd2 first, then fd2
+    //                 redirected to file. fd1 still points to
+    //                 ORIGINAL fd2 (terminal stderr), so file ends
+    //                 empty. echo writes to terminal-stderr.
+    //   `2>&1 >file`: fd2 dup'd to current fd1 (terminal stdout),
+    //                 then fd1 redirected to file. fd2 still
+    //                 points to terminal, so error msgs go to
+    //                 terminal while stdout goes to file.
+    //   `ls bad 2>file`: simple stderr-to-file redirect, captures
+    //                    the ls error in file.
+    let tmp = tempdir_for_test();
+    let (_, output, _) = run_zshrs_parity(&format!(
+        r#"
+echo to-stderr >&2 2>{0}/a.err 2>/dev/null
+print "1:size_a=$(wc -c <{0}/a.err | tr -d ' ')"
+
+echo testtext 2>&1 >{0}/b.out
+print "2:[$(cat {0}/b.out)]"
+
+ls /nonexistent 2>{0}/c.err
+print "3:has_error=$(test -s {0}/c.err && echo yes || echo no)"
+"#,
+        tmp
+    ));
+    let expected = "1:size_a=0\n2:[testtext]\n3:has_error=yes";
     assert_eq!(output.trim(), expected, "got: {output:?}");
 }
 
