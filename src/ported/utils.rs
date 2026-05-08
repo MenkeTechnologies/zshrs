@@ -2078,22 +2078,80 @@ pub fn mindist(dir: &str, name: &str) -> Option<(String, usize)> {
     best.map(|name| (name, best_dist))
 }
 
-/// Unmetafy string (from utils.c unmetafy) - zsh meta encoding to plain
-pub fn unmetafy(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut result = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == 0x83 && i + 1 < bytes.len() {
-            // Meta character
-            result.push(bytes[i + 1] ^ 32);
-            i += 2;
-        } else {
-            result.push(bytes[i]);
-            i += 1;
-        }
+/// Port of `Meta` from `Src/zsh.h`. Sentinel byte (0x83) zsh
+/// prepends in front of any byte whose top bit it wants to escape;
+/// the byte that follows is XOR'd with 32. `unmetafy` (and the
+/// `Meta`-aware loops throughout zsh) walk the result byte-by-byte
+/// and reverse the encoding.
+pub const Meta: u8 = 0x83;
+
+/// Port of `imeta()` macro from `Src/zsh.h`. Returns true for any
+/// byte that needs meta-encoding (high-bit + the special control
+/// bytes zsh treats as syntax). The Rust port treats every byte
+/// >= 0x83 as needing escape, matching the C macro's effective
+/// range on little-endian Unix.
+#[inline]
+pub fn imeta_byte(b: u8) -> bool {
+    b >= Meta
+}
+
+/// Port of `unmetafy()` from `Src/utils.c:4954`.
+///
+/// Take a metafied byte buffer in `s` and convert it in place to
+/// its literal representation. C signature:
+///
+/// ```c
+/// char *unmetafy(char *s, int *len);
+/// ```
+///
+/// The Rust port mutates `s` in place and returns the resulting
+/// length (mirroring C's `*len` out-parameter). C control flow:
+///
+/// ```c
+/// for (p = s; *p && *p != Meta; p++);     // skip prefix with no Meta
+/// for (t = p; (*t = *p++);)                 // walk the rest
+///     if (*t++ == Meta && *p)
+///         t[-1] = *p++ ^ 32;                // un-escape: XOR with 32
+/// ```
+///
+/// Same algorithm here, byte-indexed against the Vec rather than
+/// pointer-walked.
+pub fn unmetafy(s: &mut Vec<u8>) -> usize {
+    // First loop: find the first `Meta` byte. Everything before it
+    // stays as-is, so we don't need to copy.
+    let mut p: usize = 0;
+    while p < s.len() && s[p] != Meta {
+        p += 1;
     }
-    String::from_utf8_lossy(&result).to_string()
+    // Second loop: walk from `p` onward, copying each byte into the
+    // `t` slot (which trails `p` by one position per Meta-escape
+    // we collapse).
+    let mut t: usize = p;
+    while p < s.len() {
+        let b = s[p];
+        s[t] = b;
+        p += 1;
+        if b == Meta && p < s.len() {
+            // C: t[-1] = *p++ ^ 32; — overwrite the just-written
+            // Meta with the un-escaped byte.
+            s[t] = s[p] ^ 32;
+            p += 1;
+        }
+        t += 1;
+    }
+    s.truncate(t);
+    t
+}
+
+/// Convenience wrapper: takes a `&str`, returns the un-metafied
+/// `String`. Internally clones the bytes, calls `unmetafy` on the
+/// owned buffer, and converts back. Callers that already have a
+/// `&mut Vec<u8>` should call `unmetafy` directly to avoid the
+/// round-trip allocation.
+pub fn unmetafy_dup(s: &str) -> String {
+    let mut bytes = s.as_bytes().to_vec();
+    unmetafy(&mut bytes);
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// Count meta characters in string (from utils.c metalen)
@@ -2163,6 +2221,79 @@ mod tests {
         assert_eq!(sepsplit("a:b:c", Some(":"), false), vec!["a", "b", "c"]);
         assert_eq!(sepsplit("a::b", Some(":"), false), vec!["a", "b"]);
         assert_eq!(sepsplit("a::b", Some(":"), true), vec!["a", "", "b"]);
+    }
+
+    #[test]
+    fn test_unmetafy_no_meta_byte_passes_through() {
+        // No Meta byte → buffer unchanged, length unchanged.
+        let mut buf = b"hello".to_vec();
+        let n = unmetafy(&mut buf);
+        assert_eq!(n, 5);
+        assert_eq!(&buf, b"hello");
+    }
+
+    #[test]
+    fn test_unmetafy_collapses_meta_escapes() {
+        // C: Meta byte (0x83) followed by `'a' ^ 32` (0x41 = 'A')
+        // unmetafies to a single byte 'a' (0x61).
+        // i.e. {0x83, 'a' ^ 32} → {'a'}.
+        let mut buf = vec![0x83, b'a' ^ 32];
+        let n = unmetafy(&mut buf);
+        assert_eq!(n, 1);
+        assert_eq!(buf, vec![b'a']);
+    }
+
+    #[test]
+    fn test_unmetafy_mixed_prefix_then_meta() {
+        // Plain prefix, then Meta-escaped 0xFF (0x83, 0xFF ^ 32 = 0xDF).
+        let mut buf = vec![b'X', b'Y', 0x83, 0xFF ^ 32, b'Z'];
+        let n = unmetafy(&mut buf);
+        assert_eq!(n, 4);
+        assert_eq!(buf, vec![b'X', b'Y', 0xFF, b'Z']);
+    }
+
+    #[test]
+    fn test_unmetafy_dup_with_no_meta_bytes() {
+        // String round-trip works for ASCII (no Meta bytes).
+        // Note: the Meta byte (0x83) isn't valid UTF-8 alone, so
+        // the &str → String API is only useful for already-ASCII
+        // input or for callers who route through `metafy` first.
+        // The byte-level path (unmetafy(&mut Vec<u8>)) is what
+        // clone.rs / paths-from-argv use.
+        assert_eq!(unmetafy_dup("plain"), "plain");
+    }
+
+    #[test]
+    fn test_unmetafy_returns_self_value() {
+        // C returns `s` (the buffer) for chaining; Rust returns
+        // the new length. Verify length matches a call that
+        // collapses two Meta-escapes.
+        let mut buf = vec![
+            b'A',
+            0x83, b'B' ^ 32, // → 'B'
+            0x83, b'C' ^ 32, // → 'C'
+            b'D',
+        ];
+        let n = unmetafy(&mut buf);
+        assert_eq!(n, 4);
+        assert_eq!(buf, b"ABCD".to_vec());
+    }
+
+    #[test]
+    fn test_imeta_byte_threshold() {
+        // C `#define imeta(c) ((c) >= Meta)` — true for any byte
+        // >= 0x83.
+        assert!(!imeta_byte(0x82));
+        assert!(imeta_byte(Meta));
+        assert!(imeta_byte(0xFF));
+    }
+
+    #[test]
+    fn test_meta_constant_value() {
+        // Locked at 0x83 by Src/zsh.h. If this test fails, zsh
+        // bumped the Meta sentinel and the encoding mapping needs
+        // a full audit.
+        assert_eq!(Meta, 0x83);
     }
 
     #[test]

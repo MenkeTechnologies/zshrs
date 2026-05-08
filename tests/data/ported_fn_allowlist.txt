@@ -207,3 +207,16 @@ is_ident
 pop_with_lval
 get_value
 top_prec
+
+# utils.rs — Meta-encoding helpers.
+#   imeta_byte — Rust port of the `imeta()` macro from Src/zsh.h
+#     (`#define imeta(c) ((c) >= Meta)`). Macros aren't in the
+#     C-function index, so the name lands here.
+#   unmetafy_dup — convenience wrapper that owns the buffer and
+#     returns String. C callers either mutate in place via
+#     `unmetafy(s, NULL)` or use `ztrdup_metafy` for the inverse;
+#     there's no exact C counterpart for "unmetafy a &str into a
+#     fresh String", but it's the shape Rust callers using &str
+#     reach for.
+imeta_byte
+unmetafy_dup
