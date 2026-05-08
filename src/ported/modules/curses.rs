@@ -549,20 +549,6 @@ pub fn noecho() -> io::Result<()> {
     Ok(())
 }
 
-/// Show or hide the cursor.
-/// Port of the `curs_set()` libncurses call invoked from
-/// `zccmd_init()` (Src/Modules/curses.c:434). The Rust port emits
-/// `\e[?25h` (visible) / `\e[?25l` (hidden) directly.
-pub fn curs_set(visible: bool) -> io::Result<()> {
-    let mut stdout = io::stdout();
-    if visible {
-        write!(stdout, "\x1b[?25h")?;
-    } else {
-        write!(stdout, "\x1b[?25l")?;
-    }
-    stdout.flush()
-}
-
 /// `zcurses` builtin entry point.
 /// Port of the `bin_zcurses()` dispatch table in
 /// Src/Modules/curses.c — the C source uses `zccmd_*` callbacks
