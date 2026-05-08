@@ -6623,16 +6623,25 @@ pub(crate) fn getarg<'a>(
         }
         let skip = if start < 0 { 0 } else { start as usize };
 
+        // Per C params.c:1707-1709 + zsh 5.9 empirical:
+        //   k/K — keymatch path: pprog=NULL, no glob; exact key
+        //         lookup. `(K)*` returns "" because there's no key
+        //         literally named "*".
+        //   r/R/i/I — value path: pprog=patcompile, glob/exact.
+        let key_compare = |target: &str| -> bool {
+            if key_match {
+                target == pat
+            } else if exact {
+                target == pat
+            } else {
+                crate::ported::exec::ShellExecutor::glob_match_static(target, pat)
+            }
+        };
         if return_all {
             let mut out: Vec<String> = Vec::new();
             for (k, v) in map.iter().skip(skip) {
                 let target = if key_match { k.as_str() } else { v.as_str() };
-                let hit = if exact {
-                    target == pat
-                } else {
-                    crate::ported::exec::ShellExecutor::glob_match_static(target, pat)
-                };
-                if hit {
+                if key_compare(target) {
                     // `K` (key-match) returns VALUE; `I` (value-match+ind)
                     // returns KEY; `R` (value-match) returns VALUE.
                     out.push(if key_match {
@@ -6650,12 +6659,7 @@ pub(crate) fn getarg<'a>(
         let mut remaining = num;
         for (k, v) in map.iter().skip(skip) {
             let target = if key_match { k.as_str() } else { v.as_str() };
-            let hit = if exact {
-                target == pat
-            } else {
-                crate::ported::exec::ShellExecutor::glob_match_static(target, pat)
-            };
-            if hit {
+            if key_compare(target) {
                 remaining -= 1;
                 if remaining == 0 {
                     return Some(GetargOut::Value(Value::str(if key_match {
