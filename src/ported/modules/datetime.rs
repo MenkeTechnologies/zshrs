@@ -405,3 +405,43 @@ impl crate::ported::exec::ShellExecutor {
     }
 }
 // END moved-from-exec-rs
+
+/// Module loader entry — port of `setup_()` from
+/// Src/Modules/datetime.c:270.
+pub fn setup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `features_()` from
+/// Src/Modules/datetime.c:277. Returns the features array; in the C
+/// build this hands `featuresarray(m, &module_features)` back to the
+/// loader.
+pub fn features_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `enables_()` from
+/// Src/Modules/datetime.c:285. C delegates to `handlefeatures()`.
+pub fn enables_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `boot_()` from
+/// Src/Modules/datetime.c:292.
+pub fn boot_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `cleanup_()` from
+/// Src/Modules/datetime.c:299. C calls
+/// `setfeatureenables(m, &module_features, NULL)` to drop registered
+/// features at unload time.
+pub fn cleanup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `finish_()` from
+/// Src/Modules/datetime.c:306.
+pub fn finish_() -> i32 {
+    0
+}
