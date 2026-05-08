@@ -10516,6 +10516,8 @@ impl crate::ported::exec::ShellExecutor {
             "zstyle" => self.bin_zstyle(cmd_args),
             "compadd" => self.bin_compadd(cmd_args),
             "compset" => self.bin_compset(cmd_args),
+            "compctl" => crate::ported::zle::compctl::bin_compctl("compctl", cmd_args),
+            "compcall" => crate::ported::zle::compctl::bin_compcall("compcall", cmd_args),
             "compdef" => self.builtin_compdef(cmd_args),
             "compinit" => self.builtin_compinit(cmd_args),
             "cdreplay" => self.builtin_cdreplay(cmd_args),
