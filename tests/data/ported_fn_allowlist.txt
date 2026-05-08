@@ -76,6 +76,4 @@ magic_assoc_keys
 parse_subscript_arith_assign
 parse_subscript_arith_compound
 parse_subscript_arith_pre_inc
-parse_zselect_args
-zselect
 zformat_recurse

@@ -54,6 +54,8 @@ pub struct SelectResult {
     pub as_hash: HashMap<String, String>,
 }
 
+impl ZselectOptions {
+
 /// Perform select/poll on file descriptors.
 /// Helper extracted from `bin_zselect()` (Src/Modules/zselect.c:65) —
 /// populates the read/write/error fd sets, runs the kernel call
@@ -62,9 +64,9 @@ pub struct SelectResult {
 /// an `fd → mode-string` hash to mirror the `-a` / `-A` output
 /// forms zsh exposes.
 #[cfg(unix)]
-pub fn zselect(options: &ZselectOptions) -> Result<SelectResult, String> {
+pub fn run(&self) -> Result<SelectResult, String> {
     use std::collections::HashSet;
-
+    let options = self;
     if options.fds.is_empty() {
         return Ok(SelectResult {
             ready_fds: Vec::new(),
@@ -193,7 +195,7 @@ pub fn zselect(options: &ZselectOptions) -> Result<SelectResult, String> {
 /// Stub for non-unix targets (no `select(2)`); helper for `bin_zselect`
 /// at `Src/Modules/zselect.c:65`.
 #[cfg(not(unix))]
-pub fn zselect(_options: &ZselectOptions) -> Result<SelectResult, String> {
+pub fn run(&self) -> Result<SelectResult, String> {
     Err("your system does not implement the select system call".to_string())
 }
 
@@ -203,7 +205,7 @@ pub fn zselect(_options: &ZselectOptions) -> Result<SelectResult, String> {
 /// the long form (`-r 0 -w 1`) and the bundled form (`-r0 -w1`) are
 /// accepted, with `-a NAME` / `-A NAME` / `-t HUNDREDTHS` capturing
 /// the same flags the C source's `bin_zselect()` parses.
-pub fn parse_zselect_args(args: &[&str]) -> Result<ZselectOptions, String> {
+pub fn parse(args: &[&str]) -> Result<ZselectOptions, String> {
     let mut options = ZselectOptions::default();
     let mut current_mode = SelectMode::Read;
     let mut i = 0;
@@ -307,13 +309,15 @@ pub fn parse_zselect_args(args: &[&str]) -> Result<ZselectOptions, String> {
     Ok(options)
 }
 
+}  // impl ZselectOptions
+
 /// `zselect` builtin entry point.
 /// Port of `bin_zselect()` from Src/Modules/zselect.c:65 — wires
 /// `parse_zselect_args` → `zselect` → exit-status conversion the
 /// same way the C source returns 0 when at least one fd is ready
 /// and 1 otherwise (timeout or empty result).
 pub fn bin_zselect(args: &[&str]) -> (i32, Vec<String>, HashMap<String, String>) {
-    let options = match parse_zselect_args(args) {
+    let options = match ZselectOptions::parse(args) {
         Ok(opts) => opts,
         Err(e) => {
             zwarnnam("zselect", &format!("{}", e));
@@ -321,7 +325,7 @@ pub fn bin_zselect(args: &[&str]) -> (i32, Vec<String>, HashMap<String, String>)
         }
     };
 
-    match zselect(&options) {
+    match options.run() {
         Ok(result) => {
             if result.ready_fds.is_empty() {
                 (1, Vec::new(), HashMap::new())
@@ -358,7 +362,7 @@ mod tests {
     #[test]
     fn test_parse_basic_args() {
         let args = vec!["-r", "0", "-w", "1"];
-        let options = parse_zselect_args(&args).unwrap();
+        let options = ZselectOptions::parse(&args).unwrap();
 
         assert_eq!(options.fds.len(), 2);
         assert!(options.fds.contains(&(0, SelectMode::Read)));
@@ -368,7 +372,7 @@ mod tests {
     #[test]
     fn test_parse_timeout() {
         let args = vec!["-t", "100", "-r", "0"];
-        let options = parse_zselect_args(&args).unwrap();
+        let options = ZselectOptions::parse(&args).unwrap();
 
         assert_eq!(options.timeout_hundredths, Some(100));
     }
@@ -376,7 +380,7 @@ mod tests {
     #[test]
     fn test_parse_combined_args() {
         let args = vec!["-r0", "-w1"];
-        let options = parse_zselect_args(&args).unwrap();
+        let options = ZselectOptions::parse(&args).unwrap();
 
         assert_eq!(options.fds.len(), 2);
     }
@@ -384,7 +388,7 @@ mod tests {
     #[test]
     fn test_parse_array_name() {
         let args = vec!["-a", "myarray", "-r", "0"];
-        let options = parse_zselect_args(&args).unwrap();
+        let options = ZselectOptions::parse(&args).unwrap();
 
         assert_eq!(options.array_name, Some("myarray".to_string()));
     }
@@ -392,7 +396,7 @@ mod tests {
     #[test]
     fn test_parse_hash_name() {
         let args = vec!["-A", "myhash", "-r", "0"];
-        let options = parse_zselect_args(&args).unwrap();
+        let options = ZselectOptions::parse(&args).unwrap();
 
         assert_eq!(options.hash_name, Some("myhash".to_string()));
     }
@@ -400,14 +404,14 @@ mod tests {
     #[test]
     fn test_parse_invalid_fd() {
         let args = vec!["-r", "abc"];
-        let result = parse_zselect_args(&args);
+        let result = ZselectOptions::parse(&args);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_zselect_empty() {
         let options = ZselectOptions::default();
-        let result = zselect(&options).unwrap();
+        let result = options.run().unwrap();
         assert!(result.ready_fds.is_empty());
     }
 }
