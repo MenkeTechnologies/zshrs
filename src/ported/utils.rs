@@ -2815,21 +2815,6 @@ pub(crate) fn base64_decode(s: &str) -> Vec<u8> {
     }
     out
 }
-/// Strip Rust's "(os error N)" suffix from an io::Error display so
-/// the message matches BSD/GNU coreutils' output (e.g. zsh's bundled
-/// cat/head emit `cat: foo: No such file or directory`, not
-/// `cat: foo: No such file or directory (os error 2)`). Used by all
-/// the in-process coreutils builtins.
-/// Format an `io::Error` for zsh-style diagnostic output.
-/// zshrs convenience around `strerror(3)` — C zsh inlines
-/// `strerror(errno)` at every call site (Src/utils.c).
-pub fn pretty_io_err(e: &std::io::Error) -> String {
-    let s = e.to_string();
-    match s.find(" (os error") {
-        Some(i) => s[..i].to_string(),
-        None => s,
-    }
-}
 // END moved-from-exec-rs (free fns)
 
 // ===========================================================

@@ -53,7 +53,7 @@ pub(crate) use crate::ported::pattern::{
 #[allow(unused_imports)]
 pub(crate) use crate::ported::text::format_function_body_zsh;
 #[allow(unused_imports)]
-pub(crate) use crate::ported::utils::{base64_decode, pretty_io_err};
+pub(crate) use crate::ported::utils::base64_decode;
 #[allow(unused_imports)]
 pub(crate) use crate::ported::utils::{
     emit_xtrace_text, ispwd, normalize_logical, quote_xtrace_arg,
