@@ -40,7 +40,7 @@ pub fn hasher(s: &str) -> u32 {
 /// Hasher tuned for the history table.
 /// Port of the per-history hash specialization Src/hist.c uses
 /// — the C source bypasses leading whitespace before mixing.
-pub fn hist_hasher(s: &str) -> u32 {
+pub fn histhasher(s: &str) -> u32 {
     let mut hashval: u32 = 0;
     let mut chars = s.chars().peekable();
 
@@ -77,7 +77,7 @@ pub fn hist_hasher(s: &str) -> u32 {
 /// Compare two history entries with optional blank-reduction.
 /// Port of the comparator the C source's `addhistnode()` from
 /// Src/hist.c uses to detect duplicate history lines.
-pub fn hist_strcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering {
+pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering {
     let s1 = s1.trim_start();
     let s2 = s2.trim_start();
 
@@ -1137,19 +1137,19 @@ mod tests {
     }
 
     #[test]
-    fn test_hist_hasher() {
-        assert_eq!(hist_hasher("  hello  world  "), hist_hasher("hello world"));
-        assert_ne!(hist_hasher("hello world"), hist_hasher("helloworld"));
+    fn test_histhasher() {
+        assert_eq!(histhasher("  hello  world  "), histhasher("hello world"));
+        assert_ne!(histhasher("hello world"), histhasher("helloworld"));
     }
 
     #[test]
-    fn test_hist_strcmp() {
+    fn test_histstrcmp() {
         assert_eq!(
-            hist_strcmp("  hello  world  ", "hello world", false),
+            histstrcmp("  hello  world  ", "hello world", false),
             std::cmp::Ordering::Equal
         );
         assert_eq!(
-            hist_strcmp("hello world", "hello world", true),
+            histstrcmp("hello world", "hello world", true),
             std::cmp::Ordering::Equal
         );
     }
@@ -1441,22 +1441,9 @@ pub fn printaliasnode() {}
 /// by event number directly; shim.
 pub fn createhisttable() {}
 
-/// Port of `histhasher()` from Src/hashtable.c:1365 — hash-fn
-/// callback for the history table; mixes the event command
-/// string. Shim.
-pub fn histhasher(_s: &str) -> u64 {
-    0
-}
-
 /// Port of `emptyhisttable()` from Src/hashtable.c:1385 — drop
 /// every history-table entry (`history -p` etc.). Shim.
 pub fn emptyhisttable() {}
-
-/// Port of `histstrcmp()` from Src/hashtable.c:1396 — comparator
-/// callback over history-table nodes. Shim.
-pub fn histstrcmp(a: &str, b: &str) -> std::cmp::Ordering {
-    a.cmp(b)
-}
 
 /// Port of `addhistnode()` from Src/hashtable.c:1427 — insert a
 /// history event into the hash. Shim.
