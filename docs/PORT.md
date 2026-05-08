@@ -114,6 +114,62 @@ explicitly carved out below and are **not** a precedent for adding more.
 
 ---
 
+## NO SHORTCUTS — 100% LINE-BY-LINE COVERAGE
+
+When the maintainer asks to port a C source file, the result is a
+**complete 1:1 port**, not a partial one. "Faithful port" means
+every function, struct, enum, `#define`, table, and module-static
+the C source defines has a real Rust counterpart with matching
+name, signature, and control flow.
+
+The forbidden pattern (caught repeatedly in earlier rounds):
+
+❌ Port `bin_<name>` and the dispatch table → ship the rest as
+   `WARNING: NOT IN <FILE>.C` stubs / `*_notavail` placeholders /
+   bare `0`-returning entries → claim "faithful port".
+
+This is the failure mode that triggered "what do I have to fucking
+check every LOC to make sure its a real port b/c ur lazy/liar?"
+
+### When stubs ARE acceptable
+
+The `// WARNING: NOT IN <FILE>.C` marker is **only** appropriate
+when the C definition genuinely lives in a *different* `Src/*.c`
+file. Examples that pass review:
+
+- `zsetlimit` / `setlimits` ported alongside rlimits.rs because
+  their canonical home is `Src/exec.c`, not `rlimits.c`. Marker
+  with file:line citation is correct.
+- `addtimedfn` / `deltimedfn` referenced by sched.rs because they
+  live in `Src/utils.c`. Marker with file:line citation is correct.
+
+The marker is **not** appropriate for any function defined in the
+*same* C source file the port covers. If `Src/Modules/curses.c`
+defines `zcurses_validate_window` and the Rust port skips it, that
+is the lazy pattern. Port it.
+
+### Audit requirement before declaring a port done
+
+Before writing the commit message, run a sanity check:
+
+```sh
+# List every function defined in the C source file:
+grep -nE '^[a-zA-Z_][a-zA-Z_0-9]*\(' src/zsh/Src/Modules/<file>.c
+
+# List every fn in the Rust port:
+grep -nE '^(pub )?(pub\(crate\) )?fn ' src/ported/modules/<file>.rs
+
+# Walk both lists side-by-side. Every C name must appear in the
+# Rust list. Stubs that don't match a different-file definition
+# are blockers — not "follow-up commits".
+```
+
+Plus the bag-of-globals anti-pattern from PORT_PLAN.md applies in
+full. C `static` fields → thread_local!/OnceLock<Mutex>, never a
+Rust struct that aggregates them all.
+
+---
+
 ## The Three Hard Rules
 
 ### 1. PORT-ONLY. NO ADHOC IMPLEMENTATIONS.
