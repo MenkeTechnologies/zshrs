@@ -85,7 +85,6 @@ matches_watch_pattern
 get_term_width
 get_term_height
 zsh_split_z
-shell_quote_value
 
 color_to_code
 format_function_body_zsh

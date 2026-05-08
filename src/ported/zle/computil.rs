@@ -14,8 +14,7 @@
 //! - bin_comptry       → compsys::state::comptry()
 
 use std::collections::HashMap;
-use crate::ported::utils::zwarnnam;
-use crate::ported::exec::shell_quote_value;
+use crate::ported::utils::{quotedzputs, zwarnnam};
 
 /// Completion description set Port of `CDSet` from Src/Zle/computil.c.
 #[derive(Debug, Clone)]
@@ -442,11 +441,11 @@ impl crate::ported::exec::ShellExecutor {
                 continue;
             }
             if let Some(arr) = self.arrays.get(name).cloned() {
-                let quoted: Vec<String> = arr.iter().map(|v| shell_quote_value(v)).collect();
+                let quoted: Vec<String> = arr.iter().map(|v| quotedzputs(v)).collect();
                 self.arrays.insert(name.to_string(), quoted);
             } else if let Some(val) = self.variables.get(name).cloned() {
                 self.variables
-                    .insert(name.to_string(), shell_quote_value(&val));
+                    .insert(name.to_string(), quotedzputs(&val));
             } else {
                 zwarnnam("compquote", &format!("unknown parameter: {}", name));
                 returnval = 1;
