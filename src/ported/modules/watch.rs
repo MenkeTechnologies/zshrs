@@ -179,45 +179,10 @@ pub fn watchlog_match(pattern: &str, value: &str) -> bool {
     }
 
     if pattern.contains('*') || pattern.contains('?') {
-        glob_match(pattern, value)
+        crate::glob::matchpat(pattern, value, false, true)
     } else {
         false
     }
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/watch.c`.
-fn glob_match(pattern: &str, text: &str) -> bool {
-    let p_chars: Vec<char> = pattern.chars().collect();
-    let t_chars: Vec<char> = text.chars().collect();
-
-    let mut p_idx = 0;
-    let mut t_idx = 0;
-    let mut star_idx: Option<usize> = None;
-    let mut match_idx = 0;
-
-    while t_idx < t_chars.len() {
-        if p_idx < p_chars.len() && (p_chars[p_idx] == '?' || p_chars[p_idx] == t_chars[t_idx]) {
-            p_idx += 1;
-            t_idx += 1;
-        } else if p_idx < p_chars.len() && p_chars[p_idx] == '*' {
-            star_idx = Some(p_idx);
-            match_idx = t_idx;
-            p_idx += 1;
-        } else if let Some(star) = star_idx {
-            p_idx = star + 1;
-            match_idx += 1;
-            t_idx = match_idx;
-        } else {
-            return false;
-        }
-    }
-
-    while p_idx < p_chars.len() && p_chars[p_idx] == '*' {
-        p_idx += 1;
-    }
-
-    p_idx == p_chars.len()
 }
 
 /// Format a watch event
@@ -562,11 +527,12 @@ mod tests {
 
     #[test]
     fn test_glob_match() {
-        assert!(glob_match("*", "anything"));
-        assert!(glob_match("user*", "username"));
-        assert!(glob_match("*name", "username"));
-        assert!(glob_match("user?ame", "username"));
-        assert!(!glob_match("user", "username"));
+        use crate::glob::matchpat;
+        assert!(matchpat("*", "anything", false, true));
+        assert!(matchpat("user*", "username", false, true));
+        assert!(matchpat("*name", "username", false, true));
+        assert!(matchpat("user?ame", "username", false, true));
+        assert!(!matchpat("user", "username", false, true));
     }
 
     #[test]

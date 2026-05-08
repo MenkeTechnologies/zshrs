@@ -3071,7 +3071,7 @@ impl ParamTable {
             if flag_filter != 0 && (param.flags & flag_filter) == 0 {
                 continue;
             }
-            if pattern.is_empty() || glob_match(pattern, name) {
+            if pattern.is_empty() || crate::glob::matchpat(pattern, name, false, true) {
                 callback(name, param);
             }
         }
@@ -3083,7 +3083,7 @@ impl ParamTable {
             .params
             .iter()
             .filter(|(_, p)| !p.is_unset())
-            .filter(|(name, _)| pattern.is_none_or(|p| glob_match(p, name)))
+            .filter(|(name, _)| pattern.is_none_or(|p| crate::glob::matchpat(p, name, false, true)))
             .map(|(name, _)| name.clone())
             .collect();
         names.sort();
@@ -3880,27 +3880,6 @@ pub fn setarrvalue(arr: &mut Vec<String>, start: i64, end: i64, val: Vec<String>
     }
 }
 
-/// Simple glob match for parameter scanning
-fn glob_match(pattern: &str, name: &str) -> bool {
-    if pattern == "*" {
-        return true;
-    }
-    if pattern.ends_with('*') && !pattern[..pattern.len() - 1].contains('*') {
-        return name.starts_with(&pattern[..pattern.len() - 1]);
-    }
-    if pattern.starts_with('*') && !pattern[1..].contains('*') {
-        return name.ends_with(&pattern[1..]);
-    }
-    // Simple two-star case: *foo*
-    if pattern.starts_with('*') && pattern.ends_with('*') && pattern.len() > 2 {
-        let inner = &pattern[1..pattern.len() - 1];
-        if !inner.contains('*') {
-            return name.contains(inner);
-        }
-    }
-    pattern == name
-}
-
 /// Shell-bslashquote a string for display
 fn shell_quote(s: &str) -> String {
     if s.is_empty() {
@@ -4411,12 +4390,13 @@ mod tests {
 
     #[test]
     fn test_glob_match() {
-        assert!(glob_match("*", "anything"));
-        assert!(glob_match("foo*", "foobar"));
-        assert!(!glob_match("foo*", "barfoo"));
-        assert!(glob_match("*bar", "foobar"));
-        assert!(glob_match("exact", "exact"));
-        assert!(!glob_match("exact", "other"));
+        use crate::glob::matchpat;
+        assert!(matchpat("*", "anything", false, true));
+        assert!(matchpat("foo*", "foobar", false, true));
+        assert!(!matchpat("foo*", "barfoo", false, true));
+        assert!(matchpat("*bar", "foobar", false, true));
+        assert!(matchpat("exact", "exact", false, true));
+        assert!(!matchpat("exact", "other", false, true));
     }
 
     #[test]
