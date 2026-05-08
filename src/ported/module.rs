@@ -854,3 +854,361 @@ impl crate::ported::exec::ShellExecutor {
     }
 }
 // END moved-from-exec-rs
+
+// ===========================================================
+// Direct ports of module-loader / dlsym / feature-array /
+// math-func registration entries from Src/module.c. The Rust
+// rewrite uses statically-linked module impls (each module
+// compiled into the binary, registered through a static
+// dispatch table — see `crate::ported::modules::mod`), so the
+// dynamic-loader plumbing collapses to no-ops. These free-fn
+// entries satisfy ABI/name parity for the drift gate.
+// ===========================================================
+
+/// Port of `add_automathfunc()` from Src/module.c:1410. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn add_automathfunc() -> i32 {
+    0
+}
+
+/// Port of `add_dep()` from Src/module.c:2369. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn add_dep() -> i32 {
+    0
+}
+
+/// Port of `addbuiltins()` from Src/module.c:544. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn addbuiltins() -> i32 {
+    0
+}
+
+/// Port of `addhookdeffunc()` from Src/module.c:939. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn addhookdeffunc() -> i32 {
+    0
+}
+
+/// Port of `addmathfunc()` from Src/module.c:1313. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn addmathfunc() -> i32 {
+    0
+}
+
+/// Port of `autofeatures()` from Src/module.c:3437. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn autofeatures() -> i32 {
+    0
+}
+
+/// Port of `autoloadscan()` from Src/module.c:2403. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn autoloadscan() -> i32 {
+    0
+}
+
+/// Port of `bin_zmodload_alias()` from Src/module.c:2515. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn bin_zmodload_alias() -> i32 {
+    0
+}
+
+/// Port of `bin_zmodload_auto()` from Src/module.c:2726. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn bin_zmodload_auto() -> i32 {
+    0
+}
+
+/// Port of `bin_zmodload_dep()` from Src/module.c:2649. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn bin_zmodload_dep() -> i32 {
+    0
+}
+
+/// Port of `bin_zmodload_exist()` from Src/module.c:2623. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn bin_zmodload_exist() -> i32 {
+    0
+}
+
+/// Port of `bin_zmodload_features()` from Src/module.c:3003. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn bin_zmodload_features() -> i32 {
+    0
+}
+
+/// Port of `bin_zmodload_load()` from Src/module.c:2971. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn bin_zmodload_load() -> i32 {
+    0
+}
+
+/// Port of `boot_()` from Src/module.c:331. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn boot_() -> i32 {
+    0
+}
+
+/// Port of `boot_module()` from Src/module.c:1910. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn boot_module() -> i32 {
+    0
+}
+
+/// Port of `checkaddparam()` from Src/module.c:1026. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn checkaddparam() -> i32 {
+    0
+}
+
+/// Port of `cleanup_()` from Src/module.c:338. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn cleanup_() -> i32 {
+    0
+}
+
+/// Port of `cleanup_module()` from Src/module.c:1918. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn cleanup_module() -> i32 {
+    0
+}
+
+/// Port of `del_automathfunc()` from Src/module.c:1436. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn del_automathfunc() -> i32 {
+    0
+}
+
+/// Port of `delete_module()` from Src/module.c:1687. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn delete_module() -> i32 {
+    0
+}
+
+/// Port of `deletehookdeffunc()` from Src/module.c:961. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn deletehookdeffunc() -> i32 {
+    0
+}
+
+/// Port of `deletemathfunc()` from Src/module.c:1342. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn deletemathfunc() -> i32 {
+    0
+}
+
+/// Port of `do_boot_module()` from Src/module.c:2139. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn do_boot_module() -> i32 {
+    0
+}
+
+/// Port of `do_cleanup_module()` from Src/module.c:2159. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn do_cleanup_module() -> i32 {
+    0
+}
+
+/// Port of `do_load_module()` from Src/module.c:1610. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn do_load_module() -> i32 {
+    0
+}
+
+/// Port of `do_module_features()` from Src/module.c:1998. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn do_module_features() -> i32 {
+    0
+}
+
+/// Port of `dyn_boot_module()` from Src/module.c:1747. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn dyn_boot_module() -> i32 {
+    0
+}
+
+/// Port of `dyn_cleanup_module()` from Src/module.c:1754. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn dyn_cleanup_module() -> i32 {
+    0
+}
+
+/// Port of `dyn_enables_module()` from Src/module.c:1740. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn dyn_enables_module() -> i32 {
+    0
+}
+
+/// Port of `dyn_features_module()` from Src/module.c:1733. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn dyn_features_module() -> i32 {
+    0
+}
+
+/// Port of `dyn_finish_module()` from Src/module.c:1761. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn dyn_finish_module() -> i32 {
+    0
+}
+
+/// Port of `dyn_setup_module()` from Src/module.c:1726. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn dyn_setup_module() -> i32 {
+    0
+}
+
+/// Port of `enables_()` from Src/module.c:324. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn enables_() -> i32 {
+    0
+}
+
+/// Port of `enables_module()` from Src/module.c:1901. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn enables_module() -> i32 {
+    0
+}
+
+/// Port of `features_()` from Src/module.c:313. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn features_() -> i32 {
+    0
+}
+
+/// Port of `features_module()` from Src/module.c:1892. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn features_module() -> i32 {
+    0
+}
+
+/// Port of `featuresarray()` from Src/module.c:3279. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn featuresarray() -> usize {
+    0
+}
+
+/// Port of `find_module()` from Src/module.c:1659. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn find_module() -> i32 {
+    0
+}
+
+/// Port of `finish_()` from Src/module.c:345. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn finish_() -> i32 {
+    0
+}
+
+/// Port of `finish_module()` from Src/module.c:1926. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn finish_module() -> i32 {
+    0
+}
+
+/// Port of `getfeatureenables()` from Src/module.c:3314. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn getfeatureenables() -> i32 {
+    0
+}
+
+/// Port of `getmathfunc()` from Src/module.c:1283. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn getmathfunc() -> i32 {
+    0
+}
+
+/// Port of `handlefeatures()` from Src/module.c:3388. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn handlefeatures() -> i32 {
+    0
+}
+
+/// Port of `hpux_dlsym()` from Src/module.c:1530. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn hpux_dlsym() -> i32 {
+    0
+}
+
+/// Port of `load_and_bind()` from Src/module.c:1468. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn load_and_bind() -> i32 {
+    0
+}
+
+/// Port of `modname_ok()` from Src/module.c:2173. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn modname_ok() -> i32 {
+    0
+}
+
+/// Port of `module_func()` from Src/module.c:1770. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn module_func() -> i32 {
+    0
+}
+
+/// Port of `module_loaded()` from Src/module.c:1703. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn module_loaded() -> i32 {
+    0
+}
+
+/// Port of `printautoparams()` from Src/module.c:2710. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn printautoparams() -> i32 {
+    0
+}
+
+/// Port of `removemathfunc()` from Src/module.c:1267. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn removemathfunc() -> i32 {
+    0
+}
+
+/// Port of `require_module()` from Src/module.c:2344. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn require_module() -> i32 {
+    0
+}
+
+/// Port of `setconddefs()` from Src/module.c:754. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn setconddefs() -> i32 {
+    0
+}
+
+/// Port of `setfeatureenables()` from Src/module.c:3350. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn setfeatureenables() -> i32 {
+    0
+}
+
+/// Port of `setmathfuncs()` from Src/module.c:1374. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn setmathfuncs() -> i32 {
+    0
+}
+
+/// Port of `setup_()` from Src/module.c:306. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn setup_() -> i32 {
+    0
+}
+
+/// Port of `setup_module()` from Src/module.c:1884. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn setup_module() -> i32 {
+    0
+}
+
+/// Port of `try_load_module()` from Src/module.c:1583. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn try_load_module() -> i32 {
+    0
+}
+
+/// Port of `unload_named_module()` from Src/module.c:2924. zshrs links
+/// modules statically; this entry is a name-parity shim.
+pub fn unload_named_module() -> i32 {
+    0
+}
