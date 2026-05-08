@@ -255,35 +255,6 @@ pub fn ptywritestr(fd: RawFd, data: &str) -> io::Result<usize> {
     }
 }
 
-/// Send a signal to the child process behind a pty.
-/// Port of the `kill()` call inside `deleteptycmd()`
-/// (Src/Modules/zpty.c:490) — the C source sends SIGHUP/SIGTERM
-/// when freeing a ptycmd entry.
-pub fn pty_kill(pid: i32, signal: i32) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        let ret = unsafe { libc::kill(pid, signal) };
-        if ret < 0 {
-            return Err(io::Error::last_os_error());
-        }
-    }
-    Ok(())
-}
-
-/// Close a pty file descriptor.
-/// Port of the `zclose()` call inside `deleteptycmd()`
-/// (Src/Modules/zpty.c:490).
-pub fn pty_close(fd: RawFd) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        let ret = unsafe { libc::close(fd) };
-        if ret < 0 {
-            return Err(io::Error::last_os_error());
-        }
-    }
-    Ok(())
-}
-
 /// `zpty` builtin option flags.
 /// Port of the `Options ops` flag bag `bin_zpty()` from
 /// Src/Modules/zpty.c:773 reads — `-d`/`-L`/`-w`/`-r`/`-t`/`-b`
@@ -312,8 +283,8 @@ pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) -> (i3
             let names: Vec<String> = cmds.names().iter().map(|s| s.to_string()).collect();
             for name in names {
                 if let Some(cmd) = cmds.remove(&name) {
-                    let _ = pty_kill(cmd.pid, libc::SIGTERM);
-                    let _ = pty_close(cmd.master_fd);
+                    unsafe { libc::kill(cmd.pid, libc::SIGTERM); }
+                    unsafe { libc::close(cmd.master_fd); }
                 }
             }
             return (0, output);
@@ -321,8 +292,8 @@ pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) -> (i3
 
         for name in args {
             if let Some(cmd) = cmds.remove(name) {
-                let _ = pty_kill(cmd.pid, libc::SIGTERM);
-                let _ = pty_close(cmd.master_fd);
+                unsafe { libc::kill(cmd.pid, libc::SIGTERM); }
+                unsafe { libc::close(cmd.master_fd); }
             } else {
                 output.push_str(&format!("zpty: no such pty command: {}\n", name));
                 return (1, output);
@@ -426,15 +397,15 @@ pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) -> (i3
             match get_pty() {
                 Ok((master, slave)) => match unsafe { libc::fork() } {
                     -1 => {
-                        let _ = pty_close(master);
-                        let _ = pty_close(slave);
+                        unsafe { libc::close(master); }
+                        unsafe { libc::close(slave); }
                         (
                             1,
                             format!("zpty: fork failed: {}\n", io::Error::last_os_error()),
                         )
                     }
                     0 => {
-                        let _ = pty_close(master);
+                        unsafe { libc::close(master); }
                         unsafe {
                             libc::setsid();
                             libc::dup2(slave, 0);
@@ -474,7 +445,7 @@ pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) -> (i3
                         }
                     }
                     pid => {
-                        let _ = pty_close(slave);
+                        unsafe { libc::close(slave); }
 
                         if !options.block {
                             let _ = ptynonblock(master);
