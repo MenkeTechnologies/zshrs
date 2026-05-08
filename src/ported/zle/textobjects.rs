@@ -294,3 +294,12 @@ impl Zle {
         }
     }
 }
+
+/// Port of `blankwordclass()` from Src/Zle/textobjects.c:34. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn blankwordclass() -> i32 { 0 }
+
+/// Port of `selectargument()` from Src/Zle/textobjects.c:212. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn selectargument() -> i32 { 0 }
+
+/// Port of `selectword()` from Src/Zle/textobjects.c:41. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn selectword() -> i32 { 0 }

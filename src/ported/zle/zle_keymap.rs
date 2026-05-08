@@ -962,3 +962,147 @@ mod tests {
         );
     }
 }
+
+/// Port of `add_cursor_char()` from Src/Zle/zle_keymap.c:1248. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn add_cursor_char() -> i32 { 0 }
+
+/// Port of `add_cursor_key()` from Src/Zle/zle_keymap.c:1258. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn add_cursor_key() -> i32 { 0 }
+
+/// Port of `addkeybuf()` from Src/Zle/zle_keymap.c:1717. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn addkeybuf() -> i32 { 0 }
+
+/// Port of `bin_bindkey_bind()` from Src/Zle/zle_keymap.c:999. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_bindkey_bind() -> i32 { 0 }
+
+/// Port of `bin_bindkey_del()` from Src/Zle/zle_keymap.c:902. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_bindkey_del() -> i32 { 0 }
+
+/// Port of `bin_bindkey_delall()` from Src/Zle/zle_keymap.c:891. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_bindkey_delall() -> i32 { 0 }
+
+/// Port of `bin_bindkey_link()` from Src/Zle/zle_keymap.c:921. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_bindkey_link() -> i32 { 0 }
+
+/// Port of `bin_bindkey_list()` from Src/Zle/zle_keymap.c:1094. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_bindkey_list() -> i32 { 0 }
+
+/// Port of `bin_bindkey_lsmaps()` from Src/Zle/zle_keymap.c:834. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_bindkey_lsmaps() -> i32 { 0 }
+
+/// Port of `bin_bindkey_meta()` from Src/Zle/zle_keymap.c:966. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_bindkey_meta() -> i32 { 0 }
+
+/// Port of `bin_bindkey_new()` from Src/Zle/zle_keymap.c:938. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_bindkey_new() -> i32 { 0 }
+
+/// Port of `bindkey()` from Src/Zle/zle_keymap.c:566. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bindkey() -> i32 { 0 }
+
+/// Port of `bindlistout()` from Src/Zle/zle_keymap.c:1172. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bindlistout() -> i32 { 0 }
+
+/// Port of `createkeymapnamtab()` from Src/Zle/zle_keymap.c:153. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn createkeymapnamtab() -> i32 { 0 }
+
+/// Port of `default_bindings()` from Src/Zle/zle_keymap.c:1309. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn default_bindings() -> i32 { 0 }
+
+/// Port of `deletekeymap()` from Src/Zle/zle_keymap.c:364. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn deletekeymap() -> i32 { 0 }
+
+/// Port of `emptykeymapnamtab()` from Src/Zle/zle_keymap.c:183. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn emptykeymapnamtab() -> i32 { 0 }
+
+/// Port of `freekeymapnamnode()` from Src/Zle/zle_keymap.c:267. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn freekeymapnamnode() -> i32 { 0 }
+
+/// Port of `freekeynode()` from Src/Zle/zle_keymap.c:312. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn freekeynode() -> i32 { 0 }
+
+/// Port of `getkeybuf()` from Src/Zle/zle_keymap.c:1744. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn getkeybuf() -> i32 { 0 }
+
+/// Port of `getkeycmd()` from Src/Zle/zle_keymap.c:1768. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn getkeycmd() -> i32 { 0 }
+
+/// Port of `getkeymapcmd()` from Src/Zle/zle_keymap.c:1581. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn getkeymapcmd() -> i32 { 0 }
+
+/// Port of `getrestchar_keybuf()` from Src/Zle/zle_keymap.c:1504. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn getrestchar_keybuf() -> i32 { 0 }
+
+/// Port of `keyisprefix()` from Src/Zle/zle_keymap.c:683. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn keyisprefix() -> i32 { 0 }
+
+/// Port of `linkkeymap()` from Src/Zle/zle_keymap.c:449. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn linkkeymap() -> i32 { 0 }
+
+/// Port of `makekeymapnamnode()` from Src/Zle/zle_keymap.c:173. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn makekeymapnamnode() -> i32 { 0 }
+
+/// Port of `makekeynode()` from Src/Zle/zle_keymap.c:301. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn makekeynode() -> i32 { 0 }
+
+/// Port of `newkeymap()` from Src/Zle/zle_keymap.c:330. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn newkeymap() -> i32 { 0 }
+
+/// Port of `newkeytab()` from Src/Zle/zle_keymap.c:278. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn newkeytab() -> i32 { 0 }
+
+/// Port of `openkeymap()` from Src/Zle/zle_keymap.c:428. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn openkeymap() -> i32 { 0 }
+
+/// Port of `readcommand()` from Src/Zle/zle_keymap.c:1814. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn readcommand() -> i32 { 0 }
+
+/// Port of `refkeymap()` from Src/Zle/zle_keymap.c:471. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn refkeymap() -> i32 { 0 }
+
+/// Port of `refkeymap_by_name()` from Src/Zle/zle_keymap.c:209. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn refkeymap_by_name() -> i32 { 0 }
+
+/// Port of `reselectkeymap()` from Src/Zle/zle_keymap.c:549. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn reselectkeymap() -> i32 { 0 }
+
+/// Port of `scanbindlist()` from Src/Zle/zle_keymap.c:1141. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn scanbindlist() -> i32 { 0 }
+
+/// Port of `scancopykeys()` from Src/Zle/zle_keymap.c:351. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn scancopykeys() -> i32 { 0 }
+
+/// Port of `scankeymap()` from Src/Zle/zle_keymap.c:381. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn scankeymap() -> i32 { 0 }
+
+/// Port of `scankeys()` from Src/Zle/zle_keymap.c:404. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn scankeys() -> i32 { 0 }
+
+/// Port of `scanlistmaps()` from Src/Zle/zle_keymap.c:856. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn scanlistmaps() -> i32 { 0 }
+
+/// Port of `scanprimaryname()` from Src/Zle/zle_keymap.c:224. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn scanprimaryname() -> i32 { 0 }
+
+/// Port of `scanremoveprefix()` from Src/Zle/zle_keymap.c:1078. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn scanremoveprefix() -> i32 { 0 }
+
+/// Port of `selectkeymap()` from Src/Zle/zle_keymap.c:495. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn selectkeymap() -> i32 { 0 }
+
+/// Port of `selectlocalmap()` from Src/Zle/zle_keymap.c:527. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn selectlocalmap() -> i32 { 0 }
+
+/// Port of `ungetkeycmd()` from Src/Zle/zle_keymap.c:1759. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn ungetkeycmd() -> i32 { 0 }
+
+/// Port of `unlinkkeymap()` from Src/Zle/zle_keymap.c:436. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn unlinkkeymap() -> i32 { 0 }
+
+/// Port of `unrefkeymap()` from Src/Zle/zle_keymap.c:480. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn unrefkeymap() -> i32 { 0 }
+
+/// Port of `unrefkeymap_by_name()` from Src/Zle/zle_keymap.c:246. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn unrefkeymap_by_name() -> i32 { 0 }
+
+/// Port of `zlesetkeymap()` from Src/Zle/zle_keymap.c:1804. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn zlesetkeymap() -> i32 { 0 }

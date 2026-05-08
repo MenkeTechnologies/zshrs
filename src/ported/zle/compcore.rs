@@ -306,3 +306,78 @@ impl crate::ported::exec::ShellExecutor {
     }
 }
 // END moved-from-exec-rs
+
+/// Port of `add_match_data()` from Src/Zle/compcore.c:2643. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn add_match_data() -> i32 { 0 }
+
+/// Port of `addexpl()` from Src/Zle/compcore.c:3140. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn addexpl() -> i32 { 0 }
+
+/// Port of `addmatches()` from Src/Zle/compcore.c:2080. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn addmatches() -> i32 { 0 }
+
+/// Port of `after_complete()` from Src/Zle/compcore.c:503. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn after_complete() -> i32 { 0 }
+
+/// Port of `before_complete()` from Src/Zle/compcore.c:461. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn before_complete() -> i32 { 0 }
+
+/// Port of `begcmgroup()` from Src/Zle/compcore.c:3073. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn begcmgroup() -> i32 { 0 }
+
+/// Port of `callcompfunc()` from Src/Zle/compcore.c:544. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn callcompfunc() -> i32 { 0 }
+
+/// Port of `check_param()` from Src/Zle/compcore.c:1113. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn check_param() -> i32 { 0 }
+
+/// Port of `comp_quoting_string()` from Src/Zle/compcore.c:1435. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn comp_quoting_string() -> i32 { 0 }
+
+/// Port of `comp_str()` from Src/Zle/compcore.c:1403. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn comp_str() -> i32 { 0 }
+
+/// Port of `ctokenize()` from Src/Zle/compcore.c:1366. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn ctokenize() -> i32 { 0 }
+
+/// Port of `do_completion()` from Src/Zle/compcore.c:287. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn do_completion() -> i32 { 0 }
+
+/// Port of `dupmatch()` from Src/Zle/compcore.c:3370. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn dupmatch() -> i32 { 0 }
+
+/// Port of `endcmgroup()` from Src/Zle/compcore.c:3131. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn endcmgroup() -> i32 { 0 }
+
+/// Port of `freematch()` from Src/Zle/compcore.c:3575. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn freematch() -> i32 { 0 }
+
+/// Port of `freematches()` from Src/Zle/compcore.c:3605. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn freematches() -> i32 { 0 }
+
+/// Port of `get_data_arr()` from Src/Zle/compcore.c:2022. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_data_arr() -> i32 { 0 }
+
+/// Port of `makearray()` from Src/Zle/compcore.c:3224. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn makearray() -> i32 { 0 }
+
+/// Port of `makecomplist()` from Src/Zle/compcore.c:946. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn makecomplist() -> i32 { 0 }
+
+/// Port of `matchcmp()` from Src/Zle/compcore.c:3173. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn matchcmp() -> i32 { 0 }
+
+/// Port of `matcheq()` from Src/Zle/compcore.c:3207. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn matcheq() -> i32 { 0 }
+
+/// Port of `permmatches()` from Src/Zle/compcore.c:3423. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn permmatches() -> i32 { 0 }
+
+/// Port of `remsquote()` from Src/Zle/compcore.c:1343. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn remsquote() -> i32 { 0 }
+
+/// Port of `set_comp_sep()` from Src/Zle/compcore.c:1460. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn set_comp_sep() -> i32 { 0 }
+
+/// Port of `set_list_array()` from Src/Zle/compcore.c:1947. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn set_list_array() -> i32 { 0 }

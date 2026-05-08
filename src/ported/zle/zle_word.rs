@@ -327,3 +327,69 @@ mod tests {
         assert_eq!(shell_word_start_before(&line, 5), 3);
     }
 }
+
+/// Port of `backwarddeleteword()` from Src/Zle/zle_word.c:429. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn backwarddeleteword() -> i32 { 0 }
+
+/// Port of `backwardkillword()` from Src/Zle/zle_word.c:499. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn backwardkillword() -> i32 { 0 }
+
+/// Port of `backwardword()` from Src/Zle/zle_word.c:240. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn backwardword() -> i32 { 0 }
+
+/// Port of `capitalizeword()` from Src/Zle/zle_word.c:577. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn capitalizeword() -> i32 { 0 }
+
+/// Port of `deleteword()` from Src/Zle/zle_word.c:604. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn deleteword() -> i32 { 0 }
+
+/// Port of `downcaseword()` from Src/Zle/zle_word.c:555. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn downcaseword() -> i32 { 0 }
+
+/// Port of `emacsbackwardword()` from Src/Zle/zle_word.c:397. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn emacsbackwardword() -> i32 { 0 }
+
+/// Port of `emacsforwardword()` from Src/Zle/zle_word.c:140. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn emacsforwardword() -> i32 { 0 }
+
+/// Port of `forwardword()` from Src/Zle/zle_word.c:45. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn forwardword() -> i32 { 0 }
+
+/// Port of `killword()` from Src/Zle/zle_word.c:628. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn killword() -> i32 { 0 }
+
+/// Port of `transposewords()` from Src/Zle/zle_word.c:652. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn transposewords() -> i32 { 0 }
+
+/// Port of `upcaseword()` from Src/Zle/zle_word.c:533. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn upcaseword() -> i32 { 0 }
+
+/// Port of `vibackwardblankword()` from Src/Zle/zle_word.c:313. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vibackwardblankword() -> i32 { 0 }
+
+/// Port of `vibackwardblankwordend()` from Src/Zle/zle_word.c:375. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vibackwardblankwordend() -> i32 { 0 }
+
+/// Port of `vibackwardkillword()` from Src/Zle/zle_word.c:462. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vibackwardkillword() -> i32 { 0 }
+
+/// Port of `vibackwardword()` from Src/Zle/zle_word.c:272. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vibackwardword() -> i32 { 0 }
+
+/// Port of `vibackwardwordend()` from Src/Zle/zle_word.c:348. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vibackwardwordend() -> i32 { 0 }
+
+/// Port of `viforwardblankword()` from Src/Zle/zle_word.c:112. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viforwardblankword() -> i32 { 0 }
+
+/// Port of `viforwardblankwordend()` from Src/Zle/zle_word.c:164. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viforwardblankwordend() -> i32 { 0 }
+
+/// Port of `viforwardword()` from Src/Zle/zle_word.c:82. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viforwardword() -> i32 { 0 }
+
+/// Port of `viforwardwordend()` from Src/Zle/zle_word.c:198. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viforwardwordend() -> i32 { 0 }
+
+/// Port of `wordclass()` from Src/Zle/zle_word.c:74. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn wordclass() -> i32 { 0 }

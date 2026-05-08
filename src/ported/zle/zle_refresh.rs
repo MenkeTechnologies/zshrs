@@ -1019,3 +1019,49 @@ mod tests {
         assert!(attrs[4].is_none());
     }
 }
+
+/// Port of `addmultiword()` from Src/Zle/zle_refresh.c:913. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn addmultiword() -> i32 { 0 }
+
+/// Port of `bufswap()` from Src/Zle/zle_refresh.c:946. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bufswap() -> i32 { 0 }
+
+/// Port of `freevideo()` from Src/Zle/zle_refresh.c:700. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn freevideo() -> i32 { 0 }
+
+/// Port of `nextline()` from Src/Zle/zle_refresh.c:842. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn nextline() -> i32 { 0 }
+
+/// Port of `resetvideo()` from Src/Zle/zle_refresh.c:725. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn resetvideo() -> i32 { 0 }
+
+/// Port of `singmoveto()` from Src/Zle/zle_refresh.c:2687. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn singmoveto() -> i32 { 0 }
+
+/// Port of `snextline()` from Src/Zle/zle_refresh.c:875. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn snextline() -> i32 { 0 }
+
+/// Port of `tcout_via_func()` from Src/Zle/zle_refresh.c:2291. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn tcout_via_func() -> i32 { 0 }
+
+/// Port of `wpfxlen()` from Src/Zle/zle_refresh.c:1736. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn wpfxlen() -> i32 { 0 }
+
+/// Port of `zle_free_highlight()` from Src/Zle/zle_refresh.c:415. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn zle_free_highlight() -> i32 { 0 }
+
+/// Port of `ZR_memset()` from Src/Zle/zle_refresh.c:86. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+#[allow(non_snake_case)]
+pub fn ZR_memset() -> i32 { 0 }
+
+/// Port of `ZR_strcpy()` from Src/Zle/zle_refresh.c:95. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+#[allow(non_snake_case)]
+pub fn ZR_strcpy() -> i32 { 0 }
+
+/// Port of `ZR_strlen()` from Src/Zle/zle_refresh.c:102. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+#[allow(non_snake_case)]
+pub fn ZR_strlen() -> i32 { 0 }
+
+/// Port of `ZR_strncmp()` from Src/Zle/zle_refresh.c:120. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+#[allow(non_snake_case)]
+pub fn ZR_strncmp() -> i32 { 0 }

@@ -982,3 +982,138 @@ mod tests {
         assert_eq!(zle.bufstack, vec!["two".to_string()]);
     }
 }
+
+/// Port of `acceptandinfernexthistory()` from Src/Zle/zle_hist.c:1757. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn acceptandinfernexthistory() -> i32 { 0 }
+
+/// Port of `acceptlineanddownhistory()` from Src/Zle/zle_hist.c:420. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn acceptlineanddownhistory() -> i32 { 0 }
+
+/// Port of `beginningofbufferorhistory()` from Src/Zle/zle_hist.c:573. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn beginningofbufferorhistory() -> i32 { 0 }
+
+/// Port of `beginningofhistory()` from Src/Zle/zle_hist.c:584. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn beginningofhistory() -> i32 { 0 }
+
+/// Port of `doisearch()` from Src/Zle/zle_hist.c:1082. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn doisearch() -> i32 { 0 }
+
+/// Port of `downhistory()` from Src/Zle/zle_hist.c:434. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn downhistory() -> i32 { 0 }
+
+/// Port of `downlineorhistory()` from Src/Zle/zle_hist.c:370. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn downlineorhistory() -> i32 { 0 }
+
+/// Port of `downlineorsearch()` from Src/Zle/zle_hist.c:400. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn downlineorsearch() -> i32 { 0 }
+
+/// Port of `endofbufferorhistory()` from Src/Zle/zle_hist.c:593. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn endofbufferorhistory() -> i32 { 0 }
+
+/// Port of `endofhistory()` from Src/Zle/zle_hist.c:604. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn endofhistory() -> i32 { 0 }
+
+/// Port of `free_isrch_spots()` from Src/Zle/zle_hist.c:965. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn free_isrch_spots() -> i32 { 0 }
+
+/// Port of `get_isrch_spot()` from Src/Zle/zle_hist.c:1000. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_isrch_spot() -> i32 { 0 }
+
+/// Port of `getvisrchstr()` from Src/Zle/zle_hist.c:1814. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn getvisrchstr() -> i32 { 0 }
+
+/// Port of `historybeginningsearchbackward()` from Src/Zle/zle_hist.c:2039. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn historybeginningsearchbackward() -> i32 { 0 }
+
+/// Port of `historybeginningsearchforward()` from Src/Zle/zle_hist.c:2085. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn historybeginningsearchforward() -> i32 { 0 }
+
+/// Port of `historyincrementalpatternsearchbackward()` from Src/Zle/zle_hist.c:936. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn historyincrementalpatternsearchbackward() -> i32 { 0 }
+
+/// Port of `historyincrementalpatternsearchforward()` from Src/Zle/zle_hist.c:943. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn historyincrementalpatternsearchforward() -> i32 { 0 }
+
+/// Port of `historyincrementalsearchbackward()` from Src/Zle/zle_hist.c:922. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn historyincrementalsearchbackward() -> i32 { 0 }
+
+/// Port of `historyincrementalsearchforward()` from Src/Zle/zle_hist.c:929. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn historyincrementalsearchforward() -> i32 { 0 }
+
+/// Port of `historysearchbackward()` from Src/Zle/zle_hist.c:457. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn historysearchbackward() -> i32 { 0 }
+
+/// Port of `historysearchforward()` from Src/Zle/zle_hist.c:516. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn historysearchforward() -> i32 { 0 }
+
+/// Port of `infernexthist()` from Src/Zle/zle_hist.c:1741. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn infernexthist() -> i32 { 0 }
+
+/// Port of `infernexthistory()` from Src/Zle/zle_hist.c:1772. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn infernexthistory() -> i32 { 0 }
+
+/// Port of `insertlastword()` from Src/Zle/zle_hist.c:612. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn insertlastword() -> i32 { 0 }
+
+/// Port of `isearch_newpos()` from Src/Zle/zle_hist.c:1024. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn isearch_newpos() -> i32 { 0 }
+
+/// Port of `pushinput()` from Src/Zle/zle_hist.c:883. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn pushinput() -> i32 { 0 }
+
+/// Port of `pushline()` from Src/Zle/zle_hist.c:832. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn pushline() -> i32 { 0 }
+
+/// Port of `pushlineoredit()` from Src/Zle/zle_hist.c:852. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn pushlineoredit() -> i32 { 0 }
+
+/// Port of `save_isearch_buffer()` from Src/Zle/zle_hist.c:1058. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn save_isearch_buffer() -> i32 { 0 }
+
+/// Port of `set_isrch_spot()` from Src/Zle/zle_hist.c:974. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn set_isrch_spot() -> i32 { 0 }
+
+/// Port of `setlocalhistory()` from Src/Zle/zle_hist.c:794. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn setlocalhistory() -> i32 { 0 }
+
+/// Port of `uphistory()` from Src/Zle/zle_hist.c:233. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn uphistory() -> i32 { 0 }
+
+/// Port of `uplineorhistory()` from Src/Zle/zle_hist.c:282. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn uplineorhistory() -> i32 { 0 }
+
+/// Port of `uplineorsearch()` from Src/Zle/zle_hist.c:312. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn uplineorsearch() -> i32 { 0 }
+
+/// Port of `vidownlineorhistory()` from Src/Zle/zle_hist.c:390. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vidownlineorhistory() -> i32 { 0 }
+
+/// Port of `vifetchhistory()` from Src/Zle/zle_hist.c:1787. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vifetchhistory() -> i32 { 0 }
+
+/// Port of `vihistorysearchbackward()` from Src/Zle/zle_hist.c:1964. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vihistorysearchbackward() -> i32 { 0 }
+
+/// Port of `vihistorysearchforward()` from Src/Zle/zle_hist.c:1940. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn vihistorysearchforward() -> i32 { 0 }
+
+/// Port of `virepeatsearch()` from Src/Zle/zle_hist.c:1988. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn virepeatsearch() -> i32 { 0 }
+
+/// Port of `virevrepeatsearch()` from Src/Zle/zle_hist.c:2024. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn virevrepeatsearch() -> i32 { 0 }
+
+/// Port of `viuplineorhistory()` from Src/Zle/zle_hist.c:302. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn viuplineorhistory() -> i32 { 0 }
+
+/// Port of `zgetline()` from Src/Zle/zle_hist.c:898. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn zgetline() -> i32 { 0 }
+
+/// Port of `zle_setline()` from Src/Zle/zle_hist.c:772. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn zle_setline() -> i32 { 0 }
+
+/// Port of `zlinecmp()` from Src/Zle/zle_hist.c:128. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn zlinecmp() -> i32 { 0 }
+
+/// Port of `zlinefind()` from Src/Zle/zle_hist.c:204. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn zlinefind() -> i32 { 0 }

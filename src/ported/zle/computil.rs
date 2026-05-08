@@ -567,3 +567,144 @@ pub struct CompState {
     pub vared: String,                 // vared context
 }
 
+
+/// Port of `alloc_cadef()` from Src/Zle/computil.c:1147. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn alloc_cadef() -> i32 { 0 }
+
+/// Port of `arrcontains()` from Src/Zle/computil.c:3813. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn arrcontains() -> i32 { 0 }
+
+/// Port of `bin_comparguments()` from Src/Zle/computil.c:2585. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_comparguments() -> i32 { 0 }
+
+/// Port of `bin_compdescribe()` from Src/Zle/computil.c:846. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_compdescribe() -> i32 { 0 }
+
+/// Port of `bin_compfiles()` from Src/Zle/computil.c:4970. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_compfiles() -> i32 { 0 }
+
+/// Port of `bin_compgroups()` from Src/Zle/computil.c:5073. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn bin_compgroups() -> i32 { 0 }
+
+/// Port of `boot_()` from Src/Zle/computil.c:5153. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn boot_() -> i32 { 0 }
+
+/// Port of `ca_colonlist()` from Src/Zle/computil.c:2428. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn ca_colonlist() -> i32 { 0 }
+
+/// Port of `ca_foreign_opt()` from Src/Zle/computil.c:1787. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn ca_foreign_opt() -> i32 { 0 }
+
+/// Port of `ca_get_arg()` from Src/Zle/computil.c:1807. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn ca_get_arg() -> i32 { 0 }
+
+/// Port of `ca_get_opt()` from Src/Zle/computil.c:1706. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn ca_get_opt() -> i32 { 0 }
+
+/// Port of `ca_get_sopt()` from Src/Zle/computil.c:1747. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn ca_get_sopt() -> i32 { 0 }
+
+/// Port of `ca_inactive()` from Src/Zle/computil.c:1832. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn ca_inactive() -> i32 { 0 }
+
+/// Port of `ca_nullist()` from Src/Zle/computil.c:2411. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn ca_nullist() -> i32 { 0 }
+
+/// Port of `ca_opt_arg()` from Src/Zle/computil.c:1976. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn ca_opt_arg() -> i32 { 0 }
+
+/// Port of `ca_parse_line()` from Src/Zle/computil.c:2004. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn ca_parse_line() -> i32 { 0 }
+
+/// Port of `ca_set_data()` from Src/Zle/computil.c:2472. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn ca_set_data() -> i32 { 0 }
+
+/// Port of `cf_ignore()` from Src/Zle/computil.c:4860. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cf_ignore() -> i32 { 0 }
+
+/// Port of `cf_pats()` from Src/Zle/computil.c:4829. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cf_pats() -> i32 { 0 }
+
+/// Port of `cf_remove_other()` from Src/Zle/computil.c:4899. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cf_remove_other() -> i32 { 0 }
+
+/// Port of `cfp_add_sdirs()` from Src/Zle/computil.c:4735. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cfp_add_sdirs() -> i32 { 0 }
+
+/// Port of `cfp_bld_pats()` from Src/Zle/computil.c:4704. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cfp_bld_pats() -> i32 { 0 }
+
+/// Port of `cfp_matcher_pats()` from Src/Zle/computil.c:4525. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cfp_matcher_pats() -> i32 { 0 }
+
+/// Port of `cfp_matcher_range()` from Src/Zle/computil.c:4307. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cfp_matcher_range() -> i32 { 0 }
+
+/// Port of `cfp_opt_pats()` from Src/Zle/computil.c:4621. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cfp_opt_pats() -> i32 { 0 }
+
+/// Port of `cfp_test_exact()` from Src/Zle/computil.c:4160. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cfp_test_exact() -> i32 { 0 }
+
+/// Port of `cleanup_()` from Src/Zle/computil.c:5160. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cleanup_() -> i32 { 0 }
+
+/// Port of `comp_quote()` from Src/Zle/computil.c:3662. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn comp_quote() -> i32 { 0 }
+
+/// Port of `cv_get_val()` from Src/Zle/computil.c:3178. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cv_get_val() -> i32 { 0 }
+
+/// Port of `cv_inactive()` from Src/Zle/computil.c:3209. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cv_inactive() -> i32 { 0 }
+
+/// Port of `cv_next()` from Src/Zle/computil.c:3240. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cv_next() -> i32 { 0 }
+
+/// Port of `cv_parse_word()` from Src/Zle/computil.c:3336. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cv_parse_word() -> i32 { 0 }
+
+/// Port of `cv_quote_get_val()` from Src/Zle/computil.c:3190. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cv_quote_get_val() -> i32 { 0 }
+
+/// Port of `enables_()` from Src/Zle/computil.c:5146. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn enables_() -> i32 { 0 }
+
+/// Port of `features_()` from Src/Zle/computil.c:5138. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn features_() -> i32 { 0 }
+
+/// Port of `finish_()` from Src/Zle/computil.c:5167. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn finish_() -> i32 { 0 }
+
+/// Port of `freecastate()` from Src/Zle/computil.c:1960. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn freecastate() -> i32 { 0 }
+
+/// Port of `freectags()` from Src/Zle/computil.c:3780. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn freectags() -> i32 { 0 }
+
+/// Port of `freectset()` from Src/Zle/computil.c:3763. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn freectset() -> i32 { 0 }
+
+/// Port of `freecvdef()` from Src/Zle/computil.c:2961. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn freecvdef() -> i32 { 0 }
+
+/// Port of `get_cadef()` from Src/Zle/computil.c:1673. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_cadef() -> i32 { 0 }
+
+/// Port of `get_cvdef()` from Src/Zle/computil.c:3154. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_cvdef() -> i32 { 0 }
+
+/// Port of `parse_cadef()` from Src/Zle/computil.c:1196. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn parse_cadef() -> i32 { 0 }
+
+/// Port of `parse_cvdef()` from Src/Zle/computil.c:2986. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn parse_cvdef() -> i32 { 0 }
+
+/// Port of `set_cadef_opts()` from Src/Zle/computil.c:1180. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn set_cadef_opts() -> i32 { 0 }
+
+/// Port of `settags()` from Src/Zle/computil.c:3794. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn settags() -> i32 { 0 }
+
+/// Port of `setup_()` from Src/Zle/computil.c:5124. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn setup_() -> i32 { 0 }

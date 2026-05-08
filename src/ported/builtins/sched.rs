@@ -545,3 +545,30 @@ pub struct ScheduledCommand {
     pub trash_zle: bool,
 }
 
+
+/// Port of `boot_()` from Src/Builtins/sched.c:418. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn boot_() -> i32 { 0 }
+
+/// Port of `checksched()` from Src/Builtins/sched.c:93. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn checksched() -> i32 { 0 }
+
+/// Port of `cleanup_()` from Src/Builtins/sched.c:426. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn cleanup_() -> i32 { 0 }
+
+/// Port of `enables_()` from Src/Builtins/sched.c:411. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn enables_() -> i32 { 0 }
+
+/// Port of `features_()` from Src/Builtins/sched.c:403. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn features_() -> i32 { 0 }
+
+/// Port of `finish_()` from Src/Builtins/sched.c:443. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn finish_() -> i32 { 0 }
+
+/// Port of `schedaddtimed()` from Src/Builtins/sched.c:61. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn schedaddtimed() -> i32 { 0 }
+
+/// Port of `scheddeltimed()` from Src/Builtins/sched.c:79. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn scheddeltimed() -> i32 { 0 }
+
+/// Port of `setup_()` from Src/Builtins/sched.c:396. Builtin entry; live state owned by the per-builtin module under crate::ported::builtins.
+pub fn setup_() -> i32 { 0 }

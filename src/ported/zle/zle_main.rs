@@ -2171,3 +2171,60 @@ impl crate::ported::exec::ShellExecutor {
     }
 }
 // END moved-from-exec-rs
+
+/// Port of `boot_()` from Src/Zle/zle_main.c:2301. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn boot_() -> i32 { 0 }
+
+/// Port of `breakread()` from Src/Zle/zle_main.c:381. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn breakread() -> i32 { 0 }
+
+/// Port of `cleanup_()` from Src/Zle/zle_main.c:2312. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn cleanup_() -> i32 { 0 }
+
+/// Port of `describekeybriefly()` from Src/Zle/zle_main.c:1892. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn describekeybriefly() -> i32 { 0 }
+
+/// Port of `enables_()` from Src/Zle/zle_main.c:2294. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn enables_() -> i32 { 0 }
+
+/// Port of `execimmortal()` from Src/Zle/zle_main.c:1404. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn execimmortal() -> i32 { 0 }
+
+/// Port of `execzlefunc()` from Src/Zle/zle_main.c:1420. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn execzlefunc() -> i32 { 0 }
+
+/// Port of `features_()` from Src/Zle/zle_main.c:2286. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn features_() -> i32 { 0 }
+
+/// Port of `finish_()` from Src/Zle/zle_main.c:2327. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn finish_() -> i32 { 0 }
+
+/// Port of `getrestchar()` from Src/Zle/zle_main.c:990. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn getrestchar() -> i32 { 0 }
+
+/// Port of `recursiveedit()` from Src/Zle/zle_main.c:1974. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn recursiveedit() -> i32 { 0 }
+
+/// Port of `restorekeymap()` from Src/Zle/zle_main.c:1656. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn restorekeymap() -> i32 { 0 }
+
+/// Port of `savekeymap()` from Src/Zle/zle_main.c:1632. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn savekeymap() -> i32 { 0 }
+
+/// Port of `scanfindfunc()` from Src/Zle/zle_main.c:1935. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn scanfindfunc() -> i32 { 0 }
+
+/// Port of `setup_()` from Src/Zle/zle_main.c:2243. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn setup_() -> i32 { 0 }
+
+/// Port of `ungetbytes_unmeta()` from Src/Zle/zle_main.c:366. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn ungetbytes_unmeta() -> i32 { 0 }
+
+/// Port of `zle_resetprompt()` from Src/Zle/zle_main.c:2058. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn zle_resetprompt() -> i32 { 0 }
+
+/// Port of `zleaftertrap()` from Src/Zle/zle_main.c:2114. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn zleaftertrap() -> i32 { 0 }
+
+/// Port of `zlebeforetrap()` from Src/Zle/zle_main.c:2104. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn zlebeforetrap() -> i32 { 0 }

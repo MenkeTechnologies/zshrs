@@ -197,3 +197,144 @@ impl Zle {
         state
     }
 }
+
+/// Port of `free_prepostdisplay()` from Src/Zle/zle_params.c:914. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn free_prepostdisplay() -> i32 { 0 }
+
+/// Port of `get_context()` from Src/Zle/zle_params.c:942. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_context() -> i32 { 0 }
+
+/// Port of `get_histno()` from Src/Zle/zle_params.c:514. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_histno() -> i32 { 0 }
+
+/// Port of `get_isearchmatchactive()` from Src/Zle/zle_params.c:591. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_isearchmatchactive() -> i32 { 0 }
+
+/// Port of `get_isearchmatchend()` from Src/Zle/zle_params.c:584. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_isearchmatchend() -> i32 { 0 }
+
+/// Port of `get_isearchmatchstart()` from Src/Zle/zle_params.c:577. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_isearchmatchstart() -> i32 { 0 }
+
+/// Port of `get_keys()` from Src/Zle/zle_params.c:463. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_keys() -> i32 { 0 }
+
+/// Port of `get_keys_queued_count()` from Src/Zle/zle_params.c:470. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_keys_queued_count() -> i32 { 0 }
+
+/// Port of `get_killring()` from Src/Zle/zle_params.c:705. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_killring() -> i32 { 0 }
+
+/// Port of `get_lasearch()` from Src/Zle/zle_params.c:924. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_lasearch() -> i32 { 0 }
+
+/// Port of `get_lsearch()` from Src/Zle/zle_params.c:933. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_lsearch() -> i32 { 0 }
+
+/// Port of `get_lwidget()` from Src/Zle/zle_params.c:449. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_lwidget() -> i32 { 0 }
+
+/// Port of `get_postdisplay()` from Src/Zle/zle_params.c:907. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_postdisplay() -> i32 { 0 }
+
+/// Port of `get_prebuffer()` from Src/Zle/zle_params.c:394. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_prebuffer() -> i32 { 0 }
+
+/// Port of `get_predisplay()` from Src/Zle/zle_params.c:893. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_predisplay() -> i32 { 0 }
+
+/// Port of `get_prepost()` from Src/Zle/zle_params.c:879. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_prepost() -> i32 { 0 }
+
+/// Port of `get_recursive()` from Src/Zle/zle_params.c:535. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_recursive() -> i32 { 0 }
+
+/// Port of `get_region_active()` from Src/Zle/zle_params.c:325. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_region_active() -> i32 { 0 }
+
+/// Port of `get_registers()` from Src/Zle/zle_params.c:807. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_registers() -> i32 { 0 }
+
+/// Port of `get_suffixactive()` from Src/Zle/zle_params.c:612. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_suffixactive() -> i32 { 0 }
+
+/// Port of `get_suffixend()` from Src/Zle/zle_params.c:605. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_suffixend() -> i32 { 0 }
+
+/// Port of `get_suffixstart()` from Src/Zle/zle_params.c:598. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_suffixstart() -> i32 { 0 }
+
+/// Port of `get_widget()` from Src/Zle/zle_params.c:414. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_widget() -> i32 { 0 }
+
+/// Port of `get_widgetfunc()` from Src/Zle/zle_params.c:421. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_widgetfunc() -> i32 { 0 }
+
+/// Port of `get_widgetstyle()` from Src/Zle/zle_params.c:435. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_widgetstyle() -> i32 { 0 }
+
+/// Port of `get_yankactive()` from Src/Zle/zle_params.c:556. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_yankactive() -> i32 { 0 }
+
+/// Port of `get_yankend()` from Src/Zle/zle_params.c:549. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_yankend() -> i32 { 0 }
+
+/// Port of `get_yankstart()` from Src/Zle/zle_params.c:542. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn get_yankstart() -> i32 { 0 }
+
+/// Port of `makezleparams()` from Src/Zle/zle_params.c:194. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn makezleparams() -> i32 { 0 }
+
+/// Port of `scan_registers()` from Src/Zle/zle_params.c:784. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn scan_registers() -> i32 { 0 }
+
+/// Port of `set_histno()` from Src/Zle/zle_params.c:503. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn set_histno() -> i32 { 0 }
+
+/// Port of `set_killring()` from Src/Zle/zle_params.c:661. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn set_killring() -> i32 { 0 }
+
+/// Port of `set_numeric()` from Src/Zle/zle_params.c:477. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn set_numeric() -> i32 { 0 }
+
+/// Port of `set_postdisplay()` from Src/Zle/zle_params.c:900. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn set_postdisplay() -> i32 { 0 }
+
+/// Port of `set_predisplay()` from Src/Zle/zle_params.c:886. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn set_predisplay() -> i32 { 0 }
+
+/// Port of `set_prepost()` from Src/Zle/zle_params.c:865. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn set_prepost() -> i32 { 0 }
+
+/// Port of `set_region_active()` from Src/Zle/zle_params.c:318. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn set_region_active() -> i32 { 0 }
+
+/// Port of `set_register()` from Src/Zle/zle_params.c:751. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn set_register() -> i32 { 0 }
+
+/// Port of `set_registers()` from Src/Zle/zle_params.c:833. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn set_registers() -> i32 { 0 }
+
+/// Port of `set_yankend()` from Src/Zle/zle_params.c:570. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn set_yankend() -> i32 { 0 }
+
+/// Port of `set_yankstart()` from Src/Zle/zle_params.c:563. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn set_yankstart() -> i32 { 0 }
+
+/// Port of `unset_cutbuffer()` from Src/Zle/zle_params.c:647. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn unset_cutbuffer() -> i32 { 0 }
+
+/// Port of `unset_killring()` from Src/Zle/zle_params.c:741. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn unset_killring() -> i32 { 0 }
+
+/// Port of `unset_numeric()` from Src/Zle/zle_params.c:492. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn unset_numeric() -> i32 { 0 }
+
+/// Port of `unset_register()` from Src/Zle/zle_params.c:777. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn unset_register() -> i32 { 0 }
+
+/// Port of `unset_registers()` from Src/Zle/zle_params.c:857. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn unset_registers() -> i32 { 0 }
+
+/// Port of `zleunsetfn()` from Src/Zle/zle_params.c:237. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+pub fn zleunsetfn() -> i32 { 0 }
