@@ -2493,42 +2493,22 @@ pub fn paramsubst(                                          // c:1625
                     value = raw_value.clone();                   // c:3870
                 }
             } else if let Some(rep) = r.strip_prefix("//") {  // c:3870 (global replace)
-                // Split on first un-escaped `/` so `\/` stays
-                // literal in pat. The bridge's BUILTIN_EXPAND_TEXT
-                // mode-0 prep inserts NUL (`\x00`) before each
-                // backslash-escaped special (`\$` → `\0$`,
-                // `\\` → `\0\`, `\/` → bridge doesn't escape `/`
-                // so it arrives raw `\/`). We recognize:
-                //   NUL+X        → literal X (next char protected)
-                //   `\` + `/`    → literal `/` (raw backslash escape
-                //                  in pat — different from `/`
-                //                  separator)
-                // Direct port of Src/subst.c:3884 parsesub which
-                // distinguishes `\X` from `X` via the BNULL marker
-                // (our analog is the NUL marker).
+                // Same NUL/BNULL-aware split as before. NUL/BNULL +
+                // X → `\X` for the pat side (glob meta literal).
+                // `\` + `/` → `/` (literal `/`, not separator).
+                // Direct port of Src/subst.c:3884.
                 let split_unescaped = |s: &str| -> (String, String) {
                     let cv: Vec<char> = s.chars().collect();
                     let mut pat_buf = String::new();
                     let mut i = 0;
                     while i < cv.len() {
                         let c = cv[i];
-                        // NUL marker (or BNULL): next char is
-                        // literal, including `/` (no separator).
                         if (c == '\x00' || c == '\u{9f}') && i + 1 < cv.len() {
-                            // The next char is whatever was
-                            // backslash-escaped in source. For pat
-                            // matching we want it literal. Push the
-                            // char with a backslash prefix so the
-                            // glob matcher treats meta chars as
-                            // literal too.
                             pat_buf.push('\\');
                             pat_buf.push(cv[i + 1]);
                             i += 2;
                             continue;
                         }
-                        // Raw backslash escapes a `/` to keep it
-                        // out of the pat/repl split. Drop the
-                        // backslash, keep the `/`.
                         if c == '\\' && i + 1 < cv.len() && cv[i + 1] == '/' {
                             pat_buf.push(cv[i + 1]);
                             i += 2;
@@ -2545,7 +2525,37 @@ pub fn paramsubst(                                          // c:1625
                 };
                 let (raw_pat, raw_repl) = split_unescaped(rep);
                 let pat = singsub(&raw_pat, state);
-                let repl = singsub(&raw_repl, state);
+                // Replacement: per C subst.c around line 3354,
+                // `prefork(replstr, ...)` runs with SUB_FLAG|SKIP_FILESUB
+                // — tilde / file expansion is suppressed in the
+                // replacement (so `\~` lands as literal `~`, not
+                // `$HOME`). Same `\X` → `X` strip emulates C's
+                // untokenize on the BNULL→`\` form the bridge upstream
+                // produces.
+                let repl = {
+                    let saved_skip = state.skip_filesub;
+                    state.skip_filesub = true;
+                    let s = crate::lex::untokenize(&singsub(&raw_repl, state));
+                    state.skip_filesub = saved_skip;
+                    let mut out = String::with_capacity(s.len());
+                    let mut it = s.chars().peekable();
+                    while let Some(c) = it.next() {
+                        if c == '\\' {
+                            if let Some(&nx) = it.peek() {
+                                if nx == '\\' {
+                                    out.push('\\');
+                                    it.next();
+                                    continue;
+                                }
+                                out.push(nx);
+                                it.next();
+                                continue;
+                            }
+                        }
+                        out.push(c);
+                    }
+                    out
+                };
                 // Per-element replace for arrays — zsh treats each
                 // element as a separate match target, preserving the
                 // array shape. \${(@)arr//pat/repl} keeps element
@@ -2577,7 +2587,20 @@ pub fn paramsubst(                                          // c:1625
                     o
                 };
                 let mut handled_array = false;
-                if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                // Subscripted lookup (`${arr[N]//pat/repl}`) clears
+                // isarr in C (subst.c:2915 `v->scanflags ? 1 : 0`)
+                // and dispatches to getmatch on the single element
+                // at subst.c:3451 — not getmatcharr per-element.
+                // Only single-element subscripts trigger this: `[@]`
+                // and `[*]` keep array shape (still per-element); a
+                // range `[N,M]` also keeps array shape; only literal
+                // `[N]` / `[key]` reduces to scalar.
+                let has_scalar_subscript = subscript.as_deref().map(|s| {
+                    let t = s.trim();
+                    t != "@" && t != "*" && !t.contains(',')
+                }).unwrap_or(false);
+                let has_subscript = has_scalar_subscript;
+                if let Some(arr) = state.arrays.get(&var_name).cloned().filter(|_| !has_subscript) {
                     let new_arr: Vec<String> = arr.iter().map(|e| replace_global(e)).collect();
                     value = new_arr.join(" ");                // c:3870
                     split_parts = Some(new_arr);              // c:3870 (auto-splat)
@@ -2620,21 +2643,21 @@ pub fn paramsubst(                                          // c:1625
                 value = out;                                         // c:3870
                 } // close handled_array else block
             } else if let Some(rep) = r.strip_prefix('/') {   // c:3870 (single replace)
-                // Same NUL/BNULL-aware split as `//` arm — honor
-                // \\X escape markers in pat. See c:3884 comment.
+                // Same escape-walk as `//` arm above — direct port of
+                // subst.c:3147-3164.
                 let split_unescaped = |s: &str| -> (String, String) {
                     let cv: Vec<char> = s.chars().collect();
-                    let mut pat_buf = String::new();
+                    let mut pat_buf = String::with_capacity(s.len());
                     let mut i = 0;
                     while i < cv.len() {
                         let c = cv[i];
-                        if (c == '\x00' || c == '\u{9f}') && i + 1 < cv.len() {
-                            pat_buf.push('\\');
-                            pat_buf.push(cv[i + 1]);
-                            i += 2;
-                            continue;
-                        }
-                        if c == '\\' && i + 1 < cv.len() && cv[i + 1] == '/' {
+                        if (c == '\x00' || c == '\u{9f}' || c == '\\') && i + 1 < cv.len() {
+                            if cv[i + 1] == '/' {
+                                pat_buf.push('/');
+                                i += 2;
+                                continue;
+                            }
+                            pat_buf.push(c);
                             pat_buf.push(cv[i + 1]);
                             i += 2;
                             continue;
@@ -2649,8 +2672,44 @@ pub fn paramsubst(                                          // c:1625
                     (pat_buf, String::new())
                 };
                 let (raw_pat, raw_repl) = split_unescaped(rep);
+                // Pattern: keep \X for glob meta literals (untokenize
+                // drops BNULL but pat still carries `\X` from the
+                // split-walk above for the "match this literal X"
+                // form).
                 let pat = singsub(&raw_pat, state);
-                let repl = singsub(&raw_repl, state);
+                // Replacement: per Src/glob.c::compgetmatch:2687-2688,
+                // C runs `singsub(replstrp); untokenize(*replstrp);`.
+                // The C untokenize drops BNULL markers (the lexer's
+                // form for `\X` escapes). zshrs's bridge upstream
+                // already untokenized BNULL → literal `\`, so the
+                // `\X` arrives here as raw chars. Strip a literal
+                // backslash before each non-`\` char to mirror the C
+                // BNULL-drop semantics (kept as a separate strip pass
+                // so the existing untokenize call still handles any
+                // surviving meta-tokens).
+                let repl = {
+                    let s = crate::lex::untokenize(&singsub(&raw_repl, state));
+                    let mut out = String::with_capacity(s.len());
+                    let mut it = s.chars().peekable();
+                    while let Some(c) = it.next() {
+                        if c == '\\' {
+                            if let Some(&nx) = it.peek() {
+                                if nx == '\\' {
+                                    // `\\` → `\` (preserve one backslash)
+                                    out.push('\\');
+                                    it.next();
+                                    continue;
+                                }
+                                // `\X` → `X` for any other X
+                                out.push(nx);
+                                it.next();
+                                continue;
+                            }
+                        }
+                        out.push(c);
+                    }
+                    out
+                };
                 // Single-replace helper. Variants: anchor-prefix
                 // (pat starts with `#`), anchor-suffix (`%`), or
                 // unanchored. Returns the post-replacement string.
@@ -2693,7 +2752,16 @@ pub fn paramsubst(                                          // c:1625
                         val.to_string()
                     }
                 };
-                if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                // Same has_subscript guard as `//` arm above —
+                // C subst.c:2915 clears isarr for subscripted form;
+                // dispatches to getmatch (scalar) at subst.c:3451.
+                // Only literal-index subscripts; `[@]`/`[*]`/`[N,M]`
+                // keep array shape.
+                let has_subscript_one = subscript.as_deref().map(|s| {
+                    let t = s.trim();
+                    t != "@" && t != "*" && !t.contains(',')
+                }).unwrap_or(false);
+                if let Some(arr) = state.arrays.get(&var_name).cloned().filter(|_| !has_subscript_one) {
                     let new_arr: Vec<String> = arr.iter().map(|e| replace_one(e)).collect();
                     value = new_arr.join(" ");                    // c:3870
                     split_parts = Some(new_arr);                  // c:3870
