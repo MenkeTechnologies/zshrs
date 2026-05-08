@@ -33,17 +33,6 @@ is_forked_child
 # 100+ lines; inlining into zstrcmp would make it unwieldy.
 compare_numeric
 
-# Math function arms extracted from `math_func()` switch
-# (Src/Modules/mathfunc.c:math_func). The C source dispatches to
-# libm directly; the Rust port adds wrappers for portability.
-erf_fn
-bessel_j0
-bessel_j1
-bessel_jn
-bessel_y0
-bessel_y1
-bessel_yn
-
 # Color-distance / 256-palette mapping helpers — extracted from
 # nearcolor module's main lookup logic. zsh C does this inline.
 
