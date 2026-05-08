@@ -340,10 +340,12 @@ impl Default for MathValue {
 /// these as save-and-restore stack locals (`xyyval`, `xyylval`,
 /// etc.) around the recursive call into `mathparse()`. zsh C has
 /// no struct named after this set of locals; the Rust port collects
-/// them privately so the free fns can pass them through one slot
-/// instead of 19. Not part of the public math API — outside callers
-/// use `matheval`/`mathevali`/`Mnumber`.
-struct MathState<'a> {
+/// them in one bag so the free fns can pass them through one slot
+/// instead of 19. `pub(crate)` so the internal pub(crate) free fns
+/// can name the type without visibility-leak warnings. Not part of
+/// the public math API — outside callers use
+/// `matheval`/`mathevali`/`Mnumber`.
+pub(crate) struct MathState<'a> {
     input: &'a str,
     pos: usize,
     /// Byte position in `input` where the most recently lexed token began
@@ -399,13 +401,13 @@ pub(crate) fn new<'a>(input: &'a str) -> MathState<'a> {
         }
     }
 
-    pub fn with_variables<'a>(mut s: MathState<'a>, vars: HashMap<String, Mnumber>) -> MathState<'a> {
+    pub(crate) fn with_variables<'a>(mut s: MathState<'a>, vars: HashMap<String, Mnumber>) -> MathState<'a> {
         s.variables = vars;
         s
     }
 
     /// Inject variables from string->string mapping (for shell integration)
-    pub fn with_string_variables<'a>(mut s: MathState<'a>, vars: &HashMap<String, String>) -> MathState<'a> {
+    pub(crate) fn with_string_variables<'a>(mut s: MathState<'a>, vars: &HashMap<String, String>) -> MathState<'a> {
         for (k, v) in vars {
             if let Ok(i) = v.parse::<i64>() {
                 s.variables.insert(k.clone(), Mnumber::integer(i));
@@ -422,39 +424,39 @@ pub(crate) fn new<'a>(input: &'a str) -> MathState<'a> {
     }
 
     /// Extract modified variables as string->string mapping (for shell integration)
-    pub fn extract_string_variables<'a>(s: &MathState<'a>) -> HashMap<String, String> {
+    pub(crate) fn extract_string_variables<'a>(s: &MathState<'a>) -> HashMap<String, String> {
         s.variables
             .iter()
             .map(|(k, v)| (k.clone(), v.format_zsh()))
             .collect()
     }
 
-    pub fn with_c_precedences<'a>(mut s: MathState<'a>, enable: bool) -> MathState<'a> {
+    pub(crate) fn with_c_precedences<'a>(mut s: MathState<'a>, enable: bool) -> MathState<'a> {
         s.c_precedences = enable;
         s.prec = if enable { &C_PREC } else { &Z_PREC };
         s
     }
 
-    pub fn with_force_float<'a>(mut s: MathState<'a>, enable: bool) -> MathState<'a> {
+    pub(crate) fn with_force_float<'a>(mut s: MathState<'a>, enable: bool) -> MathState<'a> {
         s.force_float = enable;
         s
     }
 
-    pub fn with_octal_zeroes<'a>(mut s: MathState<'a>, enable: bool) -> MathState<'a> {
+    pub(crate) fn with_octal_zeroes<'a>(mut s: MathState<'a>, enable: bool) -> MathState<'a> {
         s.octal_zeroes = enable;
         s
     }
 
-    pub fn with_lastval<'a>(mut s: MathState<'a>, val: i32) -> MathState<'a> {
+    pub(crate) fn with_lastval<'a>(mut s: MathState<'a>, val: i32) -> MathState<'a> {
         s.lastval = val;
         s
     }
 
-    pub fn peek(s: &MathState<'_>) -> Option<char> {
+    pub(crate) fn peek(s: &MathState<'_>) -> Option<char> {
         s.input[s.pos..].chars().next()
     }
 
-    pub fn advance(s: &mut MathState<'_>) -> Option<char> {
+    pub(crate) fn advance(s: &mut MathState<'_>) -> Option<char> {
         let c = peek(s)?;
         s.pos += c.len_utf8();
         Some(c)
@@ -1599,7 +1601,7 @@ pub(crate) fn bop(s: &mut MathState<'_>, tk: MathTok) {
         }
     }
 
-    pub fn top_prec(s: &MathState<'_>) -> u8 {
+    pub(crate) fn top_prec(s: &MathState<'_>) -> u8 {
         s.prec[MathTok::Comma as usize] + 1
     }
 
@@ -1679,7 +1681,7 @@ pub(crate) fn checkunary(s: &mut MathState<'_>) {
     }
 
     /// Operator-precedence parser - closely follows zsh math.c mathparse()
-    pub fn mathparse(s: &mut MathState<'_>, pc: u8) {
+    pub(crate) fn mathparse(s: &mut MathState<'_>, pc: u8) {
         if s.error.is_some() {
             return;
         }
@@ -1831,7 +1833,7 @@ pub(crate) fn checkunary(s: &mut MathState<'_>) {
     }
 
     /// Call a math function
-    pub fn callmathfunc(s: &mut MathState<'_>, call: &str) -> Mnumber {
+    pub(crate) fn callmathfunc(s: &mut MathState<'_>, call: &str) -> Mnumber {
         // Parse function name and args
         let paren = call.find('(').unwrap_or(call.len());
         let name = &call[..paren];
@@ -1948,7 +1950,7 @@ pub(crate) fn checkunary(s: &mut MathState<'_>) {
     }
 
     /// Evaluate the expression
-    pub fn mathevall(s: &mut MathState<'_>) -> Result<Mnumber, String> {
+    pub(crate) fn mathevall(s: &mut MathState<'_>) -> Result<Mnumber, String> {
         s.prec = if s.c_precedences { &C_PREC } else { &Z_PREC };
 
         // Skip leading whitespace and Nularg
