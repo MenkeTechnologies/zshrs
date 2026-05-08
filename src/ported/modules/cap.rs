@@ -31,7 +31,7 @@ mod ffi {
 /// `bin_cap()` (Src/Modules/cap.c:36) calls when invoked with no
 /// arguments — backs `cap` with no args.
 #[cfg(all(target_os = "linux", feature = "libcap"))]
-pub fn get_proc_caps() -> io::Result<String> {
+pub fn cap_get_proc() -> io::Result<String> {
     use std::ffi::CStr;
 
     unsafe {
@@ -57,7 +57,7 @@ pub fn get_proc_caps() -> io::Result<String> {
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/cap.c`.
 #[cfg(not(all(target_os = "linux", feature = "libcap")))]
-pub fn get_proc_caps() -> io::Result<String> {
+pub fn cap_get_proc() -> io::Result<String> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "capabilities not supported (build with --features libcap on Linux)",
@@ -70,7 +70,7 @@ pub fn get_proc_caps() -> io::Result<String> {
 /// source's `bin_cap()` (Src/Modules/cap.c:36) calls when invoked
 /// with one argument — backs `cap STRING`.
 #[cfg(all(target_os = "linux", feature = "libcap"))]
-pub fn set_proc_caps(cap_string: &str) -> io::Result<()> {
+pub fn cap_set_proc(cap_string: &str) -> io::Result<()> {
     use std::ffi::CString;
 
     let cap_c = CString::new(cap_string)
@@ -99,7 +99,7 @@ pub fn set_proc_caps(cap_string: &str) -> io::Result<()> {
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/cap.c`.
 #[cfg(not(all(target_os = "linux", feature = "libcap")))]
-pub fn set_proc_caps(_cap_string: &str) -> io::Result<()> {
+pub fn cap_set_proc(_cap_string: &str) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "capabilities not supported (build with --features libcap on Linux)",
@@ -111,7 +111,7 @@ pub fn set_proc_caps(_cap_string: &str) -> io::Result<()> {
 /// source's `bin_getcap()` (Src/Modules/cap.c:68) calls per file
 /// argument — backs `getcap FILE...`.
 #[cfg(all(target_os = "linux", feature = "libcap"))]
-pub fn get_file_caps(path: &str) -> io::Result<String> {
+pub fn cap_get_file(path: &str) -> io::Result<String> {
     use std::ffi::{CStr, CString};
 
     let path_c = CString::new(path)
@@ -140,7 +140,7 @@ pub fn get_file_caps(path: &str) -> io::Result<String> {
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/cap.c`.
 #[cfg(not(all(target_os = "linux", feature = "libcap")))]
-pub fn get_file_caps(_path: &str) -> io::Result<String> {
+pub fn cap_get_file(_path: &str) -> io::Result<String> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "capabilities not supported (build with --features libcap on Linux)",
@@ -153,12 +153,12 @@ pub fn get_file_caps(_path: &str) -> io::Result<String> {
 /// the parsed capability string.
 pub fn bin_cap(args: &[&str]) -> (i32, String) {
     if args.is_empty() {
-        match get_proc_caps() {
+        match cap_get_proc() {
             Ok(caps) => (0, format!("{}\n", caps)),
             Err(e) => (1, format!("cap: {}\n", e)),
         }
     } else {
-        match set_proc_caps(args[0]) {
+        match cap_set_proc(args[0]) {
             Ok(()) => (0, String::new()),
             Err(e) => (1, format!("cap: {}\n", e)),
         }
@@ -178,7 +178,7 @@ pub fn bin_getcap(args: &[&str]) -> (i32, String) {
     let mut status = 0;
 
     for file in args {
-        match get_file_caps(file) {
+        match cap_get_file(file) {
             Ok(caps) => output.push_str(&format!("{} {}\n", file, caps)),
             Err(e) => {
                 output.push_str(&format!("getcap: {}: {}\n", file, e));
@@ -301,8 +301,8 @@ mod tests {
 // BEGIN moved-from-exec-rs
 impl crate::ported::exec::ShellExecutor {
     /// cap / getcap / setcap — Linux capabilities (zsh/Src/Modules/cap.c).
-    /// Routes through src/cap.rs which exposes get_proc_caps,
-    /// set_proc_caps, get_file_caps, set_file_caps. On macOS or
+    /// Routes through src/cap.rs which exposes cap_get_proc,
+    /// cap_set_proc, cap_get_file, set_file_caps. On macOS or
     /// without the libcap feature, the underlying calls return
     /// io::Error(Unsupported).
     /// `cap` builtin — delegates to canonical port at
