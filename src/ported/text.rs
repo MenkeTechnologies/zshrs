@@ -883,7 +883,13 @@ mod tests {
 /// Render a function body as zsh source.
 /// Specialized variant of `getpermtext` (Src/text.c:279) for the
 /// function-body subset (used by `functions`, `which -x`).
-pub fn format_function_body_zsh(body: &str) -> String {
+/// Source-text input variant (raw body string) — distinct from
+/// the AST-based `getpermtext(&ShellCommand)` overload used when
+/// the parsed tree is available.
+pub struct FuncBodyFmt;
+
+impl FuncBodyFmt {
+pub fn render(body: &str) -> String {
     let mut lines: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut depth_paren = 0i32;
@@ -935,6 +941,7 @@ pub fn format_function_body_zsh(body: &str) -> String {
     }
     lines.join("\n\t")
 }
+}  // impl FuncBodyFmt
 // END moved-from-exec-rs (free fns)
 
 // ===========================================================

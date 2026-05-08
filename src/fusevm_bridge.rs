@@ -1725,7 +1725,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // Was returning the raw user-typed source which
                         // diverges on indent and terminator. Direct port
                         // of Src/exec.c's `getfn_functions` formatter.
-                        let formatted = format_function_body_zsh(text.trim());
+                        let formatted = FuncBodyFmt::render(text.trim());
                         Some(Value::str(format!("\t{}", formatted)))
                     } else {
                         Some(Value::str(""))

@@ -9,7 +9,7 @@
 #[allow(unused_imports)]
 use crate::ported::exec::{self, ShellExecutor};
 use crate::ported::utils::zerr;
-use crate::ported::text::format_function_body_zsh;
+use crate::ported::text::FuncBodyFmt;
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -4840,7 +4840,7 @@ impl crate::ported::exec::ShellExecutor {
                 // `${functions[foo]:0:20}` (substring extraction)
                 // consistent with the fast-path `\$functions[foo]`.
                 let text = self.function_definition_text(key)?;
-                let formatted = format_function_body_zsh(text.trim());
+                let formatted = FuncBodyFmt::render(text.trim());
                 Some(format!("\t{}", formatted))
             }
             "functions_source" => {

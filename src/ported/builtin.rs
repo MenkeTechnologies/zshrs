@@ -34,7 +34,7 @@ use crate::ported::exec::{
     VarAttr, VarKind,
 };
 use crate::ported::utils::{zerr, zerrnam, zwarn, zwarnnam};
-use crate::ported::text::format_function_body_zsh;
+use crate::ported::text::FuncBodyFmt;
 #[allow(unused_imports)]
 use crate::ported::options::ZSH_OPTIONS_SET;
 #[allow(unused_imports)]
@@ -2512,7 +2512,7 @@ impl crate::ported::exec::ShellExecutor {
                             println!(
                                 "{} () {{\n\t{}\n}}",
                                 name,
-                                format_function_body_zsh(body.trim())
+                                FuncBodyFmt::render(body.trim())
                             );
                         }
                     }
@@ -2606,7 +2606,7 @@ impl crate::ported::exec::ShellExecutor {
                     println!(
                         "{} () {{\n\t{}\n}}",
                         name,
-                        format_function_body_zsh(body.trim())
+                        FuncBodyFmt::render(body.trim())
                     );
                 }
             }
@@ -2626,7 +2626,7 @@ impl crate::ported::exec::ShellExecutor {
                     println!(
                         "{} () {{\n\t{}\n}}",
                         name,
-                        format_function_body_zsh(body.trim())
+                        FuncBodyFmt::render(body.trim())
                     );
                 } else {
                     zwarnnam(invoked_as, &format!("no such function: {}", name));
@@ -8509,7 +8509,7 @@ impl crate::ported::exec::ShellExecutor {
                     println!(
                         "{} () {{\n\t{}\n}}",
                         name,
-                        format_function_body_zsh(body.trim())
+                        FuncBodyFmt::render(body.trim())
                     );
                 }
             }
@@ -8524,7 +8524,7 @@ impl crate::ported::exec::ShellExecutor {
                     println!(
                         "{} () {{\n\t{}\n}}",
                         name,
-                        format_function_body_zsh(body.trim())
+                        FuncBodyFmt::render(body.trim())
                     );
                 }
             }
@@ -8549,7 +8549,7 @@ impl crate::ported::exec::ShellExecutor {
                     println!(
                         "{} () {{\n\t{}\n}}",
                         name,
-                        format_function_body_zsh(body.trim())
+                        FuncBodyFmt::render(body.trim())
                     );
                 }
             }
@@ -9441,7 +9441,7 @@ impl crate::ported::exec::ShellExecutor {
                                     println!(
                                         "{} () {{\n\t{}\n}}",
                                         fnname,
-                                        format_function_body_zsh(&body)
+                                        FuncBodyFmt::render(&body)
                                     );
                                 } else {
                                     println!("{}", fnname);
@@ -9592,7 +9592,7 @@ impl crate::ported::exec::ShellExecutor {
                             .get(name)
                             .cloned()
                             .unwrap_or_else(|| ":".to_string());
-                        println!("{} () {{\n\t{}\n}}", name, format_function_body_zsh(&body));
+                        println!("{} () {{\n\t{}\n}}", name, FuncBodyFmt::render(&body));
                     } else {
                         println!("{}", name);
                     }
