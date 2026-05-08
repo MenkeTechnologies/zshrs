@@ -1610,24 +1610,106 @@ pub fn checkrmall(path: &str) -> bool {
     }
 }
 
-/// Resolve symlinks in path (from utils.c xsymlinks/xsymlink)
-pub fn xsymlink(path: &str) -> String {
+/// Port of `xsymlink()` from `Src/utils.c:971`.
+///
+/// ```c
+/// mod_export char *
+/// xsymlink(char *s, int heap)
+/// {
+///     if (*s != '/')
+///         return NULL;
+///     *xbuf = '\0';
+///     if (!chrealpath(&s, 'P', heap)) {
+///         zwarn("path expansion failed, using root directory");
+///         return heap ? dupstring("/") : ztrdup("/");
+///     }
+///     return s;
+/// }
+/// ```
+///
+/// Returns `Some(resolved)` on success, `None` if the path isn't
+/// absolute (C: returns NULL). On resolve failure emits the same
+/// "path expansion failed, using root directory" warning and
+/// returns `Some("/")`.
+///
+/// The C source dispatches through `chrealpath()` (Src/hist.c:1971,
+/// mode 'P' = physical resolution); the Rust port uses
+/// `fs::canonicalize()` which is the libc `realpath(3)` wrapper —
+/// same semantics for the symlink-resolution path that `xsymlink`
+/// exercises.
+pub fn xsymlink(path: &str) -> Option<String> {
+    // C: if (*s != '/') return NULL;
+    if !path.starts_with('/') {
+        return None;
+    }
     match std::fs::canonicalize(path) {
-        Ok(p) => p.to_string_lossy().to_string(),
-        Err(_) => path.to_string(),
+        Ok(p) => Some(p.to_string_lossy().into_owned()),
+        Err(_) => {
+            // C: zwarn("path expansion failed, using root directory");
+            //    return heap ? dupstring("/") : ztrdup("/");
+            zwarn("path expansion failed, using root directory");
+            Some("/".to_string())
+        }
     }
 }
 
-/// Check if running with elevated privileges (from utils.c privasserted)
+/// Port of `privasserted()` from `Src/utils.c:7607`.
+///
+/// "Check whether the shell is running with privileges in effect.
+/// This is the case if EITHER the euid is zero, OR (if the system
+/// supports POSIX.1e (POSIX.6) capability sets) the process'
+/// Effective or Inheritable capability sets are non-empty."
+///
+/// ```c
+/// if (!geteuid()) return 1;
+/// #ifdef HAVE_CAP_GET_PROC
+///     cap_t caps = cap_get_proc();
+///     if (caps) {
+///         cap_flag_value_t val;
+///         for (cap_value_t cap = 0;
+///              !cap_get_flag(caps, cap, CAP_EFFECTIVE, &val); cap++)
+///             if (val && cap != CAP_WAKE_ALARM) {
+///                 cap_free(caps);
+///                 return 1;
+///             }
+///     }
+///     cap_free(caps);
+/// #endif
+///     return 0;
+/// ```
+///
+/// The previous Rust port checked `getuid() != geteuid()` which is
+/// the SUID-binary detection, not the "running with privileges"
+/// check. The capability-set inspection requires libcap (gated
+/// behind the `libcap` feature in `crate::ported::modules::cap`);
+/// without it, only the euid==0 path is exercised — same as the
+/// C `#else` arm when HAVE_CAP_GET_PROC isn't defined.
 pub fn privasserted() -> bool {
     #[cfg(unix)]
     {
-        unsafe { libc::getuid() != libc::geteuid() || libc::getgid() != libc::getegid() }
+        if unsafe { libc::geteuid() } == 0 {
+            return true;
+        }
     }
-    #[cfg(not(unix))]
+    // POSIX.1e capabilities check (HAVE_CAP_GET_PROC) — only
+    // active on Linux when zshrs is built with `--features
+    // libcap`. The cap module's `cap_get_proc` returns Ok(text)
+    // when the process has any capability set; we treat any
+    // non-default-empty result as "privileges asserted".
+    #[cfg(all(target_os = "linux", feature = "libcap"))]
     {
-        false
+        // Pending: walk the capability set with cap_get_flag and
+        // skip CAP_WAKE_ALARM as the C source does. The cap.rs
+        // port doesn't yet expose the flag-iteration FFI; until
+        // it does, conservative-true on any non-empty cap text.
+        if let Ok(text) = crate::ported::modules::cap::cap_get_proc() {
+            // Empty / default-empty cap text = no privileges.
+            if !text.is_empty() && text != "=" {
+                return true;
+            }
+        }
     }
+    false
 }
 
 /// Get the current working directory (port of findpwd/set_pwd_env)
