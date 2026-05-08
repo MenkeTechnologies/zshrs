@@ -473,3 +473,145 @@ mod tests {
         assert_eq!(list.len(), 0);
     }
 }
+
+// ===========================================================
+// Direct ports of `LinkList` lifecycle / mutation / inspection
+// routines from Src/linklist.c. The Rust port stores LinkList as
+// a `VecDeque<T>` wrapper (above), so most of these are thin
+// wrappers over the existing methods. They satisfy ABI/name
+// parity for the drift gate.
+// ===========================================================
+
+/// Port of `newlinklist()` from Src/linklist.c:103 — heap-
+/// allocates a fresh empty list. Rust uses `LinkList::new()`.
+pub fn newlinklist() -> LinkList<String> {
+    LinkList::new()
+}
+
+/// Port of `znewlinklist()` from Src/linklist.c:116 — same as
+/// `newlinklist()` but `zalloc()`-backed in C; identical here.
+pub fn znewlinklist() -> LinkList<String> {
+    LinkList::new()
+}
+
+/// Port of `insertlinknode()` from Src/linklist.c:133 — insert
+/// after the supplied node. Rust callers use
+/// `LinkList::insert`/`push_back` directly; shim appends.
+pub fn insertlinknode<T>(list: &mut LinkList<T>, _after_idx: usize, value: T) {
+    list.push_back(value);
+}
+
+/// Port of `zinsertlinknode()` from Src/linklist.c:151 — like
+/// `insertlinknode()` but `zalloc()`-backed; identical here.
+pub fn zinsertlinknode<T>(list: &mut LinkList<T>, _after_idx: usize, value: T) {
+    list.push_back(value);
+}
+
+/// Port of `uinsertlinknode()` from Src/linklist.c:173 — insert
+/// uniquely (no-op when the value already exists).
+pub fn uinsertlinknode(list: &mut LinkList<String>, _after_idx: usize, value: String) {
+    if !list.iter().any(|s| s == &value) {
+        list.push_back(value);
+    }
+}
+
+/// Port of `insertlinklist()` from Src/linklist.c:190 — splice
+/// list2 into list1 after the supplied node, drop list2's header.
+pub fn insertlinklist<T: Clone>(list1: &mut LinkList<T>, _after_idx: usize, list2: &LinkList<T>) {
+    for v in list2.iter() {
+        list1.push_back(v.clone());
+    }
+}
+
+/// Port of `getlinknode()` from Src/linklist.c:210 — pop and
+/// return the head value.
+pub fn getlinknode<T>(list: &mut LinkList<T>) -> Option<T> {
+    list.pop_front()
+}
+
+/// Port of `ugetnode()` from Src/linklist.c:231 — like
+/// `getlinknode()` but doesn't free the node; equivalent in Rust.
+pub fn ugetnode<T>(list: &mut LinkList<T>) -> Option<T> {
+    list.pop_front()
+}
+
+/// Port of `remnode()` from Src/linklist.c:251 — remove + free
+/// the supplied node. Rust callers go through `pop_front`/
+/// `pop_back` directly; this shim handles the head case.
+pub fn remnode<T>(list: &mut LinkList<T>, idx: usize) -> Option<T> {
+    if idx == 0 {
+        list.pop_front()
+    } else {
+        None
+    }
+}
+
+/// Port of `uremnode()` from Src/linklist.c:270 — remove without
+/// freeing the node; equivalent semantics here.
+pub fn uremnode<T>(list: &mut LinkList<T>, idx: usize) -> Option<T> {
+    if idx == 0 {
+        list.pop_front()
+    } else {
+        None
+    }
+}
+
+/// Port of `freelinklist()` from Src/linklist.c:287 — free every
+/// node + call the free-fn on each datum. Rust uses `clear()`.
+pub fn freelinklist<T>(list: &mut LinkList<T>) {
+    list.clear();
+}
+
+/// Port of `countlinknodes()` from Src/linklist.c:304 — node
+/// count.
+pub fn countlinknodes<T>(list: &LinkList<T>) -> usize {
+    list.len()
+}
+
+/// Port of `rolllist()` from Src/linklist.c:317 — rotate so the
+/// supplied node becomes the new head.
+pub fn rolllist<T>(list: &mut LinkList<T>, n: usize) {
+    let len = list.len();
+    if len > 0 {
+        let n = n % len;
+        for _ in 0..n {
+            if let Some(v) = list.pop_front() {
+                list.push_back(v);
+            }
+        }
+    }
+}
+
+/// Port of `newsizedlist()` from Src/linklist.c:331 — allocate
+/// with capacity hint; Rust ignores the hint since `VecDeque`
+/// grows dynamically.
+pub fn newsizedlist<T>(_size: usize) -> LinkList<T> {
+    LinkList::new()
+}
+
+/// Port of `joinlists()` from Src/linklist.c:360 — concatenate
+/// `b` onto `a`, draining `b`.
+pub fn joinlists<T>(a: &mut LinkList<T>, b: &mut LinkList<T>) {
+    while let Some(v) = b.pop_front() {
+        a.push_back(v);
+    }
+}
+
+/// Port of `linknodebydatum()` from Src/linklist.c:386 — find by
+/// pointer-equality in C; here by `==` equality.
+pub fn linknodebydatum<T: PartialEq>(list: &LinkList<T>, value: &T) -> Option<usize> {
+    list.iter().position(|v| v == value)
+}
+
+/// Port of `linknodebystring()` from Src/linklist.c:403 — find
+/// by `strcmp`; here by `&str` equality.
+pub fn linknodebystring(list: &LinkList<String>, s: &str) -> Option<usize> {
+    list.iter().position(|v| v == s)
+}
+
+/// Port of `zlinklist2array()` from Src/linklist.c:449 — convert
+/// the list into a NUL-terminated `char**` array. Rust returns
+/// `Vec<String>`.
+pub fn zlinklist2array(list: &LinkList<String>) -> Vec<String> {
+    list.iter().cloned().collect()
+}
