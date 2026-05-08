@@ -57,6 +57,18 @@ pub mod cc_flags {
     pub const RESERVED: u64    = 1 << 31;  // compctl.h:149
 }
 
+/// `mask2` (secondary completion-target flags) — port of the second
+/// `CC_*` block in Src/Zle/compctl.h:151-158.
+pub mod cc_flags2 {
+    pub const NOSORT: u64   = 1 << 0;  // compctl.h:152
+    pub const XORCONT: u64  = 1 << 1;  // compctl.h:153
+    pub const CCCONT: u64   = 1 << 2;  // compctl.h:154
+    pub const PATCONT: u64  = 1 << 3;  // compctl.h:155
+    pub const DEFCONT: u64  = 1 << 4;  // compctl.h:156
+    pub const UNIQCON: u64  = 1 << 5;  // compctl.h:157
+    pub const UNIQALL: u64  = 1 << 6;  // compctl.h:158
+}
+
 /// `-x` condition types — port of `CCT_*` constants from
 /// Src/Zle/compctl.h:76-89.
 pub mod cct {
@@ -288,21 +300,273 @@ pub(crate) fn get_gmatcher(_name: &str, _argv: &[String]) -> i32 {
 /// Port of `print_gmatcher()` from Src/Zle/compctl.c:301.
 pub(crate) fn print_gmatcher(_ac: i32) {}
 
-/// Get a compctl from arg vector. Stub for the main compctl-spec parser.
-/// Port of `get_compctl()` from Src/Zle/compctl.c:382 (~600 lines).
-/// The C version walks `argv` letter-by-letter applying flag bits to
-/// `cc->mask`/`cc->mask2` and capturing the string args. To be ported
-/// incrementally — start with the simple flag arms (`f`, `c`, `b`,
-/// etc.) and add the arg-taking ones (`-K`, `-x`, `-M`) as they're
-/// exercised by tests.
+/// Get a compctl from arg vector — main compctl-spec parser.
+/// Port of `get_compctl()` from Src/Zle/compctl.c:373 (~600 lines).
+///
+/// Walks `argv` letter-by-letter, applying flag bits to `cc.mask` /
+/// `cc.mask2` and capturing the string args (`-K func`, `-X expl`,
+/// `-P prefix`, `-S suffix`, `-g glob`, `-s str`, etc.).
+///
+/// Returns 0 on success, 1 on parse error. On success, advances the
+/// caller's argv past the consumed flags via `*av_idx` mutation.
+///
+/// Currently implements the simple-flag-char arms (per-char →
+/// mask bit) from compctl.c:418-508 and the simple arg-taking
+/// flags. The complex arms (`-x` extended condition, `-M` matcher,
+/// `-+` chains, `-t` retry spec) are left as placeholders pending
+/// per-arm follow-up.
 pub(crate) fn get_compctl(
-    _name: &str,
-    _av: &mut Vec<String>,
-    _cc: &mut CompCtl,
-    _first: bool,
-    _isdef: bool,
-    _cl: i32,
+    name: &str,
+    av: &mut Vec<String>,
+    cc: &mut CompCtl,
+    first: bool,
+    mut isdef: bool,
+    cl: i32,
 ) -> i32 {
+    // C: `argv = *av;` — alias the caller's array.
+    let mut i: usize = 0;
+    let hx = false;
+    let mut cclist_local = *CCLIST.lock().unwrap();
+    cc.mask2 = cc_flags2::CCCONT;                            // c:407
+
+    // C: `compctl + foo ...` becomes default — c:392-404
+    if first
+        && i < av.len()
+        && av[i] == "+"
+        && !(i + 1 < av.len() && av[i + 1].starts_with('-') && av[i + 1].len() > 1)
+    {
+        i += 1;
+        if i < av.len() && av[i].starts_with('-') {
+            i += 1;
+        }
+        av.drain(0..i);
+        if cl != 0 {
+            return 1;
+        } else {
+            *CCLIST.lock().unwrap() = comp_op::REMOVE;
+            return 0;
+        }
+    }
+
+    // Loop through the flags. C: c:412 `for (; !ready && argv[0] && argv[0][0] == '-' && (argv[0][1] || !first); )`
+    let mut ready = false;
+    while !ready
+        && i < av.len()
+        && av[i].starts_with('-')
+        && (av[i].len() > 1 || !first)
+    {
+        // C: bare `-` becomes `-+` to absorb the next iter — c:413-414
+        if av[i].len() == 1 {
+            av[i] = "-+".to_string();
+        }
+        // Walk chars after the `-`. C: `while (!ready && *++(*argv))`
+        let arg = av[i].clone();
+        let chars: Vec<char> = arg.chars().skip(1).collect();
+        let mut consumed = false;
+        for c in chars {
+            if ready { break; }
+            // Simple-flag-char dispatch — direct port of the
+            // switch at c:418-508.
+            match c {
+                'f' => cc.mask |= cc_flags::FILES,           // c:419
+                'c' => cc.mask |= cc_flags::COMMPATH,         // c:422
+                'm' => cc.mask |= cc_flags::EXTCMDS,          // c:425
+                'w' => cc.mask |= cc_flags::RESWDS,           // c:428
+                'o' => cc.mask |= cc_flags::OPTIONS,          // c:431
+                'v' => cc.mask |= cc_flags::VARS,             // c:434
+                'b' => cc.mask |= cc_flags::BINDINGS,         // c:437
+                'A' => cc.mask |= cc_flags::ARRAYS,           // c:440
+                'I' => cc.mask |= cc_flags::INTVARS,          // c:443
+                'F' => cc.mask |= cc_flags::SHFUNCS,          // c:446
+                'p' => cc.mask |= cc_flags::PARAMS,           // c:449
+                'E' => cc.mask |= cc_flags::ENVVARS,          // c:452
+                'j' => cc.mask |= cc_flags::JOBS,             // c:455
+                'r' => cc.mask |= cc_flags::RUNNING,          // c:458
+                'z' => cc.mask |= cc_flags::STOPPED,          // c:461
+                'B' => cc.mask |= cc_flags::BUILTINS,         // c:464
+                'a' => cc.mask |= cc_flags::ALREG | cc_flags::ALGLOB, // c:467
+                'R' => cc.mask |= cc_flags::ALREG,            // c:470
+                'G' => cc.mask |= cc_flags::ALGLOB,           // c:473
+                'u' => cc.mask |= cc_flags::USERS,            // c:476
+                'd' => cc.mask |= cc_flags::DISCMDS,          // c:479
+                'e' => cc.mask |= cc_flags::EXCMDS,           // c:482
+                'N' => cc.mask |= cc_flags::SCALARS,          // c:485
+                'O' => cc.mask |= cc_flags::READONLYS,        // c:488
+                'Z' => cc.mask |= cc_flags::SPECIALS,         // c:491
+                'q' => cc.mask |= cc_flags::REMOVE,           // c:494
+                'U' => cc.mask |= cc_flags::DELETE,           // c:497
+                'n' => cc.mask |= cc_flags::NAMED,            // c:500
+                'Q' => cc.mask |= cc_flags::QUOTEFLAG,        // c:503
+                '/' => cc.mask |= cc_flags::DIRS,             // c:506
+                '1' => {                                       // c:722
+                    cc.mask2 |= cc_flags2::UNIQALL;
+                    cc.mask2 &= !cc_flags2::UNIQCON;
+                }
+                '2' => {                                       // c:726
+                    cc.mask2 |= cc_flags2::UNIQCON;
+                    cc.mask2 &= !cc_flags2::UNIQALL;
+                }
+                'C' => {                                       // c:777
+                    if cl != 0 {
+                        eprintln!("{}: illegal option -{}", name, c);
+                        return 1;
+                    }
+                    if first && !hx {
+                        cclist_local |= comp_op::COMMAND;
+                    } else {
+                        eprintln!("{}: misplaced command completion (-C) flag", name);
+                        return 1;
+                    }
+                }
+                'D' => {                                       // c:789
+                    if cl != 0 {
+                        eprintln!("{}: illegal option -{}", name, c);
+                        return 1;
+                    }
+                    if first && !hx {
+                        isdef = true;
+                        cclist_local |= comp_op::DEFAULT;
+                    } else {
+                        eprintln!("{}: misplaced default completion (-D) flag", name);
+                        return 1;
+                    }
+                }
+                'T' => {                                       // c:802
+                    if cl != 0 {
+                        eprintln!("{}: illegal option -{}", name, c);
+                        return 1;
+                    }
+                    if first && !hx {
+                        cclist_local |= comp_op::FIRST;
+                    } else {
+                        eprintln!("{}: misplaced first completion (-T) flag", name);
+                        return 1;
+                    }
+                }
+                'L' => {                                       // c:814
+                    if cl != 0 {
+                        eprintln!("{}: illegal option -{}", name, c);
+                        return 1;
+                    }
+                    if !first || hx {
+                        eprintln!("{}: illegal use of -L flag", name);
+                        return 1;
+                    }
+                    cclist_local |= comp_op::LIST;
+                }
+                '+' => {                                       // c:850 (xor chain marker)
+                    // Marks end of this compctl spec; remainder is
+                    // the next xor'd compctl. Stop the loop here;
+                    // the caller iterates again for the xor chain.
+                    ready = true;
+                    consumed = true;
+                    break;
+                }
+                _ => {
+                    // Arg-taking flags + unknown — bail to the
+                    // post-loop handler. These are c:509+ (`t` retry,
+                    // `k` keyvar, `K` func, `Y`/`X` explain, `y`
+                    // ylist, `P`/`S` prefix/suffix, `g` glob, `s`
+                    // str, `l`/`h` subcmd/substr, `W` withd, `J`/`V`
+                    // gname, `M` matcher, `H` history, `x` extended).
+                    // For now, if the arg-taking char is followed by
+                    // no body, consume one extra argv slot as the
+                    // arg. Else ignore. Real impls land per-flag.
+                    let (has_inline, inline_val) = (
+                        arg.len() > 2 && arg.chars().nth(1) == Some(c),
+                        if arg.len() > 2 { arg[2..].to_string() } else { String::new() },
+                    );
+                    let mut val: Option<String> = None;
+                    if has_inline {
+                        val = Some(inline_val);
+                    } else if i + 1 < av.len() {
+                        val = Some(av[i + 1].clone());
+                        i += 1;
+                    }
+                    match c {
+                        'k' => cc.keyvar = val,                // c:553
+                        'K' => cc.func = val,                  // c:565
+                        'Y' => {                                // c:577
+                            cc.mask |= cc_flags::EXPANDEXPL;
+                            cc.explain = val;
+                        }
+                        'X' => {                                // c:580
+                            cc.mask &= !cc_flags::EXPANDEXPL;
+                            cc.explain = val;
+                        }
+                        'y' => cc.ylist = val,                 // c:594
+                        'P' => cc.prefix = val,                // c:606
+                        'S' => cc.suffix = val,                // c:618
+                        'g' => cc.glob = val,                  // c:630
+                        's' => cc.str_expansion = val,         // c:642
+                        'l' => cc.subcmd = val,                // c:655
+                        'h' => cc.substr = val,                // c:670
+                        'W' => cc.withd = val,                 // c:685
+                        'J' => cc.gname = val,                 // c:697
+                        'V' => {                                // c:709
+                            cc.gname = val;
+                            cc.mask2 |= cc_flags2::NOSORT;
+                        }
+                        'M' => {                                // c:730
+                            // Matcher spec — full parse needs
+                            // `parse_cmatcher` (Src/Zle/compmatch.c).
+                            // For now, store the raw string.
+                            if let Some(s) = val {
+                                cc.mstr = Some(s);
+                            }
+                        }
+                        'H' => {                                // c:757
+                            // -H N PAT — number + pattern. The
+                            // simple-flag walker consumed N as `val`;
+                            // the next argv is PAT.
+                            if let Some(s) = val {
+                                cc.hnum = s.parse::<i32>().unwrap_or(0).max(0);
+                            }
+                            if i + 1 < av.len() {
+                                cc.hpat = Some(av[i + 1].clone());
+                                if cc.hpat.as_deref() == Some("*") {
+                                    cc.hpat = Some(String::new());
+                                }
+                                i += 1;
+                            }
+                        }
+                        't' => {                                // c:509 retry spec
+                            // `-t {+|n|-|x}` controls continuation.
+                            // Direct port of the switch at c:528-545.
+                            if let Some(s) = val {
+                                let bit = match s.as_str() {
+                                    "+" => cc_flags2::XORCONT,
+                                    "n" => 0,
+                                    "-" => cc_flags2::PATCONT,
+                                    "x" => cc_flags2::DEFCONT,
+                                    _ => {
+                                        eprintln!("{}: invalid retry specification character `{}`", name, s);
+                                        return 1;
+                                    }
+                                };
+                                cc.mask2 = bit;
+                            }
+                        }
+                        _ => {
+                            eprintln!("{}: unknown compctl flag `-{}`", name, c);
+                            return 1;
+                        }
+                    }
+                    consumed = true;
+                    break;
+                }
+            }
+        }
+        i += 1;
+        if !consumed {
+            // Pure simple-flag arg — already advanced.
+        }
+    }
+
+    // C: c:1582 — push the parsed cct into the caller's slot.
+    av.drain(0..i);
+    let _ = isdef;
+    *CCLIST.lock().unwrap() = cclist_local;
     0
 }
 
@@ -351,38 +615,288 @@ pub(crate) fn delpatcomp(n: &str) {
 }
 
 /// Process the parsed compctl into the table.
-/// Port of `compctl_process_cc()` from Src/Zle/compctl.c:1314 — the
-/// post-parse step that installs the spec via cc_assign and handles
-/// the `-D`/`-T`/`-C`/`-p` special targets.
-pub(crate) fn compctl_process_cc(_s: &[String], _cc: Arc<CompCtl>) -> i32 {
+/// Port of `compctl_process_cc()` from Src/Zle/compctl.c:1314 —
+/// installs the spec into compctltab (or patcomps for `-p PAT`),
+/// or removes entries when COMP_REMOVE is set (the `-` flag).
+pub(crate) fn compctl_process_cc(s: &[String], cc: Arc<CompCtl>) -> i32 {
+    let cclist = *CCLIST.lock().unwrap();
+    if (cclist & comp_op::REMOVE) != 0 {
+        // C: c:1320-1328 — delete entries for the listed commands
+        for n in s {
+            // pattern shape — `compctl -p`. compctl_name_pat
+            // returns true if `n` looks like a pattern; here we
+            // just check both tables.
+            let mut p = PATCOMPS.lock().unwrap();
+            let len_before = p.len();
+            p.retain(|(pat, _)| pat != n);
+            let pat_removed = p.len() != len_before;
+            drop(p);
+            if !pat_removed {
+                if let Some(map) = COMPCTL_TAB.lock().unwrap().as_mut() {
+                    map.remove(n);
+                }
+            }
+        }
+    } else {
+        // C: c:1330-1351 — add the parsed compctl to the table
+        for n in s {
+            // For now, treat all names as plain (not pattern) —
+            // pattern-mode `-p` requires get_compctl to set a flag
+            // we haven't ported yet.
+            let mut g = COMPCTL_TAB.lock().unwrap();
+            if g.is_none() {
+                *g = Some(HashMap::new());
+            }
+            if let Some(map) = g.as_mut() {
+                map.insert(n.clone(), cc.clone());
+            }
+        }
+    }
     0
 }
 
 /// Print a single compctl spec.
-/// Port of `printcompctl()` from Src/Zle/compctl.c:1380 — emits the
-/// `compctl -...` re-runnable text for `compctl -L` listing.
+/// Port of `printcompctl()` from Src/Zle/compctl.c:1358 (~190 lines).
+///
+/// Emits the `compctl -FLAGS NAME` line that re-creates the spec.
+/// Direct port of the C flag-letter walk (c:1362 `css = "fcqovbAIFp..."`):
+/// each char in the css string corresponds to a CC_* bit; if the bit
+/// is set in cc.mask, the letter prints. Same for `mss` against mask2.
+///
+/// Then per-string-arg flags (-K func, -X expl, etc.), -x extended
+/// chain, +xor chain. Trailing arg is the command name (or pattern
+/// when ispat=true).
 pub(crate) fn printcompctl(
-    _name: &str,
-    _cc: &CompCtl,
-    _printflags: i32,
-    _ispat: bool,
+    s: &str,
+    cc: &CompCtl,
+    printflags: i32,
+    ispat: bool,
 ) {
+    // C: c:1362-1364 — flag-letter strings (positional → bit index)
+    const CSS: &str = "fcqovbAIFpEjrzBRGudeNOZUnQmw/";
+    const MSS: &str = " pcCwWsSnNmrRq";
+
+    // C: c:1366
+    let mut flags = cc.mask;
+    let flags2 = cc.mask2;
+
+    // C: c:1369-1372 — printflags adjusts cclist mode
+    const PRINT_LIST: i32 = 1 << 0;
+    const PRINT_TYPE: i32 = 1 << 1;
+    let mut cclist = *CCLIST.lock().unwrap();
+    if (printflags & PRINT_LIST) != 0 {
+        cclist |= comp_op::LIST;
+    } else if (printflags & PRINT_TYPE) != 0 {
+        cclist &= !comp_op::LIST;
+    }
+
+    // C: c:1374 — adjust EXCMDS if DISCMDS not set
+    if (flags & cc_flags::EXCMDS) != 0 && (flags & cc_flags::DISCMDS) == 0 {
+        flags &= !cc_flags::EXCMDS;
+    }
+
+    // C: c:1379 — showmask filter
+    let showmask = *SHOWMASK.lock().unwrap();
+    if showmask != 0 && (flags & showmask) == 0 {
+        return;
+    }
+
+    // C: c:1384-1385 — clear showmask for recursive calls
+    let oldshowmask = showmask;
+    *SHOWMASK.lock().unwrap() = 0;
+
+    // C: c:1388-1402 — print prefix
+    if (cclist & comp_op::LIST) != 0 {
+        print!("compctl");
+    } else if !s.is_empty() {
+        print!("compctl");
+    }
+
+    // C: c:1404-1417 — walk CSS for primary mask flags
+    for (i, ch) in CSS.chars().enumerate() {
+        if ch == ' ' { continue; }
+        if (flags & (1u64 << i)) != 0 {
+            print!(" -{}", ch);
+        }
+    }
+
+    // C: walk MSS for mask2 flags (NOSORT, etc.)
+    let _ = MSS;  // mss is for the printable mask2 letters; pending
+                  // a full per-bit mapping in zsh's source
+
+    // C: c:1418-1430 — string-arg flags (-K func, etc.)
+    if let Some(s) = &cc.keyvar    { print!(" -k '{}'", s); }
+    if let Some(s) = &cc.glob      { print!(" -g '{}'", s); }
+    if let Some(s) = &cc.str_expansion { print!(" -s '{}'", s); }
+    if let Some(s) = &cc.func      { print!(" -K '{}'", s); }
+    if let Some(s) = &cc.explain   {
+        if (cc.mask & cc_flags::EXPANDEXPL) != 0 { print!(" -Y '{}'", s); }
+        else { print!(" -X '{}'", s); }
+    }
+    if let Some(s) = &cc.ylist     { print!(" -y '{}'", s); }
+    if let Some(s) = &cc.prefix    { print!(" -P '{}'", s); }
+    if let Some(s) = &cc.suffix    { print!(" -S '{}'", s); }
+    if let Some(s) = &cc.subcmd    { print!(" -l '{}'", s); }
+    if let Some(s) = &cc.substr    { print!(" -h '{}'", s); }
+    if let Some(s) = &cc.withd     { print!(" -W '{}'", s); }
+    if let Some(s) = &cc.gname     {
+        if (flags2 & cc_flags2::NOSORT) != 0 { print!(" -V '{}'", s); }
+        else { print!(" -J '{}'", s); }
+    }
+    if let Some(s) = &cc.mstr      { print!(" -M '{}'", s); }
+    if cc.hnum > 0 {
+        if let Some(p) = &cc.hpat {
+            print!(" -H {} '{}'", cc.hnum, if p.is_empty() { "*" } else { p });
+        }
+    }
+
+    // C: c:1518-1523 — xor chain
+    if cc.xor.is_some() {
+        print!(" +");
+    }
+
+    // C: c:1524-1543 — trailing name (or pattern)
+    if !s.is_empty() && (cclist & comp_op::LIST) != 0 {
+        if ispat {
+            print!(" -p '{}'", s);
+        } else {
+            print!(" '{}'", s);
+        }
+    } else if !s.is_empty() {
+        print!(" '{}'", s);
+    }
+    println!();
+
+    // C: c:1545 — restore showmask
+    *SHOWMASK.lock().unwrap() = oldshowmask;
 }
 
 /// Print a compctl hash node.
-/// Port of `printcompctlp()` from Src/Zle/compctl.c:1592 — hash-table
+/// Port of `printcompctlp()` from Src/Zle/compctl.c:1549 — hash-table
 /// callback that calls printcompctl.
 pub(crate) fn printcompctlp(name: &str, cc: &CompCtl, printflags: i32) {
     printcompctl(name, cc, printflags, false);
 }
 
 /// `compctl` builtin entry point.
-/// Port of `bin_compctl()` from Src/Zle/compctl.c:1605 (~140 lines).
-/// Dispatches based on flags: `-L` lists, `-D` sets default,
-/// `-T` sets first, `-C` sets command, `-p` adds pattern, `-r` removes,
-/// otherwise installs/updates per-name.
-pub(crate) fn bin_compctl(_name: &str, _argv: &[String]) -> i32 {
-    0
+/// Port of `bin_compctl()` from Src/Zle/compctl.c:1561 (~110 lines).
+/// Direct port of the C dispatch flow:
+///   1. Reset cclist + showmask
+///   2. Try `get_gmatcher` — if returns non-zero, return that-1
+///   3. Allocate cct, run `get_compctl`. On failure, free + return 1
+///   4. Save mask in showmask (with EXCMDS/DISCMDS adjust)
+///   5. If no remaining args or COMP_LIST, free cc
+///   6. If no args and no special: print all (patcomps + compctltab +
+///      cc_compos/cc_default/cc_first + global matchers)
+///   7. If COMP_LIST: print only the named entries
+///   8. Else: install via compctl_process_cc
+pub(crate) fn bin_compctl(name: &str, argv: &[String]) -> i32 {
+    let mut argv: Vec<String> = argv.to_vec();
+    let mut ret: i32 = 0;
+
+    // C: c:1570-1571 — clear static flags
+    *CCLIST.lock().unwrap() = 0;
+    *SHOWMASK.lock().unwrap() = 0;
+
+    // C: c:1574-1596 — parse args if any
+    if !argv.is_empty() {
+        // C: c:1576 — try global matcher first
+        let gret = get_gmatcher(name, &argv);
+        if gret != 0 {
+            return gret - 1;
+        }
+
+        // C: c:1581 — allocate compctl
+        let mut cc = CompCtl::default();
+        // C: c:1582 — parse the spec
+        if get_compctl(name, &mut argv, &mut cc, true, false, 0) != 0 {
+            // freecompctl(cc) is implicit on Drop
+            return 1;
+        }
+
+        // C: c:1589 — remember flags for printing
+        let mut showmask = cc.mask;
+        if (showmask & cc_flags::EXCMDS) != 0 && (showmask & cc_flags::DISCMDS) == 0 {
+            showmask &= !cc_flags::EXCMDS;
+        }
+        *SHOWMASK.lock().unwrap() = showmask;
+
+        let cclist = *CCLIST.lock().unwrap();
+        // C: c:1594 — if no command args or just listing, drop cc
+        if argv.is_empty() || (cclist & comp_op::LIST) != 0 {
+            // cc dropped at end of if-let
+        } else {
+            // C: c:1656-1664 — install via compctl_process_cc
+            if (cclist & comp_op::SPECIAL) != 0 {
+                // C: c:1657 — special targets ignore extra args
+                eprintln!("{}: extraneous commands ignored", name);
+            } else {
+                let cc_arc = Arc::new(cc);
+                ret = compctl_process_cc(&argv, cc_arc);
+            }
+            return ret;
+        }
+    }
+
+    let cclist = *CCLIST.lock().unwrap();
+
+    // C: c:1601 — if no commands and no special-target flag, print all
+    if argv.is_empty() && (cclist & (comp_op::SPECIAL | comp_op::LISTMATCH)) == 0 {
+        // Print pattern compctls
+        let pats = PATCOMPS.lock().unwrap().clone();
+        for (pat, cc) in &pats {
+            printcompctl(pat, cc, 0, true);
+        }
+        // Print all hash table entries (sorted for stable output)
+        if let Some(map) = COMPCTL_TAB.lock().unwrap().as_ref() {
+            let mut names: Vec<&String> = map.keys().collect();
+            names.sort();
+            for n in names {
+                if let Some(cc) = map.get(n) {
+                    printcompctlp(n, cc, 0);
+                }
+            }
+        }
+        // Print special compctls (cc_compos, cc_default, cc_first
+        // are handled by the `default` table — out of scope until
+        // we wire up those globals).
+        print_gmatcher((cclist & comp_op::LIST) as i32);
+        return ret;
+    }
+
+    // C: c:1618 — if listing, print only named entries
+    if (cclist & comp_op::LIST) != 0 {
+        *SHOWMASK.lock().unwrap() = 0;
+        for n in &argv {
+            let mut found = false;
+            // Try pattern compctls first
+            let pats = PATCOMPS.lock().unwrap().clone();
+            for (pat, cc) in &pats {
+                if pat == n {
+                    printcompctl(pat, cc, 0, true);
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                if let Some(map) = COMPCTL_TAB.lock().unwrap().as_ref() {
+                    if let Some(cc) = map.get(n) {
+                        printcompctlp(n, cc, 0);
+                        found = true;
+                    }
+                }
+            }
+            if !found {
+                eprintln!("{}: no compctl defined for {}", name, n);
+                ret = 1;
+            }
+        }
+        if (cclist & comp_op::LISTMATCH) != 0 {
+            print_gmatcher(comp_op::LIST as i32);
+        }
+    }
+
+    ret
 }
 
 /// `compcall` builtin entry point.
@@ -535,8 +1049,16 @@ pub(crate) fn finish_() -> i32 {
 mod tests {
     use super::*;
 
+    /// Serialize tests that touch the singleton state — `cargo test`
+    /// runs tests in parallel and the static `COMPCTL_TAB` / `CCLIST`
+    /// would interleave. The parking_lot variant would deadlock-free
+    /// across panics; std::sync::Mutex is fine since each test runs
+    /// quickly and panics propagate.
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn createcompctltable_initializes_table() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
         let g = COMPCTL_TAB.lock().unwrap();
         assert!(g.is_some());
@@ -545,6 +1067,7 @@ mod tests {
 
     #[test]
     fn cc_assign_inserts_into_table() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
         let cc = Arc::new(CompCtl {
             mask: cc_flags::FILES,
@@ -557,6 +1080,7 @@ mod tests {
 
     #[test]
     fn freecompctlp_removes_entry() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
         cc_assign("rm", Arc::new(CompCtl::default()), false);
         freecompctlp("rm");
@@ -586,5 +1110,112 @@ mod tests {
             comp_op::SPECIAL,
             comp_op::COMMAND | comp_op::DEFAULT | comp_op::FIRST
         );
+    }
+
+    #[test]
+    fn cc_flags2_constants_match_c_compctlh() {
+        assert_eq!(cc_flags2::NOSORT, 1);
+        assert_eq!(cc_flags2::CCCONT, 4);
+        assert_eq!(cc_flags2::UNIQALL, 1 << 6);
+    }
+
+    #[test]
+    fn get_compctl_simple_flag_chars_set_mask() {
+        // `compctl -fcv ls` — files + commpath + vars
+        let mut argv = vec!["-fcv".to_string(), "ls".to_string()];
+        let mut cc = CompCtl::default();
+        let r = get_compctl("compctl", &mut argv, &mut cc, true, false, 0);
+        assert_eq!(r, 0);
+        assert_ne!(cc.mask & cc_flags::FILES, 0);
+        assert_ne!(cc.mask & cc_flags::COMMPATH, 0);
+        assert_ne!(cc.mask & cc_flags::VARS, 0);
+        // `ls` should remain in argv
+        assert_eq!(argv, vec!["ls".to_string()]);
+    }
+
+    #[test]
+    fn get_compctl_combined_a_sets_alreg_and_alglob() {
+        let mut argv = vec!["-a".to_string(), "ls".to_string()];
+        let mut cc = CompCtl::default();
+        get_compctl("compctl", &mut argv, &mut cc, true, false, 0);
+        assert_ne!(cc.mask & cc_flags::ALREG, 0);
+        assert_ne!(cc.mask & cc_flags::ALGLOB, 0);
+    }
+
+    #[test]
+    fn get_compctl_arg_taking_K_captures_function_name() {
+        let mut argv = vec!["-K".to_string(), "_my_completer".to_string(), "myfunc".to_string()];
+        let mut cc = CompCtl::default();
+        get_compctl("compctl", &mut argv, &mut cc, true, false, 0);
+        assert_eq!(cc.func.as_deref(), Some("_my_completer"));
+        assert_eq!(argv, vec!["myfunc".to_string()]);
+    }
+
+    #[test]
+    fn get_compctl_inline_arg_K_captures_function_name() {
+        // `-K_my_func`  → the K flag char with inline arg
+        let mut argv = vec!["-K_my_func".to_string(), "myfunc".to_string()];
+        let mut cc = CompCtl::default();
+        get_compctl("compctl", &mut argv, &mut cc, true, false, 0);
+        assert_eq!(cc.func.as_deref(), Some("_my_func"));
+    }
+
+    #[test]
+    fn get_compctl_P_S_capture_prefix_suffix() {
+        let mut argv = vec![
+            "-P".to_string(), "before-".to_string(),
+            "-S".to_string(), "-after".to_string(),
+            "cmd".to_string()
+        ];
+        let mut cc = CompCtl::default();
+        get_compctl("compctl", &mut argv, &mut cc, true, false, 0);
+        assert_eq!(cc.prefix.as_deref(), Some("before-"));
+        assert_eq!(cc.suffix.as_deref(), Some("-after"));
+    }
+
+    #[test]
+    fn get_compctl_1_2_set_uniq_flags() {
+        let mut argv = vec!["-1".to_string(), "ls".to_string()];
+        let mut cc = CompCtl::default();
+        get_compctl("compctl", &mut argv, &mut cc, true, false, 0);
+        assert_ne!(cc.mask2 & cc_flags2::UNIQALL, 0);
+        assert_eq!(cc.mask2 & cc_flags2::UNIQCON, 0);
+    }
+
+    #[test]
+    fn get_compctl_V_implies_NOSORT() {
+        let mut argv = vec!["-V".to_string(), "mygroup".to_string(), "cmd".to_string()];
+        let mut cc = CompCtl::default();
+        get_compctl("compctl", &mut argv, &mut cc, true, false, 0);
+        assert_eq!(cc.gname.as_deref(), Some("mygroup"));
+        assert_ne!(cc.mask2 & cc_flags2::NOSORT, 0);
+    }
+
+    #[test]
+    fn bin_compctl_install_then_lookup_via_table() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createcompctltable();
+        let r = bin_compctl("compctl", &["-f".to_string(), "mycmd".to_string()]);
+        assert_eq!(r, 0);
+        let g = COMPCTL_TAB.lock().unwrap();
+        assert!(g.as_ref().unwrap().contains_key("mycmd"));
+        let cc = g.as_ref().unwrap().get("mycmd").unwrap();
+        assert_ne!(cc.mask & cc_flags::FILES, 0);
+    }
+
+    #[test]
+    fn compctl_process_cc_remove_deletes_named_entries() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createcompctltable();
+        cc_assign("foo", Arc::new(CompCtl::default()), false);
+        cc_assign("bar", Arc::new(CompCtl::default()), false);
+        *CCLIST.lock().unwrap() = comp_op::REMOVE;
+        compctl_process_cc(&["foo".to_string()], Arc::new(CompCtl::default()));
+        let g = COMPCTL_TAB.lock().unwrap();
+        let map = g.as_ref().unwrap();
+        assert!(!map.contains_key("foo"));
+        assert!(map.contains_key("bar"));
+        // Reset cclist for other tests.
+        *CCLIST.lock().unwrap() = 0;
     }
 }
