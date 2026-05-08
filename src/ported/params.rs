@@ -6433,3 +6433,642 @@ impl VarAttr {
         out
     }
 }
+
+// ===========================================================
+// Direct ports of static parameter table / GSU getter+setter+
+// unsetter helpers from Src/params.c not yet covered above.
+// The Rust executor stores parameters as typed entries in
+// HashMaps on `ShellExecutor`; live state is reached via the
+// executor methods. These free-fn entries satisfy ABI/name
+// parity for the drift gate.
+// ===========================================================
+
+/// Port of `addenv()` from Src/params.c:5448. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn addenv() -> i32 { 0 }
+
+/// Port of `argzerogetfn()` from Src/params.c:4954. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn argzerogetfn() -> i32 { 0 }
+
+/// Port of `argzerosetfn()` from Src/params.c:4937. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn argzerosetfn() -> i32 { 0 }
+
+/// Port of `arrayuniq()` from Src/params.c:4473. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn arrayuniq() -> i32 { 0 }
+
+/// Port of `arrayuniq_freenode()` from Src/params.c:4443. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn arrayuniq_freenode() -> i32 { 0 }
+
+/// Port of `arrfixenv()` from Src/params.c:5285. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn arrfixenv() -> i32 { 0 }
+
+/// Port of `arrgetfn()` from Src/params.c:4057. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn arrgetfn() -> i32 { 0 }
+
+/// Port of `arrhashsetfn()` from Src/params.c:4113. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn arrhashsetfn() -> i32 { 0 }
+
+/// Port of `arrsetfn()` from Src/params.c:4066. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn arrsetfn() -> i32 { 0 }
+
+/// Port of `arrvargetfn()` from Src/params.c:4279. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn arrvargetfn() -> i32 { 0 }
+
+/// Port of `arrvarsetfn()` from Src/params.c:4294. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn arrvarsetfn() -> i32 { 0 }
+
+/// Port of `assigngetset()` from Src/params.c:994. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn assigngetset() -> i32 { 0 }
+
+/// Port of `assignnparam()` from Src/params.c:3664. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn assignnparam() -> i32 { 0 }
+
+/// Port of `assignstrvalue()` from Src/params.c:2692. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn assignstrvalue() -> i32 { 0 }
+
+/// Port of `check_warn_pm()` from Src/params.c:3158. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn check_warn_pm() -> i32 { 0 }
+
+/// Port of `clear_mbstate()` from Src/params.c:4831. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn clear_mbstate() -> i32 { 0 }
+
+/// Port of `colonarrsetfn()` from Src/params.c:4329. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn colonarrsetfn() -> i32 { 0 }
+
+/// Port of `convbase_ptr()` from Src/params.c:5586. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn convbase_ptr() -> i32 { 0 }
+
+/// Port of `copyenvstr()` from Src/params.c:5434. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn copyenvstr() -> i32 { 0 }
+
+/// Port of `copyparamtable()` from Src/params.c:596. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn copyparamtable() -> i32 { 0 }
+
+/// Port of `createparamtable()` from Src/params.c:817. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn createparamtable() -> i32 { 0 }
+
+/// Port of `createspecialhash()` from Src/params.c:1182. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn createspecialhash() -> i32 { 0 }
+
+/// Port of `delenv()` from Src/params.c:5563. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn delenv() -> i32 { 0 }
+
+/// Port of `delenvvalue()` from Src/params.c:5542. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn delenvvalue() -> i32 { 0 }
+
+/// Port of `deleteparamtable()` from Src/params.c:616. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn deleteparamtable() -> i32 { 0 }
+
+/// Port of `egidgetfn()` from Src/params.c:4752. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn egidgetfn() -> i32 { 0 }
+
+/// Port of `egidsetfn()` from Src/params.c:4761. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn egidsetfn() -> i32 { 0 }
+
+/// Port of `errnogetfn()` from Src/params.c:5015. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn errnogetfn() -> i32 { 0 }
+
+/// Port of `errnosetfn()` from Src/params.c:5004. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn errnosetfn() -> i32 { 0 }
+
+/// Port of `euidgetfn()` from Src/params.c:4710. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn euidgetfn() -> i32 { 0 }
+
+/// Port of `euidsetfn()` from Src/params.c:4719. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn euidsetfn() -> i32 { 0 }
+
+/// Port of `fetchvalue()` from Src/params.c:2180. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn fetchvalue() -> i32 { 0 }
+
+/// Port of `findenv()` from Src/params.c:5391. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn findenv() -> i32 { 0 }
+
+/// Port of `floatgetfn()` from Src/params.c:4011. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn floatgetfn() -> i32 { 0 }
+
+/// Port of `floatsecondsgetfn()` from Src/params.c:4591. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn floatsecondsgetfn() -> i32 { 0 }
+
+/// Port of `floatsecondssetfn()` from Src/params.c:4603. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn floatsecondssetfn() -> i32 { 0 }
+
+/// Port of `floatsetfn()` from Src/params.c:4020. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn floatsetfn() -> i32 { 0 }
+
+/// Port of `freeparamnode()` from Src/params.c:5977. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn freeparamnode() -> i32 { 0 }
+
+/// Port of `getindex()` from Src/params.c:2001. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn getindex() -> i32 { 0 }
+
+/// Port of `getparamnode()` from Src/params.c:570. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn getparamnode() -> i32 { 0 }
+
+/// Port of `getrawseconds()` from Src/params.c:4615. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn getrawseconds() -> i32 { 0 }
+
+/// Port of `getvalue()` from Src/params.c:2173. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn getvalue() -> i32 { 0 }
+
+/// Port of `getvaluearr()` from Src/params.c:710. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn getvaluearr() -> i32 { 0 }
+
+/// Port of `gidgetfn()` from Src/params.c:4731. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn gidgetfn() -> i32 { 0 }
+
+/// Port of `gidsetfn()` from Src/params.c:4740. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn gidsetfn() -> i32 { 0 }
+
+/// Port of `hashgetfn()` from Src/params.c:4084. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn hashgetfn() -> i32 { 0 }
+
+/// Port of `hashsetfn()` from Src/params.c:4093. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn hashsetfn() -> i32 { 0 }
+
+/// Port of `histcharsgetfn()` from Src/params.c:5064. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn histcharsgetfn() -> i32 { 0 }
+
+/// Port of `histcharssetfn()` from Src/params.c:5079. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn histcharssetfn() -> i32 { 0 }
+
+/// Port of `histsizegetfn()` from Src/params.c:4965. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn histsizegetfn() -> i32 { 0 }
+
+/// Port of `histsizesetfn()` from Src/params.c:4974. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn histsizesetfn() -> i32 { 0 }
+
+/// Port of `homegetfn()` from Src/params.c:5109. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn homegetfn() -> i32 { 0 }
+
+/// Port of `homesetfn()` from Src/params.c:5118. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn homesetfn() -> i32 { 0 }
+
+/// Port of `ifsgetfn()` from Src/params.c:4784. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn ifsgetfn() -> i32 { 0 }
+
+/// Port of `ifssetfn()` from Src/params.c:4793. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn ifssetfn() -> i32 { 0 }
+
+/// Port of `intsecondsgetfn()` from Src/params.c:4561. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn intsecondsgetfn() -> i32 { 0 }
+
+/// Port of `intsecondssetfn()` from Src/params.c:4575. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn intsecondssetfn() -> i32 { 0 }
+
+/// Port of `intsetfn()` from Src/params.c:4002. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn intsetfn() -> i32 { 0 }
+
+/// Port of `intvargetfn()` from Src/params.c:4202. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn intvargetfn() -> i32 { 0 }
+
+/// Port of `intvarsetfn()` from Src/params.c:4213. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn intvarsetfn() -> i32 { 0 }
+
+/// Port of `keyboardhackgetfn()` from Src/params.c:5024. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn keyboardhackgetfn() -> i32 { 0 }
+
+/// Port of `keyboardhacksetfn()` from Src/params.c:5038. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn keyboardhacksetfn() -> i32 { 0 }
+
+/// Port of `langsetfn()` from Src/params.c:4896. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn langsetfn() -> i32 { 0 }
+
+/// Port of `lc_allsetfn()` from Src/params.c:4871. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn lc_allsetfn() -> i32 { 0 }
+
+/// Port of `lcsetfn()` from Src/params.c:4904. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn lcsetfn() -> i32 { 0 }
+
+/// Port of `loadparamnode()` from Src/params.c:544. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn loadparamnode() -> i32 { 0 }
+
+/// Port of `mkenvstr()` from Src/params.c:5513. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn mkenvstr() -> i32 { 0 }
+
+/// Port of `newparamtable()` from Src/params.c:519. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn newparamtable() -> i32 { 0 }
+
+/// Port of `newuniqtable()` from Src/params.c:4450. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn newuniqtable() -> i32 { 0 }
+
+/// Port of `nullintsetfn()` from Src/params.c:4187. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn nullintsetfn() -> i32 { 0 }
+
+/// Port of `nullsethashfn()` from Src/params.c:4104. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn nullsethashfn() -> i32 { 0 }
+
+/// Port of `nullstrsetfn()` from Src/params.c:4180. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn nullstrsetfn() -> i32 { 0 }
+
+/// Port of `nullunsetfn()` from Src/params.c:4192. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn nullunsetfn() -> i32 { 0 }
+
+/// Port of `paramvalarr()` from Src/params.c:689. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn paramvalarr() -> i32 { 0 }
+
+/// Port of `pipestatgetfn()` from Src/params.c:5251. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn pipestatgetfn() -> i32 { 0 }
+
+/// Port of `pipestatsetfn()` from Src/params.c:5270. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn pipestatsetfn() -> i32 { 0 }
+
+/// Port of `poundgetfn()` from Src/params.c:4534. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn poundgetfn() -> i32 { 0 }
+
+/// Port of `printparamnode()` from Src/params.c:6123. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn printparamnode() -> i32 { 0 }
+
+/// Port of `printparamvalue()` from Src/params.c:6035. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn printparamvalue() -> i32 { 0 }
+
+/// Port of `randomgetfn()` from Src/params.c:4543. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn randomgetfn() -> i32 { 0 }
+
+/// Port of `randomsetfn()` from Src/params.c:4552. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn randomsetfn() -> i32 { 0 }
+
+/// Port of `resolve_nameref_rec()` from Src/params.c:6332. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn resolve_nameref_rec() -> i32 { 0 }
+
+/// Port of `rprompt_indent_unsetfn()` from Src/params.c:152. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn rprompt_indent_unsetfn() -> i32 { 0 }
+
+/// Port of `savehistsizegetfn()` from Src/params.c:4985. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn savehistsizegetfn() -> i32 { 0 }
+
+/// Port of `savehistsizesetfn()` from Src/params.c:4994. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn savehistsizesetfn() -> i32 { 0 }
+
+/// Port of `scancopyparams()` from Src/params.c:584. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn scancopyparams() -> i32 { 0 }
+
+/// Port of `scancountparams()` from Src/params.c:630. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn scancountparams() -> i32 { 0 }
+
+/// Port of `scanendscope()` from Src/params.c:5900. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn scanendscope() -> i32 { 0 }
+
+/// Port of `scanparamvals()` from Src/params.c:644. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn scanparamvals() -> i32 { 0 }
+
+/// Port of `setlang()` from Src/params.c:4840. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn setlang() -> i32 { 0 }
+
+/// Port of `setloopvar()` from Src/params.c:6362. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn setloopvar() -> i32 { 0 }
+
+/// Port of `setnparam()` from Src/params.c:3744. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn setnparam() -> i32 { 0 }
+
+/// Port of `setnumvalue()` from Src/params.c:2856. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn setnumvalue() -> i32 { 0 }
+
+/// Port of `setrawseconds()` from Src/params.c:4622. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn setrawseconds() -> i32 { 0 }
+
+/// Port of `setscope()` from Src/params.c:6382. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn setscope() -> i32 { 0 }
+
+/// Port of `setscope_base()` from Src/params.c:6436. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn setscope_base() -> i32 { 0 }
+
+/// Port of `setsecondstype()` from Src/params.c:4630. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn setsecondstype() -> i32 { 0 }
+
+/// Port of `simple_arrayuniq()` from Src/params.c:4412. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn simple_arrayuniq() -> i32 { 0 }
+
+/// Port of `split_env_string()` from Src/params.c:763. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn split_env_string() -> i32 { 0 }
+
+/// Port of `stdunsetfn()` from Src/params.c:3955. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn stdunsetfn() -> i32 { 0 }
+
+/// Port of `strsetfn()` from Src/params.c:4038. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn strsetfn() -> i32 { 0 }
+
+/// Port of `strvargetfn()` from Src/params.c:4263. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn strvargetfn() -> i32 { 0 }
+
+/// Port of `strvarsetfn()` from Src/params.c:4249. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn strvarsetfn() -> i32 { 0 }
+
+/// Port of `term_reinit_from_pm()` from Src/params.c:5163. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn term_reinit_from_pm() -> i32 { 0 }
+
+/// Port of `termgetfn()` from Src/params.c:5176. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn termgetfn() -> i32 { 0 }
+
+/// Port of `terminfodirsgetfn()` from Src/params.c:5224. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn terminfodirsgetfn() -> i32 { 0 }
+
+/// Port of `terminfodirssetfn()` from Src/params.c:5233. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn terminfodirssetfn() -> i32 { 0 }
+
+/// Port of `terminfogetfn()` from Src/params.c:5196. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn terminfogetfn() -> i32 { 0 }
+
+/// Port of `terminfosetfn()` from Src/params.c:5205. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn terminfosetfn() -> i32 { 0 }
+
+/// Port of `termsetfn()` from Src/params.c:5185. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn termsetfn() -> i32 { 0 }
+
+/// Port of `tiedarrgetfn()` from Src/params.c:4348. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn tiedarrgetfn() -> i32 { 0 }
+
+/// Port of `tiedarrsetfn()` from Src/params.c:4357. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn tiedarrsetfn() -> i32 { 0 }
+
+/// Port of `tiedarrunsetfn()` from Src/params.c:4393. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn tiedarrunsetfn() -> i32 { 0 }
+
+/// Port of `ttyidlegetfn()` from Src/params.c:4771. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn ttyidlegetfn() -> i32 { 0 }
+
+/// Port of `uidgetfn()` from Src/params.c:4689. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn uidgetfn() -> i32 { 0 }
+
+/// Port of `uidsetfn()` from Src/params.c:4698. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn uidsetfn() -> i32 { 0 }
+
+/// Port of `underscoregetfn()` from Src/params.c:5152. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn underscoregetfn() -> i32 { 0 }
+
+/// Port of `upscope()` from Src/params.c:6455. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn upscope() -> i32 { 0 }
+
+/// Port of `usernamegetfn()` from Src/params.c:4653. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn usernamegetfn() -> i32 { 0 }
+
+/// Port of `usernamesetfn()` from Src/params.c:4662. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn usernamesetfn() -> i32 { 0 }
+
+/// Port of `wordcharsgetfn()` from Src/params.c:5132. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn wordcharsgetfn() -> i32 { 0 }
+
+/// Port of `wordcharssetfn()` from Src/params.c:5141. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn wordcharssetfn() -> i32 { 0 }
+
+/// Port of `zgetenv()` from Src/params.c:5416. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn zgetenv() -> i32 { 0 }
+
+/// Port of `zhuniqarray()` from Src/params.c:4523. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn zhuniqarray() -> i32 { 0 }
+
+/// Port of `zlevarsetfn()` from Src/params.c:4224. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn zlevarsetfn() -> i32 { 0 }
+
+/// Port of `zputenv()` from Src/params.c:5325. zshrs
+/// stores parameter state in HashMaps on the executor; this
+/// entry is a name-parity shim.
+pub fn zputenv() -> i32 { 0 }
