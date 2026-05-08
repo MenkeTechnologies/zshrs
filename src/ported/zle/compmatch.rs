@@ -262,7 +262,7 @@ pub fn pattern_match_equivalence(a: char, b: char, case_insensitive: bool) -> bo
 
 /// Parse a matcher specification string (from compmatch.c)
 /// Format: `m:{[:lower:]}={[:upper:]}` or `l:|=* r:|=*` etc.
-pub fn parse_matcher_spec(spec: &str) -> Vec<CompMatcher> {
+pub fn parse_cmatcher(spec: &str) -> Vec<CompMatcher> {
     let mut matchers = Vec::new();
 
     for part in spec.split_whitespace() {
@@ -326,8 +326,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_matcher_spec() {
-        let matchers = parse_matcher_spec("m:{[:lower:]}={[:upper:]}");
+    fn test_parse_cmatcher() {
+        let matchers = parse_cmatcher("m:{[:lower:]}={[:upper:]}");
         assert_eq!(matchers.len(), 1);
         assert!(matchers[0].flags.case_insensitive);
     }
