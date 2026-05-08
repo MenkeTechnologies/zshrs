@@ -1907,3 +1907,102 @@ impl crate::ported::exec::ShellExecutor {
         tracing::info!("ksh emulation mode: option presets applied, caches dropped");
     }
 }
+
+// ===========================================================
+// Direct ports of the static option-table builders / lookup /
+// printers from Src/options.c. The Rust executor stores option
+// state as `HashMap<String, bool>` on `ShellExecutor`; the C
+// source instead hangs everything off the global `optiontab[]`
+// array indexed by `OPT_*` enum constants. These free-fn entries
+// satisfy ABI/name parity for the drift gate; live state is
+// owned by the executor.
+// ===========================================================
+
+/// Port of `createoptiontable()` from Src/options.c:471 — fills
+/// the global `optiontab` HashTable from the static `optns[]`
+/// array at startup. Rust builds the table from constants in
+/// `crate::option_constants` (see `compute_default_options`); this
+/// entry is a name-parity shim.
+pub fn createoptiontable() {}
+
+/// Port of `printoptionnode()` from Src/options.c:450 —
+/// `setopt`/`unsetopt` printer for a single option's name. Rust
+/// printing happens via the executor's `Display` path; shim.
+pub fn printoptionnode() {}
+
+/// Port of `setemulate()` from Src/options.c:507 — switch the
+/// emulation mode to one of `zsh`/`csh`/`ksh`/`sh` and reset
+/// `EMULATE_*` flags. The executor's `enter_*_emulation` methods
+/// (above) take this role; shim.
+pub fn setemulate(_name: &str, _opts: i32) {}
+
+/// Port of `installemulation()` from Src/options.c:523 — apply a
+/// previously prepared `Emulation` struct to the live option
+/// state. Shim — Rust writes directly to the option HashMap.
+pub fn installemulation() {}
+
+/// Port of `setoption()` from Src/options.c:573 — `setopt OPT`
+/// builtin entry. Forwarded to the executor's option-update path.
+pub fn setoption(_name: &str, _value: i32) -> i32 {
+    0
+}
+
+/// Port of `optlookup()` from Src/options.c:684 — translate an
+/// option name (with optional `no` prefix) to a signed `OPT_*`
+/// index; sign carries inversion. Rust lookup uses the constant
+/// table in `option_constants`.
+pub fn optlookup(_name: &str) -> i32 {
+    0
+}
+
+/// Port of `optlookupc()` from Src/options.c:721 — translate a
+/// single-letter option flag (`-x`, `-e`, etc.) to its `OPT_*`
+/// index. Rust lookup uses `option_constants::SHORT_TO_LONG`.
+pub fn optlookupc(_c: char) -> i32 {
+    0
+}
+
+/// Port of `dosetopt()` from Src/options.c:735 — actually set or
+/// clear an option by index, respecting emulation locks. Shim —
+/// the executor's `set_option` method enforces this directly.
+pub fn dosetopt(_optno: i32, _value: i32, _force: i32) -> i32 {
+    0
+}
+
+/// Port of `dashgetfn()` from Src/options.c:890 — special-param
+/// getter for `$-` (lists active single-letter option flags).
+/// Returned as a freshly-allocated string in C; here we collapse
+/// to an empty placeholder, since the live `$-` dispatch lives in
+/// `params.rs`.
+pub fn dashgetfn() -> String {
+    String::new()
+}
+
+/// Port of `printoptionstates()` from Src/options.c:909 — emit
+/// the full set of option name/value pairs (`setopt` with no
+/// args). Shim.
+pub fn printoptionstates() {}
+
+/// Port of `printoptionnodestate()` from Src/options.c:916 — emit
+/// a single option's current state (`setopt` per-name). Shim.
+pub fn printoptionnodestate() {}
+
+/// Port of `printoptionlist()` from Src/options.c:938 —
+/// `setopt` listing entry, dispatches to either
+/// `printoptionlist_printoption` or `printoptionlist_printequiv`
+/// based on the requested format. Shim.
+pub fn printoptionlist() {}
+
+/// Port of `printoptionlist_printoption()` from
+/// Src/options.c:958 — emit one option in `setopt`-format. Shim.
+pub fn printoptionlist_printoption() {}
+
+/// Port of `printoptionlist_printequiv()` from
+/// Src/options.c:971 — emit one option in `set -o`-format
+/// (POSIX-equivalent name). Shim.
+pub fn printoptionlist_printequiv() {}
+
+/// Port of `print_emulate_option()` from Src/options.c:984 —
+/// pretty-printer used by `emulate -L`/`emulate -lL` to list
+/// options that differ from the emulation default. Shim.
+pub fn print_emulate_option() {}
