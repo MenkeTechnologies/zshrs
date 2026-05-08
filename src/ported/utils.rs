@@ -959,51 +959,6 @@ pub fn ztrftime(fmt: &str, time: std::time::SystemTime) -> String {
     }
 }
 
-/// Unescape string
-pub fn unescape(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            match chars.next() {
-                Some('n') => result.push('\n'),
-                Some('t') => result.push('\t'),
-                Some('r') => result.push('\r'),
-                Some('\\') => result.push('\\'),
-                Some('\'') => result.push('\''),
-                Some('"') => result.push('"'),
-                Some('0') => result.push('\0'),
-                Some('a') => result.push('\x07'),
-                Some('b') => result.push('\x08'),
-                Some('e') => result.push('\x1b'),
-                Some('f') => result.push('\x0c'),
-                Some('v') => result.push('\x0b'),
-                Some('x') => {
-                    let mut hex = String::new();
-                    for _ in 0..2 {
-                        if let Some(&c) = chars.peek() {
-                            if c.is_ascii_hexdigit() {
-                                hex.push(chars.next().unwrap());
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    if let Ok(val) = u8::from_str_radix(&hex, 16) {
-                        result.push(val as char);
-                    }
-                }
-                Some(c) => result.push(c),
-                None => result.push('\\'),
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
-
 /// Get hostname
 pub fn gethostname() -> String {
     #[cfg(unix)]
