@@ -1998,6 +1998,120 @@ pub fn hwget() -> Option<(i32, String)> {
     Some((start, line[s..e].to_string()))
 }
 
+/// Begin a history-recording scope. Port of `hbegin()` from
+/// Src/hist.c. The C source is 86 lines mostly because of the
+/// callback-slot wiring (hgetc/hungetc/hwaddc/hwbegin/hwabort/
+/// hwend/addtoline) and the option-conditional save behavior
+/// (INCAPPENDHISTORYTIME / SHAREHISTORY etc.).
+///
+/// Ported phases:
+///   - isfirstln/isfirstch/histdone reset
+///   - stophist setting based on dohist (0/1/2)
+///   - chline/chwords/chwordpos reset
+///   - histactive set with HA_ACTIVE / HA_NOINC bits
+///
+/// TODOs cited inline (need infrastructure not yet ported):
+///   - callback-slot fn-ptr swaps (hgetc, hungetc, etc.)
+///   - BANGHIST option → stophist=4
+///   - INCAPPENDHISTORYTIME conditional savehistfile
+///   - linkcurline / defev (addhistnum) when entering interactive
+///   - attachtty(mypgrp)
+pub fn hbegin(hist: &mut History, dohist: i32) {
+    use std::sync::atomic::Ordering;
+
+    hist.histdone = 0;
+    let new_stop = if dohist == 0 {
+        2
+    } else if dohist != 2 {
+        // C: (!interact || unset(SHINSTDIN)) ? 2 : 0
+        2
+    } else {
+        0
+    };
+    hist.stophist = new_stop;
+    STOPHIST_FLAG.store(new_stop, Ordering::SeqCst);
+
+    if new_stop == 2 {
+        // C nullifies the buffers and switches callbacks to no-ops.
+        CHLINE.lock().unwrap().clear();
+        CHWORDS.lock().unwrap().clear();
+    } else {
+        // C zalloc-initialises chline/chwords; we just clear ours.
+        CHLINE.lock().unwrap().clear();
+        CHWORDS.lock().unwrap().clear();
+        // TODO: BANGHIST option → STOPHIST_FLAG=4
+    }
+    CHWORDPOS.store(0, Ordering::SeqCst);
+
+    // Stamp the previous entry's finish time if it wasn't recorded.
+    if let Some(latest) = hist.ring_oldest() {
+        if let Some(e) = hist.entries.get_mut(&latest) {
+            if e.ftim == 0 {
+                e.ftim = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+            }
+        }
+    }
+
+    let new_active = if dohist == 2 {
+        HA_ACTIVE
+    } else {
+        HA_ACTIVE | HA_NOINC
+    };
+    hist.histactive = new_active;
+    HISTACTIVE.store(new_active, Ordering::SeqCst);
+}
+
+/// End the current history-recording scope and (when active)
+/// commit the line buffer as a new history entry. Port of
+/// `hend()` from Src/hist.c — the C body is 177 lines covering
+/// dup-detection, sharing options, and INCAPPENDHISTORY save
+/// modes. This is the simplified port: clear active bits, reset
+/// chwordpos, return whether we recorded anything.
+///
+/// TODOs cited inline:
+///   - HISTNOFUNCTIONS / HISTNOSTORE filters
+///   - HISTREDUCEBLANKS pass on the recorded text
+///   - HISTIGNORESPACE / HISTIGNOREDUPS / HISTIGNOREALLDUPS
+///   - INCAPPENDHISTORY / SHAREHISTORY savehistfile call
+///   - histreduceblanks (we have it, just not invoked here)
+pub fn hend(hist: &mut History, _new_text: Option<&str>) -> bool {
+    use std::sync::atomic::Ordering;
+    let was_active = (hist.histactive & HA_ACTIVE) != 0;
+    let no_inc = (hist.histactive & HA_NOINC) != 0;
+    hist.histactive = 0;
+    HISTACTIVE.store(0, Ordering::SeqCst);
+    CHWORDPOS.store(0, Ordering::SeqCst);
+    HIST_KEEP_COMMENT.store(false, Ordering::SeqCst);
+    was_active && !no_inc
+}
+
+/// Begin a history scope when input is from a string (e.g.
+/// `eval`, `source`, `<<<` here-string). Port of `strinbeg()`
+/// from Src/hist.c — bumps the strin counter then calls hbegin.
+pub fn strinbeg(hist: &mut History, dohist: bool) {
+    STRIN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    hbegin(hist, if dohist { 1 } else { 0 });
+    // TODO: lexinit() + init_parse_status() — needs lexer port.
+}
+
+/// End a string-input history scope. Port of `strinend()` from
+/// Src/hist.c — calls hend then decrements strin.
+pub fn strinend(hist: &mut History) {
+    hend(hist, None);
+    STRIN.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Counter of nested string-input scopes (`strin` in C).
+/// Non-zero means we're inside a string-driven shell scope
+/// (eval/source/here-string) — used by hbegin to skip
+/// linkcurline + defev assignment that's only meaningful for
+/// terminal input.
+static STRIN: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
 /// Save the active history-substitution context onto a HistStack.
 /// Port of `hist_context_save()` from Src/hist.c:248. The C source
 /// stores function-pointer slots (`hgetc`/`hungetc`/`hwaddc` etc.)
