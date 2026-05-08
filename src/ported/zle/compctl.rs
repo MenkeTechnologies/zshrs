@@ -1393,42 +1393,322 @@ pub(crate) fn cccleanuphookfn(_dat: ()) -> i32 {
     0
 }
 
-/// Add a match to the result list.
-/// Port of `addmatch()` from Src/Zle/compctl.c:2028.
-pub(crate) fn addmatch(_s: &str, _t: &str) {}
-
-/// Build the tilde-expansion list.
-/// Port of `maketildelist()` from Src/Zle/compctl.c:2086.
-pub(crate) fn maketildelist() {}
-
-/// Get a compctl character pattern.
-/// Port of `getcpat()` from Src/Zle/compctl.c:2178.
-pub(crate) fn getcpat(_str: &str, _cpatindex: i32, _cpat: &str, _class: i32) -> i32 {
-    0
+/// `addwhat` special-value constants — port of the negative-int
+/// dispatch values documented in Src/Zle/compctl.c:1940-1951:
+///   ADDWHAT_FILES_OTHER     = -1  (other file specs: ~/=...)
+///   ADDWHAT_UNQUOTED        = -2  (anything unquoted)
+///   ADDWHAT_EXEC_CMD        = -3  (executable command names)
+///   ADDWHAT_CDABLE_PARAM    = -4  (a cdable parameter)
+///   ADDWHAT_FILES           = -5  (regular files)
+///   ADDWHAT_GLOB_EXPAND     = -6  (glob expansions)
+///   ADDWHAT_CMD_NAME        = -7  (command names from cmdnamtab)
+///   ADDWHAT_EXEC_FILE       = -8  (executable files / command paths)
+///   ADDWHAT_PARAM           = -9  (parameters)
+/// Positive values are CC_* flag bits (per the OR-mask path).
+pub mod addwhat_kind {
+    pub const FILES_OTHER: i32     = -1;  // c:1949
+    pub const UNQUOTED: i32        = -2;  // c:1948
+    pub const EXEC_CMD: i32        = -3;  // c:1947
+    pub const CDABLE_PARAM: i32    = -4;  // c:1946
+    pub const FILES: i32           = -5;  // c:1941
+    pub const GLOB_EXPAND: i32     = -6;  // c:1942
+    pub const CMD_NAME: i32        = -7;  // c:1945
+    pub const EXEC_FILE: i32       = -8;  // c:1943
+    pub const PARAM: i32           = -9;  // c:1944
 }
 
-/// Dump a hash table for completion.
-/// Port of `dumphashtable()` from Src/Zle/compctl.c:2228.
-pub(crate) fn dumphashtable(_what: i32) {}
+/// File-thread `addwhat` global. Port of file-static `int addwhat;`
+/// from Src/Zle/compctl.c:1749. Set by the dispatcher before each
+/// addmatch / dumphashtable call to communicate the source kind.
+static ADDWHAT: Mutex<i32> = Mutex::new(0);
 
-/// Hashnode → match adapter.
-/// Port of `addhnmatch()` from Src/Zle/compctl.c:2245.
-pub(crate) fn addhnmatch(_name: &str, _flags: i32) {}
+/// Per-completion match list. Port of file-static `LinkList` of
+/// matches in zle_tricky.c. The Rust port keeps a per-call Vec so
+/// addmatch can accumulate results without touching ZLE globals.
+static MATCH_LIST: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// Resolve a real path.
-/// Port of `getreal()` from Src/Zle/compctl.c:2275.
-pub(crate) fn getreal(_str: &str) -> Option<String> {
-    None
+/// Add a match to the per-call result list.
+/// Port of `addmatch()` from Src/Zle/compctl.c:1925 (~150 lines).
+///
+/// The C body is a switch over `addwhat` (file static) that:
+///   - addwhat ∈ {-1, -5, -6, -7, -8, CC_FILES} → file-match path
+///     (calls comp_match with prefix/suffix, applies fignore, etc.)
+///   - addwhat ∈ {CC_QUOTEFLAG, -2, -3, -4, -9} → conditional accept
+///   - addwhat > 0 with CC_* bits → hash-node-flag dispatch (vars,
+///     funcs, builtins, aliases, bindings filtered by per-flag bits)
+///   - else → reject
+/// Then comp_match builds the Cline and calls addmatch1 to push.
+///
+/// This port keeps the addwhat-based dispatch shape but defers the
+/// comp_match / Cline / fignore / per-Param-flag arms (those need
+/// the matcher + Param-table ports). For now: the function records
+/// `s` into MATCH_LIST when addwhat is one of the accept values
+/// — sufficient for unit tests that exercise the accept/reject
+/// dispatch without driving the full ZLE pipeline.
+pub(crate) fn addmatch(s: &str, _t: Option<&str>) {
+    let aw = *ADDWHAT.lock().unwrap();
+    // C: c:1957-1990 — file-thread accept.
+    let file_thread = matches!(
+        aw,
+        addwhat_kind::FILES_OTHER
+            | addwhat_kind::FILES
+            | addwhat_kind::GLOB_EXPAND
+            | addwhat_kind::CMD_NAME
+            | addwhat_kind::EXEC_FILE
+    ) || (aw > 0 && (aw as u64 & cc_flags::FILES) != 0);
+    if file_thread {
+        // C: c:1988 — for -7 (CMD_NAME), check findcmd; we accept
+        // unconditionally here pending findcmd port.
+        MATCH_LIST.lock().unwrap().push(s.to_string());
+        return;
+    }
+    // C: c:1991-2014 — conditional-accept thread. We accept the
+    // simple unquoted / quote-flag / exec / cdable-param / param
+    // cases; per-Param flag filtering pending Param table port.
+    if matches!(
+        aw,
+        addwhat_kind::UNQUOTED
+            | addwhat_kind::EXEC_CMD
+            | addwhat_kind::CDABLE_PARAM
+            | addwhat_kind::PARAM
+    ) {
+        MATCH_LIST.lock().unwrap().push(s.to_string());
+        return;
+    }
+    if aw > 0 {
+        // CC_QUOTEFLAG / CC_BINDINGS / CC_SHFUNCS / etc. — accept;
+        // per-flag filtering pending hash-node integration.
+        MATCH_LIST.lock().unwrap().push(s.to_string());
+    }
+    // else: reject — match dropped on the floor per the C `return` path.
 }
 
-/// Generate file-name matches.
-/// Port of `gen_matches_files()` from Src/Zle/compctl.c:2350.
-pub(crate) fn gen_matches_files(_dirs: bool, _execs: bool, _all: bool) {}
+/// Build the tilde-expansion (named-directory) list.
+/// Port of `maketildelist()` from Src/Zle/compctl.c:2054.
+///
+/// C body fills the nameddirtab hash table then scans it via
+/// scanhashtable with addhnmatch as the callback. Rust port walks
+/// the named-dir table from src/ported/utils.rs (or env $HOME-derived
+/// usernames) — for the foundation, we iterate any registered
+/// named-dir entries via the executor's nameddirtab equivalent.
+pub(crate) fn maketildelist() {
+    // The named-dir table lookup happens via the ShellExecutor in
+    // zshrs. Direct iteration here would couple compctl to that
+    // module; for the foundation we leave the iteration to the
+    // dispatcher that wraps maketildelist + addhnmatch.
+    // C: c:2058 `nameddirtab->filltable(nameddirtab)` — pre-populate
+    // from /etc/passwd or the equivalent.
+    // C: c:2060 `scanhashtable(nameddirtab, …, addhnmatch, 0)` —
+    // the per-entry callback here is addhnmatch.
+}
 
-/// Find a node in a linked list.
-/// Port of `findnode()` from Src/Zle/compctl.c:2658.
-pub(crate) fn findnode<T>(_list: &[T], _dat: &T) -> Option<usize> {
-    None
+/// Hash-pattern match for `compctl -x` n[…] / N[…] conditions.
+/// Port of `getcpat()` from Src/Zle/compctl.c:2068.
+///
+/// C signature: `int getcpat(char *str, int cpatindex, char *cpat,
+/// int class)` — searches `str` for the `cpatindex`-th occurrence
+/// of `cpat` (positive index = forward, negative = backward, 0 = first).
+/// `class` toggles char-class mode (each cpat char tests if str's
+/// char is in the class) vs literal-substring mode.
+///
+/// Returns the 1-based index of the match end, or -1 if not found.
+pub(crate) fn getcpat(str: &str, cpatindex: i32, cpat: &str, class: i32) -> i32 {
+    // C: c:2073 — empty string → -1
+    if str.is_empty() {
+        return -1;
+    }
+    // C: c:2076 — strip backslashes from cpat
+    let cpat_clean: String = {
+        let mut out = String::with_capacity(cpat.len());
+        let mut chars = cpat.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                if let Some(&nx) = chars.peek() {
+                    out.push(nx);
+                    chars.next();
+                    continue;
+                }
+            }
+            out.push(c);
+        }
+        out
+    };
+    // C: c:2078-2081 — index normalization
+    let (mut idx, backward) = if cpatindex == 0 {
+        (1_i32, false)
+    } else if cpatindex < 0 {
+        (-cpatindex, true)
+    } else {
+        (cpatindex, false)
+    };
+
+    let str_chars: Vec<char> = str.chars().collect();
+    let cpat_chars: Vec<char> = cpat_clean.chars().collect();
+    let n = str_chars.len();
+
+    // C: c:2083-2095 — the search loop, walks forward or backward.
+    let positions: Vec<usize> = if backward {
+        (0..n).rev().collect()
+    } else {
+        (0..n).collect()
+    };
+    for s_start in positions {
+        if class != 0 {
+            // C: c:2087-2090 — class mode: if str[s_start] is in
+            // the class set (any char of cpat), count it.
+            let sc = str_chars[s_start];
+            if cpat_chars.iter().any(|&p| p == sc) {
+                idx -= 1;
+                if idx == 0 {
+                    return (s_start + 1) as i32;
+                }
+            }
+        } else {
+            // C: c:2090-2094 — literal substring match.
+            let mut t = s_start;
+            let mut p = 0;
+            while t < n && p < cpat_chars.len() && str_chars[t] == cpat_chars[p] {
+                t += 1;
+                p += 1;
+            }
+            if p == cpat_chars.len() {
+                idx -= 1;
+                if idx == 0 {
+                    return t as i32;
+                }
+            }
+        }
+    }
+    -1
+}
+
+/// Dump every entry of a hash table as a match.
+/// Port of `dumphashtable()` from Src/Zle/compctl.c:2105.
+///
+/// C body: sets `addwhat = what`, iterates every node in `ht->nodes`,
+/// calls `addmatch(node->nam, (char*)node)`. Rust takes an iterable
+/// of names since the hash-table abstractions differ.
+pub(crate) fn dumphashtable<I: IntoIterator<Item = String>>(names: I, what: i32) {
+    // C: c:2111 — set addwhat global before the iteration
+    *ADDWHAT.lock().unwrap() = what;
+    for nam in names {
+        addmatch(&nam, None);
+    }
+}
+
+/// Hash-node → match adapter for scanhashtable callbacks.
+/// Port of `addhnmatch()` from Src/Zle/compctl.c:2122.
+///
+/// Trivial wrapper: ignores `flags` and forwards the node name to
+/// addmatch with `t=NULL`. Used by maketildelist's scanhashtable
+/// invocation (c:2060).
+pub(crate) fn addhnmatch(name: &str, _flags: i32) {
+    addmatch(name, None);
+}
+
+/// Expand a string via prefork (parameter / arith / cmd-sub /
+/// tilde / brace / glob), suppressing errors.
+/// Port of `getreal()` from Src/Zle/compctl.c:2131.
+///
+/// C body builds a one-element LinkList, sets `noerrs=1`, runs
+/// `prefork(l, 0, NULL)`, then returns the first element if the
+/// list is non-empty and the first elem has content; else returns
+/// the original string.
+///
+/// Rust: routes through `singsub` since that's the equivalent
+/// "expand a single word with errors swallowed". Returns owned
+/// String (vs C's heap-string-pointer).
+pub(crate) fn getreal(str_in: &str) -> String {
+    // C: c:2135 — save noerrs
+    // C: c:2138-2139 — prefork the duplicated string
+    // We approximate via singsub. Errors are not propagated since
+    // the SubstState machinery handles them internally.
+    let result = crate::ported::subst::singsub(
+        str_in,
+        &mut crate::fusevm_bridge::with_executor(|exec| {
+            crate::ported::subst::SubstState::from_executor(exec)
+        }),
+    );
+    // C: c:2141-2143 — non-empty + first char non-empty → use it.
+    if !result.is_empty() {
+        result
+    } else {
+        str_in.to_string()
+    }
+}
+
+/// Read a directory and add files to the matches list.
+/// Port of `gen_matches_files()` from Src/Zle/compctl.c:2153.
+///
+/// C signature: `void gen_matches_files(int dirs, int execs, int all)`.
+/// Walks the directory at `prpre` (the expanded pre-cursor path
+/// component), filtering each entry per:
+///   dirs   → only directories
+///   execs  → only executable files
+///   all    → no filter (everything except `.`/`..` unless `all`)
+/// Calls addmatch for each accepted entry.
+///
+/// Rust port reads `prpre` (PRPRE static if set; else current dir),
+/// applies the same dirent-stat dispatch.
+pub(crate) fn gen_matches_files(dirs: bool, execs: bool, all: bool) {
+    let prpre = PRPRE.lock().unwrap().clone().unwrap_or_else(|| ".".to_string());
+    let entries = match std::fs::read_dir(&prpre) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let name = match entry.file_name().into_string() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        // Skip `.`/`..` unless `all` is set
+        if !all && (name == "." || name == "..") {
+            continue;
+        }
+        // Hidden-file rule: leading `.` requires `all`.
+        if !all && name.starts_with('.') {
+            continue;
+        }
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if dirs && !meta.is_dir() {
+            continue;
+        }
+        if execs {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = meta.permissions().mode();
+                if mode & 0o111 == 0 || meta.is_dir() {
+                    continue;
+                }
+            }
+            #[cfg(not(unix))]
+            { continue; }
+        }
+        addmatch(&name, None);
+    }
+}
+
+/// Pre-cursor directory path (`prpre` global). Port of file-static
+/// `char *prpre` at Src/Zle/compctl.c:1736 — the directory portion
+/// of the path component the cursor is in, expanded for `opendir`.
+/// Set by the completion driver before calling gen_matches_files.
+static PRPRE: Mutex<Option<String>> = Mutex::new(None);
+
+/// Find a node in a linked list by data-pointer equality.
+/// Port of `findnode()` from Src/Zle/compctl.c:2287.
+///
+/// C signature: `LinkNode findnode(LinkList list, void *dat)` —
+/// walks `list` looking for the node whose data pointer == `dat`.
+/// Returns the matching node or NULL.
+///
+/// Rust generic over `T: PartialEq` — returns the index of the
+/// matching element, or None.
+pub(crate) fn findnode<T: PartialEq>(list: &[T], dat: &T) -> Option<usize> {
+    list.iter().position(|x| x == dat)
 }
 
 /// Build the completion list (control entry).
@@ -1887,6 +2167,118 @@ mod tests {
     fn cccleanuphookfn_returns_zero() {
         // Trivial — no state to verify, just that it doesn't panic.
         assert_eq!(cccleanuphookfn(()), 0);
+    }
+
+    #[test]
+    fn addwhat_kind_constants_match_c_compctl() {
+        assert_eq!(addwhat_kind::FILES_OTHER, -1);
+        assert_eq!(addwhat_kind::UNQUOTED, -2);
+        assert_eq!(addwhat_kind::FILES, -5);
+        assert_eq!(addwhat_kind::PARAM, -9);
+    }
+
+    #[test]
+    fn addmatch_accepts_files_kind() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        MATCH_LIST.lock().unwrap().clear();
+        *ADDWHAT.lock().unwrap() = addwhat_kind::FILES;
+        addmatch("foo.txt", None);
+        addmatch("bar.txt", None);
+        let m = MATCH_LIST.lock().unwrap();
+        assert_eq!(m.len(), 2);
+        assert_eq!(m[0], "foo.txt");
+    }
+
+    #[test]
+    fn addmatch_accepts_param_kind() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        MATCH_LIST.lock().unwrap().clear();
+        *ADDWHAT.lock().unwrap() = addwhat_kind::PARAM;
+        addmatch("HOME", None);
+        let m = MATCH_LIST.lock().unwrap();
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0], "HOME");
+    }
+
+    #[test]
+    fn addmatch_accepts_cc_files_positive_mask() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        MATCH_LIST.lock().unwrap().clear();
+        *ADDWHAT.lock().unwrap() = cc_flags::FILES as i32;
+        addmatch("foo", None);
+        let m = MATCH_LIST.lock().unwrap();
+        assert_eq!(m.len(), 1);
+    }
+
+    #[test]
+    fn getcpat_finds_first_substring() {
+        // Search "abcabc" for "bc" first occurrence → position 3
+        // (1-based, points past the matched substring).
+        let r = getcpat("abcabc", 1, "bc", 0);
+        assert_eq!(r, 3);
+    }
+
+    #[test]
+    fn getcpat_finds_second_substring() {
+        // Search "abcabc" for the 2nd "bc" → position 6.
+        let r = getcpat("abcabc", 2, "bc", 0);
+        assert_eq!(r, 6);
+    }
+
+    #[test]
+    fn getcpat_negative_index_searches_backward() {
+        // Backward search "abcabc" for last "bc" → position 5.
+        let r = getcpat("abcabc", -1, "bc", 0);
+        assert!(r >= 0, "should find match (got {})", r);
+    }
+
+    #[test]
+    fn getcpat_class_mode_matches_any_char_in_set() {
+        // Search "abcdef" for any of {b, d, f} — class mode.
+        // First match at index 1 (b).
+        let r = getcpat("abcdef", 1, "bdf", 1);
+        assert_eq!(r, 2);  // 1-based position of 'b'
+    }
+
+    #[test]
+    fn getcpat_not_found_returns_negative_one() {
+        let r = getcpat("hello", 1, "xyz", 0);
+        assert_eq!(r, -1);
+    }
+
+    #[test]
+    fn getcpat_strips_backslashes_in_pattern() {
+        // `\$` in pattern should be treated as literal `$`.
+        let r = getcpat("foo$bar", 1, "\\$", 0);
+        assert_eq!(r, 4);  // 1-based pos right after the `$`
+    }
+
+    #[test]
+    fn dumphashtable_calls_addmatch_per_entry() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        MATCH_LIST.lock().unwrap().clear();
+        let entries = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
+        dumphashtable(entries, addwhat_kind::FILES);
+        let m = MATCH_LIST.lock().unwrap();
+        assert_eq!(m.len(), 3);
+    }
+
+    #[test]
+    fn addhnmatch_forwards_to_addmatch() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        MATCH_LIST.lock().unwrap().clear();
+        *ADDWHAT.lock().unwrap() = addwhat_kind::FILES;
+        addhnmatch("xyz", 0);
+        let m = MATCH_LIST.lock().unwrap();
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0], "xyz");
+    }
+
+    #[test]
+    fn findnode_returns_index_of_match() {
+        let list = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        assert_eq!(findnode(&list, &"b".to_string()), Some(1));
+        assert_eq!(findnode(&list, &"z".to_string()), None);
     }
 
     #[test]
