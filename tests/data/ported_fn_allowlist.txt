@@ -127,7 +127,6 @@ bin_random_real
 bind_key
 clone_shell
 color_to_code
-color_to_sgr_code
 convbaseu
 ensure_initialized
 errno_from_name

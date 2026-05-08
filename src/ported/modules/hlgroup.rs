@@ -27,12 +27,12 @@ pub fn convertattr(attr: &str, sgr: bool) -> String {
                 "hidden" | "invisible" => codes.push("8".to_string()),
                 "strikethrough" => codes.push("9".to_string()),
                 s if s.starts_with("fg=") => {
-                    if let Some(code) = color_to_sgr_code(&s[3..], true) {
+                    if let Some(code) = color_to_code(&s[3..], true, true) {
                         codes.push(code);
                     }
                 }
                 s if s.starts_with("bg=") => {
-                    if let Some(code) = color_to_sgr_code(&s[3..], false) {
+                    if let Some(code) = color_to_code(&s[3..], false, true) {
                         codes.push(code);
                     }
                 }
@@ -59,12 +59,12 @@ pub fn convertattr(attr: &str, sgr: bool) -> String {
                 "hidden" | "invisible" => result.push_str("\x1b[8m"),
                 "strikethrough" => result.push_str("\x1b[9m"),
                 s if s.starts_with("fg=") => {
-                    if let Some(color) = color_to_code(&s[3..], true) {
+                    if let Some(color) = color_to_code(&s[3..], true, false) {
                         result.push_str(&color);
                     }
                 }
                 s if s.starts_with("bg=") => {
-                    if let Some(color) = color_to_code(&s[3..], false) {
+                    if let Some(color) = color_to_code(&s[3..], false, false) {
                         result.push_str(&color);
                     }
                 }
@@ -75,103 +75,70 @@ pub fn convertattr(attr: &str, sgr: bool) -> String {
     }
 }
 
-/// Resolve a `fg=`/`bg=` colour spec into a full `\e[...m` escape.
+/// Resolve a `fg=`/`bg=` colour spec into either a full `\e[...m`
+/// escape (`sgr = false`) or the bare SGR parameter list used by
+/// `${.zle.sgr[name]}` (`sgr = true`).
+///
 /// Port of the colour-name lookup table inside `convertattr()`
 /// (Src/Modules/hlgroup.c:40) — same name set, plus the
 /// 256-colour numeric codes and `#RRGGBB` truecolor extension the C
 /// source documents in `Doc/Zsh/mod_hlgroup.yo`.
-fn color_to_code(color: &str, fg: bool) -> Option<String> {
+fn color_to_code(color: &str, fg: bool, sgr: bool) -> Option<String> {
     let base = if fg { 30 } else { 40 };
     let bright_base = if fg { 90 } else { 100 };
-
+    let wrap = |n: i32| -> String {
+        if sgr {
+            n.to_string()
+        } else {
+            format!("\x1b[{}m", n)
+        }
+    };
+    let wrap_256 = |n: u8| -> String {
+        let prefix = if fg { 38 } else { 48 };
+        if sgr {
+            format!("{};5;{}", prefix, n)
+        } else {
+            format!("\x1b[{};5;{}m", prefix, n)
+        }
+    };
+    let wrap_truecolor = |r: u8, g: u8, b: u8| -> String {
+        let prefix = if fg { 38 } else { 48 };
+        if sgr {
+            format!("{};2;{};{};{}", prefix, r, g, b)
+        } else {
+            format!("\x1b[{};2;{};{};{}m", prefix, r, g, b)
+        }
+    };
     match color {
-        "black" => Some(format!("\x1b[{}m", base)),
-        "red" => Some(format!("\x1b[{}m", base + 1)),
-        "green" => Some(format!("\x1b[{}m", base + 2)),
-        "yellow" => Some(format!("\x1b[{}m", base + 3)),
-        "blue" => Some(format!("\x1b[{}m", base + 4)),
-        "magenta" => Some(format!("\x1b[{}m", base + 5)),
-        "cyan" => Some(format!("\x1b[{}m", base + 6)),
-        "white" => Some(format!("\x1b[{}m", base + 7)),
-        "default" => Some(format!("\x1b[{}m", base + 9)),
+        "black" => Some(wrap(base)),
+        "red" => Some(wrap(base + 1)),
+        "green" => Some(wrap(base + 2)),
+        "yellow" => Some(wrap(base + 3)),
+        "blue" => Some(wrap(base + 4)),
+        "magenta" => Some(wrap(base + 5)),
+        "cyan" => Some(wrap(base + 6)),
+        "white" => Some(wrap(base + 7)),
+        "default" => Some(wrap(base + 9)),
         s if s.starts_with("bright-") || s.starts_with("light-") => {
             let inner = s.split_once('-').map(|(_, c)| c)?;
             match inner {
-                "black" => Some(format!("\x1b[{}m", bright_base)),
-                "red" => Some(format!("\x1b[{}m", bright_base + 1)),
-                "green" => Some(format!("\x1b[{}m", bright_base + 2)),
-                "yellow" => Some(format!("\x1b[{}m", bright_base + 3)),
-                "blue" => Some(format!("\x1b[{}m", bright_base + 4)),
-                "magenta" => Some(format!("\x1b[{}m", bright_base + 5)),
-                "cyan" => Some(format!("\x1b[{}m", bright_base + 6)),
-                "white" => Some(format!("\x1b[{}m", bright_base + 7)),
+                "black" => Some(wrap(bright_base)),
+                "red" => Some(wrap(bright_base + 1)),
+                "green" => Some(wrap(bright_base + 2)),
+                "yellow" => Some(wrap(bright_base + 3)),
+                "blue" => Some(wrap(bright_base + 4)),
+                "magenta" => Some(wrap(bright_base + 5)),
+                "cyan" => Some(wrap(bright_base + 6)),
+                "white" => Some(wrap(bright_base + 7)),
                 _ => None,
             }
         }
-        s if s.parse::<u8>().is_ok() => {
-            let n: u8 = s.parse().unwrap();
-            Some(format!("\x1b[{};5;{}m", if fg { 38 } else { 48 }, n))
-        }
+        s if s.parse::<u8>().is_ok() => Some(wrap_256(s.parse().unwrap())),
         s if s.starts_with('#') && s.len() == 7 => {
             let r = u8::from_str_radix(&s[1..3], 16).ok()?;
             let g = u8::from_str_radix(&s[3..5], 16).ok()?;
             let b = u8::from_str_radix(&s[5..7], 16).ok()?;
-            Some(format!(
-                "\x1b[{};2;{};{};{}m",
-                if fg { 38 } else { 48 },
-                r,
-                g,
-                b
-            ))
-        }
-        _ => None,
-    }
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/hlgroup.c`.
-/// Resolve a `fg=`/`bg=` colour spec into its bare SGR parameter
-/// list (no `\e[`/`m` framing).
-/// SGR-only counterpart of `color_to_code()` — same lookup table
-/// as `convertattr()` (Src/Modules/hlgroup.c:40) but emits just the
-/// numeric parameters used by `${.zle.sgr[name]}`.
-fn color_to_sgr_code(color: &str, fg: bool) -> Option<String> {
-    let base = if fg { 30 } else { 40 };
-    let bright_base = if fg { 90 } else { 100 };
-
-    match color {
-        "black" => Some(base.to_string()),
-        "red" => Some((base + 1).to_string()),
-        "green" => Some((base + 2).to_string()),
-        "yellow" => Some((base + 3).to_string()),
-        "blue" => Some((base + 4).to_string()),
-        "magenta" => Some((base + 5).to_string()),
-        "cyan" => Some((base + 6).to_string()),
-        "white" => Some((base + 7).to_string()),
-        "default" => Some((base + 9).to_string()),
-        s if s.starts_with("bright-") || s.starts_with("light-") => {
-            let inner = s.split_once('-').map(|(_, c)| c)?;
-            match inner {
-                "black" => Some(bright_base.to_string()),
-                "red" => Some((bright_base + 1).to_string()),
-                "green" => Some((bright_base + 2).to_string()),
-                "yellow" => Some((bright_base + 3).to_string()),
-                "blue" => Some((bright_base + 4).to_string()),
-                "magenta" => Some((bright_base + 5).to_string()),
-                "cyan" => Some((bright_base + 6).to_string()),
-                "white" => Some((bright_base + 7).to_string()),
-                _ => None,
-            }
-        }
-        s if s.parse::<u8>().is_ok() => {
-            let n: u8 = s.parse().unwrap();
-            Some(format!("{};5;{}", if fg { 38 } else { 48 }, n))
-        }
-        s if s.starts_with('#') && s.len() == 7 => {
-            let r = u8::from_str_radix(&s[1..3], 16).ok()?;
-            let g = u8::from_str_radix(&s[3..5], 16).ok()?;
-            let b = u8::from_str_radix(&s[5..7], 16).ok()?;
-            Some(format!("{};2;{};{};{}", if fg { 38 } else { 48 }, r, g, b))
+            Some(wrap_truecolor(r, g, b))
         }
         _ => None,
     }
