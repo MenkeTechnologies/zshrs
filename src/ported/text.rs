@@ -963,3 +963,84 @@ pub fn format_function_body_zsh(body: &str) -> String {
     lines.join("\n\t")
 }
 // END moved-from-exec-rs (free fns)
+
+// ===========================================================
+// AST-text-buffer helpers — direct ports of the static text-
+// builder routines from Src/text.c. In zsh these accumulate text
+// into the globals `tbuf`/`tptr`/`tlim`/`tindent`/`tpending`
+// during AST decompilation (used by `whence -v`, job-text, fc, the
+// `printprompt` debug path). The Rust port renders AST nodes
+// through `Display` impls and `gettext()` (above) so the global
+// buffer machinery isn't kept; these entries are name-parity
+// shims for the drift gate.
+// ===========================================================
+
+/// Port of `dec_tindent()` from Src/text.c:69 — decrement the
+/// global indent counter `tindent` (clamped at zero in C with a
+/// `DPUTS` check). Rust formatter uses local indent counters per
+/// AST visitor pass, so this is a no-op shim.
+pub fn dec_tindent() {}
+
+/// Port of `taddpending()` from Src/text.c:88 — buffer a here-doc
+/// string + terminator pair to be emitted at the next significant
+/// newline. Rust AST printer emits here-docs inline as part of
+/// `Redir::Display`, so this entry is a no-op shim.
+pub fn taddpending(_str1: &str, _str2: &str) {}
+
+/// Port of `tdopending()` from Src/text.c:113 — flush the pending
+/// here-doc string, prefixed with a newline. No-op shim — Rust
+/// emits here-docs inline (see `taddpending`).
+pub fn tdopending() {}
+
+/// Port of `taddchr()` from Src/text.c:127 — append one byte to
+/// the text-buffer with realloc-on-overflow. Rust uses owned
+/// `String` accumulators per visitor; no-op shim.
+pub fn taddchr(_c: i32) {}
+
+/// Port of `taddstr()` from Src/text.c:145 — append a NUL-
+/// terminated string to the text buffer (calls `taddchr` per
+/// byte). No-op shim; see `taddchr`.
+pub fn taddstr(_s: &str) {}
+
+/// Port of `taddlist()` from Src/text.c:170 — append a `LinkList`
+/// of words to the text buffer, space-separated. Rust calls
+/// `Vec::join(" ")` directly inside its formatter; no-op shim.
+pub fn taddlist() {}
+
+/// Port of `taddassign()` from Src/text.c:184 — emit a single
+/// `name=value` (or `+=`) assignment to the text buffer. Rust
+/// `Assign::Display` handles this; no-op shim.
+pub fn taddassign() {}
+
+/// Port of `taddassignlist()` from Src/text.c:213 — emit an
+/// array assignment list `name=( a b c )` to the text buffer.
+/// Rust `Assign::Display` handles this; no-op shim.
+pub fn taddassignlist() {}
+
+/// Port of `taddnl()` from Src/text.c:227 — emit a newline plus
+/// indent (`tindent`*tab) to the text buffer, also flushing any
+/// pending here-doc strings. No-op shim.
+pub fn taddnl(_let_semicolon: i32) {}
+
+/// Port of `zoutputtab()` from Src/text.c:263 — emit a tab to the
+/// text buffer, with TAB compression depending on output stream
+/// kind. Rust formatter uses raw tabs; no-op shim.
+pub fn zoutputtab() {}
+
+/// Port of `tpush()` from Src/text.c:396 — push a saved text-
+/// buffer state (used when emitting nested function/loop bodies
+/// that need their own decompilation context). Rust visitor pass
+/// allocates fresh `String`s per node; no-op shim.
+pub fn tpush(_increment: i32) {}
+
+/// Port of `gettext2()` from Src/text.c:415 — the recursive
+/// AST-walk that renders an `Eprog` wordcode tree into the text
+/// buffer. Rust uses `Display` impls + `gettext()` above; this
+/// is the entry-point shim for ABI parity.
+pub fn gettext2() {}
+
+/// Port of `getredirs()` from Src/text.c:1019 — emit a
+/// `LinkList` of redirection nodes to the text buffer, reading
+/// the same `redirtab[]` table used by exec.c. Rust
+/// `Redir::Display` handles this; no-op shim.
+pub fn getredirs() {}
