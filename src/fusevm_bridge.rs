@@ -6628,7 +6628,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     if name.ends_with(']') {
                         let arr_name = &name[..lb];
                         let key = &name[lb + 1..name.len() - 1];
-                        let element_set = with_executor(|exec| {
+                        let direct_set = with_executor(|exec| {
                             // Numeric index: 1-based, must be in range.
                             if let Ok(n) = key.parse::<i64>() {
                                 let len = exec
@@ -6637,19 +6637,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                     .map(|a| a.len() as i64)
                                     .unwrap_or(0);
                                 if n > 0 && n <= len {
-                                    return true;
+                                    return Some(true);
                                 }
                                 if n < 0 {
                                     let resolved = len + n;
-                                    return resolved >= 0;
+                                    return Some(resolved >= 0);
                                 }
-                                return false;
+                                return Some(false);
                             }
-                            // Assoc key — direct lookup.
                             if let Some(map) = exec.assoc_arrays.get(arr_name) {
-                                return map.contains_key(key);
+                                return Some(map.contains_key(key));
                             }
-                            // (r)PAT / (R)PAT — set iff any element matches.
                             if let Some(arr) = exec.arrays.get(arr_name) {
                                 let pat = if let Some(p) = key
                                     .strip_prefix("(r)")
@@ -6659,11 +6657,26 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 } else {
                                     key
                                 };
-                                return arr.iter().any(|el| {
+                                return Some(arr.iter().any(|el| {
                                     crate::exec::ShellExecutor::glob_match_static(el, pat)
-                                });
+                                }));
                             }
-                            false
+                            None
+                        });
+                        // Magic-assoc fallback (commands, aliases,
+                        // functions, options, etc.) — `${+commands[ls]}`
+                        // walks PATH to answer "is ls a command". Direct
+                        // port of zsh's getindex routing through the
+                        // special-parameter getfn (Src/params.c
+                        // SPECIAL_PARAMS) when the named assoc isn't
+                        // user-declared. Re-uses the same magic_assoc_lookup
+                        // dispatcher BUILTIN_ARRAY_INDEX consults; called
+                        // outside the with_executor closure so the lookup
+                        // itself can re-enter the executor lock safely.
+                        let element_set = direct_set.unwrap_or_else(|| {
+                            magic_assoc_lookup(arr_name, key)
+                                .map(|v| !v.to_str().is_empty())
+                                .unwrap_or(false)
                         });
                         return fusevm::Value::str(if element_set { "1" } else { "0" });
                     }
