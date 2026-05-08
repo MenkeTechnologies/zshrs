@@ -429,8 +429,16 @@ pub fn new<'a>(input: &'a str) -> MathState<'a> {
         c.is_ascii_alphanumeric() || c == '_'
     }
 
-    /// Lex a numeric constant
-    pub(crate) fn lexconstant(s: &mut MathState<'_>) -> MathTok {
+/// Port of `lexconstant()` from `Src/math.c:462`.
+///
+/// Lex a numeric constant — decimal/hex/binary/octal integer or
+/// floating-point literal. Sets `s.yyval` and returns
+/// `MathTok::Num`. Recognises `0x`/`0b` prefixes, base-prefix
+/// (`16#FF`), trailing-dot float, scientific notation, and zsh's
+/// underscore digit-grouping. Mirrors C's `zstrtol_underscore()`
+/// for greedy base parsing (consume valid digits only, leave the
+/// rest as the next token).
+pub(crate) fn lexconstant(s: &mut MathState<'_>) -> MathTok {
         let _start = s.pos;
         let mut is_neg = false;
 
@@ -676,8 +684,15 @@ pub fn new<'a>(input: &'a str) -> MathState<'a> {
         MathTok::Num
     }
 
-    /// Main lexer
-    pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
+/// Port of `zzlex()` from `Src/math.c:617`.
+///
+/// Main math-expression lexer — returns the next token, advancing
+/// `s.pos` and updating `s.yyval` / `s.yylval` as side-effects.
+/// Handles all operators, ident lookahead for `Func` vs `Id`,
+/// `[base]value` / `[#base]EXPR` output-radix prefixes, char
+/// constants (`#x`, `##varname`), and dispatches numeric literals
+/// to `lexconstant()`.
+pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
         s.yyval = MathNum::Integer(0);
 
         loop {
@@ -1065,22 +1080,34 @@ pub fn new<'a>(input: &'a str) -> MathState<'a> {
         }
     }
 
-    pub fn push(s: &mut MathState<'_>, val: MathNum, lval: Option<String>) {
-        s.stack.push(MathValue { val, lval });
-    }
+/// Port of `push()` from `Src/math.c:916`.
+///
+/// Push a value onto the evaluator's operand stack, with the
+/// optional lvalue name (set when the value came from a variable
+/// reference; needed for `++`/`--`/assignment-op write-back).
+pub fn push(s: &mut MathState<'_>, val: MathNum, lval: Option<String>) {
+    s.stack.push(MathValue { val, lval });
+}
 
-    pub fn pop(s: &mut MathState<'_>) -> MathNum {
-        if let Some(mv) = s.stack.pop() {
-            if matches!(mv.val, MathNum::Unset) {
-                if let Some(ref name) = mv.lval {
-                    return getmathparam(s, name);
-                }
+/// Port of `pop()` from `Src/math.c:931`.
+///
+/// Pop the top operand from the stack, resolving any deferred
+/// variable read (`MathNum::Unset` + lval set). The C source
+/// passes a `noget` flag to skip the resolution; the Rust port
+/// always resolves since callers that want the raw lvalue use
+/// `pop_with_lval` instead.
+pub fn pop(s: &mut MathState<'_>) -> MathNum {
+    if let Some(mv) = s.stack.pop() {
+        if matches!(mv.val, MathNum::Unset) {
+            if let Some(ref name) = mv.lval {
+                return getmathparam(s, name);
             }
-            mv.val
-        } else {
-            s.error = Some("stack underflow".to_string());
-            MathNum::Integer(0)
         }
+        mv.val
+    } else {
+        s.error = Some("stack underflow".to_string());
+        MathNum::Integer(0)
+    }
     }
 
     pub(crate) fn pop_with_lval(s: &mut MathState<'_>) -> MathValue {
@@ -1096,8 +1123,16 @@ pub fn new<'a>(input: &'a str) -> MathState<'a> {
         mv.val
     }
 
-    pub fn getmathparam(s: &MathState<'_>, name: &str) -> MathNum {
-        // Strip array subscript if present
+/// Port of `getmathparam()` from `Src/math.c:337`.
+///
+/// Look up a parameter by name from inside math context. zsh
+/// auto-typesets a missing-but-referenced name (its mathparam
+/// flag), but the Rust port keeps the variables map separate from
+/// the param table so a miss returns `Integer(0)` and skips the
+/// type-coercion. Indirect-string mode (`a="3+2"; $((a))`) is
+/// handled by recursively evaluating the string value.
+pub fn getmathparam(s: &MathState<'_>, name: &str) -> MathNum {
+    // Strip array subscript if present
         let base_name = if let Some(bracket) = name.find('[') {
             &name[..bracket]
         } else {
@@ -1126,18 +1161,31 @@ pub fn new<'a>(input: &'a str) -> MathState<'a> {
         MathNum::Integer(0)
     }
 
-    pub fn setmathvar(s: &mut MathState<'_>, name: &str, val: MathNum) -> MathNum {
-        let base_name = if let Some(bracket) = name.find('[') {
-            &name[..bracket]
-        } else {
-            name
-        };
-        s.variables.insert(base_name.to_string(), val);
-        val
-    }
+/// Port of `setmathvar()` from `Src/math.c:972`.
+///
+/// Write `val` to the named parameter from inside math context.
+/// Subscripted writes (`a[i] = …`) are pre-handled by the
+/// SubscriptArith free fns higher up the call chain; this stub
+/// only handles the scalar case. Returns the stored value so
+/// `op` can leave it on the stack.
+pub fn setmathvar(s: &mut MathState<'_>, name: &str, val: MathNum) -> MathNum {
+    let base_name = if let Some(bracket) = name.find('[') {
+        &name[..bracket]
+    } else {
+        name
+    };
+    s.variables.insert(base_name.to_string(), val);
+    val
+}
 
-    /// Execute binary/unary operator
-    pub(crate) fn op(s: &mut MathState<'_>, what: MathTok) {
+/// Port of `op()` from `Src/math.c:1154`.
+///
+/// Apply a binary or unary operator to the operand stack. Pops
+/// 1-2 values, applies the operation (with type coercion), and
+/// pushes the result. Handles assignment (`OP_E2*` flag) by
+/// writing through `setmathvar` and pushing the new value back
+/// with the same lvalue so chained assigns work.
+pub(crate) fn op(s: &mut MathState<'_>, what: MathTok) {
         if s.error.is_some() {
             return;
         }
@@ -1475,8 +1523,13 @@ pub fn new<'a>(input: &'a str) -> MathState<'a> {
         }
     }
 
-    /// Short-circuit boolean handling
-    pub(crate) fn bop(s: &mut MathState<'_>, tk: MathTok) {
+/// Port of `bop()` from `Src/math.c:1454`.
+///
+/// Short-circuit boolean prologue. Inspects (without popping) the
+/// top of stack and bumps `s.noeval` for the parse-only side of
+/// `&&` / `||` / their assignment forms. The matching decrement
+/// happens after `mathparse` recurses for the RHS.
+pub(crate) fn bop(s: &mut MathState<'_>, tk: MathTok) {
         if s.stack.is_empty() {
             return;
         }
@@ -1507,8 +1560,17 @@ pub fn new<'a>(input: &'a str) -> MathState<'a> {
         s.prec[MathTok::Comma as usize] + 1
     }
 
-    pub fn checkunary(s: &mut MathState<'_>) {
-        // Direct port of zsh math.c checkunary() (line 1548).
+/// Port of `checkunary()` from `Src/math.c:1548`.
+///
+/// Two roles. (1) Validate that the just-lexed token (`s.mtok`)
+/// matches the parser's expectation: an operand was wanted but an
+/// operator (`OP_*` flags) showed up, or vice versa. Mismatch
+/// emits zsh's `bad math expression: <kind> expected at <ctx>`
+/// with `<kind>` being `operator` or `operand` and `<ctx>` taken
+/// from the input pointer at the start of the bad token. (2)
+/// Update `s.unary` for the next iteration based on `OP_OPF`.
+pub fn checkunary(s: &mut MathState<'_>) {
+    // Direct port of zsh math.c checkunary() (line 1548).
         // Two roles:
         //   1. Validate that the just-lexed token (`s.mtok`)
         //      matches the parser's expectation (operator vs
