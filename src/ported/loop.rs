@@ -172,28 +172,6 @@ pub fn selectlist(items: &[String], prompt: &str, columns: usize) -> String {
     output
 }
 
-/// Parse a `select` reply.
-/// Port of the input-parsing block of `execselect()` from
-/// Src/loop.c:217 — accepts a 1-based numeric index that maps onto
-/// the original word list. Empty / out-of-range / non-numeric
-/// replies return `None`, matching the C source's "redisplay menu"
-/// fallback.
-pub fn select_parse_reply(reply: &str, items: &[String]) -> Option<String> {
-    let reply = reply.trim();
-    if reply.is_empty() {
-        return None;
-    }
-
-    // Try as number
-    if let Ok(n) = reply.parse::<usize>() {
-        if n >= 1 && n <= items.len() {
-            return Some(items[n - 1].clone());
-        }
-    }
-
-    None
-}
-
 /// `for` loop variable iteration helper.
 /// Port of the word-list walk inside `execfor()` (Src/loop.c:50)
 /// plus the integer-range walk inside `execfor`'s C-style branch.
@@ -354,16 +332,6 @@ mod tests {
         let iter = ForIterator::from_range(1, 5, 1);
         let items: Vec<String> = iter.collect();
         assert_eq!(items, vec!["1", "2", "3", "4", "5"]);
-    }
-
-    #[test]
-    fn test_select_parse() {
-        let items = vec!["apple".into(), "banana".into(), "cherry".into()];
-        assert_eq!(select_parse_reply("1", &items), Some("apple".to_string()));
-        assert_eq!(select_parse_reply("3", &items), Some("cherry".to_string()));
-        assert_eq!(select_parse_reply("0", &items), None);
-        assert_eq!(select_parse_reply("4", &items), None);
-        assert_eq!(select_parse_reply("", &items), None);
     }
 
     #[test]

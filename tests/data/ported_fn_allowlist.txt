@@ -134,7 +134,6 @@ pcre_compile
 pcre_match
 pcre_study
 scan_directory
-select_parse_reply
 set_file_contents
 shell_word_end_after
 shell_word_start_before
