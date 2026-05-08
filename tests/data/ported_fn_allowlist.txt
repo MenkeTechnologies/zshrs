@@ -220,3 +220,26 @@ top_prec
 #     reach for.
 imeta_byte
 unmetafy_dup
+iwsep_byte
+
+# utils.rs zwarn/zerrnam family — module-static get/setters for the
+# C globals scriptname / argzero / errflag / noerrs / locallevel /
+# lineno (declared in Src/init.c, populated by the parser/source/fn
+# entry paths). Rust port wraps each in OnceLock<Mutex<…>> with these
+# helpers; C dereferences the globals directly.
+scriptname_lock
+argzero_lock
+errflag_lock
+noerrs_lock
+locallevel_lock
+lineno_lock
+shinstdin_lock
+set_scriptname
+set_argzero
+set_errflag
+set_noerrs
+set_locallevel
+set_lineno
+set_shinstdin
+zwarning
+errflag

@@ -19,50 +19,291 @@ pub static mut SCRIPT_FILENAME: Option<String> = None;
 /// Port of `zerr()` from Src/utils.c:172. C source sets `errflag`
 /// after emitting `<prefix>: <msg>\n` so the running script aborts
 /// at the next safe point. The Rust port currently just prints —
-/// errflag plumbing isn't wired through every caller yet.
-pub fn zerr(msg: &str) {
-    eprintln!("zsh: {}", msg);
+// =====================================================================
+// Module-static state for the zerr/zwarn/zerrnam/zwarnnam family —
+// port of the file-statics in Src/init.c + Src/exec.c that
+// `zwarning()` (utils.c:142) reads to build the error prefix.
+// =====================================================================
+
+/// Port of `char *scriptname` from `Src/init.c`. Set when `source`
+/// is reading a script; cleared on return. Used by `zwarning()`
+/// (utils.c:147) as the diagnostic prefix.
+static SCRIPTNAME: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+    std::sync::OnceLock::new();
+
+/// Port of `char *argzero` from `Src/init.c`. The shell's argv[0].
+/// Used by `zwarning()` (utils.c:147) as the fallback diagnostic
+/// prefix when scriptname is unset.
+static ARGZERO: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+    std::sync::OnceLock::new();
+
+/// Port of `int errflag` from `Src/init.c`. Tracks whether an
+/// error has been raised (`ERRFLAG_ERROR = 1`) or break/return
+/// is in flight (`ERRFLAG_INT = 2`).
+static ERRFLAG: std::sync::OnceLock<std::sync::Mutex<i32>> = std::sync::OnceLock::new();
+
+/// Port of `int noerrs` from `Src/init.c`. Counter — when `> 0`,
+/// suppresses error printing. `noerrs >= 2` also suppresses the
+/// `errflag` set inside `zerr`/`zerrnam`.
+static NOERRS: std::sync::OnceLock<std::sync::Mutex<i32>> = std::sync::OnceLock::new();
+
+/// Port of `int locallevel` from `Src/init.c`. Function-call depth
+/// (0 = top-level, 1+ = inside a fn). `zwarning()` checks this in
+/// the script-prefix path (utils.c:150).
+static LOCALLEVEL: std::sync::OnceLock<std::sync::Mutex<i32>> = std::sync::OnceLock::new();
+
+/// Port of `int lineno` from `Src/init.c`. Current line number;
+/// `zerrmsg()` includes it in the diagnostic when locallevel > 0
+/// or shinstdin is unset (utils.c:301).
+static LINENO: std::sync::OnceLock<std::sync::Mutex<i32>> = std::sync::OnceLock::new();
+
+/// Port of the `isset(SHINSTDIN)` check from utils.c:150. C reads
+/// the SHINSTDIN option directly; the Rust port caches it here so
+/// callers don't pull in the whole option-table for every error.
+static SHINSTDIN_OPT: std::sync::OnceLock<std::sync::Mutex<bool>> = std::sync::OnceLock::new();
+
+/// `ERRFLAG_ERROR` from `Src/zsh.h`. Set on `zerr`/`zerrnam` to
+/// signal a fatal error has occurred.
+pub const ERRFLAG_ERROR: i32 = 1;
+
+// WARNING: NOT IN UTILS.C — Rust-only OnceLock get-or-init
+// helpers. C dereferences each global directly.
+fn scriptname_lock() -> &'static std::sync::Mutex<Option<String>> {
+    SCRIPTNAME.get_or_init(|| std::sync::Mutex::new(None))
+}
+// WARNING: NOT IN UTILS.C — see scriptname_lock above.
+fn argzero_lock() -> &'static std::sync::Mutex<Option<String>> {
+    ARGZERO.get_or_init(|| std::sync::Mutex::new(None))
+}
+// WARNING: NOT IN UTILS.C — see scriptname_lock above.
+fn errflag_lock() -> &'static std::sync::Mutex<i32> {
+    ERRFLAG.get_or_init(|| std::sync::Mutex::new(0))
+}
+// WARNING: NOT IN UTILS.C — see scriptname_lock above.
+fn noerrs_lock() -> &'static std::sync::Mutex<i32> {
+    NOERRS.get_or_init(|| std::sync::Mutex::new(0))
+}
+// WARNING: NOT IN UTILS.C — see scriptname_lock above.
+fn locallevel_lock() -> &'static std::sync::Mutex<i32> {
+    LOCALLEVEL.get_or_init(|| std::sync::Mutex::new(0))
+}
+// WARNING: NOT IN UTILS.C — see scriptname_lock above.
+fn lineno_lock() -> &'static std::sync::Mutex<i32> {
+    LINENO.get_or_init(|| std::sync::Mutex::new(0))
+}
+// WARNING: NOT IN UTILS.C — Rust-only cache for the SHINSTDIN
+// option flag so error-emission doesn't pull in the option-table.
+fn shinstdin_lock() -> &'static std::sync::Mutex<bool> {
+    SHINSTDIN_OPT.get_or_init(|| std::sync::Mutex::new(false))
 }
 
-/// Print a fatal error tagged with a command name.
-/// Port of `zerrnam()` from Src/utils.c:189. Same `<cmd>: <msg>`
-/// shape as `zwarnnam` but semantically marks the failure as
-/// fatal (sets errflag in C).
-pub fn zerrnam(cmd: &str, msg: &str) {
-    eprintln!("{}: {}", cmd, msg);
+/// Setter for `scriptname`. Called from `bin_dot` / `source`
+/// when entering a script.
+pub fn set_scriptname(name: Option<String>) {
+    *scriptname_lock().lock().unwrap() = name;
 }
 
-/// Print a warning to stderr.
-/// Port of `zwarn()` from Src/utils.c:213. C source emits
-/// `<prefix>: <msg>\n` where prefix is `scriptname`, `argzero`, or
-/// "zsh" depending on context (see `zwarning()` Src/utils.c:142).
-/// No "warning:" tag — bare "zsh: msg" matches both interactive and
-/// scripted output.
-pub fn zwarn(msg: &str) {
-    eprintln!("zsh: {}", msg);
+/// Setter for `argzero`. Called once at shell init from `parseargs`.
+pub fn set_argzero(name: Option<String>) {
+    *argzero_lock().lock().unwrap() = name;
 }
 
-/// Print a warning tagged with a command name.
-/// Port of `zwarnnam()` from Src/utils.c:230. C source emits
-/// `<prefix>: <cmd>: <msg>\n` where prefix is `scriptname` or
-/// `argzero` for scripts/functions, omitted for interactive use
-/// (`unset(SHINSTDIN) || locallevel` test in zwarning() at
-/// Src/utils.c:150). The Rust port mirrors the interactive shape
-/// (`<cmd>: <msg>`) — script-name prefix would require carrying
-/// scriptname/argzero through the executor.
-pub fn zwarnnam(cmd: &str, msg: &str) {
-    eprintln!("{}: {}", cmd, msg);
+/// Read `errflag`. Used by callers that need to short-circuit on
+/// error (e.g. parser loops).
+pub fn errflag() -> i32 {
+    *errflag_lock().lock().unwrap()
 }
 
-/// Print formatted error with optional errno
-/// Print an errno-aware diagnostic.
-/// Port of `zerrmsg()` from Src/utils.c — wraps `strerror(3)`.
-pub fn zerrmsg(msg: &str, errno: Option<i32>) {
-    if let Some(e) = errno {
-        let errmsg = std::io::Error::from_raw_os_error(e);
-        eprintln!("zsh: {}: {}", msg, errmsg);
+/// Set `errflag`. Called by `zerr`/`zerrnam` to signal fatal errors.
+pub fn set_errflag(v: i32) {
+    *errflag_lock().lock().unwrap() = v;
+}
+
+/// Setter for `noerrs`. Increment to suppress error output;
+/// decrement to restore.
+pub fn set_noerrs(v: i32) {
+    *noerrs_lock().lock().unwrap() = v;
+}
+
+/// Setter for `locallevel`. Called by function-call entry/exit.
+pub fn set_locallevel(v: i32) {
+    *locallevel_lock().lock().unwrap() = v;
+}
+
+/// Setter for `lineno`. Called by the parser as it advances.
+pub fn set_lineno(v: i32) {
+    *lineno_lock().lock().unwrap() = v;
+}
+
+/// Setter for the cached SHINSTDIN flag. Called by the option
+/// machinery whenever `setopt shinstdin` / `unsetopt shinstdin`
+/// fires.
+pub fn set_shinstdin(v: bool) {
+    *shinstdin_lock().lock().unwrap() = v;
+}
+
+// =====================================================================
+// Port of `zwarning()` from `Src/utils.c:142`.
+// =====================================================================
+
+/// Port of `zwarning()` from `Src/utils.c:142`.
+///
+/// Internal helper that builds the diagnostic prefix and emits it +
+/// the formatted message to stderr. Direct C body translation:
+///
+/// ```c
+/// if (isatty(2)) zleentry(ZLE_CMD_TRASH);
+/// char *prefix = scriptname ? scriptname : (argzero ? argzero : "");
+/// if (cmd) {
+///     if (unset(SHINSTDIN) || locallevel) {
+///         nicezputs(prefix, stderr);
+///         fputc(':', stderr);
+///     }
+///     nicezputs(cmd, stderr);
+///     fputc(':', stderr);
+/// } else {
+///     nicezputs((isset(SHINSTDIN) && !locallevel) ? "zsh" : prefix, stderr);
+///     fputc(':', stderr);
+/// }
+/// zerrmsg(stderr, fmt, ap);
+/// ```
+fn zwarning(cmd: Option<&str>, msg: &str) {
+    use std::io::Write;
+    // C: if (isatty(2)) zleentry(ZLE_CMD_TRASH);
+    // ZLE trash-line is pending the zle_main.c port; skip without
+    // affecting the error-emission path.
+    let _ = unsafe { libc::isatty(2) };
+    let scriptname = scriptname_lock().lock().unwrap().clone();
+    let argzero = argzero_lock().lock().unwrap().clone();
+    let locallevel = *locallevel_lock().lock().unwrap();
+    let shinstdin = *shinstdin_lock().lock().unwrap();
+    let prefix: String = scriptname
+        .or(argzero)
+        .unwrap_or_default();
+    let stderr_handle = std::io::stderr();
+    let mut stderr_lock = stderr_handle.lock();
+    if let Some(cmd) = cmd {
+        // C: if (unset(SHINSTDIN) || locallevel) — emit prefix.
+        if !shinstdin || locallevel != 0 {
+            let _ = stderr_lock.write_all(nicezputs(&prefix).as_bytes());
+            let _ = stderr_lock.write_all(b":");
+        }
+        let _ = stderr_lock.write_all(nicezputs(cmd).as_bytes());
+        let _ = stderr_lock.write_all(b":");
     } else {
-        eprintln!("zsh: {}", msg);
+        // C: nicezputs((isset(SHINSTDIN) && !locallevel) ? "zsh" : prefix, ...);
+        let to_emit = if shinstdin && locallevel == 0 {
+            "zsh"
+        } else {
+            prefix.as_str()
+        };
+        let _ = stderr_lock.write_all(nicezputs(to_emit).as_bytes());
+        let _ = stderr_lock.write_all(b":");
+    }
+    // C: zerrmsg(stderr, fmt, ap);  — emit formatted message + \n.
+    let _ = stderr_lock.write_all(b" ");
+    let _ = stderr_lock.write_all(msg.as_bytes());
+    let _ = stderr_lock.write_all(b"\n");
+    let _ = stderr_lock.flush();
+}
+
+// =====================================================================
+// Port of `zerr` / `zerrnam` / `zwarn` / `zwarnnam` from utils.c:173
+// onward. Each is a thin wrapper: check errflag/noerrs guards, set
+// `ERRFLAG_ERROR` on the fatal variants, call `zwarning`.
+// =====================================================================
+
+/// Port of `zerr()` from `Src/utils.c:173`.
+///
+/// ```c
+/// if (errflag || noerrs) {
+///     if (noerrs < 2) errflag |= ERRFLAG_ERROR;
+///     return;
+/// }
+/// errflag |= ERRFLAG_ERROR;
+/// zwarning(NULL, fmt, ap);
+/// ```
+pub fn zerr(msg: &str) {
+    let mut flag = errflag_lock().lock().unwrap();
+    let noerrs = *noerrs_lock().lock().unwrap();
+    if *flag != 0 || noerrs != 0 {
+        if noerrs < 2 {
+            *flag |= ERRFLAG_ERROR;
+        }
+        return;
+    }
+    *flag |= ERRFLAG_ERROR;
+    drop(flag);
+    zwarning(None, msg);
+}
+
+/// Port of `zerrnam()` from `Src/utils.c:194`.
+///
+/// ```c
+/// if (errflag || noerrs) return;
+/// errflag |= ERRFLAG_ERROR;
+/// zwarning(cmd, fmt, ap);
+/// ```
+pub fn zerrnam(cmd: &str, msg: &str) {
+    let mut flag = errflag_lock().lock().unwrap();
+    let noerrs = *noerrs_lock().lock().unwrap();
+    if *flag != 0 || noerrs != 0 {
+        return;
+    }
+    *flag |= ERRFLAG_ERROR;
+    drop(flag);
+    zwarning(Some(cmd), msg);
+}
+
+/// Port of `zwarn()` from `Src/utils.c:214`.
+///
+/// ```c
+/// if (errflag || noerrs) return;
+/// zwarning(NULL, fmt, ap);
+/// ```
+pub fn zwarn(msg: &str) {
+    let flag = *errflag_lock().lock().unwrap();
+    let noerrs = *noerrs_lock().lock().unwrap();
+    if flag != 0 || noerrs != 0 {
+        return;
+    }
+    zwarning(None, msg);
+}
+
+/// Port of `zwarnnam()` from `Src/utils.c:231`.
+///
+/// ```c
+/// if (errflag || noerrs) return;
+/// zwarning(cmd, fmt, ap);
+/// ```
+pub fn zwarnnam(cmd: &str, msg: &str) {
+    let flag = *errflag_lock().lock().unwrap();
+    let noerrs = *noerrs_lock().lock().unwrap();
+    if flag != 0 || noerrs != 0 {
+        return;
+    }
+    zwarning(Some(cmd), msg);
+}
+
+/// Port of `zerrmsg()` from `Src/utils.c:289`.
+///
+/// C body emits the formatted message + (when locallevel > 0 or
+/// SHINSTDIN unset) the line number prefix + "\n". The Rust port
+/// is invoked indirectly through `zwarning` — direct callers pass
+/// pre-formatted strings.
+pub fn zerrmsg(msg: &str, errno: Option<i32>) {
+    let lineno = *lineno_lock().lock().unwrap();
+    let shinstdin = *shinstdin_lock().lock().unwrap();
+    let locallevel = *locallevel_lock().lock().unwrap();
+    // C: if ((unset(SHINSTDIN) || locallevel) && lineno) — prefix
+    // with the line number.
+    if (!shinstdin || locallevel != 0) && lineno != 0 {
+        eprint!("{}: ", lineno);
+    }
+    if let Some(e) = errno {
+        eprintln!("{}: {}", msg, std::io::Error::from_raw_os_error(e));
+    } else {
+        eprintln!("{}", msg);
     }
 }
 
@@ -721,45 +962,44 @@ pub fn arrlen<T>(arr: &[T]) -> usize {
     arr.len()
 }
 
-/// Duplicate string prefix
+/// Port of `dupstrpfx()` from `Src/utils.c` (~line 1230 — duplicate
+/// the first `len` BYTES of `s` into a fresh heap string). C body
+/// is `memcpy(zhalloc(len+1), s, len); ret[len] = 0;`. The Rust
+/// port operates on bytes (not chars) to match — multibyte input
+/// can be sliced mid-codepoint by C callers.
 pub fn dupstrpfx(s: &str, len: usize) -> String {
-    s.chars().take(len).collect()
+    let bytes = s.as_bytes();
+    let take = len.min(bytes.len());
+    String::from_utf8_lossy(&bytes[..take]).into_owned()
 }
 
-const META_CHAR: char = '\u{83}';
-
-/// Unmetafy string (from utils.c unmeta lines 4930-5051)
+/// Port of `unmeta()` from `Src/utils.c:4994`.
+///
+/// Convert a zsh internal (metafied) string to a system-call-safe
+/// form (e.g. for passing to `open(2)`). C uses a static buffer
+/// when allocation is needed; Rust port allocates fresh via the
+/// `unmetafy` in-place port (`unmetafy_dup` wrapper).
+///
+/// ```c
+/// /* C body shape:
+///  * meta = 0; for (t = file_name; *t; t++) if (*t == Meta) meta = 1;
+///  * if (!meta) return (char *) file_name;        // no copy
+///  * for (t = file_name, p = fn; *t; p++)
+///  *     if ((*p = *t++) == Meta && *t)
+///  *         *p = *t++ ^ 32;
+///  */
+/// ```
 pub fn unmeta(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        if chars[i] == META_CHAR && i + 1 < chars.len() {
-            let c = (chars[i + 1] as u8) ^ 32;
-            result.push(c as char);
-            i += 2;
-        } else {
-            result.push(chars[i]);
-            i += 1;
-        }
-    }
-    result
+    unmetafy_dup(s)
 }
 
-/// Metafy string (from utils.c pastebuf)
-pub fn pastebuf(s: &str) -> String {
-    let mut result = String::with_capacity(s.len() * 2);
-    for c in s.chars() {
-        let b = c as u32;
-        if b < 32 || (0x83..=0x9b).contains(&b) {
-            result.push(META_CHAR);
-            result.push(char::from_u32((c as u8 ^ 32) as u32).unwrap_or(c));
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
+// pastebuf() DELETED — was a misplaced fn. The real `pastebuf()`
+// lives in `Src/Zle/zle_misc.c:558` (a ZLE clipboard helper that
+// pastes a Cutbuffer into the line-edit buffer). It has nothing to
+// do with metafication, despite this file's prior body which
+// reimplemented half of `metafy`. The real metafy lives below at
+// `pub fn metafy()` (port of utils.c:4856).
+
 
 /// Unmetafied string length (from utils.c ztrlen lines 5135-5152)
 pub fn ztrlen(s: &str) -> usize {
@@ -768,7 +1008,7 @@ pub fn ztrlen(s: &str) -> usize {
     let mut i = 0;
     while i < chars.len() {
         len += 1;
-        if chars[i] == META_CHAR && i + 1 < chars.len() {
+        if chars[i] as u32 == Meta as u32 && i + 1 < chars.len() {
             i += 2;
         } else {
             i += 1;
@@ -777,9 +1017,50 @@ pub fn ztrlen(s: &str) -> usize {
     len
 }
 
-/// Compare strings with meta handling (from utils.c ztrcmp lines 5106-5130)
+/// Port of `ztrcmp()` from `Src/utils.c:5106`.
+///
+/// Byte-walking compare with lazy Meta resolution. C body skips
+/// matching bytes wholesale, then on the first differing byte
+/// un-meta-fies just that byte and compares. Faster than
+/// `unmeta(s1).cmp(unmeta(s2))` because:
+///   1. No allocation up front,
+///   2. Only the first differing position pays the un-meta cost.
+///
+/// ```c
+/// while(*s1 && *s1 == *s2) { s1++; s2++; }
+/// if (!(c1 = *s1)) c1 = -1;
+/// else if (c1 == Meta) c1 = *++s1 ^ 32;
+/// if (!(c2 = *s2)) c2 = -1;
+/// else if (c2 == Meta) c2 = *++s2 ^ 32;
+/// return c1 - c2;
+/// ```
 pub fn ztrcmp(s1: &str, s2: &str) -> std::cmp::Ordering {
-    unmeta(s1).cmp(&unmeta(s2))
+    let b1 = s1.as_bytes();
+    let b2 = s2.as_bytes();
+    let mut i1 = 0;
+    let mut i2 = 0;
+    // Skip the matching prefix.
+    while i1 < b1.len() && i2 < b2.len() && b1[i1] == b2[i2] {
+        i1 += 1;
+        i2 += 1;
+    }
+    // Resolve c1: -1 for end-of-string, else the next byte
+    // (un-meta-fied if it's a Meta marker).
+    let c1: i32 = if i1 >= b1.len() {
+        -1
+    } else if b1[i1] == Meta && i1 + 1 < b1.len() {
+        (b1[i1 + 1] ^ 32) as i32
+    } else {
+        b1[i1] as i32
+    };
+    let c2: i32 = if i2 >= b2.len() {
+        -1
+    } else if b2[i2] == Meta && i2 + 1 < b2.len() {
+        (b2[i2 + 1] ^ 32) as i32
+    } else {
+        b2[i2] as i32
+    };
+    c1.cmp(&c2)
 }
 
 /// String pointer subtraction with meta handling (from utils.c ztrsub)
@@ -854,19 +1135,69 @@ pub fn colonsplit(s: &str, uniq: bool) -> Vec<String> {
     result
 }
 
-/// Skip whitespace separators (from utils.c skipwsep)
-pub fn skipwsep(s: &str) -> &str {
-    s.trim_start()
+/// Port of `skipwsep()` from `Src/utils.c:3680`.
+///
+/// Skip whitespace separators (`iwsep`-true bytes) at the start of
+/// `s`. Returns `(remaining_str, count)` — `count` is the number of
+/// bytes / chars skipped. C body:
+///
+/// ```c
+/// while (*t && iwsep(*t == Meta ? t[1] ^ 32 : *t)) {
+///     if (*t == Meta) t++;
+///     t++;
+///     i++;
+/// }
+/// ```
+///
+/// The C version honours Meta-encoded bytes (`Meta` followed by
+/// `^32`-XOR'd byte). Rust port mirrors that byte-by-byte.
+pub fn skipwsep(s: &str) -> (&str, usize) {
+    let bytes = s.as_bytes();
+    let mut i: usize = 0;
+    let mut count: usize = 0;
+    while i < bytes.len() {
+        let b = if bytes[i] == Meta && i + 1 < bytes.len() {
+            bytes[i + 1] ^ 32
+        } else {
+            bytes[i]
+        };
+        if !iwsep_byte(b) {
+            break;
+        }
+        if bytes[i] == Meta {
+            i += 1;
+        }
+        i += 1;
+        count += 1;
+    }
+    (&s[i..], count)
 }
 
-/// Check if character is a whitespace separator
+/// Port of `iwsep()` macro from `Src/zsh.h`.
+///
+/// `iwsep(c) == c == ' ' || c == '\t' || c == '\n'` — true for
+/// space, tab, or newline. The original Rust port omitted `\n`
+/// which is wrong: `wordcount`/`skipwsep`/`spacesplit` all rely on
+/// `\n` being a separator for lines.
 pub fn iwsep(c: char) -> bool {
-    c == ' ' || c == '\t'
+    c == ' ' || c == '\t' || c == '\n'
 }
 
-/// Check if character needs metafication
+/// Byte-form of `iwsep` for callers that work on raw bytes (e.g.
+/// `skipwsep` walking a metafied buffer).
+#[inline]
+pub fn iwsep_byte(b: u8) -> bool {
+    b == b' ' || b == b'\t' || b == b'\n'
+}
+
+/// Port of the `imeta()` macro from `Src/zsh.h`.
+///
+/// `#define imeta(c) ((c) >= Meta)` — true for any byte the
+/// metafy/unmetafy machinery treats as needing the Meta-escape.
+/// The previous Rust port had a wrong predicate (control bytes +
+/// 0x7f + Meta itself); the C macro is just `>= Meta`.
 pub fn imeta(c: char) -> bool {
-    (c as u32) < 32 || c == '\x7f' || c == '\u{83}'
+    (c as u32) >= Meta as u32
 }
 
 /// Format time struct (from utils.c ztrftime)
@@ -2131,6 +2462,7 @@ pub fn mindist(dir: &str, name: &str) -> Option<(String, usize)> {
 /// the byte that follows is XOR'd with 32. `unmetafy` (and the
 /// `Meta`-aware loops throughout zsh) walk the result byte-by-byte
 /// and reverse the encoding.
+#[allow(non_upper_case_globals)]
 pub const Meta: u8 = 0x83;
 
 /// Port of `imeta()` macro from `Src/zsh.h`. Returns true for any
@@ -2414,6 +2746,95 @@ mod tests {
     }
 
     #[test]
+    fn test_dupstrpfx_byte_counted() {
+        // 5 bytes of ASCII = 5 chars, identical.
+        assert_eq!(dupstrpfx("hello", 3), "hel");
+        // Beyond length clamps.
+        assert_eq!(dupstrpfx("hi", 10), "hi");
+        // Empty.
+        assert_eq!(dupstrpfx("anything", 0), "");
+    }
+
+    #[test]
+    fn test_metafy_passes_through_ascii() {
+        // ASCII bytes (< 0x83) stay untouched.
+        assert_eq!(metafy("hello"), "hello");
+        assert_eq!(metafy(""), "");
+    }
+
+    #[test]
+    fn test_metafy_imeta_predicate_matches_c_macro() {
+        // The C macro is `#define imeta(c) ((c) >= Meta)` —
+        // verify the Rust port's predicate matches via imeta_byte.
+        for b in 0u8..0x83 {
+            assert!(!imeta_byte(b), "byte {:#x} should NOT be imeta", b);
+        }
+        for b in 0x83u8..=0xff {
+            assert!(imeta_byte(b), "byte {:#x} should be imeta", b);
+        }
+    }
+
+    #[test]
+    fn test_ztrcmp_meta_aware() {
+        // Two identical metafied strings → Equal.
+        assert_eq!(ztrcmp("foo", "foo"), std::cmp::Ordering::Equal);
+        // "foo" < "foz".
+        assert_eq!(ztrcmp("foo", "foz"), std::cmp::Ordering::Less);
+        // Prefix comparison: shorter < longer.
+        assert_eq!(ztrcmp("foo", "foobar"), std::cmp::Ordering::Less);
+        // Meta-encoded comparison: {0x83, 'a'^32} should compare as 'a'.
+        let s_meta = unsafe { std::str::from_utf8_unchecked(&[0x83, b'a' ^ 32]) };
+        let s_plain = "a";
+        // Meta-encoded "a" should compare equal to plain "a".
+        assert_eq!(ztrcmp(s_meta, s_plain), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn test_skipwsep_skips_runs() {
+        // 3 spaces + 'x' → returns ("x", 3).
+        let (rest, n) = skipwsep("   x");
+        assert_eq!(rest, "x");
+        assert_eq!(n, 3);
+        // No leading whitespace → 0 skipped.
+        let (rest, n) = skipwsep("foo");
+        assert_eq!(rest, "foo");
+        assert_eq!(n, 0);
+        // Mix of space/tab/newline.
+        let (rest, n) = skipwsep(" \t\nbar");
+        assert_eq!(rest, "bar");
+        assert_eq!(n, 3);
+    }
+
+    #[test]
+    fn test_imeta_macro_threshold() {
+        // C `imeta(c) == c >= Meta`. The previous Rust port had
+        // a wrong predicate (control bytes); the C version is just
+        // `>= 0x83`.
+        assert!(!imeta(0x82 as char));
+        assert!(imeta(Meta as char));
+        assert!(imeta(0xff as char));
+        assert!(!imeta(' '));
+        assert!(!imeta('A'));
+    }
+
+    #[test]
+    fn test_unmeta_routes_through_unmetafy() {
+        // unmeta is a thin wrapper for unmetafy_dup. Verify it
+        // works on plain strings.
+        assert_eq!(unmeta("plain"), "plain");
+    }
+
+    #[test]
+    fn test_iwsep_includes_newline() {
+        // The previous port omitted '\n' which broke wordcount on
+        // multi-line input.
+        assert!(iwsep('\n'));
+        assert!(iwsep('\t'));
+        assert!(iwsep(' '));
+        assert!(!iwsep('a'));
+    }
+
+    #[test]
     fn test_mailstat_aggregates_maildir() {
         // Create a temp maildir layout with 2 messages in new/ and 1
         // in cur/, verify the aggregate.
@@ -2544,14 +2965,10 @@ mod tests {
 // Remaining 33 missing utils.c functions
 // ---------------------------------------------------------------------------
 
-/// Warning with va_list formatting (from utils.c zwarning)
-pub fn zwarning(cmd: &str, msg: &str) {
-    if cmd.is_empty() {
-        eprintln!("zsh: {}", msg);
-    } else {
-        eprintln!("{}: {}", cmd, msg);
-    }
-}
+// `zwarning` is defined earlier in this file as the real port of
+// utils.c:142 (private helper invoked by `zerr`/`zerrnam`/`zwarn`/
+// `zwarnnam`). The duplicate stub previously here has been deleted
+// — callers use the four public entry points instead.
 
 /// Plural helper (from utils.c zz_plural_z_alpha) - returns 's' for plural
 pub fn zz_plural_z_alpha() -> &'static str {
@@ -2683,9 +3100,18 @@ pub fn setcbreak() -> bool {
     false
 }
 
-/// Metafy and duplicate string (from utils.c ztrdup_metafy)
+/// Port of `ztrdup_metafy()` from `Src/utils.c:4929`.
+///
+/// ```c
+/// mod_export char *
+/// ztrdup_metafy(const char *s)
+/// {
+///     if (!s) return NULL;
+///     return metafy((char *)s, -1, META_DUP);
+/// }
+/// ```
 pub fn ztrdup_metafy(s: &str) -> String {
-    pastebuf(s)
+    metafy(s)
 }
 
 /// Unmetafy a single character (from utils.c unmeta_one)
@@ -3681,9 +4107,15 @@ pub fn metafy(buf: &str) -> String {
     let bytes = buf.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     for &b in bytes {
-        // C: imeta(b) is true for b in [0x83..=0x9b] OR b == 0.
-        if b == 0 || (0x83..=0x9b).contains(&b) {
-            out.push(0x83); // Meta marker
+        // C: `#define imeta(c) ((c) >= Meta)` from Src/zsh.h —
+        // every byte >= 0x83 needs escaping. The previous
+        // narrow-range check `(0x83..=0x9b)` was a bug: bytes
+        // 0x9c..=0xff (e.g. UTF-8 continuation bytes, high-Latin
+        // characters) escaped C's imeta() but not the Rust
+        // version, which then fed un-escaped bytes downstream
+        // and corrupted Meta-aware loops.
+        if imeta_byte(b) {
+            out.push(Meta);
             out.push(b ^ 32);
         } else {
             out.push(b);
