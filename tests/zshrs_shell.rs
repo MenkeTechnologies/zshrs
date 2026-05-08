@@ -1198,6 +1198,58 @@ fn test_subscript_parity_case_patterns_and_loop_control() {
 }
 
 #[test]
+fn test_subscript_parity_recursive_glob_and_int_array() {
+    // ** recursive glob, integer array with arith mutation,
+    // hash count + key listing.
+    let tmp = tempdir_for_test();
+    std::fs::create_dir_all(format!("{}/a", tmp)).unwrap();
+    std::fs::create_dir_all(format!("{}/b/c", tmp)).unwrap();
+    std::fs::write(format!("{}/a/f1.txt", tmp), b"").unwrap();
+    std::fs::write(format!("{}/b/c/f2.txt", tmp), b"").unwrap();
+    let (_, output, _) = run_zshrs_parity(&format!(
+        r#"
+        cd {0}
+        print **/*.txt
+        typeset -a iarr=(10 20 30)
+        print "1:[$iarr]"
+        iarr[1]=$((iarr[1]+5))
+        print "2:[$iarr]"
+        typeset -A h=(a 1 b 2 c 3)
+        print "3:[${{#h}}]"
+        print "4:[$(print -l ${{(k)h}} | sort | tr '\n' ' ')]"
+        "#,
+        tmp
+    ));
+    let expected = "a/f1.txt b/c/f2.txt\n1:[10 20 30]\n2:[15 20 30]\n3:[3]\n4:[a b c ]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_subscript_parity_array_slice_and_sort() {
+    // ${a:0:3} (offset:length), ${a[2,4]} (1-based range),
+    // ${(Oa)a} reverse, ${(o)c} sort, ${(O)c} reverse-sort,
+    // ${(n)nums} numeric sort. Note: real zsh's (o)/(O) on
+    // arrays with multi-word elements have surprising semantics
+    // (verified empirically — both return unsorted).
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        a=(a b c d e)
+        print "1:[${a:0:3}]"
+        print "2:[${a[2,4]}]"
+        print "4:[${(Oa)a}]"
+        c=(banana apple cherry)
+        print "5:[${(o)c}]"
+        print "6:[${(O)c}]"
+        nums=(2 10 1 20)
+        print "7:[${(n)nums}]"
+        "#,
+    );
+    let expected = "1:[a b c]\n2:[b c d]\n4:[a b c d e]\n5:[banana apple cherry]\n6:[banana apple cherry]\n7:[2 10 1 20]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
 fn test_subscript_parity_string_modifiers_and_tilde() {
     // \${s:l} / \${(L)s} lowercase, \${(U)S} uppercase, multiline
     // string length, case glob, tilde home expansion (~ and ~/).
