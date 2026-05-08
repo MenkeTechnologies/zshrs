@@ -62,7 +62,6 @@ resolve_port
 parse_pattern_flags_full
 extract_numeric_ranges
 replace_numeric_ranges_with_star
-filter_numeric_ranges
 locale_aware_name_cmp
 
 # watch.rs Rust-side utmp/utmpx readers + format helpers — zsh C
