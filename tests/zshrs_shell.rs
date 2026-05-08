@@ -1198,6 +1198,51 @@ fn test_subscript_parity_case_patterns_and_loop_control() {
 }
 
 #[test]
+fn test_subscript_parity_print_v_no_trailing_newline() {
+    // `print -v VAR ...` stores body WITHOUT terminator, regardless
+    // of whether `-n` is given. Verified empirically:
+    //   /bin/zsh -c 'print -v X "hello world"; print "[$X][${#X}]"'
+    //   [hello world][11]
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        print -v X "hello world"
+        print "[$X][${#X}]"
+        print -v Y "foo"
+        print "[$Y][${#Y}]"
+        "#,
+    );
+    assert_eq!(
+        output.trim(),
+        "[hello world][11]\n[foo][3]",
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_subscript_parity_read_into_array() {
+    // `read -A arr` consumes IFS-split tokens from stdin into array.
+    let (_, output, _) = run_zshrs_parity(
+        r#"echo "alpha beta gamma" | { read -A arr; print "[${#arr}] [${arr[1]}] [${arr[3]}]"; }"#,
+    );
+    assert_eq!(output.trim(), "[3] [alpha] [gamma]", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_printf_format_specifiers() {
+    // %d / %s / %.4f / %x / %o / %-10s|%10s| field-width specifiers.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        printf "%.4f\n" 3.14159
+        printf "0x%x\n" 255
+        printf "%o\n" 8
+        printf "%-10s|%10s|\n" left right
+        "#,
+    );
+    let expected = "3.1416\n0xff\n10\nleft      |     right|";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
 fn test_subscript_parity_alias_listing() {
     // alias forms — list, set, and unalias. Empirical against /bin/zsh:
     //   ll='ls -l' / g='grep -i' / run-help=man (zsh built-in default)
