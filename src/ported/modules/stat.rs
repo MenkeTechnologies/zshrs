@@ -393,7 +393,19 @@ impl FileStat {
         if flags.string_format {
             #[cfg(unix)]
             {
-                if let Some(name) = get_groupname(self.gid) {
+                use std::ffi::CStr;
+                let name: Option<String> = unsafe {
+                    let grp = libc::getgrgid(self.gid);
+                    if grp.is_null() {
+                        None
+                    } else {
+                        CStr::from_ptr((*grp).gr_name)
+                            .to_str()
+                            .ok()
+                            .map(|s| s.to_string())
+                    }
+                };
+                if let Some(name) = name {
                     result.push_str(&name);
                 } else {
                     result.push_str(&format!("{}", self.gid));
@@ -486,24 +498,6 @@ fn statuidprint(uid: u32) -> Option<String> {
             None
         } else {
             CStr::from_ptr((*pwd).pw_name)
-                .to_str()
-                .ok()
-                .map(|s| s.to_string())
-        }
-    }
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/stat.c`.
-#[cfg(unix)]
-fn get_groupname(gid: u32) -> Option<String> {
-    use std::ffi::CStr;
-    unsafe {
-        let grp = libc::getgrgid(gid);
-        if grp.is_null() {
-            None
-        } else {
-            CStr::from_ptr((*grp).gr_name)
                 .to_str()
                 .ok()
                 .map(|s| s.to_string())
