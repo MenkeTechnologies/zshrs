@@ -33,7 +33,7 @@ use crate::ported::exec::{
     format_int_in_base, normalize_logical, shell_quote, shell_quote_value,
     VarAttr, VarKind,
 };
-use crate::ported::utils::pretty_io_err;
+use crate::ported::utils::{pretty_io_err, zerr, zerrnam, zwarn, zwarnnam};
 use crate::ported::text::format_function_body_zsh;
 #[allow(unused_imports)]
 use crate::ported::options::ZSH_OPTIONS_SET;
@@ -407,7 +407,7 @@ impl crate::ported::exec::ShellExecutor {
                         'L' => logical = true,
                         'P' => logical = false,
                         _ => {
-                            eprintln!("zshrs:cd:1: bad option: -{}", ch);
+                            zwarnnam("cd", &format!("bad option: -{}", ch));
                             return 1;
                         }
                     }
@@ -446,7 +446,7 @@ impl crate::ported::exec::ShellExecutor {
                 // with `cd:1: string not in pwd: <old>` exit 1.
                 // builtin.c:914-916 emits the same diagnostic and
                 // returns NULL (which propagates to exit 1).
-                eprintln!("zshrs:cd:1: string not in pwd: {}", old);
+                zwarnnam("cd", &format!("string not in pwd: {}", old));
                 return 1;
             }
         }
@@ -454,7 +454,7 @@ impl crate::ported::exec::ShellExecutor {
         // exit 1. The substitution form takes 2; anything more is
         // an error.
         if positional_args.len() > 2 {
-            eprintln!("zshrs:cd:1: too many arguments");
+            zwarnnam("cd", "too many arguments");
             return 1;
         }
 
@@ -472,7 +472,7 @@ impl crate::ported::exec::ShellExecutor {
                     let dir_path = dir.to_string_lossy().to_string();
                     return self.do_cd(&dir_path, quiet, use_cdpath, logical);
                 } else {
-                    eprintln!("zshrs:cd:1: no such entry in dir stack");
+                    zwarnnam("cd", "no such entry in dir stack");
                     return 1;
                 }
             }
@@ -509,14 +509,14 @@ impl crate::ported::exec::ShellExecutor {
                     // and continued, masking typos and letting `pwd
                     // -X` print the cwd as if -X were valid.
                     _ => {
-                        eprintln!("zshrs:pwd:1: bad option: -{}", ch);
+                        zwarnnam("pwd", &format!("bad option: -{}", ch));
                         return 1;
                     }
                 }
             }
         }
         if positional_count > 0 {
-            eprintln!("zshrs:pwd:1: too many arguments");
+            zwarnnam("pwd", "too many arguments");
             return 1;
         }
         let logical_pwd = self
@@ -544,7 +544,7 @@ impl crate::ported::exec::ShellExecutor {
             })
         };
         if printed.is_empty() {
-            eprintln!("zshrs:pwd:1: cannot determine current directory");
+            zwarnnam("pwd", "cannot determine current directory");
             1
         } else {
             println!("{}", printed);
@@ -651,7 +651,7 @@ impl crate::ported::exec::ShellExecutor {
             // accepted alongside names. Reject anything else starting
             // with `-` (other than name-with-equals) for parity.
             if arg.starts_with('-') && !arg.contains('=') && arg.len() > 1 {
-                eprintln!("zshrs:export:1: bad option: {}", arg);
+                zwarnnam("export", &format!("bad option: {}", arg));
                 return 1;
             }
             let key_owned = if let Some((key, value)) = arg.split_once('=') {
@@ -671,14 +671,14 @@ impl crate::ported::exec::ShellExecutor {
                     .unwrap_or(false);
                 if !first_ok {
                     if key.chars().any(|c| !c.is_ascii_alphanumeric() && c != '_') {
-                        eprintln!("zshrs:export:1: not valid in this context: {}", key);
+                        zerrnam("export", &format!("not valid in this context: {}", key));
                     } else {
-                        eprintln!("zshrs:export:1: not an identifier: {}", key);
+                        zerrnam("export", &format!("not an identifier: {}", key));
                     }
                     return 1;
                 }
                 if chars.any(|c| !c.is_ascii_alphanumeric() && c != '_') {
-                    eprintln!("zshrs:export:1: not valid in this context: {}", key);
+                    zerrnam("export", &format!("not valid in this context: {}", key));
                     return 1;
                 }
                 self.variables.insert(key.to_string(), value.to_string());
@@ -700,7 +700,7 @@ impl crate::ported::exec::ShellExecutor {
         // `unset` with no args is an error in zsh: `not enough arguments`
         // exit 1. zshrs returned 0 silently — masked typo'd unset NAMES.
         if args.is_empty() {
-            eprintln!("zshrs:unset:1: not enough arguments");
+            zwarnnam("unset", "not enough arguments");
             return 1;
         }
         // PFA-SMR aspect: emit one `unset` event per non-flag arg.
@@ -739,7 +739,7 @@ impl crate::ported::exec::ShellExecutor {
                     // zsh: `unset -X foo` errors `unset:1: bad
                     // option: -X` exit 1. zshrs silently swallowed
                     // unknown flags, which masked typos.
-                    eprintln!("zshrs:unset:1: bad option: {}", arg);
+                    zwarnnam("unset", &format!("bad option: {}", arg));
                     return 1;
                 }
                 _ => names.push(arg.clone()),
@@ -861,7 +861,7 @@ impl crate::ported::exec::ShellExecutor {
                 || self.readonly_vars.contains(arg)
                 || self.var_attrs.get(arg).map(|a| a.readonly).unwrap_or(false);
             if is_ro {
-                eprintln!("zshrs:1: read-only variable: {}", arg);
+                zerr(&format!("read-only variable: {}", arg));
                 return 1;
             }
             env::remove_var(arg);
@@ -893,7 +893,7 @@ impl crate::ported::exec::ShellExecutor {
             // zsh: `source` -> `source:1: not enough arguments`,
             // `.` -> `.:1: not enough arguments`. zshrs hard-coded
             // a bash-style banner without the shell-name prefix.
-            eprintln!("zshrs:{}:1: not enough arguments", invoked_as);
+            zwarnnam(invoked_as, "not enough arguments");
             return 1;
         }
         // PFA-SMR aspect: emit a `source` event for the as-typed path.
@@ -911,7 +911,7 @@ impl crate::ported::exec::ShellExecutor {
         // directory and produced `is a directory: `. Special-case
         // empty so the diagnostic matches zsh.
         if args[0].is_empty() {
-            eprintln!("zshrs:{}:1: no such file or directory: ", invoked_as);
+            zwarnnam(invoked_as, "no such file or directory: ");
             return 127;
         }
 
@@ -1059,7 +1059,7 @@ impl crate::ported::exec::ShellExecutor {
                 Ok(content) => match self.execute_script(&content) {
                     Ok(status) => status,
                     Err(e) => {
-                        eprintln!("zshrs:source:1: {}: {}", path, e);
+                        zwarnnam("source", &format!("{}: {}", path, e));
                         1
                     }
                 },
@@ -1067,7 +1067,7 @@ impl crate::ported::exec::ShellExecutor {
                     // zsh format: `zshrs:source:1: no such file or
                     // directory: PATH` and exit 127.
                     let msg = pretty_io_err(&e).to_lowercase();
-                    eprintln!("zshrs:source:1: {}: {}", msg, path);
+                    zwarnnam("source", &format!("{}: {}", msg, path));
                     127
                 }
             };
@@ -1154,7 +1154,7 @@ impl crate::ported::exec::ShellExecutor {
                         Some(i) => msg[..i].to_string(),
                         None => msg,
                     };
-                    eprintln!("zshrs:source:1: {}: {}", msg.to_lowercase(), path);
+                    zwarnnam("source", &format!("{}: {}", msg.to_lowercase(), path));
                     127
                 }
             };
@@ -1542,7 +1542,7 @@ impl crate::ported::exec::ShellExecutor {
             // `1: = not found` exit 1 (it parses `==` as `=` `=`
             // and tries to look up the second `=` as a command).
             [_, "==", _] => {
-                eprintln!("zshrs:1: = not found");
+                zwarn("= not found");
                 1
             }
             [a, "=", b] => {
@@ -1569,7 +1569,7 @@ impl crate::ported::exec::ShellExecutor {
             // (it lists `<`/`>` as known so the diagnostic stays
             // clean). The `[[`-cond compiler still handles them.
             [a, "<", b] | [a, ">", b] => {
-                eprintln!("zshrs:1: condition expected: {}", args[1]);
+                zwarn(&format!("condition expected: {}", args[1]));
                 let _ = (a, b);
                 2
             }
@@ -1584,14 +1584,14 @@ impl crate::ported::exec::ShellExecutor {
                 let av = match a.parse::<i64>() {
                     Ok(v) => v,
                     Err(_) => {
-                        eprintln!("zshrs:[:1: integer expression expected: {}", a);
+                        zwarnnam("[", &format!("integer expression expected: {}", a));
                         return 2;
                     }
                 };
                 let bv = match b.parse::<i64>() {
                     Ok(v) => v,
                     Err(_) => {
-                        eprintln!("zshrs:[:1: integer expression expected: {}", b);
+                        zwarnnam("[", &format!("integer expression expected: {}", b));
                         return 2;
                     }
                 };
@@ -1605,14 +1605,14 @@ impl crate::ported::exec::ShellExecutor {
                 let av = match a.parse::<i64>() {
                     Ok(v) => v,
                     Err(_) => {
-                        eprintln!("zshrs:[:1: integer expression expected: {}", a);
+                        zwarnnam("[", &format!("integer expression expected: {}", a));
                         return 2;
                     }
                 };
                 let bv = match b.parse::<i64>() {
                     Ok(v) => v,
                     Err(_) => {
-                        eprintln!("zshrs:[:1: integer expression expected: {}", b);
+                        zwarnnam("[", &format!("integer expression expected: {}", b));
                         return 2;
                     }
                 };
@@ -1626,14 +1626,14 @@ impl crate::ported::exec::ShellExecutor {
                 let av = match a.parse::<i64>() {
                     Ok(v) => v,
                     Err(_) => {
-                        eprintln!("zshrs:[:1: integer expression expected: {}", a);
+                        zwarnnam("[", &format!("integer expression expected: {}", a));
                         return 2;
                     }
                 };
                 let bv = match b.parse::<i64>() {
                     Ok(v) => v,
                     Err(_) => {
-                        eprintln!("zshrs:[:1: integer expression expected: {}", b);
+                        zwarnnam("[", &format!("integer expression expected: {}", b));
                         return 2;
                     }
                 };
@@ -1647,14 +1647,14 @@ impl crate::ported::exec::ShellExecutor {
                 let av = match a.parse::<i64>() {
                     Ok(v) => v,
                     Err(_) => {
-                        eprintln!("zshrs:[:1: integer expression expected: {}", a);
+                        zwarnnam("[", &format!("integer expression expected: {}", a));
                         return 2;
                     }
                 };
                 let bv = match b.parse::<i64>() {
                     Ok(v) => v,
                     Err(_) => {
-                        eprintln!("zshrs:[:1: integer expression expected: {}", b);
+                        zwarnnam("[", &format!("integer expression expected: {}", b));
                         return 2;
                     }
                 };
@@ -1668,14 +1668,14 @@ impl crate::ported::exec::ShellExecutor {
                 let av = match a.parse::<i64>() {
                     Ok(v) => v,
                     Err(_) => {
-                        eprintln!("zshrs:[:1: integer expression expected: {}", a);
+                        zwarnnam("[", &format!("integer expression expected: {}", a));
                         return 2;
                     }
                 };
                 let bv = match b.parse::<i64>() {
                     Ok(v) => v,
                     Err(_) => {
-                        eprintln!("zshrs:[:1: integer expression expected: {}", b);
+                        zwarnnam("[", &format!("integer expression expected: {}", b));
                         return 2;
                     }
                 };
@@ -1689,14 +1689,14 @@ impl crate::ported::exec::ShellExecutor {
                 let av = match a.parse::<i64>() {
                     Ok(v) => v,
                     Err(_) => {
-                        eprintln!("zshrs:[:1: integer expression expected: {}", a);
+                        zwarnnam("[", &format!("integer expression expected: {}", a));
                         return 2;
                     }
                 };
                 let bv = match b.parse::<i64>() {
                     Ok(v) => v,
                     Err(_) => {
-                        eprintln!("zshrs:[:1: integer expression expected: {}", b);
+                        zwarnnam("[", &format!("integer expression expected: {}", b));
                         return 2;
                     }
                 };
@@ -1767,7 +1767,7 @@ impl crate::ported::exec::ShellExecutor {
                 {
                     let bytes = args[0].as_bytes();
                     if bytes[1..].iter().all(|b| b.is_ascii_alphabetic()) || args[0] == "--" {
-                        eprintln!("zshrs:[:1: unknown condition: {}", args[0]);
+                        zwarnnam("[", &format!("unknown condition: {}", args[0]));
                         return 2;
                     }
                 }
@@ -1783,7 +1783,7 @@ impl crate::ported::exec::ShellExecutor {
                     && args[0] != "("
                     && args[1] != ")"
                 {
-                    eprintln!("zshrs:1: parse error: condition expected: {}", args[0]);
+                    zwarn(&format!("parse error: condition expected: {}", args[0]));
                     return 2;
                 }
                 // `[ a -lt ]` (2 args: operand + binop, missing
@@ -1809,7 +1809,7 @@ impl crate::ported::exec::ShellExecutor {
                             | "-ef"
                     )
                 {
-                    eprintln!("zshrs:1: parse error: condition expected: {}", args[0]);
+                    zwarn(&format!("parse error: condition expected: {}", args[0]));
                     return 2;
                 }
                 // 3-arg with binary operator at position 0 (not 1) —
@@ -1820,7 +1820,7 @@ impl crate::ported::exec::ShellExecutor {
                 if args.len() == 3
                     && matches!(args[0], "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge")
                 {
-                    eprintln!("zshrs:[:1: unknown condition: {}", args[0]);
+                    zwarnnam("[", &format!("unknown condition: {}", args[0]));
                     return 2;
                 }
                 // 3-arg with unknown non-`-` operator at args[1] —
@@ -1837,7 +1837,7 @@ impl crate::ported::exec::ShellExecutor {
                     && args[1].chars().any(|c| !c.is_ascii_alphanumeric())
                     && !matches!(args[1], "=" | "!=" | "==")
                 {
-                    eprintln!("zshrs:[:1: condition expected: {}", args[1]);
+                    zwarnnam("[", &format!("condition expected: {}", args[1]));
                     return 2;
                 }
                 // 3-arg with binop at args[1] but NO operand at
@@ -1883,7 +1883,7 @@ impl crate::ported::exec::ShellExecutor {
                             | "-v"
                     )
                 {
-                    eprintln!("zshrs:[:1: too many arguments");
+                    zwarnnam("[", "too many arguments");
                     return 2;
                 }
                 // Three-arg `[ a -OP b ]` where -OP isn't a known
@@ -1894,11 +1894,11 @@ impl crate::ported::exec::ShellExecutor {
                     if matches!(args[1], "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge") {
                         // Check both operands are numeric.
                         if args[0].parse::<i64>().is_err() {
-                            eprintln!("zshrs:[:1: integer expression expected: {}", args[0]);
+                            zwarnnam("[", &format!("integer expression expected: {}", args[0]));
                             return 2;
                         }
                         if args[2].parse::<i64>().is_err() {
-                            eprintln!("zshrs:[:1: integer expression expected: {}", args[2]);
+                            zwarnnam("[", &format!("integer expression expected: {}", args[2]));
                             return 2;
                         }
                     } else if !matches!(
@@ -1909,7 +1909,7 @@ impl crate::ported::exec::ShellExecutor {
                     {
                         // Unknown alphabetic 3-arg operator like `-ZZ`.
                         // zsh: `[:1: unknown condition: -ZZ` exit 2.
-                        eprintln!("zshrs:[:1: unknown condition: {}", args[1]);
+                        zwarnnam("[", &format!("unknown condition: {}", args[1]));
                         return 2;
                     }
                 }
@@ -1925,7 +1925,7 @@ impl crate::ported::exec::ShellExecutor {
                     && args[2] != ")"
                     && !matches!(args[1], "=" | "!=" | "==")
                 {
-                    eprintln!("zshrs:1: condition expected: {}", args[1]);
+                    zwarn(&format!("condition expected: {}", args[1]));
                     return 2;
                 }
                 // `[ \( a ]` — paren without matching close. zsh emits
@@ -1946,14 +1946,14 @@ impl crate::ported::exec::ShellExecutor {
                     if d > 0 {
                         // More `(` than `)` — open paren without
                         // close. zsh: `argument expected`.
-                        eprintln!("zshrs:[:1: argument expected");
+                        zwarnnam("[", "argument expected");
                         return 2;
                     } else if d < 0 {
                         // More `)` than `(` — surplus close paren.
                         // zsh: `[:1: too many arguments` (the `)`
                         // is the extra arg). zshrs collapsed both
                         // to "argument expected".
-                        eprintln!("zshrs:[:1: too many arguments");
+                        zwarnnam("[", "too many arguments");
                         return 2;
                     }
                 }
@@ -2015,7 +2015,7 @@ impl crate::ported::exec::ShellExecutor {
                         // error" since an empty test expression is
                         // ill-formed).
                         if inner.is_empty() {
-                            eprintln!("zshrs:[:1: argument expected");
+                            zwarnnam("[", "argument expected");
                             return 2;
                         }
                         return self.bin_test(&inner);
@@ -2094,9 +2094,9 @@ impl crate::ported::exec::ShellExecutor {
                                 | "-o"
                         );
                     if known_binop || unary_flag_at_0 {
-                        eprintln!("zshrs:[:1: too many arguments");
+                        zwarnnam("[", "too many arguments");
                     } else {
-                        eprintln!("zshrs:1: condition expected: {}", args[0]);
+                        zwarn(&format!("condition expected: {}", args[0]));
                     }
                     return 2;
                 }
@@ -2298,7 +2298,7 @@ impl crate::ported::exec::ShellExecutor {
                         // `+` flag also handles `-i` removal etc. Unknown
                         // letters error like the `-` arm: `bad option: +X`.
                         other => {
-                            eprintln!("zshrs:{}:1: bad option: +{}", invoked_as, other);
+                            zwarnnam(invoked_as, &format!("bad option: +{}", other));
                             return 1;
                         }
                     }
@@ -2420,7 +2420,7 @@ impl crate::ported::exec::ShellExecutor {
                         // `typeset -Q x` succeed without setting any
                         // attribute.
                         other => {
-                            eprintln!("zshrs:{}:1: bad option: -{}", invoked_as, other);
+                            zwarnnam(invoked_as, &format!("bad option: -{}", other));
                             return 1;
                         }
                     }
@@ -2635,7 +2635,7 @@ impl crate::ported::exec::ShellExecutor {
                         format_function_body_zsh(body.trim())
                     );
                 } else {
-                    eprintln!("zshrs:{}:1: no such function: {}", invoked_as, name);
+                    zwarnnam(invoked_as, &format!("no such function: {}", name));
                     missing += 1;
                 }
             }
@@ -2887,7 +2887,7 @@ impl crate::ported::exec::ShellExecutor {
                     // variable doesn't exist. The builtin name comes
                     // from how the user called it — `declare -p X` →
                     // `declare:1:`, `typeset -p X` → `typeset:1:`.
-                    eprintln!("zshrs:{}:1: no such variable: {}", invoked_as, name);
+                    zwarnnam(invoked_as, &format!("no such variable: {}", name));
                     return 1;
                 }
             }
@@ -2958,7 +2958,7 @@ impl crate::ported::exec::ShellExecutor {
                         .unwrap_or(false);
                     let body_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
                     if !first_ok || !body_ok {
-                        eprintln!("zshrs:{}:1: not an identifier: {}", invoked_as, name);
+                        zerrnam(invoked_as, &format!("not an identifier: {}", name));
                         return 1;
                     }
                 }
@@ -2977,7 +2977,7 @@ impl crate::ported::exec::ShellExecutor {
                         .map(|a| a.readonly)
                         .unwrap_or(false)
                 {
-                    eprintln!("zshrs:1: read-only variable: {}", name);
+                    zerr(&format!("read-only variable: {}", name));
                     std::process::exit(1);
                 }
 
@@ -3409,9 +3409,7 @@ impl crate::ported::exec::ShellExecutor {
                             // an error. zsh writes:
                             //   "read: option valid only in functions called from completion"
                             // and exits 1.
-                            eprintln!(
-                                "zshrs:read:1: option valid only in functions called from completion"
-                            );
+                            zwarnnam("read", "option valid only in functions called from completion");
                             return 1;
                         }
                         'e' => echo_line = true,
@@ -3466,7 +3464,7 @@ impl crate::ported::exec::ShellExecutor {
                             } else {
                                 i += 1;
                                 if i >= args.len() {
-                                    eprintln!("zshrs:read:1: argument expected: -d");
+                                    zwarnnam("read", "argument expected: -d");
                                     return 1;
                                 }
                                 delimiter = args[i].chars().next().unwrap_or('\n');
@@ -3500,7 +3498,7 @@ impl crate::ported::exec::ShellExecutor {
                             } else {
                                 i += 1;
                                 if i >= args.len() {
-                                    eprintln!("zshrs:read:1: argument expected: -u");
+                                    zwarnnam("read", "argument expected: -u");
                                     return 1;
                                 }
                                 args[i].clone()
@@ -3508,10 +3506,7 @@ impl crate::ported::exec::ShellExecutor {
                             match value_str.parse::<i32>() {
                                 Ok(n) => fd = n,
                                 Err(_) => {
-                                    eprintln!(
-                                        "zshrs:read:1: number expected after -u: {}",
-                                        value_str
-                                    );
+                                    zwarnnam("read", &format!("number expected after -u: {}", value_str));
                                     return 1;
                                 }
                             }
@@ -3524,7 +3519,7 @@ impl crate::ported::exec::ShellExecutor {
                             // or `read -P prompt` (capital P) on some
                             // ports. Without a coprocess set up, zsh
                             // emits "no coprocess" and bails.
-                            eprintln!("zshrs:read:1: -p: no coprocess");
+                            zwarnnam("read", "-p: no coprocess");
                             return 1;
                         }
                         'P' => {
@@ -3550,7 +3545,7 @@ impl crate::ported::exec::ShellExecutor {
                         // letting `read -Q v` pass through to the
                         // assignment phase as if -Q were valid.
                         other => {
-                            eprintln!("zshrs:read:1: bad option: -{}", other);
+                            zwarnnam("read", &format!("bad option: -{}", other));
                             return 1;
                         }
                     }
@@ -3641,7 +3636,7 @@ impl crate::ported::exec::ShellExecutor {
         // interactive and can't open terminal" and returns 1.
         // zshrs previously read from stdin and returned 0 silently.
         if quiet && !atty::is(atty::Stream::Stdin) {
-            eprintln!("not interactive and can't open terminal");
+            zwarnnam("read", "not interactive and can't open terminal");
             return 1;
         }
 
@@ -4045,14 +4040,14 @@ impl crate::ported::exec::ShellExecutor {
                 && arg.len() > 1
             {
                 // zsh: negative count is rejected with this exact diagnostic.
-                eprintln!("zshrs:shift:1: argument to shift must be non-negative");
+                zwarnnam("shift", "argument to shift must be non-negative");
                 return 1;
             } else if arg.starts_with('-') && arg.len() > 1 {
                 // zsh: unknown shift flag (besides -p) -> `shift:1:
                 // bad option: -X` exit 1. zshrs's catch-all pushed
                 // the flag string into array_names, masking typos.
                 let bad: String = arg[1..].chars().take(1).collect();
-                eprintln!("zshrs:shift:1: bad option: -{}", bad);
+                zwarnnam("shift", &format!("bad option: -{}", bad));
                 return 1;
             } else if arg.chars().all(|c| c.is_ascii_digit()) {
                 count = arg.parse().unwrap_or(1);
@@ -4065,7 +4060,7 @@ impl crate::ported::exec::ShellExecutor {
         if array_names.is_empty() {
             // zsh: `shift N` errors and exits 1 if N > $#.
             if count > self.positional_params.len() {
-                eprintln!("zshrs:shift:1: shift count must be <= $#");
+                zwarnnam("shift", "shift count must be <= $#");
                 return 1;
             }
             // Shift positional parameters
@@ -4091,7 +4086,7 @@ impl crate::ported::exec::ShellExecutor {
             for name in &array_names {
                 if let Some(arr) = self.arrays.get(name) {
                     if count > arr.len() {
-                        eprintln!("zshrs:shift:1: shift count must be <= $#");
+                        zwarnnam("shift", "shift count must be <= $#");
                         ret = 1;
                     }
                 }
@@ -4139,7 +4134,7 @@ impl crate::ported::exec::ShellExecutor {
         match self.execute_script(&code) {
             Ok(status) => status,
             Err(e) => {
-                eprintln!("zshrs:eval:1: {}", e);
+                zwarnnam("eval", &format!("{}", e));
                 1
             }
         }
@@ -4197,7 +4192,7 @@ impl crate::ported::exec::ShellExecutor {
                         // +flag letters symmetric to the - parser.
                         'X' | 'r' | 'R' | 'T' | 'W' | 'w' | 'm' => {}
                         _ => {
-                            eprintln!("zshrs:autoload:1: bad option: +{}", c);
+                            zwarnnam("autoload", &format!("bad option: +{}", c));
                             return 1;
                         }
                     }
@@ -4227,7 +4222,7 @@ impl crate::ported::exec::ShellExecutor {
                         // typos like `-Z` or `-l` (bash-style flag
                         // that zsh doesn't have).
                         _ => {
-                            eprintln!("zshrs:autoload:1: bad option: -{}", c);
+                            zwarnnam("autoload", &format!("bad option: -{}", c));
                             return 1;
                         }
                     }
@@ -4267,7 +4262,7 @@ impl crate::ported::exec::ShellExecutor {
         // `execute_now=true && functions.is_empty()` skipped both
         // the listing branch and the execute branch below.
         if functions.is_empty() && execute_now {
-            eprintln!("zshrs:autoload:1: bad autoload");
+            zwarnnam("autoload", "bad autoload");
             return 1;
         }
 
@@ -4283,10 +4278,9 @@ impl crate::ported::exec::ShellExecutor {
                 if self.function_exists(func_name) {
                     self.autoload_pending.remove(func_name);
                 } else {
-                    eprintln!(
-                        "autoload: {}: function definition file not found",
-                        func_name
-                    );
+                    // C: `zerr("%s: function definition file not found", ...)` —
+                    // fatal, no cmd-name prefix (Src/builtin.c:3213).
+                    zerr(&format!("{}: function definition file not found", func_name));
                     return 1;
                 }
             }
@@ -4347,10 +4341,8 @@ impl crate::ported::exec::ShellExecutor {
 
             // If -r or -R, resolve the path now to verify it exists
             if resolve && self.find_function_file(func_name).is_none() {
-                eprintln!(
-                    "autoload: {}: function definition file not found",
-                    func_name
-                );
+                // C: zerr("%s: function definition file not found", ...)
+                zerr(&format!("{}: function definition file not found", func_name));
             }
         }
 
@@ -4397,7 +4389,7 @@ impl crate::ported::exec::ShellExecutor {
     }
     pub(crate) fn builtin_history(&self, args: &[String]) -> i32 {
         let Some(ref engine) = self.history else {
-            eprintln!("zshrs:history:1: history engine not available");
+            zwarnnam("history", "history engine not available");
             return 1;
         };
 
@@ -4416,7 +4408,7 @@ impl crate::ported::exec::ShellExecutor {
                     // doesn't accept `-c` (bash-only). Match zsh's
                     // diagnostic format so user scripts that probe
                     // for the bash-style flag see the same error.
-                    eprintln!("zshrs:history:1: bad option: -c");
+                    zwarnnam("history", "bad option: -c");
                     return 1;
                 }
                 "-a" | "--all" => show_all = true,
@@ -4441,7 +4433,7 @@ impl crate::ported::exec::ShellExecutor {
                     // -S is bash's "save" flag (zsh's history can't
                     // write because it's just `fc -l`).
                     let bad: String = s[1..].chars().take(1).collect();
-                    eprintln!("zshrs:history:1: bad option: -{}", bad);
+                    zwarnnam("history", &format!("bad option: -{}", bad));
                     return 1;
                 }
                 // Other `-X` flags fall through to the fc-list path
@@ -4478,12 +4470,12 @@ impl crate::ported::exec::ShellExecutor {
             // 3+ numeric positionals -> `fc:1: too many arguments`
             // (history is `fc -l`; takes at most 2 range bounds).
             if positional_count > 2 {
-                eprintln!("zshrs:fc:1: too many arguments");
+                zwarnnam("fc", "too many arguments");
                 return 1;
             }
             // 2 numeric positionals -> "no events in that range".
             if positional_count == 2 {
-                eprintln!("zshrs:fc:1: no events in that range");
+                zwarnnam("fc", "no events in that range");
                 return 1;
             }
             // Non-numeric positional `history XX` is a search-by-text
@@ -4495,7 +4487,7 @@ impl crate::ported::exec::ShellExecutor {
             // user-supplied count (e.g. `history -d 99` reports
             // `no such event: 99` not `1`).
             if let Some(ref q) = search_query {
-                eprintln!("zshrs:fc:1: event not found: {}", q);
+                zwarnnam("fc", &format!("event not found: {}", q));
             } else {
                 // Negative count (`history -d -1`) resolves to 0 in
                 // zsh's count-from-end semantics with empty history.
@@ -4507,7 +4499,7 @@ impl crate::ported::exec::ShellExecutor {
                 } else {
                     1
                 };
-                eprintln!("zshrs:fc:1: no such event: {}", event_id);
+                zwarnnam("fc", &format!("no such event: {}", event_id));
             }
             return 1;
         }
@@ -4537,7 +4529,7 @@ impl crate::ported::exec::ShellExecutor {
                 0
             }
             Err(e) => {
-                eprintln!("zshrs:history:1: {}", e);
+                zwarnnam("history", &format!("{}", e));
                 1
             }
         }
@@ -4549,7 +4541,7 @@ impl crate::ported::exec::ShellExecutor {
     /// -p/-P (push/pop history stack), -I (skip old), -L (local), -s (substitute)
     pub(crate) fn bin_fc(&mut self, args: &[String]) -> i32 {
         let Some(ref engine) = self.history else {
-            eprintln!("zshrs:fc:1: history engine not available");
+            zwarnnam("fc", "history engine not available");
             return 1;
         };
 
@@ -4608,7 +4600,7 @@ impl crate::ported::exec::ShellExecutor {
                                     // silently let the missing arg
                                     // slip through, falling into
                                     // the recurse-endlessly path.
-                                    eprintln!("zshrs:fc:1: argument expected: -e");
+                                    zwarnnam("fc", "argument expected: -e");
                                     return 1;
                                 }
                             }
@@ -4626,7 +4618,7 @@ impl crate::ported::exec::ShellExecutor {
                                 // the no-positional path triggered
                                 // the recurse-endlessly diagnostic.
                                 if i >= args.len() {
-                                    eprintln!("zshrs:fc:1: argument expected: -t");
+                                    zwarnnam("fc", "argument expected: -t");
                                     return 1;
                                 }
                             }
@@ -4662,7 +4654,7 @@ impl crate::ported::exec::ShellExecutor {
                             // (re-execute last command) which can
                             // recurse forever for `fc -h` since fc
                             // entered history.
-                            eprintln!("zshrs:fc:1: bad option: -{}", chars[j]);
+                            zwarnnam("fc", &format!("bad option: -{}", chars[j]));
                             return 1;
                         }
                     }
@@ -4740,7 +4732,7 @@ impl crate::ported::exec::ShellExecutor {
                         }
                     }
                     Err(e) => {
-                        eprintln!("zshrs:fc:1: cannot write {}: {}", path.display(), e);
+                        zwarnnam("fc", &format!("cannot write {}: {}", path.display(), e));
                         return 1;
                     }
                 }
@@ -4769,7 +4761,7 @@ impl crate::ported::exec::ShellExecutor {
             // pop, -a modify, -I/-L local, -m pattern, and
             // -R/-W/-A read/write/append (handled below); these
             // signal an explicit non-edit-form invocation.
-            eprintln!("zsh:fc:1: current history line would recurse endlessly, aborted");
+            zwarnnam("fc", "current history line would recurse endlessly, aborted");
             return 1;
         }
         // `-p`/`-P` etc. exempt flags — silent success (no actual
@@ -4807,7 +4799,7 @@ impl crate::ported::exec::ShellExecutor {
                 // recurse endlessly, aborted". Distinct from the
                 // -l case which uses "no such event: N".
                 if !list_mode && positional.is_empty() {
-                    eprintln!("zsh:fc:1: current history line would recurse endlessly, aborted");
+                    zwarnnam("fc", "current history line would recurse endlessly, aborted");
                     return 1;
                 }
                 // Non-numeric event spec (`fc -l blah`) is an "event
@@ -4816,7 +4808,7 @@ impl crate::ported::exec::ShellExecutor {
                 // out-of-range is "no such event: N"; non-numeric is
                 // "event not found: <text>".
                 if positional.len() == 1 && positional[0].parse::<i64>().is_err() {
-                    eprintln!("zsh:fc:1: event not found: {}", positional[0]);
+                    zwarnnam("fc", &format!("event not found: {}", positional[0]));
                     return 1;
                 }
                 // Two-positional `fc -l N M` is a RANGE query — zsh
@@ -4834,9 +4826,9 @@ impl crate::ported::exec::ShellExecutor {
                     // bounds.
                     let first_text = positional.iter().find(|s| s.parse::<i64>().is_err());
                     if let Some(text) = first_text {
-                        eprintln!("zshrs:fc:1: event not found: {}", text);
+                        zwarnnam("fc", &format!("event not found: {}", text));
                     } else {
-                        eprintln!("zshrs:fc:1: too many arguments");
+                        zwarnnam("fc", "too many arguments");
                     }
                     return 1;
                 }
@@ -4848,14 +4840,14 @@ impl crate::ported::exec::ShellExecutor {
                     let p0_bad = positional[0].parse::<i64>().is_err();
                     let p1_bad = positional[1].parse::<i64>().is_err();
                     if p0_bad {
-                        eprintln!("zshrs:fc:1: event not found: {}", positional[0]);
+                        zwarnnam("fc", &format!("event not found: {}", positional[0]));
                         return 1;
                     }
                     if p1_bad {
-                        eprintln!("zshrs:fc:1: event not found: {}", positional[1]);
+                        zwarnnam("fc", &format!("event not found: {}", positional[1]));
                         return 1;
                     }
-                    eprintln!("zsh:fc:1: no events in that range");
+                    zwarnnam("fc", "no events in that range");
                     return 1;
                 }
                 // zsh's "no such event" uses the resolved index:
@@ -4874,7 +4866,7 @@ impl crate::ported::exec::ShellExecutor {
                 } else {
                     first
                 };
-                eprintln!("zsh:fc:1: no such event: {}", resolved);
+                zwarnnam("fc", &format!("no such event: {}", resolved));
                 return 1;
             }
 
@@ -4966,7 +4958,7 @@ impl crate::ported::exec::ShellExecutor {
                     0
                 }
                 Err(e) => {
-                    eprintln!("zshrs:fc:1: {}", e);
+                    zwarnnam("fc", &format!("{}", e));
                     1
                 }
             }
@@ -4982,11 +4974,11 @@ impl crate::ported::exec::ShellExecutor {
                     self.execute_script(&cmd).unwrap_or(1)
                 }
                 Ok(None) => {
-                    eprintln!("zshrs:fc:1: no command to re-execute");
+                    zwarnnam("fc", "no command to re-execute");
                     1
                 }
                 Err(e) => {
-                    eprintln!("zshrs:fc:1: {}", e);
+                    zwarnnam("fc", &format!("{}", e));
                     1
                 }
             }
@@ -4998,11 +4990,11 @@ impl crate::ported::exec::ShellExecutor {
                     self.execute_script(&entry.command).unwrap_or(1)
                 }
                 Ok(None) => {
-                    eprintln!("zshrs:fc:1: no command to re-execute");
+                    zwarnnam("fc", "no command to re-execute");
                     1
                 }
                 Err(e) => {
-                    eprintln!("zshrs:fc:1: {}", e);
+                    zwarnnam("fc", &format!("{}", e));
                     1
                 }
             }
@@ -5011,7 +5003,7 @@ impl crate::ported::exec::ShellExecutor {
             // (`fc FIRST [LAST]`); 3+ -> `fc:1: too many arguments`
             // exit 1.
             if positional.len() > 2 {
-                eprintln!("zshrs:fc:1: too many arguments");
+                zwarnnam("fc", "too many arguments");
                 return 1;
             }
             // Edit-mode `fc N` / `fc N M` (numeric positionals): zsh
@@ -5023,7 +5015,7 @@ impl crate::ported::exec::ShellExecutor {
             if !atty::is(atty::Stream::Stdin) {
                 let all_numeric = positional.iter().all(|s| s.parse::<i64>().is_ok());
                 if all_numeric && positional.len() <= 2 {
-                    eprintln!("zsh:fc:1: current history line would recurse endlessly, aborted");
+                    zwarnnam("fc", "current history line would recurse endlessly, aborted");
                     return 1;
                 }
             }
@@ -5037,11 +5029,11 @@ impl crate::ported::exec::ShellExecutor {
                         self.execute_script(&entry.command).unwrap_or(1)
                     }
                     Ok(None) => {
-                        eprintln!("zshrs:fc:1: event not found");
+                        zwarnnam("fc", "event not found");
                         1
                     }
                     Err(e) => {
-                        eprintln!("zshrs:fc:1: {}", e);
+                        zwarnnam("fc", &format!("{}", e));
                         1
                     }
                 }
@@ -5051,7 +5043,7 @@ impl crate::ported::exec::ShellExecutor {
                 // zshrs's prefix-match found the most recent entry
                 // and recursively re-executed it — `fc ""` triggered
                 // infinite recursion (it ran `fc ""` again).
-                eprintln!("zshrs:fc:1: event not found: ");
+                zwarnnam("fc", "event not found: ");
                 1
             } else {
                 // Try to find command by prefix
@@ -5061,11 +5053,11 @@ impl crate::ported::exec::ShellExecutor {
                         self.execute_script(&entries[0].command).unwrap_or(1)
                     }
                     Ok(_) => {
-                        eprintln!("zshrs:fc:1: event not found: {}", arg);
+                        zwarnnam("fc", &format!("event not found: {}", arg));
                         1
                     }
                     Err(e) => {
-                        eprintln!("zshrs:fc:1: {}", e);
+                        zwarnnam("fc", &format!("{}", e));
                         1
                     }
                 }
@@ -5078,11 +5070,11 @@ impl crate::ported::exec::ShellExecutor {
                     self.execute_script(&entry.command).unwrap_or(1)
                 }
                 Ok(None) => {
-                    eprintln!("zshrs:fc:1: no command to re-execute");
+                    zwarnnam("fc", "no command to re-execute");
                     1
                 }
                 Err(e) => {
-                    eprintln!("zshrs:fc:1: {}", e);
+                    zwarnnam("fc", &format!("{}", e));
                     1
                 }
             }
@@ -5247,7 +5239,7 @@ impl crate::ported::exec::ShellExecutor {
                 .map(|n| n > 0 && n <= 63)
                 .unwrap_or(false);
             if !known_sig {
-                eprintln!("zshrs:trap:1: undefined signal: {}", sig);
+                zwarnnam("trap", &format!("undefined signal: {}", sig));
                 return 1;
             }
 
@@ -5302,7 +5294,7 @@ impl crate::ported::exec::ShellExecutor {
                         // mirror that here so `alias +X` errors too
                         // instead of silently swallowing the typo.
                         _ => {
-                            eprintln!("zshrs:alias:1: bad option: +{}", ch);
+                            zwarnnam("alias", &format!("bad option: +{}", ch));
                             return 1;
                         }
                     }
@@ -5316,7 +5308,7 @@ impl crate::ported::exec::ShellExecutor {
                         'm' => matchpat = true,
                         'r' => is_regular = true,
                         _ => {
-                            eprintln!("zshrs:alias:1: bad option: -{}", ch);
+                            zwarnnam("alias", &format!("bad option: -{}", ch));
                             return 1;
                         }
                     }
@@ -5334,7 +5326,7 @@ impl crate::ported::exec::ShellExecutor {
         // `-gs` case; `-gr` and `-sr` slipped through.
         let type_opts = (is_global as u32) + (is_suffix as u32) + (is_regular as u32);
         if type_opts > 1 {
-            eprintln!("zshrs:alias:1: illegal combination of options");
+            zwarnnam("alias", "illegal combination of options");
             return 1;
         }
 
@@ -5421,7 +5413,7 @@ impl crate::ported::exec::ShellExecutor {
                 // created an alias with name "" which was then
                 // un-removable.
                 if eq_pos == 0 {
-                    eprintln!("zshrs:1: bad assignment");
+                    zwarn("bad assignment");
                     return 1;
                 }
                 let name = &arg[..eq_pos];
@@ -5537,7 +5529,7 @@ impl crate::ported::exec::ShellExecutor {
             // zshrs previously printed a bash-style usage line with
             // a different prefix and option list — script consumers
             // pattern-matching on `unalias:1:` missed the diagnostic.
-            eprintln!("zshrs:unalias:1: not enough arguments");
+            zwarnnam("unalias", "not enough arguments");
             return 1;
         }
         // PFA-SMR aspect: emit one `unalias` event per non-flag arg.
@@ -5568,7 +5560,7 @@ impl crate::ported::exec::ShellExecutor {
                         's' => is_suffix = true,
                         'm' => match_glob = true,
                         _ => {
-                            eprintln!("zshrs:unalias:1: bad option: -{}", ch);
+                            zwarnnam("unalias", &format!("bad option: -{}", ch));
                             return 1;
                         }
                     }
@@ -5593,7 +5585,7 @@ impl crate::ported::exec::ShellExecutor {
         }
 
         if positional_args.is_empty() {
-            eprintln!("zshrs:unalias:1: not enough arguments");
+            zwarnnam("unalias", "not enough arguments");
             return 1;
         }
 
@@ -5642,7 +5634,7 @@ impl crate::ported::exec::ShellExecutor {
                 self.aliases.remove(&name).is_some()
             };
             if !removed {
-                eprintln!("zshrs:unalias:1: no such hash table element: {}", name);
+                zwarnnam("unalias", &format!("no such hash table element: {}", name));
                 status = 1;
             }
         }
@@ -5724,7 +5716,7 @@ impl crate::ported::exec::ShellExecutor {
                     if let Some(opt) = iter.next() {
                         let (name, enable) = Self::normalize_option_name(opt);
                         if !ZSH_OPTIONS_SET.contains(name.as_str()) {
-                            eprintln!("zshrs:set:1: no such option: {}", opt);
+                            zwarnnam("set", &format!("no such option: {}", opt));
                             return 1;
                         }
                         self.options.insert(name, enable);
@@ -5744,7 +5736,7 @@ impl crate::ported::exec::ShellExecutor {
                     if let Some(opt) = iter.next() {
                         let (name, enable) = Self::normalize_option_name(opt);
                         if !ZSH_OPTIONS_SET.contains(name.as_str()) {
-                            eprintln!("zshrs:set:1: no such option: {}", opt);
+                            zwarnnam("set", &format!("no such option: {}", opt));
                             return 1;
                         }
                         self.options.insert(name, !enable);
@@ -5997,7 +5989,7 @@ impl crate::ported::exec::ShellExecutor {
                                 _ => {
                                     // Unknown letter: zsh errors with
                                     // `can't change option: -X` exit 1.
-                                    eprintln!("zshrs:set:1: can't change option: -{}", c);
+                                    zwarnnam("set", &format!("can't change option: -{}", c));
                                     return 1;
                                 }
                             }
@@ -6044,7 +6036,7 @@ impl crate::ported::exec::ShellExecutor {
                                 | 'E' | 'F' | 'G' | 'H' | 'K' | 'L' | 'N' | 'P' | 'R' | 'T'
                                 | 'U' | 'X' | 'Y' => {}
                                 _ => {
-                                    eprintln!("zshrs:set:1: can't change option: +{}", c);
+                                    zwarnnam("set", &format!("can't change option: +{}", c));
                                     return 1;
                                 }
                             }
@@ -6098,7 +6090,7 @@ impl crate::ported::exec::ShellExecutor {
             // zsh: bare `getopts` (or with only one arg) errors
             // `getopts:1: not enough arguments` exit 1. zshrs's
             // bash-style usage banner had no shell-name prefix.
-            eprintln!("zshrs:getopts:1: not enough arguments");
+            zwarnnam("getopts", "not enough arguments");
             return 1;
         }
 
@@ -6184,7 +6176,7 @@ impl crate::ported::exec::ShellExecutor {
                             } else {
                                 self.variables.insert(varname.to_string(), "?".to_string());
                                 self.variables.insert("OPTARG".to_string(), String::new());
-                                eprintln!("zshrs:getopts:1: argument expected after -{} option", c);
+                                zwarnnam("getopts", &format!("argument expected after -{} option", c));
                             }
                             return 0;
                         };
@@ -6227,7 +6219,7 @@ impl crate::ported::exec::ShellExecutor {
                         self.variables.insert("OPTARG".to_string(), c.to_string());
                     } else {
                         self.variables.insert("OPTARG".to_string(), String::new());
-                        eprintln!("zshrs:1: bad option: -{}", c);
+                        zwarn(&format!("bad option: -{}", c));
                     }
 
                     // Advance to next option/arg
@@ -6296,7 +6288,7 @@ impl crate::ported::exec::ShellExecutor {
                         _ => {
                             // zsh: unknown flag → `bad option: -X`
                             // exit 1. zshrs previously dropped silently.
-                            eprintln!("zshrs:type:1: bad option: -{}", c);
+                            zwarnnam("type", &format!("bad option: -{}", c));
                             return 1;
                         }
                     }
@@ -6542,7 +6534,7 @@ impl crate::ported::exec::ShellExecutor {
                         // bad option for the active mask. zsh's
                         // standard message is `bad option: -X`.
                         _ => {
-                            eprintln!("zshrs:{}:1: bad option: -{}", cmd_name, ch);
+                            zwarnnam(cmd_name, &format!("bad option: -{}", ch));
                             return 1;
                         }
                     }
@@ -6557,7 +6549,7 @@ impl crate::ported::exec::ShellExecutor {
         // args ("too many arguments") because they're table-wide
         // operations.
         if (rehash || fill_all) && !names.is_empty() {
-            eprintln!("zshrs:{}:1: too many arguments", cmd_name);
+            zwarnnam(cmd_name, "too many arguments");
             return 1;
         }
 
@@ -6671,7 +6663,7 @@ impl crate::ported::exec::ShellExecutor {
                 if let Some((n, p)) = name.split_once('=') {
                     self.add_named_dir(n, p);
                 } else if !self.named_dirs.contains_key(name) {
-                    eprintln!("zshrs:hash:1: no such directory name: {}", name);
+                    zwarnnam("hash", &format!("no such directory name: {}", name));
                     status = 1;
                 }
             }
@@ -6720,7 +6712,7 @@ impl crate::ported::exec::ShellExecutor {
                 // form diverged from C zsh by one word, breaking
                 // diagnostic-text parity tests and tools that
                 // grep-match the exact phrase.
-                eprintln!("zshrs:hash:1: no such command: {}", name);
+                zwarnnam("hash", &format!("no such command: {}", name));
                 return 1;
             }
         }
@@ -6739,7 +6731,7 @@ impl crate::ported::exec::ShellExecutor {
         // arity check, not bin_let itself. Mirror the dispatcher
         // behaviour here so call sites see the same failure mode.
         if args.is_empty() {
-            eprintln!("zshrs:let:1: not enough arguments");
+            zwarnnam("let", "not enough arguments");
             return 1;
         }
         let mut result: i64 = 0;
@@ -6784,7 +6776,7 @@ impl crate::ported::exec::ShellExecutor {
                         // `pushd -X /tmp` cd'd to /tmp instead of
                         // erroring.
                         _ => {
-                            eprintln!("zshrs:pushd:1: bad option: -{}", ch);
+                            zwarnnam("pushd", &format!("bad option: -{}", ch));
                             return 1;
                         }
                     }
@@ -6800,7 +6792,7 @@ impl crate::ported::exec::ShellExecutor {
         let current = match std::env::current_dir() {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("zshrs:pushd:1: {}", e);
+                zwarnnam("pushd", &format!("{}", e));
                 return 1;
             }
         };
@@ -6818,13 +6810,13 @@ impl crate::ported::exec::ShellExecutor {
                     let home = match std::env::var("HOME") {
                         Ok(h) => PathBuf::from(h),
                         Err(_) => {
-                            eprintln!("zshrs:pushd:1: HOME not set");
+                            zwarnnam("pushd", "HOME not set");
                             return 1;
                         }
                     };
                     self.dir_stack.push(current.clone());
                     if let Err(e) = std::env::set_current_dir(&home) {
-                        eprintln!("zshrs:pushd:1: {}: {}", home.display(), e);
+                        zwarnnam("pushd", &format!("{}: {}", home.display(), e));
                         self.dir_stack.pop();
                         return 1;
                     }
@@ -6833,7 +6825,7 @@ impl crate::ported::exec::ShellExecutor {
                     }
                     return 0;
                 }
-                eprintln!("zshrs:pushd:1: no other directory");
+                zwarnnam("pushd", "no other directory");
                 return 1;
             }
             let target = self.dir_stack.pop().unwrap();
@@ -6846,7 +6838,7 @@ impl crate::ported::exec::ShellExecutor {
             };
 
             if let Err(e) = std::env::set_current_dir(&resolved) {
-                eprintln!("zshrs:pushd:1: {}: {}", target.display(), e);
+                zwarnnam("pushd", &format!("{}: {}", target.display(), e));
                 self.dir_stack.pop();
                 self.dir_stack.push(target);
                 return 1;
@@ -6864,7 +6856,7 @@ impl crate::ported::exec::ShellExecutor {
             if let Ok(n) = arg[1..].parse::<usize>() {
                 let total = self.dir_stack.len() + 1;
                 if n >= total {
-                    eprintln!("zshrs:pushd:1: {}: directory stack index out of range", arg);
+                    zwarnnam("pushd", &format!("{}: directory stack index out of range", arg));
                     return 1;
                 }
                 // Rotate stack
@@ -6883,7 +6875,7 @@ impl crate::ported::exec::ShellExecutor {
                 };
 
                 if let Err(e) = std::env::set_current_dir(&resolved) {
-                    eprintln!("zshrs:pushd:1: {}: {}", target.display(), e);
+                    zwarnnam("pushd", &format!("{}: {}", target.display(), e));
                     return 1;
                 }
                 if !quiet {
@@ -6903,7 +6895,7 @@ impl crate::ported::exec::ShellExecutor {
 
         self.dir_stack.push(current.clone());
         if let Err(e) = std::env::set_current_dir(&resolved) {
-            eprintln!("zshrs:pushd:1: {}: {}", arg, e);
+            zwarnnam("pushd", &format!("{}: {}", arg, e));
             self.dir_stack.pop();
             return 1;
         }
@@ -6970,7 +6962,7 @@ impl crate::ported::exec::ShellExecutor {
                         // else; matches the bin_cd-shared option
                         // letter table.
                         _ => {
-                            eprintln!("zshrs:popd:1: bad option: -{}", ch);
+                            zwarnnam("popd", &format!("bad option: -{}", ch));
                             return 1;
                         }
                     }
@@ -6981,7 +6973,7 @@ impl crate::ported::exec::ShellExecutor {
         }
 
         if self.dir_stack.is_empty() {
-            eprintln!("zshrs:popd:1: directory stack empty");
+            zwarnnam("popd", "directory stack empty");
             return 1;
         }
 
@@ -6991,7 +6983,7 @@ impl crate::ported::exec::ShellExecutor {
                 if let Ok(n) = arg[1..].parse::<usize>() {
                     let total = self.dir_stack.len() + 1;
                     if n >= total {
-                        eprintln!("zshrs:popd:1: {}: directory stack index out of range", arg);
+                        zwarnnam("popd", &format!("{}: directory stack index out of range", arg));
                         return 1;
                     }
                     let remove_pos = if arg.starts_with('+') {
@@ -7008,7 +7000,7 @@ impl crate::ported::exec::ShellExecutor {
                             target.clone()
                         };
                         if let Err(e) = std::env::set_current_dir(&resolved) {
-                            eprintln!("zshrs:popd:1: {}: {}", target.display(), e);
+                            zwarnnam("popd", &format!("{}: {}", target.display(), e));
                             return 1;
                         }
                     } else {
@@ -7029,7 +7021,7 @@ impl crate::ported::exec::ShellExecutor {
             target.clone()
         };
         if let Err(e) = std::env::set_current_dir(&resolved) {
-            eprintln!("zshrs:popd:1: {}: {}", target.display(), e);
+            zwarnnam("popd", &format!("{}: {}", target.display(), e));
             self.dir_stack.push(target);
             return 1;
         }
@@ -7092,7 +7084,7 @@ impl crate::ported::exec::ShellExecutor {
                         // silently, so `dirs -X` printed the stack as if
                         // -X were a no-op flag (typo masked).
                         _ => {
-                            eprintln!("zshrs:dirs:1: bad option: -{}", ch);
+                            zwarnnam("dirs", &format!("bad option: -{}", ch));
                             return 1;
                         }
                     }
@@ -7278,7 +7270,7 @@ impl crate::ported::exec::ShellExecutor {
     /// printf builtin - format and print data (zsh/bash compatible)
     pub(crate) fn builtin_printf(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            eprintln!("zshrs:printf:1: not enough arguments");
+            zwarnnam("printf", "not enough arguments");
             return 1;
         }
 
@@ -7293,7 +7285,7 @@ impl crate::ported::exec::ShellExecutor {
             args
         };
         if trimmed.is_empty() {
-            eprintln!("zshrs:printf:1: not enough arguments");
+            zwarnnam("printf", "not enough arguments");
             return 1;
         }
         let (assign_var, format, format_args): (Option<String>, &String, &[String]) =
@@ -7843,11 +7835,11 @@ impl crate::ported::exec::ShellExecutor {
                         // %a (hex float) and %v (bash-only) are rejected by
                         // zsh as invalid directives. Match zsh.
                         'a' | 'A' | 'v' | 'V' => {
-                            eprintln!("zshrs:printf:1: %{}: invalid directive", specifier);
+                            zwarnnam("printf", &format!("%{}: invalid directive", specifier));
                             had_error = true;
                         }
                         _ => {
-                            eprintln!("zshrs:printf:1: %{}: invalid directive", specifier);
+                            zwarnnam("printf", &format!("%{}: invalid directive", specifier));
                             had_error = true;
                         }
                     }
@@ -7900,7 +7892,7 @@ impl crate::ported::exec::ShellExecutor {
                     _ => 1,
                 };
                 if levels <= 0 {
-                    eprintln!("zshrs:break:1: argument is not positive: {}", levels);
+                    zwarnnam("break", &format!("argument is not positive: {}", levels));
                     return 1;
                 }
                 self.breaking = levels;
@@ -7912,7 +7904,7 @@ impl crate::ported::exec::ShellExecutor {
                     _ => 1,
                 };
                 if levels <= 0 {
-                    eprintln!("zshrs:continue:1: argument is not positive: {}", levels);
+                    zwarnnam("continue", &format!("argument is not positive: {}", levels));
                     return 1;
                 }
                 self.continuing = levels;
@@ -7941,7 +7933,7 @@ impl crate::ported::exec::ShellExecutor {
                 // print the diagnostic but still treat as a real exit
                 // so the user sees the error and the shell terminates.
                 if args.len() > 1 {
-                    eprintln!("zshrs:{}:1: too many arguments", name);
+                    zwarnnam(name, "too many arguments");
                 }
                 // builtin.c:5815-5818 — exit's arg is a math
                 // expression, not just a literal integer.
@@ -7969,7 +7961,7 @@ impl crate::ported::exec::ShellExecutor {
                 std::process::exit(code);
             }
             _ => {
-                eprintln!("zshrs:bin_break:1: unknown name: {}", name);
+                zwarnnam("bin_break", &format!("unknown name: {}", name));
                 1
             }
         }
@@ -8005,7 +7997,7 @@ impl crate::ported::exec::ShellExecutor {
                 if i < args.len() {
                     command_arg = Some(args[i].clone());
                 } else {
-                    eprintln!("zshrs:emulate:1: -c requires an argument");
+                    zwarnnam("emulate", "-c requires an argument");
                     return 1;
                 }
             } else if arg == "-o" {
@@ -8014,7 +8006,7 @@ impl crate::ported::exec::ShellExecutor {
                 if i < args.len() {
                     extra_set_opts.push(args[i].clone());
                 } else {
-                    eprintln!("zshrs:emulate:1: -o requires an argument");
+                    zwarnnam("emulate", "-o requires an argument");
                     return 1;
                 }
             } else if arg == "+o" {
@@ -8023,7 +8015,7 @@ impl crate::ported::exec::ShellExecutor {
                 if i < args.len() {
                     extra_unset_opts.push(args[i].clone());
                 } else {
-                    eprintln!("zshrs:emulate:1: +o requires an argument");
+                    zwarnnam("emulate", "+o requires an argument");
                     return 1;
                 }
             } else if arg.starts_with('-') && arg.len() > 1 && !arg.starts_with("--") {
@@ -8034,7 +8026,7 @@ impl crate::ported::exec::ShellExecutor {
                         'R' => reset_mode = true,
                         'l' => list_mode = true,
                         _ => {
-                            eprintln!("zshrs:emulate:1: bad option: -{}", ch);
+                            zwarnnam("emulate", &format!("bad option: -{}", ch));
                             return 1;
                         }
                     }
@@ -8064,13 +8056,13 @@ impl crate::ported::exec::ShellExecutor {
         // silently dropped extras, so `emulate -l zsh oops` listed
         // zsh options without diagnosing the typo.
         if list_mode && extra_positional_count > 0 {
-            eprintln!("zshrs:emulate:1: too many arguments for -l");
+            zwarnnam("emulate", "too many arguments for -l");
             return 1;
         }
 
         // -L and -c are mutually exclusive
         if local_mode && command_arg.is_some() {
-            eprintln!("zshrs:emulate:1: -L and -c are mutually exclusive");
+            zwarnnam("emulate", "-L and -c are mutually exclusive");
             return 1;
         }
 
@@ -8083,7 +8075,7 @@ impl crate::ported::exec::ShellExecutor {
         // user error because there's nothing to make local.
         if mode.is_none() && !list_mode {
             if local_mode || reset_mode {
-                eprintln!("zshrs:emulate:1: not enough arguments");
+                zwarnnam("emulate", "not enough arguments");
                 return 1;
             }
             let current = self
@@ -8373,7 +8365,7 @@ impl crate::ported::exec::ShellExecutor {
                     .unwrap_or(false);
                 let body_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
                 if !first_ok || !body_ok {
-                    eprintln!("zshrs:integer:1: not an identifier: {}", name);
+                    zerrnam("integer", &format!("not an identifier: {}", name));
                     return 1;
                 }
             }
@@ -8469,7 +8461,7 @@ impl crate::ported::exec::ShellExecutor {
                             // attrs yet) but unknown letters error.
                             'c' | 'k' | 'M' | 's' | 'u' | 'U' | 'W' | 'z' => {}
                             _ => {
-                                eprintln!("zshrs:functions:1: bad option: -{}", c);
+                                zwarnnam("functions", &format!("bad option: -{}", c));
                                 return 1;
                             }
                         }
@@ -8485,7 +8477,7 @@ impl crate::ported::exec::ShellExecutor {
                             'l' | 't' | 'T' | 'm' => enable_trace = true,
                             'c' | 'k' | 'M' | 's' | 'u' | 'U' | 'W' | 'z' => {}
                             _ => {
-                                eprintln!("zshrs:functions:1: bad option: +{}", c);
+                                zwarnnam("functions", &format!("bad option: +{}", c));
                                 return 1;
                             }
                         }
@@ -8653,7 +8645,7 @@ impl crate::ported::exec::ShellExecutor {
                 // Removed from the known set so they fall through to the
                 // "bad option" error path matching zsh.
                 if let Some(bad) = body.chars().find(|c| !known(*c)) {
-                    eprintln!("zshrs:print:1: bad option: -{}", bad);
+                    zwarnnam("print", &format!("bad option: -{}", bad));
                     return 1;
                 }
                 let mut chars = arg[1..].chars().peekable();
@@ -8707,10 +8699,7 @@ impl crate::ported::exec::ShellExecutor {
                             } else {
                                 i += 1;
                                 if i >= args.len() {
-                                    eprintln!(
-                                        "zshrs:print:1: positive integer expected after -{}",
-                                        ch
-                                    );
+                                    zwarnnam("print", &format!("positive integer expected after -{}", ch));
                                     return 1;
                                 }
                                 args[i].clone()
@@ -8718,10 +8707,7 @@ impl crate::ported::exec::ShellExecutor {
                             match value_str.parse::<i32>() {
                                 Ok(n) if n > 0 => tab_expand = Some((n, all_tabs)),
                                 _ => {
-                                    eprintln!(
-                                        "zshrs:print:1: positive integer expected after -{}: {}",
-                                        ch, value_str
-                                    );
+                                    zwarnnam("print", &format!("positive integer expected after -{}: {}", ch, value_str));
                                     return 1;
                                 }
                             }
@@ -8739,7 +8725,7 @@ impl crate::ported::exec::ShellExecutor {
                             // isn't running. Real coproc support requires
                             // the coproc pipe wiring in exec.c we haven't
                             // ported yet.
-                            eprintln!("zshrs:print:1: no coprocess");
+                            zwarnnam("print", "no coprocess");
                             return 1;
                         }
                         'u' => {
@@ -8755,7 +8741,7 @@ impl crate::ported::exec::ShellExecutor {
                             } else {
                                 i += 1;
                                 if i >= args.len() {
-                                    eprintln!("zshrs:print:1: number expected after -u");
+                                    zwarnnam("print", "number expected after -u");
                                     return 1;
                                 }
                                 args[i].clone()
@@ -8763,10 +8749,7 @@ impl crate::ported::exec::ShellExecutor {
                             match value_str.parse::<i32>() {
                                 Ok(n) => fd = n,
                                 Err(_) => {
-                                    eprintln!(
-                                        "zshrs:print:1: number expected after -u: {}",
-                                        value_str
-                                    );
+                                    zwarnnam("print", &format!("number expected after -u: {}", value_str));
                                     return 1;
                                 }
                             }
@@ -8810,7 +8793,7 @@ impl crate::ported::exec::ShellExecutor {
                             } else {
                                 i += 1;
                                 if i >= args.len() {
-                                    eprintln!("zshrs:print:1: argument expected: -f");
+                                    zwarnnam("print", "argument expected: -f");
                                     return 1;
                                 }
                                 format_string = Some(args[i].clone());
@@ -8846,19 +8829,19 @@ impl crate::ported::exec::ShellExecutor {
             + (split_word_history as u32)
             + (store_var.is_some() as u32);
         if group1 > 1 {
-            eprintln!("zshrs:print:1: only one of -s, -S, -v, or -z allowed");
+            zwarnnam("print", "only one of -s, -S, -v, or -z allowed");
             return 1;
         }
         let any_redirect_sink = push_to_stack || add_to_history;
         let any_columns = columns != 0 || auto_columns;
         if any_redirect_sink && any_columns {
-            eprintln!("zshrs:print:1: -c or -C not allowed with -s, -S, or -z");
+            zwarnnam("print", "-c or -C not allowed with -s, -S, or -z");
             return 1;
         }
         let any_redirect_or_var = push_to_stack || add_to_history || store_var.is_some();
         let explicit_fd = fd != 1;
         if any_redirect_or_var && explicit_fd {
-            eprintln!("zshrs:print:1: -p or -u not allowed with -s, -S, -v, or -z");
+            zwarnnam("print", "-p or -u not allowed with -s, -S, -v, or -z");
             return 1;
         }
 
@@ -8882,7 +8865,7 @@ impl crate::ported::exec::ShellExecutor {
             // and stderr (always open in -c mode).
             let rc = unsafe { libc::fcntl(fd, libc::F_GETFD) };
             if rc < 0 {
-                eprintln!("zshrs:print:1: bad file number: {}", fd);
+                zwarnnam("print", &format!("bad file number: {}", fd));
                 return 1;
             }
         }
@@ -9216,7 +9199,7 @@ impl crate::ported::exec::ShellExecutor {
             // argument` exit 1. zshrs's loop concatenated all args
             // into the history entry silently.
             if split_word_history && output_args.len() > 1 {
-                eprintln!("zshrs:print:1: option -S takes a single argument");
+                zwarnnam("print", "option -S takes a single argument");
                 return 1;
             }
             if let Some(ref mut engine) = self.history {
@@ -9713,10 +9696,11 @@ impl crate::ported::exec::ShellExecutor {
                 if word_type {
                     println!("{}: none", name);
                 } else if verbose || csh_style {
-                    // zsh `where` (= `whence -ca`) emits the not-found
-                    // line for missing names; suppress only when caller
-                    // asked for a pure machine-readable form (no flags).
-                    eprintln!("{} not found", name);
+                    // zsh `where`/`whence -v` writes the not-found
+                    // line to stdout via `puts(" not found")`
+                    // (Src/builtin.c bin_whence) — informational, not
+                    // a diagnostic, so use println! not zwarnnam.
+                    println!("{} not found", name);
                 }
                 status = 1;
             }
@@ -9762,7 +9746,7 @@ impl crate::ported::exec::ShellExecutor {
                 // for `umask -X` was the wrong category entirely.
                 _ if arg.starts_with('-') && arg.len() > 1 => {
                     let bad: String = arg[1..].chars().take(1).collect();
-                    eprintln!("zshrs:umask:1: bad option: -{}", bad);
+                    zwarnnam("umask", &format!("bad option: -{}", bad));
                     return 1;
                 }
                 _ => {}
@@ -9773,7 +9757,7 @@ impl crate::ported::exec::ShellExecutor {
         // `too many arguments` and exits 1. zshrs's loop just
         // overwrote `value` silently with the last positional.
         if value_count > 1 {
-            eprintln!("zshrs:umask:1: too many arguments");
+            zwarnnam("umask", "too many arguments");
             return 1;
         }
 
@@ -9822,12 +9806,12 @@ impl crate::ported::exec::ShellExecutor {
                     }
                     // builtin.c:7556-7563 — operator.
                     if i >= bytes.len() {
-                        eprintln!("zshrs:umask:1: bad umask");
+                        zwarnnam("umask", "bad umask");
                         return 1;
                     }
                     let umaskop = bytes[i] as char;
                     if umaskop != '+' && umaskop != '-' && umaskop != '=' {
-                        eprintln!("zshrs:umask:1: bad symbolic mode operator: {}", umaskop);
+                        zwarnnam("umask", &format!("bad symbolic mode operator: {}", umaskop));
                         return 1;
                     }
                     i += 1;
@@ -9839,10 +9823,7 @@ impl crate::ported::exec::ShellExecutor {
                             b'w' => mask |= 0o222 & whomask,
                             b'x' => mask |= 0o111 & whomask,
                             other => {
-                                eprintln!(
-                                    "zshrs:umask:1: bad symbolic mode permission: {}",
-                                    other as char
-                                );
+                                zwarnnam("umask", &format!("bad symbolic mode permission: {}", other as char));
                                 return 1;
                             }
                         }
@@ -9862,10 +9843,7 @@ impl crate::ported::exec::ShellExecutor {
                     }
                 }
                 if i < bytes.len() {
-                    eprintln!(
-                        "zshrs:umask:1: bad character in symbolic mode: {}",
-                        bytes[i] as char
-                    );
+                    zwarnnam("umask", &format!("bad character in symbolic mode: {}", bytes[i] as char));
                     return 1;
                 }
                 unsafe {
@@ -9886,7 +9864,7 @@ impl crate::ported::exec::ShellExecutor {
                     .map(|c| c.is_ascii_digit())
                     .unwrap_or(false);
                 if looks_numeric || starts_with_digit {
-                    eprintln!("zshrs:umask:1: bad umask");
+                    zwarnnam("umask", "bad umask");
                     return 1;
                 }
                 let bytes = v.as_bytes();
@@ -9895,12 +9873,9 @@ impl crate::ported::exec::ShellExecutor {
                     i += 1;
                 }
                 if i < bytes.len() && !matches!(bytes[i], b'+' | b'-' | b'=') {
-                    eprintln!(
-                        "zshrs:umask:1: bad symbolic mode operator: {}",
-                        bytes[i] as char
-                    );
+                    zwarnnam("umask", &format!("bad symbolic mode operator: {}", bytes[i] as char));
                 } else {
-                    eprintln!("zshrs:umask:1: bad umask");
+                    zwarnnam("umask", "bad umask");
                 }
                 return 1;
             }
@@ -9982,7 +9957,7 @@ impl crate::ported::exec::ShellExecutor {
                 // (the default target) regardless of -X.
                 s if s.starts_with('-') => {
                     let bad: String = s[1..].chars().take(1).collect();
-                    eprintln!("zshrs:unhash:1: bad option: -{}", bad);
+                    zwarnnam("unhash", &format!("bad option: -{}", bad));
                     return 1;
                 }
                 _ => names.push(arg),
@@ -10039,7 +10014,7 @@ impl crate::ported::exec::ShellExecutor {
                 Target::Commands => self.command_hash.remove(name).is_some(),
             };
             if !removed {
-                eprintln!("zshrs:unhash:1: no such hash table element: {}", name);
+                zwarnnam("unhash", &format!("no such hash table element: {}", name));
                 returnval = 1;
             }
         }
@@ -10169,7 +10144,7 @@ impl crate::ported::exec::ShellExecutor {
                 // bad option: -X` exit 1. zshrs accepted any `-X`
                 // silently as if it were a name to mark readonly.
                 let bad: String = arg[1..].chars().take(1).collect();
-                eprintln!("zshrs:readonly:1: bad option: -{}", bad);
+                zwarnnam("readonly", &format!("bad option: -{}", bad));
                 return 1;
             } else if let Some(eq_pos) = arg.find('=') {
                 let name = &arg[..eq_pos];
@@ -10185,7 +10160,7 @@ impl crate::ported::exec::ShellExecutor {
                         .unwrap_or(false);
                     let body_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
                     if !first_ok || !body_ok {
-                        eprintln!("zshrs:readonly:1: not an identifier: {}", name);
+                        zerrnam("readonly", &format!("not an identifier: {}", name));
                         return 1;
                     }
                 }
@@ -10217,14 +10192,14 @@ impl crate::ported::exec::ShellExecutor {
                 "-m" => pattern_mode = true,
                 "--" => {} // accept end-of-options
                 s if s.starts_with('-') && s.len() > 1 => {
-                    eprintln!("zshrs:unfunction:1: bad option: {}", s);
+                    zwarnnam("unfunction", &format!("bad option: {}", s));
                     return 1;
                 }
                 s => names.push(s),
             }
         }
         if names.is_empty() {
-            eprintln!("zshrs:unfunction:1: not enough arguments");
+            zwarnnam("unfunction", "not enough arguments");
             return 1;
         }
         let mut returnval = 0;
@@ -10244,7 +10219,7 @@ impl crate::ported::exec::ShellExecutor {
         } else {
             for name in names {
                 if !self.remove_function(name) {
-                    eprintln!("zshrs:unfunction:1: no such function: {}", name);
+                    zwarnnam("unfunction", &format!("no such function: {}", name));
                     returnval = 1;
                 }
             }
@@ -10258,7 +10233,7 @@ impl crate::ported::exec::ShellExecutor {
         // stack is empty, zsh's read uses an empty string (builtin.c:6770
         // ternary `nonempty(bufstack) ? getlinknode(bufstack) : ztrdup("")`).
         if args.is_empty() {
-            eprintln!("zshrs:getln:1: missing variable name");
+            zwarnnam("getln", "missing variable name");
             return 1;
         }
         let line = self.buffer_stack.pop().unwrap_or_default();
@@ -10315,7 +10290,7 @@ impl crate::ported::exec::ShellExecutor {
                 // long-option support). Mirror by emitting the
                 // command-not-found diagnostic for any `--xxx` form.
                 if arg.starts_with("--") {
-                    eprintln!("zshrs:1: command not found: {}", arg);
+                    zwarn(&format!("command not found: {}", arg));
                     return 127;
                 }
                 for ch in arg[1..].chars() {
@@ -10331,7 +10306,7 @@ impl crate::ported::exec::ShellExecutor {
                             // bogus command). Match by emitting the
                             // command-not-found diagnostic instead of
                             // the flag-error message.
-                            eprintln!("zshrs:1: command not found: -{}", ch);
+                            zwarn(&format!("command not found: -{}", ch));
                             return 127;
                         }
                     }
@@ -10447,7 +10422,9 @@ impl crate::ported::exec::ShellExecutor {
             }
 
             if verbose {
-                eprintln!("{} not found", cmd);
+                // C: `puts(" not found")` to stdout — informational,
+                // not a diagnostic.
+                println!("{} not found", cmd);
             }
             return 1;
         }
@@ -10509,17 +10486,9 @@ impl crate::ported::exec::ShellExecutor {
                 if self.options.get("login").copied().unwrap_or(false) {
                     self.bin_break("logout", cmd_args)
                 } else {
-                    let prefix = if self.local_scope_depth > 0 {
-                        let name = self
-                            .arrays
-                            .get("funcstack")
-                            .and_then(|s| s.first().cloned())
-                            .unwrap_or_else(|| "anon".to_string());
-                        format!("({}):logout", name)
-                    } else {
-                        "zshrs:logout:1".to_string()
-                    };
-                    eprintln!("{}: not login shell", prefix);
+                    // C source: `zerrnam(name, "not login shell")` —
+                    // fatal (sets errflag) at Src/builtin.c:5861.
+                    zerrnam("logout", "not login shell");
                     1
                 }
             }
@@ -10601,7 +10570,7 @@ impl crate::ported::exec::ShellExecutor {
                 crate::daemon::builtins::try_dispatch(n, &argv).unwrap_or(1)
             }
             _ => {
-                eprintln!("zshrs:1: no such builtin: {}", cmd);
+                zwarn(&format!("no such builtin: {}", cmd));
                 1
             }
         }
@@ -10634,7 +10603,7 @@ impl crate::ported::exec::ShellExecutor {
                     // a parameter` exit 1, NOT the generic "exec
                     // requires a command to execute". Pinpoints the
                     // missing flag-value.
-                    eprintln!("zshrs:1: exec flag -a requires a parameter");
+                    zwarn("exec flag -a requires a parameter");
                     return 1;
                 }
                 argv0 = Some(args[i].clone());
@@ -10698,7 +10667,7 @@ impl crate::ported::exec::ShellExecutor {
                 || argv0.is_some()
                 || args.iter().any(|a| a.starts_with('-') && a.len() > 1);
             if saw_flag {
-                eprintln!("zshrs:1: exec requires a command to execute");
+                zwarn("exec requires a command to execute");
                 return 1;
             }
             return 0;
@@ -10730,7 +10699,7 @@ impl crate::ported::exec::ShellExecutor {
         // directory: PATH` (lowercased, no os-error suffix). Strip
         // Rust's wrapping.
         let msg = pretty_io_err(&err).to_lowercase();
-        eprintln!("zshrs:1: {}: {}", msg, cmd);
+        zwarn(&format!("{}: {}", msg, cmd));
         // exec failure is fatal in zsh — exit the shell with status 127
         // (not 1) since the target couldn't be found/executed.
         std::process::exit(127);
@@ -10792,7 +10761,7 @@ impl crate::ported::exec::ShellExecutor {
                         'a' => compile_auto = true,
                         'U' | 'M' | 'R' | 'm' | 'z' | 'k' => {} // ignored for now
                         _ => {
-                            eprintln!("zshrs:zcompile:1: bad option: -{}", c);
+                            zwarnnam("zcompile", &format!("bad option: -{}", c));
                             return 1;
                         }
                     }
@@ -10804,7 +10773,7 @@ impl crate::ported::exec::ShellExecutor {
         }
 
         if files.is_empty() {
-            eprintln!("zshrs:zcompile:1: not enough arguments");
+            zwarnnam("zcompile", "not enough arguments");
             return 1;
         }
 
@@ -10825,7 +10794,7 @@ impl crate::ported::exec::ShellExecutor {
                             if zwc.get_function(name).is_some() {
                                 println!("{}", name);
                             } else {
-                                eprintln!("zshrs:zcompile:1: function not found: {}", name);
+                                zwarnnam("zcompile", &format!("function not found: {}", name));
                                 return 1;
                             }
                         }
@@ -10838,7 +10807,7 @@ impl crate::ported::exec::ShellExecutor {
                     return 0;
                 }
                 Err(e) => {
-                    eprintln!("zshrs:zcompile:1: can't read zwc file: {}: {}", zwc_path, e);
+                    zwarnnam("zcompile", &format!("can't read zwc file: {}: {}", zwc_path, e));
                     return 1;
                 }
             }
@@ -10867,12 +10836,12 @@ impl crate::ported::exec::ShellExecutor {
                         // Try to load autoload function source
                         if let Some(path) = self.find_function_file(name) {
                             if let Err(e) = builder.add_file(&path) {
-                                eprintln!("zshrs:zcompile:1: can't read {}: {}", name, e);
+                                zwarnnam("zcompile", &format!("can't read {}: {}", name, e));
                                 return 1;
                             }
                         }
                     } else {
-                        eprintln!("zshrs:zcompile:1: no such function: {}", name);
+                        zwarnnam("zcompile", &format!("no such function: {}", name));
                         return 1;
                     }
                 }
@@ -10887,7 +10856,7 @@ impl crate::ported::exec::ShellExecutor {
             }
 
             if let Err(e) = builder.write(&zwc_path) {
-                eprintln!("zshrs:zcompile:1: can't write {}: {}", zwc_path, e);
+                zwarnnam("zcompile", &format!("can't write {}: {}", zwc_path, e));
                 return 1;
             }
             return 0;
@@ -10914,13 +10883,13 @@ impl crate::ported::exec::ShellExecutor {
                             let p = entry.path();
                             if p.is_file() && p.extension().is_none_or(|e| e != "zwc") {
                                 if let Err(e) = builder.add_file(&p) {
-                                    eprintln!("zshrs:zcompile:1: can't read {:?}: {}", p, e);
+                                    zwarnnam("zcompile", &format!("can't read {:?}: {}", p, e));
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("zshrs:zcompile:1: can't read directory: {}", e);
+                        zwarnnam("zcompile", &format!("can't read directory: {}", e));
                         return 1;
                     }
                 }
@@ -10935,13 +10904,13 @@ impl crate::ported::exec::ShellExecutor {
         for file in &source_files {
             let path = std::path::Path::new(file);
             if let Err(e) = builder.add_file(path) {
-                eprintln!("zshrs:zcompile:1: can't read {}: {}", file, e);
+                zwarnnam("zcompile", &format!("can't read {}: {}", file, e));
                 return 1;
             }
         }
 
         if let Err(e) = builder.write(&zwc_path) {
-            eprintln!("zshrs:zcompile:1: can't write {}: {}", zwc_path, e);
+            zwarnnam("zcompile", &format!("can't write {}: {}", zwc_path, e));
             return 1;
         }
 
@@ -10978,7 +10947,7 @@ impl crate::ported::exec::ShellExecutor {
                 _ if arg.starts_with('-') => {
                     let bad: String = arg[1..].chars().take(1).collect();
                     let bn = if enable { "enable" } else { "disable" };
-                    eprintln!("zshrs:{}:1: bad option: -{}", bn, bad);
+                    zwarnnam(bn, &format!("bad option: -{}", bad));
                     return 1;
                 }
                 _ => names.push(arg.clone()),
@@ -11099,10 +11068,10 @@ impl crate::ported::exec::ShellExecutor {
             }
             if hits.is_empty() {
                 if !match_glob {
-                    eprintln!(
-                        "{}: no such hash table element: {}",
+                    // C: zwarnnam(name, "no such hash table element: %s", *argv)
+                    zwarnnam(
                         if enable { "enable" } else { "disable" },
-                        arg
+                        &format!("no such hash table element: {}", arg),
                     );
                     returnval = 1;
                 }
@@ -11406,7 +11375,7 @@ impl crate::ported::exec::ShellExecutor {
                 }
                 PathBuf::from(oldpwd)
             } else {
-                eprintln!("zshrs:cd:1: OLDPWD not set");
+                zwarnnam("cd", "OLDPWD not set");
                 return 1;
             }
         } else if !path_arg.starts_with('/')
@@ -11509,7 +11478,7 @@ impl crate::ported::exec::ShellExecutor {
                 // zsh format: `zshrs:cd:1: no such file or directory: PATH`
                 // (lowercased, no Rust os-error suffix). Exit code stays 1.
                 let msg = pretty_io_err(&e).to_lowercase();
-                eprintln!("zshrs:cd:1: {}: {}", msg, path.display());
+                zwarnnam("cd", &format!("{}: {}", msg, path.display()));
                 1
             }
         }
@@ -11995,7 +11964,7 @@ impl crate::ported::exec::ShellExecutor {
                             // previously emitted the literal `%X`.
                             // %a (hex float) and %v (bash-only) hit this
                             // path along with any user typo.
-                            eprintln!("zshrs:printf:1: %{}: invalid directive", conv);
+                            zwarnnam("printf", &format!("%{}: invalid directive", conv));
                         }
                     }
                 }

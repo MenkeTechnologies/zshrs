@@ -15,32 +15,43 @@ pub static mut SCRIPT_NAME: Option<String> = None;
 /// Script filename
 pub static mut SCRIPT_FILENAME: Option<String> = None;
 
-/// Print an error message
-/// Print a shell error message to stderr.
-/// Port of `zerr()` from Src/utils.c — same `zsh: <msg>` shape.
+/// Print a fatal error to stderr.
+/// Port of `zerr()` from Src/utils.c:172. C source sets `errflag`
+/// after emitting `<prefix>: <msg>\n` so the running script aborts
+/// at the next safe point. The Rust port currently just prints —
+/// errflag plumbing isn't wired through every caller yet.
 pub fn zerr(msg: &str) {
     eprintln!("zsh: {}", msg);
 }
 
-/// Print an error message with command name
-/// Print a shell error message tagged with a command name.
-/// Port of `zerrnam()` from Src/utils.c.
+/// Print a fatal error tagged with a command name.
+/// Port of `zerrnam()` from Src/utils.c:189. Same `<cmd>: <msg>`
+/// shape as `zwarnnam` but semantically marks the failure as
+/// fatal (sets errflag in C).
 pub fn zerrnam(cmd: &str, msg: &str) {
     eprintln!("{}: {}", cmd, msg);
 }
 
-/// Print a warning message
-/// Print a non-fatal warning.
-/// Port of `zwarn()` from Src/utils.c.
+/// Print a warning to stderr.
+/// Port of `zwarn()` from Src/utils.c:213. C source emits
+/// `<prefix>: <msg>\n` where prefix is `scriptname`, `argzero`, or
+/// "zsh" depending on context (see `zwarning()` Src/utils.c:142).
+/// No "warning:" tag — bare "zsh: msg" matches both interactive and
+/// scripted output.
 pub fn zwarn(msg: &str) {
-    eprintln!("zsh: warning: {}", msg);
+    eprintln!("zsh: {}", msg);
 }
 
-/// Print a warning with command name  
-/// Print a non-fatal warning tagged with a command name.
-/// Port of `zwarnnam()` from Src/utils.c.
+/// Print a warning tagged with a command name.
+/// Port of `zwarnnam()` from Src/utils.c:230. C source emits
+/// `<prefix>: <cmd>: <msg>\n` where prefix is `scriptname` or
+/// `argzero` for scripts/functions, omitted for interactive use
+/// (`unset(SHINSTDIN) || locallevel` test in zwarning() at
+/// Src/utils.c:150). The Rust port mirrors the interactive shape
+/// (`<cmd>: <msg>`) — script-name prefix would require carrying
+/// scriptname/argzero through the executor.
 pub fn zwarnnam(cmd: &str, msg: &str) {
-    eprintln!("{}: warning: {}", cmd, msg);
+    eprintln!("{}: {}", cmd, msg);
 }
 
 /// Print formatted error with optional errno
