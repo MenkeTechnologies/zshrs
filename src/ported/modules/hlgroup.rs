@@ -27,12 +27,12 @@ pub fn convertattr(attr: &str, sgr: bool) -> String {
                 "hidden" | "invisible" => codes.push("8".to_string()),
                 "strikethrough" => codes.push("9".to_string()),
                 s if s.starts_with("fg=") => {
-                    if let Some(code) = color_to_code(&s[3..], true, true) {
+                    if let Some(code) = match_colour(&s[3..], true, true) {
                         codes.push(code);
                     }
                 }
                 s if s.starts_with("bg=") => {
-                    if let Some(code) = color_to_code(&s[3..], false, true) {
+                    if let Some(code) = match_colour(&s[3..], false, true) {
                         codes.push(code);
                     }
                 }
@@ -59,12 +59,12 @@ pub fn convertattr(attr: &str, sgr: bool) -> String {
                 "hidden" | "invisible" => result.push_str("\x1b[8m"),
                 "strikethrough" => result.push_str("\x1b[9m"),
                 s if s.starts_with("fg=") => {
-                    if let Some(color) = color_to_code(&s[3..], true, false) {
+                    if let Some(color) = match_colour(&s[3..], true, false) {
                         result.push_str(&color);
                     }
                 }
                 s if s.starts_with("bg=") => {
-                    if let Some(color) = color_to_code(&s[3..], false, false) {
+                    if let Some(color) = match_colour(&s[3..], false, false) {
                         result.push_str(&color);
                     }
                 }
@@ -79,11 +79,17 @@ pub fn convertattr(attr: &str, sgr: bool) -> String {
 /// escape (`sgr = false`) or the bare SGR parameter list used by
 /// `${.zle.sgr[name]}` (`sgr = true`).
 ///
-/// Port of the colour-name lookup table inside `convertattr()`
-/// (Src/Modules/hlgroup.c:40) — same name set, plus the
-/// 256-colour numeric codes and `#RRGGBB` truecolor extension the C
-/// source documents in `Doc/Zsh/mod_hlgroup.yo`.
-fn color_to_code(color: &str, fg: bool, sgr: bool) -> Option<String> {
+/// Port of `match_colour()` from Src/prompt.c:1957 — the C function
+/// `convertattr()` (Src/Modules/hlgroup.c:40) calls indirectly via
+/// `match_highlight()` to resolve a color spec. C signature is
+/// `match_colour(const char **, int is_fg, int colour) -> zattr`
+/// returning a bitmask the renderer later translates to escapes;
+/// this Rust port does the resolve + escape in one step (since the
+/// `${.zle.esc[name]}` / `${.zle.sgr[name]}` parameters expose the
+/// rendered string directly). Handles the same name set
+/// (`black`/`red`/.../`bright-red`/`light-red`), 256-colour numeric
+/// codes (line 2008 of C source), and `#RRGGBB` truecolor (line 1972).
+fn match_colour(color: &str, fg: bool, sgr: bool) -> Option<String> {
     let base = if fg { 30 } else { 40 };
     let bright_base = if fg { 90 } else { 100 };
     let wrap = |n: i32| -> String {
