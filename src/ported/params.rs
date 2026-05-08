@@ -4694,11 +4694,12 @@ mod tests {
     }
 
     #[test]
-    fn getarg_scalar_re_returns_first_match_substring() {
-        // C params.c:1798-1980 — `(re)pat` slides window over scalar
-        // with exact-match comparison.
+    fn getarg_scalar_re_returns_char_at_match_position() {
+        // C params.c:1798-1980 — char-search returns CHAR at match
+        // position, not full substring. Verified empirically:
+        //   /bin/zsh -c 's="barfooxyz"; print "${s[(r)foo]}"'  → "f"
         let out = getarg("(re)bc", None, None, Some("abcdef")).expect("Some");
-        assert_eq!(val_str(out), "bc");
+        assert_eq!(val_str(out), "b");
     }
 
     #[test]
@@ -6918,9 +6919,13 @@ pub(crate) fn getarg<'a>(
             }
             return Some(GetargOut::Value(match (found, return_index) {
                 (Some((s_pos, _)), true) => Value::str((s_pos + 1).to_string()),
-                (Some((s_pos, e_pos)), false) => {
-                    Value::str(s_chars[s_pos..e_pos].iter().collect::<String>())
-                }
+                // C params.c:1798-1980 char-search returns the char AT
+                // the match position, not the full matched substring.
+                // Verified empirically: `s="barfooxyz"; ${s[(r)foo]}`
+                // returns "f" in real zsh, not "foo".
+                (Some((s_pos, _)), false) => Value::str(
+                    s_chars.get(s_pos).map(|c| c.to_string()).unwrap_or_default(),
+                ),
                 (None, true) => Value::str(if flags.contains('i') {
                     (n + 1).to_string()
                 } else {
