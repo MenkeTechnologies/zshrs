@@ -453,6 +453,44 @@ fn test_subscript_flag_re_exact_match() {
     assert_eq!(output.trim(), "foo", "got: {output:?}");
 }
 
+#[test]
+fn test_subscript_flag_n_picks_nth_match() {
+    // (n.2.r) picks the 2nd match. Verified empirically:
+    // /bin/zsh -c 'arr=(foo bar foo baz); print "${arr[(n.2.r)foo]}"' → "foo"
+    // /bin/zsh -c 'arr=(foo bar foo baz); print "${arr[(n.2.i)foo]}"' → "3"
+    let (_, output, _) = run_zshrs(
+        r#"arr=(foo bar foo baz); print "[${arr[(n.2.r)foo]}]:[${arr[(n.2.i)foo]}]""#,
+    );
+    assert_eq!(output.trim(), "[foo]:[3]", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_flag_b_starts_from_offset() {
+    // (b.3.r) starts search from idx 3 (parsed-1).
+    let (_, output, _) = run_zshrs(
+        r#"arr=(foo bar foo baz); print "[${arr[(b.3.r)foo]}]:[${arr[(b.3.i)foo]}]""#,
+    );
+    assert_eq!(output.trim(), "[foo]:[3]", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_flag_b_out_of_bounds_returns_len_plus_one_for_i() {
+    // (b.99.i) on 4-element arr returns 5 (len+1) per c:1746.
+    let (_, output, _) = run_zshrs(
+        r#"arr=(foo bar foo baz); print "[${arr[(b.99.r)foo]}]:[${arr[(b.99.i)foo]}]""#,
+    );
+    assert_eq!(output.trim(), "[]:[5]", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_flag_hash_neg_num_xor_semantics() {
+    // r+neg → R semantics (all matches); R+neg → r (single match).
+    let (_, output, _) = run_zshrs(
+        r#"typeset -A h=(a 1 b 1 c 2); print "[${h[(n.-1.r)1]}]:[${h[(n.-1.R)1]}]""#,
+    );
+    assert_eq!(output.trim(), "[1 1]:[1]", "got: {output:?}");
+}
+
 // ---------------------------------------------------------------------------
 // `typeset -A` two-statement assoc init: declare then array-literal-assign
 // ---------------------------------------------------------------------------

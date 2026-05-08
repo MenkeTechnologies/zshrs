@@ -1656,7 +1656,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let close = rest.find(')')?;
             let flags = rest[..close].to_string();
             let pat = rest[close + 1..].to_string();
-            if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p')) {
+            if flags.chars().next().is_some_and(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p' | 's')) {
                 Some((flags, pat))
             } else { None }
         })(idx);
@@ -2414,7 +2414,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         let close = rest.find(')')?;
                         let flags = rest[..close].to_string();
                         let pat = rest[close + 1..].to_string();
-                        if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p')) {
+                        if flags.chars().next().is_some_and(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p' | 's')) {
                             Some((flags, pat))
                         } else { None }
                     })(&idx) {
@@ -2499,7 +2499,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         if flags.starts_with('s') {
                             return Some((flags, pat));
                         }
-                        if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p')) {
+                        if flags.chars().next().is_some_and(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p' | 's')) {
                             Some((flags, pat))
                         } else { None }
                     })(&idx) {
@@ -2588,7 +2588,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let close = rest.find(')')?;
                     let flags = rest[..close].to_string();
                     let pat = rest[close + 1..].to_string();
-                    if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p')) {
+                    if flags.chars().next().is_some_and(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b' | 'w' | 'f' | 'p' | 's')) {
                         Some((flags, pat))
                     } else { None }
                 })(&idx) {
