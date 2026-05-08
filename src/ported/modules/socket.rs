@@ -122,27 +122,6 @@ pub fn socket_accept(listen_fd: RawFd) -> io::Result<(RawFd, String)> {
     Ok((fd, path))
 }
 
-/// Test if a listening socket has a pending connection without
-/// blocking.
-/// Port of the `-t` polling step inside `bin_zsocket()`'s `-a -t`
-/// path (Src/Modules/socket.c:57). Uses `poll(2)` with a zero
-/// timeout so the caller can fast-fail when no client is waiting.
-#[cfg(unix)]
-pub fn socket_test(fd: RawFd) -> io::Result<bool> {
-    let mut pfd = libc::pollfd {
-        fd,
-        events: libc::POLLIN,
-        revents: 0,
-    };
-
-    let result = unsafe { libc::poll(&mut pfd, 1, 0) };
-    if result < 0 {
-        return Err(io::Error::last_os_error());
-    }
-
-    Ok(result > 0)
-}
-
 /// Connect to a Unix-domain socket bound at `path`.
 /// Port of the no-flag branch of `bin_zsocket()` from
 /// Src/Modules/socket.c:57 — `socket(PF_UNIX, SOCK_STREAM, 0)` →
@@ -223,10 +202,26 @@ pub fn bin_zsocket(args: &[&str], options: &ZsocketOptions) -> (i32, String, Opt
         };
 
         if options.test {
-            match socket_test(listen_fd) {
-                Ok(true) => {}
-                Ok(false) => return (1, output, None),
-                Err(e) => return (1, format!("zsocket: poll error: {}\n", e), None),
+            // Inline of the deleted socket_test helper: poll the fd with
+            // zero timeout (Src/Modules/socket.c:57 -t branch).
+            #[cfg(unix)]
+            {
+                let mut pfd = libc::pollfd {
+                    fd: listen_fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                let result = unsafe { libc::poll(&mut pfd, 1, 0) };
+                if result < 0 {
+                    return (
+                        1,
+                        format!("zsocket: poll error: {}\n", io::Error::last_os_error()),
+                        None,
+                    );
+                }
+                if result == 0 {
+                    return (1, output, None);
+                }
             }
         }
 

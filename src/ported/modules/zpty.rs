@@ -173,27 +173,6 @@ pub fn ptynonblock(fd: RawFd) -> io::Result<()> {
     Ok(())
 }
 
-/// Disable line-discipline echo on a terminal.
-/// Port of the echo-clearing path inside `ptysettyinfo()`
-/// (Src/Modules/zpty.c:124) — `tcgetattr` → clear `ECHO` →
-/// `tcsetattr(TCSADRAIN)`.
-#[cfg(unix)]
-pub fn disable_echo(fd: RawFd) -> io::Result<()> {
-    unsafe {
-        let mut termios: libc::termios = std::mem::zeroed();
-        if libc::tcgetattr(fd, &mut termios) < 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        termios.c_lflag &= !libc::ECHO;
-
-        if libc::tcsetattr(fd, libc::TCSADRAIN, &termios) < 0 {
-            return Err(io::Error::last_os_error());
-        }
-    }
-    Ok(())
-}
-
 /// Read from a pty, optionally matching a pattern.
 /// Port of `ptyread()` from Src/Modules/zpty.c:548 — `poll(2)` +
 /// `read(2)` loop that bails when `pattern` is found in the
@@ -477,7 +456,15 @@ pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) -> (i3
                         }
 
                         if !options.echo {
-                            let _ = disable_echo(0);
+                            // Inline of the deleted disable_echo helper
+                            // (Src/Modules/zpty.c:124 ptysettyinfo).
+                            unsafe {
+                                let mut termios: libc::termios = std::mem::zeroed();
+                                if libc::tcgetattr(0, &mut termios) >= 0 {
+                                    termios.c_lflag &= !libc::ECHO;
+                                    let _ = libc::tcsetattr(0, libc::TCSADRAIN, &termios);
+                                }
+                            }
                         }
 
                         let cmd = CString::new(cmd_args[0].clone()).unwrap();
