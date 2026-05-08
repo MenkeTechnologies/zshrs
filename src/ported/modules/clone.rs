@@ -7,6 +7,7 @@
 //! child pid and the child's `$!` is zero.
 
 use std::io;
+use crate::ported::utils::zwarnnam;
 
 /// Result returned by `clone_shell` so the caller can wire $! /
 /// $TTY / $PID / $PPID per src/zsh/Src/Modules/clone.c:55-98.
@@ -65,10 +66,7 @@ pub fn clone_shell(tty_path: &str) -> io::Result<CloneOutcome> {
                 // clone.c:60 — setsid creates a new session and pgid.
                 // Failure is non-fatal; zsh just warns.
                 if libc::setsid() == -1 {
-                    eprintln!(
-                        "clone: failed to create new session: {}",
-                        io::Error::last_os_error()
-                    );
+                    zwarnnam("clone", &format!("failed to create new session: {}", io::Error::last_os_error()));
                 }
 
                 // clone.c:67-69 — point std fds at the new tty.

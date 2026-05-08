@@ -8,6 +8,7 @@
 
 #[allow(unused_imports)]
 use crate::ported::exec::{self, ShellExecutor};
+use crate::ported::utils::zerr;
 use crate::ported::text::format_function_body_zsh;
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
@@ -5791,7 +5792,7 @@ impl crate::ported::exec::ShellExecutor {
                         let nounset_on = self.options.get("nounset").copied().unwrap_or(false)
                             || !self.options.get("unset").copied().unwrap_or(true);
                         if nounset_on {
-                            eprintln!("zshrs:1: {}: parameter not set", name);
+                            zerr(&format!("{}: parameter not set", name));
                             std::process::exit(1);
                         }
                         String::new()

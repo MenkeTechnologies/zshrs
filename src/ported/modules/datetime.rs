@@ -3,6 +3,7 @@
 //! Provides output_strftime builtin and EPOCHSECONDS/EPOCHREALTIME/epochtime parameters.
 
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
+use crate::ported::utils::zwarnnam;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Get current time as epoch seconds.
@@ -360,7 +361,7 @@ impl crate::ported::exec::ShellExecutor {
                             'r' => options.reverse = true,
                             'q' => options.quiet = true,
                             _ => {
-                                eprintln!("output_strftime: bad option: -{}", ch);
+                                zwarnnam("output_strftime", &format!("bad option: -{}", ch));
                                 return 1;
                             }
                         }

@@ -14,6 +14,7 @@
 //! - bin_comptry       → compsys::state::comptry()
 
 use std::collections::HashMap;
+use crate::ported::utils::zwarnnam;
 use crate::ported::exec::shell_quote_value;
 
 /// Completion description set Port of `CDSet` from Src/Zle/computil.c.
@@ -447,7 +448,7 @@ impl crate::ported::exec::ShellExecutor {
                 self.variables
                     .insert(name.to_string(), shell_quote_value(&val));
             } else {
-                eprintln!("zshrs:compquote:1: unknown parameter: {}", name);
+                zwarnnam("compquote", &format!("unknown parameter: {}", name));
                 returnval = 1;
             }
         }

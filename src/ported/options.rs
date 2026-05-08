@@ -9,6 +9,7 @@
 //! - setopt/unsetopt builtins
 
 use std::collections::HashMap;
+use crate::ported::utils::zwarnnam;
 
 /// Shell emulation modes.
 /// Port of the `EMULATE_*` constants from Src/zsh.h —
@@ -1076,7 +1077,7 @@ impl crate::ported::exec::ShellExecutor {
                         // diagnostic. Strip leading `no` first because
                         // `nounset` ↔ `unset` style names are toggles.
                         if !ZSH_OPTIONS_SET.contains(oname.as_str()) {
-                            eprintln!("zshrs:{}:1: no such option: {}", name, arg);
+                            zwarnnam(name, &format!("no such option: {}", arg));
                             return 1;
                         }
                         let v = if is_unsetopt { !enable } else { enable };

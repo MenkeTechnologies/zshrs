@@ -4,6 +4,7 @@
 //! Uses the Rust `regex` crate which provides Perl-compatible regex syntax.
 
 use regex::Regex;
+use crate::ported::utils::zwarnnam;
 use std::collections::HashMap;
 
 /// Compiled PCRE pattern state.
@@ -539,7 +540,7 @@ impl crate::ported::exec::ShellExecutor {
         match pcre_study(&self.pcre_state) {
             Ok(()) => 0,
             Err(e) => {
-                eprintln!("pcre_study: {}", e);
+                zwarnnam("pcre_study", &format!("{}", e));
                 1
             }
         }

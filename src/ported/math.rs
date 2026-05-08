@@ -16,6 +16,7 @@
 //! - Variable references and assignment
 
 use std::collections::HashMap;
+use crate::ported::utils::zerr;
 use std::env;
 use crate::ported::exec::{
     self,
@@ -2243,14 +2244,14 @@ impl crate::ported::exec::ShellExecutor {
                 "*=" => cur * rhs_val,
                 "/=" => {
                     if rhs_val == 0 {
-                        eprintln!("zshrs:1: division by zero");
+                        zerr("division by zero");
                         return cur.to_string();
                     }
                     cur / rhs_val
                 }
                 "%=" => {
                     if rhs_val == 0 {
-                        eprintln!("zshrs:1: division by zero");
+                        zerr("division by zero");
                         return cur.to_string();
                     }
                     cur % rhs_val
@@ -2522,7 +2523,7 @@ impl crate::ported::exec::ShellExecutor {
                 // status of unrelated paths that share evaluate_arith
                 // (e.g. `a+=y` where the value parses as a non-arith
                 // string then errors silently).
-                eprintln!("zshrs:1: {}", msg);
+                zerr(&format!("{}", msg));
                 // zsh aborts the surrounding command on arith
                 // errors — `echo $((2#5))` emits the diagnostic
                 // but does NOT print `0`. Match common error
@@ -2629,7 +2630,7 @@ impl crate::ported::exec::ShellExecutor {
                 // stderr in the form `zshrs:LINE: <message>`. Without this
                 // gate, `$((10/0))` returned 0 silently — masking real bugs
                 // in user scripts.
-                eprintln!("zshrs:1: {}", msg);
+                zerr(&format!("{}", msg));
                 0
             }
         }
