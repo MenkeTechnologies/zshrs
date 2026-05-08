@@ -78,10 +78,6 @@ errno_str
 # init.rs argv-parsing / help-text / exe-resolution helpers —
 # zsh C inlines this work in `parseargs()` and `init_main()`.
 # Each is single-caller and < 30 lines.
-set_option_by_name
-print_help
-get_exe_path
-is_login_shell
 
 # tcp.rs Rust-side helpers extracted from `bin_ztcp` (Src/Modules/
 # tcp.c). C zsh inlines connect/listen/accept/etc. inside one large
@@ -138,8 +134,6 @@ is_file
 is_dir
 file_mtime
 read_lines
-random_int
-random_range
 is_identifier
 is_number
 is_float
@@ -189,13 +183,11 @@ get_proc_caps
 get_terminal_size
 get_tied_param
 get_today_midnight
-getsingleline
 hist_hasher
 hist_strcmp
 init_completion
 is_emacs_word_char
 is_meta
-is_tok
 is_valid_identifier
 is_vi_word_char
 list_bindings
@@ -203,7 +195,6 @@ lookup
 lookup_builtin
 magic_assoc_keys
 mathevalf
-meta_decode
 meta_encode
 minimal_zshrc
 needs_newuser_setup

@@ -1290,22 +1290,6 @@ pub fn printtime(secs: i64) -> String {
     }
 }
 
-/// Generate random integer
-pub fn random_int() -> u32 {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-    RandomState::new().build_hasher().finish() as u32
-}
-
-/// Generate random integer in range [0, max)
-pub fn random_range(max: u32) -> u32 {
-    if max == 0 {
-        0
-    } else {
-        random_int() % max
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Missing utility functions ported from utils.c
 // ---------------------------------------------------------------------------

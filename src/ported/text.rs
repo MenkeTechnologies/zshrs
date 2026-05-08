@@ -741,14 +741,6 @@ pub fn getjobtext(cmd: &ShellCommand) -> String {
     TextFormatter::new(TextConfig::job_text()).format(cmd)
 }
 
-/// Get a single-line representation
-/// Render a command on a single line, no newlines.
-/// zshrs convenience over `getpermtext()` (Src/text.c:279) — used
-/// by callers that want compact rendering for diagnostics.
-pub fn getsingleline(cmd: &ShellCommand) -> String {
-    TextFormatter::new(TextConfig::single_line()).format(cmd)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -841,7 +833,7 @@ mod tests {
             simple_cmd(&["echo", "a"]),
             simple_cmd(&["echo", "b"]),
         ]));
-        let text = getsingleline(&cmd);
+        let text = TextFormatter::new(TextConfig::single_line()).format(&cmd);
         assert!(!text.contains('\n'));
         assert!(text.contains(';'));
     }
