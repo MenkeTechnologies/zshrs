@@ -118,57 +118,6 @@ impl WatchState {
     }
 }
 
-/// Read utmp entries via the libc `getutxent(3)` walk that
-/// `watchlog2()` (Src/Modules/watch.c:204) uses on every poll. The
-/// linux/macos paths share identical libc machinery; non-Unix
-/// targets return empty.
-pub fn read_utmp() -> Vec<UtmpEntry> {
-    let mut entries = Vec::new();
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    unsafe {
-        libc::setutxent();
-
-        loop {
-            let entry = libc::getutxent();
-            if entry.is_null() {
-                break;
-            }
-            let ut = &*entry;
-
-            let user = CStr::from_ptr(ut.ut_user.as_ptr())
-                .to_string_lossy()
-                .into_owned();
-            let line = CStr::from_ptr(ut.ut_line.as_ptr())
-                .to_string_lossy()
-                .into_owned();
-            let host = CStr::from_ptr(ut.ut_host.as_ptr())
-                .to_string_lossy()
-                .into_owned();
-
-            let session_type = match ut.ut_type {
-                t if t == libc::USER_PROCESS => SessionType::UserProcess,
-                t if t == libc::DEAD_PROCESS => SessionType::DeadProcess,
-                t if t == libc::LOGIN_PROCESS => SessionType::LoginProcess,
-                t if t == libc::INIT_PROCESS => SessionType::InitProcess,
-                t if t == libc::BOOT_TIME => SessionType::BootTime,
-                _ => SessionType::Unknown,
-            };
-
-            entries.push(UtmpEntry {
-                user,
-                line,
-                host,
-                time: ut.ut_tv.tv_sec as i64,
-                pid: ut.ut_pid,
-                session_type,
-            });
-        }
-
-        libc::endutxent();
-    }
-    entries
-}
-
 /// Check if a watch pattern matches an entry field
 /// Match a `$watch` pattern against an actual user/host/tty.
 /// Port of `watchlog_match()` from Src/Modules/watch.c:434 — same
@@ -432,7 +381,48 @@ fn matches_watch_pattern(pattern: &str, entry: &UtmpEntry) -> bool {
 /// fires `watchlog()` for each new entry / departure.
 pub fn dowatch(state: &mut WatchState, current_user: &str) -> Vec<(UtmpEntry, bool)> {
     let mut events = Vec::new();
-    let new_entries = read_utmp();
+    // Inline utmp walk — direct port of the setutxent/getutxent/endutxent
+    // loop watchlog2 uses every poll (Src/Modules/watch.c:204). zsh C
+    // performs this walk in-place inside watchlog2; mirroring that
+    // structure here keeps the call shape 1:1.
+    let mut new_entries: Vec<UtmpEntry> = Vec::new();
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    unsafe {
+        libc::setutxent();
+        loop {
+            let entry = libc::getutxent();
+            if entry.is_null() {
+                break;
+            }
+            let ut = &*entry;
+            let user = CStr::from_ptr(ut.ut_user.as_ptr())
+                .to_string_lossy()
+                .into_owned();
+            let line = CStr::from_ptr(ut.ut_line.as_ptr())
+                .to_string_lossy()
+                .into_owned();
+            let host = CStr::from_ptr(ut.ut_host.as_ptr())
+                .to_string_lossy()
+                .into_owned();
+            let session_type = match ut.ut_type {
+                t if t == libc::USER_PROCESS => SessionType::UserProcess,
+                t if t == libc::DEAD_PROCESS => SessionType::DeadProcess,
+                t if t == libc::LOGIN_PROCESS => SessionType::LoginProcess,
+                t if t == libc::INIT_PROCESS => SessionType::InitProcess,
+                t if t == libc::BOOT_TIME => SessionType::BootTime,
+                _ => SessionType::Unknown,
+            };
+            new_entries.push(UtmpEntry {
+                user,
+                line,
+                host,
+                time: ut.ut_tv.tv_sec as i64,
+                pid: ut.ut_pid,
+                session_type,
+            });
+        }
+        libc::endutxent();
+    }
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
