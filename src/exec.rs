@@ -55,8 +55,7 @@ pub(crate) use crate::ported::text::format_function_body_zsh;
 pub(crate) use crate::ported::utils::base64_decode;
 #[allow(unused_imports)]
 pub(crate) use crate::ported::utils::{
-    ispwd, printprompt4, quotedzputs,
-    zsh_split_z,
+    bufferwords as bufferwords_z, ispwd, printprompt4, quotedzputs,
 };
 
 pub(crate) use crate::intercepts::intercept_matches;

@@ -48,6 +48,7 @@ src/ported/signals.rs::getsigidx
 src/ported/signals.rs::getsigname
 src/ported/signals.rs::handler
 src/ported/utils.rs::base64_decode
+src/ported/utils.rs::bufferwords
 src/ported/utils.rs::checkglobqual
 src/ported/utils.rs::convfloat
 src/ported/utils.rs::convfloat_underscore
