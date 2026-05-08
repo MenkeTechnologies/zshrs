@@ -292,11 +292,37 @@ static OP_TYPE: [u16; TOKCOUNT] = [
     LR | OP_OPF,
 ];
 
-/// Stack value for the evaluator
+/// Port of `enum prec_type` from `Src/math.c`. `mathevall()` (line
+/// 367) uses this to differentiate top-level expression evaluation
+/// (`(())`, `$(())`) from function-argument evaluation
+/// (`func(arg, arg, …)`) — argument-mode terminates parsing on
+/// the first comma encountered at the top level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(non_camel_case_types)]
+pub enum prec_type {
+    MPREC_TOP,
+    MPREC_ARG,
+}
+
+/// Port of `struct mathvalue` from `Src/math.c`:
+///
+/// ```c
+/// struct mathvalue {
+///     char *lval;     /* lvalue string for variable write-back  */
+///     Value pval;     /* resolved variable handle (or NULL)     */
+///     mnumber val;    /* current numeric value                  */
+/// };
+/// ```
 #[derive(Clone)]
 pub(crate) struct MathValue {
-    val: Mnumber,
-    lval: Option<String>,
+    pub val: Mnumber,
+    pub lval: Option<String>,
+    /// `Value pval` slot from the C source. zsh uses it to cache the
+    /// resolved parameter handle so write-back doesn't re-parse the
+    /// `lval` string. Rust port leaves this as `()` for now — the
+    /// resolved variable lives in `crate::ported::exec::ShellExecutor`'s
+    /// `variables` map, looked up by `lval` on each access.
+    pub pval: (),
 }
 
 impl Default for MathValue {
@@ -304,6 +330,7 @@ impl Default for MathValue {
         MathValue {
             val: Mnumber::integer(0),
             lval: None,
+            pval: (),
         }
     }
 }
@@ -1096,7 +1123,7 @@ pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
 /// optional lvalue name (set when the value came from a variable
 /// reference; needed for `++`/`--`/assignment-op write-back).
 pub fn push(s: &mut MathState<'_>, val: Mnumber, lval: Option<String>) {
-    s.stack.push(MathValue { val, lval });
+    s.stack.push(MathValue { val, lval, pval: () });
 }
 
 /// Port of `pop()` from `Src/math.c:931`.
