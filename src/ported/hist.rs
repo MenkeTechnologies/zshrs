@@ -1973,6 +1973,154 @@ pub fn saveandpophiststack(hist: &mut History, _writeflags: i32) {
     pophiststack(hist);
 }
 
+/// Canonicalise a path in place — collapse `.`/`..`, prepend
+/// cwd if relative, squeeze duplicate slashes, preserve trailing
+/// `/` semantics. Port of `chabspath()` from Src/hist.c.
+/// Returns `None` when collapse fails (e.g. `..` past root with
+/// no SUPERROOT). The C source mutates a `char**`; we return the
+/// new path. Used by the `:A` modifier in older zsh codepaths.
+pub fn chabspath(input: &str) -> Option<String> {
+    if input.is_empty() {
+        return Some(String::new());
+    }
+    let mut path = if !input.starts_with('/') {
+        let cwd = std::env::current_dir().ok()?;
+        let cwd_s = cwd.to_string_lossy().into_owned();
+        if cwd_s.ends_with('/') {
+            format!("{}{}", cwd_s, input)
+        } else {
+            format!("{}/{}", cwd_s, input)
+        }
+    } else {
+        input.to_string()
+    };
+    // Collapse pass — direct port of the C `for (;;) { if/else }`
+    // walk over `current` writing into `dest`.
+    let chars: Vec<char> = path.chars().collect();
+    let mut out: Vec<char> = Vec::with_capacity(chars.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '/' {
+            out.push('/');
+            i += 1;
+            while i < chars.len() && chars[i] == '/' {
+                i += 1;
+            }
+        } else if c == '.' && i + 1 < chars.len() && chars[i + 1] == '.'
+            && (i + 2 == chars.len() || chars[i + 2] == '/')
+        {
+            // `..` component
+            if out.len() <= 1 {
+                // At root or starting — push literal `..` (matches
+                // C's first branch: dest == junkptr or current ==
+                // junkptr). Without SUPERROOT support, this falls
+                // through to "can't go above root".
+                if out.is_empty() || out == ['/'] {
+                    return None;
+                }
+                out.push('.');
+                out.push('.');
+            } else if out.len() >= 3 && &out[out.len() - 3..] == &['.', '.', '/'] {
+                out.push('.');
+                out.push('.');
+            } else {
+                // Pop the last component up to (but not including)
+                // the prior `/`.
+                if out.last() == Some(&'/') && out.len() > 1 {
+                    out.pop();
+                }
+                while out.last().map(|c| *c != '/').unwrap_or(false) {
+                    out.pop();
+                }
+            }
+            i += 2;
+            if i < chars.len() && chars[i] == '/' {
+                i += 1;
+            }
+        } else if c == '.' && (i + 1 == chars.len() || chars[i + 1] == '/') {
+            // `.` component — skip it and following slashes.
+            i += 1;
+            while i < chars.len() && chars[i] == '/' {
+                i += 1;
+            }
+        } else {
+            // Regular component byte.
+            out.push(c);
+            i += 1;
+        }
+    }
+    // Strip trailing slashes (C: `while (dest > *junkptr + 1 &&
+    // dest[-1] == '/') dest--`).
+    while out.len() > 1 && out.last() == Some(&'/') {
+        out.pop();
+    }
+    path = out.into_iter().collect();
+    if path.is_empty() {
+        Some("/".to_string())
+    } else {
+        Some(path)
+    }
+}
+
+/// Wrap a string in single-quotes, escaping any embedded `'` and
+/// (when not inside a quoted run) blank chars. Port of `quote()`
+/// from Src/hist.c — used by the `:q` history modifier.
+/// The C signature mutates a `char**`; the Rust port takes &str
+/// and returns the quoted String.
+pub fn quote(s: &str) -> String {
+    let bytes: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(bytes.len() + 3);
+    out.push('\'');
+    let mut inquotes = false;
+    let mut prev: char = '\0';
+    for (i, &c) in bytes.iter().enumerate() {
+        if c == '\'' {
+            inquotes = !inquotes;
+            // `'\''` form: close existing quote, escaped quote, reopen.
+            out.push('\'');
+            out.push('\\');
+            out.push('\'');
+            out.push('\'');
+        } else if c.is_whitespace() && !inquotes && prev != '\\' {
+            // Blank outside quoted run: close, emit, reopen.
+            out.push('\'');
+            out.push(c);
+            out.push('\'');
+        } else {
+            out.push(c);
+        }
+        prev = if i < bytes.len() { c } else { prev };
+    }
+    out.push('\'');
+    out
+}
+
+/// Extract the substring spanning words `arg1..=arg2` of a
+/// history entry. Port of `getargs()` from Src/hist.c — uses the
+/// per-entry `words` boundary array; emits an error and returns
+/// `None` for out-of-range / corrupted positions.
+pub fn getargs(entry: &HistEntry, arg1: usize, arg2: usize) -> Option<String> {
+    let nwords = entry.words.len();
+    if nwords == 0 || arg2 < arg1 || arg1 >= nwords || arg2 >= nwords {
+        herrflush();
+        eprintln!("no such word in event");
+        return None;
+    }
+    // Optimisation: full-event request returns the whole text.
+    if arg1 == 0 && arg2 == nwords - 1 {
+        return Some(entry.text.clone());
+    }
+    let (pos1, _) = entry.words[arg1];
+    let (_, pos2) = entry.words[arg2];
+    if pos2 > entry.text.len() || pos1 > pos2 {
+        herrflush();
+        eprintln!("history event too long, can't index requested words");
+        return None;
+    }
+    Some(entry.text[pos1..pos2].to_string())
+}
+
 /// Decrement the lock counter. Port of `unlockhistfile()` from
 /// Src/hist.c — drops the lock when the count reaches 0. The
 /// actual file-level unlock (flock release) is currently a TODO
