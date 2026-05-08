@@ -4510,14 +4510,14 @@ mod tests {
     fn getarg_n_flag_picks_second_exact_match() {
         // C params.c:1431-1442 + 1758 — `(en.2.)pat` picks 2nd exact match.
         let arr: Vec<String> = vec!["foo".into(), "bar".into(), "foo".into(), "baz".into()];
-        let out = getarg("(en.2.)foo", Some(&arr), None).expect("Some");
+        let out = getarg("(en.2.)foo", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "foo");
     }
 
     #[test]
     fn getarg_n_flag_third_exact_match() {
         let arr: Vec<String> = vec!["a".into(), "a".into(), "a".into(), "b".into()];
-        let out = getarg("(en.3.)a", Some(&arr), None).expect("Some");
+        let out = getarg("(en.3.)a", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "a");
     }
 
@@ -4525,7 +4525,7 @@ mod tests {
     fn getarg_n_flag_returns_index_with_i() {
         // (en.2.i) — return INDEX of 2nd exact match.
         let arr: Vec<String> = vec!["x".into(), "y".into(), "x".into(), "y".into()];
-        let out = getarg("(en.2.i)x", Some(&arr), None).expect("Some");
+        let out = getarg("(en.2.i)x", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "3");
     }
 
@@ -4534,7 +4534,7 @@ mod tests {
         // C params.c:1488-1491 — negative `num` flips down (reverse).
         // (en.-1.) on forward-default search matches from the end.
         let arr: Vec<String> = vec!["a".into(), "a".into(), "a".into()];
-        let out = getarg("(en.-1.i)a", Some(&arr), None).expect("Some");
+        let out = getarg("(en.-1.i)a", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "3");
     }
 
@@ -4542,7 +4542,7 @@ mod tests {
     fn getarg_n_flag_zero_treated_as_one() {
         // C params.c:1438-1439 — `if (!num) num = 1`.
         let arr: Vec<String> = vec!["x".into(), "y".into()];
-        let out = getarg("(en.0.)x", Some(&arr), None).expect("Some");
+        let out = getarg("(en.0.)x", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "x");
     }
 
@@ -4550,14 +4550,14 @@ mod tests {
     fn getarg_unknown_flag_char_returns_none() {
         // C params.c:1477-1483 flagerr — invalid flag char reports error.
         let arr: Vec<String> = vec!["x".into()];
-        assert!(getarg("(z)x", Some(&arr), None).is_none());
+        assert!(getarg("(z)x", Some(&arr), None, None).is_none());
     }
 
     #[test]
     fn getarg_n_flag_unterminated_arg_returns_none() {
         // (n.5 missing closing delimiter — flagerr.
         let arr: Vec<String> = vec!["x".into()];
-        assert!(getarg("(n.5", Some(&arr), None).is_none());
+        assert!(getarg("(n.5", Some(&arr), None, None).is_none());
     }
 
     #[test]
@@ -4566,7 +4566,7 @@ mod tests {
         // forward (parsed value `N`, normalized to `beg = N-1`).
         let arr: Vec<String> = vec!["x".into(), "y".into(), "x".into(), "y".into()];
         // Forward, beg=2 (skip first 2) → starts at idx 2 → 'x' at 3.
-        let out = getarg("(b.3.ei)x", Some(&arr), None).expect("Some");
+        let out = getarg("(b.3.ei)x", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "3");
     }
 
@@ -4576,7 +4576,7 @@ mod tests {
         // arr=(x y x y), beg=2 (parsed 3-1), reverse → walks 2,1,0; first
         // exact 'x' is at idx 2 → 1-based "3".
         let arr: Vec<String> = vec!["x".into(), "y".into(), "x".into(), "y".into()];
-        let out = getarg("(b.3.eIR)x", Some(&arr), None).expect("Some");
+        let out = getarg("(b.3.eIR)x", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "3");
     }
 
@@ -4584,14 +4584,14 @@ mod tests {
     fn getarg_b_flag_out_of_bounds_forward_returns_empty() {
         // c:1746 — beg >= len returns len+1 (empty for value-mode).
         let arr: Vec<String> = vec!["x".into()];
-        let out = getarg("(b.5.e)x", Some(&arr), None).expect("Some");
+        let out = getarg("(b.5.e)x", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "");
     }
 
     #[test]
     fn getarg_b_flag_out_of_bounds_index_mode_returns_len_plus_one() {
         let arr: Vec<String> = vec!["x".into(), "y".into()];
-        let out = getarg("(b.5.ei)x", Some(&arr), None).expect("Some");
+        let out = getarg("(b.5.ei)x", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "3");
     }
 
@@ -4603,7 +4603,7 @@ mod tests {
         h.insert("a".into(), "1".into());
         h.insert("b".into(), "1".into());
         h.insert("c".into(), "2".into());
-        let out = getarg("(en.-1.r)1", None, Some(&h)).expect("Some");
+        let out = getarg("(en.-1.r)1", None, Some(&h), None).expect("Some");
         // r + neg = R semantics → all values where pat matches value.
         assert_eq!(val_str(out), "1 1");
     }
@@ -4615,7 +4615,7 @@ mod tests {
         h.insert("a".into(), "1".into());
         h.insert("b".into(), "1".into());
         h.insert("c".into(), "2".into());
-        let out = getarg("(en.-1.R)1", None, Some(&h)).expect("Some");
+        let out = getarg("(en.-1.R)1", None, Some(&h), None).expect("Some");
         // R + neg → r → single first match.
         assert_eq!(val_str(out), "1");
     }
@@ -4629,7 +4629,7 @@ mod tests {
         h.insert("b".into(), "1".into());
         h.insert("c".into(), "1".into());
         // beg=2 (parsed 3-1) → skip first 2, scan from "c" onward.
-        let out = getarg("(b.3.ei)1", None, Some(&h)).expect("Some");
+        let out = getarg("(b.3.ei)1", None, Some(&h), None).expect("Some");
         assert_eq!(val_str(out), "c");
     }
 
@@ -4640,7 +4640,7 @@ mod tests {
         h.insert("a".into(), "1".into());
         h.insert("b".into(), "1".into());
         h.insert("c".into(), "1".into());
-        let out = getarg("(b.2.eI)1", None, Some(&h)).expect("Some");
+        let out = getarg("(b.2.eI)1", None, Some(&h), None).expect("Some");
         // beg=1, return_all=I → walk from "b" onward, all matching keys.
         assert_eq!(val_str(out), "b c");
     }
@@ -4650,7 +4650,7 @@ mod tests {
         // c:1746 — beg >= len with single-match → empty.
         let mut h: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
         h.insert("a".into(), "1".into());
-        let out = getarg("(b.5.e)1", None, Some(&h)).expect("Some");
+        let out = getarg("(b.5.e)1", None, Some(&h), None).expect("Some");
         assert_eq!(val_str(out), "");
     }
 
@@ -4659,14 +4659,14 @@ mod tests {
         // C params.c:1761-1797 — `(w)N` joins array then re-splits by
         // IFS-default whitespace. arr=("a b" "c d"); (w)2 → "b" not "c d".
         let arr: Vec<String> = vec!["a b".into(), "c d".into()];
-        let out = getarg("(w)2", Some(&arr), None).expect("Some");
+        let out = getarg("(w)2", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "b");
     }
 
     #[test]
     fn getarg_w_flag_simple_array_indexing_still_works() {
         let arr: Vec<String> = vec!["one".into(), "two".into(), "three".into()];
-        let out = getarg("(w)2", Some(&arr), None).expect("Some");
+        let out = getarg("(w)2", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "two");
     }
 
@@ -4675,8 +4675,22 @@ mod tests {
         // C params.c:1424-1427 — `f` flag aliases `w` with sep="\n".
         // arr=("a b\nc d"); (f)2 → "c d" (split by \n only, not space).
         let arr: Vec<String> = vec!["a b\nc d".into()];
-        let out = getarg("(f)2", Some(&arr), None).expect("Some");
+        let out = getarg("(f)2", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "c d");
+    }
+
+    #[test]
+    fn getarg_scalar_w_flag_picks_nth_word() {
+        // C params.c:1761-1797 — scalar word-mode arm. `(w)2` on
+        // scalar "hello world foo" returns the 2nd whitespace word.
+        let out = getarg("(w)2", None, None, Some("hello world foo")).expect("Some");
+        assert_eq!(val_str(out), "world");
+    }
+
+    #[test]
+    fn getarg_scalar_w_flag_negative_index_counts_from_end() {
+        let out = getarg("(w)-1", None, None, Some("alpha beta gamma")).expect("Some");
+        assert_eq!(val_str(out), "gamma");
     }
 }
 
@@ -6126,13 +6140,16 @@ impl crate::ported::exec::ShellExecutor {
                 // getarg dispatches to the right pattern-search arm
                 // based on which storage we pass it. Direct port of
                 // C getarg's ishash branch (params.c:1581-1719).
+                let scalar_val = self.variables.get(&name).cloned();
                 let result = if let Some(assoc) = self.assoc_arrays.get(&name) {
-                    getarg(trimmed_key, None, Some(assoc))
+                    getarg(trimmed_key, None, Some(assoc), None)
                 } else if name == "@" || name == "*" {
                     let pos = self.positional_params.clone();
-                    getarg(trimmed_key, Some(&pos), None)
+                    getarg(trimmed_key, Some(&pos), None, None)
                 } else if let Some(arr) = self.arrays.get(&name).cloned() {
-                    getarg(trimmed_key, Some(&arr), None)
+                    getarg(trimmed_key, Some(&arr), None, None)
+                } else if let Some(ref s) = scalar_val {
+                    getarg(trimmed_key, None, None, Some(s.as_str()))
                 } else {
                     None
                 };
@@ -6275,13 +6292,16 @@ impl crate::ported::exec::ShellExecutor {
                         // getarg with the right storage gives back the
                         // matched value or the all-matches join — see
                         // params.c:1581-1719 inside getarg.
+                        let scalar_val = self.variables.get(&name).cloned();
                         let result = if let Some(assoc) = self.assoc_arrays.get(&name) {
-                            getarg(trimmed_key, None, Some(assoc))
+                            getarg(trimmed_key, None, Some(assoc), None)
                         } else if name == "@" || name == "*" {
                             let pos = self.positional_params.clone();
-                            getarg(trimmed_key, Some(&pos), None)
+                            getarg(trimmed_key, Some(&pos), None, None)
                         } else if let Some(arr) = self.arrays.get(&name).cloned() {
-                            getarg(trimmed_key, Some(&arr), None)
+                            getarg(trimmed_key, Some(&arr), None, None)
+                        } else if let Some(ref s) = scalar_val {
+                            getarg(trimmed_key, None, None, Some(s.as_str()))
                         } else {
                             None
                         };
@@ -6402,17 +6422,18 @@ pub enum GetargOut<'a> {
 ///   - Flag-block parse (c:1389-1480) — extract `(...)` chars.
 ///   - Hash pattern search (c:1581-1660) when `assoc` is `Some`.
 ///   - Array pattern search (c:1672-1719) when `arr` is `Some`.
+///   - Scalar word-mode arm (c:1761-1797) when `scalar` is `Some`.
 ///
 /// TODO (later phases):
 ///   - Brace-depth walk to closing `]` (c:1507-1535)
 ///   - parsestr + singsub on subscript body (c:1545-1580)
 ///   - mathevalarg integer parse (c:1601-1604)
-///   - Word/separator scalar split (c:1605-1660)
-///   - Multibyte char-search arm (c:1626-1985)
+///   - Multibyte char-search arm (c:1798-1985)
 pub(crate) fn getarg<'a>(
     idx: &'a str,
     arr: Option<&[String]>,
     assoc: Option<&indexmap::IndexMap<String, String>>,
+    scalar: Option<&str>,
 ) -> Option<GetargOut<'a>> {
     let rest = idx.strip_prefix('(')?;
     // Reject anything that looks like a char-class subscript: `[abc]`
@@ -6723,6 +6744,43 @@ pub(crate) fn getarg<'a>(
         } else {
             Value::str("")
         }));
+    }
+
+    // C params.c:1761-1797 — scalar word-mode arm. `(w)N` joins
+    // the source string and re-splits by sep (whitespace by default
+    // for `w`, "\n" for `f`). When `pat` is a numeric N, the Nth
+    // word is returned. Pattern-search variants on scalars share
+    // the c:1798-1980 char-search arm which is not yet ported.
+    if let Some(s) = scalar {
+        use fusevm::Value;
+        if flags.contains('w') || flags.contains('f') {
+            if let Ok(n) = pat.parse::<i64>() {
+                let sep_chars: &[char] = if flags.contains('f') {
+                    &['\n']
+                } else {
+                    &[' ', '\t', '\n']
+                };
+                let words: Vec<&str> = s
+                    .split(|c: char| sep_chars.contains(&c))
+                    .filter(|w| !w.is_empty())
+                    .collect();
+                let len = words.len() as i64;
+                let idx_into = if n > 0 {
+                    (n - 1) as usize
+                } else if n < 0 {
+                    let off = len + n;
+                    if off < 0 {
+                        return Some(GetargOut::Value(Value::str("")));
+                    }
+                    off as usize
+                } else {
+                    return Some(GetargOut::Value(Value::str("")));
+                };
+                return Some(GetargOut::Value(
+                    Value::str(words.get(idx_into).map(|s| s.to_string()).unwrap_or_default()),
+                ));
+            }
+        }
     }
 
     // No search context — return parsed flags for caller dispatch.
