@@ -2464,7 +2464,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             }
                             return Value::str(out.join(" "));
                         }
-                        return crate::ported::exec::ShellExecutor::assoc_subscript_flag(map, &flags, &pat);
+                        // Default flag handling — route to getarg's
+                        // hash-search arm (params.c:1581-1660).
+                        match crate::ported::params::getarg(&idx, None, Some(map)) {
+                            Some(crate::ported::params::GetargOut::Value(v)) => return v,
+                            _ => {}
+                        }
                     }
                     return Value::str(map.get(&idx).cloned().unwrap_or_default());
                 }
@@ -2614,7 +2619,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         Some((flags, pat))
                     } else { None }
                 })(&idx) {
-                    return crate::ported::exec::ShellExecutor::array_subscript_flag(&arr, &flags, &pat);
+                    // Route to getarg's array-search arm
+                    // (params.c:1672-1719).
+                    let _ = (&flags, &pat); // silence unused if any
+                    match crate::ported::params::getarg(&idx, Some(&arr), None) {
+                        Some(crate::ported::params::GetargOut::Value(v)) => return v,
+                        _ => {}
+                    }
+                    return Value::str("");
                 }
 
                 // Slice form `N,M`: comma separator with int-or-arith

@@ -6,16 +6,14 @@
 //! associative arrays, parameter attributes, namerefs, scoping,
 //! tied parameters, and all special parameter get/set functions.
 
+#[allow(unused_imports)]
+use crate::ported::exec::{self, ShellExecutor};
+use crate::ported::text::format_function_body_zsh;
+use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-#[allow(unused_imports)]
-use crate::ported::exec::{
-    self, ShellExecutor,
-};
-use crate::ported::text::format_function_body_zsh;
-use indexmap::IndexMap;
 
 // ---------------------------------------------------------------------------
 // Parameter flags (from zsh.h PM_* flags)
@@ -3392,14 +3390,17 @@ pub fn assignsparam(
     subscript: Option<&str>,
     val: &str,
 ) {
-    if let Some(key) = subscript {                              // c:3210 (subscripted)
+    if let Some(key) = subscript {
+        // c:3210 (subscripted)
         // Existing assoc — write the key.
-        if let Some(map) = assoc_arrays.get_mut(name) {         // c:3602 sethparam path
+        if let Some(map) = assoc_arrays.get_mut(name) {
+            // c:3602 sethparam path
             map.insert(key.to_string(), val.to_string());
             return;
         }
         // Numeric key on a (potentially auto-vivified) array.
-        if let Ok(idx) = key.parse::<i64>() {                   // c:3357 assignaparam idx
+        if let Ok(idx) = key.parse::<i64>() {
+            // c:3357 assignaparam idx
             let arr = arrays.entry(name.to_string()).or_default();
             let len = arr.len() as i64;
             // 1-based forward, negative-from-end. Direct port of
@@ -3529,7 +3530,14 @@ pub fn setiparam(
     name: &str,
     val: i64,
 ) {
-    assignsparam(variables, arrays, assoc_arrays, name, None, &val.to_string());
+    assignsparam(
+        variables,
+        arrays,
+        assoc_arrays,
+        name,
+        None,
+        &val.to_string(),
+    );
 }
 
 /// Set integer parameter without forcing PM_INTEGER promotion.
@@ -3544,7 +3552,14 @@ pub fn setiparam_no_convert(
     name: &str,
     val: i64,
 ) {
-    assignsparam(variables, arrays, assoc_arrays, name, None, &val.to_string());
+    assignsparam(
+        variables,
+        arrays,
+        assoc_arrays,
+        name,
+        None,
+        &val.to_string(),
+    );
 }
 
 /// Retrieve scalar parameter as string.
@@ -3864,8 +3879,6 @@ pub fn setarrvalue(arr: &mut Vec<String>, start: i64, end: i64, val: Vec<String>
         }
     }
 }
-
-
 
 /// Simple glob match for parameter scanning
 fn glob_match(pattern: &str, name: &str) -> bool {
@@ -4483,7 +4496,6 @@ mod tests {
         let s = convbase_underscore(1234567, 10, 3);
         assert_eq!(s, "1_234_567");
     }
-
 }
 
 // ===========================================================
@@ -4665,10 +4677,12 @@ impl crate::ported::exec::ShellExecutor {
             // `scanpmmapfile()` (line 240).
             "mapfile" => {
                 if key == "@" || key == "*" {
-                    return Some(crate::modules::mapfile::scan_directory(".")
-                        .ok()
-                        .map(|v| v.join(" "))
-                        .unwrap_or_default());
+                    return Some(
+                        crate::modules::mapfile::scan_directory(".")
+                            .ok()
+                            .map(|v| v.join(" "))
+                            .unwrap_or_default(),
+                    );
                 }
                 Some(crate::modules::mapfile::get_contents(key).unwrap_or_default())
             }
@@ -4799,9 +4813,7 @@ impl crate::ported::exec::ShellExecutor {
             // Keeping a no-op arm here avoids a spurious "unknown
             // assoc" diagnostic if a caller bypasses
             // magic_assoc_lookup.
-            "termcap" => {
-                Some(crate::modules::termcap::lookup(key).unwrap_or_default())
-            }
+            "termcap" => Some(crate::modules::termcap::lookup(key).unwrap_or_default()),
 
             // === FUNCTIONS ===
             "functions" => {
@@ -5700,7 +5712,7 @@ impl crate::ported::exec::ShellExecutor {
                 let path_str = path.to_string_lossy().into_owned();
                 match std::fs::metadata(&path_str) {
                     Ok(meta) => {
-                        use std::time::{SystemTime, UNIX_EPOCH};
+                        use std::time::SystemTime;
                         if let Ok(atime) = meta.accessed() {
                             let now = SystemTime::now();
                             let idle = now.duration_since(atime).unwrap_or_default();
@@ -5882,20 +5894,23 @@ impl crate::ported::exec::ShellExecutor {
             }
             let key_str: String = bytes[key_start..j].iter().collect();
             let trimmed_key = key_str.trim_start();
-            let parsed_flag = if trimmed_key.starts_with('(') {
-                getarg(trimmed_key)
-            } else {
-                None
-            };
-            let resolved = if let Some((flags, pat)) = parsed_flag {
-                if let Some(assoc) = self.assoc_arrays.get(&name) {
-                    Self::assoc_subscript_flag(assoc, flags, pat).to_str()
+            let resolved = if trimmed_key.starts_with('(') {
+                // getarg dispatches to the right pattern-search arm
+                // based on which storage we pass it. Direct port of
+                // C getarg's ishash branch (params.c:1581-1719).
+                let result = if let Some(assoc) = self.assoc_arrays.get(&name) {
+                    getarg(trimmed_key, None, Some(assoc))
                 } else if name == "@" || name == "*" {
-                    Self::array_subscript_flag(&self.positional_params, flags, pat).to_str()
-                } else if let Some(arr) = self.arrays.get(&name) {
-                    Self::array_subscript_flag(arr, flags, pat).to_str()
+                    let pos = self.positional_params.clone();
+                    getarg(trimmed_key, Some(&pos), None)
+                } else if let Some(arr) = self.arrays.get(&name).cloned() {
+                    getarg(trimmed_key, Some(&arr), None)
                 } else {
-                    "0".to_string()
+                    None
+                };
+                match result {
+                    Some(GetargOut::Value(v)) => v.to_str(),
+                    _ => "0".to_string(),
                 }
             } else if let Some(assoc) = self.assoc_arrays.get(&name) {
                 let key_clean = if (key_str.starts_with('"') && key_str.ends_with('"'))
@@ -5905,7 +5920,10 @@ impl crate::ported::exec::ShellExecutor {
                 } else {
                     key_str.clone()
                 };
-                assoc.get(&key_clean).cloned().unwrap_or_else(|| "0".to_string())
+                assoc
+                    .get(&key_clean)
+                    .cloned()
+                    .unwrap_or_else(|| "0".to_string())
             } else if name == "@" || name == "*" {
                 if let Ok(idx) = key_str.trim().parse::<i64>() {
                     let len = self.positional_params.len() as i64;
@@ -6025,24 +6043,23 @@ impl crate::ported::exec::ShellExecutor {
                     // `(( $@[(I)-*] ))` and `(( OPTS[opt_-h,…] ))`
                     // patterns yield an index/key as zsh does.
                     let trimmed_key = key_resolved.trim_start();
-                    let parsed_flag = if trimmed_key.starts_with('(') {
-                        getarg(trimmed_key)
-                    } else {
-                        None
-                    };
-                    let resolved = if let Some((flags, pat)) = parsed_flag {
-                        // Pick assoc vs indexed array path.
-                        if let Some(assoc) = self.assoc_arrays.get(&name) {
-                            let v = Self::assoc_subscript_flag(assoc, flags, pat);
-                            v.to_str()
+                    let resolved = if trimmed_key.starts_with('(') {
+                        // getarg with the right storage gives back the
+                        // matched value or the all-matches join — see
+                        // params.c:1581-1719 inside getarg.
+                        let result = if let Some(assoc) = self.assoc_arrays.get(&name) {
+                            getarg(trimmed_key, None, Some(assoc))
                         } else if name == "@" || name == "*" {
-                            let v = Self::array_subscript_flag(&self.positional_params, flags, pat);
-                            v.to_str()
-                        } else if let Some(arr) = self.arrays.get(&name) {
-                            let v = Self::array_subscript_flag(arr, flags, pat);
-                            v.to_str()
+                            let pos = self.positional_params.clone();
+                            getarg(trimmed_key, Some(&pos), None)
+                        } else if let Some(arr) = self.arrays.get(&name).cloned() {
+                            getarg(trimmed_key, Some(&arr), None)
                         } else {
-                            "0".to_string()
+                            None
+                        };
+                        match result {
+                            Some(GetargOut::Value(v)) => v.to_str(),
+                            _ => "0".to_string(),
                         }
                     } else if let Some(assoc) = self.assoc_arrays.get(&name) {
                         assoc
@@ -6135,33 +6152,40 @@ impl crate::ported::exec::ShellExecutor {
 // Free fns moved verbatim from src/ported/exec.rs.
 // ===========================================================
 // BEGIN moved-from-exec-rs (free fns)
+/// Subscript-argument result.
+///
+/// `Flags` carries the parsed flag chars and the remaining subscript
+/// text (the pattern after `(...)`); the caller dispatches the
+/// search itself. `Value` is the result of an in-getarg array/hash
+/// pattern search — direct port of getarg's pprog/pattry arm at
+/// Src/params.c:1672-1719 (array) and 1581-1660 (hash).
+pub enum GetargOut<'a> {
+    Flags { flags: &'a str, rest: &'a str },
+    Value(fusevm::Value),
+}
+
 /// Subscript-argument parser.
 ///
 /// Port of `getarg()` from Src/params.c:1367. The C function is a
-/// 618-line monolith that handles the entire `[...]` body of a
-/// subscripted parameter expansion: flag block (`(r/R/k/K/i/I/w/f/e/n/b/p/s)`),
-/// then pattern compile + array/hash/scalar search returning the
-/// resolved index.
+/// 618-line monolith handling the entire `[...]` body of a
+/// subscripted parameter expansion.
 ///
-/// Currently ported phases:
-///   - Flag-block parse (c:1389-1480) — extract `(...)` chars,
-///     advance past `)`. Rejects bracket-containing blocks (those
-///     are char-class subscripts, not flag blocks).
+/// Ported phases:
+///   - Flag-block parse (c:1389-1480) — extract `(...)` chars.
+///   - Hash pattern search (c:1581-1660) when `assoc` is `Some`.
+///   - Array pattern search (c:1672-1719) when `arr` is `Some`.
 ///
-/// TODO (later phases of the port):
+/// TODO (later phases):
 ///   - Brace-depth walk to closing `]` (c:1507-1535)
-///   - parsestr + singsub on the subscript body (c:1545-1580)
-///   - Hash key lookup (c:1581-1660)
+///   - parsestr + singsub on subscript body (c:1545-1580)
 ///   - mathevalarg integer parse (c:1601-1604)
 ///   - Word/separator scalar split (c:1605-1660)
-///   - Pattern compile + array forward/reverse pattry (c:1672-1719)
 ///   - Multibyte char-search arm (c:1626-1985)
-///
-/// Until those land, the array/hash search arms live in the
-/// `array_subscript_flag` / `assoc_subscript_flag` helpers (see
-/// allowlist note). Each subsequent phase folds one of those
-/// helpers' bodies INTO this function and removes the helper.
-pub(crate) fn getarg(idx: &str) -> Option<(&str, &str)> {
+pub(crate) fn getarg<'a>(
+    idx: &'a str,
+    arr: Option<&[String]>,
+    assoc: Option<&indexmap::IndexMap<String, String>>,
+) -> Option<GetargOut<'a>> {
     let rest = idx.strip_prefix('(')?;
     let end = rest.find(')')?;
     let flags = &rest[..end];
@@ -6179,7 +6203,9 @@ pub(crate) fn getarg(idx: &str) -> Option<(&str, &str)> {
     // and treat the rest as literal.
     let first = flags.chars().next();
     if first == Some('s') {
-        return Some((flags, &rest[end + 1..]));
+        // `(s:SEP:)` forms pass through with raw flag string;
+        // pattern-search arms don't apply.
+        return Some(GetargOut::Flags { flags, rest: &rest[end + 1..] });
     }
     if !flags
         .chars()
@@ -6187,144 +6213,112 @@ pub(crate) fn getarg(idx: &str) -> Option<(&str, &str)> {
     {
         return None;
     }
-    Some((flags, &rest[end + 1..]))
-}
-// Methods folding `getarg`'s array/hash pattern-search arms
-// (Src/params.c:1581-1719) onto the type that already owns the
-// param storage. Exposing them as associated fns rather than
-// free top-level fns reflects what the C source does (inline
-// inside getarg) — there is no separate C function name for
-// these search bodies.
-impl crate::ported::exec::ShellExecutor {
+    let pat = &rest[end + 1..];
 
-/// Apply zsh subscript flags to an indexed array. `flags` is the
-/// single-char flag set parsed by `getarg`. `pat` is the search
-/// pattern (or literal when `e` flag is present).
-///
-/// Direct port of getarg's array-search arm at Src/params.c:1672-1719
-/// (the `} else { ... pprog = patcompile(s, 0, NULL); ... }` plus the
-/// `for (r = 1 + beg, p = ta + beg; *p; r++, p++) if (pprog && pattry...)`
-/// forward/reverse iteration). Semantics from zshparam(1):
-/// - `r` — first matching value (forward search)
-/// - `R` — last matching value (reverse search)
-/// - `i` — first matching index (1-based; 0 if none)
-/// - `I` — last matching index (1-based; 0 if none)
-/// - `e` — exact (literal) match instead of glob match
-/// - `re` / `Re` / `ie` / `Ie` — combine with `e` for literal search
-pub(crate) fn array_subscript_flag(arr: &[String], flags: &str, pat: &str) -> fusevm::Value {
-    use fusevm::Value;
-    // `(w)N` on an array is just `arr[N]` — the word index is the
-    // same as the array index since the value is already split.
-    // Direct port of zsh's zshparam(1) "Subscript Flags" `w`:
-    // for arrays already in word form, no extra splitting; for
-    // scalars (handled in the scalar path), split by IFS first.
-    if flags.contains('w') {
-        if let Ok(n) = pat.parse::<i64>() {
-            let len = arr.len() as i64;
-            let idx = if n > 0 {
-                (n - 1) as usize
-            } else if n < 0 {
-                let off = len + n;
-                if off < 0 {
-                    return Value::str("");
+    // Phase 3 — hash pattern search arm (c:1581-1660). On assoc,
+    // `(i)`/`(I)` search KEYS; `(r)`/`(R)` search VALUES.
+    // `(I)` returns ALL matching keys (space-joined); `(R)` returns
+    // ALL matching values; `(i)`/`(r)` return the FIRST match.
+    if let Some(map) = assoc {
+        use fusevm::Value;
+        let exact = flags.contains('e');
+        let search_keys = flags.contains('i') || flags.contains('I');
+        let return_key = search_keys;
+        let return_all = flags.contains('I') || flags.contains('R');
+        if return_all {
+            let mut out: Vec<String> = Vec::new();
+            for (k, v) in map.iter() {
+                let target = if search_keys { k.as_str() } else { v.as_str() };
+                let hit = if exact {
+                    target == pat
+                } else {
+                    crate::ported::exec::ShellExecutor::glob_match_static(target, pat)
+                };
+                if hit {
+                    out.push(if return_key { k.clone() } else { v.clone() });
                 }
-                off as usize
-            } else {
-                return Value::str("");
-            };
-            return Value::str(arr.get(idx).cloned().unwrap_or_default());
-        }
-    }
-    let exact = flags.contains('e');
-    let match_one = |s: &str| -> bool {
-        if exact {
-            s == pat
-        } else {
-            ShellExecutor::glob_match_static(s, pat)
-        }
-    };
-    let return_index = flags.contains('i') || flags.contains('I');
-    let reverse = flags.contains('R') || flags.contains('I');
-    let iter: Box<dyn Iterator<Item = (usize, &String)>> = if reverse {
-        Box::new(arr.iter().enumerate().rev())
-    } else {
-        Box::new(arr.iter().enumerate())
-    };
-    for (i, s) in iter {
-        if match_one(s) {
-            if return_index {
-                return Value::str((i + 1).to_string());
-            } else {
-                return Value::str(s.clone());
             }
+            return Some(GetargOut::Value(Value::str(out.join(" "))));
         }
-    }
-    if return_index {
-        // zsh: `i` returns len+1 if not found, `I` returns 0.
-        if flags.contains('I') {
-            Value::str("0")
-        } else {
-            Value::str((arr.len() + 1).to_string())
-        }
-    } else {
-        Value::str("")
-    }
-}
-/// Apply zsh subscript flags to an associative array. Direct port
-/// of getarg's hash-search arm at Src/params.c:1581-1660 (the
-/// `if (ishash) { HashTable ht = v->pm->gsu.h->getfn(v->pm); ...}`
-/// branch + scanprog walk). Semantics mirror `array_subscript_flag`
-/// but `r`/`R` search values, while `i`/`I` return matching keys
-/// (zsh `i` flag for assoc returns the matching key, not a numeric
-/// index).
-pub(crate) fn assoc_subscript_flag(map: &IndexMap<String, String>, flags: &str, pat: &str) -> fusevm::Value {
-    use fusevm::Value;
-    let exact = flags.contains('e');
-    // zsh subst.c: on assoc, `(i)`/`(I)` search KEYS; `(r)`/`(R)`
-    // search VALUES. `(I)` returns ALL matching keys (space-joined);
-    // `(R)` returns ALL matching values; `(i)`/`(r)` return the
-    // FIRST match. Subtle but verified against zsh:
-    //   typeset -A h=(a 1 b 2); echo "${h[(I)*]}"  → "a b"
-    //   typeset -A h=(a 1 b 2); echo "${h[(i)*]}"  → "a"
-    let search_keys = flags.contains('i') || flags.contains('I');
-    let return_key = search_keys;
-    let return_all = flags.contains('I') || flags.contains('R');
-    let entries: Vec<(&String, &String)> = map.iter().collect();
-    if return_all {
-        let mut out: Vec<String> = Vec::new();
-        for (k, v) in &entries {
-            let target = if search_keys { *k } else { *v };
+        for (k, v) in map.iter() {
+            let target = if search_keys { k.as_str() } else { v.as_str() };
             let hit = if exact {
                 target == pat
             } else {
-                ShellExecutor::glob_match_static(target, pat)
+                crate::ported::exec::ShellExecutor::glob_match_static(target, pat)
             };
             if hit {
-                out.push(if return_key {
-                    (*k).clone()
-                } else {
-                    (*v).clone()
-                });
+                return Some(GetargOut::Value(
+                    Value::str(if return_key { k.clone() } else { v.clone() })
+                ));
             }
         }
-        return Value::str(out.join(" "));
+        return Some(GetargOut::Value(Value::str("")));
     }
-    for (k, v) in entries {
-        let target = if search_keys { k } else { v };
-        let hit = if exact {
-            target == pat
-        } else {
-            ShellExecutor::glob_match_static(target, pat)
-        };
-        if hit {
-            return Value::str(if return_key { k.clone() } else { v.clone() });
-        }
-    }
-    Value::str("")
-}
 
-} // impl ShellExecutor (folded getarg search arms)
-// END moved-from-exec-rs (free fns)
+    // Phase 2 — array pattern search arm (c:1672-1719). The C body
+    // does `pprog = patcompile(s, 0, NULL)` then forward/reverse
+    // `for (r = 1 + beg, p = ta + beg; *p; r++, p++) if (pprog &&
+    // pattry(pprog, *p)) return r`.
+    if let Some(arr) = arr {
+        use fusevm::Value;
+        // `(w)N` on an array is `arr[N]` — the value is already split.
+        if flags.contains('w') {
+            if let Ok(n) = pat.parse::<i64>() {
+                let len = arr.len() as i64;
+                let idx_into = if n > 0 {
+                    (n - 1) as usize
+                } else if n < 0 {
+                    let off = len + n;
+                    if off < 0 {
+                        return Some(GetargOut::Value(Value::str("")));
+                    }
+                    off as usize
+                } else {
+                    return Some(GetargOut::Value(Value::str("")));
+                };
+                return Some(GetargOut::Value(
+                    Value::str(arr.get(idx_into).cloned().unwrap_or_default())
+                ));
+            }
+        }
+        let exact = flags.contains('e');
+        let return_index = flags.contains('i') || flags.contains('I');
+        let reverse = flags.contains('R') || flags.contains('I');
+        let iter: Box<dyn Iterator<Item = (usize, &String)>> = if reverse {
+            Box::new(arr.iter().enumerate().rev())
+        } else {
+            Box::new(arr.iter().enumerate())
+        };
+        for (i, s) in iter {
+            let hit = if exact {
+                s == pat
+            } else {
+                crate::ported::exec::ShellExecutor::glob_match_static(s, pat)
+            };
+            if hit {
+                return Some(GetargOut::Value(if return_index {
+                    Value::str((i + 1).to_string())
+                } else {
+                    Value::str(s.clone())
+                }));
+            }
+        }
+        return Some(GetargOut::Value(if return_index {
+            // zsh: `i` returns len+1 if not found, `I` returns 0.
+            if flags.contains('I') {
+                Value::str("0")
+            } else {
+                Value::str((arr.len() + 1).to_string())
+            }
+        } else {
+            Value::str("")
+        }));
+    }
+
+    // No search context — return parsed flags for caller dispatch.
+    Some(GetargOut::Flags { flags, rest: pat })
+}
 
 // ===========================================================
 // VarAttr / VarKind moved from src/ported/exec.rs.
