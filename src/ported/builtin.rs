@@ -9161,9 +9161,13 @@ impl crate::ported::exec::ShellExecutor {
             // -v N stores into a scalar, otherwise write to fd. Mirror
             // the same fd routing used in the regular print output path
             // below (1 -> stdout!, 2 -> stderr!, else libc::write).
+            // Empirical /bin/zsh: `print -v X "hello"` stores
+            // "hello" without a trailing newline; the terminator
+            // only applies to fd output. Verified: `/bin/zsh -c
+            // 'print -v X "hello world"; print "[$X]"'` → `[hello world]`.
             let final_out = format!("{}{}", result, term);
             if let Some(var) = store_var {
-                self.variables.insert(var, final_out);
+                self.variables.insert(var, result);
                 return 0;
             }
             match fd {
@@ -9308,14 +9312,13 @@ impl crate::ported::exec::ShellExecutor {
         // Store in variable or print. Per builtin.c:5197-5202 the
         // `-v` path captures the SAME byte stream as stdout — so
         // the trailing terminator (newline by default, suppressed
-        // by `-n`) ends up inside the variable. zshrs previously
-        // stored just the joined body, so:
-        //   print -v x foo
-        //   echo ${#x}
-        // printed `3` instead of `4` (foo + \n).
+        // -v stores the joined body WITHOUT the terminator —
+        // verified empirically against /bin/zsh:
+        //   /bin/zsh -c 'print -v x foo; echo "[${#x}]"'  → [3]
+        // The terminator only applies when writing to a fd, not
+        // to a captured-variable target.
         if let Some(var) = store_var {
-            let stored = format!("{}{}", output, terminator);
-            self.variables.insert(var, stored);
+            self.variables.insert(var, output);
         } else {
             // Route to the requested fd. fd=1 (stdout) and fd=2
             // (stderr) get the standard io macros; other fds use
