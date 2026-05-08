@@ -4726,6 +4726,29 @@ mod tests {
         let out = getarg("(Ie)z", None, None, Some("abc")).expect("Some");
         assert_eq!(val_str(out), "0");
     }
+
+    #[test]
+    fn getarg_scalar_n_flag_picks_second_match() {
+        // C params.c:1929/1964 — `!--num` Nth-match counter on
+        // scalar char-search. abcabc: 'a' at idx 0 and 3 → 2nd match
+        // at byte position 4 (1-based).
+        let out = getarg("(en.2.i)a", None, None, Some("abcabc")).expect("Some");
+        assert_eq!(val_str(out), "4");
+    }
+
+    #[test]
+    fn getarg_scalar_b_flag_starts_from_offset() {
+        // C params.c:1740-1742 — `(b.N.)` starts search from idx N-1.
+        // abc bc abc: with b=4, skip first 3 chars; first 'b' at byte 5.
+        let out = getarg("(b.4.ei)b", None, None, Some("abcbc")).expect("Some");
+        assert_eq!(val_str(out), "4");
+    }
+
+    #[test]
+    fn getarg_scalar_re_n2_picks_second_substring() {
+        let out = getarg("(en.2.r)b", None, None, Some("abab")).expect("Some");
+        assert_eq!(val_str(out), "b");
+    }
 }
 
 // ===========================================================
@@ -6837,8 +6860,31 @@ pub(crate) fn getarg<'a>(
             } else {
                 Box::new(0..=n)
             };
+            // c:1929+ / c:1964 — `!--num` skips matches until the Nth.
+            // Per `b<NUM>` (c:1740-1747) — start from offset, only
+            // when has_beg is set. Without `b`, walk all positions.
+            let beg_idx_opt: Option<usize> = if has_beg {
+                let beg_norm = if beg < 0 { beg + n as i64 } else { beg };
+                Some(if beg_norm < 0 {
+                    0
+                } else {
+                    (beg_norm as usize).min(n)
+                })
+            } else {
+                None
+            };
             let mut found: Option<(usize, usize)> = None;
+            let mut remaining = num;
             'outer: for start in positions {
+                if let Some(b_idx) = beg_idx_opt {
+                    if want_last {
+                        if start > b_idx {
+                            continue;
+                        }
+                    } else if start < b_idx {
+                        continue;
+                    }
+                }
                 for span_len in 1..=(n - start) {
                     let cand: String = s_chars[start..start + span_len].iter().collect();
                     let hit = if flags.contains('e') {
@@ -6847,8 +6893,15 @@ pub(crate) fn getarg<'a>(
                         crate::ported::exec::ShellExecutor::glob_match_static(&cand, pat)
                     };
                     if hit {
-                        found = Some((start, start + span_len));
-                        break 'outer;
+                        remaining -= 1;
+                        if remaining == 0 {
+                            found = Some((start, start + span_len));
+                            break 'outer;
+                        }
+                        // Advance past this match position to find the
+                        // next-Nth instead of repeatedly matching same
+                        // start (mirrors C's pointer increment).
+                        break;
                     }
                 }
             }
