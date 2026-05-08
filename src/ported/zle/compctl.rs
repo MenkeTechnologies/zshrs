@@ -1621,22 +1621,21 @@ pub(crate) fn addhnmatch(name: &str, _flags: i32) {
 pub(crate) fn getreal(str_in: &str) -> String {
     // C: c:2135 — save noerrs
     // C: c:2138-2139 — prefork the duplicated string
-    // We approximate via singsub. Errors are not propagated since
-    // the SubstState machinery handles them internally.
-    let result = crate::ported::subst::singsub(
-        str_in,
-        &mut crate::fusevm_bridge::with_executor(|exec| {
-            crate::ported::subst::SubstState::from_executor(exec)
-        }),
-    );
+    // Routes through singsub when a VM/executor is available;
+    // outside the VM (unit tests, direct calls) returns the input
+    // unchanged. Direct port of the C "noerrs swallow" path.
+    let result = crate::fusevm_bridge::try_with_executor(|exec| {
+        let mut state = crate::ported::subst::SubstState::from_executor(exec);
+        crate::ported::subst::singsub(str_in, &mut state)
+    });
     // C: c:2141-2143 — non-empty + first char non-empty → use it.
-    if !result.is_empty() {
-        result
-    } else {
-        str_in.to_string()
+    match result {
+        Some(s) if !s.is_empty() => s,
+        _ => str_in.to_string(),
     }
 }
 
+// (getreal port location; impl above already routes through singsub)
 /// Read a directory and add files to the matches list.
 /// Port of `gen_matches_files()` from Src/Zle/compctl.c:2153.
 ///
@@ -1711,50 +1710,364 @@ pub(crate) fn findnode<T: PartialEq>(list: &[T], dat: &T) -> Option<usize> {
     list.iter().position(|x| x == dat)
 }
 
-/// Build the completion list (control entry).
-/// Port of `makecomplistctl()` from Src/Zle/compctl.c:2680.
-pub(crate) fn makecomplistctl(_flags: i32) {}
+/// `cdepth` recursion guard. Port of file-static `int cdepth = 0;`
+/// at Src/Zle/compctl.c:2300.
+static CDEPTH: Mutex<i32> = Mutex::new(0);
 
-/// Build the global completion list.
-/// Port of `makecomplistglobal()` from Src/Zle/compctl.c:2715.
-pub(crate) fn makecomplistglobal(_os: &str, _incmd: bool, _lst: i32, _flags: i32) {}
+/// Maximum recursion depth — port of `MAX_CDEPTH 16` macro at
+/// Src/Zle/compctl.c:2302. Prevents infinite recursion between
+/// compctl-driven completion and the wrapper.
+const MAX_CDEPTH: i32 = 16;
 
-/// Build the per-command completion list.
-/// Port of `makecomplistcmd()` from Src/Zle/compctl.c:2843.
-pub(crate) fn makecomplistcmd(_os: &str, _incmd: bool, _flags: i32) {}
-
-/// Build the per-position completion list.
-/// Port of `makecomplistpc()` from Src/Zle/compctl.c:2934.
-pub(crate) fn makecomplistpc(_os: &str, _incmd: bool) {}
-
-/// Build the completion list from a compctl spec.
-/// Port of `makecomplistcc()` from Src/Zle/compctl.c:2998.
-pub(crate) fn makecomplistcc(_cc: &CompCtl, _s: &str, _incmd: bool) {}
-
-/// Build the completion list from an OR'd compctl chain.
-/// Port of `makecomplistor()` from Src/Zle/compctl.c:3045.
-pub(crate) fn makecomplistor(_cc: &CompCtl, _s: &str, _incmd: bool, _compadd: i32, _sub: i32) {}
+/// `ccont` continuation flags. Port of file-static `unsigned long
+/// ccont;` at Src/Zle/compctl.c:1714. Bitmask of CC_CCCONT/etc.
+/// controlling whether the dispatch loop continues to next compctl.
+static CCONT: Mutex<u64> = Mutex::new(0);
 
 /// Build the completion list — top-level dispatch.
+/// Port of `makecomplistctl()` from Src/Zle/compctl.c:2305.
+///
+/// Entry point used by bin_compcall and the completion driver.
+/// The C body:
+///   1. Recursion guard (cdepth >= MAX_CDEPTH → return 0)
+///   2. SWITCHHEAPS to the compheap (Rust uses the global allocator)
+///   3. Save lots of state (cmdstr, clwords, instring, qipre/qisuf,
+///      isuf, autoq, offs)
+///   4. Set up new state from compquote / compqiprefix / compqisuffix /
+///      compisuffix / compwords / compcurrent
+///   5. Set incompfunc=2 (deeper-nested marker)
+///   6. Call makecomplistglobal(str, !clwpos, COMP_COMPLETE, flags)
+///   7. Restore state
+///   8. cdepth-- and return
+///
+/// This Rust port keeps the recursion guard + flag dispatch + the
+/// makecomplistglobal call. The compfunc state save/restore relies
+/// on ZLE-tricky globals (clwords, etc.) that aren't ported here.
+pub(crate) fn makecomplistctl(flags: i32) -> i32 {
+    let mut cdepth = CDEPTH.lock().unwrap();
+    if *cdepth == MAX_CDEPTH {                                // c:2311
+        return 0;
+    }
+    *cdepth += 1;                                             // c:2314
+    drop(cdepth);
+
+    // C: c:2372 — bump incompfunc to 2 (recursion marker)
+    let saved_incomp = *INCOMPFUNC.lock().unwrap();
+    *INCOMPFUNC.lock().unwrap() = 2;
+
+    // C: c:2373 — recurse to global dispatch
+    let str_in = "";  // placeholder; real impl reads comp_str
+    let ret = makecomplistglobal(str_in, false, comp_op::LIST as i32, flags);
+
+    *INCOMPFUNC.lock().unwrap() = saved_incomp;
+    *CDEPTH.lock().unwrap() -= 1;
+    ret
+}
+
+/// Line-context dispatch — global completion entry.
+/// Port of `makecomplistglobal()` from Src/Zle/compctl.c:2401.
+///
+/// Looks at `linwhat` (IN_ENV / IN_MATH / IN_COND / IN_REDIR / else)
+/// and dispatches to the appropriate compctl spec:
+///   IN_ENV    → cc_default (parameter values)
+///   IN_MATH   → cc_dummy (params or assoc keys)
+///   IN_COND   → cc_dummy with -o/-nt/-ot/-ef logic
+///   IN_REDIR  → cc_default (redirections)
+///   default   → makecomplistcmd (per-command lookup)
+///
+/// `linwhat` and friends live in zle_tricky.c. For the foundation,
+/// we assume "default" (per-command lookup) which is the most
+/// common path.
+pub(crate) fn makecomplistglobal(os: &str, incmd: bool, _lst: i32, flags: i32) -> i32 {
+    // C: c:2406 — reset ccont
+    *CCONT.lock().unwrap() = cc_flags2::CCCONT;
+
+    // C: c:2407 — clear cc_dummy.suffix
+    if let Some(d) = CC_DUMMY.lock().unwrap().as_mut() {
+        // Arc<CompCtl> can't mutate easily; re-assign a fresh one
+        // with cleared suffix when needed. For now, a no-op.
+        let _ = d;
+    }
+
+    // C: c:2409+ — linwhat dispatch. We don't have linwhat ported;
+    // fall through to the default per-command path which is the
+    // most common case.
+    let _ = flags;
+    makecomplistcmd(os, incmd, flags)
+}
+
+/// Per-command compctl lookup + dispatch.
+/// Port of `makecomplistcmd()` from Src/Zle/compctl.c:2473.
+///
+/// Resolves the compctl for cmdstr by:
+///   1. If !CFN_FIRST: run cc_first first; bail if !CC_CCCONT
+///   2. Run pattern compctls (makecomplistpc); bail if !CC_CCCONT
+///   3. If cmdstr starts with `=`, expand path
+///   4. Lookup cmdstr in compctltab — try full name then trailing
+///      pathname component (after remlpaths)
+///   5. If incmd: use cc_compos
+///   6. Else if no match: cc_default (unless CFN_DEFAULT)
+///   7. Call makecomplistcc(cc, os, incmd)
+pub(crate) fn makecomplistcmd(os: &str, incmd: bool, flags: i32) -> i32 {
+    const CFN_FIRST: i32 = 1;
+    const CFN_DEFAULT: i32 = 2;
+    let mut ret: i32 = 0;
+
+    // C: c:2482 — first try cc_first
+    if (flags & CFN_FIRST) == 0 {
+        if let Some(cc_first) = CC_FIRST.lock().unwrap().clone() {
+            makecomplistcc(&cc_first, os, incmd);
+            if (*CCONT.lock().unwrap() & cc_flags2::CCCONT) == 0 {
+                return 0;
+            }
+        }
+    }
+
+    // C: c:2491 — pattern compctls
+    let cmdstr = CMDSTR.lock().unwrap().clone();
+    if cmdstr.is_some() {
+        ret |= makecomplistpc(os, incmd);
+        if (*CCONT.lock().unwrap() & cc_flags2::CCCONT) == 0 {
+            return ret;
+        }
+    }
+
+    // C: c:2509 — incmd path uses cc_compos
+    let cc = if incmd {
+        CC_COMPOS.lock().unwrap().clone()
+    } else {
+        // C: c:2511-2519 — lookup compctltab[cmdstr]
+        let name = match &cmdstr {
+            Some(s) => s.clone(),
+            None => return ret,
+        };
+        let table = COMPCTL_TAB.lock().unwrap();
+        let from_table = table.as_ref().and_then(|m| m.get(&name).cloned());
+        drop(table);
+        match from_table {
+            Some(c) => Some(c),
+            None => {
+                if (flags & CFN_DEFAULT) != 0 {
+                    return ret;
+                }
+                ret |= 1;
+                CC_DEFAULT.lock().unwrap().clone()
+            }
+        }
+    };
+    if let Some(c) = cc {
+        makecomplistcc(&c, os, incmd);
+    }
+    ret
+}
+
+/// `cmdstr` — current command word being completed.
+/// Port of file-static `char *cmdstr` (zle_tricky.c). Set by the
+/// completion driver before invoking makecomplistcmd.
+static CMDSTR: Mutex<Option<String>> = Mutex::new(None);
+
+/// Pattern compctl iteration — `compctl -p PAT cmd`.
+/// Port of `makecomplistpc()` from Src/Zle/compctl.c:2529.
+///
+/// Walks the patcomps list, compiles each pattern, tries it against
+/// cmdstr (and optionally against the resolved command path). On
+/// match, runs makecomplistcc for that pattern's spec.
+pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {
+    let mut ret: i32 = 0;
+    let cmdstr = CMDSTR.lock().unwrap().clone();
+    let cmd = match cmdstr {
+        Some(s) => s,
+        None => return 0,
+    };
+
+    let pats = PATCOMPS.lock().unwrap().clone();
+    for (pat, cc) in &pats {
+        // C: c:2542 — compile pattern, try match against cmdstr
+        if crate::exec::ShellExecutor::glob_match_static(&cmd, pat) {
+            makecomplistcc(cc, os, incmd);
+            ret |= 2;
+            if (*CCONT.lock().unwrap() & cc_flags2::CCCONT) == 0 {
+                return ret;
+            }
+        }
+    }
+    ret
+}
+
+/// Per-compctl entry — track usage + dispatch the OR chain.
+/// Port of `makecomplistcc()` from Src/Zle/compctl.c:2557.
+///
+/// Bumps refc on cc, adds it to ccused list, resets ccont, calls
+/// makecomplistor. The ccused list lets later cleanup free all
+/// compctls used during a single completion.
+pub(crate) fn makecomplistcc(cc: &Arc<CompCtl>, s: &str, incmd: bool) {
+    // C: c:2560 — refc++ (Arc handles this)
+    let _ = cc.clone();
+
+    // C: c:2562 — initialize ccused list
+    let mut ccused = CCUSED.lock().unwrap();
+    ccused.push(cc.clone());
+    drop(ccused);
+
+    // C: c:2565 — reset ccont
+    *CCONT.lock().unwrap() = 0;
+
+    // C: c:2567 — dispatch OR chain
+    makecomplistor(cc, s, incmd, 0, 0);
+}
+
+/// `ccused` — per-completion list of compctls used. Port of
+/// file-static `LinkList ccused` at Src/Zle/compctl.c:1702.
+static CCUSED: Mutex<Vec<Arc<CompCtl>>> = Mutex::new(Vec::new());
+
+/// Walk the [x]or chain of compctls.
+/// Port of `makecomplistor()` from Src/Zle/compctl.c:2573.
+///
+/// C body:
+///   - Loop over xors (cc->xor chain)
+///   - For each, call makecomplistlist
+///   - Track newly-added matches (mn diff)
+///   - Stop based on ccont bits (CC_PATCONT, CC_DEFCONT, CC_XORCONT)
+pub(crate) fn makecomplistor(cc: &Arc<CompCtl>, s: &str, incmd: bool, compadd: i32, sub: i32) {
+    let mut current = cc.clone();
+    loop {
+        makecomplistlist(&current, s, incmd, compadd);
+        // Walk to next xor
+        match &current.xor {
+            Some(next) => current = next.clone(),
+            None => break,
+        }
+        let _ = sub;
+    }
+}
+
+/// Top-level per-compctl dispatch.
 /// Port of `makecomplistlist()` from Src/Zle/compctl.c:3081.
-pub(crate) fn makecomplistlist(_cc: &CompCtl, _s: &str, _incmd: bool, _compadd: i32) {}
+///
+/// Routes to either makecomplistext (for -x extended conditions)
+/// or makecomplistflags (for the regular flag-mask compctl).
+pub(crate) fn makecomplistlist(cc: &Arc<CompCtl>, s: &str, incmd: bool, compadd: i32) {
+    if cc.ext.is_some() {
+        // C: c:3155 — extended -x conditions
+        makecomplistext(cc, s, incmd);
+    } else {
+        // C: c:3499 — regular flag-driven completion
+        makecomplistflags(cc, s, incmd, compadd);
+    }
+}
 
-/// Build the extended (`-x`) completion list.
+/// Extended (`-x`) completion list builder.
 /// Port of `makecomplistext()` from Src/Zle/compctl.c:3155.
-pub(crate) fn makecomplistext(_occ: &CompCtl, _os: &str, _incmd: bool) {}
+///
+/// Walks cc.ext chain (the per-condition compctls), evaluates each
+/// condition against the current line state, and dispatches to
+/// makecomplistflags for the first matching condition's spec.
+pub(crate) fn makecomplistext(occ: &Arc<CompCtl>, os: &str, incmd: bool) {
+    // Walk the ext chain — each entry has a Compcond + a CompCtl.
+    let mut current = occ.ext.clone();
+    while let Some(cc) = current {
+        // Evaluate the condition (port of c:2658 condition-eval loop).
+        // For now, accept all conditions and run flags.
+        if let Some(_cond) = &cc.cond {
+            // TODO: full condition eval per cct::* dispatch.
+            // For the foundation, treat conditions as always-true.
+        }
+        makecomplistflags(&cc, os, incmd, 0);
+        current = cc.next.clone();
+    }
+}
 
-/// Separate a completion string into prefix/suffix/word.
-/// Port of `sep_comp_string()` from Src/Zle/compctl.c:3344.
+/// Separate the cursor word into prefix/word/suffix.
+/// Port of `sep_comp_string()` from Src/Zle/compctl.c:3270 (~200 lines).
+///
+/// C signature: `int sep_comp_string(char *ss, char *s, int noffs)`.
+/// The function splits the word at `s` containing the cursor at
+/// offset `noffs` into the components the matcher needs:
+///   lpre/lsuf — what's on the line (prefix/suffix of cursor word)
+///   rpre/rsuf — same, expanded
+///   ppre/psuf — path-component prefix/suffix
+///   fpre/fsuf — pathname-segment prefix/suffix the cursor is in
+///   prpre — opendir-friendly form of ppre
+///   q* variants — quoted forms for re-display
+///
+/// The full port requires ZLE state (zlemetaline, zlemetacs, brbeg/
+/// brend, instring, autoq, etc.) from zle_tricky.c. Stubbed here
+/// pending those ports.
 pub(crate) fn sep_comp_string(_ss: &str, _s: &str, _noffs: i32) -> i32 {
     0
 }
 
-/// Apply flag-driven generators to populate the completion list.
-/// Port of `makecomplistflags()` from Src/Zle/compctl.c:3499 — the
-/// largest fn in this file (~500 lines), iterates the bits in
-/// `cc->mask` and dispatches per-bit to the matching generator
-/// (files, vars, jobs, etc.).
-pub(crate) fn makecomplistflags(_cc: &CompCtl, _s: &str, _incmd: bool, _compadd: i32) {}
+/// The flag-driven completion-list builder — workhorse fn.
+/// Port of `makecomplistflags()` from Src/Zle/compctl.c:3499 (~500 lines).
+///
+/// Walks the bits of cc.mask and cc.mask2, dispatching per CC_* bit
+/// to the matching generator:
+///   CC_FILES     → gen_matches_files (regular files)
+///   CC_DIRS      → gen_matches_files(dirs=true)
+///   CC_COMMPATH  → command-path completion
+///   CC_OPTIONS   → option completion
+///   CC_VARS      → dumphashtable(paramtab, CC_VARS)
+///   CC_BINDINGS  → bindings (zle widgets)
+///   CC_ARRAYS    → param table filtered to PM_ARRAY
+///   CC_INTVARS   → param table filtered to PM_INTEGER
+///   CC_SHFUNCS   → shfunctab
+///   CC_PARAMS    → paramtab non-exported
+///   CC_ENVVARS   → paramtab PM_EXPORTED
+///   CC_JOBS / CC_RUNNING / CC_STOPPED → job table filters
+///   CC_BUILTINS  → builtintab
+///   CC_USERS     → /etc/passwd users (or named-dir filltable)
+///   CC_DISCMDS / CC_EXCMDS → cmdnamtab filtered by DISABLED bit
+///   CC_RESWDS    → reserved-word table
+///   CC_NAMED     → named-directory table
+///   CC_DIRS      → directory matches
+///   ... and more
+///
+/// Plus arg-taking flags:
+///   cc.glob   → globlist expansion
+///   cc.str_expansion → string-arg expansion via singsub
+///   cc.func   → call user function (compctl -K)
+///   cc.keyvar → read array variable for matches
+///   cc.hpat   → history-pattern matches
+///
+/// This stub records the dispatch entry so call sites can wire to
+/// it; per-bit generators land per-bit in follow-ups.
+pub(crate) fn makecomplistflags(cc: &Arc<CompCtl>, s: &str, _incmd: bool, _compadd: i32) {
+    let _ = (cc, s);
+    // Set ccont per cc.mask2 — c:3499 loop init reads CC_CCCONT
+    // from mask2 to determine dispatch continuation.
+    *CCONT.lock().unwrap() = cc.mask2;
+
+    // CC_FILES — c:3650+ in real impl
+    if (cc.mask & cc_flags::FILES) != 0 {
+        *ADDWHAT.lock().unwrap() = addwhat_kind::FILES;
+        gen_matches_files(false, false, false);
+    }
+    // CC_DIRS — c:3680
+    if (cc.mask & cc_flags::DIRS) != 0 {
+        *ADDWHAT.lock().unwrap() = addwhat_kind::FILES;
+        gen_matches_files(true, false, false);
+    }
+    // CC_NAMED — c:3742
+    if (cc.mask & cc_flags::NAMED) != 0 {
+        *ADDWHAT.lock().unwrap() = addwhat_kind::FILES_OTHER;
+        maketildelist();
+    }
+    // Per-CC_* arms beyond these (CC_VARS, CC_SHFUNCS, etc.) need
+    // hashtable iteration ports — TODO when those ports land.
+
+    // cc.func (compctl -K) — call user function for matches.
+    // Skipped pending function-dispatch wiring.
+
+    // cc.glob — globlist expansion. Skipped pending glob-port use.
+
+    // cc.str_expansion (-s) — call singsub on the string.
+    if let Some(s) = &cc.str_expansion {
+        let expanded = getreal(s);
+        // Push as a single match with addwhat=GLOB_EXPAND
+        *ADDWHAT.lock().unwrap() = addwhat_kind::GLOB_EXPAND;
+        addmatch(&expanded, None);
+    }
+}
 
 // =================================================================
 // Module boot/cleanup hooks — port of compctl.c:4000+
@@ -2272,6 +2585,89 @@ mod tests {
         let m = MATCH_LIST.lock().unwrap();
         assert_eq!(m.len(), 1);
         assert_eq!(m[0], "xyz");
+    }
+
+    #[test]
+    fn makecomplistctl_recursion_guard() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Force depth to MAX
+        *CDEPTH.lock().unwrap() = MAX_CDEPTH;
+        let r = makecomplistctl(0);
+        assert_eq!(r, 0);
+        // Reset for other tests.
+        *CDEPTH.lock().unwrap() = 0;
+    }
+
+    #[test]
+    fn makecomplistflags_cc_files_invokes_gen_matches() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        MATCH_LIST.lock().unwrap().clear();
+        // Set prpre to a known dir we can read.
+        *PRPRE.lock().unwrap() = Some(".".to_string());
+        let cc = Arc::new(CompCtl {
+            mask: cc_flags::FILES,
+            ..Default::default()
+        });
+        makecomplistflags(&cc, "", false, 0);
+        // Should have at least picked up Cargo.toml or similar from pwd.
+        let m = MATCH_LIST.lock().unwrap();
+        assert!(!m.is_empty(), "expected file matches in pwd");
+    }
+
+    #[test]
+    fn makecomplistflags_cc_str_expansion_emits_one_match() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        MATCH_LIST.lock().unwrap().clear();
+        let cc = Arc::new(CompCtl {
+            str_expansion: Some("hardcoded".to_string()),
+            ..Default::default()
+        });
+        makecomplistflags(&cc, "", false, 0);
+        let m = MATCH_LIST.lock().unwrap();
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0], "hardcoded");
+    }
+
+    #[test]
+    fn makecomplistor_walks_xor_chain() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        MATCH_LIST.lock().unwrap().clear();
+        // Build cc1 with str "first", xor → cc2 with str "second"
+        let cc2 = Arc::new(CompCtl {
+            str_expansion: Some("second".to_string()),
+            ..Default::default()
+        });
+        let cc1 = Arc::new(CompCtl {
+            str_expansion: Some("first".to_string()),
+            xor: Some(cc2),
+            ..Default::default()
+        });
+        makecomplistor(&cc1, "", false, 0, 0);
+        let m = MATCH_LIST.lock().unwrap();
+        assert_eq!(m.len(), 2);
+        assert_eq!(m[0], "first");
+        assert_eq!(m[1], "second");
+    }
+
+    #[test]
+    fn makecomplistcc_pushes_to_ccused() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        CCUSED.lock().unwrap().clear();
+        let cc = Arc::new(CompCtl::default());
+        makecomplistcc(&cc, "", false);
+        let used = CCUSED.lock().unwrap();
+        assert_eq!(used.len(), 1);
+    }
+
+    #[test]
+    fn makecomplistpc_iterates_patcomps() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Verify makecomplistpc returns 0 when cmdstr is unset
+        // (its early-bail path) — full pattern-match test requires
+        // VM context for glob_match_static.
+        *CMDSTR.lock().unwrap() = None;
+        let r = makecomplistpc("", false);
+        assert_eq!(r, 0);
     }
 
     #[test]
