@@ -60,7 +60,6 @@ resolve_port
 # compare). zsh C inlines this work in `pattern.c::patcompile`,
 # `pattern.c::patmatch`, and `glob.c`'s sort comparators.
 parse_pattern_flags_full
-parse_numeric_range
 expand_posix_char_classes
 glob_match_impl
 match_bracket_expr

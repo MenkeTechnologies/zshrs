@@ -23,7 +23,7 @@ use crate::ported::exec::{
     extract_numeric_ranges, replace_numeric_ranges_with_star,
     with_executor, NumericRange,
 };
-use crate::ported::pattern::{parse_numeric_range, parse_pattern_flags_full};
+use crate::ported::pattern::parse_pattern_flags_full;
 
 /// Sort specifier flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3786,8 +3786,39 @@ impl crate::ported::exec::ShellExecutor {
                 }
                 '<' => {
                     // Try to parse `<lo-hi>`. If the form doesn't
-                    // match, fall back to literal `<`.
-                    if let Some((lo, hi, consumed)) = parse_numeric_range(&mut chars) {
+                    // match, fall back to literal `<`. Direct port of
+                    // zsh's numeric-range glob handler — speculative
+                    // scan for the closing `>`, split on `-`, parse
+                    // optional bounds. Matches `<5-10>`, `<5->`,
+                    // `<-10>`, `<->`.
+                    let parsed: Option<(Option<i64>, Option<i64>, usize)> = (|| {
+                        let mut buf = String::new();
+                        let peek_iter = chars.clone();
+                        for c in peek_iter {
+                            buf.push(c);
+                            if c == '>' { break; }
+                            if buf.len() > 64 { return None; }
+                        }
+                        if !buf.ends_with('>') {
+                            return None;
+                        }
+                        let inner = &buf[..buf.len() - 1];
+                        let (lo_str, hi_str) = inner.split_once('-')?;
+                        let lo: Option<i64> = if lo_str.is_empty() {
+                            None
+                        } else {
+                            Some(lo_str.parse().ok()?)
+                        };
+                        let hi: Option<i64> = if hi_str.is_empty() {
+                            None
+                        } else {
+                            Some(hi_str.parse().ok()?)
+                        };
+                        let n = buf.chars().count();
+                        for _ in 0..n { chars.next(); }
+                        Some((lo, hi, n))
+                    })();
+                    if let Some((lo, hi, consumed)) = parsed {
                         regex_pattern.push_str("(\\d+)");
                         capture_group_count += 1;
                         numeric_ranges.push((capture_group_count, lo, hi));
