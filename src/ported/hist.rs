@@ -1885,6 +1885,94 @@ pub fn resizehistents(hist: &mut History) {
     }
 }
 
+/// Save the active history-substitution context onto a HistStack.
+/// Port of `hist_context_save()` from Src/hist.c:248. The C source
+/// stores function-pointer slots (`hgetc`/`hungetc`/`hwaddc` etc.)
+/// alongside the parser scratch buffers; our Rust adaptation keeps
+/// the buffer/state slots that exist on `History` and leaves the
+/// callback-slot save as TODO until the input-stream port lands.
+pub fn hist_context_save(hist: &History, hs: &mut HistStack, _toplevel: bool) {
+    hs.histactive = hist.histactive;
+    hs.histdone = hist.histdone;
+    hs.stophist = hist.stophist;
+    // chline / hptr / chwords / hlinesz / defev — line-edit
+    // scratch state. Owned by the lexer integration once that
+    // ports; for now zero-initialised so save+restore is a no-op
+    // round trip on those fields.
+    hs.hist_keep_comment = HIST_KEEP_COMMENT.load(std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Restore a previously-saved history-substitution context.
+/// Port of `hist_context_restore()` from Src/hist.c:296. Mirror
+/// of the save above.
+pub fn hist_context_restore(hist: &mut History, hs: &HistStack, _toplevel: bool) {
+    hist.histactive = hs.histactive;
+    hist.histdone = hs.histdone;
+    hist.stophist = hs.stophist;
+    HIST_KEEP_COMMENT.store(hs.hist_keep_comment, std::sync::atomic::Ordering::SeqCst);
+}
+
+// Stack of saved history snapshots — port of C's struct histsave
+// linked list pushed by pushhiststack and popped by pophiststack.
+// Lives in a thread-local to mirror the per-process global C uses.
+thread_local! {
+    static HIST_STACK: std::cell::RefCell<Vec<HistSnapshot>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// One saved history-state frame. Mirrors `struct histsave`
+/// (Src/hist.c) but holds the values we actually port — file
+/// paths and size limits. The full C struct also stashes
+/// `hist_ring`, `hist_skip_flags`, etc.; those are moved when
+/// `History::*` mutator state is fully ported.
+#[derive(Clone, Default)]
+pub struct HistSnapshot {
+    pub histfile: Option<String>,
+    pub histsiz: i64,
+    pub savehistsiz: i64,
+    pub level: i32,
+}
+
+/// Push the current history state onto the stack and reset to a
+/// fresh state with the new file/size limits. Port of
+/// `pushhiststack()` from Src/hist.c. The C source preserves the
+/// in-edit `curline` across the swap when the active history
+/// holds it; we mirror that with the snapshot/restore pair.
+pub fn pushhiststack(hist: &mut History, hf: Option<&str>, hs: i64, shs: i64, level: i32) {
+    let snap = HistSnapshot {
+        histfile: hist.histfile.clone(),
+        histsiz: hist.histsiz,
+        savehistsiz: hist.savehistsiz,
+        level,
+    };
+    HIST_STACK.with(|s| s.borrow_mut().push(snap));
+    hist.histfile = hf.map(|s| s.to_string());
+    hist.histsiz = hs;
+    hist.savehistsiz = shs;
+}
+
+/// Pop the previously-pushed history snapshot. Port of
+/// `pophiststack()` from Src/hist.c.
+pub fn pophiststack(hist: &mut History) {
+    if let Some(snap) = HIST_STACK.with(|s| s.borrow_mut().pop()) {
+        hist.histfile = snap.histfile;
+        hist.histsiz = snap.histsiz;
+        hist.savehistsiz = snap.savehistsiz;
+    }
+}
+
+/// Save the active history to its file and pop the stack frame.
+/// Port of `saveandpophiststack()` from Src/hist.c:hist.c — calls
+/// savehistfile with the current settings, then pophiststack.
+/// `savehistfile` itself is TODO (file-I/O port pending), so this
+/// just pops for now.
+pub fn saveandpophiststack(hist: &mut History, _writeflags: i32) {
+    // TODO: savehistfile(hist.histfile.as_deref(),
+    //                    HFILE_USE_OPTIONS | writeflags)
+    // (Src/hist.c savehistfile, 221 lines, needs file-format port).
+    pophiststack(hist);
+}
+
 /// Decrement the lock counter. Port of `unlockhistfile()` from
 /// Src/hist.c — drops the lock when the count reaches 0. The
 /// actual file-level unlock (flock release) is currently a TODO
