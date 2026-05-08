@@ -2770,6 +2770,13 @@ pub fn paramsubst(                                          // c:1625
                 }
             } else if let Some(pat) = r.strip_prefix("##") {  // c:3540 (longest prefix strip)
                 let p = singsub(pat, state);
+                // has_subscript guard — same as `/`/`//` arms.
+                // Per subst.c:2915 + 3422-3451, scalar subscript
+                // dispatches to getmatch on the single element.
+                let has_scalar_sub = subscript.as_deref().map(|s| {
+                    let t = s.trim();
+                    t != "@" && t != "*" && !t.contains(',')
+                }).unwrap_or(false);
                 // Strip-one helper. op: 0=#, 1=##, 2=%, 3=%%.
                 // Direct port of subst.c:3540 patmatch dispatch.
                 let strip_one = |val: &str, op: u8| -> String {
@@ -2791,7 +2798,7 @@ pub fn paramsubst(                                          // c:1625
                         _ => val.to_string(),
                     }
                 };
-                if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                if let Some(arr) = state.arrays.get(&var_name).cloned().filter(|_| !has_scalar_sub) {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e, 1)).collect();
                     value = new_arr.join(" ");                    // c:3540
                     split_parts = Some(new_arr);                  // c:3540
@@ -2800,6 +2807,10 @@ pub fn paramsubst(                                          // c:1625
                 }
             } else if let Some(pat) = r.strip_prefix('#') {   // c:3540 (shortest prefix strip)
                 let p = singsub(pat, state);
+                let has_scalar_sub = subscript.as_deref().map(|s| {
+                    let t = s.trim();
+                    t != "@" && t != "*" && !t.contains(',')
+                }).unwrap_or(false);
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
@@ -2811,7 +2822,7 @@ pub fn paramsubst(                                          // c:1625
                     }
                     val.to_string()
                 };
-                if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                if let Some(arr) = state.arrays.get(&var_name).cloned().filter(|_| !has_scalar_sub) {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
                     value = new_arr.join(" ");                    // c:3540
                     split_parts = Some(new_arr);                  // c:3540
@@ -2820,6 +2831,10 @@ pub fn paramsubst(                                          // c:1625
                 }
             } else if let Some(pat) = r.strip_prefix("%%") {  // c:3540 (longest suffix strip)
                 let p = singsub(pat, state);
+                let has_scalar_sub = subscript.as_deref().map(|s| {
+                    let t = s.trim();
+                    t != "@" && t != "*" && !t.contains(',')
+                }).unwrap_or(false);
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
@@ -2834,7 +2849,7 @@ pub fn paramsubst(                                          // c:1625
                     }
                     val.to_string()
                 };
-                if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                if let Some(arr) = state.arrays.get(&var_name).cloned().filter(|_| !has_scalar_sub) {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
                     value = new_arr.join(" ");                    // c:3540
                     split_parts = Some(new_arr);                  // c:3540
@@ -2843,6 +2858,10 @@ pub fn paramsubst(                                          // c:1625
                 }
             } else if let Some(pat) = r.strip_prefix('%') {   // c:3540 (shortest suffix strip)
                 let p = singsub(pat, state);
+                let has_scalar_sub = subscript.as_deref().map(|s| {
+                    let t = s.trim();
+                    t != "@" && t != "*" && !t.contains(',')
+                }).unwrap_or(false);
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
@@ -2854,7 +2873,7 @@ pub fn paramsubst(                                          // c:1625
                     }
                     val.to_string()
                 };
-                if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                if let Some(arr) = state.arrays.get(&var_name).cloned().filter(|_| !has_scalar_sub) {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
                     value = new_arr.join(" ");                    // c:3540
                     split_parts = Some(new_arr);                  // c:3540
