@@ -58,39 +58,6 @@ pub fn random_real() -> f64 {
     (significand as f64) * (exponent as f64).exp2()                             // c:211
 }
 
-/// Math-function entry point for `${(rrand)}` / `random()`.
-/// Port of `bin_random_real()` from Src/Modules/random_real.c.
-/// Dispatches to the 0/1/2-argument forms (random in [0,1),
-/// [0,max), [min,max)). The 0-arg path uses the 53-bit mantissa
-/// fast path; 1/2-arg paths use the full random_real() distribution.
-pub fn bin_random_real(args: &[f64]) -> Result<f64, String> {
-    match args.len() {
-        0 => {
-            // 53-bit fast path: two u32 draws stitched into a f64
-            // mantissa, divided by 2^53 to get [0, 1).
-            let a = random::get_random_u32() >> 5;
-            let b = random::get_random_u32() >> 6;
-            Ok((a as f64 * 67108864.0 + b as f64) * (1.0 / 9007199254740992.0))
-        }
-        1 => {
-            let max = args[0];
-            if max <= 0.0 {
-                return Err("random: max must be positive".to_string());
-            }
-            Ok(random_real() * max)
-        }
-        2 => {
-            let min = args[0];
-            let max = args[1];
-            if max <= min {
-                return Err("random: max must be greater than min".to_string());
-            }
-            Ok(min + random_real() * (max - min))
-        }
-        _ => Err("random: too many arguments".to_string()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,61 +68,6 @@ mod tests {
             let r = random_real();
             assert!((0.0..1.0).contains(&r));
         }
-    }
-
-    #[test]
-    fn test_random_real_max() {
-        for _ in 0..100 {
-            let r = bin_random_real(&[10.0]).unwrap();
-            assert!((0.0..10.0).contains(&r));
-        }
-    }
-
-    #[test]
-    fn test_random_real_min_max() {
-        for _ in 0..100 {
-            let r = bin_random_real(&[5.0, 10.0]).unwrap();
-            assert!((5.0..10.0).contains(&r));
-        }
-    }
-
-    #[test]
-    fn test_random_real_53() {
-        for _ in 0..100 {
-            let r = bin_random_real(&[]).unwrap();
-            assert!((0.0..1.0).contains(&r));
-        }
-    }
-
-    #[test]
-    fn test_math_random_real_no_args() {
-        let result = bin_random_real(&[]);
-        assert!(result.is_ok());
-        let r = result.unwrap();
-        assert!((0.0..1.0).contains(&r));
-    }
-
-    #[test]
-    fn test_math_random_real_one_arg() {
-        let result = bin_random_real(&[100.0]);
-        assert!(result.is_ok());
-        let r = result.unwrap();
-        assert!((0.0..100.0).contains(&r));
-    }
-
-    #[test]
-    fn test_math_random_real_two_args() {
-        let result = bin_random_real(&[10.0, 20.0]);
-        assert!(result.is_ok());
-        let r = result.unwrap();
-        assert!((10.0..20.0).contains(&r));
-    }
-
-    #[test]
-    fn test_math_random_real_invalid() {
-        assert!(bin_random_real(&[-1.0]).is_err());
-        assert!(bin_random_real(&[10.0, 5.0]).is_err());
-        assert!(bin_random_real(&[1.0, 2.0, 3.0]).is_err());
     }
 }
 
