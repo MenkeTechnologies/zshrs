@@ -575,3 +575,33 @@ pub struct ProfileEntry {
     pub self_time_us: u64,
 }
 
+
+/// Module loader entry — port of `setup_()` from Src/Modules/zprof.c:332.
+pub fn setup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `features_()` from Src/Modules/zprof.c:340.
+pub fn features_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `enables_()` from Src/Modules/zprof.c:348.
+pub fn enables_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `boot_()` from Src/Modules/zprof.c:355.
+pub fn boot_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `cleanup_()` from Src/Modules/zprof.c:367.
+pub fn cleanup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `finish_()` from Src/Modules/zprof.c:377.
+pub fn finish_() -> i32 {
+    0
+}

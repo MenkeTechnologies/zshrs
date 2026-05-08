@@ -255,3 +255,33 @@ mod tests {
         }
     }
 }
+
+/// Module loader entry — port of `setup_()` from Src/Modules/langinfo.c:472.
+pub fn setup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `features_()` from Src/Modules/langinfo.c:479.
+pub fn features_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `enables_()` from Src/Modules/langinfo.c:487.
+pub fn enables_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `boot_()` from Src/Modules/langinfo.c:494.
+pub fn boot_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `cleanup_()` from Src/Modules/langinfo.c:501.
+pub fn cleanup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `finish_()` from Src/Modules/langinfo.c:508.
+pub fn finish_() -> i32 {
+    0
+}

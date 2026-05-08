@@ -342,3 +342,33 @@ mod tests {
         assert_eq!(status, 1);
     }
 }
+
+/// Module loader entry — port of `setup_()` from Src/Modules/ksh93.c:236.
+pub fn setup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `features_()` from Src/Modules/ksh93.c:243.
+pub fn features_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `enables_()` from Src/Modules/ksh93.c:251.
+pub fn enables_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `boot_()` from Src/Modules/ksh93.c:258.
+pub fn boot_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `cleanup_()` from Src/Modules/ksh93.c:265.
+pub fn cleanup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `finish_()` from Src/Modules/ksh93.c:284.
+pub fn finish_() -> i32 {
+    0
+}

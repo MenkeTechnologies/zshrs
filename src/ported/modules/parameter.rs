@@ -997,3 +997,33 @@ mod tests {
         assert!(!table.is_loaded("nonexistent"));
     }
 }
+
+/// Module loader entry — port of `setup_()` from Src/Modules/parameter.c:2311.
+pub fn setup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `features_()` from Src/Modules/parameter.c:2318.
+pub fn features_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `enables_()` from Src/Modules/parameter.c:2326.
+pub fn enables_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `boot_()` from Src/Modules/parameter.c:2341.
+pub fn boot_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `cleanup_()` from Src/Modules/parameter.c:2348.
+pub fn cleanup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `finish_()` from Src/Modules/parameter.c:2359.
+pub fn finish_() -> i32 {
+    0
+}

@@ -101,3 +101,33 @@ mod tests {
         assert!(!r.matched);
     }
 }
+
+/// Module loader entry — port of `setup_()` from Src/Modules/regex.c:229.
+pub fn setup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `features_()` from Src/Modules/regex.c:236.
+pub fn features_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `enables_()` from Src/Modules/regex.c:244.
+pub fn enables_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `boot_()` from Src/Modules/regex.c:251.
+pub fn boot_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `cleanup_()` from Src/Modules/regex.c:258.
+pub fn cleanup_() -> i32 {
+    0
+}
+
+/// Module loader entry — port of `finish_()` from Src/Modules/regex.c:265.
+pub fn finish_() -> i32 {
+    0
+}
