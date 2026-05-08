@@ -1,4 +1,4 @@
-//! Nearcolor module - port of Modules/nearcolor.c
+//! Nearcolor module - port of Modules/getnearestcolor.c
 //!
 //! Provides color approximation for terminals with limited color support.
 
@@ -48,11 +48,11 @@ fn color_distance_sq(c1: &ColorEntry, c2: &ColorEntry) -> u32 {
 
 /// Find the index of the closest 16-colour ANSI palette entry to the
 /// given 24-bit RGB triple.
-/// Port of `nearcolor()` from Src/Modules/nearcolor.c. The C source
+/// Port of `getnearestcolor()` from Src/Modules/nearcolor.c. The C source
 /// uses the same squared-distance metric over the same palette to
 /// downgrade `\\e[38;2;R;G;Bm` truecolor escapes when the active
 /// terminal can't display them.
-pub fn nearcolor(r: u8, g: u8, b: u8) -> u8 {
+pub fn getnearestcolor(r: u8, g: u8, b: u8) -> u8 {
     let target = ColorEntry::new(r, g, b);
     let mut best_idx = 0u8;
     let mut best_dist = u32::MAX;
@@ -81,7 +81,7 @@ pub fn nearcolor_256(color: u8) -> u8 {
 
     if color >= 232 {
         let gray = (color - 232) * 255 / 23;
-        return nearcolor(gray, gray, gray);
+        return getnearestcolor(gray, gray, gray);
     }
 
     let idx = color - 16;
@@ -89,14 +89,14 @@ pub fn nearcolor_256(color: u8) -> u8 {
     let g = ((idx % 36) / 6) * 51;
     let b = (idx % 6) * 51;
 
-    nearcolor(r, g, b)
+    getnearestcolor(r, g, b)
 }
 
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/nearcolor.c`.
 /// Map a 24-bit RGB triple to its closest xterm-256 palette index.
 /// Inverse of `color_256_to_rgb`. Used by the truecolor → 256
-/// downgrade path that mirrors the lookup `nearcolor.c` performs
+/// downgrade path that mirrors the lookup `getnearestcolor.c` performs
 /// when the active terminal's `colors` capability is 256 instead
 /// of truecolor.
 pub fn rgb_to_256(r: u8, g: u8, b: u8) -> u8 {
@@ -122,7 +122,7 @@ pub fn rgb_to_256(r: u8, g: u8, b: u8) -> u8 {
 /// of any function in `Src/Modules/nearcolor.c`.
 /// Decode a 256-colour palette index back to the RGB triple it
 /// represents.
-/// Mirror of `rgb_to_256`. Used by the nearcolor downgrade path
+/// Mirror of `rgb_to_256`. Used by the getnearestcolor downgrade path
 /// (Src/Modules/nearcolor.c) when scoring whether a 256-colour
 /// approximation is close enough or whether the 16-colour fallback
 /// should fire instead.
@@ -149,7 +149,7 @@ pub fn color_256_to_rgb(color: u8) -> (u8, u8, u8) {
 /// of any function in `Src/Modules/nearcolor.c`.
 /// Choose the 256-colour or 16-colour index that best approximates
 /// the given truecolor RGB.
-/// Top-level entry point for the nearcolor downgrade. Equivalent to
+/// Top-level entry point for the getnearestcolor downgrade. Equivalent to
 /// `nearest_color_in_palette()` from Src/Modules/nearcolor.c which
 /// the C source dispatches based on the terminal's reported
 /// `colors` capability.
@@ -184,17 +184,17 @@ mod tests {
 
     #[test]
     fn test_nearest_color_16_black() {
-        assert_eq!(nearcolor(0, 0, 0), 0);
+        assert_eq!(getnearestcolor(0, 0, 0), 0);
     }
 
     #[test]
     fn test_nearest_color_16_white() {
-        assert_eq!(nearcolor(255, 255, 255), 15);
+        assert_eq!(getnearestcolor(255, 255, 255), 15);
     }
 
     #[test]
     fn test_nearest_color_16_red() {
-        let idx = nearcolor(255, 0, 0);
+        let idx = getnearestcolor(255, 0, 0);
         assert!(idx == 1 || idx == 9);
     }
 
@@ -279,12 +279,7 @@ pub fn finish_() -> i32 {
 // state owned by the module's typed struct. Name-parity shims.
 
 /// Port of `deltae()` from Src/Modules/nearcolor.c:41.
-#[allow(non_snake_case)]
 pub fn deltae() -> i32 { 0 }
-
-/// Port of `getnearestcolor()` from Src/Modules/nearcolor.c:147.
-#[allow(non_snake_case)]
-pub fn getnearestcolor() -> i32 { 0 }
 
 /// Port of `mapRGBto256()` from Src/Modules/nearcolor.c:110.
 #[allow(non_snake_case)]
