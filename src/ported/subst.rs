@@ -4781,9 +4781,13 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
             None => break,                                  // c:4531
         };                                                  // c:4531
 
-        // Count suffix for :h/:t — `:h2` = repeat 2 times.
-        // Port of subst.c:4570-4577 idigit count parse.
-        let mut count: i32 = 1;                             // c:4570
+        // Count suffix for :h/:t — `:hN` keeps N leading components,
+        // `:tN` keeps N trailing components. Bare `:h` is the
+        // "remove filename" form, signalled by count=0 to remtpath
+        // (Src/hist.c:2056). Bare `:t` is "last component", remlpaths
+        // treats count=0 as count=1. Port of subst.c:4570-4577
+        // idigit count parse.
+        let mut count: i32 = 0;                             // c:4570
         if matches!(modifier, 'h' | 't') {                  // c:4571
             let mut count_str = String::new();              // c:4572
             while let Some(&pc) = chars.peek() {
