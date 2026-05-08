@@ -70,8 +70,89 @@ pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {
         b.to_string()
     };
 
+    // Inline numeric comparison — direct port of the
+    // `if (sortnumeric)` branch of eltpcmp at Src/sort.c:137-172.
+    // Walks both strings to first divergence, then either short-
+    // circuits on signed-mode `-DIGIT` vs `DIGIT`, or rewinds to
+    // the start of the digit run, skips leading zeros, compares
+    // run lengths (longer = bigger; flipped for negatives via mul).
+    // Falls back to plain byte-wise compare from the divergence
+    // point when neither side is a digit.
+    let cmp_numeric = |a: &str, b: &str, signed_mode: bool| -> Ordering {
+        let ab = a.as_bytes();
+        let bb = b.as_bytes();
+        let n = ab.len().min(bb.len());
+        let mut i = 0;
+        while i < n && ab[i] == bb[i] {
+            i += 1;
+        }
+        let ac = ab.get(i).copied().unwrap_or(0);
+        let bc = bb.get(i).copied().unwrap_or(0);
+        let is_digit = |c: u8| c.is_ascii_digit();
+        let mut mul: i32 = 0;
+        let mut cmp: i32 = (ac as i32) - (bc as i32);
+        if signed_mode {
+            if ac == b'-' && ab.get(i + 1).copied().map(is_digit).unwrap_or(false) && is_digit(bc) {
+                return Ordering::Less;
+            }
+            if bc == b'-' && bb.get(i + 1).copied().map(is_digit).unwrap_or(false) && is_digit(ac) {
+                return Ordering::Greater;
+            }
+        }
+        if is_digit(ac) || is_digit(bc) {
+            let mut start = i;
+            while start > 0 && is_digit(ab[start - 1]) {
+                start -= 1;
+            }
+            if signed_mode && start > 0 && ab[start - 1] == b'-' {
+                mul = -1;
+            } else {
+                mul = 1;
+            }
+            let run_a: Vec<u8> = ab[start..].iter().copied().take_while(|&c| is_digit(c)).collect();
+            let run_b: Vec<u8> = bb[start..].iter().copied().take_while(|&c| is_digit(c)).collect();
+            let stripped_a: &[u8] = {
+                let z = run_a.iter().take_while(|&&c| c == b'0').count();
+                &run_a[z..]
+            };
+            let stripped_b: &[u8] = {
+                let z = run_b.iter().take_while(|&&c| c == b'0').count();
+                &run_b[z..]
+            };
+            match stripped_a.len().cmp(&stripped_b.len()) {
+                Ordering::Greater => {
+                    return if mul >= 0 { Ordering::Greater } else { Ordering::Less };
+                }
+                Ordering::Less => {
+                    return if mul >= 0 { Ordering::Less } else { Ordering::Greater };
+                }
+                Ordering::Equal => {
+                    for k in 0..stripped_a.len() {
+                        if stripped_a[k] != stripped_b[k] {
+                            let d = (stripped_a[k] as i32) - (stripped_b[k] as i32);
+                            let signed_cmp = if mul >= 0 { d } else { -d };
+                            return match signed_cmp.cmp(&0) {
+                                Ordering::Equal => Ordering::Equal,
+                                o => o,
+                            };
+                        }
+                    }
+                    cmp = 0;
+                }
+            }
+        }
+        let _ = mul;
+        if cmp == 0 {
+            ab[i..].cmp(&bb[i..])
+        } else if cmp < 0 {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }
+    };
+
     let mut result = if numeric {
-        compare_numeric(&a_str, &b_str, numeric_signed)
+        cmp_numeric(&a_str, &b_str, numeric_signed)
     } else if case_insensitive {
         a_str.to_lowercase().cmp(&b_str.to_lowercase())
     } else {
@@ -82,136 +163,6 @@ pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {
         result = result.reverse();
     }
     result
-}
-
-/// Numeric comparison — direct port of src/zsh/Src/sort.c:137-172
-/// (the `if (sortnumeric)` branch of eltpcmp).
-///
-/// Algorithm: walk both strings until they diverge (or both end);
-/// `ao` records the start so we can rewind into a digit run. On
-/// divergence the C source distinguishes two sub-cases. First,
-/// signed-mode where one side starts with `-DIGIT` and the other
-/// starts with `DIGIT` — the negative side is less. Second, either
-/// side is a digit at the divergence point — walk back to the start
-/// of the digit run on both sides (they share a common prefix up to
-/// `as`), skip leading zeros, find the first different digit, then
-/// count remaining digits to decide which number is longer (longer
-/// wins for positive; reversed for negative via `mul`). Otherwise
-/// plain byte-wise compare from `as`.
-fn compare_numeric(a: &str, b: &str, signed_mode: bool) -> Ordering {
-    let ab = a.as_bytes();
-    let bb = b.as_bytes();
-    let n = ab.len().min(bb.len());
-
-    // Walk to first divergence (or shared end).
-    let mut i = 0;
-    while i < n && ab[i] == bb[i] {
-        i += 1;
-    }
-
-    let ac = ab.get(i).copied().unwrap_or(0);
-    let bc = bb.get(i).copied().unwrap_or(0);
-    let is_digit = |c: u8| c.is_ascii_digit();
-
-    let mut mul: i32 = 0;
-    let mut cmp: i32 = (ac as i32) - (bc as i32);
-
-    // Signed-mode sign-vs-digit early branches (sort.c:143-151).
-    if signed_mode {
-        if ac == b'-' && ab.get(i + 1).copied().map(is_digit).unwrap_or(false) && is_digit(bc) {
-            return Ordering::Less;
-        }
-        if bc == b'-' && bb.get(i + 1).copied().map(is_digit).unwrap_or(false) && is_digit(ac) {
-            return Ordering::Greater;
-        }
-    }
-
-    // Digit-run compare (sort.c:152-171).
-    if is_digit(ac) || is_digit(bc) {
-        // Rewind to the start of the digit run. Both strings share
-        // bytes [..i] so the rewind position is the same on both.
-        let mut start = i;
-        while start > 0 && is_digit(ab[start - 1]) {
-            start -= 1;
-        }
-        // Determine sign multiplier (signed mode + leading `-`).
-        if signed_mode && start > 0 && ab[start - 1] == b'-' {
-            mul = -1;
-        } else {
-            mul = 1;
-        }
-
-        // We need to compare the FULL digit runs starting at `start`,
-        // not just from `i` — because in `0042` vs `0050` the runs
-        // differ at position 2 but the leading-zero skip changes
-        // alignment. zsh skips leading zeros first, then walks digit-
-        // by-digit.
-        let run_a: Vec<u8> = ab[start..]
-            .iter()
-            .copied()
-            .take_while(|&c| is_digit(c))
-            .collect();
-        let run_b: Vec<u8> = bb[start..]
-            .iter()
-            .copied()
-            .take_while(|&c| is_digit(c))
-            .collect();
-        let stripped_a: &[u8] = {
-            let z = run_a.iter().take_while(|&&c| c == b'0').count();
-            &run_a[z..]
-        };
-        let stripped_b: &[u8] = {
-            let z = run_b.iter().take_while(|&&c| c == b'0').count();
-            &run_b[z..]
-        };
-        // Longer (post-zero) run wins (more digits = bigger number).
-        match stripped_a.len().cmp(&stripped_b.len()) {
-            Ordering::Greater => {
-                return if mul >= 0 {
-                    Ordering::Greater
-                } else {
-                    Ordering::Less
-                };
-            }
-            Ordering::Less => {
-                return if mul >= 0 {
-                    Ordering::Less
-                } else {
-                    Ordering::Greater
-                };
-            }
-            Ordering::Equal => {
-                // Same length — compare digit-by-digit.
-                for k in 0..stripped_a.len() {
-                    if stripped_a[k] != stripped_b[k] {
-                        let d = (stripped_a[k] as i32) - (stripped_b[k] as i32);
-                        let signed_cmp = if mul >= 0 { d } else { -d };
-                        return match signed_cmp.cmp(&0) {
-                            Ordering::Equal => Ordering::Equal,
-                            o => o,
-                        };
-                    }
-                }
-                // Numbers are equal — fall through to compare what
-                // follows the run.
-                let after_a = &ab[start + run_a.len()..];
-                let after_b = &bb[start + run_b.len()..];
-                let _ = (after_a, after_b);
-                cmp = 0;
-            }
-        }
-    }
-
-    // Default byte-wise compare from divergence point (sort.c:174-175,
-    // strcmp(as, bs)).
-    let _ = mul;
-    if cmp == 0 {
-        ab[i..].cmp(&bb[i..])
-    } else if cmp < 0 {
-        Ordering::Less
-    } else {
-        Ordering::Greater
-    }
 }
 
 /// Sort an array of strings.

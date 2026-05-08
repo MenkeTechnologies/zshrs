@@ -28,10 +28,6 @@ traps
 # child and must skip touching parent state. Used by glob.rs's parallel
 # expansion path to disable post-fork worker thread access.
 is_forked_child
-# Inner numeric-compare branch of zstrcmp/eltpcmp — direct port
-# of src/zsh/Src/sort.c:137-172 (the `if (sortnumeric)` block).
-# 100+ lines; inlining into zstrcmp would make it unwieldy.
-compare_numeric
 
 # Color-distance / 256-palette mapping helpers — extracted from
 # nearcolor module's main lookup logic. zsh C does this inline.
