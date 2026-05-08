@@ -126,6 +126,25 @@ parse_leading_decimal
 midnight_today_local
 format_localtime
 
+# curses.rs — Rust-only helpers in the faithful port of
+# Src/Modules/curses.c. C dereferences libncurses globals directly
+# (`stdscr`, `LINES`, `COLS`, internal window list); Rust port
+# substitutes module-static OnceLock<Mutex<…>>'s + ANSI-escape
+# emission since libncurses isn't linked.
+#   windows_lock / initialized_lock / color_pairs_lock /
+#     next_pair_lock — OnceLock get-or-init for the four module
+#     statics (port of curses.c file-scope `zcurses_windows`,
+#     `colorpairs`, `next_pair`).
+#   terminal_size — TIOCGWINSZ probe replacing libncurses's `LINES`
+#     / `COLS` populated by `initscr()` from terminfo.
+#   cbreak — termios shim replacing libncurses's `cbreak()` call.
+windows_lock
+initialized_lock
+color_pairs_lock
+next_pair_lock
+terminal_size
+cbreak
+
 # math.rs — MathState lifecycle / accessors. The struct mirrors the
 # saved-and-restored locals C `mathevall()` (math.c:367) keeps across
 # recursive entry; in C they are stack locals + module-statics so no

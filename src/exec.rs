@@ -580,10 +580,10 @@ pub struct ShellExecutor {
     /// `Src/Modules/watch.c`) needs to remember the previous utmp
     /// snapshot across calls.
     pub watch_state: crate::watch::WatchState,
-    /// Persistent zcurses windows/colour-pairs — the canonical
-    /// port at `src/ported/modules/curses.rs:573` mutates this in
-    /// place (window creation, attribute mods, etc.).
-    pub curses: crate::curses::Curses,
+    // curses (Src/Modules/curses.c) — windows/colour-pairs/init flag
+    // now live in module-static OnceLock<Mutex<…>>'s in
+    // src/ported/modules/curses.rs (matching C's file-statics
+    // `zcurses_windows`, `colorpairs`, `next_pair`).
     /// Persistent set of named zpty subprocesses — the canonical
     /// port at `src/ported/modules/zpty.rs:367` looks up names
     /// across calls (`zpty -r`, `zpty -w`, `zpty -d`).
@@ -937,7 +937,6 @@ impl ShellExecutor {
             style_table: StyleTable::new(),
             termcap: Default::default(),
             watch_state: crate::watch::WatchState::new(),
-            curses: Default::default(),
             pty_cmds: Default::default(),
             zsh_compat: false,
             bash_compat: false,
