@@ -636,7 +636,7 @@ impl ShellOptions {
 
     /// Look up an option by name (case insensitive, underscores ignored)
     pub fn lookup(&self, name: &str) -> Option<bool> {
-        let normalized = normalize_option_name(name);
+        let normalized = name.chars().filter(|&c| c != '_').flat_map(|c| c.to_lowercase()).collect::<String>();
 
         // Check for "no" prefix
         if let Some(stripped) = normalized.strip_prefix("no") {
@@ -653,7 +653,7 @@ impl ShellOptions {
 
     /// Set an option value
     pub fn set(&mut self, name: &str, value: bool) -> Result<(), String> {
-        let normalized = normalize_option_name(name);
+        let normalized = name.chars().filter(|&c| c != '_').flat_map(|c| c.to_lowercase()).collect::<String>();
 
         // Handle "no" prefix
         let (actual_name, actual_value) = if let Some(stripped) = normalized.strip_prefix("no") {
@@ -798,18 +798,6 @@ impl ShellOptions {
     }
 }
 
-/// Normalize an option name: lowercase, remove underscores
-/// Lowercase + strip `_` / `-` punctuation from an option name.
-/// Port of the canonicalization `optlookup()` from
-/// Src/options.c:684 performs before hashing — `NO_GLOB_DOTS` and
-/// `noglobdots` resolve to the same option entry.
-pub fn normalize_option_name(name: &str) -> String {
-    name.chars()
-        .filter(|&c| c != '_')
-        .flat_map(|c| c.to_lowercase())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -901,10 +889,15 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_name() {
-        assert_eq!(normalize_option_name("AUTO_LIST"), "autolist");
-        assert_eq!(normalize_option_name("AutoList"), "autolist");
-        assert_eq!(normalize_option_name("auto__list"), "autolist");
+    fn test_lookup_canonicalises_underscores_and_case() {
+        let opts = ShellOptions::new();
+        // The canonicalised name "autolist" is the same option whether
+        // written AUTO_LIST, AutoList, auto__list, etc. — opts.lookup()
+        // does the inline normalize that used to live in
+        // normalize_option_name.
+        assert_eq!(opts.lookup("AUTO_LIST"), opts.lookup("autolist"));
+        assert_eq!(opts.lookup("AutoList"), opts.lookup("autolist"));
+        assert_eq!(opts.lookup("auto__list"), opts.lookup("autolist"));
     }
 }
 
@@ -1955,7 +1948,7 @@ pub fn setoption(name: &str, value: i32) -> i32 {
 /// negative-encoding for inversion). Returns OPT_INVALID for
 /// unknown names.
 pub fn optlookup(name: &str) -> i32 {
-    let normalized = normalize_option_name(name);
+    let normalized = name.chars().filter(|&c| c != '_').flat_map(|c| c.to_lowercase()).collect::<String>();
     let opts = ShellOptions::new();
     let hash = |s: &str| -> i32 {
         // FNV-1a, masked to positive 30 bits.
