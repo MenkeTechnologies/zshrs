@@ -112,7 +112,6 @@ emit_xtrace_text
 quote_string
 split_quoted
 
-clone_shell
 color_to_code
 format_function_body_zsh
 format_key_sequence

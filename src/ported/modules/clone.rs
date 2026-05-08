@@ -9,142 +9,93 @@
 use std::io;
 use crate::ported::utils::zwarnnam;
 
-/// Result returned by `clone_shell` so the caller can wire $! /
-/// $TTY / $PID / $PPID per src/zsh/Src/Modules/clone.c:55-98.
-#[cfg(unix)]
-pub struct CloneOutcome {
-    /// Child pid in the parent (post-fork). 0 means we are the child.
-    pub pid: i32,
-    /// True iff the child successfully acquired the new tty as its
-    /// controlling terminal. Mirrors the `cttyfd = open("/dev/tty")`
-    /// success branch of clone.c:86-91.
-    pub got_ctty: bool,
-}
-
-/// Helper extracted from `bin_clone()` (Src/Modules/clone.c:44):
-/// the fork/setsid/dup2/TIOCSCTTY ctty-acquisition body. The
-/// thin `bin_clone` wrapper below handles arg parsing and result
-/// translation.
+/// Port of `bin_clone()` from `Src/Modules/clone.c:44`.
 ///
-/// Steps mirror the C implementation:
-///   1. Open the tty path with O_RDWR|O_NOCTTY (clone.c:49).
-///   2. fork(). On error, propagate (clone.c:101-104).
-///   3. In the child:
-///      a. setsid() (clone.c:60), warn if failed.
-///      b. dup2 ttyfd onto fds 0/1/2 (clone.c:67-69).
-///      c. close ttyfd if > 2 (clone.c:70-71).
-///      d. open tty again to acquire it as ctty + TIOCSCTTY (clone.c:75-84).
-///      e. open /dev/tty to verify ctty acquisition (clone.c:85-91).
-#[cfg(unix)]
-pub fn clone_shell(tty_path: &str) -> io::Result<CloneOutcome> {
-    use std::ffi::CString;
-    use std::os::unix::io::RawFd;
-
-    let tty_c = CString::new(tty_path)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid tty path"))?;
-
-    // clone.c:49 — open with O_NOCTTY so opening doesn't steal ctty.
-    let ttyfd: RawFd = unsafe { libc::open(tty_c.as_ptr(), libc::O_RDWR | libc::O_NOCTTY) };
-
-    if ttyfd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-
-    // clone.c:54 — fork. Parent: close ttyfd, return child pid.
-    // Child: continues at the !pid branch below.
-    let pid = unsafe { libc::fork() };
-
-    match pid {
-        -1 => {
-            unsafe { libc::close(ttyfd) };
-            Err(io::Error::last_os_error())
-        }
-        0 => {
-            // CHILD path — clone.c:55-98.
-            let mut got_ctty = false;
-            unsafe {
-                // clone.c:60 — setsid creates a new session and pgid.
-                // Failure is non-fatal; zsh just warns.
-                if libc::setsid() == -1 {
-                    zwarnnam("clone", &format!("failed to create new session: {}", io::Error::last_os_error()));
-                }
-
-                // clone.c:67-69 — point std fds at the new tty.
-                libc::dup2(ttyfd, 0);
-                libc::dup2(ttyfd, 1);
-                libc::dup2(ttyfd, 2);
-
-                // clone.c:70-71 — close the original ttyfd if it's
-                // not already 0/1/2 after dup2.
-                if ttyfd > 2 {
-                    libc::close(ttyfd);
-                }
-
-                // clone.c:75-84 — re-open the tty to acquire it as
-                // controlling terminal via TIOCSCTTY.
-                let cttyfd = libc::open(tty_c.as_ptr(), libc::O_RDWR);
-                if cttyfd >= 0 {
-                    #[cfg(any(target_os = "linux", target_os = "macos"))]
-                    {
-                        libc::ioctl(cttyfd, libc::TIOCSCTTY as libc::c_ulong, 0);
-                    }
-                    libc::close(cttyfd);
-                }
-
-                // clone.c:85-91 — verify by opening /dev/tty. If this
-                // succeeds the kernel has assigned a ctty.
-                let dev_tty = b"/dev/tty\0";
-                let verify = libc::open(dev_tty.as_ptr() as *const libc::c_char, libc::O_RDWR);
-                if verify >= 0 {
-                    got_ctty = true;
-                    libc::close(verify);
-                }
-            }
-
-            Ok(CloneOutcome { pid: 0, got_ctty })
-        }
-        child_pid => {
-            // PARENT path — clone.c:99-100, 105-106.
-            unsafe { libc::close(ttyfd) };
-            Ok(CloneOutcome {
-                pid: child_pid,
-                got_ctty: true,
-            })
-        }
-    }
-}
-
-#[cfg(not(unix))]
-pub struct CloneOutcome {
-    pub pid: i32,
-    pub got_ctty: bool,
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/clone.c`.
-#[cfg(not(unix))]
-pub fn clone_shell(_tty_path: &str) -> io::Result<CloneOutcome> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "clone not supported",
-    ))
-}
-
-/// `clone` builtin entry point.
-/// Port of `bin_clone()` from Src/Modules/clone.c:44 — wraps
-/// `clone_shell()` with the C source's "terminal required"
-/// diagnostic and surfaces `(status, error_text, child_pid)` so
-/// the caller can wire `$!`. `child_pid > 0` in parent, `0` in
-/// child, `None` on failure (matches the C source's exit-status
-/// convention).
+/// The clone builtin: fork the shell onto a new terminal. The C source
+/// performs all the work inline (open ctty, fork, child does setsid +
+/// dup2 + TIOCSCTTY, parent closes ttyfd and returns). Mirrors that
+/// inline structure here — no helper extraction.
+///
+/// Returns `(status, error_text, child_pid)`:
+/// - status 1 + diagnostic for arg-missing or open/fork errors
+/// - status 0 + Some(child_pid) in parent on success
+/// - status 0 + Some(0) in child on success (per zsh's `$!` semantics)
 pub fn bin_clone(args: &[&str]) -> (i32, String, Option<u32>) {
     if args.is_empty() {
         return (1, "clone: terminal required\n".to_string(), None);
     }
+    let tty_path = args[0];
 
-    match clone_shell(args[0]) {
-        Ok(o) => (0, String::new(), Some(o.pid as u32)),
-        Err(e) => (1, format!("clone: {}: {}\n", args[0], e), None),
+    #[cfg(unix)]
+    {
+        use std::ffi::CString;
+        use std::os::unix::io::RawFd;
+
+        let tty_c = match CString::new(tty_path) {
+            Ok(c) => c,
+            Err(_) => return (1, format!("clone: {}: invalid tty path\n", tty_path), None),
+        };
+
+        // clone.c:49 — open with O_NOCTTY so opening doesn't steal ctty.
+        let ttyfd: RawFd = unsafe { libc::open(tty_c.as_ptr(), libc::O_RDWR | libc::O_NOCTTY) };
+        if ttyfd < 0 {
+            return (1, format!("clone: {}: {}\n", tty_path, io::Error::last_os_error()), None);
+        }
+
+        // clone.c:54 — fork. Parent: close ttyfd, return child pid.
+        let pid = unsafe { libc::fork() };
+        match pid {
+            -1 => {
+                unsafe { libc::close(ttyfd) };
+                (1, format!("clone: {}: {}\n", tty_path, io::Error::last_os_error()), None)
+            }
+            0 => {
+                // CHILD path — clone.c:55-98.
+                unsafe {
+                    // clone.c:60 — setsid creates a new session and pgid.
+                    // Failure is non-fatal; zsh just warns.
+                    if libc::setsid() == -1 {
+                        zwarnnam("clone", &format!("failed to create new session: {}", io::Error::last_os_error()));
+                    }
+                    // clone.c:67-69 — point std fds at the new tty.
+                    libc::dup2(ttyfd, 0);
+                    libc::dup2(ttyfd, 1);
+                    libc::dup2(ttyfd, 2);
+                    // clone.c:70-71 — close the original ttyfd if it's
+                    // not already 0/1/2 after dup2.
+                    if ttyfd > 2 {
+                        libc::close(ttyfd);
+                    }
+                    // clone.c:75-84 — re-open the tty to acquire it as
+                    // controlling terminal via TIOCSCTTY.
+                    let cttyfd = libc::open(tty_c.as_ptr(), libc::O_RDWR);
+                    if cttyfd >= 0 {
+                        #[cfg(any(target_os = "linux", target_os = "macos"))]
+                        {
+                            libc::ioctl(cttyfd, libc::TIOCSCTTY as libc::c_ulong, 0);
+                        }
+                        libc::close(cttyfd);
+                    }
+                    // clone.c:85-91 — verify by opening /dev/tty.
+                    let dev_tty = b"/dev/tty\0";
+                    let verify = libc::open(dev_tty.as_ptr() as *const libc::c_char, libc::O_RDWR);
+                    if verify >= 0 {
+                        libc::close(verify);
+                    }
+                }
+                (0, String::new(), Some(0))
+            }
+            child_pid => {
+                // PARENT path — clone.c:99-100, 105-106.
+                unsafe { libc::close(ttyfd) };
+                (0, String::new(), Some(child_pid as u32))
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tty_path;
+        (1, format!("clone: {}: clone not supported\n", tty_path), None)
     }
 }
 
