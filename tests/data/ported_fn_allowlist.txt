@@ -89,7 +89,6 @@ color_to_code
 format_function_body_zsh
 format_key_sequence
 magic_assoc_keys
-normalize_option_name
 parse_key_sequence
 parse_subscript_arith_assign
 parse_subscript_arith_compound
