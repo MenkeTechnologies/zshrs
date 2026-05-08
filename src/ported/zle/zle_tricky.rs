@@ -464,7 +464,7 @@ pub fn has_real_token(s: &str) -> bool {
 
 /// Get length of common prefix
 /// Port of pfxlen() from zle_tricky.c
-pub fn pfx_len(s1: &str, s2: &str) -> usize {
+pub fn pfxlen(s1: &str, s2: &str) -> usize {
     s1.chars()
         .zip(s2.chars())
         .take_while(|(a, b)| a == b)
@@ -473,7 +473,7 @@ pub fn pfx_len(s1: &str, s2: &str) -> usize {
 
 /// Get length of common suffix
 /// Port of sfxlen() from zle_tricky.c
-pub fn sfx_len(s1: &str, s2: &str) -> usize {
+pub fn sfxlen(s1: &str, s2: &str) -> usize {
     s1.chars()
         .rev()
         .zip(s2.chars().rev())
@@ -514,16 +514,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_pfx_len() {
-        assert_eq!(pfx_len("hello", "help"), 3);
-        assert_eq!(pfx_len("abc", "xyz"), 0);
-        assert_eq!(pfx_len("test", "test"), 4);
+    fn test_pfxlen() {
+        assert_eq!(pfxlen("hello", "help"), 3);
+        assert_eq!(pfxlen("abc", "xyz"), 0);
+        assert_eq!(pfxlen("test", "test"), 4);
     }
 
     #[test]
-    fn test_sfx_len() {
-        assert_eq!(sfx_len("testing", "running"), 3);
-        assert_eq!(sfx_len("abc", "xyz"), 0);
+    fn test_sfxlen() {
+        assert_eq!(sfxlen("testing", "running"), 3);
+        assert_eq!(sfxlen("abc", "xyz"), 0);
     }
 
     #[test]
@@ -635,9 +635,6 @@ pub fn menuexpandorcomplete() -> i32 { 0 }
 /// Port of `parambeg()` from Src/Zle/zle_tricky.c:521. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn parambeg() -> i32 { 0 }
 
-/// Port of `pfxlen()` from Src/Zle/zle_tricky.c:2359. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn pfxlen() -> i32 { 0 }
-
 /// Port of `printfmt()` from Src/Zle/zle_tricky.c:2431. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn printfmt() -> i32 { 0 }
 
@@ -649,9 +646,6 @@ pub fn quotestring() -> i32 { 0 }
 
 /// Port of `reversemenucomplete()` from Src/Zle/zle_tricky.c:344. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn reversemenucomplete() -> i32 { 0 }
-
-/// Port of `sfxlen()` from Src/Zle/zle_tricky.c:2411. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn sfxlen() -> i32 { 0 }
 
 /// Port of `spellword()` from Src/Zle/zle_tricky.c:261. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn spellword() -> i32 { 0 }
