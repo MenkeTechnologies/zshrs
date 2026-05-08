@@ -996,9 +996,6 @@ pub fn bin_bindkey_meta() -> i32 { 0 }
 /// Port of `bin_bindkey_new()` from Src/Zle/zle_keymap.c:938. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn bin_bindkey_new() -> i32 { 0 }
 
-/// Port of `bindkey()` from Src/Zle/zle_keymap.c:566. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bindkey() -> i32 { 0 }
-
 /// Port of `bindlistout()` from Src/Zle/zle_keymap.c:1172. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn bindlistout() -> i32 { 0 }
 
