@@ -237,6 +237,30 @@ impl History {
         self.ring[pos]
     }
 
+    /// Histnum of the oldest entry (last in the ring), or `None`
+    /// when the ring is empty. Mirrors C's `hist_ring->down`.
+    pub fn ring_oldest(&self) -> Option<i64> {
+        self.ring.last().copied()
+    }
+
+    /// Push an entry at the head of the ring (newest position) and
+    /// register it in `entries` under `histnum`. Mirrors C's
+    /// `hist_ring = he` after the doubly-linked-list splice.
+    pub fn insert_at_head(&mut self, histnum: i64, entry: HistEntry) {
+        self.entries.insert(histnum, entry);
+        self.ring.retain(|n| *n != histnum);
+        self.ring.insert(0, histnum);
+        self.histlinect = self.ring.len() as i64;
+    }
+
+    /// Remove the entry with `histnum` from both the ring and the
+    /// entries map. Mirrors C's `freehistnode` on a single entry.
+    pub fn remove(&mut self, histnum: i64) {
+        self.entries.remove(&histnum);
+        self.ring.retain(|n| *n != histnum);
+        self.histlinect = self.ring.len() as i64;
+    }
+
     /// Get the n-th most recent entry (0 = latest)
     pub fn recent(&self, n: usize) -> Option<&HistEntry> {
         self.ring.get(n).and_then(|num| self.entries.get(num))
@@ -1748,6 +1772,117 @@ pub fn hconsearch(hist: &History, needle: &str, start: Option<i64>) -> Option<i6
         }
     }
     None
+}
+
+/// Insert `hist.curline` (the in-progress edit) at the head of
+/// the ring and bump curhist. Port of `linkcurline()` from
+/// Src/hist.c. Adapted from C's circular doubly-linked-list
+/// splice to Vec<i64> push-front semantics — same observable
+/// effect: latest entry visible at ring index 0.
+pub fn linkcurline(hist: &mut History) {
+    hist.curhist += 1;
+    let n = hist.curhist;
+    if let Some(ref mut cur) = hist.curline {
+        cur.histnum = n;
+    }
+    if let Some(cur) = hist.curline.clone() {
+        hist.insert_at_head(n, cur);
+    }
+}
+
+/// Remove `hist.curline` from the ring head and decrement
+/// curhist. Port of `unlinkcurline()` from Src/hist.c.
+pub fn unlinkcurline(hist: &mut History) {
+    let n = hist.curhist;
+    hist.remove(n);
+    hist.curhist -= 1;
+}
+
+/// Move `n` entries from `start` (positive = newer, negative =
+/// older), skipping entries whose flags intersect `xflags`.
+/// Returns the resulting histnum or `None` when the walk runs
+/// out of ring. Port of `movehistent()` from Src/hist.c.
+pub fn movehistent(hist: &History, start: i64, mut n: i32, xflags: u32) -> Option<i64> {
+    let mut cur = start;
+    while n < 0 {
+        cur = up_histent(hist, cur)?;
+        if let Some(e) = hist.get(cur) {
+            if e.flags & xflags == 0 {
+                n += 1;
+            }
+        }
+    }
+    while n > 0 {
+        cur = down_histent(hist, cur)?;
+        if let Some(e) = hist.get(cur) {
+            if e.flags & xflags == 0 {
+                n -= 1;
+            }
+        }
+    }
+    Some(cur)
+}
+
+/// Get a history entry by event number with near-match fallback.
+/// Port of `gethistent()` from Src/hist.c. `nearmatch`:
+///   == 0  → exact match only, `None` on miss.
+///   <  0  → on miss, return the closest OLDER entry.
+///   >  0  → on miss, return the closest NEWER entry.
+pub fn gethistent(hist: &History, ev: i64, nearmatch: i32) -> Option<i64> {
+    if hist.ring_len() == 0 {
+        return None;
+    }
+    // Direct lookup first — most calls hit the exact event.
+    if hist.get(ev).is_some() {
+        return Some(ev);
+    }
+    if nearmatch == 0 {
+        return None;
+    }
+    // Walk the ring to find closest with the right side.
+    let mut best_older: Option<i64> = None;
+    let mut best_newer: Option<i64> = None;
+    for i in 0..hist.ring_len() {
+        let n = hist.ring_at(i);
+        if n < ev && best_older.map_or(true, |b| n > b) {
+            best_older = Some(n);
+        } else if n > ev && best_newer.map_or(true, |b| n < b) {
+            best_newer = Some(n);
+        }
+    }
+    if nearmatch < 0 { best_older } else { best_newer }
+}
+
+/// Allocate the next history slot and return its histnum. Port of
+/// `prepnexthistent()` from Src/hist.c — drops the oldest entry
+/// when the ring is full (per `histsiz`), increments curhist, and
+/// reserves the slot. The C source returns a Histent pointer; we
+/// return the histnum (caller fills text via `History::add` or
+/// similar mutator).
+pub fn prepnexthistent(hist: &mut History) -> i64 {
+    if hist.histlinect >= hist.histsiz {
+        // Drop oldest. C calls putoldhistentryontop(0) +
+        // freehistnode; for our Vec-based ring, simply pop tail.
+        if let Some(oldest) = hist.ring_oldest() {
+            hist.remove(oldest);
+        }
+    }
+    hist.curhist += 1;
+    hist.curhist
+}
+
+/// Trim the ring back down to `histsiz` after a setting change.
+/// Port of `resizehistents()` from Src/hist.c — same loop, but
+/// without zsh's HISTEXPIREDUPSFIRST handling (TODO: port the
+/// `putoldhistentryontop(1)` dup-priority preference).
+pub fn resizehistents(hist: &mut History) {
+    while hist.histlinect > hist.histsiz {
+        if let Some(oldest) = hist.ring_oldest() {
+            hist.remove(oldest);
+        } else {
+            break;
+        }
+    }
 }
 
 /// Decrement the lock counter. Port of `unlockhistfile()` from
