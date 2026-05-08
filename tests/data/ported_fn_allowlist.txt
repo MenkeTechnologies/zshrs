@@ -140,7 +140,6 @@ set_file_contents
 shell_word_end_after
 shell_word_start_before
 strwidth
-try_matcher
 visible_width
 zselect
 zformat_recurse
