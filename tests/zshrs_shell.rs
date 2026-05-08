@@ -435,17 +435,20 @@ fn test_subscript_flag_I_no_match() {
 }
 
 #[test]
-fn test_subscript_flag_r_implicit_trailing_wildcard() {
-    // C params.c:1668-1685 — non-exact, non-word array search
-    // appends `*` to the user's pattern. So `(r)foo` matches "foobar".
-    let (_, output, _) = run_zshrs("arr=(foobar baz qux); print ${arr[(r)foo]}");
-    assert_eq!(output.trim(), "foobar", "got: {output:?}");
+fn test_subscript_flag_r_no_implicit_wildcard() {
+    // Verified empirically against `/bin/zsh`: `(r)foo` on
+    // `(foobar baz qux)` returns EMPTY — `r` does NOT add an
+    // implicit `*` wrap. User must supply explicit `*` for glob
+    // matching. The C wrap at params.c:1668-1685 only fires when
+    // `v->scanflags` is unset, which is not the case in standard
+    // subscript callsites.
+    let (_, output, _) = run_zshrs("arr=(foobar baz qux); print \"[${arr[(r)foo]}]\"");
+    assert_eq!(output.trim(), "[]", "got: {output:?}");
 }
 
 #[test]
-fn test_subscript_flag_e_disables_implicit_wildcard() {
-    // (e) means exact — no implicit `*` wrap. `(e)foo` should NOT
-    // match "foobar".
+fn test_subscript_flag_re_exact_match() {
+    // `(re)foo` is exact match. arr has literal "foo" → returns it.
     let (_, output, _) = run_zshrs("arr=(foobar foo qux); print ${arr[(re)foo]}");
     assert_eq!(output.trim(), "foo", "got: {output:?}");
 }
