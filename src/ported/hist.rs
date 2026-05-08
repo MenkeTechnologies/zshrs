@@ -219,6 +219,24 @@ impl History {
         self.ring.first().and_then(|n| self.entries.get(n))
     }
 
+    /// Length of the in-memory history ring. Used by up_histent /
+    /// down_histent to detect ends of the ring.
+    pub fn ring_len(&self) -> usize {
+        self.ring.len()
+    }
+
+    /// Position of `histnum` in the ring (0 = newest), or `None`
+    /// if the histnum isn't present.
+    pub fn ring_position(&self, histnum: i64) -> Option<usize> {
+        self.ring.iter().position(|n| *n == histnum)
+    }
+
+    /// Histnum at ring index `pos` (0 = newest). Caller must ensure
+    /// `pos < ring_len()`.
+    pub fn ring_at(&self, pos: usize) -> i64 {
+        self.ring[pos]
+    }
+
     /// Get the n-th most recent entry (0 = latest)
     pub fn recent(&self, n: usize) -> Option<&HistEntry> {
         self.ring.get(n).and_then(|num| self.entries.get(num))
@@ -1599,6 +1617,151 @@ pub fn checkcurline(hist: &History, line: &str) -> bool {
 /// Quietly get history entry without error (from hist.c quietgethist)
 pub fn quietgethist(hist: &History, ev: i64) -> Option<&HistEntry> {
     hist.get(ev)
+}
+
+/// Toggle the `HA_INWORD` bit on `histactive`.
+/// Port of `hist_in_word()` from Src/hist.c.
+pub fn hist_in_word(hist: &mut History, yesno: bool) {
+    if yesno {
+        hist.histactive |= HA_INWORD;
+    } else {
+        hist.histactive &= !HA_INWORD;
+    }
+}
+
+/// Read the `HA_INWORD` bit on `histactive`.
+/// Port of `hist_is_in_word()` from Src/hist.c.
+pub fn hist_is_in_word(hist: &History) -> bool {
+    (hist.histactive & HA_INWORD) != 0
+}
+
+/// Live count of `lockhistfile()` invocations not yet matched by
+/// `unlockhistfile()`. Mirrors C zsh's `lockhistct` global. Used
+/// by `histfileIsLocked` and the lock-counting pop in
+/// `unlockhistfile`.
+static LOCKHISTCT: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Live counter for `chwordpos` — the index into the per-line
+/// word-boundary array zsh's lexer fills as it tokenises. Used by
+/// the `ihw*` family. Mirrors C zsh's `chwordpos` global.
+static CHWORDPOS: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// `hist_keep_comment` flag — set by `ihwabort` to retain a
+/// comment that would otherwise be dropped. Mirrors the C global.
+static HIST_KEEP_COMMENT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the history file is currently locked by this process.
+/// Port of `histfileIsLocked()` from Src/hist.c.
+#[allow(non_snake_case)]
+pub fn histfileIsLocked() -> bool {
+    LOCKHISTCT.load(std::sync::atomic::Ordering::SeqCst) > 0
+}
+
+/// Move one history entry up (toward older). Port of
+/// `up_histent()` from Src/hist.c. Returns the histnum of the
+/// previous entry, or `None` when at the top of the ring.
+pub fn up_histent(hist: &History, current: i64) -> Option<i64> {
+    let pos = hist.ring_position(current)?;
+    if pos + 1 >= hist.ring_len() {
+        None
+    } else {
+        Some(hist.ring_at(pos + 1))
+    }
+}
+
+/// Move one history entry down (toward newer). Port of
+/// `down_histent()` from Src/hist.c. Returns the histnum of the
+/// next entry, or `None` when at the bottom of the ring.
+pub fn down_histent(hist: &History, current: i64) -> Option<i64> {
+    let pos = hist.ring_position(current)?;
+    if pos == 0 {
+        None
+    } else {
+        Some(hist.ring_at(pos - 1))
+    }
+}
+
+/// Abort the current half-formed history word. Port of
+/// `ihwabort()` from Src/hist.c — back the word-position counter
+/// off by one if it's odd (mid-word) and set
+/// `hist_keep_comment` so the lexer preserves whatever follows.
+pub fn ihwabort() {
+    use std::sync::atomic::Ordering;
+    let pos = CHWORDPOS.load(Ordering::SeqCst);
+    if pos % 2 != 0 {
+        CHWORDPOS.fetch_sub(1, Ordering::SeqCst);
+    }
+    HIST_KEEP_COMMENT.store(true, Ordering::SeqCst);
+}
+
+/// Get a history entry by event number, erroring if not found.
+/// Port of `gethist()` from Src/hist.c — wraps `quietgethist` and
+/// emits the same `no such event: N` error to stderr.
+pub fn gethist(hist: &History, ev: i64) -> Option<&HistEntry> {
+    let ret = quietgethist(hist, ev);
+    if ret.is_none() {
+        herrflush();
+        eprintln!("no such event: {}", ev);
+    }
+    ret
+}
+
+/// Forward search through history for the first entry whose text
+/// starts with `prefix` (newest-toward-oldest). Returns the
+/// histnum on hit, `None` on miss. Port of `hcomsearch()` from
+/// Src/hist.c — same up-walk + `strncmp` semantics, FOREIGN
+/// entries skipped.
+pub fn hcomsearch(hist: &History, prefix: &str) -> Option<i64> {
+    let mut cur = hist.curhist;
+    while let Some(prev) = up_histent(hist, cur) {
+        cur = prev;
+        if let Some(entry) = hist.get(cur) {
+            if (entry.flags & hist_flags::FOREIGN) != 0 {
+                continue;
+            }
+            if entry.text.starts_with(prefix) {
+                return Some(cur);
+            }
+        }
+    }
+    None
+}
+
+/// Forward search through history for the first entry whose text
+/// CONTAINS `needle`. Direct port of `hconsearch()` from
+/// Src/hist.c. The `start` arg lets the caller resume from a
+/// previous match; `None` starts at the most recent.
+pub fn hconsearch(hist: &History, needle: &str, start: Option<i64>) -> Option<i64> {
+    let mut cur = start.unwrap_or(hist.curhist);
+    while let Some(prev) = up_histent(hist, cur) {
+        cur = prev;
+        if let Some(entry) = hist.get(cur) {
+            if (entry.flags & hist_flags::FOREIGN) != 0 {
+                continue;
+            }
+            if entry.text.contains(needle) {
+                return Some(cur);
+            }
+        }
+    }
+    None
+}
+
+/// Decrement the lock counter. Port of `unlockhistfile()` from
+/// Src/hist.c — drops the lock when the count reaches 0. The
+/// actual file-level unlock (flock release) is currently a TODO
+/// pending the wider history-file I/O port (`lockhistfile`,
+/// `readhistfile`, `savehistfile`).
+pub fn unlockhistfile(_path: &str) {
+    use std::sync::atomic::Ordering;
+    let prev = LOCKHISTCT.fetch_sub(1, Ordering::SeqCst);
+    if prev <= 0 {
+        // Mirror C: under-count is a no-op (the C source asserts).
+        LOCKHISTCT.store(0, Ordering::SeqCst);
+    }
 }
 
 /// Dynamic history read during expansion (from hist.c hdynread)
