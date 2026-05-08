@@ -213,7 +213,7 @@ pub fn parse_caarg(spec: &str) -> Option<CompArgDef> {
 }
 
 /// Parse an option spec Port of `set_cadef_opts` from Src/Zle/computil.c.
-pub fn parse_caopt(spec: &str) -> Option<CompOptDef> {
+pub fn parse_cadef(spec: &str) -> Option<CompOptDef> {
     // Format: "-o[description]" or "--option[description]:arg_desc:action"
     // or "(-a -b)-c[description]"
 
@@ -368,13 +368,13 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_caopt() {
-        let opt = parse_caopt("-v[verbose output]").unwrap();
+    fn test_parse_cadef() {
+        let opt = parse_cadef("-v[verbose output]").unwrap();
         assert_eq!(opt.name, "-v");
         assert_eq!(opt.description, "verbose output");
         assert!(!opt.has_arg);
 
-        let opt = parse_caopt("--output[output file]:file:_files").unwrap();
+        let opt = parse_cadef("--output[output file]:file:_files").unwrap();
         assert_eq!(opt.name, "--output");
         assert!(opt.has_arg);
     }
@@ -693,9 +693,6 @@ pub fn get_cadef() -> i32 { 0 }
 
 /// Port of `get_cvdef()` from Src/Zle/computil.c:3154. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn get_cvdef() -> i32 { 0 }
-
-/// Port of `parse_cadef()` from Src/Zle/computil.c:1196. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn parse_cadef() -> i32 { 0 }
 
 /// Port of `parse_cvdef()` from Src/Zle/computil.c:2986. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn parse_cvdef() -> i32 { 0 }
