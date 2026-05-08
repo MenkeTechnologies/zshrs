@@ -545,9 +545,18 @@ pub fn casemodify(s: &str, how: CaseMod) -> String {
     result
 }
 
-/// Remove trailing path component (from hist.c remtpath lines 2056-2117)
-/// Remove trailing path components (`:t` / `:h` modifiers).
-/// Port of the `:t` arm inside `applymod()` (Src/utils.c).
+/// Path-head modifier `:h` / `:hN`.
+/// Port of `remtpath()` from Src/hist.c:2056. Two modes per the C
+/// source's `if (!count)` switch:
+///   count == 0 — bare `:h`. Skip the trailing filename component
+///                and return the dirname (or "/" / "." when nothing
+///                is left).
+///   count > 0  — `:hN`. Walk from the FRONT decrementing on each
+///                separator; terminate when count reaches 0. The
+///                leading slash counts as one component, so `:h1` on
+///                "/a/b/c" returns "/", `:h2` returns "/a", `:h3`
+///                returns "/a/b". Consecutive separators are
+///                squeezed (matches C `while (IS_DIRSEP(strp[1]))`).
 pub fn remtpath(s: &str, count: i32) -> String {
     let s = s.trim_end_matches('/');
 
@@ -556,6 +565,7 @@ pub fn remtpath(s: &str, count: i32) -> String {
     }
 
     if count == 0 {
+        // Bare `:h` — strip the last component.
         if let Some(pos) = s.rfind('/') {
             if pos == 0 {
                 return "/".to_string();
@@ -565,24 +575,33 @@ pub fn remtpath(s: &str, count: i32) -> String {
         return ".".to_string();
     }
 
-    let parts: Vec<&str> = s.split('/').filter(|p| !p.is_empty()).collect();
-    if count as usize >= parts.len() {
-        return s.to_string();
+    // count > 0 — direct port of the front-walk loop in C remtpath
+    // (Src/hist.c:2078-2098). Decrement on each separator; when
+    // count <= 0, terminate at that position (special-casing the
+    // leading-slash position).
+    let bytes = s.as_bytes();
+    let mut remaining = count;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'/' {
+            remaining -= 1;
+            if remaining <= 0 {
+                if i == 0 {
+                    // Leading slash counted as a component.
+                    return "/".to_string();
+                }
+                return s[..i].to_string();
+            }
+            // Skip consecutive separators — C: `while
+            // (IS_DIRSEP(strp[1])) ++strp;`
+            while i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                i += 1;
+            }
+        }
+        i += 1;
     }
-
-    let leading_slash = s.starts_with('/');
-    let result: String = parts
-        .iter()
-        .take(count as usize)
-        .copied()
-        .collect::<Vec<&str>>()
-        .join("/");
-
-    if leading_slash {
-        format!("/{}", result)
-    } else {
-        result
-    }
+    // Full string needed (count larger than the available components).
+    s.to_string()
 }
 
 /// Remove leading path components (from hist.c remlpaths lines 2151-2186)
