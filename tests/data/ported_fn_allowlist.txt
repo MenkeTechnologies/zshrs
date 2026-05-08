@@ -102,7 +102,6 @@ matches_watch_pattern
 
 # utils.rs Rust-side stdlib wrappers and zshrs-original helpers
 # kept for ergonomics — zsh C inlines these or uses macros.
-unescape
 read_lines
 get_term_width
 get_term_height
