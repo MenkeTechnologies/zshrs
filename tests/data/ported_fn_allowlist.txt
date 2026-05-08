@@ -58,4 +58,3 @@
 # kept for ergonomics — zsh C inlines these or uses macros.
 
 
-zformat_recurse
