@@ -135,8 +135,6 @@ get_all_langinfo
 get_datetime_info
 get_terminal_size
 get_tied_param
-hist_hasher
-hist_strcmp
 is_emacs_word_char
 is_valid_identifier
 is_vi_word_char
