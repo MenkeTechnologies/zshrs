@@ -37,6 +37,51 @@ impl RandomState {
         }
     }
 
+    /// One-shot variant of `get_srandom()` (Src/Modules/random.c:143)
+    /// — convenience for callers that don't need the 8-element batching.
+    pub fn random_u32() -> u32 {
+        let mut buf = [0u8; 4];
+        let _ = getrandom_buffer(&mut buf);
+        u32::from_ne_bytes(buf)
+    }
+
+    /// Two-word variant — used by the `random_real()` path
+    /// in Src/Modules/random_real.c:158-175 which reads 64 bits at a
+    /// time when building uniform-real samples.
+    pub fn random_u64() -> u64 {
+        let mut buf = [0u8; 8];
+        let _ = getrandom_buffer(&mut buf);
+        u64::from_ne_bytes(buf)
+    }
+
+    /// Get a random integer in `[0, max)` using Lemire's unbiased
+    /// rejection algorithm. Port of the inline bound-rejection logic
+    /// inside `get_bound_random_buffer()` from Src/Modules/random.c:104.
+    pub fn bounded(max: u32) -> u32 {
+        if max == 0 {
+            return 0;
+        }
+
+        if max == u32::MAX {
+            return Self::random_u32();
+        }
+
+        let mut x = Self::random_u32();
+        let mut m = (x as u64) * (max as u64);
+        let mut l = m as u32;
+
+        if l < max {
+            let threshold = (-(max as i64) as u64 % max as u64) as u32;
+            while l < threshold {
+                x = Self::random_u32();
+                m = (x as u64) * (max as u64);
+                l = m as u32;
+            }
+        }
+
+        (m >> 32) as u32
+    }
+
     /// Get a random u32 value.
     /// Port of `get_srandom()` from Src/Modules/random.c:143 — the
     /// `getfn` slot the C source wires for the `$SRANDOM` special
@@ -111,68 +156,13 @@ pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {
     Ok(())
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/random.c`.
-/// Get a single random u32.
-/// One-shot variant of `getrandom_buffer()` from Src/Modules/
-/// random.c:62 — convenience for callers that don't need the
-/// 8-element batching `RandomState` provides.
-pub fn get_random_u32() -> u32 {
-    let mut buf = [0u8; 4];
-    let _ = getrandom_buffer(&mut buf);
-    u32::from_ne_bytes(buf)
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/random.c`.
-/// Get a single random u64.
-/// Two-word variant of `get_random_u32` — used by the
-/// `random_real()` path in Src/Modules/random_real.c:158-175 which
-/// reads 64 bits at a time when building uniform-real samples.
-pub fn get_random_u64() -> u64 {
-    let mut buf = [0u8; 8];
-    let _ = getrandom_buffer(&mut buf);
-    u64::from_ne_bytes(buf)
-}
-
-/// Get a random integer in `[0, max)` using Lemire's unbiased
-/// rejection algorithm.
-/// Port of the inline bound-rejection logic inside
-/// `get_bound_random_buffer()` from Src/Modules/random.c:104. The C
-/// source uses the same `(x * max) >> 32` reduction with rejection
-/// when the low 32 bits fall under the bias threshold.
-pub fn get_bounded_random(max: u32) -> u32 {
-    if max == 0 {
-        return 0;
-    }
-
-    if max == u32::MAX {
-        return get_random_u32();
-    }
-
-    let mut x = get_random_u32();
-    let mut m = (x as u64) * (max as u64);
-    let mut l = m as u32;
-
-    if l < max {
-        let threshold = (-(max as i64) as u64 % max as u64) as u32;
-        while l < threshold {
-            x = get_random_u32();
-            m = (x as u64) * (max as u64);
-            l = m as u32;
-        }
-    }
-
-    (m >> 32) as u32
-}
-
 /// Fill a buffer with bounded random integers.
 /// Port of `get_bound_random_buffer()` from Src/Modules/random.c:104
 /// — repeatedly pulls from the kernel and rejection-samples each
 /// slot until the entire buffer is filled with values in `[0, max)`.
 pub fn get_bound_random_buffer(buffer: &mut [u32], max: u32) {
     for item in buffer.iter_mut() {
-        *item = get_bounded_random(max);
+        *item = RandomState::bounded(max);
     }
 }
 
@@ -213,7 +203,7 @@ pub fn math_zrand_int(upper: Option<i64>, lower: Option<i64>, inclusive: bool) -
         return Ok(upper);
     }
 
-    let r = get_bounded_random(diff);
+    let r = RandomState::bounded(diff);
     Ok(r as i64 + lower)
 }
 
@@ -232,7 +222,7 @@ pub fn math_zrand_float() -> f64 {
 /// Src/Modules/random_real.c documents at line 145; for the
 /// distribution-correct path see `crate::random_real::random_real`.
 pub fn random_real() -> f64 {
-    let x = get_random_u64();
+    let x = RandomState::random_u64();
     (x >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
 }
 
@@ -252,23 +242,23 @@ mod tests {
 
     #[test]
     fn test_get_random_u32() {
-        let r1 = get_random_u32();
-        let r2 = get_random_u32();
-        let r3 = get_random_u32();
+        let r1 = RandomState::random_u32();
+        let r2 = RandomState::random_u32();
+        let r3 = RandomState::random_u32();
         assert!(r1 != r2 || r2 != r3);
     }
 
     #[test]
     fn test_get_random_u64() {
-        let r1 = get_random_u64();
-        let r2 = get_random_u64();
+        let r1 = RandomState::random_u64();
+        let r2 = RandomState::random_u64();
         assert_ne!(r1, r2);
     }
 
     #[test]
     fn test_bounded_random() {
         for _ in 0..100 {
-            let r = get_bounded_random(10);
+            let r = RandomState::bounded(10);
             assert!(r < 10);
         }
     }
@@ -276,7 +266,7 @@ mod tests {
     #[test]
     fn test_bounded_random_one() {
         for _ in 0..10 {
-            let r = get_bounded_random(1);
+            let r = RandomState::bounded(1);
             assert_eq!(r, 0);
         }
     }
@@ -325,7 +315,7 @@ mod tests {
         let original = arr.clone();
         let n = arr.len();
         for i in (1..n).rev() {
-            let j = get_bounded_random((i + 1) as u32) as usize;
+            let j = RandomState::bounded((i + 1) as u32) as usize;
             arr.swap(i, j);
         }
         arr.sort();
