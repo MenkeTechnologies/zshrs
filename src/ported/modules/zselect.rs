@@ -3,6 +3,7 @@
 //! Provides zselect builtin for select/poll system calls on file descriptors.
 
 use std::collections::HashMap;
+use crate::ported::utils::zwarnnam;
 use std::os::unix::io::RawFd;
 
 /// Which type of event to monitor
@@ -315,7 +316,7 @@ pub fn bin_zselect(args: &[&str]) -> (i32, Vec<String>, HashMap<String, String>)
     let options = match parse_zselect_args(args) {
         Ok(opts) => opts,
         Err(e) => {
-            eprintln!("zselect: {}", e);
+            zwarnnam("zselect", &format!("{}", e));
             return (1, Vec::new(), HashMap::new());
         }
     };
@@ -329,7 +330,7 @@ pub fn bin_zselect(args: &[&str]) -> (i32, Vec<String>, HashMap<String, String>)
             }
         }
         Err(e) => {
-            eprintln!("zselect: {}", e);
+            zwarnnam("zselect", &format!("{}", e));
             (1, Vec::new(), HashMap::new())
         }
     }
