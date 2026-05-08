@@ -410,3 +410,69 @@ mod tests {
         assert!(!state.in_try);
     }
 }
+
+// ===========================================================
+// Tree-walker control-flow dispatch entries.
+//
+// In zsh these seven functions are bytecode-tree walkers — each
+// consumes a `Wordcode`/`Estate` cursor and recursively invokes
+// `execlist()` for nested clauses. They run during the legacy
+// `tree_walker` execution path.
+//
+// zshrs replaces the tree walker entirely with fusevm bytecode
+// (see `tree_walker_absent.rs` / `no_tree_walker_dispatch.rs`
+// invariant tests), so these entries exist to satisfy ABI/name
+// parity. The actual control-flow lowering happens in the
+// fusevm compiler (`crate::fusevm::compile`) where every
+// `for`/`while`/`if`/`case`/`select`/`repeat`/`try` AST node
+// becomes a fusevm `Op`.
+// ===========================================================
+
+/// `for` loop tree-walker — port of `execfor()` from
+/// Src/loop.c:50. Lowered to fusevm `LOOP_FOR_*` ops in the
+/// compiler pass; this entry is a name-parity stub.
+pub fn execfor(_do_exec: i32) -> i32 {
+    0
+}
+
+/// `select` builtin tree-walker — port of `execselect()` from
+/// Src/loop.c:217. Lowered to fusevm `SELECT_LOOP` ops; entry
+/// kept for name parity.
+pub fn execselect(_do_exec: i32) -> i32 {
+    0
+}
+
+/// `while`/`until` tree-walker — port of `execwhile()` from
+/// Src/loop.c:413. Lowered to fusevm `LOOP_WHILE` ops; entry
+/// kept for name parity.
+pub fn execwhile(_do_exec: i32) -> i32 {
+    0
+}
+
+/// `repeat` tree-walker — port of `execrepeat()` from
+/// Src/loop.c:499. Lowered to fusevm `REPEAT_LOOP` ops; entry
+/// kept for name parity.
+pub fn execrepeat(_do_exec: i32) -> i32 {
+    0
+}
+
+/// `if`/`elif`/`else` tree-walker — port of `execif()` from
+/// Src/loop.c:553. Lowered to fusevm `JMP_IF`/`JMP` ops; entry
+/// kept for name parity.
+pub fn execif(_do_exec: i32) -> i32 {
+    0
+}
+
+/// `case` tree-walker — port of `execcase()` from
+/// Src/loop.c:600. Lowered to fusevm `CASE_DISPATCH` ops; entry
+/// kept for name parity.
+pub fn execcase(_do_exec: i32) -> i32 {
+    0
+}
+
+/// `try`/`always` tree-walker — port of `exectry()` from
+/// Src/loop.c:735. Lowered to fusevm `TRY_ENTER`/`TRY_LEAVE`
+/// ops; entry kept for name parity.
+pub fn exectry(_do_exec: i32) -> i32 {
+    0
+}
