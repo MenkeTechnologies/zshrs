@@ -50,7 +50,6 @@ bessel_yn
 
 # Color-distance / 256-palette mapping helpers — extracted from
 # nearcolor module's main lookup logic. zsh C does this inline.
-color_distance_sq
 
 # Rust-only RNG primitives — zsh C uses `random()` libc directly.
 # We wrap to centralise the seed/state and provide ChaCha20Rng for
@@ -100,9 +99,6 @@ numeric_string_cmp
 
 # watch.rs Rust-side utmp/utmpx readers + format helpers — zsh C
 # inlines this work in `watchlog2` (Src/Modules/watch.c).
-read_utmp
-read_utmpx
-read_utmp_file
 format_conditional
 check_watch_entry
 matches_watch_pattern
@@ -200,3 +196,4 @@ zformat_align
 zformat_recurse
 zparseopts
 zselect
+read_utmp
