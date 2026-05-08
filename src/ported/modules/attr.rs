@@ -18,10 +18,10 @@ use std::ffi::CString;
 
 use crate::ported::exec::ShellExecutor;
 use crate::ported::module::{
-    featuresarray, handlefeatures, setfeatureenables, Builtin, Conddef, Features, MathFunc,
-    Module, Paramdef,
+    featuresarray, handlefeatures, setfeatureenables, Builtin, Features, Module,
 };
-use crate::ported::utils::zwarnnam;
+use crate::ported::params::{setsparam, unsetparam};
+use crate::ported::utils::{metafy, unmetafy, zwarnnam};
 
 #[cfg(target_os = "macos")]
 const XATTR_NOFOLLOW: i32 = 0x0001;
@@ -248,22 +248,51 @@ pub(crate) fn xremovexattr(_path: &str, _name: &str, _symlink: i32) -> i32 {
 /// `zgetattr [-h] file attr [param]`: read the named xattr from
 /// `file`. With `param`, write the value into the named shell
 /// parameter; without, print to stdout.
+///
+/// C body:
+/// ```c
+/// unmetafy(file, &slen);
+/// unmetafy(attr, NULL);
+/// val_len = xgetxattr(file, attr, NULL, 0, symlink);
+/// if (val_len == 0) { if (param) unsetparam(param); return 0; }
+/// if (val_len > 0) {
+///     value = zalloc(val_len+1);
+///     attr_len = xgetxattr(file, attr, value, val_len, symlink);
+///     if (attr_len > 0 && attr_len <= val_len) {
+///         value[attr_len] = '\0';
+///         if (param) setsparam(param, metafy(value, attr_len, META_DUP));
+///         else printf("%s\n", value);
+///     }
+///     zfree(value, val_len+1);
+/// }
+/// if (val_len < 0 || attr_len < 0 || attr_len > val_len) {
+///     zwarnnam(nam, "%s: %e", metafy(file, slen, META_NOALLOC), errno);
+///     ret = 1 + ((val_len > 0 && attr_len > val_len) || attr_len < 0);
+/// }
+/// ```
 pub(crate) fn bin_getattr(s: &mut ShellExecutor, nam: &str, argv: &[String], symlink: i32) -> i32 {
     if argv.len() < 2 {
         zwarnnam(nam, "not enough arguments");
         return 1;
     }
-    let file = argv[0].as_str();
-    let attr = argv[1].as_str();
-    let param = argv.get(2).map(|s| s.as_str());
+    // C: unmetafy(file, &slen); unmetafy(attr, NULL);
+    // Convert the metafied bytes to plain bytes before passing to
+    // libc syscalls. `slen` is captured for the metafy(file, slen,
+    // META_NOALLOC) re-metafication in the error path.
+    let mut file_bytes = argv[0].as_bytes().to_vec();
+    let _slen = unmetafy(&mut file_bytes);
+    let mut attr_bytes = argv[1].as_bytes().to_vec();
+    unmetafy(&mut attr_bytes);
+    let file = std::str::from_utf8(&file_bytes).unwrap_or(&argv[0]);
+    let attr = std::str::from_utf8(&attr_bytes).unwrap_or(&argv[1]);
+    let param = argv.get(2).map(|p| p.as_str());
     let mut ret = 0;
     // C: val_len = xgetxattr(file, attr, NULL, 0, symlink);
     let val_len = xgetxattr(file, attr, &mut [], symlink);
     if val_len == 0 {
-        // attr.c:108-112 — empty xattr; unset param if given.
+        // attr.c:108-112 — empty xattr; unsetparam(param) if given.
         if let Some(p) = param {
-            s.variables.remove(p);
-            s.arrays.remove(p);
+            unsetparam(&mut s.variables, &mut s.arrays, &mut s.assoc_arrays, p);
         }
         return 0;
     }
@@ -274,17 +303,31 @@ pub(crate) fn bin_getattr(s: &mut ShellExecutor, nam: &str, argv: &[String], sym
         attr_len = xgetxattr(file, attr, &mut value, symlink);
         if attr_len > 0 && attr_len <= val_len {
             value.truncate(attr_len as usize);
-            // C: setsparam(param, metafy(...)) or printf("%s\n", value);
-            let val = String::from_utf8_lossy(&value).into_owned();
+            // C: setsparam(param, metafy(value, attr_len, META_DUP));
+            //   else: printf("%s\n", value);
+            let val_plain = String::from_utf8_lossy(&value).into_owned();
             if let Some(p) = param {
-                s.variables.insert(p.to_string(), val);
+                let metafied = metafy(&val_plain);
+                setsparam(
+                    &mut s.variables,
+                    &mut s.arrays,
+                    &mut s.assoc_arrays,
+                    p,
+                    &metafied,
+                );
             } else {
-                println!("{}", val);
+                println!("{}", val_plain);
             }
         }
     }
     if val_len < 0 || attr_len < 0 || attr_len > val_len {
-        zwarnnam(nam, &format!("{}: {}", file, std::io::Error::last_os_error()));
+        // C: zwarnnam(nam, "%s: %e", metafy(file, slen, META_NOALLOC), errno);
+        // Re-metafy the unmetafied path for the error message.
+        let displayed = metafy(file);
+        zwarnnam(
+            nam,
+            &format!("{}: {}", displayed, std::io::Error::last_os_error()),
+        );
         // C: ret = 1 + ((val_len > 0 && attr_len > val_len) || attr_len < 0);
         ret = 1 + i32::from((val_len > 0 && attr_len > val_len) || attr_len < 0);
     }
@@ -297,18 +340,42 @@ pub(crate) fn bin_getattr(s: &mut ShellExecutor, nam: &str, argv: &[String], sym
 
 /// Port of `bin_setattr()` from `Src/Modules/attr.c:132`.
 ///
+/// C body:
+/// ```c
+/// unmetafy(file, &slen);
+/// unmetafy(attr, NULL);
+/// unmetafy(value, &vlen);
+/// if (xsetxattr(file, attr, value, vlen, 0, symlink)) {
+///     zwarnnam(nam, "%s: %e", metafy(file, slen, META_NOALLOC), errno);
+///     ret = 1;
+/// }
+/// ```
+///
 /// `zsetattr [-h] file attr value`: write `value` to the named
-/// xattr.
+/// xattr. Note `vlen` is captured from `unmetafy(value, &vlen)`
+/// because the value buffer can contain Meta-encoded bytes that
+/// need to be unescaped before passing to setxattr (C:
+/// `xsetxattr(..., vlen, ...)` — the unmetafied length).
 pub(crate) fn bin_setattr(_s: &mut ShellExecutor, nam: &str, argv: &[String], symlink: i32) -> i32 {
     if argv.len() < 3 {
         zwarnnam(nam, "not enough arguments");
         return 1;
     }
-    let file = argv[0].as_str();
-    let attr = argv[1].as_str();
-    let value = argv[2].as_bytes();
-    if xsetxattr(file, attr, value, 0, symlink) != 0 {
-        zwarnnam(nam, &format!("{}: {}", file, std::io::Error::last_os_error()));
+    // C: unmetafy(file, &slen); unmetafy(attr, NULL); unmetafy(value, &vlen);
+    let mut file_bytes = argv[0].as_bytes().to_vec();
+    let _slen = unmetafy(&mut file_bytes);
+    let mut attr_bytes = argv[1].as_bytes().to_vec();
+    unmetafy(&mut attr_bytes);
+    let mut value_bytes = argv[2].as_bytes().to_vec();
+    let _vlen = unmetafy(&mut value_bytes);
+    let file = std::str::from_utf8(&file_bytes).unwrap_or(&argv[0]);
+    let attr = std::str::from_utf8(&attr_bytes).unwrap_or(&argv[1]);
+    if xsetxattr(file, attr, &value_bytes, 0, symlink) != 0 {
+        // C: zwarnnam(nam, "%s: %e", metafy(file, slen, META_NOALLOC), errno);
+        zwarnnam(
+            nam,
+            &format!("{}: {}", metafy(file), std::io::Error::last_os_error()),
+        );
         return 1;
     }
     0
@@ -320,18 +387,45 @@ pub(crate) fn bin_setattr(_s: &mut ShellExecutor, nam: &str, argv: &[String], sy
 
 /// Port of `bin_delattr()` from `Src/Modules/attr.c:149`.
 ///
+/// C body:
+/// ```c
+/// unmetafy(file, &slen);
+/// while (*++attr) {
+///     unmetafy(*attr, NULL);
+///     if (xremovexattr(file, *attr, symlink)) {
+///         zwarnnam(nam, "%s: %e", metafy(file, slen, META_NOALLOC), errno);
+///         ret = 1;
+///         break;
+///     }
+/// }
+/// ```
+///
 /// `zdelattr [-h] file attr...`: remove each named xattr; bail on
-/// the first error.
+/// the first error. Each attr arg is unmetafied separately before
+/// the syscall.
 pub(crate) fn bin_delattr(_s: &mut ShellExecutor, nam: &str, argv: &[String], symlink: i32) -> i32 {
     if argv.len() < 2 {
         zwarnnam(nam, "not enough arguments");
         return 1;
     }
-    let file = argv[0].as_str();
+    // C: unmetafy(file, &slen);
+    let mut file_bytes = argv[0].as_bytes().to_vec();
+    let _slen = unmetafy(&mut file_bytes);
+    let file = std::str::from_utf8(&file_bytes)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|_| argv[0].clone());
     // C: while (*++attr) — iterate argv[1..].
-    for attr in &argv[1..] {
-        if xremovexattr(file, attr, symlink) != 0 {
-            zwarnnam(nam, &format!("{}: {}", file, std::io::Error::last_os_error()));
+    for attr_arg in &argv[1..] {
+        // C: unmetafy(*attr, NULL);
+        let mut attr_bytes = attr_arg.as_bytes().to_vec();
+        unmetafy(&mut attr_bytes);
+        let attr = std::str::from_utf8(&attr_bytes).unwrap_or(attr_arg);
+        if xremovexattr(&file, attr, symlink) != 0 {
+            // C: zwarnnam(nam, "%s: %e", metafy(file, slen, META_NOALLOC), errno);
+            zwarnnam(
+                nam,
+                &format!("{}: {}", metafy(&file), std::io::Error::last_os_error()),
+            );
             return 1;
         }
     }
@@ -344,21 +438,58 @@ pub(crate) fn bin_delattr(_s: &mut ShellExecutor, nam: &str, argv: &[String], sy
 
 /// Port of `bin_listattr()` from `Src/Modules/attr.c:168`.
 ///
+/// C body:
+/// ```c
+/// unmetafy(file, &slen);
+/// val_len = xlistxattr(file, NULL, 0, symlink);
+/// if (val_len == 0) { if (param) unsetparam(param); return 0; }
+/// if (val_len > 0) {
+///     value = zalloc(val_len+1);
+///     list_len = xlistxattr(file, value, val_len, symlink);
+///     if (list_len > 0 && list_len <= val_len) {
+///         char *p = value;
+///         if (param) {
+///             // build array of metafied names
+///             arrptr = zshcalloc((arrlen+1) * sizeof(char *));
+///             while (p < &value[list_len]) {
+///                 *arrptr++ = metafy(p, -1, META_DUP);
+///                 p += strlen(p) + 1;
+///             }
+///             setaparam(param, array);
+///         } else while (p < &value[list_len]) {
+///             printf("%s\n", p);
+///             p += strlen(p) + 1;
+///         }
+///     }
+///     zfree(value, val_len+1);
+/// }
+/// if (val_len < 0 || list_len < 0 || list_len > val_len) {
+///     zwarnnam(nam, "%s: %e", metafy(file, slen, META_NOALLOC), errno);
+///     ret = 1 + (list_len > val_len || list_len < 0);
+/// }
+/// ```
+///
 /// `zlistattr [-h] file [param]`: list xattr names. With `param`,
-/// write the array; without, print one per line.
+/// write the metafied names array; without, print one per line.
 pub(crate) fn bin_listattr(s: &mut ShellExecutor, nam: &str, argv: &[String], symlink: i32) -> i32 {
     if argv.is_empty() {
         zwarnnam(nam, "not enough arguments");
         return 1;
     }
-    let file = argv[0].as_str();
-    let param = argv.get(1).map(|s| s.as_str());
+    // C: unmetafy(file, &slen);
+    let mut file_bytes = argv[0].as_bytes().to_vec();
+    let _slen = unmetafy(&mut file_bytes);
+    let file_owned = std::str::from_utf8(&file_bytes)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|_| argv[0].clone());
+    let file = file_owned.as_str();
+    let param = argv.get(1).map(|p| p.as_str());
     let mut ret = 0;
     let val_len = xlistxattr(file, &mut [], symlink);
     if val_len == 0 {
+        // C: if (param) unsetparam(param);
         if let Some(p) = param {
-            s.variables.remove(p);
-            s.arrays.remove(p);
+            unsetparam(&mut s.variables, &mut s.arrays, &mut s.assoc_arrays, p);
         }
         return 0;
     }
@@ -369,24 +500,36 @@ pub(crate) fn bin_listattr(s: &mut ShellExecutor, nam: &str, argv: &[String], sy
         if list_len > 0 && list_len <= val_len {
             value.truncate(list_len as usize);
             // C walks the NUL-terminated name list (attr.c:192-205).
-            let names: Vec<String> = value
+            let raw_names: Vec<&[u8]> = value
                 .split(|&b| b == 0)
                 .filter(|s| !s.is_empty())
-                .map(|s| String::from_utf8_lossy(s).into_owned())
                 .collect();
             if let Some(p) = param {
-                // C: setaparam(param, array)
-                s.arrays.insert(p.to_string(), names);
+                // C: *arrptr++ = metafy(p, -1, META_DUP); — each name
+                // metafied before going into the array.
+                let metafied_names: Vec<String> = raw_names
+                    .iter()
+                    .map(|n| metafy(&String::from_utf8_lossy(n)))
+                    .collect();
+                // C: setaparam(param, array). zshrs's ShellExecutor
+                // uses a HashMap<String, Vec<String>> for arrays —
+                // direct insert is the equivalent of setaparam's
+                // table mutation.
+                s.arrays.insert(p.to_string(), metafied_names);
             } else {
                 // C: while (p < &value[list_len]) printf("%s\n", p);
-                for n in &names {
-                    println!("{}", n);
+                for n in &raw_names {
+                    println!("{}", String::from_utf8_lossy(n));
                 }
             }
         }
     }
     if val_len < 0 || list_len < 0 || list_len > val_len {
-        zwarnnam(nam, &format!("{}: {}", file, std::io::Error::last_os_error()));
+        // C: zwarnnam(nam, "%s: %e", metafy(file, slen, META_NOALLOC), errno);
+        zwarnnam(
+            nam,
+            &format!("{}: {}", metafy(file), std::io::Error::last_os_error()),
+        );
         // C: ret = 1 + (list_len > val_len || list_len < 0);
         ret = 1 + i32::from(list_len > val_len || list_len < 0);
     }
