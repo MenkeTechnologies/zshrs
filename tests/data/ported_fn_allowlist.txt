@@ -130,7 +130,6 @@ normalize_logical
 shell_quote_value
 quote_xtrace_arg
 emit_xtrace_text
-zexpandtabs_into
 quote_string
 split_quoted
 is_executable
