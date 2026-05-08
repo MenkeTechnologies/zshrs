@@ -108,7 +108,6 @@ parse_zselect_args
 pcre_compile
 pcre_match
 pcre_study
-scan_directory
 set_file_contents
 shell_word_end_after
 shell_word_start_before
