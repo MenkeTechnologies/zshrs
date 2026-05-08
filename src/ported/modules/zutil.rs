@@ -760,48 +760,6 @@ pub fn zparseopts(
     Ok((results, remaining))
 }
 
-/// Align array values with a separator
-/// `zformat -a` align mode entry point.
-/// Port of the `-a` branch of `bin_zformat()` from
-/// Src/Modules/zutil.c:955 — splits each input on `sep`, pads the
-/// left half to the longest key length, then re-joins.
-pub fn zformat_align(sep: &str, values: &[&str]) -> Vec<String> {
-    let mut max_pre = 0;
-
-    for value in values {
-        if let Some(pos) = value.find(':') {
-            let pre_len = value[..pos].chars().filter(|c| *c != '\\').count();
-            if pre_len > max_pre {
-                max_pre = pre_len;
-            }
-        }
-    }
-
-    let mut result = Vec::new();
-    for value in values {
-        if let Some(pos) = value.find(':') {
-            let pre = &value[..pos];
-            let post = &value[pos + 1..];
-            let pre_len = pre.chars().filter(|c| *c != '\\').count();
-            let padding = max_pre - pre_len;
-
-            let clean_pre: String = pre.chars().filter(|c| *c != '\\').collect();
-
-            result.push(format!(
-                "{}{}{}{}",
-                clean_pre,
-                " ".repeat(padding),
-                sep,
-                post
-            ));
-        } else {
-            result.push(value.to_string());
-        }
-    }
-
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -986,15 +944,6 @@ mod tests {
         assert_eq!(opts.get("-output"), Some(&vec!["file.txt".to_string()]));
     }
 
-    #[test]
-    fn test_zformat_align() {
-        let values = vec!["short:desc1", "verylongname:desc2", "med:desc3"];
-        let result = zformat_align(" -- ", &values);
-
-        assert_eq!(result[0], "short        -- desc1");
-        assert_eq!(result[1], "verylongname -- desc2");
-        assert_eq!(result[2], "med          -- desc3");
-    }
 }
 
 // ===========================================================
