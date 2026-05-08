@@ -5861,8 +5861,44 @@ impl crate::ported::exec::ShellExecutor {
                 i += 1;
                 continue;
             }
-            // Skip `$$`/`$?`/`$#` — single-char specials, not arrays.
+            // `$#NAME` — length of array NAME (zsh shorthand for
+            // `${#NAME}`). The C math lexer (Src/math.c::zzlex)
+            // dispatches `#` after `$` via getstr() which calls
+            // `getstrvalue()` with the param's flags including
+            // PM_ARRAY length. Direct port: substitute the count
+            // before arith eval reaches the lexer.
             let next = bytes[i + 1];
+            if next == '#' {
+                let name_start = i + 2;
+                let mut name_end = name_start;
+                while name_end < bytes.len()
+                    && (bytes[name_end].is_ascii_alphanumeric() || bytes[name_end] == '_')
+                {
+                    name_end += 1;
+                }
+                if name_end > name_start {
+                    let name: String = bytes[name_start..name_end].iter().collect();
+                    let count = if let Some(arr) = self.arrays.get(&name) {
+                        arr.len()
+                    } else if let Some(assoc) = self.assoc_arrays.get(&name) {
+                        assoc.len()
+                    } else if name == "@" || name == "*" {
+                        self.positional_params.len()
+                    } else if let Some(s) = self.variables.get(&name) {
+                        s.chars().count()
+                    } else {
+                        0
+                    };
+                    out.push_str(&count.to_string());
+                    i = name_end;
+                    continue;
+                }
+                // `$#` alone (no name) — single-char special; skip.
+                out.push(c);
+                i += 1;
+                continue;
+            }
+            // Skip `$$`/`$?` — single-char specials, not arrays.
             let is_at_or_star = next == '@' || next == '*';
             let is_ident_start = next.is_ascii_alphabetic() || next == '_';
             if !is_at_or_star && !is_ident_start {

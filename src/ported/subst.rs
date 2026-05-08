@@ -4537,9 +4537,54 @@ fn filesub(s: &str, flags: u32, state: &mut SubstState) -> String { // c:667
 /// own their storage; the caller now consumes the returned String
 /// directly instead of the C in-out buffer protocol.
 fn arithsubst(expr: &str, prefix: &str, rest: &str, state: &mut SubstState) -> String { // c:4485
+    // Pre-resolve `$#NAME` before singsub — singsub treats `$#` as
+    // positional-count (`$#`) followed by literal `NAME`, which mangles
+    // `$#parts` to `0parts`. zsh's parser binds `$#NAME` as length-of
+    // (parameter-name length form) when NAME is an identifier. Direct
+    // port of zsh's `prefork()` BNULL-aware `$#` arm — Src/subst.c
+    // around line 1860 dispatches via the param-name lookahead before
+    // the math evaluator sees the expression.
+    let expr = {
+        let bytes: Vec<char> = expr.chars().collect();
+        let mut out = String::with_capacity(expr.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == '$' && i + 1 < bytes.len() && bytes[i + 1] == '#' {
+                let name_start = i + 2;
+                let mut name_end = name_start;
+                while name_end < bytes.len()
+                    && (bytes[name_end].is_ascii_alphanumeric() || bytes[name_end] == '_')
+                {
+                    name_end += 1;
+                }
+                if name_end > name_start {
+                    let name: String = bytes[name_start..name_end].iter().collect();
+                    let count = crate::fusevm_bridge::try_with_executor(|exec| {
+                        if let Some(arr) = exec.arrays.get(&name) {
+                            arr.len()
+                        } else if let Some(assoc) = exec.assoc_arrays.get(&name) {
+                            assoc.len()
+                        } else if name == "@" || name == "*" {
+                            exec.positional_params.len()
+                        } else if let Some(s) = exec.variables.get(&name) {
+                            s.chars().count()
+                        } else {
+                            0
+                        }
+                    }).unwrap_or(0);
+                    out.push_str(&count.to_string());
+                    i = name_end;
+                    continue;
+                }
+            }
+            out.push(bytes[i]);
+            i += 1;
+        }
+        out
+    };
     // C: `singsub(&a);` — parameter-substitute the math expression
     // before evaluation. Without this `${(($n+1))}` won't see $n.
-    let expanded = singsub(expr, state);                    // c:4490
+    let expanded = singsub(&expr, state);                    // c:4490
 
     // C: `v = matheval(a);` — evaluate via Src/math.c::matheval.
     // Route through the executor so the eval has access to the live
