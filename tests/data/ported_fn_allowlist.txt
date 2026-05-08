@@ -150,7 +150,6 @@ color_to_sgr_code
 convbaseu
 curs_set
 default_zshrc
-disable_echo
 ensure_initialized
 errno_from_name
 extract_ampm
@@ -214,7 +213,6 @@ skip_chars
 socket_accept
 socket_connect
 socket_listen
-socket_test
 strwidth
 try_matcher
 underscore_separate_digits
