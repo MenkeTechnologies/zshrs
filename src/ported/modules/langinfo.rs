@@ -153,24 +153,6 @@ pub fn getlanginfo(_name: &str) -> Option<String> {
     None
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/langinfo.c`.
-/// Snapshot every supported langinfo item into a name→value map.
-/// Equivalent to scanning the parameter via `${(kv)langinfo}` in
-/// zsh — the C source's `scan_langinfo()` (Src/Modules/langinfo.c)
-/// fires the same loop over the registered item table.
-pub fn get_all_langinfo() -> HashMap<String, String> {
-    let mut result = HashMap::new();
-
-    for name in LANGINFO_NAMES {
-        if let Some(value) = getlanginfo(name) {
-            result.insert(name.to_string(), value);
-        }
-    }
-
-    result
-}
-
 /// Langinfo parameter interface
 #[derive(Debug, Default)]
 pub struct Langinfo;
@@ -196,19 +178,33 @@ impl Langinfo {
         getlanginfo(name)
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/langinfo.c`.
-    /// `${(kv)langinfo}` enumeration.
-    /// Equivalent to the `scanfn` slot of the `langinfo` Param in
-    /// Src/Modules/langinfo.c.
+    /// `${(kv)langinfo}` enumeration. Direct port of the loop body in
+    /// `scanlanginfo()` (Src/Modules/langinfo.c:430) — walks `nl_names`
+    /// (LANGINFO_NAMES here), skips items where `nl_langinfo` returns
+    /// NULL, emits each (name, value) pair to the caller. The C source
+    /// pushes through a ScanFunc callback; Rust returns an Iterator.
     pub fn iter(&self) -> impl Iterator<Item = (String, String)> {
-        get_all_langinfo().into_iter()
+        let mut result = HashMap::new();
+        for name in LANGINFO_NAMES {
+            if let Some(value) = getlanginfo(name) {
+                result.insert(name.to_string(), value);
+            }
+        }
+        result.into_iter()
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/langinfo.c`.
+    /// Snapshot every langinfo item to a name→value map. Same scan
+    /// loop as `iter()` (scanlanginfo at langinfo.c:430), collected
+    /// into a HashMap for callers that want a single materialised
+    /// view rather than streaming.
     pub fn to_hash(&self) -> HashMap<String, String> {
-        get_all_langinfo()
+        let mut result = HashMap::new();
+        for name in LANGINFO_NAMES {
+            if let Some(value) = getlanginfo(name) {
+                result.insert(name.to_string(), value);
+            }
+        }
+        result
     }
 }
 
@@ -247,8 +243,9 @@ mod tests {
     }
 
     #[test]
-    fn test_get_all_langinfo() {
-        let all = get_all_langinfo();
+    fn test_langinfo_iter_emits_items() {
+        let li = Langinfo::new();
+        let all: HashMap<String, String> = li.iter().collect();
         #[cfg(unix)]
         {
             assert!(!all.is_empty());
