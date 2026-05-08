@@ -1870,6 +1870,70 @@ pub fn set_colour_attribute(color: &Color, is_fg: bool) -> String {
     }
 }
 
+/// Maximum cmdstack depth, mirroring C zsh's `CMDSTACKSZ`.
+/// Used to bound `cmdpush`/`cmdpop` so the stack can't grow
+/// unbounded under runaway recursion.
+const CMDSTACKSZ: usize = 256;
+
+/// Mirror of C zsh's `cmdstack` global — the stack of context
+/// tokens (CS_*) the parser pushes as it descends into nested
+/// command structures (`if`/`for`/`while`/`{}` etc.). Read by
+/// the prompt expander for `%_` and `%^` to render which
+/// constructs are currently open.
+static CMDSTACK: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+
+/// Push a parser context token. Port of `cmdpush()` from
+/// Src/prompt.c. Bounded at CMDSTACKSZ; over-push is silently
+/// ignored (matches the C source's `cmdsp < CMDSTACKSZ` guard).
+pub fn cmdpush(cmdtok: u8) {
+    let mut stack = CMDSTACK.lock().unwrap();
+    if stack.len() < CMDSTACKSZ {
+        stack.push(cmdtok);
+    }
+}
+
+/// Pop the top parser context token. Port of `cmdpop()` from
+/// Src/prompt.c. Empty-stack pop is a no-op (the C source emits
+/// a `BUG: cmdstack empty` debug print and continues).
+pub fn cmdpop() {
+    let _ = CMDSTACK.lock().unwrap().pop();
+}
+
+/// Promote the 256-color value embedded in `atr` to an explicit
+/// 24-bit RGB value. Port of `map256toRGB()` from Src/prompt.c.
+/// Used by the prompt-output path when the terminal supports
+/// truecolor and we want to emit RGB rather than the smaller
+/// 256-palette code.
+///
+/// `shift` selects fg-byte vs bg-byte position inside `atr`;
+/// `set24` is the bit that marks "this slot is now 24-bit".
+/// Algorithm mirrors the C: 16-231 are the 6×6×6 color cube,
+/// 232-255 are the 24-step grayscale ramp.
+#[allow(non_snake_case)]
+pub fn map256toRGB(atr: &mut u64, shift: u32, set24: u64) {
+    if (*atr & set24) != 0 {
+        return;
+    }
+    let colour: u32 = ((*atr >> shift) & 0xff) as u32;
+    if colour < 16 {
+        return;
+    }
+    let (red, green, blue) = if (16..232).contains(&colour) {
+        let mut c = colour - 16;
+        let blue = (if c != 0 { 0x37 } else { 0 }) + 40 * (c % 6);
+        c /= 6;
+        let green = (if c != 0 { 0x37 } else { 0 }) + 40 * (c % 6);
+        c /= 6;
+        let red = (if c != 0 { 0x37 } else { 0 }) + 40 * c;
+        (red, green, blue)
+    } else {
+        let v = 8 + 10 * (colour - 232);
+        (v, v, v)
+    };
+    *atr &= !((0xffffff_u64) << shift);
+    *atr |= set24 | ((((red as u64) << 8 | green as u64) << 8 | blue as u64) << shift);
+}
+
 // ===========================================================
 // Methods moved verbatim from src/ported/exec.rs because their
 // C counterpart's source file maps 1:1 to this Rust module.
