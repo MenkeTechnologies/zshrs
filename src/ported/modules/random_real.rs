@@ -33,7 +33,7 @@ pub fn random_real() -> f64 {
     // we hit a non-zero chunk.
     while significand == 0 {                                                    // c:150
         exponent -= 64;                                                         // c:149
-        significand = random::get_random_u64();                                 // c:150
+        significand = random::RandomState::random_u64();                                 // c:150
         // random_real.c:172-174 — exp below -1074 means it would
         // round to zero anyway (smallest subnormal exponent).
         if exponent < -1074 {                                                   // c:149
@@ -44,7 +44,7 @@ pub fn random_real() -> f64 {
     // random_real.c:185-196 — leading-zero shift.
     let shift = significand.leading_zeros() as i32;                             // c:185
     if shift != 0 {                                                             // c:152
-        let r = random::get_random_u64();                                       // c:147
+        let r = random::RandomState::random_u64();                                       // c:147
         exponent -= shift;                                                      // c:180
         significand <<= shift;                                                  // c:185
         significand |= r >> (64 - shift);                                       // c:185

@@ -35,9 +35,6 @@ is_forked_child
 # Rust-only RNG primitives — zsh C uses `random()` libc directly.
 # We wrap to centralise the seed/state and provide ChaCha20Rng for
 # tests. These names exist nowhere in zsh C.
-get_random_u32
-get_random_u64
-get_bounded_random
 
 # OpenSSH BSD setresuid/setresgid shim helpers — these are Rust
 # wrappers around libc::setres{uid,gid}() with errno save/restore;
