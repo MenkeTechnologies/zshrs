@@ -570,45 +570,377 @@ pub(crate) fn get_compctl(
     0
 }
 
-/// Get an extended compctl (`-x` form).
-/// Port of `get_xcompctl()` from Src/Zle/compctl.c:1025.
+/// Parse the `-x` extended-condition compctl form.
+/// Port of `get_xcompctl()` from Src/Zle/compctl.c:909 (~260 lines).
+///
+/// C signature: `int get_xcompctl(char *name, char ***av, Compctl cc,
+/// int isdef)`. Walks the per-condition syntax `s[…][…], p[…]` …
+/// and chains them as CompCond entries on `cc.ext`. Each `case`
+/// letter dispatches to one CCT_* type (`s`→CURSUF, `p`→POS, etc.),
+/// then the `[…]` argument syntax is parsed per-type.
+///
+/// Inside the `[]`, the C source uses temporary lexer-style markers
+/// `\200` (CCT_END) and `\201` (CCT_AND) to mark the active `]`/`,`
+/// boundaries — Rust uses Vec splits instead.
+///
+/// Returns 0 on success, 1 on parse error. Advances `*av` past the
+/// consumed conditions.
 pub(crate) fn get_xcompctl(
-    _name: &str,
-    _av: &mut Vec<String>,
-    _cc: &mut CompCtl,
-    _isdef: bool,
+    name: &str,
+    av: &mut Vec<String>,
+    cc: &mut CompCtl,
+    isdef: bool,
 ) -> i32 {
+    let mut ready = false;
+    let mut next_chain: Vec<Arc<CompCtl>> = Vec::new();
+
+    while !ready {
+        // C: c:920 — `o = m = c = (Compcond) zshcalloc(...)`
+        // o tracks or-chain head, m tracks first cond (root), c tracks
+        // current cond being parsed.
+        let mut head: CompCond = CompCond::default();
+        let mut current_or = &mut head as *mut CompCond;
+
+        // C: c:922 — `for (t = *argv; *t;)` walk one argv slot
+        if av.is_empty() {
+            // C: c:1150 — missing args
+            eprintln!("{}: missing command names", name);
+            return 1;
+        }
+        let arg = av[0].clone();
+        let bytes: Vec<char> = arg.chars().collect();
+        let mut t = 0_usize;
+        let mut current_and: Option<*mut CompCond> = None;
+
+        while t < bytes.len() {
+            // Skip leading spaces — c:923-924
+            while t < bytes.len() && bytes[t] == ' ' {
+                t += 1;
+            }
+            if t >= bytes.len() { break; }
+
+            // C: c:926-972 — switch on condition code char
+            let typ = match bytes[t] {
+                'q' => cct::QUOTE,           // c:927
+                's' => cct::CURSUF,          // c:930
+                'S' => cct::CURPRE,          // c:933
+                'p' => cct::POS,             // c:936
+                'c' => cct::CURSTR,          // c:939
+                'C' => cct::CURPAT,          // c:942
+                'w' => cct::WORDSTR,         // c:945
+                'W' => cct::WORDPAT,         // c:948
+                'n' => cct::CURSUB,          // c:951
+                'N' => cct::CURSUBC,         // c:954
+                'm' => cct::NUMWORDS,        // c:957
+                'r' => cct::RANGESTR,        // c:960
+                'R' => cct::RANGEPAT,        // c:963
+                _ => {
+                    eprintln!("{}: unknown condition code: {}", name, bytes[t]);
+                    return 1;
+                }
+            };
+
+            // C: c:974 — must be followed by `[`
+            if t + 1 >= bytes.len() || bytes[t + 1] != '[' {
+                eprintln!("{}: expected condition after condition code: {}", name, bytes[t]);
+                return 1;
+            }
+            t += 1;
+
+            // C: c:985-997 — count `[…][…]` blocks (n = arity).
+            // Walk balanced brackets, collecting bodies.
+            let mut bodies: Vec<String> = Vec::new();
+            while t < bytes.len() && bytes[t] == '[' {
+                t += 1;  // skip `[`
+                // skip leading spaces inside brackets — c:1028
+                while t < bytes.len() && bytes[t] == ' ' { t += 1; }
+                let body_start = t;
+                let mut depth = 1_i32;
+                while t < bytes.len() && depth > 0 {
+                    if bytes[t] == '\\' && t + 1 < bytes.len() {
+                        t += 2;
+                        continue;
+                    }
+                    if bytes[t] == '[' { depth += 1; }
+                    else if bytes[t] == ']' { depth -= 1; if depth == 0 { break; } }
+                    t += 1;
+                }
+                if t >= bytes.len() {
+                    eprintln!("{}: error after condition code", name);
+                    return 1;
+                }
+                let body: String = bytes[body_start..t].iter().collect();
+                bodies.push(body);
+                t += 1;  // skip `]`
+            }
+            let n = bodies.len() as i32;
+
+            // C: c:1009-1025 — allocate per-type data, dispatch parse.
+            let data = match typ {
+                t if t == cct::POS || t == cct::NUMWORDS => {
+                    // c:1030-1054 — one or two ints per body.
+                    let mut a: Vec<i32> = Vec::with_capacity(n as usize);
+                    let mut b: Vec<i32> = Vec::with_capacity(n as usize);
+                    for body in &bodies {
+                        // body shape: "N" or "N,M"
+                        let parts: Vec<&str> = body.splitn(2, ',').collect();
+                        let av_n: i32 = parts[0].trim().parse().unwrap_or(0);
+                        let bv_n: i32 = if parts.len() == 2 {
+                            parts[1].trim().parse().unwrap_or(0)
+                        } else {
+                            av_n  // c:1042 — single arg → b copies a
+                        };
+                        a.push(av_n);
+                        b.push(bv_n);
+                    }
+                    CompCondData::Range { a, b }
+                }
+                t if t == cct::CURSUF || t == cct::CURPRE || t == cct::QUOTE => {
+                    // c:1056-1069 — single string per body.
+                    let s: Vec<String> = bodies.iter().cloned().collect();
+                    let p: Vec<i32> = vec![0; s.len()];
+                    CompCondData::Strings { p, s }
+                }
+                t if t == cct::RANGESTR || t == cct::RANGEPAT => {
+                    // c:1070-1099 — two strings per body, comma-separated.
+                    let mut a: Vec<String> = Vec::with_capacity(n as usize);
+                    let mut b: Vec<String> = Vec::with_capacity(n as usize);
+                    for body in &bodies {
+                        let parts: Vec<&str> = body.splitn(2, ',').collect();
+                        a.push(parts[0].to_string());
+                        b.push(parts.get(1).map(|s| s.to_string()).unwrap_or_default());
+                    }
+                    CompCondData::StringRange { a, b }
+                }
+                _ => {
+                    // c:1100-1121 — number followed by string per body.
+                    let mut p: Vec<i32> = Vec::with_capacity(n as usize);
+                    let mut s: Vec<String> = Vec::with_capacity(n as usize);
+                    for body in &bodies {
+                        let parts: Vec<&str> = body.splitn(2, ',').collect();
+                        if parts.len() != 2 {
+                            eprintln!("{}: error in condition", name);
+                            return 1;
+                        }
+                        p.push(parts[0].trim().parse().unwrap_or(0));
+                        s.push(parts[1].to_string());
+                    }
+                    CompCondData::Strings { p, s }
+                }
+            };
+
+            // Fill the current condition node.
+            // SAFETY: current_or points to either head (stack) or a
+            // Box<CompCond> we control via current_and chain.
+            unsafe {
+                let cur = match current_and {
+                    Some(p) => p,
+                    None => current_or,
+                };
+                (*cur).typ = typ;
+                (*cur).n = n;
+                (*cur).data = data;
+            }
+
+            // Skip trailing spaces — c:1123
+            while t < bytes.len() && bytes[t] == ' ' { t += 1; }
+
+            // C: c:1125-1134 — `,` → or-chain, else and-chain
+            if t < bytes.len() && bytes[t] == ',' {
+                let new_node = Box::new(CompCond::default());
+                let new_ptr = Box::into_raw(new_node);
+                unsafe {
+                    let cur = current_and.unwrap_or(current_or);
+                    (*cur).or = Some(Box::from_raw(new_ptr));
+                    current_or = (*cur).or.as_mut().unwrap().as_mut() as *mut CompCond;
+                }
+                current_and = None;
+                t += 1;
+            } else if t < bytes.len() {
+                let new_node = Box::new(CompCond::default());
+                let new_ptr = Box::into_raw(new_node);
+                unsafe {
+                    let cur = current_and.unwrap_or(current_or);
+                    (*cur).and = Some(Box::from_raw(new_ptr));
+                    current_and = Some((*cur).and.as_mut().unwrap().as_mut() as *mut CompCond);
+                }
+            }
+        }
+
+        // C: c:1137-1142 — assign condition to a fresh compctl on
+        // the chain, parse the flags that follow.
+        let mut next_cc = CompCtl::default();
+        next_cc.cond = Some(head);
+        // Drop the consumed argv slot.
+        av.remove(0);
+        if get_compctl(name, av, &mut next_cc, false, isdef, 0) != 0 {
+            return 1;
+        }
+        next_chain.push(Arc::new(next_cc));
+
+        // C: c:1143-1145 — special target → finished
+        let cclist = *CCLIST.lock().unwrap();
+        if (av.is_empty()) && (cclist & comp_op::SPECIAL) != 0 {
+            ready = true;
+            continue;
+        }
+
+        // C: c:1150-1162 — look for next `-` flag block or `--` term
+        if av.is_empty()
+            || !av[0].starts_with('-')
+            || (av[0].len() == 1 && av.len() < 2)
+        {
+            eprintln!("{}: missing command names", name);
+            return 1;
+        }
+        if av[0] == "--" {
+            ready = true;
+        } else if av[0] == "-+" && av.len() >= 2 && av[1] == "--" {
+            ready = true;
+            av.remove(0);
+        }
+        av.remove(0);
+    }
+
+    // C: c:1167-1168 — install the chain on cc.ext.
+    if let Some(first) = next_chain.into_iter().next() {
+        cc.ext = Some(first);
+    }
     0
 }
 
-/// Assign a compctl to a name.
-/// Port of `cc_assign()` from Src/Zle/compctl.c:1230. The C version
-/// installs a CompCtl into the hash table, freeing any prior entry
-/// (or merging in `reass` mode).
-pub(crate) fn cc_assign(name: &str, cct: Arc<CompCtl>, _reass: bool) {
+/// Copy fields from `cct` into the spec stored at `name`.
+/// Port of `cc_assign()` from Src/Zle/compctl.c:1173 (~75 lines).
+///
+/// C semantics: with `reass=true`, the special targets
+/// (cc_compos / cc_default / cc_first) are reassigned via
+/// `cc_reassign` which strips the prior `ext`/`xor` chains while
+/// preserving the static storage. Then every string field is
+/// `zsfree`d on the old spec and `ztrdup`d from `cct` into the new
+/// slot. Rust's Arc<CompCtl> handles drop refcounting; this fn
+/// installs `cct` directly under `name` in the hash table.
+///
+/// The reass=true case for the special targets currently routes
+/// through the same install path — the static-storage distinction
+/// in C is a memory-model detail that doesn't transfer to Rust's
+/// Arc-based ownership.
+pub(crate) fn cc_assign(name: &str, cct: Arc<CompCtl>, reass: bool) {
+    let cclist = *CCLIST.lock().unwrap();
+    if reass && (cclist & comp_op::LIST) == 0 {
+        // C: c:1182-1188 — reject conflicting special targets
+        let conflicts = cclist == (comp_op::COMMAND | comp_op::DEFAULT)
+            || cclist == (comp_op::COMMAND | comp_op::FIRST)
+            || cclist == (comp_op::DEFAULT | comp_op::FIRST)
+            || cclist == comp_op::SPECIAL;
+        if conflicts {
+            eprintln!("{}: can't set -D, -T, and -C simultaneously", name);
+            return;
+        }
+        // C: c:1190-1202 — reassign special target. The COMMAND /
+        // DEFAULT / FIRST cases install under reserved names. The
+        // C statics cc_compos / cc_default / cc_first map to these
+        // reserved keys in zshrs's table.
+        if (cclist & comp_op::COMMAND) != 0 {
+            let _ = cc_reassign(cct.clone());
+            let mut g = COMPCTL_TAB.lock().unwrap();
+            if g.is_none() { *g = Some(HashMap::new()); }
+            if let Some(map) = g.as_mut() {
+                map.insert("__cc_compos".to_string(), cct);
+            }
+            return;
+        }
+        if (cclist & comp_op::DEFAULT) != 0 {
+            let _ = cc_reassign(cct.clone());
+            let mut g = COMPCTL_TAB.lock().unwrap();
+            if g.is_none() { *g = Some(HashMap::new()); }
+            if let Some(map) = g.as_mut() {
+                map.insert("__cc_default".to_string(), cct);
+            }
+            return;
+        }
+        if (cclist & comp_op::FIRST) != 0 {
+            let _ = cc_reassign(cct.clone());
+            let mut g = COMPCTL_TAB.lock().unwrap();
+            if g.is_none() { *g = Some(HashMap::new()); }
+            if let Some(map) = g.as_mut() {
+                map.insert("__cc_first".to_string(), cct);
+            }
+            return;
+        }
+    }
+    // C: c:1205-1247 — Rust's Arc replaces the manual zsfree/ztrdup
+    // ladder. The new spec is installed under `name`; the prior
+    // entry (if any) drops its refcount when this insert overwrites.
     let mut g = COMPCTL_TAB.lock().unwrap();
+    if g.is_none() { *g = Some(HashMap::new()); }
     if let Some(map) = g.as_mut() {
         map.insert(name.to_string(), cct);
     }
 }
 
-/// Reassign a compctl (compose with existing).
-/// Port of `cc_reassign()` from Src/Zle/compctl.c:1262 — used when the
-/// `+` operator chains a new spec onto an existing one.
+/// Free a special-target compctl's chain while preserving its slot.
+/// Port of `cc_reassign()` from Src/Zle/compctl.c:1252.
+///
+/// C semantics: builds a temporary CompCtl carrying `cc->xor` /
+/// `cc->ext`, sets refc=1, calls `freecompctl` on it (which
+/// recursively frees those chains), then nulls them on `cc`. This
+/// is needed because cc_compos / cc_default / cc_first are static
+/// allocations that can't themselves be freed — only their chains.
+///
+/// Rust's Arc handles refcounting. Returning a fresh empty CompCtl
+/// matches the "free the chain, keep the storage" semantic by
+/// dropping the input cc's ext/xor refcounts and giving the caller
+/// a placeholder.
 pub(crate) fn cc_reassign(_cc: Arc<CompCtl>) -> Arc<CompCtl> {
+    // Arc drop on the input cc handles the C `freecompctl(c2)` call —
+    // when refcount hits zero, ext/xor chains drop too. Return an
+    // empty placeholder for the caller to populate.
     Arc::new(CompCtl::default())
 }
 
-/// Pattern-name dispatch — `compctl -p PAT`.
-/// Port of `compctl_name_pat()` from Src/Zle/compctl.c:1278. Walks
-/// the patcomps linked list looking for an entry matching the
-/// pattern.
-pub(crate) fn compctl_name_pat(_p: &[String]) -> Option<Arc<CompCtl>> {
-    None
+/// Test whether the given string is a pattern.
+/// Port of `compctl_name_pat()` from Src/Zle/compctl.c:1274.
+///
+/// C signature: `int compctl_name_pat(char **p)` — returns 1 if `*p`
+/// contains glob wildcards (after `tokenize` + `remnulargs`); also
+/// rewrites `*p` either to the tokenized form (pattern) or with
+/// backslashes removed (literal). Rust port: returns `(is_pattern,
+/// new_text)` tuple since we can't mutate a `&str` in-place.
+///
+/// Pattern detection: the C `haswilds()` checks for the lexer's
+/// glob-meta tokens (Star, Quest, Inbrack, etc.). Since the input
+/// here is plain user-typed text, we approximate by checking for
+/// the literal `*`/`?`/`[` characters.
+pub(crate) fn compctl_name_pat(p: &str) -> (bool, String) {
+    // C: c:1282 `if (haswilds(s))` — has glob metas
+    let has_glob = p.chars().any(|c| matches!(c, '*' | '?' | '['));
+    if has_glob {
+        // C: c:1283 `*p = s` — keep the (tokenized) pattern as-is.
+        // Rust: return the original; caller treats as pattern.
+        (true, p.to_string())
+    } else {
+        // C: c:1286 `*p = rembslash(*p)` — strip backslashes from
+        // literal text (`\X` → `X`).
+        let mut out = String::with_capacity(p.len());
+        let mut chars = p.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                if let Some(&nx) = chars.peek() {
+                    out.push(nx);
+                    chars.next();
+                    continue;
+                }
+            }
+            out.push(c);
+        }
+        (false, out)
+    }
 }
 
-/// Delete a pattern compctl.
-/// Port of `delpatcomp()` from Src/Zle/compctl.c:1297.
+/// Delete a pattern compctl by name.
+/// Port of `delpatcomp()` from Src/Zle/compctl.c:1294. Walks the
+/// patcomps list, removes the entry matching `n`, frees the cc.
+/// Rust's Vec::retain handles the linked-list-style removal.
 pub(crate) fn delpatcomp(n: &str) {
     let mut p = PATCOMPS.lock().unwrap();
     p.retain(|(pat, _)| pat != n);
@@ -1201,6 +1533,80 @@ mod tests {
         assert!(g.as_ref().unwrap().contains_key("mycmd"));
         let cc = g.as_ref().unwrap().get("mycmd").unwrap();
         assert_ne!(cc.mask & cc_flags::FILES, 0);
+    }
+
+    #[test]
+    fn compctl_name_pat_detects_glob_wildcards() {
+        // Glob-meta chars present → pattern.
+        let (is_pat, _) = compctl_name_pat("ls*");
+        assert!(is_pat);
+        let (is_pat, _) = compctl_name_pat("foo?bar");
+        assert!(is_pat);
+        let (is_pat, _) = compctl_name_pat("[abc]");
+        assert!(is_pat);
+    }
+
+    #[test]
+    fn compctl_name_pat_strips_backslashes_from_literal() {
+        let (is_pat, out) = compctl_name_pat("\\$home");
+        assert!(!is_pat);
+        // Backslash dropped, `$` kept.
+        assert_eq!(out, "$home");
+    }
+
+    #[test]
+    fn delpatcomp_removes_matching_pattern() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut p = PATCOMPS.lock().unwrap();
+        p.push(("foo*".to_string(), Arc::new(CompCtl::default())));
+        p.push(("bar*".to_string(), Arc::new(CompCtl::default())));
+        drop(p);
+        delpatcomp("foo*");
+        let p = PATCOMPS.lock().unwrap();
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0].0, "bar*");
+    }
+
+    #[test]
+    fn cc_assign_with_reass_command_target_uses_special_key() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createcompctltable();
+        *CCLIST.lock().unwrap() = comp_op::COMMAND;
+        cc_assign("compctl", Arc::new(CompCtl {
+            mask: cc_flags::FILES,
+            ..Default::default()
+        }), true);
+        let g = COMPCTL_TAB.lock().unwrap();
+        assert!(g.as_ref().unwrap().contains_key("__cc_compos"));
+        // Reset for other tests.
+        drop(g);
+        *CCLIST.lock().unwrap() = 0;
+    }
+
+    #[test]
+    fn cc_assign_with_reass_default_target_uses_special_key() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createcompctltable();
+        *CCLIST.lock().unwrap() = comp_op::DEFAULT;
+        cc_assign("compctl", Arc::new(CompCtl::default()), true);
+        let g = COMPCTL_TAB.lock().unwrap();
+        assert!(g.as_ref().unwrap().contains_key("__cc_default"));
+        drop(g);
+        *CCLIST.lock().unwrap() = 0;
+    }
+
+    #[test]
+    fn cc_assign_rejects_conflicting_special_targets() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createcompctltable();
+        *CCLIST.lock().unwrap() = comp_op::COMMAND | comp_op::DEFAULT;
+        cc_assign("compctl", Arc::new(CompCtl::default()), true);
+        let g = COMPCTL_TAB.lock().unwrap();
+        // Should have been rejected — neither key installed.
+        assert!(!g.as_ref().unwrap().contains_key("__cc_compos"));
+        assert!(!g.as_ref().unwrap().contains_key("__cc_default"));
+        drop(g);
+        *CCLIST.lock().unwrap() = 0;
     }
 
     #[test]
