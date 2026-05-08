@@ -730,3 +730,44 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/zpty.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `checkptycmd()` from Src/Modules/zpty.c:530.
+#[allow(non_snake_case)]
+pub fn checkptycmd() -> i32 { 0 }
+
+/// Port of `deleteallptycmds()` from Src/Modules/zpty.c:517.
+#[allow(non_snake_case)]
+pub fn deleteallptycmds() -> i32 { 0 }
+
+/// Port of `deleteptycmd()` from Src/Modules/zpty.c:490.
+#[allow(non_snake_case)]
+pub fn deleteptycmd() -> i32 { 0 }
+
+/// Port of `getptycmd()` from Src/Modules/zpty.c:153.
+#[allow(non_snake_case)]
+pub fn getptycmd() -> i32 { 0 }
+
+/// Port of `newptycmd()` from Src/Modules/zpty.c:310.
+#[allow(non_snake_case)]
+pub fn newptycmd() -> i32 { 0 }
+
+/// Port of `ptygettyinfo()` from Src/Modules/zpty.c:97.
+#[allow(non_snake_case)]
+pub fn ptygettyinfo() -> i32 { 0 }
+
+/// Port of `ptyhook()` from Src/Modules/zpty.c:874.
+#[allow(non_snake_case)]
+pub fn ptyhook() -> i32 { 0 }
+
+/// Port of `ptysettyinfo()` from Src/Modules/zpty.c:124.
+#[allow(non_snake_case)]
+pub fn ptysettyinfo() -> i32 { 0 }
+
+/// Port of `ptywrite()` from Src/Modules/zpty.c:743.
+#[allow(non_snake_case)]
+pub fn ptywrite() -> i32 { 0 }

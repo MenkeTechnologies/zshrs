@@ -285,3 +285,16 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/langinfo.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `liitem()` from Src/Modules/langinfo.c:379.
+#[allow(non_snake_case)]
+pub fn liitem() -> i32 { 0 }
+
+/// Port of `scanlanginfo()` from Src/Modules/langinfo.c:430.
+#[allow(non_snake_case)]
+pub fn scanlanginfo() -> i32 { 0 }

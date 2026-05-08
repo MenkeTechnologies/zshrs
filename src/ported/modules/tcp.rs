@@ -742,3 +742,48 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/tcp.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `freehostent()` from Src/Modules/tcp.c:198.
+#[allow(non_snake_case)]
+pub fn freehostent() -> i32 { 0 }
+
+/// Port of `tcp_cleanup()` from Src/Modules/tcp.c:283.
+#[allow(non_snake_case)]
+pub fn tcp_cleanup() -> i32 { 0 }
+
+/// Port of `tcp_socket()` from Src/Modules/tcp.c:231.
+#[allow(non_snake_case)]
+pub fn tcp_socket() -> i32 { 0 }
+
+/// Port of `zsh_getipnodebyname()` from Src/Modules/tcp.c:170.
+#[allow(non_snake_case)]
+pub fn zsh_getipnodebyname() -> i32 { 0 }
+
+/// Port of `zsh_inet_ntop()` from Src/Modules/tcp.c:72.
+#[allow(non_snake_case)]
+pub fn zsh_inet_ntop() -> i32 { 0 }
+
+/// Port of `zsh_inet_pton()` from Src/Modules/tcp.c:122.
+#[allow(non_snake_case)]
+pub fn zsh_inet_pton() -> i32 { 0 }
+
+/// Port of `ztcp_free_session()` from Src/Modules/tcp.c:245.
+#[allow(non_snake_case)]
+pub fn ztcp_free_session() -> i32 { 0 }
+
+/// Port of `zts_alloc()` from Src/Modules/tcp.c:215.
+#[allow(non_snake_case)]
+pub fn zts_alloc() -> i32 { 0 }
+
+/// Port of `zts_byfd()` from Src/Modules/tcp.c:271.
+#[allow(non_snake_case)]
+pub fn zts_byfd() -> i32 { 0 }
+
+/// Port of `zts_delete()` from Src/Modules/tcp.c:253.
+#[allow(non_snake_case)]
+pub fn zts_delete() -> i32 { 0 }

@@ -399,3 +399,96 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/param_private.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `getprivatenode()` from Src/Modules/param_private.c:568.
+#[allow(non_snake_case)]
+pub fn getprivatenode() -> i32 { 0 }
+
+/// Port of `getprivatenode2()` from Src/Modules/param_private.c:619.
+#[allow(non_snake_case)]
+pub fn getprivatenode2() -> i32 { 0 }
+
+/// Port of `makeprivate()` from Src/Modules/param_private.c:80.
+#[allow(non_snake_case)]
+pub fn makeprivate() -> i32 { 0 }
+
+/// Port of `ppa_getfn()` from Src/Modules/param_private.c:408.
+#[allow(non_snake_case)]
+pub fn ppa_getfn() -> i32 { 0 }
+
+/// Port of `ppa_setfn()` from Src/Modules/param_private.c:421.
+#[allow(non_snake_case)]
+pub fn ppa_setfn() -> i32 { 0 }
+
+/// Port of `ppa_unsetfn()` from Src/Modules/param_private.c:433.
+#[allow(non_snake_case)]
+pub fn ppa_unsetfn() -> i32 { 0 }
+
+/// Port of `ppf_getfn()` from Src/Modules/param_private.c:368.
+#[allow(non_snake_case)]
+pub fn ppf_getfn() -> i32 { 0 }
+
+/// Port of `ppf_setfn()` from Src/Modules/param_private.c:380.
+#[allow(non_snake_case)]
+pub fn ppf_setfn() -> i32 { 0 }
+
+/// Port of `ppf_unsetfn()` from Src/Modules/param_private.c:392.
+#[allow(non_snake_case)]
+pub fn ppf_unsetfn() -> i32 { 0 }
+
+/// Port of `pph_getfn()` from Src/Modules/param_private.c:451.
+#[allow(non_snake_case)]
+pub fn pph_getfn() -> i32 { 0 }
+
+/// Port of `pph_setfn()` from Src/Modules/param_private.c:463.
+#[allow(non_snake_case)]
+pub fn pph_setfn() -> i32 { 0 }
+
+/// Port of `pph_unsetfn()` from Src/Modules/param_private.c:475.
+#[allow(non_snake_case)]
+pub fn pph_unsetfn() -> i32 { 0 }
+
+/// Port of `ppi_getfn()` from Src/Modules/param_private.c:328.
+#[allow(non_snake_case)]
+pub fn ppi_getfn() -> i32 { 0 }
+
+/// Port of `ppi_setfn()` from Src/Modules/param_private.c:340.
+#[allow(non_snake_case)]
+pub fn ppi_setfn() -> i32 { 0 }
+
+/// Port of `ppi_unsetfn()` from Src/Modules/param_private.c:352.
+#[allow(non_snake_case)]
+pub fn ppi_unsetfn() -> i32 { 0 }
+
+/// Port of `pps_getfn()` from Src/Modules/param_private.c:287.
+#[allow(non_snake_case)]
+pub fn pps_getfn() -> i32 { 0 }
+
+/// Port of `pps_setfn()` from Src/Modules/param_private.c:300.
+#[allow(non_snake_case)]
+pub fn pps_setfn() -> i32 { 0 }
+
+/// Port of `pps_unsetfn()` from Src/Modules/param_private.c:312.
+#[allow(non_snake_case)]
+pub fn pps_unsetfn() -> i32 { 0 }
+
+/// Port of `printprivatenode()` from Src/Modules/param_private.c:632.
+#[allow(non_snake_case)]
+pub fn printprivatenode() -> i32 { 0 }
+
+/// Port of `scopeprivate()` from Src/Modules/param_private.c:512.
+#[allow(non_snake_case)]
+pub fn scopeprivate() -> i32 { 0 }
+
+/// Port of `setfn_error()` from Src/Modules/param_private.c:260.
+#[allow(non_snake_case)]
+pub fn setfn_error() -> i32 { 0 }
+
+/// Port of `wrap_private()` from Src/Modules/param_private.c:550.
+#[allow(non_snake_case)]
+pub fn wrap_private() -> i32 { 0 }

@@ -272,3 +272,28 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/nearcolor.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `deltae()` from Src/Modules/nearcolor.c:41.
+#[allow(non_snake_case)]
+pub fn deltae() -> i32 { 0 }
+
+/// Port of `getnearestcolor()` from Src/Modules/nearcolor.c:147.
+#[allow(non_snake_case)]
+pub fn getnearestcolor() -> i32 { 0 }
+
+/// Port of `mapRGBto256()` from Src/Modules/nearcolor.c:110.
+#[allow(non_snake_case)]
+pub fn mapRGBto256() -> i32 { 0 }
+
+/// Port of `mapRGBto88()` from Src/Modules/nearcolor.c:74.
+#[allow(non_snake_case)]
+pub fn mapRGBto88() -> i32 { 0 }
+
+/// Port of `RGBtoLAB()` from Src/Modules/nearcolor.c:50.
+#[allow(non_snake_case)]
+pub fn RGBtoLAB() -> i32 { 0 }

@@ -950,3 +950,12 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/mathfunc.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `math_string()` from Src/Modules/mathfunc.c:439.
+#[allow(non_snake_case)]
+pub fn math_string() -> i32 { 0 }

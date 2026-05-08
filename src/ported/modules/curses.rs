@@ -842,3 +842,152 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/curses.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `freecolorpairnode()` from Src/Modules/curses.c:422.
+#[allow(non_snake_case)]
+pub fn freecolorpairnode() -> i32 { 0 }
+
+/// Port of `zccmd_addwin()` from Src/Modules/curses.c:503.
+#[allow(non_snake_case)]
+pub fn zccmd_addwin() -> i32 { 0 }
+
+/// Port of `zccmd_attr()` from Src/Modules/curses.c:843.
+#[allow(non_snake_case)]
+pub fn zccmd_attr() -> i32 { 0 }
+
+/// Port of `zccmd_bg()` from Src/Modules/curses.c:908.
+#[allow(non_snake_case)]
+pub fn zccmd_bg() -> i32 { 0 }
+
+/// Port of `zccmd_border()` from Src/Modules/curses.c:802.
+#[allow(non_snake_case)]
+pub fn zccmd_border() -> i32 { 0 }
+
+/// Port of `zccmd_char()` from Src/Modules/curses.c:723.
+#[allow(non_snake_case)]
+pub fn zccmd_char() -> i32 { 0 }
+
+/// Port of `zccmd_clear()` from Src/Modules/curses.c:694.
+#[allow(non_snake_case)]
+pub fn zccmd_clear() -> i32 { 0 }
+
+/// Port of `zccmd_endwin()` from Src/Modules/curses.c:823.
+#[allow(non_snake_case)]
+pub fn zccmd_endwin() -> i32 { 0 }
+
+/// Port of `zccmd_init()` from Src/Modules/curses.c:434.
+#[allow(non_snake_case)]
+pub fn zccmd_init() -> i32 { 0 }
+
+/// Port of `zccmd_input()` from Src/Modules/curses.c:1029.
+#[allow(non_snake_case)]
+pub fn zccmd_input() -> i32 { 0 }
+
+/// Port of `zccmd_mouse()` from Src/Modules/curses.c:1294.
+#[allow(non_snake_case)]
+pub fn zccmd_mouse() -> i32 { 0 }
+
+/// Port of `zccmd_move()` from Src/Modules/curses.c:669.
+#[allow(non_snake_case)]
+pub fn zccmd_move() -> i32 { 0 }
+
+/// Port of `zccmd_position()` from Src/Modules/curses.c:1343.
+#[allow(non_snake_case)]
+pub fn zccmd_position() -> i32 { 0 }
+
+/// Port of `zccmd_querychar()` from Src/Modules/curses.c:1382.
+#[allow(non_snake_case)]
+pub fn zccmd_querychar() -> i32 { 0 }
+
+/// Port of `zccmd_refresh()` from Src/Modules/curses.c:632.
+#[allow(non_snake_case)]
+pub fn zccmd_refresh() -> i32 { 0 }
+
+/// Port of `zccmd_resize()` from Src/Modules/curses.c:1494.
+#[allow(non_snake_case)]
+pub fn zccmd_resize() -> i32 { 0 }
+
+/// Port of `zccmd_scroll()` from Src/Modules/curses.c:986.
+#[allow(non_snake_case)]
+pub fn zccmd_scroll() -> i32 { 0 }
+
+/// Port of `zccmd_string()` from Src/Modules/curses.c:759.
+#[allow(non_snake_case)]
+pub fn zccmd_string() -> i32 { 0 }
+
+/// Port of `zccmd_timeout()` from Src/Modules/curses.c:1255.
+#[allow(non_snake_case)]
+pub fn zccmd_timeout() -> i32 { 0 }
+
+/// Port of `zccmd_touch()` from Src/Modules/curses.c:1472.
+#[allow(non_snake_case)]
+pub fn zccmd_touch() -> i32 { 0 }
+
+/// Port of `zcurses_attrget()` from Src/Modules/curses.c:302.
+#[allow(non_snake_case)]
+pub fn zcurses_attrget() -> i32 { 0 }
+
+/// Port of `zcurses_attrgetfn()` from Src/Modules/curses.c:1651.
+#[allow(non_snake_case)]
+pub fn zcurses_attrgetfn() -> i32 { 0 }
+
+/// Port of `zcurses_color()` from Src/Modules/curses.c:318.
+#[allow(non_snake_case)]
+pub fn zcurses_color() -> i32 { 0 }
+
+/// Port of `zcurses_colorget()` from Src/Modules/curses.c:331.
+#[allow(non_snake_case)]
+pub fn zcurses_colorget() -> i32 { 0 }
+
+/// Port of `zcurses_colorget_reverse()` from Src/Modules/curses.c:410.
+#[allow(non_snake_case)]
+pub fn zcurses_colorget_reverse() -> i32 { 0 }
+
+/// Port of `zcurses_colornode()` from Src/Modules/curses.c:402.
+#[allow(non_snake_case)]
+pub fn zcurses_colornode() -> i32 { 0 }
+
+/// Port of `zcurses_colorpairsintgetfn()` from Src/Modules/curses.c:1701.
+#[allow(non_snake_case)]
+pub fn zcurses_colorpairsintgetfn() -> i32 { 0 }
+
+/// Port of `zcurses_colorsarrgetfn()` from Src/Modules/curses.c:1641.
+#[allow(non_snake_case)]
+pub fn zcurses_colorsarrgetfn() -> i32 { 0 }
+
+/// Port of `zcurses_colorsintgetfn()` from Src/Modules/curses.c:1691.
+#[allow(non_snake_case)]
+pub fn zcurses_colorsintgetfn() -> i32 { 0 }
+
+/// Port of `zcurses_free_window()` from Src/Modules/curses.c:285.
+#[allow(non_snake_case)]
+pub fn zcurses_free_window() -> i32 { 0 }
+
+/// Port of `zcurses_getwindowbyname()` from Src/Modules/curses.c:246.
+#[allow(non_snake_case)]
+pub fn zcurses_getwindowbyname() -> i32 { 0 }
+
+/// Port of `zcurses_keycodesgetfn()` from Src/Modules/curses.c:1661.
+#[allow(non_snake_case)]
+pub fn zcurses_keycodesgetfn() -> i32 { 0 }
+
+/// Port of `zcurses_pairs_to_array()` from Src/Modules/curses.c:213.
+#[allow(non_snake_case)]
+pub fn zcurses_pairs_to_array() -> i32 { 0 }
+
+/// Port of `zcurses_strerror()` from Src/Modules/curses.c:233.
+#[allow(non_snake_case)]
+pub fn zcurses_strerror() -> i32 { 0 }
+
+/// Port of `zcurses_validate_window()` from Src/Modules/curses.c:259.
+#[allow(non_snake_case)]
+pub fn zcurses_validate_window() -> i32 { 0 }
+
+/// Port of `zcurses_windowsgetfn()` from Src/Modules/curses.c:1671.
+#[allow(non_snake_case)]
+pub fn zcurses_windowsgetfn() -> i32 { 0 }

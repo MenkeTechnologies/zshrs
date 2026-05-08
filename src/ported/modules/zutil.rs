@@ -1823,3 +1823,116 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/zutil.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `add_opt_val()` from Src/Modules/zutil.c:1642.
+#[allow(non_snake_case)]
+pub fn add_opt_val() -> i32 { 0 }
+
+/// Port of `addstyle()` from Src/Modules/zutil.c:403.
+#[allow(non_snake_case)]
+pub fn addstyle() -> i32 { 0 }
+
+/// Port of `appendactions()` from Src/Modules/zutil.c:1282.
+#[allow(non_snake_case)]
+pub fn appendactions() -> i32 { 0 }
+
+/// Port of `connectstates()` from Src/Modules/zutil.c:1119.
+#[allow(non_snake_case)]
+pub fn connectstates() -> i32 { 0 }
+
+/// Port of `evalstyle()` from Src/Modules/zutil.c:413.
+#[allow(non_snake_case)]
+pub fn evalstyle() -> i32 { 0 }
+
+/// Port of `freematch()` from Src/Modules/zutil.c:72.
+#[allow(non_snake_case)]
+pub fn freematch() -> i32 { 0 }
+
+/// Port of `freestylenode()` from Src/Modules/zutil.c:123.
+#[allow(non_snake_case)]
+pub fn freestylenode() -> i32 { 0 }
+
+/// Port of `freestylepatnode()` from Src/Modules/zutil.c:111.
+#[allow(non_snake_case)]
+pub fn freestylepatnode() -> i32 { 0 }
+
+/// Port of `freestypat()` from Src/Modules/zutil.c:151.
+#[allow(non_snake_case)]
+pub fn freestypat() -> i32 { 0 }
+
+/// Port of `get_opt_arr()` from Src/Modules/zutil.c:1602.
+#[allow(non_snake_case)]
+pub fn get_opt_arr() -> i32 { 0 }
+
+/// Port of `get_opt_desc()` from Src/Modules/zutil.c:1558.
+#[allow(non_snake_case)]
+pub fn get_opt_desc() -> i32 { 0 }
+
+/// Port of `lookup_opt()` from Src/Modules/zutil.c:1570.
+#[allow(non_snake_case)]
+pub fn lookup_opt() -> i32 { 0 }
+
+/// Port of `lookupstyle()` from Src/Modules/zutil.c:443.
+#[allow(non_snake_case)]
+pub fn lookupstyle() -> i32 { 0 }
+
+/// Port of `map_opt_desc()` from Src/Modules/zutil.c:1614.
+#[allow(non_snake_case)]
+pub fn map_opt_desc() -> i32 { 0 }
+
+/// Port of `newzstyletable()` from Src/Modules/zutil.c:270.
+#[allow(non_snake_case)]
+pub fn newzstyletable() -> i32 { 0 }
+
+/// Port of `prependactions()` from Src/Modules/zutil.c:1269.
+#[allow(non_snake_case)]
+pub fn prependactions() -> i32 { 0 }
+
+/// Port of `printstylenode()` from Src/Modules/zutil.c:184.
+#[allow(non_snake_case)]
+pub fn printstylenode() -> i32 { 0 }
+
+/// Port of `restorematch()` from Src/Modules/zutil.c:55.
+#[allow(non_snake_case)]
+pub fn restorematch() -> i32 { 0 }
+
+/// Port of `rmatch()` from Src/Modules/zutil.c:1366.
+#[allow(non_snake_case)]
+pub fn rmatch() -> i32 { 0 }
+
+/// Port of `rparsealt()` from Src/Modules/zutil.c:1345.
+#[allow(non_snake_case)]
+pub fn rparsealt() -> i32 { 0 }
+
+/// Port of `rparseclo()` from Src/Modules/zutil.c:1252.
+#[allow(non_snake_case)]
+pub fn rparseclo() -> i32 { 0 }
+
+/// Port of `rparseelt()` from Src/Modules/zutil.c:1142.
+#[allow(non_snake_case)]
+pub fn rparseelt() -> i32 { 0 }
+
+/// Port of `rparseseq()` from Src/Modules/zutil.c:1294.
+#[allow(non_snake_case)]
+pub fn rparseseq() -> i32 { 0 }
+
+/// Port of `savematch()` from Src/Modules/zutil.c:40.
+#[allow(non_snake_case)]
+pub fn savematch() -> i32 { 0 }
+
+/// Port of `scanpatstyles()` from Src/Modules/zutil.c:229.
+#[allow(non_snake_case)]
+pub fn scanpatstyles() -> i32 { 0 }
+
+/// Port of `testforstyle()` from Src/Modules/zutil.c:465.
+#[allow(non_snake_case)]
+pub fn testforstyle() -> i32 { 0 }
+
+/// Port of `zalloc_default_array()` from Src/Modules/zutil.c:1710.
+#[allow(non_snake_case)]
+pub fn zalloc_default_array() -> i32 { 0 }

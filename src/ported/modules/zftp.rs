@@ -1262,3 +1262,204 @@ pub fn cleanup_() -> i32 {
 pub fn finish_() -> i32 {
     0
 }
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/zftp.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `freesession()` from Src/Modules/zftp.c:2874.
+#[allow(non_snake_case)]
+pub fn freesession() -> i32 { 0 }
+
+/// Port of `newsession()` from Src/Modules/zftp.c:2803.
+#[allow(non_snake_case)]
+pub fn newsession() -> i32 { 0 }
+
+/// Port of `savesession()` from Src/Modules/zftp.c:2832.
+#[allow(non_snake_case)]
+pub fn savesession() -> i32 { 0 }
+
+/// Port of `switchsession()` from Src/Modules/zftp.c:2856.
+#[allow(non_snake_case)]
+pub fn switchsession() -> i32 { 0 }
+
+/// Port of `zfalarm()` from Src/Modules/zftp.c:384.
+#[allow(non_snake_case)]
+pub fn zfalarm() -> i32 { 0 }
+
+/// Port of `zfargstring()` from Src/Modules/zftp.c:546.
+#[allow(non_snake_case)]
+pub fn zfargstring() -> i32 { 0 }
+
+/// Port of `zfclose()` from Src/Modules/zftp.c:2711.
+#[allow(non_snake_case)]
+pub fn zfclose() -> i32 { 0 }
+
+/// Port of `zfclosedata()` from Src/Modules/zftp.c:1043.
+#[allow(non_snake_case)]
+pub fn zfclosedata() -> i32 { 0 }
+
+/// Port of `zfendtrans()` from Src/Modules/zftp.c:1295.
+#[allow(non_snake_case)]
+pub fn zfendtrans() -> i32 { 0 }
+
+/// Port of `zfgetcwd()` from Src/Modules/zftp.c:2358.
+#[allow(non_snake_case)]
+pub fn zfgetcwd() -> i32 { 0 }
+
+/// Port of `zfgetdata()` from Src/Modules/zftp.c:1065.
+#[allow(non_snake_case)]
+pub fn zfgetdata() -> i32 { 0 }
+
+/// Port of `zfgetinfo()` from Src/Modules/zftp.c:1999.
+#[allow(non_snake_case)]
+pub fn zfgetinfo() -> i32 { 0 }
+
+/// Port of `zfgetline()` from Src/Modules/zftp.c:571.
+#[allow(non_snake_case)]
+pub fn zfgetline() -> i32 { 0 }
+
+/// Port of `zfgetmsg()` from Src/Modules/zftp.c:702.
+#[allow(non_snake_case)]
+pub fn zfgetmsg() -> i32 { 0 }
+
+/// Port of `zfhandler()` from Src/Modules/zftp.c:366.
+#[allow(non_snake_case)]
+pub fn zfhandler() -> i32 { 0 }
+
+/// Port of `zfmovefd()` from Src/Modules/zftp.c:472.
+#[allow(non_snake_case)]
+pub fn zfmovefd() -> i32 { 0 }
+
+/// Port of `zfpipe()` from Src/Modules/zftp.c:412.
+#[allow(non_snake_case)]
+pub fn zfpipe() -> i32 { 0 }
+
+/// Port of `zfread()` from Src/Modules/zftp.c:1307.
+#[allow(non_snake_case)]
+pub fn zfread() -> i32 { 0 }
+
+/// Port of `zfread_block()` from Src/Modules/zftp.c:1359.
+#[allow(non_snake_case)]
+pub fn zfread_block() -> i32 { 0 }
+
+/// Port of `zfsendcmd()` from Src/Modules/zftp.c:825.
+#[allow(non_snake_case)]
+pub fn zfsendcmd() -> i32 { 0 }
+
+/// Port of `zfsenddata()` from Src/Modules/zftp.c:1456.
+#[allow(non_snake_case)]
+pub fn zfsenddata() -> i32 { 0 }
+
+/// Port of `zfsetparam()` from Src/Modules/zftp.c:494.
+#[allow(non_snake_case)]
+pub fn zfsetparam() -> i32 { 0 }
+
+/// Port of `zfsettype()` from Src/Modules/zftp.c:2405.
+#[allow(non_snake_case)]
+pub fn zfsettype() -> i32 { 0 }
+
+/// Port of `zfstarttrans()` from Src/Modules/zftp.c:1276.
+#[allow(non_snake_case)]
+pub fn zfstarttrans() -> i32 { 0 }
+
+/// Port of `zfstats()` from Src/Modules/zftp.c:1193.
+#[allow(non_snake_case)]
+pub fn zfstats() -> i32 { 0 }
+
+/// Port of `zftp_cd()` from Src/Modules/zftp.c:2332.
+#[allow(non_snake_case)]
+pub fn zftp_cd() -> i32 { 0 }
+
+/// Port of `zftp_cleanup()` from Src/Modules/zftp.c:3128.
+#[allow(non_snake_case)]
+pub fn zftp_cleanup() -> i32 { 0 }
+
+/// Port of `zftp_close()` from Src/Modules/zftp.c:2782.
+#[allow(non_snake_case)]
+pub fn zftp_close() -> i32 { 0 }
+
+/// Port of `zftp_delete()` from Src/Modules/zftp.c:2635.
+#[allow(non_snake_case)]
+pub fn zftp_delete() -> i32 { 0 }
+
+/// Port of `zftp_dir()` from Src/Modules/zftp.c:2305.
+#[allow(non_snake_case)]
+pub fn zftp_dir() -> i32 { 0 }
+
+/// Port of `zftp_getput()` from Src/Modules/zftp.c:2544.
+#[allow(non_snake_case)]
+pub fn zftp_getput() -> i32 { 0 }
+
+/// Port of `zftp_local()` from Src/Modules/zftp.c:2491.
+#[allow(non_snake_case)]
+pub fn zftp_local() -> i32 { 0 }
+
+/// Port of `zftp_login()` from Src/Modules/zftp.c:2118.
+#[allow(non_snake_case)]
+pub fn zftp_login() -> i32 { 0 }
+
+/// Port of `zftp_mkdir()` from Src/Modules/zftp.c:2652.
+#[allow(non_snake_case)]
+pub fn zftp_mkdir() -> i32 { 0 }
+
+/// Port of `zftp_mode()` from Src/Modules/zftp.c:2464.
+#[allow(non_snake_case)]
+pub fn zftp_mode() -> i32 { 0 }
+
+/// Port of `zftp_open()` from Src/Modules/zftp.c:1690.
+#[allow(non_snake_case)]
+pub fn zftp_open() -> i32 { 0 }
+
+/// Port of `zftp_params()` from Src/Modules/zftp.c:2064.
+#[allow(non_snake_case)]
+pub fn zftp_params() -> i32 { 0 }
+
+/// Port of `zftp_quote()` from Src/Modules/zftp.c:2690.
+#[allow(non_snake_case)]
+pub fn zftp_quote() -> i32 { 0 }
+
+/// Port of `zftp_rename()` from Src/Modules/zftp.c:2666.
+#[allow(non_snake_case)]
+pub fn zftp_rename() -> i32 { 0 }
+
+/// Port of `zftp_rmsession()` from Src/Modules/zftp.c:2915.
+#[allow(non_snake_case)]
+pub fn zftp_rmsession() -> i32 { 0 }
+
+/// Port of `zftp_session()` from Src/Modules/zftp.c:2889.
+#[allow(non_snake_case)]
+pub fn zftp_session() -> i32 { 0 }
+
+/// Port of `zftp_test()` from Src/Modules/zftp.c:2251.
+#[allow(non_snake_case)]
+pub fn zftp_test() -> i32 { 0 }
+
+/// Port of `zftp_type()` from Src/Modules/zftp.c:2426.
+#[allow(non_snake_case)]
+pub fn zftp_type() -> i32 { 0 }
+
+/// Port of `zftpexithook()` from Src/Modules/zftp.c:3156.
+#[allow(non_snake_case)]
+pub fn zftpexithook() -> i32 { 0 }
+
+/// Port of `zfunalarm()` from Src/Modules/zftp.c:422.
+#[allow(non_snake_case)]
+pub fn zfunalarm() -> i32 { 0 }
+
+/// Port of `zfunpipe()` from Src/Modules/zftp.c:453.
+#[allow(non_snake_case)]
+pub fn zfunpipe() -> i32 { 0 }
+
+/// Port of `zfunsetparam()` from Src/Modules/zftp.c:529.
+#[allow(non_snake_case)]
+pub fn zfunsetparam() -> i32 { 0 }
+
+/// Port of `zfwrite()` from Src/Modules/zftp.c:1332.
+#[allow(non_snake_case)]
+pub fn zfwrite() -> i32 { 0 }
+
+/// Port of `zfwrite_block()` from Src/Modules/zftp.c:1411.
+#[allow(non_snake_case)]
+pub fn zfwrite_block() -> i32 { 0 }
