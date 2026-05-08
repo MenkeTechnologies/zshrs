@@ -1262,6 +1262,12 @@ pub fn paramsubst(                                          // c:1625
         let mut flag_qmin = false;                          // c:2245 (q-)
         let mut flag_qplus = false;                         // c:2245 (q+)
         let mut flag_at = false;                            // c:2167 (@)
+        // Temp state.arrays slot holding a nested-expansion array
+        // result (see line ~1755). Set when `${(@)${(@)…}…}` with
+        // outer `(@)` triggers multsub on the inner; cleared at end
+        // of paramsubst so the temp doesn't leak. Direct port of the
+        // multsub-driven word list C zsh threads through subst.c.
+        let mut subexp_array_temp: Option<String> = None;
         let mut flag_p_indirect = false;                    // c:2295 (P)
         // (A) — array-assign mode for `${(A)var=val}`. (AA) →
         // associative-assign: split val into key/value pairs.
@@ -1752,7 +1758,35 @@ pub fn paramsubst(                                          // c:1625
                 }
             }
             let inner: String = body_chars[start..p].iter().collect(); // c:2671
-            let expanded = singsub(&inner, state);          // c:2681
+            // Array-shape preservation through nested `${(@)${(@)…}…}`.
+            // C zsh uses `multsub` (subst.c:544) for the inner expansion
+            // when the outer flag set wants array shape; that returns the
+            // word list, not a joined scalar. With `(@)` set on the
+            // outer expansion, route through multsub and stash the array
+            // in state.arrays under a unique temp name so the existing
+            // splat path (line 3636 state.arrays.contains_key) sees it.
+            // Direct port of subst.c's prefork SPLIT path that the (@)
+            // flag triggers around line 2167.
+            let expanded = if flag_at {                     // c:2167+544
+                let (joined, arr_parts, isarr, _) = multsub(
+                    &inner, prefork_flags::SPLIT, state);
+                if isarr && !arr_parts.is_empty() {
+                    // Generate a stable per-call temp name. We use a
+                    // process-local counter; cleanup happens at end of
+                    // paramsubst (state.arrays.remove).
+                    use std::sync::atomic::{AtomicUsize, Ordering};
+                    static SEQ: AtomicUsize = AtomicUsize::new(0);
+                    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+                    let temp = format!("__subexp_arr_{}", n);
+                    state.arrays.insert(temp.clone(), arr_parts);
+                    subexp_array_temp = Some(temp.clone());
+                    temp
+                } else {
+                    joined
+                }
+            } else {
+                singsub(&inner, state)                      // c:2681
+            };
             idx = p;                                        // c:2691
             // If we peeled a leading `"`, also consume the matching
             // closing `"` now so the rest of the body (operators,
@@ -1796,6 +1830,15 @@ pub fn paramsubst(                                          // c:1625
             }
         }
         let mut var_name: String = body_chars[name_start..idx].iter().collect();
+        // If the subexp produced an array (multsub path above), bind
+        // var_name to the temp slot in state.arrays so the rest of
+        // paramsubst — splat, subscript, filter, replace — operates
+        // on the array via the existing var-lookup paths instead of
+        // treating the joined scalar as a value.
+        if let Some(ref temp) = subexp_array_temp {
+            var_name = temp.clone();
+            subexp_value = None;
+        }
 
         // ${arr[subscript]} — subscript loop. Port of subst.c:2862-3000.
         // Parse `[…]` after the var name, with brace-depth tracking
