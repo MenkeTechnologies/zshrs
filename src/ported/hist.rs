@@ -2121,17 +2121,211 @@ pub fn getargs(entry: &HistEntry, arg1: usize, arg2: usize) -> Option<String> {
     Some(entry.text[pos1..pos2].to_string())
 }
 
-/// Decrement the lock counter. Port of `unlockhistfile()` from
-/// Src/hist.c — drops the lock when the count reaches 0. The
-/// actual file-level unlock (flock release) is currently a TODO
-/// pending the wider history-file I/O port (`lockhistfile`,
-/// `readhistfile`, `savehistfile`).
-pub fn unlockhistfile(_path: &str) {
+/// Acquire an exclusive lock on the history file. Port of
+/// `lockhistfile()` from Src/hist.c. The C source has three
+/// platform-conditional locking strategies (fcntl `flock`, then
+/// symlink-based, then link-based with retry); zshrs uses the
+/// fcntl path unconditionally — modern Unix supports it, and
+/// the symlink/link fallbacks are for ancient hosts. Increments
+/// `LOCKHISTCT` on success so nested lock calls re-use the
+/// existing lock and only the outermost `unlockhistfile` releases.
+///
+/// Returns:
+///   0 — locked successfully
+///   1 — keep_trying=false and lock held by another process
+///   2 — fatal error (path bad, fs error)
+///
+/// `keep_trying` controls retry-on-busy. C uses 67ms exponential
+/// backoff; we use a tighter loop with a short sleep, capped at
+/// 30 retries (~3s wall time).
+pub fn lockhistfile(hist: &History, fn_path: Option<&str>, keep_trying: bool) -> i32 {
+    use std::sync::atomic::Ordering;
+
+    let path: String = match fn_path {
+        Some(p) => p.to_string(),
+        None => match hist.histfile.as_deref() {
+            Some(p) => p.to_string(),
+            None => return 1,
+        },
+    };
+
+    // Re-entrant: if we already hold the lock, just bump the count.
+    if LOCKHISTCT.fetch_add(1, Ordering::SeqCst) > 0 {
+        return 0;
+    }
+
+    // Try fcntl flock. Mirrors the `if (isset(HISTFCNTLLOCK))
+    // return flockhistfile(...);` early-return branch in C.
+    let max_tries = if keep_trying { 30 } else { 1 };
+    for attempt in 0..max_tries {
+        if flockhistfile(&path) {
+            return 0;
+        }
+        if attempt + 1 < max_tries {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+
+    // All retries exhausted — back out the count and report busy.
+    LOCKHISTCT.fetch_sub(1, Ordering::SeqCst);
+    if keep_trying { 2 } else { 1 }
+}
+
+/// Read a zsh history file into the in-memory ring. Port of
+/// `readhistfile()` from Src/hist.c (~196 lines). This is a
+/// SIMPLIFIED port covering the common case:
+///   - Plain lines: one history entry per line
+///   - Extended format: `: <stim>:<dur>;<text>` (zsh's
+///     EXTENDED_HISTORY)
+///   - Backslash-newline continuation for multi-line entries
+///
+/// TODOs from the C source not yet ported (cited inline):
+///   - HFILE_FAST resume via lasthist.fpos/fsiz/mtim — full
+///     re-read every call; the C version would skip if the
+///     file hasn't changed.
+///   - Lex pre-pass to populate word-boundary array.
+///   - HFILE_NO_REC_DUPS / HFILE_SKIP_DUPS / HFILE_SKIP_FOREIGN /
+///     HFILE_SKIP_OLD flag handling beyond the bare entry insert.
+///   - Locale conversion via meta encoding.
+pub fn readhistfile(hist: &mut History, fn_path: Option<&str>, _err: bool, _readflags: i32) {
+    let path: String = match fn_path {
+        Some(p) => p.to_string(),
+        None => match hist.histfile.as_deref() {
+            Some(p) => p.to_string(),
+            None => return,
+        },
+    };
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    if contents.is_empty() {
+        return;
+    }
+    // Acquire lock per C; on busy fall through to read anyway.
+    let _ = lockhistfile(hist, Some(&path), true);
+
+    let mut current: Option<(i64, i64, String)> = None; // (stim, ftim, text)
+    for raw_line in contents.lines() {
+        // Backslash-newline continuation — append next line into
+        // the in-progress entry. Mirrors C's `while (...) buf =
+        // realloc(...)` continuation loop.
+        if let Some((stim, ftim, ref mut text)) = current {
+            if text.ends_with('\\') {
+                text.pop();
+                text.push('\n');
+                text.push_str(raw_line);
+                current = Some((stim, ftim, text.clone()));
+                continue;
+            }
+            // Flush in-progress entry before starting a new one.
+            hist.curhist += 1;
+            let mut entry = HistEntry::new(hist.curhist, text.clone());
+            entry.stim = stim;
+            entry.ftim = ftim;
+            entry.flags |= hist_flags::OLD;
+            hist.insert_at_head(hist.curhist, entry);
+            current = None;
+        }
+        // Extended format: `: <stim>:<dur>;<text>`
+        if let Some(rest) = raw_line.strip_prefix(": ") {
+            if let Some((meta, text)) = rest.split_once(';') {
+                if let Some((stim_s, dur_s)) = meta.split_once(':') {
+                    let stim: i64 = stim_s.parse().unwrap_or(0);
+                    let dur: i64 = dur_s.parse().unwrap_or(0);
+                    let ftim = stim + dur;
+                    current = Some((stim, ftim, text.to_string()));
+                    continue;
+                }
+            }
+        }
+        // Plain line — record with now-ish timestamp (lossy; the
+        // file didn't carry one).
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        current = Some((now, now, raw_line.to_string()));
+    }
+    // Flush trailing in-progress entry.
+    if let Some((stim, ftim, text)) = current {
+        hist.curhist += 1;
+        let mut entry = HistEntry::new(hist.curhist, text);
+        entry.stim = stim;
+        entry.ftim = ftim;
+        entry.flags |= hist_flags::OLD;
+        hist.insert_at_head(hist.curhist, entry);
+    }
+    unlockhistfile(&path);
+    // Trim to histsiz per resizehistents semantics.
+    resizehistents(hist);
+}
+
+/// Write the in-memory history ring to a file. Port of
+/// `savehistfile()` from Src/hist.c (~221 lines). SIMPLIFIED to
+/// the common case: emit each entry in extended format
+/// (`: <stim>:<dur>;<text>`) for portability with C zsh's
+/// EXTENDED_HISTORY option.
+///
+/// TODOs cited from C source:
+///   - HFILE_APPEND vs truncate semantics — currently always truncates
+///   - HFILE_USE_OPTIONS to honor INC_APPEND_HISTORY etc.
+///   - Backslash-newline encoding for embedded newlines in entry text
+///   - HISTSAVENODUPS / HISTIGNORESPACE filtering at write time
+///   - savehistsiz cap (write only N most recent) — currently writes all
+pub fn savehistfile(hist: &History, fn_path: Option<&str>, _writeflags: i32) {
+    use std::io::Write;
+    let path: String = match fn_path {
+        Some(p) => p.to_string(),
+        None => match hist.histfile.as_deref() {
+            Some(p) => p.to_string(),
+            None => return,
+        },
+    };
+    let _ = lockhistfile(hist, Some(&path), true);
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&path)
+    {
+        // Write oldest-first (C iterates hist_ring->down forward).
+        // Our ring is newest-first; iterate in reverse for that
+        // order on disk.
+        let cap = hist.savehistsiz.max(0) as usize;
+        let mut count = 0;
+        for i in (0..hist.ring_len()).rev() {
+            if cap > 0 && count >= cap {
+                break;
+            }
+            let n = hist.ring_at(i);
+            if let Some(entry) = hist.get(n) {
+                let dur = entry.ftim.saturating_sub(entry.stim);
+                let _ = writeln!(file, ": {}:{};{}", entry.stim, dur, entry.text);
+                count += 1;
+            }
+        }
+    }
+    unlockhistfile(&path);
+}
+
+/// Decrement the lock counter and release the underlying flock
+/// when the count drops to 0. Port of `unlockhistfile()` from
+/// Src/hist.c.
+pub fn unlockhistfile(path: &str) {
     use std::sync::atomic::Ordering;
     let prev = LOCKHISTCT.fetch_sub(1, Ordering::SeqCst);
     if prev <= 0 {
         // Mirror C: under-count is a no-op (the C source asserts).
         LOCKHISTCT.store(0, Ordering::SeqCst);
+        return;
+    }
+    if prev == 1 {
+        // Outermost release — drop the .lock file. flock(2) auto-
+        // releases on file close, so we just delete the lockfile
+        // path. Best-effort; ignore errors (mirrors C).
+        let lockpath = format!("{}.lock", path);
+        let _ = std::fs::remove_file(&lockpath);
     }
 }
 
