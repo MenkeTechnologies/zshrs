@@ -385,10 +385,17 @@ thread_local! {
     static M_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
+// ============================================================
+// WARNING: NOT IN MATH.C — every `m_*` fn below is a Rust-only
+// thread_local accessor. C dereferences the corresponding module
+// global directly (`yyval.u.l`, `*ptr++`, etc.) without an
+// fn-shaped wrapper. The wrappers exist solely because Rust's
+// `thread_local!` requires `.with(|c| ...)` for any access, and
+// scattering 600 such closures throughout the evaluator would be
+// unreadable. Allowlisted in tests/data/ported_fn_allowlist.txt.
+// ============================================================
 // Accessor helpers — each thread_local reads/writes via these so the
-// migration from `s.X` → free-fn-only access is mechanical. Helpers
-// have no zsh C analog (the C source dereferences globals directly);
-// allowlisted in tests/data/ported_fn_allowlist.txt.
+// migration from `s.X` → free-fn-only access is mechanical.
 
 #[inline] fn m_input_clone() -> String { M_INPUT.with(|c| c.borrow().clone()) }
 #[inline] fn m_input_set(v: String) { M_INPUT.with(|c| *c.borrow_mut() = v) }
@@ -523,6 +530,11 @@ struct xyy_locals {
     lastbase: i32,
 }
 
+// WARNING: NOT IN MATH.C — Rust-only helper. C inlines the
+// xyy* save/restore directly inside `mathevall()`'s body
+// (math.c:367 onward); the Rust port factors it out because two
+// callsites (callmathfunc arg parsing, getmathparam indirect-string
+// eval) would each duplicate ~17 lines of save/restore code.
 fn save_state() -> xyy_locals {
     xyy_locals {
         input: m_input_clone(),
@@ -545,6 +557,7 @@ fn save_state() -> xyy_locals {
     }
 }
 
+// WARNING: NOT IN MATH.C — Rust-only helper. See save_state above.
 fn restore_state(saved: xyy_locals) {
     m_input_set(saved.input);
     m_pos_set(saved.pos);
@@ -599,6 +612,11 @@ impl Default for MathValue {
 // MathState struct DELETED — state now lives in M_* thread_locals
 // (matching C math.c's module statics + mathevall's xyy* save/restore).
 
+// WARNING: NOT IN MATH.C — Rust-only initializer. C `mathevall()`
+// (math.c:367) takes the input as a parameter and seeds the module
+// statics inline at function entry; Rust port factors that seeding
+// out so call sites can chain `with_*` setters before invoking
+// `mathevall()`.
 /// Initialize thread_local math state from a fresh input string.
 /// Mirrors the entry-side state setup in C `mathevall()` (math.c:367).
 pub(crate) fn new(input: &str) {
@@ -623,10 +641,16 @@ pub(crate) fn new(input: &str) {
     m_error_clear();
 }
 
+// WARNING: NOT IN MATH.C — Rust-only setter. zsh C reads parameters
+// directly from the global param table on demand; the Rust port
+// caller seeds an in-memory map up front via this fn.
 pub(crate) fn with_variables(vars: HashMap<String, Mnumber>) {
     m_variables_set(vars);
 }
 
+// WARNING: NOT IN MATH.C — Rust-only setter. Parses each value as
+// numeric → `Mnumber` if possible, otherwise stores the raw string
+// for `getmathparam`'s recursive-eval path (e.g. `a="3+2"; $((a))`).
 /// Inject variables from string->string mapping (for shell integration)
 pub(crate) fn with_string_variables(vars: &HashMap<String, String>) {
     for (k, v) in vars {
@@ -643,6 +667,10 @@ pub(crate) fn with_string_variables(vars: &HashMap<String, String>) {
     }
 }
 
+// WARNING: NOT IN MATH.C — Rust-only accessor. zsh C writes back
+// to the global param table during evaluation; ShellExecutor
+// integration uses this to harvest the post-eval variables map and
+// merge it into its own `variables` table.
 /// Extract modified variables as string->string mapping (for shell integration)
 pub(crate) fn extract_string_variables() -> HashMap<String, String> {
     M_VARIABLES.with(|c| {
@@ -653,41 +681,60 @@ pub(crate) fn extract_string_variables() -> HashMap<String, String> {
     })
 }
 
+// WARNING: NOT IN MATH.C — Rust-only setopt mirror. zsh C reads
+// the option flag directly from `isset(CPRECEDENCES)` inside
+// `mathevall()`; this setter caches the bit so the evaluator
+// avoids re-reading the option tree on every token.
 pub(crate) fn with_c_precedences(enable: bool) {
     m_c_precedences_set(enable);
     m_prec_set(if enable { &C_PREC } else { &Z_PREC });
 }
 
+// WARNING: NOT IN MATH.C — Rust-only setopt mirror for FORCE_FLOAT.
 pub(crate) fn with_force_float(enable: bool) {
     m_force_float_set(enable);
 }
 
+// WARNING: NOT IN MATH.C — Rust-only setopt mirror for OCTAL_ZEROES.
 pub(crate) fn with_octal_zeroes(enable: bool) {
     m_octal_zeroes_set(enable);
 }
 
+// WARNING: NOT IN MATH.C — Rust-only setter for `$?` (last command
+// status) so the `?`-token in unary position can read it. zsh C
+// reads `lastval` directly as a global.
 pub(crate) fn with_lastval(val: i32) {
     m_lastval_set(val);
 }
 
+    // WARNING: NOT IN MATH.C — Rust-only cursor read. C uses `*ptr`
+    // directly without an fn-shaped wrapper.
     pub(crate) fn peek() -> Option<char> {
         m_input_clone()[m_pos()..].chars().next()
     }
 
+    // WARNING: NOT IN MATH.C — Rust-only cursor advance. C uses
+    // `*ptr++` directly.
     pub(crate) fn advance() -> Option<char> {
         let c = peek()?;
         m_pos_add(c.len_utf8());
         Some(c)
     }
 
+    // WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
+    // ctype.h `idigit()` macro directly.
     fn is_digit(c: char) -> bool {
         c.is_ascii_digit()
     }
 
+    // WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
+    // `iident()` / `isalpha()` macros directly.
     fn is_ident_start(c: char) -> bool {
         c.is_ascii_alphabetic() || c == '_'
     }
 
+    // WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
+    // `iident()` macro directly.
     fn is_ident(c: char) -> bool {
         c.is_ascii_alphanumeric() || c == '_'
     }
@@ -1348,7 +1395,7 @@ pub(crate) fn zzlex() -> MathTok {
 /// Push a value onto the evaluator's operand stack, with the
 /// optional lvalue name (set when the value came from a variable
 /// reference; needed for `++`/`--`/assignment-op write-back).
-pub(crate) fn push(/* removed s param */val: Mnumber, lval: Option<String>) {
+pub(crate) fn push(val: Mnumber, lval: Option<String>) {
     m_stack_push(MathValue { val, lval, pval: () });
 }
 
@@ -1373,11 +1420,20 @@ pub(crate) fn pop() -> Mnumber {
     }
     }
 
+    // WARNING: NOT IN MATH.C — Rust-only stack helper. C inlines
+    // this inside `pop()` (math.c:931) — its `noget` flag controls
+    // whether to resolve the deferred Unset+lval read; zshrs splits
+    // the two paths into separate fns so the resolved-vs-raw choice
+    // is at the call site.
     pub(crate) fn pop_with_lval() -> MathValue {
         m_stack_pop().unwrap_or_default()
     }
 
-    pub(crate) fn get_value(/* removed s param */mv: &MathValue) -> Mnumber {
+    // WARNING: NOT IN MATH.C — Rust-only value-resolver. C inlines
+    // the deferred-variable-read pattern inside `pop()` and `op()`
+    // (math.c:931, 1154); the Rust port factors it out for `bop`
+    // and `mathparse` to inspect-without-consuming.
+    pub(crate) fn get_value(mv: &MathValue) -> Mnumber {
         if mv.val.is_unset() {
             if let Some(ref name) = mv.lval {
                 return getmathparam(name);
@@ -1394,7 +1450,7 @@ pub(crate) fn pop() -> Mnumber {
 /// the param table so a miss returns `Integer(0)` and skips the
 /// type-coercion. Indirect-string mode (`a="3+2"; $((a))`) is
 /// handled by recursively evaluating the string value.
-pub(crate) fn getmathparam(/* removed s param */name: &str) -> Mnumber {
+pub(crate) fn getmathparam(name: &str) -> Mnumber {
     // Strip array subscript if present
         let base_name = if let Some(bracket) = name.find('[') {
             &name[..bracket]
@@ -1444,7 +1500,7 @@ pub(crate) fn getmathparam(/* removed s param */name: &str) -> Mnumber {
 /// SubscriptArith free fns higher up the call chain; this stub
 /// only handles the scalar case. Returns the stored value so
 /// `op` can leave it on the stack.
-pub(crate) fn setmathvar(/* removed s param */name: &str, val: Mnumber) -> Mnumber {
+pub(crate) fn setmathvar(name: &str, val: Mnumber) -> Mnumber {
     let base_name = if let Some(bracket) = name.find('[') {
         &name[..bracket]
     } else {
@@ -1461,7 +1517,7 @@ pub(crate) fn setmathvar(/* removed s param */name: &str, val: Mnumber) -> Mnumb
 /// pushes the result. Handles assignment (`OP_E2*` flag) by
 /// writing through `setmathvar` and pushing the new value back
 /// with the same lvalue so chained assigns work.
-pub(crate) fn op(/* removed s param */what: MathTok) {
+pub(crate) fn op(what: MathTok) {
         if m_error_some() {
             return;
         }
@@ -1804,7 +1860,7 @@ pub(crate) fn op(/* removed s param */what: MathTok) {
 /// top of stack and bumps `m_noeval()` for the parse-only side of
 /// `&&` / `||` / their assignment forms. The matching decrement
 /// happens after `mathparse` recurses for the RHS.
-pub(crate) fn bop(/* removed s param */tk: MathTok) {
+pub(crate) fn bop(tk: MathTok) {
         if m_stack_is_empty() {
             return;
         }
@@ -1831,6 +1887,9 @@ pub(crate) fn bop(/* removed s param */tk: MathTok) {
         }
     }
 
+    // WARNING: NOT IN MATH.C — Rust-only helper. C inlines the
+    // expression `prec[COMMA] + 1` directly in mathparse() and
+    // mathevall() everywhere it's needed (math.c:1594, 367).
     pub(crate) fn top_prec() -> u8 {
         m_prec()[MathTok::Comma as usize] + 1
     }
@@ -1912,7 +1971,7 @@ pub(crate) fn checkunary() {
     }
 
     /// Operator-precedence parser - closely follows zsh math.c mathparse()
-    pub(crate) fn mathparse(/* removed s param */pc: u8) {
+    pub(crate) fn mathparse(pc: u8) {
         if m_error_some() {
             return;
         }
@@ -2064,7 +2123,7 @@ pub(crate) fn checkunary() {
     }
 
     /// Call a math function
-    pub(crate) fn callmathfunc(/* removed s param */call: &str) -> Mnumber {
+    pub(crate) fn callmathfunc(call: &str) -> Mnumber {
         // Parse function name and args
         let paren = call.find('(').unwrap_or(call.len());
         let name = &call[..paren];
@@ -2241,6 +2300,10 @@ pub(crate) fn checkunary() {
         Ok(result)
     }
 
+// WARNING: NOT IN MATH.C — Rust-only accessor (note plural — singular
+// `getmathparam` IS in math.c:337). zsh C's caller reads the param
+// table directly post-eval; this returns a snapshot of the in-memory
+// variables map for ShellExecutor integration.
 /// Get updated variables after evaluation
 pub(crate) fn getmathparams() -> HashMap<String, Mnumber> {
     m_variables_clone()
@@ -2993,6 +3056,11 @@ impl crate::ported::exec::ShellExecutor {
 /// references — the C source's `mathexpr()` (Src/math.c) inlines this work
 /// inside the lexer, but Rust splits it out so the assignment-target arms
 /// don't get confused with read sites.
+// WARNING: NOT IN MATH.C — Rust-only string parser. C `setmathvar`
+// (math.c:972) walks the lvalue pointer left in place by zzlex,
+// so subscripted compound assigns fall out of the lexer for free.
+// zshrs sees `((a[i]+=v))` as raw text and must split it before
+// pre_resolve_array_subscripts substitutes the read value in place.
 #[inline]
 /// Detect `name[idx]=rhs` (or `name[idx]+=rhs`, etc.) at the start of
 /// an arith expression. Returns (name, idx_expr, rhs). Used by
@@ -3069,6 +3137,9 @@ pub(crate) fn parse_compound(expr: &str) -> Option<(String, String, String, Stri
     }
     Some((name, idx_expr, op.to_string(), rhs))
 }
+// WARNING: NOT IN MATH.C — Rust-only string parser. C handles
+// `++NAME[IDX]` via the lexer leaving the lvalue pointer set; the
+// Rust port pre-parses the text. See parse_compound above.
 /// Pre-increment/decrement on subscript: `++NAME[IDX]` / `--NAME[IDX]`.
 /// Returns (name, idx_expr, op) where op is "++" or "--".
 pub(crate) fn parse_pre_inc(expr: &str) -> Option<(String, String, String)> {
@@ -3123,6 +3194,8 @@ pub(crate) fn parse_pre_inc(expr: &str) -> Option<(String, String, String)> {
     }
     Some((name, idx_expr, pre_op.to_string()))
 }
+// WARNING: NOT IN MATH.C — Rust-only string parser for `NAME[IDX]=v`.
+// See parse_compound above for the rationale.
 pub(crate) fn parse_assign(expr: &str) -> Option<(String, String, String)> {
     let trimmed = expr.trim();
     let bytes = trimmed.as_bytes();
@@ -3181,6 +3254,11 @@ pub(crate) fn parse_assign(expr: &str) -> Option<(String, String, String)> {
 // ===========================================================
 
 
+// WARNING: NOT IN MATH.C — `convbase` lives in `Src/params.c:5632`
+// (called from math.c:1089). This file holds a duplicate that
+// predates the params.rs port; canonical home is
+// `crate::ported::params::convbase`. This entry is drift pending
+// cleanup; do not add new callers — use `crate::ported::params::convbase`.
 /// Format an integer in the given base (2-36) using zsh's
 /// `BASE#DIGITS` form.
 /// Port of `convbase()` from Src/utils.c (also called from
