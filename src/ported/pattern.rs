@@ -1025,24 +1025,6 @@ pub fn patcompile(pattern: &str, flags: PatFlags) -> Result<PatProg, String> {
     PatCompiler::new(pattern, flags).compile()
 }
 
-/// Compile a pattern with extended-glob / ksh-glob / case-fold opts.
-/// Same dispatch as `patcompile()` (Src/pattern.c:540) but threads
-/// the option flags through the compiler. The C source pulls the
-/// equivalent settings from the running shell's `EXTENDED_GLOB` /
-/// `KSH_GLOB` / `NOCASEMATCH` options.
-pub fn patcompile_opts(
-    pattern: &str,
-    flags: PatFlags,
-    extended_glob: bool,
-    ksh_glob: bool,
-    igncase: bool,
-) -> Result<PatProg, String> {
-    PatCompiler::new(pattern, flags)
-        .with_options(extended_glob, ksh_glob)
-        .with_igncase(igncase)
-        .compile()
-}
-
 /// Try to match a compiled pattern against a string.
 /// Port of `pattry()` from Src/pattern.c:2223 — the C source's
 /// top-level matcher entry point. Wraps `PatMatcher::try_match()`.
@@ -1072,33 +1054,13 @@ pub fn patmatch_opts(
     ksh_glob: bool,
     igncase: bool,
 ) -> bool {
-    match patcompile_opts(
-        pattern,
-        PatFlags::default(),
-        extended_glob,
-        ksh_glob,
-        igncase,
-    ) {
+    let result = PatCompiler::new(pattern, PatFlags::default())
+        .with_options(extended_glob, ksh_glob)
+        .with_igncase(igncase)
+        .compile();
+    match result {
         Ok(prog) => pattry(&prog, text),
         Err(_) => false,
-    }
-}
-
-/// Match a pattern and return capture groups if it succeeded.
-/// Convenience wrapper around `pattry` (Src/pattern.c:2223) that
-/// surfaces the per-group `(start, end)` slices the C source
-/// stores in `patbeginp[]` / `patendp[]` for `${MATCH}` /
-/// `${match[N]}` substitution.
-pub fn patmatch_captures<'a>(prog: &'a PatProg, text: &'a str) -> Option<Vec<Option<&'a str>>> {
-    let mut matcher = PatMatcher::new(prog, text);
-    if matcher.try_match() {
-        let mut captures = Vec::with_capacity(prog.npar);
-        for i in 1..=prog.npar {
-            captures.push(matcher.capture(i));
-        }
-        Some(captures)
-    } else {
-        None
     }
 }
 
@@ -1584,8 +1546,16 @@ mod tests {
 
     #[test]
     fn test_captures() {
+        // Inline of the deleted patmatch_captures helper — runs the
+        // matcher and surfaces the per-group capture slices that
+        // Src/pattern.c:patbeginp[]/patendp[] expose to ${match[N]}.
         let prog = patcompile("(foo)(bar)", PatFlags::default()).unwrap();
-        let captures = patmatch_captures(&prog, "foobar").unwrap();
+        let mut matcher = PatMatcher::new(&prog, "foobar");
+        assert!(matcher.try_match());
+        let mut captures: Vec<Option<&str>> = Vec::with_capacity(prog.npar);
+        for i in 1..=prog.npar {
+            captures.push(matcher.capture(i));
+        }
         assert_eq!(captures.len(), 2);
         assert_eq!(captures[0], Some("foo"));
         assert_eq!(captures[1], Some("bar"));
