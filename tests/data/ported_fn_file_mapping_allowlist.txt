@@ -73,3 +73,4 @@ src/ported/utils.rs::isident
 src/ported/zle/zle_refresh.rs::match_colour
 src/ported/zle/zle_word.rs::bufferwords
 src/ported/zle/zle_bindings.rs::bindkey
+src/ported/zle/zle_bindings.rs::bindlistout

@@ -168,7 +168,7 @@ pub fn bindkey(km: &mut KeymapManager, keymap: &str, seq: &str, widget: &str) ->
 /// Port of `bindkey -L` listing from Src/Zle/zle_keymap.c (the
 /// listing branch of `bin_bindkey`). Both 1-byte fast-path entries
 /// (`first[]`) and multi-byte trie entries (`multi`) are included.
-pub fn list_bindings(km: &KeymapManager, keymap: &str) -> Vec<(String, String)> {
+pub fn bindlistout(km: &KeymapManager, keymap: &str) -> Vec<(String, String)> {
     let mut bindings = Vec::new();
 
     if let Some(map) = km.keymaps.get(keymap) {
@@ -212,8 +212,8 @@ mod tests {
         // Pick a sequence unlikely to clash with the default emacs map.
         // \M-z = ESC z = bytes 0x1B 0x7A.
         assert!(bindkey(&mut km, "emacs", "\\ez", "self-insert"));
-        // Verify the binding shows up in list_bindings.
-        let listed = list_bindings(&km, "emacs");
+        // Verify the binding shows up in bindlistout.
+        let listed = bindlistout(&km, "emacs");
         let seq = format_key_sequence(&[0x1b, 0x7a]);
         assert!(
             listed.iter().any(|(k, v)| k == &seq && v == "self-insert"),
@@ -225,7 +225,7 @@ mod tests {
         let map = km.keymaps.get_mut("emacs").unwrap();
         let inner = std::sync::Arc::make_mut(map);
         inner.unbind_seq(&seq_bytes);
-        let listed = list_bindings(&km, "emacs");
+        let listed = bindlistout(&km, "emacs");
         assert!(
             !listed.iter().any(|(k, _)| k == &seq),
             "unbound sequence still present: {:?}",
