@@ -515,6 +515,17 @@ fn test_subscript_flag_k_hash_exact_match_only() {
 }
 
 #[test]
+fn test_subscript_flag_e_alone_no_search() {
+    // Per C params.c:1575 `if (!rev)`, getarg only enters the
+    // array search loop when a direction flag (r/R/i/I/k/K) is set.
+    // `(e)foo` without a direction flag does NOT match. Verified
+    // /bin/zsh -c 'arr=(foo bar); print "[${arr[(e)foo]}]"'  → []
+    let (_, output, _) =
+        run_zshrs(r#"arr=(foo bar); print "[${arr[(e)foo]}]:[${arr[(re)foo]}]""#);
+    assert_eq!(output.trim(), "[]:[foo]", "got: {output:?}");
+}
+
+#[test]
 fn test_subscript_flag_at_positional_routes_through_getarg() {
     // ${@[(I)t*]} should route through getarg with positional_params
     // as the array. Verified against /bin/zsh:

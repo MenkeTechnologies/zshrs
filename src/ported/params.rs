@@ -4510,14 +4510,14 @@ mod tests {
     fn getarg_n_flag_picks_second_exact_match() {
         // C params.c:1431-1442 + 1758 — `(en.2.)pat` picks 2nd exact match.
         let arr: Vec<String> = vec!["foo".into(), "bar".into(), "foo".into(), "baz".into()];
-        let out = getarg("(en.2.)foo", Some(&arr), None, None).expect("Some");
+        let out = getarg("(en.2.r)foo", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "foo");
     }
 
     #[test]
     fn getarg_n_flag_third_exact_match() {
         let arr: Vec<String> = vec!["a".into(), "a".into(), "a".into(), "b".into()];
-        let out = getarg("(en.3.)a", Some(&arr), None, None).expect("Some");
+        let out = getarg("(en.3.r)a", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "a");
     }
 
@@ -4542,7 +4542,7 @@ mod tests {
     fn getarg_n_flag_zero_treated_as_one() {
         // C params.c:1438-1439 — `if (!num) num = 1`.
         let arr: Vec<String> = vec!["x".into(), "y".into()];
-        let out = getarg("(en.0.)x", Some(&arr), None, None).expect("Some");
+        let out = getarg("(en.0.r)x", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "x");
     }
 
@@ -4584,7 +4584,7 @@ mod tests {
     fn getarg_b_flag_out_of_bounds_forward_returns_empty() {
         // c:1746 — beg >= len returns len+1 (empty for value-mode).
         let arr: Vec<String> = vec!["x".into()];
-        let out = getarg("(b.5.e)x", Some(&arr), None, None).expect("Some");
+        let out = getarg("(b.5.er)x", Some(&arr), None, None).expect("Some");
         assert_eq!(val_str(out), "");
     }
 
@@ -6720,6 +6720,20 @@ pub(crate) fn getarg<'a>(
         let word = flags.contains('w') || flags.contains('f');
         let _ = word;
         let return_index = flags.contains('i') || flags.contains('I');
+        // C params.c:1575 `if (!rev)` — without a direction flag
+        // (r/R/i/I/k/K), getarg does NOT enter the search loop on
+        // arrays; pat is mathevalarg'd as an integer index instead.
+        // Verified empirically: `arr=(foo bar); ${arr[(e)foo]}`
+        // returns empty in real zsh (mathevalarg fails, no element).
+        let any_search_flag = flags.contains('r')
+            || flags.contains('R')
+            || flags.contains('i')
+            || flags.contains('I')
+            || flags.contains('k')
+            || flags.contains('K');
+        if !any_search_flag {
+            return None;
+        }
         // c:1488-1491 — negative `num` flips reverse direction.
         let reverse = (flags.contains('R') || flags.contains('I')) ^ neg_num_flips;
         // C params.c:1668-1685 implicit `*` wrap fires only when
