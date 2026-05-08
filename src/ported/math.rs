@@ -2455,13 +2455,14 @@ impl crate::ported::exec::ShellExecutor {
                 // integer results).
                 if let Some((base, no_prefix)) = output_radix {
                     let n = result.to_int();
-                    let mut body = convbase(n, base);
-                    // Apply underscore digit grouping if `[#N_M]` was
-                    // given. Direct port of convbase_underscore at
-                    // src/zsh/Src/params.c:5645-5680.
-                    if let Some(group) = output_underscore {
-                        body = underscore_separate_digits(&body, group);
-                    }
+                    // Direct port of convbase_underscore at
+                    // Src/params.c:5645 — handles `[#N_M]` underscore
+                    // grouping (no-op when group is None / 0).
+                    let body = crate::ported::params::convbase_underscore(
+                        n,
+                        base,
+                        output_underscore.map(|g| g as i32).unwrap_or(0),
+                    );
                     // Direct port of convbase_ptr at
                     // src/zsh/Src/params.c:5596-5604:
                     //   isset(CBASES) && base == 16              → "0x"
@@ -2894,47 +2895,6 @@ pub(crate) fn parse_subscript_arith_assign(expr: &str) -> Option<(String, String
 // Mirror Src/math.c / Src/utils.c base+digit-grouping logic.
 // ===========================================================
 
-/// Insert `_` separators every `group` digits, counting from the end of
-/// the digit run (right-to-left). Direct port of `convbase_underscore`
-/// in src/zsh/Src/params.c:5645-5680. Operates on the digit suffix only,
-/// preserving any `BASE#` prefix and leading sign.
-/// `${(l:N::_:)num}` underscore-grouping for digits.
-/// Port of the digit-grouping code in `convbase()` (Src/utils.c)
-/// when `setopt OCTAL_ZEROES`/`PRINT_THOUSANDS` apply.
-pub fn underscore_separate_digits(s: &str, group: u32) -> String {
-    if group == 0 {
-        return s.to_string();
-    }
-    // Find where the digit run starts (after any `-`, `BASE#`, or `0x`).
-    let prefix_end = s
-        .rfind(|c: char| !c.is_ascii_alphanumeric())
-        .map(|i| i + 1)
-        .unwrap_or(0);
-    let (head, digits) = s.split_at(prefix_end);
-    if digits.len() <= group as usize {
-        return s.to_string();
-    }
-    // Walk from the end, insert `_` every `group` characters.
-    let mut out = String::with_capacity(s.len() + digits.len() / group as usize);
-    out.push_str(head);
-    let n = digits.len();
-    let first_group_len = n % group as usize;
-    let mut i = 0;
-    if first_group_len > 0 {
-        out.push_str(&digits[..first_group_len]);
-        i = first_group_len;
-    }
-    let mut first = first_group_len == 0;
-    while i < n {
-        if !first {
-            out.push('_');
-        }
-        first = false;
-        out.push_str(&digits[i..i + group as usize]);
-        i += group as usize;
-    }
-    out
-}
 
 /// Format an integer in the given base (2-36) using zsh's
 /// `BASE#DIGITS` form.

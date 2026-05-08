@@ -157,7 +157,6 @@ shell_word_end_after
 shell_word_start_before
 strwidth
 try_matcher
-underscore_separate_digits
 visible_width
 zparseopts
 zselect
