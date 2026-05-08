@@ -284,8 +284,9 @@ impl GlobMatch {
         for spec in specs {
             let cmp = match spec.sort_type {
                 GlobSort::Name => {
+                    use crate::ported::sort::{zstrcmp, flags as sf};
                     if numeric_sort {
-                        numeric_string_cmp(&self.name, &other.name)
+                        zstrcmp(&self.name, &other.name, sf::NUMERIC)
                     } else {
                         locale_aware_name_cmp(&self.name, &other.name)
                     }
@@ -339,7 +340,7 @@ impl GlobMatch {
                         .map(|s| s.as_str())
                         .unwrap_or("");
                     if numeric_sort {
-                        numeric_string_cmp(a, b)
+                        crate::ported::sort::zstrcmp(a, b, crate::ported::sort::flags::NUMERIC)
                     } else {
                         a.cmp(b)
                     }
@@ -388,57 +389,6 @@ pub fn locale_aware_name_cmp(a: &str, b: &str) -> Ordering {
         a.cmp(b)
     } else {
         primary
-    }
-}
-
-/// Numeric string comparison (for numeric glob sort)
-fn numeric_string_cmp(a: &str, b: &str) -> Ordering {
-    let mut ai = a.chars().peekable();
-    let mut bi = b.chars().peekable();
-
-    loop {
-        match (ai.peek(), bi.peek()) {
-            (None, None) => return Ordering::Equal,
-            (None, Some(_)) => return Ordering::Less,
-            (Some(_), None) => return Ordering::Greater,
-            (Some(&ac), Some(&bc)) => {
-                if ac.is_ascii_digit() && bc.is_ascii_digit() {
-                    // Compare numeric segments
-                    let mut an = String::new();
-                    let mut bn = String::new();
-                    while let Some(&c) = ai.peek() {
-                        if c.is_ascii_digit() {
-                            an.push(c);
-                            ai.next();
-                        } else {
-                            break;
-                        }
-                    }
-                    while let Some(&c) = bi.peek() {
-                        if c.is_ascii_digit() {
-                            bn.push(c);
-                            bi.next();
-                        } else {
-                            break;
-                        }
-                    }
-                    let av: u64 = an.parse().unwrap_or(0);
-                    let bv: u64 = bn.parse().unwrap_or(0);
-                    match av.cmp(&bv) {
-                        Ordering::Equal => continue,
-                        other => return other,
-                    }
-                } else {
-                    match ac.cmp(&bc) {
-                        Ordering::Equal => {
-                            ai.next();
-                            bi.next();
-                        }
-                        other => return other,
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -3520,10 +3470,11 @@ mod tests {
     }
 
     #[test]
-    fn test_numeric_string_cmp() {
-        assert_eq!(numeric_string_cmp("file1", "file2"), Ordering::Less);
-        assert_eq!(numeric_string_cmp("file10", "file2"), Ordering::Greater);
-        assert_eq!(numeric_string_cmp("file10", "file10"), Ordering::Equal);
+    fn test_zstrcmp_numeric() {
+        use crate::ported::sort::{zstrcmp, flags::NUMERIC};
+        assert_eq!(zstrcmp("file1", "file2", NUMERIC), Ordering::Less);
+        assert_eq!(zstrcmp("file10", "file2", NUMERIC), Ordering::Greater);
+        assert_eq!(zstrcmp("file10", "file10", NUMERIC), Ordering::Equal);
     }
 }
 
