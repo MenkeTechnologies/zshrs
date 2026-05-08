@@ -104,7 +104,6 @@ matches_watch_pattern
 # kept for ergonomics — zsh C inlines these or uses macros.
 unescape
 read_lines
-is_number
 get_term_width
 get_term_height
 is_special

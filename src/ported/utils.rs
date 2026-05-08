@@ -122,23 +122,6 @@ pub fn isident(s: &str) -> bool {
 
 /// Check if string looks like a number
 /// Check whether a string parses as a decimal integer.
-/// Port of the `itype_end(...IDIGIT)` walk Src/utils.c uses
-/// inside `mathevalarg()`.
-pub fn is_number(s: &str) -> bool {
-    let s = s.trim();
-    if s.is_empty() {
-        return false;
-    }
-    let s = s
-        .strip_prefix('-')
-        .or_else(|| s.strip_prefix('+'))
-        .unwrap_or(s);
-    if s.is_empty() {
-        return false;
-    }
-    s.chars().all(|c| c.is_ascii_digit())
-}
-
 /// Sleep for a given number of seconds (fractional)
 /// Sleep for a fractional number of seconds.
 /// Port of `zsleep()` from Src/utils.c — wraps `nanosleep(2)`
@@ -2337,15 +2320,6 @@ mod tests {
         assert!(isident("baz123"));
         assert!(!isident("123abc"));
         assert!(!isident("foo-bar"));
-    }
-
-    #[test]
-    fn test_is_number() {
-        assert!(is_number("123"));
-        assert!(is_number("-456"));
-        assert!(is_number("+789"));
-        assert!(!is_number("12.34"));
-        assert!(!is_number("abc"));
     }
 
     #[test]
