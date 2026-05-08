@@ -235,62 +235,6 @@ pub fn tcp_connect(host: &str, port: u16) -> io::Result<(RawFd, SocketAddr, Sock
     ))
 }
 
-/// Create a listening TCP socket
-/// Open a listening TCP socket bound to the given port.
-/// Port of the `-l` branch of `bin_ztcp()` (Src/Modules/tcp.c:342)
-/// — `socket(2)` → `bind(2)` → `listen(2, 5)`.
-pub fn tcp_listen(port: u16) -> io::Result<(RawFd, SocketAddr)> {
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
-    let listener = TcpListener::bind(addr)?;
-    let local = listener.local_addr()?;
-    let fd = listener.as_raw_fd();
-    std::mem::forget(listener);
-    Ok((fd, local))
-}
-
-/// Accept a connection on a listening socket
-/// Accept a connection on a listening socket.
-/// Port of the `-a` branch of `bin_ztcp()` (Src/Modules/tcp.c:342)
-/// — `accept(2)` with EINTR retry, returns peer + local sockaddrs.
-pub fn tcp_accept(listen_fd: RawFd) -> io::Result<(RawFd, SocketAddr, SocketAddr)> {
-    let listener = unsafe { TcpListener::from_raw_fd(listen_fd) };
-    let result = listener.accept();
-    std::mem::forget(listener);
-
-    let (stream, peer) = result?;
-    let local = stream.local_addr()?;
-    let fd = stream.as_raw_fd();
-    std::mem::forget(stream);
-    Ok((fd, local, peer))
-}
-
-/// Check if a socket has pending connections (for -t option)
-/// Probe whether a listening socket has a pending connection.
-/// Port of the `-t` branch of `bin_ztcp()` (Src/Modules/tcp.c:342)
-/// — `poll(2)` with zero timeout for non-blocking probe.
-pub fn tcp_test_accept(listen_fd: RawFd) -> io::Result<bool> {
-    #[cfg(unix)]
-    {
-        let mut pfd = libc::pollfd {
-            fd: listen_fd,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-
-        let result = unsafe { libc::poll(&mut pfd, 1, 0) };
-        if result < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(result > 0)
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        Ok(true)
-    }
-}
-
 /// Close a TCP session
 /// Close a TCP session.
 /// Port of `tcp_close()` from Src/Modules/tcp.c:295 — closes
@@ -416,7 +360,16 @@ pub fn bin_ztcp(
             }
         };
 
-        match tcp_listen(port) {
+        // Inline of the deleted tcp_listen helper (Src/Modules/tcp.c:342
+        // -l branch): bind a TCP listener on 0.0.0.0:port, leak the
+        // listener so the raw fd survives.
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
+        match TcpListener::bind(addr).and_then(|l| {
+            let local = l.local_addr()?;
+            let fd = l.as_raw_fd();
+            std::mem::forget(l);
+            Ok((fd, local))
+        }) {
             Ok((fd, local)) => {
                 let mut session = TcpSession::new(fd, TcpSessionType::Listen);
                 session.local_addr = Some(local);
@@ -457,15 +410,38 @@ pub fn bin_ztcp(
             );
         }
 
+        // Inline of the deleted tcp_test_accept helper: poll(2) zero-
+        // timeout probe (Src/Modules/tcp.c:342 -t branch).
         if options.test {
-            match tcp_test_accept(listen_fd) {
-                Ok(true) => {}
-                Ok(false) => return (1, output),
-                Err(e) => return (1, format!("ztcp: poll error: {}\n", e)),
+            #[cfg(unix)]
+            {
+                let mut pfd = libc::pollfd {
+                    fd: listen_fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                let result = unsafe { libc::poll(&mut pfd, 1, 0) };
+                if result < 0 {
+                    return (1, format!("ztcp: poll error: {}\n", io::Error::last_os_error()));
+                }
+                if result == 0 {
+                    return (1, output);
+                }
             }
         }
 
-        match tcp_accept(listen_fd) {
+        // Inline of the deleted tcp_accept helper (Src/Modules/tcp.c:342
+        // -a branch): accept(2) on a listener wrapped from raw fd, leak
+        // both listener + stream so caller-owned fds survive.
+        let listener = unsafe { TcpListener::from_raw_fd(listen_fd) };
+        let accept_result = listener.accept();
+        std::mem::forget(listener);
+        match accept_result.and_then(|(stream, peer)| {
+            let local = stream.local_addr()?;
+            let fd = stream.as_raw_fd();
+            std::mem::forget(stream);
+            Ok((fd, local, peer))
+        }) {
             Ok((fd, local, peer)) => {
                 let mut session = TcpSession::new(fd, TcpSessionType::Inbound);
                 session.local_addr = Some(local);
