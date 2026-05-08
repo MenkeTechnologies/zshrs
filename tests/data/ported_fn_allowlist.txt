@@ -115,7 +115,6 @@ split_quoted
 color_to_code
 format_function_body_zsh
 format_key_sequence
-format_limit_display
 get_all_langinfo
 get_datetime_info
 get_terminal_size
