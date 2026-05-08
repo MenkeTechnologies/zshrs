@@ -1198,6 +1198,85 @@ fn test_subscript_parity_case_patterns_and_loop_control() {
 }
 
 #[test]
+fn test_subscript_parity_string_modifiers_and_tilde() {
+    // \${s:l} / \${(L)s} lowercase, \${(U)S} uppercase, multiline
+    // string length, case glob, tilde home expansion (~ and ~/).
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        s="HELLO"
+        print "1:[${s:l}]"
+        print "2:[${(L)s}]"
+        S="hello"
+        print "3:[${(U)S}]"
+        m="line1
+line2
+line3"
+        print "len:${#m}"
+        case "abc.txt" in
+          *.txt) print "ends-txt";;
+        esac
+        "#,
+    );
+    let expected = "1:[hello]\n2:[hello]\n3:[HELLO]\nlen:17\nends-txt";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_arith_numeric_bases() {
+    // Octal (010), hex (0xff), explicit-base (2#101) arithmetic.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        print "1:[$((010))]"
+        print "2:[$((0xff))]"
+        print "3:[$((2#101))]"
+        "#,
+    );
+    let expected = "1:[10]\n2:[255]\n3:[5]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_printf_multi_arg_loop() {
+    // printf with format-string + N args (more than the format
+    // consumes) — re-applies format to remaining args.
+    let (_, output, _) = run_zshrs_parity(r#"printf "%d-%d\n" 1 2 3 4"#);
+    assert_eq!(output.trim(), "1-2\n3-4", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_setopt_sticky() {
+    // setopt / unsetopt don't disturb subsequent commands when
+    // toggled in -c mode.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        setopt nounset
+        echo "set"
+        unsetopt nounset
+        echo "unset"
+        "#,
+    );
+    assert_eq!(output.trim(), "set\nunset", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_function_self_name_and_dq_at_star() {
+    // \$0 inside a function is the function's name (not the script).
+    // \"\$@\" splats positional args to multiple args; \"\$*\" joins
+    // them with first IFS char into one.
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        fn() { print "fn0=[$0]"; }
+        fn
+        set -- a b c
+        print "DQ_at=[\"$@\"]"
+        print "DQ_star=[\"$*\"]"
+        "#,
+    );
+    let expected = "fn0=[fn]\nDQ_at=[\"a b c\"]\nDQ_star=[\"a b c\"]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
 fn test_subscript_parity_function_return_and_dynamic_scope() {
     // `return N` skips remaining body and exits with N. zsh has
     // dynamic scoping: an inner function sees its caller's locals.
