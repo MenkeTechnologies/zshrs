@@ -1043,27 +1043,6 @@ pub fn patmatch(pattern: &str, text: &str) -> bool {
     }
 }
 
-/// Compile and match with extended-glob / ksh-glob / case-fold opts.
-/// Convenience wrapper around `patcompile_opts` + `pattry` —
-/// equivalent to running the same one-liner under `setopt
-/// extended_glob ksh_glob nocasematch` in the C source.
-pub fn patmatch_opts(
-    pattern: &str,
-    text: &str,
-    extended_glob: bool,
-    ksh_glob: bool,
-    igncase: bool,
-) -> bool {
-    let result = PatCompiler::new(pattern, PatFlags::default())
-        .with_options(extended_glob, ksh_glob)
-        .with_igncase(igncase)
-        .compile();
-    match result {
-        Ok(prog) => pattry(&prog, text),
-        Err(_) => false,
-    }
-}
-
 /// Try to match pattern against a length-limited string Port of `pattrylen()` from Src/pattern.c:2236
 pub fn pattrylen(prog: &PatProg, s: &str, len: usize) -> bool {
     let truncated = if len < s.len() { &s[..len] } else { s };
@@ -1531,9 +1510,19 @@ mod tests {
 
     #[test]
     fn test_case_insensitive() {
-        assert!(patmatch_opts("Hello", "HELLO", true, true, true));
-        assert!(patmatch_opts("Hello", "hello", true, true, true));
-        assert!(!patmatch_opts("Hello", "HELLO", true, true, false));
+        // Inline patcompile_opts + pattry equivalent of the deleted
+        // patmatch_opts wrapper. Mirrors zsh's `setopt nocasematch`
+        // path through patcompile + pattry.
+        let compile = |pattern: &str, igncase: bool| -> PatProg {
+            PatCompiler::new(pattern, PatFlags::default())
+                .with_options(true, true)
+                .with_igncase(igncase)
+                .compile()
+                .unwrap()
+        };
+        assert!(pattry(&compile("Hello", true), "HELLO"));
+        assert!(pattry(&compile("Hello", true), "hello"));
+        assert!(!pattry(&compile("Hello", false), "HELLO"));
     }
 
     #[test]
