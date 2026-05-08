@@ -136,9 +136,34 @@ pub fn match_str(
         }]);
     }
 
-    // Try matchers
+    // Try matchers — case-insensitive / substring / partial-word
+    // tests inlined per zsh's compmatch.c which dispatches the M flag
+    // mask inline in every matcher loop. No helper extracted in C.
     for matcher in matchers {
-        if try_matcher(line, word, matcher) {
+        let hit = if matcher.flags.case_insensitive {
+            line.to_lowercase().contains(&word.to_lowercase())
+        } else if matcher.flags.substring {
+            line.contains(word)
+        } else if matcher.flags.partial_word {
+            // Match word parts: "fb" matches "foobar" at word boundaries.
+            let mut wi = word.chars();
+            let mut wc = wi.next();
+            let mut all_consumed = false;
+            for lc in line.chars() {
+                if let Some(w) = wc {
+                    if lc.eq_ignore_ascii_case(&w) {
+                        wc = wi.next();
+                    }
+                } else {
+                    all_consumed = true;
+                    break;
+                }
+            }
+            all_consumed || wc.is_none()
+        } else {
+            false
+        };
+        if hit {
             return Some(vec![CompLine {
                 line: line.to_string(),
                 word: word.to_string(),
@@ -149,32 +174,6 @@ pub fn match_str(
     }
 
     None
-}
-
-fn try_matcher(line: &str, word: &str, matcher: &CompMatcher) -> bool {
-    if matcher.flags.case_insensitive {
-        line.to_lowercase().contains(&word.to_lowercase())
-    } else if matcher.flags.substring {
-        line.contains(word)
-    } else if matcher.flags.partial_word {
-        // Match word parts: "fb" matches "foobar" at word boundaries
-        let li = line.chars().peekable();
-        let mut wi = word.chars();
-        let mut wc = wi.next();
-
-        for lc in li {
-            if let Some(w) = wc {
-                if lc.eq_ignore_ascii_case(&w) {
-                    wc = wi.next();
-                }
-            } else {
-                return true;
-            }
-        }
-        wc.is_none()
-    } else {
-        false
-    }
 }
 
 /// Find every byte-range in `line` where `word`'s next character was
