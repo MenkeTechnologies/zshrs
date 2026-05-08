@@ -70,7 +70,4 @@ locale_aware_name_cmp
 format_function_body_zsh
 magic_assoc_keys
 
-parse_subscript_arith_assign
-parse_subscript_arith_compound
-parse_subscript_arith_pre_inc
 zformat_recurse

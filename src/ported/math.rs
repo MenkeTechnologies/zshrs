@@ -2119,10 +2119,10 @@ impl crate::ported::exec::ShellExecutor {
         // lvalue identity across the operator. Without this,
         // pre_resolve_array_subscripts substitutes the value first
         // and `5++` errors "lvalue required".
-        let compound = parse_subscript_arith_compound(&expr)
+        let compound = SubscriptArith::parse_compound(&expr)
             .map(|(n, i, o, r)| (n, i, o, r, false))
             .or_else(|| {
-                parse_subscript_arith_pre_inc(&expr).map(|(n, i, o)| (n, i, o, String::new(), true))
+                SubscriptArith::parse_pre_inc(&expr).map(|(n, i, o)| (n, i, o, String::new(), true))
             });
         if let Some((name, idx_expr, op, rhs, is_pre)) = compound {
             let is_assoc = self.assoc_arrays.contains_key(&name);
@@ -2236,7 +2236,7 @@ impl crate::ported::exec::ShellExecutor {
         // Subscripted-array arith assignment: `((a[i]=expr))`. Without
         // this special case, pre_resolve_array_subscripts would
         // substitute a[i] with its current value (`0=42` → invalid).
-        if let Some((name, idx_expr, rhs)) = parse_subscript_arith_assign(&expr) {
+        if let Some((name, idx_expr, rhs)) = SubscriptArith::parse_assign(&expr) {
             let idx_val = self.eval_arith_expr(&idx_expr);
             let rhs_val = self.eval_arith_expr(&rhs);
             if let Some(arr) = self.arrays.get_mut(&name) {
@@ -2489,7 +2489,7 @@ impl crate::ported::exec::ShellExecutor {
         // pre_resolve_array_subscripts pass below substitutes a[i]
         // with the current value (e.g. 0=42 → invalid). Detect the
         // assignment LHS first, evaluate the RHS, write to arrays.
-        if let Some((name, idx_expr, rhs)) = parse_subscript_arith_assign(&expr_expanded) {
+        if let Some((name, idx_expr, rhs)) = SubscriptArith::parse_assign(&expr_expanded) {
             // Evaluate the index (could itself be an expression).
             let idx_val = self.eval_arith_expr(&idx_expr);
             // Evaluate the RHS.
@@ -2642,6 +2642,15 @@ impl crate::ported::exec::ShellExecutor {
 /// rule as fusevm's `Op::Exec`. Without this, a builtin like `echo
 /// ${arr[@]}` with `arr=(x y z)` would receive a single space-joined arg
 /// `"x y z"` instead of three separate args.
+/// Subscript-arith parser namespace. Holds the three pre-resolve parsers
+/// `eval_arith_expr` runs against an expression before substituting array
+/// references — the C source's `mathexpr()` (Src/math.c) inlines this work
+/// inside the lexer, but Rust splits it out so the assignment-target arms
+/// don't get confused with read sites.
+pub(crate) struct SubscriptArith;
+
+impl SubscriptArith {
+
 #[inline]
 /// Detect `name[idx]=rhs` (or `name[idx]+=rhs`, etc.) at the start of
 /// an arith expression. Returns (name, idx_expr, rhs). Used by
@@ -2650,7 +2659,7 @@ impl crate::ported::exec::ShellExecutor {
 /// turning the expression into `0=42` which is invalid.
 /// Parse `name[idx]OP rhs?` where OP is `++`, `--`, `+=`, `-=`, etc.
 /// Returns (name, idx_expr, op, rhs). For `++`/`--`, rhs is empty.
-pub(crate) fn parse_subscript_arith_compound(expr: &str) -> Option<(String, String, String, String)> {
+pub(crate) fn parse_compound(expr: &str) -> Option<(String, String, String, String)> {
     let trimmed = expr.trim();
     let bytes = trimmed.as_bytes();
     if bytes.is_empty() || !(bytes[0] == b'_' || bytes[0].is_ascii_alphabetic()) {
@@ -2720,7 +2729,7 @@ pub(crate) fn parse_subscript_arith_compound(expr: &str) -> Option<(String, Stri
 }
 /// Pre-increment/decrement on subscript: `++NAME[IDX]` / `--NAME[IDX]`.
 /// Returns (name, idx_expr, op) where op is "++" or "--".
-pub(crate) fn parse_subscript_arith_pre_inc(expr: &str) -> Option<(String, String, String)> {
+pub(crate) fn parse_pre_inc(expr: &str) -> Option<(String, String, String)> {
     let trimmed = expr.trim();
     let (after_op, pre_op) = if let Some(s) = trimmed.strip_prefix("++") {
         (s, "++")
@@ -2772,7 +2781,7 @@ pub(crate) fn parse_subscript_arith_pre_inc(expr: &str) -> Option<(String, Strin
     }
     Some((name, idx_expr, pre_op.to_string()))
 }
-pub(crate) fn parse_subscript_arith_assign(expr: &str) -> Option<(String, String, String)> {
+pub(crate) fn parse_assign(expr: &str) -> Option<(String, String, String)> {
     let trimmed = expr.trim();
     let bytes = trimmed.as_bytes();
     if bytes.is_empty() || !(bytes[0] == b'_' || bytes[0].is_ascii_alphabetic()) {
@@ -2821,6 +2830,8 @@ pub(crate) fn parse_subscript_arith_assign(expr: &str) -> Option<(String, String
     let rhs = trimmed[k + 1..].trim().to_string();
     Some((name, idx_expr, rhs))
 }
+
+}  // impl SubscriptArith
 // END moved-from-exec-rs (free fns)
 
 // ===========================================================
