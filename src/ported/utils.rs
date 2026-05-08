@@ -1036,13 +1036,6 @@ pub fn xsymlinks(s: &str) -> std::io::Result<String> {
     }
 }
 
-/// Read file lines
-pub fn read_lines(path: &str) -> Option<Vec<String>> {
-    std::fs::read_to_string(path)
-        .ok()
-        .map(|s| s.lines().map(|l| l.to_string()).collect())
-}
-
 /// Create directory
 pub fn mkdir(path: &str) -> bool {
     std::fs::create_dir(path).is_ok()
