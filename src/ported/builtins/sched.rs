@@ -213,18 +213,53 @@ pub fn schedgetfn(s: &str) -> Result<u64, &'static str> {
         let hours: i64 = s[..colon_pos].parse().map_err(|_| "bad time specifier")?;
         let after_hours = &s[colon_pos + 1..];
 
+        // Inline am/pm extraction — Src/Builtins/sched.c parses
+        // "HH[:MM[:SS]][am|pm]" inline in parse_time_spec without a
+        // helper. Trailing 'p' / 'pm' / mid-string 'p' = PM; 'a' / 'am'
+        // / mid-string 'a' = AM; otherwise None. The two split sites
+        // (after second colon for SS, after first for MM) each repeat
+        // the index-find and slice; mirror C's inline structure here.
         let (mut hours, minutes, seconds, pm) = if let Some(second_colon) = after_hours.find(':') {
             let m: i64 = after_hours[..second_colon]
                 .parse()
                 .map_err(|_| "bad time specifier")?;
             let sec_str = &after_hours[second_colon + 1..];
-
-            let (s_str, pm) = extract_ampm(sec_str);
-            let s: i64 = s_str.parse().map_err(|_| "bad time specifier")?;
+            let sec_lower = sec_str.to_lowercase();
+            let (num_str, pm) = if sec_lower.ends_with('p')
+                || sec_lower.starts_with("pm")
+                || sec_lower.contains('p')
+            {
+                let idx = sec_lower.find('p').unwrap_or(sec_str.len());
+                (&sec_str[..idx], Some(true))
+            } else if sec_lower.ends_with('a')
+                || sec_lower.starts_with("am")
+                || sec_lower.contains('a')
+            {
+                let idx = sec_lower.find('a').unwrap_or(sec_str.len());
+                (&sec_str[..idx], Some(false))
+            } else {
+                (sec_str, None)
+            };
+            let s: i64 = num_str.parse().map_err(|_| "bad time specifier")?;
             (hours, m, s, pm)
         } else {
-            let (m_str, pm) = extract_ampm(after_hours);
-            let m: i64 = m_str.parse().map_err(|_| "bad time specifier")?;
+            let s_lower = after_hours.to_lowercase();
+            let (num_str, pm) = if s_lower.ends_with('p')
+                || s_lower.starts_with("pm")
+                || s_lower.contains('p')
+            {
+                let idx = s_lower.find('p').unwrap_or(after_hours.len());
+                (&after_hours[..idx], Some(true))
+            } else if s_lower.ends_with('a')
+                || s_lower.starts_with("am")
+                || s_lower.contains('a')
+            {
+                let idx = s_lower.find('a').unwrap_or(after_hours.len());
+                (&after_hours[..idx], Some(false))
+            } else {
+                (after_hours, None)
+            };
+            let m: i64 = num_str.parse().map_err(|_| "bad time specifier")?;
             (hours, m, 0, pm)
         };
 
@@ -244,19 +279,6 @@ pub fn schedgetfn(s: &str) -> Result<u64, &'static str> {
         Ok(target)
     } else {
         s.parse::<u64>().map_err(|_| "bad time specifier")
-    }
-}
-
-fn extract_ampm(s: &str) -> (&str, Option<bool>) {
-    let s_lower = s.to_lowercase();
-    if s_lower.ends_with('p') || s_lower.starts_with("pm") || s_lower.contains('p') {
-        let idx = s.to_lowercase().find('p').unwrap_or(s.len());
-        (&s[..idx], Some(true))
-    } else if s_lower.ends_with('a') || s_lower.starts_with("am") || s_lower.contains('a') {
-        let idx = s.to_lowercase().find('a').unwrap_or(s.len());
-        (&s[..idx], Some(false))
-    } else {
-        (s, None)
     }
 }
 
