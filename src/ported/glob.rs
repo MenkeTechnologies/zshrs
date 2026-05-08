@@ -103,6 +103,19 @@ pub enum RangeOp {
     Greater,
 }
 
+impl RangeOp {
+    /// Apply the relational operator to (value, target). Direct port
+    /// of the inline `<`/`>`/`=` dispatch in zsh's qualifier handlers
+    /// (Src/glob.c, near line 827 qgetnum).
+    pub fn matches(&self, value: u64, target: u64) -> bool {
+        match self {
+            RangeOp::Less => value < target,
+            RangeOp::Equal => value == target,
+            RangeOp::Greater => value > target,
+        }
+    }
+}
+
 /// A glob qualifier function
 #[derive(Debug, Clone)]
 /// One glob qualifier.
@@ -1299,9 +1312,9 @@ impl GlobState {
                     SizeUnit::Gigabytes => size.div_ceil(1073741824),
                     SizeUnit::Terabytes => size.div_ceil(1099511627776),
                 };
-                compare_range(scaled, *value, *op)
+                op.matches(scaled, *value)
             }
-            Qualifier::Links { value, op } => compare_range(meta.nlink(), *value, *op),
+            Qualifier::Links { value, op } => op.matches(meta.nlink(), *value),
             Qualifier::Atime { value, unit, op } => {
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -1318,7 +1331,7 @@ impl GlobState {
                     TimeUnit::Weeks => diff / 604800,
                     TimeUnit::Months => diff / 2592000,
                 };
-                compare_range(scaled as u64, *value as u64, *op)
+                op.matches(scaled as u64, *value as u64)
             }
             Qualifier::Mtime { value, unit, op } => {
                 let now = SystemTime::now()
@@ -1336,7 +1349,7 @@ impl GlobState {
                     TimeUnit::Weeks => diff / 604800,
                     TimeUnit::Months => diff / 2592000,
                 };
-                compare_range(scaled as u64, *value as u64, *op)
+                op.matches(scaled as u64, *value as u64)
             }
             Qualifier::Ctime { value, unit, op } => {
                 let now = SystemTime::now()
@@ -1354,7 +1367,7 @@ impl GlobState {
                     TimeUnit::Weeks => diff / 604800,
                     TimeUnit::Months => diff / 2592000,
                 };
-                compare_range(scaled as u64, *value as u64, *op)
+                op.matches(scaled as u64, *value as u64)
             }
             Qualifier::Mode { yes, no } => {
                 let m = mode & 0o7777;
@@ -1632,14 +1645,6 @@ pub fn file_type(mode: u32) -> char {
         '='
     } else {
         '?'
-    }
-}
-
-fn compare_range(value: u64, target: u64, op: RangeOp) -> bool {
-    match op {
-        RangeOp::Less => value < target,
-        RangeOp::Equal => value == target,
-        RangeOp::Greater => value > target,
     }
 }
 
