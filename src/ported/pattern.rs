@@ -1950,55 +1950,6 @@ pub(crate) fn parse_pattern_flags_full(
 // ===========================================================
 
 
-/// Expand POSIX character-class patterns (`[[:alpha:]]`, `[[:digit:]]`,
-/// etc.) to enumerated char ranges that the underlying `glob` crate
-/// understands. Each known class translates to its standard ASCII
-/// range; unknown classes pass through unchanged.
-pub(crate) fn expand_posix_char_classes(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        if chars[i] == '[' && i + 2 < chars.len() && chars[i + 1] == ':' {
-            // Find `:]` close
-            let mut j = i + 2;
-            while j + 1 < chars.len() && !(chars[j] == ':' && chars[j + 1] == ']') {
-                j += 1;
-            }
-            if j + 1 < chars.len() && chars[j] == ':' && chars[j + 1] == ']' {
-                let name: String = chars[i + 2..j].iter().collect();
-                let range = match name.as_str() {
-                    "alpha" => "a-zA-Z",
-                    "alnum" => "a-zA-Z0-9",
-                    "digit" => "0-9",
-                    "xdigit" => "0-9a-fA-F",
-                    "lower" => "a-z",
-                    "upper" => "A-Z",
-                    "space" => " \\t\\n\\r\\v\\f",
-                    "blank" => " \\t",
-                    "cntrl" => "\\x00-\\x1f\\x7f",
-                    "print" => "\\x20-\\x7e",
-                    "graph" => "\\x21-\\x7e",
-                    "punct" => "!-/:-@\\[-`{-~",
-                    _ => "",
-                };
-                if !range.is_empty() {
-                    // Replace `[:class:]` (NOT including the outer `[`/`]`)
-                    // — caller's outer brackets remain. Output form:
-                    // `[a-zA-Z]` for `[[:alpha:]]`, `[a-zA-Zfoo]` for
-                    // `[[:alpha:]foo]`.
-                    out.push_str(range);
-                    i = j + 2;
-                    continue;
-                }
-            }
-        }
-        out.push(chars[i]);
-        i += 1;
-    }
-    out
-}
-
 /// Apply a `${var/pat/repl}` style pattern replacement to a single
 /// scalar string. `op`: 0=first-match, 1=all (`//`), 2=anchored prefix
 /// (`/#`), 3=anchored suffix (`/%`). Mirrors the runtime
