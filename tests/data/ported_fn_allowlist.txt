@@ -115,7 +115,6 @@ split_quoted
 color_to_code
 format_function_body_zsh
 format_key_sequence
-get_all_langinfo
 get_tied_param
 is_emacs_word_char
 is_vi_word_char
