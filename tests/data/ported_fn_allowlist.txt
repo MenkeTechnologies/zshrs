@@ -87,7 +87,6 @@ get_term_height
 shell_quote
 zsh_split_z
 shell_quote_value
-quote_string
 
 color_to_code
 format_function_body_zsh
