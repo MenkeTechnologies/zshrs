@@ -1918,13 +1918,6 @@ pub fn mathevali(expr: &str) -> Result<i64, String> {
     matheval(expr).map(|n| n.to_int())
 }
 
-/// Evaluate and return float
-/// Math evaluator that coerces the result to float.
-/// zshrs convenience — the C source uses inline `MN_FLOAT` checks\n/// after `matheval()` instead of a dedicated float wrapper.
-pub fn mathevalf(expr: &str) -> Result<f64, String> {
-    matheval(expr).map(|n| n.to_float())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1986,13 +1979,13 @@ mod tests {
     fn test_power() {
         assert_eq!(mathevali("2 ** 10").unwrap(), 1024);
         assert_eq!(mathevali("3 ** 3").unwrap(), 27);
-        assert!((mathevalf("2.0 ** 0.5").unwrap() - std::f64::consts::SQRT_2).abs() < 0.0001);
+        assert!((matheval("2.0 ** 0.5").map(|n| n.to_float()).unwrap() - std::f64::consts::SQRT_2).abs() < 0.0001);
     }
 
     #[test]
     fn test_float() {
-        assert!((mathevalf("3.14 + 0.01").unwrap() - 3.15).abs() < 0.0001);
-        assert!((mathevalf("1.5 * 2.0").unwrap() - 3.0).abs() < 0.0001);
+        assert!((matheval("3.14 + 0.01").map(|n| n.to_float()).unwrap() - 3.15).abs() < 0.0001);
+        assert!((matheval("1.5 * 2.0").map(|n| n.to_float()).unwrap() - 3.0).abs() < 0.0001);
     }
 
     #[test]
@@ -2049,18 +2042,18 @@ mod tests {
 
     #[test]
     fn test_functions() {
-        assert!((mathevalf("sqrt(4)").unwrap() - 2.0).abs() < 0.0001);
-        assert!((mathevalf("sin(0)").unwrap()).abs() < 0.0001);
-        assert!((mathevalf("cos(0)").unwrap() - 1.0).abs() < 0.0001);
-        assert!((mathevalf("abs(-5)").unwrap() - 5.0).abs() < 0.0001);
-        assert!((mathevalf("floor(3.7)").unwrap() - 3.0).abs() < 0.0001);
-        assert!((mathevalf("ceil(3.2)").unwrap() - 4.0).abs() < 0.0001);
+        assert!((matheval("sqrt(4)").map(|n| n.to_float()).unwrap() - 2.0).abs() < 0.0001);
+        assert!((matheval("sin(0)").map(|n| n.to_float()).unwrap()).abs() < 0.0001);
+        assert!((matheval("cos(0)").map(|n| n.to_float()).unwrap() - 1.0).abs() < 0.0001);
+        assert!((matheval("abs(-5)").map(|n| n.to_float()).unwrap() - 5.0).abs() < 0.0001);
+        assert!((matheval("floor(3.7)").map(|n| n.to_float()).unwrap() - 3.0).abs() < 0.0001);
+        assert!((matheval("ceil(3.2)").map(|n| n.to_float()).unwrap() - 4.0).abs() < 0.0001);
     }
 
     #[test]
     fn test_special_values() {
-        assert!(mathevalf("Inf").unwrap().is_infinite());
-        assert!(mathevalf("NaN").unwrap().is_nan());
+        assert!(matheval("Inf").map(|n| n.to_float()).unwrap().is_infinite());
+        assert!(matheval("NaN").map(|n| n.to_float()).unwrap().is_nan());
     }
 
     #[test]

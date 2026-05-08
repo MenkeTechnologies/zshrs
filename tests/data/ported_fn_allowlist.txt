@@ -123,7 +123,6 @@ is_valid_identifier
 is_vi_word_char
 lookup_builtin
 magic_assoc_keys
-mathevalf
 normalize_option_name
 parse_key_sequence
 parse_subscript_arith_assign
