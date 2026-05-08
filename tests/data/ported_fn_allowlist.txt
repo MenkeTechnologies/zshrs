@@ -60,8 +60,6 @@ resolve_port
 # compare). zsh C inlines this work in `pattern.c::patcompile`,
 # `pattern.c::patmatch`, and `glob.c`'s sort comparators.
 parse_pattern_flags_full
-extract_numeric_ranges
-replace_numeric_ranges_with_star
 locale_aware_name_cmp
 
 # watch.rs Rust-side utmp/utmpx readers + format helpers — zsh C

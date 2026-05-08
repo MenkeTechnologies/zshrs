@@ -366,10 +366,7 @@ pub use crate::ported::params::{VarAttr, VarKind};
 
 // Pattern helpers moved to src/ported/pattern.rs.
 #[allow(unused_imports)]
-pub(crate) use crate::ported::pattern::{
-    extract_numeric_ranges, replace_numeric_ranges_with_star,
-    NumericRange,
-};
+pub(crate) use crate::ported::pattern::NumericRange;
 
 // `impl VarAttr` moved to src/ported/params.rs.
 
