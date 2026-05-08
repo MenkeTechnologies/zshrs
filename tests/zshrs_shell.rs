@@ -548,6 +548,166 @@ fn test_subscript_flag_at_positional_routes_through_getarg() {
 }
 
 // ---------------------------------------------------------------------------
+// Subscript parity: bulk empirical parity tests against /bin/zsh 5.9.
+// Each test is a snapshot of one or more `${name[...]}` forms whose
+// expected output was captured by running the same script under
+// /bin/zsh on macOS aarch64. These pin the surface so any future
+// getarg / subscript-dispatch regression surfaces immediately.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_subscript_parity_array_math_expr() {
+    // Math expressions inside subscripts.
+    let (_, output, _) = run_zshrs(
+        r#"
+        arr=(alpha beta gamma delta)
+        n=3
+        print "1:${arr[$((n-1))]}"
+        print "2:${arr[$n-1]}"
+        print "3:${arr[$((1+2))]}"
+        print "4:${arr[$((-n))]}"
+        print "5:${arr[$((n*2-3))]}"
+        print "6:${arr[n]}"
+        "#,
+    );
+    let expected = "1:beta\n2:beta\n3:gamma\n4:beta\n5:gamma\n6:gamma";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_array_negative_and_oob() {
+    // Out-of-bounds and zero-index edge cases.
+    let (_, output, _) = run_zshrs(
+        r#"
+        arr=(a b c d e)
+        print "1:[${arr[0]}]"
+        print "2:[${arr[-99]}]"
+        print "3:[${arr[99]}]"
+        print "4:[${arr[-1]}]"
+        print "5:[${arr[-2]}]"
+        "#,
+    );
+    let expected = "1:[]\n2:[]\n3:[]\n4:[e]\n5:[d]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_array_slice_forms() {
+    // Slice forms `${arr[start,end]}` including reversed and OOB.
+    let (_, output, _) = run_zshrs(
+        r#"
+        arr2=(one two three)
+        print "1:[${arr2[2,99]}]"
+        print "2:[${arr2[-2,-1]}]"
+        print "3:[${arr2[3,2]}]"
+        "#,
+    );
+    let expected = "1:[two three]\n2:[two three]\n3:[]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_scalar_slice_basic() {
+    // Scalar `${s[N]}` and `${s[N,M]}` 1-based char indexing.
+    let (_, output, _) = run_zshrs(
+        r#"
+        s="abcdefgh"
+        print "1:[${s[1]}]"
+        print "2:[${s[2,4]}]"
+        print "3:[${s[-3]}]"
+        print "4:[${s[-3,-1]}]"
+        print "5:[${s[5,99]}]"
+        empty=""
+        print "6:[${empty[1]}]"
+        "#,
+    );
+    let expected = "1:[a]\n2:[bcd]\n3:[f]\n4:[fgh]\n5:[efgh]\n6:[]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_scalar_slice_multibyte() {
+    // Multibyte (UTF-8) scalar slicing — should index by char, not byte.
+    let (_, output, _) = run_zshrs(
+        r#"
+        mb="αβγδε"
+        print "1:[${mb[1]}]"
+        print "2:[${mb[2,3]}]"
+        print "3:[${#mb}]"
+        emoji="🎉Hello🌟World🎊"
+        print "4:[${emoji[1]}]"
+        print "5:[${emoji[1,1]}]"
+        print "6:[${emoji[(i)World]}]"
+        print "7:[${#emoji}]"
+        "#,
+    );
+    let expected = "1:[α]\n2:[βγ]\n3:[5]\n4:[🎉]\n5:[🎉]\n6:[8]\n7:[13]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_assoc_quoted_key_with_space() {
+    // Hash key with whitespace — bare `[bar baz]` works with no quoting.
+    let (_, output, _) = run_zshrs(
+        r#"
+        typeset -A h=(foo 1 "bar baz" 2)
+        print "1:[${h[bar baz]}]"
+        print "2:[${h[(k)bar baz]}]"
+        "#,
+    );
+    let expected = "1:[2]\n2:[2]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_nested_subscript_in_subscript() {
+    // `${arr[${keys[2]}]}` — inner subscript expands first;
+    // outer treats result ("b") as math eval → 0 → empty.
+    let (_, output, _) = run_zshrs(
+        r#"
+        arr=(one two three)
+        keys=(a b c)
+        print "[${arr[${keys[2]}]}]"
+        "#,
+    );
+    assert_eq!(output.trim(), "[]", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_assoc_at_splice_sorted() {
+    // `${(o)${(v)h}}` and `${(o)${(k)h}}` — sort-then-flatten flag
+    // pipeline gives deterministic output even though hash iteration
+    // order is implementation-defined.
+    let (_, output, _) = run_zshrs(
+        r#"
+        typeset -A h=(a 1 b 2 c 3)
+        print "${(o)${(v)h}}"
+        print "${(o)${(k)h}}"
+        "#,
+    );
+    assert_eq!(output.trim(), "1 2 3\na b c", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_variable_expansion_in_subscript() {
+    // Subscripts with variable expansion — `${arr[(r)$key]}` and
+    // `${h[$n]}` / `${h[(k)$n]}` all resolve identically.
+    let (_, output, _) = run_zshrs(
+        r#"
+        arr=(foo bar baz)
+        key="bar"
+        print "1:[${arr[(r)$key]}]"
+        typeset -A h=(alpha 1 beta 2)
+        n="alpha"
+        print "2:[${h[$n]}]"
+        print "3:[${h[(k)$n]}]"
+        "#,
+    );
+    let expected = "1:[bar]\n2:[1]\n3:[1]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
 // `typeset -A` two-statement assoc init: declare then array-literal-assign
 // ---------------------------------------------------------------------------
 
