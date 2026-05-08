@@ -4,80 +4,74 @@
 
 use std::collections::HashMap;
 
-/// Convert an attribute spec to its full ANSI escape sequence.
-/// Port of `convertattr()` from Src/Modules/hlgroup.c:40 with
-/// `sgr=0` — emits each ANSI code wrapped in `\e[...m`. The
-/// `none`/`reset` short forms map onto SGR 0 the same way the C
-/// source's table does.
-pub fn convertattr(attr: &str) -> String {
-    let mut result = String::new();
-
-    for part in attr.split(',') {
-        let part = part.trim();
-        match part {
-            "none" | "reset" => result.push_str("\x1b[0m"),
-            "bold" => result.push_str("\x1b[1m"),
-            "dim" | "faint" => result.push_str("\x1b[2m"),
-            "italic" => result.push_str("\x1b[3m"),
-            "underline" => result.push_str("\x1b[4m"),
-            "blink" => result.push_str("\x1b[5m"),
-            "reverse" | "inverse" => result.push_str("\x1b[7m"),
-            "hidden" | "invisible" => result.push_str("\x1b[8m"),
-            "strikethrough" => result.push_str("\x1b[9m"),
-            s if s.starts_with("fg=") => {
-                if let Some(color) = color_to_code(&s[3..], true) {
-                    result.push_str(&color);
+/// Convert an attribute spec to either a full `\e[...m` escape
+/// stream (`sgr = false`) or a bare `;`-joined SGR parameter
+/// string (`sgr = true`).
+///
+/// Port of `convertattr()` from Src/Modules/hlgroup.c:40 — the C
+/// source takes the same `sgr` flag and switches between the
+/// `${.zle.esc[name]}` and `${.zle.sgr[name]}` output shapes.
+pub fn convertattr(attr: &str, sgr: bool) -> String {
+    if sgr {
+        let mut codes = Vec::new();
+        for part in attr.split(',') {
+            let part = part.trim();
+            match part {
+                "none" | "reset" => codes.push("0".to_string()),
+                "bold" => codes.push("1".to_string()),
+                "dim" | "faint" => codes.push("2".to_string()),
+                "italic" => codes.push("3".to_string()),
+                "underline" => codes.push("4".to_string()),
+                "blink" => codes.push("5".to_string()),
+                "reverse" | "inverse" => codes.push("7".to_string()),
+                "hidden" | "invisible" => codes.push("8".to_string()),
+                "strikethrough" => codes.push("9".to_string()),
+                s if s.starts_with("fg=") => {
+                    if let Some(code) = color_to_sgr_code(&s[3..], true) {
+                        codes.push(code);
+                    }
                 }
-            }
-            s if s.starts_with("bg=") => {
-                if let Some(color) = color_to_code(&s[3..], false) {
-                    result.push_str(&color);
+                s if s.starts_with("bg=") => {
+                    if let Some(code) = color_to_sgr_code(&s[3..], false) {
+                        codes.push(code);
+                    }
                 }
+                _ => {}
             }
-            _ => {}
         }
-    }
-
-    result
-}
-
-/// Convert an attribute spec to a bare SGR parameter string.
-/// SGR-only variant of `convertattr` (Src/Modules/hlgroup.c:40)
-/// with `sgr=1` — returns the `;`-joined parameter list without
-/// the `\e[`/`m` framing, matching `${.zle.sgr[name]}`.
-pub fn attr_to_sgr(attr: &str) -> String {
-    let mut codes = Vec::new();
-
-    for part in attr.split(',') {
-        let part = part.trim();
-        match part {
-            "none" | "reset" => codes.push("0".to_string()),
-            "bold" => codes.push("1".to_string()),
-            "dim" | "faint" => codes.push("2".to_string()),
-            "italic" => codes.push("3".to_string()),
-            "underline" => codes.push("4".to_string()),
-            "blink" => codes.push("5".to_string()),
-            "reverse" | "inverse" => codes.push("7".to_string()),
-            "hidden" | "invisible" => codes.push("8".to_string()),
-            "strikethrough" => codes.push("9".to_string()),
-            s if s.starts_with("fg=") => {
-                if let Some(code) = color_to_sgr_code(&s[3..], true) {
-                    codes.push(code);
-                }
-            }
-            s if s.starts_with("bg=") => {
-                if let Some(code) = color_to_sgr_code(&s[3..], false) {
-                    codes.push(code);
-                }
-            }
-            _ => {}
+        if codes.is_empty() {
+            "0".to_string()
+        } else {
+            codes.join(";")
         }
-    }
-
-    if codes.is_empty() {
-        "0".to_string()
     } else {
-        codes.join(";")
+        let mut result = String::new();
+        for part in attr.split(',') {
+            let part = part.trim();
+            match part {
+                "none" | "reset" => result.push_str("\x1b[0m"),
+                "bold" => result.push_str("\x1b[1m"),
+                "dim" | "faint" => result.push_str("\x1b[2m"),
+                "italic" => result.push_str("\x1b[3m"),
+                "underline" => result.push_str("\x1b[4m"),
+                "blink" => result.push_str("\x1b[5m"),
+                "reverse" | "inverse" => result.push_str("\x1b[7m"),
+                "hidden" | "invisible" => result.push_str("\x1b[8m"),
+                "strikethrough" => result.push_str("\x1b[9m"),
+                s if s.starts_with("fg=") => {
+                    if let Some(color) = color_to_code(&s[3..], true) {
+                        result.push_str(&color);
+                    }
+                }
+                s if s.starts_with("bg=") => {
+                    if let Some(color) = color_to_code(&s[3..], false) {
+                        result.push_str(&color);
+                    }
+                }
+                _ => {}
+            }
+        }
+        result
     }
 }
 
@@ -226,7 +220,7 @@ impl HlGroups {
     pub fn get_esc(&self, name: &str) -> String {
         self.groups
             .get(name)
-            .map(|attr| convertattr(attr))
+            .map(|attr| convertattr(attr, false))
             .unwrap_or_default()
     }
 
@@ -237,7 +231,7 @@ impl HlGroups {
     pub fn get_sgr(&self, name: &str) -> String {
         self.groups
             .get(name)
-            .map(|attr| attr_to_sgr(attr))
+            .map(|attr| convertattr(attr, true))
             .unwrap_or_else(|| "0".to_string())
     }
 
@@ -268,7 +262,7 @@ impl HlGroups {
     pub fn to_hash_esc(&self) -> HashMap<String, String> {
         self.groups
             .iter()
-            .map(|(k, v)| (k.clone(), convertattr(v)))
+            .map(|(k, v)| (k.clone(), convertattr(v, false)))
             .collect()
     }
 
@@ -278,7 +272,7 @@ impl HlGroups {
     pub fn to_hash_sgr(&self) -> HashMap<String, String> {
         self.groups
             .iter()
-            .map(|(k, v)| (k.clone(), attr_to_sgr(v)))
+            .map(|(k, v)| (k.clone(), convertattr(v, true)))
             .collect()
     }
 }

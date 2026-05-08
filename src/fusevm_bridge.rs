@@ -2198,11 +2198,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // returns an empty string (PM_UNSET).
                         return Some(Value::str(""));
                     }
-                    let converted = if sgr {
-                        crate::hlgroup::attr_to_sgr(&attr)
-                    } else {
-                        crate::hlgroup::convertattr(&attr)
-                    };
+                    let converted = crate::hlgroup::convertattr(&attr, sgr);
                     Some(Value::str(converted))
                 }
                 _ => None,
