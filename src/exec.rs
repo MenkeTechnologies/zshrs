@@ -46,7 +46,7 @@ pub(crate) use crate::ported::params::getarrvalue;
 #[allow(unused_imports)]
 pub(crate) use crate::ported::pattern::{
     approximate_match, extendedglob_match, ksh_extglob_body_to_regex, parse_numeric_range,
-    parse_pattern_flags, parse_pattern_flags_full,
+    parse_pattern_flags_full,
 };
 #[allow(unused_imports)]
 // drift imports removed: apply_subst_modifier, slice_scalar, strip_match_op

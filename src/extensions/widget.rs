@@ -2660,7 +2660,7 @@ fn widget_copy_prev_shell_word(zle: &mut Zle) {
     // the previous shell-word (quoted spans intact) at the cursor —
     // uses our shell-word boundary helper from src/zle/zle_word.
     let n = zle.mult.max(1) as usize;
-    let words = super::zle_word::shell_words_for_test(&zle.zleline[..zle.zlell]);
+    let words = super::zle_word::shell_words(&zle.zleline[..zle.zlell]);
     if words.is_empty() {
         return;
     }
