@@ -287,7 +287,7 @@ impl GlobMatch {
                     if numeric_sort {
                         zstrcmp(&self.name, &other.name, sf::NUMERIC)
                     } else {
-                        locale_aware_name_cmp(&self.name, &other.name)
+                        gmatchcmp(&self.name, &other.name)
                     }
                 }
                 GlobSort::Depth => {
@@ -362,10 +362,14 @@ impl GlobMatch {
 /// folds case before comparing — so `Aaa bbb Ccc` sorts in declaration
 /// order rather than ASCII (uppercase < lowercase). Fallback to byte
 /// compare under C/POSIX locale to mirror `LC_ALL=C zsh` behavior.
-/// Locale-aware filename compare for `gmatchcmp`.
-/// Port of the `strcoll(3)` path inside `gmatchcmp()`
-/// (Src/glob.c:936) when sorting by name.
-pub fn locale_aware_name_cmp(a: &str, b: &str) -> Ordering {
+/// Locale-aware filename compare. Port of `gmatchcmp()` from
+/// Src/glob.c:936 — the qsort comparator the `glob -O` order step
+/// uses. The C variant takes `(Gmatch, Gmatch)` and dispatches via
+/// the active sort spec; this Rust port narrows to the GS_NAME +
+/// non-numeric arm (locale-aware string compare via `strcoll(3)`),
+/// since the other arms (size, mtime, depth) are dispatched
+/// elsewhere at the call site.
+pub fn gmatchcmp(a: &str, b: &str) -> Ordering {
     let locale_is_c = {
         let lc_all = std::env::var("LC_ALL").unwrap_or_default();
         let lc_collate = std::env::var("LC_COLLATE").unwrap_or_default();
@@ -4414,12 +4418,12 @@ impl crate::ported::exec::ShellExecutor {
             // globs, sort by BASENAME to match zsh's locale-aware
             // case-folded output.
             if glob_pattern.contains("**/") {
-                expanded.sort_by(|a, b| crate::glob::locale_aware_name_cmp(a, b));
+                expanded.sort_by(|a, b| crate::glob::gmatchcmp(a, b));
             } else {
                 expanded.sort_by(|a, b| {
                     let an = a.rsplit('/').next().unwrap_or(a);
                     let bn = b.rsplit('/').next().unwrap_or(b);
-                    crate::glob::locale_aware_name_cmp(an, bn)
+                    crate::glob::gmatchcmp(an, bn)
                 });
             }
         }
@@ -5990,9 +5994,6 @@ pub fn parsecomplist() {}
 /// pattern parser. Shim.
 pub fn parsepat() {}
 
-/// Port of `gmatchcmp()` from Src/glob.c:936 — `qsort` comparator
-/// for `glob -O` ordering. Shim.
-pub fn gmatchcmp() -> std::cmp::Ordering { std::cmp::Ordering::Equal }
 
 /// Port of `insert_glob_match()` from Src/glob.c:1125 — insert
 /// one glob match into the result list. Shim.
