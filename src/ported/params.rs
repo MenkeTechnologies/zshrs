@@ -4619,6 +4619,40 @@ mod tests {
         // R + neg → r → single first match.
         assert_eq!(val_str(out), "1");
     }
+
+    #[test]
+    fn getarg_hash_b_flag_skips_first_n_entries() {
+        // C params.c:1740-1742 — `b<NUM>` skips first N-1 entries
+        // before searching. Hash iteration is insertion order.
+        let mut h: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+        h.insert("a".into(), "1".into());
+        h.insert("b".into(), "1".into());
+        h.insert("c".into(), "1".into());
+        // beg=2 (parsed 3-1) → skip first 2, scan from "c" onward.
+        let out = getarg("(b.3.ei)1", None, Some(&h)).expect("Some");
+        assert_eq!(val_str(out), "c");
+    }
+
+    #[test]
+    fn getarg_hash_b_flag_with_R_collects_from_offset() {
+        // R returns all matches; b skips first beg entries first.
+        let mut h: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+        h.insert("a".into(), "1".into());
+        h.insert("b".into(), "1".into());
+        h.insert("c".into(), "1".into());
+        let out = getarg("(b.2.eI)1", None, Some(&h)).expect("Some");
+        // beg=1, return_all=I → walk from "b" onward, all matching keys.
+        assert_eq!(val_str(out), "b c");
+    }
+
+    #[test]
+    fn getarg_hash_b_flag_out_of_bounds_returns_empty() {
+        // c:1746 — beg >= len with single-match → empty.
+        let mut h: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+        h.insert("a".into(), "1".into());
+        let out = getarg("(b.5.e)1", None, Some(&h)).expect("Some");
+        assert_eq!(val_str(out), "");
+    }
 }
 
 // ===========================================================
@@ -6472,9 +6506,23 @@ pub(crate) fn getarg<'a>(
         // neg → return_all; R/I/K + neg → single-match again).
         let is_uppercase = flags.contains('I') || flags.contains('R') || flags.contains('K');
         let return_all = is_uppercase ^ neg_num_flips;
+
+        // c:1740-1747 — `b<NUM>` start offset on the values array. The
+        // hash is iterated in insertion order (IndexMap); skip first
+        // `beg` entries before counting matches.
+        let len = map.len() as i64;
+        let mut start = beg;
+        if start < 0 {
+            start += len;
+        }
+        if !return_all && start >= len {
+            return Some(GetargOut::Value(Value::str("")));
+        }
+        let skip = if start < 0 { 0 } else { start as usize };
+
         if return_all {
             let mut out: Vec<String> = Vec::new();
-            for (k, v) in map.iter() {
+            for (k, v) in map.iter().skip(skip) {
                 let target = if key_match { k.as_str() } else { v.as_str() };
                 let hit = if exact {
                     target == pat
@@ -6497,7 +6545,7 @@ pub(crate) fn getarg<'a>(
         }
         // c:1753 — `!--num` skips matches until the Nth.
         let mut remaining = num;
-        for (k, v) in map.iter() {
+        for (k, v) in map.iter().skip(skip) {
             let target = if key_match { k.as_str() } else { v.as_str() };
             let hit = if exact {
                 target == pat
