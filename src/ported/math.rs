@@ -596,152 +596,86 @@ impl Default for MathValue {
     }
 }
 
-/// Per-evaluation locals — `mathevall()` (Src/math.c:367) keeps
-/// these as save-and-restore stack locals (`xyyval`, `xyylval`,
-/// etc.) around the recursive call into `mathparse()`. zsh C has
-/// no struct named after this set of locals; the Rust port collects
-/// them in one bag so the free fns can pass them through one slot
-/// instead of 19. `pub(crate)` so the internal pub(crate) free fns
-/// can name the type without visibility-leak warnings. Not part of
-/// the public math API — outside callers use
-/// `matheval`/`mathevali`/`Mnumber`.
-pub(crate) struct MathState<'a> {
-    input: &'a str,
-    pos: usize,
-    /// Byte position in `input` where the most recently lexed token began
-    /// (after whitespace skip). Used to format zsh-style error pointers
-    /// like `bad math expression: operand expected at `*'` for orphan
-    /// binary operators — zsh's error retains the input pointer at the
-    /// start of the bad operator, so the message includes the operator
-    /// (and any trailing input) rather than the post-consumption position.
-    tok_start: usize,
-    yyval: Mnumber,
-    yylval: String,
-    stack: Vec<MathValue>,
-    mtok: MathTok,
-    unary: bool,
-    noeval: i32,
-    lastbase: i32,
-    prec: &'static [u8; TOKCOUNT],
-    c_precedences: bool,
-    force_float: bool,
-    octal_zeroes: bool,
-    variables: HashMap<String, Mnumber>,
-    /// Raw string values for variables whose contents aren't a plain number.
-    /// zsh recursively evaluates these as arith expressions on lookup so
-    /// `a="3+2"; $((a))` produces 5. Without this, MathState saw `a` as
-    /// unset → 0.
-    string_variables: HashMap<String, String>,
-    lastval: i32,
-    pid: i64,
-    error: Option<String>,
+// MathState struct DELETED — state now lives in M_* thread_locals
+// (matching C math.c's module statics + mathevall's xyy* save/restore).
+
+/// Initialize thread_local math state from a fresh input string.
+/// Mirrors the entry-side state setup in C `mathevall()` (math.c:367).
+pub(crate) fn new(input: &str) {
+    m_input_set(input.to_string());
+    m_pos_set(0);
+    m_tok_start_set(0);
+    m_yyval_set(Mnumber::integer(0));
+    m_yylval_set(String::new());
+    M_STACK.with(|c| { c.borrow_mut().clear(); });
+    m_mtok_set(MathTok::Eoi);
+    m_unary_set(true);
+    m_noeval_set(0);
+    m_lastbase_set(-1);
+    m_prec_set(&Z_PREC);
+    m_c_precedences_set(false);
+    m_force_float_set(false);
+    m_octal_zeroes_set(false);
+    m_variables_set(HashMap::new());
+    m_string_variables_set(HashMap::new());
+    m_lastval_set(0);
+    m_pid_set(std::process::id() as i64);
+    m_error_clear();
 }
 
-pub(crate) fn new<'a>(input: &'a str) -> MathState<'a> {
-        // Initialize thread_local state from the input. The returned
-        // MathState struct is a vestigial marker — actual state lives
-        // in the M_* thread_locals.
-        m_input_set(input.to_string());
-        m_pos_set(0);
-        m_tok_start_set(0);
-        m_yyval_set(Mnumber::integer(0));
-        m_yylval_set(String::new());
-        M_STACK.with(|c| { c.borrow_mut().clear(); });
-        m_mtok_set(MathTok::Eoi);
-        m_unary_set(true);
-        m_noeval_set(0);
-        m_lastbase_set(-1);
-        m_prec_set(&Z_PREC);
-        m_c_precedences_set(false);
-        m_force_float_set(false);
-        m_octal_zeroes_set(false);
-        m_variables_set(HashMap::new());
-        m_string_variables_set(HashMap::new());
-        m_lastval_set(0);
-        m_pid_set(std::process::id() as i64);
-        m_error_clear();
-        MathState {
-            input,
-            pos: 0,
-            tok_start: 0,
-            yyval: Mnumber::integer(0),
-            yylval: String::new(),
-            stack: Vec::new(),
-            mtok: MathTok::Eoi,
-            unary: true,
-            noeval: 0,
-            lastbase: -1,
-            prec: &Z_PREC,
-            c_precedences: false,
-            force_float: false,
-            octal_zeroes: false,
-            variables: HashMap::new(),
-            string_variables: HashMap::new(),
-            lastval: 0,
-            pid: 0,
-            error: None,
+pub(crate) fn with_variables(vars: HashMap<String, Mnumber>) {
+    m_variables_set(vars);
+}
+
+/// Inject variables from string->string mapping (for shell integration)
+pub(crate) fn with_string_variables(vars: &HashMap<String, String>) {
+    for (k, v) in vars {
+        if let Ok(i) = v.parse::<i64>() {
+            m_variables_insert(k.clone(), Mnumber::integer(i));
+        } else if let Ok(f) = v.parse::<f64>() {
+            m_variables_insert(k.clone(), Mnumber::float(f));
+        } else if !v.is_empty() {
+            // Non-numeric string — keep raw so getmathparam can
+            // recursively evaluate it as an arith expression.
+            // zsh: `a="3+2"; $((a))` returns 5.
+            m_string_variables_insert(k.clone(), v.clone());
         }
     }
+}
 
-    pub(crate) fn with_variables<'a>(s: MathState<'a>, vars: HashMap<String, Mnumber>) -> MathState<'a> {
-        m_variables_set(vars);
-        s
-    }
+/// Extract modified variables as string->string mapping (for shell integration)
+pub(crate) fn extract_string_variables() -> HashMap<String, String> {
+    M_VARIABLES.with(|c| {
+        c.borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.format_zsh()))
+            .collect()
+    })
+}
 
-    /// Inject variables from string->string mapping (for shell integration)
-    pub(crate) fn with_string_variables<'a>(mut s: MathState<'a>, vars: &HashMap<String, String>) -> MathState<'a> {
-        for (k, v) in vars {
-            if let Ok(i) = v.parse::<i64>() {
-                m_variables_insert(k.clone(), Mnumber::integer(i));
-            } else if let Ok(f) = v.parse::<f64>() {
-                m_variables_insert(k.clone(), Mnumber::float(f));
-            } else if !v.is_empty() {
-                // Non-numeric string — keep raw so getmathparam can
-                // recursively evaluate it as an arith expression.
-                // zsh: `a="3+2"; $((a))` returns 5.
-                m_string_variables_insert(k.clone(), v.clone());
-            }
-        }
-        s
-    }
+pub(crate) fn with_c_precedences(enable: bool) {
+    m_c_precedences_set(enable);
+    m_prec_set(if enable { &C_PREC } else { &Z_PREC });
+}
 
-    /// Extract modified variables as string->string mapping (for shell integration)
-    pub(crate) fn extract_string_variables<'a>(_s: &MathState<'a>) -> HashMap<String, String> {
-        M_VARIABLES.with(|c| {
-            c.borrow()
-                .iter()
-                .map(|(k, v)| (k.clone(), v.format_zsh()))
-                .collect()
-        })
-    }
+pub(crate) fn with_force_float(enable: bool) {
+    m_force_float_set(enable);
+}
 
-    pub(crate) fn with_c_precedences<'a>(mut s: MathState<'a>, enable: bool) -> MathState<'a> {
-        m_c_precedences_set(enable);
-        m_prec_set(if enable { &C_PREC } else { &Z_PREC });
-        s
-    }
+pub(crate) fn with_octal_zeroes(enable: bool) {
+    m_octal_zeroes_set(enable);
+}
 
-    pub(crate) fn with_force_float<'a>(mut s: MathState<'a>, enable: bool) -> MathState<'a> {
-        m_force_float_set(enable);
-        s
-    }
+pub(crate) fn with_lastval(val: i32) {
+    m_lastval_set(val);
+}
 
-    pub(crate) fn with_octal_zeroes<'a>(mut s: MathState<'a>, enable: bool) -> MathState<'a> {
-        m_octal_zeroes_set(enable);
-        s
-    }
-
-    pub(crate) fn with_lastval<'a>(s: MathState<'a>, val: i32) -> MathState<'a> {
-        m_lastval_set(val);
-        s
-    }
-
-    pub(crate) fn peek(s: &MathState<'_>) -> Option<char> {
+    pub(crate) fn peek() -> Option<char> {
         m_input_clone()[m_pos()..].chars().next()
     }
 
-    pub(crate) fn advance(s: &mut MathState<'_>) -> Option<char> {
-        let c = peek(s)?;
+    pub(crate) fn advance() -> Option<char> {
+        let c = peek()?;
         m_pos_add(c.len_utf8());
         Some(c)
     }
@@ -767,27 +701,27 @@ pub(crate) fn new<'a>(input: &'a str) -> MathState<'a> {
 /// underscore digit-grouping. Mirrors C's `zstrtol_underscore()`
 /// for greedy base parsing (consume valid digits only, leave the
 /// rest as the next token).
-pub(crate) fn lexconstant(s: &mut MathState<'_>) -> MathTok {
+pub(crate) fn lexconstant() -> MathTok {
         let _start = m_pos();
         let mut is_neg = false;
 
         // Handle leading minus for unary context
-        if peek(s) == Some('-') {
+        if peek() == Some('-') {
             is_neg = true;
-            advance(s);
+            advance();
         }
 
         // Check for hex/binary/octal
-        if peek(s) == Some('0') {
-            advance(s);
-            match peek(s).map(|c| c.to_ascii_lowercase()) {
+        if peek() == Some('0') {
+            advance();
+            match peek().map(|c| c.to_ascii_lowercase()) {
                 Some('x') => {
                     // Hex: 0xFF
-                    advance(s);
+                    advance();
                     let hex_start = m_pos();
-                    while let Some(c) = peek(s) {
+                    while let Some(c) = peek() {
                         if c.is_ascii_hexdigit() || c == '_' {
-                            advance(s);
+                            advance();
                         } else {
                             break;
                         }
@@ -807,11 +741,11 @@ pub(crate) fn lexconstant(s: &mut MathState<'_>) -> MathTok {
                 }
                 Some('b') => {
                     // Binary: 0b1010
-                    advance(s);
+                    advance();
                     let bin_start = m_pos();
-                    while let Some(c) = peek(s) {
+                    while let Some(c) = peek() {
                         if c == '0' || c == '1' || c == '_' {
-                            advance(s);
+                            advance();
                         } else {
                             break;
                         }
@@ -849,12 +783,12 @@ pub(crate) fn lexconstant(s: &mut MathState<'_>) -> MathTok {
                         // Check if this looks like octal
                         let oct_start = m_pos();
                         let mut is_octal = true;
-                        while let Some(c) = peek(s) {
+                        while let Some(c) = peek() {
                             if c.is_ascii_digit() || c == '_' {
                                 if ('8'..='9').contains(&c) {
                                     is_octal = false;
                                 }
-                                advance(s);
+                                advance();
                             } else if c == '.' || c == 'e' || c == 'E' || c == '#' {
                                 is_octal = false;
                                 break;
@@ -886,35 +820,35 @@ pub(crate) fn lexconstant(s: &mut MathState<'_>) -> MathTok {
 
         // Parse decimal integer or float
         let num_start = m_pos();
-        while let Some(c) = peek(s) {
+        while let Some(c) = peek() {
             if is_digit(c) || c == '_' {
-                advance(s);
+                advance();
             } else {
                 break;
             }
         }
 
         // Check for float
-        if peek(s) == Some('.') || peek(s) == Some('e') || peek(s) == Some('E') {
+        if peek() == Some('.') || peek() == Some('e') || peek() == Some('E') {
             // Float
-            if peek(s) == Some('.') {
-                advance(s);
-                while let Some(c) = peek(s) {
+            if peek() == Some('.') {
+                advance();
+                while let Some(c) = peek() {
                     if is_digit(c) || c == '_' {
-                        advance(s);
+                        advance();
                     } else {
                         break;
                     }
                 }
             }
-            if peek(s) == Some('e') || peek(s) == Some('E') {
-                advance(s);
-                if peek(s) == Some('+') || peek(s) == Some('-') {
-                    advance(s);
+            if peek() == Some('e') || peek() == Some('E') {
+                advance();
+                if peek() == Some('+') || peek() == Some('-') {
+                    advance();
                 }
-                while let Some(c) = peek(s) {
+                while let Some(c) = peek() {
                     if is_digit(c) || c == '_' {
-                        advance(s);
+                        advance();
                     } else {
                         break;
                     }
@@ -930,8 +864,8 @@ pub(crate) fn lexconstant(s: &mut MathState<'_>) -> MathTok {
         }
 
         // Check for base#value syntax (e.g., 16#FF)
-        if peek(s) == Some('#') {
-            advance(s);
+        if peek() == Some('#') {
+            advance();
             let base_str: String = m_input_clone()[num_start..m_pos() - 1]
                 .chars()
                 .filter(|&c| c != '_')
@@ -970,9 +904,9 @@ pub(crate) fn lexconstant(s: &mut MathState<'_>) -> MathTok {
             // no valid digits follow.
             let mut val: i64 = 0;
             let base_i64 = base as i64;
-            while let Some(c) = peek(s) {
+            while let Some(c) = peek() {
                 if c == '_' {
-                    advance(s);
+                    advance();
                     continue;
                 }
                 let digit_val: Option<u32> = if c.is_ascii_digit() {
@@ -989,7 +923,7 @@ pub(crate) fn lexconstant(s: &mut MathState<'_>) -> MathTok {
                     break;
                 }
                 val = val.saturating_mul(base_i64).saturating_add(d as i64);
-                advance(s);
+                advance();
             }
             m_yyval_set(if m_force_float() {
                 Mnumber::float(if is_neg { -(val as f64) } else { val as f64 })
@@ -1021,12 +955,12 @@ pub(crate) fn lexconstant(s: &mut MathState<'_>) -> MathTok {
 /// `[base]value` / `[#base]EXPR` output-radix prefixes, char
 /// constants (`#x`, `##varname`), and dispatches numeric literals
 /// to `lexconstant()`.
-pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
+pub(crate) fn zzlex() -> MathTok {
         m_yyval_set(Mnumber::integer(0));
 
         loop {
             let pre_pos = m_pos();
-            let c = match advance(s) {
+            let c = match advance() {
                 Some(c) => c,
                 None => {
                     m_tok_start_set(pre_pos);
@@ -1043,16 +977,16 @@ pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
 
             match c {
                 '+' => {
-                    if peek(s) == Some('+') {
-                        advance(s);
+                    if peek() == Some('+') {
+                        advance();
                         return if m_unary() {
                             MathTok::PrePlus
                         } else {
                             MathTok::PostPlus
                         };
                     }
-                    if peek(s) == Some('=') {
-                        advance(s);
+                    if peek() == Some('=') {
+                        advance();
                         return MathTok::PlusEq;
                     }
                     return if m_unary() {
@@ -1063,24 +997,24 @@ pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
                 }
 
                 '-' => {
-                    if peek(s) == Some('-') {
-                        advance(s);
+                    if peek() == Some('-') {
+                        advance();
                         return if m_unary() {
                             MathTok::PreMinus
                         } else {
                             MathTok::PostMinus
                         };
                     }
-                    if peek(s) == Some('=') {
-                        advance(s);
+                    if peek() == Some('=') {
+                        advance();
                         return MathTok::MinusEq;
                     }
                     if m_unary() {
                         // Check if followed by digit for negative number
-                        if let Some(next) = peek(s) {
+                        if let Some(next) = peek() {
                             if is_digit(next) || next == '.' {
                                 m_pos_sub(1); // Put back the -
-                                return lexconstant(s);
+                                return lexconstant();
                             }
                         }
                         return MathTok::UMinus;
@@ -1092,8 +1026,8 @@ pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
                 ')' => return MathTok::OutPar,
 
                 '!' => {
-                    if peek(s) == Some('=') {
-                        advance(s);
+                    if peek() == Some('=') {
+                        advance();
                         return MathTok::Neq;
                     }
                     return MathTok::Not;
@@ -1102,120 +1036,120 @@ pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
                 '~' => return MathTok::Comp,
 
                 '&' => {
-                    if peek(s) == Some('&') {
-                        advance(s);
-                        if peek(s) == Some('=') {
-                            advance(s);
+                    if peek() == Some('&') {
+                        advance();
+                        if peek() == Some('=') {
+                            advance();
                             return MathTok::DAndEq;
                         }
                         return MathTok::DAnd;
                     }
-                    if peek(s) == Some('=') {
-                        advance(s);
+                    if peek() == Some('=') {
+                        advance();
                         return MathTok::AndEq;
                     }
                     return MathTok::And;
                 }
 
                 '|' => {
-                    if peek(s) == Some('|') {
-                        advance(s);
-                        if peek(s) == Some('=') {
-                            advance(s);
+                    if peek() == Some('|') {
+                        advance();
+                        if peek() == Some('=') {
+                            advance();
                             return MathTok::DOrEq;
                         }
                         return MathTok::DOr;
                     }
-                    if peek(s) == Some('=') {
-                        advance(s);
+                    if peek() == Some('=') {
+                        advance();
                         return MathTok::OrEq;
                     }
                     return MathTok::Or;
                 }
 
                 '^' => {
-                    if peek(s) == Some('^') {
-                        advance(s);
-                        if peek(s) == Some('=') {
-                            advance(s);
+                    if peek() == Some('^') {
+                        advance();
+                        if peek() == Some('=') {
+                            advance();
                             return MathTok::DXorEq;
                         }
                         return MathTok::DXor;
                     }
-                    if peek(s) == Some('=') {
-                        advance(s);
+                    if peek() == Some('=') {
+                        advance();
                         return MathTok::XorEq;
                     }
                     return MathTok::Xor;
                 }
 
                 '*' => {
-                    if peek(s) == Some('*') {
-                        advance(s);
-                        if peek(s) == Some('=') {
-                            advance(s);
+                    if peek() == Some('*') {
+                        advance();
+                        if peek() == Some('=') {
+                            advance();
                             return MathTok::PowerEq;
                         }
                         return MathTok::Power;
                     }
-                    if peek(s) == Some('=') {
-                        advance(s);
+                    if peek() == Some('=') {
+                        advance();
                         return MathTok::MulEq;
                     }
                     return MathTok::Mul;
                 }
 
                 '/' => {
-                    if peek(s) == Some('=') {
-                        advance(s);
+                    if peek() == Some('=') {
+                        advance();
                         return MathTok::DivEq;
                     }
                     return MathTok::Div;
                 }
 
                 '%' => {
-                    if peek(s) == Some('=') {
-                        advance(s);
+                    if peek() == Some('=') {
+                        advance();
                         return MathTok::ModEq;
                     }
                     return MathTok::Mod;
                 }
 
                 '<' => {
-                    if peek(s) == Some('<') {
-                        advance(s);
-                        if peek(s) == Some('=') {
-                            advance(s);
+                    if peek() == Some('<') {
+                        advance();
+                        if peek() == Some('=') {
+                            advance();
                             return MathTok::ShLeftEq;
                         }
                         return MathTok::ShLeft;
                     }
-                    if peek(s) == Some('=') {
-                        advance(s);
+                    if peek() == Some('=') {
+                        advance();
                         return MathTok::Leq;
                     }
                     return MathTok::Les;
                 }
 
                 '>' => {
-                    if peek(s) == Some('>') {
-                        advance(s);
-                        if peek(s) == Some('=') {
-                            advance(s);
+                    if peek() == Some('>') {
+                        advance();
+                        if peek() == Some('=') {
+                            advance();
                             return MathTok::ShRightEq;
                         }
                         return MathTok::ShRight;
                     }
-                    if peek(s) == Some('=') {
-                        advance(s);
+                    if peek() == Some('=') {
+                        advance();
                         return MathTok::Geq;
                     }
                     return MathTok::Gre;
                 }
 
                 '=' => {
-                    if peek(s) == Some('=') {
-                        advance(s);
+                    if peek() == Some('=') {
+                        advance();
                         return MathTok::Deq;
                     }
                     return MathTok::Eq;
@@ -1241,26 +1175,26 @@ pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
 
                 '[' => {
                     // [base]value or output format [#base]
-                    if is_digit(peek(s).unwrap_or('\0')) {
+                    if is_digit(peek().unwrap_or('\0')) {
                         // [base]value
                         let base_start = m_pos();
-                        while let Some(c) = peek(s) {
+                        while let Some(c) = peek() {
                             if is_digit(c) {
-                                advance(s);
+                                advance();
                             } else {
                                 break;
                             }
                         }
-                        if peek(s) != Some(']') {
+                        if peek() != Some(']') {
                             m_error_set("bad base syntax".to_string());
                             return MathTok::Eoi;
                         }
                         let base_str: String = m_input_clone()[base_start..m_pos()].to_string();
                         let base: u32 = base_str.parse().unwrap_or(10);
-                        advance(s); // skip ]
+                        advance(); // skip ]
 
-                        if !is_digit(peek(s).unwrap_or('\0'))
-                            && !is_ident_start(peek(s).unwrap_or('\0'))
+                        if !is_digit(peek().unwrap_or('\0'))
+                            && !is_ident_start(peek().unwrap_or('\0'))
                         {
                             m_error_set("bad base syntax".to_string());
                             return MathTok::Eoi;
@@ -1277,9 +1211,9 @@ pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
                         }
 
                         let val_start = m_pos();
-                        while let Some(c) = peek(s) {
+                        while let Some(c) = peek() {
                             if c.is_ascii_alphanumeric() {
-                                advance(s);
+                                advance();
                             } else {
                                 break;
                             }
@@ -1291,13 +1225,13 @@ pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
                         return MathTok::Num;
                     }
                     // Output format specifier [#base] - skip for now
-                    if peek(s) == Some('#') {
-                        while let Some(c) = peek(s) {
+                    if peek() == Some('#') {
+                        while let Some(c) = peek() {
                             if c == ']' {
-                                advance(s);
+                                advance();
                                 break;
                             }
-                            advance(s);
+                            advance();
                         }
                         continue;
                     }
@@ -1307,18 +1241,18 @@ pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
 
                 '#' => {
                     // Character code: #\x or ##string
-                    if peek(s) == Some('\\') || peek(s) == Some('#') {
-                        advance(s);
-                        if let Some(ch) = advance(s) {
+                    if peek() == Some('\\') || peek() == Some('#') {
+                        advance();
+                        if let Some(ch) = advance() {
                             m_yyval_set(Mnumber::integer(ch as i64));
                             return MathTok::Num;
                         }
                     }
                     // #varname - get first char value
                     let id_start = m_pos();
-                    while let Some(c) = peek(s) {
+                    while let Some(c) = peek() {
                         if is_ident(c) {
-                            advance(s);
+                            advance();
                         } else {
                             break;
                         }
@@ -1332,17 +1266,17 @@ pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
 
                 _ => {
                     if is_digit(c)
-                        || (c == '.' && is_digit(peek(s).unwrap_or('\0')))
+                        || (c == '.' && is_digit(peek().unwrap_or('\0')))
                     {
                         m_pos_sub(c.len_utf8());
-                        return lexconstant(s);
+                        return lexconstant();
                     }
 
                     if is_ident_start(c) {
                         let id_start = m_pos() - c.len_utf8();
-                        while let Some(c) = peek(s) {
+                        while let Some(c) = peek() {
                             if is_ident(c) {
-                                advance(s);
+                                advance();
                             } else {
                                 break;
                             }
@@ -1362,13 +1296,13 @@ pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
                         }
 
                         // Check for function call
-                        if peek(s) == Some('(') {
+                        if peek() == Some('(') {
                             // Skip to closing paren
                             let func_start = id_start;
-                            advance(s); // (
+                            advance(); // (
                             let mut depth = 1;
-                            while let Some(c) = peek(s) {
-                                advance(s);
+                            while let Some(c) = peek() {
+                                advance();
                                 if c == '(' {
                                     depth += 1;
                                 } else if c == ')' {
@@ -1383,11 +1317,11 @@ pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
                         }
 
                         // Check for array subscript
-                        if peek(s) == Some('[') {
-                            advance(s); // [
+                        if peek() == Some('[') {
+                            advance(); // [
                             let mut depth = 1;
-                            while let Some(c) = peek(s) {
-                                advance(s);
+                            while let Some(c) = peek() {
+                                advance();
                                 if c == '[' {
                                     depth += 1;
                                 } else if c == ']' {
@@ -1414,7 +1348,7 @@ pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
 /// Push a value onto the evaluator's operand stack, with the
 /// optional lvalue name (set when the value came from a variable
 /// reference; needed for `++`/`--`/assignment-op write-back).
-pub(crate) fn push(s: &mut MathState<'_>, val: Mnumber, lval: Option<String>) {
+pub(crate) fn push(/* removed s param */val: Mnumber, lval: Option<String>) {
     m_stack_push(MathValue { val, lval, pval: () });
 }
 
@@ -1425,11 +1359,11 @@ pub(crate) fn push(s: &mut MathState<'_>, val: Mnumber, lval: Option<String>) {
 /// passes a `noget` flag to skip the resolution; the Rust port
 /// always resolves since callers that want the raw lvalue use
 /// `pop_with_lval` instead.
-pub(crate) fn pop(s: &mut MathState<'_>) -> Mnumber {
+pub(crate) fn pop() -> Mnumber {
     if let Some(mv) = m_stack_pop() {
         if mv.val.is_unset() {
             if let Some(ref name) = mv.lval {
-                return getmathparam(s, name);
+                return getmathparam(name);
             }
         }
         mv.val
@@ -1439,14 +1373,14 @@ pub(crate) fn pop(s: &mut MathState<'_>) -> Mnumber {
     }
     }
 
-    pub(crate) fn pop_with_lval(s: &mut MathState<'_>) -> MathValue {
+    pub(crate) fn pop_with_lval() -> MathValue {
         m_stack_pop().unwrap_or_default()
     }
 
-    pub(crate) fn get_value(s: &MathState<'_>, mv: &MathValue) -> Mnumber {
+    pub(crate) fn get_value(/* removed s param */mv: &MathValue) -> Mnumber {
         if mv.val.is_unset() {
             if let Some(ref name) = mv.lval {
-                return getmathparam(s, name);
+                return getmathparam(name);
             }
         }
         mv.val
@@ -1460,7 +1394,7 @@ pub(crate) fn pop(s: &mut MathState<'_>) -> Mnumber {
 /// the param table so a miss returns `Integer(0)` and skips the
 /// type-coercion. Indirect-string mode (`a="3+2"; $((a))`) is
 /// handled by recursively evaluating the string value.
-pub(crate) fn getmathparam(s: &MathState<'_>, name: &str) -> Mnumber {
+pub(crate) fn getmathparam(/* removed s param */name: &str) -> Mnumber {
     // Strip array subscript if present
         let base_name = if let Some(bracket) = name.find('[') {
             &name[..bracket]
@@ -1488,13 +1422,13 @@ pub(crate) fn getmathparam(s: &MathState<'_>, name: &str) -> Mnumber {
             let inherited_prec = saved.prec;
             let inherited_c_prec = saved.c_precedences;
 
-            let mut sub = new(&raw);
+            new(&raw);
             m_variables_set(inherited_vars);
             m_string_variables_set(inherited_strs);
             m_prec_set(inherited_prec);
             m_c_precedences_set(inherited_c_prec);
 
-            let result = mathevall(&mut sub);
+            let result = mathevall();
             restore_state(saved);
             if let Ok(r) = result {
                 return r;
@@ -1510,7 +1444,7 @@ pub(crate) fn getmathparam(s: &MathState<'_>, name: &str) -> Mnumber {
 /// SubscriptArith free fns higher up the call chain; this stub
 /// only handles the scalar case. Returns the stored value so
 /// `op` can leave it on the stack.
-pub(crate) fn setmathvar(s: &mut MathState<'_>, name: &str, val: Mnumber) -> Mnumber {
+pub(crate) fn setmathvar(/* removed s param */name: &str, val: Mnumber) -> Mnumber {
     let base_name = if let Some(bracket) = name.find('[') {
         &name[..bracket]
     } else {
@@ -1527,7 +1461,7 @@ pub(crate) fn setmathvar(s: &mut MathState<'_>, name: &str, val: Mnumber) -> Mnu
 /// pushes the result. Handles assignment (`OP_E2*` flag) by
 /// writing through `setmathvar` and pushing the new value back
 /// with the same lvalue so chained assigns work.
-pub(crate) fn op(s: &mut MathState<'_>, what: MathTok) {
+pub(crate) fn op(/* removed s param */what: MathTok) {
         if m_error_some() {
             return;
         }
@@ -1546,11 +1480,11 @@ pub(crate) fn op(s: &mut MathState<'_>, what: MathTok) {
                 return;
             }
 
-            let b = pop(s);
-            let mv_a = pop_with_lval(s);
+            let b = pop();
+            let mv_a = pop_with_lval();
             let a = if mv_a.val.is_unset() {
                 if let Some(ref name) = mv_a.lval {
-                    getmathparam(s, name)
+                    getmathparam(name)
                 } else {
                     Mnumber::integer(0)
                 }
@@ -1728,14 +1662,14 @@ pub(crate) fn op(s: &mut MathState<'_>, what: MathTok) {
             // Handle assignment
             if (tp & (OP_E2 | OP_E2IO)) != 0 {
                 if let Some(ref name) = mv_a.lval {
-                    let final_val = setmathvar(s, name, result);
-                    push(s, final_val, Some(name.clone()));
+                    let final_val = setmathvar(name, result);
+                    push(final_val, Some(name.clone()));
                 } else {
                     m_error_set("lvalue required".to_string());
-                    push(s, Mnumber::integer(0), None);
+                    push(Mnumber::integer(0), None);
                 }
             } else {
-                push(s, result, None);
+                push(result, None);
             }
             return;
         }
@@ -1750,10 +1684,10 @@ pub(crate) fn op(s: &mut MathState<'_>, what: MathTok) {
             return;
         }
 
-        let mv = pop_with_lval(s);
+        let mv = pop_with_lval();
         let val = if mv.val.is_unset() {
             if let Some(ref name) = mv.lval {
-                getmathparam(s, name)
+                getmathparam(name)
             } else {
                 Mnumber::integer(0)
             }
@@ -1764,14 +1698,14 @@ pub(crate) fn op(s: &mut MathState<'_>, what: MathTok) {
         match what {
             MathTok::Not => {
                 let result = Mnumber::integer(if val.is_zero() { 1 } else { 0 });
-                push(s, result, None);
+                push(result, None);
             }
             MathTok::Comp => {
                 let result = Mnumber::integer(!val.to_int());
-                push(s, result, None);
+                push(result, None);
             }
             MathTok::UPlus => {
-                push(s, val, None);
+                push(val, None);
             }
             MathTok::UMinus => {
                 let result = if val.is_float() {
@@ -1779,7 +1713,7 @@ pub(crate) fn op(s: &mut MathState<'_>, what: MathTok) {
                 } else {
                     Mnumber::integer(-val.to_int())
                 };
-                push(s, result, None);
+                push(result, None);
             }
             MathTok::PostPlus => {
                 // ++/-- on a literal (`5++`, `--5`) is a zsh error:
@@ -1796,8 +1730,8 @@ pub(crate) fn op(s: &mut MathState<'_>, what: MathTok) {
                 } else {
                     Mnumber::integer(val.to_int() + 1)
                 };
-                setmathvar(s, name, new_val);
-                push(s, val, None); // Return original value
+                setmathvar(name, new_val);
+                push(val, None); // Return original value
             }
             MathTok::PostMinus => {
                 if mv.lval.is_none() {
@@ -1810,8 +1744,8 @@ pub(crate) fn op(s: &mut MathState<'_>, what: MathTok) {
                 } else {
                     Mnumber::integer(val.to_int() - 1)
                 };
-                setmathvar(s, name, new_val);
-                push(s, val, None);
+                setmathvar(name, new_val);
+                push(val, None);
             }
             MathTok::PrePlus => {
                 if mv.lval.is_none() {
@@ -1824,8 +1758,8 @@ pub(crate) fn op(s: &mut MathState<'_>, what: MathTok) {
                 } else {
                     Mnumber::integer(val.to_int() + 1)
                 };
-                setmathvar(s, name, new_val);
-                push(s, new_val, mv.lval);
+                setmathvar(name, new_val);
+                push(new_val, mv.lval);
             }
             MathTok::PreMinus => {
                 if mv.lval.is_none() {
@@ -1838,8 +1772,8 @@ pub(crate) fn op(s: &mut MathState<'_>, what: MathTok) {
                 } else {
                     Mnumber::integer(val.to_int() - 1)
                 };
-                setmathvar(s, name, new_val);
-                push(s, new_val, mv.lval);
+                setmathvar(name, new_val);
+                push(new_val, mv.lval);
             }
             MathTok::Quest => {
                 // Ternary: stack has [cond, true_val, false_val]
@@ -1850,10 +1784,10 @@ pub(crate) fn op(s: &mut MathState<'_>, what: MathTok) {
                     return;
                 }
                 let false_val = val;
-                let true_val = pop(s);
-                let cond = pop(s);
+                let true_val = pop();
+                let cond = pop();
                 let result = if !cond.is_zero() { true_val } else { false_val };
-                push(s, result, None);
+                push(result, None);
             }
             MathTok::Colon => {
                 m_error_set("':' without '?'".to_string());
@@ -1870,14 +1804,14 @@ pub(crate) fn op(s: &mut MathState<'_>, what: MathTok) {
 /// top of stack and bumps `m_noeval()` for the parse-only side of
 /// `&&` / `||` / their assignment forms. The matching decrement
 /// happens after `mathparse` recurses for the RHS.
-pub(crate) fn bop(s: &mut MathState<'_>, tk: MathTok) {
+pub(crate) fn bop(/* removed s param */tk: MathTok) {
         if m_stack_is_empty() {
             return;
         }
         let mv = m_stack_top_clone().unwrap();
         let val = if mv.val.is_unset() {
             if let Some(ref name) = mv.lval {
-                getmathparam(s, name)
+                getmathparam(name)
             } else {
                 Mnumber::integer(0)
             }
@@ -1897,7 +1831,7 @@ pub(crate) fn bop(s: &mut MathState<'_>, tk: MathTok) {
         }
     }
 
-    pub(crate) fn top_prec(s: &MathState<'_>) -> u8 {
+    pub(crate) fn top_prec() -> u8 {
         m_prec()[MathTok::Comma as usize] + 1
     }
 
@@ -1910,7 +1844,7 @@ pub(crate) fn bop(s: &mut MathState<'_>, tk: MathTok) {
 /// with `<kind>` being `operator` or `operand` and `<ctx>` taken
 /// from the input pointer at the start of the bad token. (2)
 /// Update `m_unary()` for the next iteration based on `OP_OPF`.
-pub(crate) fn checkunary(s: &mut MathState<'_>) {
+pub(crate) fn checkunary() {
     // Direct port of zsh math.c checkunary() (line 1548).
         // Two roles:
         //   1. Validate that the just-lexed token (`m_mtok()`)
@@ -1978,19 +1912,19 @@ pub(crate) fn checkunary(s: &mut MathState<'_>) {
     }
 
     /// Operator-precedence parser - closely follows zsh math.c mathparse()
-    pub(crate) fn mathparse(s: &mut MathState<'_>, pc: u8) {
+    pub(crate) fn mathparse(/* removed s param */pc: u8) {
         if m_error_some() {
             return;
         }
 
-        m_mtok_set(zzlex(s));
+        m_mtok_set(zzlex());
 
         // Handle empty input
-        if pc == top_prec(s) && m_mtok() == MathTok::Eoi {
+        if pc == top_prec() && m_mtok() == MathTok::Eoi {
             return;
         }
 
-        checkunary(s);
+        checkunary();
 
         while m_prec()[m_mtok() as usize] <= pc {
             if m_error_some() {
@@ -1999,14 +1933,14 @@ pub(crate) fn checkunary(s: &mut MathState<'_>) {
 
             match m_mtok() {
                 MathTok::Num => {
-                    push(s, m_yyval(), None);
+                    push(m_yyval(), None);
                 }
                 MathTok::Id => {
                     let lval = m_yylval_clone();
                     if m_noeval() > 0 {
-                        push(s, Mnumber::integer(0), Some(lval));
+                        push(Mnumber::integer(0), Some(lval));
                     } else {
-                        push(s, Mnumber::unset(), Some(lval));
+                        push(Mnumber::unset(), Some(lval));
                     }
                 }
                 MathTok::CId => {
@@ -2014,21 +1948,21 @@ pub(crate) fn checkunary(s: &mut MathState<'_>) {
                     let val = if m_noeval() > 0 {
                         Mnumber::integer(0)
                     } else {
-                        getcvar(s, &lval)
+                        getcvar(&lval)
                     };
-                    push(s, val, Some(lval));
+                    push(val, Some(lval));
                 }
                 MathTok::Func => {
                     let func_call = m_yylval_clone();
                     let val = if m_noeval() > 0 {
                         Mnumber::integer(0)
                     } else {
-                        callmathfunc(s, &func_call)
+                        callmathfunc(&func_call)
                     };
-                    push(s, val, None);
+                    push(val, None);
                 }
                 MathTok::InPar => {
-                    mathparse(s, top_prec(s));
+                    mathparse(top_prec());
                     if m_mtok() != MathTok::OutPar {
                         if !m_error_some() {
                             // Match zsh's `bad math expression: ')'
@@ -2045,7 +1979,7 @@ pub(crate) fn checkunary(s: &mut MathState<'_>) {
                         return;
                     }
                     let mv = m_stack_top_clone().unwrap();
-                    let cond = get_value(s, &mv);
+                    let cond = get_value(&mv);
 
                     let q = !cond.is_zero();
                     if !q {
@@ -2053,7 +1987,7 @@ pub(crate) fn checkunary(s: &mut MathState<'_>) {
                     }
                     let colon_prec = m_prec()[MathTok::Colon as usize];
                     let stack_before = m_stack_len();
-                    mathparse(s, colon_prec - 1);
+                    mathparse(colon_prec - 1);
                     if !q {
                         m_noeval_dec();
                     }
@@ -2081,12 +2015,12 @@ pub(crate) fn checkunary(s: &mut MathState<'_>) {
                         m_noeval_inc();
                     }
                     let quest_prec = m_prec()[MathTok::Quest as usize];
-                    mathparse(s, quest_prec);
+                    mathparse(quest_prec);
                     if q {
                         m_noeval_dec();
                     }
 
-                    op(s, MathTok::Quest);
+                    op(MathTok::Quest);
                     continue;
                 }
                 _ => {
@@ -2111,26 +2045,26 @@ pub(crate) fn checkunary(s: &mut MathState<'_>) {
                         return;
                     }
                     if (tp & 0x03) == BOOL {
-                        bop(s, otok);
+                        bop(otok);
                     }
                     let otok_prec = m_prec()[otok as usize];
                     // Right-to-left gets same prec, left-to-right gets prec-1
                     let adjust = if (tp & 0x01) != RL { 1 } else { 0 };
-                    mathparse(s, otok_prec - adjust);
+                    mathparse(otok_prec - adjust);
                     m_noeval_set(onoeval);
-                    op(s, otok);
+                    op(otok);
                     continue;
                 }
             }
 
             // After operand (Num, Id, Func, InPar), get next token
-            m_mtok_set(zzlex(s));
-            checkunary(s);
+            m_mtok_set(zzlex());
+            checkunary();
         }
     }
 
     /// Call a math function
-    pub(crate) fn callmathfunc(s: &mut MathState<'_>, call: &str) -> Mnumber {
+    pub(crate) fn callmathfunc(/* removed s param */call: &str) -> Mnumber {
         // Parse function name and args
         let paren = call.find('(').unwrap_or(call.len());
         let name = &call[..paren];
@@ -2155,9 +2089,9 @@ pub(crate) fn checkunary(s: &mut MathState<'_>) {
                     // C `mathevall()` xyy* save/restore (math.c:367).
                     let saved = save_state();
                     let inherited_vars = saved.variables.clone();
-                    let mut eval = new(arg.trim());
+                    new(arg.trim());
                     m_variables_set(inherited_vars);
-                    let result = mathevall(&mut eval).ok();
+                    let result = mathevall().ok();
                     restore_state(saved);
                     result
                 })
@@ -2254,13 +2188,13 @@ pub(crate) fn checkunary(s: &mut MathState<'_>) {
     }
 
     /// Evaluate the expression
-    pub(crate) fn mathevall(s: &mut MathState<'_>) -> Result<Mnumber, String> {
+    pub(crate) fn mathevall() -> Result<Mnumber, String> {
         m_prec_set(if m_c_precedences() { &C_PREC } else { &Z_PREC });
 
         // Skip leading whitespace and Nularg
-        while let Some(c) = peek(s) {
+        while let Some(c) = peek() {
             if c.is_whitespace() || c == '\u{a1}' {
-                advance(s);
+                advance();
             } else {
                 break;
             }
@@ -2270,16 +2204,16 @@ pub(crate) fn checkunary(s: &mut MathState<'_>) {
             return Ok(Mnumber::integer(0));
         }
 
-        mathparse(s, top_prec(s));
+        mathparse(top_prec());
 
         if let Some(err) = m_error_take() {
             return Err(err);
         }
 
         // Check for trailing characters
-        while let Some(c) = peek(s) {
+        while let Some(c) = peek() {
             if c.is_whitespace() {
-                advance(s);
+                advance();
             } else if c == ')' {
                 // zsh's specific wording for the unmatched-close
                 // case: `bad math expression: unexpected ')'`.
@@ -2296,7 +2230,7 @@ pub(crate) fn checkunary(s: &mut MathState<'_>) {
         let mv = m_stack_pop().unwrap();
         let result = if mv.val.is_unset() {
             if let Some(ref name) = mv.lval {
-                getmathparam(s, name)
+                getmathparam(name)
             } else {
                 Mnumber::integer(0)
             }
@@ -2308,16 +2242,16 @@ pub(crate) fn checkunary(s: &mut MathState<'_>) {
     }
 
 /// Get updated variables after evaluation
-pub(crate) fn getmathparams<'a>(s: &'a MathState<'_>) -> &'a HashMap<String, Mnumber> {
-    &s.variables
+pub(crate) fn getmathparams() -> HashMap<String, Mnumber> {
+    m_variables_clone()
 }
 
 /// Convenience function to evaluate a math expression
 /// Top-level math-expression evaluator.
 /// Port of `matheval()` from Src/math.c:1480 — wraps `mathevall()`\n/// (line 367) with the C source's standard error-message\n/// formatting.
 pub fn matheval(expr: &str) -> Result<Mnumber, String> {
-    let mut eval = new(expr);
-    mathevall(&mut eval)
+    new(expr);
+    mathevall()
 }
 
 /// Evaluate and return integer
@@ -2420,18 +2354,19 @@ mod tests {
         vars.insert("x".to_string(), Mnumber::integer(10));
         vars.insert("y".to_string(), Mnumber::integer(20));
 
-        let mut eval = with_variables(new("x + y"), vars);
-        assert_eq!(mathevall(&mut eval).unwrap().to_int(), 30);
+        new("x + y");
+        with_variables(vars);
+        assert_eq!(mathevall().unwrap().to_int(), 30);
     }
 
     #[test]
     fn test_assignment() {
-        let mut eval = new("x = 5");
-        mathevall(&mut eval).unwrap();
+        new("x = 5");
+        mathevall().unwrap();
         assert_eq!(m_variables_get("x").unwrap().to_int(), 5);
 
-        let mut eval2 = new("x = 5, x += 3");
-        let result = mathevall(&mut eval2).unwrap();
+        new("x = 5, x += 3");
+        let result = mathevall().unwrap();
         assert_eq!(result.to_int(), 8);
     }
 
@@ -2440,12 +2375,14 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("x".to_string(), Mnumber::integer(5));
 
-        let mut eval = with_variables(new("++x"), vars.clone());
-        assert_eq!(mathevall(&mut eval).unwrap().to_int(), 6);
+        new("++x");
+        with_variables(vars.clone());
+        assert_eq!(mathevall().unwrap().to_int(), 6);
         assert_eq!(m_variables_get("x").unwrap().to_int(), 6);
 
-        let mut eval2 = with_variables(new("x++"), vars.clone());
-        assert_eq!(mathevall(&mut eval2).unwrap().to_int(), 5);
+        new("x++");
+        with_variables(vars.clone());
+        assert_eq!(mathevall().unwrap().to_int(), 5);
         assert_eq!(m_variables_get("x").unwrap().to_int(), 6);
     }
 
@@ -2758,15 +2695,15 @@ impl crate::ported::exec::ShellExecutor {
                 extras.insert(special.to_string(), v);
             }
         }
-        let evaluator = new(&expr);
-        let evaluator = with_string_variables(evaluator, &extras);
-        let evaluator = with_force_float(evaluator, force_float);
-        let evaluator = with_c_precedences(evaluator, c_prec);
-        let mut evaluator = with_octal_zeroes(evaluator, octal);
+        new(&expr);
+        with_string_variables(&extras);
+        with_force_float(force_float);
+        with_c_precedences(c_prec);
+        with_octal_zeroes(octal);
 
-        match mathevall(&mut evaluator) {
+        match mathevall() {
             Ok(result) => {
-                for (k, v) in extract_string_variables(&evaluator) {
+                for (k, v) in extract_string_variables() {
                     let formatted = self.format_for_var_attr(&k, &v);
                     // Only mirror to env when the variable is
                     // explicitly exported (typeset -x or env::var
@@ -2937,14 +2874,14 @@ impl crate::ported::exec::ShellExecutor {
         let c_prec = self.options.get("cprecedences").copied().unwrap_or(false);
         let octal = self.options.get("octalzeroes").copied().unwrap_or(false);
 
-        let evaluator = new(&expr_expanded);
-        let evaluator = with_string_variables(evaluator, &self.variables);
-        let evaluator = with_c_precedences(evaluator, c_prec);
-        let mut evaluator = with_octal_zeroes(evaluator, octal);
+        new(&expr_expanded);
+        with_string_variables(&self.variables);
+        with_c_precedences(c_prec);
+        with_octal_zeroes(octal);
 
-        match mathevall(&mut evaluator) {
+        match mathevall() {
             Ok(result) => {
-                for (k, v) in extract_string_variables(&evaluator) {
+                for (k, v) in extract_string_variables() {
                     let formatted = self.format_for_var_attr(&k, &v);
                     // Only mirror to env when the variable is
                     // explicitly exported (typeset -x or env::var
@@ -2989,15 +2926,15 @@ impl crate::ported::exec::ShellExecutor {
         let c_prec = self.options.get("cprecedences").copied().unwrap_or(false);
         let octal = self.options.get("octalzeroes").copied().unwrap_or(false);
 
-        let evaluator = new(&expr_expanded);
-        let evaluator = with_string_variables(evaluator, &self.variables);
-        let evaluator = with_force_float(evaluator, force_float);
-        let evaluator = with_c_precedences(evaluator, c_prec);
-        let mut evaluator = with_octal_zeroes(evaluator, octal);
+        new(&expr_expanded);
+        with_string_variables(&self.variables);
+        with_force_float(force_float);
+        with_c_precedences(c_prec);
+        with_octal_zeroes(octal);
 
-        match mathevall(&mut evaluator) {
+        match mathevall() {
             Ok(result) => {
-                for (k, v) in extract_string_variables(&evaluator) {
+                for (k, v) in extract_string_variables() {
                     let formatted = self.format_for_var_attr(&k, &v);
                     // Only mirror to env when the variable is
                     // explicitly exported (typeset -x or env::var
@@ -3329,11 +3266,11 @@ pub(crate) fn store(x: f64) -> f64 { x }
 /// codepoint of its first character. Used for `#varname` token
 /// (CId): `x="hello"; (( y = #x ))` puts 104 (`'h'`) into y.
 /// On miss or empty value, returns 0 (matches zsh's `*s ? *s : 0`).
-pub(crate) fn getcvar(s: &MathState<'_>, name: &str) -> Mnumber {
-    if let Some(raw) = s.string_variables.get(name) {
+pub(crate) fn getcvar(name: &str) -> Mnumber {
+    if let Some(raw) = m_string_variables_get(name) {
         return Mnumber::integer(raw.chars().next().map(|c| c as i64).unwrap_or(0));
     }
-    if let Some(v) = s.variables.get(name) {
+    if let Some(v) = m_variables_get(name) {
         return Mnumber::integer(v.format_zsh().chars().next().map(|c| c as i64).unwrap_or(0));
     }
     Mnumber::integer(0)
