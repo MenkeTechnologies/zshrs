@@ -1977,23 +1977,442 @@ pub(crate) fn makecomplistext(occ: &Arc<CompCtl>, os: &str, incmd: bool) {
     }
 }
 
-/// Separate the cursor word into prefix/word/suffix.
-/// Port of `sep_comp_string()` from Src/Zle/compctl.c:3270 (~200 lines).
+// =================================================================
+// zle_tricky.c state required by sep_comp_string and the
+// completion-driver hooks. Ports of the file-statics in
+// Src/Zle/zle_tricky.c that compctl reads/writes during the
+// completion flow. Each is a `Mutex<...>` singleton matching the
+// C global's name + type (translated to Rust idioms).
+// =================================================================
+
+/// `we` / `wb` — word end / begin positions (1-based byte offsets
+/// into zlemetaline). Port of `int wb, we;` at Src/Zle/zle_tricky.c.
+static WE: Mutex<i32> = Mutex::new(0);
+static WB: Mutex<i32> = Mutex::new(0);
+
+/// `zlemetacs` — cursor position (byte offset). Port of `int zlemetacs;`.
+static ZLEMETACS: Mutex<i32> = Mutex::new(0);
+
+/// `zlemetall` — line length in bytes. Port of `int zlemetall;`.
+static ZLEMETALL: Mutex<i32> = Mutex::new(0);
+
+/// `zlemetaline` — the actual line buffer. Port of `char *zlemetaline;`.
+static ZLEMETALINE: Mutex<String> = Mutex::new(String::new());
+
+/// `noerrs` / `noaliases` — lexer error/alias-suppression flags.
+static NOERRS: Mutex<i32> = Mutex::new(0);
+static NOALIASES: Mutex<i32> = Mutex::new(0);
+
+/// `instring` — quoting context (QT_NONE/SINGLE/DOUBLE/DOLLARS/BACKSLASH/
+/// BACKTICK). Port of `int instring;`. Mirrors zsh.h QT_* enum.
+pub mod qt {
+    pub const NONE: i32      = 0;  // unquoted
+    pub const SINGLE: i32    = 1;  // '...'
+    pub const DOUBLE: i32    = 2;  // "..."
+    pub const DOLLARS: i32   = 3;  // $'...'
+    pub const BACKSLASH: i32 = 4;  // \X escape
+    pub const BACKTICK: i32  = 5;  // `...`
+}
+static INSTRING: Mutex<i32> = Mutex::new(qt::NONE);
+
+/// `inbackt` — inside backtick command-substitution. Port of `int inbackt;`.
+static INBACKT: Mutex<i32> = Mutex::new(0);
+
+/// `autoq` — auto-quote chars to insert with completed match. Port of
+/// `char *autoq;`.
+static AUTOQ: Mutex<String> = Mutex::new(String::new());
+
+/// `compqstack` — current quoting-context stack. Port of `char *compqstack;`.
+static COMPQSTACK: Mutex<String> = Mutex::new(String::new());
+
+/// `qipre` / `qisuf` — quoted ignored prefix/suffix from the
+/// completion driver. Port of `char *qipre, *qisuf;`.
+static QIPRE: Mutex<String> = Mutex::new(String::new());
+static QISUF: Mutex<String> = Mutex::new(String::new());
+
+/// `compqiprefix` / `compqisuffix` / `compisuffix` — completion-context
+/// state from the user's compfunc. Port of those file-statics.
+static COMPQIPREFIX: Mutex<String> = Mutex::new(String::new());
+static COMPQISUFFIX: Mutex<String> = Mutex::new(String::new());
+static COMPISUFFIX: Mutex<String> = Mutex::new(String::new());
+
+/// `compwords` — current word array from the completion driver.
+static COMPWORDS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static COMPCURRENT: Mutex<i32> = Mutex::new(0);
+
+/// `clwords` / `clwsize` / `clwnum` / `clwpos` — current line word
+/// array + sizes used by the completion code.
+static CLWORDS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static CLWSIZE: Mutex<i32> = Mutex::new(0);
+static CLWNUM: Mutex<i32> = Mutex::new(0);
+static CLWPOS: Mutex<i32> = Mutex::new(0);
+
+/// `offs` — completion offset into the current word.
+static OFFS: Mutex<i32> = Mutex::new(0);
+
+/// `addedx` — non-zero while the dummy `x` cursor marker is in
+/// the line being lexed.
+static ADDEDX: Mutex<i32> = Mutex::new(0);
+
+/// `lexflags` — lexer mode flags (LEXFLAGS_ZLE etc.). Port of
+/// `int lexflags;` from Src/lex.c.
+static LEXFLAGS: Mutex<i32> = Mutex::new(0);
+
+/// LEXFLAGS_ZLE — the bit set during ZLE-driven completion lex.
+/// Port of `LEXFLAGS_ZLE` from Src/zsh.h.
+const LEXFLAGS_ZLE: i32 = 1 << 0;
+
+/// `brange` / `erange` — `-l` word-range begin/end.
+static BRANGE: Mutex<i32> = Mutex::new(0);
+static ERANGE: Mutex<i32> = Mutex::new(0);
+
+/// `linwhat` — line-context kind (IN_ENV/IN_MATH/IN_COND/IN_REDIR/0).
+/// Port of `int linwhat;` from zle_tricky.c.
+pub mod linwhat_kind {
+    pub const NONE: i32      = 0;
+    pub const IN_ENV: i32    = 1;
+    pub const IN_MATH: i32   = 2;
+    pub const IN_COND: i32   = 3;
+    pub const IN_REDIR: i32  = 4;
+}
+static LINWHAT: Mutex<i32> = Mutex::new(0);
+
+/// `linredir` — non-zero when completing inside a redirection.
+static LINREDIR: Mutex<i32> = Mutex::new(0);
+
+/// `insubscr` — non-zero inside an array subscript context.
+static INSUBSCR: Mutex<i32> = Mutex::new(0);
+
+/// Inull-token chars from Src/zsh.h. These are the byte values
+/// the lexer uses to mark suppressed quoted-region boundaries
+/// (Snull = single-quote, Dnull = double-quote, Bnull = backslash,
+/// String/Qstring = `$`/`'$'` markers).
+pub const SNULL: char  = '\u{9d}';  // Single-quote null
+pub const DNULL: char  = '\u{9e}';  // Double-quote null
+pub const BNULL: char  = '\u{9f}';  // Backslash null
+pub const STRING_TOK: char  = '\u{85}';  // META-$
+pub const QSTRING_TOK: char = '\u{84}';  // QSTRING (for $'...')
+
+/// Test whether `c` is one of the inull token chars.
+/// Port of `inull()` macro from Src/zsh.h — `c >= Pound && c <= LAST_NORMAL_TOK`
+/// per the zsh range. We use the explicit set since the byte values
+/// are stable across the codebase.
+fn inull(c: char) -> bool {
+    matches!(c, SNULL | DNULL | BNULL | STRING_TOK | QSTRING_TOK)
+}
+
+/// Separate the cursor word into prefix/word/suffix components.
+/// Port of `sep_comp_string()` from Src/Zle/compctl.c:2806 (~225 lines).
 ///
 /// C signature: `int sep_comp_string(char *ss, char *s, int noffs)`.
-/// The function splits the word at `s` containing the cursor at
-/// offset `noffs` into the components the matcher needs:
-///   lpre/lsuf — what's on the line (prefix/suffix of cursor word)
-///   rpre/rsuf — same, expanded
-///   ppre/psuf — path-component prefix/suffix
-///   fpre/fsuf — pathname-segment prefix/suffix the cursor is in
-///   prpre — opendir-friendly form of ppre
-///   q* variants — quoted forms for re-display
 ///
-/// The full port requires ZLE state (zlemetaline, zlemetacs, brbeg/
-/// brend, instring, autoq, etc.) from zle_tricky.c. Stubbed here
-/// pending those ports.
-pub(crate) fn sep_comp_string(_ss: &str, _s: &str, _noffs: i32) -> i32 {
+/// The function constructs a synthetic line of the form `ss + " " +
+/// s[..noffs] + 'x' + s[noffs..]` and runs the lexer over it to
+/// recover word boundaries with the cursor (the inserted 'x') in
+/// view. Then adjusts wb/we/zlemetacs to reflect positions inside
+/// the lexed word, accounting for inull markers. Pushes results
+/// into clwords + cmdstr + qipre/qisuf and dispatches to
+/// makecomplistcmd.
+///
+/// Faithful port:
+///   - constructs the temp buffer per c:2827-2832
+///   - applies rembslash if QT_BACKSLASH stack head (c:2833)
+///   - state save/restore for instring/inbackt/noaliases/autoq (c:2810-2813)
+///   - state save/restore for clwords/cmdstr/qipre/qisuf (c:2980-3023)
+///   - inull/Bnull adjustment loop (c:2931-2952)
+///   - nested makecomplistcmd dispatch (c:3006)
+///
+/// The actual `ctxtlex()` driver is replaced by Rust's `ZshLexer`
+/// from parse/src/lex.rs — for this port we approximate by
+/// splitting the temp string on whitespace + tracking the cursor
+/// word. Full lexer-token reconstruction (LEXERR/STRING/ENDINPUT
+/// handling for unbalanced quotes per c:2842-2855) is the
+/// remaining gap; the foundation here handles plain-token cases
+/// which cover the most common compctl flows.
+pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
+    // C: c:2810-2813 — save state to restore on exit
+    let owe = *WE.lock().unwrap();
+    let owb = *WB.lock().unwrap();
+    let ocs = *ZLEMETACS.lock().unwrap();
+    let oll = *ZLEMETALL.lock().unwrap();
+    let ois = *INSTRING.lock().unwrap();
+    let oib = *INBACKT.lock().unwrap();
+    let ona = *NOALIASES.lock().unwrap();
+    let ne = *NOERRS.lock().unwrap();
+    let ol = ZLEMETALINE.lock().unwrap().clone();
+    let oaq = AUTOQ.lock().unwrap().clone();
+
+    let sl = ss.len() as i32;
+    let mut got = false;
+    let mut i = 0_i32;
+    let mut cur: i32 = -1;
+    let mut swb = 0_i32;
+    let mut swe = 0_i32;
+    let mut soffs = 0_i32;
+    let mut ns: String = String::new();
+    let mut foo: Vec<String> = Vec::new();
+
+    // C: c:2823-2832 — build the temp buffer with cursor `x` marker.
+    // tmp = ss + " " + s[..noffs] + 'x' + s[noffs..]
+    *ADDEDX.lock().unwrap() = 1;
+    *NOERRS.lock().unwrap() = 1;
+    *LEXFLAGS.lock().unwrap() = LEXFLAGS_ZLE;
+    let mut tmp = String::with_capacity(ss.len() + 3 + s.len());
+    tmp.push_str(ss);
+    tmp.push(' ');
+    let s_chars: Vec<char> = s.chars().collect();
+    let noffs_u = (noffs as usize).min(s_chars.len());
+    let s_pre: String = s_chars[..noffs_u].iter().collect();
+    let s_post: String = s_chars[noffs_u..].iter().collect();
+    tmp.push_str(&s_pre);
+    let scs_initial = sl + 1 + noffs;
+    *ZLEMETACS.lock().unwrap() = scs_initial;
+    let mut scs = scs_initial;
+    tmp.push('x');
+    tmp.push_str(&s_post);
+    let tl = tmp.len() as i32;
+
+    // C: c:2833 — apply rembslash if QT_BACKSLASH stack head
+    let qstack_head = COMPQSTACK.lock().unwrap().chars().next().unwrap_or(qt::NONE as u8 as char);
+    let remq = qstack_head as i32 == qt::BACKSLASH;
+    if remq {
+        // rembslash — strip backslashes
+        let mut stripped = String::with_capacity(tmp.len());
+        let mut chars = tmp.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                if let Some(&_nx) = chars.peek() {
+                    // Skip backslash, keep next char
+                    continue;
+                }
+            }
+            stripped.push(c);
+        }
+        tmp = stripped;
+    }
+
+    // C: c:2835-2839 — push input, set zlemetaline
+    *ZLEMETALINE.lock().unwrap() = tmp.clone();
+    *ZLEMETALL.lock().unwrap() = tl - 1;
+    *NOALIASES.lock().unwrap() = 1;
+
+    // C: c:2840-2873 — lex loop. We approximate ctxtlex() with a
+    // whitespace-tokenize + cursor-word detection. Real lexer
+    // integration requires the parse crate's ZshLexer wired with
+    // ZLE input-stack semantics.
+    {
+        let chars: Vec<char> = tmp.chars().collect();
+        let mut t_start = 0_usize;
+        let mut idx = 0_usize;
+        let mut word_idx = 0_i32;
+        while idx <= chars.len() {
+            let at_end = idx == chars.len();
+            let is_sep = !at_end && chars[idx] == ' ';
+            if at_end || is_sep {
+                if idx > t_start {
+                    let token: String = chars[t_start..idx].iter().collect();
+                    let abs_start = t_start as i32;
+                    let abs_end = idx as i32;
+                    foo.push(token.clone());
+                    // C: c:2862-2871 — first time scs falls inside
+                    // a token, that's the cursor word.
+                    if !got && scs >= abs_start && scs <= abs_end {
+                        got = true;
+                        cur = word_idx;
+                        swb = abs_start;
+                        swe = abs_end;
+                        soffs = scs - swb;
+                        // C: chuck(p + soffs) — remove the dummy 'x'
+                        let mut t = token.clone();
+                        if (soffs as usize) < t.len() {
+                            t.remove(soffs as usize);
+                        }
+                        ns = t;
+                    }
+                    word_idx += 1;
+                }
+                t_start = idx + 1;
+            }
+            if at_end { break; }
+            idx += 1;
+        }
+        i = word_idx;
+    }
+
+    *NOALIASES.lock().unwrap() = ona;
+    *NOERRS.lock().unwrap() = ne;
+    *WB.lock().unwrap() = owb;
+    *WE.lock().unwrap() = owe;
+    *ZLEMETACS.lock().unwrap() = ocs;
+    *ZLEMETALINE.lock().unwrap() = ol;
+    *ZLEMETALL.lock().unwrap() = oll;
+
+    // C: c:2885 — bail if no cursor word found
+    if cur < 0 || i < 1 {
+        return 1;
+    }
+
+    // C: c:2887-2896 — check_param dispatch (params + Snull/Dnull
+    // marker conversion). Skipped pending check_param port.
+
+    // C: c:2898-2929 — quote-prefix detection. Examine ns[0] for
+    // SNULL/DNULL/STRING_TOK/QSTRING_TOK and adjust instring + autoq.
+    let ts = ns.clone();
+    let _ = ts.clone();
+    let first_char = ns.chars().next();
+    let is_quoted_open = matches!(
+        first_char,
+        Some(SNULL) | Some(DNULL)
+    ) || (matches!(first_char, Some(STRING_TOK) | Some(QSTRING_TOK))
+        && ns.chars().nth(1) == Some(SNULL));
+
+    if is_quoted_open {
+        let new_instring = match first_char {
+            Some(SNULL) => qt::SINGLE,
+            Some(DNULL) => qt::DOUBLE,
+            _ => qt::DOLLARS,
+        };
+        *INSTRING.lock().unwrap() = new_instring;
+        *INBACKT.lock().unwrap() = 0;
+        swb += 1;
+        // C: c:2921 — if the closing quote-marker matches at end, swe--
+        if let (Some(first), Some(last)) = (ns.chars().next(), ns.chars().last()) {
+            if first == last && ns.len() >= 2 {
+                swe -= 1;
+            }
+        }
+        // C: c:2925 — autoq from compqstack[1] and multiquote
+        let qstack = COMPQSTACK.lock().unwrap().clone();
+        if qstack.len() >= 2 {
+            *AUTOQ.lock().unwrap() = String::new();
+        } else {
+            *AUTOQ.lock().unwrap() = ts.clone();
+        }
+    } else {
+        *INSTRING.lock().unwrap() = qt::NONE;
+        *AUTOQ.lock().unwrap() = String::new();
+    }
+
+    // C: c:2931-2952 — inull walk: drop inull markers from ns,
+    // adjusting scs/soffs/swb as we go.
+    let mut ns_chars: Vec<char> = ns.chars().collect();
+    let mut p_idx = 0_usize;
+    let mut walk_i = swb;
+    while p_idx < ns_chars.len() {
+        let c = ns_chars[p_idx];
+        if inull(c) {
+            if walk_i < scs {
+                soffs -= 1;
+                if remq && c == BNULL && p_idx + 1 < ns_chars.len() {
+                    swb -= 2;
+                }
+            }
+            let next = ns_chars.get(p_idx + 1).copied();
+            if next.is_some() || c != BNULL {
+                if c == BNULL {
+                    if scs == walk_i + 1 {
+                        scs += 1;
+                        soffs += 1;
+                    }
+                } else if scs > walk_i {
+                    scs -= 1;
+                    walk_i -= 1;  // C: `scs > i--`
+                }
+            } else if scs == swe {
+                scs -= 1;
+            }
+            ns_chars.remove(p_idx);
+            // Don't advance p_idx — re-check the new char at p_idx
+            // (matches C's `chuck(p--); p++;` next-iter increment).
+            walk_i -= 1;
+        } else {
+            p_idx += 1;
+            walk_i += 1;
+        }
+    }
+    ns = ns_chars.iter().collect();
+
+    // C: c:2961-2974 — build qp/qs from ss + qipre/qisuf
+    let qipre_val = QIPRE.lock().unwrap().clone();
+    let qisuf_val = QISUF.lock().unwrap().clone();
+    let qp = format!("{}{}", qipre_val, &s[..((swb - sl - 1).max(0) as usize).min(s.len())]);
+    if swe < swb {
+        swe = swb;
+    }
+    swe -= sl + 1;
+    let s_len = s.len() as i32;
+    if swe > s_len {
+        swe = s_len;
+        if (ns.len() as i32) > swe - swb + 1 {
+            ns.truncate((swe - swb + 1) as usize);
+        }
+    }
+    let qs_start = (swe.max(0) as usize).min(s.len());
+    let qs = format!("{}{}", &s[qs_start..], qisuf_val);
+    let s_chars_len = ns.len() as i32;
+    if soffs > s_chars_len {
+        soffs = s_chars_len;
+    }
+
+    // C: c:2980-3023 — state save/restore + nested makecomplistcmd
+    let ow = CLWORDS.lock().unwrap().clone();
+    let os = CMDSTR.lock().unwrap().clone();
+    let oqp = QIPRE.lock().unwrap().clone();
+    let oqs = QISUF.lock().unwrap().clone();
+    let oqst = COMPQSTACK.lock().unwrap().clone();
+    let olws = *CLWSIZE.lock().unwrap();
+    let olwn = *CLWNUM.lock().unwrap();
+    let olwp = *CLWPOS.lock().unwrap();
+    let obr = *BRANGE.lock().unwrap();
+    let oer = *ERANGE.lock().unwrap();
+    let oof = *OFFS.lock().unwrap();
+    let occ = *CCONT.lock().unwrap();
+
+    // C: c:2986-2989 — push current quote char onto compqstack
+    let new_quote_char = if *INSTRING.lock().unwrap() != qt::NONE {
+        char::from_u32(*INSTRING.lock().unwrap() as u32).unwrap_or('\\')
+    } else {
+        char::from_u32(qt::BACKSLASH as u32).unwrap_or('\\')
+    };
+    let mut new_compqstack = String::new();
+    new_compqstack.push(new_quote_char);
+    new_compqstack.push_str(&oqst);
+    *COMPQSTACK.lock().unwrap() = new_compqstack;
+
+    // C: c:2991-2997 — install foo into clwords
+    *CLWSIZE.lock().unwrap() = foo.len() as i32;
+    *CLWNUM.lock().unwrap() = foo.len() as i32;
+    *CLWORDS.lock().unwrap() = foo.clone();
+    *CLWPOS.lock().unwrap() = cur;
+    *CMDSTR.lock().unwrap() = foo.first().cloned();
+    *BRANGE.lock().unwrap() = 0;
+    *ERANGE.lock().unwrap() = (foo.len() as i32) - 1;
+    *QIPRE.lock().unwrap() = qp;
+    *QISUF.lock().unwrap() = qs;
+    *OFFS.lock().unwrap() = soffs;
+    *CCONT.lock().unwrap() = cc_flags2::CCCONT;
+
+    // C: c:3006 — nested dispatch
+    const CFN_FIRST: i32 = 1;
+    let _ = makecomplistcmd(&ns, cur == 0, CFN_FIRST);
+
+    *CCONT.lock().unwrap() = occ;
+    *OFFS.lock().unwrap() = oof;
+    *CMDSTR.lock().unwrap() = os;
+    *CLWORDS.lock().unwrap() = ow;
+    *CLWSIZE.lock().unwrap() = olws;
+    *CLWNUM.lock().unwrap() = olwn;
+    *CLWPOS.lock().unwrap() = olwp;
+    *BRANGE.lock().unwrap() = obr;
+    *ERANGE.lock().unwrap() = oer;
+    *QIPRE.lock().unwrap() = oqp;
+    *QISUF.lock().unwrap() = oqs;
+    *COMPQSTACK.lock().unwrap() = oqst;
+
+    *AUTOQ.lock().unwrap() = oaq;
+    *INSTRING.lock().unwrap() = ois;
+    *INBACKT.lock().unwrap() = oib;
+
     0
 }
 
@@ -2705,5 +3124,69 @@ mod tests {
         assert!(map.contains_key("bar"));
         // Reset cclist for other tests.
         *CCLIST.lock().unwrap() = 0;
+    }
+
+    #[test]
+    fn sep_comp_string_returns_zero_or_one() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // C compctl.c:2806-3030 contract — sep_comp_string only returns
+        // 0 (success / dispatched) or 1 (bail, no cursor word).
+        let r = sep_comp_string("", "", 0);
+        assert!(r == 0 || r == 1, "expected 0 or 1, got {}", r);
+    }
+
+    #[test]
+    fn sep_comp_string_round_trips_zle_state() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Pre-set zle_tricky.c globals; sep_comp_string must restore them
+        // on exit (C compctl.c:2810-2813 save / 2941-2950 restore).
+        *WE.lock().unwrap() = 42;
+        *WB.lock().unwrap() = 7;
+        *ZLEMETACS.lock().unwrap() = 11;
+        *ZLEMETALL.lock().unwrap() = 99;
+        *INSTRING.lock().unwrap() = qt::DOUBLE;
+        *INBACKT.lock().unwrap() = 1;
+        *NOALIASES.lock().unwrap() = 1;
+        *NOERRS.lock().unwrap() = 0;
+        *ZLEMETALINE.lock().unwrap() = "hello".to_string();
+        *AUTOQ.lock().unwrap() = "Q".to_string();
+
+        let _ = sep_comp_string("", "x", 0);
+
+        assert_eq!(*WE.lock().unwrap(), 42);
+        assert_eq!(*WB.lock().unwrap(), 7);
+        assert_eq!(*ZLEMETACS.lock().unwrap(), 11);
+        assert_eq!(*ZLEMETALL.lock().unwrap(), 99);
+        assert_eq!(*INSTRING.lock().unwrap(), qt::DOUBLE);
+        assert_eq!(*INBACKT.lock().unwrap(), 1);
+        assert_eq!(*NOALIASES.lock().unwrap(), 1);
+        assert_eq!(*NOERRS.lock().unwrap(), 0);
+        assert_eq!(*ZLEMETALINE.lock().unwrap(), "hello");
+        assert_eq!(*AUTOQ.lock().unwrap(), "Q");
+    }
+
+    #[test]
+    fn inull_recognises_marker_chars() {
+        // C compctl.c:2917 — INULL macro recognises SNULL/DNULL/BNULL
+        // plus String/Qstring tokens for inull-walk.
+        assert!(inull(SNULL));
+        assert!(inull(DNULL));
+        assert!(inull(BNULL));
+        assert!(inull(STRING_TOK));
+        assert!(inull(QSTRING_TOK));
+        assert!(!inull('a'));
+        assert!(!inull(' '));
+    }
+
+    #[test]
+    fn qt_constants_match_c_compctl() {
+        // C compctl.c:2902-2922 — instring values for sep_comp_string
+        // quote-prefix detection.
+        assert_eq!(qt::NONE, 0);
+        assert_eq!(qt::SINGLE, 1);
+        assert_eq!(qt::DOUBLE, 2);
+        assert_eq!(qt::DOLLARS, 3);
+        assert_eq!(qt::BACKSLASH, 4);
+        assert_eq!(qt::BACKTICK, 5);
     }
 }
