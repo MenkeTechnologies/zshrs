@@ -6595,9 +6595,25 @@ pub(crate) fn getarg<'a>(
             }
         }
         let exact = flags.contains('e');
+        let word = flags.contains('w') || flags.contains('f');
         let return_index = flags.contains('i') || flags.contains('I');
         // c:1488-1491 — negative `num` flips reverse direction.
         let reverse = (flags.contains('R') || flags.contains('I')) ^ neg_num_flips;
+        // c:1668-1685 — non-exact, non-word array search wraps the
+        // pattern with a trailing `*` so `(r)foo` matches "foobar".
+        // Skip when pat already ends in unescaped `*`.
+        let pat_owned: String;
+        let pat_used: &str = if !exact && !word && {
+            let pb = pat.as_bytes();
+            pb.is_empty()
+                || pb[pb.len() - 1] != b'*'
+                || (pb.len() > 1 && pb[pb.len() - 2] == b'\\')
+        } {
+            pat_owned = format!("{}*", pat);
+            pat_owned.as_str()
+        } else {
+            pat
+        };
 
         // c:1740-1760 — `b<NUM>` starting offset + bounds checks.
         // beg is already 0-based after parse (parsed-1 for positive).
@@ -6644,7 +6660,7 @@ pub(crate) fn getarg<'a>(
             let hit = if exact {
                 s == pat
             } else {
-                crate::ported::exec::ShellExecutor::glob_match_static(s, pat)
+                crate::ported::exec::ShellExecutor::glob_match_static(s, pat_used)
             };
             if hit {
                 remaining -= 1;
