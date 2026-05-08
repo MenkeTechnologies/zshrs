@@ -58,7 +58,7 @@ use crate::ported::exec::{
 // canonical port of Src/hist.c). Import here so subst.rs's modify()
 // arms and the parity tests can reference by bare name.
 use crate::ported::hist::{casemodify, CaseMod, remlpaths, rembutext, remtext, remtpath};
-use crate::ported::utils::xsymlinks;
+use crate::ported::utils::{xsymlinks, zerr};
 #[allow(unused_imports)]
 use crate::parse::{ShellWord, VarModifier, ZshParamFlag};
 
@@ -1067,7 +1067,7 @@ fn stringsubst(                                             // c:237
                     continue;                               // c:237
                 } else {                                    // c:237
                     state.errflag = true;                   // c:237
-                    eprintln!("zshrs: closing bracket missing"); // c:237
+                    zerr("closing bracket missing"); // c:237
                     return None;                            // c:237
                 }                                           // c:237
             } else if next_c == Some(SNULL) || next_c == Some('\'') { // c:237
@@ -1244,7 +1244,7 @@ pub fn paramsubst(                                          // c:1625
         // Direct port of zsh's zerr("closing brace missing") at
         // subst.c around line 1885.
         if end >= chars.len() || depth != 0 {
-            eprintln!("zshrs: closing brace missing");      // c:1885
+            zerr("closing brace missing");      // c:1885
             state.errflag = true;                           // c:1885
             return (String::new(), chars.len(), vec![]);    // c:1885
         }
@@ -1355,7 +1355,7 @@ pub fn paramsubst(                                          // c:1625
             // and aborts the substitution. Emit and bail rather than
             // silently treating the entire body as flag chars.
             if !body_chars.iter().skip(1).any(|c| *c == ')') { // c:2147
-                eprintln!("zshrs: bad substitution");        // c:2147
+                zerr("bad substitution");        // c:2147
                 state.errflag = true;                        // c:2147
                 return (String::new(), new_pos, vec![]);     // c:2147
             }                                                // c:2147
@@ -1553,7 +1553,7 @@ pub fn paramsubst(                                          // c:1625
                                     'o' => want_octal = true, // c:2421
                                     'c' => want_ctrl = true,  // c:2424
                                     _ => {                  // c:2429 (flagerr)
-                                        eprintln!("zshrs: bad substitution");
+                                        zerr("bad substitution");
                                         state.errflag = true;
                                         return (String::new(), new_pos, vec![]);
                                     }
@@ -2422,7 +2422,8 @@ pub fn paramsubst(                                          // c:1625
                     } else {                                  // c:3193
                         singsub(msg, state)                   // c:3193
                     };                                        // c:3193
-                    eprintln!("{}: {}", var_name, m);
+                    // C: zerr("%s: %s", idbeg, msg) — Src/subst.c:3337
+                    zerr(&format!("{}: {}", var_name, m));
                     state.errflag = true;
                 }
             } else if let Some(msg) = r.strip_prefix('?') {  // c:3193 (?msg — not-set only)
@@ -2435,7 +2436,8 @@ pub fn paramsubst(                                          // c:1625
                     } else {                                  // c:3193
                         singsub(msg, state)                   // c:3193
                     };                                        // c:3193
-                    eprintln!("{}: {}", var_name, m);
+                    // C: zerr("%s: parameter not set", idbeg) — Src/subst.c:3472
+                    zerr(&format!("{}: {}", var_name, m));
                     state.errflag = true;
                 }
             } else if let Some(rep) = r.strip_prefix(":/") {  // c:3870 (whole-element replace)
@@ -3425,7 +3427,7 @@ pub fn paramsubst(                                          // c:1625
         // (X) error on unset/empty — emit error if value is empty.
         // Port of subst.c:2264 (quoteerr=1).
         if flag_error && value.is_empty() && !is_set {      // c:2264
-            eprintln!("zshrs: {}: parameter not set or null", var_name); // c:N/A
+            zerr(&format!("{}: parameter not set or null", var_name)); // c:N/A
             state.errflag = true;
         }
 
@@ -5198,7 +5200,7 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
                 match dispatch(w) {
                     Some(m) => modified.push(m),
                     None => {
-                        eprintln!("zshrs: unrecognized modifier `{}'", modifier);
+                        zerr(&format!("unrecognized modifier `{}'", modifier));
                         state.errflag = true;
                         return String::new();
                     }
@@ -5209,7 +5211,7 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
             match dispatch(&result) {
                 Some(m) => result = m,
                 None => {
-                    eprintln!("zshrs: unrecognized modifier `{}'", modifier);
+                    zerr(&format!("unrecognized modifier `{}'", modifier));
                     state.errflag = true;
                     return String::new();
                 }
@@ -6670,7 +6672,7 @@ pub fn substevalchar(s: &str) -> Option<String> {           // c:1490
     if ires < 0 {                                           // c:1505
         // C: `zerr("character not in range");` — diagnostic to
         // stderr.
-        eprintln!("zshrs: character not in range");         // c:1506
+        zerr("character not in range");         // c:1506
         // C falls through to the byte-render path with a negative
         // ires, which emits a garbage byte. The Rust port returns
         // empty rather than a corrupt char.
@@ -6932,7 +6934,7 @@ pub fn equalsubstr(s: &str, assign: bool, nomatch: bool, _state: &SubstState) ->
         }
         None => {                                           // c:725
             if nomatch {                                    // c:725
-                eprintln!("zshrs: {}: not found", cmdstr);  // c:726
+                zerr(&format!("{}: not found", cmdstr));  // c:726
             }
             None                                            // c:728
         }
