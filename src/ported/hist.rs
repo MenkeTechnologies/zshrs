@@ -2112,6 +2112,47 @@ pub fn strinend(hist: &mut History) {
 static STRIN: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
 
+/// Read characters from `input` until `stop` (or `\n`, or EOF),
+/// honoring `\X` as a literal-X escape. Port of `hdynread2()`
+/// from Src/hist.c. The C signature reads via `ingetc()` and
+/// pushes back the trailing `\n` via `inungetc('\n')`; the Rust
+/// adaptation takes the input string by value and returns
+/// `(collected, bytes_consumed)` so the caller can advance its
+/// own input cursor — same semantics, no global ingetc/inungetc
+/// dependency.
+///
+/// Used by the `${...:%pattern%body}` form's content-search
+/// helper that the C source threads through `histsubchar`. Once
+/// the input-stream port lands, this can be re-fitted with the
+/// callback-driven shape.
+pub fn hdynread2(stop: char, input: &str) -> (String, usize) {
+    let mut out = String::new();
+    let mut consumed = 0usize;
+    let mut chars = input.chars();
+    while let Some(c) = chars.next() {
+        consumed += c.len_utf8();
+        if c == stop || c == '\n' {
+            // C: if (c == '\n') inungetc('\n'). The newline isn't
+            // consumed in the returned cursor — caller resumes at
+            // the newline. Mirror by walking `consumed` back.
+            if c == '\n' {
+                consumed -= c.len_utf8();
+            }
+            return (out, consumed);
+        }
+        if c == '\\' {
+            // Backslash escape — read the next char as literal.
+            if let Some(esc) = chars.next() {
+                consumed += esc.len_utf8();
+                out.push(esc);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    (out, consumed)
+}
+
 /// Save the active history-substitution context onto a HistStack.
 /// Port of `hist_context_save()` from Src/hist.c:248. The C source
 /// stores function-pointer slots (`hgetc`/`hungetc`/`hwaddc` etc.)
