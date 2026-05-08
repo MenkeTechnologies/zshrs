@@ -2160,14 +2160,6 @@ pub fn paramsubst(                                          // c:1625
             }
             false
         };
-        // Environment-imported variables (HOME, PATH, etc.) are "set"
-        // in zsh's view but not necessarily mirrored in state.variables.
-        // Direct port of params.c:1313 getvalue's getenv() fallback —
-        // the C source treats env vars as part of the parameter table
-        // for set-test purposes. Without this, `${(P)+hook}` with
-        // hook=HOME returned 0 because state.variables didn't contain
-        // "HOME" until something assigned to it.
-        let is_envvar_set = || std::env::var(var_name.as_str()).is_ok();
         let is_set = if let Some(sub) = subscript.as_deref() {
             used_subexp
                 || state.assoc_arrays.get(&var_name)
@@ -2188,7 +2180,6 @@ pub fn paramsubst(                                          // c:1625
                 || state.arrays.contains_key(&var_name)
                 || state.assoc_arrays.contains_key(&var_name)
                 || is_positional_set()
-                || is_envvar_set()
         };
 
         // ${+name} short-circuit per subst.c:3600 — return "1"/"0".
