@@ -413,7 +413,7 @@ impl MathFunctions {
     fn lgamma(args: &[MathNumber]) -> Result<MathNumber, String> {
         Self::check_args(args, 1, 1, "lgamma")?;
         let x = args[0].as_float();
-        Ok(MathNumber::Float(lgamma_fn(x)))
+        Ok(MathNumber::Float(math_func(x).abs().ln()))
     }
 
     /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
@@ -514,12 +514,6 @@ fn math_func(x: f64) -> f64 {
         let t = x + g as f64 + 0.5;
         (2.0 * PI).sqrt() * t.powf(x + 0.5) * (-t).exp() * sum
     }
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/mathfunc.c`.
-fn lgamma_fn(x: f64) -> f64 {
-    math_func(x).abs().ln()
 }
 
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT

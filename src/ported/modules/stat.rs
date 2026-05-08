@@ -316,7 +316,7 @@ impl FileStat {
                 }
             }
 
-            if !set_bit(self.mode, 0o100) && self.mode & 0o4000 != 0 {
+            if self.mode & 0o100 == 0 && self.mode & 0o4000 != 0 {
                 let chars: Vec<char> = result.chars().collect();
                 let mut r: String = chars[..3].iter().collect();
                 r.push('S');
@@ -474,12 +474,6 @@ impl FileStat {
             .map(|(_, elem)| self.get_element(elem, flags))
             .collect()
     }
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/stat.c`.
-fn set_bit(mode: u32, bit: u32) -> bool {
-    mode & bit != 0
 }
 
 /// Port of `statuidprint()` from `Src/Modules/stat.c:132`.

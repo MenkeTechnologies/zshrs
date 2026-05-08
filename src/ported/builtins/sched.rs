@@ -234,7 +234,7 @@ pub fn schedgetfn(s: &str) -> Result<u64, &'static str> {
             hours = 0;
         }
 
-        let today_midnight = get_today_midnight(now);
+        let today_midnight = now - (now % 86400);
         let mut target = today_midnight + (hours * 3600 + minutes * 60 + seconds) as u64;
 
         if target < now {
@@ -258,11 +258,6 @@ fn extract_ampm(s: &str) -> (&str, Option<bool>) {
     } else {
         (s, None)
     }
-}
-
-fn get_today_midnight(now: u64) -> u64 {
-    let secs_since_midnight = now % 86400;
-    now - secs_since_midnight
 }
 
 /// Format a scheduled command for the `sched` listing.

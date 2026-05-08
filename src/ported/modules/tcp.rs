@@ -373,35 +373,15 @@ pub fn zsh_gethostbyname2(host: &str) -> io::Result<IpAddr> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "host resolution failure"))
 }
 
-/// Reverse DNS lookup
-/// Reverse-DNS an IP address back to a hostname.
-/// Port of the `gethostbyaddr(3)` lookup the C source uses
-/// for `-v` verbose listing in `bin_ztcp()`
-/// (Src/Modules/tcp.c:342).
-pub fn reverse_lookup(addr: &IpAddr) -> Option<String> {
-    let socket_addr = SocketAddr::new(*addr, 0);
-
-    dns_lookup_reverse(&socket_addr)
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/tcp.c`.
-fn dns_lookup_reverse(_addr: &SocketAddr) -> Option<String> {
-    None
-}
-
 /// Format a socket address for display
 /// Render a SocketAddr as `host:port`, optionally
 /// reverse-resolving the host.
 /// Port of the `zsh_inet_ntop()` (Src/Modules/tcp.c:72) +
 /// optional reverse-DNS path the C source uses for
 /// human-readable session listings.
-pub fn format_addr(addr: &SocketAddr, resolve: bool) -> String {
-    if resolve {
-        if let Some(hostname) = reverse_lookup(&addr.ip()) {
-            return format!("{}:{}", hostname, addr.port());
-        }
-    }
+pub fn format_addr(addr: &SocketAddr, _resolve: bool) -> String {
+    // C source's bin_ztcp -v branch calls gethostbyaddr(3); std lacks
+    // a reverse-DNS API so we always emit numeric form here.
     format!("{}:{}", addr.ip(), addr.port())
 }
 
