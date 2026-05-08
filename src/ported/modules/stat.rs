@@ -3,6 +3,7 @@
 //! Provides stat/zstat builtin for accessing file metadata.
 
 use std::collections::HashMap;
+use crate::ported::utils::zwarnnam;
 use std::fs::{self, Metadata};
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::Path;
@@ -855,7 +856,7 @@ impl crate::ported::exec::ShellExecutor {
                     if let Some(name) = iter.next() {
                         array_name = name.clone();
                     } else {
-                        eprintln!("zshrs:zstat:1: argument expected: -A");
+                        zwarnnam("zstat", "argument expected: -A");
                         return 1;
                     }
                 }
@@ -864,7 +865,7 @@ impl crate::ported::exec::ShellExecutor {
                     if let Some(name) = iter.next() {
                         hash_name = name.clone();
                     } else {
-                        eprintln!("zshrs:zstat:1: argument expected: -H");
+                        zwarnnam("zstat", "argument expected: -H");
                         return 1;
                     }
                 }
@@ -883,14 +884,14 @@ impl crate::ported::exec::ShellExecutor {
                     // zsh/Src/Modules/stat.c declares the valid letter
                     // set. Old \`_ => {}\` accepted any letter.
                     let bad: String = s[1..].chars().take(1).collect();
-                    eprintln!("zshrs:zstat:1: bad option: -{}", bad);
+                    zwarnnam("zstat", &format!("bad option: -{}", bad));
                     return 1;
                 }
             }
         }
 
         if files.is_empty() {
-            eprintln!("zshrs:zstat:1: no files specified");
+            zwarnnam("zstat", "no files specified");
             return 1;
         }
 
@@ -911,7 +912,7 @@ impl crate::ported::exec::ShellExecutor {
             let meta = match meta {
                 Ok(m) => m,
                 Err(e) => {
-                    eprintln!("zshrs:zstat:1: {}: {}", file, e);
+                    zwarnnam("zstat", &format!("{}: {}", file, e));
                     return 1;
                 }
             };

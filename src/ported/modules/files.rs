@@ -3,6 +3,7 @@
 //! Provides mkdir, rmdir, ln, mv, rm, chmod, chown, chgrp, sync builtins.
 
 use std::fs::{self};
+use crate::ported::utils::zwarnnam;
 use std::io;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
@@ -58,7 +59,7 @@ impl crate::ported::exec::ShellExecutor {
                         // old `_ => {}` made `mkdir -X foo` create
                         // foo silently with -X dropped.
                         _ => {
-                            eprintln!("mkdir: unrecognized option: '-{}'", c);
+                            zwarnnam("mkdir", &format!("unrecognized option: '-{}'", c));
                             return 1;
                         }
                     }
@@ -76,7 +77,7 @@ impl crate::ported::exec::ShellExecutor {
                 std::fs::create_dir(path)
             };
             if let Err(e) = result {
-                eprintln!("mkdir: cannot create directory '{}': {}", dir, e);
+                zwarnnam("mkdir", &format!("cannot create directory '{}': {}", dir, e));
                 err = 1;
             } else {
                 #[cfg(unix)]
@@ -106,7 +107,7 @@ impl crate::ported::exec::ShellExecutor {
                     // permissive silent-accept made `rmdir -Z foo`
                     // attempt to remove `foo` while losing the -Z
                     // signal. Per coreutils convention.
-                    eprintln!("rmdir: unrecognized option: '{}'", s);
+                    zwarnnam("rmdir", &format!("unrecognized option: '{}'", s));
                     return 1;
                 }
                 s => dirs.push(s),
@@ -115,7 +116,7 @@ impl crate::ported::exec::ShellExecutor {
         let mut err = 0;
         for arg in dirs {
             if let Err(e) = std::fs::remove_dir(arg) {
-                eprintln!("rmdir: cannot remove '{}': {}", arg, e);
+                zwarnnam("rmdir", &format!("cannot remove '{}': {}", arg, e));
                 err = 1;
                 continue;
             }
@@ -177,7 +178,7 @@ impl crate::ported::exec::ShellExecutor {
                 "-v" | "--verbose" => verbose = true,
                 "-T" | "--no-target-directory" => no_target_dir = true,
                 s if s.starts_with("--") => {
-                    eprintln!("ln: unrecognized option: '{}'", s);
+                    zwarnnam("ln", &format!("unrecognized option: '{}'", s));
                     return 1;
                 }
                 s if s.starts_with('-') && s.len() > 1 => {
@@ -198,7 +199,7 @@ impl crate::ported::exec::ShellExecutor {
                             // coreutils ln errors on unknown short
                             // flags inside combined forms.
                             _ => {
-                                eprintln!("ln: unrecognized option: '-{}'", c);
+                                zwarnnam("ln", &format!("unrecognized option: '-{}'", c));
                                 return 1;
                             }
                         }
@@ -209,7 +210,7 @@ impl crate::ported::exec::ShellExecutor {
         }
 
         if files.is_empty() {
-            eprintln!("ln: missing file operand");
+            zwarnnam("ln", "missing file operand");
             return 1;
         }
         if files.len() == 1 {
@@ -257,7 +258,7 @@ impl crate::ported::exec::ShellExecutor {
                     }
                     let _ = std::fs::remove_file(&dest);
                 } else {
-                    eprintln!("ln: failed to create link '{}': File exists", dest);
+                    zwarnnam("ln", &format!("failed to create link '{}': File exists", dest));
                     status = 1;
                     continue;
                 }
@@ -287,7 +288,7 @@ impl crate::ported::exec::ShellExecutor {
                     }
                 }
                 Err(e) => {
-                    eprintln!("ln: cannot create link '{}' -> '{}': {}", dest, src, e);
+                    zwarnnam("ln", &format!("cannot create link '{}' -> '{}': {}", dest, src, e));
                     status = 1;
                 }
             }
@@ -330,14 +331,14 @@ impl crate::ported::exec::ShellExecutor {
                     // coreutils mv rejects unknown flags. Old
                     // catch-all silently dropped them, so \`mv -X a b\`
                     // moved a → b ignoring -X.
-                    eprintln!("mv: unrecognized option: '{}'", s);
+                    zwarnnam("mv", &format!("unrecognized option: '{}'", s));
                     return 1;
                 }
             }
         }
 
         if files.len() < 2 {
-            eprintln!("mv: missing file operand");
+            zwarnnam("mv", "missing file operand");
             return 1;
         }
 
@@ -382,7 +383,7 @@ impl crate::ported::exec::ShellExecutor {
                         continue;
                     }
                 } else {
-                    eprintln!("mv: cannot overwrite '{}': File exists", dest);
+                    zwarnnam("mv", &format!("cannot overwrite '{}': File exists", dest));
                     mv_status = 1;
                     continue;
                 }
@@ -416,13 +417,13 @@ impl crate::ported::exec::ShellExecutor {
                             }
                         }
                         Err(ce) => {
-                            eprintln!("mv: cannot move '{}' to '{}': {}", src, dest, ce);
+                            zwarnnam("mv", &format!("cannot move '{}' to '{}': {}", src, dest, ce));
                             mv_status = 1;
                             continue;
                         }
                     }
                 } else {
-                    eprintln!("mv: cannot move '{}' to '{}': {}", src, dest, e);
+                    zwarnnam("mv", &format!("cannot move '{}' to '{}': {}", src, dest, e));
                     mv_status = 1;
                     continue;
                 }
@@ -466,7 +467,7 @@ impl crate::ported::exec::ShellExecutor {
                 "-d" | "--dir" => empty_dir = true,
                 s if s.starts_with("--") => {
                     // Unknown long form rejected per coreutils.
-                    eprintln!("rm: unrecognized option: '{}'", s);
+                    zwarnnam("rm", &format!("unrecognized option: '{}'", s));
                     return 1;
                 }
                 s if s.starts_with('-') && s.len() > 1 => {
@@ -488,7 +489,7 @@ impl crate::ported::exec::ShellExecutor {
                             // flag letters (esp. inside combined forms
                             // like \`-rfX\`).
                             _ => {
-                                eprintln!("rm: unrecognized option: '-{}'", c);
+                                zwarnnam("rm", &format!("unrecognized option: '-{}'", c));
                                 return 1;
                             }
                         }
@@ -504,7 +505,7 @@ impl crate::ported::exec::ShellExecutor {
 
             if !path.exists() {
                 if !force {
-                    eprintln!("rm: cannot remove '{}': No such file or directory", file);
+                    zwarnnam("rm", &format!("cannot remove '{}': No such file or directory", file));
                     status = 1;
                 }
                 continue;
@@ -529,7 +530,7 @@ impl crate::ported::exec::ShellExecutor {
                     // if non-empty unless -f.
                     std::fs::remove_dir(path)
                 } else {
-                    eprintln!("rm: cannot remove '{}': Is a directory", file);
+                    zwarnnam("rm", &format!("cannot remove '{}': Is a directory", file));
                     status = 1;
                     continue;
                 }
@@ -539,7 +540,7 @@ impl crate::ported::exec::ShellExecutor {
 
             if let Err(e) = result {
                 if !force {
-                    eprintln!("rm: cannot remove '{}': {}", file, e);
+                    zwarnnam("rm", &format!("cannot remove '{}': {}", file, e));
                     status = 1;
                 }
             } else if verbose {
@@ -574,14 +575,14 @@ impl crate::ported::exec::ShellExecutor {
                 "--" => {} // end of options
                 s if !s.starts_with('-') => positional.push(s),
                 s => {
-                    eprintln!("{}: unrecognized option: '{}'", prefix, s);
+                    zwarnnam(prefix, &format!("unrecognized option: '{}'", s));
                     return 1;
                 }
             }
         }
 
         if positional.len() < 2 {
-            eprintln!("{}: missing operand", prefix);
+            zwarnnam(prefix, "missing operand");
             return 1;
         }
 
@@ -597,7 +598,7 @@ impl crate::ported::exec::ShellExecutor {
                     let c_group = std::ffi::CString::new(group_spec).unwrap();
                     let gr = libc::getgrnam(c_group.as_ptr());
                     if gr.is_null() {
-                        eprintln!("{}: invalid group: '{}'", prefix, group_spec);
+                        zwarnnam(prefix, &format!("invalid group: '{}'", group_spec));
                         return 1;
                     }
                     (*gr).gr_gid
@@ -621,7 +622,7 @@ impl crate::ported::exec::ShellExecutor {
                     let c_user = std::ffi::CString::new(user).unwrap();
                     let pw = libc::getpwnam(c_user.as_ptr());
                     if pw.is_null() {
-                        eprintln!("{}: invalid user: '{}'", prefix, user);
+                        zwarnnam(prefix, &format!("invalid user: '{}'", user));
                         return 1;
                     }
                     (*pw).pw_uid
@@ -637,7 +638,7 @@ impl crate::ported::exec::ShellExecutor {
                             let c_group = std::ffi::CString::new(g).unwrap();
                             let gr = libc::getgrnam(c_group.as_ptr());
                             if gr.is_null() {
-                                eprintln!("{}: invalid group: '{}'", prefix, g);
+                                zwarnnam(prefix, &format!("invalid group: '{}'", g));
                                 return 1;
                             }
                             (*gr).gr_gid
@@ -675,12 +676,14 @@ impl crate::ported::exec::ShellExecutor {
             };
             if ret != 0 {
                 let verb = if prefix == "chgrp" { "group" } else { "ownership" };
-                eprintln!(
-                    "{}: changing {} of '{}': {}",
+                zwarnnam(
                     prefix,
-                    verb,
-                    path.display(),
-                    std::io::Error::last_os_error()
+                    &format!(
+                        "changing {} of '{}': {}",
+                        verb,
+                        path.display(),
+                        std::io::Error::last_os_error()
+                    ),
                 );
                 return 1;
             }
@@ -709,7 +712,7 @@ impl crate::ported::exec::ShellExecutor {
     #[cfg(not(unix))]
     pub(crate) fn bin_chown(&self, name: &str, _args: &[String]) -> i32 {
         let prefix = if name == "chgrp" || name == "zf_chgrp" { "chgrp" } else { "chown" };
-        eprintln!("{}: not supported on this platform", prefix);
+        zwarnnam(prefix, "not supported on this platform");
         1
     }
     /// chmod - change file permissions
@@ -733,7 +736,7 @@ impl crate::ported::exec::ShellExecutor {
                     if u32::from_str_radix(&s[1..], 8).is_ok() {
                         positional.push(s);
                     } else {
-                        eprintln!("chmod: unrecognized option: '{}'", s);
+                        zwarnnam("chmod", &format!("unrecognized option: '{}'", s));
                         return 1;
                     }
                 }
@@ -742,7 +745,7 @@ impl crate::ported::exec::ShellExecutor {
         }
 
         if positional.len() < 2 {
-            eprintln!("chmod: missing operand");
+            zwarnnam("chmod", "missing operand");
             return 1;
         }
 
@@ -756,7 +759,7 @@ impl crate::ported::exec::ShellExecutor {
         // format zsh uses: `chmod: invalid mode `<spec>'` exit 1.
         let mode: Option<u32> = u32::from_str_radix(mode_spec, 8).ok();
         if mode.is_none() {
-            eprintln!("chmod: invalid mode `{}'", mode_spec);
+            zwarnnam("chmod", &format!("invalid mode `{}'", mode_spec));
             return 1;
         }
         let mode = mode.unwrap();
@@ -768,7 +771,7 @@ impl crate::ported::exec::ShellExecutor {
                 if let Err(e) =
                     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
                 {
-                    eprintln!("chmod: changing permissions of '{}': {}", path.display(), e);
+                    zwarnnam("chmod", &format!("changing permissions of '{}': {}", path.display(), e));
                     return 1;
                 }
 
@@ -813,7 +816,7 @@ impl crate::ported::exec::ShellExecutor {
                 "-f" | "--file-system" => filesystem = true,
                 "--" => {}
                 s if s.starts_with('-') && s.len() > 1 => {
-                    eprintln!("sync: unrecognized option: '{}'", s);
+                    zwarnnam("sync", &format!("unrecognized option: '{}'", s));
                     return 1;
                 }
                 s => files.push(s),
@@ -832,18 +835,14 @@ impl crate::ported::exec::ShellExecutor {
             let cpath = match std::ffi::CString::new(f) {
                 Ok(c) => c,
                 Err(_) => {
-                    eprintln!("sync: invalid path '{}'", f);
+                    zwarnnam("sync", &format!("invalid path '{}'", f));
                     status = 1;
                     continue;
                 }
             };
             let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDONLY) };
             if fd < 0 {
-                eprintln!(
-                    "sync: cannot open '{}': {}",
-                    f,
-                    std::io::Error::last_os_error()
-                );
+                zwarnnam("sync", &format!("cannot open '{}': {}", f, std::io::Error::last_os_error()));
                 status = 1;
                 continue;
             }
@@ -870,11 +869,7 @@ impl crate::ported::exec::ShellExecutor {
                 unsafe { libc::fsync(fd) }
             };
             if r != 0 {
-                eprintln!(
-                    "sync: cannot sync '{}': {}",
-                    f,
-                    std::io::Error::last_os_error()
-                );
+                zwarnnam("sync", &format!("cannot sync '{}': {}", f, std::io::Error::last_os_error()));
                 status = 1;
             }
             unsafe {

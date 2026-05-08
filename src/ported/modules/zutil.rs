@@ -3,6 +3,7 @@
 //! Provides zstyle, zformat, zparseopts builtins.
 
 use regex::Regex;
+use crate::ported::utils::zwarnnam;
 use std::collections::HashMap;
 use indexmap::IndexMap;
 // ZStyle is defined below (moved from exec.rs).
@@ -979,7 +980,7 @@ impl crate::ported::exec::ShellExecutor {
         // flag-form). zshrs's catch-all set-style path required
         // args.len() >= 2 silently.
         if args.len() == 1 && !args[0].starts_with('-') {
-            eprintln!("zshrs:zstyle:1: not enough arguments");
+            zwarnnam("zstyle", "not enough arguments");
             return 1;
         }
         if args.is_empty() {
@@ -1015,7 +1016,7 @@ impl crate::ported::exec::ShellExecutor {
                     // Get style into array. zsh: too few args ->
                     // `zstyle:1: not enough arguments` exit 1.
                     if args.len() < 4 {
-                        eprintln!("zshrs:zstyle:1: not enough arguments");
+                        zwarnnam("zstyle", "not enough arguments");
                         return 1;
                     }
                     let array_name = &args[1];
@@ -1037,7 +1038,7 @@ impl crate::ported::exec::ShellExecutor {
                     // NAME), so `zstyle -s :ctx style val` left
                     // `$val` empty.
                     if args.len() < 4 {
-                        eprintln!("zshrs:zstyle:1: not enough arguments");
+                        zwarnnam("zstyle", "not enough arguments");
                         return 1;
                     }
                     let context = &args[1];
@@ -1053,7 +1054,7 @@ impl crate::ported::exec::ShellExecutor {
                 "-t" => {
                     // Test style (check if true/yes)
                     if args.len() < 3 {
-                        eprintln!("zshrs:zstyle:1: not enough arguments");
+                        zwarnnam("zstyle", "not enough arguments");
                         return 1;
                     }
                     let context = &args[1];
@@ -1071,7 +1072,7 @@ impl crate::ported::exec::ShellExecutor {
                     // non-zero when explicitly set to false. zshrs's
                     // unknown-flag fallback rejected -T as invalid.
                     if args.len() < 3 {
-                        eprintln!("zshrs:zstyle:1: not enough arguments");
+                        zwarnnam("zstyle", "not enough arguments");
                         return 1;
                     }
                     let context = &args[1];
@@ -1088,7 +1089,7 @@ impl crate::ported::exec::ShellExecutor {
                     // bin_zstyle case 'b': test_bool returning Some
                     // means we have a value, format as yes/no.
                     if args.len() < 4 {
-                        eprintln!("zshrs:zstyle:1: not enough arguments");
+                        zwarnnam("zstyle", "not enough arguments");
                         return 1;
                     }
                     let context = &args[1];
@@ -1111,7 +1112,7 @@ impl crate::ported::exec::ShellExecutor {
                     // style values into the named array (zutil.c
                     // bin_zstyle case 'a').
                     if args.len() < 4 {
-                        eprintln!("zshrs:zstyle:1: not enough arguments");
+                        zwarnnam("zstyle", "not enough arguments");
                         return 1;
                     }
                     let context = &args[1];
@@ -1128,7 +1129,7 @@ impl crate::ported::exec::ShellExecutor {
                     // style value matches the glob pattern (zutil.c
                     // bin_zstyle case 'm'). Returns 0 on match.
                     if args.len() < 4 {
-                        eprintln!("zshrs:zstyle:1: not enough arguments");
+                        zwarnnam("zstyle", "not enough arguments");
                         return 1;
                     }
                     let context = &args[1];
@@ -1150,7 +1151,7 @@ impl crate::ported::exec::ShellExecutor {
                     // we don't yet evaluate the expression on lookup,
                     // but record the values so re-listing works.
                     if args.len() < 4 {
-                        eprintln!("zshrs:zstyle:1: not enough arguments");
+                        zwarnnam("zstyle", "not enough arguments");
                         return 1;
                     }
                     let pattern = &args[1];
@@ -1196,11 +1197,11 @@ impl crate::ported::exec::ShellExecutor {
                     // Bare `-` is treated as "not enough arguments"
                     // by zsh — it's a degenerate flag-only invocation
                     // without a recognized option letter.
-                    eprintln!("zshrs:zstyle:1: not enough arguments");
+                    zwarnnam("zstyle", "not enough arguments");
                     return 1;
                 }
                 other => {
-                    eprintln!("zshrs:zstyle:1: invalid option: {}", other);
+                    zwarnnam("zstyle", &format!("invalid option: {}", other));
                     return 1;
                 }
             }
@@ -1240,7 +1241,7 @@ impl crate::ported::exec::ShellExecutor {
         // zsh: bare `zparseopts` -> `zparseopts:1: not enough
         // arguments` exit 1. zshrs silently returned 0.
         if args.is_empty() {
-            eprintln!("zshrs:zparseopts:1: not enough arguments");
+            zwarnnam("zparseopts", "not enough arguments");
             return 1;
         }
         let mut remove_parsed = false; // -D
@@ -1418,10 +1419,7 @@ impl crate::ported::exec::ShellExecutor {
                     } else if effective_spec.optional_arg {
                         None
                     } else if fail_on_error {
-                        eprintln!(
-                            "zparseopts: missing argument for option: {}",
-                            effective_spec.name
-                        );
+                        zwarnnam("zparseopts", &format!("missing argument for option: {}", effective_spec.name));
                         return 1;
                     } else {
                         None
@@ -1520,7 +1518,7 @@ impl crate::ported::exec::ShellExecutor {
     /// zformat - format strings
     pub(crate) fn bin_zformat(&mut self, args: &[String]) -> i32 {
         if args.len() < 2 {
-            eprintln!("zshrs:zformat:1: not enough arguments");
+            zwarnnam("zformat", "not enough arguments");
             return 1;
         }
 
@@ -1535,7 +1533,7 @@ impl crate::ported::exec::ShellExecutor {
                 // which handles `%(SPECTEST.true.false)` ternaries
                 // and `.MAX` width caps.
                 if args.len() < 3 {
-                    eprintln!("zshrs:zformat:1: not enough arguments");
+                    zwarnnam("zformat", "not enough arguments");
                     return 1;
                 }
                 let presence = args[0] == "-F";
@@ -1553,11 +1551,11 @@ impl crate::ported::exec::ShellExecutor {
                     }
                     let key = chars[0];
                     if chars[1] != ':' {
-                        eprintln!("zshrs:zformat:1: invalid argument: {}", s);
+                        zwarnnam("zformat", &format!("invalid argument: {}", s));
                         return 1;
                     }
                     if key == '-' || key == '.' || key.is_ascii_digit() {
-                        eprintln!("zshrs:zformat:1: invalid argument: {}", s);
+                        zwarnnam("zformat", &format!("invalid argument: {}", s));
                         return 1;
                     }
                     specs.insert(key, s[2..].to_string());
@@ -1658,7 +1656,7 @@ impl crate::ported::exec::ShellExecutor {
                 self.arrays.insert(array_name, results);
             }
             _ => {
-                eprintln!("zshrs:zformat:1: unknown option: {}", args[0]);
+                zwarnnam("zformat", &format!("unknown option: {}", args[0]));
                 return 1;
             }
         }
@@ -1667,7 +1665,7 @@ impl crate::ported::exec::ShellExecutor {
     /// zregexparse - parse with regex
     pub(crate) fn bin_zregexparse(&mut self, args: &[String]) -> i32 {
         if args.len() < 2 {
-            eprintln!("zshrs:zregexparse:1: usage: zregexparse var pattern [string]");
+            zwarnnam("zregexparse", "usage: zregexparse var pattern [string]");
             return 1;
         }
 
@@ -1720,7 +1718,7 @@ impl crate::ported::exec::ShellExecutor {
                 }
             }
             Err(e) => {
-                eprintln!("zshrs:zregexparse:1: invalid regex: {}", e);
+                zwarnnam("zregexparse", &format!("invalid regex: {}", e));
                 2
             }
         }

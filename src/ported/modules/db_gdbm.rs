@@ -8,6 +8,7 @@
 //! - zgdbmpath: Get the path of a tied GDBM database
 
 use std::collections::HashMap;
+use crate::ported::utils::zwarnnam;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
 use std::path::{Path, PathBuf};
@@ -740,7 +741,7 @@ impl crate::ported::exec::ShellExecutor {
                         db_type = Some(args[i + 1].clone());
                         i += 2;
                     } else {
-                        eprintln!("zshrs:ztie:1: -d requires an argument");
+                        zwarnnam("ztie", "-d requires an argument");
                         return 1;
                     }
                 }
@@ -749,7 +750,7 @@ impl crate::ported::exec::ShellExecutor {
                         file_path = Some(args[i + 1].clone());
                         i += 2;
                     } else {
-                        eprintln!("zshrs:ztie:1: -f requires an argument");
+                        zwarnnam("ztie", "-f requires an argument");
                         return 1;
                     }
                 }
@@ -758,7 +759,7 @@ impl crate::ported::exec::ShellExecutor {
                     i += 1;
                 }
                 arg if arg.starts_with('-') => {
-                    eprintln!("zshrs:ztie:1: bad option: {}", arg);
+                    zwarnnam("ztie", &format!("bad option: {}", arg));
                     return 1;
                 }
                 _ => {
@@ -776,7 +777,7 @@ impl crate::ported::exec::ShellExecutor {
         ) {
             Ok(()) => 0,
             Err(e) => {
-                eprintln!("zshrs:ztie:1: {}", e);
+                zwarnnam("ztie", &format!("{}", e));
                 1
             }
         }
@@ -793,7 +794,7 @@ impl crate::ported::exec::ShellExecutor {
             match arg.as_str() {
                 "-u" => force_unset = true,
                 a if a.starts_with('-') => {
-                    eprintln!("zshrs:zuntie:1: bad option: {}", a);
+                    zwarnnam("zuntie", &format!("bad option: {}", a));
                     return 1;
                 }
                 _ => param_args.push(arg.clone()),
@@ -801,14 +802,14 @@ impl crate::ported::exec::ShellExecutor {
         }
 
         if param_args.is_empty() {
-            eprintln!("zshrs:zuntie:1: not enough arguments");
+            zwarnnam("zuntie", "not enough arguments");
             return 1;
         }
 
         match db_gdbm::bin_zuntie(&param_args, force_unset) {
             Ok(()) => 0,
             Err(e) => {
-                eprintln!("zshrs:zuntie:1: {}", e);
+                zwarnnam("zuntie", &format!("{}", e));
                 1
             }
         }
@@ -820,8 +821,9 @@ impl crate::ported::exec::ShellExecutor {
         use crate::db_gdbm;
 
         if args.is_empty() {
-            eprintln!(
-                "zgdbmpath: parameter name (whose path is to be written to $REPLY) is required"
+            zwarnnam(
+                "zgdbmpath",
+                "parameter name (whose path is to be written to $REPLY) is required",
             );
             return 1;
         }
@@ -833,7 +835,7 @@ impl crate::ported::exec::ShellExecutor {
                 0
             }
             Err(e) => {
-                eprintln!("zshrs:zgdbmpath:1: {}", e);
+                zwarnnam("zgdbmpath", &format!("{}", e));
                 1
             }
         }

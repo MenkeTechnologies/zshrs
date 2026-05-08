@@ -3,6 +3,7 @@
 //! Provides bin_sysread, bin_syswrite, bin_sysopen, bin_sysseek, bin_syserror, zsystem builtins.
 
 use std::collections::HashMap;
+use crate::ported::utils::zwarnnam;
 use std::io::{self, Read, Write};
 use std::time::{Duration, Instant};
 
@@ -971,14 +972,14 @@ impl crate::ported::exec::ShellExecutor {
     /// Ported from zsh/Src/Modules/system.c bin_zsystem() lines 805-816
     pub(crate) fn bin_zsystem(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            eprintln!("zshrs:zsystem:1: subcommand expected");
+            zwarnnam("zsystem", "subcommand expected");
             return 1;
         }
         match args[0].as_str() {
             "bin_zsystem_flock" => self.bin_zsystem_flock(&args[1..]),
             "supports" => self.bin_zsystem_supports(&args[1..]),
             _ => {
-                eprintln!("zshrs:zsystem:1: unknown subcommand: {}", args[0]);
+                zwarnnam("zsystem", &format!("unknown subcommand: {}", args[0]));
                 1
             }
         }
@@ -986,11 +987,11 @@ impl crate::ported::exec::ShellExecutor {
     /// zsystem supports - ported from system.c bin_zsystem_supports() lines 780-801
     pub(crate) fn bin_zsystem_supports(&self, args: &[String]) -> i32 {
         if args.is_empty() {
-            eprintln!("zshrs:zsystem:1: supports: not enough arguments");
+            zwarnnam("zsystem", "supports: not enough arguments");
             return 255;
         }
         if args.len() > 1 {
-            eprintln!("zshrs:zsystem:1: supports: too many arguments");
+            zwarnnam("zsystem", "supports: too many arguments");
             return 255;
         }
         match args[0].as_str() {
@@ -1043,9 +1044,7 @@ impl crate::ported::exec::ShellExecutor {
                                 if i < args.len() {
                                     fdvar = Some(args[i].clone());
                                 } else {
-                                    eprintln!(
-                                        "zshrs:zsystem:1: bin_zsystem_flock: option f requires a variable name"
-                                    );
+                                    zwarnnam("bin_zsystem_flock", "option f requires a variable name");
                                     return 1;
                                 }
                             }
@@ -1060,19 +1059,14 @@ impl crate::ported::exec::ShellExecutor {
                                 if i < args.len() {
                                     args[i].clone()
                                 } else {
-                                    eprintln!(
-                                        "zshrs:zsystem:1: bin_zsystem_flock: option t requires a numeric timeout"
-                                    );
+                                    zwarnnam("bin_zsystem_flock", "option t requires a numeric timeout");
                                     return 1;
                                 }
                             };
                             match val.parse::<f64>() {
                                 Ok(t) => timeout = Some(t),
                                 Err(_) => {
-                                    eprintln!(
-                                        "zshrs:zsystem:1: bin_zsystem_flock: invalid timeout value: '{}'",
-                                        val
-                                    );
+                                    zwarnnam("bin_zsystem_flock", &format!("invalid timeout value: '{}'", val));
                                     return 1;
                                 }
                             }
@@ -1090,9 +1084,7 @@ impl crate::ported::exec::ShellExecutor {
                             } else {
                                 i += 1;
                                 if i >= args.len() {
-                                    eprintln!(
-                                        "zshrs:zsystem:1: bin_zsystem_flock: option i requires a numeric retry interval"
-                                    );
+                                    zwarnnam("bin_zsystem_flock", "option i requires a numeric retry interval");
                                     return 1;
                                 }
                                 args[i].clone()
@@ -1101,26 +1093,20 @@ impl crate::ported::exec::ShellExecutor {
                                 Ok(n) if n > 0.0 => {
                                     let us = (n * 1e6).ceil();
                                     if us < 1.0 || us > (i64::MAX as f64 * 0.999) {
-                                        eprintln!(
-                                            "zshrs:zsystem:1: bin_zsystem_flock: invalid interval value: '{}'",
-                                            val
-                                        );
+                                        zwarnnam("bin_zsystem_flock", &format!("invalid interval value: '{}'", val));
                                         return 1;
                                     }
                                     interval_us = us as u64;
                                 }
                                 _ => {
-                                    eprintln!(
-                                        "zshrs:zsystem:1: bin_zsystem_flock: invalid interval value: '{}'",
-                                        val
-                                    );
+                                    zwarnnam("bin_zsystem_flock", &format!("invalid interval value: '{}'", val));
                                     return 1;
                                 }
                             }
                             break;
                         }
                         _ => {
-                            eprintln!("zshrs:zsystem:1: bin_zsystem_flock: unknown option: -{}", c);
+                            zwarnnam("zsystem", &format!("bin_zsystem_flock: unknown option: -{}", c));
                             return 1;
                         }
                     }
@@ -1131,7 +1117,7 @@ impl crate::ported::exec::ShellExecutor {
             let filepath = match file {
                 Some(f) => f,
                 None => {
-                    eprintln!("zshrs:zsystem:1: bin_zsystem_flock: not enough arguments");
+                    zwarnnam("zsystem", "bin_zsystem_flock: not enough arguments");
                     return 1;
                 }
             };
@@ -1143,16 +1129,13 @@ impl crate::ported::exec::ShellExecutor {
                 let fd: i32 = match filepath.parse() {
                     Ok(n) => n,
                     Err(_) => {
-                        eprintln!("zshrs:zsystem:1: bin_zsystem_flock: invalid fd: {}", filepath);
+                        zwarnnam("zsystem", &format!("bin_zsystem_flock: invalid fd: {}", filepath));
                         return 1;
                     }
                 };
                 let r = unsafe { libc::close(fd) };
                 if r < 0 {
-                    eprintln!(
-                        "zshrs:zsystem:1: bin_zsystem_flock: file descriptor {} not in use for locking",
-                        fd
-                    );
+                    zwarnnam("bin_zsystem_flock", &format!("file descriptor {} not in use for locking", fd));
                     return 1;
                 }
                 return 0;
@@ -1168,7 +1151,7 @@ impl crate::ported::exec::ShellExecutor {
             {
                 Ok(f) => f,
                 Err(e) => {
-                    eprintln!("zshrs:zsystem:1: bin_zsystem_flock: {}: {}", filepath, e);
+                    zwarnnam("zsystem", &format!("bin_zsystem_flock: {}: {}", filepath, e));
                     return 1;
                 }
             };
@@ -1228,11 +1211,7 @@ impl crate::ported::exec::ShellExecutor {
                 }
                 let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
                 if errno != libc::EACCES && errno != libc::EAGAIN {
-                    eprintln!(
-                        "zshrs:zsystem:1: bin_zsystem_flock: {}: {}",
-                        filepath,
-                        std::io::Error::last_os_error()
-                    );
+                    zwarnnam("bin_zsystem_flock", &format!("{}: {}", filepath, std::io::Error::last_os_error()));
                     return 1;
                 }
                 if let Some(td) = timeout_duration {
@@ -1244,18 +1223,14 @@ impl crate::ported::exec::ShellExecutor {
                     // loops and ignored user-tuned wait values.
                     std::thread::sleep(std::time::Duration::from_micros(interval_us));
                 } else {
-                    eprintln!(
-                        "zshrs:zsystem:1: bin_zsystem_flock: {}: {}",
-                        filepath,
-                        std::io::Error::last_os_error()
-                    );
+                    zwarnnam("bin_zsystem_flock", &format!("{}: {}", filepath, std::io::Error::last_os_error()));
                     return 1;
                 }
             }
         }
         #[cfg(not(unix))]
         {
-            eprintln!("zshrs:zsystem:1: bin_zsystem_flock: not supported on this platform");
+            zwarnnam("zsystem", "bin_zsystem_flock: not supported on this platform");
             1
         }
     }
@@ -1285,7 +1260,7 @@ impl crate::ported::exec::ShellExecutor {
                     match args[i].parse::<i32>() {
                         Ok(n) if n >= 0 => infd = n,
                         _ => {
-                            eprintln!("zshrs:bin_sysread:1: integer expected: {}", args[i]);
+                            zwarnnam("bin_sysread", &format!("integer expected: {}", args[i]));
                             return 1;
                         }
                     }
@@ -1295,7 +1270,7 @@ impl crate::ported::exec::ShellExecutor {
                     match args[i].parse::<i32>() {
                         Ok(n) if n >= 0 => outfd = n,
                         _ => {
-                            eprintln!("zshrs:bin_sysread:1: integer expected: {}", args[i]);
+                            zwarnnam("bin_sysread", &format!("integer expected: {}", args[i]));
                             return 1;
                         }
                     }
@@ -1305,7 +1280,7 @@ impl crate::ported::exec::ShellExecutor {
                     match args[i].parse::<usize>() {
                         Ok(n) => bufsize = n,
                         Err(_) => {
-                            eprintln!("zshrs:bin_sysread:1: integer expected: {}", args[i]);
+                            zwarnnam("bin_sysread", &format!("integer expected: {}", args[i]));
                             return 1;
                         }
                     }
@@ -1320,7 +1295,7 @@ impl crate::ported::exec::ShellExecutor {
                     match args[i].parse::<f64>() {
                         Ok(t) => timeout_ms = Some((t * 1000.0) as i32),
                         Err(_) => {
-                            eprintln!("zshrs:bin_sysread:1: invalid timeout: {}", args[i]);
+                            zwarnnam("bin_sysread", &format!("invalid timeout: {}", args[i]));
                             return 1;
                         }
                     }
@@ -1419,7 +1394,7 @@ impl crate::ported::exec::ShellExecutor {
                     match args[i].parse::<i32>() {
                         Ok(n) if n >= 0 => outfd = n,
                         _ => {
-                            eprintln!("zshrs:bin_syswrite:1: integer expected: {}", args[i]);
+                            zwarnnam("bin_syswrite", &format!("integer expected: {}", args[i]));
                             return 1;
                         }
                     }
@@ -1512,7 +1487,7 @@ impl crate::ported::exec::ShellExecutor {
                     i += 1;
                     let mode_str = &args[i];
                     if !mode_str.chars().all(|c| ('0'..='7').contains(&c)) || mode_str.len() < 3 {
-                        eprintln!("zshrs:bin_sysopen:1: invalid mode {}", mode_str);
+                        zwarnnam("bin_sysopen", &format!("invalid mode {}", mode_str));
                         return 1;
                     }
                     perms = u32::from_str_radix(mode_str, 8).unwrap_or(0o666);
@@ -1529,7 +1504,7 @@ impl crate::ported::exec::ShellExecutor {
         let fdvar = match fdvar {
             Some(s) => s,
             None => {
-                eprintln!("zshrs:bin_sysopen:1: file descriptor not specified");
+                zwarnnam("bin_sysopen", "file descriptor not specified");
                 return 1;
             }
         };
@@ -1580,7 +1555,7 @@ impl crate::ported::exec::ShellExecutor {
                     #[cfg(target_os = "linux")]
                     "NOATIME" => libc::O_NOATIME,
                     _ => {
-                        eprintln!("zshrs:bin_sysopen:1: unsupported option: {}", tok);
+                        zwarnnam("bin_sysopen", &format!("unsupported option: {}", tok));
                         return 1;
                     }
                 };
@@ -1601,7 +1576,7 @@ impl crate::ported::exec::ShellExecutor {
         };
         if fd == -1 {
             let e = std::io::Error::last_os_error();
-            eprintln!("zshrs:bin_sysopen: can't open file {}: {}", filename, e);
+            zwarnnam("bin_sysopen", &format!("can't open file {}: {}", filename, e));
             return 2;
         }
 
@@ -1615,7 +1590,7 @@ impl crate::ported::exec::ShellExecutor {
             }
             if r == -1 {
                 let e = std::io::Error::last_os_error();
-                eprintln!("zshrs:bin_sysopen: dup2 failed: {}", e);
+                zwarnnam("bin_sysopen", &format!("dup2 failed: {}", e));
                 return 2;
             }
             target
@@ -1652,7 +1627,7 @@ impl crate::ported::exec::ShellExecutor {
                     match args[i].parse::<i32>() {
                         Ok(n) if n >= 0 => fd = n,
                         _ => {
-                            eprintln!("zshrs:bin_sysseek:1: integer expected: {}", args[i]);
+                            zwarnnam("bin_sysseek", &format!("integer expected: {}", args[i]));
                             return 1;
                         }
                     }
@@ -1665,7 +1640,7 @@ impl crate::ported::exec::ShellExecutor {
                         "end" | "2" => libc::SEEK_END,
                         "start" | "set" | "0" => libc::SEEK_SET,
                         _ => {
-                            eprintln!("zshrs:bin_sysseek:1: unknown argument to -w: {}", args[i]);
+                            zwarnnam("bin_sysseek", &format!("unknown argument to -w: {}", args[i]));
                             return 1;
                         }
                     };
@@ -1679,7 +1654,7 @@ impl crate::ported::exec::ShellExecutor {
         let pos: i64 = match pos_arg.as_deref().and_then(|s| s.parse().ok()) {
             Some(n) => n,
             None => {
-                eprintln!("zshrs:bin_sysseek:1: position required");
+                zwarnnam("bin_sysseek", "position required");
                 return 1;
             }
         };
