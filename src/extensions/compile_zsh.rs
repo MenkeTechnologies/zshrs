@@ -2489,9 +2489,15 @@ impl ZshCompiler {
         // The `(#m)` shape (hist_substring_regex_meta_escape) has
         // had_at=false and goes through EXPAND_TEXT which is correct.
         let parsed_mod = parse_param_modifier(&untoked);
+        // Replace shapes route through BUILTIN_PARAM_REPLACE which now
+        // unescapes both pattern and replacement backslashes inline
+        // (previously only the pattern was unescaped). `(#m)` still
+        // works since match-arrays are written by the handler before
+        // each replacement-string expand. Old gate required
+        // had_at: true; relaxed to any Replace.
         let modifier_safe_with_bnull = matches!(
             parsed_mod.as_ref().map(|m| &m.kind),
-            Some(crate::compile_zsh::ParamModifierKind::Replace { had_at: true, .. })
+            Some(crate::compile_zsh::ParamModifierKind::Replace { .. })
         );
         if !has_bnull || modifier_safe_with_bnull {
             if let Some(modifier) = parsed_mod {
