@@ -1936,30 +1936,6 @@ pub(crate) fn parse_pattern_flags_full(
 /// the budget. Glob metacharacters in `pat` are NOT honored — zsh's
 /// `(#a)` form combines with literal patterns; combining with `*`/`?`
 /// is rare and not supported here.
-pub(crate) fn approximate_match(s: &str, pat: &str, n: usize) -> bool {
-    let s_chars: Vec<char> = s.chars().collect();
-    let p_chars: Vec<char> = pat.chars().collect();
-    let m = s_chars.len();
-    let k = p_chars.len();
-    if m.abs_diff(k) > n {
-        return false;
-    }
-    let mut prev: Vec<usize> = (0..=k).collect();
-    let mut curr: Vec<usize> = vec![0; k + 1];
-    for i in 1..=m {
-        curr[0] = i;
-        for j in 1..=k {
-            let cost = if s_chars[i - 1] == p_chars[j - 1] {
-                0
-            } else {
-                1
-            };
-            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
-        }
-        std::mem::swap(&mut prev, &mut curr);
-    }
-    prev[k] <= n
-}
 /// Parse a `<lo-hi>` numeric-range glob suffix. Called after the `<`
 /// has already been consumed. Returns `(lo, hi, chars_consumed)` on a
 /// successful parse, `None` otherwise. Both bounds are optional: `<->`
