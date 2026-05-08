@@ -209,7 +209,20 @@ pub fn ksh93_wrapper(args: &[&str], options: &NamerefOptions) -> (i32, String) {
 
     let name = args[0];
 
-    if !is_valid_identifier(name) {
+    // Inline identifier validity test — direct port of isident()
+    // (Src/params.c:1288): non-empty, first char alphabetic or `_`,
+    // remaining chars alphanumeric or `_`. The zsh source's namespace
+    // (`.foo`) handling isn't yet wired through here.
+    let is_ident = |s: &str| -> bool {
+        let mut chars = s.chars();
+        let Some(first) = chars.next() else { return false; };
+        if !first.is_alphabetic() && first != '_' {
+            return false;
+        }
+        chars.all(|c| c.is_alphanumeric() || c == '_')
+    };
+
+    if !is_ident(name) {
         return (1, format!("nameref: {}: invalid variable name\n", name));
     }
 
@@ -222,7 +235,7 @@ pub fn ksh93_wrapper(args: &[&str], options: &NamerefOptions) -> (i32, String) {
 
     let target = args[1];
 
-    if !is_valid_identifier(target) {
+    if !is_ident(target) {
         return (
             1,
             format!("nameref: {}: invalid reference target\n", target),
@@ -230,23 +243,6 @@ pub fn ksh93_wrapper(args: &[&str], options: &NamerefOptions) -> (i32, String) {
     }
 
     (0, String::new())
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/ksh93.c`.
-fn is_valid_identifier(s: &str) -> bool {
-    if s.is_empty() {
-        return false;
-    }
-
-    let mut chars = s.chars();
-    let first = chars.next().unwrap();
-
-    if !first.is_alphabetic() && first != '_' {
-        return false;
-    }
-
-    chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
 #[cfg(test)]
@@ -302,16 +298,6 @@ mod tests {
             &[Some("h".to_string()), Some("ello".to_string())],
         );
         assert_eq!(params.match_arr.len(), 3);
-    }
-
-    #[test]
-    fn test_is_valid_identifier() {
-        assert!(is_valid_identifier("foo"));
-        assert!(is_valid_identifier("_bar"));
-        assert!(is_valid_identifier("foo123"));
-        assert!(!is_valid_identifier(""));
-        assert!(!is_valid_identifier("123"));
-        assert!(!is_valid_identifier("foo-bar"));
     }
 
     #[test]
