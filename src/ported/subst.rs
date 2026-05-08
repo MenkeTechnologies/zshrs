@@ -3750,11 +3750,22 @@ pub fn paramsubst(                                          // c:1625
             && pf_flags & prefork_flags::SINGLE == 0
             && rest.is_empty()
             && split_parts.is_some();
+        // `rest.is_empty()` guards the bare `$arr` splat path — but
+        // when an operator (e.g. `:#` filter, `(s::)` split, `##`
+        // strip on array) has already produced a per-element split_parts
+        // vector, the result is array-shaped regardless of whether
+        // `rest` was consumed. Direct port of subst.c:3540's aval
+        // threading: SUB_FILTER fills aval, and the post-fork splat
+        // sees aval populated and emits multiple words. Without the
+        // split_parts override, `${(M)arr:#pat}` returned a
+        // space-joined scalar even though paramsubst had filtered
+        // into an array.
+        let op_produced_array = split_parts.is_some();
         let auto_splat = force_splat_from_eq                 // c:2566
             || (!flag_at                                     // c:3950
             && !qt                                           // c:3950 (only outside DQ)
             && pf_flags & prefork_flags::SINGLE == 0         // c:3950 (multsub context)
-            && rest.is_empty()                               // c:3950 (no operator subverted shape)
+            && (rest.is_empty() || op_produced_array)        // c:3950 (op kept shape)
             && !scripted_scalar                              // c:3950 (single-elem pick is scalar)
             && (state.arrays.contains_key(&var_name)         // c:3950
                 || split_parts.is_some()));                  // c:3950 ((s::) made an array)
