@@ -309,12 +309,6 @@ pub fn createbuiltintable() -> &'static HashMap<&'static str, &'static Builtin> 
     })
 }
 
-/// Look up a builtin by name. Equivalent to `builtintab->getnode`
-/// in `Src/builtin.c` (`gethashnode` from `Src/hashtable.c`).
-pub fn lookup_builtin(name: &str) -> Option<&'static Builtin> {
-    createbuiltintable().get(name).copied()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,19 +328,19 @@ mod tests {
     #[test]
     fn lookup_finds_known_builtins() {
         for name in ["cd", "echo", "print", "fg", "bg", "jobs", "wait", "typeset", "test", "[", "."] {
-            assert!(lookup_builtin(name).is_some(), "missing: {name}");
+            assert!(createbuiltintable().get(name).copied().is_some(), "missing: {name}");
         }
     }
 
     #[test]
     fn lookup_misses_unknown() {
-        assert!(lookup_builtin("not-a-builtin-zZz").is_none());
+        assert!(createbuiltintable().get("not-a-builtin-zZz").copied().is_none());
     }
 
     #[test]
     fn prefix_entries_have_prefix_flag() {
         for name in ["-", "builtin", "command", "exec", "noglob"] {
-            let b = lookup_builtin(name).unwrap();
+            let b = createbuiltintable().get(name).copied().unwrap();
             assert!(b.flags & BINF_PREFIX != 0, "{name} missing BINF_PREFIX");
         }
     }
@@ -355,11 +349,11 @@ mod tests {
     fn fg_dispatch_id_distinguishes_aliases() {
         // bin_fg covers fg, bg, jobs, wait, disown — same handler,
         // different funcid. Mirrors Src/builtin.c:52,61,75,88,131.
-        assert_eq!(lookup_builtin("fg").unwrap().funcid, BIN_FG);
-        assert_eq!(lookup_builtin("bg").unwrap().funcid, BIN_BG);
-        assert_eq!(lookup_builtin("jobs").unwrap().funcid, BIN_JOBS);
-        assert_eq!(lookup_builtin("wait").unwrap().funcid, BIN_WAIT);
-        assert_eq!(lookup_builtin("disown").unwrap().funcid, BIN_DISOWN);
+        assert_eq!(createbuiltintable().get("fg").copied().unwrap().funcid, BIN_FG);
+        assert_eq!(createbuiltintable().get("bg").copied().unwrap().funcid, BIN_BG);
+        assert_eq!(createbuiltintable().get("jobs").copied().unwrap().funcid, BIN_JOBS);
+        assert_eq!(createbuiltintable().get("wait").copied().unwrap().funcid, BIN_WAIT);
+        assert_eq!(createbuiltintable().get("disown").copied().unwrap().funcid, BIN_DISOWN);
     }
 }
 
