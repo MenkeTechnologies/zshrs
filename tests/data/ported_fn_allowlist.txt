@@ -147,7 +147,6 @@ clone_shell
 color_to_code
 color_to_sgr_code
 convbaseu
-curs_set
 ensure_initialized
 errno_from_name
 extract_ampm
