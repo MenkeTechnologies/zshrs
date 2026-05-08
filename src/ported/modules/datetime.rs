@@ -212,35 +212,6 @@ pub fn bin_strftime(args: &[&str], options: &StrftimeOptions) -> (i32, String) {
 }
 
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/datetime.c`.
-/// Get current date/time info as a hashmap (for TZ-aware operations).
-/// zshrs-original convenience — bundles the output_strftime fields that
-/// `output_strftime()` in Src/Modules/datetime.c emits one at a time
-/// into a single hash so callers can pluck individual components.
-pub fn get_datetime_info() -> std::collections::HashMap<String, String> {
-    let now = Local::now();
-    let mut info = std::collections::HashMap::new();
-
-    info.insert("year".to_string(), now.format("%Y").to_string());
-    info.insert("month".to_string(), now.format("%m").to_string());
-    info.insert("day".to_string(), now.format("%d").to_string());
-    info.insert("hour".to_string(), now.format("%H").to_string());
-    info.insert("minute".to_string(), now.format("%M").to_string());
-    info.insert("second".to_string(), now.format("%S").to_string());
-    info.insert("weekday".to_string(), now.format("%A").to_string());
-    info.insert("monthname".to_string(), now.format("%B").to_string());
-    info.insert("timezone".to_string(), now.format("%Z").to_string());
-    info.insert("offset".to_string(), now.format("%z").to_string());
-    info.insert("epoch".to_string(), now.timestamp().to_string());
-    info.insert(
-        "iso8601".to_string(),
-        now.format("%Y-%m-%dT%H:%M:%S%z").to_string(),
-    );
-
-    info
-}
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,13 +279,6 @@ mod tests {
         assert!(output.contains("1700000000"));
     }
 
-    #[test]
-    fn test_get_datetime_info() {
-        let info = get_datetime_info();
-        assert!(info.contains_key("year"));
-        assert!(info.contains_key("epoch"));
-        assert!(info.contains_key("iso8601"));
-    }
 }
 
 // ===========================================================
