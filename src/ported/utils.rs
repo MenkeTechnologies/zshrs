@@ -1136,30 +1136,6 @@ pub fn xsymlinks(s: &str) -> std::io::Result<String> {
     }
 }
 
-/// Check if file exists
-pub fn file_exists(path: &str) -> bool {
-    std::path::Path::new(path).exists()
-}
-
-/// Check if path is a file
-pub fn is_file(path: &str) -> bool {
-    std::path::Path::new(path).is_file()
-}
-
-/// Check if path is a directory
-pub fn is_dir(path: &str) -> bool {
-    std::path::Path::new(path).is_dir()
-}
-
-/// Get file modification time as seconds since epoch
-pub fn file_mtime(path: &str) -> Option<i64> {
-    std::fs::metadata(path)
-        .ok()
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64)
-}
-
 /// Read file lines
 pub fn read_lines(path: &str) -> Option<Vec<String>> {
     std::fs::read_to_string(path)
