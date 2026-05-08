@@ -668,7 +668,7 @@ pub fn zle_refresh_finish(state: &mut RefreshState) {
 /// The `hl=`/`layer=`/`opacity=` clauses (prompt.c:2042-2094) are
 /// not surfaced here — those are prompt-system hooks that don't
 /// apply to ZLE region paint.
-pub fn parse_highlight_spec(spec: &str) -> TextAttr {
+pub fn match_highlight(spec: &str) -> TextAttr {
     let mut attr = TextAttr::default();
     for token in spec.split(',') {
         let token = token.trim();
@@ -689,9 +689,9 @@ pub fn parse_highlight_spec(spec: &str) -> TextAttr {
             "noblink" => attr.blink = false,
             other => {
                 if let Some(rest) = other.strip_prefix("fg=") {
-                    attr.fg_color = parse_color_token(rest);
+                    attr.fg_color = match_colour(rest);
                 } else if let Some(rest) = other.strip_prefix("bg=") {
-                    attr.bg_color = parse_color_token(rest);
+                    attr.bg_color = match_colour(rest);
                 }
                 // Anything else (hl=, layer=, opacity=, unknown name) is
                 // silently dropped — same as the C source's "found = 0"
@@ -706,7 +706,7 @@ pub fn parse_highlight_spec(spec: &str) -> TextAttr {
 /// Mirrors the eight ANSI base names + 256-colour numeric form supported
 /// by `match_colour()` (Src/prompt.c, called from `match_highlight`). The
 /// 24-bit `#rrggbb` form and `bright-foo` aliases are not surfaced.
-fn parse_color_token(name: &str) -> Option<u8> {
+fn match_colour(name: &str) -> Option<u8> {
     match name {
         "black" => Some(0),
         "red" => Some(1),
@@ -723,7 +723,7 @@ fn parse_color_token(name: &str) -> Option<u8> {
 
 /// Apply a `$zle_highlight` array to the manager.
 /// Port of `zle_set_highlight()` from Src/Zle/zle_refresh.c:322. Walks
-/// each `category:spec` entry, parses the spec via `parse_highlight_spec`,
+/// each `category:spec` entry, parses the spec via `match_highlight`,
 /// and stores it in `category_attrs`. Categories not mentioned keep the
 /// zsh defaults, applied here on first call: `region` and `special`
 /// default to `standout`, `isearch` to `underline`, `suffix` to `bold`
@@ -766,7 +766,7 @@ pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
             "ellipsis" => HC::Ellipsis,
             _ => continue,
         };
-        manager.category_attrs.insert(cat, parse_highlight_spec(rest));
+        manager.category_attrs.insert(cat, match_highlight(rest));
         seen.insert(cat);
     }
 
@@ -880,31 +880,31 @@ mod tests {
     }
 
     #[test]
-    fn parse_highlight_spec_handles_combined_attrs() {
-        let attr = parse_highlight_spec("bold,fg=red,underline");
+    fn match_highlight_handles_combined_attrs() {
+        let attr = match_highlight("bold,fg=red,underline");
         assert!(attr.bold);
         assert!(attr.underline);
         assert_eq!(attr.fg_color, Some(1));
     }
 
     #[test]
-    fn parse_highlight_spec_named_and_numeric_colors() {
-        assert_eq!(parse_highlight_spec("fg=cyan").fg_color, Some(6));
-        assert_eq!(parse_highlight_spec("bg=42").bg_color, Some(42));
+    fn match_highlight_named_and_numeric_colors() {
+        assert_eq!(match_highlight("fg=cyan").fg_color, Some(6));
+        assert_eq!(match_highlight("bg=42").bg_color, Some(42));
         // Out-of-range numeric → ignored (parse fails for u8).
-        assert_eq!(parse_highlight_spec("fg=999").fg_color, None);
+        assert_eq!(match_highlight("fg=999").fg_color, None);
     }
 
     #[test]
-    fn parse_highlight_spec_negation_clears_attr() {
-        let attr = parse_highlight_spec("bold,nobold,underline");
+    fn match_highlight_negation_clears_attr() {
+        let attr = match_highlight("bold,nobold,underline");
         assert!(!attr.bold);
         assert!(attr.underline);
     }
 
     #[test]
-    fn parse_highlight_spec_none_resets_everything() {
-        let attr = parse_highlight_spec("bold,fg=red,none,underline");
+    fn match_highlight_none_resets_everything() {
+        let attr = match_highlight("bold,fg=red,none,underline");
         // After `none` the only thing surviving is the trailing `underline`.
         assert!(!attr.bold);
         assert!(attr.underline);
