@@ -380,6 +380,94 @@ pub fn pastebuf(s: &str) -> String {
     result
 }
 
+/// Find the first occurrence of `needle` in `haystack`. Port of
+/// `strstr()` from Src/compat.c — that file provides the shim
+/// for systems missing a C library `strstr`. Modern Rust has
+/// `str::find` which gives a byte position; we wrap to the
+/// substring slice C returns. `None` when no match.
+pub fn strstr<'a>(haystack: &'a str, needle: &str) -> Option<&'a str> {
+    haystack.find(needle).map(|i| &haystack[i..])
+}
+
+/// Render an errno value as a human-readable string. Port of
+/// `strerror()` from Src/compat.c — shim for systems without
+/// libc strerror. Delegates to Rust's `std::io::Error` which
+/// calls libc strerror underneath when present.
+pub fn strerror(errnum: i32) -> String {
+    std::io::Error::from_raw_os_error(errnum).to_string()
+}
+
+/// Fetch wall-clock time. Port of `gettimeofday()` from
+/// Src/compat.c — shim for systems without libc gettimeofday.
+/// Returns `(seconds, microseconds)` since the Unix epoch. The C
+/// shim falls back to `time(2)` with `tv_usec = 0` when high-
+/// resolution time isn't available; Rust's `SystemTime` always
+/// has sub-second resolution so we return the precise value.
+pub fn gettimeofday() -> (i64, i64) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| (d.as_secs() as i64, d.subsec_micros() as i64))
+        .unwrap_or((0, 0))
+}
+
+/// Parse an unsigned long with optional radix-prefix detection.
+/// Port of `strtoul()` from Src/compat.c — shim for systems
+/// missing libc strtoul. Returns `(value, bytes_consumed)`.
+/// `base`: 0 = auto-detect (`0x` → 16, leading `0` → 8, else 10);
+/// 2-36 = forced radix. Returns `(0, 0)` on parse failure
+/// (matches C's `*endptr = nptr; return 0` no-progress path).
+pub fn strtoul(s: &str, base: i32) -> (u64, usize) {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
+    let mut radix: u32 = if base == 0 { 10 } else { base as u32 };
+    if i + 1 < bytes.len() && bytes[i] == b'0'
+        && (bytes[i+1] == b'x' || bytes[i+1] == b'X')
+        && (base == 0 || base == 16)
+    {
+        radix = 16;
+        i += 2;
+    } else if base == 0 && i < bytes.len() && bytes[i] == b'0' {
+        radix = 8;
+        i += 1;
+    }
+    let digit_start = i;
+    let mut acc: u64 = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        let d = match c {
+            b'0'..=b'9' => (c - b'0') as u32,
+            b'a'..=b'z' => (c - b'a' + 10) as u32,
+            b'A'..=b'Z' => (c - b'A' + 10) as u32,
+            _ => break,
+        };
+        if d >= radix { break; }
+        acc = acc.saturating_mul(radix as u64).saturating_add(d as u64);
+        i += 1;
+    }
+    if i == digit_start { return (0, 0); }
+    (acc, i)
+}
+
+/// Maximum path length supported by the filesystem at `path`.
+/// Port of `zpathmax()` from Src/compat.c — wraps `pathconf(3)
+/// _PC_PATH_MAX`. Returns 1024 when pathconf is unavailable or
+/// fails.
+pub fn zpathmax(path: &str) -> i64 {
+    #[cfg(unix)]
+    {
+        use std::ffi::CString;
+        if let Ok(c_path) = CString::new(path) {
+            unsafe {
+                let r = libc::pathconf(c_path.as_ptr(), libc::_PC_PATH_MAX);
+                if r > 0 { return r as i64; }
+            }
+        }
+    }
+    1024
+}
+
 /// Unmetafy a string.
 /// Port of `unmetafy()` from Src/utils.c — inverse of `pastebuf`.
 pub fn unmetafy(s: &str) -> String {
