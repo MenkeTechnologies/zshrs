@@ -1,518 +1,459 @@
-//! Extended attributes (xattr) module - port of Modules/attr.c
+//! Extended attributes (xattr) — port of `Src/Modules/attr.c`.
 //!
-//! Provides zgetattr, zsetattr, zdelattr, zlistattr builtins for
-//! manipulating extended file attributes.
+//! Implements `zgetattr` / `zsetattr` / `zdelattr` / `zlistattr`.
+//!
+//! Structure mirrors the C source line-by-line:
+//!   - `xgetxattr` / `xlistxattr` / `xsetxattr` / `xremovexattr`
+//!     (attr.c:36/51/66/82) — thin wrappers over the macOS / Linux
+//!     `xxxxattr(2)` ABI variants.
+//!   - `bin_getattr` / `bin_setattr` / `bin_delattr` / `bin_listattr`
+//!     (attr.c:97/132/149/168) — the four builtin entry points.
+//!   - module entries: `setup_` / `features_` / `enables_` / `boot_`
+//!     / `cleanup_` / `finish_` (attr.c:236+).
+
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
 
 use std::ffi::CString;
-use std::io;
 
-/// Options for xattr operations
-#[derive(Debug, Default, Clone)]
-pub struct XattrOptions {
-    pub no_dereference: bool,
-}
+use crate::ported::exec::ShellExecutor;
+use crate::ported::utils::zwarnnam;
 
-/// Read an extended attribute value.
-/// Port of `xgetxattr()` from Src/Modules/attr.c:37 — the C source
-/// abstracts the macOS / Linux / FreeBSD `xgetxattr(2)` ABI
-/// differences behind a single helper. The `symlink` flag in the C
-/// source maps onto our `options.no_dereference` (macOS:
-/// `XATTR_NOFOLLOW`, Linux: `lgetxattr`).
 #[cfg(target_os = "macos")]
-pub fn xgetxattr(path: &str, name: &str, options: &XattrOptions) -> io::Result<Vec<u8>> {
-    let path_c = CString::new(path)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
-    let name_c = CString::new(name)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid attr name"))?;
+const XATTR_NOFOLLOW: i32 = 0x0001;
 
-    let flags = if options.no_dereference {
-        libc::XATTR_NOFOLLOW
+// =====================================================================
+// Port of `xgetxattr()` from Src/Modules/attr.c:36.
+//
+// C signature:
+//   ssize_t xgetxattr(const char *path, const char *name,
+//                     void *value, size_t size, int symlink);
+// Rust port: same signature, returns ssize_t (`isize`). Caller
+// passes a `&mut [u8]` slot for `value` and the buffer length for
+// `size`. Pass `&mut []` (or any zero-length slice) to query the
+// required size without filling — same as C's `value=NULL, size=0`
+// idiom (attr.c:107).
+// =====================================================================
+
+/// Port of `xgetxattr()` from `Src/Modules/attr.c:36`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn xgetxattr(path: &str, name: &str, value: &mut [u8], symlink: i32) -> isize {
+    let path_c = match CString::new(path) {
+        Ok(c) => c,
+        Err(_) => return -1,
+    };
+    let name_c = match CString::new(name) {
+        Ok(c) => c,
+        Err(_) => return -1,
+    };
+    let val_ptr = if value.is_empty() {
+        std::ptr::null_mut()
     } else {
-        0
+        value.as_mut_ptr() as *mut libc::c_void
     };
-
-    let size = unsafe {
-        libc::getxattr(
-            path_c.as_ptr(),
-            name_c.as_ptr(),
-            std::ptr::null_mut(),
-            0,
-            0,
-            flags,
-        )
-    };
-
-    if size < 0 {
-        return Err(io::Error::last_os_error());
+    #[cfg(target_os = "macos")]
+    {
+        let opts = if symlink != 0 { XATTR_NOFOLLOW } else { 0 };
+        unsafe {
+            libc::getxattr(path_c.as_ptr(), name_c.as_ptr(), val_ptr, value.len(), 0, opts)
+        }
     }
-
-    if size == 0 {
-        return Ok(Vec::new());
+    #[cfg(target_os = "linux")]
+    {
+        if symlink != 0 {
+            unsafe { libc::lgetxattr(path_c.as_ptr(), name_c.as_ptr(), val_ptr, value.len()) }
+        } else {
+            unsafe { libc::getxattr(path_c.as_ptr(), name_c.as_ptr(), val_ptr, value.len()) }
+        }
     }
-
-    let mut buf = vec![0u8; size as usize];
-
-    let result = unsafe {
-        libc::getxattr(
-            path_c.as_ptr(),
-            name_c.as_ptr(),
-            buf.as_mut_ptr() as *mut libc::c_void,
-            size as usize,
-            0,
-            flags,
-        )
-    };
-
-    if result < 0 {
-        return Err(io::Error::last_os_error());
-    }
-
-    buf.truncate(result as usize);
-    Ok(buf)
 }
 
-/// Port of `xgetxattr()` from `Src/Modules/attr.c:37`.
-#[cfg(target_os = "linux")]
-pub fn xgetxattr(path: &str, name: &str, options: &XattrOptions) -> io::Result<Vec<u8>> {
-    let path_c = CString::new(path)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
-    let name_c = CString::new(name)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid attr name"))?;
-
-    let size = if options.no_dereference {
-        unsafe { libc::lgetxattr(path_c.as_ptr(), name_c.as_ptr(), std::ptr::null_mut(), 0) }
-    } else {
-        unsafe { libc::getxattr(path_c.as_ptr(), name_c.as_ptr(), std::ptr::null_mut(), 0) }
-    };
-
-    if size < 0 {
-        return Err(io::Error::last_os_error());
-    }
-
-    if size == 0 {
-        return Ok(Vec::new());
-    }
-
-    let mut buf = vec![0u8; size as usize];
-
-    let result = if options.no_dereference {
-        unsafe {
-            libc::lgetxattr(
-                path_c.as_ptr(),
-                name_c.as_ptr(),
-                buf.as_mut_ptr() as *mut libc::c_void,
-                size as usize,
-            )
-        }
-    } else {
-        unsafe {
-            libc::getxattr(
-                path_c.as_ptr(),
-                name_c.as_ptr(),
-                buf.as_mut_ptr() as *mut libc::c_void,
-                size as usize,
-            )
-        }
-    };
-
-    if result < 0 {
-        return Err(io::Error::last_os_error());
-    }
-
-    buf.truncate(result as usize);
-    Ok(buf)
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/attr.c`.
+/// Port of `xgetxattr()` from `Src/Modules/attr.c:36` — non-xattr stub.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn xgetxattr(_path: &str, _name: &str, _options: &XattrOptions) -> io::Result<Vec<u8>> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "xattr not supported",
-    ))
+pub(crate) fn xgetxattr(_path: &str, _name: &str, _value: &mut [u8], _symlink: i32) -> isize {
+    -1
 }
 
-/// Write an extended attribute value.
-/// Port of `xsetxattr()` from Src/Modules/attr.c:67 — the C
-/// source's wrapper over `xsetxattr(2)` / `lsetxattr(2)`.
-#[cfg(target_os = "macos")]
-pub fn xsetxattr(path: &str, name: &str, value: &[u8], options: &XattrOptions) -> io::Result<()> {
-    let path_c = CString::new(path)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
-    let name_c = CString::new(name)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid attr name"))?;
+// =====================================================================
+// Port of `xlistxattr()` from Src/Modules/attr.c:51.
+// =====================================================================
 
-    let flags = if options.no_dereference {
-        libc::XATTR_NOFOLLOW
+/// Port of `xlistxattr()` from `Src/Modules/attr.c:51`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn xlistxattr(path: &str, list: &mut [u8], symlink: i32) -> isize {
+    let path_c = match CString::new(path) {
+        Ok(c) => c,
+        Err(_) => return -1,
+    };
+    let list_ptr = if list.is_empty() {
+        std::ptr::null_mut()
     } else {
-        0
+        list.as_mut_ptr() as *mut libc::c_char
     };
-
-    let result = unsafe {
-        libc::setxattr(
-            path_c.as_ptr(),
-            name_c.as_ptr(),
-            value.as_ptr() as *const libc::c_void,
-            value.len(),
-            0,
-            flags,
-        )
-    };
-
-    if result < 0 {
-        return Err(io::Error::last_os_error());
+    #[cfg(target_os = "macos")]
+    {
+        let opts = if symlink != 0 { XATTR_NOFOLLOW } else { 0 };
+        unsafe { libc::listxattr(path_c.as_ptr(), list_ptr, list.len(), opts) }
     }
-
-    Ok(())
+    #[cfg(target_os = "linux")]
+    {
+        if symlink != 0 {
+            unsafe { libc::llistxattr(path_c.as_ptr(), list_ptr, list.len()) }
+        } else {
+            unsafe { libc::listxattr(path_c.as_ptr(), list_ptr, list.len()) }
+        }
+    }
 }
 
-/// Port of `xsetxattr()` from `Src/Modules/attr.c:67`.
-#[cfg(target_os = "linux")]
-pub fn xsetxattr(path: &str, name: &str, value: &[u8], options: &XattrOptions) -> io::Result<()> {
-    let path_c = CString::new(path)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
-    let name_c = CString::new(name)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid attr name"))?;
+/// Port of `xlistxattr()` from `Src/Modules/attr.c:51` — non-xattr stub.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub(crate) fn xlistxattr(_path: &str, _list: &mut [u8], _symlink: i32) -> isize {
+    -1
+}
 
-    let result = if options.no_dereference {
-        unsafe {
-            libc::lsetxattr(
-                path_c.as_ptr(),
-                name_c.as_ptr(),
-                value.as_ptr() as *const libc::c_void,
-                value.len(),
-                0,
-            )
-        }
-    } else {
+// =====================================================================
+// Port of `xsetxattr()` from Src/Modules/attr.c:66.
+// =====================================================================
+
+/// Port of `xsetxattr()` from `Src/Modules/attr.c:66`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn xsetxattr(
+    path: &str,
+    name: &str,
+    value: &[u8],
+    flags: i32,
+    symlink: i32,
+) -> i32 {
+    let path_c = match CString::new(path) {
+        Ok(c) => c,
+        Err(_) => return -1,
+    };
+    let name_c = match CString::new(name) {
+        Ok(c) => c,
+        Err(_) => return -1,
+    };
+    let val_ptr = value.as_ptr() as *const libc::c_void;
+    #[cfg(target_os = "macos")]
+    {
+        // C: `flags | symlink ? XATTR_NOFOLLOW : 0` — the cast is the
+        // C source's well-known operator-precedence quirk; the
+        // resulting expression is `(flags | symlink) ? XATTR_NOFOLLOW
+        // : 0`. We mirror it byte-for-byte.
+        let combined = if (flags | symlink) != 0 {
+            XATTR_NOFOLLOW
+        } else {
+            0
+        };
         unsafe {
             libc::setxattr(
                 path_c.as_ptr(),
                 name_c.as_ptr(),
-                value.as_ptr() as *const libc::c_void,
+                val_ptr,
                 value.len(),
                 0,
+                combined,
             )
         }
-    };
-
-    if result < 0 {
-        return Err(io::Error::last_os_error());
     }
-
-    Ok(())
+    #[cfg(target_os = "linux")]
+    {
+        if symlink != 0 {
+            unsafe {
+                libc::lsetxattr(
+                    path_c.as_ptr(),
+                    name_c.as_ptr(),
+                    val_ptr,
+                    value.len(),
+                    flags,
+                )
+            }
+        } else {
+            unsafe {
+                libc::setxattr(
+                    path_c.as_ptr(),
+                    name_c.as_ptr(),
+                    val_ptr,
+                    value.len(),
+                    flags,
+                )
+            }
+        }
+    }
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/attr.c`.
+/// Port of `xsetxattr()` from `Src/Modules/attr.c:66` — non-xattr stub.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn xsetxattr(
+pub(crate) fn xsetxattr(
     _path: &str,
     _name: &str,
     _value: &[u8],
-    _options: &XattrOptions,
-) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "xattr not supported",
-    ))
+    _flags: i32,
+    _symlink: i32,
+) -> i32 {
+    -1
 }
 
-/// Remove an extended attribute.
-/// Port of `xremovexattr()` from Src/Modules/attr.c:83 — wrapper
-/// over `xremovexattr(2)` / `lremovexattr(2)`.
-#[cfg(target_os = "macos")]
-pub fn xremovexattr(path: &str, name: &str, options: &XattrOptions) -> io::Result<()> {
-    let path_c = CString::new(path)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
-    let name_c = CString::new(name)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid attr name"))?;
+// =====================================================================
+// Port of `xremovexattr()` from Src/Modules/attr.c:82.
+// =====================================================================
 
-    let flags = if options.no_dereference {
-        libc::XATTR_NOFOLLOW
-    } else {
-        0
+/// Port of `xremovexattr()` from `Src/Modules/attr.c:82`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn xremovexattr(path: &str, name: &str, symlink: i32) -> i32 {
+    let path_c = match CString::new(path) {
+        Ok(c) => c,
+        Err(_) => return -1,
     };
-
-    let result = unsafe { libc::removexattr(path_c.as_ptr(), name_c.as_ptr(), flags) };
-
-    if result < 0 {
-        return Err(io::Error::last_os_error());
-    }
-
-    Ok(())
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/attr.c`.
-#[cfg(target_os = "linux")]
-pub fn xremovexattr(path: &str, name: &str, options: &XattrOptions) -> io::Result<()> {
-    let path_c = CString::new(path)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
-    let name_c = CString::new(name)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid attr name"))?;
-
-    let result = if options.no_dereference {
-        unsafe { libc::lremovexattr(path_c.as_ptr(), name_c.as_ptr()) }
-    } else {
-        unsafe { libc::removexattr(path_c.as_ptr(), name_c.as_ptr()) }
+    let name_c = match CString::new(name) {
+        Ok(c) => c,
+        Err(_) => return -1,
     };
-
-    if result < 0 {
-        return Err(io::Error::last_os_error());
+    #[cfg(target_os = "macos")]
+    {
+        let opts = if symlink != 0 { XATTR_NOFOLLOW } else { 0 };
+        unsafe { libc::removexattr(path_c.as_ptr(), name_c.as_ptr(), opts) }
     }
-
-    Ok(())
+    #[cfg(target_os = "linux")]
+    {
+        if symlink != 0 {
+            unsafe { libc::lremovexattr(path_c.as_ptr(), name_c.as_ptr()) }
+        } else {
+            unsafe { libc::removexattr(path_c.as_ptr(), name_c.as_ptr()) }
+        }
+    }
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/attr.c`.
+/// Port of `xremovexattr()` from `Src/Modules/attr.c:82` — non-xattr stub.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn xremovexattr(_path: &str, _name: &str, _options: &XattrOptions) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "xattr not supported",
-    ))
+pub(crate) fn xremovexattr(_path: &str, _name: &str, _symlink: i32) -> i32 {
+    -1
 }
 
-/// List a file's extended-attribute names.
-/// Port of `xlistxattr()` from Src/Modules/attr.c:52 — wrapper
-/// over `listxattr(2)` / `llistxattr(2)`. The C source returns the
-/// raw NUL-terminated buffer; we parse it into a `Vec<String>`.
-#[cfg(target_os = "macos")]
-pub fn xlistxattr(path: &str, options: &XattrOptions) -> io::Result<Vec<String>> {
-    let path_c = CString::new(path)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
+// =====================================================================
+// Port of `bin_getattr()` from Src/Modules/attr.c:97.
+//
+// C signature:
+//   bin_getattr(char *nam, char **argv, Options ops, int func)
+// Rust port adds `&mut ShellExecutor` so `setsparam(param, ...)` /
+// `unsetparam(param)` from C lines 110/119 can be expressed as
+// `s.variables.insert(...)` / `s.variables.remove(...)`.
+// =====================================================================
 
-    let flags = if options.no_dereference {
-        libc::XATTR_NOFOLLOW
-    } else {
-        0
-    };
-
-    let size = unsafe { libc::listxattr(path_c.as_ptr(), std::ptr::null_mut(), 0, flags) };
-
-    if size < 0 {
-        return Err(io::Error::last_os_error());
+/// Port of `bin_getattr()` from `Src/Modules/attr.c:97`.
+///
+/// `zgetattr [-h] file attr [param]`: read the named xattr from
+/// `file`. With `param`, write the value into the named shell
+/// parameter; without, print to stdout.
+pub(crate) fn bin_getattr(s: &mut ShellExecutor, nam: &str, argv: &[String], symlink: i32) -> i32 {
+    if argv.len() < 2 {
+        zwarnnam(nam, "not enough arguments");
+        return 1;
     }
-
-    if size == 0 {
-        return Ok(Vec::new());
+    let file = argv[0].as_str();
+    let attr = argv[1].as_str();
+    let param = argv.get(2).map(|s| s.as_str());
+    let mut ret = 0;
+    // C: val_len = xgetxattr(file, attr, NULL, 0, symlink);
+    let val_len = xgetxattr(file, attr, &mut [], symlink);
+    if val_len == 0 {
+        // attr.c:108-112 — empty xattr; unset param if given.
+        if let Some(p) = param {
+            s.variables.remove(p);
+            s.arrays.remove(p);
+        }
+        return 0;
     }
-
-    let mut buf = vec![0u8; size as usize];
-
-    let result = unsafe {
-        libc::listxattr(
-            path_c.as_ptr(),
-            buf.as_mut_ptr() as *mut libc::c_char,
-            size as usize,
-            flags,
-        )
-    };
-
-    if result < 0 {
-        return Err(io::Error::last_os_error());
-    }
-
-    buf.truncate(result as usize);
-    // Walk the NUL-terminated name list inline — direct port of the
-    // C loop in bin_listattr (Src/Modules/attr.c:169).
-    let mut names = Vec::new();
-    let mut start = 0;
-    for (i, &byte) in buf.iter().enumerate() {
-        if byte == 0 {
-            if i > start {
-                names.push(String::from_utf8_lossy(&buf[start..i]).into_owned());
+    let mut attr_len: isize = 0;
+    if val_len > 0 {
+        // C: value = zalloc(val_len+1); attr_len = xgetxattr(...);
+        let mut value = vec![0u8; val_len as usize];
+        attr_len = xgetxattr(file, attr, &mut value, symlink);
+        if attr_len > 0 && attr_len <= val_len {
+            value.truncate(attr_len as usize);
+            // C: setsparam(param, metafy(...)) or printf("%s\n", value);
+            let val = String::from_utf8_lossy(&value).into_owned();
+            if let Some(p) = param {
+                s.variables.insert(p.to_string(), val);
+            } else {
+                println!("{}", val);
             }
-            start = i + 1;
         }
     }
-    Ok(names)
+    if val_len < 0 || attr_len < 0 || attr_len > val_len {
+        zwarnnam(nam, &format!("{}: {}", file, std::io::Error::last_os_error()));
+        // C: ret = 1 + ((val_len > 0 && attr_len > val_len) || attr_len < 0);
+        ret = 1 + i32::from((val_len > 0 && attr_len > val_len) || attr_len < 0);
+    }
+    ret
 }
 
-/// Port of `xlistxattr()` from `Src/Modules/attr.c:52`.
-#[cfg(target_os = "linux")]
-pub fn xlistxattr(path: &str, options: &XattrOptions) -> io::Result<Vec<String>> {
-    let path_c = CString::new(path)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
+// =====================================================================
+// Port of `bin_setattr()` from Src/Modules/attr.c:132.
+// =====================================================================
 
-    let size = if options.no_dereference {
-        unsafe { libc::llistxattr(path_c.as_ptr(), std::ptr::null_mut(), 0) }
-    } else {
-        unsafe { libc::listxattr(path_c.as_ptr(), std::ptr::null_mut(), 0) }
-    };
-
-    if size < 0 {
-        return Err(io::Error::last_os_error());
+/// Port of `bin_setattr()` from `Src/Modules/attr.c:132`.
+///
+/// `zsetattr [-h] file attr value`: write `value` to the named
+/// xattr.
+pub(crate) fn bin_setattr(_s: &mut ShellExecutor, nam: &str, argv: &[String], symlink: i32) -> i32 {
+    if argv.len() < 3 {
+        zwarnnam(nam, "not enough arguments");
+        return 1;
     }
-
-    if size == 0 {
-        return Ok(Vec::new());
+    let file = argv[0].as_str();
+    let attr = argv[1].as_str();
+    let value = argv[2].as_bytes();
+    if xsetxattr(file, attr, value, 0, symlink) != 0 {
+        zwarnnam(nam, &format!("{}: {}", file, std::io::Error::last_os_error()));
+        return 1;
     }
+    0
+}
 
-    let mut buf = vec![0u8; size as usize];
+// =====================================================================
+// Port of `bin_delattr()` from Src/Modules/attr.c:149.
+// =====================================================================
 
-    let result = if options.no_dereference {
-        unsafe {
-            libc::llistxattr(
-                path_c.as_ptr(),
-                buf.as_mut_ptr() as *mut libc::c_char,
-                size as usize,
-            )
+/// Port of `bin_delattr()` from `Src/Modules/attr.c:149`.
+///
+/// `zdelattr [-h] file attr...`: remove each named xattr; bail on
+/// the first error.
+pub(crate) fn bin_delattr(_s: &mut ShellExecutor, nam: &str, argv: &[String], symlink: i32) -> i32 {
+    if argv.len() < 2 {
+        zwarnnam(nam, "not enough arguments");
+        return 1;
+    }
+    let file = argv[0].as_str();
+    // C: while (*++attr) — iterate argv[1..].
+    for attr in &argv[1..] {
+        if xremovexattr(file, attr, symlink) != 0 {
+            zwarnnam(nam, &format!("{}: {}", file, std::io::Error::last_os_error()));
+            return 1;
         }
-    } else {
-        unsafe {
-            libc::listxattr(
-                path_c.as_ptr(),
-                buf.as_mut_ptr() as *mut libc::c_char,
-                size as usize,
-            )
-        }
-    };
-
-    if result < 0 {
-        return Err(io::Error::last_os_error());
     }
+    0
+}
 
-    buf.truncate(result as usize);
-    // Walk the NUL-terminated name list inline — direct port of the
-    // C loop in bin_listattr (Src/Modules/attr.c:169).
-    let mut names = Vec::new();
-    let mut start = 0;
-    for (i, &byte) in buf.iter().enumerate() {
-        if byte == 0 {
-            if i > start {
-                names.push(String::from_utf8_lossy(&buf[start..i]).into_owned());
+// =====================================================================
+// Port of `bin_listattr()` from Src/Modules/attr.c:168.
+// =====================================================================
+
+/// Port of `bin_listattr()` from `Src/Modules/attr.c:168`.
+///
+/// `zlistattr [-h] file [param]`: list xattr names. With `param`,
+/// write the array; without, print one per line.
+pub(crate) fn bin_listattr(s: &mut ShellExecutor, nam: &str, argv: &[String], symlink: i32) -> i32 {
+    if argv.is_empty() {
+        zwarnnam(nam, "not enough arguments");
+        return 1;
+    }
+    let file = argv[0].as_str();
+    let param = argv.get(1).map(|s| s.as_str());
+    let mut ret = 0;
+    let val_len = xlistxattr(file, &mut [], symlink);
+    if val_len == 0 {
+        if let Some(p) = param {
+            s.variables.remove(p);
+            s.arrays.remove(p);
+        }
+        return 0;
+    }
+    let mut list_len: isize = 0;
+    if val_len > 0 {
+        let mut value = vec![0u8; val_len as usize];
+        list_len = xlistxattr(file, &mut value, symlink);
+        if list_len > 0 && list_len <= val_len {
+            value.truncate(list_len as usize);
+            // C walks the NUL-terminated name list (attr.c:192-205).
+            let names: Vec<String> = value
+                .split(|&b| b == 0)
+                .filter(|s| !s.is_empty())
+                .map(|s| String::from_utf8_lossy(s).into_owned())
+                .collect();
+            if let Some(p) = param {
+                // C: setaparam(param, array)
+                s.arrays.insert(p.to_string(), names);
+            } else {
+                // C: while (p < &value[list_len]) printf("%s\n", p);
+                for n in &names {
+                    println!("{}", n);
+                }
             }
-            start = i + 1;
         }
     }
-    Ok(names)
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/attr.c`.
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn xlistxattr(_path: &str, _options: &XattrOptions) -> io::Result<Vec<String>> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "xattr not supported",
-    ))
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/attr.c`.
-
-/// `zgetattr` builtin entry point.
-/// Port of `bin_getattr()` from Src/Modules/attr.c:98 — calls
-/// `xgetxattr()` and surfaces the value as a string. Honours
-/// `-h` (no-dereference) the same way the C source does.
-pub fn bin_getattr(file: &str, attr: &str, options: &XattrOptions) -> (i32, Option<String>) {
-    match xgetxattr(file, attr, options) {
-        Ok(value) => {
-            let s = String::from_utf8_lossy(&value).into_owned();
-            (0, Some(s))
-        }
-        Err(e) => (1, Some(format!("zgetattr: {}: {}\n", file, e))),
+    if val_len < 0 || list_len < 0 || list_len > val_len {
+        zwarnnam(nam, &format!("{}: {}", file, std::io::Error::last_os_error()));
+        // C: ret = 1 + (list_len > val_len || list_len < 0);
+        ret = 1 + i32::from(list_len > val_len || list_len < 0);
     }
+    ret
 }
 
-/// `zsetattr` builtin entry point.
-/// Port of `bin_setattr()` from Src/Modules/attr.c:133.
-pub fn bin_setattr(
-    file: &str,
-    attr: &str,
-    value: &str,
-    options: &XattrOptions,
-) -> (i32, String) {
-    match xsetxattr(file, attr, value.as_bytes(), options) {
-        Ok(()) => (0, String::new()),
-        Err(e) => (1, format!("zsetattr: {}: {}\n", file, e)),
-    }
+// =====================================================================
+// Module entry points (attr.c:236-275).
+// =====================================================================
+
+/// Port of `setup_()` from `Src/Modules/attr.c:236`.
+pub fn setup_() -> i32 {
+    0
 }
 
-/// `zdelattr` builtin entry point.
-/// Port of `bin_delattr()` from Src/Modules/attr.c:150 — removes
-/// each named xattr and bails on the first error, matching the C
-/// source's loop.
-pub fn bin_delattr(file: &str, attrs: &[&str], options: &XattrOptions) -> (i32, String) {
-    for attr in attrs {
-        if let Err(e) = xremovexattr(file, attr, options) {
-            return (1, format!("zdelattr: {}: {}\n", file, e));
-        }
-    }
-    (0, String::new())
+/// Port of `features_()` from `Src/Modules/attr.c:243`.
+pub fn features_() -> i32 {
+    0
 }
 
-/// `zlistattr` builtin entry point.
-/// Port of `bin_listattr()` from Src/Modules/attr.c:169.
-pub fn bin_listattr(file: &str, options: &XattrOptions) -> (i32, Vec<String>, String) {
-    match xlistxattr(file, options) {
-        Ok(attrs) => (0, attrs, String::new()),
-        Err(e) => (1, Vec::new(), format!("zlistattr: {}: {}\n", file, e)),
-    }
+/// Port of `enables_()` from `Src/Modules/attr.c:251`.
+pub fn enables_() -> i32 {
+    0
 }
+
+/// Port of `boot_()` from `Src/Modules/attr.c:258`.
+pub fn boot_() -> i32 {
+    0
+}
+
+/// Port of `cleanup_()` from `Src/Modules/attr.c:265`.
+pub fn cleanup_() -> i32 {
+    0
+}
+
+/// Port of `finish_()` from `Src/Modules/attr.c:272`.
+pub fn finish_() -> i32 {
+    0
+}
+
+// =====================================================================
+// Tests
+// =====================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_xattr_options_default() {
-        let opts = XattrOptions::default();
-        assert!(!opts.no_dereference);
+    fn test_xgetxattr_nonexistent() {
+        let mut buf = [0u8; 0];
+        let r = xgetxattr("/nonexistent/path", "user.test", &mut buf, 0);
+        assert!(r < 0);
     }
 
     #[test]
-    fn test_builtin_zgetattr_nonexistent() {
-        let opts = XattrOptions::default();
-        let (status, _) = bin_getattr("/nonexistent/path", "user.test", &opts);
-        assert_eq!(status, 1);
+    fn test_xsetxattr_nonexistent() {
+        let r = xsetxattr("/nonexistent/path", "user.test", b"value", 0, 0);
+        assert!(r < 0);
     }
 
     #[test]
-    fn test_builtin_zsetattr_nonexistent() {
-        let opts = XattrOptions::default();
-        let (status, _) = bin_setattr("/nonexistent/path", "user.test", "value", &opts);
-        assert_eq!(status, 1);
+    fn test_xlistxattr_nonexistent() {
+        let mut buf = [0u8; 0];
+        let r = xlistxattr("/nonexistent/path", &mut buf, 0);
+        assert!(r < 0);
     }
 
     #[test]
-    fn test_builtin_zlistattr_nonexistent() {
-        let opts = XattrOptions::default();
-        let (status, _, _) = bin_listattr("/nonexistent/path", &opts);
-        assert_eq!(status, 1);
+    fn test_xremovexattr_nonexistent() {
+        let r = xremovexattr("/nonexistent/path", "user.test", 0);
+        assert!(r < 0);
     }
-}
-
-/// Module loader entry — port of `setup_()` from Src/Modules/attr.c:236.
-pub fn setup_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `features_()` from Src/Modules/attr.c:243.
-pub fn features_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `enables_()` from Src/Modules/attr.c:251.
-pub fn enables_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `boot_()` from Src/Modules/attr.c:258.
-pub fn boot_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `cleanup_()` from Src/Modules/attr.c:265.
-pub fn cleanup_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `finish_()` from Src/Modules/attr.c:272.
-pub fn finish_() -> i32 {
-    0
 }
