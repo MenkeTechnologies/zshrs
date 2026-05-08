@@ -56,7 +56,7 @@ pub(crate) use crate::ported::text::format_function_body_zsh;
 pub(crate) use crate::ported::utils::{base64_decode, pretty_io_err};
 #[allow(unused_imports)]
 pub(crate) use crate::ported::utils::{
-    emit_xtrace_text, ispwd_inherited, normalize_logical, quote_xtrace_arg,
+    emit_xtrace_text, ispwd, normalize_logical, quote_xtrace_arg,
     shell_quote, shell_quote_value, zsh_split_z,
 };
 
@@ -693,7 +693,7 @@ impl ShellExecutor {
         // PWD points, escaping the parent's sandbox. ztst harnesses
         // hit this and polluted the project root with test artifacts.
         if let Ok(pwd_env) = env::var("PWD") {
-            let valid = ispwd_inherited(&pwd_env);
+            let valid = ispwd(&pwd_env);
             if !valid {
                 if let Ok(real) = env::current_dir() {
                     env::set_var("PWD", &real);

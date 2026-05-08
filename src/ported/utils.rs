@@ -1385,15 +1385,6 @@ pub fn findpwd() -> String {
         .unwrap_or_else(|_| ".".to_string())
 }
 
-/// Check if path is the current directory (from utils.c ispwd)
-pub fn ispwd(path: &str) -> bool {
-    if let Ok(cwd) = std::env::current_dir() {
-        cwd.to_string_lossy() == path
-    } else {
-        false
-    }
-}
-
 /// Print directory name with ~ substitution (from utils.c fprintdir)
 pub fn fprintdir(path: &str, home: &str) -> String {
     if !home.is_empty() && path.starts_with(home) {
@@ -3050,7 +3041,7 @@ pub(crate) fn normalize_logical(path: &std::path::Path) -> std::path::PathBuf {
 /// src/zsh/Src/utils.c:809-829: PWD must be absolute, must stat to the
 /// same dev+inode as ".", and must contain no `.` or `..` components.
 /// When this returns false, callers should fall back to `getcwd()`.
-pub(crate) fn ispwd_inherited(pwd: &str) -> bool {
+pub(crate) fn ispwd(pwd: &str) -> bool {
     use std::os::unix::fs::MetadataExt;
     if !pwd.starts_with('/') {
         return false;
