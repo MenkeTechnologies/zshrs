@@ -285,10 +285,32 @@ impl Zle {
 
         let _ = write!(handle, "\r\x1b[K");
 
-        // Prompt — drawn unless we've scrolled past it.
+        // Prompt — drawn unless we've scrolled past it. Skip
+        // `scroll_offset` visible chars from the prompt (inlined
+        // from the deleted skip_chars helper) — ANSI escape
+        // sequences are skipped unconditionally so they don't
+        // count against width.
         if scroll_offset < prompt_width {
-            let visible_prompt = skip_chars(&prompt, scroll_offset);
-            let _ = write!(handle, "{}", visible_prompt);
+            let mut width = 0;
+            let mut byte_idx = 0;
+            let mut in_escape = false;
+            for (i, c) in prompt.char_indices() {
+                if width >= scroll_offset {
+                    byte_idx = i;
+                    break;
+                }
+                if in_escape {
+                    if c.is_ascii_alphabetic() {
+                        in_escape = false;
+                    }
+                } else if c == '\x1b' {
+                    in_escape = true;
+                } else {
+                    width += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+                }
+                byte_idx = i + c.len_utf8();
+            }
+            let _ = write!(handle, "{}", &prompt[byte_idx..]);
         }
 
         // Compute the visible byte/char range of the buffer after scroll.
@@ -516,33 +538,6 @@ fn visible_width(s: &str) -> usize {
     }
 
     width
-}
-
-/// Skip N visible characters from a string
-fn skip_chars(s: &str, n: usize) -> &str {
-    let mut width = 0;
-    let mut byte_idx = 0;
-    let mut in_escape = false;
-
-    for (i, c) in s.char_indices() {
-        if width >= n {
-            byte_idx = i;
-            break;
-        }
-
-        if in_escape {
-            if c.is_ascii_alphabetic() {
-                in_escape = false;
-            }
-        } else if c == '\x1b' {
-            in_escape = true;
-        } else {
-            width += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-        }
-        byte_idx = i + c.len_utf8();
-    }
-
-    &s[byte_idx..]
 }
 
 /// Region highlight entry
