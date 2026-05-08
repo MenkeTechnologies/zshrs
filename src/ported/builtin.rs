@@ -5326,7 +5326,7 @@ impl crate::ported::exec::ShellExecutor {
 
         // If +g/+s/+r used, list those types. Sorted for
         // deterministic output (was HashMap-iteration random).
-        let print_sorted = |map: &HashMap<String, String>, prefix: &str, list_form: bool| {
+        let print_sorted = |map: &indexmap::IndexMap<String, String>, prefix: &str, list_form: bool| {
             let mut keys: Vec<&String> = map.keys().collect();
             keys.sort();
             for name in keys {
@@ -5442,7 +5442,7 @@ impl crate::ported::exec::ShellExecutor {
                 // alias path). Uses Self::glob_match_static so character
                 // classes, extendedglob negation, etc. work the same as
                 // every other glob site.
-                let alias_map: &HashMap<String, String> = if is_suffix {
+                let alias_map: &indexmap::IndexMap<String, String> = if is_suffix {
                     &self.suffix_aliases
                 } else if is_global {
                     &self.global_aliases
