@@ -795,14 +795,6 @@ pub fn getpmsysparams() -> HashMap<String, String> {
     params
 }
 
-/// Get list of errno names
-/// Snapshot the `${errnos}` array.
-/// Port of the `errnos[]` table the C source builds at module
-/// load (referenced by `errnosgetfn()` Src/Modules/system.c:832).
-pub fn get_errnos() -> Vec<&'static str> {
-    ERRNO_NAMES.iter().map(|(n, _)| *n).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -869,7 +861,7 @@ mod tests {
 
     #[test]
     fn test_get_errnos() {
-        let errnos = get_errnos();
+        let errnos: Vec<&'static str> = ERRNO_NAMES.iter().map(|(n, _)| *n).collect();
         assert!(errnos.contains(&"EPERM"));
         assert!(errnos.contains(&"ENOENT"));
         assert!(errnos.contains(&"EINVAL"));

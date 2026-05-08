@@ -149,7 +149,6 @@ color_to_code
 color_to_sgr_code
 convbaseu
 curs_set
-default_zshrc
 ensure_initialized
 errno_from_name
 extract_ampm
@@ -160,7 +159,6 @@ format_limit_display
 format_zsh_float
 get_all_langinfo
 get_datetime_info
-get_errnos
 get_file_caps
 get_proc_caps
 get_terminal_size
@@ -177,8 +175,6 @@ lookup_builtin
 magic_assoc_keys
 mathevalf
 meta_encode
-minimal_zshrc
-needs_newuser_setup
 normalize_option_name
 parse_caopt
 parse_color_token
