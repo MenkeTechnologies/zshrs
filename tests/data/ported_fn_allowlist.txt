@@ -72,10 +72,8 @@ matches_watch_pattern
 # kept for ergonomics — zsh C inlines these or uses macros.
 
 format_function_body_zsh
-format_key_sequence
 magic_assoc_keys
 
-parse_key_sequence
 parse_subscript_arith_assign
 parse_subscript_arith_compound
 parse_subscript_arith_pre_inc
