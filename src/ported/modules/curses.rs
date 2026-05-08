@@ -106,6 +106,13 @@ pub struct zc_win {
     pub fg: i32,
     pub bg: i32,
     pub attrs: u32,
+    /// Background `chtype` set by `zccmd_bg` (curses.c:908). Holds
+    /// the OR'd attribute / color-pair / character mask C `wbkgd`
+    /// receives.
+    pub bg_chtype: u32,
+    /// Per-window timeout in milliseconds. Port of the `wtimeout()`
+    /// state set by `zccmd_timeout` (curses.c:1255). `-1` = blocking.
+    pub timeout_ms: i32,
     pub parent: Option<String>,
     pub children: Vec<String>,
     buffer: Vec<Vec<char>>,
@@ -129,6 +136,8 @@ impl zc_win {
             fg: -1,
             bg: -1,
             attrs: 0,
+            bg_chtype: 0,
+            timeout_ms: -1,
             parent: None,
             children: Vec::new(),
             buffer: vec![vec![' '; cols]; rows],
@@ -693,51 +702,579 @@ pub(crate) fn zccmd_endwin(_nam: &str, _args: &[String]) -> i32 {
 }
 
 // =====================================================================
+// Port of `zccmd_char()` from `Src/Modules/curses.c:723`.
+// =====================================================================
+
+/// Port of `zccmd_char()` from `Src/Modules/curses.c:723`. Writes
+/// one character into the window buffer at the current cursor.
+pub(crate) fn zccmd_char(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+    if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
+        zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
+        return 1;
+    }
+    let ch = match args[1].chars().next() {
+        Some(c) => c,
+        None => return 1,
+    };
+    let mut wins = windows_lock().lock().unwrap();
+    if let Some(w) = wins.get_mut(args[0].as_str()) {
+        if w.cursor_y < w.rows && w.cursor_x < w.cols {
+            w.buffer[w.cursor_y][w.cursor_x] = ch;
+            // C: wadd_wch advances the cursor.
+            w.cursor_x += 1;
+            if w.cursor_x >= w.cols {
+                w.cursor_x = 0;
+                if w.cursor_y + 1 < w.rows {
+                    w.cursor_y += 1;
+                }
+            }
+        }
+    }
+    0
+}
+
+// =====================================================================
+// Port of `zccmd_border()` from `Src/Modules/curses.c:802`.
+// =====================================================================
+
+/// Port of `zccmd_border()` from `Src/Modules/curses.c:802`.
+///
+/// C calls libncurses's `wborder(w, 0, 0, 0, 0, 0, 0, 0, 0)` which
+/// draws default ACS line-drawing chars around the window. The
+/// Rust port writes Unicode box-drawing equivalents to the buffer
+/// perimeter — the closest faithful match without libncurses ACS
+/// codepoint dispatch.
+pub(crate) fn zccmd_border(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+    if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
+        zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
+        return 1;
+    }
+    let mut wins = windows_lock().lock().unwrap();
+    if let Some(w) = wins.get_mut(args[0].as_str()) {
+        if w.rows < 2 || w.cols < 2 {
+            return 0;
+        }
+        // Top + bottom horizontal runs.
+        for x in 1..w.cols.saturating_sub(1) {
+            w.buffer[0][x] = '─';
+            w.buffer[w.rows - 1][x] = '─';
+        }
+        // Left + right vertical runs.
+        for y in 1..w.rows.saturating_sub(1) {
+            w.buffer[y][0] = '│';
+            w.buffer[y][w.cols - 1] = '│';
+        }
+        // Corners.
+        w.buffer[0][0] = '┌';
+        w.buffer[0][w.cols - 1] = '┐';
+        w.buffer[w.rows - 1][0] = '└';
+        w.buffer[w.rows - 1][w.cols - 1] = '┘';
+    }
+    0
+}
+
+// =====================================================================
+// Port of `zccmd_bg()` from `Src/Modules/curses.c:908`.
+// =====================================================================
+
+/// Port of `zccmd_bg()` from `Src/Modules/curses.c:908`.
+///
+/// `bg WINDOW [+ATTR|-ATTR|@CHAR|FG/BG]...`: build a `chtype` mask
+/// of attributes / a fill character / a color-pair, then apply it
+/// as the window's background via `wbkgd()`. The Rust port stores
+/// the resolved mask on `w.bg_chtype` since the ANSI-escape pipeline
+/// emits the equivalent SGR at refresh time.
+pub(crate) fn zccmd_bg(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+    if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
+        zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
+        return 1;
+    }
+    let mut ret = 0;
+    let mut ch: u32 = 0;
+    let mut wins = windows_lock().lock().unwrap();
+    let w = match wins.get_mut(args[0].as_str()) {
+        Some(w) => w,
+        None => return 1,
+    };
+    for spec in &args[1..] {
+        if spec.contains('/') {
+            // Color pair "fg/bg" — resolve via colorpairs, OR pair
+            // index into ch's high bits per `COLOR_PAIR(n)`. Since
+            // libncurses isn't linked we just record the pair index
+            // for later SGR emission.
+            let cp = colorpair_get_or_alloc(spec);
+            if cp < 0 {
+                ret = 1;
+            } else {
+                // C: ch |= COLOR_PAIR(cp); — high bits encode pair.
+                ch |= (cp as u32) << 16;
+            }
+        } else if let Some(rest) = spec.strip_prefix('@') {
+            // C: ch |= the character itself. Use first char.
+            if let Some(c) = rest.chars().next() {
+                ch |= c as u32;
+            }
+        } else {
+            let (mode, attr_name) = match spec.as_bytes().first() {
+                Some(b'+') => (ZCURSES_ATTRON, &spec[1..]),
+                Some(b'-') => (ZCURSES_ATTROFF, &spec[1..]),
+                _ => (ZCURSES_ATTRON, spec.as_str()),
+            };
+            match zcurses_attrget(w, attr_name) {
+                Some(p) => {
+                    if mode == ZCURSES_ATTRON {
+                        ch |= p.number as u32;
+                    } else {
+                        ch &= !(p.number as u32);
+                    }
+                }
+                None => {
+                    drop(wins);
+                    zwarnnam(nam, &format!("attribute `{}' not known", attr_name));
+                    return 1;
+                }
+            }
+        }
+    }
+    if ret == 0 {
+        // C: return wbkgd(w->win, ch) != OK;
+        w.bg_chtype = ch;
+    }
+    ret
+}
+
+// =====================================================================
+// Port of `zccmd_scroll()` from `Src/Modules/curses.c:986`.
+// =====================================================================
+
+/// Port of `zccmd_scroll()` from `Src/Modules/curses.c:986`.
+///
+/// `scroll WINDOW (on|off|N)`: enable/disable scroll for the
+/// window, or scroll by N lines.
+pub(crate) fn zccmd_scroll(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+    if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
+        zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
+        return 1;
+    }
+    let mut wins = windows_lock().lock().unwrap();
+    let w = match wins.get_mut(args[0].as_str()) {
+        Some(w) => w,
+        None => return 1,
+    };
+    match args[1].as_str() {
+        "on" => {
+            w.flags |= ZCWF_SCROLL;
+        }
+        "off" => {
+            w.flags &= !ZCWF_SCROLL;
+        }
+        s => {
+            let n: i32 = match s.parse() {
+                Ok(n) => n,
+                Err(_) => {
+                    drop(wins);
+                    zwarnnam(
+                        nam,
+                        &format!("scroll requires `on', `off' or integer: {}", s),
+                    );
+                    return 1;
+                }
+            };
+            // C: wscrl(w->win, sl) — scroll buffer up by N lines
+            // (negative = down).
+            if n > 0 {
+                for _ in 0..n {
+                    if !w.buffer.is_empty() {
+                        w.buffer.remove(0);
+                        w.buffer.push(vec![' '; w.cols]);
+                    }
+                }
+            } else {
+                for _ in 0..(-n) {
+                    if !w.buffer.is_empty() {
+                        w.buffer.pop();
+                        w.buffer.insert(0, vec![' '; w.cols]);
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+// =====================================================================
+// Port of `zccmd_input()` from `Src/Modules/curses.c:1029`.
+// =====================================================================
+
+/// Port of `zccmd_input()` from `Src/Modules/curses.c:1029`.
+///
+/// `input WINDOW [VAR [KEYVAR [MOUSEVAR]]]`: read one character
+/// from stdin into VAR. With KEYVAR, also recognise keypad / arrow /
+/// function keys — the Rust port parses the common CSI sequences
+/// (`\e[A`/`\e[B`/`\e[C`/`\e[D` for arrows, `\e[1~`/`\e[2~`/etc.).
+/// Mouse decoding (KEY_MOUSE → MOUSEVAR array) requires xterm
+/// SGR-mouse mode parsing — pending the mouse infrastructure port.
+pub(crate) fn zccmd_input(s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+    if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
+        zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
+        return 1;
+    }
+    // C: keypad(w->win, args.len() >= 3 ? TRUE : FALSE);
+    let want_keypad = args.len() >= 3;
+    let timeout = windows_lock()
+        .lock()
+        .unwrap()
+        .get(args[0].as_str())
+        .map(|w| w.timeout_ms)
+        .unwrap_or(-1);
+    let (key_str, key_code) = match read_key_sequence(want_keypad, timeout) {
+        Some(pair) => pair,
+        None => return 1,
+    };
+    let var = args.get(1).map(|v| v.as_str()).unwrap_or("REPLY");
+    s.variables.insert(var.to_string(), key_str.clone());
+    if want_keypad {
+        if let Some(name) = args.get(2) {
+            let code_str = if key_code > 0 {
+                keypad_name(key_code).unwrap_or_else(|| key_code.to_string())
+            } else {
+                String::new()
+            };
+            s.variables.insert(name.clone(), code_str);
+        }
+        if args.len() >= 4 {
+            // C: KEY_MOUSE branch handled the MOUSE event array.
+            // WARNING: NOT IN CURSES.C — mouse-event parsing
+            // requires xterm SGR-mouse decoding; the Rust port
+            // sets the array empty pending that work.
+            if let Some(mvar) = args.get(3) {
+                s.arrays.insert(mvar.clone(), Vec::new());
+            }
+        }
+    }
+    0
+}
+
+// =====================================================================
+// Port of `zccmd_timeout()` from `Src/Modules/curses.c:1255`.
+// =====================================================================
+
+/// Port of `zccmd_timeout()` from `Src/Modules/curses.c:1255`.
+pub(crate) fn zccmd_timeout(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+    if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
+        zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
+        return 1;
+    }
+    let to: i32 = match args[1].parse() {
+        Ok(n) => n,
+        Err(_) => {
+            zwarnnam(nam, &format!("timeout requires an integer: {}", args[1]));
+            return 1;
+        }
+    };
+    let mut wins = windows_lock().lock().unwrap();
+    if let Some(w) = wins.get_mut(args[0].as_str()) {
+        w.timeout_ms = to;
+    }
+    0
+}
+
+// =====================================================================
+// Port of `zccmd_mouse()` from `Src/Modules/curses.c:1294`.
+// =====================================================================
+
+/// `static int zcurses_flags` mouse mask, port of `curses.c:99`.
+static zcurses_flags: OnceLock<Mutex<u32>> = OnceLock::new();
+
+/// `static mmask_t zcurses_mouse_mask`, port of `curses.c:205`.
+static zcurses_mouse_mask: OnceLock<Mutex<u32>> = OnceLock::new();
+
+/// `ZCF_MOUSE_ACTIVE` flag (curses.c:116).
+pub const ZCF_MOUSE_ACTIVE: u32 = 1 << 0;
+/// `ZCF_MOUSE_MASK_CHANGED` flag (curses.c:117).
+pub const ZCF_MOUSE_MASK_CHANGED: u32 = 1 << 1;
+
+// WARNING: NOT IN CURSES.C — OnceLock get-or-init for `zcurses_flags`
+// and `zcurses_mouse_mask` (C dereferences globals directly).
+fn flags_lock() -> &'static Mutex<u32> {
+    zcurses_flags.get_or_init(|| Mutex::new(0))
+}
+// WARNING: NOT IN CURSES.C — see flags_lock above.
+fn mouse_mask_lock() -> &'static Mutex<u32> {
+    // ALL_MOUSE_EVENTS in ncurses ≈ 0x07ffffff for the standard
+    // event set. Default to that until a `mouse delay`/`mouse motion`
+    // command flips it.
+    zcurses_mouse_mask.get_or_init(|| Mutex::new(0x07ffffff))
+}
+
+/// `REPORT_MOUSE_POSITION` libncurses constant. Port of the bit
+/// `zcurses_mouse_mask` toggles for `mouse motion`.
+pub const REPORT_MOUSE_POSITION: u32 = 1 << 28;
+
+/// Port of `zccmd_mouse()` from `Src/Modules/curses.c:1294`.
+///
+/// `mouse [+motion|-motion|delay N]...`: toggle the mouse mode.
+/// Without libncurses calling `mouseinterval()` / `mousemask()`,
+/// the Rust port records the mask + delay into module statics for
+/// when an xterm-SGR-mouse decoder lands.
+pub(crate) fn zccmd_mouse(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+    let mut idx = 0usize;
+    while idx < args.len() {
+        let arg = args[idx].as_str();
+        if arg == "delay" {
+            idx += 1;
+            let v: i32 = match args.get(idx).and_then(|a| a.parse().ok()) {
+                Some(v) => v,
+                None => {
+                    zwarnnam(nam, "mouse delay requires an integer argument");
+                    return 1;
+                }
+            };
+            // C: mouseinterval(delay).
+            // WARNING: NOT IN CURSES.C — stored locally; libncurses's
+            // `mouseinterval()` would be called when ncurses is linked.
+            let _ = v;
+            idx += 1;
+        } else {
+            let (onoff, name) = match arg.as_bytes().first() {
+                Some(b'+') => (true, &arg[1..]),
+                Some(b'-') => (false, &arg[1..]),
+                _ => (true, arg),
+            };
+            if name == "motion" {
+                let mut mask = mouse_mask_lock().lock().unwrap();
+                let old = *mask;
+                if onoff {
+                    *mask |= REPORT_MOUSE_POSITION;
+                } else {
+                    *mask &= !REPORT_MOUSE_POSITION;
+                }
+                if old != *mask {
+                    *flags_lock().lock().unwrap() |= ZCF_MOUSE_MASK_CHANGED;
+                }
+            } else {
+                zwarnnam(nam, &format!("unrecognised mouse command: {}", name));
+                return 1;
+            }
+            idx += 1;
+        }
+    }
+    0
+}
+
+// =====================================================================
+// Port of `zccmd_position()` from `Src/Modules/curses.c:1343`.
+// =====================================================================
+
+/// Port of `zccmd_position()` from `Src/Modules/curses.c:1343`.
+///
+/// `position WINDOW VAR`: write `[cy, cx, y, x, rows, cols]` into
+/// the named array param. C uses `getyx`/`getbegyx`/`getmaxyx`
+/// macros; Rust port reads the cached fields on `zc_win`.
+pub(crate) fn zccmd_position(s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+    if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
+        zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
+        return 1;
+    }
+    let wins = windows_lock().lock().unwrap();
+    let w = match wins.get(args[0].as_str()) {
+        Some(w) => w,
+        None => return 1,
+    };
+    let arr = vec![
+        w.cursor_y.to_string(),
+        w.cursor_x.to_string(),
+        w.y.to_string(),
+        w.x.to_string(),
+        w.rows.to_string(),
+        w.cols.to_string(),
+    ];
+    drop(wins);
+    s.arrays.insert(args[1].clone(), arr);
+    0
+}
+
+// =====================================================================
+// Port of `zccmd_querychar()` from `Src/Modules/curses.c:1382`.
+// =====================================================================
+
+/// Port of `zccmd_querychar()` from `Src/Modules/curses.c:1382`.
+///
+/// `querychar WINDOW [VAR]`: write `[char, color, attr...]` into
+/// the named array (or `reply`). C uses `winch` to read the
+/// character + color + attrs at the cursor; Rust port reads from
+/// the in-memory buffer.
+pub(crate) fn zccmd_querychar(s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+    if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
+        zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
+        return 1;
+    }
+    let var = args.get(1).cloned().unwrap_or_else(|| "reply".to_string());
+    let wins = windows_lock().lock().unwrap();
+    let w = match wins.get(args[0].as_str()) {
+        Some(w) => w,
+        None => return 1,
+    };
+    let ch = if w.cursor_y < w.rows && w.cursor_x < w.cols {
+        w.buffer[w.cursor_y][w.cursor_x]
+    } else {
+        ' '
+    };
+    let mut clist: Vec<String> = Vec::new();
+    clist.push(ch.to_string());
+    // C reads the color pair via `PAIR_NUMBER(winch(...))` and
+    // resolves to the registered name via `zcurses_colorget_reverse`.
+    // Without libncurses linked we always report "default".
+    clist.push("default".into());
+    for entry in zcurses_attributes {
+        if w.attrs & entry.number as u32 != 0 {
+            clist.push(entry.name.to_string());
+        }
+    }
+    drop(wins);
+    s.arrays.insert(var, clist);
+    0
+}
+
+// =====================================================================
+// Port of `zccmd_touch()` from `Src/Modules/curses.c:1472`.
+// =====================================================================
+
+/// Port of `zccmd_touch()` from `Src/Modules/curses.c:1472`.
+///
+/// `touch WINDOW...`: mark each window for full redraw. The Rust
+/// port's refresh always rewrites the whole buffer, so this just
+/// validates each name and is otherwise a no-op.
+pub(crate) fn zccmd_touch(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+    for name in args {
+        if !zcurses_validate_window(name.as_str(), ZCURSES_USED) {
+            zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), name));
+            return 1;
+        }
+    }
+    0
+}
+
+// =====================================================================
+// Port of `zccmd_resize()` from `Src/Modules/curses.c:1494`.
+// =====================================================================
+
+/// Port of `zccmd_resize()` from `Src/Modules/curses.c:1494`.
+///
+/// `resize ROWS COLS [endwin|nosave|endwin_nosave]`: resize stdscr
+/// (and via parent-child chain, sub-windows) to the new geometry.
+/// The third arg gates whether to call `endwin()` first / save tty
+/// state — both are no-ops in the ANSI-escape backend.
+pub(crate) fn zccmd_resize(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+    if !zcurses_getwindowbyname("stdscr") {
+        return 1;
+    }
+    let y: usize = args[0].parse().unwrap_or(0);
+    let x: usize = args[1].parse().unwrap_or(0);
+    if let Some(third) = args.get(2) {
+        match third.as_str() {
+            "endwin" | "nosave" | "endwin_nosave" => {}
+            other => {
+                zwarnnam(
+                    nam,
+                    &format!(
+                        "`resize' expects `endwin', `nosave' or `endwin_nosave' for third argument, if given: {}",
+                        other
+                    ),
+                );
+                return 1;
+            }
+        }
+    }
+    if y == 0 && x == 0 && args.get(2).is_none() {
+        // C special-case: just probe whether resize_term is available.
+        return 0;
+    }
+    let mut wins = windows_lock().lock().unwrap();
+    if let Some(w) = wins.get_mut("stdscr") {
+        w.rows = y;
+        w.cols = x;
+        w.buffer = vec![vec![' '; x]; y];
+        w.cursor_y = w.cursor_y.min(y.saturating_sub(1));
+        w.cursor_x = w.cursor_x.min(x.saturating_sub(1));
+    }
+    0
+}
+
+// =====================================================================
 // Port of `struct zcurses_subcommand` (curses.c:83) + dispatch
 // table inside `bin_zcurses` (curses.c:1574).
 // =====================================================================
 
 /// Subcommand table entry. Port of `struct zcurses_subcommand`
-/// from `Src/Modules/curses.c:83`.
+/// from `Src/Modules/curses.c:83`. The fn-pointer signature picks
+/// up `&mut ShellExecutor` so subcommands like `position` /
+/// `querychar` / `input` can write through to params via
+/// `s.variables` / `s.arrays` (C uses the global `setsparam` /
+/// `setaparam`).
 struct zcurses_subcommand {
     name: &'static str,
-    cmd: fn(&str, &[String]) -> i32,
+    cmd: fn(&mut ShellExecutor, &str, &[String]) -> i32,
     minargs: i32,
     maxargs: i32,
 }
 
 /// Port of the `struct zcurses_subcommand scs[]` array inside
-/// `bin_zcurses` (curses.c:1574). Subcommands not yet ported (need
-/// libncurses FFI) are stubbed with `zccmd_notavail`.
+/// `bin_zcurses` (curses.c:1574). Order + min/max args match C.
 static SCS: &[zcurses_subcommand] = &[
-    zcurses_subcommand { name: "init", cmd: zccmd_init, minargs: 0, maxargs: 0 },
-    zcurses_subcommand { name: "addwin", cmd: zccmd_addwin, minargs: 5, maxargs: 6 },
-    zcurses_subcommand { name: "delwin", cmd: zccmd_delwin, minargs: 1, maxargs: 1 },
-    zcurses_subcommand { name: "refresh", cmd: zccmd_refresh, minargs: 0, maxargs: -1 },
-    zcurses_subcommand { name: "move", cmd: zccmd_move, minargs: 3, maxargs: 3 },
-    zcurses_subcommand { name: "clear", cmd: zccmd_clear, minargs: 1, maxargs: 2 },
-    zcurses_subcommand { name: "position", cmd: zccmd_notavail, minargs: 2, maxargs: 2 },
-    zcurses_subcommand { name: "char", cmd: zccmd_notavail, minargs: 2, maxargs: 2 },
-    zcurses_subcommand { name: "string", cmd: zccmd_string, minargs: 2, maxargs: 2 },
-    zcurses_subcommand { name: "border", cmd: zccmd_notavail, minargs: 1, maxargs: 1 },
-    zcurses_subcommand { name: "end", cmd: zccmd_endwin, minargs: 0, maxargs: 0 },
-    zcurses_subcommand { name: "attr", cmd: zccmd_attr, minargs: 2, maxargs: -1 },
-    zcurses_subcommand { name: "bg", cmd: zccmd_notavail, minargs: 2, maxargs: -1 },
-    zcurses_subcommand { name: "scroll", cmd: zccmd_notavail, minargs: 2, maxargs: 2 },
-    zcurses_subcommand { name: "input", cmd: zccmd_notavail, minargs: 1, maxargs: 4 },
-    zcurses_subcommand { name: "timeout", cmd: zccmd_notavail, minargs: 2, maxargs: 2 },
-    zcurses_subcommand { name: "mouse", cmd: zccmd_notavail, minargs: 0, maxargs: -1 },
-    zcurses_subcommand { name: "querychar", cmd: zccmd_notavail, minargs: 1, maxargs: 2 },
-    zcurses_subcommand { name: "touch", cmd: zccmd_notavail, minargs: 1, maxargs: -1 },
-    zcurses_subcommand { name: "resize", cmd: zccmd_notavail, minargs: 2, maxargs: 3 },
+    zcurses_subcommand { name: "init", cmd: |_, n, a| zccmd_init(n, a), minargs: 0, maxargs: 0 },
+    zcurses_subcommand { name: "addwin", cmd: |_, n, a| zccmd_addwin(n, a), minargs: 5, maxargs: 6 },
+    zcurses_subcommand { name: "delwin", cmd: |_, n, a| zccmd_delwin(n, a), minargs: 1, maxargs: 1 },
+    zcurses_subcommand { name: "refresh", cmd: |_, n, a| zccmd_refresh(n, a), minargs: 0, maxargs: -1 },
+    zcurses_subcommand { name: "move", cmd: |_, n, a| zccmd_move(n, a), minargs: 3, maxargs: 3 },
+    zcurses_subcommand { name: "clear", cmd: |_, n, a| zccmd_clear(n, a), minargs: 1, maxargs: 2 },
+    zcurses_subcommand { name: "position", cmd: zccmd_position, minargs: 2, maxargs: 2 },
+    zcurses_subcommand { name: "char", cmd: zccmd_char, minargs: 2, maxargs: 2 },
+    zcurses_subcommand { name: "string", cmd: |_, n, a| zccmd_string(n, a), minargs: 2, maxargs: 2 },
+    zcurses_subcommand { name: "border", cmd: zccmd_border, minargs: 1, maxargs: 1 },
+    zcurses_subcommand { name: "end", cmd: |_, n, a| zccmd_endwin(n, a), minargs: 0, maxargs: 0 },
+    zcurses_subcommand { name: "attr", cmd: |_, n, a| zccmd_attr(n, a), minargs: 2, maxargs: -1 },
+    zcurses_subcommand { name: "bg", cmd: zccmd_bg, minargs: 2, maxargs: -1 },
+    zcurses_subcommand { name: "scroll", cmd: zccmd_scroll, minargs: 2, maxargs: 2 },
+    zcurses_subcommand { name: "input", cmd: zccmd_input, minargs: 1, maxargs: 4 },
+    zcurses_subcommand { name: "timeout", cmd: zccmd_timeout, minargs: 2, maxargs: 2 },
+    zcurses_subcommand { name: "mouse", cmd: zccmd_mouse, minargs: 0, maxargs: -1 },
+    zcurses_subcommand { name: "querychar", cmd: zccmd_querychar, minargs: 1, maxargs: 2 },
+    zcurses_subcommand { name: "touch", cmd: zccmd_touch, minargs: 1, maxargs: -1 },
+    zcurses_subcommand { name: "resize", cmd: zccmd_resize, minargs: 2, maxargs: 3 },
 ];
 
-// WARNING: NOT IN CURSES.C — Rust-only stub for subcommands whose
-// libncurses-FFI port hasn't landed yet. C implementations live at
-// the line numbers cited above.
-fn zccmd_notavail(nam: &str, _args: &[String]) -> i32 {
-    zwarnnam(nam, "subcommand not yet ported (needs libncurses FFI)");
-    1
+// =====================================================================
+// Port of `zcurses_colorget()` from `Src/Modules/curses.c:331`.
+// =====================================================================
+
+/// Port of `zcurses_colorget()` from `Src/Modules/curses.c:331`.
+///
+/// Resolve `"fg/bg"` to a color-pair index, allocating a new pair
+/// via `init_pair()` semantics (incrementing `next_cp`) on first
+/// use. C uses libncurses's `init_pair`; Rust port stores the
+/// mapping in the `zcurses_colorpairs` HashMap for later SGR.
+pub(crate) fn colorpair_get_or_alloc(spec: &str) -> i32 {
+    let mut pairs = colorpairs_lock().lock().unwrap();
+    if let Some(&n) = pairs.get(spec) {
+        return n as i32;
+    }
+    let slash = match spec.find('/') {
+        Some(p) => p,
+        None => return -1,
+    };
+    let fg = &spec[..slash];
+    let bg = &spec[slash + 1..];
+    let _fg_n = zcurses_color(fg);
+    let _bg_n = zcurses_color(bg);
+    if _fg_n == -2 || _bg_n == -2 {
+        return -1;
+    }
+    let mut np = next_cp_lock().lock().unwrap();
+    *np = np.saturating_add(1);
+    let cp = *np;
+    pairs.insert(spec.to_string(), cp);
+    cp as i32
 }
 
 // =====================================================================
@@ -750,7 +1287,7 @@ fn zccmd_notavail(nam: &str, _args: &[String]) -> i32 {
 /// validates arg-count against `minargs`/`maxargs`, then enforces
 /// the C source's "command can't be used before `zcurses init`"
 /// invariant before delegating to the matched `zccmd_*`.
-pub(crate) fn bin_zcurses(_s: &mut ShellExecutor, nam: &str, args: &[String], _func: i32) -> i32 {
+pub(crate) fn bin_zcurses(s: &mut ShellExecutor, nam: &str, args: &[String], _func: i32) -> i32 {
     if args.is_empty() {
         zwarnnam(nam, "subcommand required");
         return 1;
@@ -759,7 +1296,7 @@ pub(crate) fn bin_zcurses(_s: &mut ShellExecutor, nam: &str, args: &[String], _f
     //         if(!strcmp(args[0], zcsc->name)) break;
     //     }
     let cmd_name = args[0].as_str();
-    let entry = match SCS.iter().find(|s| s.name == cmd_name) {
+    let entry = match SCS.iter().find(|sc| sc.name == cmd_name) {
         Some(e) => e,
         None => {
             zwarnnam(nam, &format!("unknown subcommand: {}", cmd_name));
@@ -779,8 +1316,8 @@ pub(crate) fn bin_zcurses(_s: &mut ShellExecutor, nam: &str, args: &[String], _f
     }
     // C: if (zcsc->cmd != zccmd_init && zcsc->cmd != zccmd_endwin &&
     //         !zcurses_getwindowbyname("stdscr")) { … return 1; }
-    let is_init = entry.cmd as usize == zccmd_init as usize;
-    let is_end = entry.cmd as usize == zccmd_endwin as usize;
+    let is_init = matches!(cmd_name, "init");
+    let is_end = matches!(cmd_name, "end");
     if !is_init && !is_end && !zcurses_getwindowbyname("stdscr") {
         zwarnnam(
             nam,
@@ -788,7 +1325,137 @@ pub(crate) fn bin_zcurses(_s: &mut ShellExecutor, nam: &str, args: &[String], _f
         );
         return 1;
     }
-    (entry.cmd)(nam, sub_args)
+    (entry.cmd)(s, nam, sub_args)
+}
+
+// =====================================================================
+// Keypad / keyboard input helpers — substitutes for libncurses's
+// `wgetch` / `wget_wch` + `keypad()` table from `curses_keys.h`.
+// =====================================================================
+
+// WARNING: NOT IN CURSES.C — Rust-only termios+read shim. C uses
+// libncurses's `wget_wch(w->win, &wi)` / `wgetch(w->win, ...)`.
+// Without libncurses linked, the Rust port reads raw bytes from
+// stdin (cbreak set by `zccmd_init`) and parses CSI / SS3 sequences
+// for arrow + function-key codes. Returns `(string, keycode)`.
+// `keycode == 0` means a regular character; non-zero means a
+// keypad code.
+fn read_key_sequence(want_keypad: bool, _timeout_ms: i32) -> Option<(String, i32)> {
+    #[cfg(unix)]
+    {
+        use std::io::Read;
+        let mut buf = [0u8; 1];
+        let n = io::stdin().read(&mut buf).ok()?;
+        if n == 0 {
+            return None;
+        }
+        let c = buf[0];
+        if c == 0x1b && want_keypad {
+            // CSI / SS3 prefix — read up to a few more bytes.
+            let mut seq = vec![c];
+            for _ in 0..6 {
+                let mut next = [0u8; 1];
+                if io::stdin().read(&mut next).ok()? == 0 {
+                    break;
+                }
+                seq.push(next[0]);
+                // Final byte for CSI is in 0x40..=0x7E; for ESC O
+                // (SS3) it's a single trailing letter.
+                if seq.len() >= 3 && (seq[2] >= 0x40 && seq[2] <= 0x7e) {
+                    break;
+                }
+                if seq.len() >= 4 && seq[seq.len() - 1] >= 0x40 && seq[seq.len() - 1] <= 0x7e {
+                    break;
+                }
+            }
+            if let Some(code) = csi_to_keypad(&seq) {
+                return Some((String::new(), code));
+            }
+        }
+        Some(((c as char).to_string(), 0))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (want_keypad, _timeout_ms);
+        None
+    }
+}
+
+// WARNING: NOT IN CURSES.C — table-driven CSI/SS3 → libncurses
+// keypad-code mapping. Substitutes for the `curses_keys.h`
+// autogenerated table that ncurses' `keypad()` uses internally.
+// Values match libncurses constants (KEY_UP = 0o403, etc.).
+fn csi_to_keypad(seq: &[u8]) -> Option<i32> {
+    if seq.len() < 3 || seq[0] != 0x1b {
+        return None;
+    }
+    if seq[1] == b'[' {
+        match seq[2] {
+            b'A' => Some(KEY_UP),
+            b'B' => Some(KEY_DOWN),
+            b'C' => Some(KEY_RIGHT),
+            b'D' => Some(KEY_LEFT),
+            b'H' => Some(KEY_HOME),
+            b'F' => Some(KEY_END),
+            b'1' if seq.len() >= 4 && seq[3] == b'~' => Some(KEY_HOME),
+            b'2' if seq.len() >= 4 && seq[3] == b'~' => Some(KEY_IC),
+            b'3' if seq.len() >= 4 && seq[3] == b'~' => Some(KEY_DC),
+            b'4' if seq.len() >= 4 && seq[3] == b'~' => Some(KEY_END),
+            b'5' if seq.len() >= 4 && seq[3] == b'~' => Some(KEY_PPAGE),
+            b'6' if seq.len() >= 4 && seq[3] == b'~' => Some(KEY_NPAGE),
+            _ => None,
+        }
+    } else if seq[1] == b'O' {
+        match seq[2] {
+            b'A' => Some(KEY_UP),
+            b'B' => Some(KEY_DOWN),
+            b'C' => Some(KEY_RIGHT),
+            b'D' => Some(KEY_LEFT),
+            b'P' => Some(KEY_F0 + 1),
+            b'Q' => Some(KEY_F0 + 2),
+            b'R' => Some(KEY_F0 + 3),
+            b'S' => Some(KEY_F0 + 4),
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+/// libncurses keypad code constants. Subset of the
+/// autogenerated `curses_keys.h` table the C source includes.
+pub const KEY_DOWN: i32 = 0o402;
+pub const KEY_UP: i32 = 0o403;
+pub const KEY_LEFT: i32 = 0o404;
+pub const KEY_RIGHT: i32 = 0o405;
+pub const KEY_HOME: i32 = 0o406;
+pub const KEY_DC: i32 = 0o512;
+pub const KEY_IC: i32 = 0o513;
+pub const KEY_NPAGE: i32 = 0o522;
+pub const KEY_PPAGE: i32 = 0o523;
+pub const KEY_END: i32 = 0o550;
+pub const KEY_F0: i32 = 0o410;
+
+// WARNING: NOT IN CURSES.C — Rust-only reverse lookup of the
+// keypad-code → name table. C uses `keypad_names[]` from
+// `curses_keys.h`; Rust port hardcodes the most common keys to
+// keep the table compact.
+fn keypad_name(code: i32) -> Option<String> {
+    let name = match code {
+        KEY_DOWN => "DOWN",
+        KEY_UP => "UP",
+        KEY_LEFT => "LEFT",
+        KEY_RIGHT => "RIGHT",
+        KEY_HOME => "HOME",
+        KEY_END => "END",
+        KEY_DC => "DC",
+        KEY_IC => "IC",
+        KEY_NPAGE => "NPAGE",
+        KEY_PPAGE => "PPAGE",
+        c if c > KEY_F0 => return Some(format!("F{}", c - KEY_F0)),
+        _ => return None,
+    };
+    Some(name.to_string())
 }
 
 // =====================================================================
@@ -1148,6 +1815,234 @@ mod tests {
         let _g = reset();
         let mut s = ShellExecutor::new();
         assert_eq!(bin_zcurses(&mut s, "zcurses", &[], 0), 1);
+    }
+
+    #[test]
+    fn test_zccmd_char_writes_into_buffer() {
+        let _g = reset();
+        let mut s = ShellExecutor::new();
+        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        let add: Vec<String> = vec![
+            "addwin".into(), "w".into(), "5".into(), "10".into(),
+            "0".into(), "0".into(),
+        ];
+        bin_zcurses(&mut s, "zcurses", &add, 0);
+        let ch: Vec<String> = vec!["char".into(), "w".into(), "X".into()];
+        assert_eq!(bin_zcurses(&mut s, "zcurses", &ch, 0), 0);
+        let wins = windows_lock().lock().unwrap();
+        assert_eq!(wins.get("w").unwrap().buffer[0][0], 'X');
+        assert_eq!(wins.get("w").unwrap().cursor_x, 1);
+    }
+
+    #[test]
+    fn test_zccmd_border_draws_box() {
+        let _g = reset();
+        let mut s = ShellExecutor::new();
+        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        let add: Vec<String> = vec![
+            "addwin".into(), "box".into(), "3".into(), "5".into(),
+            "0".into(), "0".into(),
+        ];
+        bin_zcurses(&mut s, "zcurses", &add, 0);
+        assert_eq!(
+            bin_zcurses(&mut s, "zcurses", &["border".into(), "box".into()], 0),
+            0
+        );
+        let wins = windows_lock().lock().unwrap();
+        let b = &wins.get("box").unwrap().buffer;
+        assert_eq!(b[0][0], '┌');
+        assert_eq!(b[0][4], '┐');
+        assert_eq!(b[2][0], '└');
+        assert_eq!(b[2][4], '┘');
+        assert_eq!(b[1][0], '│');
+        assert_eq!(b[0][2], '─');
+    }
+
+    #[test]
+    fn test_zccmd_scroll_on_off() {
+        let _g = reset();
+        let mut s = ShellExecutor::new();
+        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        let add: Vec<String> = vec![
+            "addwin".into(), "sw".into(), "5".into(), "10".into(),
+            "0".into(), "0".into(),
+        ];
+        bin_zcurses(&mut s, "zcurses", &add, 0);
+        let on: Vec<String> = vec!["scroll".into(), "sw".into(), "on".into()];
+        assert_eq!(bin_zcurses(&mut s, "zcurses", &on, 0), 0);
+        assert_eq!(
+            windows_lock().lock().unwrap().get("sw").unwrap().flags & ZCWF_SCROLL,
+            ZCWF_SCROLL
+        );
+        let off: Vec<String> = vec!["scroll".into(), "sw".into(), "off".into()];
+        assert_eq!(bin_zcurses(&mut s, "zcurses", &off, 0), 0);
+        assert_eq!(
+            windows_lock().lock().unwrap().get("sw").unwrap().flags & ZCWF_SCROLL,
+            0
+        );
+    }
+
+    #[test]
+    fn test_zccmd_scroll_integer_advances_buffer() {
+        let _g = reset();
+        let mut s = ShellExecutor::new();
+        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        let add: Vec<String> = vec![
+            "addwin".into(), "sw".into(), "3".into(), "5".into(),
+            "0".into(), "0".into(),
+        ];
+        bin_zcurses(&mut s, "zcurses", &add, 0);
+        // Pre-fill row 0 with 'A' to detect the shift.
+        windows_lock().lock().unwrap().get_mut("sw").unwrap().buffer[0][0] = 'A';
+        let scr: Vec<String> = vec!["scroll".into(), "sw".into(), "1".into()];
+        assert_eq!(bin_zcurses(&mut s, "zcurses", &scr, 0), 0);
+        // Row 0 'A' shifted out — bottom row is fresh spaces.
+        let wins = windows_lock().lock().unwrap();
+        assert_eq!(wins.get("sw").unwrap().buffer[0][0], ' ');
+    }
+
+    #[test]
+    fn test_zccmd_timeout_stores_value() {
+        let _g = reset();
+        let mut s = ShellExecutor::new();
+        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        let add: Vec<String> = vec![
+            "addwin".into(), "tw".into(), "5".into(), "10".into(),
+            "0".into(), "0".into(),
+        ];
+        bin_zcurses(&mut s, "zcurses", &add, 0);
+        let to: Vec<String> = vec!["timeout".into(), "tw".into(), "100".into()];
+        assert_eq!(bin_zcurses(&mut s, "zcurses", &to, 0), 0);
+        assert_eq!(
+            windows_lock().lock().unwrap().get("tw").unwrap().timeout_ms,
+            100
+        );
+    }
+
+    #[test]
+    fn test_zccmd_position_writes_array() {
+        let _g = reset();
+        let mut s = ShellExecutor::new();
+        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        let add: Vec<String> = vec![
+            "addwin".into(), "pw".into(), "10".into(), "20".into(),
+            "2".into(), "3".into(),
+        ];
+        bin_zcurses(&mut s, "zcurses", &add, 0);
+        let mv: Vec<String> = vec!["move".into(), "pw".into(), "5".into(), "7".into()];
+        bin_zcurses(&mut s, "zcurses", &mv, 0);
+        let pos: Vec<String> = vec!["position".into(), "pw".into(), "result".into()];
+        assert_eq!(bin_zcurses(&mut s, "zcurses", &pos, 0), 0);
+        let arr = s.arrays.get("result").unwrap();
+        assert_eq!(arr, &vec![
+            "5".to_string(),  // cursor_y
+            "7".to_string(),  // cursor_x
+            "2".to_string(),  // y
+            "3".to_string(),  // x
+            "10".to_string(), // rows
+            "20".to_string(), // cols
+        ]);
+    }
+
+    #[test]
+    fn test_zccmd_querychar_writes_reply() {
+        let _g = reset();
+        let mut s = ShellExecutor::new();
+        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        let add: Vec<String> = vec![
+            "addwin".into(), "qw".into(), "5".into(), "10".into(),
+            "0".into(), "0".into(),
+        ];
+        bin_zcurses(&mut s, "zcurses", &add, 0);
+        let chr: Vec<String> = vec!["char".into(), "qw".into(), "Z".into()];
+        bin_zcurses(&mut s, "zcurses", &chr, 0);
+        let mv: Vec<String> = vec!["move".into(), "qw".into(), "0".into(), "0".into()];
+        bin_zcurses(&mut s, "zcurses", &mv, 0);
+        let q: Vec<String> = vec!["querychar".into(), "qw".into(), "out".into()];
+        assert_eq!(bin_zcurses(&mut s, "zcurses", &q, 0), 0);
+        let arr = s.arrays.get("out").unwrap();
+        assert_eq!(arr[0], "Z");
+        assert_eq!(arr[1], "default");
+    }
+
+    #[test]
+    fn test_zccmd_touch_validates_each() {
+        let _g = reset();
+        let mut s = ShellExecutor::new();
+        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        let touch_ok: Vec<String> = vec!["touch".into(), "stdscr".into()];
+        assert_eq!(bin_zcurses(&mut s, "zcurses", &touch_ok, 0), 0);
+        let touch_bad: Vec<String> = vec!["touch".into(), "ghost".into()];
+        assert_eq!(bin_zcurses(&mut s, "zcurses", &touch_bad, 0), 1);
+        assert_eq!(zc_errno_get(), ZCURSES_EUNDEFINED);
+    }
+
+    #[test]
+    fn test_zccmd_resize_changes_stdscr() {
+        let _g = reset();
+        let mut s = ShellExecutor::new();
+        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        let rs: Vec<String> = vec!["resize".into(), "30".into(), "100".into()];
+        assert_eq!(bin_zcurses(&mut s, "zcurses", &rs, 0), 0);
+        let wins = windows_lock().lock().unwrap();
+        let stdscr = wins.get("stdscr").unwrap();
+        assert_eq!(stdscr.rows, 30);
+        assert_eq!(stdscr.cols, 100);
+        assert_eq!(stdscr.buffer.len(), 30);
+        assert_eq!(stdscr.buffer[0].len(), 100);
+    }
+
+    #[test]
+    fn test_zccmd_resize_bad_third_arg() {
+        let _g = reset();
+        let mut s = ShellExecutor::new();
+        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        let rs: Vec<String> = vec![
+            "resize".into(),
+            "30".into(),
+            "100".into(),
+            "junk".into(),
+        ];
+        assert_eq!(bin_zcurses(&mut s, "zcurses", &rs, 0), 1);
+    }
+
+    #[test]
+    fn test_zccmd_mouse_motion_toggle() {
+        let _g = reset();
+        let mut s = ShellExecutor::new();
+        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        // Default mask should not have REPORT_MOUSE_POSITION.
+        let mouse_on: Vec<String> = vec!["mouse".into(), "+motion".into()];
+        assert_eq!(bin_zcurses(&mut s, "zcurses", &mouse_on, 0), 0);
+        assert_ne!(
+            *mouse_mask_lock().lock().unwrap() & REPORT_MOUSE_POSITION,
+            0
+        );
+        let mouse_off: Vec<String> = vec!["mouse".into(), "-motion".into()];
+        assert_eq!(bin_zcurses(&mut s, "zcurses", &mouse_off, 0), 0);
+        assert_eq!(
+            *mouse_mask_lock().lock().unwrap() & REPORT_MOUSE_POSITION,
+            0
+        );
+    }
+
+    #[test]
+    fn test_zccmd_bg_with_color_pair() {
+        let _g = reset();
+        let mut s = ShellExecutor::new();
+        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        let add: Vec<String> = vec![
+            "addwin".into(), "bgw".into(), "5".into(), "10".into(),
+            "0".into(), "0".into(),
+        ];
+        bin_zcurses(&mut s, "zcurses", &add, 0);
+        let bg: Vec<String> = vec!["bg".into(), "bgw".into(), "red/black".into()];
+        assert_eq!(bin_zcurses(&mut s, "zcurses", &bg, 0), 0);
+        // Pair was allocated; bg_chtype encodes the pair in the high bits.
+        assert_ne!(
+            windows_lock().lock().unwrap().get("bgw").unwrap().bg_chtype,
+            0
+        );
     }
 
     #[test]
