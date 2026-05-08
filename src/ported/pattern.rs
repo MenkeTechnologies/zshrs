@@ -1886,14 +1886,6 @@ impl crate::ported::exec::ShellExecutor {
 // Free fns moved verbatim from src/ported/exec.rs.
 // ===========================================================
 // BEGIN moved-from-exec-rs (free fns)
-/// Strip the leading `(#flags)` block from a zsh pattern (if any).
-/// Returns `(remaining_pattern, case_insensitive, l_flag, approx_n)`.
-/// If no flag block is present, the input pattern is returned unchanged
-/// with all flags off.
-pub(crate) fn parse_pattern_flags(pat: &str) -> (String, bool, bool, Option<usize>) {
-    let (rest, case_i, l, approx, _backref) = parse_pattern_flags_full(pat);
-    (rest, case_i, l, approx)
-}
 /// Full pattern-flag parser that also reports the `(#b)` backref-
 /// capture flag in addition to the four flags `parse_pattern_flags`
 /// returns. Used by `BUILTIN_PARAM_REPLACE` to enable

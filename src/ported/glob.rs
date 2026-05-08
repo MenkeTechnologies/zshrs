@@ -22,7 +22,7 @@ use crate::ported::exec::{
     extract_numeric_ranges, replace_numeric_ranges_with_star,
     with_executor, NumericRange,
 };
-use crate::ported::pattern::{approximate_match, ksh_extglob_body_to_regex, parse_numeric_range, parse_pattern_flags};
+use crate::ported::pattern::{approximate_match, ksh_extglob_body_to_regex, parse_numeric_range, parse_pattern_flags_full};
 
 /// Sort specifier flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3619,7 +3619,7 @@ impl crate::ported::exec::ShellExecutor {
         //          uppercase pattern char is exact-match
         //   (#a<n>) — approximate match: up to <n> errors (Levenshtein
         //          distance, insert/delete/substitute)
-        let (pattern, case_insensitive, l_flag, approx_n) = parse_pattern_flags(pattern);
+        let (pattern, case_insensitive, l_flag, approx_n, _) = parse_pattern_flags_full(pattern);
 
         if let Some(n) = approx_n {
             return approximate_match(s, &pattern, n);

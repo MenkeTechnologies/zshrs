@@ -166,7 +166,7 @@ fn is_vi_word_char(c: ZleChar) -> bool {
 /// `bufferwords()` actually re-tokenizes those inner regions. The simpler
 /// form is sufficient for ZLE word-motion widgets, which only need
 /// boundary detection.
-fn shell_words(line: &[ZleChar]) -> Vec<(usize, usize)> {
+pub fn shell_words(line: &[ZleChar]) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     let mut i = 0;
     let n = line.len();
@@ -224,14 +224,6 @@ fn shell_words(line: &[ZleChar]) -> Vec<(usize, usize)> {
         out.push((start, i));
     }
     out
-}
-
-/// Expose the shell-word splitter for callers that need the full word
-/// list (used by copy-prev-shell-word). Mirrors zsh's `bufferwords()` at
-/// Src/lex.c — coarse port that respects single/double quotes + backslash
-/// escapes; see `shell_words` for the detail.
-pub fn shell_words_for_test(line: &[ZleChar]) -> Vec<(usize, usize)> {
-    shell_words(line)
 }
 
 /// Find the start of the shell word containing or immediately preceding `pos`.

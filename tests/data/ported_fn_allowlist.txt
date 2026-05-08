@@ -94,7 +94,6 @@ format_addr
 patcompile_opts
 patmatch_opts
 patmatch_captures
-parse_pattern_flags
 parse_pattern_flags_full
 approximate_match
 parse_numeric_range
@@ -212,7 +211,6 @@ sfx_len
 shell_word_end_after
 shell_word_start_before
 shell_words
-shell_words_for_test
 skip_chars
 socket_accept
 socket_connect
