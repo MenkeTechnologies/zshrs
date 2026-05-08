@@ -214,9 +214,15 @@ impl QuoteType {
     }
 }
 
-/// Check if character is special for shell
-/// Port from ispecial() macro in zsh.h
-fn is_special(c: char) -> bool {
+/// Port of `ispecial()` macro from `Src/ztype.h:59` (macro).
+///
+/// `ispecial(X)` expands to `zistype(X, ISPECIAL)` and tests
+/// whether the char is in the SPECCHARS table — the literal set
+/// `"#$^*()=|{}[]`<>?~;&\\n\\t \\\\\\'\\""` from `Src/zsh.h:228`,
+/// optionally augmented with `,` (ZTF_SP_COMMA) and `bangchar`
+/// (BANGHIST). zshrs hard-codes the static set; the `,`/`!`
+/// augmentation flags aren't yet wired through.
+fn ispecial(c: char) -> bool {
     matches!(
         c,
         '|' | '&'
@@ -288,7 +294,7 @@ pub fn quotestring(s: &str, quote_type: QuoteType) -> String {
             // Backslash quoting (lines 6260-6416)
             let mut result = String::with_capacity(s.len() * 2);
             for c in s.chars() {
-                if is_special(c) {
+                if ispecial(c) {
                     result.push('\\');
                 }
                 result.push(c);
@@ -317,7 +323,7 @@ pub fn quotestring(s: &str, quote_type: QuoteType) -> String {
 
         QuoteType::SingleOptional => {
             // Only add quotes where necessary (lines 6314-6363)
-            let needs_quoting = s.chars().any(is_special);
+            let needs_quoting = s.chars().any(ispecial);
             if !needs_quoting {
                 return s.to_string();
             }
@@ -332,7 +338,7 @@ pub fn quotestring(s: &str, quote_type: QuoteType) -> String {
                         in_quotes = false;
                     }
                     result.push_str("\\'");
-                } else if is_special(c) {
+                } else if ispecial(c) {
                     if !in_quotes {
                         result.push('\'');
                         in_quotes = true;
@@ -411,7 +417,7 @@ pub fn quote_string(s: &str) -> String {
         return "''".to_string();
     }
 
-    let needs_quotes = s.chars().any(is_special);
+    let needs_quotes = s.chars().any(ispecial);
 
     if !needs_quotes {
         s.to_string()
@@ -1693,7 +1699,7 @@ pub fn quotedzputs(s: &str) -> String {
     for c in s.chars() {
         if c == '\'' {
             result.push_str("'\\''");
-        } else if is_special(c) {
+        } else if ispecial(c) {
             result.push('\\');
             result.push(c);
         } else if c.is_ascii_control() {
@@ -1708,7 +1714,7 @@ pub fn quotedzputs(s: &str) -> String {
 
 /// Check for special characters that need quoting (from utils.c hasspecial)
 pub fn hasspecial(s: &str) -> bool {
-    s.chars().any(is_special)
+    s.chars().any(ispecial)
 }
 
 /// Attach to the controlling tty's process group (from utils.c attachtty)
@@ -1766,7 +1772,7 @@ pub fn putshout(c: char) {
 
 /// Nice char with quoting selection (from utils.c nicechar_sel)
 pub fn nicechar_sel(c: char, quotable: bool) -> String {
-    if quotable && is_special(c) {
+    if quotable && ispecial(c) {
         format!("\\{}", c)
     } else {
         nicechar(c)
