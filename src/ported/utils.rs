@@ -2672,16 +2672,60 @@ pub fn niceztrlen(s: &str) -> usize {
     sb_niceformat(s).len()
 }
 
-/// Duplicate and double-bslashquote a string (from utils.c dquotedztrdup)
+/// Port of `dquotedztrdup()` from `Src/utils.c:6649`.
+///
+/// "Double-quote a metafied string." C body has two arms:
+/// - CSHJUNKIEQUOTES set: backslash-escape `"`/`$`/`` ` `` and
+///   wrap whole sections in `"..."`, breaking on metacharacters.
+/// - Otherwise: wrap the whole string in `"..."` with backslash
+///   escaping for `\`/`"`/`$`/`` ` ``, plus the `pending` quirk
+///   for trailing backslashes.
+///
+/// Previous Rust port produced unquoted output (just escaped
+/// metacharacters inline) — wrong for both arms. New port matches
+/// the non-CSHJUNKIEQUOTES path (the common one).
 pub fn dquotedztrdup(s: &str) -> String {
-    let mut result = String::with_capacity(s.len() + 4);
-    for c in s.chars() {
-        if matches!(c, '$' | '`' | '"' | '\\') {
-            result.push('\\');
+    let mut out = String::with_capacity(s.len() * 4 + 2);
+    out.push('"');
+    let mut pending = false;
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = if bytes[i] == Meta && i + 1 < bytes.len() {
+            i += 2;
+            (bytes[i - 1] ^ 32) as char
+        } else {
+            i += 1;
+            bytes[i - 1] as char
+        };
+        match c {
+            '\\' => {
+                if pending {
+                    out.push('\\');
+                }
+                out.push('\\');
+                pending = true;
+            }
+            '"' | '$' | '`' => {
+                if pending {
+                    out.push('\\');
+                }
+                out.push('\\');
+                out.push(c);
+                pending = false;
+            }
+            other => {
+                out.push(other);
+                pending = false;
+            }
         }
-        result.push(c);
     }
-    result
+    if pending {
+        out.push('\\');
+    }
+    out.push('"');
+    // C: ret = metafy(buf, p - buf, META_DUP);  — re-metafy result.
+    metafy(&out)
 }
 
 /// Port of `restoredir()` from `Src/utils.c:7565`.
@@ -3217,15 +3261,52 @@ pub fn arrlen_lt<T>(arr: &[T], n: usize) -> bool {
     arr.len() < n
 }
 
-/// Set stdin to blocking mode (from utils.c setblock_stdin)
-pub fn setblock_stdin() {
-    setblock_fd(0, true);
+/// Port of `setblock_stdin()` from `Src/utils.c:2622`.
+///
+/// ```c
+/// int setblock_stdin(void) {
+///     long mode;
+///     return setblock_fd(1, 0, &mode);
+/// }
+/// ```
+///
+/// Set stdin to BLOCKING mode (`unblock=1` in C, third arg is the
+/// out-parameter for the previous mode flags). Returns success.
+/// The previous Rust port called `setblock_fd(0, true)` — wrong:
+/// fd 0 (stdin) is correct, but the second argument was `true`
+/// meaning unblock=true. C's `setblock_fd(1, ...)` first arg is
+/// `unblock=1` meaning enable blocking; second arg is fd 0.
+pub fn setblock_stdin() -> i32 {
+    // C calls setblock_fd(1 /* unblock=true means SET to blocking */, 0 /* fd */, &mode).
+    // The Rust setblock_fd shim just toggles O_NONBLOCK on the fd.
+    setblock_fd(0, false);
+    0
 }
 
-/// Buffer size helper for time formatting (from utils.c ztrftimebuf)
-pub fn ztrftimebuf(needed: usize) -> usize {
-    // Return a reasonable buffer size for time formatting
-    needed.max(256)
+/// Port of `ztrftimebuf()` from `Src/utils.c:3312`.
+///
+/// ```c
+/// static int ztrftimebuf(int *bufsizeptr, int decr) {
+///     if (*bufsizeptr <= decr) return 1;
+///     *bufsizeptr -= decr;
+///     return 0;
+/// }
+/// ```
+///
+/// "Helper for ztrftime: try to fit decr more bytes (plus a NUL)
+/// in the buffer, and a new string length to decrement from that.
+/// Returns 0 if the new length fits, 1 otherwise."
+///
+/// Previous Rust port had wrong semantics — returned `needed.max(256)`
+/// (a buffer-sizing helper) instead of the C "decrement-and-check"
+/// semantics. New port matches C: takes &mut bufsize + decr,
+/// returns i32 (0 = fit, 1 = doesn't fit).
+pub fn ztrftimebuf(bufsize: &mut i32, decr: i32) -> i32 {
+    if *bufsize <= decr {
+        return 1;
+    }
+    *bufsize -= decr;
+    0
 }
 
 /// Call shell function by name (from utils.c subst_string_by_func)
@@ -4376,10 +4457,43 @@ pub fn metafy(buf: &str) -> String {
 }
 
 /// Set a wide-char array from a multibyte source string.
-/// Port of `set_widearray()` from Src/utils.c:69. The C source
-/// builds a `widechar_array` (used to back `WORDCHARS_w` /
-/// `IFS_w` for fast lookups). Rust uses owned `Vec<char>` and
-/// returns it directly — caller stores in the right slot.
+/// Port of `set_widearray()` from `Src/utils.c:69`.
+///
+/// ```c
+/// static void set_widearray(char *mb_array, Widechar_array wca) {
+///     if (wca->chars) free(wca->chars);
+///     wca->len = 0;
+///     if (mb_array) {
+///         while (*mb_array) {
+///             if (unsigned char *mb_array <= 0x7f) {
+///                 *wcptr++ = (wchar_t)*mb_array++;
+///                 continue;
+///             }
+///             mblen = mb_metacharlenconv(mb_array, &wci);
+///             if (!mblen) break;
+///             if (wci == WEOF) return;  // any non-convertible aborts
+///             *wcptr++ = (wchar_t)wci;
+///             mb_array += mblen;
+///         }
+///         wca->chars = malloc(...); wca->len = wcptr - tmpwcs;
+///     }
+/// }
+/// ```
+///
+/// Build a wide-char array from a metafied multibyte source string.
+/// C uses `mb_metacharlenconv()` to walk Meta-encoded sequences;
+/// Rust port unmetafies first, then collects chars (the
+/// equivalent: walk Unicode codepoints).
+///
+/// Returns the new vec; caller assigns to the appropriate slot
+/// (`WORDCHARS_w`, `IFS_w`, etc.). C aborts on non-convertible
+/// chars (returns without setting `wca->chars`); Rust port mirrors
+/// by returning empty Vec when conversion fails.
 pub fn set_widearray(mb_array: &str) -> Vec<char> {
-    mb_array.chars().collect()
+    let mut bytes = mb_array.as_bytes().to_vec();
+    unmetafy(&mut bytes);
+    match std::str::from_utf8(&bytes) {
+        Ok(s) => s.chars().collect(),
+        Err(_) => Vec::new(),
+    }
 }
