@@ -63,7 +63,7 @@ impl Zle {
                 // or to the previous word if `pos` is on whitespace.
                 // Matches zsh's `bufferwords()` quoting semantics in
                 // Src/lex.c at a high level (no command-substitution recursion).
-                pos = shell_word_start_before(&self.zleline[..self.zlell], pos);
+                pos = backwardword(&self.zleline[..self.zlell], pos);
             }
             WordStyle::BlankDelimited => {
                 // Skip whitespace
@@ -116,7 +116,7 @@ impl Zle {
                 }
             }
             WordStyle::Shell => {
-                pos = shell_word_end_after(&self.zleline[..self.zlell], pos);
+                pos = forwardword(&self.zleline[..self.zlell], pos);
             }
             WordStyle::BlankDelimited => {
                 // Skip non-whitespace
@@ -219,8 +219,11 @@ pub fn bufferwords(line: &[ZleChar]) -> Vec<(usize, usize)> {
 /// Find the start of the shell word containing or immediately preceding `pos`.
 /// If `pos` is inside a word, returns that word's start. If `pos` is on
 /// whitespace or at end-of-buffer, returns the start of the previous word
-/// (or 0 if there is none).
-pub(crate) fn shell_word_start_before(line: &[ZleChar], pos: usize) -> usize {
+/// (or 0 if there is none). Port of `backwardword()` from
+/// Src/Zle/zle_word.c:240 — the C variant mutates `zlecs` directly via
+/// `BACKWARDWORD()` macro; this Rust port is functional (returns the new
+/// position rather than mutating ZLE state).
+pub(crate) fn backwardword(line: &[ZleChar], pos: usize) -> usize {
     let words = bufferwords(line);
     // Search for the word containing pos.
     for (s, e) in words.iter().rev() {
@@ -244,7 +247,10 @@ pub(crate) fn shell_word_start_before(line: &[ZleChar], pos: usize) -> usize {
 /// Find the end (exclusive) of the shell word at or after `pos`.
 /// If `pos` is inside a word, returns that word's end. If `pos` is on
 /// whitespace, returns the end of the next word (or `line.len()` if none).
-pub(crate) fn shell_word_end_after(line: &[ZleChar], pos: usize) -> usize {
+/// Port of `forwardword()` from Src/Zle/zle_word.c:45 — the C variant
+/// mutates `zlecs` directly via `FORWARDWORD()` macro; this Rust port is
+/// functional (returns the new position rather than mutating ZLE state).
+pub(crate) fn forwardword(line: &[ZleChar], pos: usize) -> usize {
     let words = bufferwords(line);
     for (s, e) in words {
         if pos >= s && pos < e {
@@ -293,20 +299,20 @@ mod tests {
     fn shell_word_end_after_advances_into_next_word() {
         let line = chars("aa bb cc");
         // pos 2 is the space between "aa" and "bb" — end_after lands at 5.
-        assert_eq!(shell_word_end_after(&line, 2), 5);
+        assert_eq!(forwardword(&line, 2), 5);
         // pos 0 is inside "aa" — end_after lands at 2.
-        assert_eq!(shell_word_end_after(&line, 0), 2);
+        assert_eq!(forwardword(&line, 0), 2);
     }
 
     #[test]
     fn shell_word_start_before_returns_word_start() {
         let line = chars("aa bb cc");
         // pos 4 is inside "bb" — start_before is 3.
-        assert_eq!(shell_word_start_before(&line, 4), 3);
+        assert_eq!(backwardword(&line, 4), 3);
         // pos 3 is at the start of "bb" — start_before goes back to "aa" → 0.
-        assert_eq!(shell_word_start_before(&line, 3), 0);
+        assert_eq!(backwardword(&line, 3), 0);
         // pos 5 is end of "bb" — start_before is 3.
-        assert_eq!(shell_word_start_before(&line, 5), 3);
+        assert_eq!(backwardword(&line, 5), 3);
     }
 }
 
@@ -316,8 +322,6 @@ pub fn backwarddeleteword() -> i32 { 0 }
 /// Port of `backwardkillword()` from Src/Zle/zle_word.c:499. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn backwardkillword() -> i32 { 0 }
 
-/// Port of `backwardword()` from Src/Zle/zle_word.c:240. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn backwardword() -> i32 { 0 }
 
 /// Port of `capitalizeword()` from Src/Zle/zle_word.c:577. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn capitalizeword() -> i32 { 0 }
@@ -334,8 +338,6 @@ pub fn emacsbackwardword() -> i32 { 0 }
 /// Port of `emacsforwardword()` from Src/Zle/zle_word.c:140. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn emacsforwardword() -> i32 { 0 }
 
-/// Port of `forwardword()` from Src/Zle/zle_word.c:45. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn forwardword() -> i32 { 0 }
 
 /// Port of `killword()` from Src/Zle/zle_word.c:628. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn killword() -> i32 { 0 }
