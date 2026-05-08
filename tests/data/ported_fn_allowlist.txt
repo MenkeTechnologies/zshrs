@@ -162,5 +162,4 @@ underscore_separate_digits
 visible_width
 zparseopts
 zselect
-read_utmp
 zformat_recurse
