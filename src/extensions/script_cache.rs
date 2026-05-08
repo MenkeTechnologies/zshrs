@@ -1,6 +1,6 @@
 //! rkyv-backed bytecode cache for zsh scripts.
 //!
-//! Single-file shard at `~/.cache/zshrs/scripts.rkyv`. On 2+ runs of a given
+//! Single-file shard at `~/.zshrs/scripts.rkyv`. On 2+ runs of a given
 //! script, lex/parse/compile is skipped — the cache hit is `mmap` + zero-copy
 //! `ArchivedHashMap` lookup + bincode-decode of the inner `fusevm::Chunk` blob.
 //!
@@ -410,11 +410,11 @@ fn current_binary_mtime_secs() -> Option<i64> {
     })
 }
 
-/// Default shard path: `~/.cache/zshrs/scripts.rkyv`.
+/// Default shard path: `~/.zshrs/scripts.rkyv`.
 pub fn default_cache_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".cache/zshrs/scripts.rkyv")
+        .join(".zshrs/scripts.rkyv")
 }
 
 /// `ZSHRS_CACHE=0|false|no` disables the cache entirely.

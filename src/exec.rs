@@ -1026,7 +1026,7 @@ impl ShellExecutor {
             .to_string_lossy()
             .to_string();
 
-        // Try bytecode cache first — rkyv shard at ~/.cache/zshrs/scripts.rkyv.
+        // Try bytecode cache first — rkyv shard at ~/.zshrs/scripts.rkyv.
         // The cache validates path + mtime + zshrs binary mtime; on any miss
         // we fall through to lex/parse/compile.
         if let Some(bc_blob) = crate::script_cache::try_load_bytes(path) {
