@@ -2291,7 +2291,14 @@ pub fn paramsubst(                                          // c:1625
                 let p = singsub(pat, state);                 // c:3540
                 let invert = (state.sub_flags & 0x0008) != 0; // c:2171 SUB_MATCH
                 state.sub_flags = 0;                          // c:2169 (consume)
-                if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                // Subscripted access already collapsed the array to a
+                // single element in `raw_value`; the filter applies to
+                // that element, not to the unsubscripted backing array.
+                // Direct port of getindex's per-slot collapse before
+                // SUB_FILTER fires (Src/subst.c paramsubst flow when
+                // v->start/v->end are set).
+                let has_subscript = subscript.is_some();
+                if let Some(arr) = state.arrays.get(&var_name).cloned().filter(|_| !has_subscript) {
                     let kept: Vec<String> = arr.into_iter() // c:3540
                         .filter(|elem| {                      // c:3540
                             let m = crate::exec::ShellExecutor::glob_match_static(elem, &p); // c:3540
