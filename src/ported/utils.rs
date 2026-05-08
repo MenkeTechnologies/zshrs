@@ -2826,32 +2826,6 @@ pub(crate) fn zsh_split_z(s: &str) -> Vec<String> {
     out
 }
 
-/// Normalise a path lexically: collapse `.` and `..` components without
-/// touching the filesystem. Used by `cd -L` (default) so symlinks are
-/// preserved in `$PWD` (matches zsh's logical-pwd behaviour).
-pub(crate) fn normalize_logical(path: &std::path::Path) -> std::path::PathBuf {
-    use std::path::Component;
-    let mut out = std::path::PathBuf::new();
-    for comp in path.components() {
-        match comp {
-            Component::Prefix(_) | Component::RootDir => out.push(comp.as_os_str()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                // Pop one component if we have any non-root piece to drop.
-                let popped = out.pop();
-                if !popped {
-                    out.push("..");
-                }
-            }
-            Component::Normal(c) => out.push(c),
-        }
-    }
-    if out.as_os_str().is_empty() {
-        out.push(".");
-    }
-    out
-}
-
 /// Validate an inherited `$PWD` exactly like zsh's ispwd() at
 /// src/zsh/Src/utils.c:809-829: PWD must be absolute, must stat to the
 /// same dev+inode as ".", and must contain no `.` or `..` components.
