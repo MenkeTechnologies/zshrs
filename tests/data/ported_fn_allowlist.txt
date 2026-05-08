@@ -217,7 +217,6 @@ socket_listen
 socket_test
 strwidth
 try_matcher
-unbind_key
 underscore_separate_digits
 visible_width
 zformat
