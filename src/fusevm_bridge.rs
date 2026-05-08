@@ -2100,7 +2100,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // `${terminfo[…]}` uses but with the legacy
                     // 2-letter cap names.
                     Some(Value::str(
-                        crate::modules::termcap::lookup(idx).unwrap_or_default(),
+                        crate::modules::termcap::gettermcap(idx).unwrap_or_default(),
                     ))
                 }
                 "terminfo" => {
