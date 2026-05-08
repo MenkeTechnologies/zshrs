@@ -60,12 +60,40 @@
 # math.rs — `name[idx]OP rhs` subscript-arith string parsers. zsh C
 # does not pre-parse the assignment text: its `setmathvar()` (math.c:972)
 # walks the `lval` left in place by the lexer/parser, so subscripts
-# fall out of the regular lexer path. zshrs's MathEval (currently still
-# struct-shaped, pending Task #2) sees the raw `((a[i]+=expr))` text
-# and must split it before evaluating; these three parsers do that
-# split. Moving to src/extensions/ once MathEval is migrated to the
-# C-faithful free-fn form, since they will become an extension layer
-# over the C-style mathparse() rather than living inside math.rs.
+# fall out of the regular lexer path. zshrs sees the raw `((a[i]+=expr))`
+# text and must split it before evaluating; these three parsers do that
+# split. Moving to src/extensions/ once the lexer can re-emit subscript
+# tokens directly.
 parse_compound
 parse_pre_inc
 parse_assign
+
+# math.rs — MathState lifecycle / accessors. The struct mirrors the
+# saved-and-restored locals C `mathevall()` (math.c:367) keeps across
+# recursive entry; in C they are stack locals + module-statics so no
+# fn ports them. `new` constructs the bag of locals; `with_*` are
+# builder-style field setters; `extract_string_variables` and
+# `getmathparams` read out the post-evaluation variables map for the
+# caller (which zsh C does inline since the variables ARE the param
+# table). `peek`/`advance`/`is_digit`/`is_ident_start`/`is_ident` mirror
+# zsh C's `*ptr++` / `idigit()` / `iident()` macro idioms, but the C
+# uses `unsigned char` arithmetic directly without an fn-shaped helper.
+# `pop_with_lval`/`get_value`/`top_prec` extract per-token shapes that
+# C inlines inside `pop()` / `mathparse()`.
+new
+with_variables
+with_string_variables
+with_c_precedences
+with_force_float
+with_octal_zeroes
+with_lastval
+extract_string_variables
+getmathparams
+peek
+advance
+is_digit
+is_ident_start
+is_ident
+pop_with_lval
+get_value
+top_prec
