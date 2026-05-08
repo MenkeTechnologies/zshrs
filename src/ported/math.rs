@@ -15,6 +15,7 @@
 //! - Special values (Inf, NaN)
 //! - Variable references and assignment
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use crate::ported::utils::zerr;
 use std::env;
@@ -335,9 +336,14 @@ impl Default for MathValue {
     }
 }
 
-/// Math evaluator state.
-/// Port of the per-evaluation locals `mathevall()` (Src/math.c:367)\n/// keeps — input cursor, operator stack, value stack. Drives\n/// `zzlex()` (line 617), `push()` / `pop()` (lines 916/931), and\n/// `op()` / `bop()` (lines 1154/1454).
-pub struct MathState<'a> {
+/// Per-evaluation locals — `mathevall()` (Src/math.c:367) keeps
+/// these as save-and-restore stack locals (`xyyval`, `xyylval`,
+/// etc.) around the recursive call into `mathparse()`. zsh C has
+/// no struct named after this set of locals; the Rust port collects
+/// them privately so the free fns can pass them through one slot
+/// instead of 19. Not part of the public math API — outside callers
+/// use `matheval`/`mathevali`/`Mnumber`.
+struct MathState<'a> {
     input: &'a str,
     pos: usize,
     /// Byte position in `input` where the most recently lexed token began
@@ -369,7 +375,7 @@ pub struct MathState<'a> {
     error: Option<String>,
 }
 
-pub fn new<'a>(input: &'a str) -> MathState<'a> {
+pub(crate) fn new<'a>(input: &'a str) -> MathState<'a> {
         MathState {
             input,
             pos: 0,
@@ -1122,7 +1128,7 @@ pub(crate) fn zzlex(s: &mut MathState<'_>) -> MathTok {
 /// Push a value onto the evaluator's operand stack, with the
 /// optional lvalue name (set when the value came from a variable
 /// reference; needed for `++`/`--`/assignment-op write-back).
-pub fn push(s: &mut MathState<'_>, val: Mnumber, lval: Option<String>) {
+pub(crate) fn push(s: &mut MathState<'_>, val: Mnumber, lval: Option<String>) {
     s.stack.push(MathValue { val, lval, pval: () });
 }
 
@@ -1133,7 +1139,7 @@ pub fn push(s: &mut MathState<'_>, val: Mnumber, lval: Option<String>) {
 /// passes a `noget` flag to skip the resolution; the Rust port
 /// always resolves since callers that want the raw lvalue use
 /// `pop_with_lval` instead.
-pub fn pop(s: &mut MathState<'_>) -> Mnumber {
+pub(crate) fn pop(s: &mut MathState<'_>) -> Mnumber {
     if let Some(mv) = s.stack.pop() {
         if mv.val.is_unset() {
             if let Some(ref name) = mv.lval {
@@ -1168,7 +1174,7 @@ pub fn pop(s: &mut MathState<'_>) -> Mnumber {
 /// the param table so a miss returns `Integer(0)` and skips the
 /// type-coercion. Indirect-string mode (`a="3+2"; $((a))`) is
 /// handled by recursively evaluating the string value.
-pub fn getmathparam(s: &MathState<'_>, name: &str) -> Mnumber {
+pub(crate) fn getmathparam(s: &MathState<'_>, name: &str) -> Mnumber {
     // Strip array subscript if present
         let base_name = if let Some(bracket) = name.find('[') {
             &name[..bracket]
@@ -1205,7 +1211,7 @@ pub fn getmathparam(s: &MathState<'_>, name: &str) -> Mnumber {
 /// SubscriptArith free fns higher up the call chain; this stub
 /// only handles the scalar case. Returns the stored value so
 /// `op` can leave it on the stack.
-pub fn setmathvar(s: &mut MathState<'_>, name: &str, val: Mnumber) -> Mnumber {
+pub(crate) fn setmathvar(s: &mut MathState<'_>, name: &str, val: Mnumber) -> Mnumber {
     let base_name = if let Some(bracket) = name.find('[') {
         &name[..bracket]
     } else {
@@ -1606,7 +1612,7 @@ pub(crate) fn bop(s: &mut MathState<'_>, tk: MathTok) {
 /// with `<kind>` being `operator` or `operand` and `<ctx>` taken
 /// from the input pointer at the start of the bad token. (2)
 /// Update `s.unary` for the next iteration based on `OP_OPF`.
-pub fn checkunary(s: &mut MathState<'_>) {
+pub(crate) fn checkunary(s: &mut MathState<'_>) {
     // Direct port of zsh math.c checkunary() (line 1548).
         // Two roles:
         //   1. Validate that the just-lexed token (`s.mtok`)
@@ -1996,7 +2002,7 @@ pub fn checkunary(s: &mut MathState<'_>) {
     }
 
 /// Get updated variables after evaluation
-pub fn getmathparams<'a>(s: &'a MathState<'_>) -> &'a HashMap<String, Mnumber> {
+pub(crate) fn getmathparams<'a>(s: &'a MathState<'_>) -> &'a HashMap<String, Mnumber> {
     &s.variables
 }
 
@@ -2979,14 +2985,14 @@ pub fn convbase(n: i64, base: u32) -> String {
 
 /// Port of `isinf()` from Src/math.c:588 — IEEE +/-Infinity test.
 /// Wraps Rust's `f64::is_infinite`.
-pub fn isinf(x: f64) -> bool { x.is_infinite() }
+pub(crate) fn isinf(x: f64) -> bool { x.is_infinite() }
 
 /// Port of `isnan()` from Src/math.c:608 — IEEE NaN test. C
 /// implements it as `store(&x) != store(&x)` to defeat compiler
 /// folding of the canonical `x != x` NaN test; we route through
 /// `store` for parity, but Rust's `f64::is_nan` is the
 /// correctness path.
-pub fn isnan(x: f64) -> bool { store(x) != store(x) || x.is_nan() }
+pub(crate) fn isnan(x: f64) -> bool { store(x) != store(x) || x.is_nan() }
 
 /// Port of `notzero()` from Src/math.c:1142 — error-on-zero check
 /// used by `/` and `%` operators. Returns true when `a` is non-
@@ -2994,7 +3000,7 @@ pub fn isnan(x: f64) -> bool { store(x) != store(x) || x.is_nan() }
 /// "division by zero"). Float zero is treated as non-zero per
 /// IEEE 754 (1/0.0 → Inf, not an error) — only integer zero
 /// trips the check, matching math.c's `if (!a.u.l) zerr(…)`.
-pub fn notzero(a: Mnumber) -> bool {
+pub(crate) fn notzero(a: Mnumber) -> bool {
     if a.is_unset() {
         return false;
     }
@@ -3010,14 +3016,14 @@ pub fn notzero(a: Mnumber) -> bool {
 /// `HAVE_ISNAN` is undefined; we keep it as a name-parity shim
 /// so `isnan()` can route through it (matching the C source's
 /// `store(&x) != store(&x)` idiom).
-pub fn store(x: f64) -> f64 { x }
+pub(crate) fn store(x: f64) -> f64 { x }
 
 /// Port of `getcvar()` from Src/math.c:943 — character-constant
 /// lookup. Reads the named shell variable and returns the
 /// codepoint of its first character. Used for `#varname` token
 /// (CId): `x="hello"; (( y = #x ))` puts 104 (`'h'`) into y.
 /// On miss or empty value, returns 0 (matches zsh's `*s ? *s : 0`).
-pub fn getcvar(s: &MathState<'_>, name: &str) -> Mnumber {
+pub(crate) fn getcvar(s: &MathState<'_>, name: &str) -> Mnumber {
     if let Some(raw) = s.string_variables.get(name) {
         return Mnumber::integer(raw.chars().next().map(|c| c as i64).unwrap_or(0));
     }
@@ -3030,6 +3036,6 @@ pub fn getcvar(s: &MathState<'_>, name: &str) -> Mnumber {
 /// Port of `mathevalarg()` from Src/math.c:1514 — evaluate one
 /// arg expression and return as integer. Used by `let` builtin
 /// and others that take an arith-expr argument.
-pub fn mathevalarg(expr: &str) -> i64 {
+pub(crate) fn mathevalarg(expr: &str) -> i64 {
     matheval(expr).map(|n| n.to_int()).unwrap_or(0)
 }

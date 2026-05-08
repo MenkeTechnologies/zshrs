@@ -15,7 +15,8 @@
 //! re-export alias so existing call-sites continue to compile.
 
 use crate::history::HistoryEngine;
-use crate::math::MathState;
+// MathState is private to math.rs (per math.c — no public state struct);
+// math API surface is matheval/mathevali/Mnumber.
 use crate::options::ZSH_OPTIONS_SET;
 use crate::pcre::PcreState;
 use crate::prompt::{expand_prompt, PromptContext};

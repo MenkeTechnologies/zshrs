@@ -12,7 +12,7 @@
 #![allow(unused_imports)]
 
 use crate::history::HistoryEngine;
-use crate::math::MathState;
+// MathState is private to math.rs (no public state struct in math.c).
 use crate::options::ZSH_OPTIONS_SET;
 use crate::pcre::PcreState;
 use crate::prompt::{expand_prompt, PromptContext};
