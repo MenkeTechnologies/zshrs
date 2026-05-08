@@ -2464,7 +2464,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             }
                             return Value::str(out.join(" "));
                         }
-                        return assoc_subscript_flag(map, &flags, &pat);
+                        return crate::ported::exec::ShellExecutor::assoc_subscript_flag(map, &flags, &pat);
                     }
                     return Value::str(map.get(&idx).cloned().unwrap_or_default());
                 }
@@ -2614,7 +2614,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         Some((flags, pat))
                     } else { None }
                 })(&idx) {
-                    return array_subscript_flag(&arr, &flags, &pat);
+                    return crate::ported::exec::ShellExecutor::array_subscript_flag(&arr, &flags, &pat);
                 }
 
                 // Slice form `N,M`: comma separator with int-or-arith

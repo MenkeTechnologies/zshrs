@@ -5889,11 +5889,11 @@ impl crate::ported::exec::ShellExecutor {
             };
             let resolved = if let Some((flags, pat)) = parsed_flag {
                 if let Some(assoc) = self.assoc_arrays.get(&name) {
-                    assoc_subscript_flag(assoc, flags, pat).to_str()
+                    Self::assoc_subscript_flag(assoc, flags, pat).to_str()
                 } else if name == "@" || name == "*" {
-                    array_subscript_flag(&self.positional_params, flags, pat).to_str()
+                    Self::array_subscript_flag(&self.positional_params, flags, pat).to_str()
                 } else if let Some(arr) = self.arrays.get(&name) {
-                    array_subscript_flag(arr, flags, pat).to_str()
+                    Self::array_subscript_flag(arr, flags, pat).to_str()
                 } else {
                     "0".to_string()
                 }
@@ -6033,13 +6033,13 @@ impl crate::ported::exec::ShellExecutor {
                     let resolved = if let Some((flags, pat)) = parsed_flag {
                         // Pick assoc vs indexed array path.
                         if let Some(assoc) = self.assoc_arrays.get(&name) {
-                            let v = assoc_subscript_flag(assoc, flags, pat);
+                            let v = Self::assoc_subscript_flag(assoc, flags, pat);
                             v.to_str()
                         } else if name == "@" || name == "*" {
-                            let v = array_subscript_flag(&self.positional_params, flags, pat);
+                            let v = Self::array_subscript_flag(&self.positional_params, flags, pat);
                             v.to_str()
                         } else if let Some(arr) = self.arrays.get(&name) {
-                            let v = array_subscript_flag(arr, flags, pat);
+                            let v = Self::array_subscript_flag(arr, flags, pat);
                             v.to_str()
                         } else {
                             "0".to_string()
@@ -6189,11 +6189,22 @@ pub(crate) fn getarg(idx: &str) -> Option<(&str, &str)> {
     }
     Some((flags, &rest[end + 1..]))
 }
+// Methods folding `getarg`'s array/hash pattern-search arms
+// (Src/params.c:1581-1719) onto the type that already owns the
+// param storage. Exposing them as associated fns rather than
+// free top-level fns reflects what the C source does (inline
+// inside getarg) — there is no separate C function name for
+// these search bodies.
+impl crate::ported::exec::ShellExecutor {
+
 /// Apply zsh subscript flags to an indexed array. `flags` is the
-/// single-char flag set parsed by `parse_subscript_flags`. `pat` is
-/// the search pattern (or literal when `e` flag is present).
+/// single-char flag set parsed by `getarg`. `pat` is the search
+/// pattern (or literal when `e` flag is present).
 ///
-/// Semantics (from zshparam(1) "Subscript Flags"):
+/// Direct port of getarg's array-search arm at Src/params.c:1672-1719
+/// (the `} else { ... pprog = patcompile(s, 0, NULL); ... }` plus the
+/// `for (r = 1 + beg, p = ta + beg; *p; r++, p++) if (pprog && pattry...)`
+/// forward/reverse iteration). Semantics from zshparam(1):
 /// - `r` — first matching value (forward search)
 /// - `R` — last matching value (reverse search)
 /// - `i` — first matching index (1-based; 0 if none)
@@ -6259,10 +6270,13 @@ pub(crate) fn array_subscript_flag(arr: &[String], flags: &str, pat: &str) -> fu
         Value::str("")
     }
 }
-/// Apply zsh subscript flags to an associative array. The semantics
-/// mirror `array_subscript_flag` but `r`/`R` search values, while
-/// `i`/`I` return matching keys (zsh `i` flag for assoc returns the
-/// matching key, not a numeric index).
+/// Apply zsh subscript flags to an associative array. Direct port
+/// of getarg's hash-search arm at Src/params.c:1581-1660 (the
+/// `if (ishash) { HashTable ht = v->pm->gsu.h->getfn(v->pm); ...}`
+/// branch + scanprog walk). Semantics mirror `array_subscript_flag`
+/// but `r`/`R` search values, while `i`/`I` return matching keys
+/// (zsh `i` flag for assoc returns the matching key, not a numeric
+/// index).
 pub(crate) fn assoc_subscript_flag(map: &IndexMap<String, String>, flags: &str, pat: &str) -> fusevm::Value {
     use fusevm::Value;
     let exact = flags.contains('e');
@@ -6308,6 +6322,8 @@ pub(crate) fn assoc_subscript_flag(map: &IndexMap<String, String>, flags: &str, 
     }
     Value::str("")
 }
+
+} // impl ShellExecutor (folded getarg search arms)
 // END moved-from-exec-rs (free fns)
 
 // ===========================================================
