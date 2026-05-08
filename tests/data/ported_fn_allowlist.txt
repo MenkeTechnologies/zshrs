@@ -51,10 +51,6 @@ bessel_yn
 # Color-distance / 256-palette mapping helpers — extracted from
 # nearcolor module's main lookup logic. zsh C does this inline.
 color_distance_sq
-rgb_to_256
-color_256_to_rgb
-truecolor_to_256
-nearcolor_256
 
 # Rust-only RNG primitives — zsh C uses `random()` libc directly.
 # We wrap to centralise the seed/state and provide ChaCha20Rng for
@@ -192,7 +188,6 @@ sfx_len
 shell_word_end_after
 shell_word_start_before
 shell_words
-skip_chars
 socket_accept
 socket_connect
 socket_listen
