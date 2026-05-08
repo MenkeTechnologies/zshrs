@@ -5838,14 +5838,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             pattern_raw
         };
         let arr_val = with_executor(|exec| exec.arrays.get(&name).cloned());
-        // extendedglob_match handles the leading-`^` negation operator
-        // when the `extendedglob` option is set. Plain literal-equal
-        // path retained for the no-meta-char case (cheaper than running
-        // a regex compile on every element).
+        // Inline of the deleted extendedglob_match helper (Src/glob.c
+        // pattern_match path): leading `^` inverts when extendedglob is
+        // set; otherwise falls through to glob_match_static. Plain
+        // literal-equal path retained for the no-meta-char case
+        // (cheaper than running a regex compile on every element).
         let matches_glob = |s: &str, pat: &str| -> bool {
             let starts_neg = pat.starts_with('^');
             if pat.contains('*') || pat.contains('?') || pat.contains('[') || starts_neg {
-                extendedglob_match(s, pat)
+                let extendedglob = with_executor(|exec| {
+                    exec.options.get("extendedglob").copied().unwrap_or(false)
+                });
+                if extendedglob {
+                    if let Some(neg) = pat.strip_prefix('^') {
+                        return !crate::ported::exec::ShellExecutor::glob_match_static(s, neg);
+                    }
+                }
+                crate::ported::exec::ShellExecutor::glob_match_static(s, pat)
             } else {
                 s == pat
             }
