@@ -15,6 +15,7 @@
 //! - zle_main_entry() - module entry point
 
 use std::collections::VecDeque;
+use crate::ported::utils::zwarnnam;
 use std::io::{self, Read, Write};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::time::{Duration, Instant};
@@ -1623,14 +1624,14 @@ impl crate::ported::exec::ShellExecutor {
                     let new = match iter.next() {
                         Some(s) => s.clone(),
                         None => {
-                            eprintln!("zshrs:bindkey:1: not enough arguments for -A");
+                            zwarnnam("bindkey", "not enough arguments for -A");
                             return 1;
                         }
                     };
                     let existing = match iter.next() {
                         Some(s) => s.clone(),
                         None => {
-                            eprintln!("zshrs:bindkey:1: not enough arguments for -A");
+                            zwarnnam("bindkey", "not enough arguments for -A");
                             return 1;
                         }
                     };
@@ -1647,14 +1648,14 @@ impl crate::ported::exec::ShellExecutor {
                     let new_km = match map_name(&new) {
                         Some(k) => k,
                         None => {
-                            eprintln!("zshrs:bindkey:1: no such keymap: {}", new);
+                            zwarnnam("bindkey", &format!("no such keymap: {}", new));
                             return 1;
                         }
                     };
                     let src_km = match map_name(&existing) {
                         Some(k) => k,
                         None => {
-                            eprintln!("zshrs:bindkey:1: no such keymap: {}", existing);
+                            zwarnnam("bindkey", &format!("no such keymap: {}", existing));
                             return 1;
                         }
                     };
@@ -1664,7 +1665,7 @@ impl crate::ported::exec::ShellExecutor {
                         zle.keymaps.insert(new_km, km);
                         return 0;
                     }
-                    eprintln!("zshrs:bindkey:1: no such keymap: {}", existing);
+                    zwarnnam("bindkey", &format!("no such keymap: {}", existing));
                     return 1;
                 }
                 "-d" => {
@@ -1713,7 +1714,7 @@ impl crate::ported::exec::ShellExecutor {
                 // unknown flags drop into list-mode silently.
                 other => {
                     let bad: String = other.chars().skip(1).take(1).collect();
-                    eprintln!("zshrs:bindkey:1: bad option: -{}", bad);
+                    zwarnnam("bindkey", &format!("bad option: -{}", bad));
                     return 1;
                 }
             }
@@ -1829,7 +1830,7 @@ impl crate::ported::exec::ShellExecutor {
                     for name in iter.by_ref() {
                         had_arg = true;
                         if !zle.delete_widget(name) {
-                            eprintln!("zshrs:zle:1: no such widget: {}", name);
+                            zwarnnam("zle", &format!("no such widget: {}", name));
                             returnval = 1;
                         }
                     }
@@ -1845,20 +1846,20 @@ impl crate::ported::exec::ShellExecutor {
                     let old = match iter.next() {
                         Some(s) => s.clone(),
                         None => {
-                            eprintln!("zshrs:zle:1: -A requires source widget");
+                            zwarnnam("zle", "-A requires source widget");
                             return 1;
                         }
                     };
                     let new = match iter.next() {
                         Some(s) => s.clone(),
                         None => {
-                            eprintln!("zshrs:zle:1: -A requires destination widget");
+                            zwarnnam("zle", "-A requires destination widget");
                             return 1;
                         }
                     };
                     let mut zle = zle();
                     if !zle.alias_widget(&new, &old) {
-                        eprintln!("zshrs:zle:1: no such widget: {}", old);
+                        zwarnnam("zle", &format!("no such widget: {}", old));
                         return 1;
                     }
                     // PFA-SMR aspect: ZLE widget alias `zle -A old new`.
@@ -1904,12 +1905,10 @@ impl crate::ported::exec::ShellExecutor {
                     // hold the live ZLE state here; emit the same
                     // diagnostic + exit 1 instead of silently dropping.
                     if iter.next().is_none() {
-                        eprintln!("zshrs:zle:1: -U requires a string argument");
+                        zwarnnam("zle", "-U requires a string argument");
                         return 1;
                     }
-                    eprintln!(
-                        "zshrs:zle:1: can only be called from widget function"
-                    );
+                    zwarnnam("zle", "can only be called from widget function");
                     return 1;
                 }
                 "-K" => {
@@ -1918,13 +1917,13 @@ impl crate::ported::exec::ShellExecutor {
                     let name = match iter.next() {
                         Some(s) => s.clone(),
                         None => {
-                            eprintln!("zshrs:zle:1: -K requires keymap name");
+                            zwarnnam("zle", "-K requires keymap name");
                             return 1;
                         }
                     };
                     let mut zle = zle();
                     if !zle.select_keymap(&name) {
-                        eprintln!("zshrs:zle:1: no such keymap: {}", name);
+                        zwarnnam("zle", &format!("no such keymap: {}", name));
                         return 1;
                     }
                     return 0;
@@ -1949,7 +1948,7 @@ impl crate::ported::exec::ShellExecutor {
                             s if fd_arg.is_none() => fd_arg = Some(s.to_string()),
                             s if handler.is_none() => handler = Some(s.to_string()),
                             _ => {
-                                eprintln!("zshrs:zle:1: too many arguments for -F");
+                                zwarnnam("zle", "too many arguments for -F");
                                 return 1;
                             }
                         }
@@ -1960,10 +1959,7 @@ impl crate::ported::exec::ShellExecutor {
                         match s.parse::<i32>() {
                             Ok(n) if n >= 0 => {}
                             _ => {
-                                eprintln!(
-                                    "zshrs:zle:1: bad file descriptor number for -F: {}",
-                                    s
-                                );
+                                zwarnnam("zle", &format!("bad file descriptor number for -F: {}", s));
                                 return 1;
                             }
                         }
@@ -2012,23 +2008,21 @@ impl crate::ported::exec::ShellExecutor {
                     let name = match iter.next() {
                         Some(s) => s.clone(),
                         None => {
-                            eprintln!("zshrs:zle:1: -C requires a name");
+                            zwarnnam("zle", "-C requires a name");
                             return 1;
                         }
                     };
                     let target = match iter.next() {
                         Some(s) => s.clone(),
                         None => {
-                            eprintln!(
-                                "zshrs:zle:1: -C requires a target completion widget"
-                            );
+                            zwarnnam("zle", "-C requires a target completion widget");
                             return 1;
                         }
                     };
                     let func = match iter.next() {
                         Some(s) => s.clone(),
                         None => {
-                            eprintln!("zshrs:zle:1: -C requires a shell function");
+                            zwarnnam("zle", "-C requires a shell function");
                             return 1;
                         }
                     };
@@ -2057,7 +2051,7 @@ impl crate::ported::exec::ShellExecutor {
                     match zle.execute_widget(widget_name, None) {
                         crate::zle::WidgetResult::Ok => return 0,
                         crate::zle::WidgetResult::Error(e) => {
-                            eprintln!("zshrs:zle:1: {}", e);
+                            zwarnnam("zle", &format!("{}", e));
                             return 1;
                         }
                         crate::zle::WidgetResult::CallFunction(func) => {
@@ -2089,7 +2083,7 @@ impl crate::ported::exec::ShellExecutor {
     /// the C source supports.
     pub(crate) fn bin_vared(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            eprintln!("zshrs:vared:1: not enough arguments");
+            zwarnnam("vared", "not enough arguments");
             return 1;
         }
 
@@ -2113,7 +2107,7 @@ impl crate::ported::exec::ShellExecutor {
                         // dropped the flag without erroring, which
                         // then triggered the catch-all `not enough
                         // arguments` for the missing var.
-                        eprintln!("zshrs:vared:1: argument expected: -p");
+                        zwarnnam("vared", "argument expected: -p");
                         return 1;
                     }
                     i += 1;
@@ -2121,7 +2115,7 @@ impl crate::ported::exec::ShellExecutor {
                 }
                 "-r" => {
                     if i + 1 >= args.len() {
-                        eprintln!("zshrs:vared:1: argument expected: -r");
+                        zwarnnam("vared", "argument expected: -r");
                         return 1;
                     }
                     i += 1;
@@ -2145,7 +2139,7 @@ impl crate::ported::exec::ShellExecutor {
         }
 
         if var_name.is_empty() {
-            eprintln!("zshrs:vared:1: not enough arguments");
+            zwarnnam("vared", "not enough arguments");
             return 1;
         }
 

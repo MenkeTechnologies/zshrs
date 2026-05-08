@@ -14,6 +14,8 @@
 //! Unknown capabilities return `None` so callers can emit `""`
 //! matching zsh's `PM_UNSET` fallback (terminfo.c:165-168).
 
+use crate::ported::utils::zwarnnam;
+
 // FFI bindings to the system ncurses terminfo interface. Direct
 // port of the call sites in `zsh/Src/Modules/terminfo.c`. macOS
 // and Linux SDKs ship libcurses by default — no extra build dep.
@@ -123,7 +125,7 @@ impl crate::ported::exec::ShellExecutor {
         // port of zsh/Src/Modules/terminfo.c bin_echoti's
         // tparm-style path with the canonical mapping below.
         if args.is_empty() {
-            eprintln!("zshrs:echoti:1: not enough arguments");
+            zwarnnam("echoti", "not enough arguments");
             return 1;
         }
         let cap = args[0].as_str();

@@ -5,6 +5,7 @@
 //! Provides history expansion, history file management, and history ring.
 
 use std::collections::HashMap;
+use crate::ported::utils::zerr;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
@@ -1755,7 +1756,7 @@ pub fn gethist(hist: &History, ev: i64) -> Option<&HistEntry> {
     let ret = quietgethist(hist, ev);
     if ret.is_none() {
         herrflush();
-        eprintln!("no such event: {}", ev);
+        zerr(&format!("no such event: {}", ev));
     }
     ret
 }
@@ -2277,7 +2278,7 @@ pub fn histsubchar(c: char, input: &mut crate::ported::input::InputBuffer, hist:
         Some(e) => e,
         None => {
             herrflush();
-            eprintln!("event not found");
+            zerr("event not found");
             LEXSTOP.store(true, std::sync::atomic::Ordering::SeqCst);
             return None;
         }
@@ -2809,7 +2810,7 @@ pub fn getargs(entry: &HistEntry, arg1: usize, arg2: usize) -> Option<String> {
     let nwords = entry.words.len();
     if nwords == 0 || arg2 < arg1 || arg1 >= nwords || arg2 >= nwords {
         herrflush();
-        eprintln!("no such word in event");
+        zerr("no such word in event");
         return None;
     }
     // Optimisation: full-event request returns the whole text.
@@ -2820,7 +2821,7 @@ pub fn getargs(entry: &HistEntry, arg1: usize, arg2: usize) -> Option<String> {
     let (_, pos2) = entry.words[arg2];
     if pos2 > entry.text.len() || pos1 > pos2 {
         herrflush();
-        eprintln!("history event too long, can't index requested words");
+        zerr("history event too long, can't index requested words");
         return None;
     }
     Some(entry.text[pos1..pos2].to_string())
@@ -4146,7 +4147,7 @@ impl crate::ported::exec::ShellExecutor {
                 // unknown modifiers silently terminated the loop and the
                 // caller saw the previous-stage value (often empty).
                 'U' | 'L' | 'V' | 'X' => {
-                    eprintln!("zshrs:1: unrecognized modifier `{}'", c);
+                    zerr(&format!("unrecognized modifier `{}'", c));
                     result = String::new();
                     break;
                 }

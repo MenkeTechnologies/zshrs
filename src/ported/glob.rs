@@ -11,6 +11,7 @@
 //! - Sorting and filtering matches
 
 use std::cmp::Ordering;
+use crate::ported::utils::zerr;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, Metadata};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -4099,7 +4100,7 @@ impl crate::ported::exec::ShellExecutor {
                 }
                 let nomatch = self.options.get("nomatch").copied().unwrap_or(true);
                 if nomatch {
-                    eprintln!("zshrs:1: no matches found: {}", pattern);
+                    zerr(&format!("no matches found: {}", pattern));
                     std::process::exit(1);
                 }
                 return vec![pattern.to_string()];
@@ -4151,7 +4152,7 @@ impl crate::ported::exec::ShellExecutor {
                 }
                 let nomatch = self.options.get("nomatch").copied().unwrap_or(true);
                 if nomatch && Self::looks_like_glob(pattern) {
-                    eprintln!("zshrs:1: no matches found: {}", pattern);
+                    zerr(&format!("no matches found: {}", pattern));
                     std::process::exit(1);
                 }
                 return vec![pattern.to_string()];
@@ -4337,7 +4338,7 @@ impl crate::ported::exec::ShellExecutor {
             // through" is the opt-out via `unsetopt nomatch`.
             let nomatch = self.options.get("nomatch").copied().unwrap_or(true);
             if nomatch && Self::looks_like_glob(pattern) {
-                eprintln!("zshrs:1: no matches found: {}", pattern);
+                zerr(&format!("no matches found: {}", pattern));
                 // zsh: command is aborted (skipped) with status 1,
                 // script continues. Set the flag the simple-command
                 // dispatcher checks; it returns early before exec.

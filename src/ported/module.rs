@@ -10,6 +10,7 @@
 //! hooks, and math functions).
 
 use std::collections::HashMap;
+use crate::ported::utils::zwarnnam;
 
 /// Module feature types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -722,7 +723,7 @@ impl crate::ported::exec::ShellExecutor {
                     // declares the valid letter set. Unknown flags
                     // silently dropped previously, masking typos.
                     let bad: String = arg[1..].chars().take(1).collect();
-                    eprintln!("zshrs:zmodload:1: bad option: -{}", bad);
+                    zwarnnam("zmodload", &format!("bad option: -{}", bad));
                     return 1;
                 }
                 _ => modules.push(arg),
@@ -839,7 +840,7 @@ impl crate::ported::exec::ShellExecutor {
         // succeeded, masking typos in user scripts.
         for module in &modules {
             if !ALWAYS_LOADED.contains(module) {
-                eprintln!("zshrs:zmodload:1: failed to load module: {}", module);
+                zwarnnam("zmodload", &format!("failed to load module: {}", module));
                 return 1;
             }
         }
