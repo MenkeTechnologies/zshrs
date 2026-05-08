@@ -108,75 +108,15 @@ impl MathNum {
     pub fn format_zsh_subst(&self) -> String {
         match self {
             MathNum::Integer(i) => i.to_string(),
-            MathNum::Float(f) => format_zsh_float(*f),
+            // Direct port of zsh's `$(( ))` printing path: convfloat()
+            // with PM_EFLOAT=PM_FFLOAT=0 and digits=0 (defaulting to
+            // 17 inside convfloat). Src/math.c:1089 calls convbase
+            // for integer-valued; floats route through subst.c which
+            // calls getstrvalue → convfloat for PM_FLOAT params.
+            MathNum::Float(f) => crate::ported::params::convfloat(*f, 0, 0),
             MathNum::Unset => "0".to_string(),
         }
     }
-}
-
-/// Format a float for `$(( ))` arithmetic-substitution display the
-/// way zsh's `convfloat()` (Src/params.c) does it: a single
-/// `sprintf("%.*g", 17, val)` call plus zsh's "if no `e` and no `.`
-/// after, append `.`" trailing-dot rule for integer-valued floats.
-///
-/// Routed through `libc::snprintf` directly so the output matches
-/// the C runtime byte-for-byte across the full f64 range —
-/// 0.1 → `0.10000000000000001`, 9.9e16 → `99000000000000000.`,
-/// 1e-5 → `1.0000000000000001e-05`, etc. Earlier handwritten
-/// implementations partitioned the range and used Rust's
-/// shortest-roundtrip `{:e}`/`{}` for the edges, which diverged
-/// from zsh on inexact-representable values.
-///
-/// IEEE specials: zsh hand-formats `Inf`, `-Inf`, `NaN`
-/// (capitalized) — does NOT round-trip through `%g` for those,
-/// since C's `%g` lowercases.
-fn format_zsh_float(f: f64) -> String {
-    if f.is_nan() {
-        return "NaN".to_string();
-    }
-    if f.is_infinite() {
-        return if f > 0.0 {
-            "Inf".to_string()
-        } else {
-            "-Inf".to_string()
-        };
-    }
-    // Negative zero: zsh preserves the sign in the trailing-dot
-    // form (`-0.`). C's `%g` would print `-0` first; the
-    // append-dot rule then makes it `-0.`. Same code path as the
-    // generic case but worth calling out — earlier impls
-    // bypassed `%g` to detect this.
-    let buf_len = 64usize; // 17-digit %g + sign + exponent + NUL fits comfortably
-    let mut buf = vec![0u8; buf_len];
-    // SAFETY: buffer has room for any %.17g output (max ~25 chars
-    // for double); fmt is a NUL-terminated literal. snprintf
-    // writes UTF-8-compatible ASCII only (digits, `.`, `e`, `+`,
-    // `-`).
-    let n = unsafe {
-        libc::snprintf(
-            buf.as_mut_ptr() as *mut libc::c_char,
-            buf_len,
-            c"%.*g".as_ptr(),
-            17 as libc::c_int,
-            f,
-        )
-    };
-    if n < 0 {
-        // snprintf failure — fall back to a plain Rust display so
-        // the shell doesn't crash. Should never happen for finite
-        // f64 with a 64-byte buffer.
-        return format!("{}", f);
-    }
-    let len = (n as usize).min(buf_len - 1);
-    buf.truncate(len);
-    let mut s = String::from_utf8(buf).unwrap_or_else(|_| format!("{}", f));
-    // zsh's convfloat appends `.` when the output has no `e` and
-    // no `.` — turning integer-valued floats like `5` into `5.`
-    // so callers can tell them apart from MathNum::Integer.
-    if !s.contains('e') && !s.contains('.') {
-        s.push('.');
-    }
-    s
 }
 
 /// Math tokens - from math.c

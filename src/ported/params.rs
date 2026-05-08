@@ -4003,36 +4003,81 @@ pub fn convbase_underscore(val: i64, base: u32, underscore: i32) -> String {
     result
 }
 
-/// Format a float value for output.
-/// Port of `convfloat()` from Src/params.c.
+/// Port of `convfloat()` from `Src/params.c:5689`.
+///
+/// C signature: `char *convfloat(double dval, int digits, int flags,
+/// FILE *fout)` — picks `%e` / `%f` / `%g` based on PM_EFLOAT /
+/// PM_FFLOAT (line 5705-5727), then snprintf'd with `digits` precision.
+/// When neither E nor F flag is set, zsh uses `%.*g` with a default
+/// of 17 significant digits (line 5712-5714). E-flag with N significant
+/// figures decrements `digits` because `%e` counts decimal places not
+/// significants (line 5720-5725).
+///
+/// Rust signature drops the `fout` parameter — every caller wanted the
+/// returned string. IEEE specials (inf/nan) hand-formatted to `Inf`/
+/// `-Inf`/`NaN` ahead of the snprintf, matching the C source's Inf/NaN
+/// shortcuts at lines 5733-5736 / 5742-5744. The trailing-dot rule for
+/// integer-valued floats (`5` -> `5.`) is added by the caller (params'
+/// internal printing path) in C zsh; mirrored here for the no-flag case
+/// so `MathNum::Float(5.0).format_zsh_subst()` produces `5.` not `5`.
 pub fn convfloat(dval: f64, digits: i32, pm_flags: u32) -> String {
-    if dval.is_infinite() {
+    if dval.is_infinite() {                                       // c:5742
         return if dval < 0.0 {
             "-Inf".to_string()
         } else {
             "Inf".to_string()
         };
     }
-    if dval.is_nan() {
+    if dval.is_nan() {                                            // c:5744
         return "NaN".to_string();
     }
-
-    let digits = if digits <= 0 { 10 } else { digits as usize };
-
-    if (pm_flags & flags::EFLOAT) != 0 {
-        format!("{:.*e}", digits.saturating_sub(1), dval)
-    } else if (pm_flags & flags::FFLOAT) != 0 {
-        format!("{:.*}", digits, dval)
+    // Pick fmt char + adjust digits per the C cascade at 5705-5727.
+    let (fmt_char, digits) = if (pm_flags & flags::EFLOAT) != 0 { // c:5715
+        let d = if digits <= 0 { 10 } else { digits };           // c:5718
+        ('e', (d - 1).max(0))                                    // c:5725
+    } else if (pm_flags & flags::FFLOAT) != 0 {                  // c:5716
+        let d = if digits <= 0 { 10 } else { digits };           // c:5718
+        ('f', d)
     } else {
-        // General format
-        let s = format!("{:.*}", 17, dval);
-        // Ensure there's a decimal point
-        if !s.contains('.') && !s.contains('e') {
-            format!("{}.", s)
-        } else {
-            s
-        }
+        let d = if digits == 0 { 17 } else { digits };           // c:5713
+        ('g', d)
+    };
+    // Mirror zsh's snprintf path (Src/params.c:5751) — the C source
+    // uses `VARARR(char, buf, 512 + digits)` for %f's full integer-
+    // part expansion. 512 + 17 = 529 covers the zsh general case;
+    // wider buffers below for the unbounded %f.
+    let buf_len = 512usize + digits as usize + 4;
+    let mut buf = vec![0u8; buf_len];
+    let fmt = match fmt_char {
+        'e' => c"%.*e",
+        'f' => c"%.*f",
+        _ => c"%.*g",
+    };
+    // SAFETY: buf has the C-required size for any double precision; fmt
+    // is a NUL-terminated literal; snprintf writes ASCII only.
+    let n = unsafe {
+        libc::snprintf(
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf_len,
+            fmt.as_ptr(),
+            digits as libc::c_int,
+            dval,
+        )
+    };
+    if n < 0 {
+        return format!("{}", dval);
     }
+    let len = (n as usize).min(buf_len - 1);
+    buf.truncate(len);
+    let mut s = String::from_utf8(buf).unwrap_or_else(|_| format!("{}", dval));
+    // zsh's general-format (%g) callers (math `$(( ))` substitution)
+    // append `.` when the output has no `e` and no `.`, so integer-
+    // valued floats like `5` render as `5.`. PM_EFLOAT/PM_FFLOAT skip
+    // this rule (the format spec already pins shape).
+    if fmt_char == 'g' && !s.contains('e') && !s.contains('.') {
+        s.push('.');
+    }
+    s
 }
 
 /// Format float with underscores

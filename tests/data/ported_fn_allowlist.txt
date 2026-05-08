@@ -123,7 +123,6 @@ format_alias_kv
 format_function_body_zsh
 format_key_sequence
 format_limit_display
-format_zsh_float
 get_all_langinfo
 get_datetime_info
 get_terminal_size
