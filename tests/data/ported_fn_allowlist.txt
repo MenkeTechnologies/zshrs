@@ -153,7 +153,6 @@ pcre_compile
 pcre_match
 pcre_study
 pfx_len
-print_bind
 pty_close
 pty_kill
 scan_directory
