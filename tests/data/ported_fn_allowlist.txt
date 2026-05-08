@@ -90,7 +90,6 @@ normalize_logical
 shell_quote_value
 emit_xtrace_text
 quote_string
-split_quoted
 
 color_to_code
 format_function_body_zsh
