@@ -2291,12 +2291,14 @@ pub fn paramsubst(                                          // c:1625
                 let p = singsub(pat, state);                 // c:3540
                 let invert = (state.sub_flags & 0x0008) != 0; // c:2171 SUB_MATCH
                 state.sub_flags = 0;                          // c:2169 (consume)
-                // Subscripted access already collapsed the array to a
-                // single element in `raw_value`; the filter applies to
-                // that element, not to the unsubscripted backing array.
-                // Direct port of getindex's per-slot collapse before
-                // SUB_FILTER fires (Src/subst.c paramsubst flow when
-                // v->start/v->end are set).
+                // Direct port of subst.c:3422 `if (!vunset && isarr)` —
+                // the array iteration only fires when `isarr` is set.
+                // After getindex computes a single-slot subscript, isarr
+                // is cleared at line 2915 (`v->scanflags ? 1 : 0`) and
+                // the C source falls through to getmatch on `val`
+                // (line 3451). Mirror that here: when subscript was
+                // applied, treat raw_value as the scalar `val` and
+                // skip the per-element arr loop.
                 let has_subscript = subscript.is_some();
                 if let Some(arr) = state.arrays.get(&var_name).cloned().filter(|_| !has_subscript) {
                     let kept: Vec<String> = arr.into_iter() // c:3540
