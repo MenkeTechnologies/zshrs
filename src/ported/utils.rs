@@ -1900,10 +1900,6 @@ pub fn checkmailpath(paths: &[String]) -> Vec<String> {
     messages
 }
 
-/// `printprompt4()` (Src/utils.c:1718-1735) — moved to
-/// `emit_xtrace_text` below; this stub had a wrong signature
-/// (took a ps4 arg, returned String) and zero callers.
-
 /// Get terminal info (from utils.c gettyinfo/fdgettyinfo)
 #[cfg(unix)]
 pub fn gettyinfo(fd: i32) -> Option<libc::termios> {
@@ -2927,10 +2923,9 @@ pub(crate) fn shell_quote_value(s: &str) -> String {
 
 // ===========================================================
 // xtrace helpers moved from src/ported/exec.rs.
-// emit_xtrace_text is a direct port of printprompt4()
-// at Src/utils.c:1718-1735; quotedzputs is its
-// argument-formatter companion (zsh formats `set -x` lines via
-// the same utils.c path).
+// printprompt4 is a direct port of utils.c:1718-1735; quotedzputs
+// is its argument-formatter companion (zsh formats `set -x` lines
+// via the same utils.c path).
 // ===========================================================
 
 /// Port of `quotedzputs()` from `Src/utils.c:6464`.
@@ -2994,17 +2989,23 @@ pub(crate) fn quotedzputs(s: &str) -> String {
     }
 }
 
-/// Render the current PS4 prefix and write `prefix + cmd_text` to
-/// stderr. Shared by BUILTIN_XTRACE_LINE / BUILTIN_XTRACE_ARGS.
-/// Direct port of `printprompt4()` (Src/utils.c:1718-1735).
-pub(crate) fn emit_xtrace_text(cmd_text: &str) {
+/// Port of `printprompt4()` from `Src/utils.c:1718`.
+///
+/// Render the PS4 / PROMPT4 prefix and write it to stderr. zsh's
+/// implementation reads `prompt4` global, suppresses XTRACE during
+/// promptexpand (so subshells inside `%(?…)` don't recursively trace),
+/// then fprintf's the expanded prefix to xtrerr. zshrs uses the same
+/// suppress-XTRACE-around-expand pattern; ksh/sh emulation defaults
+/// to `+ ` per Src/init.c:1192-1193, zsh default to `+%N:%i> `.
+///
+/// The C source's caller (Src/exec.c::tracingcond etc.) follows this
+/// with the per-line/per-arg fprintf — same shape mirrored at the two
+/// zshrs call sites in fusevm_bridge.rs (BUILTIN_XTRACE_LINE / ARGS).
+pub(crate) fn printprompt4() {
     let on = with_executor(|exec| exec.options.get("xtrace").copied().unwrap_or(false));
     if !on {
         return;
     }
-    // Default `prompt4` per Src/init.c:1192-1193:
-    //   ksh / sh emulation → `+ `
-    //   zsh (default)      → `+%N:%i> `
     let (prefix_template, ctx, _posix_mode) = with_executor(|exec| {
         let posix = exec
             .options
@@ -3035,7 +3036,9 @@ pub(crate) fn emit_xtrace_text(cmd_text: &str) {
     });
     // Suppress recursion: the prompt expander runs subshells for
     // `%(?...)` etc.; with XTRACE still on we'd re-emit a trace of
-    // every expanded sub-command.
+    // every expanded sub-command. Direct port of zsh's
+    // `opts[XTRACE] = 0; ... opts[XTRACE] = t;` save/restore at
+    // utils.c:1726-1730.
     let saved = with_executor(|exec| {
         let s = exec.options.get("xtrace").copied().unwrap_or(false);
         exec.options.insert("xtrace".to_string(), false);
@@ -3045,7 +3048,7 @@ pub(crate) fn emit_xtrace_text(cmd_text: &str) {
     with_executor(|exec| {
         exec.options.insert("xtrace".to_string(), saved);
     });
-    eprintln!("{}{}", prefix, cmd_text);
+    eprint!("{}", prefix);
 }
 
 /// Tab expansion — direct port of `zexpandtabs` in zsh/Src/utils.c:5973.
@@ -3259,19 +3262,6 @@ pub fn preprompt() {
 }
 
 /// Emit the `$PS4` xtrace prefix to stderr.
-/// Port of `printprompt4()` from Src/utils.c:1718. Disables XTRACE
-/// recursion for the duration of the expansion (matches the C
-/// source's `opts[XTRACE] = 0` save/restore at lines 1726/1730)
-/// so a `$PS4` containing `$(...)` doesn't recursively trace.
-pub fn printprompt4() {
-    use std::io::Write;
-    let prompt4 = std::env::var("PS4").unwrap_or_else(|_| "+ ".to_string());
-    let ctx = crate::ported::prompt::PromptContext::default();
-    let expanded = crate::ported::prompt::promptexpand(&prompt4, &ctx);
-    let stderr = std::io::stderr();
-    let _ = write!(stderr.lock(), "{}", expanded);
-}
-
 /// Read terminal mode from a file descriptor.
 /// Port of `fdgettyinfo()` from Src/utils.c:1753. C source uses
 /// `tcgetattr(SHTTY, &ti->tio)`; we return the populated termios

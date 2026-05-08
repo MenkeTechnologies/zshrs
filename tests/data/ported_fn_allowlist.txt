@@ -88,7 +88,6 @@ shell_quote
 zsh_split_z
 normalize_logical
 shell_quote_value
-emit_xtrace_text
 quote_string
 
 color_to_code
