@@ -2119,10 +2119,10 @@ impl crate::ported::exec::ShellExecutor {
         // lvalue identity across the operator. Without this,
         // pre_resolve_array_subscripts substitutes the value first
         // and `5++` errors "lvalue required".
-        let compound = SubscriptArith::parse_compound(&expr)
+        let compound = parse_compound(&expr)
             .map(|(n, i, o, r)| (n, i, o, r, false))
             .or_else(|| {
-                SubscriptArith::parse_pre_inc(&expr).map(|(n, i, o)| (n, i, o, String::new(), true))
+                parse_pre_inc(&expr).map(|(n, i, o)| (n, i, o, String::new(), true))
             });
         if let Some((name, idx_expr, op, rhs, is_pre)) = compound {
             let is_assoc = self.assoc_arrays.contains_key(&name);
@@ -2236,7 +2236,7 @@ impl crate::ported::exec::ShellExecutor {
         // Subscripted-array arith assignment: `((a[i]=expr))`. Without
         // this special case, pre_resolve_array_subscripts would
         // substitute a[i] with its current value (`0=42` → invalid).
-        if let Some((name, idx_expr, rhs)) = SubscriptArith::parse_assign(&expr) {
+        if let Some((name, idx_expr, rhs)) = parse_assign(&expr) {
             let idx_val = self.eval_arith_expr(&idx_expr);
             let rhs_val = self.eval_arith_expr(&rhs);
             if let Some(arr) = self.arrays.get_mut(&name) {
@@ -2489,7 +2489,7 @@ impl crate::ported::exec::ShellExecutor {
         // pre_resolve_array_subscripts pass below substitutes a[i]
         // with the current value (e.g. 0=42 → invalid). Detect the
         // assignment LHS first, evaluate the RHS, write to arrays.
-        if let Some((name, idx_expr, rhs)) = SubscriptArith::parse_assign(&expr_expanded) {
+        if let Some((name, idx_expr, rhs)) = parse_assign(&expr_expanded) {
             // Evaluate the index (could itself be an expression).
             let idx_val = self.eval_arith_expr(&idx_expr);
             // Evaluate the RHS.
@@ -2647,10 +2647,6 @@ impl crate::ported::exec::ShellExecutor {
 /// references — the C source's `mathexpr()` (Src/math.c) inlines this work
 /// inside the lexer, but Rust splits it out so the assignment-target arms
 /// don't get confused with read sites.
-pub(crate) struct SubscriptArith;
-
-impl SubscriptArith {
-
 #[inline]
 /// Detect `name[idx]=rhs` (or `name[idx]+=rhs`, etc.) at the start of
 /// an arith expression. Returns (name, idx_expr, rhs). Used by
@@ -2831,7 +2827,6 @@ pub(crate) fn parse_assign(expr: &str) -> Option<(String, String, String)> {
     Some((name, idx_expr, rhs))
 }
 
-}  // impl SubscriptArith
 // END moved-from-exec-rs (free fns)
 
 // ===========================================================
