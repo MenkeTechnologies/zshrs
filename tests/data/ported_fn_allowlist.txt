@@ -63,7 +63,6 @@ nearcolor_256
 get_random_u32
 get_random_u64
 get_bounded_random
-shuffle
 
 # OpenSSH BSD setresuid/setresgid shim helpers — these are Rust
 # wrappers around libc::setres{uid,gid}() with errno save/restore;

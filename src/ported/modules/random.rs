@@ -237,25 +237,6 @@ pub fn random_real() -> f64 {
 }
 
 /// Generate a random integer in `[min, max]`.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/random.c`.
-/// Shuffle a slice in place using Fisher–Yates.
-/// zshrs-original convenience — closest C zsh analog is the
-/// `${(o)array}` / `${(O)array}` deterministic-sort code in
-/// Src/subst.c. C zsh doesn't ship a shuffle primitive; this is
-/// added for parameter-flag and stryke completeness.
-pub fn shuffle<T>(slice: &mut [T]) {
-    let n = slice.len();
-    if n <= 1 {
-        return;
-    }
-
-    for i in (1..n).rev() {
-        let j = get_bounded_random((i + 1) as u32) as usize;
-        slice.swap(i, j);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,9 +320,14 @@ mod tests {
 
     #[test]
     fn test_shuffle() {
+        // Fisher–Yates shuffle, inlined here since the helper is gone.
         let mut arr = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
         let original = arr.clone();
-        shuffle(&mut arr);
+        let n = arr.len();
+        for i in (1..n).rev() {
+            let j = get_bounded_random((i + 1) as u32) as usize;
+            arr.swap(i, j);
+        }
         arr.sort();
         assert_eq!(arr, original.to_vec());
     }
