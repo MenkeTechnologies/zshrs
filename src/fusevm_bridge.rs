@@ -7348,6 +7348,38 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             .or_else(|| name_raw.strip_suffix("[*]"))
             .unwrap_or(&name_raw)
             .to_string();
+        // `${#arr[N]}` — length of the Nth ELEMENT, not the array
+        // count. Verified empirically: arr=(aa bb ccc); ${#arr[2]} → 2
+        // in real zsh. Resolve the bare name + bracketed subscript
+        // (with embedded `$VAR` references expanded) to a single
+        // value, then count its chars. Skip `[@]` / `[*]` — those
+        // were stripped above as splice forms.
+        if let Some(open) = name.find('[') {
+            if name.ends_with(']') && &name[open..] != "[@]" && &name[open..] != "[*]" {
+                let bare = &name[..open];
+                let raw_idx = &name[open + 1..name.len() - 1];
+                let elem = with_executor(|exec| {
+                    // Expand `$VAR` / `${VAR}` references inside the
+                    // subscript before lookup (single dollar pass).
+                    let resolved_idx = expand_dollar_refs(raw_idx, exec);
+                    if let Some(arr) = exec.arrays.get(bare) {
+                        if let Ok(n) = resolved_idx.trim().parse::<i64>() {
+                            let len = arr.len() as i64;
+                            let idx = if n > 0 { n - 1 } else if n < 0 { len + n } else { -1 };
+                            if idx >= 0 && (idx as usize) < arr.len() {
+                                return arr[idx as usize].clone();
+                            }
+                        }
+                        return String::new();
+                    }
+                    if let Some(map) = exec.assoc_arrays.get(bare) {
+                        return map.get(resolved_idx.as_str()).cloned().unwrap_or_default();
+                    }
+                    String::new()
+                });
+                return fusevm::Value::str(elem.chars().count().to_string());
+            }
+        }
         let count = with_executor(|exec| {
             // ${#@} / ${#*} → count of positional params (= $#).
             // Without this, `@`/`*` fell through to `get_variable`
@@ -7938,6 +7970,50 @@ impl ZshrsHost {
     fn is_zsh_flag_delim(c: char) -> bool {
         !c.is_ascii_alphanumeric() && c != '_'
     }
+}
+
+fn expand_dollar_refs(s: &str, exec: &crate::ported::exec::ShellExecutor) -> String {
+    // Single-pass `$VAR` / `${VAR}` expansion for subscript bodies.
+    // Mirrors the small subset of paramsubst needed when the BUILTIN_
+    // PARAM_LENGTH handler resolves `${#arr[$i]}`.
+    let bytes: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != '$' {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        if i + 1 >= bytes.len() {
+            out.push('$');
+            i += 1;
+            continue;
+        }
+        let next = bytes[i + 1];
+        if next == '{' {
+            if let Some(close) = bytes[i + 2..].iter().position(|&c| c == '}') {
+                let name: String = bytes[i + 2..i + 2 + close].iter().collect();
+                out.push_str(&exec.get_variable(&name));
+                i += 2 + close + 1;
+                continue;
+            }
+        }
+        if next.is_ascii_alphabetic() || next == '_' {
+            let start = i + 1;
+            let mut end = start;
+            while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == '_') {
+                end += 1;
+            }
+            let name: String = bytes[start..end].iter().collect();
+            out.push_str(&exec.get_variable(&name));
+            i = end;
+            continue;
+        }
+        out.push('$');
+        i += 1;
+    }
+    out
 }
 
 fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {

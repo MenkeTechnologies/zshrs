@@ -689,6 +689,79 @@ fn test_subscript_parity_assoc_at_splice_sorted() {
 }
 
 #[test]
+fn test_subscript_parity_param_flag_case_conversion() {
+    // (U) uppercase / (L) lowercase / (C) capitalize on scalars and arrays.
+    let (_, output, _) = run_zshrs(
+        r#"
+        s="Hello World"
+        print "1:[${(U)s}]"
+        print "2:[${(L)s}]"
+        print "3:[${(C)s}]"
+        arr=(hello world foo)
+        print "4:[${(U)arr}]"
+        print "5:[${(L)arr}]"
+        "#,
+    );
+    let expected = "1:[HELLO WORLD]\n2:[hello world]\n3:[Hello World]\n4:[HELLO WORLD FOO]\n5:[hello world foo]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_param_flag_array_join() {
+    // (j:sep:) joins array with sep.
+    let (_, output, _) = run_zshrs(
+        r#"
+        arr=(hello world foo)
+        print "1:[${(j:_:)arr}]"
+        print "2:[${(j:|:)arr}]"
+        "#,
+    );
+    let expected = "1:[hello_world_foo]\n2:[hello|world|foo]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_length_of_indexed_element() {
+    // ${#arr[N]} returns the length of the Nth ELEMENT, not the
+    // array count. Verified empirically:
+    //   /bin/zsh -c 'arr=(aa bb ccc dddd eeeee);
+    //                for i in 1 2 3 4 5; do
+    //                  print "${#arr[$i]}"
+    //                done'
+    //   2 2 3 4 5
+    let (_, output, _) = run_zshrs(
+        r#"
+        arr=(aa bb ccc dddd eeeee)
+        for i in 1 2 3 4 5; do
+          print -n "${#arr[$i]} "
+        done
+        print
+        typeset -A h=(a 1 b 22 c 333)
+        print "${#h[a]} ${#h[b]} ${#h[c]}"
+        # Literal-index forms also work
+        print "${#arr[2]} ${#arr[5]}"
+        "#,
+    );
+    let expected = "2 2 3 4 5 \n1 2 3\n2 5";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_parity_param_flag_split_to_array() {
+    // `${(@s/sep/)scalar}` in array-assignment context → splices.
+    let (_, output, _) = run_zshrs(
+        r#"
+        multi="a:b:c:d"
+        arr2=("${(@s/:/)multi}")
+        print "len:${#arr2}"
+        print "el:[${arr2[2]}]"
+        "#,
+    );
+    let expected = "len:4\nel:[b]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
 fn test_subscript_parity_variable_expansion_in_subscript() {
     // Subscripts with variable expansion — `${arr[(r)$key]}` and
     // `${h[$n]}` / `${h[(k)$n]}` all resolve identically.
