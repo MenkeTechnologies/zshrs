@@ -208,9 +208,52 @@ pub fn watch3ary(entry: &UtmpEntry, logged_in: bool, fmt: &str) -> String {
                     }
                     '%' => result.push('%'),
                     '(' => {
-                        if let Some(cond_result) = format_conditional(&mut chars, entry, logged_in)
-                        {
-                            result.push_str(&cond_result);
+                        // Inline %(c.true.false) conditional parser.
+                        // Direct port of the inline conditional handling
+                        // in zsh's watchlog_string (Src/Modules/watch.c).
+                        // C: parses single condition char + separator,
+                        // then walks until matching `)` collecting true/
+                        // false branches, recursing on nested `%(`.
+                        if let (Some(condition), Some(separator)) = (chars.next(), chars.next()) {
+                            let truth = match condition {
+                                'n' => !entry.user.is_empty(),
+                                'a' => logged_in,
+                                'l' => {
+                                    if entry.line.starts_with("tty") {
+                                        entry.line.len() > 3
+                                    } else {
+                                        !entry.line.is_empty()
+                                    }
+                                }
+                                'm' | 'M' => !entry.host.is_empty(),
+                                _ => false,
+                            };
+                            let mut true_branch = String::new();
+                            let mut false_branch = String::new();
+                            let mut depth = 1;
+                            let mut in_true = true;
+                            while let Some(c) = chars.next() {
+                                if c == ')' {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        break;
+                                    }
+                                }
+                                if c == separator && depth == 1 {
+                                    in_true = false;
+                                    continue;
+                                }
+                                if c == '%' && chars.peek() == Some(&'(') {
+                                    depth += 1;
+                                }
+                                if in_true {
+                                    true_branch.push(c);
+                                } else {
+                                    false_branch.push(c);
+                                }
+                            }
+                            let branch = if truth { &true_branch } else { &false_branch };
+                            result.push_str(&watch3ary(entry, logged_in, branch));
                         }
                     }
                     _ => {
@@ -225,66 +268,6 @@ pub fn watch3ary(entry: &UtmpEntry, logged_in: bool, fmt: &str) -> String {
     }
 
     result
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/watch.c`.
-fn format_conditional(
-    chars: &mut std::iter::Peekable<std::str::Chars>,
-    entry: &UtmpEntry,
-    logged_in: bool,
-) -> Option<String> {
-    let condition = chars.next()?;
-    let separator = chars.next()?;
-
-    let truth = match condition {
-        'n' => !entry.user.is_empty(),
-        'a' => logged_in,
-        'l' => {
-            if entry.line.starts_with("tty") {
-                entry.line.len() > 3
-            } else {
-                !entry.line.is_empty()
-            }
-        }
-        'm' | 'M' => !entry.host.is_empty(),
-        _ => false,
-    };
-
-    let mut true_branch = String::new();
-    let mut false_branch = String::new();
-    let mut depth = 1;
-    let mut in_true = true;
-
-    while let Some(c) = chars.next() {
-        if c == ')' {
-            depth -= 1;
-            if depth == 0 {
-                break;
-            }
-        }
-
-        if c == separator && depth == 1 {
-            in_true = false;
-            continue;
-        }
-
-        if c == '%' && chars.peek() == Some(&'(') {
-            depth += 1;
-        }
-
-        if in_true {
-            true_branch.push(c);
-        } else {
-            false_branch.push(c);
-        }
-    }
-
-    if truth {
-        Some(watch3ary(entry, logged_in, &true_branch))
-    } else {
-        Some(watch3ary(entry, logged_in, &false_branch))
-    }
 }
 
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
