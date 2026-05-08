@@ -6380,7 +6380,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             exec.last_status = live;
         });
-        emit_xtrace_text(&cmd_text);
+        // Mirrors Src/exec.c xtrace emission: printprompt4() writes
+        // the PS4 prefix to xtrerr (no newline), then the caller
+        // emits the line text + newline.
+        printprompt4();
+        eprintln!("{}", cmd_text);
         fusevm::Value::Status(0)
     });
 
@@ -6417,7 +6421,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             } else {
                 format!("{} {}", prefix, arg_strs.join(" "))
             };
-            emit_xtrace_text(&line);
+            // Mirrors Src/exec.c xtrace emission: printprompt4() writes
+            // the PS4 prefix to xtrerr (no newline), then the caller
+            // emits the joined line + newline.
+            printprompt4();
+            eprintln!("{}", line);
         }
         fusevm::Value::Status(0)
     });
