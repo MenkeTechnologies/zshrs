@@ -4689,13 +4689,13 @@ fn arithsubst(expr: &str, prefix: &str, rest: &str, state: &mut SubstState) -> S
         }
         let result_str = exec.evaluate_arithmetic(&expanded);
         result_str.parse::<i64>()
-            .map(crate::math::MathNum::Integer)
-            .or_else(|_| result_str.parse::<f64>().map(crate::math::MathNum::Float))
-            .unwrap_or(crate::math::MathNum::Unset)
+            .map(crate::math::Mnumber::integer)
+            .or_else(|_| result_str.parse::<f64>().map(crate::math::Mnumber::float))
+            .unwrap_or_else(|_| crate::math::Mnumber::unset())
     }).unwrap_or_else(|| {
         match crate::math::matheval(&expanded) {
             Ok(n) => n,
-            Err(_) => crate::math::MathNum::Unset,
+            Err(_) => crate::math::Mnumber::unset(),
         }
     });
 
@@ -4705,23 +4705,20 @@ fn arithsubst(expr: &str, prefix: &str, rest: &str, state: &mut SubstState) -> S
     let outputradix = state.variables.get("OUTPUT_RADIX")
         .and_then(|s| s.parse::<i32>().ok())
         .unwrap_or(0);                                      // c:4492
-    let b: String = match v {                               // c:4492
-        crate::math::MathNum::Float(f) if outputradix == 0 => { // c:4492
-            // QT_FLOAT — let Display handle it; zsh's
-            // convfloat_underscore is the underscore-grouped form,
-            // skipped here pending OUTPUT_UNDERSCORE port.
-            format!("{}", f)                                // c:4493
-        }                                                   // c:4493
-        crate::math::MathNum::Float(f) => {                 // c:4495
-            // Integer cast + convbase per radix.
-            let l = f as i64;                               // c:4496
-            crate::ported::utils::convbase(l, outputradix as u32)       // c:4497
-        }                                                   // c:4497
-        crate::math::MathNum::Integer(n) => {               // c:4498
-            crate::ported::utils::convbase(n, outputradix as u32)       // c:4498
-        }                                                   // c:4498
-        crate::math::MathNum::Unset => "0".to_string(),     // c:4498
-    };                                                      // c:4499
+    let b: String = if v.is_float() && outputradix == 0 {   // c:4492
+        // QT_FLOAT — let Display handle it; zsh's
+        // convfloat_underscore is the underscore-grouped form,
+        // skipped here pending OUTPUT_UNDERSCORE port.
+        format!("{}", v.to_float())                         // c:4493
+    } else if v.is_float() {                                 // c:4495
+        // Integer cast + convbase per radix.
+        let l = v.to_float() as i64;                        // c:4496
+        crate::ported::utils::convbase(l, outputradix as u32) // c:4497
+    } else if v.is_integer() {                               // c:4498
+        crate::ported::utils::convbase(v.to_int(), outputradix as u32) // c:4498
+    } else {
+        "0".to_string()                                      // c:4498
+    };                                                       // c:4499
 
     // C: `t = *bptr = hcalloc(...); …; strcat(t, rest);` — concat
     // prefix + b + rest. Returns pointer past prefix+b (where rest
