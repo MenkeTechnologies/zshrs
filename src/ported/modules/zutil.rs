@@ -314,7 +314,7 @@ impl StyleTable {
 /// — same `%X:value` substitution + width / left/right-align /
 /// repeat flag handling the C source's `zformat_substring()`
 /// (line 814) implements.
-pub fn zformat(format: &str, specs: &HashMap<char, String>, presence: bool) -> String {
+pub fn zformat_substring(format: &str, specs: &HashMap<char, String>, presence: bool) -> String {
     // Direct port of src/zsh/Src/Modules/zutil.c:814-952
     // zformat_substring. Recursive walker that handles:
     //   - Plain `%X` substitutions
@@ -1562,7 +1562,7 @@ impl crate::ported::exec::ShellExecutor {
                     }
                     specs.insert(key, s[2..].to_string());
                 }
-                let result = crate::zutil::zformat(&format, &specs, presence);
+                let result = crate::zutil::zformat_substring(&format, &specs, presence);
                 self.variables.insert(var_name, result);
             }
             "-a" => {

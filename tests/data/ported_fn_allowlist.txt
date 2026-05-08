@@ -179,8 +179,7 @@ strwidth
 try_matcher
 underscore_separate_digits
 visible_width
-zformat
-zformat_recurse
 zparseopts
 zselect
 read_utmp
+zformat_recurse
