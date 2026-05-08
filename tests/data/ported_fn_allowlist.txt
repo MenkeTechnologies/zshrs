@@ -127,7 +127,6 @@ pretty_io_err
 shell_quote
 zsh_split_z
 normalize_logical
-ispwd_inherited
 shell_quote_value
 quote_xtrace_arg
 emit_xtrace_text
