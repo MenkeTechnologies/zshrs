@@ -8,6 +8,8 @@ use std::path::PathBuf;
 
 use crate::exec::ShellExecutor;
 
+impl ShellExecutor {
+
 /// Magic-assoc key enumeration for `${(k)NAME}` / `${(v)NAME}` /
 /// `${(kv)NAME}` introspection.
 ///
@@ -18,7 +20,8 @@ use crate::exec::ShellExecutor;
 /// the canonical hashtable. Returns the key list for known
 /// magic-assoc names; `None` for non-magic names so the caller
 /// falls back to regular variable lookup.
-pub fn magic_assoc_keys(name: &str, exec: &ShellExecutor) -> Option<Vec<String>> {
+pub fn magic_assoc_keys(&self, name: &str) -> Option<Vec<String>> {
+    let exec = self;
     match name {
         "aliases" => Some(exec.aliases.keys().cloned().collect()),
         "galiases" => Some(exec.global_aliases.keys().cloned().collect()),
@@ -82,6 +85,8 @@ pub fn magic_assoc_keys(name: &str, exec: &ShellExecutor) -> Option<Vec<String>>
         _ => None,
     }
 }
+
+}  // impl ShellExecutor
 
 /// Parameter type flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

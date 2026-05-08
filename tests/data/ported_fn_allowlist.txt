@@ -62,6 +62,5 @@ locale_aware_name_cmp
 # kept for ergonomics — zsh C inlines these or uses macros.
 
 format_function_body_zsh
-magic_assoc_keys
 
 zformat_recurse

@@ -82,12 +82,6 @@ impl Drop for ExecutorContext {
     }
 }
 
-/// Re-export of `magic_assoc_keys` — canonical home is
-/// `src/ported/modules/parameter.rs` (port of Src/Modules/parameter.c
-/// per-magic-table getfn dispatch). Kept as a thin alias so existing
-/// `magic_assoc_keys(name, exec)` call sites in this file don't need
-/// path qualifiers.
-pub(crate) use crate::ported::modules::parameter::magic_assoc_keys;
 
 /// Access the current executor from a builtin handler.
 /// # Safety
@@ -1668,7 +1662,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         })(idx);
         if let Some((flags, pat)) = parsed_flags.clone() {
             let pairs = with_executor(|exec| -> Option<Vec<(String, String)>> {
-                let keys = magic_assoc_keys(name, exec)?;
+                let keys = exec.magic_assoc_keys(name)?;
                 Some(keys
                     .into_iter()
                     .map(|k| {
@@ -2924,7 +2918,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // scanfn dispatch (Src/Modules/parameter.c +
                     // system.c + terminfo.c et al.).
                     if let Some(keys) =
-                        magic_assoc_keys(&name, exec)
+                        exec.magic_assoc_keys(&name)
                     {
                         St::A(keys)
                     } else {
@@ -2938,7 +2932,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // (v) symmetry was missing, so plugin code that
                     // looped over alias bodies got an empty list.
                     if let Some(keys) =
-                        magic_assoc_keys(&name, exec)
+                        exec.magic_assoc_keys(&name)
                     {
                         let values: Vec<String> = keys
                             .iter()
@@ -3805,7 +3799,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 // alternating [key, value] pairs by
                                 // pairing magic_assoc_keys with
                                 // get_special_array_value lookups.
-                                if let Some(keys) = magic_assoc_keys(&name, exec) {
+                                if let Some(keys) = exec.magic_assoc_keys(&name) {
                                     let mut out = Vec::with_capacity(keys.len() * 2);
                                     for k in keys {
                                         let v = exec
@@ -3838,7 +3832,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 // parameter.c et al.). Returns the
                                 // sorted key set the C source builds
                                 // by walking each magic table.
-                                magic_assoc_keys(&name, exec)
+                                exec.magic_assoc_keys(&name)
                                     .unwrap_or_default()
                             }
                         });
@@ -3865,7 +3859,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 }
                                 out
                             } else if let Some(keys) =
-                                magic_assoc_keys(&name, exec)
+                                exec.magic_assoc_keys(&name)
                             {
                                 let mut out = Vec::with_capacity(keys.len() * 2);
                                 for k in keys {
@@ -3886,7 +3880,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             if let Some(m) = exec.assoc_arrays.get(&name) {
                                 m.values().cloned().collect::<Vec<_>>()
                             } else if let Some(keys) =
-                                magic_assoc_keys(&name, exec)
+                                exec.magic_assoc_keys(&name)
                             {
                                 keys.iter()
                                     .map(|k| {
@@ -5217,7 +5211,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // splitting for assoc-bare references.
         let magic_vals = with_executor(|exec| {
             sync_status(exec);
-            magic_assoc_keys(&name, exec).map(|keys| {
+            exec.magic_assoc_keys(&name).map(|keys| {
                 keys.iter()
                     .map(|k| exec.get_special_array_value(&name, k).unwrap_or_default())
                     .collect::<Vec<_>>()
