@@ -515,6 +515,15 @@ fn test_subscript_flag_k_hash_exact_match_only() {
 }
 
 #[test]
+fn test_subscript_flag_scalar_r_returns_first_char_of_match() {
+    // C params.c:1798-1980 char-search returns the CHAR at the match
+    // position, not the full substring. Verified empirically:
+    //   /bin/zsh -c 's="barfooxyz"; print "${s[(r)foo]}"' → "f"
+    let (_, output, _) = run_zshrs(r#"s="barfooxyz"; print "[${s[(r)foo]}]:[${s[(re)foo]}]:[${s[(i)foo]}]""#);
+    assert_eq!(output.trim(), "[f]:[f]:[4]", "got: {output:?}");
+}
+
+#[test]
 fn test_subscript_flag_e_alone_no_search() {
     // Per C params.c:1575 `if (!rev)`, getarg only enters the
     // array search loop when a direction flag (r/R/i/I/k/K) is set.
