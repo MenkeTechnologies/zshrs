@@ -1111,9 +1111,126 @@ pub fn bicat(s1: &str, s2: &str) -> String {
     format!("{}{}", s1, s2)
 }
 
-/// Word count for strings
-pub fn wordcount(s: &str) -> usize {
-    s.split_whitespace().count()
+/// Port of `wordcount()` from `Src/utils.c:3879`.
+///
+/// Returns the number of words in `s` that would result from splitting
+/// on `sep` (or `$IFS` when `sep` is None). `mul` controls how
+/// consecutive empty fields are counted:
+/// - `mul == 0`: don't count leading/trailing/consecutive empties.
+/// - `mul > 0`: count consecutive empties (each `sep` boundary
+///   produces one word, even if the surrounding text is empty).
+/// - `mul < 0`: count empty trailing fields (final separator after
+///   the last non-empty field counts as one extra empty word).
+///
+/// C body (paraphrased):
+/// ```c
+/// if (sep) {
+///     r = 1;
+///     sl = strlen(sep);
+///     for (; (c = findsep(&s, sep, 0)) >= 0; s += sl)
+///         if ((c || mul) && (sl || *(s + sl)))
+///             r++;
+/// } else {
+///     /* IFS-based: walk skipwsep / itype_end(s, ISEP, 1) */
+/// }
+/// ```
+///
+/// This port walks the metafied byte stream directly to mirror C's
+/// pointer arithmetic. The `sep`-based branch is exact; the IFS
+/// branch uses [`iwsep`] for whitespace-separator detection (C's
+/// `ISEP` char class collapsed to whitespace, which is the common
+/// case for default `$IFS` = `" \t\n"`).
+pub fn wordcount(s: &str, sep: Option<&str>, mul: i32) -> i32 {
+    let bytes = s.as_bytes();
+    if let Some(sep) = sep {
+        // C: r = 1; sl = strlen(sep); for (; findsep(&s,sep,0) >= 0; s+=sl)
+        //        if ((c || mul) && (sl || *(s+sl))) r++;
+        let sep_bytes = sep.as_bytes();
+        let sl = sep_bytes.len();
+        let mut r: i32 = 1;
+        let mut pos = 0;
+        while pos <= bytes.len() {
+            let rest = &bytes[pos..];
+            let c_offset = match sep_bytes.is_empty() {
+                true => Some(0usize),
+                false => rest
+                    .windows(sl)
+                    .position(|w| w == sep_bytes),
+            };
+            let Some(c) = c_offset else { break };
+            // C `c` is the chars before the separator; `(sl || *(s+sl))`
+            // means: if sl is zero (empty sep), only count when there's a
+            // following char. Otherwise (sl > 0), the second clause is true
+            // when sep is non-empty AND there are bytes after sep.
+            let after_off = pos + c + sl;
+            let following_nonempty = after_off < bytes.len();
+            let cond_b = sl != 0 || following_nonempty;
+            if (c != 0 || mul != 0) && cond_b {
+                r += 1;
+            }
+            if sl == 0 {
+                // Avoid infinite loop on empty sep — mirrors C's findsep
+                // which advances by 1 byte when sep is empty.
+                pos += 1;
+            } else {
+                pos += c + sl;
+            }
+        }
+        r
+    } else {
+        // IFS branch (sep == NULL). C source uses itype_end(s, ISEP, 1)
+        // to skip ISEP chars (default $IFS = " \t\n"). We use iwsep.
+        let mut s_pos = 0usize;
+        let t_orig = s_pos;
+        let mut r: i32 = 0;
+        // C: if (mul <= 0) skipwsep(&s);
+        if mul <= 0 {
+            while s_pos < bytes.len() && iwsep(bytes[s_pos] as char) {
+                s_pos += 1;
+            }
+        }
+        // C: if ((*s && itype_end(s,ISEP,1)!=s) || (mul<0 && t!=s)) r++;
+        let has_word_now = s_pos < bytes.len()
+            && !iwsep(bytes[s_pos] as char);
+        if has_word_now || (mul < 0 && t_orig != s_pos) {
+            r += 1;
+        }
+        // C: for (; *s; r++) { advance over word + maybe-skipwsep + findsep + maybe-skipwsep }
+        while s_pos < bytes.len() {
+            // Advance past the current word (non-ISEP chars).
+            let word_start = s_pos;
+            while s_pos < bytes.len() && !iwsep(bytes[s_pos] as char) {
+                s_pos += 1;
+            }
+            if s_pos > word_start && mul <= 0 {
+                while s_pos < bytes.len() && iwsep(bytes[s_pos] as char) {
+                    s_pos += 1;
+                }
+            }
+            // C: (void)findsep(&s, NULL, 0) — advance past one sep run.
+            // Already handled above when mul<=0; for mul>0 we still need
+            // to consume one separator byte to make progress.
+            if s_pos < bytes.len() && iwsep(bytes[s_pos] as char) {
+                s_pos += 1;
+            }
+            let t_after = s_pos;
+            if mul <= 0 {
+                while s_pos < bytes.len() && iwsep(bytes[s_pos] as char) {
+                    s_pos += 1;
+                }
+            }
+            if s_pos < bytes.len() {
+                r += 1;
+            } else {
+                // C: if (mul < 0 && t != s) r++;
+                if mul < 0 && t_after != s_pos {
+                    r += 1;
+                }
+                break;
+            }
+        }
+        r
+    }
 }
 
 /// Join array with delimiter (from utils.c zjoin)
@@ -1265,7 +1382,15 @@ pub fn zchdir(path: &str) -> bool {
     std::env::set_current_dir(path).is_ok()
 }
 
-/// Get real (canonical) path
+/// Rust wrapper around libc `realpath(3)` — no zsh C counterpart
+/// (zsh uses libc directly via the `realpath` symbol). Provided
+/// here for the same callsite shape as C's `realpath(path, NULL)`
+/// idiom that some zsh paths use (e.g. `:A` modifier fallback).
+///
+/// WARNING: Rust-only helper, not a port of any zsh C function.
+/// Wraps `std::fs::canonicalize` (which is itself a `realpath(3)`
+/// equivalent on Unix). See [`xsymlinks`] for the path-canonicalize
+/// equivalent of zsh's actual `:a`/`:A` modifier impl.
 pub fn realpath(path: &str) -> Option<String> {
     std::fs::canonicalize(path)
         .ok()
@@ -2507,7 +2632,26 @@ pub fn spscan(name: &str, candidates: &[String], threshold: usize) -> Option<Str
     best
 }
 
-/// Get shell function by name (from utils.c getshfunc)
+/// Port of `getshfunc()` from `Src/utils.c:3998`.
+///
+/// C body:
+/// ```c
+/// Shfunc getshfunc(char *nam) {
+///     return (Shfunc) shfunctab->getnode(shfunctab, nam);
+/// }
+/// ```
+///
+/// C looks up the global `shfunctab` (the shell-function hashtable);
+/// zshrs holds shell functions in `ShellExecutor::functions`, which
+/// is per-evaluator state, so the Rust signature takes the function
+/// table as a `&HashMap` parameter rather than reading a global.
+/// Returns the function body as `Option<String>` (zshrs's `Shfunc`
+/// equivalent is the function-text mapping; bytecode dispatch
+/// happens in fusevm at call time).
+///
+/// WARNING: Rust signature diverges from C's `Shfunc getshfunc(char*)`
+/// because zshrs has no global function table. Callers must pass
+/// the active `ShellExecutor.functions` map.
 pub fn getshfunc(
     name: &str,
     functions: &std::collections::HashMap<String, String>,
@@ -2662,12 +2806,30 @@ pub fn metalen(s: &str, len: usize) -> usize {
     count
 }
 
-/// Dup string nicely (from utils.c nicedup)
+/// Port of `nicedup()` from `Src/utils.c:5289` (single-byte build) and
+/// `Src/utils.c:5530` (multibyte build). C body:
+/// ```c
+/// char *retstr;
+/// (void)sb_niceformat(s, NULL, &retstr, heap ? NICEFLAG_HEAP : 0);
+/// return retstr;
+/// ```
+/// Both C variants delegate to `sb_niceformat` (single-byte) or
+/// `mb_niceformat` (multibyte) — the wrapper is identical shape, so
+/// the Rust port is a direct call into [`sb_niceformat`]. The `heap`
+/// arg is dropped because Rust ownership tracks lifetime; the C
+/// `NICEFLAG_HEAP` only controls which allocator zalloc-vs-zhalloc
+/// is used, which has no Rust analog.
 pub fn nicedup(s: &str) -> String {
     sb_niceformat(s)
 }
 
-/// Count nice string length (from utils.c niceztrlen)
+/// Port of `niceztrlen()` from `Src/utils.c:5324`.
+///
+/// Returns the length (in bytes) of the visible representation of
+/// the metafied string `s`. C body walks each char via `nicechar`
+/// and accumulates `strlen(nicechar(c))`; the Rust port mirrors
+/// this via [`sb_niceformat`] which is the same render-then-measure
+/// path.
 pub fn niceztrlen(s: &str) -> usize {
     sb_niceformat(s).len()
 }
@@ -2810,19 +2972,70 @@ pub fn restoredir(d: &mut DirSav) -> i32 {
     err
 }
 
-/// Convert float for output (from utils.c convfloat)
+/// Port of `convfloat()` from `Src/params.c:5690` (the C source has
+/// it in params.c, not utils.c — re-exported through utils.rs for
+/// caller convenience since math/printf paths reach it from both
+/// directories). See [`crate::params::convfloat`] for the faithful
+/// C body port; this wrapper drops the `FILE *fout` arg (every
+/// zshrs caller wants the returned string, never the printf path).
 pub fn convfloat(dval: f64, digits: i32, flags: u32) -> String {
     crate::params::convfloat(dval, digits, flags)
 }
 
-/// Convert float with underscores (from utils.c convfloat_underscore)
+/// Port of `convfloat_underscore()` from `Src/params.c:5765`.
+/// See [`crate::params::convfloat_underscore`] for the faithful C
+/// body port.
 pub fn convfloat_underscore(dval: f64, underscore: i32) -> String {
     crate::params::convfloat_underscore(dval, underscore)
 }
 
-/// Convert UCS-4 to multibyte (from utils.c ucs4tomb)
-pub fn ucs4tomb(wval: u32) -> Option<String> {
-    char::from_u32(wval).map(|c| c.to_string())
+/// Port of `ucs4tomb()` from `Src/utils.c:6788`.
+///
+/// Encode a UCS-4 codepoint into the buffer `buf` using the current
+/// locale's multibyte encoding. Returns the number of bytes written,
+/// or -1 on conversion failure. C body uses `wctomb(3)` when
+/// `__STDC_ISO_10646__` is defined (which it is on every modern
+/// glibc / macOS libc), falls back to UTF-8 if the codeset is
+/// `"UTF-8"`, and uses `iconv(3)` otherwise.
+///
+/// This Rust port mirrors the primary `wctomb` path via libc FFI;
+/// the iconv fallback is unused on macOS/Linux modern builds.
+/// On conversion failure, emits `zerr("character not in range")`
+/// to match C source line 6794.
+///
+/// C body shape:
+/// ```c
+/// int count = wctomb(buf, (wchar_t)wval);
+/// if (count == -1) zerr("character not in range");
+/// return count;
+/// ```
+pub fn ucs4tomb(wval: u32, buf: &mut [u8]) -> i32 {
+    // libc::wctomb requires at least MB_CUR_MAX bytes (typically 4
+    // for UTF-8, 6 for some encodings). Use a stack buffer first,
+    // then copy into the caller's buffer.
+    // libc crate doesn't expose wctomb on all platforms; declare
+    // the POSIX prototype directly. wchar_t is i32 on macOS/Linux
+    // for our supported targets.
+    extern "C" {
+        fn wctomb(s: *mut libc::c_char, wc: libc::wchar_t) -> libc::c_int;
+    }
+    let mut local = [0i8; 16];
+    let count = unsafe {
+        wctomb(local.as_mut_ptr(), wval as libc::wchar_t)
+    };
+    if count < 0 {
+        zerr("character not in range");
+        return -1;
+    }
+    let n = count as usize;
+    if n > buf.len() {
+        zerr("character not in range");
+        return -1;
+    }
+    for i in 0..n {
+        buf[i] = local[i] as u8;
+    }
+    count
 }
 
 #[cfg(test)]
@@ -3192,6 +3405,54 @@ mod tests {
         assert_eq!(tuupper('a'), 'A');
         assert_eq!(tulower('1'), '1');
     }
+
+    #[test]
+    fn test_wordcount_ifs_default() {
+        // C: wordcount("a b c", NULL, 0) -> 3
+        assert_eq!(wordcount("a b c", None, 0), 3);
+        // Leading/trailing whitespace coalesced when mul <= 0.
+        assert_eq!(wordcount("  a b  ", None, 0), 2);
+        // Empty string with mul == 0 -> 0 words.
+        assert_eq!(wordcount("", None, 0), 0);
+        // Single word, no separators.
+        assert_eq!(wordcount("foo", None, 0), 1);
+    }
+
+    #[test]
+    fn test_wordcount_with_explicit_sep() {
+        // C: wordcount("a:b:c", ":", 0) -> 3 (3 fields, 2 separators)
+        assert_eq!(wordcount("a:b:c", Some(":"), 0), 3);
+        // Empty fields counted when mul != 0.
+        assert_eq!(wordcount("a::b", Some(":"), 1), 3);
+        // Without mul, consecutive empties collapse: a, b => 2... but
+        // C's "if ((c || mul) && (sl || *(s+sl)))" — second `:` has
+        // c=0 and mul=0 so doesn't increment. Result: a, b => 2.
+        assert_eq!(wordcount("a::b", Some(":"), 0), 2);
+    }
+
+    #[test]
+    fn test_ucs4tomb_ascii() {
+        let mut buf = [0u8; 8];
+        // 'A' = 0x41, ASCII, single byte in any locale.
+        let n = ucs4tomb('A' as u32, &mut buf);
+        // wctomb may return 1 in C/POSIX locale; in UTF-8 locale also 1.
+        assert!(n == 1);
+        assert_eq!(buf[0], b'A');
+    }
+
+    #[test]
+    fn test_is_mb_niceformat_plain_ascii() {
+        // Plain printable ASCII — nothing needs nicechar escaping.
+        assert!(!is_mb_niceformat("hello world"));
+    }
+
+    #[test]
+    fn test_is_mb_niceformat_with_control_char() {
+        // Tab is control (< 0x20) — needs nice escaping.
+        assert!(is_mb_niceformat("a\tb"));
+        // Bell character.
+        assert!(is_mb_niceformat("a\x07b"));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3213,10 +3474,18 @@ pub fn is_nicechar(c: char) -> bool {
     c.is_ascii_control() || !c.is_ascii()
 }
 
-/// Free a string (from utils.c freestr) - no-op in Rust
-pub fn freestr(_s: String) {
-    // Rust Drop handles this
-}
+/// Port of `freestr()` from `Src/utils.c:1739`.
+///
+/// C body:
+/// ```c
+/// void freestr(void *a) { zsfree(a); }
+/// ```
+/// The C function is registered as the `freenode` callback for
+/// hashtables holding plain string values. The Rust port consumes
+/// `s` by value; Rust's `Drop` runs the equivalent of `zsfree` when
+/// the `String` is moved into this fn and falls out of scope at the
+/// closing brace — the no-op body is the correct port.
+pub fn freestr(_s: String) {}
 
 /// Create a temporary file (from utils.c gettempfile)
 pub fn gettempfile(prefix: &str, suffix: &str) -> Option<String> {
@@ -3309,9 +3578,23 @@ pub fn ztrftimebuf(bufsize: &mut i32, decr: i32) -> i32 {
     0
 }
 
-/// Call shell function by name (from utils.c subst_string_by_func)
+/// Port of `subst_string_by_func()` from `Src/utils.c:4017`.
+///
+/// C body invokes `doshfunc(func, l, 1)` with a 3-element arg list
+/// (func name, optional arg1, original string), then reads the
+/// `reply` parameter as an array. The returned strings come
+/// directly from the parameter — caller must consume before the
+/// next param mutation.
+///
+/// WARNING: stub pending the `doshfunc` port. Real implementation
+/// requires:
+///   - `doshfunc` (Src/exec.c) for shell-function invocation
+///   - `getaparam("reply")` (Src/params.c) to read the result array
+///   - `sfcontext`/`stopmsg`/`incompfunc` save+restore (utils.c:4019)
+/// The current return-None path matches the C source's "function
+/// returned non-zero status" branch (utils.c:4035), so callers
+/// already handle it as "no substitution made".
 pub fn subst_string_by_func(_func_name: &str, _arg: &str, _orig: &str) -> Option<String> {
-    // This would require exec engine access - return None to indicate no substitution
     None
 }
 
@@ -3601,9 +3884,19 @@ pub fn skipparens(s: &str, open: char, close: char) -> usize {
     s.len()
 }
 
-/// Call hook function by name (from utils.c subst_string_by_hook)
+/// Port of `subst_string_by_hook()` from `Src/utils.c:4049`.
+///
+/// C body looks up `name` as a single function; if found, calls
+/// `subst_string_by_func`. Otherwise builds `name + "_hook"` (an
+/// array of function names) and tries each in order until one
+/// returns success.
+///
+/// WARNING: stub pending [`subst_string_by_func`] port. The hook
+/// dispatch logic is straightforward but cannot fire without the
+/// underlying function-call machinery. Returning None matches C's
+/// "no hook produced output" path (utils.c:4080), so callers that
+/// fall back to default behavior already work correctly.
 pub fn subst_string_by_hook(_hook: &str, _arg: &str, _orig: &str) -> Option<String> {
-    // Hook functions require access to the exec engine
     None
 }
 
@@ -4327,12 +4620,82 @@ pub fn mb_niceformat(s: &str) -> String {
     out
 }
 
-/// Predicate for `mb_niceformat`: would any char need representing?
-/// Port of `is_mb_niceformat()` from Src/utils.c:5474.
+/// Port of `is_mb_niceformat()` from `Src/utils.c:5474`.
+///
+/// Predicate: would any character in `s` need representation by
+/// `mb_niceformat` / `nicedup`? C body:
+/// ```c
+/// ums = ztrdup(s);
+/// untokenize(ums);
+/// ptr = unmetafy(ums, &umlen);
+/// while (umlen > 0) {
+///     cnt = mbrtowc(&c, ptr, umlen, &mbs);
+///     switch (cnt) {
+///     case MB_INCOMPLETE: case MB_INVALID:
+///         if (is_nicechar(*ptr)) { ret = 1; break; }
+///         cnt = 1;
+///         memset(&mbs, 0, sizeof mbs);
+///         break;
+///     case 0: cnt = 1;  /* FALLTHROUGH */
+///     default:
+///         if (is_wcs_nicechar(c)) ret = 1;
+///         break;
+///     }
+///     if (ret) break;
+///     umlen -= cnt; ptr += cnt;
+/// }
+/// ```
+///
+/// Rust port: unmetafy in place via [`unmetafy`], then walk the
+/// resulting bytes. For valid UTF-8 sequences, check
+/// `is_wcs_nicechar(scalar)`; for invalid bytes, check
+/// `is_nicechar(byte)`. Either path bailing positive returns true.
 pub fn is_mb_niceformat(s: &str) -> bool {
-    crate::ported::compat::unmetafy(s)
-        .chars()
-        .any(|c| c.is_ascii_control() || c == '\x7f' || (c as u32) >= 0x80)
+    // C: ums = ztrdup(s); untokenize(ums); ptr = unmetafy(ums, &umlen);
+    let mut bytes = s.as_bytes().to_vec();
+    let umlen = unmetafy(&mut bytes);
+    bytes.truncate(umlen);
+
+    let mut i = 0;
+    while i < bytes.len() {
+        // Try to decode a UTF-8 char at bytes[i..]
+        let remaining = &bytes[i..];
+        match std::str::from_utf8(remaining) {
+            Ok(s) => {
+                // Whole rest is valid UTF-8 — walk char by char.
+                for c in s.chars() {
+                    // C: is_wcs_nicechar — control chars or > 0x7e
+                    // ASCII (which mirrors `nicechar`'s output rules).
+                    if (c as u32) < 0x20 || c == '\x7f' || (c as u32) > 0x7e {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            Err(e) => {
+                let valid_up_to = e.valid_up_to();
+                if valid_up_to > 0 {
+                    let valid = std::str::from_utf8(&remaining[..valid_up_to])
+                        .expect("valid_up_to slice");
+                    for c in valid.chars() {
+                        if (c as u32) < 0x20 || c == '\x7f' || (c as u32) > 0x7e {
+                            return true;
+                        }
+                    }
+                    i += valid_up_to;
+                    continue;
+                }
+                // Invalid byte — mirror C's MB_INVALID branch: check
+                // `is_nicechar(*ptr)` (the raw byte).
+                let b = remaining[0];
+                if is_nicechar(b as char) {
+                    return true;
+                }
+                i += 1;
+            }
+        }
+    }
+    false
 }
 
 /// Unmetafy a string and write it to stdout.
