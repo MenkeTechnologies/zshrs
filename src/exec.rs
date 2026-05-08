@@ -304,7 +304,8 @@ pub use crate::ported::modules::zutil::ZStyle;
 pub use crate::ported::modules::zpty::ZptyState;
 pub use crate::ported::modules::zprof::ProfileEntry;
 pub use crate::ported::modules::socket::UnixSocketState;
-pub use crate::ported::builtins::sched::ScheduledCommand;
+// `ScheduledCommand` (Rust-only) deleted; use `crate::builtins::sched::schedcmd`
+// (port of `struct schedcmd` from Src/Builtins/sched.c:43) for live state.
 pub use crate::ported::builtin::AutoloadFlags;
 
 
@@ -538,8 +539,8 @@ pub struct ShellExecutor {
     // bin_sysopen - file descriptor management
     pub open_fds: HashMap<i32, std::fs::File>,
     pub next_fd: i32,
-    // sched - scheduled commands
-    pub scheduled_commands: Vec<ScheduledCommand>,
+    // sched (Src/Builtins/sched.c) — schedcmds list lives in module
+    // statics in the canonical port; nothing to carry on ShellExecutor.
     // zprof - profiling data
     pub profile_data: HashMap<String, ProfileEntry>,
     pub profiling_enabled: bool,
@@ -587,11 +588,10 @@ pub struct ShellExecutor {
     /// port at `src/ported/modules/zpty.rs:367` looks up names
     /// across calls (`zpty -r`, `zpty -w`, `zpty -d`).
     pub pty_cmds: crate::zpty::PtyCmds,
-    /// Persistent scheduler queue used by the canonical port at
-    /// `src/ported/builtins/sched.rs:291`. Distinct from the
-    /// legacy `scheduled_commands` field above which predates the
-    /// canonical Scheduler port.
-    pub sched: crate::builtins::sched::Scheduler,
+    // sched: scheduled commands now live in `SCHEDCMDS` static in
+    // `src/ported/builtins/sched.rs` (port of `static struct schedcmd
+    // *schedcmds` from Src/Builtins/sched.c:52). No state on
+    // ShellExecutor.
     /// zsh compatibility mode - use .zcompdump, fpath scanning, etc.
     /// Also serves as the `--zsh` parity-test flag: caches off, daemon
     /// off, plugin_cache replay off so every `source` re-runs the file
@@ -876,7 +876,6 @@ impl ShellExecutor {
             zptys: HashMap::new(),
             open_fds: HashMap::new(),
             next_fd: 10,
-            scheduled_commands: Vec::new(),
             profile_data: HashMap::new(),
             profiling_enabled: false,
             unix_sockets: HashMap::new(),
@@ -940,7 +939,6 @@ impl ShellExecutor {
             watch_state: crate::watch::WatchState::new(),
             curses: Default::default(),
             pty_cmds: Default::default(),
-            sched: Default::default(),
             zsh_compat: false,
             bash_compat: false,
             posix_mode: false,
