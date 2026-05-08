@@ -6208,11 +6208,15 @@ pub(crate) fn getarg<'a>(
         return None;
     }
     // Flag set per zshparam(1) "Subscript Flags" / params.c:1389-1480
-    // switch: r/R (reverse search), i/I (index forms), e (exact match),
-    // k (return matching key), n (Nth match), w (word index),
-    // s (split-by-separator). The `s` form's `/sep/` body has its own
-    // delimiter syntax — accept any flag block whose first char is `s`
-    // and treat the rest as literal.
+    // switch: r/R (reverse value-search → value), i/I (value-search → key),
+    // k/K (key-search → value), e (exact match — disables glob),
+    // n (Nth match, takes arg), w (word index on scalar),
+    // f (word index split by newline; alias for `w` with sep="\n"),
+    // p (escapes — affects subsequent get_strarg parsing),
+    // b (begin index, takes arg),
+    // s (split-by-separator, takes arg). The `s` form's `:SEP:` body
+    // has its own delimiter syntax — accept any flag block whose first
+    // char is `s` and treat the rest as literal.
     let first = flags.chars().next();
     if first == Some('s') {
         // `(s:SEP:)` forms pass through with raw flag string;
@@ -6221,48 +6225,64 @@ pub(crate) fn getarg<'a>(
     }
     if !flags
         .chars()
-        .all(|c| matches!(c, 'r' | 'R' | 'i' | 'I' | 'e' | 'k' | 'n' | 'w'))
+        .all(|c| matches!(c, 'r' | 'R' | 'i' | 'I' | 'e' | 'k' | 'K' | 'n' | 'w' | 'f' | 'p' | 'b'))
     {
         return None;
     }
     let pat = &rest[end + 1..];
 
-    // Phase 3 — hash pattern search arm (c:1581-1660). On assoc,
-    // `(i)`/`(I)` search KEYS; `(r)`/`(R)` search VALUES.
-    // `(I)` returns ALL matching keys (space-joined); `(R)` returns
-    // ALL matching values; `(i)`/`(r)` return the FIRST match.
+    // Phase 3 — hash pattern search arm (c:1581-1660 / 1672-1734).
+    // Per C source case-arms:
+    //   `r`: rev=1 → match against VALUES, return matching VALUE
+    //   `R`: rev+down=1 → match VALUES, return ALL matching VALUEs
+    //   `i`: rev+ind=1 → match VALUES, return KEY of first match
+    //   `I`: rev+ind+down=1 → match VALUES, return ALL matching KEYs
+    //   `k`: keymatch+rev=1 → match KEYS, return VALUE of first match
+    //   `K`: keymatch+rev+down=1 → match KEYS, return ALL matching VALUEs
     if let Some(map) = assoc {
         use fusevm::Value;
         let exact = flags.contains('e');
-        let search_keys = flags.contains('i') || flags.contains('I');
-        let return_key = search_keys;
-        let return_all = flags.contains('I') || flags.contains('R');
+        let key_match = flags.contains('k') || flags.contains('K');
+        let return_index = flags.contains('i') || flags.contains('I');
+        let return_all = flags.contains('I') || flags.contains('R') || flags.contains('K');
         if return_all {
             let mut out: Vec<String> = Vec::new();
             for (k, v) in map.iter() {
-                let target = if search_keys { k.as_str() } else { v.as_str() };
+                let target = if key_match { k.as_str() } else { v.as_str() };
                 let hit = if exact {
                     target == pat
                 } else {
                     crate::ported::exec::ShellExecutor::glob_match_static(target, pat)
                 };
                 if hit {
-                    out.push(if return_key { k.clone() } else { v.clone() });
+                    // `K` (key-match) returns VALUE; `I` (value-match+ind)
+                    // returns KEY; `R` (value-match) returns VALUE.
+                    out.push(if key_match {
+                        v.clone()
+                    } else if return_index {
+                        k.clone()
+                    } else {
+                        v.clone()
+                    });
                 }
             }
             return Some(GetargOut::Value(Value::str(out.join(" "))));
         }
         for (k, v) in map.iter() {
-            let target = if search_keys { k.as_str() } else { v.as_str() };
+            let target = if key_match { k.as_str() } else { v.as_str() };
             let hit = if exact {
                 target == pat
             } else {
                 crate::ported::exec::ShellExecutor::glob_match_static(target, pat)
             };
             if hit {
-                return Some(GetargOut::Value(
-                    Value::str(if return_key { k.clone() } else { v.clone() })
-                ));
+                return Some(GetargOut::Value(Value::str(if key_match {
+                    v.clone()
+                } else if return_index {
+                    k.clone()
+                } else {
+                    v.clone()
+                })));
             }
         }
         return Some(GetargOut::Value(Value::str("")));
