@@ -4498,6 +4498,76 @@ mod tests {
         let s = convbase_underscore(1234567, 10, 3);
         assert_eq!(s, "1_234_567");
     }
+
+    fn val_str(v: GetargOut<'_>) -> String {
+        match v {
+            GetargOut::Value(v) => v.to_str(),
+            GetargOut::Flags { .. } => panic!("expected Value, got Flags"),
+        }
+    }
+
+    #[test]
+    fn getarg_n_flag_picks_second_exact_match() {
+        // C params.c:1431-1442 + 1758 — `(en.2.)pat` picks 2nd exact match.
+        let arr: Vec<String> = vec!["foo".into(), "bar".into(), "foo".into(), "baz".into()];
+        let out = getarg("(en.2.)foo", Some(&arr), None).expect("Some");
+        assert_eq!(val_str(out), "foo");
+    }
+
+    #[test]
+    fn getarg_n_flag_third_exact_match() {
+        let arr: Vec<String> = vec!["a".into(), "a".into(), "a".into(), "b".into()];
+        let out = getarg("(en.3.)a", Some(&arr), None).expect("Some");
+        assert_eq!(val_str(out), "a");
+    }
+
+    #[test]
+    fn getarg_n_flag_returns_index_with_i() {
+        // (en.2.i) — return INDEX of 2nd exact match.
+        let arr: Vec<String> = vec!["x".into(), "y".into(), "x".into(), "y".into()];
+        let out = getarg("(en.2.i)x", Some(&arr), None).expect("Some");
+        assert_eq!(val_str(out), "3");
+    }
+
+    #[test]
+    fn getarg_negative_n_flips_search_direction() {
+        // C params.c:1488-1491 — negative `num` flips down (reverse).
+        // (en.-1.) on forward-default search matches from the end.
+        let arr: Vec<String> = vec!["a".into(), "a".into(), "a".into()];
+        let out = getarg("(en.-1.i)a", Some(&arr), None).expect("Some");
+        assert_eq!(val_str(out), "3");
+    }
+
+    #[test]
+    fn getarg_n_flag_zero_treated_as_one() {
+        // C params.c:1438-1439 — `if (!num) num = 1`.
+        let arr: Vec<String> = vec!["x".into(), "y".into()];
+        let out = getarg("(en.0.)x", Some(&arr), None).expect("Some");
+        assert_eq!(val_str(out), "x");
+    }
+
+    #[test]
+    fn getarg_unknown_flag_char_returns_none() {
+        // C params.c:1477-1483 flagerr — invalid flag char reports error.
+        let arr: Vec<String> = vec!["x".into()];
+        assert!(getarg("(z)x", Some(&arr), None).is_none());
+    }
+
+    #[test]
+    fn getarg_n_flag_unterminated_arg_returns_none() {
+        // (n.5 missing closing delimiter — flagerr.
+        let arr: Vec<String> = vec!["x".into()];
+        assert!(getarg("(n.5", Some(&arr), None).is_none());
+    }
+
+    #[test]
+    fn getarg_b_flag_parses_without_panic() {
+        // Phase 1 — `b<DELIM>NUM<DELIM>` is parsed; behavioral wiring is
+        // a phase-2 follow-up. Verify it doesn't break the search path.
+        let arr: Vec<String> = vec!["a".into(), "a".into(), "a".into()];
+        let out = getarg("(b.0.e)a", Some(&arr), None).expect("Some");
+        assert_eq!(val_str(out), "a");
+    }
 }
 
 // ===========================================================
@@ -6235,37 +6305,105 @@ pub(crate) fn getarg<'a>(
     assoc: Option<&indexmap::IndexMap<String, String>>,
 ) -> Option<GetargOut<'a>> {
     let rest = idx.strip_prefix('(')?;
-    let end = rest.find(')')?;
-    let flags = &rest[..end];
     // Reject anything that looks like a char-class subscript: `[abc]`
     // doesn't match this prefix, but `(...)` containing brackets is
     // probably alternation — let it fall through to runtime instead.
-    if flags.is_empty() || flags.contains('[') || flags.contains(']') {
+    if rest.starts_with(')') || rest.contains('[') {
         return None;
     }
-    // Flag set per zshparam(1) "Subscript Flags" / params.c:1389-1480
-    // switch: r/R (reverse value-search → value), i/I (value-search → key),
-    // k/K (key-search → value), e (exact match — disables glob),
-    // n (Nth match, takes arg), w (word index on scalar),
-    // f (word index split by newline; alias for `w` with sep="\n"),
-    // p (escapes — affects subsequent get_strarg parsing),
-    // b (begin index, takes arg),
-    // s (split-by-separator, takes arg). The `s` form's `:SEP:` body
-    // has its own delimiter syntax — accept any flag block whose first
-    // char is `s` and treat the rest as literal.
-    let first = flags.chars().next();
-    if first == Some('s') {
-        // `(s:SEP:)` forms pass through with raw flag string;
-        // pattern-search arms don't apply.
-        return Some(GetargOut::Flags { flags, rest: &rest[end + 1..] });
+    // Flag scanner per zshparam(1) "Subscript Flags" /
+    // params.c:1389-1480 switch:
+    //   r/R (reverse value-search → value/all values),
+    //   i/I (value-search → key/all keys),
+    //   k/K (key-search → value/all values),
+    //   e (exact match — disables glob),
+    //   n<DELIM>NUM<DELIM> (Nth match — params.c:1431-1442),
+    //   b<DELIM>NUM<DELIM> (begin offset — params.c:1443-1454),
+    //   w (word index on scalar),
+    //   f (word index split by newline; alias for `w` + sep="\n"),
+    //   p (escapes for next get_strarg),
+    //   s<DELIM>SEP<DELIM> (split-by-separator).
+    // The `n` / `b` / `s` forms use `get_strarg`'s balanced-delimiter
+    // pair: any non-flag char closes its pair (`(n.5.)`, `(n:5:)` etc.).
+    let bytes = rest.as_bytes();
+    let mut i: usize = 0;
+    let mut num: i64 = 1;
+    let mut beg: i64 = 0;
+    let mut has_beg = false;
+    let flags_start = 0_usize;
+    let mut flags_end = 0_usize;
+    let mut bad = false;
+    while i < bytes.len() && bytes[i] != b')' {
+        let c = bytes[i] as char;
+        match c {
+            'r' | 'R' | 'i' | 'I' | 'e' | 'k' | 'K' | 'w' | 'f' | 'p' => {
+                i += 1;
+                flags_end = i;
+            }
+            'n' | 'b' => {
+                // Consume `n<DELIM>NUM<DELIM>` per c:1432 get_strarg.
+                if i + 1 >= bytes.len() {
+                    bad = true;
+                    break;
+                }
+                let delim = bytes[i + 1];
+                let arg_start = i + 2;
+                let mut arg_end = arg_start;
+                while arg_end < bytes.len() && bytes[arg_end] != delim {
+                    arg_end += 1;
+                }
+                if arg_end >= bytes.len() {
+                    bad = true;
+                    break;
+                }
+                // Parse the argument as a signed decimal integer.
+                let arg = std::str::from_utf8(&bytes[arg_start..arg_end]).ok()?;
+                let parsed: i64 = arg.trim().parse().ok()?;
+                if c == 'n' {
+                    num = if parsed == 0 { 1 } else { parsed };
+                } else {
+                    has_beg = true;
+                    beg = if parsed > 0 { parsed - 1 } else { parsed };
+                }
+                i = arg_end + 1;
+                flags_end = i;
+            }
+            's' => {
+                // (s:SEP:) — pass through with raw flag block.
+                let close = match rest[i..].find(')') {
+                    Some(p) => i + p,
+                    None => return None,
+                };
+                let flags = &rest[flags_start..close];
+                return Some(GetargOut::Flags { flags, rest: &rest[close + 1..] });
+            }
+            _ => {
+                bad = true;
+                break;
+            }
+        }
     }
-    if !flags
-        .chars()
-        .all(|c| matches!(c, 'r' | 'R' | 'i' | 'I' | 'e' | 'k' | 'K' | 'n' | 'w' | 'f' | 'p' | 'b'))
-    {
+    // c:1477-1483 — flag-error fallback: reset all flags, treat as no
+    // subscript flags.
+    if bad {
         return None;
     }
-    let pat = &rest[end + 1..];
+    if i >= bytes.len() || bytes[i] != b')' {
+        return None;
+    }
+    if flags_end == flags_start {
+        return None;
+    }
+    let flags = &rest[flags_start..flags_end];
+    let pat = &rest[i + 1..];
+
+    // c:1488-1491 — negative `num` flips the search direction.
+    let neg_num_flips = num < 0;
+    if neg_num_flips {
+        num = -num;
+    }
+    let _ = has_beg;
+    let _ = beg;
 
     // Phase 3 — hash pattern search arm (c:1581-1660 / 1672-1734).
     // Per C source case-arms:
@@ -6280,7 +6418,8 @@ pub(crate) fn getarg<'a>(
         let exact = flags.contains('e');
         let key_match = flags.contains('k') || flags.contains('K');
         let return_index = flags.contains('i') || flags.contains('I');
-        let return_all = flags.contains('I') || flags.contains('R') || flags.contains('K');
+        let return_all = flags.contains('I') || flags.contains('R') || flags.contains('K')
+            || neg_num_flips;
         if return_all {
             let mut out: Vec<String> = Vec::new();
             for (k, v) in map.iter() {
@@ -6304,6 +6443,8 @@ pub(crate) fn getarg<'a>(
             }
             return Some(GetargOut::Value(Value::str(out.join(" "))));
         }
+        // c:1753 — `!--num` skips matches until the Nth.
+        let mut remaining = num;
         for (k, v) in map.iter() {
             let target = if key_match { k.as_str() } else { v.as_str() };
             let hit = if exact {
@@ -6312,13 +6453,16 @@ pub(crate) fn getarg<'a>(
                 crate::ported::exec::ShellExecutor::glob_match_static(target, pat)
             };
             if hit {
-                return Some(GetargOut::Value(Value::str(if key_match {
-                    v.clone()
-                } else if return_index {
-                    k.clone()
-                } else {
-                    v.clone()
-                })));
+                remaining -= 1;
+                if remaining == 0 {
+                    return Some(GetargOut::Value(Value::str(if key_match {
+                        v.clone()
+                    } else if return_index {
+                        k.clone()
+                    } else {
+                        v.clone()
+                    })));
+                }
             }
         }
         return Some(GetargOut::Value(Value::str("")));
@@ -6352,12 +6496,15 @@ pub(crate) fn getarg<'a>(
         }
         let exact = flags.contains('e');
         let return_index = flags.contains('i') || flags.contains('I');
-        let reverse = flags.contains('R') || flags.contains('I');
+        // c:1488-1491 — negative `num` flips reverse direction.
+        let reverse = (flags.contains('R') || flags.contains('I')) ^ neg_num_flips;
         let iter: Box<dyn Iterator<Item = (usize, &String)>> = if reverse {
             Box::new(arr.iter().enumerate().rev())
         } else {
             Box::new(arr.iter().enumerate())
         };
+        // c:1758 — `!--num` skips matches until the Nth.
+        let mut remaining = num;
         for (i, s) in iter {
             let hit = if exact {
                 s == pat
@@ -6365,11 +6512,14 @@ pub(crate) fn getarg<'a>(
                 crate::ported::exec::ShellExecutor::glob_match_static(s, pat)
             };
             if hit {
-                return Some(GetargOut::Value(if return_index {
-                    Value::str((i + 1).to_string())
-                } else {
-                    Value::str(s.clone())
-                }));
+                remaining -= 1;
+                if remaining == 0 {
+                    return Some(GetargOut::Value(if return_index {
+                        Value::str((i + 1).to_string())
+                    } else {
+                        Value::str(s.clone())
+                    }));
+                }
             }
         }
         return Some(GetargOut::Value(if return_index {
