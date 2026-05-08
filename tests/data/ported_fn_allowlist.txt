@@ -145,8 +145,6 @@ pcre_compile
 pcre_match
 pcre_study
 pfx_len
-pty_close
-pty_kill
 scan_directory
 select_parse_reply
 set_file_contents
