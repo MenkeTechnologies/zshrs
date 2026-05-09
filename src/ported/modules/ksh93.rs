@@ -1,332 +1,97 @@
-//! Ksh93 compatibility module - port of Modules/ksh93.c
+//! Ksh93 compatibility module — port of `Src/Modules/ksh93.c`.
 //!
-//! Provides ksh93 compatibility features including:
-//! - nameref builtin
-//! - .sh.* special parameters
+//! C source has zero `struct ...` / `enum ...` definitions. Rust
+//! port matches: zero types. The `.sh.*` parameters are registered
+//! via the C `partab[]` paramdef array (ksh93.c:200+); each entry
+//! is a `struct paramdef` (defined in zsh.h, not a ksh93-private
+//! type) wired to a getfn/setfn pair.
+//!
+//! Functions in C:
+//!   - `edcharsetfn`   — setfn for `.sh.edchar` (c:47-58)
+//!   - `matchgetfn`    — getfn for `.sh.match` (c:60-90)
+//!   - `ksh93_wrapper` — per-function wrapper installed via
+//!                       `addwrapper(m, wrapper)` (c:142-...)
+//!   - `setup_/features_/enables_/boot_/cleanup_/finish_` — module
+//!                       loader hooks.
 
-use std::collections::HashMap;
-
-/// Ksh93 special parameters (`${.sh.*}`).
-/// Port of the parameter table Src/Modules/ksh93.c installs in
-/// `setup_()` (line 236) and `getrandom_buffer()` (line 258) — the C source
-/// registers `.sh.file`, `.sh.lineno`, `.sh.fun`, `.sh.level`,
-/// `.sh.subshell`, `.sh.version`, `.sh.name`, `.sh.subscript`,
-/// `.sh.edchar`, `.sh.edmode`, `.sh.edcol`, `.sh.edtext`,
-/// `.sh.command`, `.sh.value`, `.sh.match`. The Rust struct holds
-/// the same field set.
-#[derive(Debug, Default)]
-pub struct Ksh93Params {
-    pub file: Option<String>,
-    pub lineno: i64,
-    pub fun: Option<String>,
-    pub level: i64,
-    pub subshell: i64,
-    pub version: String,
-    pub name: Option<String>,
-    pub subscript: Option<String>,
-    pub edchar: Option<String>,
-    pub edmode: String,
-    pub edcol: Option<i64>,
-    pub edtext: Option<String>,
-    pub command: Option<String>,
-    pub value: Option<String>,
-    pub match_arr: Vec<String>,
+/// Port of static helper `edcharsetfn()` from
+/// `Src/Modules/ksh93.c:47`. The setfn callback for ksh93's
+/// `.sh.edchar` param. C body is intentionally empty (just `;`)
+/// — the comment at ksh93.c:48-55 explains a faithful ksh
+/// emulation would need to intercept `$KEYS` before widget lookup
+/// (similar to `bindkey -s`) and register `SIGKEYBD`. Upstream zsh
+/// left it as a placeholder for future work.
+///
+/// C signature: `static void edcharsetfn(Param pm, char *x)`.
+/// Rust port matches: takes the param ref + new value, does
+/// nothing.
+pub fn edcharsetfn(_pm_name: &str, _value: &str) {                       // c:47
+    // Intentional no-op — ksh93.c:56 is just `;`.
 }
 
-impl Ksh93Params {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/ksh93.c`.
-    pub fn new() -> Self {
-        Self {
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            ..Default::default()
+/// Port of static helper `matchgetfn()` from
+/// `Src/Modules/ksh93.c:60`. The getfn callback for ksh93's
+/// `.sh.match` array. Reads zsh's `match` array via `getaparam`,
+/// then under `KSHARRAYS` prepends `$MATCH` as element 0;
+/// otherwise returns the array as-is.
+///
+/// C signature: `static char **matchgetfn(Param pm)`.
+/// Rust port returns a fresh `Vec<String>` since the param-node
+/// `u.arr` mutation in C lives in the param-table layer; this
+/// entry produces the value the param machinery then assigns.
+pub fn matchgetfn() -> Vec<String> {                                     // c:60
+    // c:62 — `char **zsh_match = getaparam("match");`
+    let zsh_match: Vec<String> = std::env::var("match")
+        .ok()
+        .map(|s| s.split(' ').map(|t| t.to_string()).collect())
+        .unwrap_or_default();
+    // c:71 — `if (isset(KSHARRAYS)) ...`
+    let kshari = std::env::var("KSHARRAYS").map(|v| !v.is_empty()).unwrap_or(false);
+    // c:67-68 — `if (pm->u.arr) freearray(pm->u.arr);` (param-table side)
+    if zsh_match.is_empty() {                                            // c:80
+        if kshari {
+            // c:80 — `pm->u.arr = mkarray(ztrdup(getsparam("MATCH")));`
+            return vec![std::env::var("MATCH").unwrap_or_default()];
         }
+        return Vec::new();                                               // c:82 NULL
     }
-
-    /// Get a `.sh.*` parameter by name.
-    /// Port of the `getfn` slot Src/Modules/ksh93.c installs for
-    /// each of the `.sh.*` parameters (`matchgetfn` at line 60 for
-    /// `.sh.match`, plus the auto-generated getters).
-    pub fn get(&self, name: &str) -> Option<String> {
-        match name {
-            ".sh.file" => self.file.clone(),
-            ".sh.lineno" => Some(self.lineno.to_string()),
-            ".sh.fun" => self.fun.clone(),
-            ".sh.level" => Some(self.level.to_string()),
-            ".sh.subshell" => Some(self.subshell.to_string()),
-            ".sh.version" => Some(self.version.clone()),
-            ".sh.name" => self.name.clone(),
-            ".sh.subscript" => self.subscript.clone(),
-            ".sh.edchar" => self.edchar.clone(),
-            ".sh.edmode" => Some(self.edmode.clone()),
-            ".sh.edcol" => self.edcol.map(|n| n.to_string()),
-            ".sh.edtext" => self.edtext.clone(),
-            ".sh.command" => self.command.clone(),
-            ".sh.value" => self.value.clone(),
-            ".sh.match" => {
-                if self.match_arr.is_empty() {
-                    None
-                } else {
-                    Some(self.match_arr.join(" "))
-                }
-            }
-            _ => None,
-        }
-    }
-
-    /// Set a `.sh.*` parameter by name.
-    /// Port of the `setfn` slots Src/Modules/ksh93.c installs —
-    /// only `.sh.edchar` (via `edcharsetfn` line 47) and `.sh.value`
-    /// are writable in the C source; others are read-only.
-    pub fn set(&mut self, name: &str, value: &str) -> bool {
-        match name {
-            ".sh.edchar" => {
-                self.edchar = Some(value.to_string());
-                true
-            }
-            ".sh.value" => {
-                self.value = Some(value.to_string());
-                true
-            }
-            _ => false,
-        }
-    }
-
-    /// Update parameters on function entry.
-    /// Port of the function-context update inside `ksh93_wrapper()`
-    /// (Src/Modules/ksh93.c:143) — bumps `.sh.level`, sets
-    /// `.sh.fun`, `.sh.file`, `.sh.lineno` so the function body
-    /// sees the matching ksh93 frame view.
-    pub fn enter_function(&mut self, name: &str, file: Option<&str>, lineno: i64) {
-        self.level += 1;
-        self.fun = Some(name.to_string());
-        self.file = file.map(|s| s.to_string());
-        self.lineno = lineno;
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/ksh93.c`.
-    /// Update parameters on function exit.
-    /// Counterpart to `enter_function` — same `ksh93_wrapper()`
-    /// path (Src/Modules/ksh93.c:143) restores `.sh.level` /
-    /// `.sh.fun` after the call returns.
-    pub fn exit_function(&mut self) {
-        self.level = (self.level - 1).max(0);
-        self.fun = None;
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/ksh93.c`.
-    /// Increment `.sh.subshell` on subshell entry.
-    /// Mirrors the `subsh++` step C zsh performs in `entersubsh()`
-    /// (Src/exec.c) — the ksh93 module exposes the depth via the
-    /// `.sh.subshell` parameter.
-    pub fn enter_subshell(&mut self) {
-        self.subshell += 1;
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/ksh93.c`.
-    /// Decrement `.sh.subshell` on subshell exit.
-    /// Counterpart of `enter_subshell` — keeps the parameter in
-    /// sync as nested subshells unwind.
-    pub fn exit_subshell(&mut self) {
-        self.subshell = (self.subshell - 1).max(0);
-    }
-
-    /// Populate `.sh.match` from a regex result.
-    /// Port of the `matchgetfn()` getter at Src/Modules/ksh93.c:60
-    /// — the C source builds the array on demand from the `MATCH`
-    /// / `match[]` parameters; we cache the values here.
-    pub fn set_match(&mut self, full: Option<&str>, captures: &[Option<String>]) {
-        self.match_arr.clear();
-        if let Some(m) = full {
-            self.match_arr.push(m.to_string());
-        }
-        for c in captures.iter().flatten() {
-            self.match_arr.push(c.clone());
-        }
-    }
-
-    /// Port of `ksh93_wrapper()` from `Src/Modules/ksh93.c:143`.
-    /// Snapshot every supported `.sh.*` parameter into a name→value map.
-    /// Equivalent to scanning the parameter table the C source
-    /// installs in `getrandom_buffer()` (Src/Modules/ksh93.c:258).
-    pub fn to_hash(&self) -> HashMap<String, String> {
-        let mut map = HashMap::new();
-        for name in &[
-            ".sh.file",
-            ".sh.lineno",
-            ".sh.fun",
-            ".sh.level",
-            ".sh.subshell",
-            ".sh.version",
-            ".sh.name",
-            ".sh.subscript",
-            ".sh.edchar",
-            ".sh.edmode",
-            ".sh.edcol",
-            ".sh.edtext",
-            ".sh.command",
-            ".sh.value",
-            ".sh.match",
-        ] {
-            if let Some(v) = self.get(name) {
-                map.insert(name.to_string(), v);
-            }
-        }
-        map
+    if kshari {                                                          // c:71
+        // c:73-77 — prepend $MATCH as element 0.
+        let mut out = Vec::with_capacity(zsh_match.len() + 1);
+        out.push(std::env::var("MATCH").unwrap_or_default());            // c:75
+        out.extend(zsh_match);                                           // c:76
+        out
+    } else {
+        zsh_match                                                        // c:78 zarrdup
     }
 }
 
-/// `nameref` builtin options.
-/// Mirrors the flag set the upstream `nameref` builtin parses —
-/// the C source's `zsh/ksh93` module wires `nameref` as an alias
-/// for `typeset -n`. `-g` (global), `-p` (print), `-r` (readonly),
-/// `-u` (unset).
-#[derive(Debug, Default, Clone)]
-pub struct NamerefOptions {
-    pub global: bool,
-    pub print: bool,
-    pub readonly: bool,
-    pub unset: bool,
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/ksh93.c`.
-/// `nameref` builtin entry point.
-/// Equivalent to `typeset -n` (Src/builtin.c) which the
-/// `zsh/ksh93` module aliases as `nameref`. Validates the variable
-/// name and reference target the same way the C source's
-/// `bin_typeset()` does.
-pub fn ksh93_wrapper(args: &[&str], options: &NamerefOptions) -> (i32, String) {
-    if args.is_empty() {
-        if options.print {
-            return (0, String::new());
-        }
-        return (1, "nameref: variable name required\n".to_string());
-    }
-
-    let name = args[0];
-
-    // Inline identifier validity test — direct port of isident()
-    // (Src/params.c:1288): non-empty, first char alphabetic or `_`,
-    // remaining chars alphanumeric or `_`. The zsh source's namespace
-    // (`.foo`) handling isn't yet wired through here.
-    let is_ident = |s: &str| -> bool {
-        let mut chars = s.chars();
-        let Some(first) = chars.next() else { return false; };
-        if !first.is_alphabetic() && first != '_' {
-            return false;
-        }
-        chars.all(|c| c.is_alphanumeric() || c == '_')
-    };
-
-    if !is_ident(name) {
-        return (1, format!("nameref: {}: invalid variable name\n", name));
-    }
-
-    if args.len() < 2 {
-        if options.unset {
-            return (0, String::new());
-        }
-        return (1, format!("nameref: {}: reference target required\n", name));
-    }
-
-    let target = args[1];
-
-    if !is_ident(target) {
-        return (
-            1,
-            format!("nameref: {}: invalid reference target\n", target),
-        );
-    }
-
-    (0, String::new())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_ksh93_params_new() {
-        let params = Ksh93Params::new();
-        assert!(!params.version.is_empty());
-        assert_eq!(params.level, 0);
-    }
-
-    #[test]
-    fn test_ksh93_params_get() {
-        let params = Ksh93Params::new();
-        assert!(params.get(".sh.version").is_some());
-        assert!(params.get(".sh.invalid").is_none());
-    }
-
-    #[test]
-    fn test_ksh93_params_enter_function() {
-        let mut params = Ksh93Params::new();
-        params.enter_function("test", Some("test.zsh"), 10);
-        assert_eq!(params.level, 1);
-        assert_eq!(params.fun, Some("test".to_string()));
-        assert_eq!(params.lineno, 10);
-    }
-
-    #[test]
-    fn test_ksh93_params_exit_function() {
-        let mut params = Ksh93Params::new();
-        params.enter_function("test", None, 1);
-        params.exit_function();
-        assert_eq!(params.level, 0);
-        assert!(params.fun.is_none());
-    }
-
-    #[test]
-    fn test_ksh93_params_subshell() {
-        let mut params = Ksh93Params::new();
-        params.enter_subshell();
-        assert_eq!(params.subshell, 1);
-        params.exit_subshell();
-        assert_eq!(params.subshell, 0);
-    }
-
-    #[test]
-    fn test_ksh93_params_set_match() {
-        let mut params = Ksh93Params::new();
-        params.set_match(
-            Some("hello"),
-            &[Some("h".to_string()), Some("ello".to_string())],
-        );
-        assert_eq!(params.match_arr.len(), 3);
-    }
-
-    #[test]
-    fn test_builtin_nameref_no_args() {
-        let options = NamerefOptions::default();
-        let (status, _) = ksh93_wrapper(&[], &options);
-        assert_eq!(status, 1);
-    }
-
-    #[test]
-    fn test_builtin_nameref_no_target() {
-        let options = NamerefOptions::default();
-        let (status, _) = ksh93_wrapper(&["foo"], &options);
-        assert_eq!(status, 1);
-    }
-
-    #[test]
-    fn test_builtin_nameref_valid() {
-        let options = NamerefOptions::default();
-        let (status, _) = ksh93_wrapper(&["foo", "bar"], &options);
-        assert_eq!(status, 0);
-    }
-
-    #[test]
-    fn test_builtin_nameref_invalid_name() {
-        let options = NamerefOptions::default();
-        let (status, _) = ksh93_wrapper(&["123", "bar"], &options);
-        assert_eq!(status, 1);
-    }
+/// Port of `ksh93_wrapper()` from `Src/Modules/ksh93.c:142`. The
+/// per-function wrapper hook — installed by `boot_()` via
+/// `addwrapper(m, wrapper)`. Runs at every shell-function call
+/// when the module is loaded; sets up the `.sh.command` /
+/// `.sh.edcol` / etc. local namerefs, then calls `runshfunc()`
+/// to actually run the function body.
+///
+/// C signature: `static int ksh93_wrapper(Eprog prog, FuncWrap w,
+///                                         char *name)`. Returns 1
+/// when not in EMULATE_KSH so the wrapper chain falls through to
+/// the next entry (c:148-149).
+///
+/// **Partial port — see TODO.md.** The full body needs:
+///   - `EMULATION(EMULATE_KSH)` check (c:148)
+///   - `getiparam(".sh.level")` + funcstack walk (c:146,151)
+///   - `queue_signals()` / `unqueue_signals()` (c:156)
+///   - `createparam(".sh.command", LOCAL_NAMEREF)` for each `.sh.*`
+///     local nameref (c:159+)
+///   - `runshfunc(prog, w, name)` to execute the wrapped function
+///   - `++locallevel` / `--locallevel` book-keeping (c:157)
+/// All of these depend on param-table + funcstack + locallevel
+/// machinery that isn't yet wired through to a free-fn signature
+/// like this. The Rust port returns 1 to mean "skip this wrapper"
+/// — matching the EMULATE_KSH-not-set arm of the C body.
+pub fn ksh93_wrapper(_prog: i32, _w: i32, _name: &str) -> i32 {          // c:142
+    1                                                                    // c:149 not EMULATE_KSH
 }
 
 /// Port of `setup_()` from `Src/Modules/ksh93.c:236`. C body is
@@ -351,8 +116,7 @@ pub fn enables_() -> i32 {                                               // c:25
 
 /// Port of `boot_()` from `Src/Modules/ksh93.c:258`. C body is
 /// `return addwrapper(m, wrapper);` — registers the per-function
-/// `ksh93_wrapper` callback that intercepts function execution
-/// under ksh emulation. zshrs's function dispatch wires the
+/// `ksh93_wrapper` callback. zshrs's function dispatch wires the
 /// ksh93 wrapper directly through `crate::ported::exec` when
 /// emulation is set; the loader hook is a no-op.
 pub fn boot_() -> i32 {                                                  // c:258
@@ -380,55 +144,34 @@ pub fn finish_() -> i32 {                                                // c:28
     0                                                                    // c:287
 }
 
-/// Port of static helper `edcharsetfn()` from
-/// `Src/Modules/ksh93.c:47`. The setfn callback for ksh93's `EDCHAR`
-/// param. C body is intentionally empty (just `;`) — see the comment
-/// at ksh93.c:48-55: a faithful ksh emulation would need to intercept
-/// `$KEYS` before widget lookup (similar to `bindkey -s`), and
-/// register `SIGKEYBD` for that purpose. zsh upstream left it as
-/// a placeholder for future work.
-///
-/// C signature: `static void edcharsetfn(Param pm, char *x)`.
-/// Rust port matches: takes the param ref + new value, does
-/// nothing, mirroring upstream's TODO.
-pub fn edcharsetfn(_pm_name: &str, _value: &str) {                       // c:47
-    // Intentional no-op — ksh93.c:56 is just `;`.
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// Port of static helper `matchgetfn()` from
-/// `Src/Modules/ksh93.c:60`. The getfn callback for ksh93's
-/// `.sh.match` array. Reads zsh's `match` array via `getaparam`,
-/// then under `KSHARRAYS` prepends `$MATCH` as element 0; otherwise
-/// returns the array as-is.
-///
-/// C signature: `static char **matchgetfn(Param pm)`.
-/// Rust port: reads `match` array + `MATCH` scalar from the executor
-/// and assembles the ksh-shape array. The C version mutates the
-/// param's `u.arr` slot in place; Rust returns a fresh `Vec<String>`
-/// since we don't own the param node here.
-pub fn matchgetfn() -> Vec<String> {                                     // c:60
-    // C: `char **zsh_match = getaparam("match");`
-    let zsh_match = std::env::var("match")                                // c:62 (approximation
-        .ok()                                                             // — paramdef-backed
-        .map(|s| s.split(' ').map(|t| t.to_string()).collect::<Vec<_>>()) //   in real wiring)
-        .unwrap_or_default();
-    let kshari = false;                                                   // c:71 isset(KSHARRAYS)
-    // Real wiring will read `KSHARRAYS` option and `match` array
-    // via the param table. Approximation: env-fallback only.
-    if zsh_match.is_empty() {
-        if kshari {
-            // C: `pm->u.arr = mkarray(ztrdup(getsparam("MATCH")));`
-            return vec![std::env::var("MATCH").unwrap_or_default()];     // c:80
-        }
-        return Vec::new();                                                // c:82 NULL
+    #[test]
+    fn ksh93_wrapper_returns_one_when_not_emulate_ksh() {
+        // C c:148-149: `if (!EMULATION(EMULATE_KSH)) return 1;`
+        // The Rust port currently always takes that branch (full
+        // port pending param-table integration).
+        assert_eq!(ksh93_wrapper(0, 0, "foo"), 1);
     }
-    if kshari {                                                           // c:71
-        // C prepends $MATCH as element 0.
-        let mut out = Vec::with_capacity(zsh_match.len() + 1);
-        out.push(std::env::var("MATCH").unwrap_or_default());             // c:75
-        out.extend(zsh_match);                                            // c:76
-        out
-    } else {
-        zsh_match                                                         // c:78 zarrdup
+
+    #[test]
+    fn matchgetfn_empty_returns_empty() {
+        // With $match unset, returns empty Vec (c:82 NULL branch).
+        std::env::remove_var("match");
+        std::env::remove_var("KSHARRAYS");
+        let v = matchgetfn();
+        assert!(v.is_empty());
+    }
+
+    #[test]
+    fn module_loaders_return_zero() {
+        assert_eq!(setup_(), 0);
+        assert_eq!(features_(), 0);
+        assert_eq!(enables_(), 0);
+        assert_eq!(boot_(), 0);
+        assert_eq!(cleanup_(), 0);
+        assert_eq!(finish_(), 0);
     }
 }
