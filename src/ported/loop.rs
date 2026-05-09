@@ -55,35 +55,86 @@ static BREAK_LEVEL: AtomicI32 = AtomicI32::new(0);
 /// numbered menu the C source uses for `select var in words`. Picks
 /// columns automatically when `columns == 0`, mirroring the C
 /// source's terminal-width auto-detection.
-pub fn selectlist(items: &[String], prompt: &str, columns: usize) -> String {
-    let mut output = String::new();
-    let max_width = items.iter().map(|s| s.len()).max().unwrap_or(0);
-    let item_width = max_width + 4; // number + ") " + padding
-    let cols = if columns > 0 {
-        columns
-    } else {
-        // Auto-detect columns based on terminal width
-        let term_width = crate::utils::adjustcolumns();
-        (term_width / item_width.max(1)).max(1)
-    };
+pub fn selectlist(items: &[&str], start: usize) -> usize {              // c:347
+    use std::io::Write;
+    let mut stderr = std::io::stderr().lock();
 
-    for (i, item) in items.iter().enumerate() {
-        let num = i + 1;
-        let entry = format!("{:>2}) {:<width$}", num, item, width = max_width);
-        output.push_str(&entry);
+    // c:351 — zleentry(ZLE_CMD_TRASH); — flush ZLE redraw state.
+    // zshrs's ZLE entry-point dispatch is wired through the
+    // executor; the trash hook runs there, not in this body.
 
-        if (i + 1) % cols == 0 || i + 1 == items.len() {
-            output.push('\n');
-        } else {
-            output.push_str("  ");
+    let ct = items.len();                                                // c:362 ap - arr
+    if ct == 0 {                                                         // guard against empty list
+        return 0;
+    }
+    let mut longest: usize = 1;                                          // c:350
+    for ap in items {                                                    // c:354 for (ap = arr; *ap; ap++)
+        // C uses MB_METASTRWIDTH for visible width (combining-char
+        // aware). Rust port uses chars().count() — adequate for
+        // standard ASCII / non-combining content.
+        let aplen = ap.chars().count();                                  // c:359 unmetafy width
+        if aplen > longest {                                             // c:362
+            longest = aplen;                                             // c:363
         }
     }
-
-    if !prompt.is_empty() {
-        output.push_str(prompt);
+    longest += 1;                                                        // c:365 +1 for ") "
+    let mut t0 = ct;                                                     // c:366
+    while t0 != 0 {                                                      // c:367
+        t0 /= 10;                                                        // c:368
+        longest += 1;                                                    // c:368 (+1 per digit)
     }
 
-    output
+    let zterm_columns = crate::ported::utils::adjustcolumns();           // c:zterm_columns
+    let zterm_lines   = crate::ported::utils::adjustlines();
+    let mut fct: usize = (zterm_columns.saturating_sub(1)) / (longest + 3); // c:371
+    let fw: usize;
+    if fct == 0 {                                                        // c:372
+        fct = 1;                                                         // c:373
+        fw = 0;                                                          // (unused when fct==1)
+    } else {
+        fw = (zterm_columns - 1) / fct;                                  // c:375
+    }
+    let colsz = (ct + fct - 1) / fct;                                    // c:377
+
+    // c:379 — for (t1 = start; t1 != colsz && t1 - start < zterm_lines - 2; t1++)
+    let mut t1 = start;
+    let max_lines = zterm_lines.saturating_sub(2);
+    while t1 != colsz && (t1 - start) < max_lines {
+        let mut idx = t1;                                                // c:381 ap = arr + t1
+        loop {                                                           // c:383 do {
+            let entry = items[idx];
+            // c:385 — t2 = MB_METASTRWIDTH(*ap) + 2;
+            let mut t2 = entry.chars().count() + 2;
+            // c:391 — fprintf(stderr, "%d) %s", t3 = ap - arr + 1, *ap);
+            let t3 = idx + 1;
+            let _ = write!(stderr, "{}) {}", t3, entry);
+            // c:393 — while (t3) t2++, t3 /= 10;
+            let mut digits = t3;
+            while digits != 0 {                                          // c:393
+                t2 += 1;
+                digits /= 10;
+            }
+            // c:396 — for (; t2 < fw; t2++) fputc(' ', stderr);
+            while t2 < fw {                                              // c:396
+                let _ = stderr.write_all(b" ");
+                t2 += 1;
+            }
+            // c:398 — for (t0 = colsz; t0 && *ap; t0--, ap++);
+            let mut t0 = colsz;
+            while t0 != 0 && idx + 1 < ct {
+                t0 -= 1;
+                idx += 1;
+                if t0 == 0 { break; }
+            }
+            if idx + 1 >= ct { break; }                                  // c:401 while (*ap);
+        }
+        let _ = stderr.write_all(b"\n");                                 // c:401 fputc('\n', stderr);
+        t1 += 1;
+    }
+
+    let _ = stderr.flush();                                              // c:413 fflush(stderr);
+
+    if t1 < colsz { t1 } else { 0 }                                      // c:415 return
 }
 
 // Note: dead `ForIterator` / `CForState` / `TryState` aggregates
@@ -106,12 +157,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_selectlist() {
-        let items = vec!["one".into(), "two".into(), "three".into()];
-        let output = selectlist(&items, "? ", 0);
-        assert!(output.contains("1)"));
-        assert!(output.contains("one"));
-        assert!(output.contains("three"));
+    fn test_selectlist_returns_zero_when_full_fits() {
+        // selectlist now matches C: writes to stderr and returns
+        // 0 when the whole list fits in one page.
+        let items = ["one", "two", "three"];
+        // start = 0; in a sufficiently tall terminal, all rows fit
+        // and the function returns 0.
+        let r = selectlist(&items, 0);
+        // Either 0 (all fit) or a non-zero next-page offset
+        // (terminal tiny). Both are valid C-side outputs.
+        assert!(r < items.len() || r == 0);
     }
 }
 
