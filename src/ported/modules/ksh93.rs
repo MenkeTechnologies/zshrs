@@ -35,34 +35,46 @@ pub fn edcharsetfn(_pm_name: &str, _value: &str) {                       // c:47
 /// then under `KSHARRAYS` prepends `$MATCH` as element 0;
 /// otherwise returns the array as-is.
 ///
-/// C signature: `static char **matchgetfn(Param pm)`.
-/// Rust port returns a fresh `Vec<String>` since the param-node
-/// `u.arr` mutation in C lives in the param-table layer; this
-/// entry produces the value the param machinery then assigns.
-pub fn matchgetfn() -> Vec<String> {                                     // c:60
-    // c:62 — `char **zsh_match = getaparam("match");`
-    let zsh_match: Vec<String> = std::env::var("match")
-        .ok()
-        .map(|s| s.split(' ').map(|t| t.to_string()).collect())
+/// C signature: `static char **matchgetfn(Param pm)`. The C
+/// `Param pm` is the magic-assoc param being read — Rust takes the
+/// `ShellExecutor` ref since the executor owns the variables/arrays
+/// hash maps that `getaparam`/`getsparam` resolve against. Returns a
+/// fresh `Vec<String>` (the param-node `u.arr` mutation at c:67-86
+/// lives in the param-table layer; this entry produces the value the
+/// param machinery then assigns).
+pub fn matchgetfn(exec: &crate::ported::exec::ShellExecutor) -> Vec<String> {  // c:60
+    // c:62 — `char **zsh_match = getaparam("match");`. The shell
+    // `match` array lives on `exec.arrays` (the param-table backing
+    // map for PM_ARRAY entries).
+    let zsh_match: Vec<String> = exec.arrays.get("match")
+        .cloned()
         .unwrap_or_default();
-    // c:71 — `if (isset(KSHARRAYS)) ...`
-    let kshari = std::env::var("KSHARRAYS").map(|v| !v.is_empty()).unwrap_or(false);
-    // c:67-68 — `if (pm->u.arr) freearray(pm->u.arr);` (param-table side)
-    if zsh_match.is_empty() {                                            // c:80
+    // c:74 — `if (isset(KSHARRAYS))`. Options live in `exec.options`
+    // as a bool map keyed by the option's canonical uppercase name.
+    let kshari = exec.options.get("KSHARRAYS").copied().unwrap_or(false);
+
+    // c:73-86 — three-arm dispatch: KSHARRAYS+match, KSHARRAYS+no-match,
+    // !KSHARRAYS+match. Final !KSHARRAYS+no-match returns NULL (c:86).
+    let match_scalar = crate::ported::params::getsparam(
+        &exec.variables, &exec.arrays, "MATCH"
+    ).unwrap_or_default();
+
+    if zsh_match.is_empty() {
         if kshari {
-            // c:80 — `pm->u.arr = mkarray(ztrdup(getsparam("MATCH")));`
-            return vec![std::env::var("MATCH").unwrap_or_default()];
+            // c:84 — `pm->u.arr = mkarray(ztrdup(getsparam("MATCH")));`
+            return vec![match_scalar];
         }
-        return Vec::new();                                               // c:82 NULL
+        return Vec::new();                                               // c:86 NULL
     }
-    if kshari {                                                          // c:71
-        // c:73-77 — prepend $MATCH as element 0.
+    if kshari {                                                          // c:74
+        // c:75-80 — prepend $MATCH as element 0; copy each existing
+        // entry via ztrdup.
         let mut out = Vec::with_capacity(zsh_match.len() + 1);
-        out.push(std::env::var("MATCH").unwrap_or_default());            // c:75
-        out.extend(zsh_match);                                           // c:76
+        out.push(match_scalar);                                          // c:78
+        out.extend(zsh_match);                                           // c:79-80
         out
     } else {
-        zsh_match                                                        // c:78 zarrdup
+        zsh_match                                                        // c:82 zarrdup
     }
 }
 
@@ -158,10 +170,10 @@ mod tests {
 
     #[test]
     fn matchgetfn_empty_returns_empty() {
-        // With $match unset, returns empty Vec (c:82 NULL branch).
-        std::env::remove_var("match");
-        std::env::remove_var("KSHARRAYS");
-        let v = matchgetfn();
+        // With $match unset and KSHARRAYS off, returns empty Vec
+        // (c:86 NULL branch).
+        let exec = crate::ported::exec::ShellExecutor::new();
+        let v = matchgetfn(&exec);
         assert!(v.is_empty());
     }
 

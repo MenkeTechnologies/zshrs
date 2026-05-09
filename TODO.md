@@ -61,26 +61,22 @@ ticked DONE in PORT_CHECKLIST.md:
   flag parsing + select() call, matching `bin_zselect()` at
   zselect.c:67-200 line-by-line. ~300-line rewrite.
 
-- `modules/ksh93.rs` — `Ksh93Params` struct, `NamerefOptions`
-  struct. C ksh93.c has zero structs/enums (only the static
-  `partab[]` / `bintab[]` paramdef arrays). Fix path: rewrite
-  `ksh93_wrapper` to take individual args matching C
-  `ex_wrapper(Eprog prog, FuncWrap w, char *name)` and delete
-  the Options bag.
-
 - `modules/langinfo.rs` — `LangInfoItem` enum (probably). C
   langinfo.c has zero structs/enums. Fix path: replace with
   raw `nl_item` integer keys matching the libc enum.
 
-- `modules/stat.rs` — `StatElement` enum, `StatFlags` struct,
-  `FileStat` struct, `FileType` enum, `StatOptions` struct.
-  C stat.c has zero structs/enums. ~1200-line rewrite required:
-  use `std::fs::Metadata` directly + `i32` STF_* bitmask + index
-  into `statelts[]`-style array.
-
-- `modules/mapfile.rs` — check; may have Rust-only types.
-- `modules/hlgroup.rs` — check; may have Rust-only types.
-- `modules/zprof.rs` — has `Pfunc`/`Parc` (matching C — OK).
+- `modules/ksh93.rs` — DONE. Earlier `Ksh93Params`/`NamerefOptions`
+  already deleted; matchgetfn signature updated to take
+  `&ShellExecutor` so the param-table reads happen through
+  `exec.arrays`/`exec.variables` rather than `std::env::var` (zsh
+  shell arrays aren't env vars).
+- `modules/stat.rs` — DONE (commit `4ae9cff069`).
+- `modules/mapfile.rs` — DONE (commit `a2d70f4776`).
+- `modules/hlgroup.rs` — PARTIAL (commit `a4d3925a6a`); blocked
+  on prompt.c match_highlight + zattrescape ports — see above.
+- `modules/zprof.rs` — DONE (commit `92be6c235d`); Profiler bag-of-
+  globals dissolved into module-level CALLS/NCALLS/ARCS/NARCS/
+  STACK/ZPROF_MODULE statics matching C file-statics.
 
 ---
 
