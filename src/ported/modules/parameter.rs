@@ -1886,13 +1886,13 @@ pub fn setpmoption(pm: Param, value: String) {                               // 
     // c:929-940 — optlookup(pm->node.nam), dosetopt(n, on, ...).
     let val = value.as_str();
     if val != "on" && val != "off" {                                         // c:931
-        eprintln!("zshrs: invalid value: {}", value);                        // c:932
+        crate::ported::utils::zwarn(&format!("invalid value: {}", value));   // c:930
         return;
     }
     let nam = pm.node.nam.clone();
     let n = crate::ported::options::optlookup(&nam);                         // c:934
     if n == 0 {
-        eprintln!("zshrs: no such option: {}", nam);                         // c:935
+        crate::ported::utils::zwarn(&format!("no such option: {}", nam));    // c:932
         return;
     }
     let on = val == "on";

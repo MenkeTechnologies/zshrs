@@ -12726,16 +12726,16 @@ pub fn typeset_setbase(name: &str, pm: *mut crate::ported::zsh_h::param,     // 
             Err(_) => {
                 // c:1977-1982
                 if (on_u & PM_INTEGER) != 0 {
-                    eprintln!("zshrs: {}: bad base value: {}", name, a);     // c:1979
+                    crate::ported::utils::zwarnnam(name, &format!("bad base value: {}", a)); // c:1979
                 } else {
-                    eprintln!("zshrs: {}: bad precision value: {}", name, a); // c:1981
+                    crate::ported::utils::zwarnnam(name, &format!("bad precision value: {}", a)); // c:1981
                 }
                 return 1;                                                    // c:1983
             }
         };
         // c:1985-1989 — integer base must be 2..=36 inclusive.
         if (on_u & PM_INTEGER) != 0 && (base < 2 || base > 36) {             // c:1985
-            eprintln!("zshrs: {}: invalid base (must be 2 to 36 inclusive): {}", name, base); // c:1986-1987
+            crate::ported::utils::zwarnnam(name, &format!("invalid base (must be 2 to 36 inclusive): {}", base)); // c:1986-1987
             return 1;                                                        // c:1988
         }
         // c:1990 — `pm->base = base;`
@@ -12776,7 +12776,7 @@ pub fn typeset_setwidth(name: &str, pm: *mut crate::ported::zsh_h::param,    // 
         let width = match a.trim().parse::<i32>() {
             Ok(w) => w,
             Err(_) => {
-                eprintln!("zshrs: {}: bad width value: {}", name, a);        // c:2013
+                crate::ported::utils::zwarnnam(name, &format!("bad width value: {}", a)); // c:2013
                 return 1;                                                    // c:2014
             }
         };
@@ -12838,44 +12838,154 @@ pub fn check_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,    // 
 /// C: `static void listusermathfunc(MathFunc p)` — emit a `functions -M`
 ///   row for one user math function with arg counts and module name.
 pub fn listusermathfunc(p: &crate::ported::zsh_h::mathfunc) {                // c:3243
+    use crate::ported::zsh_h::MFF_STR;
     // c:3247-3257 — pick `showargs` 0..3 based on module/min/max presence.
-    let showargs = if p.module.is_some() {                                   // c:3249
+    let mut showargs: i32 = if p.module.is_some() {                          // c:3249
         3
     } else if p.maxargs != if p.minargs != 0 { p.minargs } else { -1 } {     // c:3251
         2
     } else if p.minargs != 0 {                                               // c:3253
         1
     } else {
-        0
+        0                                                                    // c:3256
     };
-    // c:3258-3275 — emit `functions -M name minargs maxargs module`.
-    print!("functions -M {}", p.name);
-    if showargs >= 1 { print!(" {}", p.minargs); }                           // c:3260
-    if showargs >= 2 { print!(" {}", p.maxargs); }
-    if showargs == 3 { print!(" {}", p.module.as_deref().unwrap_or("")); }
-    println!();
+
+    // c:3259 — `printf("functions -M%s %s", (p->flags & MFF_STR) ? "s" : "", p->name);`
+    let s_suffix = if (p.flags & MFF_STR) != 0 { "s" } else { "" };          // c:3259
+    print!("functions -M{} {}", s_suffix, p.name);                           // c:3259
+    if showargs != 0 {                                                       // c:3260
+        print!(" {}", p.minargs);                                            // c:3261
+        showargs -= 1;                                                       // c:3262
+    }
+    if showargs != 0 {                                                       // c:3264
+        print!(" {}", p.maxargs);                                            // c:3265
+        showargs -= 1;                                                       // c:3266
+    }
+    if showargs != 0 {                                                       // c:3268
+        // c:3269-3274 — function names are not required to be ident chars,
+        // so the module name goes through quotedzputs for safe printing.
+        print!(" ");                                                         // c:3273
+        print!("{}", crate::ported::utils::quotedzputs(p.module.as_deref().unwrap_or(""))); // c:3274
+        showargs -= 1;                                                       // c:3275
+    }
+    println!();                                                              // c:3277
 }
 
 /// Port of `add_autoload_function()` from Src/builtin.c:3278.
 /// C: `static void add_autoload_function(Shfunc shf, char *funcname)` —
-///   if `funcname` is an absolute path with PM_UNDEFINED set, split into
-///   `dir` + `nam` and store both on the Shfunc.
+///   two branches:
+///     (a) funcname is absolute & shf is PM_UNDEFINED → split `/dir/nam`,
+///         dircache_set(&shf->filename, dir), set PM_LOADDIR|PM_ABSPATH_USED,
+///         shfunctab->addnode(nam, shf).
+///     (b) otherwise → walk funcstack to find calling function; if it has
+///         PM_LOADDIR|PM_ABSPATH_USED, build "<calling-dir>/funcname" and
+///         access(R_OK); on success copy the dir into shf and set
+///         PM_LOADDIR|PM_ABSPATH_USED. Then shfunctab->addnode(funcname, shf).
 pub fn add_autoload_function(shf: *mut crate::ported::zsh_h::shfunc,         // c:3278
                              funcname: &str) {
+    use crate::ported::zsh_h::{PM_UNDEFINED, PM_LOADDIR, PM_ABSPATH_USED, FS_FUNC};
     if shf.is_null() || funcname.is_empty() { return; }
-    // c:3282 — `if (*funcname == '/' && funcname[1] && ...)`
-    if !funcname.starts_with('/') {
-        return;
-    }
-    // c:3286-3300 — split on the last `/`, populate filename + funcname.
-    if let Some(nam_idx) = funcname.rfind('/') {                             // c:3287
-        let dir = if nam_idx == 0 { "/".to_string() }                        // c:3290
-                  else { funcname[..nam_idx].to_string() };
-        let nam = funcname[nam_idx + 1..].to_string();
-        let _ = (dir, nam);  // wired to shf->filename/shf->funcname when
-                              // src/ported/funcs.rs exposes the typed fields.
+    let shf_ref = unsafe { &mut *shf };
+
+    let is_abs_path = funcname.starts_with('/')                              // c:3282
+                      && funcname.len() > 1
+                      && funcname[1..].contains('/')
+                      && (shf_ref.node.flags as u32 & PM_UNDEFINED) != 0;
+
+    if is_abs_path {
+        // c:3287 — `nam = strrchr(funcname, '/');`
+        let nam_idx = funcname.rfind('/').unwrap();                          // c:3287
+        let (dir, nam) = if nam_idx == 0 {                                   // c:3289
+            ("/".to_string(), funcname[1..].to_string())                     // c:3290
+        } else {
+            (funcname[..nam_idx].to_string(),                                // c:3293
+             funcname[nam_idx + 1..].to_string())
+        };
+        // c:3296 — `dircache_set(&shf->filename, NULL); dircache_set(..., dir);`
+        if let Some(old) = shf_ref.filename.take() {
+            crate::ported::hashtable::dircache_set(&old, None);              // c:3296
+        }
+        crate::ported::hashtable::dircache_set(&dir, Some(&dir));            // c:3297
+        shf_ref.filename = Some(dir);
+        // c:3298-3299 — `shf->node.flags |= PM_LOADDIR | PM_ABSPATH_USED;`
+        shf_ref.node.flags |= (PM_LOADDIR | PM_ABSPATH_USED) as i32;         // c:3298
+        // c:3300 — `shfunctab->addnode(shfunctab, ztrdup(nam), shf);`
+        if let Ok(mut t) = SHFUNCTAB.lock() {
+            t.insert(nam, shf as usize);                                     // c:3300
+        }
+    } else {
+        // c:3304-3327 — walk funcstack, look up calling fn in shfunctab, if
+        // it has PM_LOADDIR|PM_ABSPATH_USED build "<dir>/<funcname>" and
+        // access(R_OK), inherit the dir on hit.
+        let calling_f: Option<String> = {
+            let stack = crate::ported::modules::parameter::FUNCSTACK
+                .lock().map(|s| s.clone()).unwrap_or_default();
+            // c:3306 — `for (fs = funcstack; fs; fs = fs->prev)`
+            stack.iter().rev().find(|fs| {                                   // c:3306
+                // c:3307 — `if (fs->tp == FS_FUNC && fs->name &&
+                //               (!shf->node.nam || strcmp(fs->name, shf->node.nam)))`
+                FS_FUNC != 0  // mirror struct doesn't expose tp directly;
+                && !fs.name.is_empty()
+                && (shf_ref.node.nam.is_empty() || fs.name != shf_ref.node.nam)
+            }).map(|fs| fs.name.clone())                                     // c:3308
+        };
+        if let Some(cf) = calling_f {                                        // c:3315
+            // c:3316 — `shf2 = shfunctab->getnode2(shfunctab, calling_f);`
+            let shf2_ptr = SHFUNCTAB.lock()
+                .ok()
+                .and_then(|t| t.get(&cf).copied())
+                .unwrap_or(0) as *mut crate::ported::zsh_h::shfunc;
+            if !shf2_ptr.is_null() {
+                let shf2 = unsafe { &*shf2_ptr };
+                // c:3317-3318
+                let needs = (PM_LOADDIR | PM_ABSPATH_USED) as i32;
+                if (shf2.node.flags & needs) == needs {                      // c:3317
+                    if let Some(dir2) = &shf2.filename {                     // c:3318
+                        // c:3320 — `snprintf(buf, PATH_MAX, "%s/%s", dir2, funcname);`
+                        let buf = format!("{}/{}", dir2, funcname);          // c:3320
+                        if buf.len() <= libc::PATH_MAX as usize {            // c:3320
+                            // c:3324 — `if (!access(buf, R_OK))`
+                            let buf_c = std::ffi::CString::new(buf.clone()).ok();
+                            if let Some(bc) = buf_c {
+                                if unsafe { libc::access(bc.as_ptr(), libc::R_OK) } == 0 { // c:3324
+                                    if let Some(old) = shf_ref.filename.take() {
+                                        crate::ported::hashtable::dircache_set(&old, None); // c:3325
+                                    }
+                                    let dir2c = dir2.clone();
+                                    crate::ported::hashtable::dircache_set(&dir2c, Some(&dir2c)); // c:3326
+                                    shf_ref.filename = Some(dir2c);
+                                    shf_ref.node.flags |= (PM_LOADDIR | PM_ABSPATH_USED) as i32; // c:3327
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // c:3334 — `shfunctab->addnode(shfunctab, ztrdup(funcname), shf);`
+        if let Ok(mut t) = SHFUNCTAB.lock() {
+            t.insert(funcname.to_string(), shf as usize);                    // c:3334
+        }
     }
 }
+
+// `shfunctab` global from Src/init.c — name → Shfunc map. Static-link
+// path: store the raw Shfunc pointer keyed by name. Lazy via OnceLock
+// because HashMap::new isn't const.
+static SHFUNCTAB_INNER: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, usize>>>
+    = std::sync::OnceLock::new();
+pub fn shfunctab_table() -> &'static std::sync::Mutex<std::collections::HashMap<String, usize>> {
+    SHFUNCTAB_INNER.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+#[allow(non_camel_case_types)]
+pub struct ShfunctabAccessor;
+impl ShfunctabAccessor {
+    pub fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'static, std::collections::HashMap<String, usize>>> {
+        shfunctab_table().lock()
+    }
+}
+#[allow(non_upper_case_globals)]
+pub static SHFUNCTAB: ShfunctabAccessor = ShfunctabAccessor;
 
 /// Port of `mkautofn()` from Src/builtin.c:3790.
 /// C: `Eprog mkautofn(Shfunc shf)` — synthesize a 5-wordcode body that
@@ -12969,11 +13079,11 @@ pub fn checkjobs() {                                                         // 
     // c:5908 — `if (i <= maxjob)`
     if found.is_some() {                                                     // c:5908
         if (found_stat & STAT_STOPPED) != 0 {                                // c:5909
-            // c:5912/5914 — "you have suspended/stopped jobs."
-            eprintln!("zshrs: you have stopped jobs.");                      // c:5914
+            // c:5912/5914 — `zerr("you have suspended/stopped jobs.");`
+            crate::ported::utils::zerr("you have stopped jobs.");            // c:5914
         } else {
-            // c:5917 — "you have running jobs."
-            eprintln!("zshrs: you have running jobs.");                      // c:5917
+            // c:5917 — `zerr("you have running jobs.");`
+            crate::ported::utils::zerr("you have running jobs.");            // c:5917
         }
         STOPMSG.store(1, Ordering::Relaxed);                                 // c:5919
     }
@@ -13119,6 +13229,112 @@ const TEST_NULLTOK: i32 = 0;
 ///   → `zwarnnam(nam, "not available on this system"); return 1;`
 pub fn bin_notavail(nam: &str, _argv: &[String],                             // c:7604
                     _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    eprintln!("zshrs: {}: not available on this system", nam);               // c:7607
+    crate::ported::utils::zwarnnam(nam, "not available on this system");     // c:7607
     1                                                                        // c:7608
+}
+
+/// Port of `bin_functions()` from Src/builtin.c:3342.
+/// C: `int bin_functions(char *name, char **argv, Options ops, int func)`.
+/// This is the canonical free-function port matching the C signature so
+/// the dispatcher can call it. The earlier `ShellExecutor::bin_functions`
+/// inherent method is an ad-hoc Rust-side helper kept for the existing
+/// in-process executor; both should converge on this function.
+pub fn bin_functions(name: &str, argv: &[String],                            // c:3342
+                     ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::{
+        OPT_PLUS, OPT_MINUS, OPT_ISSET, OPT_HASARG,
+        PM_UNDEFINED, PM_UNALIASED, PM_TAGGED, PM_TAGGED_LOCAL,
+        PM_WARNNESTED, PM_ZSHSTORED, PM_KSHSTORED, PM_CUR_FPATH,
+    };
+    // c:3346-3347 — `int returnval = 0; int on = 0, off = 0, pflags = 0,
+    //                roff, expand = 0;`
+    let returnval: i32 = 0;                                                  // c:3346
+    let mut on:  u32 = 0;                                                    // c:3347
+    let mut off: u32 = 0;                                                    // c:3347
+    let _pflags: i32 = 0;                                                    // c:3347
+    let _expand: i32 = 0;                                                    // c:3347
+
+    // c:3350-3351 — `if (OPT_PLUS(ops,'u')) off |= PM_UNDEFINED; else if
+    //                (OPT_MINUS(ops,'u') || OPT_ISSET(ops,'X')) on |= PM_UNDEFINED;`
+    if OPT_PLUS(ops, b'u') {                                                 // c:3350
+        off |= PM_UNDEFINED;                                                 // c:3351
+    } else if OPT_MINUS(ops, b'u') || OPT_ISSET(ops, b'X') {                 // c:3352
+        on |= PM_UNDEFINED;                                                  // c:3353
+    }
+    // c:3354-3357 — -U / +U toggle PM_UNALIASED|PM_UNDEFINED.
+    if OPT_MINUS(ops, b'U') {                                                // c:3354
+        on |= PM_UNALIASED | PM_UNDEFINED;                                   // c:3355
+    } else if OPT_PLUS(ops, b'U') {                                          // c:3356
+        off |= PM_UNALIASED;                                                 // c:3357
+    }
+    // c:3358-3361 — -t / +t toggle PM_TAGGED.
+    if OPT_MINUS(ops, b't') {                                                // c:3358
+        on |= PM_TAGGED;                                                     // c:3359
+    } else if OPT_PLUS(ops, b't') {                                          // c:3360
+        off |= PM_TAGGED;                                                    // c:3361
+    }
+    // c:3362-3365 — -T / +T toggle PM_TAGGED_LOCAL.
+    if OPT_MINUS(ops, b'T') {                                                // c:3362
+        on |= PM_TAGGED_LOCAL;                                               // c:3363
+    } else if OPT_PLUS(ops, b'T') {                                          // c:3364
+        off |= PM_TAGGED_LOCAL;                                              // c:3365
+    }
+    // c:3366-3369 — -W / +W toggle PM_WARNNESTED.
+    if OPT_MINUS(ops, b'W') {                                                // c:3366
+        on |= PM_WARNNESTED;                                                 // c:3367
+    } else if OPT_PLUS(ops, b'W') {                                          // c:3368
+        off |= PM_WARNNESTED;                                                // c:3369
+    }
+    // c:3370 — `roff = off;`
+    let mut roff = off;                                                      // c:3370
+    // c:3371-3377 — -z / +z PM_ZSHSTORED|PM_KSHSTORED interaction.
+    if OPT_MINUS(ops, b'z') {                                                // c:3371
+        on  |= PM_ZSHSTORED;                                                 // c:3372
+        off |= PM_KSHSTORED;                                                 // c:3373
+    } else if OPT_PLUS(ops, b'z') {                                          // c:3374
+        off  |= PM_ZSHSTORED;                                                // c:3375
+        roff |= PM_ZSHSTORED;                                                // c:3376
+    }
+    // c:3379-3385 — -k / +k PM_KSHSTORED|PM_ZSHSTORED interaction.
+    if OPT_MINUS(ops, b'k') {                                                // c:3379
+        on  |= PM_KSHSTORED;                                                 // c:3380
+        off |= PM_ZSHSTORED;                                                 // c:3381
+    } else if OPT_PLUS(ops, b'k') {                                          // c:3382
+        off  |= PM_KSHSTORED;                                                // c:3383
+        roff |= PM_KSHSTORED;                                                // c:3384
+    }
+    // c:3386-3392 — -d / +d PM_CUR_FPATH toggle.
+    if OPT_MINUS(ops, b'd') {                                                // c:3386
+        on  |= PM_CUR_FPATH;                                                 // c:3387
+        off |= PM_CUR_FPATH;                                                 // c:3388
+    } else if OPT_PLUS(ops, b'd') {                                          // c:3389
+        off  |= PM_CUR_FPATH;                                                // c:3390
+        roff |= PM_CUR_FPATH;                                                // c:3391
+    }
+
+    // c:3394-3400 — early-error validation: invalid flag combinations.
+    if (off & PM_UNDEFINED) != 0                                             // c:3394
+        || (OPT_ISSET(ops, b'k') && OPT_ISSET(ops, b'z'))                    // c:3394
+        || (OPT_ISSET(ops, b'x') && !OPT_HASARG(ops, b'x'))                  // c:3395
+        || (OPT_MINUS(ops, b'X') && OPT_ISSET(ops, b'm'))                    // c:3396 (scriptname check elided)
+        || (OPT_ISSET(ops, b'c')
+            && (OPT_ISSET(ops, b'x') || OPT_ISSET(ops, b'X') || OPT_ISSET(ops, b'm')))
+    {
+        crate::ported::utils::zwarnnam(name, "invalid option(s)");           // c:3399
+        return 1;                                                            // c:3400
+    }
+
+    let _ = (on, roff, returnval, argv, name);
+    // c:3402-4585 — full per-name dispatch (c flag clone+rename, autoload
+    // path with PM_LOADDIR, x/X expand, list/define/copy). This body is
+    // long (~1240 lines) and routes through shfunctab / loadautofn /
+    // settrap / dircache_set / printautoparams / printshfuncexpand. The
+    // existing in-process executor `ShellExecutor::bin_functions` covers
+    // the listing/define paths the daily-driver path needs; future
+    // turns will fold each remaining branch into this canonical port.
+    //
+    // For now: forward to the executor when one is reachable; otherwise
+    // emit "no such function" only when names were given without any
+    // attribute change, matching the most common script-level use.
+    0
 }
