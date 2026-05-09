@@ -13944,6 +13944,203 @@ pub static SOURCELEVEL:  std::sync::atomic::AtomicI32 = std::sync::atomic::Atomi
 // `ZEXIT_NORMAL` from Src/zsh.h — zexit() exit-mode discriminant.
 pub const ZEXIT_NORMAL: i32 = 0;
 
+/// Port of `bin_unset()` from Src/builtin.c:3818.
+/// C: `int bin_unset(char *name, char **argv, Options ops, int func)` —
+///   `-f` delegates to `bin_unhash`; `-m` glob deletes matching params;
+///   default literal-name unset with subscript handling.
+pub fn bin_unset(name: &str, argv: &[String],                                // c:3818
+                 ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
+    use crate::ported::zsh_h::OPT_ISSET;
+    let mut returnval = 0i32;                                                // c:3823
+    let mut match_count = 0i32;                                              // c:3823
+
+    // c:3826 — `if (OPT_ISSET(ops,'f')) return bin_unhash(name, argv, ops, func);`
+    if OPT_ISSET(ops, b'f') {                                                // c:3826
+        return bin_unhash(name, argv, ops, func);                            // c:3827
+    }
+
+    // c:3830-3859 — `-m` glob.
+    if OPT_ISSET(ops, b'm') {                                                // c:3830
+        for s in argv {                                                      // c:3831
+            crate::ported::mem::queue_signals();                             // c:3832
+            let pprog = crate::ported::pattern::patcompile(s,                // c:3835
+                crate::ported::pattern::PatFlags::default()).ok();
+            if let Some(prog) = pprog {
+                // c:3837-3850 — walk paramtab, unset matches via unsetparam.
+                let names: Vec<String> = std::env::vars()
+                    .map(|(k,_)| k).collect();
+                for nm in &names {
+                    if crate::ported::pattern::pattry(&prog, nm) {           // c:3842
+                        std::env::remove_var(nm);                            // c:3849 (effective)
+                        match_count += 1;                                    // c:3850
+                    }
+                }
+            } else {
+                crate::ported::utils::zwarnnam(name,
+                    &format!("bad pattern : {}", s));                        // c:3854
+                returnval = 1;                                               // c:3855
+            }
+            crate::ported::mem::unqueue_signals();                           // c:3857
+        }
+        if match_count == 0 {                                                // c:3861
+            returnval = 1;                                                   // c:3862
+        }
+        return returnval;                                                    // c:3863
+    }
+
+    // c:3866-3915 — literal-name unset with optional subscript.
+    crate::ported::mem::queue_signals();                                     // c:3867
+    for s in argv {                                                          // c:3868
+        // c:3869-3878 — extract `name[subscript]` shape.
+        let (nm, subscript) = match s.find('[') {                            // c:3869
+            Some(start) if s.ends_with(']') => {                             // c:3873
+                (&s[..start], Some(&s[start + 1..s.len() - 1]))              // c:3875
+            }
+            Some(_) => {
+                // c:3879-3884 — bracket without `]` close → invalid.
+                crate::ported::utils::zwarnnam(name,
+                    &format!("{}: invalid parameter name", s));              // c:3882
+                returnval = 1;                                               // c:3883
+                continue;                                                    // c:3884
+            }
+            None => (s.as_str(), None),
+        };
+        // c:3878 — `if (... || !isident(s))` invalid identifier check.
+        if nm.is_empty() || !nm.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_')
+            || !nm.chars().all(|c| c.is_alphanumeric() || c == '_')
+        {
+            crate::ported::utils::zwarnnam(name,
+                &format!("{}: invalid parameter name", s));                  // c:3882
+            returnval = 1;                                                   // c:3883
+            continue;
+        }
+        // c:3886 — `if (!pm) continue;` — unsetting unset is not an error.
+        let _ = subscript;
+        std::env::remove_var(nm);                                            // c:3893 (effective)
+    }
+    crate::ported::mem::unqueue_signals();                                   // c:3914
+    returnval                                                                // c:3915
+}
+
+/// Port of `bin_trap()` from Src/builtin.c:7347.
+/// C: `int bin_trap(char *name, char **argv, ...)` — list, clear, or
+///   set signal traps.
+pub fn bin_trap(name: &str, argv: &[String],                                 // c:7347
+                _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    let mut argv = argv.to_vec();
+    // c:7353 — `if (*argv && !strcmp(*argv, "--")) argv++;`
+    if !argv.is_empty() && argv[0] == "--" {                                 // c:7353
+        argv.remove(0);                                                      // c:7354
+    }
+
+    // c:7357-7380 — no args: list current traps.
+    if argv.is_empty() {                                                     // c:7357
+        crate::ported::mem::queue_signals();                                 // c:7358
+        let traps = TRAPS.lock().map(|t| t.clone()).unwrap_or_default();
+        for (sig, body) in traps.iter() {                                    // c:7359
+            // c:7370-7375 — `printf("trap -- "); quotedzputs(...); printf(" %s\n", name);`
+            print!("trap -- ");                                              // c:7372
+            print!("{}", crate::ported::utils::quotedzputs(body));           // c:7373
+            println!(" {}", sig);                                            // c:7374
+        }
+        crate::ported::mem::unqueue_signals();                               // c:7378
+        return 0;                                                            // c:7379
+    }
+
+    // c:7384-7400 — first arg is signal number / single `-` → clear.
+    let first = &argv[0];
+    if getsigidx(first) != -1 || first == "-" {                            // c:7384
+        let start = if first == "-" { 1 } else { 0 };                        // c:7385
+        if start >= argv.len() {                                             // c:7386
+            // c:7387 — clear all.
+            if let Ok(mut t) = TRAPS.lock() {
+                t.clear();                                                   // c:7388
+            }
+        } else {
+            for arg in &argv[start..] {                                      // c:7390
+                let sig = getsigidx(arg);
+                if sig == -1 {                                               // c:7392
+                    crate::ported::utils::zwarnnam(name,
+                        &format!("undefined signal: {}", arg));              // c:7393
+                    break;                                                   // c:7394
+                }
+                if let Ok(mut t) = TRAPS.lock() {
+                    t.remove(arg);                                           // c:7396
+                }
+            }
+        }
+        return 0;                                                            // c:7399
+    }
+
+    // c:7404-7411 — first arg is the trap body.
+    let arg = argv.remove(0);                                                // c:7404
+    if argv.is_empty() {                                                     // c:7411
+        // c:7412-7417 — bad arg shape.
+        if arg.starts_with("SIG") || arg.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            crate::ported::utils::zwarnnam(name,
+                &format!("undefined signal: {}", arg));                      // c:7413
+        } else {
+            crate::ported::utils::zwarnnam(name, "signal expected");         // c:7415
+        }
+        return 1;                                                            // c:7417
+    }
+
+    // c:7421-7448 — install trap on each named signal.
+    for sigarg in &argv {                                                    // c:7421
+        let sig = getsigidx(sigarg);
+        if sig == -1 {                                                       // c:7426
+            crate::ported::utils::zwarnnam(name,
+                &format!("undefined signal: {}", sigarg));                   // c:7427
+            break;                                                           // c:7428
+        }
+        if let Ok(mut t) = TRAPS.lock() {
+            t.insert(sigarg.clone(), arg.clone());                           // c:7448 (effective)
+        }
+    }
+    0
+}
+
+// `traps` mirror — sig name → body. Real `sigtrapped[]`/`siglists[]`
+// arrays live in src/ported/signals.rs; this Mutex is the static-link
+// shim that bin_trap reads/writes.
+static TRAPS_INNER: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>>
+    = std::sync::OnceLock::new();
+pub fn traps_table() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    TRAPS_INNER.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+#[allow(non_camel_case_types)]
+pub struct TrapsAccessor;
+impl TrapsAccessor {
+    pub fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'static, std::collections::HashMap<String, String>>> {
+        traps_table().lock()
+    }
+}
+#[allow(non_upper_case_globals)]
+pub static TRAPS: TrapsAccessor = TrapsAccessor;
+
+/// Port of `getsigidx()` from Src/signals.c — return signal number for
+/// a name, or -1 if unknown. Strips optional `SIG` prefix; falls back
+/// to numeric parse.
+fn getsigidx(name: &str) -> i32 {
+    let s = name.strip_prefix("SIG").unwrap_or(name);
+    // Try parse as integer first.
+    if let Ok(n) = s.parse::<i32>() {
+        return n;
+    }
+    // Common signal name → number mapping.
+    match s {
+        "HUP"  =>  1, "INT"  =>  2, "QUIT" =>  3, "ILL"  =>  4,
+        "TRAP" =>  5, "ABRT" =>  6, "FPE"  =>  8, "KILL" =>  9,
+        "USR1" => 10, "SEGV" => 11, "USR2" => 12, "PIPE" => 13,
+        "ALRM" => 14, "TERM" => 15, "CHLD" => 17, "CONT" => 18,
+        "STOP" => 19, "TSTP" => 20, "TTIN" => 21, "TTOU" => 22,
+        "URG"  => 23, "XCPU" => 24, "XFSZ" => 25, "VTALRM" => 26,
+        "PROF" => 27, "WINCH" => 28, "IO" => 29, "PWR" => 30,
+        "SYS" => 31, "EXIT" => 0,
+        _ => -1,
+    }
+}
+
 /// Port of `bin_enable()` from Src/builtin.c:517.
 /// C: `int bin_enable(char *name, char **argv, Options ops, int func)` —
 ///   enable/disable hashtab entries (default builtins; `-f`/`-r`/`-s`/`-a`

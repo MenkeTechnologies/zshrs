@@ -454,3 +454,7 @@ nameddir_table
 # the static must be lazily initialized through this fn. Wraps the
 # Mutex used by add_autoload_function and other shfunctab call sites.
 shfunctab_table
+# traps_table (builtin.rs) — OnceLock accessor for the C `sigtrapped[]`
+# / `siglists[]` arrays exposed via a name → body Mutex<HashMap>.
+# HashMap::new() isn't const so the static is lazy-initialized.
+traps_table
