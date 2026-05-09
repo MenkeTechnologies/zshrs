@@ -458,3 +458,9 @@ shfunctab_table
 # / `siglists[]` arrays exposed via a name → body Mutex<HashMap>.
 # HashMap::new() isn't const so the static is lazy-initialized.
 traps_table
+# ensure_termcap_loaded (modules/termcap.rs) — caches the result of
+# tgetent(NULL, $TERM) for the lifetime of the process. The C source
+# calls tgetent() inline at every consumer; the Rust port hoists this
+# into a helper so each FFI call site stays a 1:1 port of its libtermcap
+# call.
+ensure_termcap_loaded

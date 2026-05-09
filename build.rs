@@ -30,6 +30,13 @@ fn main() {
     println!("cargo:rerun-if-changed=tests/data/ported_fn_allowlist.txt");
     println!("cargo:rerun-if-changed=build.rs");
 
+    // Link libtermcap (BSD/macOS) or libtinfo (Linux) for the
+    // tgetent/tgetflag/tgetnum/tgetstr FFI in src/ported/modules/termcap.rs.
+    #[cfg(target_os = "macos")]
+    println!("cargo:rustc-link-lib=ncurses");
+    #[cfg(target_os = "linux")]
+    println!("cargo:rustc-link-lib=tinfo");
+
     let ported_root = manifest_dir.join("src/ported");
     let c_index_path = manifest_dir.join("tests/data/zsh_c_fn_names.txt");
     let allowlist_path = manifest_dir.join("tests/data/ported_fn_allowlist.txt");
