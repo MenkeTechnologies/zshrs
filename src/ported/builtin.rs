@@ -10615,7 +10615,18 @@ impl crate::ported::exec::ShellExecutor {
             ":" => 0,
             "test" | "[" => self.bin_test(cmd_args),
             "local" => self.builtin_local(cmd_args),
-            "private" => crate::modules::param_private::bin_private(self, "private", cmd_args),
+            "private" => {
+                // bin_private now takes the canonical C signature
+                // (name, args, ops, func, assigns) per Src/Modules/
+                // param_private.c:217. Build an empty Options + assigns
+                // for the dispatch.
+                use crate::ported::zsh_h::{options, MAX_OPS};
+                let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                        argscount: 0, argsalloc: 0 };
+                let mut assigns: Vec<(String, String)> = Vec::new();
+                crate::modules::param_private::bin_private("private",
+                    cmd_args, &mut ops, 0, &mut assigns)
+            }
             "declare" => self.builtin_declare(cmd_args),
             "typeset" => self.bin_typeset(cmd_args),
             "read" => self.bin_read(cmd_args),

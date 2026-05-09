@@ -9662,7 +9662,17 @@ impl crate::ported::exec::ShellExecutor {
             "zpty" => return self.bin_zpty(&rest_vec),
             "ztcp" => return self.bin_ztcp(&rest_vec),
             "zsocket" => return self.bin_zsocket(&rest_vec),
-            "private" => return crate::modules::param_private::bin_private(self, "private", &rest_vec),
+            "private" => {
+                // bin_private now takes the canonical C signature
+                // (name, args, ops, func, assigns) per Src/Modules/
+                // param_private.c:217.
+                use crate::ported::zsh_h::{options, MAX_OPS};
+                let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                        argscount: 0, argsalloc: 0 };
+                let mut assigns: Vec<(String, String)> = Vec::new();
+                return crate::modules::param_private::bin_private("private",
+                    &rest_vec, &mut ops, 0, &mut assigns);
+            }
             "zformat" => return self.bin_zformat(&rest_vec),
             "zregexparse" => return self.bin_zregexparse(&rest_vec),
             // zsh-bundled rename helpers — implemented natively in
