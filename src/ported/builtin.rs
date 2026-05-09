@@ -13753,3 +13753,193 @@ pub fn bin_shift(name: &str, argv: &[String],                                // 
 // `pparams` global from Src/init.c — positional parameters $1..$N.
 pub static PPARAMS: std::sync::Mutex<Vec<String>> =
     std::sync::Mutex::new(Vec::new());
+
+/// Port of `bin_let()` from Src/builtin.c:7469.
+/// C: `int bin_let(UNUSED(char *name), char **argv, UNUSED(Options ops),
+///     UNUSED(int func))` — evaluate each arg as a math expression;
+///   return 1 if the final value is zero (success/false), 0 if non-zero
+///   (true), 2 on math error.
+pub fn bin_let(_name: &str, argv: &[String],                                 // c:7469
+               _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::math::{matheval, Mnumber, MN_INTEGER};
+    // c:7472 — `mnumber val = zero_mnumber;`
+    let mut val: Mnumber = Mnumber::default();                               // c:7472
+    let mut had_error = false;
+    // c:7474-7475 — `while (*argv) val = matheval(*argv++);`
+    for expr in argv {                                                       // c:7474
+        match matheval(expr) {                                               // c:7475
+            Ok(v) => val = v,
+            Err(_) => { had_error = true; break; }
+        }
+    }
+    // c:7476-7480 — math errors are non-fatal in let; return 2.
+    if had_error {                                                           // c:7476
+        return 2;                                                            // c:7479
+    }
+    // c:7482 — `return (val.type == MN_INTEGER) ? val.u.l == 0 : val.u.d == 0.0;`
+    if val.type_ == MN_INTEGER {                                             // c:7482
+        (val.l == 0) as i32
+    } else {
+        (val.d == 0.0) as i32
+    }
+}
+
+/// Port of `bin_times()` from Src/builtin.c:7324.
+/// C: `int bin_times(UNUSED args)` — `times(&buf)`; print user/system
+///   for self then for children, separated by spaces and newlines.
+pub fn bin_times(_name: &str, _argv: &[String],                              // c:7324
+                 _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    let mut buf: libc::tms = unsafe { std::mem::zeroed() };                  // c:7326
+    // c:7330 — `if (times(&buf) == -1) return 1;`
+    if unsafe { libc::times(&mut buf) } == (-1i64) as libc::clock_t {        // c:7330
+        return 1;                                                            // c:7331
+    }
+    let clktck = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
+    let clktck = if clktck <= 0.0 { 100.0 } else { clktck };
+    let pttime = |t: libc::clock_t| {
+        // C `pttime` formats clock ticks as Mm S.SSSs; static-link path
+        // prints seconds with three decimals matching the expected shape.
+        let secs = t as f64 / clktck;
+        print!("{}m{:.3}s", (secs / 60.0) as i64, secs % 60.0);
+    };
+    pttime(buf.tms_utime);                                                   // c:7332
+    print!(" ");                                                             // c:7333
+    pttime(buf.tms_stime);                                                   // c:7334
+    println!();                                                              // c:7335
+    pttime(buf.tms_cutime);                                                  // c:7336
+    print!(" ");                                                             // c:7337
+    pttime(buf.tms_cstime);                                                  // c:7338
+    println!();                                                              // c:7339
+    0                                                                        // c:7340
+}
+
+/// Port of `bin_eval()` from Src/builtin.c:6393.
+/// C: `int bin_eval(UNUSED args)` → `return eval(argv);`
+pub fn bin_eval(_name: &str, argv: &[String],                                // c:6393
+                _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    eval(argv)                                                               // c:6396
+}
+
+/// Port of `bin_ttyctl()` from Src/builtin.c:7454.
+/// C: `int bin_ttyctl(UNUSED args, Options ops, ...)` — `-f` freezes the
+///   tty, `-u` unfreezes; otherwise emit "tty is [not ]frozen".
+pub fn bin_ttyctl(_name: &str, _argv: &[String],                             // c:7454
+                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::OPT_ISSET;
+    use std::sync::atomic::Ordering;
+    if OPT_ISSET(ops, b'f') {                                                // c:7456
+        TTYFROZEN.store(1, Ordering::Relaxed);                               // c:7457
+    } else if OPT_ISSET(ops, b'u') {                                         // c:7458
+        TTYFROZEN.store(0, Ordering::Relaxed);                               // c:7459
+    } else {
+        let f = TTYFROZEN.load(Ordering::Relaxed);
+        // c:7461 — `printf("tty is %sfrozen\n", ttyfrozen ? "" : "not ");`
+        println!("tty is {}frozen", if f != 0 { "" } else { "not " });       // c:7461
+    }
+    0                                                                        // c:7463
+}
+
+// `ttyfrozen` global from Src/init.c — tty-state freeze flag controlled
+// by `ttyctl -f/-u` and consulted by ZLE on prompt entry.
+pub static TTYFROZEN: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `bin_break()` from Src/builtin.c:5809.
+/// C: `int bin_break(char *name, char **argv, UNUSED(Options ops), int func)`
+/// — handles BIN_BREAK / BIN_CONTINUE / BIN_RETURN / BIN_LOGOUT / BIN_EXIT.
+pub fn bin_break(name: &str, argv: &[String],                                // c:5809
+                 _ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
+    use crate::ported::math::mathevali;
+    use std::sync::atomic::Ordering;
+    // BIN_BREAK/CONTINUE/RETURN/EXIT/LOGOUT live at the top of this file
+    // (c:5707-5712 in Src/builtin.c via the BUILTIN(...) table).
+    // c:5811 — `int num = lastval, nump = 0, implicit;`
+    let mut num: i32 = LASTVAL.load(Ordering::Relaxed);                      // c:5811
+    let mut nump = 0i32;                                                     // c:5811
+    let implicit = argv.is_empty();                                          // c:5814
+    // c:5815-5818 — first arg parsed as math expr.
+    if !implicit {                                                           // c:5815
+        num = mathevali(&argv[0]).unwrap_or(0) as i32;                       // c:5816
+        nump = 1;                                                            // c:5817
+    }
+
+    // c:5820-5823 — positive-num requirement for BIN_CONTINUE / BIN_BREAK.
+    if nump > 0 && (func == BIN_CONTINUE || func == BIN_BREAK) && num <= 0 { // c:5820
+        crate::ported::utils::zwarnnam(name, &format!("argument is not positive: {}", num)); // c:5821
+        return 1;                                                            // c:5822
+    }
+
+    let loops = LOOPS.load(Ordering::Relaxed);
+    match func {
+        // c:5825-5832 — BIN_CONTINUE: must be in a loop, set contflag.
+        x if x == BIN_CONTINUE => {                                          // c:5826
+            if loops == 0 {                                                  // c:5827
+                crate::ported::utils::zwarnnam(name, "not in while, until, select, or repeat loop"); // c:5828
+                return 1;                                                    // c:5829
+            }
+            CONTFLAG.store(1, Ordering::Relaxed);                            // c:5831
+            // FALLTHROUGH to BIN_BREAK
+            if loops == 0 {
+                return 1;
+            }
+            BREAKS.store(if nump != 0 { num.min(loops) } else { 1 },         // c:5837
+                         Ordering::Relaxed);
+        }
+        // c:5832-5838 — BIN_BREAK.
+        x if x == BIN_BREAK => {                                             // c:5832
+            if loops == 0 {                                                  // c:5833
+                crate::ported::utils::zwarnnam(name, "not in while, until, select, or repeat loop"); // c:5834
+                return 1;                                                    // c:5835
+            }
+            BREAKS.store(if nump != 0 { num.min(loops) } else { 1 },         // c:5837
+                         Ordering::Relaxed);
+        }
+        // c:5839-5860 — BIN_RETURN.
+        x if x == BIN_RETURN => {
+            let interactive = crate::ported::options::optlookup("interactive") > 0;
+            let shinstdin = crate::ported::options::optlookup("shinstdin") > 0;
+            let locallevel = LOCALLEVEL.load(Ordering::Relaxed);
+            let sourcelevel = SOURCELEVEL.load(Ordering::Relaxed);
+            // c:5840-5841 — `if ((interactive && shinstdin) || locallevel || sourcelevel)`
+            if (interactive && shinstdin) || locallevel != 0 || sourcelevel != 0 { // c:5840
+                RETFLAG.store(1, Ordering::Relaxed);                         // c:5842
+                BREAKS.store(loops, Ordering::Relaxed);                      // c:5843
+                LASTVAL.store(num, Ordering::Relaxed);                       // c:5844
+                // c:5845-5854 — POSIX-trap return-status handling, deferred.
+                let _ = implicit;
+                return num;                                                  // c:5856
+            }
+            // c:5858 — fallthrough: treat as logout/exit.
+            zexit(num, ZEXIT_NORMAL);                                        // c:5858
+        }
+        // c:5860-5867 — BIN_LOGOUT: refuse if not LOGINSHELL.
+        x if x == BIN_LOGOUT => {
+            let loginshell = crate::ported::options::optlookup("login") > 0;
+            if !loginshell {                                                 // c:5861
+                crate::ported::utils::zwarnnam(name, "not login shell");     // c:5862
+                return 1;                                                    // c:5863
+            }
+            // FALLTHROUGH to BIN_EXIT
+            zexit(num, ZEXIT_NORMAL);
+        }
+        // c:5867+ — BIN_EXIT: complex local-scope guard.
+        x if x == BIN_EXIT => {
+            zexit(num, ZEXIT_NORMAL);
+        }
+        _ => {}
+    }
+    0
+}
+
+// `loops` / `breaks` / `contflag` / `retflag` / `locallevel` / `sourcelevel`
+// globals from Src/loop.c + Src/init.c — control-flow state consulted by
+// the bin_break dispatcher.
+pub static LOOPS:        std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static BREAKS:       std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static CONTFLAG:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static RETFLAG:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static LOCALLEVEL:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static SOURCELEVEL:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+// `ZEXIT_NORMAL` from Src/zsh.h — zexit() exit-mode discriminant.
+pub const ZEXIT_NORMAL: i32 = 0;
