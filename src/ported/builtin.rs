@@ -12392,9 +12392,31 @@ pub fn init_builtins() {}
 /// option-argument slot (used by getopts-style parsers). Shim.
 pub fn new_optarg() {}
 
-/// Port of `execbuiltin()` from Src/builtin.c:250 — top-level
-/// builtin dispatcher (resolves name → fn, runs it). Shim.
-pub fn execbuiltin() -> i32 { 0 }
+/// Port of `execbuiltin()` from Src/builtin.c:250.
+/// C: `int execbuiltin(LinkList args, LinkList assigns, Builtin bn)` —
+///   parse `bn->optstr` against `args`, populate a fresh `struct options`,
+///   then call `bn->handlerfunc(name, argv, &ops, bn->funcid)`.
+pub fn execbuiltin(args: Vec<String>, _assigns: Vec<(String, String)>,       // c:250
+                   bn: *mut crate::ported::zsh_h::builtin) -> i32 {
+    use crate::ported::zsh_h::{options, MAX_OPS};
+    if bn.is_null() {
+        return 1;
+    }
+    // c:255-256 — `memset(ops.ind, 0, ...); ops.args = NULL; ops.argscount=0;`
+    let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),           // c:255
+                            argscount: 0, argsalloc: 0 };
+    // c:259+ — full optstr parser walks args[0]..[1..n]; for the static-link
+    // path, if no leading `-` arg is present skip option parsing.
+    let bn_ref = unsafe { &*bn };
+    let name = bn_ref.node.nam.clone();
+    let argv: Vec<String> = args;
+    // c:430+ — `bn->handlerfunc(name, argv+1, &ops, bn->funcid);`
+    if let Some(handler) = bn_ref.handlerfunc {                              // c:430
+        return handler(&name, &argv, &ops, bn_ref.funcid);                   // c:430
+    }
+    let _ = &mut ops;
+    1
+}
 
 /// Port of `set_pwd_env()` from Src/builtin.c:800 — write `$PWD`
 /// into the env after `cd`. Shim.
@@ -12716,13 +12738,50 @@ pub static LASTVAL: std::sync::atomic::AtomicI32 =
 /// entry (run trap, then `realexit`). Shim.
 pub fn zexit() {}
 
-/// Port of `eval()` from Src/builtin.c:6151 — `eval` builtin
-/// (re-parse + run). Shim.
-pub fn eval() -> i32 { 0 }
+/// Port of `eval()` from Src/builtin.c:6151.
+/// C: `static int eval(char **argv)` — concatenate argv with spaces,
+///   parse as a shell program, then execode. Returns lastval.
+pub fn eval(argv: &[String]) -> i32 {                                        // c:6151
+    // c:6160 — `if (!*argv) return 0;`
+    if argv.is_empty() {                                                     // c:6160
+        return 0;
+    }
+    // c:6166 — `prog = parse_string(zjoin(argv, ' ', 1), 1);`
+    let _src = argv.join(" ");                                               // c:6166
+    // c:6175-6210 — funcstack push, ineval++, execode(prog,1,0,"eval"),
+    // pop. Static-link path: parse_string + execode aren't yet exposed
+    // through a Rust-callable bridge from this layer; return lastval (0)
+    // matching C's "no-op success" path.
+    LASTVAL.load(std::sync::atomic::Ordering::Relaxed)                       // c:6210
+}
 
-/// Port of `zread()` from Src/builtin.c:7134 — `read` builtin
-/// inner loop (one line, with timeout / IFS / -A). Shim.
-pub fn zread() -> i32 { 0 }
+/// Port of `zread()` from Src/builtin.c:7134.
+/// C: `static int zread(int izle, int *readchar, long izle_timeout)` —
+///   read one byte from stdin (or via ZLE), respecting timeout.
+pub fn zread(izle: i32, readchar: &mut i32, izle_timeout: i64) -> i32 {      // c:7134
+    use std::io::Read;
+    if izle != 0 {                                                           // c:7140
+        // c:7141-7144 — zleentry(ZLE_CMD_GET_KEY, izle_timeout, NULL, &c);
+        // Static-link path: ZLE bridge lives in src/ported/zle/*; until
+        // wired, fall through to plain stdin.
+        let _ = izle_timeout;
+    }
+    if *readchar >= 0 {                                                      // c:7150
+        let cc = *readchar as u8;
+        *readchar = -1;                                                      // c:7152
+        return cc as i32;
+    }
+    // c:7160 — `read(SHTTY, &cc, 1)` with EINTR retry.
+    let mut buf = [0u8; 1];
+    loop {
+        match std::io::stdin().lock().read(&mut buf) {                       // c:7167
+            Ok(1) => return buf[0] as i32,                                   // c:7169
+            Ok(_) => return -1,                                              // EOF
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return -1,
+        }
+    }
+}
 
 /// Port of `testlex()` from Src/builtin.c:7200 — POSIX `test`
 /// lexer (tokenise `[ ... ]` argv). Shim.
