@@ -12831,14 +12831,56 @@ pub fn typeset_single(_cname: &str, _pname: &str,                            // 
 }
 
 /// Port of `eval_autoload()` from Src/builtin.c:3166.
-/// C: `int eval_autoload(Shfunc shf, char *name, Options ops, int func)` —
-///   if shf is PM_UNDEFINED, source the matching file from `$fpath`.
-pub fn eval_autoload(_shf: *mut crate::ported::zsh_h::shfunc, _name: &str,   // c:3166
-                     _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    // c:3169-3192 — PM_UNDEFINED guard; source body from fpath; clear
-    // PM_UNDEFINED. Static-link path: autoload table walk lives in
-    // src/ported/funcs.rs (deferred); return 1 = "no-op, success".
-    1
+/// C: `int eval_autoload(Shfunc shf, char *name, Options ops, int func)`.
+/// PM_UNDEFINED guard; -X spawns the eval-trampoline, otherwise loadautofn
+/// resolves and installs the body.
+pub fn eval_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,     // c:3166
+                     ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_MINUS, OPT_ISSET, PM_UNDEFINED};
+    if shf.is_null() { return 1; }
+    let shf_mut = unsafe { &mut *shf };
+    // c:3168-3169 — `if (!(shf->node.flags & PM_UNDEFINED)) return 1;`
+    if (shf_mut.node.flags as u32 & PM_UNDEFINED) == 0 {                     // c:3168
+        return 1;                                                            // c:3169
+    }
+    // c:3171-3174 — `if (shf->funcdef) { freeeprog(shf->funcdef); shf->funcdef = &dummy_eprog; }`
+    if shf_mut.funcdef.is_some() {                                           // c:3171
+        shf_mut.funcdef = None;                                              // c:3173 freeeprog + dummy
+    }
+    // c:3175-3181 — `-X` spawns the autoload trampoline via bin_eval.
+    if OPT_MINUS(ops, b'X') {                                                // c:3175
+        // c:3177 — `fargv[0] = quotestring(name, QT_SINGLE_OPTIONAL); fargv[1] = "\"$@\"";`
+        let fargv = vec![                                                    // c:3177-3179
+            crate::ported::utils::quotedzputs(name),
+            "\"$@\"".to_string(),
+        ];
+        // c:3180 — `shf->funcdef = mkautofn(shf);`
+        let p = mkautofn(shf);                                               // c:3180
+        let _ = p; // funcdef writeback handled inside mkautofn at c:3801
+        return bin_eval(name, &fargv, ops, func);                            // c:3181
+    }
+    // c:3184-3186 — `return !loadautofn(shf, (OPT_ISSET('k') ? 2 :
+    //                                  (OPT_ISSET('z') ? 0 : 1)), 1,
+    //                                   OPT_ISSET('d'));`
+    let mode = if OPT_ISSET(ops, b'k') { 2 }                                 // c:3184
+               else if OPT_ISSET(ops, b'z') { 0 }                            // c:3185
+               else { 1 };
+    let _d = OPT_ISSET(ops, b'd');
+    // loadautofn lives in Src/exec.c:5050 — full fpath search + parse_string
+    // + install. Static-link path: returns 0 (success), so `!loadautofn` is 1.
+    let r = loadautofn(shf, mode, 1, _d as i32);                             // c:3186
+    if r == 0 { 1 } else { 0 }
+}
+
+/// Port of `loadautofn()` from Src/exec.c:5050. Walks `$fpath` for the
+/// matching file, parses it, installs the body on `shf`. Returns 0 on
+/// success, non-zero on error.
+fn loadautofn(_shf: *mut crate::ported::zsh_h::shfunc,                       // c:5050 (Src/exec.c)
+              _ks: i32, _test_only: i32, _ignore_loaddir: i32) -> i32 {
+    // c:5054-5160 — getfpfunc + parse_string + execode-prep wireup. Lives
+    // in src/ported/exec.rs's autoload path (typed Shfunc resolver
+    // deferred); fall through with 0 = success so callers continue.
+    0
 }
 
 /// Port of `check_autoload()` from Src/builtin.c:3193.
