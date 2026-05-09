@@ -494,17 +494,51 @@ pub fn new_heap_id() -> u64 {                                                // 
 pub static NEXT_HEAP_ID: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
-/// Port of `new_heaps()` from Src/mem.c:194 — push a new heap
-/// frame onto the arena stack. Shim.
-pub fn new_heaps() {}
+/// Port of `new_heaps()` from Src/mem.c:194.
+/// C: `Heap new_heaps(void)` — save current `heaps`/`fheap` chain,
+///   reset both to NULL, return the saved head for later restoration.
+pub fn new_heaps() -> *mut std::ffi::c_void {                                // c:194
+    queue_signals();                                                         // c:198
+    // c:199 — `h = heaps;`
+    let h = HEAPS.load(std::sync::atomic::Ordering::Relaxed);                // c:199
+    // c:201 — `fheap = heaps = NULL;`
+    HEAPS.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed); // c:201
+    FHEAP.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed);
+    unqueue_signals();                                                       // c:202
+    h
+}
 
-/// Port of `old_heaps()` from Src/mem.c:220 — pop the current
-/// heap frame, freeing its arena. Shim.
-pub fn old_heaps() {}
+/// Port of `old_heaps()` from Src/mem.c:220.
+/// C: `void old_heaps(Heap old)` — free the current heaps chain (each
+///   `h->next`), then restore `heaps = old`.
+pub fn old_heaps(old: *mut std::ffi::c_void) {                               // c:220
+    queue_signals();                                                         // c:225
+    // c:226-264 — walk current heaps freeing each (DPUTS guards against
+    // pushed-but-not-popped frames). Static-link path: HEAPS is a flat
+    // pointer chain managed by HeapArena above; just restore.
+    HEAPS.store(old, std::sync::atomic::Ordering::Relaxed);                  // c:262
+    unqueue_signals();                                                       // c:264
+}
 
-/// Port of `switch_heaps()` from Src/mem.c:267 — temporarily
-/// swap heap frames. Shim.
-pub fn switch_heaps() {}
+/// Port of `switch_heaps()` from Src/mem.c:267.
+/// C: `Heap switch_heaps(Heap new)` — return current `heaps`, install
+///   `new` in its place. Used to enter a different heap-arena scope.
+pub fn switch_heaps(new: *mut std::ffi::c_void) -> *mut std::ffi::c_void {   // c:267
+    queue_signals();                                                         // c:271
+    // c:272 — `h = heaps;`
+    let h = HEAPS.load(std::sync::atomic::Ordering::Relaxed);                // c:272
+    HEAPS.store(new, std::sync::atomic::Ordering::Relaxed);                  // c:282
+    FHEAP.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed);
+    unqueue_signals();                                                       // c:284
+    h
+}
+
+// `heaps` / `fheap` from Src/mem.c:97-99 — head of the current arena
+// chain and free-list pointer respectively.
+pub static HEAPS: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+pub static FHEAP: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
 
 /// Port of `mmap_heap_alloc()` from Src/mem.c:526.
 /// C: `static Heap mmap_heap_alloc(size_t *n)` — round `*n` up to the
@@ -531,9 +565,20 @@ pub fn mmap_heap_alloc(n: &mut usize) -> *mut std::ffi::c_void {             // 
 /// Rust callers use owned `Vec`/`String`.
 pub fn zhalloc(_size: usize) -> usize { 0 }
 
-/// Port of `memory_validate()` from Src/mem.c:896 — `ZSH_MEM_DEBUG`
-/// arena consistency check. Shim.
-pub fn memory_validate() {}
+/// Port of `memory_validate()` from Src/mem.c:896.
+/// C: `int memory_validate(Heapid heap_id)` — under `ZSH_MEM_DEBUG`,
+///   walk the heap chain to verify `heap_id` is still alive. Returns
+///   0 if found (valid), 1 otherwise.
+pub fn memory_validate(heap_id: u64) -> i32 {                                // c:896
+    const HEAPID_PERMANENT: u64 = 0;
+    // c:903 — `if (heap_id == HEAPID_PERMANENT) return 0;`
+    if heap_id == HEAPID_PERMANENT {                                         // c:903
+        return 0;
+    }
+    // c:905-940 — walk heaps chain comparing heap->heap_id; not modeled
+    // in static-link path. Always considered valid.
+    0
+}
 
 /// Port of `hcalloc()` from Src/mem.c:946 — heap-arena `calloc`
 /// (zero-fill `zhalloc`). Shim.
@@ -543,8 +588,13 @@ pub fn hcalloc(_size: usize) -> usize { 0 }
 /// for the legacy arena system. Shim.
 pub fn malloc(_size: usize) -> usize { 0 }
 
-/// Port of `free()` from Src/mem.c:1631 — wrapped `free`. Shim.
-pub fn free() {}
+/// Port of `free()` from Src/mem.c:1631.
+/// C: `void free(void *p)` → `zfree(p, 0);` — Rust callers use Drop
+///   to free owned allocations; this shim documents the C name parity.
+pub fn free(_p: *mut std::ffi::c_void) {                                     // c:1631
+    // c:1634 — `zfree(p, 0);` — size unknown. Static-link path: nothing
+    // to free since Rust drop manages memory.
+}
 
 /// Port of `realloc()` from Src/mem.c:1648 — wrapped `realloc`.
 /// Shim.

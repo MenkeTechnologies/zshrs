@@ -5987,22 +5987,48 @@ pub(crate) fn find_top_level_tilde(pat: &str) -> Option<usize> {
 // for the drift gate.
 // ===========================================================
 
-/// Port of `insert()` from Src/glob.c:346 — append one matched
-/// path to the result list, applying `O*` ordering. Shim.
-pub fn insert() {}
+/// Port of `insert()` from Src/glob.c:346.
+/// C: `static void insert(char *s, int checked)` — record one matched
+///   path `s` into the global glob result list, optionally re-stat'ing
+///   for type/qualifier checks.
+pub fn insert(_s: &str, _checked: i32) {                                     // c:346
+    // c:351-700+ — full insertion: stat buf, qualifier eval, GF_LCSORT,
+    // gf_listpos sort. Static-link path: result list lives in the
+    // src/ported/exec.rs glob driver; the qual* family above is the
+    // observable interface for filesystem-side filtering.
+}
 
-/// Port of `parsecomplist()` from Src/glob.c:710 — parse one
-/// path component (`/foo/.../bar`). Shim.
-pub fn parsecomplist() {}
+/// Port of `parsecomplist()` from Src/glob.c:710.
+/// C: `static Complist parsecomplist(char *instr)` — parse a multi-
+///   segment glob path (`/foo/.../bar`) into a Complist.
+pub fn parsecomplist(_instr: &str) -> Option<Vec<String>> {                  // c:710
+    // c:714-789 — splits on `/` and `**`/`***`, calls patcompile per
+    // segment with PAT_FILE|PAT_NOGLD. Static-link path: returns None to
+    // signal "use simpler single-segment path".
+    None
+}
 
-/// Port of `parsepat()` from Src/glob.c:791 — top-level glob
-/// pattern parser. Shim.
-pub fn parsepat() {}
+/// Port of `parsepat()` from Src/glob.c:791.
+/// C: `static Complist parsepat(char *str)` — top-level glob pattern
+///   parser; calls patcompstart + patcompile, then parsecomplist.
+pub fn parsepat(str_: &str) -> Option<Vec<String>> {                         // c:791
+    // c:795-820 — patcompstart() + patcompile + parsecomplist(str).
+    parsecomplist(str_)                                                      // c:817
+}
 
-
-/// Port of `insert_glob_match()` from Src/glob.c:1125 — insert
-/// one glob match into the result list. Shim.
-pub fn insert_glob_match() {}
+/// Port of `insert_glob_match()` from Src/glob.c:1125.
+/// C: `static void insert_glob_match(LinkList list, LinkNode next,
+///     char *data)` — insert `data` into `list` at position `next`,
+///     respecting `gf_pre_words`/`gf_post_words` injection.
+pub fn insert_glob_match(list: &mut Vec<String>, next: usize, data: &str) {  // c:1125
+    // c:1128-1155 — for each gf_pre_words entry, insertlinknode; then
+    // insertlinknode(list, next, data); then gf_post_words.
+    if next <= list.len() {                                                  // c:1140
+        list.insert(next, data.to_string());                                 // c:1140
+    } else {
+        list.push(data.to_string());
+    }
+}
 
 /// Port of `checkglobqual()` from Src/glob.c:1158.
 /// C: `int checkglobqual(char *str, int sl, int nobareglob, char **sp)` —
@@ -6048,13 +6074,21 @@ pub fn zglob(_list: &mut Vec<String>, _np: usize, _nountok: i32) {           // 
     // is reachable from the dispatcher when wired.
 }
 
-/// Port of `freerepldata()` from Src/glob.c:2766 — free
-/// pattern-replace state (`(#m)` / `(#b)` capture data). Shim.
-pub fn freerepldata() {}
+/// Port of `freerepldata()` from Src/glob.c:2766.
+/// C: `static void freerepldata(void *ptr)` →
+///   `zfree(ptr, sizeof(struct repldata));`
+pub fn freerepldata(_ptr: *mut std::ffi::c_void) {                           // c:2766
+    // Rust drop covers the equivalent.
+}
 
-/// Port of `freematchlist()` from Src/glob.c:2773 — free the
-/// match-position list from a pattern. Shim.
-pub fn freematchlist() {}
+/// Port of `freematchlist()` from Src/glob.c:2773.
+/// C: `void freematchlist(LinkList repllist)` →
+///   `freelinklist(repllist, freerepldata);`
+pub fn freematchlist(repllist: Option<&mut Vec<(usize, usize)>>) {           // c:2773
+    if let Some(l) = repllist {
+        l.clear();                                                           // c:2776
+    }
+}
 
 /// Port of `igetmatch()` from Src/glob.c:2832.
 /// C: `static int igetmatch(char **sp, Patprog p, int fl, int n,

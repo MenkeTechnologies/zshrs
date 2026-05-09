@@ -444,3 +444,8 @@ ZISPRINT
 # zsh.h/ztype.h macro ports above.
 QT_IS_SINGLE
 MB_CHARLENCONV
+# nameddir_table (hashnameddir.rs) — OnceLock accessor for the
+# C `HashTable nameddirtab` global; HashMap::new() isn't const so
+# the static must be lazily initialized through this fn. Wraps the
+# Mutex used by all addnameddirnode/removenameddirnode/etc.
+nameddir_table
