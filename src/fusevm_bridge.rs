@@ -6373,11 +6373,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             exec.last_status = live;
         });
-        // Mirrors Src/exec.c xtrace emission: printprompt4() writes
-        // the PS4 prefix to xtrerr (no newline), then the caller
-        // emits the line text + newline.
-        printprompt4();
-        eprintln!("{}", cmd_text);
+        let on = with_executor(|exec| exec.options.get("xtrace").copied().unwrap_or(false));
+        if on {
+            // Mirrors Src/exec.c xtrace emission: printprompt4() writes
+            // the PS4 prefix to xtrerr (no newline), then the caller
+            // emits the line text + newline. Without the `on` guard,
+            // every command still printed its text to stderr — zsh does
+            // not (BUILTIN_XTRACE_ARGS already gated the same way).
+            printprompt4();
+            eprintln!("{}", cmd_text);
+        }
         fusevm::Value::Status(0)
     });
 
