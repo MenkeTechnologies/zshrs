@@ -120,42 +120,41 @@ pub fn reverse_strftime(format: &str, input: &str) -> Result<i64, String> {
     }
 }
 
-/// Options for output_strftime builtin
-#[derive(Debug, Default)]
-pub struct StrftimeOptions {
-    pub no_newline: bool,
-    pub quiet: bool,
-    pub reverse: bool,
-    pub scalar: Option<String>,
-}
+/// Port of `bin_strftime()` from `Src/Modules/datetime.c:187`.
+///
+/// C signature: `static int bin_strftime(char *nam, char **argv,
+///                                        Options ops, int func)`.
+/// `ops` is the OPT_ISSET-indexable bitmask the builtin framework
+/// fills in from the option spec `"qrs:"` (datetime.c BUILTIN
+/// registration). The Rust port takes a 256-entry boolean bitmask
+/// + an optional `-s NAME` value (separated from `ops` because C
+/// reads the `-s` arg via `OPT_ARG(ops, 's')`).
+pub fn bin_strftime(args: &[&str], ops: &[bool; 256], scalar: Option<&str>) -> (i32, String) {  // c:187
+    let no_newline = ops[b'n' as usize];                                 // c: -n
+    let quiet      = ops[b'q' as usize];                                 // c: -q
+    let reverse    = ops[b'r' as usize];                                 // c: -r
 
-/// Execute the output_strftime builtin.
-/// Port of `bin_strftime()` from Src/Modules/datetime.c. Dispatches
-/// between the forward (`output_strftime`) and reverse
-/// (`reverse_strftime`) paths based on `options.reverse`, mirroring
-/// the C source's `-r` flag handling.
-pub fn bin_strftime(args: &[&str], options: &StrftimeOptions) -> (i32, String) {
     if args.is_empty() {
         return (1, "output_strftime: format expected\n".to_string());
     }
 
     let format = args[0];
 
-    if options.reverse {
+    if reverse {
         if args.len() < 2 {
             return (1, "output_strftime: timestring expected\n".to_string());
         }
 
         match reverse_strftime(format, args[1]) {
             Ok(timestamp) => {
-                if options.scalar.is_some() {
+                if scalar.is_some() {
                     (0, timestamp.to_string())
                 } else {
                     (0, format!("{}\n", timestamp))
                 }
             }
             Err(e) => {
-                if options.quiet {
+                if quiet {
                     (1, String::new())
                 } else {
                     (1, format!("output_strftime: {}\n", e))
@@ -199,7 +198,7 @@ pub fn bin_strftime(args: &[&str], options: &StrftimeOptions) -> (i32, String) {
 
         match output_strftime(format, timestamp, nanoseconds) {
             Ok(result) => {
-                let output = if options.no_newline || options.scalar.is_some() {
+                let output = if no_newline || scalar.is_some() {
                     result
                 } else {
                     format!("{}\n", result)
@@ -264,17 +263,19 @@ mod tests {
 
     #[test]
     fn test_builtin_strftime() {
-        let (status, output) = bin_strftime(&["%s"], &StrftimeOptions::default());
+        let ops = [false; 256];
+        let (status, output) = bin_strftime(&["%s"], &ops, None);
         assert_eq!(status, 0);
         assert!(!output.is_empty());
 
-        let (status, _) = bin_strftime(&[], &StrftimeOptions::default());
+        let (status, _) = bin_strftime(&[], &ops, None);
         assert_eq!(status, 1);
     }
 
     #[test]
     fn test_builtin_strftime_with_timestamp() {
-        let (status, output) = bin_strftime(&["%s", "1700000000"], &StrftimeOptions::default());
+        let ops = [false; 256];
+        let (status, output) = bin_strftime(&["%s", "1700000000"], &ops, None);
         assert_eq!(status, 0);
         assert!(output.contains("1700000000"));
     }
@@ -297,20 +298,20 @@ impl crate::ported::exec::ShellExecutor {
     /// canonical port doesn't own); the format/output_strftime/reverse_strftime
     /// logic itself lives in datetime.rs.
     pub(crate) fn bin_strftime(&mut self, args: &[String]) -> i32 {
-        use crate::datetime::StrftimeOptions;
-        let mut options = StrftimeOptions::default();
+        let mut ops = [false; 256];
+        let mut scalar: Option<String> = None;
         let mut positional: Vec<&str> = Vec::new();
         let mut iter = args.iter().peekable();
         while let Some(arg) = iter.next() {
             match arg.as_str() {
                 "-s" => {
                     if let Some(name) = iter.next() {
-                        options.scalar = Some(name.clone());
+                        scalar = Some(name.clone());
                     }
                 }
-                "-n" => options.no_newline = true,
-                "-r" => options.reverse = true,
-                "-q" => options.quiet = true,
+                "-n" => ops[b'n' as usize] = true,
+                "-r" => ops[b'r' as usize] = true,
+                "-q" => ops[b'q' as usize] = true,
                 "--" => {
                     for rest in iter.by_ref() {
                         positional.push(rest.as_str());
@@ -321,9 +322,9 @@ impl crate::ported::exec::ShellExecutor {
                     // Combined short flags, e.g. `-rq`.
                     for ch in s[1..].chars() {
                         match ch {
-                            'n' => options.no_newline = true,
-                            'r' => options.reverse = true,
-                            'q' => options.quiet = true,
+                            'n' => ops[b'n' as usize] = true,
+                            'r' => ops[b'r' as usize] = true,
+                            'q' => ops[b'q' as usize] = true,
                             _ => {
                                 zwarnnam("output_strftime", &format!("bad option: -{}", ch));
                                 return 1;
@@ -334,9 +335,9 @@ impl crate::ported::exec::ShellExecutor {
                 _ => positional.push(arg.as_str()),
             }
         }
-        let (status, output) = crate::datetime::bin_strftime(&positional, &options);
+        let (status, output) = crate::datetime::bin_strftime(&positional, &ops, scalar.as_deref());
         if status == 0 {
-            if let Some(name) = options.scalar {
+            if let Some(name) = scalar {
                 self.variables.insert(name, output);
             } else if !output.is_empty() {
                 print!("{}", output);
