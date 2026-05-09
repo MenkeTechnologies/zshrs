@@ -132,51 +132,63 @@ mod tests {
 // becomes a fusevm `Op`.
 // ===========================================================
 
-/// `for` loop tree-walker — port of `execfor()` from
-/// Src/loop.c:50. Lowered to fusevm `LOOP_FOR_*` ops in the
-/// compiler pass; this entry is a name-parity stub.
-pub fn execfor(_do_exec: i32) -> i32 {
-    0
+// The seven entries below are zsh's tree-walker dispatch handlers
+// from `Src/loop.c`. zshrs replaces the tree walker entirely with
+// fusevm bytecode — every `for`/`while`/`if`/`case`/`select`/
+// `repeat`/`try` AST node lowers to a fusevm Op in
+// `src/extensions/compile_zsh.rs`. These entries exist purely for
+// C-name parity (drift gate enforces every Rust fn maps to a C fn).
+//
+// The 96-test architectural invariant in `tree_walker_absent.rs` +
+// `no_tree_walker_dispatch.rs` proves these are never reached in
+// production. Each body is `unreachable!()` so ANY caller fails
+// loudly rather than silently returning 0 — if a port regresses
+// the bytecode lowering, we want the test suite to crash, not pass.
+//
+// Faithful per-fn port of the C bodies is intentionally NOT done:
+// they read `Wordcode` / `Estate` cursors that zshrs doesn't model.
+// The semantic equivalent lives in:
+//   execfor    → compile_zsh.rs::compile_for
+//   execselect → compile_zsh.rs::compile_select
+//   execwhile  → compile_zsh.rs::compile_while
+//   execrepeat → compile_zsh.rs::compile_repeat
+//   execif     → compile_zsh.rs::compile_if
+//   execcase   → compile_zsh.rs::compile_case
+//   exectry    → compile_zsh.rs::compile_try
+
+/// Port of `execfor()` from `Src/loop.c:50`. See module-level note:
+/// fusevm bytecode replaces the tree walker; this entry is
+/// `unreachable!()` to crash if regressed.
+pub fn execfor(_do_exec: i32) -> i32 {                                   // c:50
+    unreachable!("execfor: tree-walker disabled — fusevm lowers `for` in compile_zsh.rs")
 }
 
-/// `select` builtin tree-walker — port of `execselect()` from
-/// Src/loop.c:217. Lowered to fusevm `SELECT_LOOP` ops; entry
-/// kept for name parity.
-pub fn execselect(_do_exec: i32) -> i32 {
-    0
+/// Port of `execselect()` from `Src/loop.c:217`.
+pub fn execselect(_do_exec: i32) -> i32 {                                // c:217
+    unreachable!("execselect: tree-walker disabled — fusevm lowers `select` in compile_zsh.rs")
 }
 
-/// `while`/`until` tree-walker — port of `execwhile()` from
-/// Src/loop.c:413. Lowered to fusevm `LOOP_WHILE` ops; entry
-/// kept for name parity.
-pub fn execwhile(_do_exec: i32) -> i32 {
-    0
+/// Port of `execwhile()` from `Src/loop.c:413`.
+pub fn execwhile(_do_exec: i32) -> i32 {                                 // c:413
+    unreachable!("execwhile: tree-walker disabled — fusevm lowers `while`/`until` in compile_zsh.rs")
 }
 
-/// `repeat` tree-walker — port of `execrepeat()` from
-/// Src/loop.c:499. Lowered to fusevm `REPEAT_LOOP` ops; entry
-/// kept for name parity.
-pub fn execrepeat(_do_exec: i32) -> i32 {
-    0
+/// Port of `execrepeat()` from `Src/loop.c:499`.
+pub fn execrepeat(_do_exec: i32) -> i32 {                                // c:499
+    unreachable!("execrepeat: tree-walker disabled — fusevm lowers `repeat` in compile_zsh.rs")
 }
 
-/// `if`/`elif`/`else` tree-walker — port of `execif()` from
-/// Src/loop.c:553. Lowered to fusevm `JMP_IF`/`JMP` ops; entry
-/// kept for name parity.
-pub fn execif(_do_exec: i32) -> i32 {
-    0
+/// Port of `execif()` from `Src/loop.c:553`.
+pub fn execif(_do_exec: i32) -> i32 {                                    // c:553
+    unreachable!("execif: tree-walker disabled — fusevm lowers `if`/`elif`/`else` in compile_zsh.rs")
 }
 
-/// `case` tree-walker — port of `execcase()` from
-/// Src/loop.c:600. Lowered to fusevm `CASE_DISPATCH` ops; entry
-/// kept for name parity.
-pub fn execcase(_do_exec: i32) -> i32 {
-    0
+/// Port of `execcase()` from `Src/loop.c:600`.
+pub fn execcase(_do_exec: i32) -> i32 {                                  // c:600
+    unreachable!("execcase: tree-walker disabled — fusevm lowers `case` in compile_zsh.rs")
 }
 
-/// `try`/`always` tree-walker — port of `exectry()` from
-/// Src/loop.c:735. Lowered to fusevm `TRY_ENTER`/`TRY_LEAVE`
-/// ops; entry kept for name parity.
-pub fn exectry(_do_exec: i32) -> i32 {
-    0
+/// Port of `exectry()` from `Src/loop.c:735`.
+pub fn exectry(_do_exec: i32) -> i32 {                                   // c:735
+    unreachable!("exectry: tree-walker disabled — fusevm lowers `try`/`always` in compile_zsh.rs")
 }

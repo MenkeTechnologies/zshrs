@@ -357,32 +357,55 @@ impl crate::ported::exec::ShellExecutor {
 // `ShellExecutor`, which was bag-of-globals + dead code (never
 // inserted, never read). Deleted per PORT_PLAN Phase 2.
 
-/// Module loader entry — port of `setup_()` from Src/Modules/socket.c:291.
-pub fn setup_() -> i32 {
-    0
+/// Port of `setup_()` from `Src/Modules/socket.c:291`. C body is a
+/// no-op `return 0;` (UNUSED `Module m`) — module setup hook fires
+/// before features/enables/boot, with nothing to do for `zsocket`.
+pub fn setup_() -> i32 {                                                 // c:291
+    0                                                                    // c:294
 }
 
-/// Module loader entry — port of `features_()` from Src/Modules/socket.c:298.
-pub fn features_() -> i32 {
-    0
+/// Port of `features_()` from `Src/Modules/socket.c:298`. Returns
+/// the per-module `Features` array via `featuresarray()`. zshrs
+/// statically links every module so feature tables are
+/// build-time-fixed; this entry is the name-parity hook the C
+/// `Module m` ABI requires. The single feature is the `zsocket`
+/// builtin (bintab at socket.c:275).
+pub fn features_() -> i32 {                                              // c:298
+    // C: `*features = featuresarray(m, &module_features); return 0;`
+    // zshrs's module loader walks the module's own static feature
+    // table directly via `bin_zsocket` dispatch — there's no
+    // per-call featuresarray call. Return 0 to mirror the C exit.
+    0                                                                    // c:302
 }
 
-/// Module loader entry — port of `enables_()` from Src/Modules/socket.c:306.
-pub fn enables_() -> i32 {
-    0
+/// Port of `enables_()` from `Src/Modules/socket.c:306`. C body is
+/// `return handlefeatures(m, &module_features, enables);` —
+/// invoked by `zmodload -e` to query/set per-builtin enable flags.
+pub fn enables_() -> i32 {                                               // c:306
+    // zshrs builtins don't currently expose per-feature toggle
+    // flags; return 0 (success, no enables changed).
+    0                                                                    // c:310
 }
 
-/// Module loader entry — port of `boot_()` from Src/Modules/socket.c:313.
-pub fn boot_() -> i32 {
-    0
+/// Port of `boot_()` from `Src/Modules/socket.c:313`. C body is a
+/// no-op `return 0;` (UNUSED `Module m`) — runs after features/
+/// enables; zsocket has no boot-time work to do.
+pub fn boot_() -> i32 {                                                  // c:313
+    0                                                                    // c:316
 }
 
-/// Module loader entry — port of `cleanup_()` from Src/Modules/socket.c:320.
-pub fn cleanup_() -> i32 {
-    0
+/// Port of `cleanup_()` from `Src/Modules/socket.c:320`. C body is
+/// `return setfeatureenables(m, &module_features, NULL);` —
+/// disables every module-provided builtin so unloading is clean.
+pub fn cleanup_() -> i32 {                                               // c:320
+    // Static-link path: builtins are never disabled at unload time
+    // because `zmodload -u` is a no-op for compiled-in features.
+    0                                                                    // c:323
 }
 
-/// Module loader entry — port of `finish_()` from Src/Modules/socket.c:327.
-pub fn finish_() -> i32 {
-    0
+/// Port of `finish_()` from `Src/Modules/socket.c:327`. C body is a
+/// no-op `return 0;` (UNUSED `Module m`) — runs last during module
+/// teardown; nothing to free for zsocket.
+pub fn finish_() -> i32 {                                                // c:327
+    0                                                                    // c:330
 }

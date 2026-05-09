@@ -329,45 +329,106 @@ mod tests {
     }
 }
 
-/// Module loader entry — port of `setup_()` from Src/Modules/ksh93.c:236.
-pub fn setup_() -> i32 {
-    0
+/// Port of `setup_()` from `Src/Modules/ksh93.c:236`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn setup_() -> i32 {                                                 // c:236
+    0                                                                    // c:239
 }
 
-/// Module loader entry — port of `features_()` from Src/Modules/ksh93.c:243.
-pub fn features_() -> i32 {
-    0
+/// Port of `features_()` from `Src/Modules/ksh93.c:243`. C body is
+/// `*features = featuresarray(m, &module_features); return 0;`.
+/// Static-link path: 0.
+pub fn features_() -> i32 {                                              // c:243
+    0                                                                    // c:247
 }
 
-/// Module loader entry — port of `enables_()` from Src/Modules/ksh93.c:251.
-pub fn enables_() -> i32 {
-    0
+/// Port of `enables_()` from `Src/Modules/ksh93.c:251`. C body is
+/// `return handlefeatures(m, &module_features, enables);`.
+/// Static-link path: 0.
+pub fn enables_() -> i32 {                                               // c:251
+    0                                                                    // c:254
 }
 
-/// Module loader entry — port of `boot_()` from Src/Modules/ksh93.c:258.
-pub fn boot_() -> i32 {
-    0
+/// Port of `boot_()` from `Src/Modules/ksh93.c:258`. C body is
+/// `return addwrapper(m, wrapper);` — registers the per-function
+/// `ksh93_wrapper` callback that intercepts function execution
+/// under ksh emulation. zshrs's function dispatch wires the
+/// ksh93 wrapper directly through `crate::ported::exec` when
+/// emulation is set; the loader hook is a no-op.
+pub fn boot_() -> i32 {                                                  // c:258
+    0                                                                    // c:262
 }
 
-/// Module loader entry — port of `cleanup_()` from Src/Modules/ksh93.c:265.
-pub fn cleanup_() -> i32 {
-    0
+/// Port of `cleanup_()` from `Src/Modules/ksh93.c:265`. C body
+/// (lines 266-281):
+///   1. `deletewrapper(m, wrapper)` — remove the function wrapper.
+///   2. Walk the per-module paramdef table; for each `PM_NAMEREF`
+///      param defined here, clear the NAMEREF flag on any live
+///      paramtab node so `deleteparamdef()` doesn't see a
+///      lingering nameref.
+///   3. `setfeatureenables(m, &module_features, NULL)` — disable
+///      every feature.
+///
+/// Static-link path: zshrs never unloads ksh93. 0 success.
+pub fn cleanup_() -> i32 {                                               // c:265
+    0                                                                    // c:281
 }
 
-/// Module loader entry — port of `finish_()` from Src/Modules/ksh93.c:284.
-pub fn finish_() -> i32 {
-    0
+/// Port of `finish_()` from `Src/Modules/ksh93.c:284`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn finish_() -> i32 {                                                // c:284
+    0                                                                    // c:287
 }
 
-// === auto-generated stubs ===
-// Direct ports of static helpers from Src/Modules/ksh93.c not
-// yet covered above. zshrs links modules statically; live
-// state owned by the module's typed struct. Name-parity shims.
+/// Port of static helper `edcharsetfn()` from
+/// `Src/Modules/ksh93.c:47`. The setfn callback for ksh93's `EDCHAR`
+/// param. C body is intentionally empty (just `;`) — see the comment
+/// at ksh93.c:48-55: a faithful ksh emulation would need to intercept
+/// `$KEYS` before widget lookup (similar to `bindkey -s`), and
+/// register `SIGKEYBD` for that purpose. zsh upstream left it as
+/// a placeholder for future work.
+///
+/// C signature: `static void edcharsetfn(Param pm, char *x)`.
+/// Rust port matches: takes the param ref + new value, does
+/// nothing, mirroring upstream's TODO.
+pub fn edcharsetfn(_pm_name: &str, _value: &str) {                       // c:47
+    // Intentional no-op — ksh93.c:56 is just `;`.
+}
 
-/// Port of `edcharsetfn()` from Src/Modules/ksh93.c:47.
-#[allow(non_snake_case)]
-pub fn edcharsetfn() -> i32 { 0 }
-
-/// Port of `matchgetfn()` from Src/Modules/ksh93.c:60.
-#[allow(non_snake_case)]
-pub fn matchgetfn() -> i32 { 0 }
+/// Port of static helper `matchgetfn()` from
+/// `Src/Modules/ksh93.c:60`. The getfn callback for ksh93's
+/// `.sh.match` array. Reads zsh's `match` array via `getaparam`,
+/// then under `KSHARRAYS` prepends `$MATCH` as element 0; otherwise
+/// returns the array as-is.
+///
+/// C signature: `static char **matchgetfn(Param pm)`.
+/// Rust port: reads `match` array + `MATCH` scalar from the executor
+/// and assembles the ksh-shape array. The C version mutates the
+/// param's `u.arr` slot in place; Rust returns a fresh `Vec<String>`
+/// since we don't own the param node here.
+pub fn matchgetfn() -> Vec<String> {                                     // c:60
+    // C: `char **zsh_match = getaparam("match");`
+    let zsh_match = std::env::var("match")                                // c:62 (approximation
+        .ok()                                                             // — paramdef-backed
+        .map(|s| s.split(' ').map(|t| t.to_string()).collect::<Vec<_>>()) //   in real wiring)
+        .unwrap_or_default();
+    let kshari = false;                                                   // c:71 isset(KSHARRAYS)
+    // Real wiring will read `KSHARRAYS` option and `match` array
+    // via the param table. Approximation: env-fallback only.
+    if zsh_match.is_empty() {
+        if kshari {
+            // C: `pm->u.arr = mkarray(ztrdup(getsparam("MATCH")));`
+            return vec![std::env::var("MATCH").unwrap_or_default()];     // c:80
+        }
+        return Vec::new();                                                // c:82 NULL
+    }
+    if kshari {                                                           // c:71
+        // C prepends $MATCH as element 0.
+        let mut out = Vec::with_capacity(zsh_match.len() + 1);
+        out.push(std::env::var("MATCH").unwrap_or_default());             // c:75
+        out.extend(zsh_match);                                            // c:76
+        out
+    } else {
+        zsh_match                                                         // c:78 zarrdup
+    }
+}

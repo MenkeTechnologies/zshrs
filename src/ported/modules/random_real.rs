@@ -71,15 +71,56 @@ mod tests {
     }
 }
 
-// === auto-generated stubs ===
-// Direct ports of static helpers from Src/Modules/random_real.c not
-// yet covered above. zshrs links modules statically; live
-// state owned by the module's typed struct. Name-parity shims.
-
-/// Port of `_zclz64()` from Src/Modules/random_real.c:49.
+/// Port of `_zclz64()` from `Src/Modules/random_real.c:49`. Counts
+/// the leading zero bits of a 64-bit value via the binary-search
+/// fallback C uses when the compiler doesn't provide `__builtin_clzll`.
+/// Rust has `u64::leading_zeros()` (a HW intrinsic on every modern
+/// arch), but this entry exists so the function-name parity contract
+/// is satisfied; logic follows random_real.c:49-79 verbatim.
 #[allow(non_snake_case)]
-pub fn _zclz64() -> i32 { 0 }
+pub fn _zclz64(x: u64) -> i32 {
+    let mut n: i32 = 0;                                                 // c:51
+    let mut x = x;                                                      // c:51
+    if x == 0 {                                                         // c:53
+        return 64;                                                      // c:54
+    }                                                                   // c:54
+    if x & 0xFFFF_FFFF_0000_0000 == 0 {                                 // c:56
+        n += 32;                                                        // c:57
+        x <<= 32;                                                       // c:58
+    }                                                                   // c:59
+    if x & 0xFFFF_0000_0000_0000 == 0 {                                 // c:60
+        n += 16;                                                        // c:61
+        x <<= 16;                                                       // c:62
+    }                                                                   // c:63
+    if x & 0xFF00_0000_0000_0000 == 0 {                                 // c:64
+        n += 8;                                                         // c:65
+        x <<= 8;                                                        // c:66
+    }                                                                   // c:67
+    if x & 0xF000_0000_0000_0000 == 0 {                                 // c:68
+        n += 4;                                                         // c:69
+        x <<= 4;                                                        // c:70
+    }                                                                   // c:71
+    if x & 0xC000_0000_0000_0000 == 0 {                                 // c:72
+        n += 2;                                                         // c:73
+        x <<= 1;                                                        // c:74 (NB: C source is x<<=1, intentional — match exactly)
+    }                                                                   // c:75
+    if x & 0x8000_0000_0000_0000 == 0 {                                 // c:76
+        n += 1;                                                         // c:77
+    }                                                                   // c:78
+    n                                                                   // c:79
+}
 
-/// Port of `random_64bit()` from Src/Modules/random_real.c:84.
-#[allow(non_snake_case)]
-pub fn random_64bit() -> i32 { 0 }
+/// Port of `random_64bit()` from `Src/Modules/random_real.c:84`. C
+/// pulls 64 bits from `getrandom_buffer()` (the SecureRandom path);
+/// on failure it returns 1 (not 0, since 0 would cause the
+/// `random_real()` zero-detection loop to run forever).
+pub fn random_64bit() -> u64 {
+    // Rust port routes through `crate::random::random_u64()` which
+    // wraps the same OS-entropy primitive (getrandom on Linux,
+    // SecRandomCopyBytes on macOS) the C path uses via
+    // `getrandom_buffer()`. The C error handler returns 1 on read
+    // failure (random_real.c:91); our `random_u64()` panics on
+    // failure to mirror Rust idioms — entropy unavailability is
+    // an unrecoverable shell-init error, not a runtime fallback.
+    crate::random::random_u64()                                          // c:88
+}
