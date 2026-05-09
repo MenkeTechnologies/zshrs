@@ -13944,6 +13944,157 @@ pub static SOURCELEVEL:  std::sync::atomic::AtomicI32 = std::sync::atomic::Atomi
 // `ZEXIT_NORMAL` from Src/zsh.h — zexit() exit-mode discriminant.
 pub const ZEXIT_NORMAL: i32 = 0;
 
+/// Port of `bin_alias()` from Src/builtin.c:4450.
+/// C: `int bin_alias(char *name, char **argv, Options ops, ...)` — list,
+///   define, glob-list, or display aliases. `-r`/`-g`/`-s` filter type;
+///   `-L` prints definitions; `-m` treats args as patterns.
+pub fn bin_alias(name: &str, argv: &[String],                                // c:4450
+                 ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::{
+        OPT_ISSET, OPT_PLUS,
+        ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED,
+        PRINT_LIST, PRINT_NAMEONLY,
+    };
+    use crate::ported::hashtable::{aliastab_lock, sufaliastab_lock, Alias};
+    let mut returnval = 0i32;                                                // c:4455
+    let mut flags1 = 0u32;                                                   // c:4456
+    let mut flags2 = DISABLED as u32;                                        // c:4456
+    let mut printflags = 0i32;                                               // c:4457
+    let mut use_suffix = false;                                              // tracks ht switch
+
+    // c:4461-4485 — type-flag parsing.
+    let type_opts = (OPT_ISSET(ops, b'r') as i32)                            // c:4461
+                  + (OPT_ISSET(ops, b'g') as i32)
+                  + (OPT_ISSET(ops, b's') as i32);
+    if type_opts != 0 {                                                      // c:4464
+        if type_opts > 1 {                                                   // c:4465
+            crate::ported::utils::zwarnnam(name, "illegal combination of options"); // c:4466
+            return 1;                                                        // c:4467
+        }
+        if OPT_ISSET(ops, b'g') {                                            // c:4469
+            flags1 |= ALIAS_GLOBAL as u32;                                   // c:4470
+        } else {
+            flags2 |= ALIAS_GLOBAL as u32;                                   // c:4472
+        }
+        if OPT_ISSET(ops, b's') {                                            // c:4473
+            flags1 |= ALIAS_SUFFIX as u32;                                   // c:4480
+            use_suffix = true;                                               // c:4481
+        } else {
+            flags2 |= ALIAS_SUFFIX as u32;                                   // c:4483
+        }
+    }
+
+    // c:4486-4490 — printflags from -L / + suffix.
+    if OPT_ISSET(ops, b'L') {                                                // c:4486
+        printflags |= PRINT_LIST;                                            // c:4487
+    } else if OPT_PLUS(ops, b'g') || OPT_PLUS(ops, b'r') || OPT_PLUS(ops, b's')
+        || OPT_PLUS(ops, b'm') || OPT_ISSET(ops, b'+')                       // c:4488
+    {
+        printflags |= PRINT_NAMEONLY;                                        // c:4490
+    }
+
+    // Helper closure that prints one Alias respecting printflags.
+    let print_alias = |a: &Alias, pflags: i32| {
+        if (pflags & PRINT_NAMEONLY) != 0 {
+            println!("{}", a.name);
+        } else if (pflags & PRINT_LIST) != 0 {
+            // c form: `alias name=value`
+            println!("alias {}={}", a.name, a.text);
+        } else {
+            println!("{}={}", a.name, a.text);
+        }
+    };
+
+    // c:4495-4500 — no args: list all (filtered by flags).
+    if argv.is_empty() {                                                     // c:4495
+        crate::ported::mem::queue_signals();                                 // c:4496
+        let lock = if use_suffix { sufaliastab_lock() } else { aliastab_lock() };
+        if let Ok(t) = lock.lock() {
+            for (_n, a) in t.iter() {                                        // c:4497
+                if (a.flags & flags1) == flags1 && (a.flags & flags2) == 0 {
+                    print_alias(a, printflags);
+                }
+            }
+        }
+        crate::ported::mem::unqueue_signals();                               // c:4498
+        return 0;                                                            // c:4499
+    }
+
+    // c:4503-4519 — `-m` glob branch.
+    if OPT_ISSET(ops, b'm') {                                                // c:4503
+        for pat in argv {                                                    // c:4504
+            crate::ported::mem::queue_signals();                             // c:4505
+            // c:4506 — `tokenize + patcompile`.
+            let pprog = crate::ported::pattern::patcompile(pat,              // c:4507
+                crate::ported::pattern::PatFlags::default()).ok();
+            if let Some(prog) = pprog {
+                let lock = if use_suffix { sufaliastab_lock() } else { aliastab_lock() };
+                if let Ok(t) = lock.lock() {
+                    for (_n, a) in t.iter() {                                // c:4509
+                        if (a.flags & flags1) == flags1 && (a.flags & flags2) == 0
+                            && crate::ported::pattern::pattry(&prog, &a.name)
+                        {
+                            print_alias(a, printflags);
+                        }
+                    }
+                }
+            } else {
+                crate::ported::utils::zwarnnam(name,
+                    &format!("bad pattern : {}", pat));                      // c:4514
+                returnval = 1;                                               // c:4515
+            }
+            crate::ported::mem::unqueue_signals();                           // c:4517
+        }
+        return returnval;                                                    // c:4518
+    }
+
+    // c:4521-4540 — literal args: define `name=value` or display a single name.
+    crate::ported::mem::queue_signals();                                     // c:4522
+    let mut idx = 0;
+    while idx < argv.len() {                                                 // c:4523
+        let arg = &argv[idx];
+        idx += 1;
+        if let Some(eq) = arg.find('=') {                                    // c:4524 (asg->value.scalar)
+            if !OPT_ISSET(ops, b'L') {                                       // c:4524
+                let n = &arg[..eq];
+                let v = &arg[eq + 1..];
+                let lock = if use_suffix { sufaliastab_lock() } else { aliastab_lock() };
+                if let Ok(mut t) = lock.lock() {
+                    let mut a = Alias::new(n, v);                            // c:4527
+                    a.flags = flags1;
+                    t.add(a);
+                }
+                continue;
+            }
+        }
+        let n = if let Some(eq) = arg.find('=') { &arg[..eq] } else { arg.as_str() };
+        let lock = if use_suffix { sufaliastab_lock() } else { aliastab_lock() };
+        let found = lock.lock().ok().and_then(|t|
+            t.get_including_disabled(n).map(|a| (a.name.clone(), a.flags, a.text.clone()))
+        );
+        match found {
+            Some((nm, fl, txt)) => {                                         // c:4530
+                // c:4532-4537 — type-filter check.
+                let show = type_opts == 0
+                    || use_suffix
+                    || (OPT_ISSET(ops, b'r')
+                        && (fl & (ALIAS_GLOBAL | ALIAS_SUFFIX) as u32) == 0)
+                    || (OPT_ISSET(ops, b'g')
+                        && (fl & ALIAS_GLOBAL as u32) != 0);
+                if show {
+                    let a = Alias { name: nm, flags: fl, text: txt, inuse: 0 };
+                    print_alias(&a, printflags);
+                }
+            }
+            None => {                                                        // c:4538
+                returnval = 1;                                               // c:4539
+            }
+        }
+    }
+    crate::ported::mem::unqueue_signals();                                   // c:4541
+    returnval                                                                // c:4542
+}
+
 /// Port of `bin_umask()` from Src/builtin.c:7491.
 /// C: `int bin_umask(char *nam, char **args, Options ops, ...)` —
 ///   set/show file-creation mask. No args → show; numeric arg → octal
