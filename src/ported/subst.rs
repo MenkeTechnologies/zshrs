@@ -2117,8 +2117,15 @@ pub fn paramsubst(                                          // c:1625
                 ))
                 || (!var_name.is_empty()
                     && var_name.chars().all(|c| c.is_ascii_digit()));
-            state.variables.get(&var_name).cloned()
-                .or_else(|| state.arrays.get(&var_name).map(|a| a.join(" ")))
+            // Canonical scalar lookup — sole funnel through
+            // `getsparam` (matches C zsh's `getsparam(name)` →
+            // `getvalue` → `getstrvalue` → `Param.gsu->getfn`
+            // dispatch at Src/params.c:3076 / 2335). The funnel
+            // handles GSU dispatch + variables + env + array-join
+            // in one place; subst.rs and the fuseVM bridge both
+            // route through here so the lookup logic lives in
+            // exactly one location.
+            crate::ported::params::getsparam(&state.variables, &state.arrays, &var_name)
                 .or_else(|| state.assoc_arrays.get(&var_name)
                     .map(|m| m.values().cloned().collect::<Vec<_>>().join(" ")))
                 .or_else(|| if is_special_name {
@@ -4038,12 +4045,11 @@ pub fn paramsubst(                                          // c:1625
                 }                                            // c:1625
             }                                                // c:1625
         } else {                                            // c:1625
-            // No subscript: scalar → assoc-values → array fallback.
-            // zsh resolves `$assoc` (bare, no subscript) to the
-            // values joined; `$arr` to elements joined. Direct
-            // port of getstrvalue dispatch.
-            state.variables.get(&var_name).cloned()
-                .or_else(|| state.arrays.get(&var_name).map(|a| a.join(" ")))
+            // No subscript: route through the canonical getsparam
+            // funnel (GSU + variables + env + array-join), then
+            // fall through to assoc-values for `$assoc` bare reads.
+            // Same single-funnel pattern as subst.rs:2120.
+            crate::ported::params::getsparam(&state.variables, &state.arrays, &var_name)
                 .or_else(|| state.assoc_arrays.get(&var_name)
                     .map(|m| m.values().cloned().collect::<Vec<_>>().join(" ")))
                 .unwrap_or_default()                         // c:1625

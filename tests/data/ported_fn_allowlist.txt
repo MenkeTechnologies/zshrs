@@ -310,6 +310,23 @@ current_attrs_lock
 pending_attrs_lock
 set_pending_text_attrs
 
+# params.rs lookup_special_var — Rust-only GSU dispatch bridge. C zsh
+# dispatches `$RANDOM` / `$USERNAME` / `$UID` etc. through
+# `Param.gsu->getfn` inside getsparam (Src/params.c:3076). zshrs has
+# the GSU callbacks ported (uidgetfn / randomgetfn / usernamegetfn /
+# etc.) but no Param struct + paramtab callback table; this is the
+# bridge that maps name → getfn so the shell's parameter-read path
+# (fusevm_bridge::expand_param + subst.rs reads) can dispatch through
+# the canonical GSU bodies. Logically equivalent to "Param.gsu->getfn"
+# — same role, named for the lookup-by-name shape Rust callers use.
+lookup_special_var
+
+# params.rs initial_username — Rust helper used inside cached_username_lock's
+# OnceLock init closure. Wraps libc getpwuid_r (C zsh's get_username() reads
+# from getpwuid(getuid())->pw_name in init.rs). Broken out so the FFI-heavy
+# init body doesn't bloat the closure literal.
+initial_username
+
 # hashtable.rs HashNodeFlags trait — Rust-only abstraction over C's
 # `struct hashnode { char *nam; int flags; ... }` header. Each typed
 # table value impls this so the generic gethashnode/disablehashnode/etc.

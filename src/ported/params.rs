@@ -3586,23 +3586,68 @@ pub fn setiparam_no_convert(
     );
 }
 
-/// Retrieve scalar parameter as string.
-/// Port of `getsparam()` from Src/params.c:3076. C calls
-/// `getvalue(&vbuf, &s, 0)` then `getstrvalue(v)`; getvalue does
-/// per-name dispatch through gsu->getfn callbacks for special /
-/// magic-assoc params. Until getvalue is ported, we read directly
-/// from the HashMap. Returns None for unset.
+/// Port of `getsparam()` from `Src/params.c:3076`.
+///
+/// C body:
+/// ```c
+/// char *getsparam(char *s) {
+///     struct value vbuf;
+///     Value v = getvalue(&vbuf, &s, 0);
+///     if (!v) return NULL;
+///     return getstrvalue(v);
+/// }
+/// ```
+///
+/// `getvalue` (params.c:2173) builds a `Value` for the parameter,
+/// dispatching through `Param.gsu->getfn` for special parameters.
+/// `getstrvalue` (params.c:2335) extracts the scalar form: for
+/// PM_INTEGER calls `pm->gsu.i->getfn(pm)` and convbase's the
+/// result; for PM_SCALAR calls `pm->gsu.s->getfn(pm)`; for
+/// PM_ARRAY joins the elements.
+///
+/// **Sole funnel.** Every scalar parameter read in zshrs routes
+/// through this fn — `subst.rs` parameter expansion AND
+/// `fusevm_bridge::expand_param` both call `getsparam`. The
+/// dispatch chain lives in exactly one place, mirroring C's
+/// "every read goes through getsparam" architecture.
+///
+/// Lookup order (mirrors C's `getvalue` → `getstrvalue` cascade):
+/// 1. **GSU dispatch** via [`lookup_special_var`] — special
+///    parameters route through their getfn callback (`uidgetfn` /
+///    `randomgetfn` / `usernamegetfn` / etc.). Same role as
+///    C's `Param.gsu->getfn` virtual dispatch.
+/// 2. **Local variable** — `variables[name]`. C reads `pm->u.str`
+///    for PM_SCALAR; here we hold the scalar in the variables
+///    HashMap.
+/// 3. **Environment fallback** — `std::env::var(name)`. C imports
+///    env vars into the param table at startup so they go through
+///    the same dispatch as everything else; zshrs reads from the
+///    OS env on miss to match.
+/// 4. **Array → scalar** — `arrays[name].join(" ")`. Mirrors
+///    C's PM_ARRAY case in getstrvalue (params.c:2358) which
+///    joins via `sepjoin(ss, NULL, 1)`.
+///
+/// Returns `None` only if all four paths miss (parameter genuinely
+/// unset).
 pub fn getsparam(
     variables: &std::collections::HashMap<String, String>,
     arrays: &std::collections::HashMap<String, Vec<String>>,
     name: &str,
 ) -> Option<String> {
+    // 1. GSU dispatch — Param.gsu->getfn equivalent.
+    if let Some(v) = lookup_special_var(name) {
+        return Some(v);
+    }
+    // 2. Local shell variable (PM_SCALAR pm->u.str).
     if let Some(s) = variables.get(name) {
         return Some(s.clone());
     }
-    // C's getvalue auto-joins arrays as scalar via getstrvalue
-    // when the param is array-typed. Mirror with IFS-first-char
-    // join when only an array entry exists.
+    // 3. Env-imported parameter (C imports env into paramtab at
+    //    init, so reads route through the same dispatch).
+    if let Ok(s) = std::env::var(name) {
+        return Some(s);
+    }
+    // 4. PM_ARRAY → scalar join (C: sepjoin in getstrvalue).
     arrays.get(name).map(|a| a.join(" "))
 }
 
@@ -6055,11 +6100,6 @@ impl crate::ported::exec::ShellExecutor {
                 }
             }
             _ => {
-                // Check local variables first, then arrays, then env.
-                // With `set -u` / `setopt nounset`, looking up an
-                // unbound name is fatal: emit the same diagnostic
-                // mainline zsh prints and exit 1 (mirrors zsh's
-                // non-interactive behaviour).
                 // Bare-assoc bypass: `declare -A h; h=(a 1 b 2); ${h}`
                 // expects the joined values. The `declare -A` sets
                 // variables["h"]="" as a side effect, which would
@@ -6071,22 +6111,30 @@ impl crate::ported::exec::ShellExecutor {
                     .get(name)
                     .map(|h| !h.is_empty())
                     .unwrap_or(false);
-                let resolved = if !assoc_has_entries {
-                    self.variables.get(name).cloned()
-                } else {
-                    None
-                }
-                .or_else(|| self.arrays.get(name).map(|a| a.join(" ")))
-                .or_else(|| {
-                    self.assoc_arrays.get(name).map(|h| {
-                        if h.is_empty() {
-                            String::new()
+                // GSU dispatch first — `$USERNAME` / `$IFS` / `$HOME`
+                // / etc. route through their getfn callback. Mirrors
+                // C zsh's `Param.gsu->getfn` lookup. Without this,
+                // get_variable bypassed the GSU table entirely and
+                // returned empty for usernamegetfn-backed reads.
+                let resolved = lookup_special_var(name)
+                    .or_else(|| {
+                        if !assoc_has_entries {
+                            self.variables.get(name).cloned()
                         } else {
-                            h.values().cloned().collect::<Vec<_>>().join(" ")
+                            None
                         }
                     })
-                })
-                .or_else(|| env::var(name).ok());
+                    .or_else(|| self.arrays.get(name).map(|a| a.join(" ")))
+                    .or_else(|| {
+                        self.assoc_arrays.get(name).map(|h| {
+                            if h.is_empty() {
+                                String::new()
+                            } else {
+                                h.values().cloned().collect::<Vec<_>>().join(" ")
+                            }
+                        })
+                    })
+                    .or_else(|| env::var(name).ok());
                 match resolved {
                     Some(v) => v,
                     None => {
@@ -7136,12 +7184,20 @@ fn keyboardhack_lock() -> &'static Mutex<u8> {
 
 fn histsiz_lock() -> &'static Mutex<i64> {
     static HISTSIZ_VAR: OnceLock<Mutex<i64>> = OnceLock::new();
-    HISTSIZ_VAR.get_or_init(|| Mutex::new(30))
+    // Match observed `zsh -fc 'echo $HISTSIZE'` output on zsh 5.9+
+    // (Homebrew). Upstream's `configure.ac` defines DEFAULT_HISTSIZE
+    // as 30 but distributed binaries seed the cap at 999999999 — the
+    // parity goal here is "match the binary the user actually runs",
+    // not "match the source-code default".
+    HISTSIZ_VAR.get_or_init(|| Mutex::new(999_999_999))
 }
 
 fn savehistsiz_lock() -> &'static Mutex<i64> {
     static SAVEHISTSIZ_VAR: OnceLock<Mutex<i64>> = OnceLock::new();
-    SAVEHISTSIZ_VAR.get_or_init(|| Mutex::new(0))
+    // Same rationale as `histsiz_lock` — observed `zsh -fc
+    // 'echo $SAVEHIST'` returns 99999999 on zsh 5.9+. Source has
+    // savehistsiz default to 0 but distributed binaries cap at 99M.
+    SAVEHISTSIZ_VAR.get_or_init(|| Mutex::new(99_999_999))
 }
 
 fn zsh_terminfo_lock() -> &'static Mutex<String> {
@@ -7156,7 +7212,31 @@ fn zsh_terminfodirs_lock() -> &'static Mutex<String> {
 
 fn cached_username_lock() -> &'static Mutex<String> {
     static USERNAME_VAR: OnceLock<Mutex<String>> = OnceLock::new();
-    USERNAME_VAR.get_or_init(|| Mutex::new(env::var("USER").unwrap_or_default()))
+    USERNAME_VAR.get_or_init(|| Mutex::new(initial_username()))
+}
+
+/// Resolve the current user's name. Mirrors C's `get_username()`
+/// init at Src/init.c which reads `getpwuid(getuid())->pw_name`
+/// rather than `$USER`. Falls back to env vars only if the
+/// passwd lookup fails (rare on real systems).
+fn initial_username() -> String {
+    #[cfg(unix)]
+    {
+        let uid = unsafe { libc::getuid() };
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut buf = vec![0i8; 1024];
+        let mut result: *mut libc::passwd = std::ptr::null_mut();
+        let rc = unsafe {
+            libc::getpwuid_r(uid, &mut pwd, buf.as_mut_ptr(), buf.len(), &mut result)
+        };
+        if rc == 0 && !result.is_null() && !pwd.pw_name.is_null() {
+            let cstr = unsafe { std::ffi::CStr::from_ptr(pwd.pw_name) };
+            return cstr.to_string_lossy().into_owned();
+        }
+    }
+    env::var("USER")
+        .or_else(|_| env::var("LOGNAME"))
+        .unwrap_or_default()
 }
 
 fn pipestats_lock() -> &'static Mutex<Vec<i32>> {
@@ -8111,6 +8191,82 @@ pub fn setscope_base(_base: i32) {}
 
 /// Port of `upscope()` from `Src/params.c:6455`. WARNING: needs Param.
 pub fn upscope() {}
+
+// ===========================================================
+// GSU dispatch table — maps special-parameter NAMES to their
+// getfn callback. C zsh dispatches reads of `$RANDOM` /
+// `$USERNAME` / `$UID` / etc. through `Param.gsu->getfn`, where
+// each special parameter has a `Param` entry in `paramtab`
+// pointing at its specific getfn (Src/params.c:225 SPECIAL_PARAM
+// table seeds these mappings).
+//
+// zshrs has the GSU callbacks ported (uidgetfn, randomgetfn,
+// usernamegetfn, etc. above) but the shell's parameter-read path
+// (fusevm_bridge::expand_param) reads from ShellExecutor.variables
+// directly — never dispatching through the callbacks. Result:
+// `echo $RANDOM` returned the cached HashMap value (or empty),
+// not a fresh `rand() & 0x7fff` from `randomgetfn`.
+//
+// `lookup_special_var(name)` is the bridge: given a variable
+// name, returns the GSU getfn's output if `name` is a recognized
+// special, else None. Callers (expand_param, subst.rs reads)
+// check this before falling back to `variables.get(name)`.
+// ===========================================================
+
+/// Look up a special-parameter NAME and dispatch to its GSU getfn.
+///
+/// Returns `Some(value_string)` if `name` is one of zshrs's
+/// recognized specials with a real GSU getfn; `None` otherwise
+/// (caller should fall back to `variables.get`).
+///
+/// This is the bridge between the named getfn callbacks above
+/// (uidgetfn / randomgetfn / etc.) and the shell's parameter-read
+/// path. Mirrors the `Param.gsu->getfn` dispatch C zsh does
+/// inside `getsparam` / `getstrvalue` (Src/params.c:3076 / 2335).
+pub fn lookup_special_var(name: &str) -> Option<String> {
+    match name {
+        // libc identity callbacks.
+        "UID" => Some(uidgetfn().to_string()),
+        "GID" => Some(gidgetfn().to_string()),
+        "EUID" => Some(euidgetfn().to_string()),
+        "EGID" => Some(egidgetfn().to_string()),
+        // libc syscall callbacks.
+        "RANDOM" => Some(randomgetfn().to_string()),
+        "TTYIDLE" => Some(ttyidlegetfn().to_string()),
+        "ERRNO" => Some(errnogetfn().to_string()),
+        // Time callbacks.
+        "SECONDS" => Some(intsecondsgetfn().to_string()),
+        // Cached-state callbacks (OnceLock<Mutex<…>> backed).
+        "USERNAME" => Some(usernamegetfn()),
+        "HOME" => Some(homegetfn()),
+        "TERM" => Some(termgetfn()),
+        "WORDCHARS" => Some(wordcharsgetfn()),
+        "IFS" => Some(ifsgetfn()),
+        "TERMINFO" => Some(terminfogetfn()),
+        "TERMINFO_DIRS" => Some(terminfodirsgetfn()),
+        "KEYBOARD_HACK" => Some(keyboardhackgetfn()),
+        "histchars" => Some(histcharsgetfn()),
+        "_" => Some(underscoregetfn()),
+        // Counters with int return.
+        "HISTSIZE" => Some(histsizegetfn().to_string()),
+        "SAVEHIST" => Some(savehistsizegetfn().to_string()),
+        "#" | "ARGC" => Some(poundgetfn().to_string()),
+        // $0 routes through utils::argzero — only override when
+        // the static was explicitly set (otherwise let the shell's
+        // argv handling provide the binary path).
+        "0" => crate::ported::utils::argzero(),
+        // Arrays — joined with space for scalar context.
+        "pipestatus" => {
+            let arr = pipestatgetfn();
+            if arr.is_empty() {
+                None
+            } else {
+                Some(arr.join(" "))
+            }
+        }
+        _ => None,
+    }
+}
 
 #[cfg(test)]
 mod gsu_tests {
