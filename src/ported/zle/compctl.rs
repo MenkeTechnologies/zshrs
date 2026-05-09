@@ -223,11 +223,18 @@ static PATCOMPS: Mutex<Vec<(String, Arc<CompCtl>)>> = Mutex::new(Vec::new());
 
 /// `cclist` — flag for listing/command/default/first completion.
 /// Port of file-static `int cclist;` at Src/Zle/compctl.c:63.
-static CCLIST: Mutex<u32> = Mutex::new(0);
+/// Bucket-1 per PORT_PLAN.md — per-completion-call scratch state,
+/// thread_local so concurrent completion invocations don't race.
+thread_local! {
+    static CCLIST: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
 
 /// `showmask` — mask determining what to print.
 /// Port of file-static `unsigned long showmask;` at Src/Zle/compctl.c:66.
-static SHOWMASK: Mutex<u64> = Mutex::new(0);
+/// Bucket-1 per PORT_PLAN.md.
+thread_local! {
+    static SHOWMASK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 
 // =================================================================
 // Free fns — start of compctl.c proper
@@ -326,7 +333,7 @@ pub(crate) fn get_compctl(
     // C: `argv = *av;` — alias the caller's array.
     let mut i: usize = 0;
     let hx = false;
-    let mut cclist_local = *CCLIST.lock().unwrap();
+    let mut cclist_local = CCLIST.with(|c| c.get());
     cc.mask2 = cc_flags2::CCCONT;                            // c:407
 
     // C: `compctl + foo ...` becomes default — c:392-404
@@ -343,7 +350,7 @@ pub(crate) fn get_compctl(
         if cl != 0 {
             return 1;
         } else {
-            *CCLIST.lock().unwrap() = comp_op::REMOVE;
+            CCLIST.with(|c| c.set(comp_op::REMOVE));
             return 0;
         }
     }
@@ -566,7 +573,7 @@ pub(crate) fn get_compctl(
     // C: c:1582 — push the parsed cct into the caller's slot.
     av.drain(0..i);
     let _ = isdef;
-    *CCLIST.lock().unwrap() = cclist_local;
+    CCLIST.with(|c| c.set(cclist_local));
     0
 }
 
@@ -779,7 +786,7 @@ pub(crate) fn get_xcompctl(
         next_chain.push(Arc::new(next_cc));
 
         // C: c:1143-1145 — special target → finished
-        let cclist = *CCLIST.lock().unwrap();
+        let cclist = CCLIST.with(|c| c.get());
         if (av.is_empty()) && (cclist & comp_op::SPECIAL) != 0 {
             ready = true;
             continue;
@@ -825,7 +832,7 @@ pub(crate) fn get_xcompctl(
 /// in C is a memory-model detail that doesn't transfer to Rust's
 /// Arc-based ownership.
 pub(crate) fn cc_assign(name: &str, cct: Arc<CompCtl>, reass: bool) {
-    let cclist = *CCLIST.lock().unwrap();
+    let cclist = CCLIST.with(|c| c.get());
     if reass && (cclist & comp_op::LIST) == 0 {
         // C: c:1182-1188 — reject conflicting special targets
         let conflicts = cclist == (comp_op::COMMAND | comp_op::DEFAULT)
@@ -951,7 +958,7 @@ pub(crate) fn delpatcomp(n: &str) {
 /// installs the spec into compctltab (or patcomps for `-p PAT`),
 /// or removes entries when COMP_REMOVE is set (the `-` flag).
 pub(crate) fn compctl_process_cc(s: &[String], cc: Arc<CompCtl>) -> i32 {
-    let cclist = *CCLIST.lock().unwrap();
+    let cclist = CCLIST.with(|c| c.get());
     if (cclist & comp_op::REMOVE) != 0 {
         // C: c:1320-1328 — delete entries for the listed commands
         for n in s {
@@ -1015,7 +1022,7 @@ pub(crate) fn printcompctl(
     // C: c:1369-1372 — printflags adjusts cclist mode
     const PRINT_LIST: i32 = 1 << 0;
     const PRINT_TYPE: i32 = 1 << 1;
-    let mut cclist = *CCLIST.lock().unwrap();
+    let mut cclist = CCLIST.with(|c| c.get());
     if (printflags & PRINT_LIST) != 0 {
         cclist |= comp_op::LIST;
     } else if (printflags & PRINT_TYPE) != 0 {
@@ -1028,14 +1035,14 @@ pub(crate) fn printcompctl(
     }
 
     // C: c:1379 — showmask filter
-    let showmask = *SHOWMASK.lock().unwrap();
+    let showmask = SHOWMASK.with(|c| c.get());
     if showmask != 0 && (flags & showmask) == 0 {
         return;
     }
 
     // C: c:1384-1385 — clear showmask for recursive calls
     let oldshowmask = showmask;
-    *SHOWMASK.lock().unwrap() = 0;
+    SHOWMASK.with(|c| c.set(0));
 
     // C: c:1388-1402 — print prefix
     if (cclist & comp_op::LIST) != 0 {
@@ -1100,7 +1107,7 @@ pub(crate) fn printcompctl(
     println!();
 
     // C: c:1545 — restore showmask
-    *SHOWMASK.lock().unwrap() = oldshowmask;
+    SHOWMASK.with(|c| c.set(oldshowmask));
 }
 
 /// Print a compctl hash node.
@@ -1127,8 +1134,8 @@ pub(crate) fn bin_compctl(name: &str, argv: &[String]) -> i32 {
     let mut ret: i32 = 0;
 
     // C: c:1570-1571 — clear static flags
-    *CCLIST.lock().unwrap() = 0;
-    *SHOWMASK.lock().unwrap() = 0;
+    CCLIST.with(|c| c.set(0));
+    SHOWMASK.with(|c| c.set(0));
 
     // C: c:1574-1596 — parse args if any
     if !argv.is_empty() {
@@ -1151,9 +1158,9 @@ pub(crate) fn bin_compctl(name: &str, argv: &[String]) -> i32 {
         if (showmask & cc_flags::EXCMDS) != 0 && (showmask & cc_flags::DISCMDS) == 0 {
             showmask &= !cc_flags::EXCMDS;
         }
-        *SHOWMASK.lock().unwrap() = showmask;
+        SHOWMASK.with(|c| c.set(showmask));
 
-        let cclist = *CCLIST.lock().unwrap();
+        let cclist = CCLIST.with(|c| c.get());
         // C: c:1594 — if no command args or just listing, drop cc
         if argv.is_empty() || (cclist & comp_op::LIST) != 0 {
             // cc dropped at end of if-let
@@ -1170,7 +1177,7 @@ pub(crate) fn bin_compctl(name: &str, argv: &[String]) -> i32 {
         }
     }
 
-    let cclist = *CCLIST.lock().unwrap();
+    let cclist = CCLIST.with(|c| c.get());
 
     // C: c:1601 — if no commands and no special-target flag, print all
     if argv.is_empty() && (cclist & (comp_op::SPECIAL | comp_op::LISTMATCH)) == 0 {
@@ -1198,7 +1205,7 @@ pub(crate) fn bin_compctl(name: &str, argv: &[String]) -> i32 {
 
     // C: c:1618 — if listing, print only named entries
     if (cclist & comp_op::LIST) != 0 {
-        *SHOWMASK.lock().unwrap() = 0;
+        SHOWMASK.with(|c| c.set(0));
         for n in &argv {
             let mut found = false;
             // Try pattern compctls first
@@ -1244,7 +1251,7 @@ pub(crate) fn bin_compctl(name: &str, argv: &[String]) -> i32 {
 ///   CFN_DEFAULT = 2  — skip cc_default
 pub(crate) fn bin_compcall(name: &str, argv: &[String]) -> i32 {
     // C: c:1680-1683 — incompfunc check
-    let incompfunc = *INCOMPFUNC.lock().unwrap();
+    let incompfunc = INCOMPFUNC.with(|c| c.get());
     if incompfunc != 1 {
         eprintln!("{}: can only be called from completion function", name);
         return 1;
@@ -1269,7 +1276,7 @@ pub(crate) fn bin_compcall(name: &str, argv: &[String]) -> i32 {
 /// Are we inside a completion function? Set by the completion-driver
 /// entry/exit hooks (compctl_make / compctl_cleanup). Mirrors the C
 /// `incompfunc` global from Src/Zle/zle_tricky.c.
-static INCOMPFUNC: Mutex<i32> = Mutex::new(0);
+thread_local! { static INCOMPFUNC: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
 
 /// `compctl -K`'s bound `compctlread` callback.
 /// Port of `compctlread()` from Src/Zle/compctl.c:189 (~150 lines).
@@ -1288,7 +1295,7 @@ static INCOMPFUNC: Mutex<i32> = Mutex::new(0);
 /// (zlemetacs, clwords, clwnum) lives in src/ported/zle/zle_main.rs.
 pub(crate) fn compctlread(name: &str, args: &[String]) -> i32 {
     // C: c:195 — must be called from compctl-invoked function
-    let incompctlfunc = *INCOMPCTLFUNC.lock().unwrap();
+    let incompctlfunc = INCOMPCTLFUNC.with(|c| c.get());
     if !incompctlfunc {
         eprintln!("{}: option valid only in functions called via compctl", name);
         return 1;
@@ -1346,7 +1353,7 @@ pub(crate) fn compctlread(name: &str, args: &[String]) -> i32 {
 /// True iff we're inside a function called via compctl -K. Mirrors
 /// the C `incompctlfunc` global from Src/Zle/zle_tricky.c — set by
 /// the dispatcher around the -K function call.
-static INCOMPCTLFUNC: Mutex<bool> = Mutex::new(false);
+thread_local! { static INCOMPCTLFUNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
 /// Hook for completion-list build start.
 /// Port of `ccmakehookfn()` from Src/Zle/compctl.c:1762 (~145 lines).
@@ -1420,12 +1427,12 @@ pub mod addwhat_kind {
 /// File-thread `addwhat` global. Port of file-static `int addwhat;`
 /// from Src/Zle/compctl.c:1749. Set by the dispatcher before each
 /// addmatch / dumphashtable call to communicate the source kind.
-static ADDWHAT: Mutex<i32> = Mutex::new(0);
+thread_local! { static ADDWHAT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
 
 /// Per-completion match list. Port of file-static `LinkList` of
 /// matches in zle_tricky.c. The Rust port keeps a per-call Vec so
 /// addmatch can accumulate results without touching ZLE globals.
-static MATCH_LIST: Mutex<Vec<String>> = Mutex::new(Vec::new());
+thread_local! { static MATCH_LIST: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) }; }
 
 /// Add a match to the per-call result list.
 /// Port of `addmatch()` from Src/Zle/compctl.c:1925 (~150 lines).
@@ -1446,7 +1453,7 @@ static MATCH_LIST: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// — sufficient for unit tests that exercise the accept/reject
 /// dispatch without driving the full ZLE pipeline.
 pub(crate) fn addmatch(s: &str, _t: Option<&str>) {
-    let aw = *ADDWHAT.lock().unwrap();
+    let aw = ADDWHAT.with(|c| c.get());
     // C: c:1957-1990 — file-thread accept.
     let file_thread = matches!(
         aw,
@@ -1459,7 +1466,7 @@ pub(crate) fn addmatch(s: &str, _t: Option<&str>) {
     if file_thread {
         // C: c:1988 — for -7 (CMD_NAME), check findcmd; we accept
         // unconditionally here pending findcmd port.
-        MATCH_LIST.lock().unwrap().push(s.to_string());
+        MATCH_LIST.with(|r| r.borrow_mut().push(s.to_string()));
         return;
     }
     // C: c:1991-2014 — conditional-accept thread. We accept the
@@ -1472,13 +1479,13 @@ pub(crate) fn addmatch(s: &str, _t: Option<&str>) {
             | addwhat_kind::CDABLE_PARAM
             | addwhat_kind::PARAM
     ) {
-        MATCH_LIST.lock().unwrap().push(s.to_string());
+        MATCH_LIST.with(|r| r.borrow_mut().push(s.to_string()));
         return;
     }
     if aw > 0 {
         // CC_QUOTEFLAG / CC_BINDINGS / CC_SHFUNCS / etc. — accept;
         // per-flag filtering pending hash-node integration.
-        MATCH_LIST.lock().unwrap().push(s.to_string());
+        MATCH_LIST.with(|r| r.borrow_mut().push(s.to_string()));
     }
     // else: reject — match dropped on the floor per the C `return` path.
 }
@@ -1590,7 +1597,7 @@ pub(crate) fn getcpat(str: &str, cpatindex: i32, cpat: &str, class: i32) -> i32 
 /// of names since the hash-table abstractions differ.
 pub(crate) fn dumphashtable<I: IntoIterator<Item = String>>(names: I, what: i32) {
     // C: c:2111 — set addwhat global before the iteration
-    *ADDWHAT.lock().unwrap() = what;
+    ADDWHAT.with(|c| c.set(what));
     for nam in names {
         addmatch(&nam, None);
     }
@@ -1650,7 +1657,7 @@ pub(crate) fn getreal(str_in: &str) -> String {
 /// Rust port reads `prpre` (PRPRE static if set; else current dir),
 /// applies the same dirent-stat dispatch.
 pub(crate) fn gen_matches_files(dirs: bool, execs: bool, all: bool) {
-    let prpre = PRPRE.lock().unwrap().clone().unwrap_or_else(|| ".".to_string());
+    let prpre = PRPRE.with(|r| r.borrow().clone()).unwrap_or_else(|| ".".to_string());
     let entries = match std::fs::read_dir(&prpre) {
         Ok(e) => e,
         Err(_) => return,
@@ -1695,7 +1702,7 @@ pub(crate) fn gen_matches_files(dirs: bool, execs: bool, all: bool) {
 /// `char *prpre` at Src/Zle/compctl.c:1736 — the directory portion
 /// of the path component the cursor is in, expanded for `opendir`.
 /// Set by the completion driver before calling gen_matches_files.
-static PRPRE: Mutex<Option<String>> = Mutex::new(None);
+thread_local! { static PRPRE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) }; }
 
 /// Find a node in a linked list by data-pointer equality.
 /// Port of `findnode()` from Src/Zle/compctl.c:2287.
@@ -1712,7 +1719,7 @@ pub(crate) fn findnode<T: PartialEq>(list: &[T], dat: &T) -> Option<usize> {
 
 /// `cdepth` recursion guard. Port of file-static `int cdepth = 0;`
 /// at Src/Zle/compctl.c:2300.
-static CDEPTH: Mutex<i32> = Mutex::new(0);
+thread_local! { static CDEPTH: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
 
 /// Maximum recursion depth — port of `MAX_CDEPTH 16` macro at
 /// Src/Zle/compctl.c:2302. Prevents infinite recursion between
@@ -1722,7 +1729,7 @@ const MAX_CDEPTH: i32 = 16;
 /// `ccont` continuation flags. Port of file-static `unsigned long
 /// ccont;` at Src/Zle/compctl.c:1714. Bitmask of CC_CCCONT/etc.
 /// controlling whether the dispatch loop continues to next compctl.
-static CCONT: Mutex<u64> = Mutex::new(0);
+thread_local! { static CCONT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
 
 /// Build the completion list — top-level dispatch.
 /// Port of `makecomplistctl()` from Src/Zle/compctl.c:2305.
@@ -1744,23 +1751,22 @@ static CCONT: Mutex<u64> = Mutex::new(0);
 /// makecomplistglobal call. The compfunc state save/restore relies
 /// on ZLE-tricky globals (clwords, etc.) that aren't ported here.
 pub(crate) fn makecomplistctl(flags: i32) -> i32 {
-    let mut cdepth = CDEPTH.lock().unwrap();
-    if *cdepth == MAX_CDEPTH {                                // c:2311
+    let cdepth = CDEPTH.with(|c| c.get());
+    if cdepth == MAX_CDEPTH {                                 // c:2311
         return 0;
     }
-    *cdepth += 1;                                             // c:2314
-    drop(cdepth);
+    CDEPTH.with(|c| c.set(cdepth + 1));                       // c:2314
 
     // C: c:2372 — bump incompfunc to 2 (recursion marker)
-    let saved_incomp = *INCOMPFUNC.lock().unwrap();
-    *INCOMPFUNC.lock().unwrap() = 2;
+    let saved_incomp = INCOMPFUNC.with(|c| c.get());
+    INCOMPFUNC.with(|c| c.set(2));
 
     // C: c:2373 — recurse to global dispatch
     let str_in = "";  // placeholder; real impl reads comp_str
     let ret = makecomplistglobal(str_in, false, comp_op::LIST as i32, flags);
 
-    *INCOMPFUNC.lock().unwrap() = saved_incomp;
-    *CDEPTH.lock().unwrap() -= 1;
+    INCOMPFUNC.with(|c| c.set(saved_incomp));
+    CDEPTH.with(|c| c.set(c.get() - 1));
     ret
 }
 
@@ -1780,7 +1786,7 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
 /// common path.
 pub(crate) fn makecomplistglobal(os: &str, incmd: bool, _lst: i32, flags: i32) -> i32 {
     // C: c:2406 — reset ccont
-    *CCONT.lock().unwrap() = cc_flags2::CCCONT;
+    CCONT.with(|c| c.set(cc_flags2::CCCONT));
 
     // C: c:2407 — clear cc_dummy.suffix
     if let Some(d) = CC_DUMMY.lock().unwrap().as_mut() {
@@ -1817,17 +1823,17 @@ pub(crate) fn makecomplistcmd(os: &str, incmd: bool, flags: i32) -> i32 {
     if (flags & CFN_FIRST) == 0 {
         if let Some(cc_first) = CC_FIRST.lock().unwrap().clone() {
             makecomplistcc(&cc_first, os, incmd);
-            if (*CCONT.lock().unwrap() & cc_flags2::CCCONT) == 0 {
+            if (CCONT.with(|c| c.get()) & cc_flags2::CCCONT) == 0 {
                 return 0;
             }
         }
     }
 
     // C: c:2491 — pattern compctls
-    let cmdstr = CMDSTR.lock().unwrap().clone();
+    let cmdstr = CMDSTR.with(|r| r.borrow().clone());
     if cmdstr.is_some() {
         ret |= makecomplistpc(os, incmd);
-        if (*CCONT.lock().unwrap() & cc_flags2::CCCONT) == 0 {
+        if (CCONT.with(|c| c.get()) & cc_flags2::CCCONT) == 0 {
             return ret;
         }
     }
@@ -1864,7 +1870,7 @@ pub(crate) fn makecomplistcmd(os: &str, incmd: bool, flags: i32) -> i32 {
 /// `cmdstr` — current command word being completed.
 /// Port of file-static `char *cmdstr` (zle_tricky.c). Set by the
 /// completion driver before invoking makecomplistcmd.
-static CMDSTR: Mutex<Option<String>> = Mutex::new(None);
+thread_local! { static CMDSTR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) }; }
 
 /// Pattern compctl iteration — `compctl -p PAT cmd`.
 /// Port of `makecomplistpc()` from Src/Zle/compctl.c:2529.
@@ -1874,7 +1880,7 @@ static CMDSTR: Mutex<Option<String>> = Mutex::new(None);
 /// match, runs makecomplistcc for that pattern's spec.
 pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {
     let mut ret: i32 = 0;
-    let cmdstr = CMDSTR.lock().unwrap().clone();
+    let cmdstr = CMDSTR.with(|r| r.borrow().clone());
     let cmd = match cmdstr {
         Some(s) => s,
         None => return 0,
@@ -1886,7 +1892,7 @@ pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {
         if crate::exec::ShellExecutor::glob_match_static(&cmd, pat) {
             makecomplistcc(cc, os, incmd);
             ret |= 2;
-            if (*CCONT.lock().unwrap() & cc_flags2::CCCONT) == 0 {
+            if (CCONT.with(|c| c.get()) & cc_flags2::CCCONT) == 0 {
                 return ret;
             }
         }
@@ -1905,12 +1911,10 @@ pub(crate) fn makecomplistcc(cc: &Arc<CompCtl>, s: &str, incmd: bool) {
     let _ = cc.clone();
 
     // C: c:2562 — initialize ccused list
-    let mut ccused = CCUSED.lock().unwrap();
-    ccused.push(cc.clone());
-    drop(ccused);
+    CCUSED.with(|r| r.borrow_mut().push(cc.clone()));
 
     // C: c:2565 — reset ccont
-    *CCONT.lock().unwrap() = 0;
+    CCONT.with(|c| c.set(0));
 
     // C: c:2567 — dispatch OR chain
     makecomplistor(cc, s, incmd, 0, 0);
@@ -1918,7 +1922,7 @@ pub(crate) fn makecomplistcc(cc: &Arc<CompCtl>, s: &str, incmd: bool) {
 
 /// `ccused` — per-completion list of compctls used. Port of
 /// file-static `LinkList ccused` at Src/Zle/compctl.c:1702.
-static CCUSED: Mutex<Vec<Arc<CompCtl>>> = Mutex::new(Vec::new());
+thread_local! { static CCUSED: std::cell::RefCell<Vec<Arc<CompCtl>>> = const { std::cell::RefCell::new(Vec::new()) }; }
 
 /// Walk the [x]or chain of compctls.
 /// Port of `makecomplistor()` from Src/Zle/compctl.c:2573.
@@ -1987,11 +1991,11 @@ pub(crate) fn makecomplistext(occ: &Arc<CompCtl>, os: &str, incmd: bool) {
 
 /// `we` / `wb` — word end / begin positions (1-based byte offsets
 /// into zlemetaline). Port of `int wb, we;` at Src/Zle/zle_tricky.c.
-static WE: Mutex<i32> = Mutex::new(0);
-static WB: Mutex<i32> = Mutex::new(0);
+thread_local! { static WE: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
+thread_local! { static WB: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
 
 /// `zlemetacs` — cursor position (byte offset). Port of `int zlemetacs;`.
-static ZLEMETACS: Mutex<i32> = Mutex::new(0);
+thread_local! { static ZLEMETACS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
 
 /// `zlemetall` — line length in bytes. Port of `int zlemetall;`.
 static ZLEMETALL: Mutex<i32> = Mutex::new(0);
@@ -2131,9 +2135,9 @@ fn inull(c: char) -> bool {
 /// which cover the most common compctl flows.
 pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     // C: c:2810-2813 — save state to restore on exit
-    let owe = *WE.lock().unwrap();
-    let owb = *WB.lock().unwrap();
-    let ocs = *ZLEMETACS.lock().unwrap();
+    let owe = WE.with(|c| c.get());
+    let owb = WB.with(|c| c.get());
+    let ocs = ZLEMETACS.with(|c| c.get());
     let oll = *ZLEMETALL.lock().unwrap();
     let ois = *INSTRING.lock().unwrap();
     let oib = *INBACKT.lock().unwrap();
@@ -2166,7 +2170,7 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     let s_post: String = s_chars[noffs_u..].iter().collect();
     tmp.push_str(&s_pre);
     let scs_initial = sl + 1 + noffs;
-    *ZLEMETACS.lock().unwrap() = scs_initial;
+    ZLEMETACS.with(|c| c.set(scs_initial));
     let mut scs = scs_initial;
     tmp.push('x');
     tmp.push_str(&s_post);
@@ -2241,9 +2245,9 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
 
     *NOALIASES.lock().unwrap() = ona;
     *NOERRS.lock().unwrap() = ne;
-    *WB.lock().unwrap() = owb;
-    *WE.lock().unwrap() = owe;
-    *ZLEMETACS.lock().unwrap() = ocs;
+    WB.with(|c| c.set(owb));
+    WE.with(|c| c.set(owe));
+    ZLEMETACS.with(|c| c.set(ocs));
     *ZLEMETALINE.lock().unwrap() = ol;
     *ZLEMETALL.lock().unwrap() = oll;
 
@@ -2356,7 +2360,7 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
 
     // C: c:2980-3023 — state save/restore + nested makecomplistcmd
     let ow = CLWORDS.lock().unwrap().clone();
-    let os = CMDSTR.lock().unwrap().clone();
+    let os = CMDSTR.with(|r| r.borrow().clone());
     let oqp = QIPRE.lock().unwrap().clone();
     let oqs = QISUF.lock().unwrap().clone();
     let oqst = COMPQSTACK.lock().unwrap().clone();
@@ -2366,7 +2370,7 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     let obr = *BRANGE.lock().unwrap();
     let oer = *ERANGE.lock().unwrap();
     let oof = *OFFS.lock().unwrap();
-    let occ = *CCONT.lock().unwrap();
+    let occ = CCONT.with(|c| c.get());
 
     // C: c:2986-2989 — push current quote char onto compqstack
     let new_quote_char = if *INSTRING.lock().unwrap() != qt::NONE {
@@ -2384,21 +2388,21 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     *CLWNUM.lock().unwrap() = foo.len() as i32;
     *CLWORDS.lock().unwrap() = foo.clone();
     *CLWPOS.lock().unwrap() = cur;
-    *CMDSTR.lock().unwrap() = foo.first().cloned();
+    CMDSTR.with(|r| *r.borrow_mut() = foo.first().cloned());
     *BRANGE.lock().unwrap() = 0;
     *ERANGE.lock().unwrap() = (foo.len() as i32) - 1;
     *QIPRE.lock().unwrap() = qp;
     *QISUF.lock().unwrap() = qs;
     *OFFS.lock().unwrap() = soffs;
-    *CCONT.lock().unwrap() = cc_flags2::CCCONT;
+    CCONT.with(|c| c.set(cc_flags2::CCCONT));
 
     // C: c:3006 — nested dispatch
     const CFN_FIRST: i32 = 1;
     let _ = makecomplistcmd(&ns, cur == 0, CFN_FIRST);
 
-    *CCONT.lock().unwrap() = occ;
+    CCONT.with(|c| c.set(occ));
     *OFFS.lock().unwrap() = oof;
-    *CMDSTR.lock().unwrap() = os;
+    CMDSTR.with(|r| *r.borrow_mut() = os);
     *CLWORDS.lock().unwrap() = ow;
     *CLWSIZE.lock().unwrap() = olws;
     *CLWNUM.lock().unwrap() = olwn;
@@ -2454,21 +2458,21 @@ pub(crate) fn makecomplistflags(cc: &Arc<CompCtl>, s: &str, _incmd: bool, _compa
     let _ = (cc, s);
     // Set ccont per cc.mask2 — c:3499 loop init reads CC_CCCONT
     // from mask2 to determine dispatch continuation.
-    *CCONT.lock().unwrap() = cc.mask2;
+    CCONT.with(|c| c.set(cc.mask2));
 
     // CC_FILES — c:3650+ in real impl
     if (cc.mask & cc_flags::FILES) != 0 {
-        *ADDWHAT.lock().unwrap() = addwhat_kind::FILES;
+        ADDWHAT.with(|c| c.set(addwhat_kind::FILES));
         gen_matches_files(false, false, false);
     }
     // CC_DIRS — c:3680
     if (cc.mask & cc_flags::DIRS) != 0 {
-        *ADDWHAT.lock().unwrap() = addwhat_kind::FILES;
+        ADDWHAT.with(|c| c.set(addwhat_kind::FILES));
         gen_matches_files(true, false, false);
     }
     // CC_NAMED — c:3742
     if (cc.mask & cc_flags::NAMED) != 0 {
-        *ADDWHAT.lock().unwrap() = addwhat_kind::FILES_OTHER;
+        ADDWHAT.with(|c| c.set(addwhat_kind::FILES_OTHER));
         maketildelist();
     }
     // Per-CC_* arms beyond these (CC_VARS, CC_SHFUNCS, etc.) need
@@ -2483,7 +2487,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<CompCtl>, s: &str, _incmd: bool, _compa
     if let Some(s) = &cc.str_expansion {
         let expanded = getreal(s);
         // Push as a single match with addwhat=GLOB_EXPAND
-        *ADDWHAT.lock().unwrap() = addwhat_kind::GLOB_EXPAND;
+        ADDWHAT.with(|c| c.set(addwhat_kind::GLOB_EXPAND));
         addmatch(&expanded, None);
     }
 }
@@ -2796,7 +2800,7 @@ mod tests {
     fn cc_assign_with_reass_command_target_uses_special_key() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
-        *CCLIST.lock().unwrap() = comp_op::COMMAND;
+        CCLIST.with(|c| c.set(comp_op::COMMAND));
         cc_assign("compctl", Arc::new(CompCtl {
             mask: cc_flags::FILES,
             ..Default::default()
@@ -2805,19 +2809,19 @@ mod tests {
         assert!(g.as_ref().unwrap().contains_key("__cc_compos"));
         // Reset for other tests.
         drop(g);
-        *CCLIST.lock().unwrap() = 0;
+        CCLIST.with(|c| c.set(0));
     }
 
     #[test]
     fn cc_assign_with_reass_default_target_uses_special_key() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
-        *CCLIST.lock().unwrap() = comp_op::DEFAULT;
+        CCLIST.with(|c| c.set(comp_op::DEFAULT));
         cc_assign("compctl", Arc::new(CompCtl::default()), true);
         let g = COMPCTL_TAB.lock().unwrap();
         assert!(g.as_ref().unwrap().contains_key("__cc_default"));
         drop(g);
-        *CCLIST.lock().unwrap() = 0;
+        CCLIST.with(|c| c.set(0));
     }
 
     #[test]
@@ -2872,7 +2876,7 @@ mod tests {
     #[test]
     fn bin_compcall_outside_compfunc_errors() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        *INCOMPFUNC.lock().unwrap() = 0;
+        INCOMPFUNC.with(|c| c.set(0));
         let r = bin_compcall("compcall", &[]);
         assert_eq!(r, 1);
     }
@@ -2880,17 +2884,17 @@ mod tests {
     #[test]
     fn bin_compcall_inside_compfunc_succeeds() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        *INCOMPFUNC.lock().unwrap() = 1;
+        INCOMPFUNC.with(|c| c.set(1));
         let r = bin_compcall("compcall", &["-T".to_string()]);
         assert_eq!(r, 0);
         // Reset
-        *INCOMPFUNC.lock().unwrap() = 0;
+        INCOMPFUNC.with(|c| c.set(0));
     }
 
     #[test]
     fn compctlread_outside_compctl_func_errors() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        *INCOMPCTLFUNC.lock().unwrap() = false;
+        INCOMPCTLFUNC.with(|c| c.set(false));
         let r = compctlread("compctlread", &[]);
         assert_eq!(r, 1);
     }
@@ -2912,11 +2916,11 @@ mod tests {
     #[test]
     fn addmatch_accepts_files_kind() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        MATCH_LIST.lock().unwrap().clear();
-        *ADDWHAT.lock().unwrap() = addwhat_kind::FILES;
+        MATCH_LIST.with(|r| r.borrow_mut().clear());
+        ADDWHAT.with(|c| c.set(addwhat_kind::FILES));
         addmatch("foo.txt", None);
         addmatch("bar.txt", None);
-        let m = MATCH_LIST.lock().unwrap();
+        let m = MATCH_LIST.with(|r| r.borrow().clone());
         assert_eq!(m.len(), 2);
         assert_eq!(m[0], "foo.txt");
     }
@@ -2924,10 +2928,10 @@ mod tests {
     #[test]
     fn addmatch_accepts_param_kind() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        MATCH_LIST.lock().unwrap().clear();
-        *ADDWHAT.lock().unwrap() = addwhat_kind::PARAM;
+        MATCH_LIST.with(|r| r.borrow_mut().clear());
+        ADDWHAT.with(|c| c.set(addwhat_kind::PARAM));
         addmatch("HOME", None);
-        let m = MATCH_LIST.lock().unwrap();
+        let m = MATCH_LIST.with(|r| r.borrow().clone());
         assert_eq!(m.len(), 1);
         assert_eq!(m[0], "HOME");
     }
@@ -2935,10 +2939,10 @@ mod tests {
     #[test]
     fn addmatch_accepts_cc_files_positive_mask() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        MATCH_LIST.lock().unwrap().clear();
-        *ADDWHAT.lock().unwrap() = cc_flags::FILES as i32;
+        MATCH_LIST.with(|r| r.borrow_mut().clear());
+        ADDWHAT.with(|c| c.set(cc_flags::FILES as i32));
         addmatch("foo", None);
-        let m = MATCH_LIST.lock().unwrap();
+        let m = MATCH_LIST.with(|r| r.borrow().clone());
         assert_eq!(m.len(), 1);
     }
 
@@ -2988,20 +2992,20 @@ mod tests {
     #[test]
     fn dumphashtable_calls_addmatch_per_entry() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        MATCH_LIST.lock().unwrap().clear();
+        MATCH_LIST.with(|r| r.borrow_mut().clear());
         let entries = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
         dumphashtable(entries, addwhat_kind::FILES);
-        let m = MATCH_LIST.lock().unwrap();
+        let m = MATCH_LIST.with(|r| r.borrow().clone());
         assert_eq!(m.len(), 3);
     }
 
     #[test]
     fn addhnmatch_forwards_to_addmatch() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        MATCH_LIST.lock().unwrap().clear();
-        *ADDWHAT.lock().unwrap() = addwhat_kind::FILES;
+        MATCH_LIST.with(|r| r.borrow_mut().clear());
+        ADDWHAT.with(|c| c.set(addwhat_kind::FILES));
         addhnmatch("xyz", 0);
-        let m = MATCH_LIST.lock().unwrap();
+        let m = MATCH_LIST.with(|r| r.borrow().clone());
         assert_eq!(m.len(), 1);
         assert_eq!(m[0], "xyz");
     }
@@ -3010,39 +3014,39 @@ mod tests {
     fn makecomplistctl_recursion_guard() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Force depth to MAX
-        *CDEPTH.lock().unwrap() = MAX_CDEPTH;
+        CDEPTH.with(|c| c.set(MAX_CDEPTH));
         let r = makecomplistctl(0);
         assert_eq!(r, 0);
         // Reset for other tests.
-        *CDEPTH.lock().unwrap() = 0;
+        CDEPTH.with(|c| c.set(0));
     }
 
     #[test]
     fn makecomplistflags_cc_files_invokes_gen_matches() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        MATCH_LIST.lock().unwrap().clear();
+        MATCH_LIST.with(|r| r.borrow_mut().clear());
         // Set prpre to a known dir we can read.
-        *PRPRE.lock().unwrap() = Some(".".to_string());
+        PRPRE.with(|r| *r.borrow_mut() = Some(".".to_string()));
         let cc = Arc::new(CompCtl {
             mask: cc_flags::FILES,
             ..Default::default()
         });
         makecomplistflags(&cc, "", false, 0);
         // Should have at least picked up Cargo.toml or similar from pwd.
-        let m = MATCH_LIST.lock().unwrap();
+        let m = MATCH_LIST.with(|r| r.borrow().clone());
         assert!(!m.is_empty(), "expected file matches in pwd");
     }
 
     #[test]
     fn makecomplistflags_cc_str_expansion_emits_one_match() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        MATCH_LIST.lock().unwrap().clear();
+        MATCH_LIST.with(|r| r.borrow_mut().clear());
         let cc = Arc::new(CompCtl {
             str_expansion: Some("hardcoded".to_string()),
             ..Default::default()
         });
         makecomplistflags(&cc, "", false, 0);
-        let m = MATCH_LIST.lock().unwrap();
+        let m = MATCH_LIST.with(|r| r.borrow().clone());
         assert_eq!(m.len(), 1);
         assert_eq!(m[0], "hardcoded");
     }
@@ -3050,7 +3054,7 @@ mod tests {
     #[test]
     fn makecomplistor_walks_xor_chain() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        MATCH_LIST.lock().unwrap().clear();
+        MATCH_LIST.with(|r| r.borrow_mut().clear());
         // Build cc1 with str "first", xor → cc2 with str "second"
         let cc2 = Arc::new(CompCtl {
             str_expansion: Some("second".to_string()),
@@ -3062,7 +3066,7 @@ mod tests {
             ..Default::default()
         });
         makecomplistor(&cc1, "", false, 0, 0);
-        let m = MATCH_LIST.lock().unwrap();
+        let m = MATCH_LIST.with(|r| r.borrow().clone());
         assert_eq!(m.len(), 2);
         assert_eq!(m[0], "first");
         assert_eq!(m[1], "second");
@@ -3071,10 +3075,10 @@ mod tests {
     #[test]
     fn makecomplistcc_pushes_to_ccused() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        CCUSED.lock().unwrap().clear();
+        CCUSED.with(|r| r.borrow_mut().clear());
         let cc = Arc::new(CompCtl::default());
         makecomplistcc(&cc, "", false);
-        let used = CCUSED.lock().unwrap();
+        let used = CCUSED.with(|r| r.borrow().clone());
         assert_eq!(used.len(), 1);
     }
 
@@ -3084,7 +3088,7 @@ mod tests {
         // Verify makecomplistpc returns 0 when cmdstr is unset
         // (its early-bail path) — full pattern-match test requires
         // VM context for glob_match_static.
-        *CMDSTR.lock().unwrap() = None;
+        CMDSTR.with(|r| *r.borrow_mut() = None);
         let r = makecomplistpc("", false);
         assert_eq!(r, 0);
     }
@@ -3100,14 +3104,14 @@ mod tests {
     fn cc_assign_rejects_conflicting_special_targets() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
-        *CCLIST.lock().unwrap() = comp_op::COMMAND | comp_op::DEFAULT;
+        CCLIST.with(|c| c.set(comp_op::COMMAND | comp_op::DEFAULT));
         cc_assign("compctl", Arc::new(CompCtl::default()), true);
         let g = COMPCTL_TAB.lock().unwrap();
         // Should have been rejected — neither key installed.
         assert!(!g.as_ref().unwrap().contains_key("__cc_compos"));
         assert!(!g.as_ref().unwrap().contains_key("__cc_default"));
         drop(g);
-        *CCLIST.lock().unwrap() = 0;
+        CCLIST.with(|c| c.set(0));
     }
 
     #[test]
@@ -3116,14 +3120,14 @@ mod tests {
         createcompctltable();
         cc_assign("foo", Arc::new(CompCtl::default()), false);
         cc_assign("bar", Arc::new(CompCtl::default()), false);
-        *CCLIST.lock().unwrap() = comp_op::REMOVE;
+        CCLIST.with(|c| c.set(comp_op::REMOVE));
         compctl_process_cc(&["foo".to_string()], Arc::new(CompCtl::default()));
         let g = COMPCTL_TAB.lock().unwrap();
         let map = g.as_ref().unwrap();
         assert!(!map.contains_key("foo"));
         assert!(map.contains_key("bar"));
         // Reset cclist for other tests.
-        *CCLIST.lock().unwrap() = 0;
+        CCLIST.with(|c| c.set(0));
     }
 
     #[test]
@@ -3140,9 +3144,9 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Pre-set zle_tricky.c globals; sep_comp_string must restore them
         // on exit (C compctl.c:2810-2813 save / 2941-2950 restore).
-        *WE.lock().unwrap() = 42;
-        *WB.lock().unwrap() = 7;
-        *ZLEMETACS.lock().unwrap() = 11;
+        WE.with(|c| c.set(42));
+        WB.with(|c| c.set(7));
+        ZLEMETACS.with(|c| c.set(11));
         *ZLEMETALL.lock().unwrap() = 99;
         *INSTRING.lock().unwrap() = qt::DOUBLE;
         *INBACKT.lock().unwrap() = 1;
@@ -3153,9 +3157,9 @@ mod tests {
 
         let _ = sep_comp_string("", "x", 0);
 
-        assert_eq!(*WE.lock().unwrap(), 42);
-        assert_eq!(*WB.lock().unwrap(), 7);
-        assert_eq!(*ZLEMETACS.lock().unwrap(), 11);
+        assert_eq!(WE.with(|c| c.get()), 42);
+        assert_eq!(WB.with(|c| c.get()), 7);
+        assert_eq!(ZLEMETACS.with(|c| c.get()), 11);
         assert_eq!(*ZLEMETALL.lock().unwrap(), 99);
         assert_eq!(*INSTRING.lock().unwrap(), qt::DOUBLE);
         assert_eq!(*INBACKT.lock().unwrap(), 1);
