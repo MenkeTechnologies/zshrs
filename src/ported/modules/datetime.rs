@@ -66,14 +66,9 @@ pub fn getcurrenttime() -> (i64, i64) {                                  // c:22
 ///
 /// C signature: `static int reverse_strftime(char *nam, char **argv,
 ///                                            char *scalar, int quiet)`.
-pub fn reverse_strftime(
-    exec: &mut ShellExecutor,
-    nam: &str,
-    argv: &[&str],
-    scalar: Option<&str>,
-    quiet: bool,
-) -> i32 {                                                                // c:42
-    if argv.len() < 2 {                                                   // c:54 timestring expected
+pub fn reverse_strftime(nam: &str, argv: &[&str],                            // c:42
+                        scalar: Option<&str>, quiet: i32) -> i32 {
+    if argv.len() < 2 {                                                  // c:54 timestring expected
         zwarnnam(nam, "timestring expected");
         return 1;
     }
@@ -84,7 +79,7 @@ pub fn reverse_strftime(
     let dt = match NaiveDateTime::parse_from_str(input, format) {
         Ok(d) => d,
         Err(_) => {                                                       // c:67-71 mismatch
-            if !quiet {
+            if quiet == 0 {
                 zwarnnam(nam, &format!("format not matched: {}", input));
             }
             return 1;
@@ -94,14 +89,14 @@ pub fn reverse_strftime(
         chrono::LocalResult::Single(d) => d.timestamp(),
         chrono::LocalResult::Ambiguous(d, _) => d.timestamp(),
         chrono::LocalResult::None => {
-            if !quiet {
+            if quiet == 0 {
                 zwarnnam(nam, "unable to convert to time");
             }
             return 1;
         }
     };
     if let Some(name) = scalar {                                          // c:90 scalar
-        exec.variables.insert(name.to_string(), secs.to_string());        // c:91 setiparam
+        crate::ported::modules::ksh93::setiparam(name, secs);             // c:91 setiparam
     } else {                                                              // c:93
         println!("{}", secs);                                             // c:94 printf("%ld\n", ...)
     }
@@ -116,14 +111,13 @@ pub fn reverse_strftime(
 ///
 /// C signature: `static int output_strftime(char *nam, char **argv,
 ///                                           Options ops, int func)`.
-pub fn output_strftime(
-    exec: &mut ShellExecutor,
-    nam: &str,
-    argv: &[&str],
-    ops: &[bool; 256],
-    scalar: Option<&str>,
-) -> i32 {                                                                // c:99
+pub fn output_strftime(nam: &str, argv: &[&str],                             // c:99
+                       ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
     // c:107 — `if (OPT_ISSET(ops,'s'))`
+    let scalar: Option<&str> = if OPT_ISSET(ops, b's') {
+        Some(OPT_ARG(ops, b's').unwrap_or(""))
+    } else { None };
     if let Some(name) = scalar {
         if !is_ident(name) {                                              // c:110 isident check
             zwarnnam(nam, &format!("not an identifier: {}", name));       // c:111
@@ -132,8 +126,9 @@ pub fn output_strftime(
     }
 
     // c:115 — `if (OPT_ISSET(ops, 'r'))` reverse path.
-    if ops[b'r' as usize] {
-        return reverse_strftime(exec, nam, argv, scalar, ops[b'q' as usize]);  // c:120
+    if OPT_ISSET(ops, b'r') {
+        let quiet = if OPT_ISSET(ops, b'q') { 1 } else { 0 };
+        return reverse_strftime(nam, argv, scalar, quiet);                // c:120
     }
 
     if argv.is_empty() {
@@ -215,14 +210,12 @@ pub fn output_strftime(
 
     // c:178 — `if (scalar) { setsparam(scalar, metafy(buffer, len, META_DUP)); }`
     if let Some(name) = scalar {
-        exec.variables.insert(
-            name.to_string(),
-            crate::ported::utils::metafy(&formatted),
-        );
+        crate::ported::modules::ksh93::setsparam(name,
+            &crate::ported::utils::metafy(&formatted));                   // c:178
     } else {
         // c:180-183 — fwrite + putchar('\n') unless -n
         print!("{}", formatted);                                          // c:181 fwrite
-        if !ops[b'n' as usize] {                                          // c:182 !OPT_ISSET(ops,'n')
+        if !OPT_ISSET(ops, b'n') {                                        // c:182 !OPT_ISSET(ops,'n')
             println!();                                                   // c:183 putchar('\n')
         }
     }
@@ -238,20 +231,15 @@ pub fn output_strftime(
 ///
 /// C signature: `static int bin_strftime(char *nam, char **argv,
 ///                                         Options ops, int func)`.
-pub fn bin_strftime(
-    exec: &mut ShellExecutor,
-    nam: &str,
-    argv: &[&str],
-    ops: &[bool; 256],
-    scalar: Option<&str>,
-) -> i32 {                                                                // c:187
+pub fn bin_strftime(nam: &str, argv: &[&str],                                // c:187
+                    ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
     // c:191 — `char *tz = getsparam("TZ");`
-    let tz_saved = exec.variables.get("TZ").cloned();
+    let tz_saved = std::env::var("TZ").ok();
     // c:193-198 — `startparamscope(); createparam("TZ", PM_LOCAL); setsparam("TZ", ...);`
     if let Some(ref tz) = tz_saved {
         std::env::set_var("TZ", tz);                                      // c:198 setsparam
     }
-    let result = output_strftime(exec, nam, argv, ops, scalar);           // c:199
+    let result = output_strftime(nam, argv, ops, func);                   // c:199
     // c:200 — `endparamscope();`
     if let Some(ref tz) = tz_saved {
         std::env::set_var("TZ", tz);
@@ -408,32 +396,36 @@ impl ShellExecutor {
     /// canonical `bin_strftime()` above, parsing the option spec
     /// `"nrqs:"` (datetime.c BUILTIN registration).
     pub(crate) fn bin_strftime(&mut self, args: &[String]) -> i32 {
-        let mut ops = [false; 256];
-        let mut scalar: Option<String> = None;
+        // Build a real Options struct from the inline parse so the
+        // canonical bin_strftime port (Src/Modules/datetime.c:187) can
+        // be invoked with its C-faithful signature. Option spec from
+        // datetime.c BUILTIN registration: `"nrqs:"`.
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                argscount: 0, argsalloc: 0 };
         let mut positional: Vec<&str> = Vec::new();
         let mut iter = args.iter().peekable();
+        let mut scalar_arg: Option<String> = None;
         while let Some(arg) = iter.next() {
             match arg.as_str() {
                 "-s" => {
                     if let Some(name) = iter.next() {
-                        scalar = Some(name.clone());
+                        scalar_arg = Some(name.clone());
                     }
                 }
-                "-n" => ops[b'n' as usize] = true,
-                "-r" => ops[b'r' as usize] = true,
-                "-q" => ops[b'q' as usize] = true,
+                "-n" => ops.ind[b'n' as usize] = 1,
+                "-r" => ops.ind[b'r' as usize] = 1,
+                "-q" => ops.ind[b'q' as usize] = 1,
                 "--" => {
-                    for rest in iter.by_ref() {
-                        positional.push(rest.as_str());
-                    }
+                    for rest in iter.by_ref() { positional.push(rest.as_str()); }
                     break;
                 }
                 s if s.starts_with('-') && s.len() > 1 => {
                     for ch in s[1..].chars() {
                         match ch {
-                            'n' => ops[b'n' as usize] = true,
-                            'r' => ops[b'r' as usize] = true,
-                            'q' => ops[b'q' as usize] = true,
+                            'n' => ops.ind[b'n' as usize] = 1,
+                            'r' => ops.ind[b'r' as usize] = 1,
+                            'q' => ops.ind[b'q' as usize] = 1,
                             _ => {
                                 zwarnnam("strftime", &format!("bad option: -{}", ch));
                                 return 1;
@@ -444,6 +436,13 @@ impl ShellExecutor {
                 _ => positional.push(arg.as_str()),
             }
         }
-        bin_strftime(self, "strftime", &positional, &ops, scalar.as_deref())
+        if let Some(s) = scalar_arg {
+            // OPT_HASARG check uses ind > 3; encode the -s arg slot at index 4.
+            ops.ind[b's' as usize] = 4;
+            ops.args.push(s);
+            ops.argscount = 1;
+            ops.argsalloc = 1;
+        }
+        bin_strftime("strftime", &positional, &ops, 0)
     }
 }
