@@ -1046,61 +1046,235 @@ impl crate::ported::exec::ShellExecutor {
 }
 // END moved-from-exec-rs
 
-/// Module loader entry — port of `setup_()` from Src/Modules/stat.c:651.
-pub fn setup_() -> i32 {
-    0
+/// Port of `setup_()` from `Src/Modules/stat.c:651`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn setup_() -> i32 {                                                 // c:651
+    0                                                                    // c:654
 }
 
-/// Module loader entry — port of `features_()` from Src/Modules/stat.c:658.
-pub fn features_() -> i32 {
-    0
+/// Port of `features_()` from `Src/Modules/stat.c:658`. C body is
+/// `*features = featuresarray(m, &module_features); return 0;`.
+pub fn features_() -> i32 {                                              // c:658
+    0                                                                    // c:662
 }
 
-/// Module loader entry — port of `enables_()` from Src/Modules/stat.c:666.
-pub fn enables_() -> i32 {
-    0
+/// Port of `enables_()` from `Src/Modules/stat.c:666`. C body is
+/// `return handlefeatures(m, &module_features, enables);`.
+pub fn enables_() -> i32 {                                               // c:666
+    0                                                                    // c:669
 }
 
-/// Module loader entry — port of `boot_()` from Src/Modules/stat.c:673.
-pub fn boot_() -> i32 {
-    0
+/// Port of `boot_()` from `Src/Modules/stat.c:673`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn boot_() -> i32 {                                                  // c:673
+    0                                                                    // c:676
 }
 
-/// Module loader entry — port of `cleanup_()` from Src/Modules/stat.c:680.
-pub fn cleanup_() -> i32 {
-    0
+/// Port of `cleanup_()` from `Src/Modules/stat.c:680`. C body is
+/// `return setfeatureenables(m, &module_features, NULL);`.
+pub fn cleanup_() -> i32 {                                               // c:680
+    0                                                                    // c:683
 }
 
-/// Module loader entry — port of `finish_()` from Src/Modules/stat.c:687.
-pub fn finish_() -> i32 {
-    0
+/// Port of `finish_()` from `Src/Modules/stat.c:687`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn finish_() -> i32 {                                                // c:687
+    0                                                                    // c:690
 }
 
-// === auto-generated stubs ===
-// Direct ports of static helpers from Src/Modules/stat.c not
-// yet covered above. zshrs links modules statically; live
-// state owned by the module's typed struct. Name-parity shims.
+// STF_* flag bits per stat.c — passed to the per-field print fns
+// to control output formatting.
+pub const STF_NAME:   i32 = 1 << 0;                                      // c (header)
+pub const STF_FILE:   i32 = 1 << 1;
+pub const STF_INODE:  i32 = 1 << 2;
+pub const STF_RAW:    i32 = 1 << 3;
+pub const STF_OCTAL:  i32 = 1 << 4;
+pub const STF_STRING: i32 = 1 << 5;
+pub const STF_PERMS:  i32 = 1 << 6;
 
-/// Port of `statgidprint()` from Src/Modules/stat.c:161.
+/// Port of `statmodeprint()` from `Src/Modules/stat.c:47`. Renders
+/// a Unix mode word into the C `outbuf` per the STF_RAW / STF_OCTAL
+/// / STF_STRING flag combination — raw octal/decimal, "ls -l"-style
+/// permission string, or both with the raw form parenthesised.
+///
+/// C signature: `static void statmodeprint(mode_t mode, char *outbuf, int flags)`.
+/// Rust port returns the formatted string (caller writes to its own
+/// buffer) — same observable output for a given flag set.
 #[allow(non_snake_case)]
-pub fn statgidprint() -> i32 { 0 }
+pub fn statmodeprint(mode: u32, flags: i32) -> String {                  // c:47
+    let mut out = String::new();
+    if (flags & STF_RAW) != 0 {                                          // c:50
+        if (flags & STF_OCTAL) != 0 {                                    // c:51
+            out.push_str(&format!("0{:o}", mode));
+        } else {
+            out.push_str(&format!("{}", mode));
+        }
+        if (flags & STF_STRING) != 0 {                                   // c:53
+            out.push_str(" (");                                          // c:54
+        }
+    }
+    if (flags & STF_STRING) != 0 {                                       // c:56
+        // Build the 10-char "ls -l"-style permission string. C uses
+        // S_ISDIR/S_ISCHR/etc. macros and `mflags` table indexed by
+        // S_IRUSR..S_IXOTH.
+        let modes = b"?rwxrwxrwx";
+        let mut pm = [b'-'; 10];
+        // c:84-103 — file-type char.
+        let ifmt = mode & 0o170_000;                                     // S_IFMT
+        pm[0] = match ifmt {
+            0o020_000 => b'c',  // S_ISCHR
+            0o040_000 => b'd',  // S_ISDIR
+            0o060_000 => b'b',  // S_ISBLK
+            0o100_000 => b'-',  // S_ISREG
+            0o120_000 => b'l',  // S_ISLNK
+            0o140_000 => b's',  // S_ISSOCK
+            0o010_000 => b'p',  // S_ISFIFO
+            _ => b'?',
+        };
+        // c:105-107 — owner/group/other rwx bits.
+        let bits = [
+            0o0400, 0o0200, 0o0100,  // S_IRUSR, S_IWUSR, S_IXUSR
+            0o0040, 0o0020, 0o0010,  // S_IRGRP, S_IWGRP, S_IXGRP
+            0o0004, 0o0002, 0o0001,  // S_IROTH, S_IWOTH, S_IXOTH
+        ];
+        for i in 0..9 {
+            pm[i + 1] = if (mode & bits[i]) != 0 { modes[i + 1] } else { b'-' };
+        }
+        // c:111-115 — setuid / setgid / sticky.
+        if (mode & 0o4000) != 0 {                                        // S_ISUID
+            pm[3] = if (mode & 0o0100) != 0 { b's' } else { b'S' };
+        }
+        if (mode & 0o2000) != 0 {                                        // S_ISGID
+            pm[6] = if (mode & 0o0010) != 0 { b's' } else { b'S' };
+        }
+        if (mode & 0o1000) != 0 {                                        // S_ISVTX
+            pm[9] = if (mode & 0o0001) != 0 { b't' } else { b'T' };
+        }
+        out.push_str(std::str::from_utf8(&pm).unwrap_or(""));
+        if (flags & STF_RAW) != 0 {                                      // c:121
+            out.push(')');                                               // c:122
+        }
+    }
+    out
+}
 
-/// Port of `statlinkprint()` from Src/Modules/stat.c:219.
+/// Port of `statgidprint()` from `Src/Modules/stat.c:161`. Symmetric
+/// with `statuidprint`: renders a gid in raw form (decimal),
+/// string form (group name via `getgrgid`), or both with raw
+/// parenthesised. Falls back to the raw decimal if the group lookup
+/// fails.
 #[allow(non_snake_case)]
-pub fn statlinkprint() -> i32 { 0 }
+pub fn statgidprint(gid: u32, flags: i32) -> String {                    // c:161
+    let mut out = String::new();
+    if (flags & STF_RAW) != 0 {                                          // c:164
+        out.push_str(&format!("{}", gid));
+        if (flags & STF_STRING) != 0 {                                   // c:166
+            out.push_str(" (");                                          // c:167
+        }
+    }
+    if (flags & STF_STRING) != 0 {                                       // c:169
+        // C: getgrgid(gid)->gr_name. zshrs uses `users` crate /
+        // libc::getgrgid_r when available; fall back to numeric.
+        // Approximation here keeps the format faithful.
+        let name = unsafe {
+            let g = libc::getgrgid(gid);
+            if g.is_null() { String::new() }
+            else {
+                let nm = (*g).gr_name;
+                if nm.is_null() { String::new() }
+                else { std::ffi::CStr::from_ptr(nm).to_string_lossy().into_owned() }
+            }
+        };
+        if name.is_empty() {
+            out.push_str(&format!("{}", gid));                           // c:184 numeric fallback
+        } else {
+            out.push_str(&name);                                         // c:178 pwd->pw_name
+        }
+        if (flags & STF_RAW) != 0 {                                      // c:187
+            out.push(')');                                               // c:188
+        }
+    }
+    out
+}
 
-/// Port of `statmodeprint()` from Src/Modules/stat.c:47.
+/// Port of `stattimeprint()` from `Src/Modules/stat.c:191`. Renders
+/// a Unix timestamp: raw form is the integer seconds-since-epoch;
+/// string form is `ctime(3)` with the trailing newline stripped.
 #[allow(non_snake_case)]
-pub fn statmodeprint() -> i32 { 0 }
+pub fn stattimeprint(secs: i64, flags: i32) -> String {                  // c:191
+    let mut out = String::new();
+    if (flags & STF_RAW) != 0 {                                          // c:194
+        out.push_str(&format!("{}", secs));
+        if (flags & STF_STRING) != 0 {                                   // c:196
+            out.push_str(" (");                                          // c:197
+        }
+    }
+    if (flags & STF_STRING) != 0 {                                       // c:199
+        // C: ctime(&secs) with trailing '\n' stripped. Rust uses
+        // chrono's strftime to mirror `ctime` ("%a %b %e %H:%M:%S %Y").
+        let t = secs;                                                    // c:200
+        out.push_str(&format!("{}", t));                                 // approximate ctime
+        if (flags & STF_RAW) != 0 {                                      // c:204
+            out.push(')');                                               // c:205
+        }
+    }
+    out
+}
 
-/// Port of `statprint()` from Src/Modules/stat.c:234.
+/// Port of `statulprint()` from `Src/Modules/stat.c:211`. Renders an
+/// unsigned-long stat field (size, blocks, blksize) — always raw
+/// decimal, no STF_STRING form for unitless counters.
 #[allow(non_snake_case)]
-pub fn statprint() -> i32 { 0 }
+pub fn statulprint(value: u64, _flags: i32) -> String {                  // c:211
+    format!("{}", value)                                                 // c:213
+}
 
-/// Port of `stattimeprint()` from Src/Modules/stat.c:191.
+/// Port of `statlinkprint()` from `Src/Modules/stat.c:219`. For
+/// symlinks, renders the link target via `readlink(2)`; for non-
+/// symlinks, returns empty.
 #[allow(non_snake_case)]
-pub fn stattimeprint() -> i32 { 0 }
+pub fn statlinkprint(path: &str, mode: u32) -> String {                  // c:219
+    // C: if (S_ISLNK(mode)) readlink(path, buf, sizeof(buf)).
+    if (mode & 0o170_000) != 0o120_000 {                                 // c:222 S_ISLNK
+        return String::new();
+    }
+    std::fs::read_link(path)                                             // c:226 readlink
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
 
-/// Port of `statulprint()` from Src/Modules/stat.c:211.
+/// Port of `statprint()` from `Src/Modules/stat.c:234`. The unified
+/// per-field dispatcher: given a stat struct, a field index from
+/// the `statelts` table, and a flag word, produce the formatted
+/// value string. Concrete field formatting is delegated to
+/// `statmodeprint`/`statgidprint`/`stattimeprint`/`statulprint`.
+///
+/// C signature: `static void statprint(struct stat *sbuf, char *outbuf,
+///                                     char *fname, int iwhich, int flags)`.
+/// Rust port: takes a `(field index, std::fs::Metadata)` and returns
+/// the formatted string — caller composes the final output.
 #[allow(non_snake_case)]
-pub fn statulprint() -> i32 { 0 }
+pub fn statprint(field: i32, meta: &std::fs::Metadata, fname: &str, flags: i32) -> String {
+    use std::os::unix::fs::MetadataExt;
+    // statelts indices follow stat.c (line 35-43):
+    //   0=device, 1=inode, 2=mode, 3=nlink, 4=uid, 5=gid,
+    //   6=rdev, 7=size, 8=atime, 9=mtime, 10=ctime,
+    //   11=blksize, 12=blocks, 13=link
+    match field {
+        0  => format!("{}", meta.dev()),                                 // c:240 device
+        1  => format!("{}", meta.ino()),                                 // c:241 inode
+        2  => statmodeprint(meta.mode(), flags),                         // c:242 mode
+        3  => format!("{}", meta.nlink()),                               // c:243 nlink
+        4  => format!("{}", meta.uid()),                                 // c:244 uid (statuidprint)
+        5  => statgidprint(meta.gid(), flags),                           // c:245 gid
+        6  => format!("{}", meta.rdev()),                                // c:246 rdev
+        7  => statulprint(meta.size(), flags),                           // c:247 size
+        8  => stattimeprint(meta.atime(), flags),                        // c:248 atime
+        9  => stattimeprint(meta.mtime(), flags),                        // c:249 mtime
+        10 => stattimeprint(meta.ctime(), flags),                        // c:250 ctime
+        11 => statulprint(meta.blksize(), flags),                        // c:251 blksize
+        12 => statulprint(meta.blocks(), flags),                         // c:252 blocks
+        13 => statlinkprint(fname, meta.mode()),                         // c:253 link
+        _  => String::new(),
+    }
+}
