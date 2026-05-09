@@ -1,61 +1,73 @@
-//! Random real module - port of Modules/random_real.c
+//! Random real module — port of `Src/Modules/random_real.c`.
 //!
-//! Provides high-quality floating-point random numbers.
+//! Provides Campbell's-algorithm uniform-double RNG and the two
+//! supporting helpers `_zclz64` and `random_64bit`.
+//!
+//! C source has zero `struct ...` / `enum ...` definitions. Rust
+//! port matches: zero types.
 
-use crate::random;
+// libc `ldexp` — `random_real()` calls it at random_real.c:212.
+// Declared here (not imported from mathfunc) because the C source's
+// random_real.c already includes <math.h> for this call; mirror
+// that locality.
+#[cfg(unix)]
+extern "C" {
+    fn ldexp(x: f64, exp: i32) -> f64;
+}
 
 /// Port of `random_real()` from `Src/Modules/random_real.c:147`.
-/// Generate a random double in [0, 1] uniformly distributed.
-/// Direct port of `random_real` from src/zsh/Src/Modules/random_real.c
-/// lines 145-212 (Campbell's algorithm, see
-/// <http://mumble.net/~campbell/2014/04/28/uniform-random-float>).
-///
-/// Algorithm:
-///   1. Read 64-bit chunks until we see a non-zero one. Each
-///      all-zero chunk shifts the exponent down by 64.
-///   2. Count leading zeros in the first non-zero chunk; shift
-///      them into the exponent and refill the low bits of the
-///      significand from another 64-bit draw.
-///   3. Set the sticky bit (significand |= 1) so the round-to-
-///      nearest-even doesn't bias toward even when the trailing
-///      bits would have decided ties.
-///   4. ldexp(significand, exponent) — convert to double.
-///
-/// This is the only correct way to generate a uniform double
-/// from a uniform bit source. The naïve "53-bit fraction" approach
-/// (random_real_53 below) skews ~3% of the [0, 1) interval toward
-/// values just below 0.5.
-pub fn random_real() -> f64 {
-    let mut exponent: i32 = 0;                                                  // c:149
-    let mut significand: u64 = 0;                                               // c:150
+/// Generates a uniform-distributed double in [0, 1) via Campbell's
+/// algorithm — the only known way to produce a uniform double from
+/// a uniform bit source without skew (the naïve "53-bit fraction"
+/// approach biases ~3% of the interval toward values just below 0.5).
+pub fn random_real() -> f64 {                                            // c:147
+    let mut exponent: i32 = 0;                                           // c:151
+    let mut significand: u64 = 0;                                        // c:152
+    #[allow(unused_assignments)]
+    let mut r: u64 = 0;                                                  // c:153
 
-    // random_real.c:158-175 — read zeros into exponent until
-    // we hit a non-zero chunk.
-    while significand == 0 {                                                    // c:150
-        exponent -= 64;                                                         // c:149
-        significand = random::random_u64();                                 // c:150
-        // random_real.c:172-174 — exp below -1074 means it would
-        // round to zero anyway (smallest subnormal exponent).
-        if exponent < -1074 {                                                   // c:149
-            return 0.0;                                                         // c:147
-        }                                                                       // c:147
-    }                                                                           // c:147
+    // Read zeros into the exponent until we hit a one; the rest will
+    // go into the significand. — c:159-176
+    while significand == 0 {                                             // c:160
+        exponent -= 64;                                                  // c:161
 
-    // random_real.c:185-196 — leading-zero shift.
-    let shift = significand.leading_zeros() as i32;                             // c:185
-    if shift != 0 {                                                             // c:152
-        let r = random::random_u64();                                       // c:147
-        exponent -= shift;                                                      // c:180
-        significand <<= shift;                                                  // c:185
-        significand |= r >> (64 - shift);                                       // c:185
-    }                                                                           // c:147
+        // c:163-167 — errno = 0; significand = random_64bit();
+        // if (errno) return -1;
+        // Rust's `random_64bit()` returns 1 on entropy failure
+        // (matching C's documented zero-avoidance) so the errno
+        // probe collapses; the loop exits naturally on the
+        // sentinel-1 result.
+        significand = random_64bit();                                    // c:166
 
-    // random_real.c:205 — sticky bit so round-to-nearest doesn't
-    // false-tie.
-    significand |= 1;                                                           // c:150
+        // c:174-175 — exponent below -1074 (= emin + 1 - p, the
+        // smallest subnormal's exponent) is guaranteed to round to
+        // zero. So unlikely it only happens if random_64bit is broken.
+        if exponent < -1074 {                                            // c:174
+            return 0.0;                                                  // c:175
+        }
+    }
 
-    // random_real.c:211 — ldexp(significand, exponent).
-    (significand as f64) * (exponent as f64).exp2()                             // c:211
+    // c:186-198 — leading-zero shift. There is a 1 somewhere in
+    // significand, not necessarily in the most significant position.
+    // If there are leading zeros, shift them into the exponent and
+    // refill the less-significant bits from another draw.
+    let shift = _zclz64(significand) as u32;                             // c:188 clz64
+    if shift != 0 {                                                      // c:189
+        // c:191-194 — errno = 0; r = random_64bit(); if (errno) return -1;
+        r = random_64bit();                                              // c:192
+        exponent -= shift as i32;                                        // c:196
+        significand <<= shift;                                           // c:197
+        significand |= r >> (64 - shift);                                // c:198
+    }
+
+    // c:201-208 — Set the sticky bit. There is almost surely another
+    // 1 in the bit stream, so without this we might round what looks
+    // like a tie to even when it isn't.
+    significand |= 1;                                                    // c:208
+
+    // c:211-212 — Finally, convert to double (rounding) and scale by
+    // 2^exponent.
+    unsafe { ldexp(significand as f64, exponent) }                       // c:212
 }
 
 #[cfg(test)]
@@ -110,17 +122,17 @@ pub fn _zclz64(x: u64) -> i32 {
     n                                                                   // c:79
 }
 
-/// Port of `random_64bit()` from `Src/Modules/random_real.c:84`. C
-/// pulls 64 bits from `getrandom_buffer()` (the SecureRandom path);
-/// on failure it returns 1 (not 0, since 0 would cause the
-/// `random_real()` zero-detection loop to run forever).
-pub fn random_64bit() -> u64 {
-    // Rust port routes through `crate::random::random_u64()` which
-    // wraps the same OS-entropy primitive (getrandom on Linux,
-    // SecRandomCopyBytes on macOS) the C path uses via
-    // `getrandom_buffer()`. The C error handler returns 1 on read
-    // failure (random_real.c:91); our `random_u64()` panics on
-    // failure to mirror Rust idioms — entropy unavailability is
-    // an unrecoverable shell-init error, not a runtime fallback.
-    crate::random::random_u64()                                          // c:88
+/// Port of `random_64bit()` from `Src/Modules/random_real.c:84`.
+/// Pulls 64 bits from `getrandom_buffer()`; on failure emits the
+/// same zwarn diagnostic as C and returns 1 (not 0 — `random_real()`'s
+/// zero-detection loop would spin forever on 0).
+pub fn random_64bit() -> u64 {                                           // c:84
+    let mut buf = [0u8; 8];                                              // c:85 uint64_t r
+    if crate::random::getrandom_buffer(&mut buf).is_err() {              // c:87
+        crate::ported::utils::zwarn(                                     // c:88
+            "zsh/random: Can't get sufficient random data.",
+        );
+        return 1;                                                        // c:89 0 will cause loop
+    }
+    u64::from_ne_bytes(buf)                                              // c:93 return r
 }
