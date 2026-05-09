@@ -48,6 +48,29 @@ exposed via the param table).
 
 ---
 
+## Module-loader signatures (need `&mut ShellExecutor`)
+
+Every C module's `setup_()` / `features_()` / `enables_()` / `boot_()`
+/ `cleanup_()` / `finish_()` takes a `Module m` arg and reads/writes
+shell-wide state (param table, fdtable, function-wrapper list,
+emulation mode). zshrs's free-fn signatures `pub fn boot_() -> i32`
+have no access to that state.
+
+Files where this gap means boot_/cleanup_/etc. is a partial port:
+- `modules/newuser.rs::boot_` — needs `EMULATION(EMULATE_ZSH)` check
+  + `source(buf)` for the newuser-install-script probe (newuser.c:67-103).
+- `modules/ksh93.rs::cleanup_` — needs `deletewrapper(m, wrapper)` +
+  paramtab walk to clear `PM_NAMEREF` flags (ksh93.c:265-281).
+- `modules/example.rs::boot_` — needs `addwrapper(m, wrapper)`
+  (example.c:222-228).
+- (More to come as the audit progresses.)
+
+**Fix path:** introduce a `&mut ShellExecutor` parameter on the module-
+loader signatures, threading it through the dispatcher. This is
+project-wide and should land in one commit.
+
+---
+
 ## Note: this file is the only place to mention port gaps
 
 If a function in `src/ported/` is not 100% line-by-line, it
