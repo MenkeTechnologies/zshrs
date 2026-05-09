@@ -2199,12 +2199,15 @@ pub fn printreswdnode(nam: &str, printflags: u32) -> String {
 }
 
 /// Port of `createaliastable()` from `Src/hashtable.c:1188`.
-///
-/// C body wires up the aliastab GSU vtable. Rust port: no-op
-/// since AliasTable's methods (add/get/remove/disable/enable)
-/// already implement the GSU semantics directly. Provided for
-/// C name parity at call sites.
-pub fn createaliastable() {}
+/// C: `void createaliastable(HashTable ht)` — assign 12 GSU vtable
+///   slots on `ht` (hasher/cmpnodes/addnode/getnode/getnode2/removenode/
+///   disablenode/enablenode/freenode/printnode). Rust port: AliasTable's
+///   methods already implement these semantics directly, so no vtable
+///   to install — call site doesn't need a per-table dispatch.
+pub fn createaliastable(_ht: *mut crate::ported::zsh_h::hashtable) {         // c:1187
+    // c:1190-1201 — vtable wireup. Rust path: AliasTable already
+    // exposes add/get/remove/disable/enable/free/print as inherent methods.
+}
 
 /// Port of `createaliastables()` from `Src/hashtable.c:1206`.
 ///

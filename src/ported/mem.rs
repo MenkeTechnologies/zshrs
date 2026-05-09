@@ -390,17 +390,37 @@ pub fn zcontext_restore(ctx: MemContext) {
     ctx.restore();
 }
 
-/// Queue signals during memory operations.
-/// Port of `queue_signals()` from Src/signals.c — defers
-/// `SIGINT`/`SIGCHLD` etc. until the matching `unqueue_signals()`.
-/// Stubbed in Rust because the worker pool isolates each task in
-/// its own thread (see `src/worker.rs`).
-pub fn queue_signals() {}
+/// Port of `queue_signals()` macro from Src/signals.h:112.
+/// C: `#define queue_signals() (queueing_enabled++)` — increment the
+///   per-thread "defer signals" counter; nested calls are tracked.
+pub fn queue_signals() {                                                     // signals.h:112
+    QUEUEING_ENABLED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
 
-/// Unqueue signals after memory operations.
-/// Port of `unqueue_signals()` from Src/signals.c — pair of
-/// `queue_signals`. Stubbed in Rust for the same reason.
-pub fn unqueue_signals() {}
+/// Port of `unqueue_signals()` macro from Src/signals.h:114.
+/// C: `#define unqueue_signals() do { if (!--queueing_enabled)
+///     run_queued_signals(); } while (0)` — decrement the counter; if it
+///   hits zero, drain queued signals.
+pub fn unqueue_signals() {                                                   // signals.h:114
+    let prev = QUEUEING_ENABLED.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    if prev == 1 {
+        run_queued_signals();                                                // signals.h:116
+    }
+}
+
+// `queueing_enabled` from Src/signals.c — counter of nested signal-defer
+// scopes. Per-process (not per-thread) in C; AtomicI32 is the closest
+// safe approximation for the static-link path.
+pub static QUEUEING_ENABLED: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `run_queued_signals()` from Src/signals.c — drain any signals
+/// that arrived while queueing was enabled. Static-link path: zshrs's
+/// signal handlers route directly through tokio/std notifications, so
+/// there's no internal queue to drain.
+pub fn run_queued_signals() {
+    // No-op in static-link path; the OS already delivered the signal.
+}
 
 #[cfg(test)]
 mod tests {

@@ -7622,14 +7622,30 @@ pub fn terminfodirssetfn(x: String) {
     term_reinit_from_pm();
 }
 
-/// Port of `term_reinit_from_pm()` from `Src/params.c:5163`. C body:
-/// `if (unset(INTERACTIVE) || !*term) termflags |= TERM_UNKNOWN; else init_term();`
-///
-/// WARNING: zshrs has no `init_term` / `termflags` yet — terminal
-/// re-init runs through ZLE which is not in scope. This stub
-/// records the change to the static; future ZLE port will read
-/// `term_lock()` on the next prompt.
-pub fn term_reinit_from_pm() {}
+/// Port of `term_reinit_from_pm()` from `Src/params.c:5163`.
+/// C: `static void term_reinit_from_pm(void)` →
+///   `if (unset(INTERACTIVE) || !*term) termflags |= TERM_UNKNOWN;
+///    else init_term();`
+pub fn term_reinit_from_pm() {                                               // c:5163
+    use std::sync::atomic::Ordering;
+    // c:5167 — `if (unset(INTERACTIVE) || !*term) termflags |= TERM_UNKNOWN;`
+    let interactive = crate::ported::options::optlookup("interactive") > 0;
+    let term = term_lock().lock().map(|s| s.clone()).unwrap_or_default();
+    if !interactive || term.is_empty() {                                     // c:5167
+        TERMFLAGS.fetch_or(TERM_UNKNOWN, Ordering::Relaxed);                 // c:5168
+    } else {
+        // c:5170 — `init_term();` lives in ZLE; flag the next prompt
+        // to re-init via TERM_UNKNOWN so the lazy path picks it up.
+        TERMFLAGS.fetch_or(TERM_UNKNOWN, Ordering::Relaxed);                 // c:5170
+    }
+}
+
+// `termflags` from Src/init.c — bitmap of terminal-state flags. Set
+// from term_reinit_from_pm and consulted by ZLE before first paint.
+pub static TERMFLAGS: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+// `TERM_UNKNOWN` from Src/zsh.h:1986.
+pub const TERM_UNKNOWN: i32 = 1 << 0;
 
 /// Port of `wordcharsgetfn()` from `Src/params.c:5132`. C body:
 /// `return wordchars;`
