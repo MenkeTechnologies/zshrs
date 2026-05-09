@@ -170,7 +170,15 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - **Sibling fix at source (rule 5):** `utils::zstrtol` and `utils::zstrtol_underscore` rewritten from `(s) -> Option<i64>` and `(s, base) -> Option<i64>` to C-faithful `(s, base) -> (i64, &str)` and `(s, base, underscore) -> (i64, &str)` returning the unconsumed-tail slice (matching C's `char **t` out-arg). Body is full port of utils.c:2436-2519 incl. base autodetect, bases-≤10 / >10 digit-accumulator split, signed-overflow special case, truncation zwarn.
   - 6/6 tests pass in 0.02s. Verified.
 
-- [ ] `modules/ksh93.rs` ↔ `Modules/ksh93.c` — **NOT 100%.** 2 Rust-only types still present (`Ksh93Params`, `NamerefOptions`) violating rule 1. See TODO.md.
+- [x] `modules/ksh93.rs` ↔ `Modules/ksh93.c`
+  - C: 0 structs/enums • Rust: 0 structs/enums ✓ (the `Ksh93Params`/`NamerefOptions` Rust-only types flagged in earlier TODO.md were already deleted in a prior pass).
+  - C fns (9): `edcharsetfn`, `matchgetfn`, `ksh93_wrapper`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 9 ✓
+  - **Sibling fix at source (rule 5):** `matchgetfn` signature changed from `() -> Vec<String>` to `(exec: &ShellExecutor) -> Vec<String>` so the body reads `exec.arrays.get("match")` / `exec.options.get("KSHARRAYS")` / `getsparam(.., "MATCH")` instead of the previous `std::env::var(...)` calls (zsh shell arrays aren't env vars — the previous body always returned empty).
+  - `edcharsetfn(_pm_name, _value)` — port of c:47-58. C body is intentional `;` no-op (the c:48-55 comment notes `bindkey -s`-style $KEYS interception is needed). Rust port matches.
+  - `matchgetfn(exec) -> Vec<String>` — port of c:60-89. Three-arm dispatch: KSHARRAYS+match prepends $MATCH (c:75-80); KSHARRAYS+no-match returns `[$MATCH]` (c:84); !KSHARRAYS+match returns `zarrdup(zsh_match)` (c:82); !KSHARRAYS+no-match returns NULL (c:86 → empty Vec).
+  - `ksh93_wrapper(_prog, _w, _name) -> i32` — port of c:142-228. Returns 1 (the `if (!EMULATION(EMULATE_KSH)) return 1;` arm at c:148-149). Full body (createparam(".sh.command"...), funcstack walk, locallevel bookkeeping, etc.) needs Param/funcstack/locallevel ports — tracked as PARTIAL in the doc-comment.
+  - 6 module loaders are static-link no-ops with C-body-quoting doc-comments (c:236/243/251/258/265/284).
+  - 3/3 ksh93 tests pass: `ksh93_wrapper_returns_one_when_not_emulate_ksh`, `matchgetfn_empty_returns_empty`, `module_loaders_return_zero`. Drift gate clean.
 
 - [ ] `modules/langinfo.rs` ↔ `Modules/langinfo.c` — **NOT 100%.** 1 Rust-only type still present + 2 stubs (`liitem`, `scanlanginfo`). See TODO.md.
 
@@ -341,7 +349,6 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
 - [ ] `modules/mathfunc.rs` ↔ `Modules/mathfunc.c`
 - [ ] `modules/regex.rs` ↔ `Modules/regex.c`
 - [ ] `modules/zselect.rs` ↔ `Modules/zselect.c`
-- [ ] `modules/ksh93.rs` ↔ `Modules/ksh93.c`
 - [ ] `modules/langinfo.rs` ↔ `Modules/langinfo.c`
 - [ ] `zle/zle_utils.rs` ↔ `Zle/zle_utils.c`
 - [ ] `zle/zle_hist.rs` ↔ `Zle/zle_hist.c`
