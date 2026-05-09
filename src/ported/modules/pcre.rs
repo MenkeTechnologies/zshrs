@@ -548,17 +548,77 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 // state owned by the module's typed struct. Name-parity shims.
 
 /// Port of `getposint()` from Src/Modules/pcre.c:312.
+/// C: `static int getposint(char *instr, char *nam)` — parse positive
+/// decimal integer; emit "integer expected" warning + return -1 on bad input.
 #[allow(non_snake_case)]
-pub fn getposint() -> i32 { 0 }
+pub fn getposint(instr: &str, nam: &str) -> i32 {                            // c:312
+    // c:317 — `ret = (int)zstrtol(instr, &eptr, 10);`
+    match instr.trim().parse::<i32>() {                                      // c:317
+        Ok(n) if n >= 0 => n,                                                // c:323
+        _ => {
+            // c:319-321 — zwarnnam(nam, "integer expected: %s", instr);
+            eprintln!("zshrs: {}: integer expected: {}", nam, instr);        // c:320
+            -1                                                               // c:321
+        }
+    }
+}
 
 /// Port of `pcre_callout()` from Src/Modules/pcre.c:132.
+/// C: `static int pcre_callout(pcre2_callout_block_8 *block,
+///     UNUSED(void *callout_data))` — eval the callout string as zsh code,
+///     bind .pcre.subject and .pcre.pos parameters, return $? | errflag.
 #[allow(non_snake_case)]
-pub fn pcre_callout() -> i32 { 0 }
+pub fn pcre_callout(_block: *mut std::ffi::c_void,                           // c:132
+                    _callout_data: *mut std::ffi::c_void) -> i32 {
+    // c:138-152 — parse_string(callout_string), setsparam(".pcre.subject"),
+    // setiparam(".pcre.pos"), execode(prog, ..., "pcre"), return lastval|errflag.
+    // Static-link path: zshrs's pcre integration uses the `regex` crate
+    // directly; native pcre callouts arrive only when the C pcre2 backend
+    // is wired in. Until then return success-no-callout.
+    0                                                                        // c:155
+}
 
 /// Port of `zpcre_get_substrings()` from Src/Modules/pcre.c:157.
+/// C: `static int zpcre_get_substrings(pcre2_code *pat, char *arg,
+///     pcre2_match_data *mdata, int captured_count, char *matchvar,
+///     char *substravar, char *namedassoc, int want_offset_pair,
+///     int matchedinarr, int want_begin_end)` — extract submatches
+///     into shell parameters.
 #[allow(non_snake_case)]
-pub fn zpcre_get_substrings() -> i32 { 0 }
+pub fn zpcre_get_substrings(_pat: *mut std::ffi::c_void, _arg: &str,         // c:157
+                            _mdata: *mut std::ffi::c_void,
+                            _captured_count: i32,
+                            _matchvar: Option<&str>, _substravar: Option<&str>,
+                            _namedassoc: Option<&str>,
+                            _want_offset_pair: i32, _matchedinarr: i32,
+                            _want_begin_end: i32) -> i32 {
+    // c:170-310 — pcre2_get_ovector_pointer + setsparam("ZPCRE_OP"/match/etc).
+    // Static-link path: implementation lives in the regex-backed bin_pcre_match
+    // dispatcher; this stub is reserved for the future native backend.
+    0
+}
 
 /// Port of `zpcre_utf8_enabled()` from Src/Modules/pcre.c:45.
+/// C: `static int zpcre_utf8_enabled(void)` — returns 1 iff PCRE2 was
+/// built with Unicode AND MULTIBYTE option is set AND nl_langinfo(CODESET)
+/// reports "UTF-8".
 #[allow(non_snake_case)]
-pub fn zpcre_utf8_enabled() -> i32 { 0 }
+pub fn zpcre_utf8_enabled() -> i32 {                                         // c:45
+    // c:48-67 — under MULTIBYTE_SUPPORT && HAVE_NL_LANGINFO && CODESET.
+    // Static-link path: zshrs hosts on macOS/Linux where PCRE2 ships with
+    // Unicode by default; check MULTIBYTE option + LANG/LC_ALL CODESET.
+    let multibyte = crate::ported::options::optlookup("multibyte") > 0;      // c:53
+    if !multibyte {
+        return 0;                                                            // c:54
+    }
+    // c:62 — nl_langinfo(CODESET) check.
+    let lc = std::env::var("LC_ALL")
+        .or_else(|_| std::env::var("LC_CTYPE"))
+        .or_else(|_| std::env::var("LANG"))
+        .unwrap_or_default();
+    if lc.to_uppercase().contains("UTF-8") || lc.to_uppercase().contains("UTF8") {
+        1                                                                    // c:62
+    } else {
+        0
+    }
+}

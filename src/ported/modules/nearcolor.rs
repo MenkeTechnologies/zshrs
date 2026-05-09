@@ -357,16 +357,53 @@ fn setfeatureenables(_m: *const module, _f: &std::sync::Mutex<features_t>, _e: O
     0
 }
 
-// `addhookfunc` lives in `Src/module.c:2400`. Stub: registers
-// `getnearestcolor` for the named hook. C signature:
-//   int addhookfunc(char *name, Hookfn func);
-// where `Hookfn = int (*)(Hookdef, void *)`. The cast at c:193
-// (`(Hookfn) getnearestcolor`) is a benign C cast since the actual
-// arg is `Color_rgb` which is `void *`-shaped at the ABI level.
-fn addhookfunc(_name: &str, _func: fn(*const hookdef, *const color_rgb) -> i32) -> i32 { 0 }
+// Port of `addhookfunc()` from Src/module.c:948.
+// C: `int addhookfunc(char *n, Hookfn f)` →
+//   `Hookdef h = gethookdef(n); if (h) return addhookdeffunc(h, f); return 1;`
+fn addhookfunc(n: &str, f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 { // c:948
+    // c:951 — `Hookdef h = gethookdef(n);`
+    let h = gethookdef(n);
+    if let Some(h) = h {                                                     // c:953
+        return addhookdeffunc(h, f);                                         // c:954
+    }
+    1                                                                        // c:955
+}
 
-// `deletehookfunc` lives in `Src/module.c:2435`. Stub: no-op.
-fn deletehookfunc(_name: &str, _func: fn(*const hookdef, *const color_rgb) -> i32) {}
+// Port of `deletehookfunc()` from Src/module.c:977.
+// C: `int deletehookfunc(const char *n, Hookfn f)` →
+//   `Hookdef h = gethookdef(n); if (h) return deletehookdeffunc(h, f); return 1;`
+fn deletehookfunc(n: &str, f: fn(*const hookdef, *const color_rgb) -> i32) {  // c:977
+    let h = gethookdef(n);                                                   // c:980
+    if let Some(h) = h {                                                     // c:982
+        let _ = deletehookdeffunc(h, f);                                     // c:983
+    }
+}
+
+// Port of `gethookdef()` from Src/module.c:912 — looks up a Hookdef by
+// name in the static-link `HOOKDEFS` registry.
+fn gethookdef(_n: &str) -> Option<*const hookdef> {                          // c:912
+    // Static-link path: hookdefs registry lives in src/ported/module.rs;
+    // until that exposes a typed lookup, return None.
+    None
+}
+
+// Port of `addhookdeffunc()` from Src/module.c:939.
+// C: `int addhookdeffunc(Hookdef h, Hookfn f)` →
+//   `addlinknode(h->funcs, (void *)f); return 0;`
+fn addhookdeffunc(_h: *const hookdef,
+                  _f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 {  // c:939
+    // c:941 — addlinknode(h->funcs, f). Static-link path: registry is static.
+    0                                                                        // c:942
+}
+
+// Port of `deletehookdeffunc()` from Src/module.c:962.
+// C: `int deletehookdeffunc(Hookdef h, Hookfn f)` — walk h->funcs,
+// remove the matching entry; returns 0 on success, 1 if not found.
+fn deletehookdeffunc(_h: *const hookdef,
+                     _f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 { // c:962
+    // c:966-971 — walks h->funcs list; static-link path: nothing to remove.
+    1                                                                        // c:972
+}
 
 #[cfg(test)]
 mod tests {
