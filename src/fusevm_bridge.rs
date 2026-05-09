@@ -8517,55 +8517,28 @@ impl fusevm::ShellHost for ZshrsHost {
         ShellExecutor::glob_match_static(s, pattern)
     }
 
-    fn expand_param(&mut self, name: &str, modifier: u8, args: &[fusevm::Value]) -> fusevm::Value {
-        // Reconstruct a synthetic `VarModifier` from the modifier byte + args
-        // and feed it to the executor's existing `apply_var_modifier`. This
-        // preserves all the zsh-specific edge cases (whitespace handling,
-        // pattern semantics, etc.) without re-implementing them.
-        use crate::parse::VarModifier;
-        use fusevm::op::param_mod;
-
-        let arg_word = |i: usize| -> crate::parse::ShellWord {
-            crate::parse::ShellWord::Literal(args.get(i).map(|v| v.to_str()).unwrap_or_default())
-        };
-
-        let synthetic: Option<VarModifier> = match modifier {
-            param_mod::DEFAULT => Some(VarModifier::Default(arg_word(0))),
-            param_mod::ASSIGN => Some(VarModifier::DefaultAssign(arg_word(0))),
-            param_mod::ERROR => Some(VarModifier::Error(arg_word(0))),
-            param_mod::ALTERNATE => Some(VarModifier::Alternate(arg_word(0))),
-            param_mod::LENGTH => Some(VarModifier::Length),
-            param_mod::STRIP_SHORT => Some(VarModifier::RemovePrefix(arg_word(0))),
-            param_mod::STRIP_LONG => Some(VarModifier::RemovePrefixLong(arg_word(0))),
-            param_mod::RSTRIP_SHORT => Some(VarModifier::RemoveSuffix(arg_word(0))),
-            param_mod::RSTRIP_LONG => Some(VarModifier::RemoveSuffixLong(arg_word(0))),
-            param_mod::SUBST_FIRST => Some(VarModifier::Replace(arg_word(0), arg_word(1))),
-            param_mod::SUBST_ALL => Some(VarModifier::ReplaceAll(arg_word(0), arg_word(1))),
-            param_mod::UPPER => Some(VarModifier::Upper),
-            param_mod::LOWER => Some(VarModifier::Lower),
-            param_mod::SLICE => {
-                let off = args.first().map(|v| v.to_int()).unwrap_or(0);
-                let len = args.get(1).map(|v| v.to_int());
-                // -1 sentinel from compiler means "no length specified"
-                let len_opt = match len {
-                    Some(-1) => None,
-                    other => other,
-                };
-                Some(VarModifier::Substring(off, len_opt))
-            }
-            // INDIRECT, KEYS, UPPER_FIRST, LOWER_FIRST, and any unmapped modifier
-            // — let apply_var_modifier handle the unmodified value as a fallback.
-            _ => None,
-        };
-
+    fn expand_param(&mut self, name: &str, _modifier: u8, _args: &[fusevm::Value]) -> fusevm::Value {
+        // Sole funnel: route through `getsparam` matching C zsh's
+        // `getsparam(name)` → `getvalue` → `getstrvalue` →
+        // `Param.gsu->getfn` dispatch (Src/params.c:3076 / 2335).
+        //
+        // The lookup chain (GSU dispatch + variables + env + array-
+        // join) lives in `params::getsparam`; subst.rs and this
+        // bridge both call into it so the logic is in exactly one
+        // place — mirroring C's "every read goes through getsparam"
+        // architecture. fuseVM bytecode triggers this bridge when
+        // the VM hits a PARAM opcode, equivalent to C's tree-walker
+        // hitting a `${...}` AST node.
+        //
+        // Modifier handling: the `_modifier` / `_args` parameters
+        // are populated by the bytecode compiler but applied by
+        // separate VM opcodes (LENGTH/STRIP/SUBST/etc.) downstream
+        // of this fetch — matching C's split between getsparam
+        // (value fetch) and paramsubst's modifier-walk loop. This
+        // bridge is the value-fetch step only.
         let val_str = with_executor(|exec| {
-            // Match expand_word's semantics for `${name}` lookup: env::var
-            // is the source of record for VariableBraced.
-            let raw = std::env::var(name)
-                .ok()
-                .or_else(|| exec.variables.get(name).cloned())
-                .unwrap_or_default();
-            raw
+            crate::ported::params::getsparam(&exec.variables, &exec.arrays, name)
+                .unwrap_or_default()
         });
         fusevm::Value::str(val_str)
     }

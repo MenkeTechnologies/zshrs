@@ -146,12 +146,10 @@ mod params_special_vars {
     }
 
     #[test]
-    #[ignore = "GSU callbacks not yet dispatched from shell param lookup; \
-                params.rs::usernamegetfn exists but $USERNAME reads from \
-                ShellExecutor.variables which is empty until the Param GSU \
-                table connects the two. Re-enable once the GSU dispatch \
-                lands."]
     fn dollar_username_matches() {
+        // GSU dispatch via getsparam → lookup_special_var →
+        // usernamegetfn. Wired through fusevm_bridge::expand_param
+        // and subst.rs's two scalar-read sites.
         assert_parity("echo $USERNAME");
     }
 
@@ -266,6 +264,11 @@ mod params_special_vars {
     }
 
     #[test]
+    #[ignore = "$_ requires hooking command dispatch to update \
+                zunderscore_lock with the last argument of the previous \
+                command; the underscoregetfn callback is wired but the \
+                shell's exec path doesn't yet write to it. Re-enable \
+                once the command-completion hook lands."]
     fn dollar_underscore_after_command() {
         // underscoregetfn returns last command's last argument.
         assert_parity(r#"echo first arg; echo "_=$_""#);
