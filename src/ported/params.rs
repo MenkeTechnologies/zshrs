@@ -7711,6 +7711,22 @@ pub fn histcharssetfn(x: Option<String>) {
     }
 }
 
+/// Update `$_` with the last argument of the just-completed
+/// command. Mirrors C zsh's writeback in `execcmd_exec` (Src/exec.c)
+/// where `zunderscore` is set to the last argv slot before
+/// returning. Callers: every command-dispatch hook in
+/// fusevm_bridge / exec.rs.
+pub fn set_zunderscore(argv: &[String]) {
+    let new = if let Some(last) = argv.last() {
+        last.clone()
+    } else {
+        String::new()
+    };
+    *zunderscore_lock()
+        .lock()
+        .expect("zunderscore poisoned") = new;
+}
+
 /// Port of `underscoregetfn()` from `Src/params.c:5152`. C body:
 /// `char *u = dupstring(zunderscore); untokenize(u); return u;`
 pub fn underscoregetfn() -> String {

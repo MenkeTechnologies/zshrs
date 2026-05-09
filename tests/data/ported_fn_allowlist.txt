@@ -327,6 +327,14 @@ lookup_special_var
 # init body doesn't bloat the closure literal.
 initial_username
 
+# params.rs set_zunderscore — Rust writer for `$_` (zunderscore_lock).
+# C zsh updates `zunderscore` inline at the end of execcmd_exec
+# (Src/exec.c); zshrs has no single execcmd_exec equivalent (commands
+# dispatch through fusevm + multiple builtin handlers) so this helper
+# is called from each command-completion site that needs to register
+# the just-finished argv.
+set_zunderscore
+
 # hashtable.rs HashNodeFlags trait — Rust-only abstraction over C's
 # `struct hashnode { char *nam; int flags; ... }` header. Each typed
 # table value impls this so the generic gethashnode/disablehashnode/etc.

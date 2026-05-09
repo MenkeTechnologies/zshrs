@@ -550,6 +550,16 @@ impl crate::ported::exec::ShellExecutor {
     pub(crate) fn builtin_echo(&mut self, args: &[String], _redirects: &[Redirect]) -> i32 {
         self.dispatch_pending_traps();
         if self.redirect_failed { self.redirect_failed = false; return 1; }
+        // `$_` writeback: mirrors C's `execcmd_exec` zunderscore
+        // update — `$_` becomes the last arg of the just-running
+        // command. The bytecode VM dispatches `echo` to this fn
+        // directly (id 170 in fusevm_bridge), bypassing
+        // `host_exec_external` where the universal hook lives;
+        // adding the call here covers the bytecode path.
+        let mut full_argv = Vec::with_capacity(args.len() + 1);
+        full_argv.push("echo".to_string());
+        full_argv.extend(args.iter().cloned());
+        crate::ported::params::set_zunderscore(&full_argv);
         let mut newline = true;
         // zsh's default: interpret backslash escapes (\n, \t, \b, etc.)
         // unless `setopt bsd_echo` is on (then `-e` is required).
