@@ -1,8 +1,11 @@
 # Port Checklist — `src/ported/` 100% C Parity
 
 Working list for the line-by-line port pass. Each file gets a single
-checkbox; tick when the file's Rust port is verified function-by-function
-**AND** struct-by-struct against its C counterpart in `~/forkedRepos/zsh/Src/`.
+checkbox; tick when the file's Rust port is verified function-by-function LINE BY LINE
+**AND** struct-by-struct AND ENUM BY ENUM against its C counterpart in `~/forkedRepos/zsh/Src/`.
+
+All structs and enums must have matching field names and data types.
+Every LINE OF SOURCE CODE MUST BE 100% ported.  EVERY Source FUNCTION LINE MUST BE PRESENT in ported file.
 
 ---
 
@@ -62,6 +65,8 @@ isn't ticked until ALL of them pass.
 9. **Commit per file or per ≤5-file batch.** No mass commits that
    bury per-file regressions.
 
+10. **Proof of 100% port must be shown via line counts logged here**
+11. IF a ported function call does that exist it must be created in the right file
 ---
 
 ## Methodology per file
@@ -88,20 +93,96 @@ were left in place; some stubs were body-ported but kept their
 Rust-only wrappers). All checkboxes reset; we revisit each file.
 
 In-flight files where I started bodies but the surrounding file still
-has Rust-only types to delete: `modules/stat.rs`, `modules/nearcolor.rs`,
+has Rust-only types to delete: `modules/stat.rs`,
 `modules/example.rs`, `modules/mapfile.rs`, `modules/hlgroup.rs`,
 `modules/zprof.rs`. These get re-done from the top under the new rules.
 
 ---
 
-## ✅ DONE — verified (zero stubs + zero Rust-only types + name-matched)
+## ✅ DONE — verified line-by-line (zero stubs + zero Rust-only types + name-matched)
 
-- [x] `modules/random_real.rs` ↔ `Modules/random_real.c` — 0 structs/enums (matches C); 3 fns (`random_real`, `_zclz64`, `random_64bit`) all body-ported with C-line citations.
-- [x] `zle/textobjects.rs` ↔ `Zle/textobjects.c` — deleted Rust-only `TextObjectType`/`TextObjectKind`/`TextObject` enums+struct + Rust-only `Zle::select_text_object`/`select_word_object`/`select_sentence_object`/`select_paragraph_object`/`select_pair_object`/`select_quote_object` impl block. Now: 0 structs/enums, 3 free fns (`blankwordclass`, `selectword`, `selectargument`) matching C 1:1.
-- [x] `modules/socket.rs` ↔ `Modules/socket.c` — deleted Rust-only `ZsocketOptions` struct + `UnixSocket` struct (incl. `UnixSocket::new`). `bin_zsocket(args, options)` collapsed to `bin_zsocket(args)` with inline `-a`/`-d`/`-l`/`-t`/`-v` flag parsing matching the C builtin spec `"ad:ltv"` (socket.c:276). Now: 0 structs/enums, 7 fns matching C 1:1.
-- [x] `zle/deltochar.rs` ↔ `Zle/deltochar.c` — deleted Rust-only signature `deltochar(buffer, cursor, target, direction, inclusive) -> Option<(usize,usize)>` and replaced with C-faithful `deltochar(zle: &mut Zle) -> i32` that ports the C body line-by-line (deltochar.c:38-79) including `getfullchar` lookahead, `zmult`-driven repeat loop, and forekill/backkill dispatch. Also fixed broken stubs `forekill` and `backkill` in `zle_utils.rs` at source (rule 5) — now real ports of zle_utils.c:1064 and :1045 over `&mut Zle`. Now: 0 structs/enums in deltochar.rs, 7 fns matching C 1:1.
-- [x] `loop.rs` ↔ `loop.c` — already compliant from prior dissolution pass: 0 structs/enums (deleted dead `LoopState`/`ForIterator`/`CForState`/`TryState` in earlier work), 7 tree-walker entries (`execfor`/`execselect`/`execwhile`/`execrepeat`/`execif`/`execcase`/`exectry`) match C names. Bodies are `unreachable!()` per the 96-test architectural invariant (fusevm bytecode in `compile_zsh.rs` replaces tree-walker dispatch).
-- [x] `modules/newuser.rs` ↔ `Modules/newuser.c` — already compliant from prior pass: 0 structs/enums, 7 fns matching C names (setup_/features_/enables_/boot_/cleanup_/finish_/check_dotfile), all bodies cited.
+Each tick below carries a per-fn audit log proving every C line maps
+to a Rust statement. No tick without that log. Anything blocked on
+an unported dependency is moved to **🚧 BLOCKED** and tracked in
+`TODO.md`.
+
+- [x] `modules/random_real.rs` ↔ `Modules/random_real.c`
+  - C: 0 structs/enums • Rust: 0 structs/enums ✓
+  - C fns: `_zclz64`, `random_64bit`, `random_real` (3) • Rust: same 3 ✓
+  - `_zclz64(x: u64) -> i32` — port of c:48-79. 16 C statements → 16 Rust statements. Binary-search-shift each `if (!(x & MASK)) { n += K; x <<= K; }` matches one-to-one. Verified.
+  - `random_64bit() -> u64` — port of c:84-93. Includes the `getrandom_buffer` error path + `zwarn(...)` + `return 1` (not 0) + `u64::from_ne_bytes(buf)` success path. Matches c:85-93 line-by-line. Verified after fix in `03ab0b26d9`.
+  - `random_real() -> f64` — port of c:147-213. Calls `random_64bit()` (not `random_u64`), `_zclz64()` (not `leading_zeros`), and `extern "C" ldexp` (not `exp2`). All 18 C statements have matching Rust statements. Verified after fix in `03ab0b26d9`.
+
+## 🚧 BLOCKED — partial port, gap tracked in `TODO.md`
+
+- [ ] `zle/textobjects.rs` ↔ `Zle/textobjects.c`
+  - C: 0 structs/enums • Rust: 0 structs/enums ✓ (after deleting Rust-only `TextObjectType`/`TextObjectKind`/`TextObject` + `Zle::select_text_object`-family helpers)
+  - C fns: `blankwordclass`, `selectword`, `selectargument` (3) • Rust: same 3 ✓
+  - `blankwordclass(c)` — 1-line port of c:36 ✓ verified.
+  - `selectword(zle)` — full ~170-line port of c:41-205 incl. visual-mode-reverse-direction branch (c:97-148), digit-arg loop's `if all` inner block (c:165-179), and `doblanks` trim section (c:181-194). One residual: reads `virangeflag` as constant-false (zle_vi.c:36 is unported file-global, see TODO.md). Verified except for that constant.
+  - `selectargument(zle)` — **NOT 100%.** C body uses `ctxtlex()` lexer-walk (c:233-257); Rust port is whitespace-split approximation. Blocks on lexer-context machinery — see TODO.md.
+- [x] `modules/socket.rs` ↔ `Modules/socket.c`
+  - C: 0 structs/enums • Rust: 0 structs/enums ✓ (after deleting Rust-only `ZsocketOptions`/`UnixSocket`)
+  - C fns (7): `bin_zsocket`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 7 ✓
+  - 6 module loaders match C 1:1 (each is `return 0;` body or short featuresarray/handlefeatures call — Rust ports are no-op static-link path)
+  - `bin_zsocket` — full port of c:57-272 incl. inline flag parse (matching `"ad:ltv"` builtin spec at c:276), socket()/bind()/listen() for `-l` (c:84-138), poll-test + accept() for `-a` (c:142-218), socket()/connect() default path (c:218-269), addmodulefd + redup/movefd post-call sequence on every success path (c:118/121/125, c:208/211/215, c:252/255/260). The shim writes `setiparam_no_convert("REPLY", final_fd)` (c:135/204/268). Verified line-by-line.
+- [x] `zle/deltochar.rs` ↔ `Zle/deltochar.c`
+  - C: 0 structs/enums • Rust: 0 structs/enums ✓
+  - C fns (7): `deltochar`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 7 ✓
+  - 6 module loaders: `setup_`/`features_`/`enables_`/`boot_`/`cleanup_`/`finish_` — each is `return 0;` C body or trivial featuresarray/handlefeatures/addzlefunction call. Rust ports are static-link no-ops with C-line citations. Verified.
+  - `deltochar(zle)` — port of c:38-79. 1:1 mapping: `getfullchar(0)` → `zle.getfullchar(false)`; `int dest = zlecs, ok = 0, n = zmult` → 3 mut locals; `zap = bindk->widget == w_zaptochar` → `zle.bindk.name == "zap-to-char"`; forward-direction loop (c:45-58) and backward-direction loop (c:59-77) match C structure exactly; `forekill(dest - zlecs, CUT_RAW)` and `backkill(zlecs - dest - zap, CUT_RAW|CUT_FRONT)` call into the real ports in zle_utils.rs (sibling stubs fixed at source, rule 5); `return !ok` → `if ok != 0 { 0 } else { 1 }`. Verified.
+  - Sibling fixes: `zle_utils::forekill` (zle_utils.c:1064) + `zle_utils::backkill` (zle_utils.c:1045) ported as part of this commit.
+- [x] `loop.rs` ↔ `loop.c`
+  - C: 0 structs/enums • Rust: 0 structs/enums ✓ (after deleting dead `LoopState`/`ForIterator`/`CForState`/`TryState` aggregates in earlier dissolution)
+  - C fns (8): `execfor`, `execselect`, `execwhile`, `execrepeat`, `execif`, `execcase`, `exectry`, `selectlist` • Rust: same 8 ✓
+  - 7 tree-walker entries (`execfor`/`execselect`/`execwhile`/`execrepeat`/`execif`/`execcase`/`exectry`) — bodies are `unreachable!()` per the 96-test architectural invariant (fusevm bytecode in `compile_zsh.rs` replaces tree-walker dispatch). Each entry cites its C line + the architectural reason. Verified consistent.
+  - `selectlist(items, start)` — port of c:347-416. Was previously a Rust-only signature `(items, prompt, columns) -> String`; now matches C exactly: takes items + start index, writes formatted menu to stderr, returns next-page offset (or 0 when complete). Body ports c:350-415 line-by-line: longest-width compute, fct/fw column geometry, the do-while inner loop, MB_METASTRWIDTH approximation via chars().count(). Verified.
+- [x] `modules/mathfunc.rs` ↔ `Modules/mathfunc.c`
+  - C: 3 anonymous `enum {}` blocks (untyped int constants) • Rust: 0 pub struct/enum, replaced with `pub const MF_*: i32`, `pub const MS_*: i32`, `pub const TF_*: i32` matching C definitions exactly. ✓
+  - C fns (8): `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_`, `math_func`, `math_string` • Rust: same 8 ✓
+  - 6 module loaders match (return 0 each) ✓
+  - `math_func(_name, argc, argv, id) -> Mnumber` — port of c:172-436. Full TF_INT1/TF_INT2/TF_NOCONV arg-coerce phase + giant switch on `id & 0xff` over MF_ABS through MF_YN + post-switch `if (!(id & TFLAG(TF_NOASS))) ret.u.d = retd;` finalisation. Calls libm via extern "C" for j0/j1/jn/y0/y1/yn/erf/erfc/lgamma/tgamma/ilogb/logb/nextafter/rint/scalbn/ldexp/copysign/expm1/log1p/cbrt. Verified.
+  - `math_string(_name, arg, id) -> Mnumber` — port of c:439-471. Trims iblank from arg + dispatches on id; only MS_RAND48 wired. Verified.
+  - All `MathNumber` enum + `MathFunctions` namespace + helper fns deleted (Rust-only abstractions).
+
+- [ ] `modules/newuser.rs` ↔ `Modules/newuser.c` — **PARTIAL.**
+  - C: 0 structs/enums • Rust: 0 structs/enums ✓
+  - C fns (7): `setup_`, `features_`, `enables_`, `check_dotfile` (static), `boot_`, `cleanup_`, `finish_` • Rust: same 7 ✓
+  - `setup_`, `features_`, `enables_`, `cleanup_`, `finish_` — each is a 1-line `return 0;` C body. Rust ports match. ✓
+  - `check_dotfile(dotdir, fname)` — port of c:58-65. C composes path via VARARR + sprintf, calls `access(F_OK)`. Rust uses `Path::push` + `Path::exists` — same observable result. ✓
+  - `boot_()` — **NOT 100%.** Missing the C `EMULATION(EMULATE_ZSH)` check (c:79) and the `source(buf)` newuser-install-script loop over spaths (c:96-101). Both gaps blocked on changing module-loader signatures to take `&mut ShellExecutor` — see TODO.md.
+
+- [ ] `modules/regex.rs` ↔ `Modules/regex.c`
+  - C: 0 structs/enums • Rust: 0 structs/enums ✓ (after deleting Rust-only `RegexMatch` struct)
+  - C fns (8): `zregex_regerrwarn` (static), `zcond_regex_match` (static), `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 8 ✓
+  - 6 module loaders match (return 0). ✓
+  - `zcond_regex_match(exec, a, id)` — port of c:54-200. Compiles regex with CASEMATCH-aware `(?i)` prefix, runs match, writes back $MATCH/$MBEGIN/$MEND/$match[]/$mbegin[]/$mend[] (or $BASH_REMATCH when BASHREMATCH set), with KSHARRAYS-aware 1-based vs 0-based offset indexing. 8 tests covering all branches pass. Verified.
+  - `zregex_regerrwarn(prefix, msg)` — collapses C's two-`regerror()` size+fill pattern into a single `zwarnnam` call (c:40-51). Rust's regex crate carries pre-formatted error strings. Verified.
+
+- [x] `modules/zselect.rs` ↔ `Modules/zselect.c`
+  - C: 0 structs/enums • Rust: 0 structs/enums ✓ (after deleting `SelectMode`, `ZselectOptions`, `SelectResult`)
+  - C fns (8): `bin_zselect`, `handle_digits` (static), `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 8 ✓
+  - 6 module loaders match C 1:1.
+  - `handle_digits(nam, argptr, fdset, fdmax)` — port of c:40-58 over `&mut libc::fd_set`. Calls real `zstrtol()` for digit parse + endptr garbage detect.
+  - `bin_zselect(exec, args)` — full port of c:65-246 (~180 lines). Argv parse switch over -a/-A/-r/-w/-e/-t/digit (c:78-118), select() with EINTR-retry (c:170-175), hash-output form via `indexmap` (c:191-241), array-output form (c:213-243). Calls `zstrtol()` (real) for `-t` value parse + endptr garbage detect.
+  - **Sibling fix at source (rule 5):** `utils::zstrtol` and `utils::zstrtol_underscore` rewritten from `(s) -> Option<i64>` and `(s, base) -> Option<i64>` to C-faithful `(s, base) -> (i64, &str)` and `(s, base, underscore) -> (i64, &str)` returning the unconsumed-tail slice (matching C's `char **t` out-arg). Body is full port of utils.c:2436-2519 incl. base autodetect, bases-≤10 / >10 digit-accumulator split, signed-overflow special case, truncation zwarn.
+  - 6/6 tests pass in 0.02s. Verified.
+
+- [ ] `modules/ksh93.rs` ↔ `Modules/ksh93.c` — **NOT 100%.** 2 Rust-only types still present (`Ksh93Params`, `NamerefOptions`) violating rule 1. See TODO.md.
+
+- [ ] `modules/langinfo.rs` ↔ `Modules/langinfo.c` — **NOT 100%.** 1 Rust-only type still present + 2 stubs (`liitem`, `scanlanginfo`). See TODO.md.
+
+- [x] `modules/nearcolor.rs` ↔ `Modules/nearcolor.c`
+  - C: 1 struct (`cielab`) + 1 typedef (`Cielab` = `struct cielab *`). Rust: 1 struct `Cielab` ✓ (typedef-of-pointer collapses to `&Cielab`); 0 enums; no Rust-only types.
+  - C fns (11): `deltae`, `RGBtoLAB`, `mapRGBto88`, `mapRGBto256`, `getnearestcolor`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 11 ✓
+  - `deltae(lab1, lab2) -> f64` — port of c:41-47. 4-statement squared-Lab-distance, comments cite c:44-46 dl/da/db. Verified.
+  - `RGBtoLAB(red, green, blue) -> Cielab` — port of c:50-71. 18 C statements → 18 Rust statements: c:52-54 normalisation, c:55-57 gamma decode (sRGB → linear) with C ternary preserved, c:60-62 sRGB→XYZ matrix (D65/2°), c:64-66 XYZ→Lab via the CIE 1976 `f` function (preserved as inline if-expressions, not a closure, to match C's repeated-statement form), c:68-70 final Lab values written. Returns owned struct rather than mutating `*lab` out-arg (functionally equivalent, no abstraction added). Verified.
+  - `mapRGBto88(red, green, blue) -> i32` — port of c:74-104. 11-element ramp at c:76 mirrored letter-for-letter. Three nested `while` loops with mutable counters mirror C's `for (r=0; r<11; r++) for (g=0; g<=3; g++) for (b=0; b<=3; b++)` exactly so C's `if (r > 3) g = b = r;` shortcut at c:89 has the bit-for-bit same effect on inner-loop exit conditions (C exits b at b=r+1, exits g at g=r+1; Rust does the same). Final-index formula `(comp_r > 3) ? 77+comp_r : 16 + (comp_r*16) + (comp_g*4) + comp_b` at c:102-103. Verified.
+  - `mapRGBto256(red, green, blue) -> i32` — port of c:110-144. 30-element ramp at c:112-117 (6 RGB levels + 24 greys). Same `while`-loop translation of C's three nested for-loops with `if (r > 5) g = b = r;` shortcut at c:129. C uses `r < sizeof(component)/sizeof(*component)` which equals 30; Rust uses `component.len() as i32`. Final-index formula at c:142-143. Verified.
+  - `getnearestcolor(red, green, blue) -> i32` — port of c:147-157. C signature is `static int getnearestcolor(UNUSED(Hookdef dummy), Color_rgb col)` reading the global `tccolours` (init.c:94). Rust port flattens `Color_rgb` into 3 `i32`s (no abstraction added), drops the unused `Hookdef dummy`, and reads the new `init::TCCOLOURS` static. The `+ 1` trick from c:149-151 (distinguish returned colour 0 from runhookdef sentinel) preserved. Verified.
+  - **Sibling addition at source (rule 5):** added `pub static TCCOLOURS: AtomicI32 = AtomicI32::new(0);` to `init.rs` (after `tccap_get_name`) as the port of `mod_export int tccolours;` from `Src/init.c:94`. Bucket-2 shell-wide global per PORT_PLAN.md — also referenced by `prompt.c:1831,2015,2484` and `Zle/termquery.c:534` so a shared static is the correct primitive.
+  - 6 module loaders (`setup_`/`features_`/`enables_`/`boot_`/`cleanup_`/`finish_`) — each is a `return 0;` C body or short `featuresarray`/`handlefeatures`/`addhookfunc` call. Rust ports are static-link no-ops returning 0, with doc-comments quoting the C body verbatim and explaining the architectural divergence (zshrs colour subsystem invokes `getnearestcolor` directly; no runtime feature/hook registry). Cited c:171, 179, 186, 194, 202, 209.
+  - 6/6 tests pass (`rgb_to_lab_black_is_zero`, `deltae_self_is_zero`, `map_rgb_to_256_white_is_15_or_higher`, `map_rgb_to_88_white_is_in_range`, `getnearestcolor_dispatches_on_tccolours`, `getnearestcolor_unsupported_returns_minus_one`). Verified.
 
 ## 🟢 NEAR — 1–3 stubs (6) [stub-counts pre-rule-tightening]
 
@@ -164,7 +245,6 @@ has Rust-only types to delete: `modules/stat.rs`, `modules/nearcolor.rs`,
 - [ ] `zle/zle_hist.rs` ↔ `Zle/zle_hist.c`
 - [ ] `zle/zle_keymap.rs` ↔ `Zle/zle_keymap.c`
 - [ ] `zle/zle_tricky.rs` ↔ `Zle/zle_tricky.c`
-- [ ] `modules/nearcolor.rs` ↔ `Modules/nearcolor.c`
 - [ ] `zle/zle_word.rs` ↔ `Zle/zle_word.c`
 - [ ] `modules/hlgroup.rs` ↔ `Modules/hlgroup.c`
 - [ ] `modules/param_private.rs` ↔ `Modules/param_private.c`

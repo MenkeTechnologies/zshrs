@@ -779,6 +779,17 @@ pub fn tccap_get_name(cap: usize) -> &'static str {
     TCCAPNAMS.get(cap).copied().unwrap_or("")
 }
 
+/// Port of `mod_export int tccolours;` from Src/init.c:94.
+/// Number of colours the terminal supports — populated by
+/// `tgetnum("Co")` in `init_term()` (init.c:823) and read by
+/// `prompt.c` colour clamping (prompt.c:2015,2484), termquery, and
+/// the nearcolor module (Modules/nearcolor.c:152,154).
+/// Bucket-2 shell-wide global per PORT_PLAN.md — `AtomicI32` so
+/// worker threads share the value with the same single-process
+/// semantics zsh has.
+pub static TCCOLOURS: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
 /// Set up SHIN to read from stdin or the script file.
 /// Port of `setupshin()` from Src/init.c:1340. C source `stat`s
 /// the script path, falls back to `$PATH` walk if `PATHSCRIPT` is
