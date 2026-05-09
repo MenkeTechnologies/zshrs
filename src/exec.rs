@@ -582,11 +582,10 @@ pub struct ShellExecutor {
     /// calls. `Termcap` defaults to an uninitialised handle; the
     /// canonical port lazy-initialises on first use.
     pub termcap: crate::termcap::Termcap,
-    /// Persistent watch/log state — the canonical port at
-    /// `src/ported/modules/watch.rs:625` (`bin_log()` from
-    /// `Src/Modules/watch.c`) needs to remember the previous utmp
-    /// snapshot across calls.
-    pub watch_state: crate::watch::WatchState,
+    // Watch state — dissolved per PORT_PLAN Phase 2. C
+    // (Src/Modules/watch.c:150-156) keeps `wtab`/`lastwatch`/
+    // `lastutmpcheck`/`watch` as file-statics; zshrs mirrors them
+    // as `thread_local!`s in src/ported/modules/watch.rs.
     // curses (Src/Modules/curses.c) — windows/colour-pairs/init flag
     // now live in module-static OnceLock<Mutex<…>>'s in
     // src/ported/modules/curses.rs (matching C's file-statics
@@ -942,7 +941,6 @@ impl ShellExecutor {
             profiler: Profiler::new(),
             style_table: StyleTable::new(),
             termcap: Default::default(),
-            watch_state: crate::watch::WatchState::new(),
             pty_cmds: Default::default(),
             zsh_compat: false,
             bash_compat: false,

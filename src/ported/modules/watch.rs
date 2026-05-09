@@ -54,84 +54,98 @@ impl UtmpEntry {
     }
 }
 
-/// Watch state for tracking login/logout events
-#[derive(Debug, Default)]
-/// Watch-loop running state.
-/// Port of the file-static `wtab` / `wtabsz` / `lastutmp_*` slots
-/// Src/Modules/watch.c keeps — `dowatch()` (line 597) compares
-/// the previous snapshot against the fresh utmp read to detect
-/// login/logout events.
-pub struct WatchState {
-    last_check: i64,
-    last_watch: i64,
-    entries: Vec<UtmpEntry>,
-    watch_list: Vec<String>,
-    watch_fmt: String,
-    log_check_interval: i64,
+// Per-evaluator watch-module state — bucket-1 dissolution per
+// PORT_PLAN.md Phase 2. C source has these file-statics in
+// `Src/Modules/watch.c`:
+//
+//     static int wtabsz = 0;                       // line 150
+//     static WATCH_STRUCT_UTMP *wtab = NULL;       // line 151
+//     static time_t lastwatch;                     // line 154
+//     static time_t lastutmpcheck = 0;             // line 156
+//     static char **watch;  /* $watch */           // line 689
+//
+// Rust port previously aggregated these into `WatchState` and also
+// pulled in `WATCHFMT` and `LOGCHECK` (which in C live on the
+// param table, NOT as file-statics) — bag-of-globals. Dissolved
+// into individual thread_locals matching the C declarations 1:1.
+// `WATCHFMT`/`LOGCHECK` are looked up via the param table at use
+// sites, not stored here.
+
+thread_local! {
+    /// Port of file-static `static WATCH_STRUCT_UTMP *wtab = NULL;`
+    /// at `Src/Modules/watch.c:151` (combined with `wtabsz` line
+    /// 150 — the `Vec` carries length implicitly).
+    static WTAB: std::cell::RefCell<Vec<UtmpEntry>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
+
+    /// Port of file-static `static time_t lastwatch;` at
+    /// `Src/Modules/watch.c:154`.
+    static LASTWATCH: std::cell::Cell<i64> = const {
+        std::cell::Cell::new(0)
+    };
+
+    /// Port of file-static `static time_t lastutmpcheck = 0;` at
+    /// `Src/Modules/watch.c:156`.
+    static LASTUTMPCHECK: std::cell::Cell<i64> = const {
+        std::cell::Cell::new(0)
+    };
+
+    /// Port of file-static `static char **watch;` at
+    /// `Src/Modules/watch.c:689` — backing array for the `$watch`
+    /// shell parameter.
+    static WATCH: std::cell::RefCell<Vec<String>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
 }
 
-impl WatchState {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/watch.c`.
-    pub fn new() -> Self {
-        Self {
-            last_check: 0,
-            last_watch: 0,
-            entries: Vec::new(),
-            watch_list: Vec::new(),
-            watch_fmt: DEFAULT_WATCHFMT.to_string(),
-            log_check_interval: 60,
-        }
-    }
+// WARNING: NOT IN WATCH.C — Rust-only setter helpers around the
+// thread_locals. C zsh doesn't have setter functions: assignments
+// to `$watch` flow through the paramdef table (watch.c:697) and
+// `watch.c:689` is updated implicitly by the param machinery.
+// The Rust port factors them into named fns so future param-hook
+// wiring has a single update site (and tests can drive them
+// directly without going through the param table).
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/watch.c`.
-    pub fn set_watch_list(&mut self, list: Vec<String>) {
-        self.watch_list = list;
-    }
+/// Replace the `$watch` array contents.
+pub fn set_watch_list(list: Vec<String>) {
+    WATCH.with(|w| *w.borrow_mut() = list);
+}
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/watch.c`.
-    pub fn set_watch_fmt(&mut self, fmt: &str) {
-        self.watch_fmt = fmt.to_string();
+/// Decide whether enough time has elapsed since the last poll.
+/// Port of the elapsed-time gate inside `dowatch()` (Src/Modules/
+/// watch.c:597). C reads `lastwatch` and the `LOGCHECK` param
+/// directly; Rust port reads from the thread_local LASTWATCH and
+/// the canonical param via `getsparam("LOGCHECK")`.
+pub fn should_check() -> bool {
+    if WATCH.with(|w| w.borrow().is_empty()) {
+        return false;
     }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let interval = std::env::var("LOGCHECK")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(60);
+    now - LASTWATCH.with(|t| t.get()) > interval
+}
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/watch.c`.
-    pub fn set_log_check(&mut self, interval: i64) {
-        self.log_check_interval = interval;
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/watch.c`.
-    pub fn should_check(&self) -> bool {
-        if self.watch_list.is_empty() {
+/// Decide whether an entry should produce a watch event.
+/// Port of the per-entry filter inside `watchlog()` from
+/// Src/Modules/watch.c:458 — checks against `$watch` array
+/// excluding the current user when the list begins with `notme`.
+pub fn check_entry(entry: &UtmpEntry, current_user: &str) -> bool {
+    WATCH.with(|w| {
+        let watch_list = w.borrow();
+        if watch_list.is_empty() {
             return false;
         }
-
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
-
-        now - self.last_watch > self.log_check_interval
-    }
-
-    /// Decide whether an entry should produce a watch event.
-    /// Port of the per-entry filter inside `watchlog()` from
-    /// Src/Modules/watch.c:458 — checks against `$watch` array
-    /// excluding the current user when the list begins with `notme`.
-    pub fn check_entry(&self, entry: &UtmpEntry, current_user: &str) -> bool {
-        if self.watch_list.is_empty() {
-            return false;
-        }
-
-        if self.watch_list.first().map(|s| s.as_str()) == Some("all") {
+        if watch_list.first().map(|s| s.as_str()) == Some("all") {
             return true;
         }
-
-        let mut iter = self.watch_list.iter().peekable();
-
+        let mut iter = watch_list.iter().peekable();
         if iter.peek().map(|s| s.as_str()) == Some("notme") {
             if entry.user == current_user {
                 return false;
@@ -141,7 +155,6 @@ impl WatchState {
                 return true;
             }
         }
-
         for pattern in iter {
             // Inline pattern match: `user[@host][%line]` triple-component
             // form per the watchlog inline scan at watch.c:489-510. Walks
@@ -150,7 +163,6 @@ impl WatchState {
             // `watchlog_match()`.
             let mut rest = pattern.as_str();
             let mut matched = true;
-
             if !rest.starts_with('@') && !rest.starts_with('%') {
                 let end = rest.find(['@', '%']).unwrap_or(rest.len());
                 let user_pat = &rest[..end];
@@ -159,7 +171,6 @@ impl WatchState {
                 }
                 rest = &rest[end..];
             }
-
             while !rest.is_empty() && matched {
                 if let Some(rest1) = rest.strip_prefix('%') {
                     let end = rest1.find('@').unwrap_or(rest1.len());
@@ -179,14 +190,12 @@ impl WatchState {
                     break;
                 }
             }
-
             if matched {
                 return true;
             }
         }
-
         false
-    }
+    })
 }
 
 /// Check if a watch pattern matches an entry field
@@ -359,7 +368,7 @@ fn printtime(timestamp: i64, fmt: &str) -> String {
 /// Port of `dowatch()` from Src/Modules/watch.c:597 — the C
 /// source diffs the cached `wtab` against a fresh utmp read and
 /// fires `watchlog()` for each new entry / departure.
-pub fn dowatch(state: &mut WatchState, current_user: &str) -> Vec<(UtmpEntry, bool)> {
+pub fn dowatch(current_user: &str) -> Vec<(UtmpEntry, bool)> {
     let mut events = Vec::new();
     // Inline utmp walk — direct port of the setutxent/getutxent/endutxent
     // loop watchlog2 uses every poll (Src/Modules/watch.c:204). zsh C
@@ -409,34 +418,33 @@ pub fn dowatch(state: &mut WatchState, current_user: &str) -> Vec<(UtmpEntry, bo
         .unwrap_or_default()
         .as_secs() as i64;
 
-    let old_active: HashMap<String, &UtmpEntry> = state
-        .entries
+    let old_entries = WTAB.with(|t| t.borrow().clone());
+    let old_active: HashMap<String, UtmpEntry> = old_entries
         .iter()
         .filter(|e| e.is_active())
-        .map(|e| (format!("{}:{}", e.user, e.line), e))
+        .map(|e| (format!("{}:{}", e.user, e.line), e.clone()))
         .collect();
 
-    let new_active: HashMap<String, &UtmpEntry> = new_entries
+    let new_active: HashMap<String, UtmpEntry> = new_entries
         .iter()
         .filter(|e| e.is_active())
-        .map(|e| (format!("{}:{}", e.user, e.line), e))
+        .map(|e| (format!("{}:{}", e.user, e.line), e.clone()))
         .collect();
 
     for (key, entry) in &new_active {
         if !old_active.contains_key(key)
-            && state.check_entry(entry, current_user)
+            && check_entry(entry, current_user)
         {
-            events.push((*entry).clone());
+            events.push(entry.clone());
             events.last_mut().unwrap();
         }
     }
 
     for (key, entry) in &old_active {
         if !new_active.contains_key(key)
-            && state.check_entry(entry, current_user)
+            && check_entry(entry, current_user)
         {
-            let logged_out = (*entry).clone();
-            events.push(logged_out);
+            events.push(entry.clone());
         }
     }
 
@@ -455,8 +463,8 @@ pub fn dowatch(state: &mut WatchState, current_user: &str) -> Vec<(UtmpEntry, bo
         })
         .collect();
 
-    state.entries = new_entries;
-    state.last_watch = now;
+    WTAB.with(|t| *t.borrow_mut() = new_entries);
+    LASTWATCH.with(|t| t.set(now));
 
     result
 }
@@ -466,14 +474,16 @@ pub fn dowatch(state: &mut WatchState, current_user: &str) -> Vec<(UtmpEntry, bo
 /// Port of `bin_log()` from Src/Modules/watch.c:681 — emits the
 /// last seen watch events using the user's `$WATCHFMT` (or the
 /// supplied override).
-pub fn bin_log(state: &mut WatchState, current_user: &str, fmt: Option<&str>) -> String {
+pub fn bin_log(current_user: &str, fmt: Option<&str>) -> String {
     let fmt_str = fmt
         .map(|s| s.to_string())
-        .unwrap_or_else(|| state.watch_fmt.clone());
-    state.entries.clear();
-    state.last_check = 0;
+        .unwrap_or_else(|| {
+            std::env::var("WATCHFMT").unwrap_or_else(|_| DEFAULT_WATCHFMT.to_string())
+        });
+    WTAB.with(|t| t.borrow_mut().clear());
+    LASTUTMPCHECK.with(|t| t.set(0));
 
-    let events = dowatch(state, current_user);
+    let events = dowatch(current_user);
     let mut output = String::new();
 
     for (entry, logged_in) in events {
@@ -489,10 +499,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_watch_state_new() {
-        let state = WatchState::new();
-        assert!(state.watch_list.is_empty());
-        assert_eq!(state.log_check_interval, 60);
+    fn test_watch_initial_empty() {
+        // Fresh thread → thread_locals are zero-initialised; the `$watch`
+        // list defaults to empty (mirrors C's `static char **watch = NULL`).
+        WATCH.with(|w| assert!(w.borrow().is_empty()));
     }
 
     #[test]
@@ -561,9 +571,8 @@ mod tests {
             session_type: SessionType::UserProcess,
         };
 
-        let mut state = WatchState::new();
-        state.set_watch_list(vec!["all".to_string()]);
-        assert!(state.check_entry(&entry, "me"));
+        set_watch_list(vec!["all".to_string()]);
+        assert!(check_entry(&entry, "me"));
     }
 
     #[test]
@@ -577,15 +586,14 @@ mod tests {
             session_type: SessionType::UserProcess,
         };
 
-        let mut state = WatchState::new();
-        state.set_watch_list(vec!["notme".to_string()]);
-        assert!(!state.check_entry(&entry, "me"));
+        set_watch_list(vec!["notme".to_string()]);
+        assert!(!check_entry(&entry, "me"));
 
         let other = UtmpEntry {
             user: "other".to_string(),
             ..entry.clone()
         };
-        assert!(state.check_entry(&other, "me"));
+        assert!(check_entry(&other, "me"));
     }
 
     #[test]
@@ -599,15 +607,14 @@ mod tests {
             session_type: SessionType::UserProcess,
         };
 
-        let mut state = WatchState::new();
-        state.set_watch_list(vec!["admin".to_string()]);
-        assert!(state.check_entry(&entry, "me"));
-        state.set_watch_list(vec!["admin@server.local".to_string()]);
-        assert!(state.check_entry(&entry, "me"));
-        state.set_watch_list(vec!["admin%pts/0".to_string()]);
-        assert!(state.check_entry(&entry, "me"));
-        state.set_watch_list(vec!["root".to_string()]);
-        assert!(!state.check_entry(&entry, "me"));
+        set_watch_list(vec!["admin".to_string()]);
+        assert!(check_entry(&entry, "me"));
+        set_watch_list(vec!["admin@server.local".to_string()]);
+        assert!(check_entry(&entry, "me"));
+        set_watch_list(vec!["admin%pts/0".to_string()]);
+        assert!(check_entry(&entry, "me"));
+        set_watch_list(vec!["root".to_string()]);
+        assert!(!check_entry(&entry, "me"));
     }
 
     #[test]
@@ -639,18 +646,16 @@ mod tests {
 // BEGIN moved-from-exec-rs
 impl crate::ported::exec::ShellExecutor {
     /// `log` builtin — delegates to canonical port at
-    /// `src/ported/modules/watch.rs:625` (`bin_log()` from
-    /// `Src/Modules/watch.c`). The watch state (`last_check`,
-    /// `last_watch`, prior utmp snapshot) lives on `ShellExecutor`
-    /// so login/logout edge detection survives across calls.
+    /// `src/ported/modules/watch.rs` (`bin_log()` from
+    /// `Src/Modules/watch.c`). The watch state lives in
+    /// `thread_local!`s in the canonical port (mirroring C's
+    /// `Src/Modules/watch.c:150-156` file-statics) so login/logout
+    /// edge detection survives across calls without a struct on
+    /// `ShellExecutor`.
     pub(crate) fn bin_log(&mut self, _args: &[String]) -> i32 {
         let user = std::env::var("USER").unwrap_or_default();
         let fmt = self.variables.get("WATCHFMT").cloned();
-        let output = crate::watch::bin_log(
-            &mut self.watch_state,
-            &user,
-            fmt.as_deref(),
-        );
+        let output = crate::watch::bin_log(&user, fmt.as_deref());
         if !output.is_empty() {
             print!("{}", output);
         }
