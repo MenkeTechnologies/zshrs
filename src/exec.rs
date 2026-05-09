@@ -573,12 +573,8 @@ pub struct ShellExecutor {
     pub zftp: Zftp,
     pub profiler: Profiler,
     pub style_table: StyleTable,
-    /// Persistent state for the `cap`/`getcap`/`setcap` family —
-    /// owned here so the canonical port at
-    /// `src/ported/modules/termcap.rs` survives across `echotc`
-    /// calls. `Termcap` defaults to an uninitialised handle; the
-    /// canonical port lazy-initialises on first use.
-    pub termcap: crate::termcap::Termcap,
+    // termcap state dissolved per strict-rules audit — no Rust-only
+    // Termcap struct; capability_lookup is stateless on $TERM.
     // Watch state — dissolved per PORT_PLAN Phase 2. C
     // (Src/Modules/watch.c:150-156) keeps `wtab`/`lastwatch`/
     // `lastutmpcheck`/`watch` as file-statics; zshrs mirrors them
@@ -936,7 +932,6 @@ impl ShellExecutor {
             zftp: Zftp::new(),
             profiler: Profiler::new(),
             style_table: StyleTable::new(),
-            termcap: Default::default(),
             pty_cmds: Default::default(),
             zsh_compat: false,
             bash_compat: false,
