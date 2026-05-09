@@ -300,7 +300,6 @@ use std::process::{Child, Command, Stdio};
 // reference `crate::ported::exec::<Name>` keep compiling.
 pub use crate::ported::zle::computil::{CompSpec, CompMatch, CompGroup, CompState};
 pub use crate::ported::modules::zutil::ZStyle;
-pub use crate::ported::modules::zpty::ZptyState;
 pub use crate::ported::modules::zprof::ProfileEntry;
 // `ScheduledCommand` (Rust-only) deleted; use `crate::builtins::sched::schedcmd`
 // (port of `struct schedcmd` from Src/Builtins/sched.c:43) for live state.
@@ -544,8 +543,6 @@ pub struct ShellExecutor {
     pub hook_functions: HashMap<String, Vec<String>>, // hook_name -> [function_names]
     // Named directories (hash -d)
     pub named_dirs: HashMap<String, PathBuf>, // name -> path
-    // zpty - pseudo-terminal management
-    pub zptys: HashMap<String, ZptyState>,
     // bin_sysopen - file descriptor management
     pub open_fds: HashMap<i32, std::fs::File>,
     pub next_fd: i32,
@@ -880,7 +877,6 @@ impl ShellExecutor {
             autoload_pending: HashMap::new(),
             hook_functions: HashMap::new(),
             named_dirs: HashMap::new(),
-            zptys: HashMap::new(),
             open_fds: HashMap::new(),
             next_fd: 10,
             profile_data: HashMap::new(),

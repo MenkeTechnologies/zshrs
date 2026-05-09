@@ -622,18 +622,14 @@ impl crate::ported::exec::ShellExecutor {
 
 // ─── moved from src/ported/exec.rs (drift extraction) ───
 
-/// State for a zpty pseudo-terminal
-/// One zpty session.
-/// Port of `struct ptycmd` from Src/Modules/zpty.c — fd, pid,
-/// echo/nonblock flags.
-pub struct ZptyState {
-    pub pid: u32,
-    pub cmd: String,
-    pub stdin: Option<std::process::ChildStdin>,
-    pub stdout: Option<std::process::ChildStdout>,
-    pub child: Option<std::process::Child>,
-}
-
+// Note: dead `ZptyState` aggregate deleted per PORT_PLAN Phase 2.
+// It was a duplicate of `PtyCmd` (zpty.rs:19), which is the correct
+// faithful port of C `struct ptycmd` (Src/Modules/zpty.c:48). The
+// dead `ZptyState` was wired into ShellExecutor as
+// `pub zptys: HashMap<String, ZptyState>` but never inserted or
+// read. Use `PtyCmd` + `PtyCmds` (the port of the file-static
+// `static Ptycmd ptycmds;` linked list at zpty.c:62) for any
+// real wiring.
 
 /// Module loader entry — port of `setup_()` from Src/Modules/zpty.c:896.
 pub fn setup_() -> i32 {
