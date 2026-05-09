@@ -8,7 +8,8 @@
 //! **Coverage**: language surface under `zsh -fc` / `zshrs --zsh -fc` (state, options,
 //! parameters, builtins, expansion, redirections, history, ZLE-adjacent, jobs, plus
 //! larger scripted corpora, `corpus_dash_fc_surface_extra`, `corpus_dash_fc_compounds_misc`,
-//! `corpus_dash_fc_control_flow`, `corpus_dash_fc_params_redir`, `corpus_dash_fc_bulk_a`). Pass/fail is **stdout + exit** only (see `assert_parity`).
+//! `corpus_dash_fc_control_flow`, `corpus_dash_fc_params_redir`, `corpus_dash_fc_bulk_a`,
+//! `corpus_dash_fc_bulk_b`, `corpus_dash_fc_bulk_c`). Pass/fail is **stdout + exit** only (see `assert_parity`).
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -732,5 +733,151 @@ mod corpus_dash_fc_bulk_a {
         bulk_param_minus_fallback_not_colon => (r#"${unset-word}"#, r#"unset md_sub_gap; print ${md_sub_gap-mddef_word}"#);
         bulk_print_rn_then_newline => (r#"print -rn"#, r#"print -rn zz_no_nl; print zz_with_ln"#);
         bulk_whence_dash_p_system_sh => (r#"whence -p sh"#, r#"whence -p sh 2>&1; print -r "ex=$?""#);
+    }
+}
+
+/// Second large batch: brace tricks, **`${PWD:h}`**, **`=`** splitting, **`read -d`**, **`zcompile`**, **`zsh/stat`**, options, arithmetic, **`bindkey`**, **`widgets`**.
+mod corpus_dash_fc_bulk_b {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_b_brace_triple_comma_repeat => (r#"x{,,}y"#, r#"print x{,,}y"#);
+        bulk_b_braceccl_letter_range => (r#"braceccl {m-o}"#, r#"setopt braceccl; print {m-o}"#);
+        bulk_b_equals_split_words_argv => (r##"set -- ${=sv}"##, r#"sv_beq='r s'; set -- ${=sv_beq}; print $#'#);
+        bulk_b_pwdtail_h_modifier => (r##"${PWD:h}"##, r#"print ${PWD:h}"#);
+        bulk_b_assoc_append_plus_paren => (r#"A+=([k]=v)"#, r#"typeset -A ax_b=(); ax_b+=([kx_b]=vy_b); print $ax_b[kx_b]"#);
+        bulk_b_euid_and_username => (r#"EUID USERNAME"#, r#"print $EUID $USERNAME"#);
+        bulk_b_lang_scalar => (r#"LANG"#, r#"print ${LANG:-nil_lang}"#);
+        bulk_b_lc_all_scalar => (r#"LC_ALL"#, r#"print ${LC_ALL:-nil_lcall}"#);
+        bulk_b_zsh_patchlevel_string => (r#"ZSH_PATCHLEVEL"#, r##"print -r "$ZSH_PATCHLEVEL""##);
+        bulk_b_terminfo_colors_bracket => (r#"terminfo[colors]"#, r#"print ${terminfo[colors]:-terminfo_no_colors}"#);
+        bulk_b_prompt_expand_ps1_pct_hash => (r#"PS1 % + (%)PS1"#, r#"PS1_bb="%#"; print ${(%)PS1_bb}"#);
+        bulk_b_cond_char_dev_null => (r##"[[ -e /dev/null ]]"##, r#"[[ -e /dev/null ]]; print $?"#);
+        bulk_b_cond_o_login => (r##"[[ -o login ]]"##, r#"[[ -o login ]]; print $?"#);
+        bulk_b_cond_o_interactive => (r##"[[ -o interactive ]]"##, r#"[[ -o interactive ]]; print $?"#);
+        bulk_b_option_functrace => (r#"options[functrace]"#, r##"print -r "<$options[functrace]>""##);
+        bulk_b_option_globsubst_value => (r#"options[globsubst]"#, r#"print $options[globsubst]"#);
+        bulk_b_option_bareglobqual => (r#"options[bareglobqual]"#, r#"print $options[bareglobqual]"#);
+        bulk_b_option_extendedhistory => (r#"options[extendedhistory]"#, r#"print $options[extendedhistory]"#);
+        bulk_b_read_ifs_delim_colon => (r#"read -d :"#, r##"printf 'a:b' | IFS= read -d : -r rd_b; print -r "$rd_b""##);
+        bulk_b_builtin_false_exit => (r#"builtin false"#, r##"builtin false; print -r "st=$?""##);
+        bulk_b_path_array_literal_first => (r#"path=(...)"#, r#"path_b=(/tmp); print $path_b[1]"#);
+        bulk_b_zmodload_calendar_stderr => (r#"zmodload zsh/calendar"#, r##"zmodload zsh/calendar 2>&1; print -r "ex=$?""##);
+        bulk_b_zmodload_net_tcp_ok => (r#"zmodload zsh/net/tcp"#, r##"zmodload zsh/net/tcp 2>&1; print -r "ex=$?""##);
+        bulk_b_zcompile_tmpfile => (r#"zcompile"#, r##"print zcb >/tmp/gap_zc_b_$$; zcompile /tmp/gap_zc_b_$$ 2>&1; print -r "zc=$?"; command rm -f /tmp/gap_zc_b_$$ /tmp/gap_zc_b_$$.zwc"##);
+        bulk_b_allexport_in_subshell => (r#"allexport subshell"#, r##"( setopt allexport; y_alx=9; print -r "in=$y_alx" ); print -r "out_plus=$+y_alx""##);
+        bulk_b_nested_for_pair => (r#"nested for"#, r##"for a_b in 1 2; do for b_b in x; do print "${a_b}${b_b}"; done; done"##);
+        bulk_b_arith_compound_add => (r#"(("+="))"#, r#"ac_b=1; (( ac_b += 3 )); print $ac_b"#);
+        bulk_b_zstat_size_etc_hosts => (r#"stat +size /etc/hosts"#, r##"zmodload zsh/stat 2>&1; stat +size /etc/hosts 2>&1; print -r "ex=$?""##);
+        bulk_b_columns_default => (r#"COLUMNS"#, r#"print ${COLUMNS:-col0}"#);
+        bulk_b_read_dev_null_reply_len => (r#"read /dev/null"#, r##"read -r < /dev/null; print -r "replen=${#REPLY}""##);
+        bulk_b_histcmd_scalar => (r#"HISTCMD"#, r##"print -r "histcmd=$HISTCMD""##);
+        bulk_b_plus_histfile => (r#"$+HISTFILE"#, r#"print $+HISTFILE"#);
+        bulk_b_fc_list_missing_event => (r#"fc -l bad event"#, r##"fc -l 1 2>&1; print -r "ex=$?""##);
+        bulk_b_unalias_all_subshell => (r#"unalias -a ( )"#, r#"( unalias -a 2>&1; print ua_cleared_inner )"#);
+        bulk_b_shift_zero_noop => (r#"shift 0"#, r##"set -- pivot_a pivot_b; shift 0; print -r "$1 $2""##);
+        bulk_b_arith_float_gt => (r#"(( 3.1 > 3 ))"#, r#"(( 3.1 > 3 )); print $?"#);
+        bulk_b_arith_int_divide => (r#"7/2"#, r#"print $(( 7 / 2 ))"#);
+        bulk_b_arith_modulo => (r#"7%3"#, r#"print $(( 7 % 3 ))"#);
+        bulk_b_arith_bitand => (r#"5&3"#, r#"print $(( 5 & 3 ))"#);
+        bulk_b_arith_shl_bits => (r#"1<<4"#, r#"print $(( 1 << 4 ))"#);
+        bulk_b_bindkey_caret_A => (r#"bindkey ^A"#, r##"bindkey "^A" 2>&1; print -r "ex=$?""##);
+        bulk_b_keymap_name_param => (r#"KEYMAP"#, r##"print -r "${KEYMAP:-no_keymap}""##);
+        bulk_b_plus_widget_history_isearch => (r#"$+widgets hist isearch"#, r#"print $+widgets[history-incremental-search-backward]"#);
+        bulk_b_option_autocd => (r#"options[autocd]"#, r#"print $options[autocd]"#);
+        bulk_b_option_autoparamslash => (r#"options[autoparamslash]"#, r#"print $options[autoparamslash]"#);
+        bulk_b_option_autoremoveslash => (r#"options[autoremoveslash]"#, r#"print $options[autoremoveslash]"#);
+        bulk_b_option_badpattern => (r#"options[badpattern]"#, r#"print $options[badpattern]"#);
+        bulk_b_option_beep => (r#"options[beep]"#, r#"print $options[beep]"#);
+        bulk_b_option_bindkeys => (r#"options[bindkeys]"#, r#"print $options[bindkeys]"#);
+        bulk_b_option_checkjobs => (r#"options[checkjobs]"#, r#"print $options[checkjobs]"#);
+        bulk_b_option_clobber => (r#"options[clobber]"#, r#"print $options[clobber]"#);
+        bulk_b_option_completealiases => (r#"options[completealiases]"#, r#"print $options[completealiases]"#);
+        bulk_b_option_correct => (r#"options[correct]"#, r#"print $options[correct]"#);
+        bulk_b_option_dvorak => (r#"options[dvorak]"#, r#"print $options[dvorak]"#);
+        bulk_b_option_braceexpand_val => (r#"options[braceexpand]"#, r#"print $options[braceexpand]"#);
+        bulk_b_option_alwayslastprompt => (r#"options[alwayslastprompt]"#, r#"print $options[alwayslastprompt]"#);
+        bulk_b_option_hashlistall => (r#"options[hashlistall]"#, r#"print $options[hashlistall]"#);
+        bulk_b_option_histverify => (r#"options[histverify]"#, r#"print $options[histverify]"#);
+        bulk_b_option_histsavebycopy => (r#"options[histsavebycopy]"#, r#"print $options[histsavebycopy]"#);
+        bulk_b_option_ignoreeof => (r#"options[ignoreeof]"#, r#"print $options[ignoreeof]"#);
+        bulk_b_option_mailwarning => (r#"options[mailwarning]"#, r#"print $options[mailwarning]"#);
+        bulk_b_option_monitor_jobs => (r#"options[monitor]"#, r#"print $options[monitor]"#);
+        bulk_b_option_pushdignoredups => (r#"options[pushdignoredups]"#, r#"print $options[pushdignoredups]"#);
+        bulk_b_option_cdablevars => (r#"options[cdablevars]"#, r#"print $options[cdablevars]"#);
+        bulk_b_zpfx_param_default => (r#"ZPFX"#, r#"print ${ZPFX:-empty_zpfx}"#);
+        bulk_b_fpath_first_elt => (r#"fpath[1]"#, r#"print ${fpath[1]:-no_fpath}"#);
+        bulk_b_module_path_join_colon => (r##"${(j.:.)module_path}"##, r#"print ${(j.:.)module_path}"#);
+        bulk_b_print_octdumps_one_octet => (r#"print -o one byte"#, r##"print -o B5 2>&1; print -r "ex=$?""##);
+    }
+}
+
+/// Third large batch: **`:^^`**, `:**:` / `##` / `%%`, **`((2#…))`**, **`typeset -i2`**, **`set -A`**, **`coproc`**, **`zparseopts`**, **`zmodload`**, **`printf %q`**, more **`$options`**.
+mod corpus_dash_fc_bulk_c {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_c_colon_caret_caret_zip => (r#"${a:^^b}"#, r#"xc=(1 2); yc=(a b); print ${xc:^^yc}"#);
+        bulk_c_scalar_colon_t_colon_h => (r#"${p:t} ${p:h}"#, r#"pc=/x/y/z.name; print ${pc:t} ${pc:h}"#);
+        bulk_c_hashhash_percentpercent_strip => (r#"## */ %% /*"#, r#"lsc=foo/bar/baz; print ${lsc##*/} ${lsc%%/*}"#);
+        bulk_c_array_slice_offset_length => (r#"$a[1:2]"#, r#"aryc=(a b c d); print ${aryc:1:2}"#);
+        bulk_c_subshell_builtin_cd => (r#"subshell cd"#, r#"( builtin cd /tmp; print -r subtmp_ok ); print -r after_subcd"#);
+        bulk_c_arith_hex_ff => (r#"16#FF"#, r#"print $(( 16#FF ))"#);
+        bulk_c_arith_binary_sharp_form => (r#"2#1010"#, r#"print $(( 2#1010 ))"#);
+        bulk_c_bang_false_exit => (r#"! false"#, r#"! false; print $?"#);
+        bulk_c_posix_bracket_empty => (r#"POSIX [ -z ]"#, r##"[ -z "" ]; print bracketc:$?"##);
+        bulk_c_cond_string_lex_less => (r#"[[ a < b ]]"#, r##"[[ a < b ]]; print lex:$?"##);
+        bulk_c_cond_file_hosts => (r#"[[ -f /etc/hosts ]]"#, r##"[[ -f /etc/hosts ]] || [[ -f /etc/hostname ]]; print hostsish:$?"##);
+        bulk_c_cond_dir_tmp => (r#"[[ -d /tmp ]]"#, r##"[[ -d /tmp ]]; print dtmp:$?"##);
+        bulk_c_integer_postincrement => (r#"(( i++ ))"#, r#"integer icc_c=0; (( icc_c++ )); print $icc_c"#);
+        bulk_c_float_scientific_E => (r#"typeset -E 1e2"#, r#"typeset -E fsci_c=1e2; print $fsci_c"#);
+        bulk_c_sparse_array_assign => (r#"a[5] sparse"#, r#"typeset -a spc=(); spc[5]=hi_gap; print $spc[5]"#);
+        bulk_c_unset_two_names => (r#"unset a b"#, r#"unset uc_aa_c uc_bb_c; print unset_pair_done"#);
+        bulk_c_command_echo_word => (r#"command echo"#, r#"command echo ce_gap_c"#);
+        bulk_c_which_echo => (r#"which echo"#, r##"which echo 2>&1; print -r "ex=$?""##);
+        bulk_c_umask_capture => (r#"umask"#, r##"uoutc=$(umask); print -r "um=$uoutc""##);
+        bulk_c_tmpdir_default => (r#"TMPDIR"#, r#"print ${TMPDIR:-nil_tmpdir}"#);
+        bulk_c_lineno_start => (r#"LINENO"#, r##"print -r "Lstart=$LINENO""##);
+        bulk_c_print_dash_dash_literal => (r#"print -- -n"#, r#"print -r -- '-n_literal'"#);
+        bulk_c_setopt_localoptions_nominal => (r#"setopt localoptions"#, r##"setopt localoptions 2>&1; print -r "lox=$?""##);
+        bulk_c_function_localtraps_option => (r#"localtraps fn"#, r#"fn_lt() { setopt localtraps; print fn_lt_inner; }; fn_lt"#);
+        bulk_c_autoload_zle_hook_helper => (r#"autoload add-zle-hook"#, r##"autoload -U add-zle-hook-widget 2>&1; print -r "alz=$?""##);
+        bulk_c_zparseopts_array_accumulate => (r#"zparseopts -a"#, r##"typeset -a zpo_c=(); zparseopts -a zpo_c -- 2>&1; print -r "n=$#zpo_c ex=$?""##);
+        bulk_c_zmodload_parameter_module => (r#"zmodload zsh/parameter"#, r##"zmodload zsh/parameter 2>&1; print -r "ex=$?""##);
+        bulk_c_printf_q_escaped => (r#"printf %q"#, r##"printf '%q\n' 'two words c'"##);
+        bulk_c_ifs_read_two_parts => (r#"IFS read :"#, r#"IFS=: read -r rc1_c rc2_c <<< 'u:v'; print $rc1_c $rc2_c"#);
+        bulk_c_coproc_cat_bang => (r#"coproc cat"#, r##"coproc cat; print -r "cop=$!""##);
+        bulk_c_dollar_under_after_command => (r#"$_ after cmd"#, r#"true gap_under_c; print $_"#);
+        bulk_c_argv_one_after_set => (r#"$argv set --"#, r#"set -- xc1_c; print $argv[1]"#);
+        bulk_c_set_capital_A_array => (r#"set -A"#, r#"set -A arrset_c a b c; print $arrset_c[2]"#);
+        bulk_c_param_q_ansi_c_quote => (r#"${(q) }"#, r#"wqc='a b c'; print ${(q)wqc}"#);
+        bulk_c_false_then_true_chain => (r#"false; true"#, r##"false; true; print -r "chain=$?""##);
+        bulk_c_double_bracket_or_pattern => (r#"[[ ]] || [[ ]]"#, r##"[[ gap_a = gap_b ]] || [[ gap_c = gap_c ]]; print orc=$?"##);
+        bulk_c_typeset_base_two_output => (r#"typeset -i2"#, r#"typeset -i2 ib2_c=5; print $ib2_c"#);
+        bulk_c_subshell_exit_propagates_status => (r#"( exit 2 )"#, r##"( exit 2 ); print -r "after_sub=$?""##);
+        bulk_c_command_capital_V_colon => (r#"command -V :"#, r##"command -V : 2>&1; print -r "ex=$?""##);
+        bulk_c_zmodload_langinfo_module => (r#"zmodload zsh/langinfo"#, r##"zmodload zsh/langinfo 2>&1; print -r "ex=$?""##);
+        bulk_c_readonly_scalar => (r#"readonly"#, r#"readonly rov_c=gapval_c; print $rov_c"#);
+        bulk_c_jobs_minus_l => (r#"jobs -l"#, r##"jobs -l 2>&1; print -r "ex=$?""##);
+        bulk_c_arith_zero_x_prefix => (r#"0x10"#, r#"print $(( 0x10 ))"#);
+        bulk_c_opt_allexport => (r#"options[allexport]"#, r#"print $options[allexport]"#);
+        bulk_c_opt_aliasfuncdef => (r#"options[aliasfuncdef]"#, r#"print $options[aliasfuncdef]"#);
+        bulk_c_opt_appendcreate => (r#"options[appendcreate]"#, r#"print $options[appendcreate]"#);
+        bulk_c_opt_nobadpattern => (r#"options[nobadpattern]"#, r#"print $options[nobadpattern]"#);
+        bulk_c_opt_rcexpandparam => (r#"options[rcexpandparam]"#, r#"print $options[rcexpandparam]"#);
+        bulk_c_opt_rematchpcre => (r#"options[rematchpcre]"#, r#"print $options[rematchpcre]"#);
+        bulk_c_opt_posixidentifiers => (r#"options[posixidentifiers]"#, r#"print $options[posixidentifiers]"#);
+        bulk_c_opt_histfcntllock => (r#"options[histfcntllock]"#, r#"print $options[histfcntllock]"#);
+        bulk_c_opt_histnostore => (r#"options[histnostore]"#, r#"print $options[histnostore]"#);
+        bulk_c_opt_sharehistory => (r#"options[sharehistory]"#, r#"print $options[sharehistory]"#);
+        bulk_c_opt_incappendhistory => (r#"options[incappendhistory]"#, r#"print $options[incappendhistory]"#);
+        bulk_c_opt_nobeep => (r#"options[nobeep]"#, r#"print $options[nobeep]"#);
+        bulk_c_opt_noaliases => (r#"options[noaliases]"#, r#"print $options[noaliases]"#);
+        bulk_c_opt_norcs => (r#"options[norcs]"#, r#"print $options[norcs]"#);
+        bulk_c_opt_shinstdin => (r#"options[shinstdin]"#, r#"print $options[shinstdin]"#);
+        bulk_c_opt_singlecommand => (r#"options[singlecommand]"#, r#"print $options[singlecommand]"#);
+        bulk_c_opt_sourcetrace => (r#"options[sourcetrace]"#, r#"print $options[sourcetrace]"#);
+        bulk_c_opt_sunkeyboardhack => (r#"options[sunkeyboardhack]"#, r#"print $options[sunkeyboardhack]"#);
+        bulk_c_opt_noflowcontrol => (r#"options[noflowcontrol]"#, r#"print $options[noflowcontrol]"#);
     }
 }
