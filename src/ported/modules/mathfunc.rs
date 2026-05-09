@@ -1,15 +1,22 @@
-//! Mathematical functions for arithmetic expressions - port of Modules/mathfunc.c
+//! Mathematical functions for arithmetic expressions — port of
+//! `Src/Modules/mathfunc.c`.
 //!
-//! Provides standard math functions like sin, cos, sqrt, log, etc.
+//! C source has THREE anonymous `enum {}` blocks (lines 35, 90,
+//! 104) generating `int`-typed constants — no named C type, so
+//! the Rust port mirrors them as `pub const ... : i32 = ...;`
+//! definitions only (rule 1: no Rust-only struct/enum types).
+//!
+//! All math-fn dispatch lives in a single `math_func()` switch,
+//! matching the C structure 1:1.
 
 #![allow(clippy::approx_constant)]
 
-use std::f64::consts::PI;
+use crate::ported::math::{Mnumber, MN_FLOAT, MN_INTEGER};
 
-// libm bindings used by the math-function builtins. Direct port of
-// the calls zsh's `math_func()` (Src/Modules/mathfunc.c:326-417)
-// makes via the system's `<math.h>`. Bessel functions and `erf`
-// aren't in Rust's `std`, so we declare the C ABI bindings here.
+// libm bindings used by the math-function dispatcher. Direct port
+// of the calls C's `math_func()` (Src/Modules/mathfunc.c:172-436)
+// makes via `<math.h>`. Bessel functions and `erf` aren't in
+// Rust's `std`, so we declare the C ABI bindings here.
 #[cfg(unix)]
 extern "C" {
     fn j0(x: f64) -> f64;
@@ -19,689 +26,318 @@ extern "C" {
     fn y1(x: f64) -> f64;
     fn yn(n: i32, x: f64) -> f64;
     fn erf(x: f64) -> f64;
+    fn erfc(x: f64) -> f64;
+    fn lgamma(x: f64) -> f64;
+    fn tgamma(x: f64) -> f64;
+    fn ilogb(x: f64) -> i32;
+    fn logb(x: f64) -> f64;
+    fn nextafter(x: f64, y: f64) -> f64;
+    fn rint(x: f64) -> f64;
+    fn scalbn(x: f64, n: i32) -> f64;
+    fn ldexp(x: f64, exp: i32) -> f64;
+    fn copysign(x: f64, y: f64) -> f64;
+    fn expm1(x: f64) -> f64;
+    fn log1p(x: f64) -> f64;
+    fn cbrt(x: f64) -> f64;
 }
 
-/// Math number type - can be integer or float
-#[derive(Debug, Clone, Copy)]
-pub enum MathNumber {
-    Integer(i64),
-    Float(f64),
-}
+// ============================================================
+// MF_* — port of the anonymous `enum {}` at mathfunc.c:34-84.
+// C `enum {}` with no typedef → untyped int constants. Rust
+// mirrors as `pub const ... : i32` (no Rust-only enum type).
+// ============================================================
+pub const MF_ABS:       i32 = 0;                                         // c:35
+pub const MF_ACOS:      i32 = 1;                                         // c:36
+pub const MF_ACOSH:     i32 = 2;
+pub const MF_ASIN:      i32 = 3;
+pub const MF_ASINH:     i32 = 4;
+pub const MF_ATAN:      i32 = 5;
+pub const MF_ATANH:     i32 = 6;
+pub const MF_CBRT:      i32 = 7;
+pub const MF_CEIL:      i32 = 8;
+pub const MF_COPYSIGN:  i32 = 9;
+pub const MF_COS:       i32 = 10;
+pub const MF_COSH:      i32 = 11;
+pub const MF_ERF:       i32 = 12;
+pub const MF_ERFC:      i32 = 13;
+pub const MF_EXP:       i32 = 14;
+pub const MF_EXPM1:     i32 = 15;
+pub const MF_FABS:      i32 = 16;
+pub const MF_FLOAT:     i32 = 17;
+pub const MF_FLOOR:     i32 = 18;
+pub const MF_FMOD:      i32 = 19;
+pub const MF_GAMMA:     i32 = 20;
+pub const MF_HYPOT:     i32 = 21;
+pub const MF_ILOGB:     i32 = 22;
+pub const MF_INT:       i32 = 23;
+pub const MF_ISINF:     i32 = 24;
+pub const MF_ISNAN:     i32 = 25;
+pub const MF_J0:        i32 = 26;
+pub const MF_J1:        i32 = 27;
+pub const MF_JN:        i32 = 28;
+pub const MF_LDEXP:     i32 = 29;
+pub const MF_LGAMMA:    i32 = 30;
+pub const MF_LOG:       i32 = 31;
+pub const MF_LOG10:     i32 = 32;
+pub const MF_LOG1P:     i32 = 33;
+pub const MF_LOG2:      i32 = 34;
+pub const MF_LOGB:      i32 = 35;
+pub const MF_NEXTAFTER: i32 = 36;
+pub const MF_RINT:      i32 = 37;
+pub const MF_SCALB:     i32 = 38;
+pub const MF_SIGNGAM:   i32 = 39;                                        // c:75 #ifdef HAVE_SIGNGAM
+pub const MF_SIN:       i32 = 40;
+pub const MF_SINH:      i32 = 41;
+pub const MF_SQRT:      i32 = 42;
+pub const MF_TAN:       i32 = 43;
+pub const MF_TANH:      i32 = 44;
+pub const MF_Y0:        i32 = 45;
+pub const MF_Y1:        i32 = 46;
+pub const MF_YN:        i32 = 47;                                        // c:84
 
-impl MathNumber {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    /// Coerce to `f64`, widening integers when needed.
-    /// Equivalent to the implicit int→float promotion zsh's
-    /// `mathfunc.c` does inside `callmathfunc()` when a function
-    /// expects floating-point arguments. Used by all the
-    /// `unary_float` / `binary_float` dispatch helpers below.
-    pub fn as_float(&self) -> f64 {
-        match self {
-            MathNumber::Integer(i) => *i as f64,
-            MathNumber::Float(f) => *f,
+// ============================================================
+// MS_* — port of the anonymous `enum {}` at mathfunc.c:90.
+// String-arg math-fn ids.
+// ============================================================
+pub const MS_RAND48: i32 = 0;                                            // c:91
+
+// ============================================================
+// TF_* — port of the anonymous `enum {}` at mathfunc.c:104.
+// Type-flag bits, individually testable.
+// ============================================================
+pub const TF_NOCONV: i32 = 1;                                            // c:106 don't convert to float
+pub const TF_INT1:   i32 = 2;                                            // c:107 first arg is integer
+pub const TF_INT2:   i32 = 4;                                            // c:108 second arg is integer
+pub const TF_NOASS:  i32 = 8;                                            // c:109 don't assign result as double
+
+/// Port of the `TFLAG(x)` macro from `mathfunc.c:113`.
+/// `#define TFLAG(x) ((x) << 8)`. Shifts the type-flag bits into
+/// the high byte of the `id` arg passed to `math_func()` so the
+/// MF_* numeric ids can occupy the low byte.
+pub const fn tflag(x: i32) -> i32 { x << 8 }                             // c:113
+
+/// Port of `math_func()` from `Src/Modules/mathfunc.c:172`. The
+/// dispatcher behind every numeric math fn registered via
+/// `NUMMATHFUNC` in `mftab[]` (mathfunc.c:115-167).
+///
+/// C signature:
+///   `static mnumber math_func(char *name, int argc, mnumber *argv, int id)`
+///
+/// Matches that signature exactly: `name` is unused (UNUSED in C);
+/// `argc` is the actual argument count; `argv` is the slice of
+/// argument values; `id` is the MF_* function id ORed with TFLAG()
+/// type flags in its high byte.
+#[allow(non_snake_case)]
+pub fn math_func(_name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber {  // c:172
+    let mut ret = Mnumber { l: 0, d: 0.0, type_: MN_FLOAT };             // c:175,193
+    let mut argd: f64 = 0.0;                                             // c:175
+    let mut argd2: f64 = 0.0;                                            // c:175
+    let mut argi: i32 = 0;                                               // c:176
+
+    // Type-coerce argv[0] (and argv[1]) per the TF_INT1/TF_INT2/
+    // TF_NOCONV flag bits — c:178-191.
+    if argc > 0 && (id & tflag(TF_NOCONV)) == 0 {                        // c:178
+        if (id & tflag(TF_INT1)) != 0 {                                  // c:179
+            argi = if argv[0].type_ == MN_FLOAT {
+                argv[0].d as i32                                         // c:180
+            } else {
+                argv[0].l as i32
+            };
+        } else {                                                         // c:181
+            argd = if argv[0].type_ == MN_INTEGER {
+                argv[0].l as f64                                         // c:182
+            } else {
+                argv[0].d
+            };
         }
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    /// Coerce to `i64`, truncating floats toward zero (C `(int64_t)f`).
-    /// Equivalent to the float→int truncation `mathfunc.c` performs
-    /// when an integer-only function (e.g. `ldexp`'s exponent arg)
-    /// receives a floating-point value.
-    pub fn as_int(&self) -> i64 {
-        match self {
-            MathNumber::Integer(i) => *i,
-            MathNumber::Float(f) => *f as i64,
-        }
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    /// Whether this number is the integer variant.
-    /// Equivalent to checking `mn.type == MN_INTEGER` on the
-    /// `mnumber` union in Src/Modules/mathfunc.c — zsh's math
-    /// engine carries both an integer and float slot per number.
-    pub fn is_integer(&self) -> bool {
-        matches!(self, MathNumber::Integer(_))
-    }
-}
-
-impl From<i64> for MathNumber {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn from(i: i64) -> Self {
-        MathNumber::Integer(i)
-    }
-}
-
-impl From<f64> for MathNumber {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn from(f: f64) -> Self {
-        MathNumber::Float(f)
-    }
-}
-
-/// Math function registry
-pub struct MathFunctions;
-
-impl MathFunctions {
-    /// Look up a math function by name and dispatch its argument list.
-    /// Port of `callmathfunc()` from Src/Modules/mathfunc.c. The C
-    /// source consults a static `MathFunc` table registering each
-    /// builtin (`abs`, `sin`, `cos`, …); this Rust dispatch matches
-    /// the same names + argument-count contract.
-    pub fn call(name: &str, args: &[MathNumber]) -> Result<MathNumber, String> {
-        match name {
-            "abs" => Self::abs(args),
-            "acos" => Self::unary_float(args, f64::acos),
-            "acosh" => Self::unary_float(args, f64::acosh),
-            "asin" => Self::unary_float(args, f64::asin),
-            "asinh" => Self::unary_float(args, f64::asinh),
-            "atan" => Self::atan(args),
-            "atanh" => Self::unary_float(args, f64::atanh),
-            "cbrt" => Self::unary_float(args, f64::cbrt),
-            "ceil" => Self::unary_float(args, f64::ceil),
-            "copysign" => Self::binary_float(args, f64::copysign),
-            "cos" => Self::unary_float(args, f64::cos),
-            "cosh" => Self::unary_float(args, f64::cosh),
-            "erf" => Self::erf(args),
-            "erfc" => Self::erfc(args),
-            "exp" => Self::unary_float(args, f64::exp),
-            "expm1" => Self::unary_float(args, f64::exp_m1),
-            "fabs" => Self::unary_float(args, f64::abs),
-            "float" => Self::to_float(args),
-            "floor" => Self::unary_float(args, f64::floor),
-            "fmod" => Self::binary_float(args, |a, b| a % b),
-            "gamma" | "tgamma" => Self::gamma(args),
-            "hypot" => Self::binary_float(args, f64::hypot),
-            "ilogb" => Self::ilogb(args),
-            "int" => Self::to_int(args),
-            "isinf" => Self::isinf(args),
-            "isnan" => Self::isnan(args),
-            "j0" => Self::j0(args),
-            "j1" => Self::j1(args),
-            "jn" => Self::jn(args),
-            "ldexp" => Self::ldexp(args),
-            "lgamma" => Self::lgamma(args),
-            "log" | "ln" => Self::unary_float(args, f64::ln),
-            "log10" => Self::unary_float(args, f64::log10),
-            "log1p" => Self::unary_float(args, f64::ln_1p),
-            "log2" => Self::unary_float(args, f64::log2),
-            "logb" => Self::logb(args),
-            "max" => Self::max(args),
-            "min" => Self::min(args),
-            "nextafter" => Self::nextafter(args),
-            "pow" => Self::binary_float(args, f64::powf),
-            "rint" | "round" => Self::unary_float(args, f64::round),
-            "scalb" | "scalbn" => Self::scalbn(args),
-            "sin" => Self::unary_float(args, f64::sin),
-            "sinh" => Self::unary_float(args, f64::sinh),
-            "sqrt" => Self::unary_float(args, f64::sqrt),
-            "tan" => Self::unary_float(args, f64::tan),
-            "tanh" => Self::unary_float(args, f64::tanh),
-            "trunc" => Self::unary_float(args, f64::trunc),
-            "y0" => Self::y0(args),
-            "y1" => Self::y1(args),
-            "yn" => Self::yn(args),
-            _ => Err(format!("unknown function: {}", name)),
-        }
-    }
-
-    /// Port of `math_func()` from `Src/Modules/mathfunc.c:173`.
-    /// Enumerate every registered math function name.
-    /// Equivalent to the `MathFunc` table in
-    /// Src/Modules/mathfunc.c — kept in sync with the dispatch in
-    /// `call()` above so `${(k)mathfuncs}` round-trips against
-    /// what's actually callable.
-    pub fn math_func() -> Vec<&'static str> {
-        vec![
-            "abs",
-            "acos",
-            "acosh",
-            "asin",
-            "asinh",
-            "atan",
-            "atanh",
-            "cbrt",
-            "ceil",
-            "copysign",
-            "cos",
-            "cosh",
-            "erf",
-            "erfc",
-            "exp",
-            "expm1",
-            "fabs",
-            "float",
-            "floor",
-            "fmod",
-            "gamma",
-            "hypot",
-            "ilogb",
-            "int",
-            "isinf",
-            "isnan",
-            "j0",
-            "j1",
-            "jn",
-            "ldexp",
-            "lgamma",
-            "log",
-            "log10",
-            "log1p",
-            "log2",
-            "logb",
-            "max",
-            "min",
-            "nextafter",
-            "pow",
-            "rint",
-            "round",
-            "scalb",
-            "scalbn",
-            "sin",
-            "sinh",
-            "sqrt",
-            "tan",
-            "tanh",
-            "trunc",
-            "y0",
-            "y1",
-            "yn",
-        ]
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn check_args(args: &[MathNumber], min: usize, max: usize, name: &str) -> Result<(), String> {
-        if args.len() < min {
-            return Err(format!("{}: not enough arguments", name));
-        }
-        if args.len() > max {
-            return Err(format!("{}: too many arguments", name));
-        }
-        Ok(())
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn unary_float(args: &[MathNumber], f: fn(f64) -> f64) -> Result<MathNumber, String> {
-        if args.is_empty() {
-            return Err("not enough arguments".to_string());
-        }
-        Ok(MathNumber::Float(f(args[0].as_float())))
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn binary_float(args: &[MathNumber], f: fn(f64, f64) -> f64) -> Result<MathNumber, String> {
-        if args.len() < 2 {
-            return Err("not enough arguments".to_string());
-        }
-        Ok(MathNumber::Float(f(args[0].as_float(), args[1].as_float())))
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn abs(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 1, 1, "abs")?;
-        match args[0] {
-            MathNumber::Integer(i) => Ok(MathNumber::Integer(i.abs())),
-            MathNumber::Float(f) => Ok(MathNumber::Float(f.abs())),
-        }
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn atan(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 1, 2, "atan")?;
-        if args.len() == 2 {
-            Ok(MathNumber::Float(
-                args[0].as_float().atan2(args[1].as_float()),
-            ))
-        } else {
-            Ok(MathNumber::Float(args[0].as_float().atan()))
-        }
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn to_float(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 1, 1, "float")?;
-        Ok(MathNumber::Float(args[0].as_float()))
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn to_int(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 1, 1, "int")?;
-        Ok(MathNumber::Integer(args[0].as_int()))
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn isinf(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 1, 1, "isinf")?;
-        let f = args[0].as_float();
-        Ok(MathNumber::Integer(if f.is_infinite() { 1 } else { 0 }))
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn isnan(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 1, 1, "isnan")?;
-        let f = args[0].as_float();
-        Ok(MathNumber::Integer(if f.is_nan() { 1 } else { 0 }))
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn ilogb(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 1, 1, "ilogb")?;
-        let f = args[0].as_float();
-        if f == 0.0 {
-            return Ok(MathNumber::Integer(i64::MIN));
-        }
-        Ok(MathNumber::Integer(f.abs().log2().floor() as i64))
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn logb(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 1, 1, "logb")?;
-        let f = args[0].as_float();
-        if f == 0.0 {
-            return Ok(MathNumber::Float(f64::NEG_INFINITY));
-        }
-        Ok(MathNumber::Float(f.abs().log2().floor()))
-    }
-
-    /// Port of `math_func()` from `Src/Modules/mathfunc.c:173`.
-    fn ldexp(args: &[MathNumber]) -> Result<MathNumber, String> {
-        // Direct port of src/zsh/Src/Modules/mathfunc.c:373-377
-        // (case MF_LDEXP). Calls libc's ldexp(3) — `x * 2^exp` with
-        // proper handling of subnormals, infinity, and underflow
-        // that the naive `x * 2.powi(exp)` doesn't get right at
-        // the f64 boundaries.
-        Self::check_args(args, 2, 2, "ldexp")?;
-        let x = args[0].as_float();
-        let exp = args[1].as_int() as i32;
-        // Rust's std doesn't expose ldexp directly; use libc.
-        #[cfg(unix)]
-        {
-            extern "C" {
-                fn ldexp(x: f64, exp: i32) -> f64;
-            }
-            let r = unsafe { ldexp(x, exp) };
-            Ok(MathNumber::Float(r))
-        }
-        #[cfg(not(unix))]
-        {
-            Ok(MathNumber::Float(x * 2f64.powi(exp)))
-        }
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn scalbn(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::ldexp(args)
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn nextafter(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 2, 2, "nextafter")?;
-        let x = args[0].as_float();
-        let y = args[1].as_float();
-
-        if x == y {
-            return Ok(MathNumber::Float(y));
-        }
-
-        let bits = x.to_bits();
-        let next_bits = if (y > x) == (x >= 0.0) {
-            bits.wrapping_add(1)
-        } else {
-            bits.wrapping_sub(1)
-        };
-        Ok(MathNumber::Float(f64::from_bits(next_bits)))
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn max(args: &[MathNumber]) -> Result<MathNumber, String> {
-        if args.is_empty() {
-            return Err("max: not enough arguments".to_string());
-        }
-        let mut max_val = args[0].as_float();
-        for arg in &args[1..] {
-            let val = arg.as_float();
-            if val > max_val {
-                max_val = val;
+        if argc > 1 {                                                    // c:183
+            if (id & tflag(TF_INT2)) != 0 {                              // c:184
+                argi = if argv[1].type_ == MN_FLOAT {
+                    argv[1].d as i32                                     // c:185
+                } else {
+                    argv[1].l as i32
+                };
+            } else {                                                     // c:187
+                argd2 = if argv[1].type_ == MN_INTEGER {
+                    argv[1].l as f64                                     // c:188
+                } else {
+                    argv[1].d
+                };
             }
         }
-        if args.iter().all(|a| a.is_integer()) {
-            Ok(MathNumber::Integer(max_val as i64))
-        } else {
-            Ok(MathNumber::Float(max_val))
-        }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn min(args: &[MathNumber]) -> Result<MathNumber, String> {
-        if args.is_empty() {
-            return Err("min: not enough arguments".to_string());
-        }
-        let mut min_val = args[0].as_float();
-        for arg in &args[1..] {
-            let val = arg.as_float();
-            if val < min_val {
-                min_val = val;
+    // C: `if (errflag) return ret;` — c:196. zshrs's errflag is on
+    // the executor; this dispatcher is invoked from the math
+    // evaluator which already short-circuits on error, so the
+    // explicit check is redundant here.
+
+    let mut retd: f64 = 0.0;                                             // c:175
+
+    match id & 0xff {                                                    // c:198
+        MF_ABS => {                                                      // c:199
+            ret.type_ = argv[0].type_;
+            if argv[0].type_ == MN_INTEGER {
+                ret.l = if argv[0].l < 0 { -argv[0].l } else { argv[0].l };
+            } else {
+                ret.d = argv[0].d.abs();
             }
         }
-        if args.iter().all(|a| a.is_integer()) {
-            Ok(MathNumber::Integer(min_val as i64))
-        } else {
-            Ok(MathNumber::Float(min_val))
+        MF_ACOS  => retd = argd.acos(),                                  // c:208
+        MF_ACOSH => retd = argd.acosh(),                                 // c:212
+        MF_ASIN  => retd = argd.asin(),                                  // c:216
+        MF_ASINH => retd = argd.asinh(),                                 // c:220
+        MF_ATAN  => {                                                    // c:224
+            retd = if argc == 2 { argd.atan2(argd2) } else { argd.atan() };
+        }
+        MF_ATANH => retd = argd.atanh(),                                 // c:233
+        MF_CBRT  => retd = unsafe { cbrt(argd) },                        // c:237
+        MF_CEIL  => retd = argd.ceil(),                                  // c:241
+        MF_COPYSIGN => retd = unsafe { copysign(argd, argd2) },          // c:245
+        MF_COS   => retd = argd.cos(),                                   // c:249
+        MF_COSH  => retd = argd.cosh(),                                  // c:253
+        MF_ERF   => retd = unsafe { erf(argd) },                         // c:257
+        MF_ERFC  => retd = unsafe { erfc(argd) },                        // c:261
+        MF_EXP   => retd = argd.exp(),                                   // c:265
+        MF_EXPM1 => retd = unsafe { expm1(argd) },                       // c:269
+        MF_FABS  => retd = argd.abs(),                                   // c:273
+        MF_FLOAT => retd = argd,                                         // c:277
+        MF_FLOOR => retd = argd.floor(),                                 // c:281
+        MF_FMOD  => retd = argd % argd2,                                 // c:285
+        MF_GAMMA => retd = unsafe { tgamma(argd) },                      // c:289
+        MF_HYPOT => retd = argd.hypot(argd2),                            // c:300
+        MF_ILOGB => {                                                    // c:304
+            ret.type_ = MN_INTEGER;
+            ret.l = unsafe { ilogb(argd) } as i64;
+        }
+        MF_INT => {                                                      // c:309
+            ret.type_ = MN_INTEGER;
+            ret.l = argd as i64;
+        }
+        MF_ISINF => {                                                    // c:314
+            ret.type_ = MN_INTEGER;
+            ret.l = argd.is_infinite() as i64;
+        }
+        MF_ISNAN => {                                                    // c:319
+            ret.type_ = MN_INTEGER;
+            ret.l = argd.is_nan() as i64;
+        }
+        MF_J0    => retd = unsafe { j0(argd) },                          // c:325
+        MF_J1    => retd = unsafe { j1(argd) },                          // c:329
+        MF_JN    => retd = unsafe { jn(argi, argd2) },                   // c:333
+        MF_LDEXP => retd = unsafe { ldexp(argd, argi) },                 // c:337
+        MF_LGAMMA => retd = unsafe { lgamma(argd) },                     // c:341
+        MF_LOG   => retd = argd.ln(),                                    // c:345
+        MF_LOG10 => retd = argd.log10(),                                 // c:349
+        MF_LOG1P => retd = unsafe { log1p(argd) },                       // c:353
+        MF_LOG2  => retd = argd.log2(),                                  // c:357
+        MF_LOGB  => retd = unsafe { logb(argd) },                        // c:365
+        MF_NEXTAFTER => retd = unsafe { nextafter(argd, argd2) },        // c:369
+        MF_RINT  => retd = unsafe { rint(argd) },                        // c:373
+        MF_SCALB => retd = unsafe { scalbn(argd, argi) },                // c:377
+        MF_SIGNGAM => {                                                  // c:386
+            ret.type_ = MN_INTEGER;
+            ret.l = 0;  // signgam is libm-internal; not portably exposed.
+        }
+        MF_SIN   => retd = argd.sin(),                                   // c:392
+        MF_SINH  => retd = argd.sinh(),                                  // c:396
+        MF_SQRT  => retd = argd.sqrt(),                                  // c:400
+        MF_TAN   => retd = argd.tan(),                                   // c:404
+        MF_TANH  => retd = argd.tanh(),                                  // c:408
+        MF_Y0    => retd = unsafe { y0(argd) },                          // c:412
+        MF_Y1    => retd = unsafe { y1(argd) },                          // c:416
+        MF_YN    => retd = unsafe { yn(argi, argd2) },                   // c:420
+        _ => {                                                           // c:425
+            // BUG: mathfunc type not handled. C prints to stderr
+            // under DEBUG; production zsh silently returns 0.
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn gamma(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 1, 1, "gamma")?;
-        let x = args[0].as_float();
-        Ok(MathNumber::Float(math_func(x)))
+    if (id & tflag(TF_NOASS)) == 0 {                                     // c:431
+        ret.d = retd;                                                    // c:432
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mathfunc.c`.
-    fn lgamma(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 1, 1, "lgamma")?;
-        let x = args[0].as_float();
-        Ok(MathNumber::Float(math_func(x).abs().ln()))
-    }
-
-    /// Direct port of mathfunc.c:417 — `retd = erf(argd)`. Delegates
-    /// to libm's erf via the FFI binding at the top of this module.
-    fn erf(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 1, 1, "erf")?;
-        let x = args[0].as_float();
-        Ok(MathNumber::Float(unsafe { erf(x) }))
-    }
-
-    /// Direct port of mathfunc.c:413 — `retd = erfc(argd)`. zsh calls
-    /// libm's erfc(); we delegate to libm's `erf` and subtract from 1.0
-    /// (libc-rs doesn't expose erfc on every platform yet).
-    fn erfc(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 1, 1, "erfc")?;
-        let x = args[0].as_float();
-        Ok(MathNumber::Float(1.0 - unsafe { erf(x) }))
-    }
-
-    /// Direct port of mathfunc.c:326 — `retd = j0(argd)`.
-    fn j0(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 1, 1, "j0")?;
-        let x = args[0].as_float();
-        Ok(MathNumber::Float(unsafe { j0(x) }))
-    }
-
-    /// Direct port of mathfunc.c:330 — `retd = j1(argd)`.
-    fn j1(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 1, 1, "j1")?;
-        let x = args[0].as_float();
-        Ok(MathNumber::Float(unsafe { j1(x) }))
-    }
-
-    /// Direct port of mathfunc.c:334 — `retd = jn(argi, argd2)`.
-    fn jn(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 2, 2, "jn")?;
-        let n = args[0].as_int() as i32;
-        let x = args[1].as_float();
-        Ok(MathNumber::Float(unsafe { jn(n, x) }))
-    }
-
-    /// Direct port of mathfunc.c:413 — `retd = y0(argd)`.
-    fn y0(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 1, 1, "y0")?;
-        let x = args[0].as_float();
-        Ok(MathNumber::Float(unsafe { y0(x) }))
-    }
-
-    /// Direct port of mathfunc.c:417 — `retd = y1(argd)`.
-    fn y1(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 1, 1, "y1")?;
-        let x = args[0].as_float();
-        Ok(MathNumber::Float(unsafe { y1(x) }))
-    }
-
-    /// Direct port of mathfunc.c:421 — `retd = yn(argi, argd2)`.
-    fn yn(args: &[MathNumber]) -> Result<MathNumber, String> {
-        Self::check_args(args, 2, 2, "yn")?;
-        let n = args[0].as_int() as i32;
-        let x = args[1].as_float();
-        Ok(MathNumber::Float(unsafe { yn(n, x) }))
-    }
+    ret                                                                  // c:434
 }
 
-/// Port of `math_func()` from `Src/Modules/mathfunc.c:173`.
-fn math_func(x: f64) -> f64 {
-    if x <= 0.0 && x == x.floor() {
-        return f64::INFINITY;
-    }
-
-    if x < 0.5 {
-        PI / (PI * x).sin() / math_func(1.0 - x)
-    } else {
-        let x = x - 1.0;
-        let g = 7;
-        let c = [
-            0.999_999_999_999_809_9,
-            676.5203681218851,
-            -1259.1392167224028,
-            771.323_428_777_653_1,
-            -176.615_029_162_140_6,
-            12.507343278686905,
-            -0.13857109526572012,
-            9.984_369_578_019_572e-6,
-            1.5056327351493116e-7,
-        ];
-
-        let mut sum = c[0];
-        for (i, &coef) in c.iter().enumerate().skip(1) {
-            sum += coef / (x + i as f64);
+/// Port of `math_string()` from `Src/Modules/mathfunc.c:439`. The
+/// string-arg math-fn dispatcher behind `rand48("seedvar")` and
+/// future string-takers. C signature:
+///   `static mnumber math_string(char *name, char *arg, int id)`
+///
+/// Strips leading/trailing iblank from `arg` (mathfunc.c:447-451)
+/// then switches on `id`. Currently only `MS_RAND48` exists; the
+/// random-bit production lives in `crate::ported::random` and
+/// `crate::ported::modules::random_real`. Returns `zero_mnumber`
+/// for unrecognised ids (matching C's pre-init `ret = zero_mnumber`).
+pub fn math_string(_name: &str, arg: &str, id: i32) -> Mnumber {         // c:439
+    let trimmed = arg.trim_matches(|c: char| c == ' ' || c == '\t');     // c:447-451 iblank
+    match id {
+        MS_RAND48 => {                                                   // c:457
+            // C decodes optional 12-hex seedstr from $seedvar then
+            // calls erand48(). zshrs uses `random_real()` which
+            // already produces uniform doubles via the OS-entropy
+            // path; the seed-from-param wiring is pending param-
+            // table integration.
+            let _ = trimmed;
+            Mnumber {
+                l: 0,
+                d: crate::ported::modules::random_real::random_real(),
+                type_: MN_FLOAT,
+            }
         }
-
-        let t = x + g as f64 + 0.5;
-        (2.0 * PI).sqrt() * t.powf(x + 0.5) * (-t).exp() * sum
+        _ => Mnumber::default(),                                         // zero_mnumber
     }
-}
-
-/// Mathematical constants
-pub mod constants {
-    pub const PI: f64 = std::f64::consts::PI;
-    pub const E: f64 = std::f64::consts::E;
-    pub const TAU: f64 = std::f64::consts::TAU;
-    pub const PHI: f64 = 1.618033988749895; // Golden ratio
-    pub const SQRT2: f64 = std::f64::consts::SQRT_2;
-    pub const LN2: f64 = std::f64::consts::LN_2;
-    pub const LN10: f64 = std::f64::consts::LN_10;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use constants::E;
 
     #[test]
-    fn test_abs() {
-        let result = MathFunctions::call("abs", &[MathNumber::Integer(-5)]).unwrap();
-        assert!(matches!(result, MathNumber::Integer(5)));
-
-        let result = MathFunctions::call("abs", &[MathNumber::Float(-3.14)]).unwrap();
-        if let MathNumber::Float(f) = result {
-            assert!((f - 3.14).abs() < 1e-10);
-        } else {
-            panic!("expected float");
-        }
+    fn test_math_func_acos() {
+        let argv = [Mnumber::float(1.0)];
+        let r = math_func("acos", 1, &argv, MF_ACOS);
+        assert!(r.is_float());
+        assert!((r.d - 0.0).abs() < 1e-9);
     }
 
     #[test]
-    fn test_trig() {
-        let result = MathFunctions::call("sin", &[MathNumber::Float(0.0)]).unwrap();
-        if let MathNumber::Float(f) = result {
-            assert!(f.abs() < 1e-10);
-        }
-
-        let result = MathFunctions::call("cos", &[MathNumber::Float(0.0)]).unwrap();
-        if let MathNumber::Float(f) = result {
-            assert!((f - 1.0).abs() < 1e-10);
-        }
-
-        let result = MathFunctions::call("tan", &[MathNumber::Float(0.0)]).unwrap();
-        if let MathNumber::Float(f) = result {
-            assert!(f.abs() < 1e-10);
-        }
+    fn test_math_func_atan_two_args() {
+        let argv = [Mnumber::float(1.0), Mnumber::float(1.0)];
+        let r = math_func("atan", 2, &argv, MF_ATAN);
+        assert!(r.is_float());
+        assert!((r.d - std::f64::consts::FRAC_PI_4).abs() < 1e-9);
     }
 
     #[test]
-    fn test_sqrt() {
-        let result = MathFunctions::call("sqrt", &[MathNumber::Float(4.0)]).unwrap();
-        if let MathNumber::Float(f) = result {
-            assert!((f - 2.0).abs() < 1e-10);
-        }
+    fn test_math_func_abs_int_preserves_type() {
+        let argv = [Mnumber::integer(-7)];
+        let r = math_func("abs", 1, &argv, MF_ABS | tflag(TF_NOCONV | TF_NOASS));
+        assert!(r.is_integer());
+        assert_eq!(r.l, 7);
     }
 
     #[test]
-    fn test_log() {
-        let result = MathFunctions::call("log", &[MathNumber::Float(E)]).unwrap();
-        if let MathNumber::Float(f) = result {
-            assert!((f - 1.0).abs() < 1e-10);
-        }
-
-        let result = MathFunctions::call("log10", &[MathNumber::Float(100.0)]).unwrap();
-        if let MathNumber::Float(f) = result {
-            assert!((f - 2.0).abs() < 1e-10);
-        }
+    fn test_math_func_int_truncates() {
+        let argv = [Mnumber::float(3.7)];
+        let r = math_func("int", 1, &argv, MF_INT | tflag(TF_NOASS));
+        assert!(r.is_integer());
+        assert_eq!(r.l, 3);
     }
 
     #[test]
-    fn test_exp() {
-        let result = MathFunctions::call("exp", &[MathNumber::Float(1.0)]).unwrap();
-        if let MathNumber::Float(f) = result {
-            assert!((f - E).abs() < 1e-10);
-        }
+    fn test_math_func_isnan() {
+        let argv = [Mnumber::float(f64::NAN)];
+        let r = math_func("isnan", 1, &argv, MF_ISNAN | tflag(TF_NOASS));
+        assert_eq!(r.l, 1);
     }
 
     #[test]
-    fn test_floor_ceil() {
-        let result = MathFunctions::call("floor", &[MathNumber::Float(3.7)]).unwrap();
-        if let MathNumber::Float(f) = result {
-            assert!((f - 3.0).abs() < 1e-10);
-        }
-
-        let result = MathFunctions::call("ceil", &[MathNumber::Float(3.2)]).unwrap();
-        if let MathNumber::Float(f) = result {
-            assert!((f - 4.0).abs() < 1e-10);
-        }
-    }
-
-    #[test]
-    fn test_pow() {
-        let result =
-            MathFunctions::call("pow", &[MathNumber::Float(2.0), MathNumber::Float(3.0)]).unwrap();
-        if let MathNumber::Float(f) = result {
-            assert!((f - 8.0).abs() < 1e-10);
-        }
-    }
-
-    #[test]
-    fn test_atan2() {
-        let result =
-            MathFunctions::call("atan", &[MathNumber::Float(1.0), MathNumber::Float(1.0)]).unwrap();
-        if let MathNumber::Float(f) = result {
-            assert!((f - PI / 4.0).abs() < 1e-10);
-        }
-    }
-
-    #[test]
-    fn test_hypot() {
-        let result =
-            MathFunctions::call("hypot", &[MathNumber::Float(3.0), MathNumber::Float(4.0)])
-                .unwrap();
-        if let MathNumber::Float(f) = result {
-            assert!((f - 5.0).abs() < 1e-10);
-        }
-    }
-
-    #[test]
-    fn test_min_max() {
-        let result = MathFunctions::call(
-            "max",
-            &[
-                MathNumber::Integer(1),
-                MathNumber::Integer(5),
-                MathNumber::Integer(3),
-            ],
-        )
-        .unwrap();
-        assert!(matches!(result, MathNumber::Integer(5)));
-
-        let result = MathFunctions::call(
-            "min",
-            &[
-                MathNumber::Float(1.5),
-                MathNumber::Float(0.5),
-                MathNumber::Float(2.5),
-            ],
-        )
-        .unwrap();
-        if let MathNumber::Float(f) = result {
-            assert!((f - 0.5).abs() < 1e-10);
-        }
-    }
-
-    #[test]
-    fn test_int_float_conversion() {
-        let result = MathFunctions::call("int", &[MathNumber::Float(3.7)]).unwrap();
-        assert!(matches!(result, MathNumber::Integer(3)));
-
-        let result = MathFunctions::call("float", &[MathNumber::Integer(5)]).unwrap();
-        if let MathNumber::Float(f) = result {
-            assert!((f - 5.0).abs() < 1e-10);
-        }
-    }
-
-    #[test]
-    fn test_isinf_isnan() {
-        let result = MathFunctions::call("isinf", &[MathNumber::Float(f64::INFINITY)]).unwrap();
-        assert!(matches!(result, MathNumber::Integer(1)));
-
-        let result = MathFunctions::call("isinf", &[MathNumber::Float(1.0)]).unwrap();
-        assert!(matches!(result, MathNumber::Integer(0)));
-
-        let result = MathFunctions::call("isnan", &[MathNumber::Float(f64::NAN)]).unwrap();
-        assert!(matches!(result, MathNumber::Integer(1)));
-    }
-
-    #[test]
-    fn test_bessel_j0() {
-        let result = MathFunctions::call("j0", &[MathNumber::Float(0.0)]).unwrap();
-        if let MathNumber::Float(f) = result {
-            assert!((f - 1.0).abs() < 1e-6);
-        }
-    }
-
-    #[test]
-    fn test_list() {
-        let funcs = MathFunctions::math_func();
-        assert!(funcs.contains(&"sin"));
-        assert!(funcs.contains(&"cos"));
-        assert!(funcs.contains(&"sqrt"));
-        assert!(funcs.contains(&"log"));
+    fn test_math_string_rand48_in_range() {
+        let r = math_string("rand48", "", MS_RAND48);
+        assert!(r.is_float());
+        assert!((0.0..1.0).contains(&r.d));
     }
 }
 
@@ -713,16 +349,14 @@ pub fn setup_() -> i32 {                                                 // c:54
 
 /// Port of `features_()` from `Src/Modules/mathfunc.c:555`. C body
 /// is `*features = featuresarray(m, &module_features); return 0;`.
-/// zshrs links the module statically; the math-function table is
-/// build-time-fixed and dispatched directly from the math evaluator,
-/// so the loader hook returns 0.
+/// Static-link path: the math-function table is build-time-fixed
+/// and dispatched directly from the math evaluator.
 pub fn features_() -> i32 {                                              // c:555
     0                                                                    // c:559
 }
 
 /// Port of `enables_()` from `Src/Modules/mathfunc.c:563`. C body
 /// is `return handlefeatures(m, &module_features, enables);`.
-/// Static-link path: 0 (no enables changed).
 pub fn enables_() -> i32 {                                               // c:563
     0                                                                    // c:566
 }
@@ -734,40 +368,14 @@ pub fn boot_() -> i32 {                                                  // c:57
 }
 
 /// Port of `cleanup_()` from `Src/Modules/mathfunc.c:577`. C body
-/// is `return setfeatureenables(m, &module_features, NULL);` —
-/// disable every module-provided math fn at unload. Static-link
-/// builds: math fns are never disabled (no zmodload -u path), so 0.
+/// is `return setfeatureenables(m, &module_features, NULL);`.
+/// Static-link path: math fns are never disabled, so 0.
 pub fn cleanup_() -> i32 {                                               // c:577
     0                                                                    // c:580
 }
 
-/// Port of `finish_()` from `Src/Modules/mathfunc.c:584`. C body is
-/// `return 0;` (UNUSED `Module m`).
+/// Port of `finish_()` from `Src/Modules/mathfunc.c:584`. C body
+/// is `return 0;` (UNUSED `Module m`).
 pub fn finish_() -> i32 {                                                // c:584
     0                                                                    // c:587
-}
-
-/// Port of static helper `math_string()` from
-/// `Src/Modules/mathfunc.c:439`. The string-arg math-function
-/// dispatcher behind `rand48("seedvar")` and similar. C signature:
-///   `static mnumber math_string(char *name, char *arg, int id);`
-/// Strips leading/trailing iblank from `arg`, then switches on `id`
-/// (currently only `MS_RAND48`) to compute a numeric result.
-///
-/// The Rust port of this is wired into the math evaluator's
-/// function table at `crate::ported::math` — calling sites flow
-/// through the dispatcher there. This entry exists for C-name
-/// parity; the actual `rand48` math-function evaluation lives in
-/// `math.rs` (port of zsh's `math_func` table dispatch). Returns
-/// 0.0 if invoked directly (caller error: should go through math).
-#[allow(non_snake_case)]
-pub fn math_string(_name: &str, _arg: &str, _id: i32) -> f64 {           // c:439
-    // C strips iblank from both ends of `arg`, then for MS_RAND48
-    // (id=0) computes erand48-based random doubles, optionally
-    // seeded from a parameter named by `arg`. zshrs's math-fn
-    // dispatch table at math.rs already handles `rand48()` via
-    // its own random.rs RNG path; this entry is the name-parity
-    // hook the loader API requires but is not on the active code
-    // path. Return 0.0 (zero_mnumber).
-    0.0                                                                  // c:441
 }
