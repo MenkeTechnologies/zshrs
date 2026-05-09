@@ -2646,22 +2646,17 @@ pub fn spscan(name: &str, candidates: &[String], threshold: usize) -> Option<Str
 /// }
 /// ```
 ///
-/// C looks up the global `shfunctab` (the shell-function hashtable);
-/// zshrs holds shell functions in `ShellExecutor::functions`, which
-/// is per-evaluator state, so the Rust signature takes the function
-/// table as a `&HashMap` parameter rather than reading a global.
-/// Returns the function body as `Option<String>` (zshrs's `Shfunc`
-/// equivalent is the function-text mapping; bytecode dispatch
-/// happens in fusevm at call time).
-///
-/// WARNING: Rust signature diverges from C's `Shfunc getshfunc(char*)`
-/// because zshrs has no global function table. Callers must pass
-/// the active `ShellExecutor.functions` map.
-pub fn getshfunc(
-    name: &str,
-    functions: &std::collections::HashMap<String, String>,
-) -> Option<String> {
-    functions.get(name).cloned()
+/// Routes through the global `shfunctab` singleton in
+/// hashtable.rs (hashtable::shfunctab_lock) — matches C's
+/// signature exactly. Returns the function body as
+/// `Option<String>` (zshrs's `Shfunc` equivalent is the
+/// function-text mapping; bytecode dispatch happens in fusevm
+/// at call time).
+pub fn getshfunc(name: &str) -> Option<String> {
+    let tab = crate::ported::hashtable::shfunctab_lock()
+        .lock()
+        .expect("shfunctab poisoned");
+    tab.get(name).and_then(|f| f.body.clone())
 }
 
 /// Make comma character special (from utils.c makecommaspecial)

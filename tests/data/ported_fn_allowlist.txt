@@ -263,6 +263,16 @@ origpgrp_lock
 capture_origpgrp
 close_or_remove_filelist_entry
 
+# hashtable.rs — Rust-only OnceLock<Mutex<ShFuncTable>> singleton
+# accessor for the global C `shfunctab`. C zsh dereferences the global
+# directly; Rust port wraps it behind get-or-init. simple_glob_match /
+# glob_match_inner are inline helpers that C does via the full
+# patmatch engine — split out as Rust helpers to avoid pulling in
+# pattern.c for the simple `*` / `?` cases scanmatchshfunc needs.
+shfunctab_lock
+simple_glob_match
+glob_match_inner
+
 # utils.rs zwarn/zerrnam family — module-static get/setters for the
 # C globals scriptname / argzero / errflag / noerrs / locallevel /
 # lineno (declared in Src/init.c, populated by the parser/source/fn

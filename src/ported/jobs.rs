@@ -1950,19 +1950,22 @@ pub fn getbgstatus(bg: &mut BgStatus, pid: i32) -> Option<i32> {
 /// C body looks up `TRAP<signame>` in the `shfunctab` (shell-
 /// function hashtable) using either `getnode` (skip disabled) or
 /// `getnode2` (include disabled), depending on `ignoredisable`.
-/// Falls back to `alt_sigs[]` aliases (e.g. `TRAPCLD` for SIGCHLD)
-/// and on systems with realtime signals checks `TRAPRTMIN+N` /
-/// `TRAPRTMAX-N` forms.
+/// Falls back to `alt_sigs[]` aliases (e.g. `TRAPCLD` for
+/// SIGCHLD) when the canonical `TRAP<getsigname(sig)>` form
+/// isn't found.
 ///
-/// WARNING: zshrs has no `shfunctab` — shell functions live in
-/// `ShellExecutor::functions`. The proper port routes through
-/// the executor, but this fn has no `&ShellExecutor` parameter
-/// (the C signature doesn't take one — uses the global). Until
-/// shfunctab lands as a passable abstraction, this returns None.
-/// Real implementation: build `format!("TRAP{}", getsigname(sig))`
-/// and look up in shfunctab.
-pub fn gettrapnode(_sig: i32) -> Option<String> {
-    None
+/// Now that `hashtable::shfunctab_lock` exists, the lookup is
+/// real. Returns the function body for the trap if defined.
+/// `ignoredisable` mirrors C: when 1, returns disabled entries
+/// too (used by `unsetfn` paths that need to remove disabled
+/// traps).
+pub fn gettrapnode(sig: i32) -> Option<String> {
+    let name = format!("TRAP{}", getsigname(sig));
+    let tab = crate::ported::hashtable::shfunctab_lock()
+        .lock()
+        .expect("shfunctab poisoned");
+    tab.get_including_disabled(&name)
+        .and_then(|f| f.body.clone())
 }
 
 /// Port of `removetrapnode()` from `Src/jobs.c:3157`.
@@ -1973,10 +1976,12 @@ pub fn gettrapnode(_sig: i32) -> Option<String> {
 /// if (hn) { shfunctab->removenode(shfunctab, hn->nam); shfunctab->freenode(hn); }
 /// ```
 ///
-/// WARNING: depends on shfunctab — see gettrapnode note. No-op
-/// stub until the function-table abstraction is callable from
-/// here.
-pub fn removetrapnode(_sig: i32) {}
+/// Routes through `hashtable::removeshfuncnode` which itself
+/// dispatches the trap-removal logic for `TRAP<sig>` names.
+pub fn removetrapnode(sig: i32) {
+    let name = format!("TRAP{}", getsigname(sig));
+    crate::ported::hashtable::removeshfuncnode(&name);
+}
 
 /// Port of `release_pgrp()` from `Src/jobs.c:3283`.
 ///
