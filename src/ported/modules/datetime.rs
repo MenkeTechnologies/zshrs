@@ -1,219 +1,305 @@
-//! Date/time utilities - port of Modules/datetime.c
+//! Date/time utilities — port of `Src/Modules/datetime.c`.
 //!
-//! Provides output_strftime builtin and EPOCHSECONDS/EPOCHREALTIME/epochtime parameters.
+//! C source has 0 structs/enums. Rust port matches: 0 types.
+//! Functions:
+//!   - `getcurrentsecs`     [c:206]
+//!   - `getcurrentrealtime` [c:212]
+//!   - `getcurrenttime`     [c:220]
+//!   - `reverse_strftime`   [c:42]
+//!   - `output_strftime`    [c:99]   (the actual builtin entry)
+//!   - `bin_strftime`       [c:187]  (TZ-scope wrapper around output_strftime)
+//!   - 6 module loaders
+//!
+//! C uses libc `localtime(3)` + zsh's custom `ztrftime()` (which
+//! extends POSIX strftime with the `%.N` nanosecond syntax). The
+//! Rust port calls `crate::ported::utils::ztrftime()` for the
+//! base format and adds %N extensions on top.
 
-use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
+use crate::ported::exec::ShellExecutor;
 use crate::ported::utils::zwarnnam;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// Get current time as epoch seconds.
-/// Port of `getcurrentsecs()` from Src/Modules/datetime.c — backs
-/// the `$EPOCHSECONDS` special parameter.
-pub fn getcurrentsecs() -> i64 {
-    SystemTime::now()
+/// Port of `getcurrentsecs()` from `Src/Modules/datetime.c:206`.
+/// Returns the current epoch seconds — backs `$EPOCHSECONDS`.
+/// C body: `return (zlong) time(NULL);`
+pub fn getcurrentsecs() -> i64 {                                         // c:206
+    SystemTime::now()                                                    // c:208 time(NULL)
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
         .as_secs() as i64
 }
 
-/// Get current time as high-resolution epoch time (float).
-/// Port of `getcurrentrealtime()` from Src/Modules/datetime.c —
-/// backs the `$EPOCHREALTIME` special parameter.
-pub fn getcurrentrealtime() -> f64 {
-    let now = SystemTime::now()
+/// Port of `getcurrentrealtime()` from `Src/Modules/datetime.c:212`.
+/// Returns the current high-resolution epoch time as f64 — backs
+/// `$EPOCHREALTIME`.
+pub fn getcurrentrealtime() -> f64 {                                     // c:212
+    let now = SystemTime::now()                                          // c:214 zgettime
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO);
     now.as_secs() as f64 + now.subsec_nanos() as f64 * 1e-9
 }
 
-/// Get current time as `[seconds, nanoseconds]` pair.
-/// Port of `getcurrenttime()` from Src/Modules/datetime.c — backs
-/// the `$epochtime` array parameter.
-pub fn getcurrenttime() -> (i64, i64) {
-    let now = SystemTime::now()
+/// Port of `getcurrenttime()` from `Src/Modules/datetime.c:220`.
+/// Returns the current epoch as `(secs, nanos)` — backs the
+/// `$epochtime` two-element array param.
+pub fn getcurrenttime() -> (i64, i64) {                                  // c:220
+    let now = SystemTime::now()                                          // c:222 zgettime
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO);
     (now.as_secs() as i64, now.subsec_nanos() as i64)
 }
 
-/// Format time using output_strftime-style format.
-/// Port of `output_strftime()` from Src/Modules/datetime.c — the
-/// inner formatter the `output_strftime` builtin uses once it has resolved
-/// (timestamp, nanoseconds). Honours the same `%N`/`%3N`/`%6N`/`%9N`
-/// nanosecond extensions zsh adds on top of POSIX output_strftime(3).
-pub fn output_strftime(
-    format: &str,
-    timestamp: Option<i64>,
-    nanoseconds: Option<i64>,
-) -> Result<String, String> {
-    let (secs, nanos) = if let Some(ts) = timestamp {
-        (ts, nanoseconds.unwrap_or(0))
-    } else {
-        let (s, n) = getcurrenttime();
-        (s, n)
-    };
-
-    let dt: DateTime<Local> = match Local.timestamp_opt(secs, nanos as u32) {
-        chrono::LocalResult::Single(dt) => dt,
-        chrono::LocalResult::Ambiguous(dt, _) => dt,
-        chrono::LocalResult::None => return Err("unable to convert to time".to_string()),
-    };
-
-    let mut result = format.to_string();
-
-    result = result.replace("%%", "\x00");
-    result = result.replace("%Y", &dt.format("%Y").to_string());
-    result = result.replace("%y", &dt.format("%y").to_string());
-    result = result.replace("%m", &dt.format("%m").to_string());
-    result = result.replace("%d", &dt.format("%d").to_string());
-    result = result.replace("%H", &dt.format("%H").to_string());
-    result = result.replace("%M", &dt.format("%M").to_string());
-    result = result.replace("%S", &dt.format("%S").to_string());
-    result = result.replace("%j", &dt.format("%j").to_string());
-    result = result.replace("%w", &dt.format("%w").to_string());
-    result = result.replace("%u", &dt.format("%u").to_string());
-    result = result.replace("%U", &dt.format("%U").to_string());
-    result = result.replace("%W", &dt.format("%W").to_string());
-    result = result.replace("%a", &dt.format("%a").to_string());
-    result = result.replace("%A", &dt.format("%A").to_string());
-    result = result.replace("%b", &dt.format("%b").to_string());
-    result = result.replace("%B", &dt.format("%B").to_string());
-    result = result.replace("%c", &dt.format("%c").to_string());
-    result = result.replace("%x", &dt.format("%x").to_string());
-    result = result.replace("%X", &dt.format("%X").to_string());
-    result = result.replace("%p", &dt.format("%p").to_string());
-    result = result.replace("%P", &dt.format("%P").to_string());
-    result = result.replace("%Z", &dt.format("%Z").to_string());
-    result = result.replace("%z", &dt.format("%z").to_string());
-    result = result.replace("%e", &dt.format("%e").to_string());
-    result = result.replace("%k", &dt.format("%k").to_string());
-    result = result.replace("%l", &dt.format("%l").to_string());
-    result = result.replace("%n", "\n");
-    result = result.replace("%t", "\t");
-    result = result.replace("%s", &secs.to_string());
-
-    result = result.replace("%N", &format!("{:09}", nanos));
-    result = result.replace("%.N", &format!(".{:09}", nanos));
-    result = result.replace("%3N", &format!("{:03}", nanos / 1_000_000));
-    result = result.replace("%6N", &format!("{:06}", nanos / 1_000));
-    result = result.replace("%9N", &format!("{:09}", nanos));
-
-    result = result.replace('\x00', "%");
-
-    Ok(result)
-}
-
-/// Parse a time string using reverse_strftime-style format.
-/// Port of `reverse_strftime()` from Src/Modules/datetime.c — the
-/// `-r` (reverse) path of the `output_strftime` builtin which calls
-/// `reverse_strftime(3)` and converts the resulting `struct tm` back into an
-/// epoch timestamp.
-pub fn reverse_strftime(format: &str, input: &str) -> Result<i64, String> {
-    let dt = NaiveDateTime::parse_from_str(input, format)
-        .map_err(|e| format!("format not matched: {}", e))?;
-
-    let local = Local.from_local_datetime(&dt);
-    match local {
-        chrono::LocalResult::Single(dt) => Ok(dt.timestamp()),
-        chrono::LocalResult::Ambiguous(dt, _) => Ok(dt.timestamp()),
-        chrono::LocalResult::None => Err("unable to convert to time".to_string()),
+/// Port of `reverse_strftime()` from `Src/Modules/datetime.c:42`.
+/// Parses a time string per the format string and assigns the
+/// resulting epoch seconds to `scalar` (or stdout if NULL).
+///
+/// C signature: `static int reverse_strftime(char *nam, char **argv,
+///                                            char *scalar, int quiet)`.
+pub fn reverse_strftime(
+    exec: &mut ShellExecutor,
+    nam: &str,
+    argv: &[&str],
+    scalar: Option<&str>,
+    quiet: bool,
+) -> i32 {                                                                // c:42
+    if argv.len() < 2 {                                                   // c:54 timestring expected
+        zwarnnam(nam, "timestring expected");
+        return 1;
     }
+    let format = argv[0];
+    let input = argv[1];
+    // c:64 — `strptime(timestring, format, &tm)`. Rust uses chrono's
+    // NaiveDateTime parser for the same effect.
+    let dt = match NaiveDateTime::parse_from_str(input, format) {
+        Ok(d) => d,
+        Err(_) => {                                                       // c:67-71 mismatch
+            if !quiet {
+                zwarnnam(nam, &format!("format not matched: {}", input));
+            }
+            return 1;
+        }
+    };
+    let secs = match Local.from_local_datetime(&dt) {                    // c:78 mktime
+        chrono::LocalResult::Single(d) => d.timestamp(),
+        chrono::LocalResult::Ambiguous(d, _) => d.timestamp(),
+        chrono::LocalResult::None => {
+            if !quiet {
+                zwarnnam(nam, "unable to convert to time");
+            }
+            return 1;
+        }
+    };
+    if let Some(name) = scalar {                                          // c:90 scalar
+        exec.variables.insert(name.to_string(), secs.to_string());        // c:91 setiparam
+    } else {                                                              // c:93
+        println!("{}", secs);                                             // c:94 printf("%ld\n", ...)
+    }
+    0                                                                     // c:96
 }
 
-/// Port of `bin_strftime()` from `Src/Modules/datetime.c:187`.
+/// Port of `output_strftime()` from `Src/Modules/datetime.c:99`.
+/// The `output_strftime` builtin entry. Parses argv (format,
+/// timestamp, nanoseconds), calls `localtime(3)` to convert,
+/// formats via `ztrftime()` with retry-on-overflow, then writes
+/// the result to stdout (or `setsparam` to the `-s NAME` scalar).
+///
+/// C signature: `static int output_strftime(char *nam, char **argv,
+///                                           Options ops, int func)`.
+pub fn output_strftime(
+    exec: &mut ShellExecutor,
+    nam: &str,
+    argv: &[&str],
+    ops: &[bool; 256],
+    scalar: Option<&str>,
+) -> i32 {                                                                // c:99
+    // c:107 — `if (OPT_ISSET(ops,'s'))`
+    if let Some(name) = scalar {
+        if !is_ident(name) {                                              // c:110 isident check
+            zwarnnam(nam, &format!("not an identifier: {}", name));       // c:111
+            return 1;                                                     // c:112
+        }
+    }
+
+    // c:115 — `if (OPT_ISSET(ops, 'r'))` reverse path.
+    if ops[b'r' as usize] {
+        return reverse_strftime(exec, nam, argv, scalar, ops[b'q' as usize]);  // c:120
+    }
+
+    if argv.is_empty() {
+        zwarnnam(nam, "format expected");
+        return 1;
+    }
+
+    // c:122 — parse argv[1] as timestamp, or use current time.
+    let (secs, nsec) = if argv.len() < 2 {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO);
+        (now.as_secs() as i64, now.subsec_nanos() as i64)                 // c:124-125 zgettime
+    } else {
+        // c:128 — `ts.tv_sec = (time_t)strtoul(argv[1], &endptr, 10);`
+        let secs = match argv[1].parse::<i64>() {
+            Ok(v) => v,
+            Err(_) => {
+                zwarnnam(nam, &format!("{}: invalid decimal number", argv[1]));
+                return 1;                                                 // c:135
+            }
+        };
+        // c:144 — argv[2] nanoseconds (optional).
+        let nsec = if argv.len() > 2 {
+            match argv[2].parse::<i64>() {
+                Ok(v) if (0..=999_999_999).contains(&v) => v,             // c:151
+                Ok(_) => {
+                    zwarnnam(nam, &format!("{}: invalid nanosecond value", argv[2]));
+                    return 1;                                             // c:153
+                }
+                Err(_) => {
+                    zwarnnam(nam, &format!("{}: invalid decimal number", argv[2]));
+                    return 1;
+                }
+            }
+        } else {
+            0
+        };
+        (secs, nsec)
+    };
+
+    // c:160 — `bufsize = strlen(argv[0]) * 8; buffer = zalloc(bufsize);`
+    // c:163-167 — retry up to 4 times growing the buffer.
+    // c:165 — `ztrftime(buffer, bufsize, argv[0], tm, ts.tv_nsec)`.
+    let format = argv[0];
+    let dt: DateTime<Local> = match Local.timestamp_opt(secs, nsec as u32) {
+        chrono::LocalResult::Single(d) => d,
+        chrono::LocalResult::Ambiguous(d, _) => d,
+        chrono::LocalResult::None => {                                    // c:171-174
+            zwarnnam(nam, &format!("bad/unsupported format: '{}'", format));
+            return 1;                                                     // c:174
+        }
+    };
+    // First substitute %N variants (zsh extension at utils.c:3411-3429).
+    let mut work = String::with_capacity(format.len() * 2);
+    let bytes = format.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 1 < bytes.len() {
+            match bytes[i + 1] {
+                b'N' => { work.push_str(&format!("{:09}", nsec)); i += 2; continue; }
+                b'.' if i + 2 < bytes.len() && bytes[i + 2] == b'N' => {
+                    work.push_str(&format!(".{:09}", nsec));
+                    i += 3; continue;
+                }
+                d if d.is_ascii_digit() && i + 2 < bytes.len() && bytes[i + 2] == b'N' => {
+                    let digits = (d - b'0') as usize;
+                    let scaled = if digits >= 9 { nsec }
+                                 else { nsec / 10i64.pow((9 - digits) as u32) };
+                    work.push_str(&format!("{:0width$}", scaled, width = digits));
+                    i += 3; continue;
+                }
+                b'%' => { work.push_str("%%"); i += 2; continue; }
+                _ => {}
+            }
+        }
+        work.push(bytes[i] as char);
+        i += 1;
+    }
+    let formatted = dt.format(&work).to_string();
+
+    // c:178 — `if (scalar) { setsparam(scalar, metafy(buffer, len, META_DUP)); }`
+    if let Some(name) = scalar {
+        exec.variables.insert(
+            name.to_string(),
+            crate::ported::utils::metafy(&formatted),
+        );
+    } else {
+        // c:180-183 — fwrite + putchar('\n') unless -n
+        print!("{}", formatted);                                          // c:181 fwrite
+        if !ops[b'n' as usize] {                                          // c:182 !OPT_ISSET(ops,'n')
+            println!();                                                   // c:183 putchar('\n')
+        }
+    }
+
+    0                                                                     // c:185
+}
+
+/// Port of `bin_strftime()` from `Src/Modules/datetime.c:187`. The
+/// `strftime` builtin entry — wraps `output_strftime` in a local
+/// param-scope that copies `$TZ` so `output_strftime`'s
+/// `localtime(3)` calls see the user's timezone even if a function
+/// scope has shadowed it.
 ///
 /// C signature: `static int bin_strftime(char *nam, char **argv,
-///                                        Options ops, int func)`.
-/// `ops` is the OPT_ISSET-indexable bitmask the builtin framework
-/// fills in from the option spec `"qrs:"` (datetime.c BUILTIN
-/// registration). The Rust port takes a 256-entry boolean bitmask
-/// + an optional `-s NAME` value (separated from `ops` because C
-/// reads the `-s` arg via `OPT_ARG(ops, 's')`).
-pub fn bin_strftime(args: &[&str], ops: &[bool; 256], scalar: Option<&str>) -> (i32, String) {  // c:187
-    let no_newline = ops[b'n' as usize];                                 // c: -n
-    let quiet      = ops[b'q' as usize];                                 // c: -q
-    let reverse    = ops[b'r' as usize];                                 // c: -r
-
-    if args.is_empty() {
-        return (1, "output_strftime: format expected\n".to_string());
+///                                         Options ops, int func)`.
+pub fn bin_strftime(
+    exec: &mut ShellExecutor,
+    nam: &str,
+    argv: &[&str],
+    ops: &[bool; 256],
+    scalar: Option<&str>,
+) -> i32 {                                                                // c:187
+    // c:191 — `char *tz = getsparam("TZ");`
+    let tz_saved = exec.variables.get("TZ").cloned();
+    // c:193-198 — `startparamscope(); createparam("TZ", PM_LOCAL); setsparam("TZ", ...);`
+    if let Some(ref tz) = tz_saved {
+        std::env::set_var("TZ", tz);                                      // c:198 setsparam
     }
-
-    let format = args[0];
-
-    if reverse {
-        if args.len() < 2 {
-            return (1, "output_strftime: timestring expected\n".to_string());
-        }
-
-        match reverse_strftime(format, args[1]) {
-            Ok(timestamp) => {
-                if scalar.is_some() {
-                    (0, timestamp.to_string())
-                } else {
-                    (0, format!("{}\n", timestamp))
-                }
-            }
-            Err(e) => {
-                if quiet {
-                    (1, String::new())
-                } else {
-                    (1, format!("output_strftime: {}\n", e))
-                }
-            }
-        }
-    } else {
-        let timestamp = if args.len() > 1 {
-            match args[1].parse::<i64>() {
-                Ok(ts) => Some(ts),
-                Err(_) => {
-                    return (
-                        1,
-                        format!("output_strftime: {}: invalid decimal number\n", args[1]),
-                    )
-                }
-            }
-        } else {
-            None
-        };
-
-        let nanoseconds = if args.len() > 2 {
-            match args[2].parse::<i64>() {
-                Ok(ns) if (0..=999_999_999).contains(&ns) => Some(ns),
-                Ok(_) => {
-                    return (
-                        1,
-                        format!("output_strftime: {}: invalid nanosecond value\n", args[2]),
-                    )
-                }
-                Err(_) => {
-                    return (
-                        1,
-                        format!("output_strftime: {}: invalid decimal number\n", args[2]),
-                    )
-                }
-            }
-        } else {
-            None
-        };
-
-        match output_strftime(format, timestamp, nanoseconds) {
-            Ok(result) => {
-                let output = if no_newline || scalar.is_some() {
-                    result
-                } else {
-                    format!("{}\n", result)
-                };
-                (0, output)
-            }
-            Err(e) => (1, format!("output_strftime: {}\n", e)),
-        }
+    let result = output_strftime(exec, nam, argv, ops, scalar);           // c:199
+    // c:200 — `endparamscope();`
+    if let Some(ref tz) = tz_saved {
+        std::env::set_var("TZ", tz);
     }
+    result                                                                // c:202
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// Identifier validity check matching zsh's `isident()` (Src/utils.c).
+fn is_ident(s: &str) -> bool {
+    if s.is_empty() { return false; }
+    let mut chars = s.chars();
+    let first = chars.next().unwrap();
+    if first.is_ascii_digit() { return false; }
+    if !(first.is_alphanumeric() || first == '_') { return false; }
+    chars.all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// Port of `setup_()` from `Src/Modules/datetime.c:270`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn setup_() -> i32 {                                                  // c:270
+    0                                                                     // c:273
+}
+
+/// Port of `features_()` from `Src/Modules/datetime.c:277`. C body
+/// is `*features = featuresarray(m, &module_features); return 0;`.
+pub fn features_() -> i32 {                                               // c:277
+    0                                                                     // c:281
+}
+
+/// Port of `enables_()` from `Src/Modules/datetime.c:285`. C body
+/// is `return handlefeatures(m, &module_features, enables);`.
+pub fn enables_() -> i32 {                                                // c:285
+    0                                                                     // c:288
+}
+
+/// Port of `boot_()` from `Src/Modules/datetime.c:292`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn boot_() -> i32 {                                                   // c:292
+    0                                                                     // c:295
+}
+
+/// Port of `cleanup_()` from `Src/Modules/datetime.c:299`. C body
+/// is `return setfeatureenables(m, &module_features, NULL);`.
+pub fn cleanup_() -> i32 {                                                // c:299
+    0                                                                     // c:302
+}
+
+/// Port of `finish_()` from `Src/Modules/datetime.c:306`. C body
+/// is `return 0;` (UNUSED `Module m`).
+pub fn finish_() -> i32 {                                                 // c:306
+    0                                                                     // c:309
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fresh_exec() -> ShellExecutor { ShellExecutor::new() }
 
     #[test]
     fn test_epoch_seconds() {
@@ -225,7 +311,6 @@ mod tests {
     fn test_epoch_realtime() {
         let rt = getcurrentrealtime();
         assert!(rt > 1700000000.0);
-
         let (secs, _) = getcurrenttime();
         assert!((rt - secs as f64).abs() < 1.0);
     }
@@ -238,65 +323,47 @@ mod tests {
     }
 
     #[test]
-    fn test_strftime_basic() {
-        let result = output_strftime("%Y-%m-%d", Some(1700000000), None).unwrap();
-        assert!(result.contains("-"));
-
-        let result = output_strftime("%%", None, None).unwrap();
-        assert_eq!(result, "%");
+    fn test_output_strftime_nanoseconds() {
+        let mut e = fresh_exec();
+        let mut ops = [false; 256];
+        ops[b'n' as usize] = true;
+        let r = output_strftime(&mut e, "strftime", &["%9N", "1700000000", "123456789"],
+                                 &ops, Some("OUT"));
+        assert_eq!(r, 0);
+        assert_eq!(e.variables.get("OUT").map(|s| s.as_str()), Some("123456789"));
+        let r = output_strftime(&mut e, "strftime", &["%3N", "1700000000", "123456789"],
+                                 &ops, Some("OUT"));
+        assert_eq!(r, 0);
+        assert_eq!(e.variables.get("OUT").map(|s| s.as_str()), Some("123"));
     }
 
     #[test]
-    fn test_strftime_nanoseconds() {
-        let result = output_strftime("%N", Some(1700000000), Some(123456789)).unwrap();
-        assert_eq!(result, "123456789");
-
-        let result = output_strftime("%3N", Some(1700000000), Some(123456789)).unwrap();
-        assert_eq!(result, "123");
+    fn test_output_strftime_to_scalar() {
+        let mut e = fresh_exec();
+        let mut ops = [false; 256];
+        ops[b'n' as usize] = true; // suppress newline
+        let r = output_strftime(&mut e, "strftime", &["%s", "1700000000"], &ops, Some("OUT"));
+        assert_eq!(r, 0);
+        assert_eq!(e.variables.get("OUT").map(|s| s.as_str()), Some("1700000000"));
     }
 
     #[test]
-    fn test_strftime_epoch() {
-        let result = output_strftime("%s", Some(1700000000), None).unwrap();
-        assert_eq!(result, "1700000000");
+    fn test_output_strftime_format_required() {
+        let mut e = fresh_exec();
+        let r = output_strftime(&mut e, "strftime", &[], &[false; 256], None);
+        assert_eq!(r, 1);
     }
-
-    #[test]
-    fn test_builtin_strftime() {
-        let ops = [false; 256];
-        let (status, output) = bin_strftime(&["%s"], &ops, None);
-        assert_eq!(status, 0);
-        assert!(!output.is_empty());
-
-        let (status, _) = bin_strftime(&[], &ops, None);
-        assert_eq!(status, 1);
-    }
-
-    #[test]
-    fn test_builtin_strftime_with_timestamp() {
-        let ops = [false; 256];
-        let (status, output) = bin_strftime(&["%s", "1700000000"], &ops, None);
-        assert_eq!(status, 0);
-        assert!(output.contains("1700000000"));
-    }
-
 }
 
-// ===========================================================
+// ========================================================
 // Methods moved verbatim from src/ported/exec.rs because their
 // C counterpart's source file maps 1:1 to this Rust module.
-// Phase: module-shims
-// ===========================================================
+// ========================================================
 
-// BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
-    /// output_strftime - format date/time (zsh/datetime module)
-    /// `output_strftime` builtin — delegates to canonical port at
-    /// `src/ported/modules/datetime.rs:136` (`bin_strftime()` from
-    /// `Src/Modules/datetime.c:187`). Argv flag parsing happens here
-    /// (`-s` writes to the executor variable table, which the
-    /// canonical port doesn't own); the format/output_strftime/reverse_strftime
-    /// logic itself lives in datetime.rs.
+impl ShellExecutor {
+    /// `strftime` builtin shim — adapts `&[String]` argv to the
+    /// canonical `bin_strftime()` above, parsing the option spec
+    /// `"nrqs:"` (datetime.c BUILTIN registration).
     pub(crate) fn bin_strftime(&mut self, args: &[String]) -> i32 {
         let mut ops = [false; 256];
         let mut scalar: Option<String> = None;
@@ -319,14 +386,13 @@ impl crate::ported::exec::ShellExecutor {
                     break;
                 }
                 s if s.starts_with('-') && s.len() > 1 => {
-                    // Combined short flags, e.g. `-rq`.
                     for ch in s[1..].chars() {
                         match ch {
                             'n' => ops[b'n' as usize] = true,
                             'r' => ops[b'r' as usize] = true,
                             'q' => ops[b'q' as usize] = true,
                             _ => {
-                                zwarnnam("output_strftime", &format!("bad option: -{}", ch));
+                                zwarnnam("strftime", &format!("bad option: -{}", ch));
                                 return 1;
                             }
                         }
@@ -335,57 +401,6 @@ impl crate::ported::exec::ShellExecutor {
                 _ => positional.push(arg.as_str()),
             }
         }
-        let (status, output) = crate::datetime::bin_strftime(&positional, &ops, scalar.as_deref());
-        if status == 0 {
-            if let Some(name) = scalar {
-                self.variables.insert(name, output);
-            } else if !output.is_empty() {
-                print!("{}", output);
-            }
-        } else if !output.is_empty() {
-            eprint!("{}", output);
-        }
-        status
+        bin_strftime(self, "strftime", &positional, &ops, scalar.as_deref())
     }
-}
-// END moved-from-exec-rs
-
-/// Module loader entry — port of `setup_()` from
-/// Src/Modules/datetime.c:270.
-pub fn setup_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `features_()` from
-/// Src/Modules/datetime.c:277. Returns the features array; in the C
-/// build this hands `featuresarray(m, &module_features)` back to the
-/// loader.
-pub fn features_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `enables_()` from
-/// Src/Modules/datetime.c:285. C delegates to `handlefeatures()`.
-pub fn enables_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `boot_()` from
-/// Src/Modules/datetime.c:292.
-pub fn boot_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `cleanup_()` from
-/// Src/Modules/datetime.c:299. C calls
-/// `setfeatureenables(m, &module_features, NULL)` to drop registered
-/// features at unload time.
-pub fn cleanup_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `finish_()` from
-/// Src/Modules/datetime.c:306.
-pub fn finish_() -> i32 {
-    0
 }
