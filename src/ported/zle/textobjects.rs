@@ -1,172 +1,290 @@
 //! ZLE text objects — port of `Src/Zle/textobjects.c`.
 //!
-//! Three C functions, zero structs/enums. The Rust port matches
-//! exactly: three free fns over a `&mut Zle`, no Rust-only types,
-//! no helper enums.
+//! Three C functions, zero structs/enums. The Rust port matches:
+//! three free fns over a `&mut Zle`, no Rust-only types.
 
 use super::zle_main::Zle;
 use super::zle_main::ModifierFlags;
 
 /// Port of `blankwordclass()` from `Src/Zle/textobjects.c:34`. The
-/// vi blank-word class predicate — splits buffer characters into
-/// "blank" (class 0) vs "non-blank" (class 1). Used by
-/// `selectinblankword` / `selectablankword` as the `viclass` arg
-/// to the generic word-spanning loop in `selectword()`.
+/// vi blank-word class predicate. Returns 0 for blanks, 1 otherwise.
 pub fn blankwordclass(x: char) -> i32 {                                  // c:34
     // C: `return (ZC_iblank(x) ? 0 : 1);`
     if x == ' ' || x == '\t' { 0 } else { 1 }                            // c:36
 }
 
-/// Port of `selectword()` from `Src/Zle/textobjects.c:41`. The
-/// dispatcher behind the `select-in-word` / `select-a-word` /
-/// `select-in-blank-word` / `select-a-blank-word` /
-/// `select-in-shell-word` / `select-a-shell-word` widgets. Sets
-/// `mark`/`zlecs` to span a vi text object around the cursor; the
-/// class-of-character (word vs blank) is decided by `wordclass()`
-/// or `blankwordclass()` depending on which widget triggered (C
-/// uses `IS_THINGY(bindk, ...)`, Rust checks the `bindk.name`
-/// string).
+/// Port of `selectword()` from `Src/Zle/textobjects.c:41`.
+/// Faithful 1:1 port of the C body. Variable names track the C
+/// source where possible.
 ///
-/// Faithful port of the C body: character-class scan back to the
-/// first boundary, scan forward to the next boundary, optional
-/// all-form blank extension, repeat-count handling for `zmult > 1`.
-/// The lexer-driven shell-word path (textobjects.c:81-205) requires
-/// `ctxtlex()` which the zshrs port lowers through fusevm bytecode
-/// rather than the C lexer; that arm is approximated by falling
-/// through to the blank-word class for now.
+/// `INCCS()` / `DECCS()` / `INCPOS()` / `DECPOS()` collapse to
+/// `+= 1` / `-= 1` in the Rust port because zshrs's buffer is
+/// `Vec<char>` (already multibyte-aware at the storage layer; no
+/// per-char byte-walk needed).
+///
+/// `virangeflag` is a `Src/Zle/zle_vi.c:36` file-global that is
+/// not yet ported (Phase 3 bucket-2 work). The cursor-adjustment
+/// arm at `c:196-203` reads it; here we treat it as false (the
+/// only reachable state during normal widget invocation — it is
+/// only set during `vi`-operator-pending evaluation, which zshrs
+/// dispatches through a different path). See TODO.md.
 pub fn selectword(zle: &mut Zle) -> i32 {                                // c:41
-    let n_init: i32 = if zle.zmod.flags.contains(ModifierFlags::MULT) {
-        zle.zmod.mult                                                    // c:43 zmult
+    let mut n: i32 = if zle.zmod.flags.contains(ModifierFlags::MULT) {   // c:42 zmult
+        zle.zmod.mult
     } else {
         1
     };
-    let mut n = n_init;
-    let widget_name = zle.bindk.as_ref().map(|t| t.name.as_str()).unwrap_or("");
-    let is_aword       = widget_name == "select-a-word";
-    let is_inword      = widget_name == "select-in-word";
-    let is_ablankword  = widget_name == "select-a-blank-word";
-    let all = is_aword || is_ablankword;                                 // c:44
+    let widget = zle.bindk.as_ref().map(|t| t.name.as_str()).unwrap_or("");
+    let is_aword       = widget == "select-a-word";
+    let is_inword      = widget == "select-in-word";
+    let is_ablankword  = widget == "select-a-blank-word";
+    let mut all: i32 = (is_aword || is_ablankword) as i32;               // c:43-44
     let viclass: fn(char) -> i32 = if is_aword || is_inword {
-        crate::ported::zle::zle_word::wordclass                          // c:46
+        crate::ported::zle::zle_word::wordclass                          // c:46-47
     } else {
-        blankwordclass                                                   // c:46
+        blankwordclass
     };
     if zle.zlell == 0 {
         return 1;
     }
-    let cur_char = zle.zleline.get(zle.zlecs).copied().unwrap_or('\n');
-    let sclass = viclass(cur_char);                                      // c:48
-    let mut doblanks = all && sclass != 0;                               // c:49
+    let cur = zle.zleline.get(zle.zlecs).copied().unwrap_or('\n');
+    let mut sclass: i32 = viclass(cur);                                  // c:48
+    let mut doblanks: i32 = all & ((sclass != 0) as i32);                // c:49 all && sclass
 
-    let region_active = zle.region_active != 0;                          // c:51
-    let mark_at = zle.mark;                                              // c:51
-    if !region_active || zle.zlecs == mark_at {
+    let region_active = zle.region_active != 0;                          // c:51 (read once)
+
+    // C's `mark == -1` sentinel doesn't exist in the Rust port (mark
+    // is `usize`); the equivalent "mark is unset" condition collapses
+    // into `!region_active` since mark is only meaningful when the
+    // region is active. Drop the `mark == -1` disjunct.
+    if !region_active || zle.zlecs == zle.mark {                         // c:51
+        // search back to first character of same class as the start
+        // position; also stop at the beginning of the line.
         zle.mark = zle.zlecs;                                            // c:54
-        loop {
-            if zle.mark == 0 { break; }
-            let pos = zle.mark - 1;
-            let c = zle.zleline.get(pos).copied().unwrap_or('\n');
-            if c == '\n' || viclass(c) != sclass {
-                break;
+        while zle.mark != 0 {                                            // c:55
+            let pos = zle.mark - 1;                                      // c:56-57 DECPOS
+            let cp = zle.zleline.get(pos).copied().unwrap_or('\n');
+            if cp == '\n' || viclass(cp) != sclass {                     // c:58
+                break;                                                   // c:59
             }
-            zle.mark = pos;
+            zle.mark = pos;                                              // c:60
         }
-        while zle.zlecs < zle.zlell {                                    // c:62
-            zle.zlecs += 1;
-            let pos = zle.zlecs;
-            if all && sclass == 0 && pos < zle.zlell &&
-                zle.zleline.get(pos).copied() == Some('\n') &&
-                pos + 1 < zle.zlell
+        // similarly scan forward over characters of the same class.
+        while zle.zlecs < zle.zlell {                                    // c:63
+            zle.zlecs += 1;                                              // c:64 INCCS
+            let mut pos = zle.zlecs;                                     // c:65
+            // single newlines within blanks are included.
+            if all != 0 && sclass == 0 && pos < zle.zlell                // c:67
+                && zle.zleline.get(pos).copied() == Some('\n')
             {
-                zle.zlecs += 1;
+                pos += 1;                                                // c:68 INCPOS(pos)
             }
             let pc = zle.zleline.get(pos).copied().unwrap_or('\n');
-            if pc == '\n' || viclass(pc) != sclass {
-                break;
+            if pc == '\n' || viclass(pc) != sclass {                     // c:70
+                break;                                                   // c:71
             }
         }
-        if all {                                                         // c:74
+
+        if all != 0 {                                                    // c:74
             let cc = zle.zleline.get(zle.zlecs).copied().unwrap_or('\n');
-            let nclass = viclass(cc);
-            if nclass == 0 || sclass == 0 {
-                while zle.zlecs < zle.zlell {
-                    zle.zlecs += 1;
+            let nclass = viclass(cc);                                    // c:75
+            // if either start or new position is blank advance over a
+            // new block of characters of a common type.
+            if nclass == 0 || sclass == 0 {                              // c:78
+                while zle.zlecs < zle.zlell {                            // c:79
+                    zle.zlecs += 1;                                      // c:80 INCCS
                     let cc = zle.zleline.get(zle.zlecs).copied().unwrap_or('\n');
-                    if cc == '\n' || viclass(cc) != nclass {
-                        break;
+                    if cc == '\n' || viclass(cc) != nclass {             // c:81
+                        break;                                           // c:82
                     }
                 }
-                if n_init < 2 { doblanks = false; }                      // c:86
+                if n < 2 {                                               // c:85
+                    doblanks = 0;                                        // c:86
+                }
             }
         }
-    } else {                                                             // c:90
-        if zle.zlecs > mark_at {
-            if zle.zlecs < zle.zlell { zle.zlecs += 1; }
-        } else if zle.zlecs > 0 {
-            zle.zlecs -= 1;
+    } else {                                                             // c:89
+        // For visual mode, advance one char so repeated invocations
+        // select subsequent words.
+        if zle.zlecs > zle.mark {                                        // c:92
+            if zle.zlecs < zle.zlell {                                   // c:93
+                zle.zlecs += 1;                                          // c:94 INCCS
+            }
+        } else if zle.zlecs != 0 {                                       // c:95
+            zle.zlecs -= 1;                                              // c:96 DECCS
+        }
+        if zle.zlecs < zle.mark {                                        // c:97
+            // visual mode with the cursor before the mark: move
+            // cursor back.
+            while {
+                let cont = n > 0;
+                n -= 1;
+                cont
+            } {                                                          // c:99 while (n-- > 0)
+                let mut pos = zle.zlecs;                                 // c:100
+                let zc_pos = zle.zleline.get(pos).copied().unwrap_or('\n');
+                // first over blanks
+                if all != 0 && (viclass(zc_pos) == 0 || zc_pos == '\n') {  // c:102
+                    all = 0;                                             // c:104
+                    while pos != 0 {                                     // c:105
+                        pos -= 1;                                        // c:106 DECPOS
+                        let pc = zle.zleline.get(pos).copied().unwrap_or('\n');
+                        if pc == '\n' {                                  // c:107
+                            break;                                       // c:108
+                        }
+                        zle.zlecs = pos;                                 // c:109
+                        if viclass(pc) != 0 {                            // c:110
+                            break;                                       // c:111
+                        }
+                    }
+                } else if zle.zlecs != 0
+                    && zle.zleline.get(zle.zlecs).copied() == Some('\n')
+                {                                                        // c:114
+                    // for 'in' widgets pass over one newline
+                    pos -= 1;                                            // c:116 DECPOS(pos)
+                    let pc = zle.zleline.get(pos).copied().unwrap_or('\n');
+                    if pc != '\n' {                                      // c:117
+                        zle.zlecs = pos;                                 // c:118
+                    }
+                }
+                pos = zle.zlecs;                                         // c:121
+                let cur = zle.zleline.get(zle.zlecs).copied().unwrap_or('\n');
+                sclass = viclass(cur);                                   // c:122
+                // now retreat over non-blanks
+                loop {                                                   // c:124
+                    let pc = zle.zleline.get(pos).copied().unwrap_or('\n');
+                    if pc == '\n' || viclass(pc) != sclass {
+                        break;
+                    }
+                    zle.zlecs = pos;                                     // c:126
+                    if pos == 0 {                                        // c:127
+                        zle.zlecs = 0;                                   // c:128
+                        break;                                           // c:129
+                    }
+                    pos -= 1;                                            // c:131 DECPOS
+                }
+                // blanks again but only if there were none first time
+                if all != 0 && zle.zlecs != 0 {                          // c:134
+                    pos = zle.zlecs;
+                    pos -= 1;                                            // c:136 DECPOS
+                    let pc = zle.zleline.get(pos).copied().unwrap_or('\n');
+                    if viclass(pc) == 0 {                                // c:137
+                        while pos != 0 {                                 // c:138
+                            pos -= 1;                                    // c:139 DECPOS
+                            let pc = zle.zleline.get(pos).copied().unwrap_or('\n');
+                            if pc == '\n' || viclass(pc) != 0 {          // c:140
+                                break;                                   // c:142
+                            }
+                            zle.zlecs = pos;                             // c:143
+                        }
+                    }
+                }
+            }
+            return 0;                                                    // c:147
         }
         n += 1;                                                          // c:148
-        doblanks = false;
+        doblanks = 0;                                                    // c:149
     }
-    zle.region_active = if region_active { 1 } else { 0 };               // c:152
+    // force to character-wise — c:152
+    zle.region_active = if region_active { 1 } else { 0 };
 
-    while {                                                              // c:155
+    // for each digit argument, advance over a further block of one class
+    while {
         n -= 1;
         n > 0
-    } {
-        if zle.zlecs < zle.zlell &&
-           zle.zleline.get(zle.zlecs).copied() == Some('\n')
-        {
-            zle.zlecs += 1;
+    } {                                                                  // c:155
+        if zle.zlecs < zle.zlell
+            && zle.zleline.get(zle.zlecs).copied() == Some('\n')
+        {                                                                // c:156
+            zle.zlecs += 1;                                              // c:157 INCCS
         }
-        let cc = zle.zleline.get(zle.zlecs).copied().unwrap_or('\n');
-        let cls = viclass(cc);
-        while zle.zlecs < zle.zlell {
-            zle.zlecs += 1;
+        let cur = zle.zleline.get(zle.zlecs).copied().unwrap_or('\n');
+        sclass = viclass(cur);                                           // c:158
+        while zle.zlecs < zle.zlell {                                    // c:159
+            zle.zlecs += 1;                                              // c:160 INCCS
             let cc = zle.zleline.get(zle.zlecs).copied().unwrap_or('\n');
-            if cc == '\n' || viclass(cc) != cls {
-                break;
+            if cc == '\n' || viclass(cc) != sclass {                     // c:161
+                break;                                                   // c:163
             }
         }
-        if all {                                                         // c:165
-            if zle.zlecs < zle.zlell &&
-               zle.zleline.get(zle.zlecs).copied() == Some('\n')
-            {
-                zle.zlecs += 1;
+        // for 'a' widgets, advance extra block if either consists of blanks
+        if all != 0 {                                                    // c:165
+            if zle.zlecs < zle.zlell
+                && zle.zleline.get(zle.zlecs).copied() == Some('\n')
+            {                                                            // c:166
+                zle.zlecs += 1;                                          // c:167 INCCS
             }
             let cc = zle.zleline.get(zle.zlecs).copied().unwrap_or('\n');
-            if cls == 0 || viclass(cc) == 0 {
-                let _ = doblanks;
+            let cls_here = viclass(cc);
+            if sclass == 0 || cls_here == 0 {                            // c:168
+                sclass = cls_here;                                       // c:169
+                if n == 1 && sclass == 0 {                               // c:170
+                    doblanks = 0;                                        // c:171
+                }
+                while zle.zlecs < zle.zlell {                            // c:172
+                    zle.zlecs += 1;                                      // c:173 INCCS
+                    let cc = zle.zleline.get(zle.zlecs).copied().unwrap_or('\n');
+                    if cc == '\n' || viclass(cc) != sclass {             // c:174
+                        break;                                           // c:176
+                    }
+                }
             }
         }
     }
 
-    // vi operators don't include cursor position — c:208.
-    // virangeflag is a deferred bucket-2 file-global (zle_vi.c:36),
-    // not yet wired on Zle; conservative default = 0 (always trim).
-    if zle.in_vi_cmd_mode() && zle.zlecs > 0 {
-        zle.zlecs -= 1;
+    // if we didn't remove blanks at either end we remove some at the start
+    if doblanks != 0 {                                                   // c:181
+        let mut pos = zle.mark;                                          // c:182
+        while pos != 0 {                                                 // c:183
+            pos -= 1;                                                    // c:184 DECPOS
+            // don't remove blanks at the start of the line, i.e. indentation
+            let pc = zle.zleline.get(pos).copied().unwrap_or('\n');
+            if pc == '\n' {                                              // c:186
+                break;                                                   // c:187
+            }
+            if !(pc == ' ' || pc == '\t') {                              // c:188 !ZC_iblank
+                pos += 1;                                                // c:189 INCPOS
+                zle.mark = pos;                                          // c:190
+                break;                                                   // c:191
+            }
+        }
     }
-    0                                                                    // c:210
+    // Adjustment: vi operators don't include the cursor position; in
+    // insert or emacs mode the region also doesn't, but for vi visual
+    // mode it is included.
+    //
+    // virangeflag is a deferred bucket-2 file-global (zle_vi.c:36),
+    // not yet wired on Zle — see TODO.md. Treat as false so we always
+    // enter the !virangeflag arm.
+    let virangeflag = false;
+    if !virangeflag {                                                    // c:196
+        if !zle.in_vi_cmd_mode() {                                       // c:197
+            zle.region_active = 1;                                       // c:198
+        } else if zle.zlecs != 0 && zle.zlecs > zle.mark {               // c:199
+            zle.zlecs -= 1;                                              // c:200 DECCS
+        }
+    }
+
+    0                                                                    // c:204
 }
 
-/// Port of `selectargument()` from `Src/Zle/textobjects.c:212`. The
-/// `select-in-shell-word` argument-N selector — uses `ctxtlex()`
-/// to walk the buffer through the shell lexer and hand back the
-/// boundaries of the Nth lexed argument under the cursor.
+/// Port of `selectargument()` from `Src/Zle/textobjects.c:212`.
 ///
-/// The C body wires through `zcontext_save()` + `lexflags` +
-/// `ctxtlex()` + `inpush()` to drive the shell tokenizer over the
-/// current line. zshrs lowers the lexer through fusevm bytecode
-/// and does not expose a free-running `ctxtlex` style scanner, so
-/// this port approximates the boundary detection by splitting on
-/// shell-word whitespace (matching what the C source produces for
-/// the simple-input case where no quoting/expansion is involved).
-/// Returns 0 on success, 1 if `n` is out of range — matching C
+/// **NOT FULLY PORTED — see TODO.md.** The C body uses the shell's
+/// `ctxtlex()` lexer-walk machinery (textobjects.c:233-257) to drive
+/// real shell tokenisation over the buffer. zshrs lowers the lexer
+/// through fusevm bytecode and does not expose a free-running
+/// `ctxtlex` style scanner; a faithful port is blocked on porting
+/// the lexer-context save/restore + standalone tokenisation API
+/// from `Src/lex.c`.
+///
+/// Until that's done, this entry is a whitespace-split approximation
+/// that handles only the simple case (no quoting, no expansion, no
+/// here-docs). Returns 1 when `n` is out of range matching C
 /// (textobjects.c:225).
 pub fn selectargument(zle: &mut Zle) -> i32 {                            // c:212
     let n: i32 = if zle.zmod.flags.contains(ModifierFlags::MULT) {
-        zle.zmod.mult
+        zle.zmod.mult                                                    // c:222 zmult
     } else {
         1
     };
@@ -174,13 +292,10 @@ pub fn selectargument(zle: &mut Zle) -> i32 {                            // c:21
         return 1;
     }
     if !zle.in_vi_cmd_mode() {                                           // c:228
-        zle.region_active = 1;
-        zle.mark = zle.zlecs;
+        zle.region_active = 1;                                           // c:229
+        zle.mark = zle.zlecs;                                            // c:230
     }
-    // Shell-word boundary scan — approximation of the lexer walk
-    // at c:233-262. Splits on whitespace at top level (no
-    // quoting/expansion lookahead). The full ctxtlex-driven port
-    // is pending the fusevm-lexer integration.
+    // Approximation pending ctxtlex port — see TODO.md.
     let mut starts: Vec<usize> = Vec::with_capacity(n as usize);
     let mut in_word = false;
     let mut word_start = 0usize;
@@ -202,10 +317,10 @@ pub fn selectargument(zle: &mut Zle) -> i32 {                            // c:21
     let e = (s..zle.zlell)
         .find(|&i| zle.zleline.get(i).copied().map_or(true, |c| c.is_whitespace()))
         .unwrap_or(zle.zlell);
-    zle.mark = s;                                                        // c:283
-    zle.zlecs = e;                                                       // c:283
-    if zle.in_vi_cmd_mode() && zle.zlecs > 0 {                           // c:308
+    zle.mark = s;
+    zle.zlecs = e;
+    if zle.in_vi_cmd_mode() && zle.zlecs > 0 {
         zle.zlecs -= 1;
     }
-    0                                                                    // c:310
+    0
 }
