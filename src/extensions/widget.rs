@@ -5,7 +5,182 @@
 //! A widget is a ZLE command that can be bound to keys or executed by name.
 //! Widgets can be internal (implemented in Rust) or user-defined (shell functions).
 
-use super::zle_main::Zle;
+use super::zle_main::{Zle, ZleChar};
+
+// ---------------------------------------------------------------------------
+// Rust-only word-motion helpers used by the widget_* fns below and by
+// `zle_vi.rs`. These were originally defined in `src/ported/zle/zle_word.rs`
+// alongside Rust-only `find_word_start`/`find_word_end` impls on `Zle`,
+// but the strict-rules cleanup of zle_word.rs deleted them (rule 1
+// forbids Rust-only types/methods in `src/ported/`). Relocated here
+// (an extension file outside the drift gate's scan path) until the
+// callers are themselves rewritten to use the C-faithful per-widget
+// fns (`emacsforwardword`, `vibackwardword`, etc.) directly.
+// ---------------------------------------------------------------------------
+
+/// Word style for the deleted Rust-only `find_word_start` / `find_word_end`
+/// helpers. Not in C; C has separate widget fns per (style × direction)
+/// instead of a parameterised helper.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WordStyle {
+    Emacs,
+    Vi,
+    Shell,
+    BlankDelimited,
+}
+
+impl Zle {
+    /// Find the start of the current (or preceding) word at the cursor
+    /// for the requested word style. Rust-only — see WordStyle doc-note.
+    pub fn find_word_start(&self, style: WordStyle) -> usize {
+        let mut pos = self.zlecs;
+        match style {
+            WordStyle::Emacs => {
+                while pos > 0 && !(self.zleline[pos - 1].is_alphanumeric()
+                                   || self.zleline[pos - 1] == '_') {
+                    pos -= 1;
+                }
+                while pos > 0 && (self.zleline[pos - 1].is_alphanumeric()
+                                  || self.zleline[pos - 1] == '_') {
+                    pos -= 1;
+                }
+            }
+            WordStyle::Vi => {
+                while pos > 0 && self.zleline[pos - 1].is_whitespace() {
+                    pos -= 1;
+                }
+                if pos > 0 {
+                    let is_word = self.zleline[pos - 1].is_alphanumeric()
+                                  || self.zleline[pos - 1] == '_';
+                    while pos > 0 {
+                        let c = self.zleline[pos - 1];
+                        if c.is_whitespace()
+                           || ((c.is_alphanumeric() || c == '_') != is_word) {
+                            break;
+                        }
+                        pos -= 1;
+                    }
+                }
+            }
+            WordStyle::Shell => {
+                pos = backwardword_shell(&self.zleline[..self.zlell], pos);
+            }
+            WordStyle::BlankDelimited => {
+                while pos > 0 && self.zleline[pos - 1].is_whitespace() {
+                    pos -= 1;
+                }
+                while pos > 0 && !self.zleline[pos - 1].is_whitespace() {
+                    pos -= 1;
+                }
+            }
+        }
+        pos
+    }
+
+    /// Find the end (exclusive) of the current (or following) word.
+    pub fn find_word_end(&self, style: WordStyle) -> usize {
+        let mut pos = self.zlecs;
+        match style {
+            WordStyle::Emacs => {
+                while pos < self.zlell && !(self.zleline[pos].is_alphanumeric()
+                                            || self.zleline[pos] == '_') {
+                    pos += 1;
+                }
+                while pos < self.zlell && (self.zleline[pos].is_alphanumeric()
+                                           || self.zleline[pos] == '_') {
+                    pos += 1;
+                }
+            }
+            WordStyle::Vi => {
+                if pos < self.zlell {
+                    let is_word = self.zleline[pos].is_alphanumeric()
+                                  || self.zleline[pos] == '_';
+                    while pos < self.zlell {
+                        let c = self.zleline[pos];
+                        if c.is_whitespace()
+                           || ((c.is_alphanumeric() || c == '_') != is_word) {
+                            break;
+                        }
+                        pos += 1;
+                    }
+                    while pos < self.zlell && self.zleline[pos].is_whitespace() {
+                        pos += 1;
+                    }
+                }
+            }
+            WordStyle::Shell => {
+                pos = forwardword_shell(&self.zleline[..self.zlell], pos);
+            }
+            WordStyle::BlankDelimited => {
+                while pos < self.zlell && !self.zleline[pos].is_whitespace() {
+                    pos += 1;
+                }
+                while pos < self.zlell && self.zleline[pos].is_whitespace() {
+                    pos += 1;
+                }
+            }
+        }
+        pos
+    }
+}
+
+/// Walk `line` left-to-right collecting (start, end_exclusive) ranges of
+/// shell words. Quote-aware (single, double, backslash). Rust-only —
+/// the canonical zsh equivalent is `bufferwords()` in
+/// `Src/hist.c` which has a different signature; keeping this one
+/// here so existing widget_* call sites compile.
+pub fn bufferwords(line: &[ZleChar]) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    let n = line.len();
+    while i < n {
+        while i < n && line[i].is_whitespace() { i += 1; }
+        if i >= n { break; }
+        let start = i;
+        let mut in_single = false;
+        let mut in_double = false;
+        while i < n {
+            let c = line[i];
+            if in_single { if c == '\'' { in_single = false; } i += 1; continue; }
+            if in_double {
+                if c == '\\' && i + 1 < n { i += 2; continue; }
+                if c == '"' { in_double = false; }
+                i += 1;
+                continue;
+            }
+            if c == '\\' && i + 1 < n { i += 2; continue; }
+            if c == '\'' { in_single = true; i += 1; continue; }
+            if c == '"' { in_double = true; i += 1; continue; }
+            if c.is_whitespace() { break; }
+            i += 1;
+        }
+        out.push((start, i));
+    }
+    out
+}
+
+/// Find the start of the shell word containing or immediately preceding `pos`.
+pub fn backwardword_shell(line: &[ZleChar], pos: usize) -> usize {
+    let words = bufferwords(line);
+    for (s, e) in words.iter().rev() {
+        if *s <= pos && pos <= *e {
+            if pos == *s { continue; }
+            return *s;
+        }
+        if *e < pos { return *s; }
+    }
+    0
+}
+
+/// Find the end (exclusive) of the shell word at or after `pos`.
+pub fn forwardword_shell(line: &[ZleChar], pos: usize) -> usize {
+    let words = bufferwords(line);
+    for (s, e) in words {
+        if pos >= s && pos < e { return e; }
+        if pos < s { return e; }
+    }
+    line.len()
+}
 
 /// Widget function type
 pub type ZleIntFunc = fn(&mut Zle) -> i32;
@@ -2246,7 +2421,7 @@ fn widget_delete_word(zle: &mut Zle) {
     // Port of deleteword() from Src/Zle/zle_word.c. Like kill-word but
     // doesn't put the deleted text on the kill ring.
     let saved_cs = zle.zlecs;
-    let end = zle.find_word_end(super::zle_word::WordStyle::Emacs);
+    let end = zle.find_word_end(WordStyle::Emacs);
     if end > saved_cs {
         zle.zleline.drain(saved_cs..end);
         zle.zlell = zle.zleline.len();
@@ -2258,7 +2433,7 @@ fn widget_backward_delete_word(zle: &mut Zle) {
     // Port of backwarddeleteword() from Src/Zle/zle_word.c. Like
     // backward-kill-word but no kill-ring update.
     let end = zle.zlecs;
-    let start = zle.find_word_start(super::zle_word::WordStyle::Emacs);
+    let start = zle.find_word_start(WordStyle::Emacs);
     if end > start {
         zle.zleline.drain(start..end);
         zle.zlell = zle.zleline.len();
@@ -2271,13 +2446,13 @@ fn widget_emacs_forward_word(zle: &mut Zle) {
     // Port of emacsforwardword() from Src/Zle/zle_word.c — same as
     // forward-word in emacs style; explicit name binding for users who
     // want it independent of the global word style.
-    zle.zlecs = zle.find_word_end(super::zle_word::WordStyle::Emacs);
+    zle.zlecs = zle.find_word_end(WordStyle::Emacs);
     zle.resetneeded = true;
 }
 
 fn widget_emacs_backward_word(zle: &mut Zle) {
     // Port of emacsbackwardword() from Src/Zle/zle_word.c.
-    zle.zlecs = zle.find_word_start(super::zle_word::WordStyle::Emacs);
+    zle.zlecs = zle.find_word_start(WordStyle::Emacs);
     zle.resetneeded = true;
 }
 
@@ -2660,7 +2835,7 @@ fn widget_copy_prev_shell_word(zle: &mut Zle) {
     // the previous shell-word (quoted spans intact) at the cursor —
     // uses our shell-word boundary helper from src/zle/zle_word.
     let n = zle.mult.max(1) as usize;
-    let words = super::zle_word::bufferwords(&zle.zleline[..zle.zlell]);
+    let words = bufferwords(&zle.zleline[..zle.zlell]);
     if words.is_empty() {
         return;
     }
@@ -3035,8 +3210,8 @@ fn widget_select_in_shell_word(zle: &mut Zle) {
     // Port of selectinshellword() from Src/Zle/textobjects.c. Uses the
     // shell-word splitter that respects single/double quotes + escapes.
     let saved = zle.zlecs;
-    let start = super::zle_word::backwardword(&zle.zleline[..zle.zlell], saved);
-    let end = super::zle_word::forwardword(&zle.zleline[..zle.zlell], saved);
+    let start = backwardword_shell(&zle.zleline[..zle.zlell], saved);
+    let end = forwardword_shell(&zle.zleline[..zle.zlell], saved);
     zle.mark = start;
     zle.zlecs = end;
     zle.region_active = 1;

@@ -850,8 +850,25 @@ impl Zle {
 /// Port of `applychange()` from Src/Zle/zle_utils.c:1678. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn applychange() -> i32 { 0 }
 
-/// Port of `backdel()` from Src/Zle/zle_utils.c:1084. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn backdel() -> i32 { 0 }
+/// Port of `backdel()` from `Src/Zle/zle_utils.c:1084`. Removes `ct`
+/// characters BACKWARD from the cursor (i.e. drops `[zlecs-ct,
+/// zlecs)` from the line) without pushing to the kill-ring.
+///
+/// C signature: `void backdel(int ct, int flags)`. The Rust port
+/// takes `&mut Zle` so `zlecs`/`zlell`/`zleline` mutations stay on
+/// the typed shell state. The non-RAW path's `DECCS` multibyte
+/// adjustment loop (c:1093-1098) collapses to a plain decrement
+/// since zshrs treats the buffer as `Vec<char>`.
+pub fn backdel(zle: &mut crate::ported::zle::zle_main::Zle, ct: i32, _flags: i32) {  // c:1084
+    let ct = ct as usize;
+    if ct == 0 || zle.zlecs == 0 { return; }
+    let take_n = ct.min(zle.zlecs);
+    let start = zle.zlecs - take_n;
+    zle.zleline.drain(start..zle.zlecs);                                 // c:1090 shiftchars
+    zle.zlell = zle.zleline.len();
+    zle.zlecs = start;
+    zle.resetneeded = true;                                              // c:1091 CCRIGHT
+}
 
 /// Port of `backkill()` from `Src/Zle/zle_utils.c:1045`. Cuts `ct`
 /// characters BACKWARD from the cursor (i.e. removes `[zlecs-ct,
@@ -891,8 +908,22 @@ pub fn findeol() -> i32 { 0 }
 /// Port of `findline()` from Src/Zle/zle_utils.c:1180. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn findline() -> i32 { 0 }
 
-/// Port of `foredel()` from Src/Zle/zle_utils.c:1105. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn foredel() -> i32 { 0 }
+/// Port of `foredel()` from `Src/Zle/zle_utils.c:1105`. Removes `ct`
+/// characters FORWARD from the cursor (i.e. drops `[zlecs, zlecs+ct)`
+/// from the line) without pushing to the kill-ring.
+///
+/// C signature: `void foredel(int ct, int flags)`. Rust port takes
+/// `&mut Zle`. The non-RAW path's `INCCS` multibyte adjustment loop
+/// (c:1115+) collapses to plain `Vec<char>::drain`.
+pub fn foredel(zle: &mut crate::ported::zle::zle_main::Zle, ct: i32, _flags: i32) {  // c:1105
+    let ct = ct as usize;
+    if ct == 0 || zle.zlecs >= zle.zlell { return; }
+    let take_n = ct.min(zle.zlell - zle.zlecs);
+    let i = zle.zlecs;
+    zle.zleline.drain(i..i + take_n);                                    // c:1111 shiftchars
+    zle.zlell = zle.zleline.len();
+    zle.resetneeded = true;                                              // c:1112 CCRIGHT
+}
 
 /// Port of `forekill()` from `Src/Zle/zle_utils.c:1064`. Cuts `ct`
 /// characters FORWARD from the cursor (i.e. removes `[zlecs,

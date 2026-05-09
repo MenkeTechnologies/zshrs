@@ -467,7 +467,7 @@ impl Zle {
                 for _ in 0..n {
                     let saved_cs = self.zlecs;
                     self.zlecs = p;
-                    p = self.find_word_end(super::zle_word::WordStyle::Vi);
+                    p = self.find_word_end(super::widget::WordStyle::Vi);
                     self.zlecs = saved_cs;
                 }
                 p
@@ -477,7 +477,7 @@ impl Zle {
                 for _ in 0..n {
                     let saved_cs = self.zlecs;
                     self.zlecs = p;
-                    p = self.find_word_end(super::zle_word::WordStyle::BlankDelimited);
+                    p = self.find_word_end(super::widget::WordStyle::BlankDelimited);
                     self.zlecs = saved_cs;
                 }
                 p
@@ -487,7 +487,7 @@ impl Zle {
                 for _ in 0..n {
                     let saved_cs = self.zlecs;
                     self.zlecs = p;
-                    p = self.find_word_start(super::zle_word::WordStyle::Vi);
+                    p = self.find_word_start(super::widget::WordStyle::Vi);
                     self.zlecs = saved_cs;
                 }
                 p
@@ -497,7 +497,7 @@ impl Zle {
                 for _ in 0..n {
                     let saved_cs = self.zlecs;
                     self.zlecs = p;
-                    p = self.find_word_start(super::zle_word::WordStyle::BlankDelimited);
+                    p = self.find_word_start(super::widget::WordStyle::BlankDelimited);
                     self.zlecs = saved_cs;
                 }
                 p
@@ -508,7 +508,7 @@ impl Zle {
                 // becomes start..=word_end which is start..(word_end+1).
                 let saved_cs = self.zlecs;
                 self.zlecs = pos;
-                let mut p = self.find_word_end(super::zle_word::WordStyle::Vi);
+                let mut p = self.find_word_end(super::widget::WordStyle::Vi);
                 self.zlecs = saved_cs;
                 if p < self.zlell {
                     p += 1;
@@ -518,7 +518,7 @@ impl Zle {
             'E' => {
                 let saved_cs = self.zlecs;
                 self.zlecs = pos;
-                let mut p = self.find_word_end(super::zle_word::WordStyle::BlankDelimited);
+                let mut p = self.find_word_end(super::widget::WordStyle::BlankDelimited);
                 self.zlecs = saved_cs;
                 if p < self.zlell {
                     p += 1;
