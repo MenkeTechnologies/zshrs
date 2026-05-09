@@ -12862,16 +12862,61 @@ pub fn bin_false(_name: &str, _argv: &[String],                              // 
 
 /// Port of `checkjobs()` from Src/builtin.c:5899.
 /// C: `static void checkjobs(void)` — walk `jobtab[1..maxjob]`; for each
-///   running/stopped job that isn't `thisjob`, set `stopmsg = 1` and emit
-///   the job listing.
+///   non-current job that's STAT_LOCKED, not STAT_NOPRINT, and either
+///   running (when CHECKRUNNINGJOBS is set) or STAT_STOPPED, emit
+///   "you have running/stopped jobs" + set `stopmsg = 1`.
 pub fn checkjobs() {                                                         // c:5899
-    // c:5901-5915 — for (i = 1; i <= maxjob; i++) ...
-    // Static-link path: jobtab lives in src/ported/jobs.rs which doesn't
-    // yet expose iteration. The `exit`/`zexit` flow consults stopmsg to
-    // decide whether to refuse. Until the typed jobtab walk is wired,
-    // stopmsg stays at its initial 0 — same end-effect as "no stopped
-    // jobs to warn about".
+    use std::sync::atomic::Ordering;
+    use crate::ported::zsh_h::{STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED};
+    let checkrunning = crate::ported::options::optlookup("checkrunningjobs") > 0;
+    let thisjob = THISJOB.load(Ordering::Relaxed);
+    let maxjob  = MAXJOB.load(Ordering::Relaxed);
+
+    // c:5903 — `for (i = 1; i <= maxjob; i++)`
+    let mut found: Option<i32> = None;
+    let mut found_stat: i32 = 0;
+    for i in 1..=maxjob {                                                    // c:5903
+        let stat = JOBSTATS.lock()
+            .ok()
+            .and_then(|t| t.get(i as usize).copied())
+            .unwrap_or(0);
+        // c:5904-5906 — `i != thisjob && (stat & STAT_LOCKED) &&
+        //                !(stat & STAT_NOPRINT) &&
+        //                (CHECKRUNNINGJOBS || stat & STAT_STOPPED)`
+        if i != thisjob                                                      // c:5904
+            && (stat & STAT_LOCKED) != 0                                     // c:5904
+            && (stat & STAT_NOPRINT) == 0                                    // c:5905
+            && (checkrunning || (stat & STAT_STOPPED) != 0)                  // c:5906
+        {
+            found = Some(i);                                                 // c:5907
+            found_stat = stat;
+            break;
+        }
+    }
+    // c:5908 — `if (i <= maxjob)`
+    if found.is_some() {                                                     // c:5908
+        if (found_stat & STAT_STOPPED) != 0 {                                // c:5909
+            // c:5912/5914 — "you have suspended/stopped jobs."
+            eprintln!("zshrs: you have stopped jobs.");                      // c:5914
+        } else {
+            // c:5917 — "you have running jobs."
+            eprintln!("zshrs: you have running jobs.");                      // c:5917
+        }
+        STOPMSG.store(1, Ordering::Relaxed);                                 // c:5919
+    }
 }
+
+// `stopmsg` global from Src/jobs.c — non-zero when checkjobs() printed.
+pub static STOPMSG: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+// `maxjob` / `thisjob` globals from Src/jobs.c:62/63.
+pub static MAXJOB:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static THISJOB: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+// `jobstats` mirror — flat per-slot stat bits (STAT_*). Real jobtab
+// lives in src/ported/jobs.rs's JobTable; this mirror is updated by
+// the spawn/wait paths that already touch STOPMSG. Empty → no jobs,
+// matching the post-init state of `jobtab[]`.
+pub static JOBSTATS: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
 
 /// Port of `realexit()` from Src/builtin.c:5953.
 /// C: `void realexit(void)` →
