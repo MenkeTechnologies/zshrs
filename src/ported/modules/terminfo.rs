@@ -192,10 +192,38 @@ pub fn finish_() -> i32 {
 }
 
 // === auto-generated stubs ===
-// Direct ports of static helpers from Src/Modules/terminfo.c not
-// yet covered above. zshrs links modules statically; live
-// state owned by the module's typed struct. Name-parity shims.
-
-/// Port of `scanterminfo()` from Src/Modules/terminfo.c:177.
-#[allow(non_snake_case)]
-pub fn scanterminfo() -> i32 { 0 }
+/// Port of `scanterminfo()` from `Src/Modules/terminfo.c:177`. The
+/// magic-assoc scan callback for `${(k)terminfo}` /
+/// `${(kv)terminfo}`. Walks the bool/num/string capability-name
+/// tables (`boolnames`/`numnames`/`strnames` from libtermcap, or
+/// the static fallback arrays at terminfo.c:184-225 when libtermcap
+/// doesn't expose them) and yields each (name, value) pair where
+/// the capability resolves.
+///
+/// C signature: `static void scanterminfo(HashTable ht, ScanFunc func, int flags)`.
+/// Rust port returns `Vec<(String, String)>` since zshrs doesn't
+/// model the ScanFunc callback shape; iteration order matches C.
+pub fn scanterminfo() -> Vec<(String, String)> {                         // c:177
+    let mut out = Vec::new();
+    // c:184-194 — boolnames (when libtermcap doesn't export them).
+    let boolnames = [
+        "bw", "am", "bce", "ccc", "xhp", "xhpa", "cpix", "crxm", "xt", "xenl",
+        "eo", "gn", "hc", "chts", "km", "daisy", "hs", "hls", "in", "lpix",
+        "da", "db", "mir", "msgr", "nxon", "xsb", "npc", "ndscr", "nrrmc",
+        "os", "mc5i", "xvpa", "sam", "eslok", "hz", "ul", "xon",
+    ];
+    // c:198-204 — numnames.
+    let numnames = [
+        "cols", "it", "lh", "lw", "lines", "lm", "xmc", "ma", "colors",
+        "pairs", "wnum", "ncv", "nlab", "pb", "vt", "wsl", "bitwin",
+        "bitype", "bufsz", "btns", "spinh", "spinv", "maddr", "mjump",
+        "mcs", "mls", "npins", "orc", "orhi", "orl", "orvi", "cps", "widcs",
+    ];
+    // c:208-225 — strnames (full subset matched by COMMON_STRING_CAPS above).
+    for cap in boolnames.iter().chain(numnames.iter()).chain(COMMON_STRING_CAPS.iter()) {
+        if let Some(v) = getterminfo(cap) {
+            out.push((cap.to_string(), v));
+        }
+    }
+    out
+}
