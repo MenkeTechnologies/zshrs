@@ -859,46 +859,41 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 mod tests {
     use super::*;
 
-    /// Verifies `bin_private` with no args returns 0 (the c:217 +
-    /// c:286 printprivatenode-walk path; no locallevel → empty list).
+    fn empty_ops_pp() -> crate::ported::zsh_h::options {
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                  argscount: 0, argsalloc: 0 }
+    }
+
+    /// Verifies `bin_private` with no args returns 0 (c:225-229 short-
+    /// circuit when -P is unset → bin_typeset returns 0).
     #[test]
     fn bin_private_no_args_returns_zero() {
-        let mut exec = ShellExecutor::new();
-        assert_eq!(bin_private(&mut exec, "private", &[]), 0);
+        let mut ops = empty_ops_pp();
+        let mut assigns: Vec<(String, String)> = Vec::new();
+        assert_eq!(bin_private("private", &[], &mut ops, 0, &mut assigns), 0);
     }
 
-    /// Verifies `bin_private name=value` stores into `exec.variables`
-    /// (the local-style fallback per the PARTIAL-port doc).
+    /// Verifies `bin_private` returns 0 with -P 'foo=bar' (c:248-256
+    /// queue_signals + bin_typeset path).
     #[test]
     fn bin_private_scalar_assign() {
-        let mut exec = ShellExecutor::new();
-        let r = bin_private(&mut exec, "private",
-            &["foo=bar".to_string()]);
+        let mut ops = empty_ops_pp();
+        ops.ind[b'P' as usize] = 1;
+        let mut assigns: Vec<(String, String)> = Vec::new();
+        let r = bin_private("private",
+            &["foo=bar".to_string()], &mut ops, 0, &mut assigns);
         assert_eq!(r, 0);
-        assert_eq!(exec.variables.get("foo").map(|s| s.as_str()), Some("bar"));
     }
 
-    /// Verifies `-i name=42` integer assign stores the raw string
-    /// (no integer-typed params in the local-style fallback).
+    /// Verifies the -P -T combination is refused per c:231-233.
     #[test]
-    fn bin_private_integer_assign() {
-        let mut exec = ShellExecutor::new();
-        let r = bin_private(&mut exec, "private",
-            &["-i".to_string(), "n=42".to_string()]);
-        assert_eq!(r, 0);
-        assert_eq!(exec.variables.get("n").map(|s| s.as_str()), Some("42"));
-    }
-
-    /// Verifies `-a name='one two'` array assign stores into
-    /// `exec.arrays`.
-    #[test]
-    fn bin_private_array_assign() {
-        let mut exec = ShellExecutor::new();
-        let r = bin_private(&mut exec, "private",
-            &["-a".to_string(), "arr=one two three".to_string()]);
-        assert_eq!(r, 0);
-        let v = exec.arrays.get("arr").cloned().unwrap_or_default();
-        assert_eq!(v, vec!["one", "two", "three"]);
+    fn bin_private_minus_p_minus_t_refused() {
+        let mut ops = empty_ops_pp();
+        ops.ind[b'P' as usize] = 1;
+        ops.ind[b'T' as usize] = 1;
+        let mut assigns: Vec<(String, String)> = Vec::new();
+        assert_eq!(bin_private("private", &[], &mut ops, 0, &mut assigns), 1);
     }
 
     /// Verifies module loaders return 0.
