@@ -443,41 +443,99 @@ impl crate::ported::exec::ShellExecutor {
 }
 // END moved-from-exec-rs
 
-/// Module loader entry — port of `setup_()` from Src/Modules/zselect.c:288.
-pub fn setup_() -> i32 {
-    0
+/// Port of `setup_()` from `Src/Modules/zselect.c:288`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn setup_() -> i32 {                                                 // c:288
+    0                                                                    // c:291
 }
 
-/// Module loader entry — port of `features_()` from Src/Modules/zselect.c:295.
-pub fn features_() -> i32 {
-    0
+/// Port of `features_()` from `Src/Modules/zselect.c:295`. C body
+/// is `*features = featuresarray(m, &module_features); return 0;`.
+/// Static-link path: 0.
+pub fn features_() -> i32 {                                              // c:295
+    0                                                                    // c:299
 }
 
-/// Module loader entry — port of `enables_()` from Src/Modules/zselect.c:303.
-pub fn enables_() -> i32 {
-    0
+/// Port of `enables_()` from `Src/Modules/zselect.c:303`. C body
+/// is `return handlefeatures(m, &module_features, enables);`.
+/// Static-link path: 0.
+pub fn enables_() -> i32 {                                               // c:303
+    0                                                                    // c:306
 }
 
-/// Module loader entry — port of `boot_()` from Src/Modules/zselect.c:310.
-pub fn boot_() -> i32 {
-    0
+/// Port of `boot_()` from `Src/Modules/zselect.c:310`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn boot_() -> i32 {                                                  // c:310
+    0                                                                    // c:313
 }
 
-/// Module loader entry — port of `cleanup_()` from Src/Modules/zselect.c:318.
-pub fn cleanup_() -> i32 {
-    0
+/// Port of `cleanup_()` from `Src/Modules/zselect.c:318`. C body is
+/// `return setfeatureenables(m, &module_features, NULL);`.
+/// Static-link path: 0.
+pub fn cleanup_() -> i32 {                                               // c:318
+    0                                                                    // c:321
 }
 
-/// Module loader entry — port of `finish_()` from Src/Modules/zselect.c:325.
-pub fn finish_() -> i32 {
-    0
+/// Port of `finish_()` from `Src/Modules/zselect.c:325`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn finish_() -> i32 {                                                // c:325
+    0                                                                    // c:328
 }
 
-// === auto-generated stubs ===
-// Direct ports of static helpers from Src/Modules/zselect.c not
-// yet covered above. zshrs links modules statically; live
-// state owned by the module's typed struct. Name-parity shims.
-
-/// Port of `handle_digits()` from Src/Modules/zselect.c:40.
-#[allow(non_snake_case)]
-pub fn handle_digits() -> i32 { 0 }
+/// Port of static helper `handle_digits()` from
+/// `Src/Modules/zselect.c:40`. Parses a file-descriptor argument
+/// from a `zselect -r N`/`-w N`/`-e N` flag and adds it to the
+/// caller-supplied fd_set; returns 0 on success or 1 on parse
+/// error (after emitting a zwarnnam diagnostic).
+///
+/// C signature: `static int handle_digits(char *nam, char *argptr,
+///                                        fd_set *fdset, int *fdmax)`.
+///
+/// Rust port: takes an in/out fd vec + running max-fd via mutable
+/// references; mirrors the C body's `idigit` + `zstrtol` parse
+/// + bounds update at zselect.c:45-58.
+pub fn handle_digits(                                                    // c:40
+    nam: &str,
+    argptr: &str,
+    fdset: &mut Vec<libc::c_int>,
+    fdmax: &mut libc::c_int,
+) -> i32 {
+    let mut chars = argptr.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_digit() => {}                              // c:45 idigit
+        _ => {
+            crate::ported::utils::zwarnnam(
+                nam,
+                &format!("expecting file descriptor: {}", argptr),
+            );
+            return 1;                                                    // c:47
+        }
+    }
+    // C uses zstrtol which stops at first non-digit and returns the
+    // numeric prefix. Rust port: split the digit prefix manually so
+    // we can detect "garbage after fd" the same way.
+    let split = argptr.find(|c: char| !c.is_ascii_digit()).unwrap_or(argptr.len());
+    let (num_part, garbage) = argptr.split_at(split);
+    let fd: libc::c_int = match num_part.parse() {                       // c:49
+        Ok(n) => n,
+        Err(_) => {
+            crate::ported::utils::zwarnnam(
+                nam,
+                &format!("expecting file descriptor: {}", argptr),
+            );
+            return 1;
+        }
+    };
+    if !garbage.is_empty() {                                             // c:50
+        crate::ported::utils::zwarnnam(
+            nam,
+            &format!("garbage after file descriptor: {}", garbage),
+        );
+        return 1;                                                        // c:52
+    }
+    fdset.push(fd);                                                      // c:55 FD_SET
+    if fd + 1 > *fdmax {                                                 // c:56
+        *fdmax = fd + 1;                                                 // c:57
+    }
+    0                                                                    // c:58
+}

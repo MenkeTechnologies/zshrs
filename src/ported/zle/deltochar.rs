@@ -86,20 +86,52 @@ mod tests {
     }
 }
 
-/// Port of `boot_()` from Src/Zle/deltochar.c:112. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn boot_() -> i32 { 0 }
+/// Port of `setup_()` from `Src/Zle/deltochar.c:90`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn setup_() -> i32 {                                                 // c:90
+    0                                                                    // c:93
+}
 
-/// Port of `cleanup_()` from Src/Zle/deltochar.c:129. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn cleanup_() -> i32 { 0 }
+/// Port of `features_()` from `Src/Zle/deltochar.c:97`. C body is
+/// `*features = featuresarray(m, &module_features); return 0;` —
+/// returns the per-module feature table. zshrs links statically so
+/// the table is build-time-fixed; this hook returns 0 to mirror C.
+pub fn features_() -> i32 {                                              // c:97
+    0                                                                    // c:101
+}
 
-/// Port of `enables_()` from Src/Zle/deltochar.c:105. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn enables_() -> i32 { 0 }
+/// Port of `enables_()` from `Src/Zle/deltochar.c:105`. C body is
+/// `return handlefeatures(m, &module_features, enables);` — wires
+/// the per-module enable bits to the loader. zshrs's static link
+/// returns 0 (success, no enables changed).
+pub fn enables_() -> i32 {                                               // c:105
+    0                                                                    // c:108
+}
 
-/// Port of `features_()` from Src/Zle/deltochar.c:97. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn features_() -> i32 { 0 }
+/// Port of `boot_()` from `Src/Zle/deltochar.c:112`. C registers
+/// the `delete-to-char` and `zap-to-char` ZLE functions via
+/// `addzlefunction(...)` with `ZLE_KILL | ZLE_KEEPSUFFIX`. zshrs
+/// registers ZLE widgets via `extensions/widget.rs` at build time,
+/// so this is a no-op port — both widgets are already wired.
+pub fn boot_() -> i32 {                                                  // c:112
+    // C creates `w_deletetochar` and `w_zaptochar` thingies and
+    // wires the `deltochar` C handler. zshrs widget dispatch lives
+    // in `extensions/widget.rs` (`widget_delete_to_char`,
+    // `widget_zap_to_char`); registration happens at startup, not
+    // at module-boot time. Match C's success exit.
+    0                                                                    // c:124
+}
 
-/// Port of `finish_()` from Src/Zle/deltochar.c:138. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn finish_() -> i32 { 0 }
+/// Port of `cleanup_()` from `Src/Zle/deltochar.c:129`. C calls
+/// `deletezlefunction()` for both registered widgets and then
+/// `setfeatureenables(...)`. zshrs widgets are static-linked and
+/// never deleted, so this is a no-op.
+pub fn cleanup_() -> i32 {                                               // c:129
+    0                                                                    // c:135
+}
 
-/// Port of `setup_()` from Src/Zle/deltochar.c:90. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn setup_() -> i32 { 0 }
+/// Port of `finish_()` from `Src/Zle/deltochar.c:138`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn finish_() -> i32 {                                                // c:138
+    0                                                                    // c:141
+}

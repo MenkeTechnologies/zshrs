@@ -102,41 +102,57 @@ mod tests {
     }
 }
 
-/// Module loader entry — port of `setup_()` from Src/Modules/regex.c:229.
-pub fn setup_() -> i32 {
-    0
+/// Port of `setup_()` from `Src/Modules/regex.c:229`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn setup_() -> i32 {                                                 // c:229
+    0                                                                    // c:232
 }
 
-/// Module loader entry — port of `features_()` from Src/Modules/regex.c:236.
-pub fn features_() -> i32 {
-    0
+/// Port of `features_()` from `Src/Modules/regex.c:236`. C body is
+/// `*features = featuresarray(m, &module_features); return 0;`.
+/// Static-link path: 0.
+pub fn features_() -> i32 {                                              // c:236
+    0                                                                    // c:240
 }
 
-/// Module loader entry — port of `enables_()` from Src/Modules/regex.c:244.
-pub fn enables_() -> i32 {
-    0
+/// Port of `enables_()` from `Src/Modules/regex.c:244`. C body is
+/// `return handlefeatures(m, &module_features, enables);`.
+/// Static-link path: 0.
+pub fn enables_() -> i32 {                                               // c:244
+    0                                                                    // c:247
 }
 
-/// Module loader entry — port of `boot_()` from Src/Modules/regex.c:251.
-pub fn boot_() -> i32 {
-    0
+/// Port of `boot_()` from `Src/Modules/regex.c:251`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn boot_() -> i32 {                                                  // c:251
+    0                                                                    // c:254
 }
 
-/// Module loader entry — port of `cleanup_()` from Src/Modules/regex.c:258.
-pub fn cleanup_() -> i32 {
-    0
+/// Port of `cleanup_()` from `Src/Modules/regex.c:258`. C body is
+/// `return setfeatureenables(m, &module_features, NULL);` —
+/// disable the `-regex-match` cond op at unload. Static-link path: 0.
+pub fn cleanup_() -> i32 {                                               // c:258
+    0                                                                    // c:261
 }
 
-/// Module loader entry — port of `finish_()` from Src/Modules/regex.c:265.
-pub fn finish_() -> i32 {
-    0
+/// Port of `finish_()` from `Src/Modules/regex.c:265`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn finish_() -> i32 {                                                // c:265
+    0                                                                    // c:268
 }
 
-// === auto-generated stubs ===
-// Direct ports of static helpers from Src/Modules/regex.c not
-// yet covered above. zshrs links modules statically; live
-// state owned by the module's typed struct. Name-parity shims.
-
-/// Port of `zregex_regerrwarn()` from Src/Modules/regex.c:40.
-#[allow(non_snake_case)]
-pub fn zregex_regerrwarn() -> i32 { 0 }
+/// Port of static helper `zregex_regerrwarn()` from
+/// `Src/Modules/regex.c:40`. Wraps libc `regerror(3)` to format a
+/// regex compilation/match error and emit it via `zwarn`.
+/// C signature: `static void zregex_regerrwarn(int r, regex_t *re, char *msg)`.
+///
+/// zshrs uses Rust's `regex` crate (RE2-style) instead of POSIX
+/// `regex_t`, and `regex::Error` already carries a formatted
+/// message. This entry is the name-parity hook; pass-through to
+/// `zwarn` with the supplied prefix + already-formatted error
+/// string (caller has the `regex::Error` in hand from `Regex::new`).
+pub fn zregex_regerrwarn(prefix: &str, err_msg: &str) {                  // c:40
+    // C composes "msg: errbuf" via two regerror() calls + zwarn(...).
+    // Rust port collapses to a single zwarnnam call.
+    crate::ported::utils::zwarnnam(prefix, err_msg);                     // c:48
+}

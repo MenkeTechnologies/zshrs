@@ -375,5 +375,17 @@ pub fn viforwardword() -> i32 { 0 }
 /// Port of `viforwardwordend()` from Src/Zle/zle_word.c:198. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn viforwardwordend() -> i32 { 0 }
 
-/// Port of `wordclass()` from Src/Zle/zle_word.c:74. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn wordclass() -> i32 { 0 }
+/// Port of `wordclass()` from `Src/Zle/zle_word.c:74`. The vi
+/// word-class predicate used by select-word / vi forward-word /
+/// backward-word / etc. Splits a buffer character into one of four
+/// classes: 0 = blank (`iblank`), 1 = alphanumeric or `_`, 2 =
+/// punctuation (`ipunct`), 3 = anything else.
+pub fn wordclass(x: char) -> i32 {                                       // c:74
+    // C: `return (ZC_iblank(x) ? 0 :
+    //              ((ZC_ialnum(x) || (ZWC('_') == x)) ? 1 :
+    //                ZC_ipunct(x) ? 2 : 3));`
+    if x == ' ' || x == '\t' { 0 }                                       // c:76 ZC_iblank
+    else if x.is_alphanumeric() || x == '_' { 1 }                        // c:76 ZC_ialnum + '_'
+    else if x.is_ascii_punctuation() { 2 }                               // c:77 ZC_ipunct
+    else { 3 }                                                           // c:77
+}

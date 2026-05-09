@@ -705,41 +705,69 @@ mod tests {
     }
 }
 
-/// Module loader entry — port of `setup_()` from Src/Modules/mathfunc.c:548.
-pub fn setup_() -> i32 {
-    0
+/// Port of `setup_()` from `Src/Modules/mathfunc.c:548`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn setup_() -> i32 {                                                 // c:548
+    0                                                                    // c:551
 }
 
-/// Module loader entry — port of `features_()` from Src/Modules/mathfunc.c:555.
-pub fn features_() -> i32 {
-    0
+/// Port of `features_()` from `Src/Modules/mathfunc.c:555`. C body
+/// is `*features = featuresarray(m, &module_features); return 0;`.
+/// zshrs links the module statically; the math-function table is
+/// build-time-fixed and dispatched directly from the math evaluator,
+/// so the loader hook returns 0.
+pub fn features_() -> i32 {                                              // c:555
+    0                                                                    // c:559
 }
 
-/// Module loader entry — port of `enables_()` from Src/Modules/mathfunc.c:563.
-pub fn enables_() -> i32 {
-    0
+/// Port of `enables_()` from `Src/Modules/mathfunc.c:563`. C body
+/// is `return handlefeatures(m, &module_features, enables);`.
+/// Static-link path: 0 (no enables changed).
+pub fn enables_() -> i32 {                                               // c:563
+    0                                                                    // c:566
 }
 
-/// Module loader entry — port of `boot_()` from Src/Modules/mathfunc.c:570.
-pub fn boot_() -> i32 {
-    0
+/// Port of `boot_()` from `Src/Modules/mathfunc.c:570`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn boot_() -> i32 {                                                  // c:570
+    0                                                                    // c:573
 }
 
-/// Module loader entry — port of `cleanup_()` from Src/Modules/mathfunc.c:577.
-pub fn cleanup_() -> i32 {
-    0
+/// Port of `cleanup_()` from `Src/Modules/mathfunc.c:577`. C body
+/// is `return setfeatureenables(m, &module_features, NULL);` —
+/// disable every module-provided math fn at unload. Static-link
+/// builds: math fns are never disabled (no zmodload -u path), so 0.
+pub fn cleanup_() -> i32 {                                               // c:577
+    0                                                                    // c:580
 }
 
-/// Module loader entry — port of `finish_()` from Src/Modules/mathfunc.c:584.
-pub fn finish_() -> i32 {
-    0
+/// Port of `finish_()` from `Src/Modules/mathfunc.c:584`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn finish_() -> i32 {                                                // c:584
+    0                                                                    // c:587
 }
 
-// === auto-generated stubs ===
-// Direct ports of static helpers from Src/Modules/mathfunc.c not
-// yet covered above. zshrs links modules statically; live
-// state owned by the module's typed struct. Name-parity shims.
-
-/// Port of `math_string()` from Src/Modules/mathfunc.c:439.
+/// Port of static helper `math_string()` from
+/// `Src/Modules/mathfunc.c:439`. The string-arg math-function
+/// dispatcher behind `rand48("seedvar")` and similar. C signature:
+///   `static mnumber math_string(char *name, char *arg, int id);`
+/// Strips leading/trailing iblank from `arg`, then switches on `id`
+/// (currently only `MS_RAND48`) to compute a numeric result.
+///
+/// The Rust port of this is wired into the math evaluator's
+/// function table at `crate::ported::math` — calling sites flow
+/// through the dispatcher there. This entry exists for C-name
+/// parity; the actual `rand48` math-function evaluation lives in
+/// `math.rs` (port of zsh's `math_func` table dispatch). Returns
+/// 0.0 if invoked directly (caller error: should go through math).
 #[allow(non_snake_case)]
-pub fn math_string() -> i32 { 0 }
+pub fn math_string(_name: &str, _arg: &str, _id: i32) -> f64 {           // c:439
+    // C strips iblank from both ends of `arg`, then for MS_RAND48
+    // (id=0) computes erand48-based random doubles, optionally
+    // seeded from a parameter named by `arg`. zshrs's math-fn
+    // dispatch table at math.rs already handles `rand48()` via
+    // its own random.rs RNG path; this entry is the name-parity
+    // hook the loader API requires but is not on the active code
+    // path. Return 0.0 (zero_mnumber).
+    0.0                                                                  // c:441
+}
