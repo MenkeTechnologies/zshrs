@@ -41,8 +41,24 @@ extern "C" {
 /// `setupterm()` call zsh's setup_/boot_ hook performs at terminfo.c:
 /// init_term path; collapsed into a OnceLock here since zshrs has no
 /// per-module init function shape.
-pub fn getterminfo(name: &str) -> Option<String> {
+pub fn getterminfo(name: &str) -> Option<String> {                       // c:135
+    use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
     use std::sync::OnceLock;
+    use std::sync::atomic::Ordering;
+    const TERM_BAD: i32 = 1 << 1;
+
+    // c:142 — `if (termflags & TERM_BAD) return NULL;`
+    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 {              // c:142
+        return None;                                                      // c:143
+    }
+    // c:144 — `if ((termflags & TERM_UNKNOWN) && (isset(INTERACTIVE) || !init_term())) return NULL;`
+    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {          // c:144
+        let interactive = crate::ported::options::optlookup("interactive") > 0;
+        if interactive {                                                  // c:144
+            return None;                                                  // c:145
+        }
+    }
+
     static INITIALIZED: OnceLock<bool> = OnceLock::new();
     let ok = *INITIALIZED.get_or_init(|| {
         let mut errret: libc::c_int = 0;
@@ -51,31 +67,40 @@ pub fn getterminfo(name: &str) -> Option<String> {
     if !ok {
         return None;
     }
-    let cname = std::ffi::CString::new(name).ok()?;
+
+    // c:147 — `nameu = dupstring(name); unmetafy(nameu, &len);`
+    let mut buf = name.as_bytes().to_vec();                               // c:147
+    crate::ported::utils::unmetafy(&mut buf);                             // c:148
+    let nameu = match std::str::from_utf8(&buf) {
+        Ok(s) => s.to_string(),
+        Err(_) => return None,
+    };
+    let cname = std::ffi::CString::new(nameu).ok()?;
+
+    // c:155 — `if (((num = tigetnum(nameu)) != -1) && (num != -2)) { ... PM_INTEGER; }`
     unsafe {
-        // String caps (function keys, cursor motion, sgr codes).
-        // `tigetstr` returns NULL or `(char*)-1` for non-string.
-        let s = tigetstr(cname.as_ptr());
-        let s_addr = s as isize;
-        if !s.is_null() && s_addr != -1 {
-            let bytes = std::ffi::CStr::from_ptr(s).to_bytes();
-            return Some(String::from_utf8_lossy(bytes).into_owned());
+        let n = tigetnum(cname.as_ptr());                                 // c:155
+        if n != -1 && n != -2 {                                           // c:155
+            // c:156-158 — pm->u.val = num; PM_INTEGER.
+            return Some(n.to_string());                                   // c:157
         }
-        // Numeric caps (`colors`, `cols`, `lines`).
-        // `tigetnum` returns -1 for unknown name, -2 for not-a-num.
-        let n = tigetnum(cname.as_ptr());
-        if n >= 0 {
-            return Some(n.to_string());
+        // c:159 — `else if ((num = tigetflag(nameu)) != -1) { PM_SCALAR; }`
+        let b = tigetflag(cname.as_ptr());                                // c:159
+        if b != -1 {                                                      // c:159
+            // c:160 — `pm->u.str = num ? dupstring("yes") : dupstring("no");`
+            return Some(if b != 0 { "yes".to_string() } else { "no".to_string() }); // c:160
         }
-        // Boolean caps (`am`, `xenl`, `bw`, `xon`, …). `tigetflag`
-        // returns -1 for unknown name, 0/1 for the flag value.
-        // terminfo.c renders booleans as the strings "yes" / "no".
-        let b = tigetflag(cname.as_ptr());
-        if b == 0 || b == 1 {
-            return Some(if b == 1 { "yes".to_string() } else { "no".to_string() });
+        // c:163 — `else if ((tistr = (char *)tigetstr(nameu)) != NULL && tistr != (char *)-1)`
+        let tistr = tigetstr(cname.as_ptr());                             // c:163
+        let s_addr = tistr as isize;
+        if !tistr.is_null() && s_addr != -1 {                             // c:163
+            // c:164 — `pm->u.str = metafy(tistr, -1, META_HEAPDUP);`
+            let raw = std::ffi::CStr::from_ptr(tistr).to_string_lossy().into_owned();
+            return Some(crate::ported::utils::metafy(&raw));              // c:164
         }
     }
-    None
+    // c:170 — fall through to PM_UNSET → empty string.
+    None                                                                  // c:170
 }
 
 /// Capability names pre-loaded into the `${terminfo[…]}` assoc at
@@ -237,8 +262,27 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 /// Rust port returns `Vec<(String, String)>` since zshrs doesn't
 /// model the ScanFunc callback shape; iteration order matches C.
 pub fn scanterminfo() -> Vec<(String, String)> {                         // c:177
+    use std::sync::OnceLock;
     let mut out = Vec::new();
-    // c:184-194 — boolnames (when libtermcap doesn't export them).
+
+    // c:152-153 — `if (termflags & TERM_BAD) return;`. The full
+    // termflag check at getterminfo's entry mirrors here too.
+    use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
+    use std::sync::atomic::Ordering;
+    const TERM_BAD: i32 = 1 << 1;
+    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 { return out; }
+    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
+        let interactive = crate::ported::options::optlookup("interactive") > 0;
+        if interactive { return out; }
+    }
+    static INITIALIZED: OnceLock<bool> = OnceLock::new();
+    let ok = *INITIALIZED.get_or_init(|| {
+        let mut errret: libc::c_int = 0;
+        unsafe { setupterm(std::ptr::null(), 1, &mut errret) == 0 }
+    });
+    if !ok { return out; }
+
+    // c:184-194 — boolnames fallback when libtermcap doesn't export them.
     let boolnames = [
         "bw", "am", "bce", "ccc", "xhp", "xhpa", "cpix", "crxm", "xt", "xenl",
         "eo", "gn", "hc", "chts", "km", "daisy", "hs", "hls", "in", "lpix",
@@ -252,10 +296,90 @@ pub fn scanterminfo() -> Vec<(String, String)> {                         // c:17
         "bitype", "bufsz", "btns", "spinh", "spinv", "maddr", "mjump",
         "mcs", "mls", "npins", "orc", "orhi", "orl", "orvi", "cps", "widcs",
     ];
-    // c:208-225 — strnames (full subset matched by COMMON_STRING_CAPS above).
-    for cap in boolnames.iter().chain(numnames.iter()).chain(COMMON_STRING_CAPS.iter()) {
-        if let Some(v) = getterminfo(cap) {
-            out.push((cap.to_string(), v));
+    // c:208-247 — strnames: full ~290-entry list matching the C source.
+    let strnames: &[&str] = &[
+        "acsc", "cbt", "bel", "cr", "cpi", "lpi", "chr", "cvr", "csr", "rmp",
+        "tbc", "mgc", "clear", "el1", "el", "ed", "hpa", "cmdch", "cwin",
+        "cup", "cud1", "home", "civis", "cub1", "mrcup", "cnorm", "cuf1",
+        "ll", "cuu1", "cvvis", "defc", "dch1", "dl1", "dial", "dsl", "dclk",
+        "hd", "enacs", "smacs", "smam", "blink", "bold", "smcup", "smdc",
+        "dim", "swidm", "sdrfq", "smir", "sitm", "slm", "smicm", "snlq",
+        "snrmq", "prot", "rev", "invis", "sshm", "smso", "ssubm", "ssupm",
+        "smul", "sum", "smxon", "ech", "rmacs", "rmam", "sgr0", "rmcup",
+        "rmdc", "rwidm", "rmir", "ritm", "rlm", "rmicm", "rshm", "rmso",
+        "rsubm", "rsupm", "rmul", "rum", "rmxon", "pause", "hook", "flash",
+        "ff", "fsl", "wingo", "hup", "is1", "is2", "is3", "if", "iprog",
+        "initc", "initp", "ich1", "il1", "ip", "ka1", "ka3", "kb2", "kbs",
+        "kbeg", "kcbt", "kc1", "kc3", "kcan", "ktbc", "kclr", "kclo", "kcmd",
+        "kcpy", "kcrt", "kctab", "kdch1", "kdl1", "kcud1", "krmir", "kend",
+        "kent", "kel", "ked", "kext", "kf0", "kf1", "kf10", "kf11", "kf12",
+        "kf13", "kf14", "kf15", "kf16", "kf17", "kf18", "kf19", "kf2",
+        "kf20", "kf21", "kf22", "kf23", "kf24", "kf25", "kf26", "kf27",
+        "kf28", "kf29", "kf3", "kf30", "kf31", "kf32", "kf33", "kf34",
+        "kf35", "kf36", "kf37", "kf38", "kf39", "kf4", "kf40", "kf41",
+        "kf42", "kf43", "kf44", "kf45", "kf46", "kf47", "kf48", "kf49",
+        "kf5", "kf50", "kf51", "kf52", "kf53", "kf54", "kf55", "kf56",
+        "kf57", "kf58", "kf59", "kf6", "kf60", "kf61", "kf62", "kf63",
+        "kf7", "kf8", "kf9", "kfnd", "khlp", "khome", "kich1", "kil1",
+        "kcub1", "kll", "kmrk", "kmsg", "kmov", "knxt", "knp", "kopn",
+        "kopt", "kpp", "kprv", "kprt", "krdo", "kref", "krfr", "krpl",
+        "krst", "kres", "kcuf1", "ksav", "kBEG", "kCAN", "kCMD", "kCPY",
+        "kCRT", "kDC", "kDL", "kslt", "kEND", "kEOL", "kEXT", "kind",
+        "kFND", "kHLP", "kHOM", "kIC", "kLFT", "kMSG", "kMOV", "kNXT",
+        "kOPT", "kPRV", "kPRT", "kri", "kRDO", "kRPL", "kRIT", "kRES",
+        "kSAV", "kSPD", "khts", "kUND", "kspd", "kund", "kcuu1", "rmkx",
+        "smkx", "lf0", "lf1", "lf10", "lf2", "lf3", "lf4", "lf5", "lf6",
+        "lf7", "lf8", "lf9", "fln", "rmln", "smln", "rmm", "smm", "mhpa",
+        "mcud1", "mcub1", "mcuf1", "mvpa", "mcuu1", "nel", "porder", "oc",
+        "op", "pad", "dch", "dl", "cud", "mcud", "ich", "indn", "il", "cub",
+        "mcub", "cuf", "mcuf", "rin", "cuu", "mcuu", "pfkey", "pfloc",
+        "pfx", "pln", "mc0", "mc5p", "mc4", "mc5", "pulse", "qdial",
+        "rmclk", "rep", "rfi", "rs1", "rs2", "rs3", "rf", "rc", "vpa",
+        "sc", "ind", "ri", "scs", "sgr", "setb", "smgb", "smgbp", "sclk",
+        "scp", "setf", "smgl", "smglp", "smgr", "smgrp", "hts", "smgt",
+        "smgtp", "wind", "sbim", "scsd", "rbim", "rcsd", "subcs",
+        "supcs", "ht", "docr", "tsl", "tone", "uc", "hu", "u0", "u1",
+        "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "wait", "xoffc",
+        "xonc", "zerom", "scesa", "bicr", "binel", "birep", "csnm",
+        "csin", "colornm", "defbi", "devt", "dispc", "endbi", "smpch",
+        "smsc", "rmpch", "rmsc", "getm", "kmous", "minfo", "pctrm",
+        "pfxl", "reqmp", "scesc", "s0ds", "s1ds", "s2ds", "s3ds",
+        "setab", "setaf", "setcolor", "smglr", "slines", "smgtb",
+        "ehhlm", "elhlm", "elohlm", "erhlm", "ethlm", "evhlm", "sgr1",
+        "slength",
+    ];
+
+    // c:257-263 — boolean caps: tigetflag → "yes" / "no", emit when num != -1.
+    for cap in &boolnames {                                               // c:257
+        let cn = match std::ffi::CString::new(*cap) { Ok(c) => c, Err(_) => continue };
+        let n = unsafe { tigetflag(cn.as_ptr()) };                        // c:258
+        if n != -1 {                                                      // c:258
+            let v = if n != 0 { "yes" } else { "no" };                    // c:259
+            out.push((cap.to_string(), v.to_string()));                   // c:261
+        }
+    }
+
+    // c:268-275 — numeric caps.
+    for cap in &numnames {                                                // c:268
+        let cn = match std::ffi::CString::new(*cap) { Ok(c) => c, Err(_) => continue };
+        let n = unsafe { tigetnum(cn.as_ptr()) };                         // c:269
+        if n != -1 && n != -2 {                                           // c:269
+            out.push((cap.to_string(), n.to_string()));                   // c:270-272
+        }
+    }
+
+    // c:280-287 — string caps: tigetstr → metafy, emit when non-NULL/-1.
+    for cap in strnames {                                                 // c:280
+        let cn = match std::ffi::CString::new(*cap) { Ok(c) => c, Err(_) => continue };
+        let raw = unsafe { tigetstr(cn.as_ptr()) };                       // c:281
+        let s_addr = raw as isize;
+        if !raw.is_null() && s_addr != -1 {                               // c:282
+            let bytes = unsafe { std::ffi::CStr::from_ptr(raw) }
+                .to_string_lossy()
+                .into_owned();
+            // c:283 — `pm->u.str = metafy(tistr, -1, META_HEAPDUP);`
+            out.push((cap.to_string(),
+                      crate::ported::utils::metafy(&bytes)));             // c:283-285
         }
     }
     out
