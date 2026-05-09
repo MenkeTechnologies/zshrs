@@ -90,3 +90,22 @@ src/ported/ztype.rs::zistype
 src/ported/zsh_system.rs::GET_ST_ATIME_NSEC
 src/ported/zsh_system.rs::GET_ST_MTIME_NSEC
 src/ported/zsh_system.rs::GET_ST_CTIME_NSEC
+
+# Port of signals.h's macro family (signals.h:39-127). C uses
+# preprocessor macros so call sites get indexed across many .c
+# files (jobs.c, exec.c, signals.c, etc.); canonical home is
+# signals.h which maps to signals_h.rs.
+src/ported/signals_h.rs::SIGIDX
+src/ported/signals_h.rs::SIGNUM
+src/ported/signals_h.rs::queue_signals
+src/ported/signals_h.rs::unqueue_signals
+src/ported/signals_h.rs::dont_queue_signals
+src/ported/signals_h.rs::restore_queue_signals
+src/ported/signals_h.rs::queue_signal_level
+src/ported/signals_h.rs::run_queued_signals
+src/ported/signals_h.rs::child_block
+src/ported/signals_h.rs::child_unblock
+src/ported/signals_h.rs::winch_block
+src/ported/signals_h.rs::winch_unblock
+src/ported/signals_h.rs::signal_ignore
+src/ported/signals_h.rs::signal_default

@@ -245,13 +245,66 @@ pub fn OPT_PLUS(_ops: &[bool; 256], _c: u8) -> bool {                    // c:14
 }
 
 // ---------------------------------------------------------------------------
-// Builtin `flags` field constants (zsh.h:1452+).
+// Builtin `flags` field constants (zsh.h:1457-1486).
 // ---------------------------------------------------------------------------
 
-/// Port of `#define BINF_PREFIX` (zsh.h around line 1452 BIN_PREFIX
-/// macro). Marks a builtin as a prefix command (e.g. `noglob`,
-/// `command`, `nocorrect`) that modifies how the next word parses.
-pub const BINF_PREFIX: u32 = 1 << 6;                                     // c:1452
+pub const BINF_PLUSOPTS:        u32 = 1 << 1;                            // c:1457 +xyz legal
+pub const BINF_PRINTOPTS:       u32 = 1 << 2;                            // c:1458
+pub const BINF_ADDED:           u32 = 1 << 3;                            // c:1459 in builtins hash
+pub const BINF_MAGICEQUALS:     u32 = 1 << 4;                            // c:1460 MAGIC_EQUAL_SUBST
+pub const BINF_PREFIX:          u32 = 1 << 5;                            // c:1461 prefix command
+pub const BINF_DASH:            u32 = 1 << 6;                            // c:1462
+pub const BINF_BUILTIN:         u32 = 1 << 7;                            // c:1463
+pub const BINF_COMMAND:         u32 = 1 << 8;                            // c:1464
+pub const BINF_EXEC:            u32 = 1 << 9;                            // c:1465
+pub const BINF_NOGLOB:          u32 = 1 << 10;                           // c:1466
+pub const BINF_PSPECIAL:        u32 = 1 << 11;                           // c:1467
+pub const BINF_SKIPINVALID:     u32 = 1 << 12;                           // c:1469 invalid opt → arg
+pub const BINF_KEEPNUM:         u32 = 1 << 13;                           // c:1470 [-+]NUM as opt
+pub const BINF_SKIPDASH:        u32 = 1 << 14;                           // c:1471 `-` as arg
+pub const BINF_DASHDASHVALID:   u32 = 1 << 15;                           // c:1472 `--` even if SKIPINVALID
+pub const BINF_CLEARENV:        u32 = 1 << 16;                           // c:1473 cleared env
+pub const BINF_AUTOALL:         u32 = 1 << 17;                           // c:1474 autoload all
+pub const BINF_HANDLES_OPTS:    u32 = 1 << 18;                           // c:1480
+pub const BINF_ASSIGN:          u32 = 1 << 19;                           // c:1486
+
+// ---------------------------------------------------------------------------
+// Cond-op type constants (zsh.h:660-679). Used by `Src/cond.c` for
+// the `[[ ... ]]` parse tree.
+// ---------------------------------------------------------------------------
+
+pub const COND_NOT:    i32 = 0;                                          // c:660
+pub const COND_AND:    i32 = 1;                                          // c:661
+pub const COND_OR:     i32 = 2;                                          // c:662
+pub const COND_STREQ:  i32 = 3;                                          // c:663
+pub const COND_STRDEQ: i32 = 4;                                          // c:664
+pub const COND_STRNEQ: i32 = 5;                                          // c:665
+pub const COND_STRLT:  i32 = 6;                                          // c:666
+pub const COND_STRGTR: i32 = 7;                                          // c:667
+pub const COND_NT:     i32 = 8;                                          // c:668
+pub const COND_OT:     i32 = 9;                                          // c:669
+pub const COND_EF:     i32 = 10;                                         // c:670
+pub const COND_EQ:     i32 = 11;                                         // c:671
+pub const COND_NE:     i32 = 12;                                         // c:672
+pub const COND_LT:     i32 = 13;                                         // c:673
+pub const COND_GT:     i32 = 14;                                         // c:674
+pub const COND_LE:     i32 = 15;                                         // c:675
+pub const COND_GE:     i32 = 16;                                         // c:676
+pub const COND_REGEX:  i32 = 17;                                         // c:677
+pub const COND_MOD:    i32 = 18;                                         // c:678
+pub const COND_MODI:   i32 = 19;                                         // c:679
+
+// ---------------------------------------------------------------------------
+// Param-assignment flags (zsh.h:2130-2145). Passed to
+// `assignsparam`/`assignaparam` to control the assignment semantics.
+// ---------------------------------------------------------------------------
+
+pub const ASSPM_AUGMENT:     i32 = 1 << 0;                               // c:2132
+pub const ASSPM_WARN_CREATE: i32 = 1 << 1;                               // c:2134
+pub const ASSPM_WARN_NESTED: i32 = 1 << 2;                               // c:2136
+pub const ASSPM_WARN:        i32 = ASSPM_WARN_CREATE | ASSPM_WARN_NESTED; // c:2137
+pub const ASSPM_ENV_IMPORT:  i32 = 1 << 3;                               // c:2139
+pub const ASSPM_KEY_VALUE:   i32 = 1 << 4;                               // c:2144
 
 #[cfg(test)]
 mod tests {
