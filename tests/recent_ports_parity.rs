@@ -176,11 +176,11 @@ mod params_special_vars {
     }
 
     #[test]
-    #[ignore = "zshrs --zsh -c doesn't yet honor the POSIX `sh -c script \
-                name args` convention where the next non-option arg becomes \
-                $0. Re-enable once init.rs's argv-parser handles the \
-                trailing-name slot."]
     fn dollar_zero_argzero_explicit_name() {
+        // POSIX `sh -c script name args` sets $0 = "name". Verifies
+        // GSU dispatch routes $0 reads through argzerogetfn →
+        // utils::argzero() → the set_argzero call that init.rs makes
+        // with the explicit-name arg.
         if !zsh_available() {
             return;
         }
@@ -200,13 +200,30 @@ mod params_special_vars {
     }
 
     #[test]
-    #[ignore = "Same GSU integration gap as dollar_username_matches: \
-                params.rs::argzerogetfn / argzerosetfn route through \
-                utils::argzero(), but the shell's $0 read still goes \
-                through ShellExecutor's argv handling. Re-enable once \
-                GSU dispatch is unified."]
     fn dollar_zero_default_argv0() {
-        assert_parity("echo $0");
+        // $0 in `-c` mode = argv[0] of the shell binary itself —
+        // the two shells have different binary paths so byte-equal
+        // assert_parity won't work. Verify equivalence: both
+        // produce a non-empty value whose basename matches the
+        // expected shell name.
+        if !zsh_available() {
+            return;
+        }
+        let z = run_zsh("echo $0");
+        let r = run_zshrs("echo $0");
+        let zbase = std::path::Path::new(z.stdout.trim())
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        let rbase = std::path::Path::new(r.stdout.trim())
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        assert_eq!(zbase, "zsh", "zsh basename: {:?}", z.stdout);
+        assert_eq!(rbase, "zshrs", "zshrs basename: {:?}", r.stdout);
+        assert_eq!(z.exit, r.exit);
     }
 
     #[test]
@@ -264,13 +281,11 @@ mod params_special_vars {
     }
 
     #[test]
-    #[ignore = "$_ requires hooking command dispatch to update \
-                zunderscore_lock with the last argument of the previous \
-                command; the underscoregetfn callback is wired but the \
-                shell's exec path doesn't yet write to it. Re-enable \
-                once the command-completion hook lands."]
     fn dollar_underscore_after_command() {
-        // underscoregetfn returns last command's last argument.
+        // $_ — last argument of the previous command. Both shells
+        // route reads through underscoregetfn → zunderscore_lock;
+        // the writer side updates the lock from the command-dispatch
+        // hook installed in exec.rs.
         assert_parity(r#"echo first arg; echo "_=$_""#);
     }
 }

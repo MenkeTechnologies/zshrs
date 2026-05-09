@@ -769,13 +769,33 @@ pub fn zshrs_main() {
             no_rcs_flag,
             &option_settings,
         );
-        // In `-c` mode zsh sets `$0` to argv[0] verbatim — when
-        // invoked as `/bin/zsh -c '...'` it's the full path; when
-        // invoked as `zsh -c '...'` it's the basename. Mirror by
-        // passing argv[0] through unchanged (was previously
-        // basename-stripped, which lost the full path zsh exposes).
-        let zero = args[0].clone();
+        // POSIX `sh -c script [name [args...]]` semantics
+        // (Src/init.c:271 + 479): the next non-option arg AFTER the
+        // command string becomes $0; remaining args become $1, $2, …
+        // When no name is supplied, $0 falls back to argv[0] (the
+        // binary path) — matching `zsh -c '...'`'s behavior of
+        // exposing the full path of the shell binary.
+        let zero = if args.len() > 3 {
+            // `zshrs -c 'cmd' name args...` — args layout after the
+            // --zsh / -f / -x filter at line 684 is:
+            //   args[0] = binary path
+            //   args[1] = "-c"
+            //   args[2] = the command string
+            //   args[3] = $0 name
+            //   args[4..] = $1, $2, …
+            executor.positional_params = args[4..].to_vec();
+            args[3].clone()
+        } else {
+            args[0].clone()
+        };
         executor.variables.insert("0".to_string(), zero.clone());
+        // Wire the GSU dispatch: `argzerogetfn` reads
+        // `utils::argzero()` which returns this value via
+        // `lookup_special_var("0")`. Without `set_argzero`, the GSU
+        // dispatch returns None and reads fall back to
+        // `executor.variables`, but the explicit-name case above
+        // depends on the GSU side knowing the value too.
+        zsh::ported::utils::set_argzero(Some(zero.clone()));
 
         // Per Src/init.c:479 — `-c` mode hardcodes
         //   `scriptname = scriptfilename = ztrdup("zsh")`

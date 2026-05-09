@@ -9510,6 +9510,12 @@ impl crate::ported::exec::ShellExecutor {
             return self.last_status;
         }
         let rest_vec: Vec<String> = rest.to_vec();
+        // Update `$_` with the just-arriving argv so the next command
+        // reads `_=<last_arg>`. Mirrors C zsh's writeback in
+        // `execcmd_exec` (Src/exec.c). Per `args.last()` semantics,
+        // when invoked as `cmd a b c`, `$_` becomes "c" — for a bare
+        // command with no args, `$_` becomes the command name itself.
+        crate::ported::params::set_zunderscore(args);
 
         // Builtins not in fusevm's name→id table fall through to
         // host.exec. Catch them here before the OS-level exec attempts
