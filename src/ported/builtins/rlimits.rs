@@ -31,7 +31,8 @@ use libc::{
     RLIMIT_DATA, RLIMIT_FSIZE, RLIMIT_NOFILE, RLIMIT_STACK, RLIM_INFINITY, RLIM_NLIMITS,
 };
 
-use crate::ported::utils::zwarnnam;
+use crate::ported::utils::{zstrtol, zwarnnam};
+use crate::ported::zsh_h::{module, options, OPT_ISSET};
 
 // =====================================================================
 // Port of `enum zlimtype` from Src/Builtins/rlimits.c:35.
@@ -746,42 +747,60 @@ fn setlimits(_nam: &str) -> i32 {
 
 /// Port of `bin_limit()` from `Src/Builtins/rlimits.c:519`.
 ///
-/// `limit [-h] [-s] [resource [value]]…`. `-h` shows/sets hard
-/// limits; `-s` flushes pending (hard/soft) changes via
-/// `setrlimit(2)`. Without args, displays all current limits.
+/// C signature mirrored verbatim:
+/// ```c
+/// static int
+/// bin_limit(char *nam, char **argv, Options ops, UNUSED(int func))
+/// ```
+/// `Options ops` becomes `&[bool; 256]` (the `OPT_ISSET` table from
+/// `zsh.h:1396`); `char **argv` becomes `&[String]`; `UNUSED(int func)`
+/// keeps the parameter for callsite compatibility.
 #[cfg(unix)]
-pub(crate) fn bin_limit(nam: &str, argv: &[String], ops_h: bool, ops_s: bool) -> i32 {
+pub(crate) fn bin_limit(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 {
+    // c:521-524 — locals
+    let hard: bool;
+    let mut limnum: i32;
+    let mut lim: i32;
+    let mut val: rlim_t;
+    let mut ret: i32 = 0;
+
     ensure_limits_initialized();
     set_resinfo();
-    let hard = ops_h;
-    if ops_s && argv.is_empty() {
-        return setlimits(nam);
+
+    hard = OPT_ISSET(ops, b'h'); // c:526
+    if OPT_ISSET(ops, b's') && argv.is_empty() {
+        return setlimits(""); // c:527-528 — C passes NULL
     }
+    /* without arguments, display limits */ // c:529
     if argv.is_empty() {
-        return showlimits(nam, hard, -1);
+        return showlimits(nam, hard, -1); // c:531
     }
-    let mut idx = 0usize;
-    let mut ret = 0;
-    while idx < argv.len() {
-        let s = argv[idx].as_str();
-        idx += 1;
-        let lim: i32 = if s.as_bytes().first().map(|c| c.is_ascii_digit()).unwrap_or(false) {
-            s.parse().unwrap_or(0)
+    let mut argi = argv.iter(); // emulate `while ((s = *argv++))`
+    while let Some(s_owned) = argi.next() {
+        let s: &str = s_owned.as_str(); // c:532
+        let sb = s.as_bytes();
+        // Search for the appropriate resource name. (c:533-547)
+        if !sb.is_empty() && sb[0].is_ascii_digit() { // c:536 idigit(*s)
+            // c:538 — lim = (int)zstrtol(s, NULL, 10);
+            lim = zstrtol(s, 10).0 as i32;
         } else {
+            // c:541-547
+            lim = -1;
+            limnum = 0;
             let resinfo_lock = RESINFO.get().unwrap();
             let v = resinfo_lock.lock().unwrap();
-            let mut found: i32 = -1;
-            for (limnum, info) in v.iter().enumerate() {
-                if info.name.starts_with(s) {
-                    if found != -1 {
-                        found = -2;
+            while (limnum as usize) < v.len() {
+                if v[limnum as usize].name.starts_with(s) { // c:542 strncmp
+                    if lim != -1 {
+                        lim = -2;
                     } else {
-                        found = limnum as i32;
+                        lim = limnum;
                     }
                 }
+                limnum += 1;
             }
-            found
-        };
+        }
+        // c:548-555
         if lim < 0 {
             zwarnnam(
                 nam,
@@ -793,35 +812,41 @@ pub(crate) fn bin_limit(nam: &str, argv: &[String], ops_h: bool, ops_s: bool) ->
             );
             return 1;
         }
-        if idx >= argv.len() {
-            return showlimits(nam, hard, lim);
-        }
-        let s = argv[idx].as_str();
-        idx += 1;
-        let val: rlim_t;
-        if (lim as usize) >= nlimits() {
-            let (v, consumed) = zstrtorlimt(s, 10);
-            if consumed != s.len() {
-                zwarnnam(nam, &format!("unknown scaling factor: {}", &s[consumed..]));
+        /* without value for limit, display the current limit */ // c:556
+        let s_val: &str = match argi.next() {
+            None => return showlimits(nam, hard, lim), // c:557-558
+            Some(t) => t.as_str(),
+        };
+        if (lim as usize) >= RLIM_NLIMITS as usize { // c:559
+            let (v, consumed) = zstrtorlimt(s_val, 10); // c:561
+            if consumed != s_val.len() { // c:562 *s
+                /* unknown limit, no idea how to scale */ // c:564
+                zwarnnam(
+                    nam,
+                    &format!("unknown scaling factor: {}", &s_val[consumed..]),
+                );
                 return 1;
             }
             val = v;
         } else {
-            let info = lookup_resinfo(lim).unwrap();
-            match info.r#type {
+            // c:569 — resinfo[lim]->type
+            let resinfo_lock = RESINFO.get().unwrap();
+            let info_type = resinfo_lock.lock().unwrap()[lim as usize].r#type;
+            match info_type {
                 zlimtype::ZLIMTYPE_TIME => {
-                    let (mut v, consumed) = zstrtorlimt(s, 10);
-                    let rest = &s[consumed..];
-                    if !rest.is_empty() {
-                        let rb = rest.as_bytes();
-                        if (rb[0] == b'h' || rb[0] == b'H') && rest.len() == 1 {
-                            v *= 3600;
-                        } else if (rb[0] == b'm' || rb[0] == b'M') && rest.len() == 1 {
-                            v *= 60;
-                        } else if rb[0] == b':' {
-                            let (more, _consumed2) = zstrtorlimt(&rest[1..], 10);
-                            v = v * 60 + more;
-                        } else {
+                    /* time-type resource (c:570-573) */
+                    let (mut v, consumed) = zstrtorlimt(s_val, 10); // c:574
+                    let rest = &s_val[consumed..];
+                    let rb = rest.as_bytes();
+                    if !rest.is_empty() { // c:575
+                        if (rb[0] == b'h' || rb[0] == b'H') && rb.len() == 1 { // c:576
+                            v = v.saturating_mul(3600);
+                        } else if (rb[0] == b'm' || rb[0] == b'M') && rb.len() == 1 { // c:578
+                            v = v.saturating_mul(60);
+                        } else if rb[0] == b':' { // c:580
+                            let (more, _) = zstrtorlimt(&rest[1..], 10);
+                            v = v.saturating_mul(60).saturating_add(more); // c:581
+                        } else { // c:582
                             zwarnnam(nam, &format!("unknown scaling factor: {}", rest));
                             return 1;
                         }
@@ -831,25 +856,29 @@ pub(crate) fn bin_limit(nam: &str, argv: &[String], ops_h: bool, ops_s: bool) ->
                 zlimtype::ZLIMTYPE_NUMBER
                 | zlimtype::ZLIMTYPE_UNKNOWN
                 | zlimtype::ZLIMTYPE_MICROSECONDS => {
-                    let (v, consumed) = zstrtorlimt(s, 10);
-                    if consumed == 0 {
-                        zwarnnam(nam, "limit must be a number");
+                    /* pure numeric resource (c:587-597) */
+                    let t = s_val; // c:592
+                    let (v, consumed) = zstrtorlimt(t, 10); // c:593
+                    if consumed == 0 { // c:594 s == t
+                        zwarnnam(nam, "limit must be a number"); // c:595
                         return 1;
                     }
                     val = v;
                 }
                 zlimtype::ZLIMTYPE_MEMORY => {
-                    let (mut v, consumed) = zstrtorlimt(s, 10);
-                    let rest = &s[consumed..];
-                    if rest.is_empty() || (rest.len() == 1 && (rest == "k" || rest == "K")) {
-                        if v != RLIM_INFINITY {
-                            v *= 1024;
+                    /* memory-type resource (c:598-612) */
+                    let (mut v, consumed) = zstrtorlimt(s_val, 10); // c:601
+                    let rest = &s_val[consumed..];
+                    let rb = rest.as_bytes();
+                    if rest.is_empty() || ((rb[0] == b'k' || rb[0] == b'K') && rb.len() == 1) { // c:602
+                        if v != RLIM_INFINITY { // c:603
+                            v = v.saturating_mul(1024); // c:604
                         }
-                    } else if rest.len() == 1 && (rest == "M" || rest == "m") {
-                        v *= 1024 * 1024;
-                    } else if rest.len() == 1 && (rest == "G" || rest == "g") {
-                        v *= 1024 * 1024 * 1024;
-                    } else {
+                    } else if (rb[0] == b'M' || rb[0] == b'm') && rb.len() == 1 { // c:605
+                        v = v.saturating_mul(1024 * 1024); // c:606
+                    } else if (rb[0] == b'G' || rb[0] == b'g') && rb.len() == 1 { // c:607
+                        v = v.saturating_mul(1024 * 1024 * 1024); // c:608
+                    } else { // c:609
                         zwarnnam(nam, &format!("unknown scaling factor: {}", rest));
                         return 1;
                     }
@@ -857,17 +886,19 @@ pub(crate) fn bin_limit(nam: &str, argv: &[String], ops_h: bool, ops_s: bool) ->
                 }
             }
         }
-        if do_limit(nam, lim, val, hard, !hard, ops_s) != 0 {
-            ret += 1;
+        // c:614 — do_limit(nam, lim, val, hard, !hard, OPT_ISSET(ops,'s'))
+        if do_limit(nam, lim, val, hard, !hard, OPT_ISSET(ops, b's')) != 0 {
+            ret += 1; // c:615
         }
     }
-    ret
+    ret // c:617
 }
 
 #[cfg(not(unix))]
-pub(crate) fn bin_limit(_nam: &str, _argv: &[String], _ops_h: bool, _ops_s: bool) -> i32 {
+pub(crate) fn bin_limit(_nam: &str, _argv: &[String], _ops: &options, _func: i32) -> i32 {
     0
 }
+
 
 // =====================================================================
 // Port of `do_unlimit()` from Src/Builtins/rlimits.c:622.
@@ -955,63 +986,80 @@ pub(crate) fn do_unlimit(
 // =====================================================================
 
 /// Port of `bin_unlimit()` from `Src/Builtins/rlimits.c:670`.
+///
+/// C signature mirrored verbatim:
+/// ```c
+/// static int
+/// bin_unlimit(char *nam, char **argv, Options ops, UNUSED(int func))
+/// ```
 #[cfg(unix)]
-pub(crate) fn bin_unlimit(nam: &str, argv: &[String], ops_h: bool, ops_s: bool) -> i32 {
+pub(crate) fn bin_unlimit(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 {
+    // c:672-674 — locals
+    let hard: bool;
+    let mut limnum: i32;
+    let mut lim: i32;
+    let mut ret: i32 = 0;
+    let euid: libc::uid_t = unsafe { geteuid() };
+
     ensure_limits_initialized();
     set_resinfo();
-    let hard = ops_h;
-    let mut ret: i32 = 0;
-    let euid = unsafe { geteuid() };
+
+    hard = OPT_ISSET(ops, b'h'); // c:676
+    /* Without arguments, remove all limits. */ // c:677
     if argv.is_empty() {
-        for limnum in 0..nlimits() {
-            if hard {
+        // c:679 — for (limnum = 0; limnum != RLIM_NLIMITS; limnum++)
+        limnum = 0;
+        while limnum != RLIM_NLIMITS as i32 {
+            if hard { // c:680
                 let cur_max = CURRENT_LIMITS
                     .get()
                     .and_then(|l| l.lock().ok())
-                    .map(|v| v[limnum].rlim_max)
+                    .map(|v| v[limnum as usize].rlim_max)
                     .unwrap_or(0);
-                if euid != 0 && cur_max != RLIM_INFINITY {
-                    ret += 1;
-                } else if let Some(lock) = LIMITS.get() {
+                if euid != 0 && cur_max != RLIM_INFINITY { // c:681
+                    ret += 1; // c:682
+                } else if let Some(lock) = LIMITS.get() { // c:684
                     let mut v = lock.lock().unwrap();
-                    v[limnum].rlim_max = RLIM_INFINITY;
+                    v[limnum as usize].rlim_max = RLIM_INFINITY;
                 }
-            } else if let Some(lock) = LIMITS.get() {
+            } else if let Some(lock) = LIMITS.get() { // c:685-686
                 let mut v = lock.lock().unwrap();
-                v[limnum].rlim_cur = v[limnum].rlim_max;
+                v[limnum as usize].rlim_cur = v[limnum as usize].rlim_max;
             }
+            limnum += 1;
         }
-        if ops_s {
-            ret += setlimits(nam);
+        if OPT_ISSET(ops, b's') { // c:688
+            ret += setlimits(nam); // c:689
         }
-        if ret != 0 {
-            zwarnnam(nam, "can't remove hard limits");
+        if ret != 0 { // c:690
+            zwarnnam(nam, "can't remove hard limits"); // c:691
         }
     } else {
-        for arg in argv {
-            let s = arg.as_str();
-            let lim: i32 = if s
-                .as_bytes()
-                .first()
-                .map(|c| c.is_ascii_digit())
-                .unwrap_or(false)
-            {
-                s.parse().unwrap_or(0)
+        // c:693 — for (; *argv; argv++)
+        let mut argi = argv.iter();
+        while let Some(arg) = argi.next() {
+            let s: &str = arg.as_str();
+            let sb = s.as_bytes();
+            // c:698-707 — Search for the appropriate resource name
+            if !sb.is_empty() && sb[0].is_ascii_digit() { // c:698 idigit(**argv)
+                lim = zstrtol(s, 10).0 as i32; // c:699
             } else {
+                lim = -1; // c:701
+                limnum = 0;
                 let resinfo_lock = RESINFO.get().unwrap();
                 let v = resinfo_lock.lock().unwrap();
-                let mut found: i32 = -1;
-                for (limnum, info) in v.iter().enumerate() {
-                    if info.name.starts_with(s) {
-                        if found != -1 {
-                            found = -2;
+                while (limnum as usize) < v.len() {
+                    if v[limnum as usize].name.starts_with(s) { // c:702 strncmp
+                        if lim != -1 {
+                            lim = -2; // c:704
                         } else {
-                            found = limnum as i32;
+                            lim = limnum; // c:706
                         }
                     }
+                    limnum += 1;
                 }
-                found
-            };
+            }
+            // c:711-715
             if lim < 0 {
                 zwarnnam(
                     nam,
@@ -1022,16 +1070,16 @@ pub(crate) fn bin_unlimit(nam: &str, argv: &[String], ops_h: bool, ops_s: bool) 
                     },
                 );
                 return 1;
-            } else if do_unlimit(nam, lim, hard, !hard, ops_s, euid) != 0 {
-                ret += 1;
+            } else if do_unlimit(nam, lim, hard, !hard, OPT_ISSET(ops, b's'), euid) != 0 {
+                ret += 1; // c:717-719
             }
         }
     }
-    ret
+    ret // c:722
 }
 
 #[cfg(not(unix))]
-pub(crate) fn bin_unlimit(_nam: &str, _argv: &[String], _ops_h: bool, _ops_s: bool) -> i32 {
+pub(crate) fn bin_unlimit(_nam: &str, _argv: &[String], _ops: &options, _func: i32) -> i32 {
     0
 }
 
@@ -1041,181 +1089,238 @@ pub(crate) fn bin_unlimit(_nam: &str, _argv: &[String], _ops_h: bool, _ops_s: bo
 
 /// Port of `bin_ulimit()` from `Src/Builtins/rlimits.c:729`.
 ///
-/// POSIX-flavored `ulimit`. Recognises `-H`/`-S`/`-a`/`-N <num>` and
-/// per-resource short flags resolved via `find_resource()`.
+/// C signature mirrored verbatim:
+/// ```c
+/// static int
+/// bin_ulimit(char *name, char **argv, UNUSED(Options ops), UNUSED(int func))
+/// ```
+/// `Options ops` and `int func` are UNUSED in C; kept as parameters
+/// for callsite compatibility.
 #[cfg(unix)]
-pub(crate) fn bin_ulimit(name: &str, argv: &[String]) -> i32 {
+pub(crate) fn bin_ulimit(
+    name: &str,
+    argv: &[String],
+    _ops: &options,
+    _func: i32,
+) -> i32 {
+    // c:731 — locals
+    let mut res: i32;
+    let mut resmask: u64 = 0;
+    let mut hard: bool = false;
+    let mut soft: bool = false;
+    let mut nres: i32 = 0;
+    let mut all: bool = false;
+    let mut ret: i32 = 0;
+
     ensure_limits_initialized();
     set_resinfo();
-    let mut argv_idx = 0usize;
-    let mut resmask: u64 = 0;
-    let mut hard = false;
-    let mut soft = false;
-    let mut nres = 0;
-    let mut all = false;
-    let mut ret = 0;
+
+    // C uses `do { ... } while (*argv);` with `argv++` increments
+    // inline. We emulate by carrying a cursor index over argv.
+    let mut argi: usize = 0;
     loop {
-        let mut res: i32 = -1;
-        let options = argv.get(argv_idx).cloned();
-        if let Some(ref o) = options {
+        // c:735 — options = *argv;
+        let options: Option<&String> = argv.get(argi);
+        // c:736 — if (options && *options == '-' && !options[1])
+        if let Some(o) = options {
             if o == "-" {
-                zwarnnam(name, "missing option letter");
+                zwarnnam(name, "missing option letter"); // c:737
                 return 1;
             }
         }
-        if let Some(ref o) = options {
-            if o.starts_with('-') {
-                argv_idx += 1;
-                let mut chars: Vec<char> = o.chars().skip(1).collect();
-                let mut i = 0usize;
-                while i < chars.len() {
-                    let c = chars[i];
-                    res = -1;
-                    match c {
-                        'H' => {
-                            hard = true;
-                            i += 1;
-                            continue;
-                        }
-                        'S' => {
-                            soft = true;
-                            i += 1;
-                            continue;
-                        }
-                        'N' => {
-                            let number = if i + 1 < chars.len() {
-                                let s: String = chars[i + 1..].iter().collect();
-                                i = chars.len();
-                                s
-                            } else if argv_idx < argv.len() {
-                                let s = argv[argv_idx].clone();
-                                argv_idx += 1;
-                                s
-                            } else {
-                                zwarnnam(name, "number required after -N");
-                                return 1;
-                            };
-                            match number.parse::<i32>() {
-                                Ok(n) => res = n,
-                                Err(_) => {
-                                    zwarnnam(name, &format!("invalid number: {}", number));
-                                    return 1;
-                                }
-                            }
-                            // fake: pretend just finished an option
-                            chars.clear();
-                        }
-                        'a' => {
-                            if resmask != 0 {
-                                zwarnnam(name, "no limits allowed with -a");
-                                return 1;
-                            }
-                            all = true;
-                            resmask = (1u64 << nlimits()) - 1;
-                            nres = nlimits() as i32;
-                            i += 1;
-                            continue;
-                        }
-                        _ => {
-                            res = find_resource(c);
-                            if res < 0 {
-                                zwarnnam(name, &format!("bad option: -{}", c));
-                                return 1;
-                            }
-                        }
+        res = -1; // c:740
+        // c:741 — if (options && *options == '-')
+        if options.map(|o| o.starts_with('-') && o.len() > 1).unwrap_or(false) {
+            argi += 1; // c:742 argv++
+            let opt_str = options.unwrap().clone();
+            let opt_bytes = opt_str.as_bytes();
+            let mut p: usize = 1; // skip leading '-'  ; emulates `while (*++options)` (c:743)
+            while p < opt_bytes.len() {
+                let mut c = opt_bytes[p];
+                // c:744 — if (*options == Meta) *++options ^= 32;
+                // (Meta-character handling skipped — argv strings are
+                // already metafied in zsh; the Rust port doesn't model
+                // Meta yet. See zsh.h:Meta = 0x83.)
+                res = -1; // c:746
+                let mut continue_outer = false;
+                match c {
+                    b'H' => { // c:748
+                        hard = true;
+                        p += 1;
+                        continue_outer = true;
                     }
-                    if i + 1 < chars.len() {
-                        resmask |= 1u64 << res;
-                        nres += 1;
+                    b'S' => { // c:751
+                        soft = true;
+                        p += 1;
+                        continue_outer = true;
                     }
-                    if all && res != -1 {
-                        zwarnnam(name, "no limits allowed with -a");
-                        return 1;
-                    }
-                    i += 1;
-                }
-            }
-        }
-        let next = argv.get(argv_idx);
-        match next {
-            None | Some(_) if next.is_none() || next.unwrap().starts_with('-') => {
-                if res < 0 {
-                    if next.is_some() || nres != 0 {
-                        if next.is_none() {
-                            break;
+                    b'N' => { // c:754
+                        // c:755-762 — number after -N
+                        let number: String = if p + 1 < opt_bytes.len() {
+                            let n = std::str::from_utf8(&opt_bytes[p + 1..])
+                                .unwrap_or("")
+                                .to_string();
+                            n
+                        } else if argi < argv.len() {
+                            let n = argv[argi].clone();
+                            argi += 1;
+                            n
+                        } else {
+                            zwarnnam(name, "number required after -N"); // c:760
+                            return 1;
+                        };
+                        // c:763 — res = (int)zstrtol(number, &eptr, 10);
+                        let nb = number.as_bytes();
+                        let mut consumed = 0;
+                        let mut acc: i64 = 0;
+                        while consumed < nb.len() && nb[consumed].is_ascii_digit() {
+                            acc = acc.saturating_mul(10).saturating_add((nb[consumed] - b'0') as i64);
+                            consumed += 1;
                         }
-                        continue;
-                    } else {
-                        res = RLIMIT_FSIZE as i32;
+                        if consumed != nb.len() { // c:764 *eptr
+                            zwarnnam(name, &format!("invalid number: {}", number));
+                            return 1;
+                        }
+                        res = acc as i32;
+                        // c:771 — fake it so it looks like we just finished an option
+                        p = opt_bytes.len();
+                    }
+                    b'a' => { // c:774
+                        if resmask != 0 {
+                            zwarnnam(name, "no limits allowed with -a"); // c:776
+                            return 1;
+                        }
+                        all = true;
+                        resmask = (1u64 << RLIM_NLIMITS as i32) - 1; // c:780
+                        nres = RLIM_NLIMITS as i32; // c:781
+                        p += 1;
+                        continue_outer = true;
+                    }
+                    _ => { // c:783
+                        res = find_resource(c as char); // c:784
+                        if res < 0 {
+                            /* unrecognised limit */ // c:786
+                            zwarnnam(name, &format!("bad option: -{}", c as char));
+                            return 1;
+                        }
                     }
                 }
-                resmask |= 1u64 << res;
-                nres += 1;
-                if next.is_none() {
-                    break;
-                } else {
+                if continue_outer {
                     continue;
                 }
+                if p + 1 < opt_bytes.len() { // c:792 options[1]
+                    resmask |= 1u64 << res; // c:793
+                    nres += 1; // c:794
+                }
+                if all && res != -1 { // c:796
+                    zwarnnam(name, "no limits allowed with -a"); // c:797
+                    return 1;
+                }
+                p += 1;
+                // Handle c:763 case where -N consumed the rest:
+                if c == b'N' {
+                    // already advanced past
+                }
+                // Actually, we need to break out of inner `while` and
+                // continue outer do-while when we hit end of `options`.
+                let _ = c; // suppress unused if N path
+                c = 0;     // discard
+                let _ = c;
             }
-            _ => {}
         }
-        if all {
-            zwarnnam(name, "no arguments allowed after -a");
+        // c:802 — if (!*argv || **argv == '-')
+        let next_is_dash = argv
+            .get(argi)
+            .map(|a| a.starts_with('-'))
+            .unwrap_or(true);
+        if next_is_dash {
+            if res < 0 { // c:803
+                if argi < argv.len() || nres != 0 { // c:804
+                    if argi >= argv.len() {
+                        // *argv == NULL, fall through to break (do-while)
+                        break;
+                    }
+                    continue; // c:805
+                } else {
+                    res = RLIMIT_FSIZE as i32; // c:807
+                }
+            }
+            resmask |= 1u64 << res; // c:809
+            nres += 1; // c:810
+            if argi >= argv.len() {
+                break; // do-while terminates
+            }
+            continue; // c:811
+        }
+        if all { // c:813
+            zwarnnam(name, "no arguments allowed after -a"); // c:814
             return 1;
         }
-        if res < 0 {
-            res = RLIMIT_FSIZE as i32;
+        if res < 0 { // c:817
+            res = RLIMIT_FSIZE as i32; // c:818
         }
-        let arg = argv[argv_idx].clone();
-        argv_idx += 1;
+        // c:819 — if (strcmp(*argv, "unlimited"))
+        let arg = argv[argi].clone();
+        argi += 1; // c:851 argv++
         if arg != "unlimited" {
+            /* set limit to specified value */ // c:820
             let limit: rlim_t;
-            if arg == "hard" {
-                let mut vals = rlimit {
-                    rlim_cur: 0,
-                    rlim_max: 0,
-                };
-                if unsafe { getrlimit(res as _, &mut vals) } < 0 {
-                    zwarnnam(name, &format!("can't read limit: {}", std::io::Error::last_os_error()));
+            if arg == "hard" { // c:823
+                let mut vals = rlimit { rlim_cur: 0, rlim_max: 0 }; // c:824
+                if unsafe { getrlimit(res as _, &mut vals) } < 0 { // c:826
+                    zwarnnam(
+                        name,
+                        &format!("can't read limit: {}", std::io::Error::last_os_error()),
+                    );
                     return 1;
                 }
-                limit = vals.rlim_max;
+                limit = vals.rlim_max; // c:833
             } else {
-                let (mut v, consumed) = zstrtorlimt(&arg, 10);
-                if consumed != arg.len() {
-                    zwarnnam(name, &format!("invalid number: {}", arg));
+                let (mut v, consumed) = zstrtorlimt(&arg, 10); // c:836
+                if consumed != arg.len() { // c:837 *eptr
+                    zwarnnam(name, &format!("invalid number: {}", arg)); // c:838
                     return 1;
                 }
-                if (res as usize) < nlimits() {
-                    if let Some(info) = lookup_resinfo(res) {
-                        v = v.saturating_mul(info.unit as rlim_t);
-                    }
+                /* scale appropriately */ // c:841
+                if (res as usize) < RLIM_NLIMITS as usize { // c:842
+                    let resinfo_lock = RESINFO.get().unwrap();
+                    let unit = resinfo_lock.lock().unwrap()[res as usize].unit as rlim_t;
+                    v = v.saturating_mul(unit); // c:843
                 }
                 limit = v;
             }
-            if do_limit(name, res, limit, hard, soft, true) != 0 {
-                ret += 1;
+            if do_limit(name, res, limit, hard, soft, true) != 0 { // c:845
+                ret += 1; // c:846
             }
-        } else if do_unlimit(name, res, hard, soft, true, unsafe { geteuid() }) != 0 {
-            ret += 1;
+        } else { // c:847
+            if do_unlimit(name, res, hard, soft, true, unsafe { geteuid() }) != 0 { // c:848
+                ret += 1; // c:849
+            }
         }
-        if argv_idx >= argv.len() {
+        // c:852 — } while (*argv);
+        if argi >= argv.len() {
             break;
         }
     }
-    let mut res = 0;
+    // c:853 — for (res = 0; resmask; res++, resmask >>= 1)
+    res = 0;
     while resmask != 0 {
-        if resmask & 1 != 0 && printulimit(name, res, hard, nres > 1) != 0 {
-            ret += 1;
+        if (resmask & 1) != 0 && printulimit(name, res, hard, nres > 1) != 0 { // c:854
+            ret += 1; // c:855
         }
         res += 1;
         resmask >>= 1;
     }
-    ret
+    ret // c:856
 }
 
 #[cfg(not(unix))]
-pub(crate) fn bin_ulimit(_name: &str, _argv: &[String]) -> i32 {
+pub(crate) fn bin_ulimit(
+    _name: &str,
+    _argv: &[String],
+    _ops: &options,
+    _func: i32,
+) -> i32 {
     0
 }
 
@@ -1223,108 +1328,130 @@ pub(crate) fn bin_ulimit(_name: &str, _argv: &[String]) -> i32 {
 // Module entry points (rlimits.c:883-924).
 // =====================================================================
 
-/// Port of `setup_()` from `Src/Builtins/rlimits.c:883`. Module load
-/// hook — C returns 0 unconditionally.
-pub fn setup_() -> i32 {
-    0
-}
+// =====================================================================
+// static struct builtin bintab[]                                     c:867
+// static struct features module_features                             c:873
+//
+// Static dispatch tables consumed by the C module loader. The
+// `module_features` table below is referenced by features_/enables_/
+// cleanup_ and built lazily on first access (Rust can't init
+// module_features as a `static` literal because Builtin contains
+// fn-pointer fields).
+// =====================================================================
 
-/// Port of `features_()` from `Src/Builtins/rlimits.c:890`. Reports
-/// the module's feature array. C side calls `featuresarray()`; the
-/// Rust port has no Module type yet — return 0 to match the
-/// success-on-no-op convention.
-pub fn features_() -> i32 {
-    0
-}
+use crate::ported::zsh_h::features as features_t;
 
-/// Port of `enables_()` from `Src/Builtins/rlimits.c:898`. C calls
-/// `handlefeatures()`; Rust port returns 0 pending the module-loader
-/// port.
-pub fn enables_() -> i32 {
-    0
-}
+// Backing store for `module_features` — built on first call to a
+// loader hook. Bucket-2 shared global per the same rationale as
+// LIMITS/RESINFO above.
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-/// Port of `boot_()` from `Src/Builtins/rlimits.c:905`. C calls
-/// `set_resinfo()` then returns 0.
-pub fn boot_() -> i32 {
-    set_resinfo();
-    0
-}
-
-/// Port of `cleanup_()` from `Src/Builtins/rlimits.c:913`. C calls
-/// `free_resinfo()` then `setfeatureenables()`. Rust port skips the
-/// latter pending the module-loader port.
-pub fn cleanup_() -> i32 {
-    free_resinfo();
-    0
-}
-
-/// Port of `finish_()` from `Src/Builtins/rlimits.c:921`. C returns
-/// 0 unconditionally.
-pub fn finish_() -> i32 {
-    0
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,                                                // c:874 bintab
+            bn_size: 3,                                                   // c:874 sizeof(bintab)/sizeof(*bintab) — limit, ulimit, unlimit
+            cd_list: None,                                                // c:875
+            cd_size: 0,
+            mf_list: None,                                                // c:876
+            mf_size: 0,
+            pd_list: None,                                                // c:877
+            pd_size: 0,
+            n_abstract: 0,                                                // c:878
+        })
+    })
 }
 
 // =====================================================================
-// ShellExecutor bridge — sanctioned PORT.md exception. The Rust
-// builtin dispatcher invokes these methods to reach the canonical
-// port above. Each is a thin wrapper that parses the leading
-// `-h`/`-s`/`-H`/`-S`/`-a` flag, unpacks `args` into `argv`, and
-// delegates to the corresponding free fn.
+// setup_(UNUSED(Module m))                                           c:881
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
-    /// `ulimit` builtin entry. Bridge to `bin_ulimit()` above.
-    pub(crate) fn bin_ulimit(&self, args: &[String]) -> i32 {
-        bin_ulimit("ulimit", args)
-    }
-
-    /// `limit` builtin entry. Bridge to `bin_limit()` above. Parses
-    /// the leading `-h`/`-s` flag (matching C's OPT_ISSET in
-    /// rlimits.c:519).
-    pub(crate) fn bin_limit(&self, args: &[String]) -> i32 {
-        let mut hard = false;
-        let mut soft_set = false;
-        let mut start = 0usize;
-        for arg in args.iter() {
-            match arg.as_str() {
-                "-h" => {
-                    hard = true;
-                    start += 1;
-                }
-                "-s" => {
-                    soft_set = true;
-                    start += 1;
-                }
-                _ => break,
-            }
-        }
-        bin_limit("limit", &args[start..], hard, soft_set)
-    }
-
-    /// `unlimit` builtin entry. Bridge to `bin_unlimit()` above.
-    /// Parses leading `-h`/`-s` (matching C's OPT_ISSET in
-    /// rlimits.c:670).
-    pub(crate) fn bin_unlimit(&self, args: &[String]) -> i32 {
-        let mut hard = false;
-        let mut soft_set = false;
-        let mut start = 0usize;
-        for arg in args.iter() {
-            match arg.as_str() {
-                "-h" => {
-                    hard = true;
-                    start += 1;
-                }
-                "-s" => {
-                    soft_set = true;
-                    start += 1;
-                }
-                _ => break,
-            }
-        }
-        bin_unlimit("unlimit", &args[start..], hard, soft_set)
-    }
+/// Port of `setup_()` from `Src/Builtins/rlimits.c:883`.
+pub fn setup_(_m: *const module) -> i32 {
+    0                                                                    // c:885
 }
+
+/// Port of `features_()` from `Src/Builtins/rlimits.c:890`.
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, module_features());                     // c:892
+    0                                                                    // c:893
+}
+
+/// Port of `enables_()` from `Src/Builtins/rlimits.c:898`.
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, module_features(), enables)                        // c:900
+}
+
+/// Port of `boot_()` from `Src/Builtins/rlimits.c:905`.
+/// C body: `set_resinfo(); return 0;`
+pub fn boot_(_m: *const module) -> i32 {
+    set_resinfo();                                                        // c:907
+    0                                                                    // c:908
+}
+
+/// Port of `cleanup_()` from `Src/Builtins/rlimits.c:913`.
+/// C body: `free_resinfo(); return setfeatureenables(m, &module_features, NULL);`
+pub fn cleanup_(m: *const module) -> i32 {
+    free_resinfo();                                                       // c:915
+    setfeatureenables(m, module_features(), None)                        // c:916
+}
+
+/// Port of `finish_()` from `Src/Builtins/rlimits.c:921`.
+pub fn finish_(_m: *const module) -> i32 {
+    0                                                                    // c:923
+}
+
+// =====================================================================
+// External fns from Src/module.c. Stubbed locally with C-faithful
+// signatures pending the module.c port from `&Module`/`&Features`
+// (CamelCase Rust-native) to `*const module`/`&Mutex<features>`.
+// =====================================================================
+
+// `featuresarray` lives in `Src/module.c:3275`. C signature:
+//   char **featuresarray(Module m, Features f);
+// Returns a NUL-terminated array of feature descriptors like "b:limit".
+// Stub builds the descriptor list inline since the existing
+// `crate::ported::module::featuresarray` takes wrong-typed args.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:limit".to_string(), "b:ulimit".to_string(), "b:unlimit".to_string()]
+}
+
+// `handlefeatures` lives in `Src/module.c:3370`. C signature:
+//   int handlefeatures(Module m, Features f, int **enables);
+// On NULL `*enables`, fills it with the current per-feature enable bits
+// via `getfeatureenables`. On non-NULL, calls `setfeatureenables`.
+fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() {
+        *enables = Some(getfeatureenables(m, f));
+    } else if let Some(e) = enables.as_ref() {
+        return setfeatureenables(m, f, Some(e));
+    }
+    0
+}
+
+// `getfeatureenables` lives in `Src/module.c:3314`. Stub returns
+// the bn_size + cd_size + mf_size + pd_size + n_abstract zero-vector
+// since no feature is enabled in the static-link path.
+fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
+    vec![0; total as usize]
+}
+
+// `setfeatureenables` lives in `Src/module.c:3445`. C disables every
+// registered feature via `*_addbuiltin/_addparamdef/etc` reverse calls.
+// Stub: no-op since static-link path doesn't register through the
+// runtime module loader.
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 {
+    0
+}
+
+// Bridge fns `ShellExecutor::bin_limit` / `bin_unlimit` /
+// `bin_ulimit` live in `src/extensions/ext_builtins.rs` (the
+// non-ported dispatcher layer). They construct a `struct options`
+// from the leading flag run and delegate to the free fns above.
 
 // =====================================================================
 // Tests

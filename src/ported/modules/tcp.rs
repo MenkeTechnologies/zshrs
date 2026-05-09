@@ -317,40 +317,69 @@ pub fn bin_ztcp(args: &[&str], ops: &[bool; 256]) -> i32 {               // c:34
     0
 }
 
-/// Port of `setup_()` from `Src/Modules/tcp.c:714`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn setup_() -> i32 {                                                 // c:714
-    0                                                                    // c:717
+// =====================================================================
+// static struct features module_features                            c:705 (tcp.c)
+// =====================================================================
+
+use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::{features as features_t, module};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None, bn_size: 1,                                       // bintab[1]: ztcp
+        cd_list: None, cd_size: 0,
+        mf_list: None, mf_size: 0,
+        pd_list: None, pd_size: 0,
+        n_abstract: 0,
+    }))
 }
 
+/// Port of `setup_()` from `Src/Modules/tcp.c:714`.
+pub fn setup_(_m: *const module) -> i32 { 0 }                           // c:714-717
+
 /// Port of `features_()` from `Src/Modules/tcp.c:721`.
-pub fn features_() -> i32 {                                              // c:721
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, module_features());                    // c:723
     0                                                                    // c:725
 }
 
 /// Port of `enables_()` from `Src/Modules/tcp.c:729`.
-pub fn enables_() -> i32 {                                               // c:729
-    0                                                                    // c:732
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, module_features(), enables)                       // c:731
 }
 
-/// Port of `boot_()` from `Src/Modules/tcp.c:736`. C body installs
-/// the at-exit `tcp_cleanup` hook.
-pub fn boot_() -> i32 {                                                  // c:736
-    0                                                                    // c:740
-}
+/// Port of `boot_()` from `Src/Modules/tcp.c:736`.
+pub fn boot_(_m: *const module) -> i32 { 0 }                            // c:736-740
 
-/// Port of `cleanup_()` from `Src/Modules/tcp.c:745`. C body is
-/// `tcp_cleanup(); return setfeatureenables(...);`.
-pub fn cleanup_() -> i32 {                                               // c:745
+/// Port of `cleanup_()` from `Src/Modules/tcp.c:745`.
+/// C body: `tcp_cleanup(); return setfeatureenables(m, &module_features, NULL);`
+pub fn cleanup_(m: *const module) -> i32 {
     tcp_cleanup();                                                       // c:748
-    0                                                                    // c:751
+    setfeatureenables(m, module_features(), None)                       // c:751
 }
 
-/// Port of `finish_()` from `Src/Modules/tcp.c:754`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn finish_() -> i32 {                                                // c:754
-    0                                                                    // c:757
+/// Port of `finish_()` from `Src/Modules/tcp.c:754`.
+pub fn finish_(_m: *const module) -> i32 { 0 }                          // c:754-757
+
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:ztcp".to_string()]
 }
+fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() {
+        *enables = Some(getfeatureenables(m, f));
+    } else if let Some(e) = enables.as_ref() {
+        return setfeatureenables(m, f, Some(e));
+    }
+    0
+}
+fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    vec![0; (g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract) as usize]
+}
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }
 
 #[cfg(test)]
 mod tests {

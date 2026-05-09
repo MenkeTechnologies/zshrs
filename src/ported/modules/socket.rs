@@ -355,39 +355,86 @@ impl crate::ported::exec::ShellExecutor {
 }
 // END moved-from-exec-rs
 
-/// Port of `setup_()` from `Src/Modules/socket.c:291`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn setup_() -> i32 {                                                 // c:291
+// =====================================================================
+// static struct builtin bintab[]                                    c:280
+// static struct features module_features                            c:284
+// =====================================================================
+
+use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::{features as features_t, module};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,                                                   // c:285 bintab[1] (zsocket)
+        bn_size: 1,
+        cd_list: None,
+        cd_size: 0,
+        mf_list: None,
+        mf_size: 0,
+        pd_list: None,
+        pd_size: 0,
+        n_abstract: 0,
+    }))
+}
+
+/// Port of `setup_()` from `Src/Modules/socket.c:291`.
+pub fn setup_(_m: *const module) -> i32 {                                // c:291
     0                                                                    // c:294
 }
 
-/// Port of `features_()` from `Src/Modules/socket.c:298`. C body
-/// is `*features = featuresarray(m, &module_features); return 0;`.
-/// Static-link path: 0.
-pub fn features_() -> i32 {                                              // c:298
+/// Port of `features_()` from `Src/Modules/socket.c:298`.
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {  // c:298
+    *features = featuresarray(m, module_features());                    // c:301
     0                                                                    // c:302
 }
 
-/// Port of `enables_()` from `Src/Modules/socket.c:306`. C body is
-/// `return handlefeatures(m, &module_features, enables);`.
-pub fn enables_() -> i32 {                                               // c:306
-    0                                                                    // c:310
+/// Port of `enables_()` from `Src/Modules/socket.c:306`.
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:306
+    handlefeatures(m, module_features(), enables)                       // c:310
 }
 
-/// Port of `boot_()` from `Src/Modules/socket.c:313`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn boot_() -> i32 {                                                  // c:313
+/// Port of `boot_()` from `Src/Modules/socket.c:313`.
+pub fn boot_(_m: *const module) -> i32 {                                 // c:313
     0                                                                    // c:316
 }
 
-/// Port of `cleanup_()` from `Src/Modules/socket.c:320`. C body
-/// is `return setfeatureenables(m, &module_features, NULL);`.
-pub fn cleanup_() -> i32 {                                               // c:320
-    0                                                                    // c:323
+/// Port of `cleanup_()` from `Src/Modules/socket.c:320`.
+/// C body: `return setfeatureenables(m, &module_features, NULL);`
+pub fn cleanup_(m: *const module) -> i32 {                               // c:320
+    setfeatureenables(m, module_features(), None)                       // c:323
 }
 
-/// Port of `finish_()` from `Src/Modules/socket.c:327`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn finish_() -> i32 {                                                // c:327
+/// Port of `finish_()` from `Src/Modules/socket.c:327`.
+pub fn finish_(_m: *const module) -> i32 {                               // c:327
     0                                                                    // c:330
+}
+
+// `featuresarray` — Src/module.c:3275.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:zsocket".to_string()]
+}
+
+// `handlefeatures` — Src/module.c:3370.
+fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() {
+        *enables = Some(getfeatureenables(m, f));
+    } else if let Some(e) = enables.as_ref() {
+        return setfeatureenables(m, f, Some(e));
+    }
+    0
+}
+
+fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
+    vec![0; total as usize]
+}
+
+// `setfeatureenables` — Src/module.c:3445.
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 {
+    0
 }

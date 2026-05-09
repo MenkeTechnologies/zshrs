@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <meta name="description" content="zshrs — Full zsh C-to-Rust port coverage report. 94 C files, 147,656 C lines, 318,571 Rust lines, 4,290 #[test] funcs. Strict-port src/ported/ (89) + non-port src/extensions/ (31) split enforced by tests/port_purity.rs.">
+  <meta name="description" content="zshrs — Full zsh C-to-Rust port coverage report. 94 C files, 147,656 C lines, 347,212 Rust lines, 4,642 #[test] hooks. Strict-port src/ported/ (98) + non-port src/extensions/ (31) split enforced by tests/port_purity.rs.">
   <title>zshrs — Port Coverage Report</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -84,7 +84,7 @@
             <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
           </nav>
           <p style="margin:0.35rem 0 0;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text-dim);letter-spacing:0.03em;opacity:0.75;">
-            src/zsh/Src/*.c &rarr; src/ported/*.rs &middot; 94 C files (33 core + 24 ZLE + 35 modules + 2 Builtins) &middot; 147,656 C lines &middot; 318,571 Rust lines &middot; 386 .rs files (4-crate workspace) &middot; 4,290 <code>#[test]</code> funcs &middot; <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PORT.md" style="color:var(--cyan);">PORT.md</a> ruleset &middot; <code>tests/port_purity.rs</code> enforces strict-port purity
+            src/zsh/Src/*.c &rarr; src/ported/*.rs &middot; 94 C files (33 core + 24 ZLE + 35 modules + 2 Builtins) &middot; 147,656 C lines &middot; 347,212 Rust lines (all <code>.rs</code> incl. tests + <code>build.rs</code>) &middot; 401 <code>.rs</code> files &middot; 4,642 <code>#[test]</code> hooks &middot; <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PORT.md" style="color:var(--cyan);">PORT.md</a> ruleset &middot; <code>tests/port_purity.rs</code> enforces strict-port purity
           </p>
         </div>
         <div class="tutorial-toolbar">
@@ -105,7 +105,7 @@
 
       <p class="tutorial-subtitle" style="margin-top:0.5rem;color:var(--accent-light);">
         <strong style="color:var(--accent);">Codebase split (NEW):</strong> the runtime crate now physically isolates ported code from non-port code so drift is mechanically detectable.
-        <code>src/ported/</code> (89 files) is the <strong>strict-port directory</strong> &mdash; every <code>.rs</code> mirrors a real <code>src/zsh/Src/&lt;x&gt;.c</code> file, every top-level <code>fn</code> carries a <code>/// Port of &lt;cname&gt;() from Src/&lt;file&gt;.c:NNNN</code> doc-comment, and the file set is <strong>FROZEN</strong> (no new files; PORT.md §"ABSOLUTE FREEZE").
+        <code>src/ported/</code> (98 files) is the <strong>strict-port directory</strong> &mdash; every <code>.rs</code> mirrors a real <code>src/zsh/Src/&lt;x&gt;.c</code> file, every top-level <code>fn</code> carries a <code>/// Port of &lt;cname&gt;() from Src/&lt;file&gt;.c:NNNN</code> doc-comment, and the file set is <strong>FROZEN</strong> (no new files; PORT.md §"ABSOLUTE FREEZE").
         <code>src/extensions/</code> (31 files) is the <strong>non-port directory</strong> &mdash; features zsh C does not have (AOT, daemon coordination, plugin/script/autoload caches, fish-style autosuggest/abbrev/highlight, persistent worker pools, ZWC byte-code helpers).
         <code>src/recorder/</code> (1 file) is feature-gated; deleted by rustc in the default build.
         Both invariants are enforced by <code>tests/port_purity.rs</code> &mdash; a regression of either rule fails CI.
@@ -122,11 +122,11 @@
       </p>
 
       <div class="stat-grid">
-        <div class="stat-card"><div class="stat-val green">4,290</div><div class="stat-label"><code>#[test]</code> Functions</div></div>
+        <div class="stat-card"><div class="stat-val green">4,642</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
         <div class="stat-card"><div class="stat-val">94</div><div class="stat-label">C Files Ported</div></div>
-        <div class="stat-card"><div class="stat-val accent">2,565</div><div class="stat-label">Public Functions</div></div>
-        <div class="stat-card"><div class="stat-val">386</div><div class="stat-label">Rust Source Files</div></div>
-        <div class="stat-card"><div class="stat-val cyan">89 / 31 / 1</div><div class="stat-label">ported / extensions / recorder</div></div>
+        <div class="stat-card"><div class="stat-val accent">3,404</div><div class="stat-label">Public Functions</div></div>
+        <div class="stat-card"><div class="stat-val">401</div><div class="stat-label">Rust Source Files</div></div>
+        <div class="stat-card"><div class="stat-val cyan">98 / 31 / 1</div><div class="stat-label">ported / extensions / recorder</div></div>
         <div class="stat-card"><div class="stat-val" style="color:var(--yellow,#ffb800);text-shadow:0 0 20px rgba(255,184,0,.3);">147,656</div><div class="stat-label">C Lines Covered</div></div>
         <div class="stat-card"><div class="stat-val green">0</div><div class="stat-label">Missing Functionality</div></div>
       </div>
@@ -135,9 +135,9 @@
         <p style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;font-family:'Orbitron',sans-serif;font-weight:700;">Overall Line Coverage</p>
         <div class="bar-wrap" style="height:26px;">
           <div class="bar-fill cyan" style="width:100%;"></div>
-          <span class="bar-pct" style="font-size:12px;">318,571 Rust / 147,656 C &mdash; 100% coverage</span>
+          <span class="bar-pct" style="font-size:12px;">347,212 Rust / 147,656 C &mdash; 100% coverage</span>
         </div>
-        <p style="font-size:10px;color:var(--text-muted);margin-top:4px;">Rust line count covers the entire 4-crate workspace (<code>zshrs</code> runtime, <code>compsys</code>, <code>zshrs-daemon</code>, <code>zshrs-parse</code>) plus <code>fish/</code>, <code>tests/</code>, and <code>bins/</code>. C-line ratio is 215% Rust : C overall, but most files are <em>more concise</em> than their C source &mdash; the inflation comes from the non-port surface (extensions, daemon, parse, fish, compsys) that has no C ancestor. <code>exec.rs</code> alone is 353% of <code>exec.c</code> because it includes 180+ builtins (23 coreutils anti-fork) that C splits across <code>builtin.c</code>.</p>
+        <p style="font-size:10px;color:var(--text-muted);margin-top:4px;">Rust line count covers the entire 4-crate workspace (<code>zshrs</code> runtime, <code>compsys</code>, <code>zshrs-daemon</code>, <code>zshrs-parse</code>) plus <code>fish/</code>, <code>tests/</code>, <code>bins/</code>, and root <code>build.rs</code>. C-line ratio is ~235% Rust : C by raw lines, but most files are <em>more concise</em> than their C source &mdash; the inflation comes from the non-port surface (extensions, daemon, parse, fish, compsys) that has no C ancestor. <code>exec.rs</code> alone is 353% of <code>exec.c</code> because it includes 180+ builtins (23 coreutils anti-fork) that C splits across <code>builtin.c</code>.</p>
       </div>
 
       <hr class="section-rule">
@@ -1219,21 +1219,16 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
       <!-- SECTION 8: ENGINEERING OVERVIEW         -->
       <!-- ═══════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">%</span>ENGINEERING OVERVIEW</h2>
-      <p class="tutorial-subtitle">Full codebase metrics across 189 Rust source files, 18 ZLE modules, 20 loadable module ports, and 145 builtins. The zshrs crate is a self-contained reimplementation of zsh in safe Rust with targeted <code>unsafe</code> for POSIX syscalls.</p>
+      <p class="tutorial-subtitle">Workspace-wide cargo workspace metrics (four packages: <code>zsh</code>, <code>compsys</code>, <code>zshrs-daemon</code>, <code>zshrs-parse</code>). Counts below are from <code>wc</code> / <code>rg</code> on 2026-05-09; per-subsystem module tables follow unchanged.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));">
-        <div class="stat-card"><div class="stat-val">208,696</div><div class="stat-label">Total Rust Lines</div></div>
-        <div class="stat-card"><div class="stat-val accent">99</div><div class="stat-label">Source Files</div></div>
-        <div class="stat-card"><div class="stat-val">76</div><div class="stat-label">Modules</div></div>
-        <div class="stat-card"><div class="stat-val green">2,565</div><div class="stat-label">Public Functions</div></div>
-        <div class="stat-card"><div class="stat-val">303</div><div class="stat-label">Structs</div></div>
-        <div class="stat-card"><div class="stat-val">107</div><div class="stat-label">Enums</div></div>
-        <div class="stat-card"><div class="stat-val">256</div><div class="stat-label">Impl Blocks</div></div>
-        <div class="stat-card"><div class="stat-val green">738</div><div class="stat-label">Unit Tests</div></div>
-        <div class="stat-card"><div class="stat-val" style="color:#ffb800;text-shadow:0 0 15px rgba(255,184,0,.3);">394</div><div class="stat-label">Unsafe Blocks</div></div>
-        <div class="stat-card"><div class="stat-val">876</div><div class="stat-label">libc:: Calls</div></div>
-        <div class="stat-card"><div class="stat-val accent">145</div><div class="stat-label">Builtins</div></div>
-        <div class="stat-card"><div class="stat-val">706</div><div class="stat-label">Git Commits</div></div>
+        <div class="stat-card"><div class="stat-val">347,212</div><div class="stat-label">Total Rust Lines</div></div>
+        <div class="stat-card"><div class="stat-val accent">401</div><div class="stat-label"><code>.rs</code> Files</div></div>
+        <div class="stat-card"><div class="stat-val green">4,642</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
+        <div class="stat-card"><div class="stat-val">3,404</div><div class="stat-label"><code>pub fn</code> (src trees)</div></div>
+        <div class="stat-card"><div class="stat-val">736</div><div class="stat-label"><code>pub struct</code></div></div>
+        <div class="stat-card"><div class="stat-val">212</div><div class="stat-label"><code>pub enum</code></div></div>
+        <div class="stat-card"><div class="stat-val accent">1,603</div><div class="stat-label">Git Commits</div></div>
       </div>
 
       <hr class="section-rule">
@@ -1390,13 +1385,13 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
       <!-- SECTION: COMPSYS — COMPLETION SYSTEM             -->
       <!-- ═════════════════════════════════════════════════ -->
       <h2 class="tutorial-title" style="color:var(--magenta);"><span class="step-hash" style="color:var(--magenta);">&#x25C6;</span>COMPSYS &mdash; ZSH COMPLETION SYSTEM IN RUST</h2>
-      <p class="tutorial-subtitle">A standalone Rust crate reimplementing zsh&rsquo;s <code>compsys</code> &mdash; the programmable completion system. 25 modules, 19,822 lines, 474 public functions. Replaces 24,000+ lines of zsh shell functions with compiled Rust backed by Rkyv caching.</p>
+      <p class="tutorial-subtitle">A standalone Rust crate reimplementing zsh&rsquo;s <code>compsys</code> &mdash; the programmable completion system. 27 modules, 23,328 lines, 154 public functions. Replaces 24,000+ lines of zsh shell functions with compiled Rust backed by Rkyv caching.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));">
-        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">19,822</div><div class="stat-label">Rust Lines</div></div>
-        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">25</div><div class="stat-label">Modules</div></div>
-        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">474</div><div class="stat-label">Public Functions</div></div>
-        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">75</div><div class="stat-label">Structs</div></div>
+        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">23,328</div><div class="stat-label">Rust Lines</div></div>
+        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">27</div><div class="stat-label">Modules</div></div>
+        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">154</div><div class="stat-label">Public Functions</div></div>
+        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">74</div><div class="stat-label">Structs</div></div>
         <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">17</div><div class="stat-label">Enums</div></div>
         <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val green">222</div><div class="stat-label">Tests</div></div>
         <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">70</div><div class="stat-label">Completion Functions</div></div>
@@ -1431,7 +1426,7 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
           <tr><td>describe.rs</td><td class="num">286</td><td><code>_describe</code>: completion with descriptions, columnar display</td></tr>
           <tr><td>lib.rs</td><td class="num">148</td><td>Crate root: public API, re-exports</td></tr>
         </tbody>
-        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL COMPSYS</td><td class="num">19,822</td><td></td></tr></tfoot>
+        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL COMPSYS</td><td class="num">23,328</td><td></td></tr></tfoot>
       </table>
 
       <h3 style="font-family:'Orbitron',sans-serif;font-size:11px;color:var(--magenta);letter-spacing:1.5px;margin:1.2rem 0 0.5rem;">// 70 COMPLETION FUNCTIONS</h3>
@@ -1444,117 +1439,44 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
       <hr class="section-rule">
 
       <!-- ═════════════════════════════════════════════════ -->
-      <!-- SECTION: STRYKELANG — PERL5 INTERPRETER          -->
+      <!-- SECTION: FUSEVM + PARSE CRATE — WORKSPACE COMPILATION -->
       <!-- ═════════════════════════════════════════════════ -->
-      <h2 class="tutorial-title" style="color:var(--accent);"><span class="step-hash" style="color:var(--accent);">&#x2B22;</span>STRYKELANG &mdash; PARALLEL PERL 5 INTERPRETER</h2>
-      <p class="tutorial-subtitle">A highly parallel Perl 5 interpreter written in Rust. NaN-boxed <code>PerlValue</code>, bytecode VM with Cranelift JIT, rayon work-stealing parallelism, pipe-forward (<code>|&gt;</code>) syntax, and 3,700+ builtins. 93 source files, 166,139 lines.</p>
+      <h2 class="tutorial-title" style="color:var(--accent);"><span class="step-hash" style="color:var(--accent);">&#x2B22;</span>FUSEVM + <code>ZSHRS-PARSE</code></h2>
+      <p class="tutorial-subtitle">Runtime bytecode targets the crates.io <a href="https://crates.io/crates/fusevm" target="_blank" rel="noopener noreferrer"><code>fusevm</code></a> crate (pinned in workspace <code>Cargo.toml</code>). Lexing and parsing live in the workspace <code>parse/</code> package (<code>zshrs-parse</code>) so the daemon and shell share one lexer/parser without linking the full executor. <a href="https://github.com/MenkeTechnologies/strykelang" target="_blank" rel="noopener noreferrer">Stryke / strykelang</a> is a separate repository &mdash; it is not part of this workspace; the former Perl-interpreter block here was erroneous pasted content.</p>
 
-      <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));">
-        <div class="stat-card" style="border-top-color:var(--accent);"><div class="stat-val accent">166,139</div><div class="stat-label">Rust Lines</div></div>
-        <div class="stat-card" style="border-top-color:var(--accent);"><div class="stat-val accent">93</div><div class="stat-label">Source Files</div></div>
-        <div class="stat-card" style="border-top-color:var(--accent);"><div class="stat-val accent">573</div><div class="stat-label">Public Functions</div></div>
-        <div class="stat-card" style="border-top-color:var(--accent);"><div class="stat-val accent">243</div><div class="stat-label">Structs</div></div>
-        <div class="stat-card" style="border-top-color:var(--accent);"><div class="stat-val accent">106</div><div class="stat-label">Enums</div></div>
-        <div class="stat-card" style="border-top-color:var(--accent);"><div class="stat-val green">2,043</div><div class="stat-label">Tests</div></div>
-        <div class="stat-card" style="border-top-color:var(--accent);"><div class="stat-val accent">3,759</div><div class="stat-label">Builtins</div></div>
-        <div class="stat-card" style="border-top-color:var(--accent);"><div class="stat-val accent">446</div><div class="stat-label">VM Opcodes</div></div>
-        <div class="stat-card" style="border-top-color:var(--accent);"><div class="stat-val accent">328</div><div class="stat-label">AST Nodes</div></div>
-        <div class="stat-card" style="border-top-color:var(--accent);"><div class="stat-val accent">540</div><div class="stat-label">Example Scripts</div></div>
-        <div class="stat-card" style="border-top-color:var(--accent);"><div class="stat-val accent">167</div><div class="stat-label">Cargo Dependencies</div></div>
-        <div class="stat-card" style="border-top-color:var(--accent);"><div class="stat-val accent">181</div><div class="stat-label">Impl Blocks</div></div>
-      </div>
-
-      <h3 style="font-family:'Orbitron',sans-serif;font-size:11px;color:var(--accent);letter-spacing:1.5px;margin:1.5rem 0 0.5rem;">// SUBSYSTEM BREAKDOWN</h3>
-
-      <table class="file-table">
-        <thead><tr><th>Subsystem</th><th>Key Files</th><th class="num">Lines</th><th class="num">%</th><th style="min-width:100px;">Share</th><th>Description</th></tr></thead>
-        <tbody>
-          <tr><td style="color:var(--accent);">Core Pipeline</td><td><code>lexer, parser, compiler, vm, interpreter, ast, bytecode</code></td><td class="num">59,133</td><td class="num">35.6%</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:35.6%"></div></div></td><td>Lexer &rarr; Parser (328 AST nodes) &rarr; Compiler (446 opcodes) &rarr; VM (register+stack hybrid) &rarr; Interpreter (tree-walk fallback)</td></tr>
-          <tr><td style="color:var(--accent);">Builtins</td><td><code>builtins, builtins_extended</code></td><td class="num">40,296</td><td class="num">24.3%</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:24.3%"></div></div></td><td>3,700+ Perl builtins: string, array, hash, I/O, regex, math, file, process, OO, format, pack/unpack</td></tr>
-          <tr><td style="color:var(--accent);">Value System</td><td><code>value, nanbox, scope, convert, capture</code></td><td class="num">7,321</td><td class="num">4.4%</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:4.4%"></div></div></td><td>NaN-boxed PerlValue (int/float/string/array/hash/regex/code/undef), scoping, type coercion, captures</td></tr>
-          <tr><td style="color:var(--accent);">JIT Compiler</td><td><code>jit</code></td><td class="num">5,169</td><td class="num">3.1%</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:3.1%"></div></div></td><td>Cranelift-based JIT: hot loop detection, native code generation, deoptimization</td></tr>
-          <tr><td style="color:var(--accent);">Parallel Runtime</td><td><code>par_lines, par_list, par_pipeline, par_walk, ppool, pchannel, ...</code></td><td class="num">2,702</td><td class="num">1.6%</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:1.6%"></div></div></td><td>Rayon work-stealing: <code>pmap</code>, <code>pgrep</code>, <code>pflat_map</code>, <code>pfor</code>, parallel file walking, progress tracking</td></tr>
-          <tr><td style="color:var(--accent);">LSP Server</td><td><code>lsp</code></td><td class="num">4,129</td><td class="num">2.5%</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:2.5%"></div></div></td><td>Language Server Protocol: diagnostics, completion, hover, go-to-definition, symbol search</td></tr>
-          <tr><td style="color:var(--accent);">Format / Deparse</td><td><code>fmt, deparse, format</code></td><td class="num">4,198</td><td class="num">2.5%</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:2.5%"></div></div></td><td>Code formatter, AST-to-source deparser, Perl format/write system</td></tr>
-          <tr><td style="color:var(--accent);">Perl Compat</td><td><code>perl_decode, perl_fs, perl_inc, perl_regex, perl_signal, special_vars</code></td><td class="num">2,197</td><td class="num">1.3%</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:1.3%"></div></div></td><td>Perl 5 compatibility: <code>@INC</code>, <code>%ENV</code>, <code>%SIG</code>, file ops, encoding, special variables (<code>$_</code>, <code>$!</code>, <code>$/</code>, ...)</td></tr>
-          <tr><td style="color:var(--accent);">Shell ZLE</td><td><code>shell_zle/*</code></td><td class="num">1,832</td><td class="num">1.1%</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:1.1%"></div></div></td><td>REPL line editor: keymaps (emacs/vi), widgets, key bindings</td></tr>
-          <tr><td style="color:var(--accent);">Crypto / JWT</td><td><code>crypt_util, jwt, pack</code></td><td class="num">1,472</td><td class="num">0.9%</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:0.9%"></div></div></td><td>Encryption builtins, JWT encode/decode, pack/unpack templates</td></tr>
-          <tr><td style="color:var(--accent);">Data / Codecs</td><td><code>native_codec, native_data, map_stream, list_util, map_grep_fast, sort_fast</code></td><td class="num">8,573</td><td class="num">5.2%</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:5.2%"></div></div></td><td>JSON/YAML/TOML/CSV/MessagePack codecs, streaming map/grep, fast sort, List::Util</td></tr>
-          <tr><td style="color:var(--accent);">Tests</td><td><code>*_tests.rs, run_semantics_*.rs</code></td><td class="num">13,848</td><td class="num">8.3%</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:8.3%"></div></div></td><td>2,043 unit tests across 10 test files: parser, lexer, builtins, parallel, regex, values, OO, semantics</td></tr>
-          <tr><td style="color:var(--accent);">Other</td><td><code>main, repl, error, debugger, profiler, static_analysis, ...</code></td><td class="num">15,269</td><td class="num">9.2%</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:9.2%"></div></div></td><td>CLI entry point, REPL, error reporting, step debugger, profiler, MRO, cluster, FFI</td></tr>
-        </tbody>
-        <tfoot><tr class="total-row"><td colspan="2" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL STRYKELANG</td><td class="num">166,139</td><td class="num">100%</td><td></td><td></td></tr></tfoot>
-      </table>
-
-      <h3 style="font-family:'Orbitron',sans-serif;font-size:11px;color:var(--accent);letter-spacing:1.5px;margin:1.5rem 0 0.5rem;">// TOP 20 FILES BY SIZE</h3>
+      <h3 style="font-family:'Orbitron',sans-serif;font-size:11px;color:var(--accent);letter-spacing:1.5px;margin:1.5rem 0 0.5rem;">// PARSE CRATE FILES</h3>
       <table class="file-table">
         <thead><tr><th>File</th><th class="num">Lines</th><th>Role</th></tr></thead>
         <tbody>
-          <tr><td>builtins.rs</td><td class="num">27,778</td><td>3,604 Perl builtins: string, array, hash, I/O, file, regex, math, system, OO</td></tr>
-          <tr><td>interpreter.rs</td><td class="num">19,492</td><td>Tree-walking interpreter: eval loop, context, error handling, debugger hooks</td></tr>
-          <tr><td>parser.rs</td><td class="num">14,794</td><td>Recursive-descent parser: 328 AST node types, operator precedence, heredocs</td></tr>
-          <tr><td>builtins_extended.rs</td><td class="num">12,518</td><td>Extended builtins: crypto, JWT, codecs, compression, HTTP, email, QR</td></tr>
-          <tr><td>vm.rs</td><td class="num">9,553</td><td>Bytecode VM: register+stack hybrid, 446 opcodes, hot path optimization</td></tr>
-          <tr><td>compiler.rs</td><td class="num">8,633</td><td>AST &rarr; bytecode compiler: constant folding, register allocation, peephole</td></tr>
-          <tr><td>jit.rs</td><td class="num">5,169</td><td>Cranelift JIT: IR generation, native code emission, deoptimization stubs</td></tr>
-          <tr><td>crate_api_tests.rs</td><td class="num">5,169</td><td>Crate API test suite: public interface validation</td></tr>
-          <tr><td>run_semantics_tests.rs</td><td class="num">4,643</td><td>Perl semantics test suite: behavior correctness</td></tr>
-          <tr><td>main.rs</td><td class="num">4,397</td><td>CLI: argument parsing, script loading, REPL, one-liner mode, -e/-E</td></tr>
-          <tr><td>lsp.rs</td><td class="num">4,129</td><td>Language Server Protocol implementation for IDE support</td></tr>
-          <tr><td>native_codec.rs</td><td class="num">3,353</td><td>JSON, YAML, TOML, CSV, MessagePack encode/decode</td></tr>
-          <tr><td>value.rs</td><td class="num">3,206</td><td>PerlValue: NaN-boxed union type, type coercion, stringify, numify</td></tr>
-          <tr><td>lexer.rs</td><td class="num">2,806</td><td>Tokenizer: heredocs, regex literals, q/qq/qw, string interpolation</td></tr>
-          <tr><td>bytecode.rs</td><td class="num">2,365</td><td>Opcode definitions (446), instruction encoding, disassembler</td></tr>
-          <tr><td>scope.rs</td><td class="num">2,242</td><td>Lexical scoping: pad slots, closures, <code>local</code>/<code>my</code>/<code>our</code>, <code>BEGIN</code>/<code>END</code></td></tr>
-          <tr><td>deparse.rs</td><td class="num">2,069</td><td>AST &rarr; source: B::Deparse equivalent, round-trip fidelity</td></tr>
-          <tr><td>list_util.rs</td><td class="num">1,983</td><td>List::Util: reduce, any, all, none, first, max, min, sum, product, shuffle, uniq, zip</td></tr>
-          <tr><td>map_stream.rs</td><td class="num">1,735</td><td>Streaming map/grep: lazy iterators, pipe-forward chains</td></tr>
-          <tr><td>fmt.rs</td><td class="num">1,713</td><td>Code formatter: perltidy-compatible, configurable style</td></tr>
+          <tr><td><code>parse/src/lex.rs</code></td><td class="num">3,747</td><td>Lexer port of <code>Src/lex.c</code> &mdash; tokens, contexts, alias fusion</td></tr>
+          <tr><td><code>parse/src/parse.rs</code></td><td class="num">3,632</td><td>Parser port of <code>Src/parse.c</code> &mdash; lists, compounds, redirections</td></tr>
+          <tr><td><code>parse/src/tokens.rs</code></td><td class="num">449</td><td>Token kinds + keyword tables shared with the lexer</td></tr>
+          <tr><td><code>parse/src/lib.rs</code></td><td class="num">24</td><td>Crate root exports</td></tr>
         </tbody>
-        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOP 20 SUBTOTAL</td><td class="num">137,744</td><td>82.9% of total</td></tr></tfoot>
+        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL PARSE</td><td class="num">7,852</td><td>four files</td></tr></tfoot>
       </table>
 
-      <h3 style="font-family:'Orbitron',sans-serif;font-size:11px;color:var(--accent);letter-spacing:1.5px;margin:1.5rem 0 0.5rem;">// EXECUTION PIPELINE</h3>
+      <h3 style="font-family:'Orbitron',sans-serif;font-size:11px;color:var(--accent);letter-spacing:1.5px;margin:1.5rem 0 0.5rem;">// EXECUTION PIPELINE (ZSHRS)</h3>
       <pre style="margin:0.5rem 0;padding:1rem;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-dim);font-size:11px;line-height:1.7;overflow-x:auto;">
-  Source Code (.stk / .pl / -e '...')
+  Source / REPL input (zsh script)
        │
        ▼
-  ┌─────────────┐     ┌─────────────┐     ┌──────────────┐
-  │  lexer.rs   │────▶│  parser.rs  │────▶│ compiler.rs  │
-  │  (2,806)    │     │  (14,794)   │     │  (8,633)     │
-  │  Tokenizer  │     │  328 AST    │     │  446 opcodes │
-  │  heredocs   │     │  node types │     │  const fold  │
-  │  regex lit  │     │  prec climb │     │  reg alloc   │
-  └─────────────┘     └─────────────┘     └──────┬───────┘
-                                                  │
-                              ┌────────────────────┤
-                              │                    │
-                              ▼                    ▼
-                     ┌──────────────┐     ┌──────────────┐
-                     │    vm.rs     │     │   jit.rs     │
-                     │   (9,553)    │     │  (5,169)     │
-                     │  Bytecode VM │     │  Cranelift   │
-                     │  reg+stack   │     │  native code │
-                     │  hot detect  │────▶│  deopt stubs │
-                     └──────┬───────┘     └──────────────┘
-                            │
-                            ▼
-                  ┌───────────────────┐
-                  │   builtins.rs     │
-                  │   (27,778)        │
-                  │   3,700+ builtins │
-                  │   + extended      │
-                  │   (12,518)        │
-                  └───────────────────┘
-                            │
-           ┌────────────────┼─────────────────┐
-           │                │                 │
-    ┌──────▼──────┐  ┌──────▼──────┐  ┌──────▼──────┐
-    │  value.rs   │  │  scope.rs   │  │  parallel   │
-    │  (3,206)    │  │  (2,242)    │  │  (2,702)    │
-    │  NaN-boxed  │  │  my/local   │  │  pmap/pgrep │
-    │  PerlValue  │  │  closures   │  │  rayon work │
-    └─────────────┘  └─────────────┘  └─────────────┘</pre>
+  ┌─────────────────┐     ┌──────────────────┐
+  │  parse::Lexer   │────▶│  parse::Parser   │
+  │  (lex.rs)       │     │  (parse.rs)      │
+  │  token stream   │     │  AST / commands  │
+  └────────┬────────┘     └────────┬─────────┘
+           │                       │
+           └───────────┬───────────┘
+                       ▼
+              ┌────────────────────┐
+              │ compile_zsh (+AOT) │  ──▶  fusevm bytecode (workspace crate)
+              │ extensions/        │
+              └─────────┬──────────┘
+                        ▼
+              ┌────────────────────┐
+              │ ShellExecutor / VM │  ──▶  builtins, jobs, redirects, zle
+              └────────────────────┘</pre>
 
       <hr class="section-rule">
 
@@ -1562,7 +1484,7 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
       <!-- SECTION: BEYOND THE C PORT — RUNTIME INFRASTRUCTURE -->
       <!-- ═════════════════════════════════════════════════ -->
       <h2 class="tutorial-title" style="color:var(--accent);"><span class="step-hash" style="color:var(--accent);">&#x25CF;</span>BEYOND THE C PORT &mdash; RUNTIME INFRASTRUCTURE</h2>
-      <p class="tutorial-subtitle">The C-to-Rust port covered above (89 strict-port files in <code>src/ported/</code>, 94 C files mapped, 859 C functions in the core 14 + 100s more across modules &amp; ZLE) is what zshrs <em>inherits</em> from zsh. The numbers below count what zshrs <em>adds</em> &mdash; new Rust code with no C ancestor. This is the layer that takes zshrs from &ldquo;zsh in Rust&rdquo; to &ldquo;the first compiled Unix shell with a session-persistent daemon, AOP-intercept recorder, and bidirectional ptmx-attach job supervisor.&rdquo; All non-port runtime code now lives in <code>src/extensions/</code> (31 files) &mdash; mechanically isolated from <code>src/ported/</code> by <code>tests/port_purity.rs</code>.</p>
+      <p class="tutorial-subtitle">The C-to-Rust port covered above (98 strict-port files in <code>src/ported/</code>, 94 C files mapped, 859 C functions in the core 14 + 100s more across modules &amp; ZLE) is what zshrs <em>inherits</em> from zsh. The numbers below count what zshrs <em>adds</em> &mdash; new Rust code with no C ancestor. This is the layer that takes zshrs from &ldquo;zsh in Rust&rdquo; to &ldquo;the first compiled Unix shell with a session-persistent daemon, AOP-intercept recorder, and bidirectional ptmx-attach job supervisor.&rdquo; All non-port runtime code now lives in <code>src/extensions/</code> (31 files) &mdash; mechanically isolated from <code>src/ported/</code> by <code>tests/port_purity.rs</code>.</p>
 
       <table class="file-table">
         <thead><tr><th>Crate / Layer</th><th class="num">Files</th><th class="num">Lines</th><th class="num">Pub Fns</th><th class="num">Tests</th><th>Purpose</th></tr></thead>
@@ -1578,15 +1500,15 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
           <tr>
             <td style="color:var(--cyan);"><code>daemon/</code></td>
             <td class="num">41</td>
-            <td class="num">23,873</td>
-            <td class="num">106</td>
-            <td class="num">109</td>
+            <td class="num">23,881</td>
+            <td class="num">58</td>
+            <td class="num">91</td>
             <td>Singleton daemon: IPC server, HTTP listener (auto-derived OpenAPI 3.1), canonical-state engine, fsnotify, schedule, supervisor (jobs + bidirectional ptmx attach), pub/sub bus, named locks, ask-inbox, snapshots, artifacts, cache. Hosts every <code>z*</code> builtin.</td>
           </tr>
           <tr>
             <td style="color:var(--magenta);"><code>parse/</code></td>
             <td class="num">4</td>
-            <td class="num">7,471</td>
+            <td class="num">7,852</td>
             <td class="num">12</td>
             <td class="num">33</td>
             <td>Standalone lexer + parser crate. Direct port of <code>src/zsh/Src/lex.c</code> + <code>parse.c</code>, but factored out so the recorder + daemon can re-tokenize without pulling the executor. Counts here go against the &ldquo;ported&rdquo; ledger above &mdash; this is the only port code that lives outside <code>src/ported/</code>, and it does so because two consumers (runtime + daemon) need it.</td>
@@ -1617,7 +1539,7 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
           </tr>
         </tbody>
         <tfoot>
-          <tr class="total-row"><td colspan="2" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">NEW INFRASTRUCTURE</td><td class="num">~210k+</td><td class="num">&nbsp;</td><td class="num">&nbsp;</td><td>The bulk of the 318k Rust LOC sits outside the port; the 89 strict-port files are surrounded by 297 non-port files</td></tr>
+          <tr class="total-row"><td colspan="2" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">NEW INFRASTRUCTURE</td><td class="num">~210k+</td><td class="num">&nbsp;</td><td class="num">&nbsp;</td><td>The bulk of the ~347k Rust LOC sits outside the 1:1 C port; the 98 strict-port files sit beside 303 other <code>.rs</code> files (extensions, daemon, parse, fish, compsys, tests, bins, build glue).</td></tr>
         </tfoot>
       </table>
 
@@ -1638,44 +1560,49 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
       <hr class="section-rule">
 
       <!-- ═════════════════════════════════════════════════ -->
-      <!-- SECTION: GRAND TOTAL — ALL THREE CRATES          -->
+      <!-- SECTION: GRAND TOTAL — WORKSPACE CRATES       -->
       <!-- ═════════════════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">&#x2261;</span>GRAND TOTAL &mdash; FULL WORKSPACE</h2>
-      <p class="tutorial-subtitle">Three Rust crates in a single Cargo workspace. Combined: 421,150 Rust lines, 3,580+ public functions, 5,194 tests, 706 commits.</p>
+      <p class="tutorial-subtitle">Four Rust packages in one Cargo workspace (<code>zsh</code>, <code>compsys</code>, <code>zshrs-daemon</code>, <code>zshrs-parse</code>). Combined: 347,212 Rust lines (all <code>.rs</code> including tests + <code>build.rs</code>, excluding <code>target/</code>), 3,404 <code>pub fn</code> hooks in non-test trees, 736 <code>pub struct</code>, 212 <code>pub enum</code>, 4,642 <code>#[test]</code> lines — counts from <code>rg</code>/<code>wc</code> on 2026-05-09.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
-        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">421,150</div><div class="stat-label">Total Rust Lines</div></div>
-        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">3,580</div><div class="stat-label">Public Functions</div></div>
-        <div class="stat-card"><div class="stat-val green">5,194</div><div class="stat-label">Tests Passing</div></div>
-        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">637</div><div class="stat-label">Cargo Packages</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">347,212</div><div class="stat-label">Total Rust Lines</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">3,404</div><div class="stat-label">Public Functions</div></div>
+        <div class="stat-card"><div class="stat-val green">4,642</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">4</div><div class="stat-label">Workspace Crates</div></div>
       </div>
 
       <table class="file-table">
         <thead><tr><th>Crate</th><th class="num">Lines</th><th class="num">Files</th><th class="num">Pub Fns</th><th class="num">Structs</th><th class="num">Enums</th><th class="num">Tests</th><th style="min-width:120px;">Share</th><th>Description</th></tr></thead>
         <tbody>
           <tr>
-            <td style="color:var(--accent);">strykelang</td><td class="num">166,139</td><td class="num">93</td><td class="num">573</td><td class="num">243</td><td class="num">106</td><td class="num">2,043</td>
-            <td><div class="bar-wrap"><div class="bar-fill magenta" style="width:61.4%"></div><span class="bar-pct">61.4%</span></div></td>
-            <td>Parallel Perl 5 interpreter: NaN-boxed VM, Cranelift JIT, 3,700+ builtins, pipe-forward, LSP</td>
+            <td style="color:var(--cyan);"><code>zsh</code> (root)</td><td class="num">292,151</td><td class="num">329</td><td class="num">3,180</td><td class="num">596</td><td class="num">169</td><td class="num">4,296</td>
+            <td><div class="bar-wrap"><div class="bar-fill cyan" style="width:84.1%"></div><span class="bar-pct">84.1%</span></div></td>
+            <td>Runtime: <code>src/</code> (ported + extensions + exec bridge), <code>fish/</code>, <code>bins/</code>, <code>tests/</code>, <code>build.rs</code>. Lines/tests include integration suites.</td>
           </tr>
           <tr>
-            <td style="color:var(--cyan);">zsh</td><td class="num">208,696</td><td class="num">189</td><td class="num">2,565</td><td class="num">303</td><td class="num">107</td><td class="num">3,059</td>
-            <td><div class="bar-wrap"><div class="bar-fill cyan" style="width:31.2%"></div><span class="bar-pct">31.2%</span></div></td>
-            <td>Full zsh port: 32 core + 24 ZLE + 33 module + 2 Builtins C files, 26 ZLE modules, 145 shell builtins</td>
+            <td style="color:var(--magenta);"><code>compsys</code></td><td class="num">23,328</td><td class="num">27</td><td class="num">154</td><td class="num">74</td><td class="num">17</td><td class="num">222</td>
+            <td><div class="bar-wrap"><div class="bar-fill yellow" style="width:6.7%"></div><span class="bar-pct">6.7%</span></div></td>
+            <td>Programmable completion: zstyle, compadd, menu selection, SQLite-backed cache.</td>
           </tr>
           <tr>
-            <td style="color:var(--magenta);">compsys</td><td class="num">19,822</td><td class="num">25</td><td class="num">474</td><td class="num">75</td><td class="num">17</td><td class="num">222</td>
-            <td><div class="bar-wrap"><div class="bar-fill yellow" style="width:7.3%"></div><span class="bar-pct">7.3%</span></div></td>
-            <td>Completion system: zstyle, compadd, _arguments, menu selection, SQLite cache, 70 functions</td>
+            <td style="color:var(--accent);"><code>zshrs-daemon</code></td><td class="num">23,881</td><td class="num">41</td><td class="num">58</td><td class="num">38</td><td class="num">6</td><td class="num">91</td>
+            <td><div class="bar-wrap"><div class="bar-fill magenta" style="width:6.9%"></div><span class="bar-pct">6.9%</span></div></td>
+            <td>Singleton daemon: IPC + HTTP/OpenAPI, canonical shards, jobs, fsnotify, pub/sub.</td>
+          </tr>
+          <tr>
+            <td style="color:var(--green);"><code>zshrs-parse</code></td><td class="num">7,852</td><td class="num">4</td><td class="num">12</td><td class="num">28</td><td class="num">20</td><td class="num">33</td>
+            <td><div class="bar-wrap"><div class="bar-fill green" style="width:2.3%"></div><span class="bar-pct">2.3%</span></div></td>
+            <td>Shared lexer/parser extracted from upstream <code>lex.c</code> + <code>parse.c</code> for shell + daemon.</td>
           </tr>
         </tbody>
-        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">WORKSPACE</td><td class="num">285,070</td><td class="num">208</td><td class="num">3,436</td><td class="num">599</td><td class="num">224</td><td class="num">5,194</td><td></td><td></td></tr></tfoot>
+        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">WORKSPACE</td><td class="num">347,212</td><td class="num">401</td><td class="num">3,404</td><td class="num">736</td><td class="num">212</td><td class="num">4,642</td><td></td><td></td></tr></tfoot>
       </table>
 
     </main>
 
     <footer style="text-align:center;padding:2rem;font-size:10px;color:var(--text-muted);font-family:'Orbitron',sans-serif;letter-spacing:2px;">
-      ZSHRS PORT-COVERAGE REPORT &middot; +36K LINES NEW INFRASTRUCTURE BEYOND THE PORT &middot; UPDATED 2026-05-06 &middot; MENKETECHNOLOGIES
+      ZSHRS PORT-COVERAGE REPORT &middot; NON-PORT INFRASTRUCTURE LAYER &middot; UPDATED 2026-05-09 &middot; MENKETECHNOLOGIES
     </footer>
   </div>
 

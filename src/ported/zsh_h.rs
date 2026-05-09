@@ -1643,16 +1643,37 @@ pub struct options {                                                     // c:14
 pub const PARSEARGS_TOPLEVEL: i32 = 0x1;                                 // c:1425
 pub const PARSEARGS_LOGIN:    i32 = 0x2;                                 // c:1426
 
-#[inline] #[allow(non_snake_case)] pub fn OPT_ISSET(ops: &[bool; 256], c: u8) -> bool { ops[c as usize] }
-#[inline] #[allow(non_snake_case)] pub fn OPT_MINUS(ops: &[bool; 256], c: u8) -> bool { ops[c as usize] }
-#[inline] #[allow(non_snake_case)] pub fn OPT_PLUS(_ops: &[bool; 256], _c: u8) -> bool { false }
-#[inline] #[allow(non_snake_case)] pub fn OPT_HASARG(_ops: &[bool; 256], _c: u8) -> bool { false }
+// Port of OPT_* macros from Src/zsh.h:1400-1414. Each takes
+// `Options ops` (= `struct options *`) and a char index. The Rust
+// port takes `&options` (a reference to the struct ported above) and
+// indexes `ind[c]`. Char indexing is direct (not c-1) per zsh.h:1408
+// `((ops)->ind[c] != 0)`.
+
+/// Port of `OPT_MINUS(ops,c)` from `Src/zsh.h:1400` —
+/// `((ops)->ind[c] & 1)`. True if option was set as `-X`.
+#[inline] #[allow(non_snake_case)]
+pub fn OPT_MINUS(ops: &options, c: u8) -> bool { (ops.ind[c as usize] & 1) != 0 }
+
+/// Port of `OPT_PLUS(ops,c)` from `Src/zsh.h:1402` —
+/// `((ops)->ind[c] & 2)`. True if option was set as `+X`.
+#[inline] #[allow(non_snake_case)]
+pub fn OPT_PLUS(ops: &options, c: u8) -> bool { (ops.ind[c as usize] & 2) != 0 }
+
+/// Port of `OPT_ISSET(ops,c)` from `Src/zsh.h:1408` —
+/// `((ops)->ind[c] != 0)`. True if option was set any way.
+#[inline] #[allow(non_snake_case)]
+pub fn OPT_ISSET(ops: &options, c: u8) -> bool { ops.ind[c as usize] != 0 }
+
+/// Port of `OPT_HASARG(ops,c)` from `Src/zsh.h:1410` —
+/// `((ops)->ind[c] > 3)`. True if option carries an argument.
+#[inline] #[allow(non_snake_case)]
+pub fn OPT_HASARG(ops: &options, c: u8) -> bool { ops.ind[c as usize] > 3 }
 
 // =============================================================================
 // 21. Builtin types + BINF_* (zsh.h:1436-1486).
 // =============================================================================
 
-pub type HandlerFunc = fn(name: &str, args: &[String], ops: &[bool; 256], funcid: i32) -> i32;
+pub type HandlerFunc = fn(name: &str, args: &[String], ops: &options, funcid: i32) -> i32;
 
 pub const BINF_PLUSOPTS:        u32 = 1 << 1;                            // c:1457
 pub const BINF_PRINTOPTS:       u32 = 1 << 2;                            // c:1458
@@ -2607,17 +2628,27 @@ pub const fn ZWC(c: char) -> char { c }                                  // c:33
 // 46. Options accessor compat (already-allowed alias for OPT_*).
 // =============================================================================
 
-/// Port of `OPT_ARG(ops, c)` from `Src/zsh.h:1412`. C indexes into
-/// `ops->args`; Rust port returns `None` since the bitmask-based
-/// `[bool; 256]` doesn't carry argument values.
+/// Port of `OPT_ARG(ops, c)` from `Src/zsh.h:1412` —
+/// `((ops)->args[((ops)->ind[c] >> 2) - 1])`. Returns the argument
+/// associated with option `c`. Caller must have already checked
+/// `OPT_HASARG(ops,c)`; out-of-range indices yield `None` (C would
+/// dereference past `args[]`, which is undefined — Rust port stays
+/// safe).
 #[inline]
 #[allow(non_snake_case)]
-pub fn OPT_ARG(_ops: &[bool; 256], _c: u8) -> Option<&'static str> { None }
+pub fn OPT_ARG<'a>(ops: &'a options, c: u8) -> Option<&'a str> {
+    let idx = (ops.ind[c as usize] >> 2) as usize;
+    if idx == 0 { return None; }
+    ops.args.get(idx - 1).map(|s| s.as_str())
+}
 
-/// Port of `OPT_ARG_SAFE(ops, c)` from `Src/zsh.h:1414`.
+/// Port of `OPT_ARG_SAFE(ops, c)` from `Src/zsh.h:1414` —
+/// `(OPT_HASARG(ops,c) ? OPT_ARG(ops,c) : NULL)`.
 #[inline]
 #[allow(non_snake_case)]
-pub fn OPT_ARG_SAFE(_ops: &[bool; 256], _c: u8) -> Option<&'static str> { None }
+pub fn OPT_ARG_SAFE<'a>(ops: &'a options, c: u8) -> Option<&'a str> {
+    if OPT_HASARG(ops, c) { OPT_ARG(ops, c) } else { None }
+}
 
 #[cfg(test)]
 mod tests {
@@ -2654,9 +2685,11 @@ mod tests {
 
     #[test]
     fn opt_isset_basic() {
-        let mut ops = [false; 256];
-        ops[b'l' as usize] = true;
+        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+        ops.ind[b'l' as usize] = 1; // OPT_MINUS bit
         assert!(OPT_ISSET(&ops, b'l'));
+        assert!(OPT_MINUS(&ops, b'l'));
+        assert!(!OPT_PLUS(&ops, b'l'));
         assert!(!OPT_ISSET(&ops, b'r'));
     }
 

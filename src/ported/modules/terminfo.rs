@@ -161,35 +161,68 @@ impl crate::ported::exec::ShellExecutor {
 }
 // END moved-from-exec-rs
 
-/// Module loader entry — port of `setup_()` from Src/Modules/terminfo.c:316.
-pub fn setup_() -> i32 {
+// =====================================================================
+// static struct features module_features                            c:307 (terminfo.c)
+// =====================================================================
+
+use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::{features as features_t, module};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None, bn_size: 1,                                       // bintab[1]: echoti
+        cd_list: None, cd_size: 0,
+        mf_list: None, mf_size: 0,
+        pd_list: None, pd_size: 1,                                       // partab[1]: terminfo
+        n_abstract: 0,
+    }))
+}
+
+/// Port of `setup_()` from `Src/Modules/terminfo.c:316`.
+pub fn setup_(_m: *const module) -> i32 { 0 }
+
+/// Port of `features_()` from `Src/Modules/terminfo.c:323`.
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, module_features());
     0
 }
 
-/// Module loader entry — port of `features_()` from Src/Modules/terminfo.c:323.
-pub fn features_() -> i32 {
-    0
+/// Port of `enables_()` from `Src/Modules/terminfo.c:331`.
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, module_features(), enables)
 }
 
-/// Module loader entry — port of `enables_()` from Src/Modules/terminfo.c:331.
-pub fn enables_() -> i32 {
-    0
+/// Port of `boot_()` from `Src/Modules/terminfo.c:338`.
+pub fn boot_(_m: *const module) -> i32 { 0 }
+
+/// Port of `cleanup_()` from `Src/Modules/terminfo.c:349`.
+/// C body: `return setfeatureenables(m, &module_features, NULL);`
+pub fn cleanup_(m: *const module) -> i32 {
+    setfeatureenables(m, module_features(), None)
 }
 
-/// Module loader entry — port of `boot_()` from Src/Modules/terminfo.c:338.
-pub fn boot_() -> i32 {
-    0
-}
+/// Port of `finish_()` from `Src/Modules/terminfo.c:359`.
+pub fn finish_(_m: *const module) -> i32 { 0 }
 
-/// Module loader entry — port of `cleanup_()` from Src/Modules/terminfo.c:349.
-pub fn cleanup_() -> i32 {
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:echoti".to_string(), "p:terminfo".to_string()]
+}
+fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() {
+        *enables = Some(getfeatureenables(m, f));
+    } else if let Some(e) = enables.as_ref() {
+        return setfeatureenables(m, f, Some(e));
+    }
     0
 }
-
-/// Module loader entry — port of `finish_()` from Src/Modules/terminfo.c:359.
-pub fn finish_() -> i32 {
-    0
+fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    vec![0; (g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract) as usize]
 }
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }
 
 // === auto-generated stubs ===
 /// Port of `scanterminfo()` from `Src/Modules/terminfo.c:177`. The

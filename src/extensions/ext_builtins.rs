@@ -2600,43 +2600,22 @@ impl ShellExecutor {
     /// (zsh/attr module). Bridge to the canonical port at
     /// `src/ported/modules/attr.rs` (`bin_getattr`/`bin_setattr`/
     /// `bin_delattr`/`bin_listattr` from `Src/Modules/attr.c`).
-    /// Parses `-h` (operate on symlink) and dispatches to the
-    /// matching `bin_*` free fn.
+    /// Parses `-h` (operate on symlink) into the canonical `options`
+    /// struct, then dispatches to the matching `bin_*` free fn.
     pub(crate) fn builtin_zattr(&mut self, cmd: &str, args: &[String]) -> i32 {
-        let mut symlink: i32 = 0;
-        let mut positional: Vec<String> = Vec::with_capacity(args.len());
-        let mut iter = args.iter();
-        while let Some(a) = iter.next() {
-            if a == "--" {
-                positional.extend(iter.by_ref().cloned());
-                break;
-            }
-            if a == "-h" {
-                symlink = 1;
-                continue;
-            }
-            if a.starts_with('-') && a.len() > 1 {
-                // attr.c BUILTIN("zgetattr"/etc) declares only -h as
-                // valid. Unknown flags previously got pushed as
-                // positional args and led to confusing "no such file"
-                // errors.
-                eprintln!("zshrs:{}:1: bad option: {}", cmd, a);
-                return 1;
-            }
-            positional.push(a.clone());
-        }
+        let (ops, positional) = build_short_opts(args, b"h");
         match cmd {
             "zgetattr" => {
-                crate::ported::modules::attr::bin_getattr(self, "zgetattr", &positional, symlink)
+                crate::ported::modules::attr::bin_getattr("zgetattr", &positional, &ops, 0)
             }
             "zsetattr" => {
-                crate::ported::modules::attr::bin_setattr(self, "zsetattr", &positional, symlink)
+                crate::ported::modules::attr::bin_setattr("zsetattr", &positional, &ops, 0)
             }
             "zdelattr" => {
-                crate::ported::modules::attr::bin_delattr(self, "zdelattr", &positional, symlink)
+                crate::ported::modules::attr::bin_delattr("zdelattr", &positional, &ops, 0)
             }
             "zlistattr" => {
-                crate::ported::modules::attr::bin_listattr(self, "zlistattr", &positional, symlink)
+                crate::ported::modules::attr::bin_listattr("zlistattr", &positional, &ops, 0)
             }
             _ => 1,
         }
@@ -8117,4 +8096,88 @@ impl ShellExecutor {
         eprintln!("mktemp: too many collisions");
         1
     }
+}
+
+// =====================================================================
+// rlimits dispatcher bridges. Build a `struct options` (zsh.h:1416)
+// from the leading short-option run and delegate to the C-faithful
+// free fns in `src/ported/builtins/rlimits.rs`. This lives outside
+// `src/ported/` because it is the dispatcher slice (analogue of
+// `Src/builtin.c:execbuiltin` + `parseopts`), not a port of
+// `rlimits.c` itself.
+// =====================================================================
+
+use crate::ported::builtins::rlimits::{bin_limit as rl_bin_limit, bin_ulimit as rl_bin_ulimit, bin_unlimit as rl_bin_unlimit};
+use crate::ported::builtins::sched::bin_sched as sc_bin_sched;
+use crate::ported::modules::clone::bin_clone as cl_bin_clone;
+use crate::ported::zsh_h::{options, MAX_OPS};
+
+impl ShellExecutor {
+    /// `limit` builtin entry. C dispatcher fills `Options ops` from
+    /// the `"sh"` flag set declared in rlimits.c:868
+    /// (`BUILTIN("limit", 0, bin_limit, 0, -1, 0, "sh", NULL)`),
+    /// then calls `bin_limit(name, argv, ops, 0)`.
+    pub(crate) fn bin_limit(&self, args: &[String]) -> i32 {
+        let (ops, rest) = build_short_opts(args, b"hs");
+        rl_bin_limit("limit", &rest, &ops, 0)
+    }
+
+    /// `unlimit` builtin entry. Flag set `"hs"` per rlimits.c:870.
+    pub(crate) fn bin_unlimit(&self, args: &[String]) -> i32 {
+        let (ops, rest) = build_short_opts(args, b"hs");
+        rl_bin_unlimit("unlimit", &rest, &ops, 0)
+    }
+
+    /// `ulimit` builtin entry. C declares the builtin with a NULL
+    /// option-string (rlimits.c:869) — `bin_ulimit` parses its own
+    /// `-H`/`-S`/`-N`/`-a`/letter flags inline and ignores the
+    /// dispatcher-filled `ops`. The bridge passes a zero-init
+    /// `options` to match.
+    pub(crate) fn bin_ulimit(&self, args: &[String]) -> i32 {
+        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+        rl_bin_ulimit("ulimit", args, &ops, 0)
+    }
+
+    /// `sched` builtin entry. C declares the builtin with a NULL
+    /// option-string (sched.c:375) — `bin_sched` parses its own
+    /// `-N`/`-o`/`--` flags inline and ignores the dispatcher-filled
+    /// `ops`. The bridge passes a zero-init `options` to match.
+    pub(crate) fn bin_sched(&self, args: &[String]) -> i32 {
+        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+        sc_bin_sched("sched", args, &ops, 0)
+    }
+
+    /// `clone` builtin entry. C declares the builtin with a NULL
+    /// option-string (clone.c:110) — `bin_clone` ignores `ops`/`func`.
+    /// The bridge passes a zero-init `options` to match.
+    pub(crate) fn bin_clone(&self, args: &[String]) -> i32 {
+        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+        cl_bin_clone("clone", args, &ops, 0)
+    }
+}
+
+// Build a `struct options` (zsh.h:1416) from the leading `-X[Y…]`
+// short-flag run, accepting only letters in `allowed`. Each set
+// flag's `ind[c]` gets the OPT_MINUS bit (1, per zsh.h:1400) so
+// `OPT_ISSET`/`OPT_MINUS` both report it as set. Stops at the first
+// non-flag arg, `--`, or unknown letter. Returns the built `options`
+// and the residual argv. This is the dispatcher slice C does inside
+// `Src/builtin.c:parseopts`.
+fn build_short_opts(args: &[String], allowed: &[u8]) -> (options, Vec<String>) {
+    let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
+    let mut i: usize = 0;
+    while i < args.len() {
+        let a = args[i].as_bytes();
+        if a.len() < 2 || a[0] != b'-' || a == b"--" { break; }
+        let mut ok = true;
+        for &c in &a[1..] {
+            if !allowed.contains(&c) { ok = false; break; }
+        }
+        if !ok { break; }
+        for &c in &a[1..] {
+            ops.ind[c as usize] = 1;
+        }
+        i += 1;
+    }
+    (ops, args[i..].to_vec())
 }

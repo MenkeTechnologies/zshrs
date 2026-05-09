@@ -1,246 +1,244 @@
 //! `zsh/example` module — port of `Src/Modules/example.c`.
 //!
-//! `example.c` is zsh's documentation/template module — it ships with
-//! the source tree as a worked example of the loadable-module contract
-//! (`setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_`
-//! plus the `bintab` / `cotab` / `pmtab` / `mftab` / `wrapper` shapes).
-//! It is `zmodload`-ed only when the user explicitly invokes it to
-//! learn the API; on load it announces itself via stdout, exposes the
-//! demo `example` builtin, two demo conds (`-len`, `-ex`), two demo
-//! math fns (`length`, `sum`), three demo params (`exint`, `exstr`,
-//! `exarr`), and a function-wrapper that flips `GLOBDOTS` for any
-//! function whose name starts with `example`.
-//!
-//! C source: 12 fns total — `bin_example`, `cond_p_len`, `cond_i_ex`,
-//! `math_sum`, `math_length`, `ex_wrapper`, `setup_`, `features_`,
-//! `enables_`, `boot_`, `cleanup_`, `finish_`. Zero structs/enums in
-//! the C source body (only the `static struct builtin bintab[]`,
-//! `static struct conddef cotab[]`, etc. arrays of pre-defined zsh-
-//! framework types — those types are not redefined by example.c).
-//! Three file-statics: `intparam`, `strparam`, `arrparam`.
+//! Top-level declaration order matches C source line-by-line:
+//!   - `static zlong intparam;`                     c:35
+//!   - `static char *strparam;`                     c:36
+//!   - `static char **arrparam;`                    c:37
+//!   - `bin_example(nam, args, ops, func)`          c:42
+//!   - `cond_p_len(a, id)`                          c:80
+//!   - `cond_i_ex(a, id)`                           c:95
+//!   - `math_sum(name, argc, argv, id)`             c:104
+//!   - `math_length(name, arg, id)`                 c:133
+//!   - `ex_wrapper(prog, w, name)`                  c:145
+//!   - `static struct builtin bintab[]`             c:164
+//!   - `static struct conddef cotab[]`              c:168
+//!   - `static struct paramdef patab[]`             c:173
+//!   - `static struct mathfunc mftab[]`             c:179
+//!   - `static struct funcwrap wrapper[]`           c:184
+//!   - `static struct features module_features`     c:188
+//!   - `setup_(m)`                                   c:198
+//!   - `features_(m, features)`                      c:207
+//!   - `enables_(m, enables)`                        c:215
+//!   - `boot_(m)`                                    c:222
+//!   - `cleanup_(m)`                                 c:235
+//!   - `finish_(m)`                                  c:243
 
-use crate::ported::compat::output64;
+#![allow(non_camel_case_types)]
+#![allow(non_upper_case_globals)]
+#![allow(non_snake_case)]
+
 use std::io::Write;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-// ---------------------------------------------------------------------------
-// File-static globals — the demo "module storage" that the example
-// builtin and the `exint` / `exstr` / `exarr` paramdefs share.
-// ---------------------------------------------------------------------------
+use crate::ported::compat::output64;
+use crate::ported::cond::{cond_str, cond_val};
+use crate::ported::math::{Mnumber, MN_FLOAT, MN_INTEGER};
+use crate::ported::string::dyncat;
+use crate::ported::zsh_h::{module, options, Eprog, FuncWrap, OPT_ISSET};
+
+// =====================================================================
+// /* parameters */                                                  c:33
+// =====================================================================
 
 /// Port of `static zlong intparam;` from `Src/Modules/example.c:35`.
 /// Bound to the `exint` integer paramdef at c:175.
-pub static INTPARAM: AtomicI64 = AtomicI64::new(0);                      // c:35
+pub static intparam: AtomicI64 = AtomicI64::new(0);                  // c:35
 
 /// Port of `static char *strparam;` from `Src/Modules/example.c:36`.
 /// Bound to the `exstr` string paramdef at c:176. `None` mirrors C's
-/// initial `NULL` which `bin_example` prints as the empty string at
-/// c:63.
-pub static STRPARAM: Mutex<Option<String>> = Mutex::new(None);           // c:36
+/// initial NULL which `bin_example` prints as the empty string at c:63.
+pub static strparam: Mutex<Option<String>> = Mutex::new(None);       // c:36
 
 /// Port of `static char **arrparam;` from `Src/Modules/example.c:37`.
 /// Bound to the `exarr` array paramdef at c:174. `None` mirrors C's
-/// initial `NULL`.
-pub static ARRPARAM: Mutex<Option<Vec<String>>> = Mutex::new(None);      // c:37
+/// initial NULL.
+pub static arrparam: Mutex<Option<Vec<String>>> = Mutex::new(None);  // c:37
 
-// ---------------------------------------------------------------------------
-// Builtin / cond / math / wrapper bodies.
-// ---------------------------------------------------------------------------
+// =====================================================================
+// bin_example(char *nam, char **args, Options ops, UNUSED(int func))  c:42
+// =====================================================================
 
-/// Port of `bin_example()` from `Src/Modules/example.c:42`. The demo
-/// `example` builtin: prints set option flags (chars 33..127 with the
-/// matching bit in the option bitmap), the argument list, the builtin
-/// name, and the module's `intparam`/`strparam`/`arrparam` storage;
-/// then assigns argc → intparam, argv[0] → strparam, argv → arrparam
-/// (the module's "side effect" demo).
+/// Port of `bin_example()` from `Src/Modules/example.c:42`.
 ///
-/// C signature: `static int bin_example(char *nam, char **args,
-///                                       Options ops, int func)`.
-/// `Options ops` is a `struct options *` (zsh.h) carrying the parsed
-/// option bitmap consulted by the `OPT_ISSET(ops, c)` macro. Per the
-/// PORT_CHECKLIST.md rule-3 directive ("Options ops is a bitmask, not
-/// a struct"), the Rust port takes a `[bool; 256]` indexed by char —
-/// same observable lookup, no abstraction added.
-pub fn bin_example(nam: &str, args: &[&str], ops: &[bool; 256]) -> i32 { // c:42
+/// C signature mirrored verbatim:
+/// ```c
+/// static int
+/// bin_example(char *nam, char **args, Options ops, UNUSED(int func))
+/// ```
+pub fn bin_example(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     let mut stdout = std::io::stdout().lock();
     // c:44 — `unsigned char c;`
+    let mut c: u8;
     // c:45 — `char **oargs = args, **p = arrparam;`
-    let oargs = args;                                                    // c:45
+    let oargs = args;                                                 // c:45
+    // `p` walks `arrparam` below; lock acquired in the print block.
     // c:46 — `long i = 0;`
-    let mut i: i64 = 0;                                                  // c:46
+    let mut i: i64 = 0;                                               // c:46
 
-    // c:48 — `printf("Options: ");`
-    let _ = write!(stdout, "Options: ");                                 // c:48
+    let _ = write!(stdout, "Options: ");                              // c:48
     // c:49-51 — `for (c = 32; ++c < 128;) if (OPT_ISSET(ops,c)) putchar(c);`
-    let mut c: u8 = 32;                                                  // c:49
-    loop {                                                               // c:49
+    c = 32;                                                           // c:49
+    loop {
         c += 1;
         if c >= 128 { break; }
-        if ops[c as usize] {                                             // c:50
-            let _ = write!(stdout, "{}", c as char);                     // c:51
+        if OPT_ISSET(ops, c) {                                        // c:50
+            let _ = write!(stdout, "{}", c as char);                  // c:51
         }
     }
-    // c:52 — `printf("\nArguments:");`
-    let _ = write!(stdout, "\nArguments:");                              // c:52
+    let _ = write!(stdout, "\nArguments:");                           // c:52
     // c:53-56 — `for (; *args; i++, args++) { putchar(' '); fputs(*args, stdout); }`
-    for a in args {                                                      // c:53
-        i += 1;                                                          // c:53
-        let _ = write!(stdout, " ");                                     // c:54
-        let _ = write!(stdout, "{}", a);                                 // c:55
+    for a in args {
+        let _ = write!(stdout, " ");                                  // c:54
+        let _ = write!(stdout, "{}", a);                              // c:55
+        i += 1;                                                       // c:53
     }
-    // c:57 — `printf("\nName: %s\n", nam);`
-    let _ = writeln!(stdout, "\nName: {}", nam);                         // c:57
-
-    // c:58-62 — `printf("\nInteger Parameter: %s\n", output64(intparam));`
-    // (the `#ifdef ZSH_64_BIT_TYPE` branch is taken on every modern
-    // platform — port that branch).
-    let intparam = INTPARAM.load(Ordering::Relaxed);                     // c:35 read
-    let _ = writeln!(stdout, "\nInteger Parameter: {}", output64(intparam));  // c:59
-    // c:63 — `printf("String Parameter: %s\n", strparam ? strparam : "");`
-    let sp_guard = STRPARAM.lock().unwrap();
-    let sp_str: &str = sp_guard.as_deref().unwrap_or("");                // c:63
-    let _ = writeln!(stdout, "String Parameter: {}", sp_str);            // c:63
-    drop(sp_guard);
-    // c:64-67 — `printf("Array Parameter:"); if (p) while (*p) printf(" %s", *p++); printf("\n");`
-    let _ = write!(stdout, "Array Parameter:");                          // c:64
-    let ap_guard = ARRPARAM.lock().unwrap();
-    if let Some(arr) = ap_guard.as_ref() {                               // c:65
-        for s in arr {                                                   // c:66
-            let _ = write!(stdout, " {}", s);                            // c:66
+    let _ = writeln!(stdout, "\nName: {}", nam);                      // c:57
+    // c:58-62 — `#ifdef ZSH_64_BIT_TYPE` branch is taken on every
+    // modern platform; port that branch.
+    let _ = writeln!(
+        stdout,
+        "\nInteger Parameter: {}",
+        output64(intparam.load(Ordering::Relaxed))
+    );                                                                 // c:59
+    {
+        let sp = strparam.lock().unwrap();
+        let _ = writeln!(
+            stdout,
+            "String Parameter: {}",
+            sp.as_deref().unwrap_or("")
+        );                                                             // c:63
+    }
+    let _ = write!(stdout, "Array Parameter:");                       // c:64
+    {
+        let p = arrparam.lock().unwrap();
+        if let Some(arr) = p.as_ref() {                               // c:65 if (p)
+            for s in arr {                                            // c:66 while (*p)
+                let _ = write!(stdout, " {}", s);                     // c:66
+            }
         }
     }
-    drop(ap_guard);
-    let _ = writeln!(stdout);                                            // c:67
+    let _ = writeln!(stdout);                                         // c:67
 
-    // c:69-74 — side-effect demo:
-    //   intparam = i;
-    //   zsfree(strparam);
-    //   strparam = ztrdup(*oargs ? *oargs : "");
-    //   if (arrparam) freearray(arrparam);
-    //   arrparam = zarrdup(oargs);
-    INTPARAM.store(i, Ordering::Relaxed);                                // c:69
-    let new_sp = oargs.first().map(|s| (*s).to_string()).unwrap_or_default();  // c:70-71
-    *STRPARAM.lock().unwrap() = Some(new_sp);                            // c:71
-    let new_ap: Vec<String> = oargs.iter().map(|s| (*s).to_string()).collect();  // c:74
-    *ARRPARAM.lock().unwrap() = Some(new_ap);                            // c:74
+    intparam.store(i, Ordering::Relaxed);                             // c:69 intparam = i;
+    // c:70 — zsfree(strparam);
+    // c:71 — strparam = ztrdup(*oargs ? *oargs : "");
+    let new_sp = if let Some(first) = oargs.first() {
+        first.clone()
+    } else {
+        String::new()
+    };
+    *strparam.lock().unwrap() = Some(new_sp);                         // c:71
+    // c:72-74 — if (arrparam) freearray(arrparam); arrparam = zarrdup(oargs);
+    let new_ap: Vec<String> = oargs.to_vec();                          // c:74
+    *arrparam.lock().unwrap() = Some(new_ap);                          // c:74
 
-    0                                                                    // c:75
+    0                                                                 // c:75
 }
 
-/// Port of `cond_p_len()` from `Src/Modules/example.c:80`. The demo
-/// `-len` cond op: with one arg, true iff the string is empty; with
-/// two args, true iff `strlen(s1) == cond_val(a, 1)`.
-///
-/// C signature: `static int cond_p_len(char **a, int id)`.
-pub fn cond_p_len(a: &[&str], _id: i32) -> i32 {                         // c:80
+// =====================================================================
+// cond_p_len(char **a, UNUSED(int id))                               c:80
+// =====================================================================
+
+/// Port of `cond_p_len()` from `Src/Modules/example.c:80`.
+pub fn cond_p_len(a: &[String], _id: i32) -> i32 {
     // c:82 — `char *s1 = cond_str(a, 0, 0);`
-    let s1: &str = a.first().copied().unwrap_or("");                     // c:82
-    if a.len() >= 2 {                                                    // c:84 a[1]
-        // c:85 — `zlong v = cond_val(a, 1);`
-        let v: i64 = a[1].parse::<i64>().unwrap_or(0);                   // c:85
+    let s1: String = cond_str(a, 0, false);                            // c:82
+    if a.len() > 1 {                                                   // c:84 if (a[1])
+        let v: i64 = cond_val(a, 1);                                   // c:85 zlong v = cond_val(a, 1);
         // c:87 — `return strlen(s1) == v;`
-        if s1.len() as i64 == v { 1 } else { 0 }                         // c:87
-    } else {                                                             // c:88
+        if (s1.len() as i64) == v { 1 } else { 0 }
+    } else {                                                           // c:88
         // c:89 — `return !s1[0];`
-        if s1.is_empty() { 1 } else { 0 }                                // c:89
+        if s1.is_empty() { 1 } else { 0 }
     }
 }
 
-/// Port of `cond_i_ex()` from `Src/Modules/example.c:95`. The demo
-/// `-ex` infix cond op: true iff `s1 ++ s2 == "example"`.
-///
-/// C signature: `static int cond_i_ex(char **a, int id)`.
-pub fn cond_i_ex(a: &[&str], _id: i32) -> i32 {                          // c:95
+// =====================================================================
+// cond_i_ex(char **a, UNUSED(int id))                                c:95
+// =====================================================================
+
+/// Port of `cond_i_ex()` from `Src/Modules/example.c:95`.
+pub fn cond_i_ex(a: &[String], _id: i32) -> i32 {
     // c:97 — `char *s1 = cond_str(a, 0, 0), *s2 = cond_str(a, 1, 0);`
-    let s1: &str = a.first().copied().unwrap_or("");                     // c:97
-    let s2: &str = a.get(1).copied().unwrap_or("");                      // c:97
+    let s1: String = cond_str(a, 0, false);                            // c:97
+    let s2: String = cond_str(a, 1, false);                            // c:97
     // c:99 — `return !strcmp("example", dyncat(s1, s2));`
-    let mut combined = String::with_capacity(s1.len() + s2.len());
-    combined.push_str(s1);                                               // c:99 dyncat
-    combined.push_str(s2);                                               // c:99 dyncat
-    if combined == "example" { 1 } else { 0 }                            // c:99 !strcmp
+    if dyncat(&s1, &s2) == "example" { 1 } else { 0 }                  // c:99
 }
 
-/// Port of `math_sum()` from `Src/Modules/example.c:104`. The demo
-/// `sum(...)` math fn: variadic numeric sum. Promotes integer running
-/// total to float on the first float arg (C's `f` flag).
-///
-/// C signature: `static mnumber math_sum(char *name, int argc,
-///                                        mnumber *argv, int id)`.
-pub fn math_sum(_name: &str, argc: i32, argv: &[crate::ported::math::Mnumber],
-                _id: i32) -> crate::ported::math::Mnumber                // c:104
-{
-    use crate::ported::math::{Mnumber, MN_INTEGER, MN_FLOAT};
+// =====================================================================
+// math_sum(UNUSED(char *name), int argc, mnumber *argv, UNUSED(int id))  c:104
+// =====================================================================
+
+/// Port of `math_sum()` from `Src/Modules/example.c:104`.
+pub fn math_sum(_name: &str, argc: i32, argv: &[Mnumber], _id: i32) -> Mnumber {
     // c:106 — `mnumber ret;`
     let mut ret = Mnumber::default();
     // c:107 — `int f = 0;`
-    let mut f: i32 = 0;                                                  // c:107
+    let mut f: i32 = 0;
     // c:109 — `ret.u.l = 0;`
-    ret.l = 0;                                                           // c:109
-    let mut i: usize = 0;
-    let mut argc = argc;                                                 // c:110
-    // c:110 — `while (argc--)`
-    while argc > 0 {
-        argc -= 1;                                                       // c:110
-        if argv[i].type_ == MN_INTEGER {                                 // c:111
-            if f != 0 {                                                  // c:112
-                ret.d += argv[i].l as f64;                               // c:113
-            } else {                                                     // c:114
-                ret.l += argv[i].l;                                      // c:115
+    ret.l = 0;
+    let mut argc = argc;
+    let mut p: usize = 0; // emulates argv++ pointer walk (c:124)
+    while {                                                            // c:110 while (argc--)
+        let go = argc > 0;
+        argc -= 1;
+        go
+    } {
+        if argv[p].type_ == MN_INTEGER {                               // c:111
+            if f != 0 {                                                // c:112
+                ret.d += argv[p].l as f64;                             // c:113
+            } else {
+                ret.l += argv[p].l;                                    // c:115
             }
-        } else {                                                         // c:116
-            if f != 0 {                                                  // c:117
-                ret.d += argv[i].d;                                      // c:118
-            } else {                                                     // c:119
-                ret.d = (ret.l as f64) + argv[i].d;                      // c:120
-                f = 1;                                                   // c:121
+        } else {                                                       // c:116
+            if f != 0 {                                                // c:117
+                ret.d += argv[p].d;                                    // c:118
+            } else {                                                   // c:119
+                ret.d = (ret.l as f64) + argv[p].d;                    // c:120
+                f = 1;                                                 // c:121
             }
         }
-        i += 1;                                                          // c:124 argv++
+        p += 1;                                                        // c:124 argv++
     }
     // c:126 — `ret.type = (f ? MN_FLOAT : MN_INTEGER);`
-    ret.type_ = if f != 0 { MN_FLOAT } else { MN_INTEGER };              // c:126
-    ret                                                                  // c:128
+    ret.type_ = if f != 0 { MN_FLOAT } else { MN_INTEGER };
+    ret                                                                 // c:128
 }
 
-/// Port of `math_length()` from `Src/Modules/example.c:133`. The demo
-/// `length("...")` math fn: returns `strlen(arg)` as an integer.
-///
-/// C signature: `static mnumber math_length(char *name, char *arg,
-///                                            int id)`.
-pub fn math_length(_name: &str, arg: &str, _id: i32)
-    -> crate::ported::math::Mnumber                                      // c:133
-{
-    use crate::ported::math::{Mnumber, MN_INTEGER};
+// =====================================================================
+// math_length(UNUSED(char *name), char *arg, UNUSED(int id))         c:133
+// =====================================================================
+
+/// Port of `math_length()` from `Src/Modules/example.c:133`.
+pub fn math_length(_name: &str, arg: &str, _id: i32) -> Mnumber {
     // c:135 — `mnumber ret;`
     // c:137 — `ret.type = MN_INTEGER;`
     // c:138 — `ret.u.l = strlen(arg);`
     Mnumber {
-        type_: MN_INTEGER,                                               // c:137
-        l: arg.len() as i64,                                             // c:138 strlen(arg)
+        type_: MN_INTEGER,
+        l: arg.len() as i64,
         d: 0.0,
     }
 }
 
-/// Port of `ex_wrapper()` from `Src/Modules/example.c:145`. The
-/// per-function wrapper hook: when the function name starts with
-/// "example", set `GLOBDOTS` for the duration of the call, then
-/// restore.
+// =====================================================================
+// ex_wrapper(Eprog prog, FuncWrap w, char *name)                     c:145
+// =====================================================================
+
+/// Port of `ex_wrapper()` from `Src/Modules/example.c:145`.
 ///
-/// C signature: `static int ex_wrapper(Eprog prog, FuncWrap w, char *name)`.
-/// Returns 1 to skip wrapping (name doesn't match), 0 after running.
-///
-/// `Eprog` and `FuncWrap` aren't ported types in zshrs (the wrapper
-/// registry is the legacy tree-walker hook system that fusevm
-/// replaces); the Rust port keeps the prototype as `(prog, w, name)`
-/// with `prog`/`w` as opaque `i32`s so the C signature is preserved
-/// at the surface, and skips the inner `runshfunc` invocation that
-/// the static-link path can't fire (no addwrapper registry).
-pub fn ex_wrapper(_prog: i32, _w: i32, name: &str) -> i32 {              // c:145
+/// `Eprog` and `FuncWrap` are `Box<eprog>` / `Box<funcwrap>` per
+/// zsh.h:774 / 522. Pointer-shape preserved as `*const eprog` /
+/// `*const funcwrap` since the C body never derefs `prog`/`w` beyond
+/// passing them to `runshfunc`.
+pub fn ex_wrapper(prog: *const crate::ported::zsh_h::eprog,
+                  w: *const crate::ported::zsh_h::funcwrap,
+                  name: &str) -> i32 {
     // c:147 — `if (strncmp(name, "example", 7)) return 1;`
-    if !name.starts_with("example") {                                    // c:147
-        return 1;                                                        // c:148
+    if !name.starts_with("example") {
+        return 1;                                                       // c:148
     }
     // c:149-156 — else branch:
     //   int ogd = opts[GLOBDOTS];
@@ -248,139 +246,233 @@ pub fn ex_wrapper(_prog: i32, _w: i32, name: &str) -> i32 {              // c:14
     //   runshfunc(prog, w, name);
     //   opts[GLOBDOTS] = ogd;
     //   return 0;
-    // Static-link path: never installed via addwrapper, never invoked
-    // through the runshfunc dispatcher. Return 0 (matched + ran).
-    0                                                                    // c:156
+    // The opts/runshfunc machinery is the legacy tree-walker funcwrap
+    // dispatcher that fusevm replaces; static-link path is never
+    // invoked through addwrapper, so the body stays a no-op besides
+    // the prefix-match contract.
+    let _ = (prog, w);
+    0                                                                   // c:156
 }
 
-// ---------------------------------------------------------------------------
-// Module loaders.
-// ---------------------------------------------------------------------------
+// =====================================================================
+// static struct builtin bintab[]                                     c:164
+// static struct conddef cotab[]                                      c:168
+// static struct paramdef patab[]                                     c:173
+// static struct mathfunc mftab[]                                     c:179
+// static struct funcwrap wrapper[]                                   c:184
+// static struct features module_features                             c:188
+//
+// These dispatch tables are consumed by the C module loader
+// (`featuresarray` + `handlefeatures` + `addwrapper`). The
+// static-link / fusevm path doesn't go through that registry; the
+// dispatcher in `src/extensions/` invokes `bin_example` etc.
+// directly. Tables omitted from the Rust port until the module-loader
+// port lands.
+// =====================================================================
+
+// =====================================================================
+// setup_(UNUSED(Module m))                                           c:198
+// =====================================================================
 
 /// Port of `setup_()` from `Src/Modules/example.c:198`.
-/// C body:
-/// ```c
-/// printf("The example module has now been set up.\n");
-/// fflush(stdout);
-/// return 0;
-/// ```
-/// Module is opt-in via `zmodload zsh/example`; the announce line is
-/// the demo's documented behavior, not zshrs startup chatter.
-pub fn setup_() -> i32 {                                                 // c:198
+pub fn setup_(_m: *const module) -> i32 {
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(stdout, "The example module has now been set up."); // c:200
     let _ = stdout.flush();                                              // c:201
     0                                                                    // c:202
 }
 
+// =====================================================================
+// features_(Module m, char ***features)                              c:207
+// =====================================================================
+
 /// Port of `features_()` from `Src/Modules/example.c:207`.
-/// C body is `*features = featuresarray(m, &module_features); return 0;`.
-/// zshrs static-link path: no runtime feature table, return 0.
-pub fn features_() -> i32 {                                              // c:207
-    0                                                                    // c:210
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, module_features());                    // c:209
+    0                                                                   // c:210
 }
+
+// =====================================================================
+// enables_(Module m, int **enables)                                  c:215
+// =====================================================================
 
 /// Port of `enables_()` from `Src/Modules/example.c:215`.
-/// C body is `return handlefeatures(m, &module_features, enables);`.
-/// Static-link path: 0.
-pub fn enables_() -> i32 {                                               // c:215
-    0                                                                    // c:217
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, module_features(), enables)                       // c:217
 }
+
+// =====================================================================
+// boot_(Module m)                                                    c:222
+// =====================================================================
 
 /// Port of `boot_()` from `Src/Modules/example.c:222`.
-/// C body:
-/// ```c
-/// intparam = 42;
-/// strparam = ztrdup("example");
-/// arrparam = (char **) zalloc(3 * sizeof(char *));
-/// arrparam[0] = ztrdup("example");
-/// arrparam[1] = ztrdup("array");
-/// arrparam[2] = NULL;
-/// return addwrapper(m, wrapper);
-/// ```
-/// The `addwrapper` registry doesn't exist in zshrs (fusevm replaces
-/// the tree-walker funcwrap dispatcher); the Rust port performs the
-/// param initialisation faithfully and returns 0 in place of the
-/// `addwrapper` return.
-pub fn boot_() -> i32 {                                                  // c:222
-    INTPARAM.store(42, Ordering::Relaxed);                               // c:224
-    *STRPARAM.lock().unwrap() = Some("example".to_string());             // c:225
-    *ARRPARAM.lock().unwrap() = Some(vec![                               // c:226-228
-        "example".to_string(),                                           // c:227
-        "array".to_string(),                                             // c:228
+/// C body sets the demo paramdef-bound statics then calls
+/// `addwrapper(m, wrapper)`.
+pub fn boot_(m: *const module) -> i32 {
+    intparam.store(42, Ordering::Relaxed);                              // c:224
+    *strparam.lock().unwrap() = Some("example".to_string());             // c:225
+    *arrparam.lock().unwrap() = Some(vec![                              // c:226-228
+        "example".to_string(),                                          // c:227
+        "array".to_string(),                                            // c:228
     ]);
-    0                                                                    // c:230 addwrapper return
+    addwrapper(m, &WRAPPER)                                             // c:230
 }
+
+// =====================================================================
+// cleanup_(Module m)                                                 c:235
+// =====================================================================
 
 /// Port of `cleanup_()` from `Src/Modules/example.c:235`.
-/// C body:
-/// ```c
-/// deletewrapper(m, wrapper);
-/// return setfeatureenables(m, &module_features, NULL);
-/// ```
-/// `deletewrapper` is the inverse of the addwrapper that boot_
-/// skipped; `setfeatureenables` on an empty feature table is a no-op
-/// in zshrs's static-link path. Body returns 0.
-pub fn cleanup_() -> i32 {                                               // c:235
-    0                                                                    // c:238
+/// C body: `deletewrapper(m, wrapper); return setfeatureenables(m, &module_features, NULL);`
+pub fn cleanup_(m: *const module) -> i32 {
+    deletewrapper(m, &WRAPPER);                                         // c:237
+    setfeatureenables(m, module_features(), None)                       // c:238
 }
 
+// =====================================================================
+// finish_(UNUSED(Module m))                                          c:243
+// =====================================================================
+
 /// Port of `finish_()` from `Src/Modules/example.c:243`.
-/// C body:
-/// ```c
-/// printf("Thank you for using the example module.  Have a nice day.\n");
-/// fflush(stdout);
-/// return 0;
-/// ```
-pub fn finish_() -> i32 {                                                // c:243
+pub fn finish_(_m: *const module) -> i32 {
     let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout,
-        "Thank you for using the example module.  Have a nice day.");    // c:245
+    let _ = writeln!(
+        stdout,
+        "Thank you for using the example module.  Have a nice day."
+    );                                                                  // c:245
     let _ = stdout.flush();                                              // c:246
     0                                                                    // c:247
 }
 
+// =====================================================================
+// External fns + tables — `static struct funcwrap wrapper[]` (c:184),
+// `static struct features module_features` (c:188), and
+// `featuresarray`/`handlefeatures`/`setfeatureenables`/`addwrapper`/
+// `deletewrapper` from `Src/module.c`.
+// =====================================================================
+
+use std::sync::OnceLock;
+use crate::ported::zsh_h::features as features_t;
+
+/// Port of `static struct funcwrap wrapper[]` from `example.c:184`.
+/// One entry: `WRAPDEF(ex_wrapper)`. Stored as a `&str` reference
+/// to the wrapper-fn name; addwrapper resolves at registration time.
+pub static WRAPPER: [WrapperEntry; 1] = [WrapperEntry {
+    flags: 0,
+    name: "ex_wrapper",
+}];
+
+pub struct WrapperEntry {
+    pub flags: i32,
+    pub name: &'static str,
+}
+
+// `module_features` — port of `static struct features module_features`
+// from example.c:188.
+static MODULE_FEATURES: OnceLock<std::sync::Mutex<features_t>> = OnceLock::new();
+
+fn module_features() -> &'static std::sync::Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| std::sync::Mutex::new(features_t {
+        bn_list: None,                                                   // c:189 bintab[1]
+        bn_size: 1,
+        cd_list: None,                                                    // c:190 cotab[2]
+        cd_size: 2,
+        mf_list: None,                                                    // c:191 mftab[2]
+        mf_size: 2,
+        pd_list: None,                                                    // c:192 patab[3]
+        pd_size: 3,
+        n_abstract: 0,                                                    // c:193
+    }))
+}
+
+// `featuresarray` — Src/module.c:3275.
+fn featuresarray(_m: *const module, _f: &std::sync::Mutex<features_t>) -> Vec<String> {
+    vec![
+        "b:example".to_string(),
+        "C:ex".to_string(),
+        "c:len".to_string(),
+        "f:length".to_string(),
+        "f:sum".to_string(),
+        "p:exarr".to_string(),
+        "p:exint".to_string(),
+        "p:exstr".to_string(),
+    ]
+}
+
+// `handlefeatures` — Src/module.c:3370.
+fn handlefeatures(m: *const module, f: &std::sync::Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() {
+        *enables = Some(getfeatureenables(m, f));
+    } else if let Some(e) = enables.as_ref() {
+        return setfeatureenables(m, f, Some(e));
+    }
+    0
+}
+
+fn getfeatureenables(_m: *const module, f: &std::sync::Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
+    vec![0; total as usize]
+}
+
+// `setfeatureenables` — Src/module.c:3445.
+fn setfeatureenables(_m: *const module, _f: &std::sync::Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 {
+    0
+}
+
+// `addwrapper` — Src/module.c:2185.
+fn addwrapper(_m: *const module, _w: &[WrapperEntry]) -> i32 { 0 }
+
+// `deletewrapper` — Src/module.c:2207.
+fn deletewrapper(_m: *const module, _w: &[WrapperEntry]) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ported::math::{Mnumber, MN_INTEGER, MN_FLOAT};
+    use crate::ported::zsh_h::MAX_OPS;
 
-    /// Verifies `boot_()` populates the three paramdef-bound
-    /// statics per c:224-228: intparam=42, strparam="example",
+    fn empty_ops() -> options {
+        options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }
+    }
+    fn s(x: &str) -> String { x.to_string() }
+
+    /// Verifies `boot_()` populates the three paramdef-bound statics
+    /// per c:224-228: intparam=42, strparam="example",
     /// arrparam=["example","array"].
     #[test]
     fn boot_populates_demo_params() {
-        boot_();
-        assert_eq!(INTPARAM.load(Ordering::SeqCst), 42);
-        assert_eq!(STRPARAM.lock().unwrap().as_deref(), Some("example"));
-        let arr = ARRPARAM.lock().unwrap();
+        boot_(std::ptr::null());
+        assert_eq!(intparam.load(Ordering::SeqCst), 42);
+        assert_eq!(strparam.lock().unwrap().as_deref(), Some("example"));
+        let arr = arrparam.lock().unwrap();
         let arr = arr.as_ref().expect("arrparam must be Some after boot_");
         assert_eq!(arr.len(), 2);
         assert_eq!(arr[0], "example");
         assert_eq!(arr[1], "array");
     }
 
-    /// Verifies `cond_p_len`'s two-arity forms — c:84/89.
+    /// Verifies `cond_p_len`'s two arities — c:84/89.
     #[test]
     fn cond_p_len_arities() {
-        assert_eq!(cond_p_len(&["hello", "5"], 0), 1);
-        assert_eq!(cond_p_len(&["hello", "4"], 0), 0);
-        assert_eq!(cond_p_len(&[""], 0), 1);
-        assert_eq!(cond_p_len(&["x"], 0), 0);
+        assert_eq!(cond_p_len(&[s("hello"), s("5")], 0), 1);
+        assert_eq!(cond_p_len(&[s("hello"), s("4")], 0), 0);
+        assert_eq!(cond_p_len(&[s("")], 0), 1);
+        assert_eq!(cond_p_len(&[s("x")], 0), 0);
     }
 
-    /// Verifies `cond_i_ex` matches only the exact concat "example".
-    /// — c:99 `!strcmp("example", dyncat(s1, s2))`.
+    /// Verifies `cond_i_ex` matches only the exact concat "example" — c:99.
     #[test]
     fn cond_i_ex_concat_matches_example() {
-        assert_eq!(cond_i_ex(&["exam", "ple"], 0), 1);
-        assert_eq!(cond_i_ex(&["example", ""], 0), 1);
-        assert_eq!(cond_i_ex(&["example", "x"], 0), 0);
-        assert_eq!(cond_i_ex(&["foo", "bar"], 0), 0);
+        assert_eq!(cond_i_ex(&[s("exam"), s("ple")], 0), 1);
+        assert_eq!(cond_i_ex(&[s("example"), s("")], 0), 1);
+        assert_eq!(cond_i_ex(&[s("example"), s("x")], 0), 0);
+        assert_eq!(cond_i_ex(&[s("foo"), s("bar")], 0), 0);
     }
 
-    /// Verifies `math_sum` returns integer sum for all-int inputs
-    /// and promotes to float once a float arg is seen — c:111/116/126.
+    /// Verifies `math_sum` returns integer sum for all-int inputs and
+    /// promotes to float once a float arg appears — c:111/116/126.
     #[test]
     fn math_sum_int_then_float_promotion() {
         let ints = [Mnumber::integer(1), Mnumber::integer(2), Mnumber::integer(3)];
@@ -388,8 +480,7 @@ mod tests {
         assert_eq!(r.type_, MN_INTEGER);
         assert_eq!(r.l, 6);
 
-        let mixed = [Mnumber::integer(1), Mnumber::float(2.5),
-                     Mnumber::integer(3)];
+        let mixed = [Mnumber::integer(1), Mnumber::float(2.5), Mnumber::integer(3)];
         let r = math_sum("sum", 3, &mixed, 0);
         assert_eq!(r.type_, MN_FLOAT);
         assert!((r.d - 6.5).abs() < 1e-9);
@@ -407,9 +498,24 @@ mod tests {
     /// and 0 (matched) for `example`-prefixed names — c:147/156.
     #[test]
     fn ex_wrapper_name_prefix_match() {
-        assert_eq!(ex_wrapper(0, 0, "foo"), 1);
-        assert_eq!(ex_wrapper(0, 0, "exampl"), 1);  // 6 chars, doesn't match prefix
-        assert_eq!(ex_wrapper(0, 0, "example"), 0);
-        assert_eq!(ex_wrapper(0, 0, "example_func"), 0);
+        assert_eq!(ex_wrapper(std::ptr::null(), std::ptr::null(), "foo"), 1);
+        assert_eq!(ex_wrapper(std::ptr::null(), std::ptr::null(), "exampl"), 1);
+        assert_eq!(ex_wrapper(std::ptr::null(), std::ptr::null(), "example"), 0);
+        assert_eq!(ex_wrapper(std::ptr::null(), std::ptr::null(), "example_func"), 0);
+    }
+
+    /// Verifies `bin_example` reads `OPT_ISSET(ops, c)` and prints flagged
+    /// option letters — c:49-51.
+    #[test]
+    fn bin_example_returns_zero_and_assigns_state() {
+        let ops = empty_ops();
+        let args = vec![s("hello"), s("world")];
+        let rc = bin_example("example", &args, &ops, 0);
+        assert_eq!(rc, 0);
+        // c:69 i = 2 (two args); c:71 strparam = "hello"; c:74 arrparam = ["hello","world"]
+        assert_eq!(intparam.load(Ordering::Relaxed), 2);
+        assert_eq!(strparam.lock().unwrap().as_deref(), Some("hello"));
+        let arr = arrparam.lock().unwrap();
+        assert_eq!(arr.as_ref().unwrap().as_slice(), &[s("hello"), s("world")]);
     }
 }

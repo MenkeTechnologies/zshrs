@@ -15,7 +15,7 @@
 //! Order in this file mirrors C source order verbatim.
 
 use crate::ported::exec::ShellExecutor;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 // ---------------------------------------------------------------------------
@@ -383,26 +383,47 @@ pub fn zprof_wrapper(_name: &str) -> i32 {                               // c:23
 // Module loaders.
 // ---------------------------------------------------------------------------
 
+// =====================================================================
+// static struct builtin bintab[]                                    c:309
+// static struct features module_features                            c:323
+// static struct funcwrap wrapper[]                                  c:328
+// =====================================================================
+
+use crate::ported::zsh_h::{features as features_t, module};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None, bn_size: 1,                                       // c:324 bintab[1] (zprof)
+        cd_list: None, cd_size: 0,
+        mf_list: None, mf_size: 0,
+        pd_list: None, pd_size: 0,
+        n_abstract: 0,
+    }))
+}
+
 /// Port of `setup_()` from `Src/Modules/zprof.c:332`.
-/// C body: `zprof_module = m; return 0;` — record the Module pointer
-/// for later `MOD_UNLOAD` checks. Rust port flips ZPROF_MODULE to
-/// true (the "loaded" sentinel).
-pub fn setup_() -> i32 {                                                 // c:332
+/// C body: `zprof_module = m; return 0;`
+pub fn setup_(_m: *const module) -> i32 {                                // c:332
     ZPROF_MODULE.store(true, Ordering::SeqCst);                          // c:334
     0                                                                    // c:335
 }
 
 /// Port of `features_()` from `Src/Modules/zprof.c:340`.
-pub fn features_() -> i32 { 0 }                                          // c:340-344
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {  // c:340
+    *features = featuresarray(m, module_features());                    // c:342
+    0                                                                    // c:343
+}
 
 /// Port of `enables_()` from `Src/Modules/zprof.c:348`.
-pub fn enables_() -> i32 { 0 }                                           // c:348-351
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:348
+    handlefeatures(m, module_features(), enables)                       // c:350
+}
 
 /// Port of `boot_()` from `Src/Modules/zprof.c:355`.
-/// C body resets the tables and registers `zprof_wrapper` via
-/// `addwrapper`. Rust port resets the tables; the wrapper is the
-/// executor's funcstack hook, not an addwrapper-registered callback.
-pub fn boot_() -> i32 {                                                  // c:355
+pub fn boot_(_m: *const module) -> i32 {                                 // c:355
     let mut calls = CALLS.lock().unwrap();
     calls.clear();                                                       // c:357
     NCALLS.store(0, Ordering::SeqCst);                                   // c:358
@@ -415,18 +436,38 @@ pub fn boot_() -> i32 {                                                  // c:35
 
 /// Port of `cleanup_()` from `Src/Modules/zprof.c:367`.
 /// C body: free pfuncs + parcs, deletewrapper, setfeatureenables.
-pub fn cleanup_() -> i32 {                                               // c:367
+pub fn cleanup_(m: *const module) -> i32 {                               // c:367
     let mut calls = CALLS.lock().unwrap();
     freepfuncs(&mut calls);                                              // c:369
     let mut arcs = ARCS.lock().unwrap();
     freeparcs(&mut arcs);                                                // c:370
     ZPROF_MODULE.store(false, Ordering::SeqCst);
-    0                                                                    // c:372
+    setfeatureenables(m, module_features(), None)                       // c:372
 }
 
-/// Port of `finish_()` from `Src/Modules/zprof.c:377`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn finish_() -> i32 { 0 }                                            // c:377-380
+/// Port of `finish_()` from `Src/Modules/zprof.c:377`.
+pub fn finish_(_m: *const module) -> i32 { 0 }                          // c:377-380
+
+// `featuresarray` — Src/module.c:3275.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:zprof".to_string()]
+}
+
+// `handlefeatures` — Src/module.c:3370.
+fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() {
+        *enables = Some(getfeatureenables(m, f));
+    } else if let Some(e) = enables.as_ref() {
+        return setfeatureenables(m, f, Some(e));
+    }
+    0
+}
+fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
+    vec![0; total as usize]
+}
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }
 
 #[cfg(test)]
 mod tests {

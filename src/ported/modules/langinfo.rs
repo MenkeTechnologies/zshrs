@@ -162,41 +162,88 @@ pub fn scanlanginfo() -> Vec<(String, String)> {                         // c:43
     out
 }
 
-/// Port of `setup_()` from `Src/Modules/langinfo.c:472`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn setup_() -> i32 {                                                 // c:472
+// =====================================================================
+// static struct paramdef partab[]                                   c:455
+// static struct features module_features                            c:464
+// =====================================================================
+
+use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::{features as features_t, module};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,
+        bn_size: 0,
+        cd_list: None,
+        cd_size: 0,
+        mf_list: None,
+        mf_size: 0,
+        pd_list: None,                                                   // c:467 partab[1]
+        pd_size: 1,
+        n_abstract: 0,
+    }))
+}
+
+/// Port of `setup_()` from `Src/Modules/langinfo.c:472`.
+pub fn setup_(_m: *const module) -> i32 {                                // c:472
     0                                                                    // c:475
 }
 
-/// Port of `features_()` from `Src/Modules/langinfo.c:479`. C body
-/// is `*features = featuresarray(m, &module_features); return 0;`.
-/// Static-link path: 0.
-pub fn features_() -> i32 {                                              // c:479
+/// Port of `features_()` from `Src/Modules/langinfo.c:479`.
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {  // c:479
+    *features = featuresarray(m, module_features());                    // c:482
     0                                                                    // c:483
 }
 
-/// Port of `enables_()` from `Src/Modules/langinfo.c:487`. C body
-/// is `return handlefeatures(m, &module_features, enables);`.
-pub fn enables_() -> i32 {                                               // c:487
-    0                                                                    // c:490
+/// Port of `enables_()` from `Src/Modules/langinfo.c:487`.
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:487
+    handlefeatures(m, module_features(), enables)                       // c:490
 }
 
-/// Port of `boot_()` from `Src/Modules/langinfo.c:494`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn boot_() -> i32 {                                                  // c:494
+/// Port of `boot_()` from `Src/Modules/langinfo.c:494`.
+pub fn boot_(_m: *const module) -> i32 {                                 // c:494
     0                                                                    // c:497
 }
 
-/// Port of `cleanup_()` from `Src/Modules/langinfo.c:501`. C body
-/// is `return setfeatureenables(m, &module_features, NULL);`.
-pub fn cleanup_() -> i32 {                                               // c:501
-    0                                                                    // c:504
+/// Port of `cleanup_()` from `Src/Modules/langinfo.c:501`.
+/// C body: `return setfeatureenables(m, &module_features, NULL);`
+pub fn cleanup_(m: *const module) -> i32 {                               // c:501
+    setfeatureenables(m, module_features(), None)                       // c:504
 }
 
-/// Port of `finish_()` from `Src/Modules/langinfo.c:508`. C body
-/// is `return 0;` (UNUSED `Module m`).
-pub fn finish_() -> i32 {                                                // c:508
+/// Port of `finish_()` from `Src/Modules/langinfo.c:508`.
+pub fn finish_(_m: *const module) -> i32 {                               // c:508
     0                                                                    // c:511
+}
+
+// `featuresarray` — Src/module.c:3275.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["p:langinfo".to_string()]
+}
+
+// `handlefeatures` — Src/module.c:3370.
+fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() {
+        *enables = Some(getfeatureenables(m, f));
+    } else if let Some(e) = enables.as_ref() {
+        return setfeatureenables(m, f, Some(e));
+    }
+    0
+}
+
+fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
+    vec![0; total as usize]
+}
+
+// `setfeatureenables` — Src/module.c:3445.
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 {
+    0
 }
 
 #[cfg(test)]

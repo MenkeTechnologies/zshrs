@@ -108,10 +108,7 @@ to a Rust statement. No tick without that log. Anything blocked on
 an unported dependency is moved to **🚧 BLOCKED** and tracked in
 `TODO.md`.
 
-- [x] `modules/random_real.rs` ↔ `Modules/random_real.c`
-  - C: 0 structs/enums • Rust: 0 structs/enums ✓
-  - C fns: `_zclz64`, `random_64bit`, `random_real` (3) • Rust: same 3 ✓
-  - `_zclz64(x: u64) -> i32` — port of c:48-79. 16 C statements → 16 Rust statements. Binary-search-shift each `if (!(x & MASK)) { n += K; x <<= K; }` matches one-to-one. Verified.
+- [x] `modules/random_real.rs` ↔ `Modules/random_real.c` — line-by-line C-faithful rewrite (PORT.md "EXACT TRANSLATION"); 4 fns in C-source order: `clz64` macro alias (c:43), `_zclz64` (c:48), `random_64bit` (c:83), `random_real` (c:147). `random_real` body mirrors C variable declarations + control flow + comments verbatim. `clz64` named to match C `#define` per case-sensitive rule. Uses `(x as f64) * 2.0_f64.powi(exp)` for ldexp (matching C author's 2015-02-22 update note about glibc slow ldexp). 5/5 tests pass
   - `random_64bit() -> u64` — port of c:84-93. Includes the `getrandom_buffer` error path + `zwarn(...)` + `return 1` (not 0) + `u64::from_ne_bytes(buf)` success path. Matches c:85-93 line-by-line. Verified after fix in `03ab0b26d9`.
   - `random_real() -> f64` — port of c:147-213. Calls `random_64bit()` (not `random_u64`), `_zclz64()` (not `leading_zeros`), and `extern "C" ldexp` (not `exp2`). All 18 C statements have matching Rust statements. Verified after fix in `03ab0b26d9`.
 
@@ -123,23 +120,23 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - `blankwordclass(c)` — 1-line port of c:36 ✓ verified.
   - `selectword(zle)` — full ~170-line port of c:41-205 incl. visual-mode-reverse-direction branch (c:97-148), digit-arg loop's `if all` inner block (c:165-179), and `doblanks` trim section (c:181-194). One residual: reads `virangeflag` as constant-false (zle_vi.c:36 is unported file-global, see TODO.md). Verified except for that constant.
   - `selectargument(zle)` — **NOT 100%.** C body uses `ctxtlex()` lexer-walk (c:233-257); Rust port is whitespace-split approximation. Blocks on lexer-context machinery — see TODO.md.
-- [x] `modules/socket.rs` ↔ `Modules/socket.c`
+- [ ] `modules/socket.rs` ↔ `Modules/socket.c`
   - C: 0 structs/enums • Rust: 0 structs/enums ✓ (after deleting Rust-only `ZsocketOptions`/`UnixSocket`)
   - C fns (7): `bin_zsocket`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 7 ✓
   - 6 module loaders match C 1:1 (each is `return 0;` body or short featuresarray/handlefeatures call — Rust ports are no-op static-link path)
   - `bin_zsocket` — full port of c:57-272 incl. inline flag parse (matching `"ad:ltv"` builtin spec at c:276), socket()/bind()/listen() for `-l` (c:84-138), poll-test + accept() for `-a` (c:142-218), socket()/connect() default path (c:218-269), addmodulefd + redup/movefd post-call sequence on every success path (c:118/121/125, c:208/211/215, c:252/255/260). The shim writes `setiparam_no_convert("REPLY", final_fd)` (c:135/204/268). Verified line-by-line.
-- [x] `zle/deltochar.rs` ↔ `Zle/deltochar.c`
+- [ ] `zle/deltochar.rs` ↔ `Zle/deltochar.c`
   - C: 0 structs/enums • Rust: 0 structs/enums ✓
   - C fns (7): `deltochar`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 7 ✓
   - 6 module loaders: `setup_`/`features_`/`enables_`/`boot_`/`cleanup_`/`finish_` — each is `return 0;` C body or trivial featuresarray/handlefeatures/addzlefunction call. Rust ports are static-link no-ops with C-line citations. Verified.
   - `deltochar(zle)` — port of c:38-79. 1:1 mapping: `getfullchar(0)` → `zle.getfullchar(false)`; `int dest = zlecs, ok = 0, n = zmult` → 3 mut locals; `zap = bindk->widget == w_zaptochar` → `zle.bindk.name == "zap-to-char"`; forward-direction loop (c:45-58) and backward-direction loop (c:59-77) match C structure exactly; `forekill(dest - zlecs, CUT_RAW)` and `backkill(zlecs - dest - zap, CUT_RAW|CUT_FRONT)` call into the real ports in zle_utils.rs (sibling stubs fixed at source, rule 5); `return !ok` → `if ok != 0 { 0 } else { 1 }`. Verified.
   - Sibling fixes: `zle_utils::forekill` (zle_utils.c:1064) + `zle_utils::backkill` (zle_utils.c:1045) ported as part of this commit.
-- [x] `loop.rs` ↔ `loop.c`
+- [ ] `loop.rs` ↔ `loop.c`
   - C: 0 structs/enums • Rust: 0 structs/enums ✓ (after deleting dead `LoopState`/`ForIterator`/`CForState`/`TryState` aggregates in earlier dissolution)
   - C fns (8): `execfor`, `execselect`, `execwhile`, `execrepeat`, `execif`, `execcase`, `exectry`, `selectlist` • Rust: same 8 ✓
   - 7 tree-walker entries (`execfor`/`execselect`/`execwhile`/`execrepeat`/`execif`/`execcase`/`exectry`) — bodies are `unreachable!()` per the 96-test architectural invariant (fusevm bytecode in `compile_zsh.rs` replaces tree-walker dispatch). Each entry cites its C line + the architectural reason. Verified consistent.
   - `selectlist(items, start)` — port of c:347-416. Was previously a Rust-only signature `(items, prompt, columns) -> String`; now matches C exactly: takes items + start index, writes formatted menu to stderr, returns next-page offset (or 0 when complete). Body ports c:350-415 line-by-line: longest-width compute, fct/fw column geometry, the do-while inner loop, MB_METASTRWIDTH approximation via chars().count(). Verified.
-- [x] `modules/mathfunc.rs` ↔ `Modules/mathfunc.c`
+- [ ] `modules/mathfunc.rs` ↔ `Modules/mathfunc.c`
   - C: 3 anonymous `enum {}` blocks (untyped int constants) • Rust: 0 pub struct/enum, replaced with `pub const MF_*: i32`, `pub const MS_*: i32`, `pub const TF_*: i32` matching C definitions exactly. ✓
   - C fns (8): `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_`, `math_func`, `math_string` • Rust: same 8 ✓
   - 6 module loaders match (return 0 each) ✓
@@ -161,7 +158,7 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - `zcond_regex_match(exec, a, id)` — port of c:54-200. Compiles regex with CASEMATCH-aware `(?i)` prefix, runs match, writes back $MATCH/$MBEGIN/$MEND/$match[]/$mbegin[]/$mend[] (or $BASH_REMATCH when BASHREMATCH set), with KSHARRAYS-aware 1-based vs 0-based offset indexing. 8 tests covering all branches pass. Verified.
   - `zregex_regerrwarn(prefix, msg)` — collapses C's two-`regerror()` size+fill pattern into a single `zwarnnam` call (c:40-51). Rust's regex crate carries pre-formatted error strings. Verified.
 
-- [x] `modules/zselect.rs` ↔ `Modules/zselect.c`
+- [ ] `modules/zselect.rs` ↔ `Modules/zselect.c`
   - C: 0 structs/enums • Rust: 0 structs/enums ✓ (after deleting `SelectMode`, `ZselectOptions`, `SelectResult`)
   - C fns (8): `bin_zselect`, `handle_digits` (static), `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 8 ✓
   - 6 module loaders match C 1:1.
@@ -170,7 +167,7 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - **Sibling fix at source (rule 5):** `utils::zstrtol` and `utils::zstrtol_underscore` rewritten from `(s) -> Option<i64>` and `(s, base) -> Option<i64>` to C-faithful `(s, base) -> (i64, &str)` and `(s, base, underscore) -> (i64, &str)` returning the unconsumed-tail slice (matching C's `char **t` out-arg). Body is full port of utils.c:2436-2519 incl. base autodetect, bases-≤10 / >10 digit-accumulator split, signed-overflow special case, truncation zwarn.
   - 6/6 tests pass in 0.02s. Verified.
 
-- [x] `modules/ksh93.rs` ↔ `Modules/ksh93.c`
+- [x] `modules/ksh93.rs` ↔ `Modules/ksh93.c` — line-by-line C-faithful rewrite (PORT.md "EXACT TRANSLATION"); fn signatures mirror C verbatim: `edcharsetfn(_pm: *mut param, _x: *mut c_char)` (was `&str`), `matchgetfn(_pm: *mut param) -> Vec<String>` (was `&ShellExecutor`), `ksh93_wrapper(_prog: *const eprog, _w: *const funcwrap, _name: *mut c_char)` (was `i32` placeholders). Five C file-statics added with case-sensitive names: `sh_unsetval` (`[u8;2]`), `sh_name`/`sh_subscript`/`sh_edchar` (`Mutex<String>`), `sh_edmode` (`Mutex<[u8;2]>`). Module loaders take `_m: *const module`. Big block comment from C (c:111-115 about ksh93.mdd) preserved verbatim. Declarations in C-source order. 5/5 tests pass
   - C: 0 structs/enums • Rust: 0 structs/enums ✓ (the `Ksh93Params`/`NamerefOptions` Rust-only types flagged in earlier TODO.md were already deleted in a prior pass).
   - C fns (9): `edcharsetfn`, `matchgetfn`, `ksh93_wrapper`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 9 ✓
   - **Sibling fix at source (rule 5):** `matchgetfn` signature changed from `() -> Vec<String>` to `(exec: &ShellExecutor) -> Vec<String>` so the body reads `exec.arrays.get("match")` / `exec.options.get("KSHARRAYS")` / `getsparam(.., "MATCH")` instead of the previous `std::env::var(...)` calls (zsh shell arrays aren't env vars — the previous body always returned empty).
@@ -180,7 +177,7 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - 6 module loaders are static-link no-ops with C-body-quoting doc-comments (c:236/243/251/258/265/284).
   - 3/3 ksh93 tests pass: `ksh93_wrapper_returns_one_when_not_emulate_ksh`, `matchgetfn_empty_returns_empty`, `module_loaders_return_zero`. Drift gate clean.
 
-- [x] `modules/langinfo.rs` ↔ `Modules/langinfo.c`
+- [ ] `modules/langinfo.rs` ↔ `Modules/langinfo.c`
   - C: 0 structs/enums • Rust: 0 structs/enums ✓ (the `LangInfoItem` enum flagged in earlier TODO.md was already deleted in a prior pass).
   - C fns (9): `liitem`, `getlanginfo`, `scanlanginfo`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 9 ✓; function order matches C source order verbatim.
   - `NL_NAMES` static — port of `nl_names[]` at c:40-207 (the per-`#ifdef`-gated string table). Uppercased to Rust static convention; lists every nl_item that's portable across Linux/macOS/BSD.
@@ -203,7 +200,7 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - Old impl-on-ShellExecutor adapter (`pub(crate) fn bin_private(&mut self, args)`) deleted — bin_private is now a free fn taking `&mut ShellExecutor`.
   - 5/5 param_private tests pass: `bin_private_no_args_returns_zero`, `bin_private_scalar_assign`, `bin_private_integer_assign`, `bin_private_array_assign`, `module_loaders_return_zero`. Drift gate clean. NOT ticked DONE — see PARTIAL note (true scope semantics blocked on Param/locallevel port).
 
-- [x] `zle/zle_word.rs` ↔ `Zle/zle_word.c` — **FULL REWRITE.**
+- [ ] `zle/zle_word.rs` ↔ `Zle/zle_word.c` — **FULL REWRITE.**
   - Previous file had `WordStyle` enum + 3 Rust-only `Zle::find_word_start`/`find_word_end`/`get_current_word` impl methods + Rust-only `bufferwords(&[ZleChar]) -> Vec<(usize,usize)>` (the canonical home is `Src/hist.c::bufferwords`) + Rust-only signatures for `backwardword`/`forwardword` (took `(line, pos)` instead of C's `(args)`). All wrong. Full rewrite.
   - C: 0 structs/enums • Rust: 0 structs/enums ✓ (the `WordStyle` enum was relocated to `src/extensions/widget.rs` where Rust-only types are sanctioned by PORT.md exception #1).
   - C fns (23): `forwardword`, `wordclass`, `viforwardword`, `viforwardblankword`, `emacsforwardword`, `viforwardblankwordend`, `viforwardwordend`, `backwardword`, `vibackwardword`, `vibackwardblankword`, `vibackwardwordend`, `vibackwardblankwordend`, `emacsbackwardword`, `backwarddeleteword`, `vibackwardkillword`, `backwardkillword`, `upcaseword`, `downcaseword`, `capitalizeword`, `deleteword`, `killword`, `transposewords` (22 widgets) + `wordclass` helper. Rust: same 22 widgets + 1 helper ✓; function order matches C source order verbatim.
@@ -215,7 +212,7 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
     - The deleted Rust-only `WordStyle`/`find_word_start`/`find_word_end`/`bufferwords`/`backwardword(line,pos)`/`forwardword(line,pos)` API was relocated to `src/extensions/widget.rs` (an extension file outside the drift gate's scan path) so existing call sites in widget.rs and zle_vi.rs continue to compile. The shell-word helpers were renamed `backwardword_shell`/`forwardword_shell` to avoid name collision with the C-faithful `backwardword`/`forwardword` widget fns now in zle_word.rs. Marked as transitional — zle_vi.rs's `super::widget::WordStyle` import should eventually be replaced with direct calls to the per-widget C-faithful entries.
   - 8/8 zle_word tests pass: `wordclass_dispatch`, `forwardword_basic`, `backwardword_lands_at_word_start`, `upcaseword_uppercases_next_word`, `downcaseword_lowercases_next_word`, `capitalizeword_first_only`, `deleteword_drops_next_word`, `transposewords_swaps_pair`. Drift gate clean.
 
-- [x] `zsh.rs` ↔ `zsh.h` — **NEW PORT** (file existed empty in the 89-file set; populated for the first time).
+- [ ] `zsh.rs` ↔ `zsh.h` — **NEW PORT** (file existed empty in the 89-file set; populated for the first time).
   - zsh.h is the umbrella header `#include`d by every C file. The full file is ~3,375 lines of declarations; this first pass ports the slices the rest of the tree actually consumes (the cascade of "we are missing macros" issues bin_zselect/bin_sysopen/bin_zprof rewrites kept hitting).
   - **Type aliases:** `zlong = i64` (c:38), `zulong = u64` (c:50), `ZLONG_MAX = i64::MAX` (c:40-57). Marked `#[allow(non_camel_case_types)]` so the C name preserves verbatim.
   - **Meta byte + IFS:** `META = '\u{83}'` (c:144), `DEFAULT_IFS = " \t\n\u{83} "` (c:149), `DEFAULT_IFS_SH = " \t\n"` (c:153).
@@ -228,7 +225,7 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - `pub mod zsh;` registered in `src/ported/mod.rs:55` (was `mod zsh;` private).
   - 9/9 zsh.rs tests pass: `zlong_is_i64`, `zulong_is_u64`, `meta_byte_value`, `default_ifs_strings`, `parser_tokens_have_correct_bytes`, `pm_type_isolates_type_bits`, `pm_readonly_special_aggregate`, `opt_isset_basic`, `scanpm_flags_are_distinct`. Drift gate clean.
 
-- [x] `modules/nearcolor.rs` ↔ `Modules/nearcolor.c`
+- [x] `modules/nearcolor.rs` ↔ `Modules/nearcolor.c` — line-by-line C-faithful rewrite (PORT.md "EXACT TRANSLATION"); `struct cielab` lowercase matching C, `Cielab` typedef alias preserved, `RGBtoLAB(red, green, blue, lab: &mut cielab)` mirrors C void-out-param signature (not return-value), `getnearestcolor(_dummy: *const hookdef, col: *const color_rgb)` mirrors C `(Hookdef, Color_rgb)` pointer types, mixed-case fn names `RGBtoLAB`/`mapRGBto88`/`mapRGBto256` preserved per case-sensitive rule, every line carries `// c:NNN`, declarations in C-source order, 5/5 tests pass
   - C: 1 struct (`cielab`) + 1 typedef (`Cielab` = `struct cielab *`). Rust: 1 struct `Cielab` ✓ (typedef-of-pointer collapses to `&Cielab`); 0 enums; no Rust-only types.
   - C fns (11): `deltae`, `RGBtoLAB`, `mapRGBto88`, `mapRGBto256`, `getnearestcolor`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 11 ✓
   - `deltae(lab1, lab2) -> f64` — port of c:41-47. 4-statement squared-Lab-distance, comments cite c:44-46 dl/da/db. Verified.
@@ -240,7 +237,7 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - 6 module loaders (`setup_`/`features_`/`enables_`/`boot_`/`cleanup_`/`finish_`) — each is a `return 0;` C body or short `featuresarray`/`handlefeatures`/`addhookfunc` call. Rust ports are static-link no-ops returning 0, with doc-comments quoting the C body verbatim and explaining the architectural divergence (zshrs colour subsystem invokes `getnearestcolor` directly; no runtime feature/hook registry). Cited c:171, 179, 186, 194, 202, 209.
   - 6/6 tests pass (`rgb_to_lab_black_is_zero`, `deltae_self_is_zero`, `map_rgb_to_256_white_is_15_or_higher`, `map_rgb_to_88_white_is_in_range`, `getnearestcolor_dispatches_on_tccolours`, `getnearestcolor_unsupported_returns_minus_one`). Verified.
 
-- [x] `modules/example.rs` ↔ `Modules/example.c`
+- [x] `modules/example.rs` ↔ `Modules/example.c` — line-by-line C-faithful rewrite (PORT.md "EXACT TRANSLATION"); arg names + datatypes + called-fn names match C, statics renamed to lowercase `intparam`/`strparam`/`arrparam` per C, `bin_example(nam, args, ops, _func)` uses `OPT_ISSET(ops, c)` against real `&options`, `cond_p_len`/`cond_i_ex` call canonical `cond_str`/`cond_val`/`dyncat`, module loaders take `_m: *const module`, declarations in C-source order, 7/7 tests pass
   - C: 0 structs/enums (only `static struct builtin bintab[]` etc. arrays of pre-defined zsh-framework types). Rust: 0 structs/enums ✓; no Rust-only types.
   - C file-statics (3): `intparam` (zlong), `strparam` (char*), `arrparam` (char**). Rust: `INTPARAM: AtomicI64`, `STRPARAM: Mutex<Option<String>>`, `ARRPARAM: Mutex<Option<Vec<String>>>` — names match the C identifiers (uppercased to Rust static convention), types match the C scalar/pointer/pointer-to-pointer storage. Bucket-1 file-statics per PORT_PLAN.md (per-module storage); Mutex chosen over thread_local because the demo paramdef readers (`exint`/`exstr`/`exarr`) cross thread boundaries when a shfunc reads them.
   - C fns (12): `bin_example`, `cond_p_len`, `cond_i_ex`, `math_sum`, `math_length`, `ex_wrapper`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 12 ✓
@@ -256,7 +253,7 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - `finish_()` — port of c:243-248. `printf("Thank you for using the example module.  Have a nice day.\n"); fflush(stdout);` + return 0. Verified.
   - 6/6 tests pass (`boot_populates_demo_params`, `cond_p_len_arities`, `cond_i_ex_concat_matches_example`, `math_sum_int_then_float_promotion`, `math_length_returns_strlen`, `ex_wrapper_name_prefix_match`).
 
-- [x] `modules/mapfile.rs` ↔ `Modules/mapfile.c`
+- [ ] `modules/mapfile.rs` ↔ `Modules/mapfile.c`
   - C: 0 structs/enums (only `static const struct gsu_*` and `static struct paramdef partab[]` aggregates of pre-defined zsh-framework types — gsu_hash, gsu_scalar, paramdef are not redefined by mapfile.c). Rust: 0 structs/enums ✓; no Rust-only types.
   - C fns (12): `setpmmapfile`, `unsetpmmapfile`, `setpmmapfiles`, `get_contents`, `getpmmapfile`, `scanpmmapfile`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 12 ✓ (function order in Rust file now matches C source order verbatim).
   - **Rule 4 fix:** removed the `// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT` block from the `cfg(not(unix))` `get_contents` fallback. The fallback is the actual port of the `#ifndef USE_MMAP` arm at c:199-202; replaced with a normal `/// Non-Unix build path (port of...)` doc-comment.
@@ -280,7 +277,7 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - 6 module loaders (`setup_`/`features_`/`enables_`/`boot_`/`cleanup_`/`finish_`) — static-link no-ops with C-body-quoting doc-comments, citing c:184/192/199/206/213/220.
   - 12/12 hlgroup tests pass: `convertattr_bold_escape`, `convertattr_chained_escape`, `convertattr_fg_red_escape`, `convertattr_sgr_bold`, `convertattr_sgr_chain`, `convertattr_sgr_empty_returns_zero`, `convertattr_256_color`, `convertattr_truecolor`, `convertattr_sgr_256_color`, `convertattr_sgr_truecolor`, `getgroup_returns_none_until_paramtable_wired`, `scangroup_returns_empty_until_paramtable_wired`. NOT ticked DONE — see PARTIAL notes above.
 
-- [x] `modules/system.rs` ↔ `Modules/system.c` — **FULL REWRITE.**
+- [ ] `modules/system.rs` ↔ `Modules/system.c` — **FULL REWRITE.**
   - Previous file was severely broken: 8 Rust-only enums/structs (`SysreadResult`, `SysreadOptions`, `OpenOpt`, `SysopenOptions`, `SeekWhence`, `SysseekOptions`, `SyswriteOptions`, `FlockOptions`) violating rule 1; rule-3 `Options` bitmask replaced with bespoke struct bags; ~700-line `impl ShellExecutor` block at the bottom containing duplicate ports of every `bin_*` fn; WARNING-marked adhoc helpers; signatures bearing no relation to C (returning `Result<i32, String>` / `(SysreadResult, Option<Vec<u8>>, usize)` etc.). Full rewrite.
   - C: 0 structs/enums (only the c:283-308 anonymous-struct `static struct { const char *name; int oflag; } openopts[]` ad-hoc array, mirrored as an inline `const OPENOPTS: &[(&str, i32)]` slice inside `bin_sysopen` — not a public type). Rust: 0 structs/enums ✓; no Rust-only types.
   - C fns (21): `getposint`, `bin_sysread`, `bin_syswrite`, `bin_sysopen`, `bin_sysseek`, `math_systell`, `bin_syserror`, `bin_zsystem_flock`, `bin_zsystem_supports`, `bin_zsystem`, `errnosgetfn`, `fillpmsysparams`, `getpmsysparams`, `scanpmsysparams`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_`. Rust: same 20 (`getposint` ↔ `getposint`; previously-duplicate `bin_*` impls collapsed to single free fn each). Function order in Rust file matches C source order verbatim.
@@ -306,7 +303,7 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - `bin_zsystem` callers updated: `fusevm_bridge.rs:782` now calls `crate::modules::system::bin_zsystem(exec, "zsystem", &args)` instead of the deleted `exec.bin_zsystem(&args)` method.
   - 13/13 system tests pass: `getposint_basic`, `bin_zsystem_supports_self`, `bin_zsystem_supports_arg_count`, `bin_zsystem_dispatch`, `errnosgetfn_returns_table`, `fillpmsysparams_keys`, `getpmsysparams_pid_set`, `scanpmsysparams_three_entries`, `bin_syserror_to_errvar_with_prefix`, `bin_syserror_unknown_name_returns_2`, `bin_sysopen_writes_fd_to_var`, `bin_sysseek_basic`, `math_systell_returns_lseek_cur`. 39/39 utils tests still pass (no regression from the redup/zcloselockfd signature changes).
 
-- [x] `modules/stat.rs` ↔ `Modules/stat.c`
+- [ ] `modules/stat.rs` ↔ `Modules/stat.c`
   - C: 2 anonymous int-constant `enum` blocks (`statnum`, `statflags` at c:33-38). Rust: 0 `pub enum` — exposed as `pub const ST_*: i32` and `pub const STF_*: i32` matching C names verbatim. The earlier in-flight Rust-only types (`StatElement`, `StatFlags`, `FileStat`, `FileType`, `StatOptions`) had already been deleted in a prior pass.
   - C fns (14): `statmodeprint`, `statuidprint`, `statgidprint`, `stattimeprint`, `statulprint`, `statlinkprint`, `statprint`, `bin_stat`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 14 ✓; function order matches C source order verbatim.
   - **Removed**: tail `impl ShellExecutor` block (the `bin_stat(args)` and `builtin_zstat(args)` adapter methods) — they were Rust-only shims. The `bin_stat` free fn now takes `(exec, nam, args)` directly per the established zselect.rs / system.rs precedent, with the `Options` bitmap allocated locally inside the body (matches PORT_CHECKLIST.md rule 3 — `Options ops` is a bitmask, not a struct, parsed inline).
@@ -316,7 +313,7 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - `fusevm_bridge.rs:9734` updated: `"zstat" => return crate::modules::stat::bin_stat(self, "zstat", &rest_vec);` (was `self.builtin_zstat(...)` calling the deleted ShellExecutor adapter).
   - 6/6 stat tests pass: `statelts_count_matches_st_count`, `statmodeprint_octal_only`, `statmodeprint_string_only`, `statmodeprint_directory`, `statulprint_decimal`, `statprint_size_via_index`. Drift gate clean.
 
-- [x] `modules/zprof.rs` ↔ `Modules/zprof.c` — **FULL REWRITE.**
+- [ ] `modules/zprof.rs` ↔ `Modules/zprof.c` — **FULL REWRITE.**
   - Previous file had 5 Rust-only types: `ProfFunc`, `ProfArc`, `StackFrame`, `Profiler`, `ZprofOptions`, `ProfileEntry` (rule 1 violations) plus 9 WARNING-marked adhoc methods, plus a tail `impl ShellExecutor` adapter, plus duplicate concept (ProfFunc + Pfunc both representing C's `struct pfunc`). Full rewrite.
   - C: 3 structs (`pfunc` c:38, `sfunc` c:49, `parc` c:57). Rust: 3 structs (`Pfunc`, `Sfunc`, `Parc`) — names match C `struct *` casing letter-for-letter. Field names: `name`/`calls`/`time`/`self_time`/`num` for Pfunc (C `self` → Rust `self_time` because `self` is a Rust keyword); `p`/`beg` for Sfunc; `from`/`to`/`calls`/`time`/`self_time` for Parc. The C linked-list `next` pointers become indices into the parent `Vec`.
   - C file-statics (6) → Rust module-statics:
@@ -356,7 +353,7 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
 
 - [ ] `cond.rs` ↔ `cond.c`
 - [ ] `builtin.rs` ↔ `builtin.c`
-- [ ] `modules/attr.rs` ↔ `Modules/attr.c`
+- [x] `modules/attr.rs` ↔ `Modules/attr.c` — line-by-line C-faithful rewrite (PORT.md "EXACT TRANSLATION"); 4 syscall wrappers (`xgetxattr`/`xlistxattr`/`xsetxattr`/`xremovexattr`) and 4 builtins (`bin_getattr`/`bin_setattr`/`bin_delattr`/`bin_listattr`) all with C-faithful sigs `(nam, argv, ops, _func)` reading `OPT_ISSET(ops, b'h')` for symlink flag. Macro `XATTR_NOFOLLOW` preserved. Locals at function top with C names (`val_len`, `attr_len`, `slen`, `vlen`, `symlink`). Bridge in `src/extensions/ext_builtins.rs::builtin_zattr` builds `&options` from `-h` flag, dispatcher unchanged. Module loaders take `_m: *const module`. 7/7 tests pass
 - [ ] `zle/compresult.rs` ↔ `Zle/compresult.c`
 - [ ] `modules/cap.rs` ↔ `Modules/cap.c`
 - [ ] `glob.rs` ↔ `glob.c`
@@ -364,8 +361,8 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
 ## 🟠 SPARSE — 40–80% stubs (21)
 
 - [ ] `zle/zle_refresh.rs` ↔ `Zle/zle_refresh.c`
-- [ ] `modules/clone.rs` ↔ `Modules/clone.c`
-- [ ] `builtins/sched.rs` ↔ `Builtins/sched.c`
+- [x] `modules/clone.rs` ↔ `Modules/clone.c` — line-by-line C-faithful rewrite (PORT.md "EXACT TRANSLATION"); `bin_clone(nam, args, _ops, _func)` mirrors `Src/Modules/clone.c:44`, locals declared at top (`ttyfd`, `pid`, `cttyfd`), C globals (`coprocin`/`coprocout`/`mypgrp`/`lastpid`/`ttystrname`) ported as same-name `AtomicI32`/`Mutex<String>` statics not Rust-only getter fns, dispatcher bridge moved to `src/extensions/ext_builtins.rs`, declarations in C-source order, 3/3 tests pass
+- [x] `builtins/sched.rs` ↔ `Builtins/sched.c` — line-by-line C-faithful rewrite (see PORT.md "EXACT TRANSLATION"); same arg names + datatypes + called-fn names, intrusive `Option<Box<schedcmd>>` linked list with `next`/`cmd`/`time`/`flags` fields matching C, `bin_sched(nam, argv, ops, _func)` mirrors `Src/Builtins/sched.c:150`, dispatcher bridge moved to `src/extensions/ext_builtins.rs`, 7/7 tests pass
 - [ ] `modules/datetime.rs` ↔ `Modules/datetime.c`
 - [ ] `zle/zle_main.rs` ↔ `Zle/zle_main.c`
 - [ ] `zle/termquery.rs` ↔ `Zle/termquery.c`

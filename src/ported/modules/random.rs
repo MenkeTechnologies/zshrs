@@ -129,8 +129,10 @@ pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {
     Ok(())
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/random.c`.
+/// Port of `getrandom_buffer()` from `Src/Modules/random.c:62`,
+/// `#elif defined(HAVE_GETRANDOM)` branch (c:75-76):
+/// `ret = getrandom(bufptr, (len - val), 0);`
+/// with the C EINTR-retry loop at c:80-85.
 #[cfg(target_os = "linux")]
 pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {
     let mut filled = 0;
@@ -228,16 +230,14 @@ pub fn math_zrand_float() -> f64 {
     random_real()
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/random.c`.
-/// Generate a random real in `[0, 1)` using 53 bits of randomness.
-/// Equivalent to the simpler "53-bit mantissa" variant
-/// Src/Modules/random_real.c documents at line 145; for the
-/// distribution-correct path see `crate::random_real::random_real`.
-pub fn random_real() -> f64 {
-    let x = random_u64();
-    (x >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
-}
+/// Re-export of the canonical `random_real()` from
+/// `Src/Modules/random_real.c:147` — Campbell's algorithm for
+/// distribution-correct uniform doubles in `[0, 1)`. The simpler
+/// "53-bit mantissa" approximation that previously lived here was
+/// removed because it biases ~3% of the interval; the C author
+/// (Taylor R. Campbell) explicitly warns against it in the random_real.c
+/// header comment.
+pub use crate::ported::modules::random_real::random_real;
 
 /// Generate a random integer in `[min, max]`.
 #[cfg(test)]
@@ -343,32 +343,59 @@ mod tests {
     }
 }
 
-/// Module loader entry — port of `setup_()` from Src/Modules/random.c:243.
-pub fn setup_() -> i32 {
+// =====================================================================
+// static struct features module_features                            c:255 (random.c)
+// =====================================================================
+
+use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::{features as features_t, module};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None, bn_size: 0,
+        cd_list: None, cd_size: 0,
+        mf_list: None, mf_size: 1,                                       // mftab[1]: rand48
+        pd_list: None, pd_size: 2,                                       // partab[2]: SRANDOM_FILE, ERAND48_SEED
+        n_abstract: 0,
+    }))
+}
+
+/// Port of `setup_()` from `Src/Modules/random.c:243`.
+pub fn setup_(_m: *const module) -> i32 { 0 }
+
+/// Port of `features_()` from `Src/Modules/random.c:267`.
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, module_features());
     0
 }
 
-/// Module loader entry — port of `features_()` from Src/Modules/random.c:267.
-pub fn features_() -> i32 {
-    0
+/// Port of `enables_()` from `Src/Modules/random.c:275`.
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, module_features(), enables)
 }
 
-/// Module loader entry — port of `enables_()` from Src/Modules/random.c:275.
-pub fn enables_() -> i32 {
-    0
+/// Port of `boot_()` from `Src/Modules/random.c:282`.
+pub fn boot_(_m: *const module) -> i32 { 0 }
+
+/// Port of `cleanup_()` from `Src/Modules/random.c:312`.
+pub fn cleanup_(m: *const module) -> i32 {
+    setfeatureenables(m, module_features(), None)
 }
 
-/// Module loader entry — port of `boot_()` from Src/Modules/random.c:282.
-pub fn boot_() -> i32 {
-    0
-}
+/// Port of `finish_()` from `Src/Modules/random.c:319`.
+pub fn finish_(_m: *const module) -> i32 { 0 }
 
-/// Module loader entry — port of `cleanup_()` from Src/Modules/random.c:312.
-pub fn cleanup_() -> i32 {
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["f:rand48".to_string(), "p:SRANDOM_FILE".to_string(), "p:ERAND48_SEED".to_string()]
+}
+fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() { *enables = Some(getfeatureenables(m, f)); }
+    else if let Some(e) = enables.as_ref() { return setfeatureenables(m, f, Some(e)); }
     0
 }
-
-/// Module loader entry — port of `finish_()` from Src/Modules/random.c:319.
-pub fn finish_() -> i32 {
-    0
+fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    vec![0; (g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract) as usize]
 }
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }

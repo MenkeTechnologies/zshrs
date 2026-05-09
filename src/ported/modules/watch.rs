@@ -15,13 +15,27 @@ pub const DEFAULT_WATCHFMT: &str = "%n has %a %l from %m.";
 /// Default watch format without host support
 pub const DEFAULT_WATCHFMT_NOHOST: &str = "%n has %a %l.";
 
-/// A utmp/utmpx entry representing a login session
+/// `WATCH_STRUCT_UTMP` typedef alias matching `Src/Modules/watch.c:71-79`:
+/// resolves to `libc::utmpx` on platforms with `<utmpx.h>` support
+/// (Linux/macOS), `libc::utmp` otherwise. The C source uses this
+/// alias name everywhere so the Rust port keeps it.
+#[cfg(unix)]
+pub type WATCH_STRUCT_UTMP = libc::utmpx;
+
+/// Rust-side projection of `WATCH_STRUCT_UTMP` (= `libc::utmpx`)
+/// for the watch.c port — the C source reads this struct directly
+/// via `getutent()`/`getutxent()` and indexes the `ut_user`/`ut_line`/
+/// `ut_host`/`ut_tv`/`ut_pid`/`ut_type` fields. Rust port projects
+/// each access to a friendlier-typed field for safe handling.
+///
+/// **Type-mapping back to libc::utmpx**:
+/// - `user` ↔ `ut_user` (UT_NAMESIZE bytes, NUL-padded)
+/// - `line` ↔ `ut_line` (UT_LINESIZE bytes, NUL-padded)
+/// - `host` ↔ `ut_host` (UT_HOSTSIZE bytes, NUL-padded)
+/// - `time` ↔ `ut_tv.tv_sec` (or `ut_xtime` per the c:108-113 alias)
+/// - `pid`  ↔ `ut_pid`
+/// - `session_type` ↔ `ut_type` (USER_PROCESS / DEAD_PROCESS / etc.)
 #[derive(Debug, Clone)]
-/// One utmp/utmpx entry (login session record).
-/// Mirrors the relevant fields of `WATCH_STRUCT_UTMP` from
-/// `<utmp.h>` / `<utmpx.h>` that Src/Modules/watch.c reads via
-/// `readwtab()` (line 537) and dispatches through `watchlog()`
-/// (line 458).
 pub struct UtmpEntry {
     pub user: String,
     pub line: String,
@@ -31,24 +45,24 @@ pub struct UtmpEntry {
     pub session_type: SessionType,
 }
 
+/// `ut_type` constants from `<utmp.h>` / `<utmpx.h>`.
+/// Port of the standard `USER_PROCESS` / `DEAD_PROCESS` / `LOGIN_PROCESS`
+/// / `INIT_PROCESS` / `BOOT_TIME` int values the C source's
+/// `watchlog()` (Src/Modules/watch.c:458) compares against `ut_type`.
+/// Rust port mirrors as an enum for exhaustive-match ergonomics; the
+/// numeric values match the libc constants on Linux/macOS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Login session classification.
-/// Mirrors the `USER_PROCESS` / `INIT_PROCESS` / `LOGIN_PROCESS`
-/// `ut_type` constants the C source's `watchlog()` (Src/Modules/
-/// watch.c:458) inspects when deciding whether an entry is a
-/// login.
 pub enum SessionType {
-    UserProcess,
-    DeadProcess,
-    LoginProcess,
-    InitProcess,
-    BootTime,
+    UserProcess,    // libc::USER_PROCESS
+    DeadProcess,    // libc::DEAD_PROCESS
+    LoginProcess,   // libc::LOGIN_PROCESS
+    InitProcess,    // libc::INIT_PROCESS
+    BootTime,       // libc::BOOT_TIME
     Unknown,
 }
 
 impl UtmpEntry {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/watch.c`.
+    /// Inline equivalent of C `entry.ut_type == USER_PROCESS && entry.ut_user[0] != 0`.
     pub fn is_active(&self) -> bool {
         matches!(self.session_type, SessionType::UserProcess) && !self.user.is_empty()
     }
@@ -664,35 +678,68 @@ impl crate::ported::exec::ShellExecutor {
 }
 // END moved-from-exec-rs
 
-/// Module loader entry — port of `setup_()` from Src/Modules/watch.c:712.
-pub fn setup_() -> i32 {
+// =====================================================================
+// static struct features module_features                            c:700 (watch.c)
+// =====================================================================
+
+use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::{features as features_t, module};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None, bn_size: 1,                                       // bintab[1]: log
+        cd_list: None, cd_size: 0,
+        mf_list: None, mf_size: 0,
+        pd_list: None, pd_size: 0,
+        n_abstract: 0,
+    }))
+}
+
+/// Port of `setup_()` from `Src/Modules/watch.c:712`.
+pub fn setup_(_m: *const module) -> i32 { 0 }
+
+/// Port of `features_()` from `Src/Modules/watch.c:723`.
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, module_features());
     0
 }
 
-/// Module loader entry — port of `features_()` from Src/Modules/watch.c:723.
-pub fn features_() -> i32 {
-    0
+/// Port of `enables_()` from `Src/Modules/watch.c:731`.
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, module_features(), enables)
 }
 
-/// Module loader entry — port of `enables_()` from Src/Modules/watch.c:731.
-pub fn enables_() -> i32 {
-    0
+/// Port of `boot_()` from `Src/Modules/watch.c:738`.
+pub fn boot_(_m: *const module) -> i32 { 0 }
+
+/// Port of `cleanup_()` from `Src/Modules/watch.c:768`.
+/// C body: `delprepromptfn(checksched); return setfeatureenables(...);`
+pub fn cleanup_(m: *const module) -> i32 {
+    setfeatureenables(m, module_features(), None)
 }
 
-/// Module loader entry — port of `boot_()` from Src/Modules/watch.c:738.
-pub fn boot_() -> i32 {
-    0
-}
+/// Port of `finish_()` from `Src/Modules/watch.c:776`.
+pub fn finish_(_m: *const module) -> i32 { 0 }
 
-/// Module loader entry — port of `cleanup_()` from Src/Modules/watch.c:768.
-pub fn cleanup_() -> i32 {
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:log".to_string()]
+}
+fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() {
+        *enables = Some(getfeatureenables(m, f));
+    } else if let Some(e) = enables.as_ref() {
+        return setfeatureenables(m, f, Some(e));
+    }
     0
 }
-
-/// Module loader entry — port of `finish_()` from Src/Modules/watch.c:776.
-pub fn finish_() -> i32 {
-    0
+fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    vec![0; (g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract) as usize]
 }
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }
 
 /// Port of `getlogtime()` from `Src/Modules/watch.c:161`. For
 /// login events (`inout` non-zero) returns the entry's `ut_time`

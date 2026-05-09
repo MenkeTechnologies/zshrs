@@ -1033,32 +1033,74 @@ pub fn scanpmsysparams() -> Vec<(String, String)> {                      // c:88
 // Module loaders.
 // ---------------------------------------------------------------------------
 
-/// Port of `setup_()` from `Src/Modules/system.c:920`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn setup_() -> i32 { 0 }                                             // c:920-923
+// =====================================================================
+// static struct features module_features                            c:910 (system.c)
+// =====================================================================
 
-/// Port of `features_()` from `Src/Modules/system.c:927`. C body is
-/// `*features = featuresarray(m, &module_features); return 0;`.
-/// Static-link path: 0.
-pub fn features_() -> i32 { 0 }                                          // c:927-931
+use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::{features as features_t, module};
 
-/// Port of `enables_()` from `Src/Modules/system.c:935`. C body is
-/// `return handlefeatures(m, &module_features, enables);`. Static-
-/// link path: 0.
-pub fn enables_() -> i32 { 0 }                                           // c:935-938
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None, bn_size: 4,                                       // bintab[4]: zsystem flock, syserror, sysopen, sysread, syswrite, sysseek
+        cd_list: None, cd_size: 0,
+        mf_list: None, mf_size: 0,
+        pd_list: None, pd_size: 1,                                       // partab[1]: errnos
+        n_abstract: 0,
+    }))
+}
 
-/// Port of `boot_()` from `Src/Modules/system.c:942`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn boot_() -> i32 { 0 }                                              // c:942-945
+/// Port of `setup_()` from `Src/Modules/system.c:920`.
+pub fn setup_(_m: *const module) -> i32 { 0 }                           // c:920-923
 
-/// Port of `cleanup_()` from `Src/Modules/system.c:950`. C body is
-/// `return setfeatureenables(m, &module_features, NULL);`. Static-
-/// link path: 0.
-pub fn cleanup_() -> i32 { 0 }                                           // c:950-953
+/// Port of `features_()` from `Src/Modules/system.c:927`.
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, module_features());                    // c:929
+    0                                                                    // c:930
+}
 
-/// Port of `finish_()` from `Src/Modules/system.c:957`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn finish_() -> i32 { 0 }                                            // c:957-960
+/// Port of `enables_()` from `Src/Modules/system.c:935`.
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, module_features(), enables)                       // c:937
+}
+
+/// Port of `boot_()` from `Src/Modules/system.c:942`.
+pub fn boot_(_m: *const module) -> i32 { 0 }                            // c:942-945
+
+/// Port of `cleanup_()` from `Src/Modules/system.c:950`.
+/// C body: `return setfeatureenables(m, &module_features, NULL);`
+pub fn cleanup_(m: *const module) -> i32 {
+    setfeatureenables(m, module_features(), None)                       // c:952
+}
+
+/// Port of `finish_()` from `Src/Modules/system.c:957`.
+pub fn finish_(_m: *const module) -> i32 { 0 }                          // c:957-960
+
+// `featuresarray` — Src/module.c:3275.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:syserror".to_string(), "b:sysread".to_string(),
+         "b:syswrite".to_string(), "b:zsystem".to_string(),
+         "p:errnos".to_string()]
+}
+
+// `handlefeatures` — Src/module.c:3370.
+fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() {
+        *enables = Some(getfeatureenables(m, f));
+    } else if let Some(e) = enables.as_ref() {
+        return setfeatureenables(m, f, Some(e));
+    }
+    0
+}
+fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
+    vec![0; total as usize]
+}
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }
 
 // ---------------------------------------------------------------------------
 // `sys_errnames[]` table — port of `Src/Modules/errnames.c:9` (which

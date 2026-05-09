@@ -269,41 +269,74 @@ fn is_ident(s: &str) -> bool {
     chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
-/// Port of `setup_()` from `Src/Modules/datetime.c:270`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn setup_() -> i32 {                                                  // c:270
-    0                                                                     // c:273
+// =====================================================================
+// static struct builtin bintab[]                                    c:255
+// static struct features module_features                            c:262
+// =====================================================================
+
+use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::{features as features_t, module};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None, bn_size: 2,                                       // c:263 bintab[2] (strftime, EPOCHREALTIME)
+        cd_list: None, cd_size: 0,
+        mf_list: None, mf_size: 0,
+        pd_list: None, pd_size: 1,
+        n_abstract: 0,
+    }))
 }
 
-/// Port of `features_()` from `Src/Modules/datetime.c:277`. C body
-/// is `*features = featuresarray(m, &module_features); return 0;`.
-pub fn features_() -> i32 {                                               // c:277
-    0                                                                     // c:281
+/// Port of `setup_()` from `Src/Modules/datetime.c:270`.
+pub fn setup_(_m: *const module) -> i32 { 0 }                           // c:270-273
+
+/// Port of `features_()` from `Src/Modules/datetime.c:277`.
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {  // c:277
+    *features = featuresarray(m, module_features());                    // c:280
+    0                                                                    // c:281
 }
 
-/// Port of `enables_()` from `Src/Modules/datetime.c:285`. C body
-/// is `return handlefeatures(m, &module_features, enables);`.
-pub fn enables_() -> i32 {                                                // c:285
-    0                                                                     // c:288
+/// Port of `enables_()` from `Src/Modules/datetime.c:285`.
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:285
+    handlefeatures(m, module_features(), enables)                       // c:288
 }
 
-/// Port of `boot_()` from `Src/Modules/datetime.c:292`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn boot_() -> i32 {                                                   // c:292
-    0                                                                     // c:295
+/// Port of `boot_()` from `Src/Modules/datetime.c:292`.
+pub fn boot_(_m: *const module) -> i32 { 0 }                            // c:292-295
+
+/// Port of `cleanup_()` from `Src/Modules/datetime.c:299`.
+/// C body: `return setfeatureenables(m, &module_features, NULL);`
+pub fn cleanup_(m: *const module) -> i32 {                               // c:299
+    setfeatureenables(m, module_features(), None)                       // c:302
 }
 
-/// Port of `cleanup_()` from `Src/Modules/datetime.c:299`. C body
-/// is `return setfeatureenables(m, &module_features, NULL);`.
-pub fn cleanup_() -> i32 {                                                // c:299
-    0                                                                     // c:302
+/// Port of `finish_()` from `Src/Modules/datetime.c:306`.
+pub fn finish_(_m: *const module) -> i32 { 0 }                          // c:306-309
+
+// `featuresarray` — Src/module.c:3275.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:strftime".to_string(), "b:zselect".to_string(),
+         "p:EPOCHREALTIME".to_string()]
 }
 
-/// Port of `finish_()` from `Src/Modules/datetime.c:306`. C body
-/// is `return 0;` (UNUSED `Module m`).
-pub fn finish_() -> i32 {                                                 // c:306
-    0                                                                     // c:309
+// `handlefeatures` — Src/module.c:3370.
+fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() {
+        *enables = Some(getfeatureenables(m, f));
+    } else if let Some(e) = enables.as_ref() {
+        return setfeatureenables(m, f, Some(e));
+    }
+    0
 }
+fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
+    vec![0; total as usize]
+}
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }
 
 #[cfg(test)]
 mod tests {
