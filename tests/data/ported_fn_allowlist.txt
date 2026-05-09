@@ -335,6 +335,17 @@ initial_username
 # the just-finished argv.
 set_zunderscore
 
+# modules/random.rs Rust-only helpers — were `RandomState::random_u32`
+# / `random_u64` / `bounded` static methods on the dissolved
+# RandomState bag-of-globals struct (Phase 2 dissolution). Now free
+# fns; C inlines the same logic at random.c:79/104/etc. Multiple
+# callers in this same Rust file (math_zrand_int, math_zrand_real,
+# get_bound_random_buffer loop, Fisher-Yates shuffle) would each
+# duplicate the 4-line `getrandom_buffer + decode` block.
+random_u32
+random_u64
+bounded
+
 # hashtable.rs HashNodeFlags trait — Rust-only abstraction over C's
 # `struct hashnode { char *nam; int flags; ... }` header. Each typed
 # table value impls this so the generic gethashnode/disablehashnode/etc.
