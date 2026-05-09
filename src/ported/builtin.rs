@@ -12627,7 +12627,7 @@ pub fn printif(str: Option<&str>, c: u8) {                                   // 
 /// C: `mod_export void printqt(char *str)` — emit `str`, escaping any
 /// `'` as `'\''` (or `''` if RCQUOTES is set).
 pub fn printqt(str: &str) {                                                  // c:1399
-    let rcquotes = false; // RCQUOTES option lookup deferred — same as default.
+    let rcquotes = crate::ported::options::optlookup("rcquotes") > 0;        // c:1405 isset(RCQUOTES)
     for ch in str.chars() {                                                  // c:1403
         if ch == '\'' {                                                      // c:1404
             print!("{}", if rcquotes { "''" } else { "'\\''" });             // c:1405
@@ -13229,18 +13229,60 @@ pub fn testlex() {                                                           // 
     if TEST_TOK.load(Ordering::Relaxed) == TEST_LEXERR {                     // c:7203
         return;
     }
-    // c:7206-7245 — pull next testargs[i], compare against -o/-a/!/(/),
-    // else STRING. Static-link path: testargs/curtestarg/tokstr live in
-    // src/ported/test.rs (deferred); set NULLTOK to mark end-of-args.
-    TEST_TOK.store(TEST_NULLTOK, Ordering::Relaxed);                         // c:7211
+    // c:7206-7224 — `tokstr = *(curtestarg = testargs);`
+    let mut targs = TESTARGS.lock().unwrap_or_else(|e| {
+        TESTARGS.clear_poison(); e.into_inner()
+    });
+    let mut idx = TESTARGS_IDX.load(Ordering::Relaxed) as usize;
+    let cur = targs.get(idx).cloned();                                       // c:7206
+    if let Some(t) = cur.as_ref() {
+        if let Ok(mut ts) = TOKSTR.lock() { *ts = t.clone(); }               // c:7206
+    }
+    // c:7207-7211 — `if (!*testargs) { tok = tok ? NULLTOK : LEXERR; return; }`
+    let none = cur.is_none() || cur.as_deref() == Some("");
+    if none {                                                                // c:7207
+        let prev = TEST_TOK.load(Ordering::Relaxed);
+        TEST_TOK.store(if prev != 0 { TEST_NULLTOK } else { TEST_LEXERR },   // c:7210
+                       Ordering::Relaxed);
+        return;
+    }
+    let arg = cur.unwrap();
+    let new_tok = match arg.as_str() {                                       // c:7212
+        "-o" => TEST_DBAR,                                                   // c:7213
+        "-a" => TEST_DAMPER,                                                 // c:7215
+        "!"  => TEST_BANG,                                                   // c:7217
+        "("  => TEST_INPAR,                                                  // c:7219
+        ")"  => TEST_OUTPAR,                                                 // c:7221
+        "<"  => TEST_INANG,                                                  // c:7223
+        ">"  => TEST_OUTANG,                                                 // c:7225
+        _    => TEST_STRING,                                                 // c:7227
+    };
+    TEST_TOK.store(new_tok, Ordering::Relaxed);
+    idx += 1;                                                                // c:7228 testargs++
+    TESTARGS_IDX.store(idx as i32, Ordering::Relaxed);
+    let _ = &mut *targs; // ensure lock holds for the duration of mutation
 }
 
 // `tok` for the test builtin — Src/builtin.c:7000 ranges. The full enum
 // lives in src/ported/lex.rs; we mirror the few values testlex() touches.
 pub static TEST_TOK: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
-const TEST_LEXERR: i32 = -1;
-const TEST_NULLTOK: i32 = 0;
+const TEST_LEXERR:  i32 = -1;                                                // c:7209
+const TEST_NULLTOK: i32 =  0;
+const TEST_DBAR:    i32 =  2;                                                // c:7213
+const TEST_DAMPER:  i32 =  3;                                                // c:7215
+const TEST_BANG:    i32 =  4;                                                // c:7217
+const TEST_INPAR:   i32 =  5;                                                // c:7219
+const TEST_OUTPAR:  i32 =  6;                                                // c:7221
+const TEST_INANG:   i32 =  7;                                                // c:7223
+const TEST_OUTANG:  i32 =  8;                                                // c:7225
+const TEST_STRING:  i32 =  9;                                                // c:7227
+
+// `testargs` / `curtestarg` / `tokstr` globals from Src/builtin.c — the
+// argv-style cursor that bin_test seeds and testlex() advances.
+pub static TESTARGS:     std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+pub static TESTARGS_IDX: std::sync::atomic::AtomicI32  = std::sync::atomic::AtomicI32::new(0);
+pub static TOKSTR:       std::sync::Mutex<String>      = std::sync::Mutex::new(String::new());
 
 /// Port of `bin_notavail()` from Src/builtin.c:7604.
 /// C: `int bin_notavail(char *nam, UNUSED(char **argv),
