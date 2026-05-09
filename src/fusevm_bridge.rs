@@ -17,7 +17,7 @@ use crate::options::ZSH_OPTIONS_SET;
 use crate::prompt::{expand_prompt, PromptContext};
 // TcpSessions struct deleted — modules/tcp.rs uses ZTCP_SESSIONS thread_local.
 use crate::zftp::Zftp;
-use crate::zprof::Profiler;
+// `Profiler` deleted — zprof state is module-level statics now.
 use crate::zutil::StyleTable;
 use compsys::cache::CompsysCache;
 use compsys::CompInitResult;
@@ -906,7 +906,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_ZPROF, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_zprof(&args));
+        let status = with_executor(|exec|
+            crate::modules::zprof::bin_zprof(exec, "zprof", &args));
         Value::Status(status)
     });
 

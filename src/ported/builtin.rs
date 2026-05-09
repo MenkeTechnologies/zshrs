@@ -10648,7 +10648,7 @@ impl crate::ported::exec::ShellExecutor {
             "zmodload" => self.bin_zmodload(cmd_args),
             "zcompile" => self.bin_zcompile(cmd_args),
             "zformat" => self.bin_zformat(cmd_args),
-            "zprof" => self.bin_zprof(cmd_args),
+            "zprof" => crate::modules::zprof::bin_zprof(self, "zprof", cmd_args),
             "print" => self.bin_print(cmd_args),
             "printf" => self.builtin_printf(cmd_args),
             "command" => self.builtin_command(cmd_args, redirects),

@@ -21,7 +21,10 @@ use crate::options::ZSH_OPTIONS_SET;
 use crate::prompt::{expand_prompt, PromptContext};
 // TcpSessions struct deleted — see modules/tcp.rs ZTCP_SESSIONS thread_local.
 use crate::zftp::Zftp;
-use crate::zprof::Profiler;
+// `Profiler`/`ProfileEntry` deleted in the zprof.rs strict-rules
+// rewrite — zprof state now lives in module-level statics
+// (`CALLS`/`NCALLS`/`ARCS`/`NARCS`/`STACK`/`ZPROF_MODULE`) matching
+// the C file-statics at zprof.c:66-71.
 use crate::zutil::StyleTable;
 use compsys::cache::CompsysCache;
 use compsys::CompInitResult;
@@ -300,7 +303,8 @@ use std::process::{Child, Command, Stdio};
 // reference `crate::ported::exec::<Name>` keep compiling.
 pub use crate::ported::zle::computil::{CompSpec, CompMatch, CompGroup, CompState};
 pub use crate::ported::modules::zutil::ZStyle;
-pub use crate::ported::modules::zprof::ProfileEntry;
+// `ProfileEntry` re-export deleted — was unused outside
+// `ShellExecutor::profile_data` (which itself is now removed).
 // `ScheduledCommand` (Rust-only) deleted; use `crate::builtins::sched::schedcmd`
 // (port of `struct schedcmd` from Src/Builtins/sched.c:43) for live state.
 pub use crate::ported::builtin::AutoloadFlags;
@@ -548,8 +552,10 @@ pub struct ShellExecutor {
     pub next_fd: i32,
     // sched (Src/Builtins/sched.c) — schedcmds list lives in module
     // statics in the canonical port; nothing to carry on ShellExecutor.
-    // zprof - profiling data
-    pub profile_data: HashMap<String, ProfileEntry>,
+    // zprof — profiling data lives in `crate::zprof` module statics
+    // (CALLS/NCALLS/ARCS/NARCS/STACK), matching the C file-statics
+    // at zprof.c:66-71. Only the user's "is profiling on?" toggle
+    // stays here, set by the `profile` extension builtin.
     pub profiling_enabled: bool,
     // compsys - completion system cache
     pub compsys_cache: Option<CompsysCache>,
@@ -572,7 +578,7 @@ pub struct ShellExecutor {
     // thread_local ZTCP_SESSIONS in modules/tcp.rs (matches C's
     // file-static `ztcp_sessions` linked list).
     pub zftp: Zftp,
-    pub profiler: Profiler,
+    // `profiler: Profiler` deleted — see comment above.
     pub style_table: StyleTable,
     // termcap state dissolved per strict-rules audit — no Rust-only
     // Termcap struct; capability_lookup is stateless on $TERM.
@@ -876,7 +882,6 @@ impl ShellExecutor {
             named_dirs: HashMap::new(),
             open_fds: HashMap::new(),
             next_fd: 10,
-            profile_data: HashMap::new(),
             profiling_enabled: false,
             compsys_cache: {
                 let cache_path = compsys::cache::default_cache_path();
@@ -930,7 +935,6 @@ impl ShellExecutor {
             breaking: 0,
             continuing: 0,
             zftp: Zftp::new(),
-            profiler: Profiler::new(),
             style_table: StyleTable::new(),
             pty_cmds: Default::default(),
             zsh_compat: false,

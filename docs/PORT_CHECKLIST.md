@@ -92,9 +92,10 @@ but those passes did NOT enforce rules 1–4 above (Rust-only structs
 were left in place; some stubs were body-ported but kept their
 Rust-only wrappers). All checkboxes reset; we revisit each file.
 
-In-flight files where I started bodies but the surrounding file still
-has Rust-only types to delete: `modules/zprof.rs`.
-These get re-done from the top under the new rules. (`modules/hlgroup.rs`
+In-flight cleanup of files with Rust-only types: complete (the
+`modules/{stat,nearcolor,example,mapfile,hlgroup,zprof}.rs` set
+flagged earlier are all done or BLOCKED with TODO.md tracking).
+(`modules/hlgroup.rs`
 has no remaining Rust-only types but is BLOCKED on a real port of
 `Src/prompt.c`'s `match_highlight` and `zattrescape` — see TODO.md.)
 
@@ -261,6 +262,33 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - `fusevm_bridge.rs:9734` updated: `"zstat" => return crate::modules::stat::bin_stat(self, "zstat", &rest_vec);` (was `self.builtin_zstat(...)` calling the deleted ShellExecutor adapter).
   - 6/6 stat tests pass: `statelts_count_matches_st_count`, `statmodeprint_octal_only`, `statmodeprint_string_only`, `statmodeprint_directory`, `statulprint_decimal`, `statprint_size_via_index`. Drift gate clean.
 
+- [x] `modules/zprof.rs` ↔ `Modules/zprof.c` — **FULL REWRITE.**
+  - Previous file had 5 Rust-only types: `ProfFunc`, `ProfArc`, `StackFrame`, `Profiler`, `ZprofOptions`, `ProfileEntry` (rule 1 violations) plus 9 WARNING-marked adhoc methods, plus a tail `impl ShellExecutor` adapter, plus duplicate concept (ProfFunc + Pfunc both representing C's `struct pfunc`). Full rewrite.
+  - C: 3 structs (`pfunc` c:38, `sfunc` c:49, `parc` c:57). Rust: 3 structs (`Pfunc`, `Sfunc`, `Parc`) — names match C `struct *` casing letter-for-letter. Field names: `name`/`calls`/`time`/`self_time`/`num` for Pfunc (C `self` → Rust `self_time` because `self` is a Rust keyword); `p`/`beg` for Sfunc; `from`/`to`/`calls`/`time`/`self_time` for Parc. The C linked-list `next` pointers become indices into the parent `Vec`.
+  - C file-statics (6) → Rust module-statics:
+    - `static Pfunc calls;` (c:66) → `pub static CALLS: Mutex<Vec<Pfunc>>`
+    - `static int ncalls;` (c:67) → `pub static NCALLS: AtomicI32`
+    - `static Parc arcs;` (c:68) → `pub static ARCS: Mutex<Vec<Parc>>`
+    - `static int narcs;` (c:69) → `pub static NARCS: AtomicI32`
+    - `static Sfunc stack;` (c:70) → `pub static STACK: Mutex<Vec<Sfunc>>` (top at `last()`)
+    - `static Module zprof_module;` (c:71) → `pub static ZPROF_MODULE: AtomicBool` (true when boot_ has run, false after cleanup_)
+  - **Eliminated**: the `Profiler` struct on `ShellExecutor` was a bag-of-globals violating PORT_PLAN's anti-pattern; same for `profile_data: HashMap<String, ProfileEntry>`. Both deleted from exec.rs. The runtime profile data now lives in the module statics matching C's file-statics 1:1.
+  - C fns (11): `freepfuncs`, `freeparcs`, `findpfunc`, `findparc`, `cmpsfuncs`, `cmptfuncs`, `cmpparcs`, `bin_zprof`, `name_for_anonymous_function`, `zprof_wrapper`, plus 6 module loaders (`setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_`). Rust: same 17 ✓; function order matches C source order verbatim.
+  - `bin_zprof(exec, nam, args) -> i32` — port of c:139-214. `-c` parsing inline (matches `OPT_ISSET(ops,'c')` at c:140); `-c` set → free both tables + reset counters per c:141-147; `-c` unset → gather + total + cmpsfuncs sort + header print + per-function row + cmptfuncs re-sort + per-function caller/callee blocks per c:149-211. Reverse-iter on the callees list mirrors C's `for (ap = as + narcs - 1; ap >= as; ap--)` at c:202.
+  - `freepfuncs(f)` / `freeparcs(a)` — port of c:74-94. Vec.clear() mirrors the linked-list zfree+zsfree walk; the contained `String`s drop with the `Pfunc` (matches `zsfree(name)` at c:80).
+  - `findpfunc(name) -> Option<usize>` — port of c:97-106. Linear scan returning the index (or `None` for C `NULL`).
+  - `findparc(from, to) -> Option<usize>` — port of c:109-118.
+  - `cmpsfuncs` / `cmptfuncs` / `cmpparcs` — descending qsort comparators per c:121-136. `b.partial_cmp(&a)` reverses the ordering.
+  - `name_for_anonymous_function(name, filename, lineno) -> String` — port of c:217-233. C uses `convbase` for the lineno + `sepjoin` for the parts array; Rust uses `format!("{} [{}:{}]")`.
+  - `zprof_wrapper(name) -> i32` — port of c:236-311. Static-link no-op stub returning 0 (C body wraps `runshfunc` with entry/exit timing; the live integration is the executor's funcstack hook, not the addwrapper-installable callback path).
+  - 6 module loaders body-ported to drive the new module-statics: `setup_` flips `ZPROF_MODULE` true, `boot_` resets all five tables (matches c:357-361), `cleanup_` calls freepfuncs+freeparcs and flips `ZPROF_MODULE` false (matches c:369-372).
+  - **Caller updates:**
+    - `src/exec.rs:24,303,552,575,879,933` — deleted `use Profiler`, `pub use ProfileEntry`, `profile_data: HashMap<String, ProfileEntry>` field (+ initializer), `profiler: Profiler` field (+ initializer). The `profiling_enabled: bool` flag stays (set by the `profile` extension builtin).
+    - `src/extensions/ext_builtins.rs:564-581,605-606,634-642` — `profile` builtin now routes through `crate::zprof::bin_zprof(self, "profile", &args)` for both clear (`-c`) and dump (no args), gating on `NCALLS.load(...)` to suppress empty-state output.
+    - `src/fusevm_bridge.rs:20,909` — deleted `use Profiler`; `BUILTIN_ZPROF` dispatch now calls `crate::modules::zprof::bin_zprof(exec, "zprof", &args)`.
+    - `src/ported/builtin.rs:10651` — `"zprof"` builtin dispatch updated to call the new free fn.
+  - 8/8 zprof tests pass (with `TEST_LOCK` Mutex serialising the ones that touch module-static state): `pfunc_default_zeros`, `freepfuncs_clears`, `findpfunc_matches_by_name`, `findparc_matches_pair`, `cmpsfuncs_descending`, `bin_zprof_clear_resets_tables`, `zprof_wrapper_returns_zero`, `name_for_anonymous_function_format`. Drift gate clean.
+
 ## 🟢 NEAR — 1–3 stubs (6) [stub-counts pre-rule-tightening]
 
 - [ ] `params.rs` ↔ `params.c`
@@ -321,7 +349,6 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
 - [ ] `zle/zle_tricky.rs` ↔ `Zle/zle_tricky.c`
 - [ ] `zle/zle_word.rs` ↔ `Zle/zle_word.c`
 - [ ] `modules/param_private.rs` ↔ `Modules/param_private.c`
-- [ ] `modules/zprof.rs` ↔ `Modules/zprof.c`
 - [ ] `modules/zftp.rs` ↔ `Modules/zftp.c`
 - [ ] `modules/parameter.rs` ↔ `Modules/parameter.c`
 - [ ] `loop.rs` ↔ `loop.c`
