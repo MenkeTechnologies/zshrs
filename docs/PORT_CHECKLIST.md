@@ -93,9 +93,9 @@ were left in place; some stubs were body-ported but kept their
 Rust-only wrappers). All checkboxes reset; we revisit each file.
 
 In-flight files where I started bodies but the surrounding file still
-has Rust-only types to delete: `modules/stat.rs`,
-`modules/example.rs`, `modules/mapfile.rs`, `modules/hlgroup.rs`,
-`modules/zprof.rs`. These get re-done from the top under the new rules.
+has Rust-only types to delete: `modules/stat.rs`, `modules/mapfile.rs`,
+`modules/hlgroup.rs`, `modules/zprof.rs`. These get re-done from the
+top under the new rules.
 
 ---
 
@@ -184,6 +184,22 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - 6 module loaders (`setup_`/`features_`/`enables_`/`boot_`/`cleanup_`/`finish_`) — each is a `return 0;` C body or short `featuresarray`/`handlefeatures`/`addhookfunc` call. Rust ports are static-link no-ops returning 0, with doc-comments quoting the C body verbatim and explaining the architectural divergence (zshrs colour subsystem invokes `getnearestcolor` directly; no runtime feature/hook registry). Cited c:171, 179, 186, 194, 202, 209.
   - 6/6 tests pass (`rgb_to_lab_black_is_zero`, `deltae_self_is_zero`, `map_rgb_to_256_white_is_15_or_higher`, `map_rgb_to_88_white_is_in_range`, `getnearestcolor_dispatches_on_tccolours`, `getnearestcolor_unsupported_returns_minus_one`). Verified.
 
+- [x] `modules/example.rs` ↔ `Modules/example.c`
+  - C: 0 structs/enums (only `static struct builtin bintab[]` etc. arrays of pre-defined zsh-framework types). Rust: 0 structs/enums ✓; no Rust-only types.
+  - C file-statics (3): `intparam` (zlong), `strparam` (char*), `arrparam` (char**). Rust: `INTPARAM: AtomicI64`, `STRPARAM: Mutex<Option<String>>`, `ARRPARAM: Mutex<Option<Vec<String>>>` — names match the C identifiers (uppercased to Rust static convention), types match the C scalar/pointer/pointer-to-pointer storage. Bucket-1 file-statics per PORT_PLAN.md (per-module storage); Mutex chosen over thread_local because the demo paramdef readers (`exint`/`exstr`/`exarr`) cross thread boundaries when a shfunc reads them.
+  - C fns (12): `bin_example`, `cond_p_len`, `cond_i_ex`, `math_sum`, `math_length`, `ex_wrapper`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 12 ✓
+  - `bin_example(nam, args, ops) -> i32` — full port of c:42-76. Mirrors the c:49 `for (c = 32; ++c < 128;)` pre-increment loop with a `loop {}` + early `c += 1; if c >= 128 break;` rather than a Rust `for c in 33..128` so the C control flow is bit-for-bit. `OPT_ISSET(ops, c)` reads as `ops[c as usize]` over the rule-3 bitmask `[bool; 256]`. Side-effect demo (c:69-74) writes back to INTPARAM/STRPARAM/ARRPARAM. Uses `compat::output64` for the `printf("%s\n", output64(intparam))` integer formatting at c:59 (matching the `#ifdef ZSH_64_BIT_TYPE` branch which is taken on every modern platform). Verified.
+  - `cond_p_len(a, id) -> i32` — port of c:80-91. Two-arity dispatch on `a[1]` presence: 1-arg form returns `!s1[0]`, 2-arg form returns `strlen(s1) == cond_val(a,1)`. Verified.
+  - `cond_i_ex(a, id) -> i32` — port of c:95-100. `dyncat(s1, s2)` → `String::push_str` concat, `!strcmp("example", ...)` → `combined == "example"`. Verified.
+  - `math_sum(name, argc, argv, id) -> Mnumber` — port of c:104-129. C `while (argc--)` translated to `while argc > 0 { argc -= 1; ... }` so the post-decrement semantic is preserved. Float-promotion `f` flag tracked at c:107/121/126. Verified.
+  - `math_length(name, arg, id) -> Mnumber` — 4-line port of c:133-141. `strlen(arg)` → `arg.len()`. Verified.
+  - `ex_wrapper(prog, w, name) -> i32` — port of c:145-158. `strncmp(name, "example", 7)` → `name.starts_with("example")`. Inner `runshfunc(prog, w, name)` skipped (no addwrapper registry in zshrs static-link path); returns 0 (matched + ran). Verified.
+  - `setup_()` — port of c:198-203. `printf("The example module has now been set up.\n"); fflush(stdout);` + return 0. Verified.
+  - `features_()`/`enables_()`/`cleanup_()` — static-link no-ops with C-body-quoting doc-comments, matching c:207/215/235. Cited c:210/217/238.
+  - `boot_()` — port of c:222-231. Faithful population of intparam=42, strparam="example", arrparam=["example","array"]; addwrapper return replaced with literal 0 (no funcwrap registry).
+  - `finish_()` — port of c:243-248. `printf("Thank you for using the example module.  Have a nice day.\n"); fflush(stdout);` + return 0. Verified.
+  - 6/6 tests pass (`boot_populates_demo_params`, `cond_p_len_arities`, `cond_i_ex_concat_matches_example`, `math_sum_int_then_float_promotion`, `math_length_returns_strlen`, `ex_wrapper_name_prefix_match`).
+
 ## 🟢 NEAR — 1–3 stubs (6) [stub-counts pre-rule-tightening]
 
 - [ ] `params.rs` ↔ `params.c`
@@ -252,7 +268,6 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
 - [ ] `modules/zftp.rs` ↔ `Modules/zftp.c`
 - [ ] `modules/parameter.rs` ↔ `Modules/parameter.c`
 - [ ] `loop.rs` ↔ `loop.c`
-- [ ] `modules/example.rs` ↔ `Modules/example.c`
 - [ ] `modules/newuser.rs` ↔ `Modules/newuser.c`
 - [ ] `modules/random_real.rs` ↔ `Modules/random_real.c`
 - [ ] `zle/textobjects.rs` ↔ `Zle/textobjects.c`
