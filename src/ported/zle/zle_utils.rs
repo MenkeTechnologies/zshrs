@@ -145,166 +145,32 @@ pub fn unmetafy(s: &str) -> String {
     s.to_string()
 }
 
-/// Undo entry structure
-/// Port of struct change from zle_utils.c
-#[derive(Debug, Clone)]
-pub struct UndoEntry {
-    /// Start position of change
-    pub start: usize,
-    /// End position of change (original)
-    pub end: usize,
-    /// Inserted/deleted text
-    pub text: ZleString,
-    /// Cursor position before change
-    pub cursor: usize,
-    /// Whether this is the start of a group
-    pub group_start: bool,
-}
-
-/// Undo state
-#[derive(Debug, Default)]
-pub struct UndoState {
-    /// Undo history
-    pub history: Vec<UndoEntry>,
-    /// Current position in undo history
-    pub current: usize,
-    /// Undo limit (where to stop)
-    pub limit: usize,
-    /// Whether changes are being recorded
-    pub recording: bool,
-    /// Merge sequential inserts
-    pub merge_inserts: bool,
-}
-
-impl UndoState {
-    pub fn new() -> Self {
-        UndoState {
-            recording: true,
-            merge_inserts: true,
-            ..Default::default()
-        }
-    }
-
-    /// Initialize undo system
-    /// Port of initundo() from zle_utils.c
-    pub fn init(&mut self) {
-        self.history.clear();
-        self.current = 0;
-        self.limit = 0;
-        self.recording = true;
-    }
-
-    /// Free undo history
-    /// Port of freeundo() from zle_utils.c
-    pub fn free(&mut self) {
-        self.history.clear();
-        self.current = 0;
-    }
-
-    /// Create an undo entry
-    /// Port of mkundoent() from zle_utils.c
-    pub fn make_entry(&mut self, start: usize, end: usize, text: ZleString, cursor: usize) {
-        if !self.recording {
-            return;
-        }
-
-        // Remove any entries after current position (redo history)
-        self.history.truncate(self.current);
-
-        let entry = UndoEntry {
-            start,
-            end,
-            text,
-            cursor,
-            group_start: false,
-        };
-
-        self.history.push(entry);
-        self.current = self.history.len();
-    }
-
-    /// Split undo (start a new undo group)
-    /// Port of splitundo() from zle_utils.c
-    pub fn split(&mut self) {
-        if let Some(entry) = self.history.last_mut() {
-            entry.group_start = true;
-        }
-    }
-
-    /// Merge with previous undo entry
-    /// Port of mergeundo() from zle_utils.c
-    pub fn merge(&mut self) {
-        // For sequential character inserts, merge into one undo
-        if self.history.len() >= 2 {
-            let last = self.history.len() - 1;
-            let prev = last - 1;
-
-            // Check if mergeable (consecutive inserts at same position)
-            if self.history[prev].end == self.history[last].start
-                && self.history[prev].text.is_empty()
-                && self.history[last].text.is_empty()
-            {
-                self.history[prev].end = self.history[last].end;
-                self.history.pop();
-                self.current = self.history.len();
-            }
-        }
-    }
-
-    /// Get current change
-    /// Port of get_undo_current_change() from zle_utils.c
-    pub fn get_current(&self) -> Option<&UndoEntry> {
-        if self.current > 0 {
-            self.history.get(self.current - 1)
-        } else {
-            None
-        }
-    }
-
-    /// Set undo limit
-    /// Port of set_undo_limit_change() from zle_utils.c
-    pub fn set_limit(&mut self) {
-        self.limit = self.current;
-    }
-
-    /// Get undo limit
-    /// Port of get_undo_limit_change() from zle_utils.c
-    pub fn get_limit(&self) -> usize {
-        self.limit
-    }
-}
+// Note: dead `UndoEntry`/`UndoState`/`apply_undo_entry` aggregates
+// removed per PORT_PLAN Phase 2. They were a Rust-only invention
+// with zero references across the codebase. The canonical undo
+// machinery lives directly on `Zle` (`undo_stack: Vec<Change>`,
+// `changeno`, `cur_change`, `undo_changeno`, `undo_limitno` —
+// declared in zle_main.rs) and the canonical port methods are:
+//
+//   Zle::mkundoent       — port of mkundoent (zle_utils.c)
+//   Zle::apply_change    — port of applychange (zle_utils.c:1633)
+//   Zle::unapply_change  — port of unapplychange (zle_utils.c:1677)
+//
+// C source's bag-of-statics that the canonical methods touch:
+//
+//   struct change *curchange;             // line 1427
+//   static struct change *changes;        // line 1429
+//   static struct change *nextchanges, *endnextchanges;  // line 1433
+//   static zlong undo_limitno;            // line 1442
+//   static struct zle_position *zle_positions;  // line 608
+//
+// These are file-scope (some `extern`-visible from zle_main.c), so
+// they're PORT_PLAN Phase 3 bucket-2 (Arc<RwLock>) work, not the
+// Phase 2 bucket-1 (thread_local!) wave. The dissolution noted here
+// is structural cleanup (remove dead aggregate); the bucket-2 wiring
+// of these globals onto Zle is already done in zle_main.rs.
 
 impl Zle {
-    /// Apply an undo entry (legacy entry-based path).
-    /// Superseded by the index-based `apply_change`/`unapply_change` further
-    /// down which match zsh's `applychange`/`unapplychange` (zle_utils.c:1633/1677).
-    /// Kept private; remove after the legacy `UndoStack` callers are gone.
-    #[allow(dead_code)]
-    fn apply_undo_entry(&mut self, entry: &UndoEntry, reverse: bool) {
-        if reverse {
-            // Redo: re-insert removed text
-            let removed: ZleString = self.zleline.drain(entry.start..entry.end).collect();
-            for (i, &c) in entry.text.iter().enumerate() {
-                self.zleline.insert(entry.start + i, c);
-            }
-            self.zlell = self.zleline.len();
-            self.zlecs = entry.cursor;
-
-            // Store for undo
-            let _ = removed;
-        } else {
-            // Undo: remove inserted text and restore old
-            let end = entry.start + entry.text.len();
-            self.zleline.drain(entry.start..end.min(self.zleline.len()));
-            for (i, &c) in entry.text.iter().enumerate() {
-                self.zleline.insert(entry.start + i, c);
-            }
-            self.zlell = self.zleline.len();
-            self.zlecs = entry.cursor;
-        }
-        self.resetneeded = true;
-    }
-
     /// Find beginning of line from position
     /// Port of findbol() from zle_utils.c
     pub fn find_bol(&self, pos: usize) -> usize {
