@@ -377,15 +377,27 @@ pub(crate) use crate::ported::pattern::NumericRange;
 /// everything into one `ShellExecutor` so we don't need
 /// thread-local globals.
 pub struct ShellExecutor {
-    /// Mirrors C zsh's file-static `scriptname` (Src/init.c) — the
-    /// short name used for `%N` / `%x` prompt expansion + the
-    /// `scriptname:line: …` prefix on error messages. Decoupled from
-    /// `$0` (which holds the full `argzero` path). Init sets this in
-    /// `-c` mode to the binary basename per Src/init.c:479
-    /// (`scriptname = scriptfilename = ztrdup("zsh")`); when sourcing
-    /// a file via `source`/`bin_dot`, it becomes the resolved file
-    /// path; otherwise it falls back through `$0` → `$ZSH_ARGZERO`.
+    /// Mirrors C zsh's file-static `scriptname` (Src/init.c). Used by
+    /// PS4's `%N` and the `scriptname:line: …` prefix on error
+    /// messages. Inside a function, MUTATES to the function name
+    /// (Src/exec.c:5903 `scriptname = dupstring(name)`). Init sets
+    /// this in `-c` mode to the binary basename per init.c:479; when
+    /// sourcing a file via `source`/`bin_dot`, it becomes the
+    /// resolved file path; otherwise it falls back through `$0` →
+    /// `$ZSH_ARGZERO`.
     pub scriptname: Option<String>,
+    /// Mirrors C zsh's `scriptfilename` global (Src/init.c). Tracks
+    /// the FILE BEING READ (vs scriptname which tracks the active
+    /// function name during a call). Used by PS4's `%x` and certain
+    /// error-message prefixes that want the file location, NOT the
+    /// function name.
+    ///
+    /// At -c-mode init, scriptname == scriptfilename == "zsh"
+    /// (Src/init.c:479). When entering a function, ONLY scriptname
+    /// updates (exec.c:5903); scriptfilename stays at the outer
+    /// file path, so `%x` inside a function still shows the file
+    /// the function was called from.
+    pub scriptfilename: Option<String>,
     pub aliases: IndexMap<String, String>,
     pub global_aliases: IndexMap<String, String>, // alias -g: expand anywhere
     pub suffix_aliases: IndexMap<String, String>, // alias -s: expand by file extension
@@ -805,6 +817,7 @@ impl ShellExecutor {
                 a
             },
             scriptname: None,
+            scriptfilename: None,
             global_aliases: IndexMap::new(),
             suffix_aliases: IndexMap::new(),
             expanding_aliases: std::collections::HashSet::new(),

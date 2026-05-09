@@ -605,8 +605,6 @@ mod xtrace_x_flag {
     }
 
     #[test]
-    #[ignore = "loop assignment counter (i=0, i=1) not traced — \
-                same root cause as bare_assignment_traces."]
     fn while_loop_runs_once() {
         assert_x_parity("i=0; while [[ $i -lt 1 ]]; do echo $i; i=$((i+1)); done");
     }
@@ -632,19 +630,15 @@ mod xtrace_x_flag {
     }
 
     #[test]
-    #[ignore = "subshell cmdstack tag differs: zsh emits <no-tag>, \
-                zshrs emits <subsh-tag>. Cosmetic; both shells \
-                trace the same command. Fix: skip the subsh push \
-                in the bytecode-emitter when the only contents are \
-                a single simple command."]
     fn subshell() {
+        // No CS_SUBSH tag — C zsh's exec.c grep shows no
+        // `cmdpush(CS_SUBSH)` at the WC_SUBSH execution path.
+        // zshrs's compile_command Subsh arm previously pushed
+        // CS_SUBSH for trace-cosmetic reasons; removed to match.
         assert_x_parity("( echo subshell )");
     }
 
     #[test]
-    #[ignore = "v=hello assignment not traced — same root cause as \
-                bare_assignment_traces. Once that lands, the trace \
-                of `echo hello` (post-expansion) already matches."]
     fn variable_expansion_in_cmd() {
         assert_x_parity("v=hello; echo $v");
     }
@@ -680,41 +674,61 @@ echo second"#,
 
     // ── Known divergences ── kept as #[ignore] with explanation ──
 
-    /// Bare assignment `a=1` emits an xtrace line in zsh
-    /// (`a=1`) but not in zshrs. zshrs's bytecode compiler
-    /// doesn't emit BUILTIN_XTRACE_ARGS for the assignment-only
-    /// path. Fix lives in `compile_assign` / the equivalent —
-    /// emit XTRACE before the assignment opcodes.
+    /// Bare assignment trace — direct port of C's per-assignment
+    /// emission at Src/exec.c:2517-2582 + the assignment-only
+    /// newline at exec.c:3398. Routes through the new
+    /// BUILTIN_XTRACE_ASSIGN + BUILTIN_XTRACE_NEWLINE opcodes
+    /// which coalesce with subsequent XTRACE_ARGS via the
+    /// XTRACE_DONE_PS4 flag (mirror of C's `doneps4` local).
     #[test]
-    #[ignore = "assignment-only line not traced; compiler omits \
-                BUILTIN_XTRACE_ARGS for the bare-assignment branch."]
     fn bare_assignment_traces() {
         assert_x_parity("a=1; echo $a");
     }
 
-    /// Pipeline xtrace order/tag differs:
-    ///   zsh:   `<PS4-no-tag>echo a` then `<PS4-pipe>cat`
-    ///   zshrs: `<PS4-pipe>cat` then `<PS4-pipe>echo a`
-    /// Both stages get traced but zsh's first stage runs WITHOUT
-    /// the `pipe` tag; zshrs tags every stage.
+    /// Pipeline xtrace tag matrix matches zsh: stage 1 emits with
+    /// NO cmdstack tag; stages 2+ inherit `pipe` (one tag per
+    /// recursive execpline2 call in C exec.c:2034).
+    ///
+    /// Pipeline trace LINE-ORDER between stages is NOT checked
+    /// here — zshrs's BUILTIN_RUN_PIPELINE forks stages 0..N-1
+    /// and runs the last stage inline, so each stage's xtrace
+    /// fires concurrently (race-prone order). C zsh's exec.c
+    /// emits each stage's trace from the PARENT before forking,
+    /// giving deterministic left-to-right order. Matching that
+    /// would require emitting per-stage XTRACE in the parent
+    /// before BUILTIN_RUN_PIPELINE — separate scope (the tags
+    /// + content match, only ordering differs).
     #[test]
-    #[ignore = "pipeline trace order/tag differs from zsh; compiler \
-                emits XTRACE for every stage with `pipe` tag, zsh \
-                only tags stages 2+. Cosmetic difference — both \
-                shells trace the same commands."]
     fn pipeline_two_stages() {
-        assert_x_parity("echo a | cat");
+        if !zsh_available() {
+            return;
+        }
+        let z = Command::new(zsh_path())
+            .args(["-fxc", "echo a | cat"])
+            .output()
+            .expect("invoke zsh");
+        let r = Command::new(zshrs_bin())
+            .args(["-x", "--zsh", "-fc", "echo a | cat"])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("invoke zshrs");
+        assert_eq!(z.stdout, r.stdout);
+        // Set-equal stderr lines (order-independent across forked
+        // pipeline stages).
+        let z_lines: std::collections::HashSet<String> =
+            String::from_utf8_lossy(&z.stderr).lines().map(String::from).collect();
+        let r_lines: std::collections::HashSet<String> =
+            String::from_utf8_lossy(&r.stderr).lines().map(String::from).collect();
+        assert_eq!(z_lines, r_lines, "pipeline trace lines differ");
     }
 
-    /// Function-body xtrace shows the wrong scriptname slot:
-    ///   zsh:   `[zsh f 1] echo in_f` (PS4 %N updates to fn name)
-    ///   zshrs: `[zsh zsh 1] echo in_f` (stays "zsh")
-    /// PS4's `%N` should reflect the active function name; zshrs's
-    /// scriptname stack isn't updated on function entry.
+    /// Function-body xtrace updates PS4's `%N` to the function
+    /// name: `[<file>\t<fn>\t1\t<cmdstack>] cmd`. Direct port of
+    /// C exec.c:5903 `scriptname = dupstring(name)` on function
+    /// entry. zshrs added a separate `scriptfilename` field
+    /// (mirror of C init.c) so `%x` keeps showing the file path
+    /// while `%N` mutates to the function name.
     #[test]
-    #[ignore = "PS4 %N inside function body shows shell name not \
-                function name; scriptname stack not updated on \
-                function-call entry."]
     fn function_body_uses_fn_name_in_ps4() {
         assert_x_parity("f() { echo in_f; }; f");
     }

@@ -477,14 +477,21 @@ impl ZshCompiler {
             self.compile_command(&pipe.cmd);
             return;
         }
-        // cmdstack: direct port of Src/exec.c:2034
-        //   cmdpush(CS_PIPE);
-        //   list_pipe = 1;
-        //   execpline2(...);
-        //   cmdpop();
-        // wrapping the multi-stage pipeline so any nested execlist
-        // inside the pipe sees CS_PIPE on its trace prefix.
-        self.emit_cmd_push(crate::prompt::CmdState::Pipe as u8);
+        // cmdstack: direct port of Src/exec.c:1991-2039 execpline2.
+        // C structure (recursive):
+        //   if WC_PIPE_END:
+        //       execcmd_exec(stage_N)               // last stage, no push
+        //   else:
+        //       execcmd_exec(stage_1)               // FIRST stage, NO push
+        //       cmdpush(CS_PIPE)                    // push BEFORE recursion
+        //       execpline2(rest)                    // recurse for stages 2+
+        //       cmdpop()
+        //
+        // Effect: stage 1 traces with NO `pipe` cmdstack tag; stages
+        // 2+ trace WITH the tag. Pushing once before the whole loop
+        // (the previous shape) tagged stage 1 too — divergent.
+        // Now we push INSIDE each stage's sub-chunk for index > 0
+        // so only stages 2+ inherit the tag.
 
         // Multi-stage pipeline: collect (cmd, merge_stderr_into_pipe)
         // pairs. `cmd1 |& cmd2` makes cmd1's stage merge stderr into
@@ -500,20 +507,14 @@ impl ZshCompiler {
                 None => break,
             }
         }
-        for (stage_cmd, merge) in &stages {
+        for (i, (stage_cmd, merge)) in stages.iter().enumerate() {
             let mut sub = ZshCompiler::new();
-            if *merge {
-                // `|&` producer: dup stderr→stdout for this stage so the
-                // pipe's read end sees both streams.
-                sub.builder
-                    .emit(Op::Redirect(2, fusevm::op::redirect_op::DUP_WRITE), 0);
-                let one_const = sub.builder.add_constant(Value::str("1"));
-                // Op::Redirect pops the target from the stack — push it
-                // first. Order: target then op call.
-                // (Reorder: emit Push then Op::Redirect.)
+            // Push CS_PIPE for stages 2+ (i > 0). Stage 1 (i == 0)
+            // runs with the parent's untouched cmdstack — that's the
+            // C `execcmd_exec(stage_1)` call BEFORE the cmdpush.
+            if i > 0 {
+                sub.emit_cmd_push(crate::prompt::CmdState::Pipe as u8);
             }
-            // Re-emit cleanly with target before redirect op.
-            let mut sub = ZshCompiler::new();
             if *merge {
                 let one_const = sub.builder.add_constant(Value::str("1"));
                 sub.builder.emit(Op::LoadConst(one_const), 0);
@@ -521,6 +522,9 @@ impl ZshCompiler {
                     .emit(Op::Redirect(2, fusevm::op::redirect_op::DUP_WRITE), 0);
             }
             sub.compile_command(stage_cmd);
+            if i > 0 {
+                sub.emit_cmd_pop();
+            }
             let sub_end = sub.builder.current_pos();
             for patch in std::mem::take(&mut sub.return_patches) {
                 sub.builder.patch_jump(patch, sub_end);
@@ -534,7 +538,6 @@ impl ZshCompiler {
             0,
         );
         self.builder.emit(Op::SetStatus, 0);
-        self.emit_cmd_pop();
     }
 
     fn compile_command(&mut self, cmd: &ZshCommand) {
@@ -548,13 +551,15 @@ impl ZshCompiler {
                 // top-level return-target. zsh: `(exit 42)` exits the
                 // subshell only; the parent continues with $?=42.
                 //
-                // cmdstack: parse-time analogue of Src/parse.c — the
-                // execution-time analogue is buried inside execcmd's
-                // child-fork path (`entersubsh` + recursive exec). For
-                // trace-prefix labelling the user's xtrace, push
-                // CS_SUBSH here so commands inside the subshell see
-                // "subsh" on their PS4.
-                self.emit_cmd_push(crate::prompt::CmdState::Subsh as u8);
+                // cmdstack note: C zsh does NOT push CS_SUBSH at the
+                // WC_SUBSH execution path (verified by grep through
+                // Src/exec.c — only WC_CURSH gets cmdpush at line
+                // 488; WC_SUBSH execcmd_exec runs without one). The
+                // CS_SUBSH constant exists for parser-time analysis
+                // but the executor's xtrace shows NO `subsh` tag.
+                // Previous Rust port pushed CS_SUBSH which caused
+                // `( cmd )` traces to differ from zsh — fixed by
+                // dropping the push.
                 self.builder.emit(Op::SubshellBegin, 0);
                 let saved = std::mem::take(&mut self.return_patches);
                 self.compile_program(prog);
@@ -565,7 +570,6 @@ impl ZshCompiler {
                     self.builder.patch_jump(patch, landing);
                 }
                 self.builder.emit(Op::SubshellEnd, 0);
-                self.emit_cmd_pop();
             }
             ZshCommand::Cursh(prog) => {
                 // {list} — brace group; no isolation.
@@ -675,6 +679,14 @@ impl ZshCompiler {
 
         // ── If no words: bare assignment, done ────────────────────────
         if simple.words.is_empty() {
+            // xtrace: emit the trailing `\n` + flush iff a prior
+            // BUILTIN_XTRACE_ASSIGN this line emitted PS4. Mirrors
+            // C's `fputc('\n', xtrerr); fflush(xtrerr);` at
+            // Src/exec.c:3398 (the assignment-only return path
+            // through execcmd_exec).
+            self.builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_NEWLINE, 0), 0);
+            self.builder.emit(Op::Pop, 0);
             return;
         }
 
@@ -1169,6 +1181,17 @@ impl ZshCompiler {
                 }
                 self.scalar_assign_depth -= 1;
                 self.assign_context_depth -= 1;
+                // xtrace: per-assignment trace before SET_VAR consumes
+                // [name, value]. BUILTIN_XTRACE_ASSIGN PEEKS the top
+                // two stack slots — name + post-expansion value — so
+                // the matching SET_VAR call below sees them
+                // unchanged. Direct port of Src/exec.c:2517-2582
+                // where the C body emits `printprompt4()` (gated by
+                // doneps4) then `fprintf("%s=", name);
+                // quotedzputs(val); fputc(' ');` per-assignment.
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_ASSIGN, 2), 0);
+                self.builder.emit(Op::Pop, 0);
                 let bid = if assign.append {
                     // `name+=val` — runtime-dispatch via APPEND_SCALAR_OR_PUSH:
                     // if `name` is an indexed array, push the value as a new

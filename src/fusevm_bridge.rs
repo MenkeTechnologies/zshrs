@@ -38,7 +38,18 @@ use std::io::Write;
 // Thread-local executor context for VM builtin dispatch
 // ═══════════════════════════════════════════════════════════════════════════
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+
+thread_local! {
+    /// Mirror of C zsh's `doneps4` local in execcmd_exec
+    /// (Src/exec.c:2517+). Tracks whether PS4 has been emitted
+    /// for the current xtrace line so a coalesced sequence of
+    /// XTRACE_ASSIGN + XTRACE_ARGS produces ONE line:
+    ///   `<PS4>a=1 b=2 echo 1 2\n`
+    /// instead of three. Reset to false by XTRACE_ARGS /
+    /// XTRACE_NEWLINE after emitting the trailing `\n`.
+    static XTRACE_DONE_PS4: Cell<bool> = const { Cell::new(false) };
+}
 
 // Thread-local pointer to the current ShellExecutor.
 // Set before VM execution, cleared after. Used by builtin handlers.
@@ -6357,6 +6368,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // The compiler emits this BEFORE the actual builtin/external call
     // with the command's literal text as a single string arg. We
     // print to stderr if xtrace is on. Honors `$PS4` (default `+ `).
+    //
+    // ── XTRACE flow control ────────────────────────────────────────
+    // Mirror of C zsh's `doneps4` flag in execcmd_exec (Src/exec.c).
+    // When an assignment trace fires (XTRACE_ASSIGN), it emits PS4
+    // and sets this flag so the subsequent XTRACE_ARGS skips its own
+    // PS4 emission — the assignment + command end up on the SAME
+    // line: `<PS4>a=1 echo hello\n`. XTRACE_ARGS / XTRACE_NEWLINE
+    // reset the flag after emitting the trailing `\n`.
     vm.register_builtin(BUILTIN_XTRACE_LINE, |vm, _argc| {
         let cmd_text = vm.pop().to_str();
         // Sync exec.last_status with the live vm.last_status BEFORE
@@ -6419,11 +6438,72 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             } else {
                 format!("{} {}", prefix, arg_strs.join(" "))
             };
-            // Mirrors Src/exec.c xtrace emission: printprompt4() writes
-            // the PS4 prefix to xtrerr (no newline), then the caller
-            // emits the joined line + newline.
-            printprompt4();
+            // Mirrors Src/exec.c:2055 xtrace emission. C does:
+            //   if (!doneps4) printprompt4();
+            //   ... emit args + spaces ...
+            //   fputc('\n', xtrerr); fflush(xtrerr);
+            // We honor doneps4 via XTRACE_DONE_PS4 — if a prior
+            // XTRACE_ASSIGN this line already emitted PS4, skip it.
+            // Then reset the flag after the trailing newline so the
+            // next command starts fresh.
+            let already_ps4 = XTRACE_DONE_PS4.with(|f| f.get());
+            if !already_ps4 {
+                printprompt4();
+            }
             eprintln!("{}", line);
+            XTRACE_DONE_PS4.with(|f| f.set(false));
+        }
+        fusevm::Value::Status(0)
+    });
+
+    // BUILTIN_XTRACE_ASSIGN — direct port of the per-assignment
+    // trace block at Src/exec.c:2517-2582. C body excerpt:
+    //   xtr = isset(XTRACE);
+    //   if (xtr) { printprompt4(); doneps4 = 1; }
+    //   while (assign) {
+    //       if (xtr) fprintf(xtrerr, "%s+=" or "%s=", name);
+    //       ... eval value into `val` ...
+    //       if (xtr) { quotedzputs(val, xtrerr); fputc(' ', xtrerr); }
+    //       ...
+    //   }
+    //
+    // Stack on entry: [..., name, value]. PEEKS both (they're left
+    // on stack for SET_VAR to pop). Emits `name=<quoted-val> ` with
+    // no newline; trailing `\n` comes from XTRACE_ARGS (cmd path)
+    // or XTRACE_NEWLINE (assignment-only path).
+    vm.register_builtin(BUILTIN_XTRACE_ASSIGN, |vm, _argc| {
+        let on = with_executor(|exec| exec.options.get("xtrace").copied().unwrap_or(false));
+        if on {
+            // PEEK [..., name, value] — argc==2 by contract.
+            let len = vm.stack.len();
+            if len >= 2 {
+                let name = vm.stack[len - 2].to_str();
+                let value = vm.stack[len - 1].to_str();
+                let already_ps4 = XTRACE_DONE_PS4.with(|f| f.get());
+                if !already_ps4 {
+                    printprompt4();
+                    XTRACE_DONE_PS4.with(|f| f.set(true));
+                }
+                // C: `fprintf(xtrerr, "%s=", name)` then `quotedzputs
+                // (val); fputc(' ', xtrerr);`. Emit no newline.
+                eprint!("{}={} ", name, quotedzputs(&value));
+            }
+        }
+        fusevm::Value::Status(0)
+    });
+
+    // BUILTIN_XTRACE_NEWLINE — emit trailing `\n` + flush iff a
+    // prior XTRACE_ASSIGN this line already emitted PS4. Mirrors
+    // C's `fputc('\n', xtrerr); fflush(xtrerr);` at exec.c:3398
+    // (the assignment-only path through execcmd_exec).
+    vm.register_builtin(BUILTIN_XTRACE_NEWLINE, |_vm, _argc| {
+        let on = with_executor(|exec| exec.options.get("xtrace").copied().unwrap_or(false));
+        if on {
+            let already_ps4 = XTRACE_DONE_PS4.with(|f| f.get());
+            if already_ps4 {
+                eprintln!();
+                XTRACE_DONE_PS4.with(|f| f.set(false));
+            }
         }
         fusevm::Value::Status(0)
     });
@@ -8432,6 +8512,34 @@ pub const BUILTIN_CMD_POP: u16 = 345;
 /// for b`. Direct port of Src/exec.c:2055-2066.
 pub const BUILTIN_XTRACE_ARGS: u16 = 346;
 
+/// Trace one assignment: emits `name=<quoted-value> ` (no newline)
+/// to xtrerr if XTRACE is on. Coalesces with subsequent
+/// XTRACE_ASSIGN / XTRACE_ARGS calls onto the SAME line via the
+/// `XTRACE_DONE_PS4` flag so `a=1 b=2 echo $a $b` produces:
+///   `<PS4>a=1 b=2 echo 1 2\n`
+/// matching C zsh's `execcmd_exec` body (Src/exec.c:2517-2582):
+///   xtr = isset(XTRACE);
+///   if (xtr) { printprompt4(); doneps4 = 1; }
+///   while (assign) {
+///       if (xtr) fprintf(xtrerr, "%s=", name);
+///       ... eval value ...
+///       if (xtr) { quotedzputs(val, xtrerr); fputc(' ', xtrerr); }
+///   }
+///
+/// Stack contract on entry: [..., name, value]. Both peeked, NOT
+/// consumed (the matching SET_VAR call pops them after). argc = 2.
+pub const BUILTIN_XTRACE_ASSIGN: u16 = 525;
+
+/// Emit a trailing `\n` + flush iff XTRACE is on AND PS4 was
+/// emitted by an earlier XTRACE_ASSIGN this line. Used at the end
+/// of compile_simple's assignment-only path so the trace line gets
+/// terminated. Mirrors C's exec.c:3397-3399 (the assign-only return
+/// path through execcmd_exec which does `fputc('\n', xtrerr);
+/// fflush(xtrerr)`).
+///
+/// Stack: untouched. argc = 0.
+pub const BUILTIN_XTRACE_NEWLINE: u16 = 526;
+
 /// Bridge into subst_port::substitute_brace_array for nested forms
 /// that need to PRESERVE array shape across the expand_string
 /// boundary. Stack: [content_string]. Returns Value::Array of the
@@ -9036,6 +9144,7 @@ impl fusevm::ShellHost for ZshrsHost {
             saved_local_arr_count,
             saved_local_assoc_count,
             saved_zero,
+            saved_scriptname,
             saved_funcstack,
             saved_exit_trap,
         ) = with_executor(|exec| {
@@ -9066,7 +9175,16 @@ impl fusevm::ShellHost for ZshrsHost {
             } else {
                 fn_name.clone()
             };
-            let prev_zero = exec.variables.insert("0".to_string(), display_name);
+            let prev_zero = exec.variables.insert("0".to_string(), display_name.clone());
+            // scriptname: PS4's `%N` and error-message prefix both
+            // read `exec.scriptname`. Inside a function, C zsh sets
+            // `scriptname = dupstring(name)` at Src/exec.c:5903 so
+            // `%N` shows the function name. Save the outer
+            // scriptname before overwrite; restored on return.
+            let prev_scriptname = std::mem::replace(
+                &mut exec.scriptname,
+                Some(display_name.clone()),
+            );
             // funcstack: prepend the function name; outermost call
             // is at the END of the stack per zsh.
             let prev_stack = exec.arrays.get("funcstack").cloned();
@@ -9091,6 +9209,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 arr_count,
                 assoc_count,
                 prev_zero,
+                prev_scriptname,
                 prev_stack,
                 saved,
             )
@@ -9161,7 +9280,9 @@ impl fusevm::ShellHost for ZshrsHost {
             {
                 exec.options = saved_options.clone();
             }
-            // Restore `$0` and `$funcstack` to their pre-call values.
+            // Restore `$0`, scriptname, and `$funcstack` to their
+            // pre-call values. scriptname mirrors C exec.c:5907
+            // `scriptname = oldscriptname;` after execode returns.
             match saved_zero {
                 Some(v) => {
                     exec.variables.insert("0".to_string(), v);
@@ -9170,6 +9291,7 @@ impl fusevm::ShellHost for ZshrsHost {
                     exec.variables.remove("0");
                 }
             }
+            exec.scriptname = saved_scriptname;
             match saved_funcstack {
                 Some(s) => {
                     exec.arrays.insert("funcstack".to_string(), s);
