@@ -518,6 +518,85 @@ mod jobs_visible {
     }
 }
 
+// ─────────────────────── xtrace gating ────────────────────────────────
+
+mod xtrace_gating {
+    use super::*;
+
+    /// `[[ … ]]` produces no stderr when xtrace is off. Regression
+    /// catcher for a bug where BUILTIN_XTRACE_LINE emitted
+    /// `printprompt4(); eprintln!(cmd_text)` UNCONDITIONALLY —
+    /// `printprompt4()` correctly no-ops when xtrace is off, but
+    /// the eprintln! after it didn't, so every simple command
+    /// (including `[[ … ]]` and `(( … ))`) printed a stray stderr
+    /// line. The `if on { … }` guard at fusevm_bridge.rs:6377
+    /// fixes this.
+    fn assert_stderr_empty(script: &str) {
+        if !zsh_available() {
+            return;
+        }
+        let z = run_zsh(script);
+        let r = run_zshrs(script);
+        assert_eq!(
+            z.stderr, "",
+            "zsh stderr non-empty for: {}\n--- {:?}",
+            script, z.stderr
+        );
+        assert_eq!(
+            r.stderr, "",
+            "zshrs stderr non-empty for: {}\n--- {:?}",
+            script, r.stderr
+        );
+        assert_eq!(z.exit, r.exit);
+    }
+
+    #[test]
+    fn double_bracket_no_stderr_when_xtrace_off() {
+        assert_stderr_empty("[[ a = a ]]");
+    }
+
+    #[test]
+    fn double_paren_no_stderr_when_xtrace_off() {
+        assert_stderr_empty("(( 1 + 1 ))");
+    }
+
+    #[test]
+    fn simple_echo_no_stderr_when_xtrace_off() {
+        assert_stderr_empty("echo hello");
+    }
+
+    #[test]
+    fn pipeline_no_stderr_when_xtrace_off() {
+        assert_stderr_empty("true | true | true");
+    }
+
+    /// xtrace ON should produce identical stderr in both shells —
+    /// PS4 prefix + command text. Locks in the printprompt4 +
+    /// eprintln! pair when the gate is open.
+    #[test]
+    fn xtrace_on_emits_same_format() {
+        if !zsh_available() {
+            return;
+        }
+        let script = "set -x; echo hello";
+        let z = run_zsh(script);
+        let r = run_zshrs(script);
+        // Both should have stderr with PS4 prefix + the echo line.
+        assert!(
+            z.stderr.contains("echo hello"),
+            "zsh stderr missing trace: {:?}",
+            z.stderr
+        );
+        assert!(
+            r.stderr.contains("echo hello"),
+            "zshrs stderr missing trace: {:?}",
+            r.stderr
+        );
+        // stdout matches.
+        assert_eq!(z.stdout, r.stdout);
+    }
+}
+
 // ─────────────────── miscellaneous shell-wide ports ───────────────────
 
 mod misc {
