@@ -48,6 +48,81 @@ exposed via the param table).
 
 ---
 
+## Rust-only-types-still-present in src/ported/
+
+These files have one or more `pub struct` / `pub enum` whose name
+doesn't appear in the matching C source. They violate strict-rule 1
+("zero Rust-only structs/enums") and need rewrite before being
+ticked DONE in PORT_CHECKLIST.md:
+
+- `modules/zselect.rs` — `SelectMode` enum, `ZselectOptions`
+  struct, `SelectResult` struct. C zselect.c has zero structs/enums.
+  Fix path: rewrite `bin_zselect` as a single fn that does inline
+  flag parsing + select() call, matching `bin_zselect()` at
+  zselect.c:67-200 line-by-line. ~300-line rewrite.
+
+- `modules/ksh93.rs` — `Ksh93Params` struct, `NamerefOptions`
+  struct. C ksh93.c has zero structs/enums (only the static
+  `partab[]` / `bintab[]` paramdef arrays). Fix path: rewrite
+  `ksh93_wrapper` to take individual args matching C
+  `ex_wrapper(Eprog prog, FuncWrap w, char *name)` and delete
+  the Options bag.
+
+- `modules/langinfo.rs` — `LangInfoItem` enum (probably). C
+  langinfo.c has zero structs/enums. Fix path: replace with
+  raw `nl_item` integer keys matching the libc enum.
+
+- `modules/stat.rs` — `StatElement` enum, `StatFlags` struct,
+  `FileStat` struct, `FileType` enum, `StatOptions` struct.
+  C stat.c has zero structs/enums. ~1200-line rewrite required:
+  use `std::fs::Metadata` directly + `i32` STF_* bitmask + index
+  into `statelts[]`-style array.
+
+- `modules/mapfile.rs` — check; may have Rust-only types.
+- `modules/hlgroup.rs` — check; may have Rust-only types.
+- `modules/zprof.rs` — has `Pfunc`/`Parc` (matching C — OK).
+
+---
+
+## prompt.c match_highlight + zattrescape — Rust-only signatures
+
+`Src/prompt.c:2031 match_highlight()` and `Src/prompt.c:257
+zattrescape()` are present in `src/ported/prompt.rs` but with
+Rust-only signatures and Rust-only `TextAttrs` shape:
+
+- `match_highlight(spec: &str) -> (TextAttrs, TextAttrs)` —
+  C signature is `int match_highlight(const char *teststr,
+  zattr *on_var, zattr *setmask, int *layer)` returning the
+  number of bytes consumed and writing to out-args.
+- `zattrescape(attrs: &TextAttrs) -> String` — C signature is
+  `char *zattrescape(zattr atr, int *len)` returning a newly-
+  allocated `\033[...m` escape stream (the `len` out-arg holds
+  the byte length). Current Rust port returns `%`-prefixed
+  prompt syntax, not ANSI escapes.
+
+Both are downstream of an unported `zattr` integer type and the
+`Color`/`TextAttrs` Rust-only abstractions in prompt.rs.
+
+**Blocks:**
+- `modules/hlgroup.rs::convertattr` — c:46-47 calls
+  `match_highlight(attrstr, &atr, NULL, NULL)` then
+  `zattrescape(atr, sgr ? NULL : &len)`. Rust port currently
+  inlines the highlight + colour parsing because the prompt.rs
+  ports don't speak the C protocol. Move to a real chain when
+  the prompt.rs ports are made C-faithful.
+- `modules/hlgroup.rs::getgroup` and `::scangroup` — both
+  read the `$.zle.hlgroups` (`GROUPVAR`) hashtable through
+  `getvalue()` + the magic-assoc dispatch. Pending the real
+  Param/HashTable port, both bodies are the C "no entry"
+  branch (None / empty Vec).
+
+**Fix path:** rewrite prompt.rs's `match_highlight` and
+`zattrescape` from `Src/prompt.c:257`/`:2031` line-by-line.
+Replace `TextAttrs` with the C `zattr` integer bitmask. Then
+hlgroup.rs::convertattr collapses to the 3-call chain in c:42-77.
+
+---
+
 ## Module-loader signatures (need `&mut ShellExecutor`)
 
 Every C module's `setup_()` / `features_()` / `enables_()` / `boot_()`

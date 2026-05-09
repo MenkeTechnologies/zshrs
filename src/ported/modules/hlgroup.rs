@@ -1,319 +1,388 @@
-//! Highlight groups module - port of Modules/hlgroup.c
+//! `zsh/hlgroup` module — port of `Src/Modules/hlgroup.c`.
 //!
-//! Provides special parameters for highlight groups: .zle.esc and .zle.sgr
+//! Exposes two read-only special parameters that bridge the
+//! `$.zle.hlgroups` user-defined hash to the rendered ANSI escape
+//! sequences zle uses internally:
+//!   - `${.zle.esc[name]}` → full `\033[...m` escape stream
+//!   - `${.zle.sgr[name]}` → bare `;`-joined SGR parameter list
+//!
+//! C source: 13 fns total — `convertattr`, `getgroup`, `scangroup`,
+//! `getpmesc`, `scanpmesc`, `getpmsgr`, `scanpmsgr`, `setup_`,
+//! `features_`, `enables_`, `boot_`, `cleanup_`, `finish_`.
+//! Zero structs/enums in hlgroup.c (only `static const struct
+//! gsu_scalar pmesc_gsu` and `static struct paramdef partab[]`
+//! aggregates of pre-defined zsh-framework types).
+//!
+//! Order in this file mirrors C source order verbatim.
 
-use std::collections::HashMap;
+use std::fmt::Write;
 
-/// Convert an attribute spec to either a full `\e[...m` escape
-/// stream (`sgr = false`) or a bare `;`-joined SGR parameter
-/// string (`sgr = true`).
+/// Port of `convertattr()` from `Src/Modules/hlgroup.c:40`.
 ///
-/// Port of `convertattr()` from Src/Modules/hlgroup.c:40 — the C
-/// source takes the same `sgr` flag and switches between the
-/// `${.zle.esc[name]}` and `${.zle.sgr[name]}` output shapes.
-pub fn convertattr(attr: &str, sgr: bool) -> String {
-    if sgr {
-        let mut codes = Vec::new();
-        for part in attr.split(',') {
-            let part = part.trim();
-            match part {
-                "none" | "reset" => codes.push("0".to_string()),
-                "bold" => codes.push("1".to_string()),
-                "dim" | "faint" => codes.push("2".to_string()),
-                "italic" => codes.push("3".to_string()),
-                "underline" => codes.push("4".to_string()),
-                "blink" => codes.push("5".to_string()),
-                "reverse" | "inverse" => codes.push("7".to_string()),
-                "hidden" | "invisible" => codes.push("8".to_string()),
-                "strikethrough" => codes.push("9".to_string()),
-                s if s.starts_with("fg=") => {
-                    if let Some(code) = match_colour(&s[3..], true, true) {
-                        codes.push(code);
-                    }
-                }
-                s if s.starts_with("bg=") => {
-                    if let Some(code) = match_colour(&s[3..], false, true) {
-                        codes.push(code);
-                    }
-                }
-                _ => {}
-            }
-        }
-        if codes.is_empty() {
-            "0".to_string()
-        } else {
-            codes.join(";")
-        }
-    } else {
-        let mut result = String::new();
-        for part in attr.split(',') {
-            let part = part.trim();
-            match part {
-                "none" | "reset" => result.push_str("\x1b[0m"),
-                "bold" => result.push_str("\x1b[1m"),
-                "dim" | "faint" => result.push_str("\x1b[2m"),
-                "italic" => result.push_str("\x1b[3m"),
-                "underline" => result.push_str("\x1b[4m"),
-                "blink" => result.push_str("\x1b[5m"),
-                "reverse" | "inverse" => result.push_str("\x1b[7m"),
-                "hidden" | "invisible" => result.push_str("\x1b[8m"),
-                "strikethrough" => result.push_str("\x1b[9m"),
-                s if s.starts_with("fg=") => {
-                    if let Some(color) = match_colour(&s[3..], true, false) {
-                        result.push_str(&color);
-                    }
-                }
-                s if s.starts_with("bg=") => {
-                    if let Some(color) = match_colour(&s[3..], false, false) {
-                        result.push_str(&color);
-                    }
-                }
-                _ => {}
-            }
-        }
-        result
-    }
-}
-
-/// Resolve a `fg=`/`bg=` colour spec into either a full `\e[...m`
-/// escape (`sgr = false`) or the bare SGR parameter list used by
-/// `${.zle.sgr[name]}` (`sgr = true`).
+/// C body (c:42-77):
+/// ```c
+/// zattr atr;
+/// match_highlight(attrstr, &atr, NULL, NULL);    // c:46
+/// s = zattrescape(atr, sgr ? NULL : &len);        // c:47
+/// if (sgr) { ...strip ESC[ and m, join with ; ... }
+/// r = dupstring_wlen(s, len);                     // c:75
+/// free(s);
+/// return r;
+/// ```
 ///
-/// Port of `match_colour()` from Src/prompt.c:1957 — the C function
-/// `convertattr()` (Src/Modules/hlgroup.c:40) calls indirectly via
-/// `match_highlight()` to resolve a color spec. C signature is
-/// `match_colour(const char **, int is_fg, int colour) -> zattr`
-/// returning a bitmask the renderer later translates to escapes;
-/// this Rust port does the resolve + escape in one step (since the
-/// `${.zle.esc[name]}` / `${.zle.sgr[name]}` parameters expose the
-/// rendered string directly). Handles the same name set
-/// (`black`/`red`/.../`bright-red`/`light-red`), 256-colour numeric
-/// codes (line 2008 of C source), and `#RRGGBB` truecolor (line 1972).
-fn match_colour(color: &str, fg: bool, sgr: bool) -> Option<String> {
-    let base = if fg { 30 } else { 40 };
-    let bright_base = if fg { 90 } else { 100 };
-    let wrap = |n: i32| -> String {
-        if sgr {
-            n.to_string()
-        } else {
-            format!("\x1b[{}m", n)
+/// **Strict-rule status: PARTIAL.** A faithful 1:1 port requires
+/// the matching ports of `match_highlight()` (Src/prompt.c:2031)
+/// and `zattrescape()` (Src/prompt.c:257) to land in
+/// `src/ported/prompt.rs` first — the current `prompt::match_highlight`
+/// and `prompt::zattrescape` use Rust-only `TextAttrs` shapes and
+/// produce `%`-prefix prompt syntax instead of the ANSI escape
+/// stream the C versions return. See `TODO.md` for the gap.
+///
+/// Until those land, the Rust port inlines a minimal colour/attr
+/// parser that handles the common spec set (`bold`, `underline`,
+/// `fg=NAME`, `fg=NN`, `fg=#RRGGBB`, etc.) directly. No Rust-only
+/// helper fn is introduced — the parsing is entirely inline so the
+/// fn-name set matches C exactly. The SGR post-processing block at
+/// c:49-72 is mirrored when `sgr=true`.
+///
+/// C signature: `static char *convertattr(char *attrstr, int sgr)`.
+pub fn convertattr(attrstr: &str, sgr: bool) -> String {                 // c:40
+    // c:46 — `match_highlight(attrstr, &atr, NULL, NULL);`
+    // c:47 — `s = zattrescape(atr, sgr ? NULL : &len);`
+    // Inlined — see fn-doc note about the prompt.rs gap. The
+    // attribute and colour name tables below mirror the data tables
+    // `match_highlight` (Src/prompt.c:2031) and `match_colour`
+    // (Src/prompt.c:1957) consult; emission format matches
+    // `zattrescape` (Src/prompt.c:257) for the escape-mode output.
+    let mut esc_stream = String::new();
+    for part in attrstr.split(',') {
+        let part = part.trim();
+        // Attribute names → SGR integers (Src/prompt.c attribute table).
+        let attr_n: Option<i32> = match part {
+            "" | "none" | "reset" => Some(0),
+            "bold"          => Some(1),
+            "dim" | "faint" => Some(2),
+            "italic"        => Some(3),
+            "underline"     => Some(4),
+            "blink"         => Some(5),
+            "reverse" | "inverse" => Some(7),
+            "hidden" | "invisible" => Some(8),
+            "strikethrough" => Some(9),
+            _ => None,
+        };
+        if let Some(n) = attr_n {
+            let _ = write!(esc_stream, "\x1b[{}m", n);
+            continue;
         }
-    };
-    let wrap_256 = |n: u8| -> String {
-        let prefix = if fg { 38 } else { 48 };
-        if sgr {
-            format!("{};5;{}", prefix, n)
+        // fg= / bg= colour resolution (Src/prompt.c:1957 match_colour).
+        let (is_fg, rest) = if let Some(r) = part.strip_prefix("fg=") {
+            (true, r)
+        } else if let Some(r) = part.strip_prefix("bg=") {
+            (false, r)
         } else {
-            format!("\x1b[{};5;{}m", prefix, n)
+            continue;
+        };
+        let base = if is_fg { 30 } else { 40 };
+        let bright_base = if is_fg { 90 } else { 100 };
+        let prefix = if is_fg { 38 } else { 48 };
+        let named: Option<i32> = match rest {
+            "black"   => Some(base),
+            "red"     => Some(base + 1),
+            "green"   => Some(base + 2),
+            "yellow"  => Some(base + 3),
+            "blue"    => Some(base + 4),
+            "magenta" => Some(base + 5),
+            "cyan"    => Some(base + 6),
+            "white"   => Some(base + 7),
+            "default" => Some(base + 9),
+            _ => None,
+        };
+        if let Some(n) = named {
+            let _ = write!(esc_stream, "\x1b[{}m", n);
+            continue;
         }
-    };
-    let wrap_truecolor = |r: u8, g: u8, b: u8| -> String {
-        let prefix = if fg { 38 } else { 48 };
-        if sgr {
-            format!("{};2;{};{};{}", prefix, r, g, b)
-        } else {
-            format!("\x1b[{};2;{};{};{}m", prefix, r, g, b)
-        }
-    };
-    match color {
-        "black" => Some(wrap(base)),
-        "red" => Some(wrap(base + 1)),
-        "green" => Some(wrap(base + 2)),
-        "yellow" => Some(wrap(base + 3)),
-        "blue" => Some(wrap(base + 4)),
-        "magenta" => Some(wrap(base + 5)),
-        "cyan" => Some(wrap(base + 6)),
-        "white" => Some(wrap(base + 7)),
-        "default" => Some(wrap(base + 9)),
-        s if s.starts_with("bright-") || s.starts_with("light-") => {
-            let inner = s.split_once('-').map(|(_, c)| c)?;
-            match inner {
-                "black" => Some(wrap(bright_base)),
-                "red" => Some(wrap(bright_base + 1)),
-                "green" => Some(wrap(bright_base + 2)),
-                "yellow" => Some(wrap(bright_base + 3)),
-                "blue" => Some(wrap(bright_base + 4)),
-                "magenta" => Some(wrap(bright_base + 5)),
-                "cyan" => Some(wrap(bright_base + 6)),
-                "white" => Some(wrap(bright_base + 7)),
+        if let Some(inner) = rest.strip_prefix("bright-")
+                                .or_else(|| rest.strip_prefix("light-"))
+        {
+            let bn: Option<i32> = match inner {
+                "black"   => Some(bright_base),
+                "red"     => Some(bright_base + 1),
+                "green"   => Some(bright_base + 2),
+                "yellow"  => Some(bright_base + 3),
+                "blue"    => Some(bright_base + 4),
+                "magenta" => Some(bright_base + 5),
+                "cyan"    => Some(bright_base + 6),
+                "white"   => Some(bright_base + 7),
                 _ => None,
+            };
+            if let Some(n) = bn {
+                let _ = write!(esc_stream, "\x1b[{}m", n);
+                continue;
             }
         }
-        s if s.parse::<u8>().is_ok() => Some(wrap_256(s.parse().unwrap())),
-        s if s.starts_with('#') && s.len() == 7 => {
-            let r = u8::from_str_radix(&s[1..3], 16).ok()?;
-            let g = u8::from_str_radix(&s[3..5], 16).ok()?;
-            let b = u8::from_str_radix(&s[5..7], 16).ok()?;
-            Some(wrap_truecolor(r, g, b))
+        if let Ok(n) = rest.parse::<u8>() {
+            let _ = write!(esc_stream, "\x1b[{};5;{}m", prefix, n);
+            continue;
         }
-        _ => None,
+        if let Some(hex) = rest.strip_prefix('#') {
+            if hex.len() == 6 {
+                let r = u8::from_str_radix(&hex[0..2], 16);
+                let g = u8::from_str_radix(&hex[2..4], 16);
+                let b = u8::from_str_radix(&hex[4..6], 16);
+                if let (Ok(r), Ok(g), Ok(b)) = (r, g, b) {
+                    let _ = write!(esc_stream, "\x1b[{};2;{};{};{}m",
+                                   prefix, r, g, b);
+                }
+            }
+        }
+    }
+
+    if sgr {
+        // c:49-72 — strip `\033[` prefix and `m` suffix, join with `;`,
+        // skip non-digit / non-`;` / non-`:` chars, replace `;`/`:` with `;`.
+        // Always return at least "0" (c:67-70).
+        let bytes = esc_stream.as_bytes();
+        let mut out = String::new();
+        let mut i = 0;
+        while i + 1 < bytes.len() && bytes[i] == 0x1b && bytes[i + 1] == b'[' {
+            i += 2;                                                      // c:53 c += 2
+            // c:54-60 — accumulate digits, treat ; or : as separator,
+            // break on anything else.
+            while i < bytes.len() {
+                let b = bytes[i];
+                if b.is_ascii_digit() {                                  // c:54
+                    out.push(b as char);                                 // c:55
+                    i += 1;
+                } else if b == b';' || b == b':' {                       // c:56
+                    out.push(';');                                       // c:57
+                    i += 1;
+                } else {
+                    break;                                               // c:59
+                }
+            }
+            // c:62-65 — `if (*c != 'm') break;` else continue with `;`.
+            if i >= bytes.len() || bytes[i] != b'm' {
+                break;                                                   // c:62-63
+            }
+            out.push(';');                                               // c:64
+            i += 1;                                                      // c:65 c++
+        }
+        // Trim trailing ';'.
+        while out.ends_with(';') {
+            out.pop();
+        }
+        // c:67-70 — `if (t <= s) { *s = '0'; t = s + 1; }`
+        if out.is_empty() {
+            out.push('0');
+        }
+        out
+    } else {
+        esc_stream                                                       // c:75 dupstring_wlen
     }
 }
 
-/// Highlight groups table.
-/// Port of the `zle_highlight` lookup hash that backs the
-// C source has 0 structs/enums; Rust port matches. The `.zle.esc` /
-// `.zle.sgr` magic-assoc pair is wired through the C `partab[]`
-// paramdef (hlgroup.c:170-172) tying getpmesc/scanpmesc and
-// getpmsgr/scanpmsgr to the underlying `$zle_highlight_groups`
-// hash via `getgroup()`. Each is a free fn below.
+/// Port of `getgroup()` from `Src/Modules/hlgroup.c:82`. The shared
+/// magic-assoc lookup behind both `${.zle.esc[name]}` and
+/// `${.zle.sgr[name]}`. Reads `$.zle.hlgroups` (the `GROUPVAR`
+/// `#define` at c:33), looks up `name`, runs `convertattr` on the
+/// matched value's attribute string. Returns PM_UNSET (Rust `None`)
+/// when the var isn't a hash, the group entry is missing, or the
+/// entry has PM_UNSET set.
+///
+/// C signature: `static HashNode getgroup(const char *name, int sgr)`.
+/// Rust port returns `Option<String>` — the synthesised Param's
+/// rendered value (or None for PM_UNSET).
+///
+/// **Strict-rule status: PARTIAL.** Reading `$.zle.hlgroups` requires
+/// the magic-assoc dispatch path through the executor's hash-param
+/// table; that wiring depends on a faithful Param/HashTable port
+/// which is a multi-file undertaking. Current body returns None
+/// (mirrors C's c:99-103 PM_UNSET branch). See `TODO.md`.
+pub fn getgroup(_name: &str, _sgr: bool) -> Option<String> {             // c:82
+    // c:91-94 — pm setup with PM_SCALAR|PM_SPECIAL.
+    // c:96-100 — `if (!(v = getvalue(...)) || ... PM_HASHED ... ||
+    //                 (((Param) hn)->node.flags & PM_UNSET))`
+    //   → c:102-103: `pm->u.str = ""; pm->node.flags |= PM_UNSET;`
+    // c:104-106 — `else: pm->u.str = convertattr(((Param) hn)->u.str, sgr);`
+    None                                                                 // c:103 PM_UNSET
+}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Port of `scangroup()` from `Src/Modules/hlgroup.c:113`. The
+/// shared magic-assoc scanner behind `${(k).zle.esc}` /
+/// `${(kv).zle.esc}` (and the `.zle.sgr` variants). Walks the
+/// `$.zle.hlgroups` hash and yields each entry as
+/// `(name, convertattr(value, sgr))`.
+///
+/// C signature: `static void scangroup(ScanFunc func, int flags, int sgr)`.
+/// Rust port returns the `(name, value)` pairs as a Vec since
+/// zshrs's magic-assoc dispatcher consumes the entire list rather
+/// than a per-entry callback.
+///
+/// **Strict-rule status: PARTIAL** for the same reason as `getgroup`
+/// (depends on the `$.zle.hlgroups` hash being readable through the
+/// param table). See `TODO.md`.
+pub fn scangroup(_sgr: bool) -> Vec<(String, String)> {                  // c:113
+    // c:123-125 — `if (!(v = getvalue(...)) || ... PM_HASHED) return;`
+    // c:126 — hlg = v->pm->gsu.h->getfn(v->pm)
+    // c:128-130 — `pm` setup + PM_SCALAR + pmesc_gsu
+    // c:132-137 — for each hashnode: `pm.u.str = convertattr(...,sgr);
+    //                                   pm.node.nam = hn->nam;
+    //                                   func(&pm.node, flags);`
+    Vec::new()                                                           // c:124-125 empty exit
+}
 
-    #[test]
-    fn test_attr_to_escape_bold() {
-        let esc = convertattr("bold", false);
-        assert_eq!(esc, "\x1b[1m");
-    }
+/// Port of `getpmesc()` from `Src/Modules/hlgroup.c:141`.
+/// C body is `return getgroup(name, 0);` — escape-form variant.
+pub fn getpmesc(name: &str) -> Option<String> {                          // c:141
+    getgroup(name, false)                                                // c:143
+}
 
-    #[test]
-    fn test_attr_to_escape_multiple() {
-        let esc = convertattr("bold,underline", false);
-        assert!(esc.contains("\x1b[1m"));
-        assert!(esc.contains("\x1b[4m"));
-    }
+/// Port of `scanpmesc()` from `Src/Modules/hlgroup.c:148`.
+/// C body is `scangroup(func, flags, 0);` — escape-form scanner.
+pub fn scanpmesc() -> Vec<(String, String)> {                            // c:148
+    scangroup(false)                                                     // c:150
+}
 
-    #[test]
-    fn test_attr_to_escape_fg_color() {
-        let esc = convertattr("fg=red", false);
-        assert!(esc.contains("31"));
-    }
+/// Port of `getpmsgr()` from `Src/Modules/hlgroup.c:155`.
+/// C body is `return getgroup(name, 1);` — SGR-form variant.
+pub fn getpmsgr(name: &str) -> Option<String> {                          // c:155
+    getgroup(name, true)                                                 // c:157
+}
 
-    #[test]
-    fn test_attr_to_sgr_bold() {
-        let sgr = convertattr("bold", true);
-        assert_eq!(sgr, "1");
-    }
-
-    #[test]
-    fn test_attr_to_sgr_multiple() {
-        let sgr = convertattr("bold,underline", true);
-        assert!(sgr.contains("1"));
-        assert!(sgr.contains("4"));
-    }
-
-    #[test]
-    fn test_attr_to_sgr_empty() {
-        let sgr = convertattr("", true);
-        assert_eq!(sgr, "0");
-    }
-
-    #[test]
-    fn test_color_256() {
-        let esc = convertattr("fg=196", false);
-        assert!(esc.contains("38;5;196"));
-    }
-
-    #[test]
-    fn test_color_truecolor() {
-        let esc = convertattr("fg=#ff0000", false);
-        assert!(esc.contains("38;2;255;0;0"));
-    }
+/// Port of `scanpmsgr()` from `Src/Modules/hlgroup.c:162`.
+/// C body is `scangroup(func, flags, 1);` — SGR-form scanner.
+pub fn scanpmsgr() -> Vec<(String, String)> {                            // c:162
+    scangroup(true)                                                      // c:164
 }
 
 /// Port of `setup_()` from `Src/Modules/hlgroup.c:182`. C body is
 /// `return 0;` (UNUSED `Module m`).
 pub fn setup_() -> i32 {                                                 // c:182
-    0                                                                    // c:185
+    0                                                                    // c:184
 }
 
 /// Port of `features_()` from `Src/Modules/hlgroup.c:189`. C body
 /// is `*features = featuresarray(m, &module_features); return 0;`.
+/// Static-link path: 0.
 pub fn features_() -> i32 {                                              // c:189
-    0                                                                    // c:193
+    0                                                                    // c:192
 }
 
 /// Port of `enables_()` from `Src/Modules/hlgroup.c:197`. C body is
-/// `return handlefeatures(m, &module_features, enables);`.
+/// `return handlefeatures(m, &module_features, enables);`. Static-
+/// link path: 0.
 pub fn enables_() -> i32 {                                               // c:197
-    0                                                                    // c:200
+    0                                                                    // c:199
 }
 
 /// Port of `boot_()` from `Src/Modules/hlgroup.c:204`. C body is
 /// `return 0;` (UNUSED `Module m`).
 pub fn boot_() -> i32 {                                                  // c:204
-    0                                                                    // c:207
+    0                                                                    // c:206
 }
 
 /// Port of `cleanup_()` from `Src/Modules/hlgroup.c:211`. C body is
-/// `return setfeatureenables(m, &module_features, NULL);`.
+/// `return setfeatureenables(m, &module_features, NULL);`. Static-
+/// link path: 0.
 pub fn cleanup_() -> i32 {                                               // c:211
-    0                                                                    // c:214
+    0                                                                    // c:213
 }
 
 /// Port of `finish_()` from `Src/Modules/hlgroup.c:218`. C body is
 /// `return 0;` (UNUSED `Module m`).
 pub fn finish_() -> i32 {                                                // c:218
-    0                                                                    // c:221
+    0                                                                    // c:220
 }
 
-/// Port of `getgroup()` from `Src/Modules/hlgroup.c:82`. The shared
-/// magic-assoc lookup behind both `${.zle.esc[name]}` and
-/// `${.zle.sgr[name]}`. Reads the `$zle_highlight_groups` hashtable
-/// for an entry named `name`, then converts its attribute string
-/// via `convertattr(...)`.
-///
-/// `sgr=false` → escape-form (esc), `sgr=true` → SGR-form (sgr).
-/// Returns `None` (PM_UNSET) when the group isn't defined.
-///
-/// C signature: `static HashNode getgroup(const char *name, int sgr)`.
-/// Rust port returns `Option<String>` — the string form of the
-/// resulting param value.
-#[allow(non_snake_case)]
-pub fn getgroup(_name: &str, _sgr: bool) -> Option<String> {             // c:82
-    // C reads `GROUPVAR` ($zle_highlight_groups) via `getvalue` →
-    // hashtable.getfn → gethashnode2; if the entry exists, runs
-    // convertattr(entry->u.str, sgr). zshrs's param table
-    // integration for this magic-assoc is wired through the
-    // executor's hash-param path; until that's plumbed, this
-    // entry is the name-parity hook returning UNSET (None) to
-    // mirror the C "no entry" branch (hlgroup.c:99-103).
-    None                                                                 // c:99-103
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// Port of `scangroup()` from `Src/Modules/hlgroup.c:113`. The
-/// shared magic-assoc scanner behind `${(k).zle.esc}` etc. Walks
-/// every entry in `$zle_highlight_groups` and yields each name +
-/// converted-attribute string.
-///
-/// C signature: `static void scangroup(ScanFunc func, int flags, int sgr)`.
-/// Rust port returns the `(name, value)` pairs as a Vec since the
-/// callback-driven C API doesn't translate cleanly.
-#[allow(non_snake_case)]
-pub fn scangroup(_sgr: bool) -> Vec<(String, String)> {                  // c:113
-    // C iterates the hashtable behind `$zle_highlight_groups` and
-    // calls `func` per entry. Pending the magic-assoc plumbing on
-    // the executor side, return empty; mirrors C's "no var" exit
-    // branch at hlgroup.c:127-129.
-    Vec::new()                                                           // c:127-129
-}
+    /// `convertattr("bold", false)` emits `\e[1m` per Src/prompt.c
+    /// attribute table.
+    #[test]
+    fn convertattr_bold_escape() {
+        assert_eq!(convertattr("bold", false), "\x1b[1m");
+    }
 
-/// Port of `getpmesc()` from `Src/Modules/hlgroup.c:141`. C body
-/// is `return getgroup(name, 0);` — the escape-form variant.
-#[allow(non_snake_case)]
-pub fn getpmesc(name: &str) -> Option<String> {                          // c:141
-    getgroup(name, false)                                                // c:144
-}
+    /// `convertattr("bold,underline", false)` chains the two
+    /// `\e[Nm` escapes.
+    #[test]
+    fn convertattr_chained_escape() {
+        let s = convertattr("bold,underline", false);
+        assert!(s.contains("\x1b[1m"));
+        assert!(s.contains("\x1b[4m"));
+    }
 
-/// Port of `scanpmesc()` from `Src/Modules/hlgroup.c:148`. C body
-/// is `scangroup(func, flags, 0);` — the escape-form scanner.
-#[allow(non_snake_case)]
-pub fn scanpmesc() -> Vec<(String, String)> {                            // c:148
-    scangroup(false)                                                     // c:151
-}
+    /// `convertattr("fg=red", false)` emits `\e[31m`.
+    #[test]
+    fn convertattr_fg_red_escape() {
+        let s = convertattr("fg=red", false);
+        assert!(s.contains("\x1b[31m"));
+    }
 
-/// Port of `getpmsgr()` from `Src/Modules/hlgroup.c:155`. C body
-/// is `return getgroup(name, 1);` — the SGR-form variant.
-#[allow(non_snake_case)]
-pub fn getpmsgr(name: &str) -> Option<String> {                          // c:155
-    getgroup(name, true)                                                 // c:158
-}
+    /// SGR-mode `convertattr("bold", true)` returns `"1"`.
+    #[test]
+    fn convertattr_sgr_bold() {
+        assert_eq!(convertattr("bold", true), "1");
+    }
 
-/// Port of `scanpmsgr()` from `Src/Modules/hlgroup.c:162`. C body
-/// is `scangroup(func, flags, 1);` — the SGR-form scanner.
-#[allow(non_snake_case)]
-pub fn scanpmsgr() -> Vec<(String, String)> {                            // c:162
-    scangroup(true)                                                      // c:165
+    /// SGR-mode chains: `convertattr("bold,underline", true)` →
+    /// `"1;4"`.
+    #[test]
+    fn convertattr_sgr_chain() {
+        let s = convertattr("bold,underline", true);
+        assert!(s.contains('1'));
+        assert!(s.contains('4'));
+    }
+
+    /// SGR-mode empty input returns `"0"` per c:67-70 fallback.
+    #[test]
+    fn convertattr_sgr_empty_returns_zero() {
+        assert_eq!(convertattr("", true), "0");
+    }
+
+    /// 256-colour spec `fg=196` emits `\e[38;5;196m`.
+    #[test]
+    fn convertattr_256_color() {
+        let s = convertattr("fg=196", false);
+        assert!(s.contains("\x1b[38;5;196m"));
+    }
+
+    /// Truecolor spec `fg=#ff0000` emits `\e[38;2;255;0;0m`.
+    #[test]
+    fn convertattr_truecolor() {
+        let s = convertattr("fg=#ff0000", false);
+        assert!(s.contains("\x1b[38;2;255;0;0m"));
+    }
+
+    /// SGR-mode 256-colour: `fg=196` → `38;5;196`.
+    #[test]
+    fn convertattr_sgr_256_color() {
+        let s = convertattr("fg=196", true);
+        assert!(s.contains("38;5;196"));
+    }
+
+    /// SGR-mode truecolor: `fg=#00ff00` → `38;2;0;255;0`.
+    #[test]
+    fn convertattr_sgr_truecolor() {
+        let s = convertattr("fg=#00ff00", true);
+        assert!(s.contains("38;2;0;255;0"));
+    }
+
+    /// `getgroup` returns None until the magic-assoc dispatch is
+    /// wired (c:99-103 PM_UNSET branch).
+    #[test]
+    fn getgroup_returns_none_until_paramtable_wired() {
+        assert_eq!(getgroup("any", false), None);
+        assert_eq!(getgroup("any", true), None);
+    }
+
+    /// `scangroup` returns empty until paramtable wiring lands
+    /// (c:124-125 early exit).
+    #[test]
+    fn scangroup_returns_empty_until_paramtable_wired() {
+        assert!(scangroup(false).is_empty());
+        assert!(scangroup(true).is_empty());
+    }
 }

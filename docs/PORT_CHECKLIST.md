@@ -93,8 +93,10 @@ were left in place; some stubs were body-ported but kept their
 Rust-only wrappers). All checkboxes reset; we revisit each file.
 
 In-flight files where I started bodies but the surrounding file still
-has Rust-only types to delete: `modules/stat.rs`, `modules/hlgroup.rs`,
-`modules/zprof.rs`. These get re-done from the top under the new rules.
+has Rust-only types to delete: `modules/stat.rs`, `modules/zprof.rs`.
+These get re-done from the top under the new rules. (`modules/hlgroup.rs`
+has no remaining Rust-only types but is BLOCKED on a real port of
+`Src/prompt.c`'s `match_highlight` and `zattrescape` — see TODO.md.)
 
 ---
 
@@ -213,6 +215,16 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - 6 module loaders (`setup_`/`features_`/`enables_`/`boot_`/`cleanup_`/`finish_`) — static-link no-ops with C-body-quoting doc-comments, citing c:281/289/296/303/310/317.
   - 8/8 mapfile tests pass: `getpmmapfile_nonexistent_returns_none`, `file_roundtrip`, `empty_value_creates_file`, `scanpmmapfile_skips_dotdirs_and_returns_empty_values`, `unsetpmmapfile_removes_file`, `unsetpmmapfile_readonly_skips`, `setpmmapfile_readonly_skips_write`, `setpmmapfiles_writes_entries`. Verified.
 
+- [ ] `modules/hlgroup.rs` ↔ `Modules/hlgroup.c` — **PARTIAL.**
+  - C: 0 structs/enums (only `static const struct gsu_scalar pmesc_gsu` and `static struct paramdef partab[]` aggregates of pre-defined zsh-framework types). Rust: 0 structs/enums ✓; **deleted Rust-only `match_colour` helper** (rule-1 violation: `match_colour` belongs in `src/ported/prompt.rs` per `Src/prompt.c:1957`); inlined the highlight-attribute and colour-name lookup tables into `convertattr` body so the Rust file's fn-name set matches C exactly with no helper drift.
+  - C fns (13): `convertattr`, `getgroup`, `scangroup`, `getpmesc`, `scanpmesc`, `getpmsgr`, `scanpmsgr`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 13 ✓ (function order in Rust file now matches C source order verbatim).
+  - `convertattr(attrstr, sgr) -> String` — body inlines the highlight-attribute table (`bold`/`dim`/`italic`/`underline`/`blink`/`reverse`/`hidden`/`strikethrough`) + colour-name table (`black`-`white`, `bright-*`, `light-*`) + 256-colour numeric + `#RRGGBB` truecolor parsing. SGR-mode post-processing block at c:49-72 (strip `\033[` prefix and `m` suffix, join with `;`, fallback to `"0"` per c:67-70) ported line-by-line via byte-level walk over `esc_stream` and explicit while loops mirroring C's `while (c[0] == '\033' && c[1] == '[')` and the inner `for (c += 2; ; c++)` digit/separator scan. **Strict status: PARTIAL** — a true 1:1 port of the C body would call `match_highlight()` (Src/prompt.c:2031) + `zattrescape()` (Src/prompt.c:257), but the current `prompt::match_highlight`/`prompt::zattrescape` use Rust-only `TextAttrs` and `%`-prefix syntax instead of the C `zattr` bitmask + ANSI escape stream. Tracked in TODO.md.
+  - `getgroup(name, sgr) -> Option<String>` — port of c:82-109. Body returns `None` (mirrors C's c:99-103 PM_UNSET branch). **Strict status: PARTIAL** — full port requires `getvalue()` + the `$.zle.hlgroups` magic-assoc hash dispatch, which depends on a faithful Param/HashTable port. Tracked in TODO.md.
+  - `scangroup(sgr) -> Vec<(String,String)>` — port of c:113-138. Body returns empty Vec (mirrors C's c:124-125 early exit when `$.zle.hlgroups` isn't a hashtable). Same dependency as `getgroup`.
+  - `getpmesc(name)` / `scanpmesc()` / `getpmsgr(name)` / `scanpmsgr()` — 1-line wrappers calling `getgroup(name, false/true)` / `scangroup(false/true)`, matching c:141-165 exactly.
+  - 6 module loaders (`setup_`/`features_`/`enables_`/`boot_`/`cleanup_`/`finish_`) — static-link no-ops with C-body-quoting doc-comments, citing c:184/192/199/206/213/220.
+  - 12/12 hlgroup tests pass: `convertattr_bold_escape`, `convertattr_chained_escape`, `convertattr_fg_red_escape`, `convertattr_sgr_bold`, `convertattr_sgr_chain`, `convertattr_sgr_empty_returns_zero`, `convertattr_256_color`, `convertattr_truecolor`, `convertattr_sgr_256_color`, `convertattr_sgr_truecolor`, `getgroup_returns_none_until_paramtable_wired`, `scangroup_returns_empty_until_paramtable_wired`. NOT ticked DONE — see PARTIAL notes above.
+
 ## 🟢 NEAR — 1–3 stubs (6) [stub-counts pre-rule-tightening]
 
 - [ ] `params.rs` ↔ `params.c`
@@ -274,7 +286,6 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
 - [ ] `zle/zle_keymap.rs` ↔ `Zle/zle_keymap.c`
 - [ ] `zle/zle_tricky.rs` ↔ `Zle/zle_tricky.c`
 - [ ] `zle/zle_word.rs` ↔ `Zle/zle_word.c`
-- [ ] `modules/hlgroup.rs` ↔ `Modules/hlgroup.c`
 - [ ] `modules/param_private.rs` ↔ `Modules/param_private.c`
 - [ ] `modules/zprof.rs` ↔ `Modules/zprof.c`
 - [ ] `modules/zftp.rs` ↔ `Modules/zftp.c`
