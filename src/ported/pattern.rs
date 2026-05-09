@@ -1224,18 +1224,32 @@ pub struct PatternScope {
     pub disabled: Vec<String>,
 }
 
-use std::sync::Mutex;
-
-static PATTERN_SCOPES: Mutex<Vec<PatternScope>> = Mutex::new(Vec::new());
+/// Port of file-static pattern-disables stack from
+/// `Src/pattern.c:4220-4296` — the per-pattern-compile scope used
+/// by `disable -p` / `enable -p` to suppress named patterns
+/// locally inside a function body.
+///
+/// Bucket-1 per PORT_PLAN.md — file-static in C, per-evaluator in
+/// zshrs. Each worker thread compiling its own pattern owns its
+/// own scope chain; sharing across threads would corrupt the
+/// nesting (one thread's `endpatternscope` would pop another
+/// thread's `startpatternscope` push).
+thread_local! {
+    static PATTERN_SCOPES: std::cell::RefCell<Vec<PatternScope>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
+}
 
 /// Start a pattern scope Port of `startpatternscope()` from Src/pattern.c:4241
 pub fn startpatternscope() {
-    PATTERN_SCOPES.lock().unwrap().push(PatternScope::default());
+    PATTERN_SCOPES.with(|s| s.borrow_mut().push(PatternScope::default()));
 }
 
 /// End a pattern scope Port of `endpatternscope()` from Src/pattern.c:4279
 pub fn endpatternscope() {
-    PATTERN_SCOPES.lock().unwrap().pop();
+    PATTERN_SCOPES.with(|s| {
+        s.borrow_mut().pop();
+    });
 }
 
 /// Snapshot the current pattern-disables state.
@@ -1243,28 +1257,32 @@ pub fn endpatternscope() {
 /// with `restorepatterndisables` to save/restore around a nested
 /// function call.
 pub fn savepatterndisables() -> Vec<String> {
-    PATTERN_SCOPES
-        .lock()
-        .unwrap()
-        .last()
-        .map(|s| s.disabled.clone())
-        .unwrap_or_default()
+    PATTERN_SCOPES.with(|s| {
+        s.borrow()
+            .last()
+            .map(|sc| sc.disabled.clone())
+            .unwrap_or_default()
+    })
 }
 
 /// Restore a previously-saved pattern-disables state.
 /// Port of `restorepatterndisables()` from Src/pattern.c:4258.
 pub fn restorepatterndisables(disables: Vec<String>) {
-    if let Some(scope) = PATTERN_SCOPES.lock().unwrap().last_mut() {
-        scope.disabled = disables;
-    }
+    PATTERN_SCOPES.with(|s| {
+        if let Some(scope) = s.borrow_mut().last_mut() {
+            scope.disabled = disables;
+        }
+    });
 }
 
 /// Clear all pattern disables in the current scope.
 /// Port of `clearpatterndisables()` from Src/pattern.c:4296.
 pub fn clearpatterndisables() {
-    if let Some(scope) = PATTERN_SCOPES.lock().unwrap().last_mut() {
-        scope.disabled.clear();
-    }
+    PATTERN_SCOPES.with(|s| {
+        if let Some(scope) = s.borrow_mut().last_mut() {
+            scope.disabled.clear();
+        }
+    });
 }
 
 /// Free a compiled pattern.

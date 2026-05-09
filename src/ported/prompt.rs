@@ -2104,28 +2104,42 @@ pub fn set_colour_attribute(color: &Color, is_fg: bool) -> String {
 /// unbounded under runaway recursion.
 const CMDSTACKSZ: usize = 256;
 
-/// Mirror of C zsh's `cmdstack` global — the stack of context
-/// tokens (CS_*) the parser pushes as it descends into nested
-/// command structures (`if`/`for`/`while`/`{}` etc.). Read by
-/// the prompt expander for `%_` and `%^` to render which
-/// constructs are currently open.
-static CMDSTACK: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+/// Port of file-static `cmdstack` from `Src/init.c` (declared as
+/// `extern unsigned char cmdstack[CMDSTACKSZ]` in `Src/zsh.h:2658`).
+/// Stack of parser-context tokens (`CS_*`) the parser pushes as it
+/// descends into nested compound commands (`if`/`for`/`while`/`{}`
+/// etc.). Read by the prompt expander for `%_` and `%^` to render
+/// which constructs are currently open.
+///
+/// Bucket-1 per PORT_PLAN.md — file-static in C, per-evaluator in
+/// zshrs. Each worker thread parses independently; sharing the
+/// stack across threads would corrupt nesting state. `RefCell`
+/// for interior mutability since the contents are owned `Vec<u8>`.
+thread_local! {
+    static CMDSTACK: std::cell::RefCell<Vec<u8>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
+}
 
 /// Push a parser context token. Port of `cmdpush()` from
 /// Src/prompt.c. Bounded at CMDSTACKSZ; over-push is silently
 /// ignored (matches the C source's `cmdsp < CMDSTACKSZ` guard).
 pub fn cmdpush(cmdtok: u8) {
-    let mut stack = CMDSTACK.lock().unwrap();
-    if stack.len() < CMDSTACKSZ {
-        stack.push(cmdtok);
-    }
+    CMDSTACK.with(|s| {
+        let mut stack = s.borrow_mut();
+        if stack.len() < CMDSTACKSZ {
+            stack.push(cmdtok);
+        }
+    });
 }
 
 /// Pop the top parser context token. Port of `cmdpop()` from
 /// Src/prompt.c. Empty-stack pop is a no-op (the C source emits
 /// a `BUG: cmdstack empty` debug print and continues).
 pub fn cmdpop() {
-    let _ = CMDSTACK.lock().unwrap().pop();
+    CMDSTACK.with(|s| {
+        s.borrow_mut().pop();
+    });
 }
 
 /// Promote the 256-color value embedded in `atr` to an explicit
