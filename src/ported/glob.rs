@@ -6024,66 +6024,133 @@ pub fn freematchlist() {}
 /// matcher used by `pattern_replace`. Shim.
 pub fn igetmatch() -> i32 { 0 }
 
-/// Port of `qualdev()` from Src/glob.c:3688 — `(d:DEV)` glob
-/// qualifier (device-id match). Shim.
-pub fn qualdev() -> i32 { 0 }
+/// Port of `qualdev()` from Src/glob.c:3688.
+/// C: `static int qualdev(UNUSED(char *name), struct stat *buf, off_t dv,
+///     UNUSED(char *dummy))` → `return (off_t)buf->st_dev == dv;`
+pub fn qualdev(_name: &str, buf: &libc::stat, dv: i64, _dummy: &str) -> i32 { // c:3688
+    (buf.st_dev as i64 == dv) as i32                                          // c:3690
+}
 
-/// Port of `qualnlink()` from Src/glob.c:3697 — `(l:N)` glob
-/// qualifier (hardlink-count match). Shim.
-pub fn qualnlink() -> i32 { 0 }
+/// Port of `qualnlink()` from Src/glob.c:3697.
+/// C: ternary on `g_range`: < / > / == against `st_nlink`.
+pub fn qualnlink(_name: &str, buf: &libc::stat, ct: i64, _dummy: &str) -> i32 { // c:3697
+    let g = G_RANGE.load(std::sync::atomic::Ordering::Relaxed);
+    let nl = buf.st_nlink as i64;                                            // c:3699
+    if g < 0 { (nl < ct) as i32 } else if g > 0 { (nl > ct) as i32 } else { (nl == ct) as i32 }
+}
 
-/// Port of `qualuid()` from Src/glob.c:3708 — `(u:UID)` glob
-/// qualifier. Shim.
-pub fn qualuid() -> i32 { 0 }
+/// Port of `qualuid()` from Src/glob.c:3708.
+/// C: `return buf->st_uid == uid;`
+pub fn qualuid(_name: &str, buf: &libc::stat, uid: i64, _dummy: &str) -> i32 { // c:3708
+    (buf.st_uid as i64 == uid) as i32                                        // c:3710
+}
 
-/// Port of `qualgid()` from Src/glob.c:3717 — `(g:GID)` glob
-/// qualifier. Shim.
-pub fn qualgid() -> i32 { 0 }
+/// Port of `qualgid()` from Src/glob.c:3717.
+/// C: `return buf->st_gid == gid;`
+pub fn qualgid(_name: &str, buf: &libc::stat, gid: i64, _dummy: &str) -> i32 { // c:3717
+    (buf.st_gid as i64 == gid) as i32                                        // c:3719
+}
 
-/// Port of `qualisdev()` from Src/glob.c:3726 — `(%)` glob
-/// qualifier (device file). Shim.
-pub fn qualisdev() -> i32 { 0 }
+/// Port of `qualisdev()` from Src/glob.c:3726.
+/// C: `return S_ISBLK(buf->st_mode) || S_ISCHR(buf->st_mode);`
+pub fn qualisdev(_name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3726
+    let m = buf.st_mode as u32 & libc::S_IFMT as u32;
+    ((m == libc::S_IFBLK as u32) || (m == libc::S_IFCHR as u32)) as i32      // c:3728
+}
 
-/// Port of `qualisblk()` from Src/glob.c:3735 — `(%b)` glob
-/// qualifier (block-special). Shim.
-pub fn qualisblk() -> i32 { 0 }
+/// Port of `qualisblk()` from Src/glob.c:3735.
+/// C: `return S_ISBLK(buf->st_mode);`
+pub fn qualisblk(_name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3735
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFBLK as u32) as i32 // c:3737
+}
 
-/// Port of `qualischr()` from Src/glob.c:3744 — `(%c)` glob
-/// qualifier (char-special). Shim.
-pub fn qualischr() -> i32 { 0 }
+/// Port of `qualischr()` from Src/glob.c:3744.
+/// C: `return S_ISCHR(buf->st_mode);`
+pub fn qualischr(_name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3744
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFCHR as u32) as i32 // c:3746
+}
 
-/// Port of `qualisdir()` from Src/glob.c:3753 — `(/)` glob
-/// qualifier (directory). Shim.
-pub fn qualisdir() -> i32 { 0 }
+/// Port of `qualisdir()` from Src/glob.c:3753.
+/// C: `return S_ISDIR(buf->st_mode);`
+pub fn qualisdir(_name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3753
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFDIR as u32) as i32 // c:3755
+}
 
-/// Port of `qualisfifo()` from Src/glob.c:3762 — `(p)` glob
-/// qualifier (FIFO). Shim.
-pub fn qualisfifo() -> i32 { 0 }
+/// Port of `qualisfifo()` from Src/glob.c:3762.
+/// C: `return S_ISFIFO(buf->st_mode);`
+pub fn qualisfifo(_name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3762
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFIFO as u32) as i32 // c:3764
+}
 
-/// Port of `qualislnk()` from Src/glob.c:3771 — `(@)` glob
-/// qualifier (symlink). Shim.
-pub fn qualislnk() -> i32 { 0 }
+/// Port of `qualislnk()` from Src/glob.c:3771.
+/// C: `return S_ISLNK(buf->st_mode);`
+pub fn qualislnk(_name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3771
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFLNK as u32) as i32 // c:3773
+}
 
-/// Port of `qualisreg()` from Src/glob.c:3780 — `(.)` glob
-/// qualifier (regular file). Shim.
-pub fn qualisreg() -> i32 { 0 }
+/// Port of `qualisreg()` from Src/glob.c:3780.
+/// C: `return S_ISREG(buf->st_mode);`
+pub fn qualisreg(_name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3780
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFREG as u32) as i32 // c:3782
+}
 
-/// Port of `qualissock()` from Src/glob.c:3789 — `(=)` glob
-/// qualifier (socket). Shim.
-pub fn qualissock() -> i32 { 0 }
+/// Port of `qualissock()` from Src/glob.c:3789.
+/// C: `return S_ISSOCK(buf->st_mode);`
+pub fn qualissock(_name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3789
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFSOCK as u32) as i32 // c:3791
+}
 
-/// Port of `qualflags()` from Src/glob.c:3798 — flag-bit glob
-/// qualifier (`(*)`). Shim.
-pub fn qualflags() -> i32 { 0 }
+/// Port of `qualflags()` from Src/glob.c:3798.
+/// C: `return mode_to_octal(buf->st_mode) & mod;`
+pub fn qualflags(_name: &str, buf: &libc::stat, mod_: i64, _dummy: &str) -> i32 { // c:3798
+    (mode_to_octal(buf.st_mode as u32) as i64 & mod_) as i32                 // c:3800
+}
 
-/// Port of `qualmodeflags()` from Src/glob.c:3807 — `(f:MODE)`
-/// glob qualifier (mode-mask match). Shim.
-pub fn qualmodeflags() -> i32 { 0 }
+/// Port of `qualmodeflags()` from Src/glob.c:3807.
+/// C: `((v & y) == y && !(v & n))` where `y = mod & 07777`, `n = mod >> 12`.
+pub fn qualmodeflags(_name: &str, buf: &libc::stat, mod_: i64, _dummy: &str) -> i32 { // c:3807
+    let v = mode_to_octal(buf.st_mode as u32) as i64;                        // c:3809
+    let y = mod_ & 0o7777;
+    let n = mod_ >> 12;
+    (((v & y) == y) && (v & n) == 0) as i32                                  // c:3811
+}
 
-/// Port of `qualiscom()` from Src/glob.c:3818 — `(*)` setuid /
-/// setgid / sticky glob qualifier composer. Shim.
-pub fn qualiscom() -> i32 { 0 }
+/// Port of `qualiscom()` from Src/glob.c:3818.
+/// C: `return S_ISREG(buf->st_mode) && (buf->st_mode & S_IXUGO);`
+pub fn qualiscom(_name: &str, buf: &libc::stat, _mod_: i64, _dummy: &str) -> i32 { // c:3818
+    let is_reg = (buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFREG as u32;
+    let s_ixugo: u32 = (libc::S_IXUSR | libc::S_IXGRP | libc::S_IXOTH) as u32;
+    (is_reg && (buf.st_mode as u32 & s_ixugo) != 0) as i32                   // c:3820
+}
 
-/// Port of `qualnonemptydir()` from Src/glob.c:3948 — `(F)` glob
-/// qualifier (non-empty directory). Shim.
-pub fn qualnonemptydir() -> i32 { 0 }
+/// Port of `qualnonemptydir()` from Src/glob.c:3948.
+/// C: opendir(name) and check if any non-`.`/`..` entries exist.
+pub fn qualnonemptydir(name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3948
+    // c:3950 — `if (!S_ISDIR(buf->st_mode)) return 0;`
+    if (buf.st_mode as u32 & libc::S_IFMT as u32) != libc::S_IFDIR as u32 {  // c:3950
+        return 0;
+    }
+    // c:3953-3964 — opendir + readdir loop, skip "." and ".." entries.
+    match std::fs::read_dir(name) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .any(|e| {
+                let n = e.file_name();
+                let s = n.to_string_lossy();
+                s != "." && s != ".."
+            }) as i32,
+        Err(_) => 0,
+    }
+}
+
+// `g_range` from Src/glob.c — qualifier-comparison direction
+// (-1 = less than, 0 = equal, 1 = greater than).
+pub static G_RANGE: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+// `mode_to_octal` from Src/utils.c — converts a stat-mode to an octal
+// integer with all the standard bits.
+fn mode_to_octal(mode: u32) -> u32 {
+    // Linux + macOS already use the standard POSIX bit layout; identity.
+    mode & 0o7777
+}
