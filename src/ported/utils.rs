@@ -724,39 +724,22 @@ pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
     arr.join(sep)
 }
 
-/// Parse a string to a signed integer with base detection
-/// Port from zsh/Src/utils.c zstrtol() lines 2384-2516
-/// Parse a signed integer with zsh's base-prefix syntax.
-/// Port of `zstrtol()` from Src/utils.c — accepts `0x` (hex),
-/// `0` (octal), and explicit base-prefix `BASE#NUM`.
-pub fn zstrtol(s: &str) -> Option<i64> {
-    let s = s.trim();
-    if s.is_empty() {
-        return None;
-    }
-
-    let (neg, rest) = if let Some(after) = s.strip_prefix('-') {
-        (true, after)
-    } else if let Some(after) = s.strip_prefix('+') {
-        (false, after)
-    } else {
-        (false, s)
-    };
-
-    let (base, rest) = if let Some(after) = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X")) {
-        (16, after)
-    } else if rest.starts_with("0b") || rest.starts_with("0B") {
-        (2, &rest[2..])
-    } else if rest.starts_with('0') && rest.len() > 1 {
-        (8, &rest[1..])
-    } else {
-        (10, rest)
-    };
-
-    let rest = rest.replace('_', "");
-    let val = u64::from_str_radix(&rest, base).ok()?;
-    let result = val as i64;
-    Some(if neg { -result } else { result })
+/// Port of `zstrtol()` from `Src/utils.c:2425`. Convert string to
+/// zlong with base autodetection. Returns the parsed value AND a
+/// `&str` slice pointing to the first unconsumed character —
+/// matching C's `char **t` out-arg.
+///
+/// C signature: `zlong zstrtol(const char *s, char **t, int base)`.
+/// `base == 0` triggers prefix-based detection (`0x`/`0X`→16,
+/// `0b`/`0B`→2, leading `0`→8, otherwise 10). Otherwise `base`
+/// must be in [2, 36]; values outside that range emit `zerr` and
+/// return 0.
+///
+/// On overflow, mirrors C's "number truncated after N digits"
+/// behaviour: emits a `zwarn` and returns the truncated value
+/// (last in-range computation).
+pub fn zstrtol(s: &str, base: i32) -> (i64, &str) {                      // c:2425
+    zstrtol_underscore(s, base, false)                                   // c:2427
 }
 
 /// Parse unsigned integer with underscore support
@@ -2431,55 +2414,6 @@ pub fn dircmp(s: &str, t: &str) -> bool {
     s == t
 }
 
-/// Pre-prompt function list (from utils.c addprepromptfn/delprepromptfn)
-pub type PrepromptFn = Box<dyn Fn()>;
-
-/// Hook function manager (from utils.c callhookfunc)
-pub struct HookManager {
-    hooks: std::collections::HashMap<String, Vec<String>>,
-}
-
-impl Default for HookManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl HookManager {
-    pub fn new() -> Self {
-        HookManager {
-            hooks: std::collections::HashMap::new(),
-        }
-    }
-
-    pub fn add(&mut self, name: &str, func: &str) {
-        self.hooks
-            .entry(name.to_string())
-            .or_default()
-            .push(func.to_string());
-    }
-
-    pub fn remove(&mut self, name: &str, func: &str) {
-        if let Some(list) = self.hooks.get_mut(name) {
-            list.retain(|f| f != func);
-        }
-    }
-
-    pub fn get(&self, name: &str) -> Option<&Vec<String>> {
-        self.hooks.get(name)
-    }
-
-    pub fn has(&self, name: &str) -> bool {
-        self.hooks.get(name).map(|v| !v.is_empty()).unwrap_or(false)
-    }
-}
-
-/// Timed function entry (from utils.c addtimedfn/deltimedfn)
-pub struct TimedFn {
-    pub func: String,
-    pub when: i64,
-}
-
 /// Check mail paths (from utils.c checkmailpath)
 pub fn checkmailpath(paths: &[String]) -> Vec<String> {
     let mut messages = Vec::new();
@@ -2588,14 +2522,146 @@ pub fn zcloselockfd(fd: i32) {
     zclose(fd);
 }
 
-/// Parse integer with underscore separators (from utils.c zstrtol_underscore)
-pub fn zstrtol_underscore(s: &str, base: u32) -> Option<i64> {
-    let cleaned: String = s.chars().filter(|&c| c != '_').collect();
-    if base == 0 || base == 10 {
-        cleaned.parse().ok()
-    } else {
-        i64::from_str_radix(&cleaned, base).ok()
+/// Port of `zstrtol_underscore()` from `Src/utils.c:2436`.
+///
+/// C signature: `zlong zstrtol_underscore(const char *s, char **t,
+///                                         int base, int underscore)`.
+///
+/// Convert string to zlong with optional `_` digit-separator support.
+/// `underscore != 0` allows underscores to appear inside the digit
+/// run (skipped during accumulation). Returns the parsed value AND
+/// the unconsumed-tail slice (matching C's `*t = (char *)s` writeback
+/// at line 2516).
+///
+/// `base == 0` triggers prefix-based detection (`0x`/`0X`→16,
+/// `0b`/`0B`→2, leading `0`→8, otherwise 10). Bases outside [2, 36]
+/// emit `zerr` and return `(0, original_s)`. Overflow truncates and
+/// emits a `zwarn` per c:2510-2512.
+pub fn zstrtol_underscore(s: &str, base: i32, underscore: bool) -> (i64, &str) {  // c:2436
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    // c:2444-2445 — skip leading `inblank` whitespace.
+    while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
+        i += 1;
     }
+    // c:2447-2450 — handle sign.
+    let neg = if i < bytes.len() && (bytes[i] == b'-') {                 // c:2447 IS_DASH
+        i += 1;
+        true
+    } else if i < bytes.len() && bytes[i] == b'+' {                      // c:2449
+        i += 1;
+        false
+    } else {
+        false
+    };
+
+    // c:2452-2461 — base autodetect when base == 0.
+    let mut base = base;
+    if base == 0 {                                                       // c:2452
+        if i >= bytes.len() || bytes[i] != b'0' {                        // c:2453
+            base = 10;                                                   // c:2454
+        } else {
+            i += 1;                                                      // c:2455 ++s
+            if i < bytes.len() && (bytes[i] == b'x' || bytes[i] == b'X') {  // c:2455
+                base = 16;
+                i += 1;
+            } else if i < bytes.len() && (bytes[i] == b'b' || bytes[i] == b'B') {  // c:2457
+                base = 2;
+                i += 1;
+            } else {                                                     // c:2459
+                base = 8;                                                // c:2460
+            }
+        }
+    }
+    let inp_idx = i;                                                     // c:2462 inp = s
+    if base < 2 || base > 36 {                                           // c:2463
+        zerr(&format!(
+            "invalid base (must be 2 to 36 inclusive): {}", base
+        ));                                                              // c:2464
+        return (0, s);                                                   // c:2465 return 0
+    }
+
+    let mut calc: u64 = 0;                                               // c:2441
+    let mut trunc_idx: Option<usize> = None;                             // c:2440 trunc = NULL
+    if base <= 10 {                                                      // c:2466
+        // c:2467-2479 — digit accumulator, low bases.
+        let max_d = b'0' + base as u8;
+        while i < bytes.len() {
+            let c = bytes[i];
+            if c >= b'0' && c < max_d {
+                if trunc_idx.is_none() {
+                    let newcalc = calc.wrapping_mul(base as u64).wrapping_add((c - b'0') as u64);
+                    if newcalc < calc {                                  // c:2473
+                        trunc_idx = Some(i);                             // c:2474
+                    } else {
+                        calc = newcalc;
+                    }
+                }
+                i += 1;
+            } else if underscore && c == b'_' {                          // c:2467 underscore && *s == '_'
+                i += 1;
+            } else {
+                break;
+            }
+        }
+    } else {                                                             // c:2480
+        // c:2481-2495 — digit accumulator, high bases (>10).
+        while i < bytes.len() {
+            let c = bytes[i];
+            let digit = if c.is_ascii_digit() {                          // c:2481 idigit
+                Some((c - b'0') as u32)
+            } else if c >= b'a' && c < b'a' + base as u8 - 10 {          // c:2482
+                Some(((c & 0x1f) + 9) as u32)                            // c:2486 (*s & 0x1f) + 9
+            } else if c >= b'A' && c < b'A' + base as u8 - 10 {          // c:2483
+                Some(((c & 0x1f) + 9) as u32)
+            } else if underscore && c == b'_' {                          // c:2484
+                i += 1;
+                continue;
+            } else {
+                None
+            };
+            match digit {
+                Some(d) => {
+                    if trunc_idx.is_none() {
+                        let newcalc = calc.wrapping_mul(base as u64).wrapping_add(d as u64);
+                        if newcalc < calc {                              // c:2489
+                            trunc_idx = Some(i);                         // c:2490
+                        } else {
+                            calc = newcalc;
+                        }
+                    }
+                    i += 1;
+                }
+                None => break,
+            }
+        }
+    }
+
+    // c:2504-2511 — special-case: signed-overflow into top bit.
+    // The lowest negative number triggers the first test but is
+    // representable correctly; check it explicitly.
+    if trunc_idx.is_none() && (calc as i64) < 0 {                        // c:2504
+        let top_bit_only = calc & !(1u64 << 63);                          // c:2506
+        if !neg || top_bit_only != 0 {                                    // c:2505
+            trunc_idx = Some(i.saturating_sub(1));                        // c:2508
+            calc /= base as u64;                                          // c:2509
+        }
+    }
+
+    if let Some(t) = trunc_idx {                                         // c:2512
+        let digits = t.saturating_sub(inp_idx);
+        let inp_str = &s[inp_idx..];
+        zwarn(&format!(
+            "number truncated after {} digits: {}", digits, inp_str
+        ));                                                              // c:2513
+    }
+
+    let result = if neg {                                                // c:2517
+        -(calc as i64)
+    } else {
+        calc as i64
+    };
+    (result, &s[i..])
 }
 
 /// Compute time difference in microseconds (from utils.c timespec_diff_us)

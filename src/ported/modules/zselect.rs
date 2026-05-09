@@ -1,447 +1,256 @@
-//! Select/poll builtin module - port of Modules/zselect.c
+//! Select/poll builtin module — port of `Src/Modules/zselect.c`.
 //!
-//! Provides zselect builtin for select/poll system calls on file descriptors.
+//! C source has zero `struct ...` / `enum ...` definitions. Rust
+//! port matches: zero types. Two fns: `bin_zselect` and the
+//! static helper `handle_digits`, plus the 6 module loaders.
 
-use std::collections::HashMap;
+use crate::ported::exec::ShellExecutor;
 use crate::ported::utils::zwarnnam;
-use std::os::unix::io::RawFd;
 
-/// Which type of event to monitor
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SelectMode {
-    Read,
-    Write,
-    Error,
+/// Port of static helper `handle_digits()` from
+/// `Src/Modules/zselect.c:40`. Validates that `argptr` is a
+/// digit-prefixed file-descriptor and adds the parsed fd to
+/// `fdset`; updates `*fdmax` to `max(*fdmax, fd+1)`. Returns 0 on
+/// success, 1 on parse error (after emitting `zwarnnam`).
+///
+/// C signature: `static int handle_digits(char *nam, char *argptr,
+///                                         fd_set *fdset, int *fdmax)`.
+/// Rust port matches: takes `&mut libc::fd_set` directly so the
+/// FD_SET op runs on the caller's set in place.
+pub fn handle_digits(                                                    // c:40
+    nam: &str,
+    argptr: &str,
+    fdset: &mut libc::fd_set,
+    fdmax: &mut libc::c_int,
+) -> i32 {
+    let first = argptr.chars().next();
+    if !matches!(first, Some(c) if c.is_ascii_digit()) {                 // c:45 idigit
+        zwarnnam(nam, &format!("expecting file descriptor: {}", argptr));
+        return 1;                                                        // c:47
+    }
+    // c:49 — `fd = (int)zstrtol(argptr, &endptr, 10);`
+    let (fd_val, endptr) = crate::ported::utils::zstrtol(argptr, 10);
+    let fd = fd_val as libc::c_int;
+    if !endptr.is_empty() {                                              // c:50 *endptr
+        zwarnnam(nam, &format!("garbage after file descriptor: {}", endptr));
+        return 1;                                                        // c:52
+    }
+    unsafe { libc::FD_SET(fd, fdset); }                                  // c:55 FD_SET
+    if fd + 1 > *fdmax {                                                 // c:56
+        *fdmax = fd + 1;                                                 // c:57
+    }
+    0                                                                    // c:58
 }
 
-impl SelectMode {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zselect.c`.
-    pub fn flag_char(&self) -> char {
-        match self {
-            SelectMode::Read => 'r',
-            SelectMode::Write => 'w',
-            SelectMode::Error => 'e',
-        }
+/// Port of `bin_zselect()` from `Src/Modules/zselect.c:65`. The
+/// `zselect` builtin: parses a `[-r|-w|-e] FD ...` argv with an
+/// optional `-t TIMEOUT` (hundredths of a second) and an optional
+/// `-a NAME` / `-A NAME` for a custom output array / hash, then
+/// runs `select(2)` and writes the ready fds back to `$reply`
+/// (or the requested array/hash).
+///
+/// C signature: `static int bin_zselect(char *nam, char **args,
+///                                       Options ops, int func)`.
+/// Returns 0 on success, 1 on parse/select error or timeout, 2
+/// when the host doesn't have `select(2)`.
+pub fn bin_zselect(exec: &mut ShellExecutor, args: &[&str]) -> i32 {     // c:65
+    let nam = "zselect";
+    // c:67-72 — locals.
+    let mut fdset: [libc::fd_set; 3] = unsafe { std::mem::zeroed() };
+    for s in &mut fdset {                                                // c:75-76 FD_ZERO
+        unsafe { libc::FD_ZERO(s); }
     }
+    let fdchar: [u8; 3] = *b"rwe";                                       // c:69
+    let mut fdmax: libc::c_int = 0;                                      // c:67
+    let mut fdsetind: usize = 0;                                         // c:67
+    let mut tv: libc::timeval = libc::timeval { tv_sec: 0, tv_usec: 0 };
+    let mut have_timeout = false;                                        // c:70 tvptr=NULL
+    let mut outarray: String = "reply".to_string();                      // c:71
+    let mut outhash: Option<String> = None;                              // c:72
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zselect.c`.
-    pub fn from_char(c: char) -> Option<Self> {
-        match c {
-            'r' => Some(SelectMode::Read),
-            'w' => Some(SelectMode::Write),
-            'e' => Some(SelectMode::Error),
-            _ => None,
-        }
-    }
-}
-
-/// Options for zselect builtin
-#[derive(Debug, Default)]
-pub struct ZselectOptions {
-    pub array_name: Option<String>,
-    pub hash_name: Option<String>,
-    pub timeout_hundredths: Option<i64>,
-    pub fds: Vec<(RawFd, SelectMode)>,
-}
-
-/// Result of select operation
-#[derive(Debug)]
-pub struct SelectResult {
-    pub ready_fds: Vec<(RawFd, SelectMode)>,
-    pub as_array: Vec<String>,
-    pub as_hash: HashMap<String, String>,
-}
-
-impl ZselectOptions {
-
-/// Perform select/poll on file descriptors.
-/// Helper extracted from `bin_zselect()` (Src/Modules/zselect.c:65) —
-/// populates the read/write/error fd sets, runs the kernel call
-/// (we use `poll(2)` since it scales past `FD_SETSIZE`), and surfaces
-/// ready fds either as a flag-prefixed array (`-r 0 -w 1`) or as
-/// an `fd → mode-string` hash to mirror the `-a` / `-A` output
-/// forms zsh exposes.
-#[cfg(unix)]
-pub fn run(&self) -> Result<SelectResult, String> {
-    use std::collections::HashSet;
-    let options = self;
-    if options.fds.is_empty() {
-        return Ok(SelectResult {
-            ready_fds: Vec::new(),
-            as_array: Vec::new(),
-            as_hash: HashMap::new(),
-        });
-    }
-
-    let mut read_fds: HashSet<RawFd> = HashSet::new();
-    let mut write_fds: HashSet<RawFd> = HashSet::new();
-    let mut error_fds: HashSet<RawFd> = HashSet::new();
-
-    let mut max_fd: RawFd = 0;
-
-    for (fd, mode) in &options.fds {
-        max_fd = max_fd.max(*fd);
-        match mode {
-            SelectMode::Read => {
-                read_fds.insert(*fd);
-            }
-            SelectMode::Write => {
-                write_fds.insert(*fd);
-            }
-            SelectMode::Error => {
-                error_fds.insert(*fd);
-            }
-        }
-    }
-
-    let mut poll_fds: Vec<libc::pollfd> = Vec::new();
-
-    for (fd, mode) in &options.fds {
-        let events = match mode {
-            SelectMode::Read => libc::POLLIN,
-            SelectMode::Write => libc::POLLOUT,
-            SelectMode::Error => libc::POLLERR | libc::POLLPRI,
-        };
-
-        if let Some(existing) = poll_fds.iter_mut().find(|p| p.fd == *fd) {
-            existing.events |= events;
-        } else {
-            poll_fds.push(libc::pollfd {
-                fd: *fd,
-                events,
-                revents: 0,
-            });
-        }
-    }
-
-    let timeout_ms = options
-        .timeout_hundredths
-        .map(|t| (t * 10) as libc::c_int)
-        .unwrap_or(-1);
-
-    let result = loop {
-        let ret = unsafe {
-            libc::poll(
-                poll_fds.as_mut_ptr(),
-                poll_fds.len() as libc::nfds_t,
-                timeout_ms,
-            )
-        };
-
-        if ret < 0 {
-            let err = std::io::Error::last_os_error();
-            if err.kind() == std::io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(format!("error on select: {}", err));
-        }
-
-        break ret;
-    };
-
-    if result == 0 {
-        return Ok(SelectResult {
-            ready_fds: Vec::new(),
-            as_array: Vec::new(),
-            as_hash: HashMap::new(),
-        });
-    }
-
-    let mut ready_fds = Vec::new();
-    let mut fd_modes: HashMap<RawFd, String> = HashMap::new();
-
-    for pfd in &poll_fds {
-        if pfd.revents != 0 {
-            if pfd.revents & libc::POLLIN != 0 && read_fds.contains(&pfd.fd) {
-                ready_fds.push((pfd.fd, SelectMode::Read));
-                fd_modes.entry(pfd.fd).or_default().push('r');
-            }
-            if pfd.revents & libc::POLLOUT != 0 && write_fds.contains(&pfd.fd) {
-                ready_fds.push((pfd.fd, SelectMode::Write));
-                fd_modes.entry(pfd.fd).or_default().push('w');
-            }
-            if (pfd.revents & (libc::POLLERR | libc::POLLPRI) != 0) && error_fds.contains(&pfd.fd) {
-                ready_fds.push((pfd.fd, SelectMode::Error));
-                fd_modes.entry(pfd.fd).or_default().push('e');
-            }
-        }
-    }
-
-    let as_hash: HashMap<String, String> = fd_modes
-        .iter()
-        .map(|(fd, modes)| (fd.to_string(), modes.clone()))
-        .collect();
-
-    let mut as_array = Vec::new();
-    let mut current_mode: Option<SelectMode> = None;
-
-    for (fd, mode) in &ready_fds {
-        if current_mode != Some(*mode) {
-            as_array.push(format!("-{}", mode.flag_char()));
-            current_mode = Some(*mode);
-        }
-        as_array.push(fd.to_string());
-    }
-
-    Ok(SelectResult {
-        ready_fds,
-        as_array,
-        as_hash,
-    })
-}
-
-/// Stub for non-unix targets (no `select(2)`); helper for `bin_zselect`
-/// at `Src/Modules/zselect.c:65`.
-#[cfg(not(unix))]
-pub fn run(&self) -> Result<SelectResult, String> {
-    Err("your system does not implement the select system call".to_string())
-}
-
-/// Parse zselect arguments.
-/// Port of the option-walk loop inside `bin_zselect()` from
-/// Src/Modules/zselect.c:65 plus `handle_digits()` (line 40) — both
-/// the long form (`-r 0 -w 1`) and the bundled form (`-r0 -w1`) are
-/// accepted, with `-a NAME` / `-A NAME` / `-t HUNDREDTHS` capturing
-/// the same flags the C source's `bin_zselect()` parses.
-pub fn parse(args: &[&str]) -> Result<ZselectOptions, String> {
-    let mut options = ZselectOptions::default();
-    let mut current_mode = SelectMode::Read;
+    // c:78-118 — argv parse.
     let mut i = 0;
-
-    while i < args.len() {
+    while i < args.len() {                                               // c:78 for(;*args;args++)
         let arg = args[i];
-
-        if arg.starts_with('-') && arg.len() > 1 {
-            let chars: Vec<char> = arg[1..].chars().collect();
+        if let Some(rest) = arg.strip_prefix('-') {                      // c:81
+            // Walk each character of the option group.
+            let mut chars: Vec<char> = rest.chars().collect();
             let mut j = 0;
-
-            while j < chars.len() {
-                match chars[j] {
-                    'a' => {
-                        let name = if j + 1 < chars.len() {
-                            chars[j + 1..].iter().collect::<String>()
+            while j < chars.len() {                                      // c:82 for(argptr++; *argptr; argptr++)
+                let c = chars[j];
+                match c {
+                    'a' | 'A' => {                                       // c:88-90
+                        // Argument expected — next char or next argv.
+                        let arg_str: String = if j + 1 < chars.len() {
+                            j += 1;                                      // c:92 argptr++
+                            chars[j..].iter().collect()
                         } else if i + 1 < args.len() {
-                            i += 1;
+                            i += 1;                                      // c:94
                             args[i].to_string()
                         } else {
-                            return Err("argument expected after -a".to_string());
+                            zwarnnam(nam, &format!("argument expected after -{}", c));
+                            return 1;                                    // c:97
                         };
-
-                        if name
-                            .chars()
-                            .next()
-                            .map(|c| c.is_ascii_digit())
-                            .unwrap_or(false)
+                        // c:99-102 — `idigit(*argptr) || !isident(argptr)` check.
+                        if arg_str.is_empty()
+                            || arg_str.chars().next().unwrap().is_ascii_digit()
+                            || !is_ident(&arg_str)
                         {
-                            return Err(format!("invalid array name: {}", name));
+                            zwarnnam(nam, &format!("invalid array name: {}", arg_str));
+                            return 1;
                         }
-                        options.array_name = Some(name);
+                        if c == 'a' {                                    // c:103
+                            outarray = arg_str;                          // c:104
+                        } else {                                         // c:105
+                            outhash = Some(arg_str);                     // c:106
+                        }
+                        // C: `while (argptr[1]) argptr++;` — break out
+                        // of the option-group loop since we've consumed
+                        // the rest of `argptr` as the array name.
                         break;
                     }
-                    'A' => {
-                        let name = if j + 1 < chars.len() {
-                            chars[j + 1..].iter().collect::<String>()
+                    'r' => fdsetind = 0,                                  // c:115
+                    'w' => fdsetind = 1,                                  // c:120
+                    'e' => fdsetind = 2,                                  // c:125
+                    't' => {                                              // c:131
+                        // Argument expected.
+                        let arg_str: String = if j + 1 < chars.len() {
+                            j += 1;
+                            chars[j..].iter().collect()
                         } else if i + 1 < args.len() {
                             i += 1;
                             args[i].to_string()
                         } else {
-                            return Err("argument expected after -A".to_string());
+                            zwarnnam(nam, &format!("argument expected after -{}", c));
+                            return 1;
                         };
-
-                        if name
-                            .chars()
-                            .next()
-                            .map(|c| c.is_ascii_digit())
-                            .unwrap_or(false)
-                        {
-                            return Err(format!("invalid array name: {}", name));
+                        let first = arg_str.chars().next();
+                        if !matches!(first, Some(d) if d.is_ascii_digit()) {  // c:140
+                            zwarnnam(nam, "number expected after -t");
+                            return 1;
                         }
-                        options.hash_name = Some(name);
-                        break;
+                        // c:144 — `tempnum = zstrtol(argptr, &endptr, 10);`
+                        let (tempnum, endptr) =
+                            crate::ported::utils::zstrtol(&arg_str, 10);
+                        if !endptr.is_empty() {                           // c:146 *endptr
+                            zwarnnam(nam, &format!("garbage after -t argument: {}", endptr));
+                            return 1;                                     // c:149
+                        }
+                        // c:151-153 — tv populated.
+                        have_timeout = true;
+                        tv.tv_sec  = (tempnum / 100) as libc::time_t;
+                        tv.tv_usec = ((tempnum % 100) * 10000) as libc::suseconds_t;
+                        break;                                            // c:156 argptr=endptr-1, then argptr++
                     }
-                    'r' => current_mode = SelectMode::Read,
-                    'w' => current_mode = SelectMode::Write,
-                    'e' => current_mode = SelectMode::Error,
-                    't' => {
-                        let timeout_str = if j + 1 < chars.len() {
-                            chars[j + 1..].iter().collect::<String>()
-                        } else if i + 1 < args.len() {
-                            i += 1;
-                            args[i].to_string()
-                        } else {
-                            return Err("argument expected after -t".to_string());
-                        };
-
-                        let timeout: i64 = timeout_str
-                            .parse()
-                            .map_err(|_| format!("number expected after -t: {}", timeout_str))?;
-                        options.timeout_hundredths = Some(timeout);
-                        break;
-                    }
-                    c if c.is_ascii_digit() => {
-                        let fd_str: String = chars[j..].iter().collect();
-                        let fd: RawFd = fd_str
-                            .parse()
-                            .map_err(|_| format!("expecting file descriptor: {}", fd_str))?;
-                        options.fds.push((fd, current_mode));
-                        break;
-                    }
-                    c => {
-                        return Err(format!("unknown option: -{}", c));
+                    _ => {                                                // c:159 default
+                        // Digits-following-flag — pass to handle_digits.
+                        let argptr_rest: String = chars[j..].iter().collect();
+                        if handle_digits(nam, &argptr_rest, &mut fdset[fdsetind], &mut fdmax) != 0 {
+                            return 1;                                     // c:162
+                        }
+                        break;                                             // consumed rest of group
                     }
                 }
                 j += 1;
             }
-        } else if arg.chars().all(|c| c.is_ascii_digit()) {
-            let fd: RawFd = arg
-                .parse()
-                .map_err(|_| format!("expecting file descriptor: {}", arg))?;
-            options.fds.push((fd, current_mode));
-        } else {
-            return Err(format!("expecting file descriptor: {}", arg));
+        } else if handle_digits(nam, arg, &mut fdset[fdsetind], &mut fdmax) != 0 {  // c:166
+            return 1;                                                     // c:167
         }
-
         i += 1;
     }
 
-    Ok(options)
-}
+    // c:170-175 — select() with EINTR-retry.
+    let tvptr: *mut libc::timeval = if have_timeout { &mut tv } else { std::ptr::null_mut() };
+    let mut sel: libc::c_int;
+    loop {
+        sel = unsafe {
+            libc::select(
+                fdmax,
+                &mut fdset[0],
+                &mut fdset[1],
+                &mut fdset[2],
+                tvptr,
+            )
+        };
+        if sel >= 0 { break; }
+        let err = std::io::Error::last_os_error();
+        if err.raw_os_error() == Some(libc::EINTR) { continue; }          // c:174
+        break;
+    }
 
-}  // impl ZselectOptions
-
-/// `zselect` builtin entry point.
-/// Port of `bin_zselect()` from Src/Modules/zselect.c:65 — wires
-/// `parse_zselect_args` → `zselect` → exit-status conversion the
-/// same way the C source returns 0 when at least one fd is ready
-/// and 1 otherwise (timeout or empty result).
-pub fn bin_zselect(args: &[&str]) -> (i32, Vec<String>, HashMap<String, String>) {
-    let options = match ZselectOptions::parse(args) {
-        Ok(opts) => opts,
-        Err(e) => {
-            zwarnnam("zselect", &format!("{}", e));
-            return (1, Vec::new(), HashMap::new());
+    if sel <= 0 {                                                         // c:177
+        if sel < 0 {                                                      // c:178
+            zwarnnam(nam, &format!(
+                "error on select: {}",
+                std::io::Error::last_os_error()
+            ));                                                           // c:179
         }
-    };
+        return 1;                                                         // c:181
+    }
 
-    match options.run() {
-        Ok(result) => {
-            if result.ready_fds.is_empty() {
-                (1, Vec::new(), HashMap::new())
-            } else {
-                (0, result.as_array, result.as_hash)
+    // c:189-243 — build the linked-list of ready fds, then convert
+    // to the array/hash output. Rust collapses znewlinklist + walk
+    // into Vec<String> and IndexMap<String, String>.
+    if let Some(hash_name) = &outhash {                                   // c:191
+        // Hash form: keys are fd numbers (as strings), values are
+        // (possibly multi-char) "rwe"-subset masks.
+        let mut hash: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+        for ii in 0..3 {                                                  // c:194
+            for fd in 0..fdmax {                                          // c:196
+                if unsafe { libc::FD_ISSET(fd, &fdset[ii]) } {            // c:197
+                    let key = fd.to_string();
+                    let mask_char = fdchar[ii] as char;
+                    hash.entry(key.clone())
+                        .and_modify(|v| {
+                            if !v.contains(mask_char) { v.push(mask_char); }
+                        })
+                        .or_insert_with(|| mask_char.to_string());
+                }
             }
         }
-        Err(e) => {
-            zwarnnam("zselect", &format!("{}", e));
-            (1, Vec::new(), HashMap::new())
+        exec.assoc_arrays.insert(hash_name.clone(), hash);                // c:241 sethparam
+    } else {
+        // Array form: list of fds preceded by `-r`/`-w`/`-e`.
+        let mut out: Vec<String> = Vec::new();
+        for ii in 0..3 {                                                  // c:194
+            let mut emitted_flag = false;                                  // c:213 doneit
+            for fd in 0..fdmax {                                          // c:196
+                if unsafe { libc::FD_ISSET(fd, &fdset[ii]) } {            // c:197
+                    if !emitted_flag {                                    // c:215
+                        out.push(format!("-{}", fdchar[ii] as char));     // c:218
+                        emitted_flag = true;                              // c:219
+                    }
+                    out.push(fd.to_string());                             // c:223 zaddlinknode
+                }
+            }
         }
+        exec.arrays.insert(outarray, out);                                // c:243 setaparam
     }
+
+    0                                                                    // c:246
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_select_mode_char() {
-        assert_eq!(SelectMode::Read.flag_char(), 'r');
-        assert_eq!(SelectMode::Write.flag_char(), 'w');
-        assert_eq!(SelectMode::Error.flag_char(), 'e');
-    }
-
-    #[test]
-    fn test_select_mode_from_char() {
-        assert_eq!(SelectMode::from_char('r'), Some(SelectMode::Read));
-        assert_eq!(SelectMode::from_char('w'), Some(SelectMode::Write));
-        assert_eq!(SelectMode::from_char('e'), Some(SelectMode::Error));
-        assert_eq!(SelectMode::from_char('x'), None);
-    }
-
-    #[test]
-    fn test_parse_basic_args() {
-        let args = vec!["-r", "0", "-w", "1"];
-        let options = ZselectOptions::parse(&args).unwrap();
-
-        assert_eq!(options.fds.len(), 2);
-        assert!(options.fds.contains(&(0, SelectMode::Read)));
-        assert!(options.fds.contains(&(1, SelectMode::Write)));
-    }
-
-    #[test]
-    fn test_parse_timeout() {
-        let args = vec!["-t", "100", "-r", "0"];
-        let options = ZselectOptions::parse(&args).unwrap();
-
-        assert_eq!(options.timeout_hundredths, Some(100));
-    }
-
-    #[test]
-    fn test_parse_combined_args() {
-        let args = vec!["-r0", "-w1"];
-        let options = ZselectOptions::parse(&args).unwrap();
-
-        assert_eq!(options.fds.len(), 2);
-    }
-
-    #[test]
-    fn test_parse_array_name() {
-        let args = vec!["-a", "myarray", "-r", "0"];
-        let options = ZselectOptions::parse(&args).unwrap();
-
-        assert_eq!(options.array_name, Some("myarray".to_string()));
-    }
-
-    #[test]
-    fn test_parse_hash_name() {
-        let args = vec!["-A", "myhash", "-r", "0"];
-        let options = ZselectOptions::parse(&args).unwrap();
-
-        assert_eq!(options.hash_name, Some("myhash".to_string()));
-    }
-
-    #[test]
-    fn test_parse_invalid_fd() {
-        let args = vec!["-r", "abc"];
-        let result = ZselectOptions::parse(&args);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_zselect_empty() {
-        let options = ZselectOptions::default();
-        let result = options.run().unwrap();
-        assert!(result.ready_fds.is_empty());
-    }
+/// `isident(s)` predicate — identifier validity check matching
+/// zsh's `isident()` (Src/utils.c). True iff `s` is non-empty,
+/// every char is alnum or `_`, and the first char is not a digit.
+fn is_ident(s: &str) -> bool {
+    if s.is_empty() { return false; }
+    let mut chars = s.chars();
+    let first = chars.next().unwrap();
+    if first.is_ascii_digit() { return false; }
+    if !(first.is_alphanumeric() || first == '_') { return false; }
+    chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Phase: module-shims
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
-    /// zselect — select(2)-based fd polling. Direct dispatch into
-    /// zselect.rs's parse + zselect implementation. Per zsh's
-    /// zsh/Src/Modules/zselect.c bin_zselect, the result is returned
-    /// in the `reply` array (index→fd-set string) and the exit code
-    /// signals success/timeout/error.
+// Shim for the executor's builtin-dispatch table.
+impl ShellExecutor {
+    /// `zselect` builtin shim — adapts `&[String]` to `&[&str]`
+    /// and forwards to the canonical `bin_zselect` above.
     pub(crate) fn bin_zselect(&mut self, args: &[String]) -> i32 {
-        let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        let (code, reply, env_kv) = crate::zselect::bin_zselect(&argv);
-        // zselect.c sets `reply` to "fd:rwe" entries; assign here so
-        // the calling script can iterate $reply / ${reply[fd]}.
-        self.arrays.insert("reply".to_string(), reply);
-        for (k, v) in env_kv {
-            self.variables.insert(k, v);
-        }
-        code
+        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+        bin_zselect(self, &argv)
     }
 }
-// END moved-from-exec-rs
 
 /// Port of `setup_()` from `Src/Modules/zselect.c:288`. C body is
 /// `return 0;` (UNUSED `Module m`).
@@ -469,73 +278,74 @@ pub fn boot_() -> i32 {                                                  // c:31
     0                                                                    // c:313
 }
 
-/// Port of `cleanup_()` from `Src/Modules/zselect.c:318`. C body is
-/// `return setfeatureenables(m, &module_features, NULL);`.
+/// Port of `cleanup_()` from `Src/Modules/zselect.c:318`. C body
+/// is `return setfeatureenables(m, &module_features, NULL);`.
 /// Static-link path: 0.
 pub fn cleanup_() -> i32 {                                               // c:318
     0                                                                    // c:321
 }
 
-/// Port of `finish_()` from `Src/Modules/zselect.c:325`. C body is
-/// `return 0;` (UNUSED `Module m`).
+/// Port of `finish_()` from `Src/Modules/zselect.c:325`. C body
+/// is `return 0;` (UNUSED `Module m`).
 pub fn finish_() -> i32 {                                                // c:325
     0                                                                    // c:328
 }
 
-/// Port of static helper `handle_digits()` from
-/// `Src/Modules/zselect.c:40`. Parses a file-descriptor argument
-/// from a `zselect -r N`/`-w N`/`-e N` flag and adds it to the
-/// caller-supplied fd_set; returns 0 on success or 1 on parse
-/// error (after emitting a zwarnnam diagnostic).
-///
-/// C signature: `static int handle_digits(char *nam, char *argptr,
-///                                        fd_set *fdset, int *fdmax)`.
-///
-/// Rust port: takes an in/out fd vec + running max-fd via mutable
-/// references; mirrors the C body's `idigit` + `zstrtol` parse
-/// + bounds update at zselect.c:45-58.
-pub fn handle_digits(                                                    // c:40
-    nam: &str,
-    argptr: &str,
-    fdset: &mut Vec<libc::c_int>,
-    fdmax: &mut libc::c_int,
-) -> i32 {
-    let mut chars = argptr.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_digit() => {}                              // c:45 idigit
-        _ => {
-            crate::ported::utils::zwarnnam(
-                nam,
-                &format!("expecting file descriptor: {}", argptr),
-            );
-            return 1;                                                    // c:47
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fresh_exec() -> ShellExecutor { ShellExecutor::new() }
+
+    #[test]
+    fn empty_args_with_zero_timeout_returns_one() {
+        // C zsh body: with `-t 0` and no fds, select() returns 0
+        // immediately and bin_zselect returns 1 (no-fds-ready
+        // path). Without `-t`, the call blocks indefinitely (POSIX
+        // select(0, _, _, _, NULL) waits forever) — matching C
+        // behaviour exactly. Tests therefore always pass `-t 0`.
+        let mut e = fresh_exec();
+        let r = bin_zselect(&mut e, &["-t", "0"]);
+        assert_eq!(r, 1);
     }
-    // C uses zstrtol which stops at first non-digit and returns the
-    // numeric prefix. Rust port: split the digit prefix manually so
-    // we can detect "garbage after fd" the same way.
-    let split = argptr.find(|c: char| !c.is_ascii_digit()).unwrap_or(argptr.len());
-    let (num_part, garbage) = argptr.split_at(split);
-    let fd: libc::c_int = match num_part.parse() {                       // c:49
-        Ok(n) => n,
-        Err(_) => {
-            crate::ported::utils::zwarnnam(
-                nam,
-                &format!("expecting file descriptor: {}", argptr),
-            );
-            return 1;
-        }
-    };
-    if !garbage.is_empty() {                                             // c:50
-        crate::ported::utils::zwarnnam(
-            nam,
-            &format!("garbage after file descriptor: {}", garbage),
-        );
-        return 1;                                                        // c:52
+
+    #[test]
+    fn invalid_array_name_returns_one() {
+        let mut e = fresh_exec();
+        let r = bin_zselect(&mut e, &["-a", "1bad"]);
+        assert_eq!(r, 1);
     }
-    fdset.push(fd);                                                      // c:55 FD_SET
-    if fd + 1 > *fdmax {                                                 // c:56
-        *fdmax = fd + 1;                                                 // c:57
+
+    #[test]
+    fn timeout_garbage_returns_one() {
+        let mut e = fresh_exec();
+        let r = bin_zselect(&mut e, &["-t", "100x"]);
+        assert_eq!(r, 1);
     }
-    0                                                                    // c:58
+
+    #[test]
+    fn no_arg_after_a_returns_one() {
+        let mut e = fresh_exec();
+        let r = bin_zselect(&mut e, &["-a"]);
+        assert_eq!(r, 1);
+    }
+
+    #[test]
+    fn handle_digits_invalid_input() {
+        let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
+        unsafe { libc::FD_ZERO(&mut fdset); }
+        let mut fdmax: libc::c_int = 0;
+        assert_eq!(handle_digits("zselect", "abc", &mut fdset, &mut fdmax), 1);
+        assert_eq!(handle_digits("zselect", "12abc", &mut fdset, &mut fdmax), 1);
+    }
+
+    #[test]
+    fn handle_digits_sets_fd_and_fdmax() {
+        let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
+        unsafe { libc::FD_ZERO(&mut fdset); }
+        let mut fdmax: libc::c_int = 0;
+        assert_eq!(handle_digits("zselect", "5", &mut fdset, &mut fdmax), 0);
+        assert_eq!(fdmax, 6);
+        assert!(unsafe { libc::FD_ISSET(5, &fdset) });
+    }
 }
