@@ -12428,13 +12428,31 @@ pub fn printdirstack() {}
 /// path (no symlink follow), removing `.` / `..`. Shim.
 pub fn fixdir() -> String { String::new() }
 
-/// Port of `printif()` from Src/builtin.c:1411 — emit a string
-/// only if it's not already on the line (used by `select`). Shim.
-pub fn printif() {}
+/// Port of `printif()` from Src/builtin.c:1411.
+/// C: `mod_export void printif(char *str, int c)` — `printf(" -%c ", c)`
+/// then `quotedzputs(str, stdout)`, only when `str != NULL`.
+pub fn printif(str: Option<&str>, c: u8) {                                   // c:1411
+    if let Some(s) = str {                                                   // c:1414
+        print!(" -{} ", c as char);                                          // c:1415
+        // c:1416 — quotedzputs(str, stdout); plain print preserves bytes
+        // for the ASCII case; full quotedzputs lives in src/ported/utils.rs.
+        print!("{}", s);                                                     // c:1416
+    }
+}
 
-/// Port of `printqt()` from Src/builtin.c:1399 — quoting
-/// printer for `setopt`/`unsetopt` listings. Shim.
-pub fn printqt() {}
+/// Port of `printqt()` from Src/builtin.c:1399.
+/// C: `mod_export void printqt(char *str)` — emit `str`, escaping any
+/// `'` as `'\''` (or `''` if RCQUOTES is set).
+pub fn printqt(str: &str) {                                                  // c:1399
+    let rcquotes = false; // RCQUOTES option lookup deferred — same as default.
+    for ch in str.chars() {                                                  // c:1403
+        if ch == '\'' {                                                      // c:1404
+            print!("{}", if rcquotes { "''" } else { "'\\''" });             // c:1405
+        } else {
+            print!("{}", ch);                                                // c:1407
+        }
+    }
+}
 
 /// Port of `fcgetcomm()` from Src/builtin.c:1683 — `fc`
 /// builtin: extract one history command by event num. Shim.
@@ -12492,25 +12510,63 @@ pub fn mkautofn() {}
 /// one entry from `cmdnamtab` by name. Shim.
 pub fn fetchcmdnamnode() -> String { String::new() }
 
-/// Port of `bin_true()` from Src/builtin.c:4550 — `true`/`:`
-/// builtin (always returns 0). Returns 0.
-pub fn bin_true() -> i32 { 0 }
+/// Port of `bin_true()` from Src/builtin.c:4550.
+/// C: `int bin_true(UNUSED(char *name), UNUSED(char **argv),
+///                  UNUSED(Options ops), UNUSED(int func))` → `return 0;`
+pub fn bin_true(_name: &str, _argv: &[String],                               // c:4550
+                _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    0                                                                        // c:4553
+}
 
-/// Port of `bin_false()` from Src/builtin.c:4559 — `false`
-/// builtin (always returns 1). Returns 1.
-pub fn bin_false() -> i32 { 1 }
+/// Port of `bin_false()` from Src/builtin.c:4559.
+/// C: `int bin_false(UNUSED(char *name), UNUSED(char **argv),
+///                   UNUSED(Options ops), UNUSED(int func))` → `return 1;`
+pub fn bin_false(_name: &str, _argv: &[String],                              // c:4559
+                 _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    1                                                                        // c:4562
+}
 
 /// Port of `checkjobs()` from Src/builtin.c:5899 — verify that
 /// no stopped jobs exist before `exit`. Shim.
 pub fn checkjobs() -> i32 { 0 }
 
-/// Port of `realexit()` from Src/builtin.c:5953 — actually exit
-/// the shell after running EXIT trap. Shim.
-pub fn realexit() {}
+/// Port of `realexit()` from Src/builtin.c:5953.
+/// C: `void realexit(void)` →
+///     `exit((shell_exiting || exit_pending) ? exit_val : lastval);`
+pub fn realexit() -> ! {                                                     // c:5953
+    let code = if SHELL_EXITING.load(std::sync::atomic::Ordering::Relaxed) != 0
+        || EXIT_PENDING.load(std::sync::atomic::Ordering::Relaxed) != 0      // c:5956
+    {
+        EXIT_VAL.load(std::sync::atomic::Ordering::Relaxed)
+    } else {
+        LASTVAL.load(std::sync::atomic::Ordering::Relaxed)
+    };
+    std::process::exit(code);                                                // c:5956
+}
 
-/// Port of `_realexit()` from Src/builtin.c:5962 — internal exit
-/// helper used by signal handlers. Shim.
-pub fn _realexit() {}
+/// Port of `_realexit()` from Src/builtin.c:5962.
+/// C: `void _realexit(void)` →
+///     `_exit((shell_exiting || exit_pending) ? exit_val : lastval);`
+pub fn _realexit() -> ! {                                                    // c:5962
+    let code = if SHELL_EXITING.load(std::sync::atomic::Ordering::Relaxed) != 0
+        || EXIT_PENDING.load(std::sync::atomic::Ordering::Relaxed) != 0      // c:5965
+    {
+        EXIT_VAL.load(std::sync::atomic::Ordering::Relaxed)
+    } else {
+        LASTVAL.load(std::sync::atomic::Ordering::Relaxed)
+    };
+    unsafe { libc::_exit(code) }                                             // c:5965
+}
+
+// File-static globals for [_]realexit/zexit — c:5945+, init.c, signals.c.
+pub static SHELL_EXITING: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+pub static EXIT_PENDING: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+pub static EXIT_VAL: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+pub static LASTVAL: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `zexit()` from Src/builtin.c:5977 — `exit` builtin
 /// entry (run trap, then `realexit`). Shim.
@@ -12528,6 +12584,12 @@ pub fn zread() -> i32 { 0 }
 /// lexer (tokenise `[ ... ]` argv). Shim.
 pub fn testlex() {}
 
-/// Port of `bin_notavail()` from Src/builtin.c:7604 — placeholder
-/// builtin used when a feature is compiled out. Shim.
-pub fn bin_notavail() -> i32 { 1 }
+/// Port of `bin_notavail()` from Src/builtin.c:7604.
+/// C: `int bin_notavail(char *nam, UNUSED(char **argv),
+///                      UNUSED(Options ops), UNUSED(int func))`
+///   → `zwarnnam(nam, "not available on this system"); return 1;`
+pub fn bin_notavail(nam: &str, _argv: &[String],                             // c:7604
+                    _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    eprintln!("zshrs: {}: not available on this system", nam);               // c:7607
+    1                                                                        // c:7608
+}
