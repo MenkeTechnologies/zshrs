@@ -565,77 +565,76 @@ pub fn pph_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:
 /// Builtin spec from c:702: `"AE:%F:HL:R:TUZ:afhi:lprtuxmM"`. Most
 /// flags are typeset's; `private` adds nothing of its own that isn't
 /// in typeset.
-pub fn bin_private(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:217
-    // c:228 — `if (locallevel == 0)` — refuse outside a function.
-    // zshrs doesn't track locallevel here; skip the guard.
+pub fn bin_private(nam: &str, args: &[String],                               // c:217
+                   ops: &mut crate::ported::zsh_h::options, func: i32,
+                   assigns: &mut Vec<(String, String)>) -> i32 {
+    use crate::ported::zsh_h::OPT_ISSET;
+    use std::sync::atomic::Ordering;
+    // c:220 — `int from_typeset = 1;`
+    let mut from_typeset: i32 = 1;                                            // c:220
+    // c:221 — `int ofake = fakelevel;`
+    let ofake = FAKELEVEL.load(Ordering::Relaxed);                            // c:221
+    // c:222 — `int hasargs = (assigns && firstnode(assigns));`
+    let hasargs = !assigns.is_empty();                                        // c:222
+    // c:223 — `makeprivate_error = 0;`
+    MAKEPRIVATE_ERROR.store(0, Ordering::Relaxed);                            // c:223
 
-    // c:259 — `bin_typeset(nam, args, NULL, ops, func)` sets up the
-    // params. Static-link path: route through builtin_local for the
-    // `local`-equivalent assignment behaviour.
-    if args.is_empty() {
-        // c:217 with no args lists private params at the current
-        // scope (c:286 printprivatenode walk). Without locallevel +
-        // paramtab, return success (empty list).
-        return 0;
+    // c:225-230 — `if (!OPT_ISSET(ops, 'P'))` straight-through to bin_typeset.
+    if !OPT_ISSET(ops, b'P') {                                                // c:225
+        FAKELEVEL.store(0, Ordering::Relaxed);                                // c:226
+        from_typeset = bin_typeset(nam, args, assigns, ops, func);       // c:227
+        FAKELEVEL.store(ofake, Ordering::Relaxed);                            // c:228
+        return from_typeset;                                                  // c:229
+    }
+    // c:231-233 — refuse `-P -T`.
+    if OPT_ISSET(ops, b'T') {                                                 // c:231
+        crate::ported::utils::zwarn("bad option: -T");                        // c:232
+        return 1;                                                             // c:233
     }
 
-    // Parse `-i`/`-F`/`-a`/`-A`/`-r` flags inline + per-arg
-    // `name=value` assign through ShellExecutor's storage. This
-    // mirrors `local` semantics, not strict C `private`. See doc.
-    let mut i = 0usize;
-    let mut want_int = false;
-    let mut want_float = false;
-    let mut want_array = false;
-    let mut want_hash = false;
-    let mut want_readonly = false;
-    while i < args.len() && args[i].starts_with('-') {
-        match args[i].as_str() {
-            "-i" => want_int = true,
-            "-F" => want_float = true,
-            "-a" => want_array = true,
-            "-A" => want_hash = true,
-            "-r" => want_readonly = true,
-            _ => {}
+    // c:235-239 — outside a function: WARNCREATEGLOBAL, then bin_typeset.
+    let locallevel = crate::ported::builtin::LOCALLEVEL.load(Ordering::Relaxed);
+    if locallevel == 0 {                                                      // c:235
+        let warn = crate::ported::options::optlookup("warncreateglobal") > 0;
+        if warn {                                                             // c:236
+            zwarnnam(nam, "invalid local scope, using globals");              // c:237
         }
-        i += 1;
+        return bin_typeset("private", args, assigns, ops, func);         // c:238
     }
-    if i >= args.len() {
-        zwarnnam(nam, "parameter name required");
-        return 1;
-    }
-    let _ = want_int;
-    let _ = want_float;
-    let _ = want_readonly;
 
-    for arg in &args[i..] {
-        if let Some((name, value)) = arg.split_once('=') {
-            if want_array {
-                let v: Vec<String> = value.split_whitespace()
-                    .map(|s| s.to_string()).collect();
-                exec.arrays.insert(name.to_string(), v);
-            } else if want_hash {
-                let mut m = indexmap::IndexMap::new();
-                for pair in value.split_whitespace() {
-                    if let Some((k, v)) = pair.split_once('=') {
-                        m.insert(k.to_string(), v.to_string());
-                    }
-                }
-                exec.assoc_arrays.insert(name.to_string(), m);
-            } else {
-                exec.variables.insert(name.to_string(), value.to_string());
-            }
-        } else {
-            // No `=` → declare empty.
-            if want_array {
-                exec.arrays.insert(arg.to_string(), Vec::new());
-            } else if want_hash {
-                exec.assoc_arrays.insert(arg.to_string(),
-                    indexmap::IndexMap::new());
-            } else {
-                exec.variables.insert(arg.to_string(), String::new());
-            }
-        }
+    // c:241-242 — `if (!(OPT_ISSET(ops,'m') || OPT_ISSET(ops,'+'))) ops->ind['g'] = 2;`
+    if !(OPT_ISSET(ops, b'm') || OPT_ISSET(ops, b'+')) {                      // c:241
+        ops.ind[b'g' as usize] = 2;                                           // c:242
     }
+    // c:243-247 — `if (OPT_ISSET('p') || OPT_ISSET('m') || (!hasargs && OPT_ISSET('+')))`
+    if OPT_ISSET(ops, b'p') || OPT_ISSET(ops, b'm')                           // c:243
+        || (!hasargs && OPT_ISSET(ops, b'+'))
+    {
+        return bin_typeset("private", args, assigns, ops, func);         // c:245
+    }
+
+    // c:248-256 — queue_signals + startparamscope + bin_typeset + scan + endparamscope.
+    crate::ported::mem::queue_signals();                                      // c:248
+    FAKELEVEL.store(locallevel, Ordering::Relaxed);                           // c:249
+    // c:250 — `startparamscope();` — deferred to typed paramscope wireup.
+    from_typeset = bin_typeset("private", args, assigns, ops, func);     // c:251
+    // c:252 — `scanhashtable(paramtab, 0, 0, 0, makeprivate, 0);` — deferred.
+    // c:253 — `endparamscope();` — deferred.
+    FAKELEVEL.store(ofake, Ordering::Relaxed);                                // c:254
+    crate::ported::mem::unqueue_signals();                                    // c:255
+
+    let mpe = MAKEPRIVATE_ERROR.load(Ordering::Relaxed);
+    mpe | from_typeset                                                        // c:257
+}
+
+/// Local C-faithful re-declaration of `bin_typeset()` from
+/// `Src/builtin.c:2655` so the intra-module call from `bin_private`
+/// has a concrete callee. The full body lives in
+/// `src/ported/builtin.rs` (typeset_single + the surrounding shape
+/// dispatch); this thin shim returns 0 until the typed wireup lands.
+fn bin_typeset(_nam: &str, _args: &[String],                                 // c:2655 (Src/builtin.c)
+               _assigns: &mut Vec<(String, String)>,
+               _ops: &mut crate::ported::zsh_h::options, _func: i32) -> i32 {
     0
 }
 
