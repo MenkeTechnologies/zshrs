@@ -483,9 +483,16 @@ mod tests {
 // fn entries satisfy ABI/name parity for the drift gate.
 // ===========================================================
 
-/// Port of `new_heap_id()` from Src/mem.c:182 — allocate a fresh
-/// heap-arena identifier. Shim.
-pub fn new_heap_id() -> i32 { 0 }
+/// Port of `new_heap_id()` from Src/mem.c:182.
+/// C: `static Heapid new_heap_id(void)` → `return next_heap_id++;`
+pub fn new_heap_id() -> u64 {                                                // c:182
+    NEXT_HEAP_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)          // c:185
+}
+
+// `next_heap_id` from Src/mem.c:178 — monotonically incrementing counter
+// for heap-arena identification under ZSH_MEM_DEBUG.
+pub static NEXT_HEAP_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
 
 /// Port of `new_heaps()` from Src/mem.c:194 — push a new heap
 /// frame onto the arena stack. Shim.
@@ -499,9 +506,25 @@ pub fn old_heaps() {}
 /// swap heap frames. Shim.
 pub fn switch_heaps() {}
 
-/// Port of `mmap_heap_alloc()` from Src/mem.c:526 — `mmap`-backed
-/// heap allocator (used when ZSH_MEM_DEBUG is set). Shim.
-pub fn mmap_heap_alloc() -> i32 { 0 }
+/// Port of `mmap_heap_alloc()` from Src/mem.c:526.
+/// C: `static Heap mmap_heap_alloc(size_t *n)` — round `*n` up to the
+///   page size, mmap an anonymous region of that size, write back the
+///   actual allocation in `*n`. Returns the Heap header.
+pub fn mmap_heap_alloc(n: &mut usize) -> *mut std::ffi::c_void {             // c:526
+    // c:530 — `static size_t pgsz = 0;`
+    let pgsz = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;        // c:533-535
+    let pgsz = if pgsz == 0 { 4096 } else { pgsz };
+    // c:540 — round up to a multiple of pgsz.
+    *n = (*n + pgsz - 1) & !(pgsz - 1);
+    // c:543 — mmap(NULL, *n, PROT_READ|PROT_WRITE, MAP_ANON|MAP_PRIVATE, -1, 0).
+    unsafe {
+        libc::mmap(
+            std::ptr::null_mut(), *n,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0,
+        )                                                                    // c:543
+    }
+}
 
 /// Port of `zhalloc()` from Src/mem.c:577 — heap-arena `malloc`
 /// (memory freed at the end of the current heap frame). Shim;
