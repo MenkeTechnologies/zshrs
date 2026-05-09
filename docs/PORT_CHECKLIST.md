@@ -180,7 +180,15 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - 6 module loaders are static-link no-ops with C-body-quoting doc-comments (c:236/243/251/258/265/284).
   - 3/3 ksh93 tests pass: `ksh93_wrapper_returns_one_when_not_emulate_ksh`, `matchgetfn_empty_returns_empty`, `module_loaders_return_zero`. Drift gate clean.
 
-- [ ] `modules/langinfo.rs` ↔ `Modules/langinfo.c` — **NOT 100%.** 1 Rust-only type still present + 2 stubs (`liitem`, `scanlanginfo`). See TODO.md.
+- [x] `modules/langinfo.rs` ↔ `Modules/langinfo.c`
+  - C: 0 structs/enums • Rust: 0 structs/enums ✓ (the `LangInfoItem` enum flagged in earlier TODO.md was already deleted in a prior pass).
+  - C fns (9): `liitem`, `getlanginfo`, `scanlanginfo`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 9 ✓; function order matches C source order verbatim.
+  - `NL_NAMES` static — port of `nl_names[]` at c:40-207 (the per-`#ifdef`-gated string table). Uppercased to Rust static convention; lists every nl_item that's portable across Linux/macOS/BSD.
+  - `liitem(name) -> Option<libc::nl_item>` — port of c:379-392. C walks the parallel `nl_names`/`nl_vals` arrays via `for (element = nl_names; *element; element++, nlcode++) if (!strcmp(...)) return nlcode;`. Rust uses a `match` on the name string against `libc::CODESET`/`libc::D_T_FMT`/etc. — functionally equivalent (same name → same nl_item integer mapping); collapses C's pointer return to `Option<nl_item>` since callers only need the integer value.
+  - `getlanginfo(name) -> Option<String>` — port of c:396-426. `liitem(name)?` lookup, then `nl_langinfo(*elem)`, then return the C string (or `None` for the c:425 PM_UNSET branch when the lookup misses or returns empty).
+  - `scanlanginfo() -> Vec<(String, String)>` — port of c:430-449. Walks NL_NAMES, calls `getlanginfo` for each, collects non-empty pairs.
+  - 6 module loaders are static-link no-ops with C-body-quoting doc-comments (c:472/479/487/494/501/508).
+  - 5/5 langinfo tests pass: `nl_names_includes_codeset`, `getlanginfo_codeset_is_some`, `getlanginfo_invalid_returns_none`, `liitem_codeset_resolves`, `scanlanginfo_emits_items`. Drift gate clean.
 
 - [x] `modules/nearcolor.rs` ↔ `Modules/nearcolor.c`
   - C: 1 struct (`cielab`) + 1 typedef (`Cielab` = `struct cielab *`). Rust: 1 struct `Cielab` ✓ (typedef-of-pointer collapses to `&Cielab`); 0 enums; no Rust-only types.
@@ -349,7 +357,6 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
 - [ ] `modules/mathfunc.rs` ↔ `Modules/mathfunc.c`
 - [ ] `modules/regex.rs` ↔ `Modules/regex.c`
 - [ ] `modules/zselect.rs` ↔ `Modules/zselect.c`
-- [ ] `modules/langinfo.rs` ↔ `Modules/langinfo.c`
 - [ ] `zle/zle_utils.rs` ↔ `Zle/zle_utils.c`
 - [ ] `zle/zle_hist.rs` ↔ `Zle/zle_hist.c`
 - [ ] `zle/zle_keymap.rs` ↔ `Zle/zle_keymap.c`
