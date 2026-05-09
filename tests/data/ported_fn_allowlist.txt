@@ -226,6 +226,30 @@ iwsep_byte
 # utils.c (zsh calls libc realpath directly). Kept for callsite shape.
 realpath
 
+# params.rs — Rust-only OnceLock<Mutex<…>> singleton accessors for the
+# C globals referenced by the special-param GSU callbacks (ifs, home,
+# term, etc.). C dereferences these globals directly; Rust port wraps
+# each in a OnceLock with a get-or-init helper because Rust can't
+# initialise statics with non-const values (env::var lookups, etc.)
+# at compile time. One helper per C global, all lazily initialised on
+# first param read. Same pattern as curses.rs windows_lock / utils.rs
+# scriptname_lock.
+ifs_lock
+home_lock
+term_lock
+wordchars_lock
+histchars_lock
+keyboardhack_lock
+histsiz_lock
+savehistsiz_lock
+zsh_terminfo_lock
+zsh_terminfodirs_lock
+cached_username_lock
+pipestats_lock
+shtimer_lock
+pparams_lock
+zunderscore_lock
+
 # utils.rs zwarn/zerrnam family — module-static get/setters for the
 # C globals scriptname / argzero / errflag / noerrs / locallevel /
 # lineno (declared in Src/init.c, populated by the parser/source/fn
@@ -247,3 +271,4 @@ set_lineno
 set_shinstdin
 zwarning
 errflag
+argzero
