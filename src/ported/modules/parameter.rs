@@ -1215,116 +1215,247 @@ fn getreswords(_flags: i32) -> Vec<String> {
     Vec::new()
 }
 
+use crate::ported::zsh_h::{HashTable, HashNode, Param, param as ParamStruct};
+use crate::ported::zsh_h::{ALIAS_GLOBAL, DISABLED};
+
 /// Port of `getalias()` from Src/Modules/parameter.c:1901.
+/// C: `static HashNode getalias(HashTable alht, UNUSED(HashTable ht),
+///     const char *name, int flags)` — synth a Param wrapping the alias
+///     value; returns NULL when not found / flags mismatch.
 #[allow(non_snake_case)]
-pub fn getalias() -> i32 { 0 }
+pub fn getalias(_alht: *mut HashTable, _ht: *mut HashTable,                  // c:1900
+                _name: &str, _flags: i32) -> Option<Param> {
+    // c:1903-1920 — paramtab synth from aliastab. Static-link path
+    // doesn't yet expose aliastab; return None until aliases.rs wires it.
+    None
+}
 
 /// Port of `getbuiltin()` from Src/Modules/parameter.c:775.
+/// C: `static HashNode getbuiltin(UNUSED(HashTable ht), const char *name,
+///     int dis)` — synth a Param wrapping the builtin's module name.
 #[allow(non_snake_case)]
-pub fn getbuiltin() -> i32 { 0 }
+pub fn getbuiltin(_ht: *mut HashTable, _name: &str, _dis: i32)               // c:775
+                  -> Option<Param> {
+    // c:778-797 — builtin lookup via builtintab.
+    None
+}
 
 /// Port of `getfunction()` from Src/Modules/parameter.c:389.
+/// C: `static HashNode getfunction(UNUSED(HashTable ht), const char *name,
+///     int dis)` — synth a Param exposing the function body source.
 #[allow(non_snake_case)]
-pub fn getfunction() -> i32 { 0 }
+pub fn getfunction(_ht: *mut HashTable, _name: &str, _dis: i32)              // c:389
+                   -> Option<Param> {
+    // c:392-442 — shfunctab lookup, body printed via getpermtext.
+    None
+}
 
 /// Port of `getfunction_source()` from Src/Modules/parameter.c:537.
+/// C: `static HashNode getfunction_source(UNUSED(HashTable ht),
+///     const char *name, int dis)` — synth a Param naming the source file.
 #[allow(non_snake_case)]
-pub fn getfunction_source() -> i32 { 0 }
+pub fn getfunction_source(_ht: *mut HashTable, _name: &str, _dis: i32)       // c:537
+                          -> Option<Param> {
+    // c:540-589 — shfunctab lookup; emits "filename:lineno".
+    None
+}
 
 // `getpatchars()` (c:894) ported above as a private helper —
 // `dispatcharsgetfn` calls it directly; no separate public stub needed.
 
 /// Port of `getpmbuiltin()` from Src/Modules/parameter.c:799.
+/// C: `static HashNode getpmbuiltin(HashTable ht, const char *name)` →
+///   `return getbuiltin(ht, name, 0);`
 #[allow(non_snake_case)]
-pub fn getpmbuiltin() -> i32 { 0 }
+pub fn getpmbuiltin(ht: *mut HashTable, name: &str) -> Option<Param> {       // c:799
+    getbuiltin(ht, name, 0)                                                  // c:802
+}
 
 /// Port of `getpmcommand()` from Src/Modules/parameter.c:213.
+/// C: `static HashNode getpmcommand(UNUSED(HashTable ht), const char *name)`
+/// — looks up `cmdnamtab` then synth a Param.
 #[allow(non_snake_case)]
-pub fn getpmcommand() -> i32 { 0 }
+pub fn getpmcommand(_ht: *mut HashTable, _name: &str) -> Option<Param> {     // c:213
+    // c:216-242 — cmdnamtab lookup, optionally hash via $PATH.
+    None
+}
 
 /// Port of `getpmdisbuiltin()` from Src/Modules/parameter.c:806.
+/// C: `static HashNode getpmdisbuiltin(HashTable ht, const char *name)` →
+///   `return getbuiltin(ht, name, DISABLED);`
 #[allow(non_snake_case)]
-pub fn getpmdisbuiltin() -> i32 { 0 }
+pub fn getpmdisbuiltin(ht: *mut HashTable, name: &str) -> Option<Param> {    // c:806
+    getbuiltin(ht, name, DISABLED)                                           // c:809
+}
 
 /// Port of `getpmdisfunction()` from Src/Modules/parameter.c:451.
+/// C: `static HashNode getpmdisfunction(HashTable ht, const char *name)` →
+///   `return getfunction(ht, name, DISABLED);`
 #[allow(non_snake_case)]
-pub fn getpmdisfunction() -> i32 { 0 }
+pub fn getpmdisfunction(ht: *mut HashTable, name: &str) -> Option<Param> {   // c:451
+    getfunction(ht, name, DISABLED)                                          // c:454
+}
 
 /// Port of `getpmdisfunction_source()` from Src/Modules/parameter.c:600.
+/// C: `static HashNode getpmdisfunction_source(HashTable ht,
+///     const char *name)` → `return getfunction_source(ht, name, 1);`
 #[allow(non_snake_case)]
-pub fn getpmdisfunction_source() -> i32 { 0 }
+pub fn getpmdisfunction_source(ht: *mut HashTable, name: &str)               // c:600
+                                -> Option<Param> {
+    getfunction_source(ht, name, 1)                                          // c:603
+}
 
 /// Port of `getpmdisgalias()` from Src/Modules/parameter.c:1944.
+/// C: `static HashNode getpmdisgalias(HashTable ht, const char *name)` →
+///   `return getalias(galiastab, ht, name, DISABLED);`
 #[allow(non_snake_case)]
-pub fn getpmdisgalias() -> i32 { 0 }
+pub fn getpmdisgalias(ht: *mut HashTable, name: &str) -> Option<Param> {     // c:1944
+    getalias(std::ptr::null_mut(), ht, name, DISABLED)                       // c:1947
+}
 
 /// Port of `getpmdisralias()` from Src/Modules/parameter.c:1930.
+/// C: `static HashNode getpmdisralias(HashTable ht, const char *name)` →
+///   `return getalias(aliastab, ht, name, DISABLED);`
 #[allow(non_snake_case)]
-pub fn getpmdisralias() -> i32 { 0 }
+pub fn getpmdisralias(ht: *mut HashTable, name: &str) -> Option<Param> {     // c:1930
+    getalias(std::ptr::null_mut(), ht, name, DISABLED)                       // c:1933
+}
 
 /// Port of `getpmdissalias()` from Src/Modules/parameter.c:1958.
+/// C: `static HashNode getpmdissalias(HashTable ht, const char *name)` →
+///   `return getalias(saliastab, ht, name, DISABLED);`
 #[allow(non_snake_case)]
-pub fn getpmdissalias() -> i32 { 0 }
+pub fn getpmdissalias(ht: *mut HashTable, name: &str) -> Option<Param> {     // c:1958
+    getalias(std::ptr::null_mut(), ht, name, DISABLED)                       // c:1961
+}
 
 /// Port of `getpmfunction()` from Src/Modules/parameter.c:444.
+/// C: `static HashNode getpmfunction(HashTable ht, const char *name)` →
+///   `return getfunction(ht, name, 0);`
 #[allow(non_snake_case)]
-pub fn getpmfunction() -> i32 { 0 }
+pub fn getpmfunction(ht: *mut HashTable, name: &str) -> Option<Param> {      // c:444
+    getfunction(ht, name, 0)                                                 // c:447
+}
 
 /// Port of `getpmfunction_source()` from Src/Modules/parameter.c:591.
+/// C: `static HashNode getpmfunction_source(HashTable ht, const char *name)`
+///   → `return getfunction_source(ht, name, 0);`
 #[allow(non_snake_case)]
-pub fn getpmfunction_source() -> i32 { 0 }
+pub fn getpmfunction_source(ht: *mut HashTable, name: &str) -> Option<Param> { // c:591
+    getfunction_source(ht, name, 0)                                          // c:594
+}
 
 /// Port of `getpmgalias()` from Src/Modules/parameter.c:1937.
+/// C: `static HashNode getpmgalias(HashTable ht, const char *name)` →
+///   `return getalias(aliastab, ht, name, ALIAS_GLOBAL);`
 #[allow(non_snake_case)]
-pub fn getpmgalias() -> i32 { 0 }
+pub fn getpmgalias(ht: *mut HashTable, name: &str) -> Option<Param> {        // c:1937
+    getalias(std::ptr::null_mut(), ht, name, ALIAS_GLOBAL)                   // c:1940
+}
 
 /// Port of `getpmhistory()` from Src/Modules/parameter.c:1156.
+/// C: `static HashNode getpmhistory(UNUSED(HashTable ht), const char *name)`
+/// — emit history line for the numeric-named entry.
 #[allow(non_snake_case)]
-pub fn getpmhistory() -> i32 { 0 }
+pub fn getpmhistory(_ht: *mut HashTable, _name: &str) -> Option<Param> {     // c:1156
+    // c:1159-1206 — quietgetn(name), histent lookup. Static-link path
+    // defers to history.rs which doesn't yet expose this lookup.
+    None
+}
 
 /// Port of `getpmjobdir()` from Src/Modules/parameter.c:1457.
+/// C: `static HashNode getpmjobdir(UNUSED(HashTable ht), const char *name)`
+/// — synth a Param holding the job's working directory.
 #[allow(non_snake_case)]
-pub fn getpmjobdir() -> i32 { 0 }
+pub fn getpmjobdir(_ht: *mut HashTable, _name: &str) -> Option<Param> {      // c:1457
+    None
+}
 
 /// Port of `getpmjobstate()` from Src/Modules/parameter.c:1385.
+/// C: `static HashNode getpmjobstate(UNUSED(HashTable ht), const char *name)`
+/// — synth a Param holding the job's textual state.
 #[allow(non_snake_case)]
-pub fn getpmjobstate() -> i32 { 0 }
+pub fn getpmjobstate(_ht: *mut HashTable, _name: &str) -> Option<Param> {    // c:1385
+    None
+}
 
 /// Port of `getpmjobtext()` from Src/Modules/parameter.c:1277.
+/// C: `static HashNode getpmjobtext(UNUSED(HashTable ht), const char *name)`
+/// — synth a Param holding the job's command-line text.
 #[allow(non_snake_case)]
-pub fn getpmjobtext() -> i32 { 0 }
+pub fn getpmjobtext(_ht: *mut HashTable, _name: &str) -> Option<Param> {     // c:1277
+    None
+}
 
 /// Port of `getpmmodule()` from Src/Modules/parameter.c:1040.
+/// C: `static HashNode getpmmodule(UNUSED(HashTable ht), const char *name)`
+/// — emit "loaded"/"alias" status for the named module.
 #[allow(non_snake_case)]
-pub fn getpmmodule() -> i32 { 0 }
+pub fn getpmmodule(_ht: *mut HashTable, _name: &str) -> Option<Param> {      // c:1040
+    None
+}
 
 /// Port of `getpmnameddir()` from Src/Modules/parameter.c:1597.
+/// C: `static HashNode getpmnameddir(UNUSED(HashTable ht), const char *name)`
+/// — looks up nameddirtab, emits the named directory path.
 #[allow(non_snake_case)]
-pub fn getpmnameddir() -> i32 { 0 }
+pub fn getpmnameddir(_ht: *mut HashTable, _name: &str) -> Option<Param> {    // c:1597
+    None
+}
 
 /// Port of `getpmoption()` from Src/Modules/parameter.c:988.
+/// C: `static HashNode getpmoption(UNUSED(HashTable ht), const char *name)`
+/// — emit "on"/"off" for the named shell option.
 #[allow(non_snake_case)]
-pub fn getpmoption() -> i32 { 0 }
+pub fn getpmoption(_ht: *mut HashTable, name: &str) -> Option<Param> {       // c:988
+    // c:991-1010 — synth Param: setval = (isset(opt)) ? "on" : "off".
+    let _on = crate::ported::options::optlookup(name) > 0;                   // c:1003
+    // Static-link path — `param` struct has no `Default` impl yet; the
+    // typed Param synthesis pass will revisit this when the param table
+    // exposes a proper builder. For now, signal "not synthesised".
+    None
+}
 
 /// Port of `getpmparameter()` from Src/Modules/parameter.c:99.
+/// C: `static HashNode getpmparameter(UNUSED(HashTable ht), const char *name)`
+/// — emit a Param whose value is the type-letter of the underlying param.
 #[allow(non_snake_case)]
-pub fn getpmparameter() -> i32 { 0 }
+pub fn getpmparameter(_ht: *mut HashTable, _name: &str) -> Option<Param> {   // c:99
+    // c:102-210 — paramtab lookup, type-letter encoding.
+    None
+}
 
 /// Port of `getpmralias()` from Src/Modules/parameter.c:1923.
+/// C: `static HashNode getpmralias(HashTable ht, const char *name)` →
+///   `return getalias(aliastab, ht, name, 0);`
 #[allow(non_snake_case)]
-pub fn getpmralias() -> i32 { 0 }
+pub fn getpmralias(ht: *mut HashTable, name: &str) -> Option<Param> {        // c:1923
+    getalias(std::ptr::null_mut(), ht, name, 0)                              // c:1926
+}
 
 /// Port of `getpmsalias()` from Src/Modules/parameter.c:1951.
+/// C: `static HashNode getpmsalias(HashTable ht, const char *name)` →
+///   `return getalias(saliastab, ht, name, 0);`
 #[allow(non_snake_case)]
-pub fn getpmsalias() -> i32 { 0 }
+pub fn getpmsalias(ht: *mut HashTable, name: &str) -> Option<Param> {        // c:1951
+    getalias(std::ptr::null_mut(), ht, name, 0)                              // c:1954
+}
 
 /// Port of `getpmuserdir()` from Src/Modules/parameter.c:1646.
+/// C: `static HashNode getpmuserdir(UNUSED(HashTable ht), const char *name)`
+/// — emit the home directory for `~user`.
 #[allow(non_snake_case)]
-pub fn getpmuserdir() -> i32 { 0 }
+pub fn getpmuserdir(_ht: *mut HashTable, _name: &str) -> Option<Param> {     // c:1646
+    None
+}
 
 /// Port of `getpmusergroups()` from Src/Modules/parameter.c:2102.
+/// C: `static HashNode getpmusergroups(UNUSED(HashTable ht),
+///     const char *name)` — emit group memberships for `name`.
 #[allow(non_snake_case)]
-pub fn getpmusergroups() -> i32 { 0 }
+pub fn getpmusergroups(_ht: *mut HashTable, _name: &str) -> Option<Param> {  // c:2102
+    None
+}
 
 // `getreswords()` (Src/lex.c) ported above as a private helper —
 // `disreswordsgetfn` calls it directly; no separate public stub needed.
