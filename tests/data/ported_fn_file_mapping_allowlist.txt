@@ -78,3 +78,7 @@ src/ported/zle/zle_bindings.rs::bindkey
 src/ported/zle/zle_bindings.rs::getkeystring
 src/ported/zle/zle_bindings.rs::printbind
 src/ported/zle/zle_bindings.rs::bindlistout
+# Port of `#define zistype(X,Y)` macro from Src/ztype.h:47. C indexes
+# it as `utils.c:zistype` because the macro is consumed inline in
+# utils.c; the canonical home is ztype.h which we map to ztype.rs.
+src/ported/ztype.rs::zistype

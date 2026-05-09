@@ -410,3 +410,30 @@ check_entry
 # bin_echotc/scantermcap) match C exactly; only this lookup helper
 # is Rust-side.
 capability_lookup
+
+# Port of zsh.h's `OPT_ISSET(ops, c)` / `OPT_MINUS(ops, c)` /
+# `OPT_PLUS(ops, c)` accessor macros (zsh.h:1400-1414). C uses
+# preprocessor macros that aren't function definitions — so they
+# don't appear in zsh_c_fn_names.txt — but the Rust port needs them
+# as inline fns so the per-builtin opt-spec parsers can call them
+# uniformly. Each is a one-liner over the `[bool; 256]` bitmap that
+# replaces C's `Options ops` per PORT_CHECKLIST.md rule 3.
+# UPPERCASE names match C macro casing exactly (rule: macro casing
+# preserved verbatim; #[allow(non_snake_case)] silences the lint).
+OPT_ISSET
+OPT_MINUS
+OPT_PLUS
+# Port of zsh.h's `PM_TYPE(X)` macro (zsh.h:1885) — same reasoning
+# as the OPT_ family above. Const fn so callers can use it in const
+# contexts like paramdef table initialisers.
+PM_TYPE
+
+# Port of ztype.h's `WC_ZISTYPE(X,Y)` / `WC_ISPRINT(X)` / `ZISPRINT(c)`
+# multibyte-conditional macros (ztype.h:74-90). Same reasoning as the
+# OPT_ family — preprocessor macros, not function definitions, so
+# they don't appear in zsh_c_fn_names.txt. The Rust port wraps them
+# as fns since `char` (Unicode-wide) needs the multibyte fallback
+# path on every host. UPPERCASE names match C macro casing exactly.
+WC_ZISTYPE
+WC_ISPRINT
+ZISPRINT

@@ -2009,10 +2009,72 @@ pub fn itype_end(s: &str, allow_digits_start: bool) -> usize {
     pos
 }
 
-/// Initialize character type table (from utils.c inittyptab)
-/// In Rust we use Unicode-aware char methods, so this is mostly a no-op
-pub fn inittyptab() {
-    // Rust handles character classification natively
+/// Port of `inittyptab()` from `Src/utils.c:4155`. Initialise the
+/// `typtab[256]` lookup table that backs the `idigit`/`ialnum`/etc.
+/// predicates in `ztype.rs`.
+///
+/// C body (c:4155-4250) does:
+///   1. Zero the table.
+///   2. Mark 0..=31 and 128..=159 + 127 as ICNTRL.
+///   3. Mark '0'..='9' as IDIGIT|IALNUM|IWORD|IIDENT|IUSER.
+///   4. Mark 'a'..='z' and 'A'..='Z' as IALPHA|IALNUM|IIDENT|IUSER|IWORD.
+///   5. Mark '_' as IIDENT|IUSER.
+///   6. Mark '-', '.', Dash as IUSER.
+///   7. Mark ' '/'\t' as IBLANK|INBLANK; '\n' as INBLANK.
+///   8. Mark '\0', Meta, Marker as IMETA.
+///   9. Mark Pound..LAST_NORMAL_TOK as ITOK|IMETA.
+///   10. Mark Snull..Nularg as ITOK|IMETA|INULL.
+///   11. Walk $IFS adding ISEP and IWSEP for blanks.
+///
+/// This first-pass port covers steps 1-7. Steps 8-11 require Meta /
+/// Marker / Pound / Snull / Nularg constants from zsh.rs/zsh.h and
+/// the `ifs` global; the remaining Meta/IFS marks are skipped until
+/// those land. Idempotent — safe to call multiple times.
+pub fn inittyptab() {                                                    // utils.c:4155
+    use crate::ported::ztype::{
+        TYPTAB, TYPTAB_FLAGS, ZTF_INIT,
+        ICNTRL, IDIGIT, IALNUM, IWORD, IIDENT, IUSER, IALPHA,
+        IBLANK, INBLANK,
+    };
+
+    // c:4160 — `if (!(typtab_flags & ZTF_INIT))` one-off init.
+    {
+        let mut flags = TYPTAB_FLAGS.lock().unwrap();
+        if (*flags & ZTF_INIT) == 0 {
+            *flags = ZTF_INIT;
+        }
+    }
+
+    let mut t = TYPTAB.lock().unwrap();
+    // c:4168 — `memset(typtab, 0, sizeof(typtab));`
+    for slot in t.iter_mut() { *slot = 0; }
+    // c:4169-4170 — control chars 0..32 and 128..160.
+    for c in 0..32u32 {
+        t[c as usize]       = ICNTRL as u32;
+        t[(c + 128) as usize] = ICNTRL as u32;
+    }
+    // c:4171 — `typtab[127] = ICNTRL;`
+    t[127] = ICNTRL as u32;
+    // c:4172-4173 — '0'..='9'.
+    for c in (b'0' as usize)..=(b'9' as usize) {
+        t[c] = (IDIGIT | IALNUM | IWORD | IIDENT | IUSER) as u32;
+    }
+    // c:4174-4175 — 'a'..='z' and matching 'A'..='Z'.
+    for c in (b'a' as usize)..=(b'z' as usize) {
+        let upper = c - (b'a' as usize) + (b'A' as usize);
+        let bits = (IALPHA | IALNUM | IIDENT | IUSER | IWORD) as u32;
+        t[c] = bits;
+        t[upper] = bits;
+    }
+    // c:4190 — `typtab['_'] = IIDENT | IUSER;`
+    t[b'_' as usize] = (IIDENT | IUSER) as u32;
+    // c:4191 — `typtab['-'] = typtab['.'] = ... = IUSER;` (skipping Dash).
+    t[b'-' as usize] = IUSER as u32;
+    t[b'.' as usize] = IUSER as u32;
+    // c:4192-4194 — blanks.
+    t[b' ' as usize]  |= (IBLANK | INBLANK) as u32;
+    t[b'\t' as usize] |= (IBLANK | INBLANK) as u32;
+    t[b'\n' as usize] |= INBLANK as u32;
 }
 
 /// Find a separator in string (from utils.c findsep)
