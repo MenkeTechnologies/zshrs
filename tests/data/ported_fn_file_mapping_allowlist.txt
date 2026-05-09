@@ -82,3 +82,11 @@ src/ported/zle/zle_bindings.rs::bindlistout
 # it as `utils.c:zistype` because the macro is consumed inline in
 # utils.c; the canonical home is ztype.h which we map to ztype.rs.
 src/ported/ztype.rs::zistype
+
+# Port of zsh_system.h's per-platform stat-time-nanosecond accessor
+# macros (zsh_system.h:877-897). C indexes them from the call sites
+# (cond.c, glob.c, stat.c — wherever stat() results are inspected);
+# canonical home is zsh_system.h which maps to zsh_system.rs.
+src/ported/zsh_system.rs::GET_ST_ATIME_NSEC
+src/ported/zsh_system.rs::GET_ST_MTIME_NSEC
+src/ported/zsh_system.rs::GET_ST_CTIME_NSEC
