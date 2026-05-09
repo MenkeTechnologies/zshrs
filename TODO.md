@@ -61,9 +61,9 @@ ticked DONE in PORT_CHECKLIST.md:
   flag parsing + select() call, matching `bin_zselect()` at
   zselect.c:67-200 line-by-line. ~300-line rewrite.
 
-- `modules/langinfo.rs` — `LangInfoItem` enum (probably). C
-  langinfo.c has zero structs/enums. Fix path: replace with
-  raw `nl_item` integer keys matching the libc enum.
+- `modules/langinfo.rs` — DONE. Earlier `LangInfoItem` already
+  deleted; liitem already returns raw `Option<libc::nl_item>`.
+  Tests pass: 5/5.
 
 - `modules/ksh93.rs` — DONE. Earlier `Ksh93Params`/`NamerefOptions`
   already deleted; matchgetfn signature updated to take
