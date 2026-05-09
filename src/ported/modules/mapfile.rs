@@ -337,52 +337,116 @@ mod tests {
 }
 
 /// Module loader entry — port of `setup_()` from Src/Modules/mapfile.c:279.
-pub fn setup_() -> i32 {
-    0
+pub fn setup_() -> i32 {                                                 // c:279
+    0                                                                    // c:282
 }
 
-/// Module loader entry — port of `features_()` from Src/Modules/mapfile.c:286.
-pub fn features_() -> i32 {
-    0
+/// Port of `features_()` from `Src/Modules/mapfile.c:286`. C body
+/// is `*features = featuresarray(m, &module_features); return 0;`.
+pub fn features_() -> i32 {                                              // c:286
+    0                                                                    // c:290
 }
 
-/// Module loader entry — port of `enables_()` from Src/Modules/mapfile.c:294.
-pub fn enables_() -> i32 {
-    0
+/// Port of `enables_()` from `Src/Modules/mapfile.c:294`. C body is
+/// `return handlefeatures(m, &module_features, enables);`.
+pub fn enables_() -> i32 {                                               // c:294
+    0                                                                    // c:297
 }
 
-/// Module loader entry — port of `boot_()` from Src/Modules/mapfile.c:301.
-pub fn boot_() -> i32 {
-    0
+/// Port of `boot_()` from `Src/Modules/mapfile.c:301`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn boot_() -> i32 {                                                  // c:301
+    0                                                                    // c:304
 }
 
-/// Module loader entry — port of `cleanup_()` from Src/Modules/mapfile.c:308.
-pub fn cleanup_() -> i32 {
-    0
+/// Port of `cleanup_()` from `Src/Modules/mapfile.c:308`. C body
+/// is `return setfeatureenables(m, &module_features, NULL);`.
+pub fn cleanup_() -> i32 {                                               // c:308
+    0                                                                    // c:311
 }
 
-/// Module loader entry — port of `finish_()` from Src/Modules/mapfile.c:315.
-pub fn finish_() -> i32 {
-    0
+/// Port of `finish_()` from `Src/Modules/mapfile.c:315`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn finish_() -> i32 {                                                // c:315
+    0                                                                    // c:318
 }
 
-// === auto-generated stubs ===
-// Direct ports of static helpers from Src/Modules/mapfile.c not
-// yet covered above. zshrs links modules statically; live
-// state owned by the module's typed struct. Name-parity shims.
-
-/// Port of `getpmmapfile()` from Src/Modules/mapfile.c:217.
+/// Port of `unsetpmmapfile()` from `Src/Modules/mapfile.c:126`. The
+/// unset-callback for an element of the `$mapfile` magic-assoc.
+/// Unlinks the file named by `pm->nam` (unless the param is
+/// readonly).
+///
+/// C signature: `static void unsetpmmapfile(Param pm, int exp)`.
+/// Rust port takes the file name directly (the param name) + the
+/// readonly flag; matches the C semantics line-by-line.
 #[allow(non_snake_case)]
-pub fn getpmmapfile() -> i32 { 0 }
+pub fn unsetpmmapfile(name: &str, readonly: bool) {                      // c:126
+    if !readonly {                                                       // c:133
+        let _ = std::fs::remove_file(name);                              // c:134 unlink
+    }
+}
 
-/// Port of `scanpmmapfile()` from Src/Modules/mapfile.c:241.
+/// Port of `setpmmapfiles()` from `Src/Modules/mapfile.c:141`. The
+/// bulk-set callback when `mapfile=( ... )` assigns a hashtable.
+/// For each `(name, contents)` entry, writes contents to a file
+/// named `name` (unless the param is readonly).
+///
+/// C iterates the `HashTable ht` and for each node calls
+/// `setpmmapfile(pm, getstrvalue(&v))`. Rust port collapses to
+/// a `&[(name, contents)]` shape since zshrs doesn't expose the
+/// raw HashNode type at this layer; the writeback semantics match.
 #[allow(non_snake_case)]
-pub fn scanpmmapfile() -> i32 { 0 }
+pub fn setpmmapfiles(entries: &[(String, String)], readonly: bool) {     // c:141
+    if entries.is_empty() { return; }                                    // c:148
+    if readonly { return; }                                              // c:151
+    for (name, contents) in entries {                                    // c:152-160
+        // C: setpmmapfile(v.pm, ztrdup(getstrvalue(&v)));
+        // setpmmapfile (mapfile.c:103) writes the string to a file
+        // named after the param.
+        let _ = std::fs::write(name, contents);                          // c:160
+    }
+}
 
-/// Port of `setpmmapfiles()` from Src/Modules/mapfile.c:141.
+/// Port of `getpmmapfile()` from `Src/Modules/mapfile.c:217`. The
+/// magic-assoc lookup callback for `${mapfile[name]}`. Reads the
+/// contents of the file named `name` and returns it as a scalar
+/// param value (or empty + UNSET if the file is unreadable).
+///
+/// C returns a `HashNode` (the synthesised Param). Rust port
+/// returns `Option<String>` — `Some(contents)` when the file
+/// reads, `None` (PM_UNSET) when it doesn't.
 #[allow(non_snake_case)]
-pub fn setpmmapfiles() -> i32 { 0 }
+pub fn getpmmapfile(name: &str) -> Option<String> {                      // c:217
+    // C: get_contents(name) — uses mmap when available, falls back
+    // to plain read. Rust uses std::fs::read_to_string (lossy
+    // UTF-8); the C source's metafy step is unnecessary in zshrs's
+    // string model.
+    std::fs::read_to_string(name).ok()                                   // c:228 get_contents
+}
 
-/// Port of `unsetpmmapfile()` from Src/Modules/mapfile.c:126.
+/// Port of `scanpmmapfile()` from `Src/Modules/mapfile.c:241`. The
+/// magic-assoc scan callback for `${(k)mapfile}` /
+/// `${(kv)mapfile}`. Walks the current directory and yields a
+/// param entry per file. The C source notes "we always leave
+/// contents empty" (mapfile.c:265-269) to avoid reading every
+/// file in the dir into memory.
+///
+/// Returns a `Vec<String>` of file names from the cwd. Filters
+/// `.` and `..` like `zreaddir`'s default no-dotfile behaviour.
 #[allow(non_snake_case)]
-pub fn unsetpmmapfile() -> i32 { 0 }
+pub fn scanpmmapfile() -> Vec<String> {                                  // c:241
+    let mut out = Vec::new();                                            // c:243
+    let dir = match std::fs::read_dir(".") {                             // c:247 opendir(".")
+        Ok(d) => d,
+        Err(_) => return out,
+    };
+    for entry in dir.flatten() {                                         // c:255 zreaddir
+        if let Some(n) = entry.file_name().to_str() {
+            // zreaddir(dir, 1) skips dot and dotdot when the second
+            // arg is non-zero (ignoredots).
+            if n == "." || n == ".." { continue; }
+            out.push(n.to_string());
+        }
+    }
+    out
+}

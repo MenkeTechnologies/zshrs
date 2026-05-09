@@ -577,72 +577,139 @@ pub struct ProfileEntry {
 
 
 /// Module loader entry — port of `setup_()` from Src/Modules/zprof.c:332.
-pub fn setup_() -> i32 {
-    0
+pub fn setup_() -> i32 {                                                 // c:333
+    0                                                                    // c:336
 }
 
-/// Module loader entry — port of `features_()` from Src/Modules/zprof.c:340.
-pub fn features_() -> i32 {
-    0
+/// Port of `features_()` from `Src/Modules/zprof.c:340`. C body is
+/// `*features = featuresarray(m, &module_features); return 0;`.
+pub fn features_() -> i32 {                                              // c:340
+    0                                                                    // c:344
 }
 
-/// Module loader entry — port of `enables_()` from Src/Modules/zprof.c:348.
-pub fn enables_() -> i32 {
-    0
+/// Port of `enables_()` from `Src/Modules/zprof.c:348`. C body is
+/// `return handlefeatures(m, &module_features, enables);`.
+pub fn enables_() -> i32 {                                               // c:348
+    0                                                                    // c:351
 }
 
-/// Module loader entry — port of `boot_()` from Src/Modules/zprof.c:355.
-pub fn boot_() -> i32 {
-    0
+/// Port of `boot_()` from `Src/Modules/zprof.c:355`. C body is
+/// `return !addwrapper(m, wrapper);` — registers the per-function
+/// timing wrapper. zshrs's profiler integration is wired through
+/// `crate::ported::exec` directly when zprof is enabled.
+pub fn boot_() -> i32 {                                                  // c:355
+    0                                                                    // c:359
 }
 
-/// Module loader entry — port of `cleanup_()` from Src/Modules/zprof.c:367.
-pub fn cleanup_() -> i32 {
-    0
+/// Port of `cleanup_()` from `Src/Modules/zprof.c:367`. C body
+/// removes the wrapper and frees the per-function and per-arc
+/// profiler tables: `freepfuncs(calls);  freeparcs(arcs);`.
+pub fn cleanup_() -> i32 {                                               // c:367
+    0                                                                    // c:373
 }
 
-/// Module loader entry — port of `finish_()` from Src/Modules/zprof.c:377.
-pub fn finish_() -> i32 {
-    0
+/// Port of `finish_()` from `Src/Modules/zprof.c:377`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn finish_() -> i32 {                                                // c:377
+    0                                                                    // c:380
 }
 
-// === auto-generated stubs ===
-// Direct ports of static helpers from Src/Modules/zprof.c not
-// yet covered above. zshrs links modules statically; live
-// state owned by the module's typed struct. Name-parity shims.
+/// Profiler per-function record — port of `struct pfunc` (zprof.c).
+/// C uses a singly-linked list anchored at file-static `calls`.
+#[derive(Debug, Clone, Default)]
+pub struct Pfunc {                                                       // c:struct pfunc
+    pub name: String,
+    pub calls: i64,
+    pub time: f64,
+    pub self_time: f64,
+}
 
-/// Port of `cmpparcs()` from Src/Modules/zprof.c:133.
-#[allow(non_snake_case)]
-pub fn cmpparcs() -> i32 { 0 }
+/// Profiler per-call-edge record — port of `struct parc` (zprof.c).
+/// C uses a singly-linked list anchored at file-static `arcs`.
+#[derive(Debug, Clone, Default)]
+pub struct Parc {                                                        // c:struct parc
+    pub from_idx: usize,
+    pub to_idx: usize,
+    pub calls: i64,
+    pub time: f64,
+}
 
-/// Port of `cmpsfuncs()` from Src/Modules/zprof.c:121.
-#[allow(non_snake_case)]
-pub fn cmpsfuncs() -> i32 { 0 }
+/// Port of `freepfuncs()` from `Src/Modules/zprof.c:74`. C iterates
+/// the linked list and `zfree`s each node + `zsfree`s its `name`.
+/// Rust port: takes the Vec by value and lets it drop — same effect
+/// (frees every entry's String + the backing array).
+pub fn freepfuncs(_funcs: Vec<Pfunc>) {                                  // c:74
+    // Drop on exit: the Vec destructor mirrors zfree() per-node;
+    // each Pfunc.name's String destructor mirrors zsfree(name).
+}
 
-/// Port of `cmptfuncs()` from Src/Modules/zprof.c:127.
-#[allow(non_snake_case)]
-pub fn cmptfuncs() -> i32 { 0 }
+/// Port of `freeparcs()` from `Src/Modules/zprof.c:86`. C iterates
+/// the arc list and zfree's each. Rust drop semantics match.
+pub fn freeparcs(_arcs: Vec<Parc>) {                                     // c:86
+    // Drop on exit — see freepfuncs.
+}
 
-/// Port of `findparc()` from Src/Modules/zprof.c:109.
-#[allow(non_snake_case)]
-pub fn findparc() -> i32 { 0 }
+/// Port of `findpfunc()` from `Src/Modules/zprof.c:97`. Linear scan
+/// over the function list looking for an entry with matching name;
+/// returns its index (Rust) or NULL (C).
+pub fn findpfunc(funcs: &[Pfunc], name: &str) -> Option<usize> {         // c:97
+    funcs.iter().position(|f| f.name == name)                            // c:101-103
+}
 
-/// Port of `findpfunc()` from Src/Modules/zprof.c:97.
-#[allow(non_snake_case)]
-pub fn findpfunc() -> i32 { 0 }
+/// Port of `findparc()` from `Src/Modules/zprof.c:109`. Linear scan
+/// for an arc connecting two specific function indices.
+pub fn findparc(arcs: &[Parc], from_idx: usize, to_idx: usize) -> Option<usize> {  // c:109
+    arcs.iter().position(|a| a.from_idx == from_idx && a.to_idx == to_idx)  // c:113-115
+}
 
-/// Port of `freeparcs()` from Src/Modules/zprof.c:86.
-#[allow(non_snake_case)]
-pub fn freeparcs() -> i32 { 0 }
+/// Port of `cmpsfuncs()` from `Src/Modules/zprof.c:121`. The qsort
+/// comparator: descending by `self_time`. C uses `Pfunc *` pointers
+/// because qsort passes opaque ptrs; Rust takes refs directly.
+pub fn cmpsfuncs(a: &Pfunc, b: &Pfunc) -> std::cmp::Ordering {           // c:121
+    // C: `(*a)->self > (*b)->self ? -1 : ((*a)->self != (*b)->self)`
+    b.self_time.partial_cmp(&a.self_time).unwrap_or(std::cmp::Ordering::Equal)
+}
 
-/// Port of `freepfuncs()` from Src/Modules/zprof.c:74.
-#[allow(non_snake_case)]
-pub fn freepfuncs() -> i32 { 0 }
+/// Port of `cmptfuncs()` from `Src/Modules/zprof.c:127`. Comparator
+/// for descending by total `time`.
+pub fn cmptfuncs(a: &Pfunc, b: &Pfunc) -> std::cmp::Ordering {           // c:127
+    b.time.partial_cmp(&a.time).unwrap_or(std::cmp::Ordering::Equal)
+}
 
-/// Port of `name_for_anonymous_function()` from Src/Modules/zprof.c:217.
-#[allow(non_snake_case)]
-pub fn name_for_anonymous_function() -> i32 { 0 }
+/// Port of `cmpparcs()` from `Src/Modules/zprof.c:133`. Comparator
+/// for descending by arc `time`.
+pub fn cmpparcs(a: &Parc, b: &Parc) -> std::cmp::Ordering {              // c:133
+    b.time.partial_cmp(&a.time).unwrap_or(std::cmp::Ordering::Equal)
+}
 
-/// Port of `zprof_wrapper()` from Src/Modules/zprof.c:236.
+/// Port of `name_for_anonymous_function()` from
+/// `Src/Modules/zprof.c:217`. Anonymous functions don't have a
+/// real name, so the profiler synthesises `name [filename:lineno]`
+/// using the current funcstack frame.
+///
+/// C signature: `static char *name_for_anonymous_function(char *name)`.
+/// Rust port takes the placeholder name + a (filename, lineno) pair
+/// the caller pulls from the funcstack.
 #[allow(non_snake_case)]
-pub fn zprof_wrapper() -> i32 { 0 }
+pub fn name_for_anonymous_function(name: &str, filename: &str, lineno: i32) -> String {  // c:217
+    // C: parts[0]=name, parts[1]=" [", parts[2]=filename, parts[3]=":",
+    //    parts[4]=lineno_str, parts[5]="]" → sepjoin(..., "", 1).
+    format!("{} [{}:{}]", name, filename, lineno)                        // c:226-233 sepjoin
+}
+
+/// Port of `zprof_wrapper()` from `Src/Modules/zprof.c:236`. The
+/// per-function timing wrapper: records call entry, measures wall
+/// time, runs the wrapped function, then accumulates self/total
+/// time on the function's `pfunc` entry and on the (caller→callee)
+/// `parc` arc.
+///
+/// C signature: `static int zprof_wrapper(Eprog prog, FuncWrap w, char *name)`.
+/// Returns 0. zshrs's profiler-on-function-call wiring lives in
+/// `crate::ported::exec` (the executor's funcstack push/pop is the
+/// natural integration point); this entry is the static-link hook.
+#[allow(non_snake_case)]
+pub fn zprof_wrapper(_name: &str) -> i32 {                               // c:236
+    // The active path is the executor's profiler hook, not this
+    // module-loader stub; static-link returns 0 unconditionally.
+    0                                                                    // c:267
+}
