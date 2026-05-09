@@ -518,6 +518,208 @@ mod jobs_visible {
     }
 }
 
+// ─────────────────────── xtrace -x parity ─────────────────────────────
+//
+// `zshrs -x --zsh` vs `zsh -fx`. Both flags enable xtrace from the
+// command line: zsh's `-x` is short for `setopt xtrace`. Each simple
+// command emits `<PS4>cmd_text\n` to stderr before running.
+//
+// PS4 default is `[34mzsh\tzsh\t%i\t%_[0m\t` — zsh's two-tab
+// scriptname/funcname/lineno/cmdstack format with cyan-blue color.
+// Both shells should produce byte-identical stderr for the same
+// script.
+
+mod xtrace_x_flag {
+    use super::*;
+
+    /// Helper: compare BOTH stdout AND stderr verbatim under `-x`.
+    /// stderr is the xtrace stream; stdout is the command output.
+    fn assert_x_parity(script: &str) {
+        if !zsh_available() {
+            return;
+        }
+        let z = Command::new(zsh_path())
+            .args(["-fxc", script])
+            .output()
+            .expect("invoke zsh");
+        let r = Command::new(zshrs_bin())
+            .args(["-x", "--zsh", "-fc", script])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("invoke zshrs");
+        let zout = String::from_utf8_lossy(&z.stdout);
+        let zerr = String::from_utf8_lossy(&z.stderr);
+        let rout = String::from_utf8_lossy(&r.stdout);
+        let rerr = String::from_utf8_lossy(&r.stderr);
+        assert_eq!(
+            zout, rout,
+            "stdout divergence on `{}`\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+            script, zout, rout
+        );
+        assert_eq!(
+            zerr, rerr,
+            "xtrace (stderr) divergence on `{}`\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+            script, zerr, rerr
+        );
+        assert_eq!(z.status.code(), r.status.code());
+    }
+
+    #[test]
+    fn simple_echo() {
+        assert_x_parity("echo hello");
+    }
+
+    #[test]
+    fn echo_multi_arg() {
+        assert_x_parity("echo a b c");
+    }
+
+    #[test]
+    fn echo_with_quoted_arg() {
+        assert_x_parity(r#"echo "hello world""#);
+    }
+
+    #[test]
+    fn arith_double_paren() {
+        assert_x_parity("(( 2 + 2 ))");
+    }
+
+    #[test]
+    fn cond_double_bracket() {
+        assert_x_parity("[[ a == a ]]");
+    }
+
+    #[test]
+    fn for_loop_iterates() {
+        assert_x_parity("for i in a b c; do echo $i; done");
+    }
+
+    #[test]
+    fn if_then_else_taken() {
+        assert_x_parity("if true; then echo y; else echo n; fi");
+    }
+
+    #[test]
+    fn if_else_branch_taken() {
+        assert_x_parity("if false; then echo y; else echo n; fi");
+    }
+
+    #[test]
+    #[ignore = "loop assignment counter (i=0, i=1) not traced — \
+                same root cause as bare_assignment_traces."]
+    fn while_loop_runs_once() {
+        assert_x_parity("i=0; while [[ $i -lt 1 ]]; do echo $i; i=$((i+1)); done");
+    }
+
+    #[test]
+    fn case_statement_first_arm() {
+        assert_x_parity(r#"case a in (a) echo matched ;; (*) echo no ;; esac"#);
+    }
+
+    #[test]
+    fn semicolon_separated_commands() {
+        assert_x_parity("echo one; echo two; echo three");
+    }
+
+    #[test]
+    fn and_or_short_circuit() {
+        assert_x_parity("true && echo yes; false || echo no");
+    }
+
+    #[test]
+    fn brace_group() {
+        assert_x_parity("{ echo a; echo b; }");
+    }
+
+    #[test]
+    #[ignore = "subshell cmdstack tag differs: zsh emits <no-tag>, \
+                zshrs emits <subsh-tag>. Cosmetic; both shells \
+                trace the same command. Fix: skip the subsh push \
+                in the bytecode-emitter when the only contents are \
+                a single simple command."]
+    fn subshell() {
+        assert_x_parity("( echo subshell )");
+    }
+
+    #[test]
+    #[ignore = "v=hello assignment not traced — same root cause as \
+                bare_assignment_traces. Once that lands, the trace \
+                of `echo hello` (post-expansion) already matches."]
+    fn variable_expansion_in_cmd() {
+        assert_x_parity("v=hello; echo $v");
+    }
+
+    #[test]
+    fn empty_lines_dont_trace() {
+        // Comments + blank lines emit nothing.
+        assert_x_parity(
+            r#"# comment line
+echo first
+
+echo second"#,
+        );
+    }
+
+    #[test]
+    fn trace_negation() {
+        assert_x_parity("! true");
+    }
+
+    /// Plain `set -x` inside a `-c` script works the same as `-x`
+    /// at startup.
+    #[test]
+    fn set_x_then_command() {
+        assert_x_parity("set -x; echo after");
+    }
+
+    #[test]
+    fn set_minus_x_disables() {
+        // Toggle on, run, off, run — only the middle command traces.
+        assert_x_parity("set -x; echo traced; set +x; echo silent");
+    }
+
+    // ── Known divergences ── kept as #[ignore] with explanation ──
+
+    /// Bare assignment `a=1` emits an xtrace line in zsh
+    /// (`a=1`) but not in zshrs. zshrs's bytecode compiler
+    /// doesn't emit BUILTIN_XTRACE_ARGS for the assignment-only
+    /// path. Fix lives in `compile_assign` / the equivalent —
+    /// emit XTRACE before the assignment opcodes.
+    #[test]
+    #[ignore = "assignment-only line not traced; compiler omits \
+                BUILTIN_XTRACE_ARGS for the bare-assignment branch."]
+    fn bare_assignment_traces() {
+        assert_x_parity("a=1; echo $a");
+    }
+
+    /// Pipeline xtrace order/tag differs:
+    ///   zsh:   `<PS4-no-tag>echo a` then `<PS4-pipe>cat`
+    ///   zshrs: `<PS4-pipe>cat` then `<PS4-pipe>echo a`
+    /// Both stages get traced but zsh's first stage runs WITHOUT
+    /// the `pipe` tag; zshrs tags every stage.
+    #[test]
+    #[ignore = "pipeline trace order/tag differs from zsh; compiler \
+                emits XTRACE for every stage with `pipe` tag, zsh \
+                only tags stages 2+. Cosmetic difference — both \
+                shells trace the same commands."]
+    fn pipeline_two_stages() {
+        assert_x_parity("echo a | cat");
+    }
+
+    /// Function-body xtrace shows the wrong scriptname slot:
+    ///   zsh:   `[zsh f 1] echo in_f` (PS4 %N updates to fn name)
+    ///   zshrs: `[zsh zsh 1] echo in_f` (stays "zsh")
+    /// PS4's `%N` should reflect the active function name; zshrs's
+    /// scriptname stack isn't updated on function entry.
+    #[test]
+    #[ignore = "PS4 %N inside function body shows shell name not \
+                function name; scriptname stack not updated on \
+                function-call entry."]
+    fn function_body_uses_fn_name_in_ps4() {
+        assert_x_parity("f() { echo in_f; }; f");
+    }
+}
+
 // ─────────────────────── xtrace gating ────────────────────────────────
 
 mod xtrace_gating {
