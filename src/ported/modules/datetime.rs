@@ -24,30 +24,40 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// Returns the current epoch seconds — backs `$EPOCHSECONDS`.
 /// C body: `return (zlong) time(NULL);`
 pub fn getcurrentsecs() -> i64 {                                         // c:206
-    SystemTime::now()                                                    // c:208 time(NULL)
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        .as_secs() as i64
+    // c:208 — `return (zlong) time(NULL);`
+    unsafe { libc::time(std::ptr::null_mut()) as i64 }
 }
 
 /// Port of `getcurrentrealtime()` from `Src/Modules/datetime.c:212`.
 /// Returns the current high-resolution epoch time as f64 — backs
 /// `$EPOCHREALTIME`.
+///
+/// C body:
+/// ```c
+/// struct timespec now;
+/// zgettime(&now);
+/// return (double)now.tv_sec + (double)now.tv_nsec * 1e-9;
+/// ```
 pub fn getcurrentrealtime() -> f64 {                                     // c:212
-    let now = SystemTime::now()                                          // c:214 zgettime
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO);
-    now.as_secs() as f64 + now.subsec_nanos() as f64 * 1e-9
+    let now = crate::compat::zgettime();                                 // c:215
+    (now.tv_sec as f64) + (now.tv_nsec as f64) * 1e-9                    // c:216
 }
 
 /// Port of `getcurrenttime()` from `Src/Modules/datetime.c:220`.
 /// Returns the current epoch as `(secs, nanos)` — backs the
 /// `$epochtime` two-element array param.
+///
+/// C body:
+/// ```c
+/// struct timespec now;
+/// zgettime(&now);
+/// arr[0] = sprintf "%ld" now.tv_sec
+/// arr[1] = sprintf "%ld" now.tv_nsec
+/// return arr;
+/// ```
 pub fn getcurrenttime() -> (i64, i64) {                                  // c:220
-    let now = SystemTime::now()                                          // c:222 zgettime
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO);
-    (now.as_secs() as i64, now.subsec_nanos() as i64)
+    let now = crate::compat::zgettime();                                 // c:226
+    (now.tv_sec, now.tv_nsec)                                            // c:228-231 sprintf %ld
 }
 
 /// Port of `reverse_strftime()` from `Src/Modules/datetime.c:42`.
