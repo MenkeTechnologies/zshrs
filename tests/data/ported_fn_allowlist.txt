@@ -284,6 +284,15 @@ reswdtab_lock
 histtab_lock
 dircache_lock
 
+# text.rs — Rust-only OnceLock<Mutex<TextBuffer>> singleton + reset
+# helper for the C file-static text-builder globals (tbuf, tindent,
+# tpending, tnewlins, tjob, text_expand_tabs at Src/text.c:30+).
+# C accesses these globals directly; Rust port wraps them in a
+# struct held by a OnceLock, with text_buffer_reset replacing the
+# inline init blocks at Src/text.c:298 / 333.
+text_buffer_lock
+text_buffer_reset
+
 # hashtable.rs HashNodeFlags trait — Rust-only abstraction over C's
 # `struct hashnode { char *nam; int flags; ... }` header. Each typed
 # table value impls this so the generic gethashnode/disablehashnode/etc.

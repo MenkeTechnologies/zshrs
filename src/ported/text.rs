@@ -662,6 +662,20 @@ impl TextFormatter {
         self.add_str("}");
     }
 
+    /// Format a redirection list to a fresh string. Used by
+    /// [`getredirs`] (the file-static text-buffer entry point);
+    /// the trailing-space + pop dance C does is handled by the
+    /// caller, so this returns the "redir1 redir2 …" body trimmed.
+    pub(crate) fn format_redirects_only(mut self, redirects: &[Redirect]) -> String {
+        for (i, r) in redirects.iter().enumerate() {
+            if i > 0 {
+                self.add_char(' ');
+            }
+            self.format_redirect(r);
+        }
+        self.buffer
+    }
+
     fn format_redirects(&mut self, redirects: &[Redirect]) {
         if redirects.is_empty() {
             return;
@@ -724,19 +738,28 @@ impl TextFormatter {
     }
 }
 
-/// Get a permanent textual representation of a command
-/// Render a parsed command back as zsh source text.
-/// Port of `getpermtext()` from Src/text.c:279 — the C source's
-/// canonical AST→source renderer used by `which -x` / `functions`
-/// / `whence -f`.
+/// Port of `getpermtext()` from `Src/text.c:279`.
+///
+/// C body initialises the file-static text buffer (tindent =
+/// start_indent, tnewlins = 1, tjob = 0, fresh tbuf), runs
+/// `gettext2` over the wordcode tree, then untokenizes and
+/// returns the buffer.
+///
+/// Rust port runs the typed-AST formatter (which carries its own
+/// String) and returns its output. The file-static [`TextBuffer`]
+/// singleton is used only by callers that explicitly invoke the
+/// `taddX` helpers (which mirror C's per-byte buffer
+/// manipulation); high-level entry points like this one don't
+/// touch it so they can be invoked from parallel tests safely.
 pub fn getpermtext(cmd: &ShellCommand) -> String {
     TextFormatter::new(TextConfig::default()).format(cmd)
 }
 
-/// Get a representation suitable for job text (abbreviated, single line)
-/// Render a command for `jobs` builtin output.
-/// Port of `getjobtext()` from Src/text.c:315 — single-line,
-/// truncated to the typical `jobs` column budget.
+/// Port of `getjobtext()` from `Src/text.c:315`.
+///
+/// C body uses a static `jbuf[JOBTEXTSIZE]` buffer in single-line
+/// (tnewlins = 0, tjob = 1) mode. Rust port routes through
+/// TextConfig::job_text without touching the global TextBuffer.
 pub fn getjobtext(cmd: &ShellCommand) -> String {
     TextFormatter::new(TextConfig::job_text()).format(cmd)
 }
@@ -866,6 +889,126 @@ mod tests {
         let text = getpermtext(&cmd);
         assert!(text.contains("> file.txt"));
     }
+
+    // -------------------------------------------------------------
+    // text-buffer file-static singleton tests.
+    //
+    // Serialise via TBUF_TEST_LOCK because the buffer is process-wide.
+    // -------------------------------------------------------------
+    static TBUF_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn test_taddchr_appends() {
+        let _g = TBUF_TEST_LOCK.lock();
+        text_buffer_reset(true, false, 0);
+        taddchr(b'x' as i32);
+        taddchr(b'y' as i32);
+        let b = text_buffer_lock().lock().unwrap();
+        assert_eq!(b.buf, "xy");
+    }
+
+    #[test]
+    fn test_taddstr_with_newlins_keeps_newlines() {
+        let _g = TBUF_TEST_LOCK.lock();
+        text_buffer_reset(true, false, 0);
+        taddstr("a\nb");
+        let b = text_buffer_lock().lock().unwrap();
+        assert_eq!(b.buf, "a\nb");
+    }
+
+    #[test]
+    fn test_taddstr_job_mode_flattens_newlines() {
+        let _g = TBUF_TEST_LOCK.lock();
+        text_buffer_reset(false, true, 0);
+        taddstr("a\nb");
+        let b = text_buffer_lock().lock().unwrap();
+        assert_eq!(b.buf, "a b");
+    }
+
+    #[test]
+    fn test_dec_tindent_clamps_at_zero() {
+        let _g = TBUF_TEST_LOCK.lock();
+        text_buffer_reset(true, false, 2);
+        dec_tindent();
+        dec_tindent();
+        dec_tindent(); // would go negative — clamp at 0 per C DPUTS branch.
+        let b = text_buffer_lock().lock().unwrap();
+        assert_eq!(b.indent, 0);
+    }
+
+    #[test]
+    fn test_taddpending_buffers_until_tdopending() {
+        let _g = TBUF_TEST_LOCK.lock();
+        text_buffer_reset(true, false, 0);
+        taddpending("EOF\n", "body line\n");
+        {
+            let b = text_buffer_lock().lock().unwrap();
+            assert_eq!(b.buf, "");
+            assert!(b.pending.as_deref() == Some("EOF\nbody line\n"));
+        }
+        tdopending();
+        let b = text_buffer_lock().lock().unwrap();
+        assert!(b.buf.contains("EOF"));
+        assert!(b.pending.is_none());
+    }
+
+    #[test]
+    fn test_taddnl_no_semicolon_when_flat() {
+        let _g = TBUF_TEST_LOCK.lock();
+        text_buffer_reset(false, false, 0);
+        taddstr("foo");
+        taddnl(0);
+        taddstr("bar");
+        let b = text_buffer_lock().lock().unwrap();
+        assert_eq!(b.buf, "foo; bar");
+        // Same with no_semicolon=1 → just space.
+        drop(b);
+        text_buffer_reset(false, false, 0);
+        taddstr("foo");
+        taddnl(1);
+        taddstr("bar");
+        let b = text_buffer_lock().lock().unwrap();
+        assert_eq!(b.buf, "foo bar");
+    }
+
+    #[test]
+    fn test_taddassign_simple() {
+        let _g = TBUF_TEST_LOCK.lock();
+        text_buffer_reset(true, false, 0);
+        taddassign("PATH", Some("/usr/bin"), false, false);
+        let b = text_buffer_lock().lock().unwrap();
+        assert!(b.buf.starts_with("PATH=/usr/bin"));
+    }
+
+    #[test]
+    fn test_taddassign_augment() {
+        let _g = TBUF_TEST_LOCK.lock();
+        text_buffer_reset(true, false, 0);
+        taddassign("ARR", Some("(a b)"), true, false);
+        let b = text_buffer_lock().lock().unwrap();
+        assert!(b.buf.starts_with("ARR+=(a b)"));
+    }
+
+    #[test]
+    fn test_zoutputtab_writes_tab_or_spaces() {
+        let _g = TBUF_TEST_LOCK.lock();
+        text_buffer_reset(true, false, 0);
+        // expand_tabs = 0 → literal tab
+        let mut buf: Vec<u8> = Vec::new();
+        zoutputtab(&mut buf).unwrap();
+        assert_eq!(buf, b"\t");
+        // expand_tabs = 4 → 4 spaces
+        text_buffer_lock().lock().unwrap().expand_tabs = 4;
+        let mut buf: Vec<u8> = Vec::new();
+        zoutputtab(&mut buf).unwrap();
+        assert_eq!(buf, b"    ");
+        // expand_tabs = -1 → no output
+        text_buffer_lock().lock().unwrap().expand_tabs = -1;
+        let mut buf: Vec<u8> = Vec::new();
+        zoutputtab(&mut buf).unwrap();
+        assert_eq!(buf, b"");
+        text_buffer_lock().lock().unwrap().expand_tabs = 0;
+    }
 }
 
 // ===========================================================
@@ -945,82 +1088,333 @@ pub fn render(body: &str) -> String {
 // END moved-from-exec-rs (free fns)
 
 // ===========================================================
-// AST-text-buffer helpers — direct ports of the static text-
-// builder routines from Src/text.c. In zsh these accumulate text
-// into the globals `tbuf`/`tptr`/`tlim`/`tindent`/`tpending`
-// during AST decompilation (used by `whence -v`, job-text, fc, the
-// `printprompt` debug path). The Rust port renders AST nodes
-// through `Display` impls and `gettext()` (above) so the global
-// buffer machinery isn't kept; these entries are name-parity
-// shims for the drift gate.
+// AST-text-buffer helpers — direct ports of the file-static
+// text-builder routines from Src/text.c. In zsh these accumulate
+// text into the globals `tbuf`/`tptr`/`tlim`/`tindent`/`tpending`/
+// `tnewlins`/`tjob`/`text_expand_tabs` during AST decompilation
+// (used by `whence -v`, job-text, fc, the `printprompt` debug
+// path).
+//
+// Rust port: the C file-statics are reproduced as a single
+// `TextBuffer` struct held inside a OnceLock<Mutex<…>>. Each fn
+// below mutates the singleton, matching the C signatures byte-
+// for-byte. The bodies match C's `Src/text.c:<line>` ports cited
+// in each doc.
+//
+// `tpush` and `gettext2` operate on C's `Estate`/`wordcode`
+// AST walker which zshrs doesn't have (the Rust formatter renders
+// `ShellCommand` instead). Those keep the C signature shape but
+// route through the Rust formatter where possible.
 // ===========================================================
 
-/// Port of `dec_tindent()` from Src/text.c:69 — decrement the
-/// global indent counter `tindent` (clamped at zero in C with a
-/// `DPUTS` check). Rust formatter uses local indent counters per
-/// AST visitor pass, so this is a no-op shim.
-pub fn dec_tindent() {}
+/// File-static state holder mirroring the text-buffer globals in
+/// `Src/text.c:30+`.
+///
+/// Fields map 1:1 to C globals:
+/// - `buf`     ↔ `tbuf` (heap string buffer being filled)
+/// - `indent`  ↔ `tindent` (current indent depth in tabs)
+/// - `pending` ↔ `tpending` (here-doc strings deferred until next \n)
+/// - `newlins` ↔ `tnewlins` (true → emit real newlines+indent;
+///                          false → flatten to "; "/" ")
+/// - `job`     ↔ `tjob` (true while building job-text via
+///                       `getjobtext`, false for permtext)
+/// - `expand_tabs` ↔ `text_expand_tabs` (-1 = no tabs at all,
+///                       0 = literal tab, N>0 = N spaces)
+#[derive(Default)]
+pub struct TextBuffer {
+    pub buf: String,
+    pub indent: i32,
+    pub pending: Option<String>,
+    pub newlins: bool,
+    pub job: bool,
+    pub expand_tabs: i32,
+}
 
-/// Port of `taddpending()` from Src/text.c:88 — buffer a here-doc
-/// string + terminator pair to be emitted at the next significant
-/// newline. Rust AST printer emits here-docs inline as part of
-/// `Redir::Display`, so this entry is a no-op shim.
-pub fn taddpending(_str1: &str, _str2: &str) {}
+/// Singleton accessor for the text-buffer state.
+///
+/// Mirrors the file-static globals around line 30 of Src/text.c.
+/// Lazily initialised on first use. Recovers from poisoning so a
+/// panicking test in this module doesn't cascade-fail every other
+/// test that grabs the lock.
+pub fn text_buffer_lock() -> &'static std::sync::Mutex<TextBuffer> {
+    static TBUF: std::sync::OnceLock<std::sync::Mutex<TextBuffer>> = std::sync::OnceLock::new();
+    let m = TBUF.get_or_init(|| std::sync::Mutex::new(TextBuffer::default()));
+    m.clear_poison();
+    m
+}
 
-/// Port of `tdopending()` from Src/text.c:113 — flush the pending
-/// here-doc string, prefixed with a newline. No-op shim — Rust
-/// emits here-docs inline (see `taddpending`).
-pub fn tdopending() {}
+/// Reset the text-buffer state. Mirrors the inline init blocks at
+/// `Src/text.c:298` (`getpermtext`) and `Src/text.c:333`
+/// (`getjobtext`) — `tindent`, `tpending`, `tnewlins`, `tjob` all
+/// re-seeded before each formatting pass.
+pub fn text_buffer_reset(newlins: bool, job: bool, indent: i32) {
+    let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
+    b.buf.clear();
+    b.indent = indent;
+    b.pending = None;
+    b.newlins = newlins;
+    b.job = job;
+    // expand_tabs is preserved (controlled separately by the
+    // `text_expand_tabs` global zsh exposes via tput / `printf`).
+}
 
-/// Port of `taddchr()` from Src/text.c:127 — append one byte to
-/// the text-buffer with realloc-on-overflow. Rust uses owned
-/// `String` accumulators per visitor; no-op shim.
-pub fn taddchr(_c: i32) {}
+/// Port of `dec_tindent()` from `Src/text.c:69`.
+///
+/// C body:
+/// ```c
+/// DPUTS(tindent == 0, "attempting to decrement tindent below zero");
+/// if (tindent > 0) tindent--;
+/// ```
+pub fn dec_tindent() {
+    let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
+    if b.indent > 0 {
+        b.indent -= 1;
+    }
+}
 
-/// Port of `taddstr()` from Src/text.c:145 — append a NUL-
-/// terminated string to the text buffer (calls `taddchr` per
-/// byte). No-op shim; see `taddchr`.
-pub fn taddstr(_s: &str) {}
+/// Port of `taddpending()` from `Src/text.c:88`.
+///
+/// C body buffers a here-doc terminator + body pair. On the next
+/// significant newline ([`tdopending`]) the buffered string is
+/// emitted prefixed with `\n`. Multiple calls concatenate (each
+/// preceded by `\n`).
+pub fn taddpending(str1: &str, str2: &str) {
+    let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
+    let combined = format!("{}{}", str1, str2);
+    match b.pending.as_mut() {
+        Some(existing) => {
+            existing.push('\n');
+            existing.push_str(&combined);
+        }
+        None => b.pending = Some(combined),
+    }
+}
 
-/// Port of `taddlist()` from Src/text.c:170 — append a `LinkList`
-/// of words to the text buffer, space-separated. Rust calls
-/// `Vec::join(" ")` directly inside its formatter; no-op shim.
-pub fn taddlist() {}
+/// Port of `tdopending()` from `Src/text.c:113`.
+///
+/// C body:
+/// ```c
+/// if (tpending) {
+///     taddchr('\n');
+///     taddstr(tpending);
+///     zsfree(tpending);
+///     tpending = NULL;
+/// }
+/// ```
+pub fn tdopending() {
+    let drained = {
+        let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
+        b.pending.take()
+    };
+    if let Some(s) = drained {
+        taddchr(b'\n' as i32);
+        taddstr(&s);
+    }
+}
 
-/// Port of `taddassign()` from Src/text.c:184 — emit a single
-/// `name=value` (or `+=`) assignment to the text buffer. Rust
-/// `Assign::Display` handles this; no-op shim.
-pub fn taddassign() {}
+/// Port of `taddchr()` from `Src/text.c:127`.
+///
+/// C body:
+/// ```c
+/// *tptr++ = c;
+/// if (tptr == tlim) { tbuf = zrealloc(tbuf, tsiz *= 2); ... }
+/// ```
+///
+/// Rust port: appends to `String`, which auto-grows. The realloc-
+/// on-overflow logic from C is implicit.
+pub fn taddchr(c: i32) {
+    let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
+    if let Some(ch) = char::from_u32(c as u32) {
+        b.buf.push(ch);
+    }
+}
 
-/// Port of `taddassignlist()` from Src/text.c:213 — emit an
-/// array assignment list `name=( a b c )` to the text buffer.
-/// Rust `Assign::Display` handles this; no-op shim.
-pub fn taddassignlist() {}
+/// Port of `taddstr()` from `Src/text.c:145`.
+///
+/// C body appends with newline-flatten semantics: when
+/// `tnewlins == 0` (job-text mode), `\n` becomes ' '.
+pub fn taddstr(s: &str) {
+    let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
+    if b.newlins {
+        b.buf.push_str(s);
+    } else {
+        for c in s.chars() {
+            b.buf.push(if c == '\n' { ' ' } else { c });
+        }
+    }
+}
 
-/// Port of `taddnl()` from Src/text.c:227 — emit a newline plus
-/// indent (`tindent`*tab) to the text buffer, also flushing any
-/// pending here-doc strings. No-op shim.
-pub fn taddnl(_let_semicolon: i32) {}
+/// Port of `taddlist()` from `Src/text.c:170`.
+///
+/// C body emits `num` words from the wordcode stream, space-
+/// separated; trailing space is removed via `tptr--`.
+///
+/// WARNING: the wordcode `Estate` walker isn't ported. Callers
+/// that hold their own list of strings should use [`taddlist_strs`]
+/// instead. This entry preserves the C signature shape — taking
+/// a slice of strings as a stand-in for the wordcode iteration.
+pub fn taddlist(words: &[String]) {
+    if words.is_empty() {
+        return;
+    }
+    let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
+    let mut first = true;
+    for w in words {
+        if !first {
+            b.buf.push(' ');
+        }
+        b.buf.push_str(w);
+        first = false;
+    }
+}
 
-/// Port of `zoutputtab()` from Src/text.c:263 — emit a tab to the
-/// text buffer, with TAB compression depending on output stream
-/// kind. Rust formatter uses raw tabs; no-op shim.
-pub fn zoutputtab() {}
+/// Port of `taddassign()` from `Src/text.c:184`.
+///
+/// Emits `name=value` (or `name+=value`) to the buffer. For array
+/// assignments emits `name=(v1 v2 …)`. The `typeset` flag enables
+/// the typeset-style "name only" emission for `WC_ASSIGN_INC`.
+pub fn taddassign(name: &str, value: Option<&str>, augment: bool, typeset: bool) {
+    let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
+    b.buf.push_str(name);
+    if augment {
+        if typeset {
+            b.buf.push(' ');
+            return;
+        }
+        b.buf.push('+');
+    }
+    b.buf.push('=');
+    drop(b);
+    if let Some(v) = value {
+        taddstr(v);
+        let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
+        b.buf.push(' ');
+    }
+}
 
-/// Port of `tpush()` from Src/text.c:396 — push a saved text-
-/// buffer state (used when emitting nested function/loop bodies
-/// that need their own decompilation context). Rust visitor pass
-/// allocates fresh `String`s per node; no-op shim.
-pub fn tpush(_increment: i32) {}
+/// Port of `taddassignlist()` from `Src/text.c:213`.
+///
+/// C body emits `count` consecutive assignments from the
+/// wordcode stream; the Rust port takes the resolved
+/// `(name, value, augment)` triples.
+pub fn taddassignlist(assigns: &[(String, Option<String>, bool)]) {
+    if !assigns.is_empty() {
+        taddchr(b' ' as i32);
+    }
+    for (name, value, augment) in assigns {
+        taddassign(name, value.as_deref(), *augment, true);
+    }
+}
 
-/// Port of `gettext2()` from Src/text.c:415 — the recursive
-/// AST-walk that renders an `Eprog` wordcode tree into the text
-/// buffer. Rust uses `Display` impls + `gettext()` above; this
-/// is the entry-point shim for ABI parity.
+/// Port of `taddnl()` from `Src/text.c:227`.
+///
+/// C body:
+/// ```c
+/// if (tnewlins) {
+///     tdopending(); taddchr('\n');
+///     for (t0 = 0; t0 != tindent; t0++)
+///         taddchr(text_expand_tabs ? ' '×N : '\t');
+/// } else if (no_semicolon) taddstr(" ");
+/// else taddstr("; ");
+/// ```
+pub fn taddnl(no_semicolon: i32) {
+    let (newlins, indent, expand_tabs) = {
+        let b = text_buffer_lock().lock().expect("text buffer poisoned");
+        (b.newlins, b.indent, b.expand_tabs)
+    };
+    if newlins {
+        tdopending();
+        taddchr(b'\n' as i32);
+        for _ in 0..indent {
+            if expand_tabs >= 0 {
+                if expand_tabs > 0 {
+                    for _ in 0..expand_tabs {
+                        taddchr(b' ' as i32);
+                    }
+                } else {
+                    taddchr(b'\t' as i32);
+                }
+            }
+        }
+    } else if no_semicolon != 0 {
+        taddstr(" ");
+    } else {
+        taddstr("; ");
+    }
+}
+
+/// Port of `zoutputtab()` from `Src/text.c:263`.
+///
+/// C body emits a tab to `outf`, expanded to spaces when
+/// `text_expand_tabs > 0`. Used by `getpermtext` consumers that
+/// need to align their own output with the formatter's indent
+/// rules.
+///
+/// Rust port writes to a writeable target (typically stdout)
+/// matching the same expansion rules.
+pub fn zoutputtab<W: std::io::Write>(outf: &mut W) -> std::io::Result<()> {
+    let expand_tabs = text_buffer_lock()
+        .lock()
+        .expect("text buffer poisoned")
+        .expand_tabs;
+    if expand_tabs < 0 {
+        return Ok(());
+    }
+    if expand_tabs > 0 {
+        let spaces = vec![b' '; expand_tabs as usize];
+        outf.write_all(&spaces)
+    } else {
+        outf.write_all(b"\t")
+    }
+}
+
+/// Port of `tpush()` from `Src/text.c:396`.
+///
+/// C body pushes a `Tstack` frame for the recursive `gettext2`
+/// walker — used when entering a nested wordcode region.
+///
+/// WARNING: zshrs's text formatter walks `ShellCommand` AST
+/// recursively (Rust's stack), so the explicit Tstack isn't
+/// kept. The fn is provided for C name parity; it just bumps
+/// the indent counter via `dec_tindent`'s inverse.
+pub fn tpush(increment: i32) {
+    if increment != 0 {
+        let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
+        b.indent = b.indent.saturating_add(1);
+    }
+}
+
+/// Port of `gettext2()` from `Src/text.c:415`.
+///
+/// C body is the master AST→text walker for the wordcode
+/// representation: dispatches on `WC_*` codes, calls all the
+/// `taddX` helpers above, and pushes Tstack frames for nested
+/// regions.
+///
+/// WARNING: zshrs uses `ShellCommand` AST + `TextFormatter`
+/// rather than wordcode + Estate. The real walker is
+/// [`getpermtext`] above, which builds the same output through
+/// the typed AST. This entry preserves the C name; calling it
+/// is equivalent to "the formatter has already run via
+/// getpermtext" — so it's a finalise-buffer no-op.
 pub fn gettext2() {}
 
-/// Port of `getredirs()` from Src/text.c:1019 — emit a
-/// `LinkList` of redirection nodes to the text buffer, reading
-/// the same `redirtab[]` table used by exec.c. Rust
-/// `Redir::Display` handles this; no-op shim.
-pub fn getredirs() {}
+/// Port of `getredirs()` from `Src/text.c:1019`.
+///
+/// C body emits each Redir node from the linked list using the
+/// fixed `fstr[]` table for the operator string. Rust port takes
+/// a slice of `Redirect` AST nodes and routes through the same
+/// formatter the rest of text.rs uses.
+///
+/// Per the C source, the buffer is space-padded then the trailing
+/// space is decremented (`tptr--`); same here via `pop()`.
+pub fn getredirs(redirs: &[Redirect]) {
+    taddchr(b' ' as i32);
+    let formatter = TextFormatter::new(TextConfig::default());
+    let snippet = formatter.format_redirects_only(redirs);
+    taddstr(&snippet);
+    let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
+    if b.buf.ends_with(' ') {
+        b.buf.pop();
+    }
+}
