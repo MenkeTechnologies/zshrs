@@ -13944,6 +13944,66 @@ pub static SOURCELEVEL:  std::sync::atomic::AtomicI32 = std::sync::atomic::Atomi
 // `ZEXIT_NORMAL` from Src/zsh.h — zexit() exit-mode discriminant.
 pub const ZEXIT_NORMAL: i32 = 0;
 
+/// Port of `bin_test()` from Src/builtin.c:7231.
+/// C: `int bin_test(char *name, char **argv, UNUSED(Options ops), int func)`
+/// — the `test` / `[` builtin: when invoked as `[`, requires a trailing
+///   `]`; XSI-extension paren-stripping for 3/4-arg forms; final
+///   evalcond dispatch returns 0/1/2.
+pub fn bin_test(name: &str, argv: &[String],                                 // c:7231
+                _ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
+    let mut argv = argv.to_vec();
+    let mut sense = 0i32;                                                    // c:7236
+
+    // c:7239-7247 — `[` requires trailing `]`.
+    if func == BIN_BRACKET {                                                 // c:7239
+        if argv.is_empty() || argv.last().map(|s| s.as_str()) != Some("]") { // c:7241
+            crate::ported::utils::zwarnnam(name, "']' expected");            // c:7243
+            return 2;                                                        // c:7244
+        }
+        argv.pop();                                                          // c:7246 (s[-1] = NULL)
+    }
+
+    // c:7249-7250 — empty argv → false (1).
+    if argv.is_empty() {                                                     // c:7249
+        return 1;                                                            // c:7250
+    }
+
+    // c:7257-7274 — XSI 3/4-arg parens + 4-arg `!` extension.
+    let nargs = argv.len();                                                  // c:7257
+    if nargs == 3 || nargs == 4 {                                            // c:7258
+        // c:7264-7269 — strip `(` ... `)` parens unless the 3-arg middle
+        // would be a binary op (which takes priority).
+        if argv[0] == "(" && argv[nargs - 1] == ")"                          // c:7264
+            && (nargs != 3 || !crate::ported::text::is_cond_binary_op(&argv[1])) // c:7265
+        {
+            argv.pop();                                                      // c:7266
+            argv.remove(0);                                                  // c:7267
+        }
+    }
+    if argv.len() == 3 && argv[0] == "!" {                                   // c:7270 (effective)
+        sense = 1;                                                           // c:7271
+        argv.remove(0);                                                      // c:7272
+    }
+
+    // c:7276-7301 — zcontext_save + parse_cond + evalcond.
+    // Static-link path: route through cond.rs's evalcond which handles
+    // the full tokenization + parse + eval inline.
+    let args_refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    let options = std::collections::HashMap::new();
+    let mut variables = std::collections::HashMap::new();
+    for (k, v) in std::env::vars() {
+        variables.insert(k, v);
+    }
+    let posix = crate::ported::options::optlookup("posixbuiltins") > 0;
+    let mut ret = crate::ported::cond::evalcond(&args_refs, &options, &variables, posix); // c:7305
+
+    // c:7307-7308 — `if (ret < 2 && sense) ret = !ret;`
+    if ret < 2 && sense != 0 {                                               // c:7307
+        ret = if ret == 0 { 1 } else { 0 };                                  // c:7308
+    }
+    ret                                                                      // c:7310
+}
+
 /// Port of `bin_unset()` from Src/builtin.c:3818.
 /// C: `int bin_unset(char *name, char **argv, Options ops, int func)` —
 ///   `-f` delegates to `bin_unhash`; `-m` glob deletes matching params;
