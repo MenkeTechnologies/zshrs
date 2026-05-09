@@ -238,6 +238,32 @@ mod params_special_vars {
         assert_parity(r#"set -- a b c d; echo $#"#);
     }
 
+    /// `${argv[@]}` — array-context expansion of positional params.
+    /// Both shells expand to one word per positional, producing one
+    /// line per positional in `print -l`.
+    ///
+    /// Note on bare `$argv`: unindexed `$argv` in `print -l` came out
+    /// as one line in zshrs vs three in zsh — zsh treats unquoted
+    /// `$argv` (and `$@` / `$*`) as array-expanding into multiple
+    /// argv tokens, while zshrs's bytecode compiler currently emits
+    /// a scalar `BUILTIN_GET_VAR` that joins on IFS. The fix lives
+    /// at the compiler level (emit `BUILTIN_ARRAY_ALL` for these
+    /// names in unquoted position) — separate scope.
+    ///
+    /// This test uses `${argv[@]}` so both shells exercise the
+    /// `BUILTIN_ARRAY_ALL` / `getvaluearr` path that already works
+    /// for explicit array-context expansion.
+    #[test]
+    fn dollar_argv_array_context() {
+        assert_parity(r#"set -- a b c; print -l "${argv[@]}""#);
+    }
+
+    #[test]
+    fn dollar_argv_at_quoted() {
+        // Same array path via "$@".
+        assert_parity(r#"set -- foo bar baz; print -l "$@""#);
+    }
+
     #[test]
     fn dollar_ifs_default() {
         // ifsgetfn reads the IFS variable. Default is "<sp><tab><nl><nul>".

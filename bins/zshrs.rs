@@ -799,16 +799,20 @@ pub fn zshrs_main() {
 
         // Per Src/init.c:479 — `-c` mode hardcodes
         //   `scriptname = scriptfilename = ztrdup("zsh")`
-        // (literal short name, NOT argzero). Mirror with the binary
-        // basename so prompt-expansion `%N` / `%x` produce `zshrs`
-        // instead of the full debug-binary path. `$0` is unaffected
-        // — it stays as argv[0] full path, matching zsh.
-        let basename = std::path::Path::new(&zero)
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(|s| s.trim_start_matches('-').to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "zshrs".to_string());
+        // (literal short name, NOT argzero). In `--zsh` parity mode,
+        // match C zsh exactly so PS4 / `%N` / xtrace prefixes byte-
+        // match the reference. Plain zshrs `-c` keeps the binary
+        // basename for branding. `$0` is argv[0] either way.
+        let basename = if is_zsh_mode() {
+            "zsh".to_string()
+        } else {
+            std::path::Path::new(&zero)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.trim_start_matches('-').to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "zshrs".to_string())
+        };
         executor.scriptname = Some(basename);
 
         // Source zshenv per Src/init.c:1473 (GLOBAL_ZSHENV) +
