@@ -152,103 +152,11 @@ fn match_colour(color: &str, fg: bool, sgr: bool) -> Option<String> {
 
 /// Highlight groups table.
 /// Port of the `zle_highlight` lookup hash that backs the
-/// `${.zle.esc[*]}` / `${.zle.sgr[*]}` special-parameter pair from
-/// Src/Modules/hlgroup.c. The C source registers the parameters
-/// via `getpmesc()` / `getpmsgr()` (lines 141 / 155) which call
-/// into `getgroup()` (line 82) which is what this struct stores.
-#[derive(Debug, Default)]
-pub struct HlGroups {
-    groups: HashMap<String, String>,
-}
-
-impl HlGroups {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/hlgroup.c`.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/hlgroup.c`.
-    /// Install or replace a highlight-group's attribute spec.
-    /// Equivalent to `zle_highlight` array assignment; backs the
-    /// parameter that drives `getgroup()` (Src/Modules/hlgroup.c:82).
-    pub fn set(&mut self, name: &str, attr: &str) {
-        self.groups.insert(name.to_string(), attr.to_string());
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/hlgroup.c`.
-    /// Look up the raw attribute spec stored for a name.
-    /// Convenience read; the C source doesn't expose the spec
-    /// directly — only its `convertattr()` output via `getgroup`.
-    pub fn get(&self, name: &str) -> Option<&str> {
-        self.groups.get(name).map(|s| s.as_str())
-    }
-
-    /// `${.zle.esc[name]}` getter.
-    /// Port of `getpmesc()` from Src/Modules/hlgroup.c:141 — the
-    /// `getfn` slot the C source wires for the `.zle.esc` special
-    /// hash. Calls into `getgroup()` (line 82) with `sgr=0`.
-    pub fn get_esc(&self, name: &str) -> String {
-        self.groups
-            .get(name)
-            .map(|attr| convertattr(attr, false))
-            .unwrap_or_default()
-    }
-
-    /// `${.zle.sgr[name]}` getter.
-    /// Port of `getpmsgr()` from Src/Modules/hlgroup.c:155 — the
-    /// `getfn` slot the C source wires for the `.zle.sgr` special
-    /// hash. Calls into `getgroup()` (line 82) with `sgr=1`.
-    pub fn get_sgr(&self, name: &str) -> String {
-        self.groups
-            .get(name)
-            .map(|attr| convertattr(attr, true))
-            .unwrap_or_else(|| "0".to_string())
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/hlgroup.c`.
-    /// Remove a highlight group.
-    /// Equivalent to clearing the `zle_highlight` entry for `name`;
-    /// the C source rebuilds its lookup on next `getgroup()` call
-    /// (Src/Modules/hlgroup.c:82).
-    pub fn remove(&mut self, name: &str) -> bool {
-        self.groups.remove(name).is_some()
-    }
-
-    /// Iterate over `(name, raw_attr)` pairs.
-    /// Port of `scangroup()` from Src/Modules/hlgroup.c:113 — the
-    /// scan callback the parameter machinery calls when iterating
-    /// the special hash. The Rust version returns the raw spec
-    /// alongside the name; the C version converts on the fly via
-    /// `convertattr()`.
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.groups.iter().map(|(k, v)| (k.as_str(), v.as_str()))
-    }
-
-    /// Snapshot the table as an `attr → escape` map.
-    /// Port of `scanpmesc()` from Src/Modules/hlgroup.c:148 — the
-    /// `.zle.esc` `scanfn` slot. Materializes the entire table the
-    /// way `${(kv).zle.esc}` reads it.
-    pub fn to_hash_esc(&self) -> HashMap<String, String> {
-        self.groups
-            .iter()
-            .map(|(k, v)| (k.clone(), convertattr(v, false)))
-            .collect()
-    }
-
-    /// Snapshot the table as an `attr → SGR-string` map.
-    /// Port of `scanpmsgr()` from Src/Modules/hlgroup.c:162 — the
-    /// `.zle.sgr` `scanfn` slot.
-    pub fn to_hash_sgr(&self) -> HashMap<String, String> {
-        self.groups
-            .iter()
-            .map(|(k, v)| (k.clone(), convertattr(v, true)))
-            .collect()
-    }
-}
+// C source has 0 structs/enums; Rust port matches. The `.zle.esc` /
+// `.zle.sgr` magic-assoc pair is wired through the C `partab[]`
+// paramdef (hlgroup.c:170-172) tying getpmesc/scanpmesc and
+// getpmsgr/scanpmsgr to the underlying `$zle_highlight_groups`
+// hash via `getgroup()`. Each is a free fn below.
 
 #[cfg(test)]
 mod tests {
@@ -290,27 +198,6 @@ mod tests {
     fn test_attr_to_sgr_empty() {
         let sgr = convertattr("", true);
         assert_eq!(sgr, "0");
-    }
-
-    #[test]
-    fn test_hlgroups_set_get() {
-        let mut groups = HlGroups::new();
-        groups.set("error", "bold,fg=red");
-        assert_eq!(groups.get("error"), Some("bold,fg=red"));
-    }
-
-    #[test]
-    fn test_hlgroups_get_esc() {
-        let mut groups = HlGroups::new();
-        groups.set("error", "bold");
-        assert_eq!(groups.get_esc("error"), "\x1b[1m");
-    }
-
-    #[test]
-    fn test_hlgroups_get_sgr() {
-        let mut groups = HlGroups::new();
-        groups.set("error", "bold");
-        assert_eq!(groups.get_sgr("error"), "1");
     }
 
     #[test]
