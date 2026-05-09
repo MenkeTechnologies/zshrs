@@ -4,44 +4,22 @@
 
 use super::zle_main::{ModifierFlags, Zle};
 
-/// Vi operation pending
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ViPendingOp {
-    None,
-    Delete,
-    Change,
-    Yank,
-    ShiftLeft,
-    ShiftRight,
-    Filter,
-    Case,
-}
-
-/// Vi state
-#[derive(Debug, Default)]
-pub struct ViState {
-    /// Pending operator
-    pub pending_op: Option<ViPendingOp>,
-    /// Character to find
-    pub find_char: Option<char>,
-    /// Find direction (true = forward)
-    pub find_forward: bool,
-    /// Find skip (t/T vs f/F)
-    pub find_skip: bool,
-    /// Last change for dot repeat
-    pub last_change: Option<ViChange>,
-    /// Numeric argument being built
-    pub arg: Option<i32>,
-}
-
-/// A recorded vi change for repeat
-#[derive(Debug, Clone)]
-pub struct ViChange {
-    /// Keys that made up the change
-    pub keys: Vec<u8>,
-    /// Starting cursor position
-    pub start_cs: usize,
-}
+// Note: dead `ViState` / `ViChange` / `ViPendingOp` aggregates
+// removed per PORT_PLAN Phase 2. They had zero references across the
+// codebase. The actual zsh-side state lives in C file-scope globals
+// declared in `Src/Zle/zle_vi.c`:
+//
+//     int virangeflag;       // line 36
+//     int wordflag;          // line 41
+//     int vilinerange;       // line 46
+//     struct vichange lastvichg, curvichg;  // line 54
+//     int vichgflag;         // line 65
+//     int viinrepeat;        // line 73
+//     int viinsbegin;        // line 78
+//
+// These are cross-compilation-unit (referenced from textobjects.c
+// and zle_move.c), so they belong to PORT_PLAN Phase 3 bucket-2
+// (Arc<RwLock>), not the Phase 2 bucket-1 (thread_local!) wave.
 
 impl Zle {
     /// Read the active numeric multiplier.
