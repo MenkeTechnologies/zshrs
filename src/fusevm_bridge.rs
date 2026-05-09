@@ -15,7 +15,7 @@ use crate::history::HistoryEngine;
 // MathState is private to math.rs (no public state struct in math.c).
 use crate::options::ZSH_OPTIONS_SET;
 use crate::prompt::{expand_prompt, PromptContext};
-use crate::tcp::TcpSessions;
+// TcpSessions struct deleted — modules/tcp.rs uses ZTCP_SESSIONS thread_local.
 use crate::zftp::Zftp;
 use crate::zprof::Profiler;
 use crate::zutil::StyleTable;

@@ -19,7 +19,7 @@ use crate::history::HistoryEngine;
 // math API surface is matheval/mathevali/Mnumber.
 use crate::options::ZSH_OPTIONS_SET;
 use crate::prompt::{expand_prompt, PromptContext};
-use crate::tcp::TcpSessions;
+// TcpSessions struct deleted — see modules/tcp.rs ZTCP_SESSIONS thread_local.
 use crate::zftp::Zftp;
 use crate::zprof::Profiler;
 use crate::zutil::StyleTable;
@@ -568,8 +568,9 @@ pub struct ShellExecutor {
     pub returning: Option<i32>, // Set by return builtin, cleared after function returns
     pub breaking: i32,          // break level (0 = not breaking, N = break N levels)
     pub continuing: i32,        // continue level
-    // New module state
-    pub tcp_sessions: TcpSessions,
+    // New module state — TcpSessions struct dissolved into the
+    // thread_local ZTCP_SESSIONS in modules/tcp.rs (matches C's
+    // file-static `ztcp_sessions` linked list).
     pub zftp: Zftp,
     pub profiler: Profiler,
     pub style_table: StyleTable,
@@ -928,7 +929,6 @@ impl ShellExecutor {
             returning: None,
             breaking: 0,
             continuing: 0,
-            tcp_sessions: TcpSessions::new(),
             zftp: Zftp::new(),
             profiler: Profiler::new(),
             style_table: StyleTable::new(),
