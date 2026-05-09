@@ -39,6 +39,8 @@ pub mod zle_vi;
 #[path = "../../extensions/widget.rs"] pub mod widget;
 pub mod zle_word;
 pub mod zleparameter;
+pub mod compctl_h;
+mod comp_h;
 
 // Re-export old API for compatibility with exec.rs
 pub use keymaps::{zle, Keymap as LegacyKeymap, KeymapName, ZleManager, ZleState};

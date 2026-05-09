@@ -56,4 +56,5 @@ pub mod zsh;
 pub mod zsh_system;
 pub mod ztype;
 mod prototypes;
-mod patchlevel;
+pub mod patchlevel;
+mod signals_h;
