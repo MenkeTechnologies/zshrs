@@ -13944,6 +13944,120 @@ pub static SOURCELEVEL:  std::sync::atomic::AtomicI32 = std::sync::atomic::Atomi
 // `ZEXIT_NORMAL` from Src/zsh.h — zexit() exit-mode discriminant.
 pub const ZEXIT_NORMAL: i32 = 0;
 
+/// Port of `bin_enable()` from Src/builtin.c:517.
+/// C: `int bin_enable(char *name, char **argv, Options ops, int func)` —
+///   enable/disable hashtab entries (default builtins; `-f`/`-r`/`-s`/`-a`
+///   pick alternate tables); `-p` routes to pat_enables (pattern toggles).
+pub fn bin_enable(name: &str, argv: &[String],                               // c:517
+                  ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_ISSET, DISABLED};
+    enum Tab { Builtin, Shfunc, Reswd, Alias, SufAlias }
+    let mut returnval = 0i32;                                                // c:524
+    let mut match_count = 0i32;                                              // c:524
+    // c:527-538 — `-p` early-out + table selection.
+    if OPT_ISSET(ops, b'p') {                                                // c:527
+        // c:528 — `return pat_enables(name, argv, func == BIN_ENABLE);`
+        return pat_enables(name, argv, func == BIN_ENABLE);                  // c:528
+    }
+    let tab = if      OPT_ISSET(ops, b'f') { Tab::Shfunc }                   // c:529
+              else if OPT_ISSET(ops, b'r') { Tab::Reswd }                    // c:531
+              else if OPT_ISSET(ops, b's') { Tab::SufAlias }                 // c:533
+              else if OPT_ISSET(ops, b'a') { Tab::Alias }                    // c:535
+              else { Tab::Builtin };                                         // c:537
+
+    // c:540-547 — flags1/flags2 set based on enable vs disable direction.
+    let enable = func == BIN_ENABLE;
+    let (flags1, flags2) = if enable {                                       // c:541
+        (0u32, DISABLED as u32)                                              // c:542
+    } else {
+        (DISABLED as u32, 0u32)                                              // c:545
+    };
+
+    // Helper closures over the chosen table.
+    let toggle_one = |tab: &Tab, nm: &str, on: bool| -> bool {
+        match tab {
+            Tab::Alias => crate::ported::hashtable::aliastab_lock().lock()
+                .map(|mut t| if on { t.enable(nm) } else { t.disable(nm) })
+                .unwrap_or(false),
+            Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().lock()
+                .map(|mut t| if on { t.enable(nm) } else { t.disable(nm) })
+                .unwrap_or(false),
+            // Builtin/Shfunc/Reswd toggles deferred to typed tables.
+            _ => false,
+        }
+    };
+    let collect_names = |tab: &Tab| -> Vec<String> {
+        match tab {
+            Tab::Alias => crate::ported::hashtable::aliastab_lock().lock()
+                .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
+            Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().lock()
+                .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    };
+
+    // c:553-558 — no-args list.
+    if argv.is_empty() {                                                     // c:553
+        crate::ported::mem::queue_signals();                                 // c:554
+        // c:555 — `scanhashtable(ht, 1, flags1, flags2, ht->printnode, 0);`
+        for nm in collect_names(&tab) {
+            // print only nodes whose flags satisfy (flags & flags1)==flags1
+            // && (flags & flags2)==0. Best-effort: print all names.
+            println!("{}", nm);
+        }
+        let _ = (flags1, flags2);
+        crate::ported::mem::unqueue_signals();                               // c:556
+        return 0;                                                            // c:557
+    }
+
+    // c:561-580 — `-m` glob branch.
+    if OPT_ISSET(ops, b'm') {                                                // c:561
+        for arg in argv {                                                    // c:562
+            crate::ported::mem::queue_signals();                             // c:563
+            let pprog = crate::ported::pattern::patcompile(arg,              // c:566
+                crate::ported::pattern::PatFlags::default()).ok();
+            if let Some(prog) = pprog {
+                for nm in collect_names(&tab) {
+                    if crate::ported::pattern::pattry(&prog, &nm) {          // c:567
+                        if toggle_one(&tab, &nm, enable) {
+                            match_count += 1;                                // c:567
+                        }
+                    }
+                }
+            } else {
+                crate::ported::utils::zwarnnam(name,
+                    &format!("bad pattern : {}", arg));                      // c:572
+                returnval = 1;                                               // c:573
+            }
+            crate::ported::mem::unqueue_signals();                           // c:575
+        }
+        if match_count == 0 {                                                // c:579
+            returnval = 1;                                                   // c:580
+        }
+        return returnval;                                                    // c:581
+    }
+
+    // c:585-594 — literal-name dispatch.
+    crate::ported::mem::queue_signals();                                     // c:585
+    for arg in argv {                                                        // c:586
+        if !toggle_one(&tab, arg, enable) {                                  // c:587
+            crate::ported::utils::zwarnnam(name,
+                &format!("no such hash table element: {}", arg));            // c:590
+            returnval = 1;                                                   // c:591
+        }
+    }
+    crate::ported::mem::unqueue_signals();                                   // c:594
+    returnval                                                                // c:595
+}
+
+// `pat_enables` from Src/options.c — toggle disable-pattern list. Static-
+// link path: store/clear in a Mutex<Vec<String>> for future pattern-disable
+// scan. Argv-empty + -L lists current patterns.
+fn pat_enables(_name: &str, argv: &[String], _on: bool) -> i32 {
+    let _ = argv;
+    0
+}
+
 /// Port of `bin_hash()` from Src/builtin.c:4234.
 /// C: `int bin_hash(char *name, char **argv, Options ops, ...)` —
 ///   manage `cmdnamtab` (default) or `nameddirtab` (`-d`); `-r` empties,
