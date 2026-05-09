@@ -1685,14 +1685,54 @@ pub fn finish_() -> i32 {
 // yet covered above. zshrs links modules statically; live
 // state owned by the module's typed struct. Name-parity shims.
 
-/// Port of `fillpmsysparams()` from Src/Modules/system.c:846.
-#[allow(non_snake_case)]
-pub fn fillpmsysparams() -> i32 { 0 }
+/// Port of `getposint()` from `Src/Modules/system.c:45`. Parses
+/// `instr` as a non-negative integer (zstrtol with base 10);
+/// emits `zwarnnam` and returns -1 on parse error or negative.
+///
+/// C signature: `static int getposint(char *instr, char *nam)`.
+pub fn getposint(instr: &str, nam: &str) -> i32 {                        // c:45
+    // c:50 — `ret = (int)zstrtol(instr, &eptr, 10);`
+    let (ret, eptr) = crate::ported::utils::zstrtol(instr, 10);
+    let ret = ret as i32;
+    // c:51 — `if (*eptr || ret < 0)`.
+    if !eptr.is_empty() || ret < 0 {
+        crate::ported::utils::zwarnnam(nam, &format!("integer expected: {}", instr));
+        return -1;                                                       // c:53
+    }
+    ret                                                                  // c:56
+}
 
-/// Port of `getposint()` from Src/Modules/system.c:45.
-#[allow(non_snake_case)]
-pub fn getposint() -> i32 { 0 }
+/// Port of `fillpmsysparams()` from `Src/Modules/system.c:846`.
+/// Populates a synthesised Param node for one of the three
+/// `${sysparams[NAME]}` keys: `pid` / `ppid` / `procsubstpid`.
+///
+/// C signature: `static void fillpmsysparams(Param pm, const char *name)`.
+/// Rust port returns the rendered string (or None for UNSET) since
+/// zshrs doesn't model the synthesised Param node here.
+pub fn fillpmsysparams(name: &str) -> Option<String> {                   // c:846
+    // c:855 — `if (!strcmp(name, "pid")) num = (int)getpid();`
+    let num: i32 = match name {
+        "pid" => unsafe { libc::getpid() },                              // c:856
+        "ppid" => unsafe { libc::getppid() },                            // c:858
+        "procsubstpid" => 0,                                             // c:860 — globals not yet wired
+        _ => return None,                                                // c:862-864 PM_UNSET
+    };
+    Some(format!("{}", num))                                             // c:867 sprintf %d
+}
 
-/// Port of `scanpmsysparams()` from Src/Modules/system.c:885.
-#[allow(non_snake_case)]
-pub fn scanpmsysparams() -> i32 { 0 }
+/// Port of `scanpmsysparams()` from `Src/Modules/system.c:885`.
+/// The magic-assoc scan callback for `${(k)sysparams}`. Iterates
+/// the three known keys + invokes the callback per entry.
+///
+/// C signature: `static void scanpmsysparams(HashTable ht, ScanFunc func, int flags)`.
+/// Rust port returns `Vec<(name, value)>`.
+pub fn scanpmsysparams() -> Vec<(String, String)> {                      // c:885
+    // c:894-898 — fill + emit each of pid / ppid / procsubstpid.
+    let mut out = Vec::new();
+    for name in ["pid", "ppid", "procsubstpid"] {
+        if let Some(v) = fillpmsysparams(name) {
+            out.push((name.to_string(), v));
+        }
+    }
+    out
+}
