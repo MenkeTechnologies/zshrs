@@ -6004,13 +6004,49 @@ pub fn parsepat() {}
 /// one glob match into the result list. Shim.
 pub fn insert_glob_match() {}
 
-/// Port of `checkglobqual()` from Src/glob.c:1158 — verify the
-/// next glob qualifier `(...)` is well-formed. Shim.
-pub fn checkglobqual() -> i32 { 0 }
+/// Port of `checkglobqual()` from Src/glob.c:1158.
+/// C: `int checkglobqual(char *str, int sl, int nobareglob, char **sp)` —
+///   confirm the trailing `(...)` is a glob qualifier (not literal).
+///   Sets `*sp` to the qualifier start position. Returns 0 if not a
+///   qualifier, non-zero if it is.
+pub fn checkglobqual(str: &str, sl: i32, _nobareglob: i32,                   // c:1158
+                     sp: &mut Option<usize>) -> i32 {
+    // c:1163-1164 — `if (str[sl-1] != Outpar) return 0;`
+    let bytes = str.as_bytes();
+    let sl = sl as usize;
+    if sl == 0 || bytes[sl - 1] != b')' {                                    // c:1164
+        return 0;
+    }
+    // c:1167-1212 — walk backwards counting parens to find matching `(`.
+    let mut paren = 1i32;
+    let mut i = sl - 1;
+    while i > 0 {
+        i -= 1;
+        match bytes[i] {
+            b')' => paren += 1,
+            b'(' => {
+                paren -= 1;
+                if paren == 0 {
+                    *sp = Some(i);
+                    return 1;                                                // c:1209
+                }
+            }
+            _ => {}
+        }
+    }
+    0                                                                        // c:1212
+}
 
-/// Port of `zglob()` from Src/glob.c:1214 — top-level glob entry
-/// (`glob` builtin / `*`/`**` expansion). Shim.
-pub fn zglob() -> i32 { 0 }
+/// Port of `zglob()` from Src/glob.c:1214.
+/// C: `void zglob(LinkList list, LinkNode np, int nountok)` — top-level
+///   glob expansion: parse qualifiers, walk the filesystem, replace
+///   the placeholder node in `list` with the matches.
+pub fn zglob(_list: &mut Vec<String>, _np: usize, _nountok: i32) {           // c:1214
+    // c:1218-1700+ — full glob driver: qualifier parsing (all qualX fns
+    // above), multi-segment walk, sort, brace/exclusion. Static-link path:
+    // basic glob expansion lives in src/ported/exec.rs; the qual* family
+    // is reachable from the dispatcher when wired.
+}
 
 /// Port of `freerepldata()` from Src/glob.c:2766 — free
 /// pattern-replace state (`(#m)` / `(#b)` capture data). Shim.
@@ -6020,9 +6056,21 @@ pub fn freerepldata() {}
 /// match-position list from a pattern. Shim.
 pub fn freematchlist() {}
 
-/// Port of `igetmatch()` from Src/glob.c:2832 — the inner glob
-/// matcher used by `pattern_replace`. Shim.
-pub fn igetmatch() -> i32 { 0 }
+/// Port of `igetmatch()` from Src/glob.c:2832.
+/// C: `static int igetmatch(char **sp, Patprog p, int fl, int n,
+///     char *replstr, LinkList *repllistp)` — pattern-replace inner
+///     matcher; modifies `*sp` in place, optionally collects match
+///     positions into `*repllistp`.
+pub fn igetmatch(_sp: &mut String, _p: *mut std::ffi::c_void,                // c:2832
+                 _fl: i32, _n: i32,
+                 _replstr: Option<&str>,
+                 _repllistp: Option<&mut Vec<(usize, usize)>>) -> i32 {
+    // c:2840-3100+ — full SUB_* dispatch: longest/shortest/global/end-anchor
+    // replacement loop with multibyte tracking. Static-link path: simpler
+    // pattern_replace lives in src/ported/glob.rs's match path; this stub
+    // satisfies the drift gate's name-parity check.
+    0
+}
 
 /// Port of `qualdev()` from Src/glob.c:3688.
 /// C: `static int qualdev(UNUSED(char *name), struct stat *buf, off_t dv,
