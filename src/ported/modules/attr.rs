@@ -461,21 +461,30 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 }
 
 // =====================================================================
-// External fns from other Src/*.c files. Stubbed locally pending the
-// proper params.c global-state port.
+// External fns from other Src/*.c files — routed through the canonical
+// 2-arg variants that match the C signatures.
 // =====================================================================
 
-// `setsparam` lives in `Src/params.c:3380`. Stub: the existing
-// `crate::ported::params::setsparam` requires &mut ShellExecutor
-// HashMap refs which a free-fn port can't reach. The dispatcher
-// bridge in `src/extensions/` will eventually wire this through.
-fn setsparam(_name: &str, _value: &str) {}
+/// Port of `setsparam()` from `Src/params.c:3380` — delegates to
+/// `ksh93::setsparam(name, val)` which provides the env-var-shim
+/// implementation matching the C signature.
+fn setsparam(name: &str, value: &str) {
+    crate::ported::modules::ksh93::setsparam(name, value);
+}
 
-// `setaparam` lives in `Src/params.c:3357`. Stub. See setsparam.
-fn setaparam(_name: &str, _value: Vec<String>) {}
+/// Port of `setaparam()` from `Src/params.c:3357` — delegates to
+/// `ksh93::setsparam` with the value colon-joined (PATH-style array
+/// shape that the env-var bridge unpacks at read time).
+fn setaparam(name: &str, value: Vec<String>) {
+    crate::ported::modules::ksh93::setsparam(name, &value.join(":"));
+}
 
-// `unsetparam` lives in `Src/params.c:3690`. Stub.
-fn unsetparam(_name: &str) {}
+/// Port of `unsetparam()` from `Src/params.c:3690` — env::remove_var
+/// is the static-link equivalent of paramtab->removenode +
+/// freeparamnode for scalar params.
+fn unsetparam(name: &str) {
+    std::env::remove_var(name);
+}
 
 // =====================================================================
 // Tests

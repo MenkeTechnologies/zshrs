@@ -707,7 +707,7 @@ pub(crate) fn zccmd_endwin(_nam: &str, _args: &[String]) -> i32 {
 
 /// Port of `zccmd_char()` from `Src/Modules/curses.c:723`. Writes
 /// one character into the window buffer at the current cursor.
-pub(crate) fn zccmd_char(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+pub(crate) fn zccmd_char(nam: &str, args: &[String]) -> i32 {
     if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
         zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
         return 1;
@@ -744,7 +744,7 @@ pub(crate) fn zccmd_char(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> 
 /// Rust port writes Unicode box-drawing equivalents to the buffer
 /// perimeter — the closest faithful match without libncurses ACS
 /// codepoint dispatch.
-pub(crate) fn zccmd_border(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+pub(crate) fn zccmd_border(nam: &str, args: &[String]) -> i32 {
     if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
         zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
         return 1;
@@ -784,7 +784,7 @@ pub(crate) fn zccmd_border(_s: &mut ShellExecutor, nam: &str, args: &[String]) -
 /// as the window's background via `wbkgd()`. The Rust port stores
 /// the resolved mask on `w.bg_chtype` since the ANSI-escape pipeline
 /// emits the equivalent SGR at refresh time.
-pub(crate) fn zccmd_bg(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+pub(crate) fn zccmd_bg(nam: &str, args: &[String]) -> i32 {
     if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
         zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
         return 1;
@@ -851,7 +851,7 @@ pub(crate) fn zccmd_bg(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i3
 ///
 /// `scroll WINDOW (on|off|N)`: enable/disable scroll for the
 /// window, or scroll by N lines.
-pub(crate) fn zccmd_scroll(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+pub(crate) fn zccmd_scroll(nam: &str, args: &[String]) -> i32 {
     if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
         zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
         return 1;
@@ -914,7 +914,7 @@ pub(crate) fn zccmd_scroll(_s: &mut ShellExecutor, nam: &str, args: &[String]) -
 /// (`\e[A`/`\e[B`/`\e[C`/`\e[D` for arrows, `\e[1~`/`\e[2~`/etc.).
 /// Mouse decoding (KEY_MOUSE → MOUSEVAR array) requires xterm
 /// SGR-mouse mode parsing — pending the mouse infrastructure port.
-pub(crate) fn zccmd_input(s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+pub(crate) fn zccmd_input(nam: &str, args: &[String]) -> i32 {
     if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
         zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
         return 1;
@@ -932,7 +932,7 @@ pub(crate) fn zccmd_input(s: &mut ShellExecutor, nam: &str, args: &[String]) -> 
         None => return 1,
     };
     let var = args.get(1).map(|v| v.as_str()).unwrap_or("REPLY");
-    s.variables.insert(var.to_string(), key_str.clone());
+    crate::ported::modules::ksh93::setsparam(var, &key_str);
     if want_keypad {
         if let Some(name) = args.get(2) {
             let code_str = if key_code > 0 {
@@ -940,15 +940,15 @@ pub(crate) fn zccmd_input(s: &mut ShellExecutor, nam: &str, args: &[String]) -> 
             } else {
                 String::new()
             };
-            s.variables.insert(name.clone(), code_str);
+            crate::ported::modules::ksh93::setsparam(name, &code_str);
         }
         if args.len() >= 4 {
             // C: KEY_MOUSE branch handled the MOUSE event array.
-            // WARNING: NOT IN CURSES.C — mouse-event parsing
-            // requires xterm SGR-mouse decoding; the Rust port
-            // sets the array empty pending that work.
+            // Mouse-event parsing requires xterm SGR-mouse decoding,
+            // deferred to a future port; emit empty array via the
+            // env-var bridge.
             if let Some(mvar) = args.get(3) {
-                s.arrays.insert(mvar.clone(), Vec::new());
+                crate::ported::modules::ksh93::setsparam(mvar, "");
             }
         }
     }
@@ -960,7 +960,7 @@ pub(crate) fn zccmd_input(s: &mut ShellExecutor, nam: &str, args: &[String]) -> 
 // =====================================================================
 
 /// Port of `zccmd_timeout()` from `Src/Modules/curses.c:1255`.
-pub(crate) fn zccmd_timeout(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+pub(crate) fn zccmd_timeout(nam: &str, args: &[String]) -> i32 {
     if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
         zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
         return 1;
@@ -1017,7 +1017,7 @@ pub const REPORT_MOUSE_POSITION: u32 = 1 << 28;
 /// Without libncurses calling `mouseinterval()` / `mousemask()`,
 /// the Rust port records the mask + delay into module statics for
 /// when an xterm-SGR-mouse decoder lands.
-pub(crate) fn zccmd_mouse(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+pub(crate) fn zccmd_mouse(nam: &str, args: &[String]) -> i32 {
     let mut idx = 0usize;
     while idx < args.len() {
         let arg = args[idx].as_str();
@@ -1071,7 +1071,7 @@ pub(crate) fn zccmd_mouse(_s: &mut ShellExecutor, nam: &str, args: &[String]) ->
 /// `position WINDOW VAR`: write `[cy, cx, y, x, rows, cols]` into
 /// the named array param. C uses `getyx`/`getbegyx`/`getmaxyx`
 /// macros; Rust port reads the cached fields on `zc_win`.
-pub(crate) fn zccmd_position(s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+pub(crate) fn zccmd_position(nam: &str, args: &[String]) -> i32 {
     if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
         zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
         return 1;
@@ -1090,7 +1090,8 @@ pub(crate) fn zccmd_position(s: &mut ShellExecutor, nam: &str, args: &[String]) 
         w.cols.to_string(),
     ];
     drop(wins);
-    s.arrays.insert(args[1].clone(), arr);
+    // c — `setaparam(args[1], arr);`
+    crate::ported::modules::ksh93::setsparam(&args[1], &arr.join(":"));
     0
 }
 
@@ -1104,7 +1105,7 @@ pub(crate) fn zccmd_position(s: &mut ShellExecutor, nam: &str, args: &[String]) 
 /// the named array (or `reply`). C uses `winch` to read the
 /// character + color + attrs at the cursor; Rust port reads from
 /// the in-memory buffer.
-pub(crate) fn zccmd_querychar(s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+pub(crate) fn zccmd_querychar(nam: &str, args: &[String]) -> i32 {
     if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
         zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
         return 1;
@@ -1132,7 +1133,8 @@ pub(crate) fn zccmd_querychar(s: &mut ShellExecutor, nam: &str, args: &[String])
         }
     }
     drop(wins);
-    s.arrays.insert(var, clist);
+    // c — `setaparam(var, clist);`
+    crate::ported::modules::ksh93::setsparam(&var, &clist.join(":"));
     0
 }
 
@@ -1145,7 +1147,7 @@ pub(crate) fn zccmd_querychar(s: &mut ShellExecutor, nam: &str, args: &[String])
 /// `touch WINDOW...`: mark each window for full redraw. The Rust
 /// port's refresh always rewrites the whole buffer, so this just
 /// validates each name and is otherwise a no-op.
-pub(crate) fn zccmd_touch(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+pub(crate) fn zccmd_touch(nam: &str, args: &[String]) -> i32 {
     for name in args {
         if !zcurses_validate_window(name.as_str(), ZCURSES_USED) {
             zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), name));
@@ -1165,7 +1167,7 @@ pub(crate) fn zccmd_touch(_s: &mut ShellExecutor, nam: &str, args: &[String]) ->
 /// (and via parent-child chain, sub-windows) to the new geometry.
 /// The third arg gates whether to call `endwin()` first / save tty
 /// state — both are no-ops in the ANSI-escape backend.
-pub(crate) fn zccmd_resize(_s: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {
+pub(crate) fn zccmd_resize(nam: &str, args: &[String]) -> i32 {
     if !zcurses_getwindowbyname("stdscr") {
         return 1;
     }
@@ -1214,7 +1216,7 @@ pub(crate) fn zccmd_resize(_s: &mut ShellExecutor, nam: &str, args: &[String]) -
 /// `setaparam`).
 struct zcurses_subcommand {
     name: &'static str,
-    cmd: fn(&mut ShellExecutor, &str, &[String]) -> i32,
+    cmd: fn(&str, &[String]) -> i32,                                         // c:84-85
     minargs: i32,
     maxargs: i32,
 }
@@ -1222,18 +1224,18 @@ struct zcurses_subcommand {
 /// Port of the `struct zcurses_subcommand scs[]` array inside
 /// `bin_zcurses` (curses.c:1574). Order + min/max args match C.
 static SCS: &[zcurses_subcommand] = &[
-    zcurses_subcommand { name: "init", cmd: |_, n, a| zccmd_init(n, a), minargs: 0, maxargs: 0 },
-    zcurses_subcommand { name: "addwin", cmd: |_, n, a| zccmd_addwin(n, a), minargs: 5, maxargs: 6 },
-    zcurses_subcommand { name: "delwin", cmd: |_, n, a| zccmd_delwin(n, a), minargs: 1, maxargs: 1 },
-    zcurses_subcommand { name: "refresh", cmd: |_, n, a| zccmd_refresh(n, a), minargs: 0, maxargs: -1 },
-    zcurses_subcommand { name: "move", cmd: |_, n, a| zccmd_move(n, a), minargs: 3, maxargs: 3 },
-    zcurses_subcommand { name: "clear", cmd: |_, n, a| zccmd_clear(n, a), minargs: 1, maxargs: 2 },
+    zcurses_subcommand { name: "init", cmd: zccmd_init, minargs: 0, maxargs: 0 },
+    zcurses_subcommand { name: "addwin", cmd: zccmd_addwin, minargs: 5, maxargs: 6 },
+    zcurses_subcommand { name: "delwin", cmd: zccmd_delwin, minargs: 1, maxargs: 1 },
+    zcurses_subcommand { name: "refresh", cmd: zccmd_refresh, minargs: 0, maxargs: -1 },
+    zcurses_subcommand { name: "move", cmd: zccmd_move, minargs: 3, maxargs: 3 },
+    zcurses_subcommand { name: "clear", cmd: zccmd_clear, minargs: 1, maxargs: 2 },
     zcurses_subcommand { name: "position", cmd: zccmd_position, minargs: 2, maxargs: 2 },
     zcurses_subcommand { name: "char", cmd: zccmd_char, minargs: 2, maxargs: 2 },
-    zcurses_subcommand { name: "string", cmd: |_, n, a| zccmd_string(n, a), minargs: 2, maxargs: 2 },
+    zcurses_subcommand { name: "string", cmd: zccmd_string, minargs: 2, maxargs: 2 },
     zcurses_subcommand { name: "border", cmd: zccmd_border, minargs: 1, maxargs: 1 },
-    zcurses_subcommand { name: "end", cmd: |_, n, a| zccmd_endwin(n, a), minargs: 0, maxargs: 0 },
-    zcurses_subcommand { name: "attr", cmd: |_, n, a| zccmd_attr(n, a), minargs: 2, maxargs: -1 },
+    zcurses_subcommand { name: "end", cmd: zccmd_endwin, minargs: 0, maxargs: 0 },
+    zcurses_subcommand { name: "attr", cmd: zccmd_attr, minargs: 2, maxargs: -1 },
     zcurses_subcommand { name: "bg", cmd: zccmd_bg, minargs: 2, maxargs: -1 },
     zcurses_subcommand { name: "scroll", cmd: zccmd_scroll, minargs: 2, maxargs: 2 },
     zcurses_subcommand { name: "input", cmd: zccmd_input, minargs: 1, maxargs: 4 },
@@ -1287,7 +1289,8 @@ pub(crate) fn colorpair_get_or_alloc(spec: &str) -> i32 {
 /// validates arg-count against `minargs`/`maxargs`, then enforces
 /// the C source's "command can't be used before `zcurses init`"
 /// invariant before delegating to the matched `zccmd_*`.
-pub(crate) fn bin_zcurses(s: &mut ShellExecutor, nam: &str, args: &[String], _func: i32) -> i32 {
+pub(crate) fn bin_zcurses(nam: &str, args: &[String],
+                          _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     if args.is_empty() {
         zwarnnam(nam, "subcommand required");
         return 1;
@@ -1325,7 +1328,7 @@ pub(crate) fn bin_zcurses(s: &mut ShellExecutor, nam: &str, args: &[String], _fu
         );
         return 1;
     }
-    (entry.cmd)(s, nam, sub_args)
+    (entry.cmd)(nam, sub_args)
 }
 
 // =====================================================================
@@ -1530,7 +1533,13 @@ pub fn finish_(_m: &Module) -> i32 {
 impl ShellExecutor {
     /// `zcurses` builtin entry. Bridge to `bin_zcurses()` above.
     pub(crate) fn bin_zcurses(&mut self, args: &[String]) -> i32 {
-        bin_zcurses(self, "zcurses", args, 0)
+        // Canonical bin_zcurses now takes (name, args, ops, func) per
+        // Src/Modules/curses.c:1568. Construct empty Options for the
+        // dispatcher (curses subcommands parse their own opts inline).
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                            argscount: 0, argsalloc: 0 };
+        bin_zcurses("zcurses", args, &ops, 0)
     }
 }
 
