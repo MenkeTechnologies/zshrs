@@ -131,3 +131,27 @@ src/ported/zsh_h.rs::IS_COMBINING
 src/ported/zsh_h.rs::IS_BASECHAR
 src/ported/zsh_h.rs::OPT_ARG
 src/ported/zsh_h.rs::OPT_ARG_SAFE
+
+# More zsh.h macro family ports — same situation as the MB_*/IS_*
+# above. C indexes them at every consumer site (builtin.c table
+# rows, init.c, exec.c, etc.); canonical home is zsh.h → zsh_h.rs.
+src/ported/zsh_h.rs::EMULATION
+src/ported/zsh_h.rs::SHELL_EMULATION
+src/ported/zsh_h.rs::IN_EVAL_TRAP
+src/ported/zsh_h.rs::ASG_ARRAYP
+src/ported/zsh_h.rs::ASG_VALUEP
+src/ported/zsh_h.rs::MB_METASTRLEN2END
+src/ported/zsh_h.rs::ZWS
+src/ported/zsh_h.rs::BUILTIN
+src/ported/zsh_h.rs::BIN_PREFIX
+src/ported/zsh_h.rs::CONDDEF
+src/ported/zsh_h.rs::HOOKDEF
+src/ported/zsh_h.rs::NUMMATHFUNC
+src/ported/zsh_h.rs::STRMATHFUNC
+src/ported/zsh_h.rs::PARAMDEF
+src/ported/zsh_h.rs::INTPARAMDEF
+src/ported/zsh_h.rs::STRPARAMDEF
+src/ported/zsh_h.rs::ARRPARAMDEF
+src/ported/zsh_h.rs::SPECIALPMDEF
+src/ported/zsh_h.rs::WRAPDEF
+src/ported/zsh_h.rs::ZLONG_CONST
