@@ -9656,7 +9656,7 @@ impl crate::ported::exec::ShellExecutor {
             "zpty" => return self.bin_zpty(&rest_vec),
             "ztcp" => return self.bin_ztcp(&rest_vec),
             "zsocket" => return self.bin_zsocket(&rest_vec),
-            "private" => return self.builtin_local(&rest_vec),
+            "private" => return crate::modules::param_private::bin_private(self, "private", &rest_vec),
             "zformat" => return self.bin_zformat(&rest_vec),
             "zregexparse" => return self.bin_zregexparse(&rest_vec),
             // zsh-bundled rename helpers — implemented natively in

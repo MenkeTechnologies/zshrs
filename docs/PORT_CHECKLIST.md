@@ -190,6 +190,19 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - 6 module loaders are static-link no-ops with C-body-quoting doc-comments (c:472/479/487/494/501/508).
   - 5/5 langinfo tests pass: `nl_names_includes_codeset`, `getlanginfo_codeset_is_some`, `getlanginfo_invalid_returns_none`, `liitem_codeset_resolves`, `scanlanginfo_emits_items`. Drift gate clean.
 
+- [ ] `modules/param_private.rs` ↔ `Modules/param_private.c` — **PARTIAL.**
+  - Previous file had `PrivateParam` struct + `ParamValue` enum + `PrivateScope` struct + a 9-method `impl PrivateScope` block + a `pub(crate) fn bin_private` shim on `ShellExecutor` — all rule-1 violations (none of those names exist in C). Full strict cleanup.
+  - C: 1 struct (`gsu_closure` c:34). Rust: 1 struct `Gsu_closure` ✓ (lowercase `gsu_closure` → CamelCase `Gsu_closure` matching the C casing letter-for-letter, with `#[allow(non_camel_case_types)]` since the C name has the underscore). 0 enums; no Rust-only types remain.
+  - C fns (25): `makeprivate`, `is_private`, `setfn_error`, `bin_private`, `printprivatenode`, `pps_getfn`, `pps_setfn`, `pps_unsetfn`, `ppi_getfn`, `ppi_setfn`, `ppi_unsetfn`, `ppf_getfn`, `ppf_setfn`, `ppf_unsetfn`, `ppa_getfn`, `ppa_setfn`, `ppa_unsetfn`, `pph_getfn`, `pph_setfn`, `pph_unsetfn`, `getprivatenode`, `getprivatenode2`, `scopeprivate`, `wrap_private`, plus 6 module loaders (`setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_`). Rust: same 25 ✓; function order matches C source order verbatim.
+  - **Strict status: PARTIAL.** A faithful 1:1 port requires the entire `Param`/`HashNode`/`gsu_*`/`locallevel`/`bin_typeset`/`createparam`/`addhashnode` machinery — none of which is yet ported in zshrs (executor stores params in plain HashMaps on ShellExecutor rather than the C linked-hashtable + level-stack design).
+  - `bin_private(exec, nam, args) -> i32` — port of c:217. Inline parsing of `-i`/`-F`/`-a`/`-A`/`-r` flags + per-arg `name=value` assign through `exec.variables`/`exec.arrays`/`exec.assoc_arrays`. This is observably equivalent to `local` for the common non-shadowing case, but the c:140-178 `makeprivate` promotion + rejection logic is unreachable. Documented inline as PARTIAL.
+  - All 12 per-type GSU callbacks (`pps_*`/`ppi_*`/`ppf_*`/`ppa_*`/`pph_*`) and `is_private`/`setfn_error`/`getprivatenode`/`getprivatenode2`/`scopeprivate`/`wrap_private`/`printprivatenode`/`makeprivate` remain as no-op stubs returning 0, each with a citing doc-comment pointing at the C body that requires the missing machinery.
+  - **Caller updates:**
+    - `src/fusevm_bridge.rs:9659` — `"private"` route now calls `crate::modules::param_private::bin_private(self, "private", &rest_vec)` instead of the old `self.builtin_local(&rest_vec)` workaround.
+    - `src/ported/builtin.rs:10618` — same change.
+  - Old impl-on-ShellExecutor adapter (`pub(crate) fn bin_private(&mut self, args)`) deleted — bin_private is now a free fn taking `&mut ShellExecutor`.
+  - 5/5 param_private tests pass: `bin_private_no_args_returns_zero`, `bin_private_scalar_assign`, `bin_private_integer_assign`, `bin_private_array_assign`, `module_loaders_return_zero`. Drift gate clean. NOT ticked DONE — see PARTIAL note (true scope semantics blocked on Param/locallevel port).
+
 - [x] `modules/nearcolor.rs` ↔ `Modules/nearcolor.c`
   - C: 1 struct (`cielab`) + 1 typedef (`Cielab` = `struct cielab *`). Rust: 1 struct `Cielab` ✓ (typedef-of-pointer collapses to `&Cielab`); 0 enums; no Rust-only types.
   - C fns (11): `deltae`, `RGBtoLAB`, `mapRGBto88`, `mapRGBto256`, `getnearestcolor`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 11 ✓
@@ -362,7 +375,6 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
 - [ ] `zle/zle_keymap.rs` ↔ `Zle/zle_keymap.c`
 - [ ] `zle/zle_tricky.rs` ↔ `Zle/zle_tricky.c`
 - [ ] `zle/zle_word.rs` ↔ `Zle/zle_word.c`
-- [ ] `modules/param_private.rs` ↔ `Modules/param_private.c`
 - [ ] `modules/zftp.rs` ↔ `Modules/zftp.c`
 - [ ] `modules/parameter.rs` ↔ `Modules/parameter.c`
 - [ ] `loop.rs` ↔ `loop.c`

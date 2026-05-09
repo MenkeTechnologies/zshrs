@@ -119,6 +119,30 @@ hlgroup.rs::convertattr collapses to the 3-call chain in c:42-77.
 
 ---
 
+## Param/locallevel/HashNode machinery (`Src/params.c` + `Src/zsh.h`)
+
+zsh's parameter table is a custom linked-hashtable with per-entry
+`gsu_*` callback dispatch and `level`/`old` chaining for function-
+local scoping. zshrs's `ShellExecutor` stores params in plain
+`HashMap`s, missing the entire scope/level/dispatch substrate.
+
+**Blocks:**
+- `modules/param_private.rs` — bin_private's `makeprivate`
+  promotion + rejection logic (c:140-178), all 12 GSU callbacks
+  (`pps_*`/`ppi_*`/`ppf_*`/`ppa_*`/`pph_*`),
+  `is_private`/`scopeprivate`/`wrap_private`/`getprivatenode`/
+  `printprivatenode` — every fn that needs `Param.level` or the
+  `gsu_closure` chaining is a no-op stub.
+
+**Fix path:** port `struct param`, `struct gsu_scalar`/`gsu_integer`/
+`gsu_float`/`gsu_array`/`gsu_hash` from zsh.h, port the dispatch in
+`getvalue`/`assignsparam`/`setiparam` to consult the per-param GSU,
+add `level`/`old` chaining and the `locallevel++`/`locallevel--`
+hooks at function entry/exit. Substantial; touches params.rs +
+exec.rs + every magic-assoc consumer.
+
+---
+
 ## Module-loader signatures (need `&mut ShellExecutor`)
 
 Every C module's `setup_()` / `features_()` / `enables_()` / `boot_()`

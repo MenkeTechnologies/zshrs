@@ -10615,7 +10615,7 @@ impl crate::ported::exec::ShellExecutor {
             ":" => 0,
             "test" | "[" => self.bin_test(cmd_args),
             "local" => self.builtin_local(cmd_args),
-            "private" => self.builtin_local(cmd_args),
+            "private" => crate::modules::param_private::bin_private(self, "private", cmd_args),
             "declare" => self.builtin_declare(cmd_args),
             "typeset" => self.bin_typeset(cmd_args),
             "read" => self.bin_read(cmd_args),
