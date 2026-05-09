@@ -385,3 +385,16 @@ argzero
 compile_pattern
 has_pattern
 match_pattern
+
+# watch.rs — Rust-only setters/predicates around the WTAB/LASTWATCH/
+# LASTUTMPCHECK/WATCH thread_locals (port of Src/Modules/watch.c:150-156,
+# 689 file-statics). C zsh has no setter functions: `$watch` assignments
+# flow through the paramdef table (watch.c:697) and the elapsed-time gate
+# is inlined inside `dowatch()` (watch.c:597). The Rust port factors them
+# into named fns so future param-hook wiring has a single update site
+# (and tests can drive them directly without going through the param
+# table). `check_entry` extracts the per-entry filter inlined inside
+# `watchlog()` (watch.c:458, lines 489-510).
+set_watch_list
+should_check
+check_entry
