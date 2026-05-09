@@ -3351,11 +3351,34 @@ pub fn assigniparam(table: &mut ParamTable, name: &str, val: i64) -> bool {
     table.set_integer(name, val)
 }
 
-/// Assign array parameter (from params.c setaparam)
-/// Assign an array parameter.
-/// Port of `setaparam()` (Src/params.c).
-pub fn setaparam(table: &mut ParamTable, name: &str, val: Vec<String>) -> bool {
-    table.set_array(name, val)
+/// Set array parameter.
+/// Port of `setaparam()` from `Src/params.c:3759` — single-line wrapper
+/// around `assignaparam(s, val, ASSPM_WARN)`. C body:
+/// ```c
+/// mod_export Param setaparam(char *s, char **val) {
+///     return assignaparam(s, val, ASSPM_WARN);
+/// }
+/// ```
+///
+/// `assignaparam` (params.c:3357) creates the param if missing
+/// (createparam(s, PM_ARRAY)), then dispatches to `setarrvalue` which
+/// drops any prior scalar / assoc value and stores the array. Rust port
+/// mirrors that "drop scalar+assoc, set array" semantic via the three
+/// separate HashMaps that ShellExecutor uses for parameter storage.
+///
+/// `ASSPM_WARN` (params.c:104) is a no-op in our port — the global
+/// "warn on creation" tracking is not yet ported. Call shape preserved
+/// so callers can use this where C calls setaparam.
+pub fn setaparam(
+    variables: &mut std::collections::HashMap<String, String>,
+    arrays: &mut std::collections::HashMap<String, Vec<String>>,
+    assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
+    name: &str,
+    val: Vec<String>,
+) {
+    arrays.insert(name.to_string(), val);
+    variables.remove(name);
+    assoc_arrays.remove(name);
 }
 
 /// Subscript-aware scalar parameter assignment.
