@@ -557,7 +557,7 @@ pub fn getposint(instr: &str, nam: &str) -> i32 {                            // 
         Ok(n) if n >= 0 => n,                                                // c:323
         _ => {
             // c:319-321 — zwarnnam(nam, "integer expected: %s", instr);
-            eprintln!("zshrs: {}: integer expected: {}", nam, instr);        // c:320
+            crate::ported::utils::zwarnnam(nam, &format!("integer expected: {}", instr)); // c:320
             -1                                                               // c:321
         }
     }

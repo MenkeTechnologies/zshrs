@@ -449,3 +449,8 @@ MB_CHARLENCONV
 # the static must be lazily initialized through this fn. Wraps the
 # Mutex used by all addnameddirnode/removenameddirnode/etc.
 nameddir_table
+# shfunctab_table (builtin.rs) — OnceLock accessor for the
+# C `HashTable shfunctab` global; HashMap::new() isn't const so
+# the static must be lazily initialized through this fn. Wraps the
+# Mutex used by add_autoload_function and other shfunctab call sites.
+shfunctab_table
