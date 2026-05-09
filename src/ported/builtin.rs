@@ -12699,24 +12699,97 @@ pub fn getasg(argvp: &mut Vec<String>,                                       // 
 
 /// Port of `typeset_setbase()` from Src/builtin.c:1961.
 /// C: `static int typeset_setbase(const char *name, Param pm, Options ops,
-///     int on, int always)` — read `-i ARG` numeric base value, set it
-///     on the integer parameter; returns 0 on success.
-pub fn typeset_setbase(_name: &str, _pm: *mut crate::ported::zsh_h::param,   // c:1961
-                       _ops: &crate::ported::zsh_h::options,
-                       _on: i32, _always: i32) -> i32 {
-    // c:1965-1995 — OPT_HASARG(ops,'i') / OPT_ARG, parse base, set pm->base.
-    // Static-link path: param.base wiring lives in src/ported/params.rs.
-    0
+///     int on, int always)` — install numeric base on `pm`. For
+///     `-i ARG`/`-E ARG`/`-F ARG`, parse ARG as base and validate
+///     (must be 2..=36 for integer); error → return 1.
+pub fn typeset_setbase(name: &str, pm: *mut crate::ported::zsh_h::param,     // c:1961
+                       ops: &crate::ported::zsh_h::options,
+                       on: i32, always: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_HASARG, OPT_ARG, PM_INTEGER, PM_EFLOAT, PM_FFLOAT};
+    // c:1964 — `char *arg = NULL;`
+    let mut arg: Option<&str> = None;                                        // c:1964
+    let on_u = on as u32;
+    // c:1966-1971 — `if ((on & PM_INTEGER) && OPT_HASARG(ops,'i')) arg = OPT_ARG(ops,'i');`
+    if (on_u & PM_INTEGER) != 0 && OPT_HASARG(ops, b'i') {                   // c:1966
+        arg = OPT_ARG(ops, b'i');                                            // c:1967
+    } else if (on_u & PM_EFLOAT) != 0 && OPT_HASARG(ops, b'E') {             // c:1968
+        arg = OPT_ARG(ops, b'E');                                            // c:1969
+    } else if (on_u & PM_FFLOAT) != 0 && OPT_HASARG(ops, b'F') {             // c:1970
+        arg = OPT_ARG(ops, b'F');                                            // c:1971
+    }
+
+    // c:1973 — `if (arg) {`
+    if let Some(a) = arg {                                                   // c:1973
+        // c:1976 — `int base = (int)zstrtol(arg, &eptr, 10);`
+        let base = match a.trim().parse::<i32>() {
+            Ok(b) => b,
+            Err(_) => {
+                // c:1977-1982
+                if (on_u & PM_INTEGER) != 0 {
+                    eprintln!("zshrs: {}: bad base value: {}", name, a);     // c:1979
+                } else {
+                    eprintln!("zshrs: {}: bad precision value: {}", name, a); // c:1981
+                }
+                return 1;                                                    // c:1983
+            }
+        };
+        // c:1985-1989 — integer base must be 2..=36 inclusive.
+        if (on_u & PM_INTEGER) != 0 && (base < 2 || base > 36) {             // c:1985
+            eprintln!("zshrs: {}: invalid base (must be 2 to 36 inclusive): {}", name, base); // c:1986-1987
+            return 1;                                                        // c:1988
+        }
+        // c:1990 — `pm->base = base;`
+        if !pm.is_null() {
+            unsafe { (*pm).base = base; }                                    // c:1990
+        }
+    } else if always != 0 {                                                  // c:1991
+        // c:1992 — `pm->base = 0;`
+        if !pm.is_null() {
+            unsafe { (*pm).base = 0; }                                       // c:1992
+        }
+    }
+    0                                                                        // c:1994
 }
 
 /// Port of `typeset_setwidth()` from Src/builtin.c:1997.
 /// C: `static int typeset_setwidth(const char *name, Param pm, Options ops,
-///     int on, int always)` — read `-L`/`-R ARG`, set right/left padding.
-pub fn typeset_setwidth(_name: &str, _pm: *mut crate::ported::zsh_h::param,  // c:1997
-                        _ops: &crate::ported::zsh_h::options,
-                        _on: i32, _always: i32) -> i32 {
-    // c:2001-2024 — OPT_HASARG(ops, 'L'/'R'), parse width, set pm->width.
-    0
+///     int on, int always)` — install padding width via `-L/-R/-Z ARG`.
+pub fn typeset_setwidth(name: &str, pm: *mut crate::ported::zsh_h::param,    // c:1997
+                        ops: &crate::ported::zsh_h::options,
+                        on: i32, always: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_HASARG, OPT_ARG, PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z};
+    // c:2000 — `char *arg = NULL;`
+    let mut arg: Option<&str> = None;                                        // c:2000
+    let on_u = on as u32;
+    // c:2002-2007
+    if (on_u & PM_LEFT) != 0 && OPT_HASARG(ops, b'L') {                      // c:2002
+        arg = OPT_ARG(ops, b'L');                                            // c:2003
+    } else if (on_u & PM_RIGHT_B) != 0 && OPT_HASARG(ops, b'R') {            // c:2004
+        arg = OPT_ARG(ops, b'R');                                            // c:2005
+    } else if (on_u & PM_RIGHT_Z) != 0 && OPT_HASARG(ops, b'Z') {            // c:2006
+        arg = OPT_ARG(ops, b'Z');                                            // c:2007
+    }
+
+    // c:2009 — `if (arg) {`
+    if let Some(a) = arg {                                                   // c:2009
+        // c:2011 — `pm->width = (int)zstrtol(arg, &eptr, 10);`
+        let width = match a.trim().parse::<i32>() {
+            Ok(w) => w,
+            Err(_) => {
+                eprintln!("zshrs: {}: bad width value: {}", name, a);        // c:2013
+                return 1;                                                    // c:2014
+            }
+        };
+        if !pm.is_null() {
+            unsafe { (*pm).width = width; }                                  // c:2011
+        }
+    } else if always != 0 {                                                  // c:2015
+        // c:2016 — `pm->width = 0;`
+        if !pm.is_null() {
+            unsafe { (*pm).width = 0; }                                      // c:2016
+        }
+    }
+    0                                                                        // c:2018
 }
 
 /// Port of `typeset_single()` from Src/builtin.c:2025.
