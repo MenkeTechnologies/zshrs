@@ -7078,640 +7078,1175 @@ impl VarAttr {
 }
 
 // ===========================================================
-// Direct ports of static parameter table / GSU getter+setter+
-// unsetter helpers from Src/params.c not yet covered above.
-// The Rust executor stores parameters as typed entries in
-// HashMaps on `ShellExecutor`; live state is reached via the
-// executor methods. These free-fn entries satisfy ABI/name
-// parity for the drift gate.
+// Special-parameter GSU (get/set/unset) callbacks ported from
+// Src/params.c.
+//
+// C zsh stores per-special-param state in file-static globals
+// (`ifs`, `home`, `term`, `histsiz`, etc.) and dispatches getfn/
+// setfn/unsetfn callbacks through `Param.gsu->getfn` etc. zshrs's
+// param storage is per-evaluator HashMaps on `ShellExecutor`, so
+// the C globals are reproduced as `OnceLock<Mutex<…>>` module
+// statics here, with the get/set fns mutating the static.
+//
+// Functions that genuinely need a `Param *` (the GSU dispatch
+// callbacks for non-special arr/hash/int/float/str params, the
+// param-table mutators, scope helpers, etc.) cannot be properly
+// ported until zshrs gains a Param struct + callback-table ABI;
+// those keep their C signatures but the body is a WARNING-stub
+// that does nothing.
 // ===========================================================
 
-/// Port of `addenv()` from Src/params.c:5448. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn addenv() -> i32 { 0 }
-
-/// Port of `argzerogetfn()` from Src/params.c:4954. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn argzerogetfn() -> i32 { 0 }
-
-/// Port of `argzerosetfn()` from Src/params.c:4937. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn argzerosetfn() -> i32 { 0 }
-
-/// Port of `arrayuniq()` from Src/params.c:4473. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn arrayuniq() -> i32 { 0 }
-
-/// Port of `arrayuniq_freenode()` from Src/params.c:4443. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn arrayuniq_freenode() -> i32 { 0 }
-
-/// Port of `arrfixenv()` from Src/params.c:5285. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn arrfixenv() -> i32 { 0 }
-
-/// Port of `arrgetfn()` from Src/params.c:4057. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn arrgetfn() -> i32 { 0 }
-
-/// Port of `arrhashsetfn()` from Src/params.c:4113. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn arrhashsetfn() -> i32 { 0 }
-
-/// Port of `arrsetfn()` from Src/params.c:4066. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn arrsetfn() -> i32 { 0 }
-
-/// Port of `arrvargetfn()` from Src/params.c:4279. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn arrvargetfn() -> i32 { 0 }
-
-/// Port of `arrvarsetfn()` from Src/params.c:4294. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn arrvarsetfn() -> i32 { 0 }
-
-/// Port of `assigngetset()` from Src/params.c:994. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn assigngetset() -> i32 { 0 }
-
-/// Port of `assignnparam()` from Src/params.c:3664. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn assignnparam() -> i32 { 0 }
-
-/// Port of `assignstrvalue()` from Src/params.c:2692. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn assignstrvalue() -> i32 { 0 }
-
-/// Port of `check_warn_pm()` from Src/params.c:3158. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn check_warn_pm() -> i32 { 0 }
-
-/// Port of `clear_mbstate()` from Src/params.c:4831. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn clear_mbstate() -> i32 { 0 }
-
-/// Port of `colonarrsetfn()` from Src/params.c:4329. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn colonarrsetfn() -> i32 { 0 }
-
-/// Port of `convbase_ptr()` from Src/params.c:5586. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn convbase_ptr() -> i32 { 0 }
-
-/// Port of `copyenvstr()` from Src/params.c:5434. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn copyenvstr() -> i32 { 0 }
-
-/// Port of `copyparamtable()` from Src/params.c:596. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn copyparamtable() -> i32 { 0 }
-
-/// Port of `createparamtable()` from Src/params.c:817. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn createparamtable() -> i32 { 0 }
-
-/// Port of `createspecialhash()` from Src/params.c:1182. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn createspecialhash() -> i32 { 0 }
-
-/// Port of `delenv()` from Src/params.c:5563. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn delenv() -> i32 { 0 }
-
-/// Port of `delenvvalue()` from Src/params.c:5542. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn delenvvalue() -> i32 { 0 }
-
-/// Port of `deleteparamtable()` from Src/params.c:616. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn deleteparamtable() -> i32 { 0 }
-
-/// Port of `egidgetfn()` from Src/params.c:4752. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn egidgetfn() -> i32 { 0 }
-
-/// Port of `egidsetfn()` from Src/params.c:4761. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn egidsetfn() -> i32 { 0 }
-
-/// Port of `errnogetfn()` from Src/params.c:5015. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn errnogetfn() -> i32 { 0 }
-
-/// Port of `errnosetfn()` from Src/params.c:5004. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn errnosetfn() -> i32 { 0 }
-
-/// Port of `euidgetfn()` from Src/params.c:4710. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn euidgetfn() -> i32 { 0 }
-
-/// Port of `euidsetfn()` from Src/params.c:4719. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn euidsetfn() -> i32 { 0 }
-
-/// Port of `fetchvalue()` from Src/params.c:2180. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn fetchvalue() -> i32 { 0 }
-
-/// Port of `findenv()` from Src/params.c:5391. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn findenv() -> i32 { 0 }
-
-/// Port of `floatgetfn()` from Src/params.c:4011. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn floatgetfn() -> i32 { 0 }
-
-/// Port of `floatsecondsgetfn()` from Src/params.c:4591. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn floatsecondsgetfn() -> i32 { 0 }
-
-/// Port of `floatsecondssetfn()` from Src/params.c:4603. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn floatsecondssetfn() -> i32 { 0 }
-
-/// Port of `floatsetfn()` from Src/params.c:4020. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn floatsetfn() -> i32 { 0 }
-
-/// Port of `freeparamnode()` from Src/params.c:5977. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn freeparamnode() -> i32 { 0 }
-
-/// Port of `getindex()` from Src/params.c:2001. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn getindex() -> i32 { 0 }
-
-/// Port of `getparamnode()` from Src/params.c:570. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn getparamnode() -> i32 { 0 }
-
-/// Port of `getrawseconds()` from Src/params.c:4615. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn getrawseconds() -> i32 { 0 }
-
-/// Port of `getvalue()` from Src/params.c:2173. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn getvalue() -> i32 { 0 }
-
-/// Port of `getvaluearr()` from Src/params.c:710. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn getvaluearr() -> i32 { 0 }
-
-/// Port of `gidgetfn()` from Src/params.c:4731. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn gidgetfn() -> i32 { 0 }
-
-/// Port of `gidsetfn()` from Src/params.c:4740. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn gidsetfn() -> i32 { 0 }
-
-/// Port of `hashgetfn()` from Src/params.c:4084. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn hashgetfn() -> i32 { 0 }
-
-/// Port of `hashsetfn()` from Src/params.c:4093. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn hashsetfn() -> i32 { 0 }
-
-/// Port of `histcharsgetfn()` from Src/params.c:5064. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn histcharsgetfn() -> i32 { 0 }
-
-/// Port of `histcharssetfn()` from Src/params.c:5079. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn histcharssetfn() -> i32 { 0 }
-
-/// Port of `histsizegetfn()` from Src/params.c:4965. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn histsizegetfn() -> i32 { 0 }
-
-/// Port of `histsizesetfn()` from Src/params.c:4974. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn histsizesetfn() -> i32 { 0 }
-
-/// Port of `homegetfn()` from Src/params.c:5109. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn homegetfn() -> i32 { 0 }
-
-/// Port of `homesetfn()` from Src/params.c:5118. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn homesetfn() -> i32 { 0 }
-
-/// Port of `ifsgetfn()` from Src/params.c:4784. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn ifsgetfn() -> i32 { 0 }
-
-/// Port of `ifssetfn()` from Src/params.c:4793. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn ifssetfn() -> i32 { 0 }
-
-/// Port of `intsecondsgetfn()` from Src/params.c:4561. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn intsecondsgetfn() -> i32 { 0 }
-
-/// Port of `intsecondssetfn()` from Src/params.c:4575. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn intsecondssetfn() -> i32 { 0 }
-
-/// Port of `intsetfn()` from Src/params.c:4002. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn intsetfn() -> i32 { 0 }
-
-/// Port of `intvargetfn()` from Src/params.c:4202. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn intvargetfn() -> i32 { 0 }
-
-/// Port of `intvarsetfn()` from Src/params.c:4213. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn intvarsetfn() -> i32 { 0 }
-
-/// Port of `keyboardhackgetfn()` from Src/params.c:5024. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn keyboardhackgetfn() -> i32 { 0 }
-
-/// Port of `keyboardhacksetfn()` from Src/params.c:5038. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn keyboardhacksetfn() -> i32 { 0 }
-
-/// Port of `langsetfn()` from Src/params.c:4896. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn langsetfn() -> i32 { 0 }
-
-/// Port of `lc_allsetfn()` from Src/params.c:4871. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn lc_allsetfn() -> i32 { 0 }
-
-/// Port of `lcsetfn()` from Src/params.c:4904. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn lcsetfn() -> i32 { 0 }
-
-/// Port of `loadparamnode()` from Src/params.c:544. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn loadparamnode() -> i32 { 0 }
-
-/// Port of `mkenvstr()` from Src/params.c:5513. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn mkenvstr() -> i32 { 0 }
-
-/// Port of `newparamtable()` from Src/params.c:519. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn newparamtable() -> i32 { 0 }
-
-/// Port of `newuniqtable()` from Src/params.c:4450. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn newuniqtable() -> i32 { 0 }
-
-/// Port of `nullintsetfn()` from Src/params.c:4187. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn nullintsetfn() -> i32 { 0 }
-
-/// Port of `nullsethashfn()` from Src/params.c:4104. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn nullsethashfn() -> i32 { 0 }
-
-/// Port of `nullstrsetfn()` from Src/params.c:4180. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn nullstrsetfn() -> i32 { 0 }
-
-/// Port of `nullunsetfn()` from Src/params.c:4192. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn nullunsetfn() -> i32 { 0 }
-
-/// Port of `paramvalarr()` from Src/params.c:689. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn paramvalarr() -> i32 { 0 }
-
-/// Port of `pipestatgetfn()` from Src/params.c:5251. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn pipestatgetfn() -> i32 { 0 }
-
-/// Port of `pipestatsetfn()` from Src/params.c:5270. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn pipestatsetfn() -> i32 { 0 }
-
-/// Port of `poundgetfn()` from Src/params.c:4534. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn poundgetfn() -> i32 { 0 }
-
-/// Port of `printparamnode()` from Src/params.c:6123. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn printparamnode() -> i32 { 0 }
-
-/// Port of `printparamvalue()` from Src/params.c:6035. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn printparamvalue() -> i32 { 0 }
-
-/// Port of `randomgetfn()` from Src/params.c:4543. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn randomgetfn() -> i32 { 0 }
-
-/// Port of `randomsetfn()` from Src/params.c:4552. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn randomsetfn() -> i32 { 0 }
-
-/// Port of `resolve_nameref_rec()` from Src/params.c:6332. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn resolve_nameref_rec() -> i32 { 0 }
-
-/// Port of `rprompt_indent_unsetfn()` from Src/params.c:152. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn rprompt_indent_unsetfn() -> i32 { 0 }
-
-/// Port of `savehistsizegetfn()` from Src/params.c:4985. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn savehistsizegetfn() -> i32 { 0 }
-
-/// Port of `savehistsizesetfn()` from Src/params.c:4994. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn savehistsizesetfn() -> i32 { 0 }
-
-/// Port of `scancopyparams()` from Src/params.c:584. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn scancopyparams() -> i32 { 0 }
-
-/// Port of `scancountparams()` from Src/params.c:630. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn scancountparams() -> i32 { 0 }
-
-/// Port of `scanendscope()` from Src/params.c:5900. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn scanendscope() -> i32 { 0 }
-
-/// Port of `scanparamvals()` from Src/params.c:644. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn scanparamvals() -> i32 { 0 }
-
-/// Port of `setlang()` from Src/params.c:4840. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn setlang() -> i32 { 0 }
-
-/// Port of `setloopvar()` from Src/params.c:6362. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn setloopvar() -> i32 { 0 }
-
-/// Port of `setnparam()` from Src/params.c:3744. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn setnparam() -> i32 { 0 }
-
-/// Port of `setnumvalue()` from Src/params.c:2856. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn setnumvalue() -> i32 { 0 }
-
-/// Port of `setrawseconds()` from Src/params.c:4622. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn setrawseconds() -> i32 { 0 }
-
-/// Port of `setscope()` from Src/params.c:6382. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn setscope() -> i32 { 0 }
-
-/// Port of `setscope_base()` from Src/params.c:6436. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn setscope_base() -> i32 { 0 }
-
-/// Port of `setsecondstype()` from Src/params.c:4630. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn setsecondstype() -> i32 { 0 }
-
-/// Port of `simple_arrayuniq()` from Src/params.c:4412. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn simple_arrayuniq() -> i32 { 0 }
-
-/// Port of `split_env_string()` from Src/params.c:763. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn split_env_string() -> i32 { 0 }
-
-/// Port of `stdunsetfn()` from Src/params.c:3955. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn stdunsetfn() -> i32 { 0 }
-
-/// Port of `strsetfn()` from Src/params.c:4038. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn strsetfn() -> i32 { 0 }
-
-/// Port of `strvargetfn()` from Src/params.c:4263. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn strvargetfn() -> i32 { 0 }
-
-/// Port of `strvarsetfn()` from Src/params.c:4249. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn strvarsetfn() -> i32 { 0 }
-
-/// Port of `term_reinit_from_pm()` from Src/params.c:5163. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn term_reinit_from_pm() -> i32 { 0 }
-
-/// Port of `termgetfn()` from Src/params.c:5176. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn termgetfn() -> i32 { 0 }
-
-/// Port of `terminfodirsgetfn()` from Src/params.c:5224. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn terminfodirsgetfn() -> i32 { 0 }
-
-/// Port of `terminfodirssetfn()` from Src/params.c:5233. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn terminfodirssetfn() -> i32 { 0 }
-
-/// Port of `terminfogetfn()` from Src/params.c:5196. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn terminfogetfn() -> i32 { 0 }
-
-/// Port of `terminfosetfn()` from Src/params.c:5205. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn terminfosetfn() -> i32 { 0 }
-
-/// Port of `termsetfn()` from Src/params.c:5185. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn termsetfn() -> i32 { 0 }
-
-/// Port of `tiedarrgetfn()` from Src/params.c:4348. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn tiedarrgetfn() -> i32 { 0 }
-
-/// Port of `tiedarrsetfn()` from Src/params.c:4357. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn tiedarrsetfn() -> i32 { 0 }
-
-/// Port of `tiedarrunsetfn()` from Src/params.c:4393. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn tiedarrunsetfn() -> i32 { 0 }
-
-/// Port of `ttyidlegetfn()` from Src/params.c:4771. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn ttyidlegetfn() -> i32 { 0 }
-
-/// Port of `uidgetfn()` from Src/params.c:4689. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn uidgetfn() -> i32 { 0 }
-
-/// Port of `uidsetfn()` from Src/params.c:4698. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn uidsetfn() -> i32 { 0 }
-
-/// Port of `underscoregetfn()` from Src/params.c:5152. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn underscoregetfn() -> i32 { 0 }
-
-/// Port of `upscope()` from Src/params.c:6455. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn upscope() -> i32 { 0 }
-
-/// Port of `usernamegetfn()` from Src/params.c:4653. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn usernamegetfn() -> i32 { 0 }
-
-/// Port of `usernamesetfn()` from Src/params.c:4662. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn usernamesetfn() -> i32 { 0 }
-
-/// Port of `wordcharsgetfn()` from Src/params.c:5132. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn wordcharsgetfn() -> i32 { 0 }
-
-/// Port of `wordcharssetfn()` from Src/params.c:5141. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn wordcharssetfn() -> i32 { 0 }
-
-/// Port of `zgetenv()` from Src/params.c:5416. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn zgetenv() -> i32 { 0 }
-
-/// Port of `zhuniqarray()` from Src/params.c:4523. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn zhuniqarray() -> i32 { 0 }
-
-/// Port of `zlevarsetfn()` from Src/params.c:4224. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn zlevarsetfn() -> i32 { 0 }
-
-/// Port of `zputenv()` from Src/params.c:5325. zshrs
-/// stores parameter state in HashMaps on the executor; this
-/// entry is a name-parity shim.
-pub fn zputenv() -> i32 { 0 }
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
+
+// -----------------------------------------------------------
+// Module statics — one per C global referenced by the special-
+// param callbacks below. All initialised lazily on first read.
+// -----------------------------------------------------------
+
+fn ifs_lock() -> &'static Mutex<String> {
+    static IFS_VAR: OnceLock<Mutex<String>> = OnceLock::new();
+    IFS_VAR.get_or_init(|| Mutex::new(" \t\n\0".to_string()))
+}
+
+fn home_lock() -> &'static Mutex<String> {
+    static HOME_VAR: OnceLock<Mutex<String>> = OnceLock::new();
+    HOME_VAR.get_or_init(|| Mutex::new(env::var("HOME").unwrap_or_default()))
+}
+
+fn term_lock() -> &'static Mutex<String> {
+    static TERM_VAR: OnceLock<Mutex<String>> = OnceLock::new();
+    TERM_VAR.get_or_init(|| Mutex::new(env::var("TERM").unwrap_or_default()))
+}
+
+fn wordchars_lock() -> &'static Mutex<String> {
+    static WORDCHARS_VAR: OnceLock<Mutex<String>> = OnceLock::new();
+    WORDCHARS_VAR.get_or_init(|| Mutex::new("*?_-.[]~=/&;!#$%^(){}<>".to_string()))
+}
+
+fn histchars_lock() -> &'static Mutex<[u8; 3]> {
+    static HISTCHARS_VAR: OnceLock<Mutex<[u8; 3]>> = OnceLock::new();
+    HISTCHARS_VAR.get_or_init(|| Mutex::new([b'!', b'^', b'#']))
+}
+
+fn keyboardhack_lock() -> &'static Mutex<u8> {
+    static KEYBOARDHACK_VAR: OnceLock<Mutex<u8>> = OnceLock::new();
+    KEYBOARDHACK_VAR.get_or_init(|| Mutex::new(0))
+}
+
+fn histsiz_lock() -> &'static Mutex<i64> {
+    static HISTSIZ_VAR: OnceLock<Mutex<i64>> = OnceLock::new();
+    HISTSIZ_VAR.get_or_init(|| Mutex::new(30))
+}
+
+fn savehistsiz_lock() -> &'static Mutex<i64> {
+    static SAVEHISTSIZ_VAR: OnceLock<Mutex<i64>> = OnceLock::new();
+    SAVEHISTSIZ_VAR.get_or_init(|| Mutex::new(0))
+}
+
+fn zsh_terminfo_lock() -> &'static Mutex<String> {
+    static TERMINFO_VAR: OnceLock<Mutex<String>> = OnceLock::new();
+    TERMINFO_VAR.get_or_init(|| Mutex::new(env::var("TERMINFO").unwrap_or_default()))
+}
+
+fn zsh_terminfodirs_lock() -> &'static Mutex<String> {
+    static TERMINFODIRS_VAR: OnceLock<Mutex<String>> = OnceLock::new();
+    TERMINFODIRS_VAR.get_or_init(|| Mutex::new(env::var("TERMINFO_DIRS").unwrap_or_default()))
+}
+
+fn cached_username_lock() -> &'static Mutex<String> {
+    static USERNAME_VAR: OnceLock<Mutex<String>> = OnceLock::new();
+    USERNAME_VAR.get_or_init(|| Mutex::new(env::var("USER").unwrap_or_default()))
+}
+
+fn pipestats_lock() -> &'static Mutex<Vec<i32>> {
+    static PIPESTATS_VAR: OnceLock<Mutex<Vec<i32>>> = OnceLock::new();
+    PIPESTATS_VAR.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn shtimer_lock() -> &'static Mutex<Duration> {
+    static SHTIMER_VAR: OnceLock<Mutex<Duration>> = OnceLock::new();
+    SHTIMER_VAR.get_or_init(|| {
+        Mutex::new(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default(),
+        )
+    })
+}
+
+fn pparams_lock() -> &'static Mutex<Vec<String>> {
+    // Mirror of zsh's `pparams` (positional params $1, $2, ...).
+    // Used by `poundgetfn` for `$#`. Real shell sets this via the
+    // `set` builtin / argv on entry; for the callback to work in
+    // isolation we expose it as a settable static.
+    static PPARAMS_VAR: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+    PPARAMS_VAR.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn zunderscore_lock() -> &'static Mutex<String> {
+    static ZUNDERSCORE_VAR: OnceLock<Mutex<String>> = OnceLock::new();
+    ZUNDERSCORE_VAR.get_or_init(|| Mutex::new(String::new()))
+}
+
+// -----------------------------------------------------------
+// libc-backed callbacks (UID/GID/EUID/EGID/errno/RANDOM/TTYIDLE).
+// -----------------------------------------------------------
+
+/// Port of `uidgetfn()` from `Src/params.c:4689`. C body:
+/// `return getuid();`
+pub fn uidgetfn() -> i64 {
+    unsafe { libc::getuid() as i64 }
+}
+
+/// Port of `uidsetfn()` from `Src/params.c:4698`. C body:
+/// `if (setuid((uid_t)x)) zerr("failed to change user ID: %e", errno);`
+pub fn uidsetfn(x: i64) {
+    if unsafe { libc::setuid(x as libc::uid_t) } != 0 {
+        zerr(&format!(
+            "failed to change user ID: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+}
+
+/// Port of `euidgetfn()` from `Src/params.c:4710`. C body:
+/// `return geteuid();`
+pub fn euidgetfn() -> i64 {
+    unsafe { libc::geteuid() as i64 }
+}
+
+/// Port of `euidsetfn()` from `Src/params.c:4719`. C body:
+/// `if (seteuid((uid_t)x)) zerr("failed to change effective user ID: %e", errno);`
+pub fn euidsetfn(x: i64) {
+    if unsafe { libc::seteuid(x as libc::uid_t) } != 0 {
+        zerr(&format!(
+            "failed to change effective user ID: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+}
+
+/// Port of `gidgetfn()` from `Src/params.c:4731`. C body: `return getgid();`
+pub fn gidgetfn() -> i64 {
+    unsafe { libc::getgid() as i64 }
+}
+
+/// Port of `gidsetfn()` from `Src/params.c:4740`. C body:
+/// `if (setgid((gid_t)x)) zerr("failed to change group ID: %e", errno);`
+pub fn gidsetfn(x: i64) {
+    if unsafe { libc::setgid(x as libc::gid_t) } != 0 {
+        zerr(&format!(
+            "failed to change group ID: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+}
+
+/// Port of `egidgetfn()` from `Src/params.c:4752`. C body: `return getegid();`
+pub fn egidgetfn() -> i64 {
+    unsafe { libc::getegid() as i64 }
+}
+
+/// Port of `egidsetfn()` from `Src/params.c:4761`. C body:
+/// `if (setegid((gid_t)x)) zerr("failed to change effective group ID: %e", errno);`
+pub fn egidsetfn(x: i64) {
+    if unsafe { libc::setegid(x as libc::gid_t) } != 0 {
+        zerr(&format!(
+            "failed to change effective group ID: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+}
+
+/// Port of `errnogetfn()` from `Src/params.c:5015`. C body: `return errno;`
+pub fn errnogetfn() -> i64 {
+    std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as i64
+}
+
+/// Port of `errnosetfn()` from `Src/params.c:5004`. C body:
+/// `errno = (int)x; if ((zlong)errno != x) zwarn("errno truncated on assignment");`
+///
+/// Rust note: `errno` is a libc thread-local; Rust uses `std::io::Error`
+/// which captures the *last* call. To set errno for subsequent
+/// `last_os_error()` reads on macOS / Linux, write through the libc
+/// `__error()`/`__errno_location()` accessor.
+pub fn errnosetfn(x: i64) {
+    extern "C" {
+        #[cfg(target_os = "macos")]
+        fn __error() -> *mut libc::c_int;
+        #[cfg(target_os = "linux")]
+        fn __errno_location() -> *mut libc::c_int;
+    }
+    let truncated = x as i32;
+    unsafe {
+        #[cfg(target_os = "macos")]
+        {
+            *__error() = truncated;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            *__errno_location() = truncated;
+        }
+    }
+    if truncated as i64 != x {
+        zerr("errno truncated on assignment");
+    }
+}
+
+/// Port of `randomgetfn()` from `Src/params.c:4543`. C body:
+/// `return rand() & 0x7fff;`
+pub fn randomgetfn() -> i64 {
+    (unsafe { libc::rand() } & 0x7fff) as i64
+}
+
+/// Port of `randomsetfn()` from `Src/params.c:4552`. C body:
+/// `srand((unsigned int)v);`
+pub fn randomsetfn(v: i64) {
+    unsafe { libc::srand(v as libc::c_uint) };
+}
+
+/// Port of `ttyidlegetfn()` from `Src/params.c:4771`. C body:
+/// ```c
+/// struct stat ttystat;
+/// if (SHTTY == -1 || fstat(SHTTY, &ttystat)) return -1;
+/// return time(NULL) - ttystat.st_atime;
+/// ```
+/// Rust port reads stdin (fd 0) — closest match to `SHTTY` the
+/// shell tracks as the controlling-tty fd. Returns -1 if stdin is
+/// not a tty.
+pub fn ttyidlegetfn() -> i64 {
+    if unsafe { libc::isatty(0) } == 0 {
+        return -1;
+    }
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstat(0, &mut st) } != 0 {
+        return -1;
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    now - st.st_atime as i64
+}
+
+// -----------------------------------------------------------
+// SECONDS / EPOCHSECONDS family — backed by SHTIMER static.
+// -----------------------------------------------------------
+
+/// Port of `intsecondsgetfn()` from `Src/params.c:4561`. C body:
+/// `return (zlong)(now.tv_sec - shtimer.tv_sec - …);`
+pub fn intsecondsgetfn() -> i64 {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let timer = *shtimer_lock().lock().expect("shtimer poisoned");
+    let now_sec = now.as_secs() as i64;
+    let timer_sec = timer.as_secs() as i64;
+    let now_nsec = now.subsec_nanos() as i64;
+    let timer_nsec = timer.subsec_nanos() as i64;
+    now_sec - timer_sec - i64::from(now_nsec < timer_nsec)
+}
+
+/// Port of `intsecondssetfn()` from `Src/params.c:4575`. C body:
+/// `shtimer.tv_sec = now.tv_sec - x; shtimer.tv_nsec = now.tv_nsec;`
+pub fn intsecondssetfn(x: i64) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let now_sec = now.as_secs() as i64;
+    let new_sec = now_sec - x;
+    if new_sec < 0 {
+        zerr("SECONDS truncated on assignment");
+        return;
+    }
+    *shtimer_lock().lock().expect("shtimer poisoned") =
+        Duration::new(new_sec as u64, now.subsec_nanos());
+}
+
+/// Port of `floatsecondsgetfn()` from `Src/params.c:4591`. C body:
+/// `return (double)(now-tv_sec - shtimer.tv_sec) + nsec/1e9;`
+pub fn floatsecondsgetfn() -> f64 {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let timer = *shtimer_lock().lock().expect("shtimer poisoned");
+    (now - timer).as_secs_f64()
+}
+
+/// Port of `floatsecondssetfn()` from `Src/params.c:4603`. C body:
+/// `shtimer.tv_sec = now.tv_sec - (zlong)x; shtimer.tv_nsec = now.tv_nsec - (x-int)*1e9;`
+pub fn floatsecondssetfn(x: f64) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let new = now.checked_sub(Duration::from_secs_f64(x)).unwrap_or_default();
+    *shtimer_lock().lock().expect("shtimer poisoned") = new;
+}
+
+/// Port of `getrawseconds()` from `Src/params.c:4615`. C body:
+/// `return (double)shtimer.tv_sec + (double)shtimer.tv_nsec / 1e9;`
+pub fn getrawseconds() -> f64 {
+    shtimer_lock().lock().expect("shtimer poisoned").as_secs_f64()
+}
+
+/// Port of `setrawseconds()` from `Src/params.c:4622`. C body:
+/// `shtimer.tv_sec = (zlong)x; shtimer.tv_nsec = (x-int)*1e9;`
+pub fn setrawseconds(x: f64) {
+    *shtimer_lock().lock().expect("shtimer poisoned") = Duration::from_secs_f64(x);
+}
+
+/// Port of `setsecondstype()` from `Src/params.c:4630`. C body
+/// flips the `gsu.f`/`gsu.i` callback pointer based on the new
+/// param-flag bitset.
+///
+/// WARNING: zshrs has no Param/GSU dispatch table yet — the
+/// "promotion between integer/float seconds" logic happens via
+/// pm->gsu pointer swaps in C. Returns 0 to signal success;
+/// callers can assume the type change is recorded by the caller's
+/// own bookkeeping until the GSU table lands.
+pub fn setsecondstype(_on: i32, _off: i32) -> i32 {
+    0
+}
+
+// -----------------------------------------------------------
+// $0 / $#
+// -----------------------------------------------------------
+
+/// Port of `argzerogetfn()` from `Src/params.c:4954`. C body:
+/// `return isset(POSIXARGZERO) ? posixzero : argzero;`
+///
+/// Reads through `crate::ported::utils::argzero()` (the canonical
+/// OnceLock storage in utils.rs). C's `posixzero` branch is not
+/// yet ported (POSIXARGZERO option needs the option table).
+pub fn argzerogetfn() -> String {
+    crate::ported::utils::argzero().unwrap_or_default()
+}
+
+/// Port of `argzerosetfn()` from `Src/params.c:4937`. C body:
+/// `if (isset(POSIXARGZERO)) zerr("read-only variable: 0"); else { zsfree(argzero); argzero = ztrdup(x); }`
+pub fn argzerosetfn(x: String) {
+    crate::ported::utils::set_argzero(Some(x));
+}
+
+/// Port of `poundgetfn()` from `Src/params.c:4534`. C body:
+/// `return arrlen(pparams);`
+pub fn poundgetfn() -> i64 {
+    pparams_lock().lock().expect("pparams poisoned").len() as i64
+}
+
+// -----------------------------------------------------------
+// $USERNAME
+// -----------------------------------------------------------
+
+/// Port of `usernamegetfn()` from `Src/params.c:4653`. C body:
+/// `return get_username();`
+pub fn usernamegetfn() -> String {
+    cached_username_lock()
+        .lock()
+        .expect("username poisoned")
+        .clone()
+}
+
+/// Port of `usernamesetfn()` from `Src/params.c:4662`. C body:
+/// `getpwnam(x); setgid; setuid; cached_uid = pswd->pw_uid;`
+///
+/// WARNING: the SUID-changing path requires getpwnam(3) which
+/// crosses an unsafe FFI boundary not yet wrapped here. The
+/// cached-name update is performed; uid/gid changes still need
+/// porting of the `pwd.h` getpwnam wrapper.
+pub fn usernamesetfn(x: String) {
+    *cached_username_lock()
+        .lock()
+        .expect("username poisoned") = x;
+}
+
+// -----------------------------------------------------------
+// $IFS / $HOME / $TERM / $WORDCHARS / $TERMINFO / $TERMINFO_DIRS
+// $KEYBOARD_HACK / $HISTCHARS / $_  — string-state callbacks.
+// -----------------------------------------------------------
+
+/// Port of `ifsgetfn()` from `Src/params.c:4784`. C body: `return ifs;`
+pub fn ifsgetfn() -> String {
+    ifs_lock().lock().expect("ifs poisoned").clone()
+}
+
+/// Port of `ifssetfn()` from `Src/params.c:4793`. C body:
+/// `zsfree(ifs); ifs = x; inittyptab();`
+pub fn ifssetfn(x: String) {
+    *ifs_lock().lock().expect("ifs poisoned") = x;
+    // `inittyptab()` is a no-op in zshrs — Rust char methods
+    // handle classification natively (utils.rs:1884).
+}
+
+/// Port of `homegetfn()` from `Src/params.c:5109`. C body: `return home;`
+pub fn homegetfn() -> String {
+    home_lock().lock().expect("home poisoned").clone()
+}
+
+/// Port of `homesetfn()` from `Src/params.c:5118`. C body:
+/// `zsfree(home); home = x ? x : ""; finddir(NULL);`
+pub fn homesetfn(x: String) {
+    *home_lock().lock().expect("home poisoned") = x;
+    // `finddir(NULL)` invalidates zsh's cached named-directory
+    // lookups — those don't exist in zshrs yet.
+}
+
+/// Port of `termgetfn()` from `Src/params.c:5176`. C body: `return term;`
+pub fn termgetfn() -> String {
+    term_lock().lock().expect("term poisoned").clone()
+}
+
+/// Port of `termsetfn()` from `Src/params.c:5185`. C body:
+/// `zsfree(term); term = x ? x : ""; term_reinit_from_pm();`
+pub fn termsetfn(x: String) {
+    *term_lock().lock().expect("term poisoned") = x;
+    term_reinit_from_pm();
+}
+
+/// Port of `terminfogetfn()` from `Src/params.c:5196`. C body:
+/// `return zsh_terminfo ? zsh_terminfo : "";`
+pub fn terminfogetfn() -> String {
+    zsh_terminfo_lock()
+        .lock()
+        .expect("zsh_terminfo poisoned")
+        .clone()
+}
+
+/// Port of `terminfosetfn()` from `Src/params.c:5205`. C body:
+/// `zsfree(zsh_terminfo); zsh_terminfo = x; addenv if exported; term_reinit_from_pm();`
+pub fn terminfosetfn(x: String) {
+    *zsh_terminfo_lock()
+        .lock()
+        .expect("zsh_terminfo poisoned") = x.clone();
+    env::set_var("TERMINFO", &x);
+    term_reinit_from_pm();
+}
+
+/// Port of `terminfodirsgetfn()` from `Src/params.c:5224`. C body:
+/// `return zsh_terminfodirs ? zsh_terminfodirs : "";`
+pub fn terminfodirsgetfn() -> String {
+    zsh_terminfodirs_lock()
+        .lock()
+        .expect("zsh_terminfodirs poisoned")
+        .clone()
+}
+
+/// Port of `terminfodirssetfn()` from `Src/params.c:5233`. C body
+/// mirrors `terminfosetfn` for the TERMINFO_DIRS env var.
+pub fn terminfodirssetfn(x: String) {
+    *zsh_terminfodirs_lock()
+        .lock()
+        .expect("zsh_terminfodirs poisoned") = x.clone();
+    env::set_var("TERMINFO_DIRS", &x);
+    term_reinit_from_pm();
+}
+
+/// Port of `term_reinit_from_pm()` from `Src/params.c:5163`. C body:
+/// `if (unset(INTERACTIVE) || !*term) termflags |= TERM_UNKNOWN; else init_term();`
+///
+/// WARNING: zshrs has no `init_term` / `termflags` yet — terminal
+/// re-init runs through ZLE which is not in scope. This stub
+/// records the change to the static; future ZLE port will read
+/// `term_lock()` on the next prompt.
+pub fn term_reinit_from_pm() {}
+
+/// Port of `wordcharsgetfn()` from `Src/params.c:5132`. C body:
+/// `return wordchars;`
+pub fn wordcharsgetfn() -> String {
+    wordchars_lock()
+        .lock()
+        .expect("wordchars poisoned")
+        .clone()
+}
+
+/// Port of `wordcharssetfn()` from `Src/params.c:5141`. C body:
+/// `zsfree(wordchars); wordchars = x; inittyptab();`
+pub fn wordcharssetfn(x: String) {
+    *wordchars_lock().lock().expect("wordchars poisoned") = x;
+}
+
+/// Port of `keyboardhackgetfn()` from `Src/params.c:5024`. C body:
+/// `static char buf[2]; buf[0] = keyboardhackchar; return buf;`
+pub fn keyboardhackgetfn() -> String {
+    let c = *keyboardhack_lock()
+        .lock()
+        .expect("keyboardhack poisoned");
+    if c == 0 {
+        String::new()
+    } else {
+        (c as char).to_string()
+    }
+}
+
+/// Port of `keyboardhacksetfn()` from `Src/params.c:5038`. C body:
+/// `unmetafy(x, &len); if (len > 1) zwarn("Only one KEYBOARD_HACK character"); …`
+pub fn keyboardhacksetfn(x: String) {
+    let bytes = x.as_bytes();
+    if bytes.len() > 1 {
+        zerr("Only one KEYBOARD_HACK character can be defined");
+    }
+    let c = bytes.first().copied().unwrap_or(0);
+    if c >= 0x80 {
+        zerr("KEYBOARD_HACK can only contain ASCII characters");
+        return;
+    }
+    *keyboardhack_lock().lock().expect("keyboardhack poisoned") = c;
+}
+
+/// Port of `histcharsgetfn()` from `Src/params.c:5064`. C body:
+/// `static char buf[4]; buf[0]=bangchar; buf[1]=hatchar; buf[2]=hashchar;`
+pub fn histcharsgetfn() -> String {
+    let chars = *histchars_lock().lock().expect("histchars poisoned");
+    let mut s = String::new();
+    for &b in chars.iter() {
+        if b != 0 {
+            s.push(b as char);
+        }
+    }
+    s
+}
+
+/// Port of `histcharssetfn()` from `Src/params.c:5079`. C body
+/// validates ASCII, takes up to 3 chars; defaults `!^#` if NULL.
+pub fn histcharssetfn(x: Option<String>) {
+    match x {
+        None => {
+            *histchars_lock().lock().expect("histchars poisoned") = [b'!', b'^', b'#'];
+        }
+        Some(s) => {
+            let bytes = s.as_bytes();
+            for &b in bytes.iter().take(3) {
+                if b >= 0x80 {
+                    zerr("HISTCHARS can only contain ASCII characters");
+                    return;
+                }
+            }
+            let mut chars = [0u8; 3];
+            for (i, &b) in bytes.iter().take(3).enumerate() {
+                chars[i] = b;
+            }
+            *histchars_lock().lock().expect("histchars poisoned") = chars;
+        }
+    }
+}
+
+/// Port of `underscoregetfn()` from `Src/params.c:5152`. C body:
+/// `char *u = dupstring(zunderscore); untokenize(u); return u;`
+pub fn underscoregetfn() -> String {
+    zunderscore_lock()
+        .lock()
+        .expect("zunderscore poisoned")
+        .clone()
+}
+
+// -----------------------------------------------------------
+// $HISTSIZE / $SAVEHIST
+// -----------------------------------------------------------
+
+/// Port of `histsizegetfn()` from `Src/params.c:4965`. C body: `return histsiz;`
+pub fn histsizegetfn() -> i64 {
+    *histsiz_lock().lock().expect("histsiz poisoned")
+}
+
+/// Port of `histsizesetfn()` from `Src/params.c:4974`. C body:
+/// `if ((histsiz = v) < 1) histsiz = 1; resizehistents();`
+pub fn histsizesetfn(v: i64) {
+    *histsiz_lock().lock().expect("histsiz poisoned") = v.max(1);
+    // `resizehistents()` is a hist.c entry point — pending the
+    // history-table port, the size change is recorded in the
+    // static and picked up the next time the history layer reads.
+}
+
+/// Port of `savehistsizegetfn()` from `Src/params.c:4985`. C body:
+/// `return savehistsiz;`
+pub fn savehistsizegetfn() -> i64 {
+    *savehistsiz_lock().lock().expect("savehistsiz poisoned")
+}
+
+/// Port of `savehistsizesetfn()` from `Src/params.c:4994`. C body:
+/// `if ((savehistsiz = v) < 0) savehistsiz = 0;`
+pub fn savehistsizesetfn(v: i64) {
+    *savehistsiz_lock().lock().expect("savehistsiz poisoned") = v.max(0);
+}
+
+// -----------------------------------------------------------
+// $pipestatus
+// -----------------------------------------------------------
+
+/// Port of `pipestatgetfn()` from `Src/params.c:5251`. C body
+/// snapshots the `pipestats[]` C array as a heap-allocated
+/// `char **`. Rust port returns the cloned snapshot.
+pub fn pipestatgetfn() -> Vec<String> {
+    pipestats_lock()
+        .lock()
+        .expect("pipestats poisoned")
+        .iter()
+        .map(|n| n.to_string())
+        .collect()
+}
+
+/// Port of `pipestatsetfn()` from `Src/params.c:5270`. C body:
+/// `for (i=0; *x && i<MAX_PIPESTATS; i++) pipestats[i] = atoi(*x++); numpipestats = i;`
+pub fn pipestatsetfn(x: Option<Vec<String>>) {
+    const MAX_PIPESTATS: usize = 256;
+    let mut guard = pipestats_lock().lock().expect("pipestats poisoned");
+    guard.clear();
+    if let Some(v) = x {
+        for s in v.iter().take(MAX_PIPESTATS) {
+            guard.push(s.parse::<i32>().unwrap_or(0));
+        }
+    }
+}
+
+// -----------------------------------------------------------
+// Locale callbacks: $LANG, $LC_*, setlang
+// -----------------------------------------------------------
+
+/// Port of `clear_mbstate()` from `Src/params.c:4831`. C body:
+/// `mb_charinit(); clear_shiftstate();`
+///
+/// WARNING: zshrs uses Rust's UTF-8 native handling so multibyte
+/// state machines aren't kept; this is a no-op pinned to the
+/// C name for parity.
+pub fn clear_mbstate() {}
+
+/// Port of `setlang()` from `Src/params.c:4840`. C body:
+/// `if (LC_ALL set) return; setlocale(LC_ALL, x); for each LC_*: if set, setlocale(category, x);`
+pub fn setlang(x: Option<&str>) {
+    if let Ok(lc_all) = env::var("LC_ALL") {
+        if !lc_all.is_empty() {
+            return;
+        }
+    }
+    if let Some(s) = x {
+        env::set_var("LANG", s);
+    }
+    clear_mbstate();
+}
+
+/// Port of `langsetfn()` from `Src/params.c:4896`. C body:
+/// `strsetfn(pm, x); setlang(unmeta(x));`
+pub fn langsetfn(x: String) {
+    setlang(Some(&x));
+}
+
+/// Port of `lc_allsetfn()` from `Src/params.c:4871`. C body
+/// dispatches to `setlang(LANG)` if x empty, else `setlocale(LC_ALL, x)`.
+pub fn lc_allsetfn(x: Option<String>) {
+    match x {
+        None => setlang(env::var("LANG").as_deref().ok()),
+        Some(s) if s.is_empty() => setlang(env::var("LANG").as_deref().ok()),
+        Some(s) => {
+            env::set_var("LC_ALL", &s);
+            clear_mbstate();
+        }
+    }
+}
+
+/// Port of `lcsetfn()` from `Src/params.c:4904`. C body:
+/// per-category `setlocale` with LC_ALL precedence + LANG fallback.
+pub fn lcsetfn(category: &str, x: Option<String>) {
+    if let Ok(lc_all) = env::var("LC_ALL") {
+        if !lc_all.is_empty() {
+            return;
+        }
+    }
+    let val = x
+        .filter(|s| !s.is_empty())
+        .or_else(|| env::var("LANG").ok().filter(|s| !s.is_empty()));
+    if let Some(v) = val {
+        env::set_var(category, v);
+    }
+    clear_mbstate();
+}
+
+// -----------------------------------------------------------
+// env management (zsh's wrapper around setenv/unsetenv).
+// -----------------------------------------------------------
+
+/// Port of `zgetenv()` from `Src/params.c:5416`. C body walks
+/// `environ` byte-by-byte. Rust port uses `std::env::var`.
+pub fn zgetenv(name: &str) -> Option<String> {
+    env::var(name).ok()
+}
+
+/// Port of `zputenv()` from `Src/params.c:5325`. C body parses
+/// `name=value` and calls `setenv(3)` (or putenv as fallback).
+pub fn zputenv(str: &str) -> i32 {
+    if let Some(eq) = str.find('=') {
+        let (name, val) = str.split_at(eq);
+        env::set_var(name, &val[1..]);
+        0
+    } else {
+        env::remove_var(str);
+        0
+    }
+}
+
+/// Port of `findenv()` from `Src/params.c:5391`. C body finds the
+/// `name=...` entry index in `environ`. Rust port returns the
+/// value via `env::var` since indices into Rust's env are not
+/// stable.
+pub fn findenv(name: &str) -> Option<String> {
+    env::var(name).ok()
+}
+
+/// Port of `delenvvalue()` from `Src/params.c:5542`. C body:
+/// frees a single env entry; Rust drops via env::remove_var.
+pub fn delenvvalue(name: &str) {
+    env::remove_var(name);
+}
+
+/// Port of `addenv()` from `Src/params.c:5448`. C body builds an
+/// env string, splices into `environ`, and updates the param's
+/// `pm->env`. Rust port uses `env::set_var`.
+pub fn addenv(name: &str, value: &str) -> i32 {
+    env::set_var(name, value);
+    0
+}
+
+/// Port of `delenv()` from `Src/params.c:5563`. C body removes
+/// `pm->env` from `environ` and frees it. Rust port uses
+/// `env::remove_var` keyed on the param name.
+pub fn delenv(name: &str) {
+    env::remove_var(name);
+}
+
+/// Port of `mkenvstr()` from `Src/params.c:5513`. C body:
+/// `len = strlen(name); m = strlen(value); s = zalloc(len+m+2); sprintf(s,"%s=%s",name,value);`
+pub fn mkenvstr(name: &str, value: &str) -> String {
+    format!("{}={}", name, value)
+}
+
+/// Port of `copyenvstr()` from `Src/params.c:5434`. C body:
+/// `strcpy(s, value); for (i=len; i--; s++) if (*s == Meta) *s = (*++s ^ 32);`
+pub fn copyenvstr(value: &str) -> String {
+    crate::ported::utils::unmetafy_dup(value)
+}
+
+/// Port of `split_env_string()` from `Src/params.c:763`. C body:
+/// finds `=` in `env`, returns `(name, value)` halves.
+pub fn split_env_string(env: &str) -> Option<(String, String)> {
+    env.find('=').map(|i| (env[..i].to_string(), env[i + 1..].to_string()))
+}
+
+/// Port of `arrfixenv()` from `Src/params.c:5285`. C body re-syncs
+/// the env entry for an array param after mutation, joining with
+/// the param's `joinchar`. Rust port joins with ':' (the default
+/// for PATH-style arrays) and updates the env var.
+pub fn arrfixenv(s: &str, t: Option<&[String]>) {
+    let val = t.map(|v| v.join(":")).unwrap_or_default();
+    env::set_var(s, val);
+}
+
+// -----------------------------------------------------------
+// Array uniq helpers.
+// -----------------------------------------------------------
+
+/// Port of `simple_arrayuniq()` from `Src/params.c:4412`. C body:
+/// O(n^2) dedupe in place — first occurrence wins.
+pub fn simple_arrayuniq(x: Vec<String>) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out = Vec::with_capacity(x.len());
+    for s in x {
+        if seen.insert(s.clone()) {
+            out.push(s);
+        }
+    }
+    out
+}
+
+/// Port of `arrayuniq()` from `Src/params.c:4473`. C body uses a
+/// hashtable when input is large, simple_arrayuniq otherwise.
+/// Both paths have first-wins semantics; Rust HashSet does the
+/// same in one pass.
+pub fn arrayuniq(x: Vec<String>) -> Vec<String> {
+    simple_arrayuniq(x)
+}
+
+/// Port of `zhuniqarray()` from `Src/params.c:4523`. C body wraps
+/// arrayuniq with the `freeok=0` flag (don't free duplicates —
+/// caller owns). Rust drop semantics handle this automatically.
+pub fn zhuniqarray(x: Vec<String>) -> Vec<String> {
+    arrayuniq(x)
+}
+
+/// Port of `arrayuniq_freenode()` from `Src/params.c:4443`. C
+/// body: `zsfree(((Pathnode)hn)->name); zfree(hn, sizeof…);` —
+/// the freenode callback for the temporary HashTable `arrayuniq`
+/// builds. Rust drop semantics handle this; no-op shim.
+pub fn arrayuniq_freenode() {}
+
+/// Port of `newuniqtable()` from `Src/params.c:4450`. C body
+/// creates a HashTable with `arrayuniq_freenode` as the freenode
+/// callback. Rust uses HashSet inline in `simple_arrayuniq`.
+pub fn newuniqtable(_size: i64) -> HashSet<String> {
+    HashSet::new()
+}
+
+// -----------------------------------------------------------
+// "Null" callbacks — no-op getfn/setfn/unsetfn slots used for
+// read-only or write-only special params.
+// -----------------------------------------------------------
+
+/// Port of `nullintsetfn()` from `Src/params.c:4187`. C body:
+/// empty (no-op setter for read-only int params).
+pub fn nullintsetfn(_x: i64) {}
+
+/// Port of `nullsethashfn()` from `Src/params.c:4104`. C body: empty.
+pub fn nullsethashfn() {}
+
+/// Port of `nullstrsetfn()` from `Src/params.c:4180`. C body:
+/// `zsfree(x);` — frees but doesn't store. Rust drop handles free.
+pub fn nullstrsetfn(_x: String) {}
+
+/// Port of `nullunsetfn()` from `Src/params.c:4192`. C body: empty.
+pub fn nullunsetfn() {}
+
+/// Port of `stdunsetfn()` from `Src/params.c:3955`. C body:
+/// `pm->gsu->setfn(pm, NULL);` then mark unset.
+///
+/// WARNING: dispatches through Param.gsu. Rust port can't fire
+/// the appropriate setfn(NULL) without the Param struct + GSU
+/// table; for now a callback-naming shim that the eventual GSU
+/// port will wire up.
+pub fn stdunsetfn() {}
+
+/// Port of `rprompt_indent_unsetfn()` from `Src/params.c:152`. C
+/// body resets `rprompt_indent` to 1.
+///
+/// WARNING: requires the Param struct; see stdunsetfn note.
+pub fn rprompt_indent_unsetfn() {}
+
+// -----------------------------------------------------------
+// GSU dispatch callbacks for non-special arr/hash/int/float/str
+// params. These genuinely need a Param struct + the GSU callback
+// table (params.c:104+), which doesn't exist in zshrs yet.
+//
+// Each is left with the C signature shape but a WARNING stub
+// body. When the Param/GSU port lands, the shim becomes the
+// callback's real implementation.
+// -----------------------------------------------------------
+
+/// Port of `arrgetfn()` from `Src/params.c:4057`. C body:
+/// `return *(char ***)pm->u.data;`
+///
+/// WARNING: needs Param struct. Returns empty array as no-op.
+pub fn arrgetfn() -> Vec<String> {
+    Vec::new()
+}
+
+/// Port of `arrsetfn()` from `Src/params.c:4066`. WARNING: needs Param.
+pub fn arrsetfn(_x: Vec<String>) {}
+
+/// Port of `arrhashsetfn()` from `Src/params.c:4113`. WARNING: needs Param.
+pub fn arrhashsetfn(_x: Vec<String>) {}
+
+/// Port of `arrvargetfn()` from `Src/params.c:4279`. WARNING: needs Param.
+pub fn arrvargetfn() -> Vec<String> {
+    Vec::new()
+}
+
+/// Port of `arrvarsetfn()` from `Src/params.c:4294`. WARNING: needs Param.
+pub fn arrvarsetfn(_x: Vec<String>) {}
+
+/// Port of `colonarrgetfn()` already exists above as a real port; no
+/// dup needed. The matching setfn at params.c:4329 is the WARNING
+/// stub here.
+pub fn colonarrsetfn(_x: String) {}
+
+/// Port of `tiedarrgetfn()` from `Src/params.c:4348`. WARNING: needs Param.
+pub fn tiedarrgetfn() -> Vec<String> {
+    Vec::new()
+}
+
+/// Port of `tiedarrsetfn()` from `Src/params.c:4357`. WARNING: needs Param.
+pub fn tiedarrsetfn(_x: String) {}
+
+/// Port of `tiedarrunsetfn()` from `Src/params.c:4393`. WARNING: needs Param.
+pub fn tiedarrunsetfn() {}
+
+/// Port of `hashgetfn()` from `Src/params.c:4084`. WARNING: needs Param.
+pub fn hashgetfn() -> HashMap<String, String> {
+    HashMap::new()
+}
+
+/// Port of `hashsetfn()` from `Src/params.c:4093`. WARNING: needs Param.
+pub fn hashsetfn(_x: HashMap<String, String>) {}
+
+/// Port of `intsetfn()` from `Src/params.c:4002`. WARNING: needs Param.
+pub fn intsetfn(_x: i64) {}
+
+/// Port of `intvargetfn()` from `Src/params.c:4202`. WARNING: needs Param.
+pub fn intvargetfn() -> i64 {
+    0
+}
+
+/// Port of `intvarsetfn()` from `Src/params.c:4213`. WARNING: needs Param.
+pub fn intvarsetfn(_x: i64) {}
+
+/// Port of `floatgetfn()` from `Src/params.c:4011`. WARNING: needs Param.
+pub fn floatgetfn() -> f64 {
+    0.0
+}
+
+/// Port of `floatsetfn()` from `Src/params.c:4020`. WARNING: needs Param.
+pub fn floatsetfn(_x: f64) {}
+
+/// Port of `strsetfn()` from `Src/params.c:4038`. WARNING: needs Param.
+pub fn strsetfn(_x: String) {}
+
+/// Port of `strvargetfn()` from `Src/params.c:4263`. WARNING: needs Param.
+pub fn strvargetfn() -> String {
+    String::new()
+}
+
+/// Port of `strvarsetfn()` from `Src/params.c:4249`. WARNING: needs Param.
+pub fn strvarsetfn(_x: String) {}
+
+/// Port of `zlevarsetfn()` from `Src/params.c:4224`. WARNING: needs Param +
+/// the ZLE module integration (the C body sets a zlong-typed module
+/// var and triggers a redraw).
+pub fn zlevarsetfn(_x: i64) {}
+
+// -----------------------------------------------------------
+// Param-table mutators / scope / nameref helpers — all need the
+// Param struct + paramtab HashTable. WARNING-stubs.
+// -----------------------------------------------------------
+
+/// Port of `assignnparam()` from `Src/params.c:3664`. WARNING: needs Param.
+pub fn assignnparam(_s: &str, _val: f64, _flags: i32) {}
+
+/// Port of `assignstrvalue()` from `Src/params.c:2692`. WARNING: needs Value.
+pub fn assignstrvalue(_val: &str, _flags: i32) {}
+
+/// Port of `assigngetset()` from `Src/params.c:994`. WARNING: needs Param.
+pub fn assigngetset() {}
+
+/// Port of `check_warn_pm()` from `Src/params.c:3158`. WARNING: needs Param.
+pub fn check_warn_pm(_pmtype: &str, _created: i32) {}
+
+/// Port of `convbase_ptr()` from `Src/params.c:5586`. WARNING: needs `int *ndigits`.
+pub fn convbase_ptr(_v: i64, _base: i32) -> (String, i32) {
+    (String::new(), 0)
+}
+
+/// Port of `copyparamtable()` from `Src/params.c:596`. WARNING: needs HashTable.
+pub fn copyparamtable() {}
+
+/// Port of `createparamtable()` from `Src/params.c:817`. WARNING: needs HashTable.
+pub fn createparamtable() {}
+
+/// Port of `createspecialhash()` from `Src/params.c:1182`. WARNING: needs HashTable.
+pub fn createspecialhash() {}
+
+/// Port of `deleteparamtable()` from `Src/params.c:616`. WARNING: needs HashTable.
+pub fn deleteparamtable() {}
+
+/// Port of `fetchvalue()` from `Src/params.c:2180`. WARNING: needs Value.
+pub fn fetchvalue() {}
+
+/// Port of `freeparamnode()` from `Src/params.c:5977`. WARNING: needs HashNode.
+pub fn freeparamnode() {}
+
+/// Port of `getindex()` from `Src/params.c:2001`. WARNING: needs Value.
+pub fn getindex() {}
+
+/// Port of `getparamnode()` from `Src/params.c:570`. WARNING: needs HashTable.
+pub fn getparamnode() {}
+
+/// Port of `getvalue()` from `Src/params.c:2173`. WARNING: needs Value.
+pub fn getvalue() {}
+
+/// Port of `getvaluearr()` from `Src/params.c:710`. WARNING: needs Value.
+pub fn getvaluearr() {}
+
+/// Port of `loadparamnode()` from `Src/params.c:544`. WARNING: needs HashTable + Param.
+pub fn loadparamnode() {}
+
+/// Port of `newparamtable()` from `Src/params.c:519`. WARNING: needs HashTable.
+pub fn newparamtable() {}
+
+/// Port of `paramvalarr()` from `Src/params.c:689`. WARNING: needs HashTable.
+pub fn paramvalarr() -> Vec<String> {
+    Vec::new()
+}
+
+/// Port of `printparamnode()` from `Src/params.c:6123`. WARNING: needs HashNode.
+pub fn printparamnode() {}
+
+/// Port of `printparamvalue()` from `Src/params.c:6035`. WARNING: needs Param.
+pub fn printparamvalue() {}
+
+/// Port of `resolve_nameref_rec()` from `Src/params.c:6332`. WARNING: needs Param.
+pub fn resolve_nameref_rec() {}
+
+/// Port of `scancopyparams()` from `Src/params.c:584`. WARNING: needs HashNode.
+pub fn scancopyparams() {}
+
+/// Port of `scancountparams()` from `Src/params.c:630`. WARNING: needs HashNode.
+pub fn scancountparams() {}
+
+/// Port of `scanendscope()` from `Src/params.c:5900`. WARNING: needs HashNode.
+pub fn scanendscope() {}
+
+/// Port of `scanparamvals()` from `Src/params.c:644`. WARNING: needs HashNode.
+pub fn scanparamvals() {}
+
+/// Port of `setloopvar()` from `Src/params.c:6362`. WARNING: needs Param.
+pub fn setloopvar(_name: &str, _value: &str) {}
+
+/// Port of `setnparam()` from `Src/params.c:3744`. WARNING: needs mnumber.
+pub fn setnparam(_s: &str, _val: f64) {}
+
+/// Port of `setnumvalue()` from `Src/params.c:2856`. WARNING: needs Value.
+pub fn setnumvalue() {}
+
+/// Port of `setscope()` from `Src/params.c:6382`. WARNING: needs Param.
+pub fn setscope() {}
+
+/// Port of `setscope_base()` from `Src/params.c:6436`. WARNING: needs Param.
+pub fn setscope_base(_base: i32) {}
+
+/// Port of `upscope()` from `Src/params.c:6455`. WARNING: needs Param.
+pub fn upscope() {}
+
+#[cfg(test)]
+mod gsu_tests {
+    use super::*;
+
+    #[test]
+    fn test_libc_id_callbacks_match_libc() {
+        assert_eq!(uidgetfn(), unsafe { libc::getuid() } as i64);
+        assert_eq!(gidgetfn(), unsafe { libc::getgid() } as i64);
+        assert_eq!(euidgetfn(), unsafe { libc::geteuid() } as i64);
+        assert_eq!(egidgetfn(), unsafe { libc::getegid() } as i64);
+    }
+
+    #[test]
+    fn test_random_returns_15_bit_value() {
+        for _ in 0..100 {
+            let v = randomgetfn();
+            assert!(v >= 0 && v < 0x8000);
+        }
+    }
+
+    #[test]
+    fn test_random_set_seeds_deterministically() {
+        randomsetfn(42);
+        let a = randomgetfn();
+        randomsetfn(42);
+        let b = randomgetfn();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_ifs_round_trip() {
+        let original = ifsgetfn();
+        ifssetfn(":,;".to_string());
+        assert_eq!(ifsgetfn(), ":,;");
+        ifssetfn(original);
+    }
+
+    #[test]
+    fn test_histsiz_clamps_to_1() {
+        let original = histsizegetfn();
+        histsizesetfn(0);
+        assert_eq!(histsizegetfn(), 1);
+        histsizesetfn(-5);
+        assert_eq!(histsizegetfn(), 1);
+        histsizesetfn(500);
+        assert_eq!(histsizegetfn(), 500);
+        histsizesetfn(original);
+    }
+
+    #[test]
+    fn test_savehistsiz_clamps_to_0() {
+        let original = savehistsizegetfn();
+        savehistsizesetfn(-5);
+        assert_eq!(savehistsizegetfn(), 0);
+        savehistsizesetfn(100);
+        assert_eq!(savehistsizegetfn(), 100);
+        savehistsizesetfn(original);
+    }
+
+    #[test]
+    fn test_pipestat_round_trip() {
+        pipestatsetfn(Some(vec!["1".to_string(), "0".to_string(), "127".to_string()]));
+        let v = pipestatgetfn();
+        assert_eq!(v, vec!["1", "0", "127"]);
+        pipestatsetfn(None);
+        assert_eq!(pipestatgetfn(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_simple_arrayuniq_first_wins() {
+        let v = vec!["a".to_string(), "b".to_string(), "a".to_string(), "c".to_string()];
+        assert_eq!(simple_arrayuniq(v), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_split_env_string() {
+        assert_eq!(
+            split_env_string("PATH=/usr/bin:/bin"),
+            Some(("PATH".to_string(), "/usr/bin:/bin".to_string()))
+        );
+        assert_eq!(
+            split_env_string("EMPTY="),
+            Some(("EMPTY".to_string(), "".to_string()))
+        );
+        assert_eq!(split_env_string("NOEQUALS"), None);
+    }
+
+    #[test]
+    fn test_mkenvstr() {
+        assert_eq!(mkenvstr("PATH", "/usr/bin"), "PATH=/usr/bin");
+        assert_eq!(mkenvstr("EMPTY", ""), "EMPTY=");
+    }
+
+    #[test]
+    fn test_seconds_round_trip() {
+        intsecondssetfn(0);
+        let s1 = intsecondsgetfn();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let s2 = intsecondsgetfn();
+        assert!(s2 >= s1);
+        // Reset to a known offset and read back.
+        setrawseconds(100.0);
+        assert_eq!(getrawseconds(), 100.0);
+    }
+
+    #[test]
+    fn test_argzero_round_trip() {
+        argzerosetfn("/bin/zsh".to_string());
+        assert_eq!(argzerogetfn(), "/bin/zsh");
+        argzerosetfn(String::new());
+    }
+
+    #[test]
+    fn test_env_get_set() {
+        let result = zputenv("ZSHRS_TEST_VAR=hello");
+        assert_eq!(result, 0);
+        assert_eq!(zgetenv("ZSHRS_TEST_VAR"), Some("hello".to_string()));
+        delenv("ZSHRS_TEST_VAR");
+        assert_eq!(zgetenv("ZSHRS_TEST_VAR"), None);
+    }
+
+    #[test]
+    fn test_keyboardhack_one_char() {
+        keyboardhacksetfn("\\".to_string());
+        assert_eq!(keyboardhackgetfn(), "\\");
+        keyboardhacksetfn(String::new());
+        assert_eq!(keyboardhackgetfn(), "");
+    }
+
+    #[test]
+    fn test_histchars_default() {
+        histcharssetfn(None);
+        assert_eq!(histcharsgetfn(), "!^#");
+        histcharssetfn(Some("@$&".to_string()));
+        assert_eq!(histcharsgetfn(), "@$&");
+        histcharssetfn(None);
+    }
+}

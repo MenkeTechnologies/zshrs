@@ -108,6 +108,11 @@ pub fn set_argzero(name: Option<String>) {
     *argzero_lock().lock().unwrap() = name;
 }
 
+/// Read `argzero`. Used by `argzerogetfn` for `$0`.
+pub fn argzero() -> Option<String> {
+    argzero_lock().lock().unwrap().clone()
+}
+
 /// Read `errflag`. Used by callers that need to short-circuit on
 /// error (e.g. parser loops).
 pub fn errflag() -> i32 {
