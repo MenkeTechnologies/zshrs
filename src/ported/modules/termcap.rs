@@ -46,47 +46,38 @@ static STRCODES: &[&str] = &[
     "us", "vb", "ve", "vi", "vs", "wi",
 ];
 
-/// Look up a capability value from the in-memory ANSI table.
-fn capability_lookup(name: &str) -> Option<String> {
-    let term = std::env::var("TERM").unwrap_or_default();
-    let is_xterm = term.contains("xterm") || term.contains("256color")
-                || term.contains("screen") || term.contains("ansi")
-                || term.contains("vt100");
-    let cols: i32 = std::env::var("COLUMNS").ok().and_then(|s| s.parse().ok()).unwrap_or(80);
-    let lines: i32 = std::env::var("LINES").ok().and_then(|s| s.parse().ok()).unwrap_or(24);
-    let colors: i32 = if term.contains("256") { 256 } else if is_xterm { 8 } else { 2 };
+// `capability_lookup` removed — Rust-only invention with hardcoded
+// ANSI escapes that has no counterpart in Src/Modules/termcap.c.
+// The C source links libtermcap (or libtinfo) and reads /etc/termcap
+// via tgetent(3) + tgetflag(3) / tgetnum(3) / tgetstr(3) directly.
+// Each call site below now invokes those libc-level routines via FFI.
 
-    Some(match name {
-        // Boolean caps (return "1" for true, "" for false-but-known, None for unknown).
-        "am" | "km" | "mi" | "ms" | "xn" => "1".to_string(),
-        "ut" => if is_xterm { "1".to_string() } else { String::new() },
-        // Numeric caps.
-        "co" => cols.to_string(),
-        "li" => lines.to_string(),
-        "Nco" | "Co" => colors.to_string(),
-        // String caps — ANSI escape sequences.
-        "cl" => "\x1b[2J\x1b[H".to_string(),
-        "ce" => "\x1b[K".to_string(),
-        "cd" => "\x1b[J".to_string(),
-        "ho" => "\x1b[H".to_string(),
-        "cm" => "\x1b[%i%d;%dH".to_string(),
-        "cr" => "\r".to_string(),
-        "do" => "\n".to_string(),
-        "le" => "\x08".to_string(),
-        "nd" => "\x1b[C".to_string(),
-        "up" => "\x1b[A".to_string(),
-        "so" => "\x1b[7m".to_string(),
-        "se" => "\x1b[27m".to_string(),
-        "us" => "\x1b[4m".to_string(),
-        "ue" => "\x1b[24m".to_string(),
-        "md" => "\x1b[1m".to_string(),
-        "me" => "\x1b[0m".to_string(),
-        "mr" => "\x1b[7m".to_string(),
-        "mh" => "\x1b[2m".to_string(),
-        "mb" => "\x1b[5m".to_string(),
-        "bl" => "\x07".to_string(),
-        _ => return None,
-    })
+unsafe extern "C" {
+    fn tgetent(bp: *mut libc::c_char, name: *const libc::c_char) -> libc::c_int;
+    fn tgetflag(id: *const libc::c_char) -> libc::c_int;
+    fn tgetnum(id: *const libc::c_char) -> libc::c_int;
+    fn tgetstr(id: *const libc::c_char, area: *mut *mut libc::c_char) -> *mut libc::c_char;
+}
+
+/// Initialize libtermcap's database for `$TERM`. Returns true on success.
+/// C call site: `tgetent(NULL, term)` (zsh.h-compatible portable form).
+fn ensure_termcap_loaded() -> bool {
+    use std::sync::atomic::{AtomicI32, Ordering};
+    // 0 = uninit, 1 = ok, -1 = failed. Cache the libtermcap state for
+    // the lifetime of the process, matching libtermcap's own behavior.
+    static STATE: AtomicI32 = AtomicI32::new(0);
+    match STATE.load(Ordering::Relaxed) {
+        1 => true,
+        -1 => false,
+        _ => {
+            let term = std::env::var("TERM").unwrap_or_else(|_| "dumb".into());
+            let term_c = match std::ffi::CString::new(term) { Ok(c) => c, Err(_) => return false };
+            let r = unsafe { tgetent(std::ptr::null_mut(), term_c.as_ptr()) };
+            let ok = r > 0;
+            STATE.store(if ok { 1 } else { -1 }, Ordering::Relaxed);
+            ok
+        }
+    }
 }
 
 /// Port of `ztgetflag()` from `Src/Modules/termcap.c:53`. Wraps
@@ -97,22 +88,22 @@ fn capability_lookup(name: &str) -> Option<String> {
 ///
 /// C signature: `static int ztgetflag(char *s)`. Returns 1 / 0 / -1.
 pub fn ztgetflag(s: &str) -> i32 {                                       // c:53
-    // c:62 — `switch (tgetflag(s))` — 1 / 0 / -1.
-    match capability_lookup(s) {
-        Some(v) if v == "1" => 1,                                        // c:70
-        Some(_) => {
-            // c:65-69 — known but off; check boolcodes.
-            for b in BOOLCODES {
-                if b.as_bytes()[0] == s.as_bytes().first().copied().unwrap_or(0)
-                    && b.len() > 1 && s.len() > 1
-                    && b.as_bytes()[1] == s.as_bytes()[1]
-                {
+    if !ensure_termcap_loaded() {
+        return -1;                                                        // tgetent failed
+    }
+    let s_c = match std::ffi::CString::new(s) { Ok(c) => c, Err(_) => return -1 };
+    // c:62 — `switch (tgetflag(s)) { case 1: return 1; case 0: ...; }`
+    match unsafe { tgetflag(s_c.as_ptr()) } {                             // c:62
+        1 => 1,                                                           // c:64
+        _ => {
+            // c:65-72 — `for (b = boolcodes; *b; b++) if (!strcmp(*b, s)) return 0;`
+            for b in BOOLCODES {                                          // c:65
+                if *b == s {                                              // c:66
                     return 0;                                             // c:68
                 }
             }
             -1                                                            // c:74
         }
-        None => -1,                                                       // c:74
     }
 }
 
@@ -121,36 +112,107 @@ pub fn ztgetflag(s: &str) -> i32 {                                       // c:53
 /// (or its tparam'd form when args follow).
 ///
 /// C signature: `static int bin_echotc(char *name, char **argv, Options ops, int func)`.
-pub fn bin_echotc(nam: &str, argv: &[&str], _ops: &[bool; 256]) -> i32 { // c:80
-    if argv.is_empty() {                                                 // c:85
-        zwarnnam(nam, "missing argument");
+pub fn bin_echotc(name: &str, argv: &[&str], _ops: &[bool; 256]) -> i32 { // c:80
+    use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
+    use std::sync::atomic::Ordering;
+    const TERM_BAD: i32 = 1 << 1;
+    if argv.is_empty() {                                                  // c:85
+        zwarnnam(name, "missing argument");
         return 1;
     }
-    let cap = argv[0];
-    // c:90 — `tgetent` + capability lookup. Rust port reads from
-    // the in-memory ANSI table.
-    match capability_lookup(cap) {                                       // c:99 tgetstr
-        Some(value) => {
-            // c:104+ — tparm-style substitution if extra args.
-            if argv.len() == 1 {
-                print!("{}", value);
-            } else {
-                // %p1 / %p2 / %d / %s substitution. Approximate via
-                // simple `%d` replacement for the first numeric arg.
-                let mut out = value;
-                for arg in &argv[1..] {
-                    out = out.replacen("%d", arg, 1);
-                    out = out.replacen("%s", arg, 1);
-                }
-                print!("{}", out);
-            }
-            0                                                             // c:138 return 0
-        }
-        None => {                                                         // c:140
-            zwarnnam(nam, &format!("no such capability: {}", cap));
-            1                                                             // c:141 return 1
+    let s = argv[0];
+    let argv_rest: Vec<&str> = argv[1..].to_vec();                        // c:85 (s = *argv++)
+
+    // c:87 — `if (termflags & TERM_BAD) return 1;`
+    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 {              // c:87
+        return 1;                                                         // c:88
+    }
+    // c:89 — `if ((termflags & TERM_UNKNOWN) && (isset(INTERACTIVE) || !init_term())) return 1;`
+    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {          // c:89
+        let interactive = crate::ported::options::optlookup("interactive") > 0;
+        if interactive || !ensure_termcap_loaded() {                      // c:89-90
+            return 1;                                                     // c:90
         }
     }
+    if !ensure_termcap_loaded() {
+        return 1;
+    }
+    let s_c = match std::ffi::CString::new(s) { Ok(c) => c, Err(_) => return 1 };
+
+    // c:92 — `if ((num = tgetnum(s)) != -1) { printf("%d\n", num); return 0; }`
+    let num = unsafe { tgetnum(s_c.as_ptr()) };                           // c:92
+    if num != -1 {                                                        // c:92
+        println!("{}", num);                                              // c:93
+        return 0;                                                         // c:94
+    }
+    // c:97 — `switch (ztgetflag(s))`.
+    match ztgetflag(s) {                                                  // c:97
+        -1 => {}                                                          // c:99
+        0 => {                                                            // c:100
+            println!("no");                                               // c:101
+            return 0;                                                     // c:102
+        }
+        _ => {                                                            // c:103
+            println!("yes");                                              // c:104
+            return 0;                                                     // c:105
+        }
+    }
+    // c:108-110 — `t = tgetstr(s, &u);`
+    let mut buf: [libc::c_char; 2048] = [0; 2048];                        // c:84
+    let mut area = buf.as_mut_ptr();
+    let t = unsafe { tgetstr(s_c.as_ptr(), &mut area) };                  // c:109
+    if t.is_null() || (t as isize) == -1 || unsafe { *t } == 0 {          // c:110
+        zwarnnam(name, &format!("no such capability: {}", s));            // c:113
+        return 1;                                                         // c:114
+    }
+    let value = unsafe { std::ffi::CStr::from_ptr(t) }
+        .to_string_lossy()
+        .into_owned();
+
+    // c:117-122 — count arguments expected by the cap's `%d/%2/%3/%./%+` codes.
+    let mut argct = 0usize;                                               // c:117
+    let bytes = value.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {                                               // c:117
+        if bytes[i] == b'%' {                                             // c:118
+            i += 1;
+            if i < bytes.len() {                                          // c:119
+                match bytes[i] {                                          // c:119-120
+                    b'd' | b'2' | b'3' | b'.' | b'+' => argct += 1,       // c:120
+                    _ => {}
+                }
+            }
+        }
+        i += 1;
+    }
+
+    // c:124-128 — `if (arrlen(argv) != argct) zwarnnam("not enough/too many args"); return 1;`
+    if argv_rest.len() != argct {                                         // c:124
+        let msg = if argv_rest.len() < argct { "not enough arguments" }   // c:125
+                  else { "too many arguments" };                          // c:126
+        zwarnnam(name, msg);                                              // c:125-126
+        return 1;                                                         // c:127
+    }
+
+    // c:131-137 — `tputs(t, 1, putraw)` or `tputs(tgoto(t, num, atoi(*argv)), 1, putraw)`.
+    if argct == 0 {                                                       // c:131
+        // c:132 — `tputs(t, 1, putraw);` — direct emit of raw cap.
+        print!("{}", value);                                              // c:132
+    } else {
+        // c:135 — `num = (argv[1]) ? atoi(argv[1]) : atoi(*argv);`
+        // c:136 — `tputs(tgoto(t, num, atoi(*argv)), 1, putraw);`
+        // libtinfo `tgoto` resolves the cap with col=arg0/line=arg1; the
+        // static-link path emits the cap with %d/%2 replacement so cm
+        // ("\E[%i%d;%dH") still produces a usable ANSI sequence.
+        let mut out = value;
+        for arg in &argv_rest {
+            out = out.replacen("%d", arg, 1);
+            out = out.replacen("%2", arg, 1);
+            out = out.replacen("%3", arg, 1);
+        }
+        print!("{}", out);                                                // c:136
+    }
+    0                                                                     // c:138
 }
 
 /// Port of `gettermcap()` from `Src/Modules/termcap.c:144`. The
@@ -161,7 +223,33 @@ pub fn bin_echotc(nam: &str, argv: &[&str], _ops: &[bool; 256]) -> i32 { // c:80
 /// Rust returns `Option<String>` — `Some(value)` for known caps,
 /// `None` for unknown (matching C's PM_UNSET on no match).
 pub fn gettermcap(name: &str) -> Option<String> {                        // c:144
-    capability_lookup(name)
+    if !ensure_termcap_loaded() { return None; }
+    let n_c = std::ffi::CString::new(name).ok()?;
+    // c:163 — try string cap first (most common via `${termcap[name]}`).
+    let mut buf: [libc::c_char; 1024] = [0; 1024];
+    let mut area = buf.as_mut_ptr();
+    let raw = unsafe { tgetstr(n_c.as_ptr(), &mut area) };               // c:163
+    if !raw.is_null() {
+        return Some(unsafe { std::ffi::CStr::from_ptr(raw) }.to_string_lossy().into_owned());
+    }
+    // c:170 — numeric cap fallback.
+    let n = unsafe { tgetnum(n_c.as_ptr()) };                            // c:170
+    if n != -1 {
+        return Some(n.to_string());
+    }
+    // c:175 — boolean cap fallback.
+    match unsafe { tgetflag(n_c.as_ptr()) } {                            // c:175
+        1 => Some("yes".to_string()),
+        0 => {
+            // Known but off → "" only if it's in BOOLCODES.
+            if BOOLCODES.iter().any(|b| *b == name) {
+                Some(String::new())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Port of `scantermcap()` from `Src/Modules/termcap.c:200`. The
@@ -171,9 +259,12 @@ pub fn gettermcap(name: &str) -> Option<String> {                        // c:14
 ///
 /// C signature: `static void scantermcap(HashTable ht, ScanFunc func, int flags)`.
 pub fn scantermcap() -> Vec<(String, String)> {                          // c:200
+    // c:206-235 — walk boolcodes/numcodes/strcodes, emit (name, value)
+    // for each cap libtermcap reports as present.
     let mut out = Vec::new();
+    if !ensure_termcap_loaded() { return out; }
     for &name in BOOLCODES.iter().chain(NUMCODES.iter()).chain(STRCODES.iter()) {
-        if let Some(v) = capability_lookup(name) {
+        if let Some(v) = gettermcap(name) {
             out.push((name.to_string(), v));
         }
     }
