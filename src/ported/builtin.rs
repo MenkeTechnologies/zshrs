@@ -13542,8 +13542,25 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
         let _ = new_filename; // wired into shfunctab[dst_name] below
         // c:3437-3447 — TRAP* prefix detection + signal trap registration.
         if dst_name.starts_with("TRAP") {                                    // c:3437
-            // c:3438 — `int sigidx = getsigidx(s + 4);` — deferred to
-            // src/ported/signals.rs typed sig lookup.
+            // c:3438 — `int sigidx = getsigidx(s + 4);`
+            let sigidx = getsigidx(&dst_name[4..]);                          // c:3438
+            if sigidx != -1 {                                                // c:3439
+                // c:3440-3445 — settrap(sigidx, NULL, ZSIG_FUNC); on
+                // failure free the eprog + filename + zfree(newsh) and
+                // return 1.
+                // c:3440 — `settrap(sigidx, NULL, ZSIG_FUNC)`. Rust port:
+                //   the typed settrap maps NULL+ZSIG_FUNC → TrapAction::Function.
+                if crate::ported::signals::settrap(sigidx,
+                    crate::ported::signals::TrapAction::Function(dst_name.clone())
+                ).is_err() {                                                 // c:3440
+                    // freeeprog(newsh->funcdef) — funcdef Drop covers it.
+                    // dircache_set(&newsh->filename, NULL);
+                    // zfree(newsh, sizeof(*newsh));
+                    return 1;                                                // c:3445
+                }
+                // c:3447 — `removetrapnode(sigidx);` — clear any prior trap.
+                crate::ported::jobs::removetrapnode(sigidx);                 // c:3447
+            }
         }
         // c:3450 — `shfunctab->addnode(shfunctab, ztrdup(s), &newsh->node);`
         if let Ok(mut t) = SHFUNCTAB.lock() {
@@ -13750,8 +13767,12 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
             let mut ok = true;
             // c:3728-3735 — TRAP* prefix → removetrapnode(sigidx).
             if fname.starts_with("TRAP") {                                   // c:3728
-                // sigidx = getsigidx(fname[4..]); — deferred.
-                sigidx = -1;
+                // c:3729 — `if ((sigidx = getsigidx(*argv + 4)) != -1)`
+                sigidx = getsigidx(&fname[4..]);                             // c:3729
+                if sigidx != -1 {                                            // c:3729
+                    // c:3733 — `removetrapnode(sigidx);`
+                    crate::ported::jobs::removetrapnode(sigidx);             // c:3733
+                }
             }
             // c:3737-3759 — absolute path /dir/base form: install dir on
             // existing matching base name with PM_UNDEFINED set.
@@ -13804,13 +13825,16 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
             add_autoload_function(new_shf_ptr, fname);                       // c:3767
             if sigidx != -1 {                                                // c:3769
                 // c:3770 — `if (settrap(sigidx, NULL, ZSIG_FUNC)) { ... }`
-                // Static-link path: deferred until signals.rs typed settrap.
-                if false {
+                if crate::ported::signals::settrap(sigidx,
+                    crate::ported::signals::TrapAction::Function(fname.clone())
+                ).is_err() {                                                 // c:3770
+                    // c:3771 — `shfunctab->removenode(shfunctab, *argv);`
                     if let Ok(mut t) = SHFUNCTAB.lock() {
-                        t.remove(fname);                                     // c:3771
+                        t.remove(fname);
                     }
-                    returnval = 1;
-                    ok = false;
+                    // c:3772 — `shfunctab->freenode(&shf->node);` Drop covers it.
+                    returnval = 1;                                           // c:3773
+                    ok = false;                                              // c:3774
                 }
             }
             if ok && check_autoload(new_shf_ptr, &fname, ops, _func) != 0 {  // c:3779
@@ -15269,4 +15293,188 @@ pub fn bin_dot(name: &str, argv: &[String],                                  // 
         }
         Err(_) => 1,
     }
+}
+
+/// Port of `bin_set()` from Src/builtin.c:601.
+/// C: `int bin_set(char *nam, char **args, UNUSED(Options ops),
+///                 UNUSED(int func))` — set shell options, declare arrays,
+///   replace positional params, or display variables.
+pub fn bin_set(nam: &str, args: &[String],                                   // c:601
+               _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::{EMULATE_ZSH, EMULATION};
+    let mut argv: Vec<String> = args.to_vec();
+    let mut hadopt = false;                                                  // c:603
+    let mut hadplus = false;                                                 // c:603
+    let mut hadend = false;                                                  // c:603
+    let mut sort: i32 = 0;                                                   // c:603
+    let mut array: i32 = 0;                                                  // c:603
+    let mut arrayname: Option<String> = None;                                // c:604
+
+    // c:608-614 — sh-compat: bare `set -` → +xv.
+    let emul_bits = match crate::ported::options::ShellOptions::new().emulation {
+        crate::ported::options::Emulation::Zsh => EMULATE_ZSH,
+        crate::ported::options::Emulation::Ksh => crate::ported::zsh_h::EMULATE_KSH,
+        crate::ported::options::Emulation::Sh  => crate::ported::zsh_h::EMULATE_SH,
+        crate::ported::options::Emulation::Csh => crate::ported::zsh_h::EMULATE_CSH,
+    };
+    if !EMULATION(emul_bits, EMULATE_ZSH)                                    // c:608
+        && !argv.is_empty() && argv[0] == "-"
+    {
+        // c:610-611 — `dosetopt(VERBOSE, 0, 0, opts); dosetopt(XTRACE, 0, 0, opts);`
+        let v = crate::ported::options::optlookup("verbose");
+        let x = crate::ported::options::optlookup("xtrace");
+        crate::ported::options::dosetopt(v, 0, 0);                           // c:610
+        crate::ported::options::dosetopt(x, 0, 0);                           // c:611
+        if argv.len() == 1 { return 0; }                                     // c:612-613
+        argv.remove(0);
+    }
+
+    // c:617-668 — top-level option-arg loop.
+    let mut idx = 0usize;
+    'outer: while idx < argv.len()                                           // c:617
+        && (argv[idx].starts_with('-') || argv[idx].starts_with('+'))
+    {
+        let arg = argv[idx].clone();
+        let action = arg.starts_with('-');                                   // c:619
+        if !action { hadplus = true; }                                       // c:620
+        // c:621-622 — bare `-` / `+` → "--"
+        let body: String = if arg.len() == 1 { "--".to_string() }
+                           else { arg.clone() };
+        // c:623 — `while (*++*args)`
+        let chars: Vec<char> = body[1..].chars().collect();
+        let mut ci = 0usize;
+        while ci < chars.len() {                                             // c:623
+            let c = chars[ci];
+            if c != '-' || action { hadopt = true; }                         // c:626
+            // c:628-632 — `--` end-of-options.
+            if c == '-' {                                                    // c:628
+                hadend = true;                                               // c:629
+                idx += 1;                                                    // c:630 args++
+                break 'outer;
+            }
+            // c:633-645 — `o` long-option name follows.
+            if c == 'o' {                                                    // c:633
+                let optname: String = if ci + 1 < chars.len() {
+                    chars[ci + 1..].iter().collect::<String>()
+                } else {
+                    idx += 1;
+                    if idx >= argv.len() {                                   // c:636
+                        // c:637 — `printoptionstates(hadplus); inittyptab(); return 0;`
+                        return 0;
+                    }
+                    argv[idx].clone()
+                };
+                let optno = crate::ported::options::optlookup(&optname);     // c:642
+                if optno == 0 {                                              // c:642
+                    crate::ported::utils::zerr(&format!(
+                        "no such option: {}", optname));                     // c:642
+                } else if crate::ported::options::dosetopt(optno,
+                            if action { 1 } else { 0 }, 0) != 0              // c:644
+                {
+                    crate::ported::utils::zerr(&format!(
+                        "can't change option: {}", optname));                // c:644
+                }
+                break;
+            }
+            // c:646-657 — `A` array-mode (with optional name arg).
+            if c == 'A' {                                                    // c:646
+                array = if action { 1 } else { -1 };                         // c:649
+                let nameopt: Option<String> = if ci + 1 < chars.len() {
+                    Some(chars[ci + 1..].iter().collect::<String>())
+                } else if idx + 1 < argv.len() {
+                    idx += 1;
+                    Some(argv[idx].clone())
+                } else { None };
+                arrayname = nameopt.clone();
+                if arrayname.is_none() {                                     // c:651
+                    idx += 1;
+                    break 'outer;
+                }
+                let ksharrays = crate::ported::options::optlookup("ksharrays") > 0;
+                if !ksharrays {                                              // c:653
+                    idx += 1;                                                // c:655 args++
+                    break 'outer;                                            // c:656
+                }
+                break;
+            }
+            // c:659-660 — `s` sort flag.
+            if c == 's' {                                                    // c:659
+                sort = if action { 1 } else { -1 };                          // c:660
+            } else {
+                // c:662-666 — short-option letter: optlookupc + dosetopt.
+                let optno = crate::ported::options::optlookupc(c);           // c:663
+                if optno == 0 {                                              // c:663
+                    crate::ported::utils::zerr(&format!("bad option: -{}", c)); // c:663
+                } else if crate::ported::options::dosetopt(optno,
+                            if action { 1 } else { 0 }, 0) != 0              // c:664
+                {
+                    crate::ported::utils::zerr(&format!("can't change option: -{}", c)); // c:664
+                }
+            }
+            ci += 1;
+        }
+        idx += 1;                                                            // c:668
+    }
+    let _ = nam;
+
+    // c:676 — `queue_signals();`
+    crate::ported::mem::queue_signals();
+    let remaining = &argv[idx..];
+
+    // c:678-694 — display path when no array/no args.
+    if arrayname.is_none() {                                                 // c:678
+        if !hadopt && remaining.is_empty() {                                 // c:679
+            // c:680 — `scanhashtable(paramtab, 1, 0, 0, paramtab->printnode, ...);`
+            for (k, v) in std::env::vars() {
+                if hadplus {                                                 // c:681 PRINT_NAMEONLY
+                    println!("{}", k);
+                } else {
+                    println!("{}={}", k,
+                        crate::ported::utils::quotedzputs(&v));
+                }
+            }
+        }
+        if array != 0 {                                                      // c:684
+            // c:685-687 — display arrays (PM_ARRAY filter). Static-link
+            // path: nothing to enumerate from env vars typed as arrays.
+        }
+        if remaining.is_empty() && !hadend {                                 // c:688
+            crate::ported::mem::unqueue_signals();
+            return 0;                                                        // c:690
+        }
+    }
+
+    // c:693-695 — `set -s` sort.
+    let sorted: Vec<String> = if sort != 0 {
+        let mut v = remaining.to_vec();
+        if sort < 0 { v.sort_by(|a, b| b.cmp(a)); } else { v.sort(); }
+        v
+    } else {
+        remaining.to_vec()
+    };
+
+    // c:696-708 — array assign or positional-param replace.
+    if array != 0 {                                                          // c:696
+        // c:697-708 — build array; `array < 0` appends to existing $name.
+        let aname = arrayname.unwrap_or_default();
+        let mut new_arr: Vec<String> = sorted;
+        if array < 0 {                                                       // c:701
+            // c:702-704 — `if ((a = getaparam(arrayname)) && arrlen_gt(a, len))`
+            let existing = std::env::var(&aname).ok()
+                .map(|v| v.split(':').map(String::from).collect::<Vec<_>>())
+                .unwrap_or_default();
+            if existing.len() > new_arr.len() {                              // c:702
+                new_arr.extend(existing.into_iter().skip(new_arr.len()));    // c:703
+            }
+        }
+        // c:709 — `setaparam(arrayname, x);`
+        crate::ported::modules::ksh93::setsparam(&aname, &new_arr.join(":"));
+    } else {
+        // c:711-712 — `freearray(pparams); pparams = zarrdup(args);`
+        if let Ok(mut pp) = PPARAMS.lock() {
+            *pp = sorted;                                                    // c:712
+        }
+    }
+    crate::ported::mem::unqueue_signals();                                   // c:714
+    0                                                                        // c:715
 }
