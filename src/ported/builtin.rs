@@ -12888,11 +12888,92 @@ fn loadautofn(_shf: *mut crate::ported::zsh_h::shfunc,                       // 
 ///     int func)` — `OPT_ISSET(ops,'X')` ? eval_autoload : 0.
 pub fn check_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,    // c:3193
                       ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
-    // c:3196 — `if (OPT_ISSET(ops,'X')) return eval_autoload(shf, name, ops, func);`
-    if crate::ported::zsh_h::OPT_ISSET(ops, b'X') {                          // c:3196
+    use crate::ported::zsh_h::{OPT_ISSET, PM_UNDEFINED, PM_LOADDIR};
+    // c:3196-3199 — `if (OPT_ISSET(ops,'X')) return eval_autoload(...);`
+    if OPT_ISSET(ops, b'X') {                                                // c:3196
         return eval_autoload(shf, name, ops, func);                          // c:3197
     }
+    // c:3200-3242 — -r / -R re-resolve: walk fpath for the function file.
+    let want_r = OPT_ISSET(ops, b'r');
+    let want_R = OPT_ISSET(ops, b'R');
+    if (want_r || want_R) && !shf.is_null() {                                // c:3200
+        let shf_mut = unsafe { &mut *shf };
+        if (shf_mut.node.flags as u32 & PM_UNDEFINED) == 0 {
+            return 0;
+        }
+        // c:3202-3216 — already has filename + PM_LOADDIR: try the cached
+        // dir first via spec_path[].
+        if (shf_mut.node.flags as u32 & PM_LOADDIR) != 0
+            && shf_mut.filename.is_some()
+        {
+            let spec = vec![shf_mut.filename.clone().unwrap_or_default()];
+            if getfpfunc(&shf_mut.node.nam, &mut None,                       // c:3206
+                         Some(&spec), 1).is_some() {
+                return 0;                                                    // c:3209
+            }
+            // c:3211-3217 — `-d` not set: bail (with -R = error, with -r = silent).
+            if !OPT_ISSET(ops, b'd') {                                       // c:3211
+                if want_R {                                                  // c:3212
+                    crate::ported::utils::zerr(&format!(
+                        "{}: function definition file not found",
+                        shf_mut.node.nam));                                  // c:3213
+                    return 1;                                                // c:3215
+                }
+                return 0;                                                    // c:3216
+            }
+        }
+        // c:3219-3231 — fpath walk via getfpfunc + dircache_set install.
+        let mut dir_path: Option<String> = None;
+        if getfpfunc(&shf_mut.node.nam, &mut dir_path, None, 1).is_some()    // c:3219
+            && dir_path.is_some()
+        {
+            // c:3220-3228 — dircache_set + relative-path absolutize.
+            if let Some(old) = shf_mut.filename.take() {
+                crate::ported::hashtable::dircache_set(&old, None);          // c:3220
+            }
+            let mut dp = dir_path.unwrap();
+            if !dp.starts_with('/') {                                        // c:3222
+                if let Some(cwd) = crate::ported::utils::zgetcwd() {
+                    dp = format!("{}/{}", cwd, dp);                          // c:3223-3224
+                }
+            }
+            crate::ported::hashtable::dircache_set(&dp, Some(&dp));          // c:3228
+            shf_mut.filename = Some(dp);
+            shf_mut.node.flags |= PM_LOADDIR as i32;                         // c:3229
+            return 0;                                                        // c:3230
+        }
+        // c:3233-3239 — -R: error; -r: silent.
+        if want_R {                                                          // c:3233
+            crate::ported::utils::zerr(&format!(
+                "{}: function definition file not found",
+                shf_mut.node.nam));                                          // c:3234
+            return 1;                                                        // c:3236
+        }
+    }
     0                                                                        // c:3243
+}
+
+/// Port of `getfpfunc()` from Src/exec.c:5260. Walks `$fpath` (or the
+/// supplied `spec_path` slice) for a file named `name` and writes the
+/// resolved directory through `*dir_path_out` (matching the C `char **dir_path`).
+/// Returns `Some(file_contents_path)` on success, `None` when not found.
+fn getfpfunc(name: &str, dir_path_out: &mut Option<String>,                  // c:5260 (Src/exec.c)
+             spec_path: Option<&[String]>, _all_loaded: i32) -> Option<String> {
+    let dirs: Vec<String> = match spec_path {
+        Some(s) => s.to_vec(),
+        None => std::env::var("FPATH").or_else(|_| std::env::var("fpath"))
+            .ok().map(|v| v.split(':').map(String::from).collect())
+            .unwrap_or_default(),
+    };
+    for dir in &dirs {
+        if dir.is_empty() { continue; }
+        let path = format!("{}/{}", dir, name);
+        if std::path::Path::new(&path).exists() {
+            *dir_path_out = Some(dir.clone());
+            return Some(path);
+        }
+    }
+    None
 }
 
 /// Port of `listusermathfunc()` from Src/builtin.c:3243.
