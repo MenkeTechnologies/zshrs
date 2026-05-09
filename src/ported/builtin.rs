@@ -13481,6 +13481,164 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
         return returnval;
     }
 
-    let _ = (on, expand, pflags);
+    // c:3672-3708 — `-m` glob: treat each arg as a pattern, scan-and-print
+    // matching shfuncs (no on/off → list) or apply on/off mask.
+    if OPT_ISSET(ops, b'm') {                                                // c:3673
+        on &= !PM_UNDEFINED;                                                 // c:3674
+        let mut returnval = returnval;
+        for pat in argv {                                                    // c:3675
+            crate::ported::mem::queue_signals();                             // c:3676
+            // c:3678 — `tokenize(*argv)` + `patcompile(...)`
+            let pprog = crate::ported::pattern::patcompile(pat,              // c:3680
+                crate::ported::pattern::PatFlags::default()).ok();
+            if let Some(prog) = pprog {
+                // c:3680-3683 — scan-and-print matching shfuncs.
+                if (on | off) == 0 && !OPT_ISSET(ops, b'X') {                // c:3682
+                    // scanmatchshfunc(...) — deferred to funcs.rs walk.
+                } else {
+                    // c:3686-3699 — walk shfunctab, apply (on, off) and
+                    // re-eval autoload for each matching shf.
+                    let names: Vec<String> = SHFUNCTAB.lock()
+                        .map(|t| t.keys().cloned().collect())
+                        .unwrap_or_default();
+                    for nm in &names {
+                        // pattry approximated by string equality / glob
+                        // here; full pat engine is in src/ported/pattern.rs.
+                        if !crate::ported::pattern::pattry(&prog, nm) {     // c:3690
+                            continue;
+                        }
+                        let shf_ptr = SHFUNCTAB.lock()
+                            .ok()
+                            .and_then(|t| t.get(nm.as_str()).copied())
+                            .unwrap_or(0) as *mut crate::ported::zsh_h::shfunc;
+                        if shf_ptr.is_null() { continue; }
+                        let shf_mut = unsafe { &mut *shf_ptr };
+                        // c:3691 — `shf->node.flags = (... | (on & ~PM_UNDEFINED)) & ~off;`
+                        shf_mut.node.flags = (shf_mut.node.flags
+                            | ((on & !PM_UNDEFINED) as i32)) & !(off as i32); // c:3691
+                        if check_autoload(shf_ptr, &shf_mut.node.nam,
+                                          ops, _func) != 0 {                  // c:3693
+                            returnval = 1;                                   // c:3695
+                        }
+                    }
+                }
+            } else {
+                // c:3700-3702 — `untokenize + zwarnnam(name, "bad pattern")`.
+                crate::ported::utils::zwarnnam(name,
+                    &format!("bad pattern : {}", pat));                      // c:3701
+                returnval = 1;                                               // c:3702
+            }
+            crate::ported::mem::unqueue_signals();                           // c:3704
+        }
+        return returnval;
+    }
+
+    // c:3710-3735 — literal name list, no globbing.
+    let mut returnval = returnval;
+    crate::ported::mem::queue_signals();                                     // c:3711
+    for fname in argv {                                                      // c:3712
+        // c:3713-3714 — `-w` (compile-and-dump) path.
+        if OPT_ISSET(ops, b'w') {                                            // c:3713
+            // dump_autoload(name, fname, on, ops, func) — dump.c port.
+            continue;
+        }
+        // c:3715 — `shf = shfunctab->getnode(shfunctab, *argv);`
+        let shf_ptr = SHFUNCTAB.lock()
+            .ok()
+            .and_then(|t| t.get(fname.as_str()).copied())
+            .unwrap_or(0) as *mut crate::ported::zsh_h::shfunc;
+        if !shf_ptr.is_null() {                                              // c:3715
+            let shf_mut = unsafe { &mut *shf_ptr };
+            if (on | off) != 0 {                                             // c:3717
+                // c:3719 — apply on/off mask, then check_autoload.
+                shf_mut.node.flags = (shf_mut.node.flags
+                    | ((on & !PM_UNDEFINED) as i32)) & !(off as i32);        // c:3719
+                if check_autoload(shf_ptr, &shf_mut.node.nam, ops, _func) != 0 { // c:3720
+                    returnval = 1;                                           // c:3721
+                }
+            } else {
+                // c:3723 — `printshfuncexpand(&shf->node, pflags, expand);`
+                println!("{}", shf_mut.node.nam);                            // c:3723
+            }
+        } else if (on & PM_UNDEFINED) != 0 {                                 // c:3725
+            // c:3726-3782 — autoload-define path: TRAP* + abs-path + new shf.
+            let mut sigidx: i32 = -1;
+            let mut ok = true;
+            // c:3728-3735 — TRAP* prefix → removetrapnode(sigidx).
+            if fname.starts_with("TRAP") {                                   // c:3728
+                // sigidx = getsigidx(fname[4..]); — deferred.
+                sigidx = -1;
+            }
+            // c:3737-3759 — absolute path /dir/base form: install dir on
+            // existing matching base name with PM_UNDEFINED set.
+            if fname.starts_with('/') {                                      // c:3737
+                let base = fname.rsplit('/').next().unwrap_or("");
+                if !base.is_empty() {
+                    let base_ptr = SHFUNCTAB.lock()
+                        .ok()
+                        .and_then(|t| t.get(base).copied())
+                        .unwrap_or(0) as *mut crate::ported::zsh_h::shfunc;
+                    if !base_ptr.is_null() {
+                        let bs = unsafe { &mut *base_ptr };
+                        // c:3742 — apply flag mask.
+                        bs.node.flags = (bs.node.flags
+                            | ((on & !PM_UNDEFINED) as i32)) & !(off as i32); // c:3742
+                        if (bs.node.flags as u32 & PM_UNDEFINED) != 0 {       // c:3744
+                            let dir = if fname.len() > 1 && base.len() == fname.len() - 1 {
+                                "/".to_string()                              // c:3747
+                            } else {
+                                fname[..fname.len() - base.len() - 1].to_string() // c:3749-3751
+                            };
+                            if let Some(old) = bs.filename.take() {
+                                crate::ported::hashtable::dircache_set(&old, None); // c:3753
+                            }
+                            crate::ported::hashtable::dircache_set(&dir, Some(&dir)); // c:3754
+                            bs.filename = Some(dir);
+                        }
+                        if check_autoload(base_ptr, &bs.node.nam, ops, _func) != 0 { // c:3756
+                            returnval = 1;
+                        }
+                        continue;                                            // c:3758
+                    }
+                }
+            }
+            // c:3763-3766 — new undefined shf, mkautofn, add_autoload_function.
+            let new_shf = Box::new(crate::ported::zsh_h::shfunc {
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: fname.clone(),
+                    flags: on as i32,                                        // c:3764
+                },
+                filename: None,
+                lineno: 0,
+                funcdef: None,
+                redir: None,
+                sticky: None,
+            });
+            let new_shf_ptr = Box::into_raw(new_shf);
+            let _ = mkautofn(new_shf_ptr);                                   // c:3765
+            add_autoload_function(new_shf_ptr, fname);                       // c:3767
+            if sigidx != -1 {                                                // c:3769
+                // c:3770 — `if (settrap(sigidx, NULL, ZSIG_FUNC)) { ... }`
+                // Static-link path: deferred until signals.rs typed settrap.
+                if false {
+                    if let Ok(mut t) = SHFUNCTAB.lock() {
+                        t.remove(fname);                                     // c:3771
+                    }
+                    returnval = 1;
+                    ok = false;
+                }
+            }
+            if ok && check_autoload(new_shf_ptr, &fname, ops, _func) != 0 {  // c:3779
+                returnval = 1;                                               // c:3780
+            }
+        } else {
+            // c:3783 — `returnval = 1;` (named function not found,
+            //          no autoload requested).
+            returnval = 1;                                                   // c:3783
+        }
+    }
+    crate::ported::mem::unqueue_signals();                                   // c:3785
+    let _ = (expand, pflags);
     returnval
 }
