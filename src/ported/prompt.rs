@@ -258,6 +258,10 @@ pub struct PromptContext {
     /// `argzero` per the C source's `scriptname ? scriptname :
     /// argzero` ternary.
     pub scriptname: Option<String>,
+    /// `scriptfilename` — file being read (vs `scriptname` which
+    /// mutates to function name inside a call). Backs `%x`. Mirrors
+    /// C zsh's `scriptfilename` global (Src/init.c).
+    pub scriptfilename: Option<String>,
     /// `argzero` — argv[0] of the running binary.
     /// Backs the `%N` fallback per Src/prompt.c:555 when no
     /// scriptname is in scope.
@@ -311,6 +315,7 @@ impl Default for PromptContext {
             // populate this before expanding `%N` per
             // Src/prompt.c:554.
             scriptname: None,
+            scriptfilename: None,
             argzero: env::args().next().unwrap_or_else(|| "zsh".to_string()),
         }
     }
@@ -779,10 +784,19 @@ impl<'a> PromptExpander<'a> {
             // identically to %N — `%2x` returns the last 2 path
             // components, `%0x` (default) is the full path.
             'x' => {
+                // %x reads `scriptfilename` (Src/prompt.c:567 case 'x':
+                //   `promptpath(scriptfilename ? scriptfilename :
+                //               argzero, arg, 0)`). Distinct from %N
+                // which reads `scriptname`. Inside a function call,
+                // `scriptname` mutates to the function name but
+                // `scriptfilename` keeps the original file path —
+                // so PS4 trace inside `f() { … }; f` shows
+                // `<file>\t<fn>\t…` not `<fn>\t<fn>\t…`.
                 let name = self
                     .ctx
-                    .scriptname
+                    .scriptfilename
                     .as_deref()
+                    .or(self.ctx.scriptname.as_deref())
                     .unwrap_or(&self.ctx.argzero);
                 let n = if arg <= 0 {
                     0
@@ -1801,6 +1815,7 @@ mod tests {
             term_width: 80,
             lineno: 10,
             scriptname: None,
+            scriptfilename: None,
             argzero: "zsh".to_string(),
         }
     }
@@ -2311,6 +2326,15 @@ impl crate::ported::exec::ShellExecutor {
             scriptname: self
                 .scriptname
                 .clone()
+                .or_else(|| self.variables.get("0").cloned()),
+            // %x reads scriptfilename — the file being read, NOT
+            // the active function name. Falls back to scriptname
+            // when scriptfilename is unset (the no-function case
+            // where they coincide).
+            scriptfilename: self
+                .scriptfilename
+                .clone()
+                .or_else(|| self.scriptname.clone())
                 .or_else(|| self.variables.get("0").cloned()),
             argzero: self
                 .variables

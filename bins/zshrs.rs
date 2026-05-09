@@ -813,7 +813,14 @@ pub fn zshrs_main() {
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "zshrs".to_string())
         };
-        executor.scriptname = Some(basename);
+        executor.scriptname = Some(basename.clone());
+        // scriptfilename mirrors C init.c:479 `scriptname =
+        // scriptfilename = ztrdup("zsh")` — both seeded to the
+        // basename in -c mode. scriptfilename stays put when we
+        // enter a function (only scriptname mutates), so PS4's
+        // %x continues to show the file basename inside function
+        // bodies.
+        executor.scriptfilename = Some(basename);
 
         // Source zshenv per Src/init.c:1473 (GLOBAL_ZSHENV) +
         // Src/init.c:1489 (`sourcehome(".zshenv")`). C zsh sources
