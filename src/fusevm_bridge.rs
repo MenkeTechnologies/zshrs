@@ -14,7 +14,6 @@
 use crate::history::HistoryEngine;
 // MathState is private to math.rs (no public state struct in math.c).
 use crate::options::ZSH_OPTIONS_SET;
-use crate::pcre::PcreState;
 use crate::prompt::{expand_prompt, PromptContext};
 use crate::tcp::TcpSessions;
 use crate::zftp::Zftp;
