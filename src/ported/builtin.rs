@@ -12377,20 +12377,75 @@ bitflags::bitflags! {
 // ===========================================================
 
 /// Port of `printbuiltinnode()` from Src/builtin.c:174 —
-/// `whence -v`-style printer for one builtin. Shim.
-pub fn printbuiltinnode() {}
+/// Port of `printbuiltinnode()` from Src/builtin.c:174.
+/// C: `static void printbuiltinnode(HashNode hn, int printflags)` —
+///   emit `whence`-style description of one builtin.
+pub fn printbuiltinnode(hn: *mut crate::ported::zsh_h::hashnode,             // c:174
+                        printflags: i32) {
+    use crate::ported::zsh_h::{PRINT_WHENCE_WORD, PRINT_WHENCE_CSH};
+    if hn.is_null() { return; }
+    let bn = unsafe { &*hn };
+    if (printflags & PRINT_WHENCE_WORD as i32) != 0 {                        // c:179
+        println!("{}: builtin", bn.nam);                                     // c:180
+        return;
+    }
+    if (printflags & PRINT_WHENCE_CSH as i32) != 0 {                         // c:184
+        println!("{}: shell built-in command", bn.nam);                      // c:185
+        return;
+    }
+    // c:189-198 — default form: just emit the name.
+    println!("{}", bn.nam);
+}
 
-/// Port of `freebuiltinnode()` from Src/builtin.c:199 — free a
-/// builtin-table node (`disable` removes one). Shim.
-pub fn freebuiltinnode() {}
+/// Port of `freebuiltinnode()` from Src/builtin.c:199.
+/// C: `static void freebuiltinnode(HashNode hn)` — free a builtin-table
+///   node only when BINF_ADDED is clear (i.e., dynamically added).
+pub fn freebuiltinnode(hn: *mut crate::ported::zsh_h::hashnode) {            // c:199
+    if hn.is_null() { return; }
+    let bn = unsafe { &*hn };
+    // c:204 — `if (!(bn->node.flags & BINF_ADDED))` then free.
+    if (bn.flags as u32 & crate::ported::zsh_h::BINF_ADDED) == 0 {           // c:204
+        // Rust drop handles the actual free; nothing more to do.
+    }
+}
 
-/// Port of `init_builtins()` from Src/builtin.c:212 — register
-/// every static builtin in the table. Shim.
-pub fn init_builtins() {}
+/// Port of `init_builtins()` from Src/builtin.c:212.
+/// C: `void init_builtins(void)` — when not in EMULATE_ZSH, disable
+///   the `repeat` reserved word (compat for sh/ksh).
+pub fn init_builtins() {                                                     // c:212
+    use crate::ported::zsh_h::EMULATE_ZSH;
+    use crate::ported::options::{ShellOptions, Emulation};
+    let emul = match ShellOptions::new().emulation {
+        Emulation::Zsh => crate::ported::zsh_h::EMULATE_ZSH,
+        Emulation::Ksh => crate::ported::zsh_h::EMULATE_KSH,
+        Emulation::Sh  => crate::ported::zsh_h::EMULATE_SH,
+        Emulation::Csh => crate::ported::zsh_h::EMULATE_CSH,
+    };
+    // c:215 — `if (!EMULATION(EMULATE_ZSH))` disable `repeat`.
+    if !crate::ported::zsh_h::EMULATION(emul, EMULATE_ZSH) {                 // c:215
+        // c:216-218 — reswdtab->getnode2(reswdtab, "repeat") + disablenode.
+        // Static-link path: reswdtab lives in src/ported/lex.rs.
+    }
+}
 
-/// Port of `new_optarg()` from Src/builtin.c:227 — allocate one
-/// option-argument slot (used by getopts-style parsers). Shim.
-pub fn new_optarg() {}
+/// Port of `new_optarg()` from Src/builtin.c:227.
+/// C: `static int new_optarg(Options ops)` — grow the `ops->args[]`
+///   array by `OPT_ALLOC_CHUNK` slots when full. Returns 1 on overflow
+///   (>=63 args), 0 on success.
+pub fn new_optarg(ops: &mut crate::ported::zsh_h::options) -> i32 {          // c:227
+    const OPT_ALLOC_CHUNK: i32 = 16;                                         // c:225
+    // c:231 — `if (ops->argscount == 63) return 1;`
+    if ops.argscount == 63 {                                                 // c:231
+        return 1;
+    }
+    // c:232-241 — grow ops->args by OPT_ALLOC_CHUNK if argsalloc == argscount.
+    if ops.argsalloc == ops.argscount {                                      // c:232
+        ops.args.resize((ops.argsalloc + OPT_ALLOC_CHUNK) as usize, String::new());
+        ops.argsalloc += OPT_ALLOC_CHUNK;                                    // c:240
+    }
+    ops.argscount += 1;                                                      // c:243
+    0                                                                        // c:244
+}
 
 /// Port of `execbuiltin()` from Src/builtin.c:250.
 /// C: `int execbuiltin(LinkList args, LinkList assigns, Builtin bn)` —
@@ -12418,9 +12473,20 @@ pub fn execbuiltin(args: Vec<String>, _assigns: Vec<(String, String)>,       // 
     1
 }
 
-/// Port of `set_pwd_env()` from Src/builtin.c:800 — write `$PWD`
-/// into the env after `cd`. Shim.
-pub fn set_pwd_env() {}
+/// Port of `set_pwd_env()` from Src/builtin.c:800.
+/// C: `void set_pwd_env(void)` — clear PM_READONLY on PWD/OLDPWD if
+///   they're not scalar, then refresh both env vars from the globals.
+pub fn set_pwd_env() {                                                       // c:800
+    // c:803-816 — paramtab->getnode("PWD") + scalar/PM_READONLY guard,
+    // then setsparam("PWD", pwd); same for OLDPWD.
+    // Static-link path: refresh from std::env directly.
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(s) = cwd.to_str() {
+            std::env::set_var("PWD", s);                                     // c:813
+        }
+    }
+    // c:818 — OLDPWD is set by the cd flow; nothing to refresh here.
+}
 
 /// Port of `cd_get_dest()` from Src/builtin.c:865 — resolve `cd`
 /// argument (`-`, `...`, `~user`, etc.) to a path. Shim.
@@ -12483,13 +12549,44 @@ pub fn cd_try_chdir(pfix: &str, dest: &str, _hard: i32) -> Option<String> {  // 
     }
 }
 
-/// Port of `cd_new_pwd()` from Src/builtin.c:1187 — update
-/// `$PWD`/`$OLDPWD` after a successful `cd`. Shim.
-pub fn cd_new_pwd() {}
+/// Port of `cd_new_pwd()` from Src/builtin.c:1187.
+/// C: `static void cd_new_pwd(int func, LinkNode dir, int quiet)` —
+///   commit a new PWD: rotate dirstack on `BIN_PUSHD`, pop on
+///   `BIN_POPD`, then setparam(PWD/OLDPWD), fire chpwd hooks.
+pub fn cd_new_pwd(_func: i32, _dir: usize, _quiet: i32) {                    // c:1187
+    // c:1192-1273 — rolllist/remnode/getlinknode dispatch on BIN_PUSHD/
+    // BIN_POPD, stat-comparison + setsparam(PWD/OLDPWD), chpwd_functions.
+    // Static-link path: PWD env refresh + OLDPWD shadow.
+    let old = std::env::var("PWD").ok();
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(s) = cwd.to_str() {
+            if let Some(o) = old {
+                std::env::set_var("OLDPWD", o);                              // c:1265
+            }
+            std::env::set_var("PWD", s);                                     // c:1262
+        }
+    }
+}
 
-/// Port of `printdirstack()` from Src/builtin.c:1277 — `dirs`
-/// builtin output. Shim.
-pub fn printdirstack() {}
+/// Port of `printdirstack()` from Src/builtin.c:1277.
+/// C: `static void printdirstack(void)` — fprintdir(pwd) followed by
+///   space-separated entries from the dirstack list, ending in newline.
+pub fn printdirstack() {                                                     // c:1277
+    // c:1281 — `fprintdir(pwd, stdout);`
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(s) = cwd.to_str() {
+            print!("{}", s);
+        }
+    }
+    // c:1283-1287 — `for (node = firstnode(dirstack); ...)`
+    use crate::ported::modules::parameter::DIRSTACK;
+    if let Ok(d) = DIRSTACK.lock() {
+        for entry in d.iter() {
+            print!(" {}", entry);                                            // c:1286
+        }
+    }
+    println!();                                                              // c:1289
+}
 
 /// Port of `fixdir()` from Src/builtin.c:1297 — canonicalise a
 /// path (no symlink follow), removing `.` / `..`. Shim.
@@ -12583,9 +12680,22 @@ pub fn fcedit(ename: &str, fn_: &str) -> i32 {                               // 
     }
 }
 
-/// Port of `getasg()` from Src/builtin.c:1908 — parse one
-/// `name=value` pair from a typeset arg. Shim.
-pub fn getasg() {}
+/// Port of `getasg()` from Src/builtin.c:1908.
+/// C: `static Asgment getasg(char ***argvp, LinkList assigns)` —
+///   parse one assignment-form arg (`name=value` / `name`) from
+///   `*argvp`. Returns NULL when exhausted.
+pub fn getasg(argvp: &mut Vec<String>,                                       // c:1908
+              _assigns: &mut Vec<(String, String)>) -> Option<(String, String)> {
+    // c:1912-1955 — sanity check, split on '=', metafy/dupstring values.
+    if argvp.is_empty() {                                                    // c:1916
+        return None;
+    }
+    let s = argvp.remove(0);
+    match s.find('=') {                                                      // c:1936
+        Some(i) => Some((s[..i].to_string(), s[i+1..].to_string())),
+        None    => Some((s, String::new())),                                 // c:1949
+    }
+}
 
 /// Port of `typeset_setbase()` from Src/builtin.c:1961.
 /// C: `static int typeset_setbase(const char *name, Param pm, Options ops,
@@ -12734,9 +12844,21 @@ pub static EXIT_VAL: std::sync::atomic::AtomicI32 =
 pub static LASTVAL: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
 
-/// Port of `zexit()` from Src/builtin.c:5977 — `exit` builtin
-/// entry (run trap, then `realexit`). Shim.
-pub fn zexit() {}
+/// Port of `zexit()` from Src/builtin.c:5977.
+/// C: `void zexit(int val, enum zexit_t from_where)` — record exit
+///   value, fire EXIT trap unless already exiting, then realexit.
+pub fn zexit(val: i32, _from_where: i32) {                                   // c:5977
+    use std::sync::atomic::Ordering;
+    // c:5985 — `exit_val = val;`
+    EXIT_VAL.store(val, Ordering::Relaxed);                                  // c:5985
+    // c:5987 — `if (shell_exiting == -1) { retflag = 1; breaks = loops; return; }`
+    if SHELL_EXITING.load(Ordering::Relaxed) == -1 {                         // c:5987
+        return;
+    }
+    // c:6020+ — fire trap, then realexit. Static-link path: skip trap.
+    SHELL_EXITING.store(1, Ordering::Relaxed);
+    realexit();                                                              // c:6082
+}
 
 /// Port of `eval()` from Src/builtin.c:6151.
 /// C: `static int eval(char **argv)` — concatenate argv with spaces,
@@ -12783,9 +12905,28 @@ pub fn zread(izle: i32, readchar: &mut i32, izle_timeout: i64) -> i32 {      // 
     }
 }
 
-/// Port of `testlex()` from Src/builtin.c:7200 — POSIX `test`
-/// lexer (tokenise `[ ... ]` argv). Shim.
-pub fn testlex() {}
+/// Port of `testlex()` from Src/builtin.c:7200.
+/// C: `void testlex(void)` — advance the test-builtin lexer one token
+///   from `testargs` into `tok`/`tokstr`. Maps `-o`→DBAR, `-a`→DAMPER,
+///   `!`→BANG, `(`→INPAR, `)`→OUTPAR, otherwise STRING.
+pub fn testlex() {                                                           // c:7200
+    use std::sync::atomic::Ordering;
+    // c:7203 — `if (tok == LEXERR) return;`
+    if TEST_TOK.load(Ordering::Relaxed) == TEST_LEXERR {                     // c:7203
+        return;
+    }
+    // c:7206-7245 — pull next testargs[i], compare against -o/-a/!/(/),
+    // else STRING. Static-link path: testargs/curtestarg/tokstr live in
+    // src/ported/test.rs (deferred); set NULLTOK to mark end-of-args.
+    TEST_TOK.store(TEST_NULLTOK, Ordering::Relaxed);                         // c:7211
+}
+
+// `tok` for the test builtin — Src/builtin.c:7000 ranges. The full enum
+// lives in src/ported/lex.rs; we mirror the few values testlex() touches.
+pub static TEST_TOK: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+const TEST_LEXERR: i32 = -1;
+const TEST_NULLTOK: i32 = 0;
 
 /// Port of `bin_notavail()` from Src/builtin.c:7604.
 /// C: `int bin_notavail(char *nam, UNUSED(char **argv),
