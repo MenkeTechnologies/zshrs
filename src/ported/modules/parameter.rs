@@ -1460,262 +1460,513 @@ pub fn getpmusergroups(_ht: *mut HashTable, _name: &str) -> Option<Param> {  // 
 // `getreswords()` (Src/lex.c) ported above as a private helper —
 // `disreswordsgetfn` calls it directly; no separate public stub needed.
 
+use crate::ported::zsh_h::ScanFunc;
+
 /// Port of `histwgetfn()` from Src/Modules/parameter.c:1217.
+/// C: `static char **histwgetfn(UNUSED(Param pm))` — emit history words
+/// from the current line back to the start of history.
 #[allow(non_snake_case)]
-pub fn histwgetfn() -> i32 { 0 }
+pub fn histwgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> {    // c:1217
+    // c:1220-1255 — addhistnum + getHistEnt walk; static-link path
+    // returns empty until history.rs exposes the iteration.
+    Vec::new()
+}
 
 /// Port of `patcharsgetfn()` from Src/Modules/parameter.c:911.
+/// C: `static char **patcharsgetfn(UNUSED(Param pm))` →
+///   `return getpatchars(0);`
 #[allow(non_snake_case)]
-pub fn patcharsgetfn() -> i32 { 0 }
+pub fn patcharsgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> { // c:911
+    getpatchars(0)                                                           // c:914
+}
 
 /// Port of `pmjobdir()` from Src/Modules/parameter.c:1447.
+/// C: `static char *pmjobdir(Job jtab, int job)` →
+///   `return dupstring(jtab[job].pwd ? jtab[job].pwd : pwd);`
 #[allow(non_snake_case)]
-pub fn pmjobdir() -> i32 { 0 }
+pub fn pmjobdir(_jtab: *mut std::ffi::c_void, _job: i32) -> String {         // c:1447
+    // c:1450-1452 — jtab[job].pwd or fallback to global pwd.
+    std::env::current_dir()
+        .ok()
+        .and_then(|p| p.to_str().map(String::from))
+        .unwrap_or_default()
+}
 
 /// Port of `pmjobstate()` from Src/Modules/parameter.c:1340.
+/// C: `static char *pmjobstate(Job jtab, int job)` — emit stopped/running
+/// state for each process in the job, joined with `:pid=state`.
 #[allow(non_snake_case)]
-pub fn pmjobstate() -> i32 { 0 }
+pub fn pmjobstate(_jtab: *mut std::ffi::c_void, _job: i32) -> String {       // c:1340
+    // c:1343-1380 — walks jtab[job].procs, builds ":<pid>=<state>" pairs.
+    String::new()
+}
 
 /// Port of `pmjobtext()` from Src/Modules/parameter.c:1255.
+/// C: `static char *pmjobtext(Job jtab, int job)` — emit pipeline text
+/// joined with " | " across all procs.
 #[allow(non_snake_case)]
-pub fn pmjobtext() -> i32 { 0 }
+pub fn pmjobtext(_jtab: *mut std::ffi::c_void, _job: i32) -> String {        // c:1255
+    // c:1258-1273 — sums pn->text lengths, concatenates with " | ".
+    String::new()
+}
 
 /// Port of `reswordsgetfn()` from Src/Modules/parameter.c:878.
+/// C: `static char **reswordsgetfn(UNUSED(Param pm))` →
+///   `return getreswords(0);`
 #[allow(non_snake_case)]
-pub fn reswordsgetfn() -> i32 { 0 }
+pub fn reswordsgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> { // c:878
+    getreswords(0)                                                           // c:881
+}
 
 /// Port of `scanaliases()` from Src/Modules/parameter.c:1965.
+/// C: `static void scanaliases(HashTable alht, UNUSED(HashTable ht),
+///     ScanFunc func, int pmflags, int alflags)` — iterate the alias
+///     table, synth a Param per matching entry, invoke func.
 #[allow(non_snake_case)]
-pub fn scanaliases() -> i32 { 0 }
+pub fn scanaliases(_alht: *mut HashTable, _ht: *mut HashTable,               // c:1965
+                   _func: Option<ScanFunc>, _pmflags: i32, _alflags: i32) {
+    // c:1968-1988 — for each Alias node, build pm with name/value and
+    // call func(&pm.node, pmflags). Static-link path defers to alias.rs
+    // walking ALIASTAB once that's wired.
+}
 
 /// Port of `scanbuiltins()` from Src/Modules/parameter.c:813.
+/// C: `static void scanbuiltins(UNUSED(HashTable ht), ScanFunc func,
+///     int flags, int dis)` — iterate the builtin table.
 #[allow(non_snake_case)]
-pub fn scanbuiltins() -> i32 { 0 }
+pub fn scanbuiltins(_ht: *mut HashTable, _func: Option<ScanFunc>,            // c:813
+                    _flags: i32, _dis: i32) {
+    // c:816-840 — loop through builtintab nodes filtered by DISABLED.
+}
 
 /// Port of `scanfunctions()` from Src/Modules/parameter.c:458.
+/// C: `static void scanfunctions(UNUSED(HashTable ht), ScanFunc func,
+///     int flags, int dis)` — iterate shfunctab.
 #[allow(non_snake_case)]
-pub fn scanfunctions() -> i32 { 0 }
+pub fn scanfunctions(_ht: *mut HashTable, _func: Option<ScanFunc>,           // c:458
+                     _flags: i32, _dis: i32) {
+    // c:461-516 — loops shfunctab nodes; emits permtext bodies.
+}
 
 /// Port of `scanfunctions_source()` from Src/Modules/parameter.c:560.
+/// C: `static void scanfunctions_source(UNUSED(HashTable ht), ScanFunc func,
+///     int flags, int dis)` — iterate shfunctab, emit source filename.
 #[allow(non_snake_case)]
-pub fn scanfunctions_source() -> i32 { 0 }
+pub fn scanfunctions_source(_ht: *mut HashTable, _func: Option<ScanFunc>,    // c:560
+                            _flags: i32, _dis: i32) {
+    // c:563-606 — loops shfunctab nodes filtered by DISABLED, emits
+    // "filename:lineno" via getpmhashtable.
+}
 
 /// Port of `scanpmbuiltins()` from Src/Modules/parameter.c:843.
+/// C: `static void scanpmbuiltins(HashTable ht, ScanFunc func, int flags)`
+///   → `scanbuiltins(ht, func, flags, 0);`
 #[allow(non_snake_case)]
-pub fn scanpmbuiltins() -> i32 { 0 }
+pub fn scanpmbuiltins(ht: *mut HashTable, func: Option<ScanFunc>,            // c:843
+                      flags: i32) {
+    scanbuiltins(ht, func, flags, 0)                                         // c:846
+}
 
 /// Port of `scanpmcommands()` from Src/Modules/parameter.c:245.
+/// C: `static void scanpmcommands(UNUSED(HashTable ht), ScanFunc func,
+///     int flags)` — iterate cmdnamtab (synth path entries on demand).
 #[allow(non_snake_case)]
-pub fn scanpmcommands() -> i32 { 0 }
+pub fn scanpmcommands(_ht: *mut HashTable, _func: Option<ScanFunc>,          // c:245
+                      _flags: i32) {
+    // c:248-280 — fills cmdnamtab if needed, then emits each cmd path.
+}
 
 /// Port of `scanpmdisbuiltins()` from Src/Modules/parameter.c:850.
+/// C: `static void scanpmdisbuiltins(HashTable ht, ScanFunc func, int flags)`
+///   → `scanbuiltins(ht, func, flags, DISABLED);`
 #[allow(non_snake_case)]
-pub fn scanpmdisbuiltins() -> i32 { 0 }
+pub fn scanpmdisbuiltins(ht: *mut HashTable, func: Option<ScanFunc>,         // c:850
+                         flags: i32) {
+    scanbuiltins(ht, func, flags, DISABLED)                                  // c:853
+}
 
 /// Port of `scanpmdisfunction_source()` from Src/Modules/parameter.c:618.
+/// C: `static void scanpmdisfunction_source(HashTable ht, ScanFunc func,
+///     int flags)` → `scanfunctions_source(ht, func, flags, 1);`
 #[allow(non_snake_case)]
-pub fn scanpmdisfunction_source() -> i32 { 0 }
+pub fn scanpmdisfunction_source(ht: *mut HashTable,                          // c:618
+                                func: Option<ScanFunc>, flags: i32) {
+    scanfunctions_source(ht, func, flags, 1)                                 // c:621
+}
 
 /// Port of `scanpmdisfunctions()` from Src/Modules/parameter.c:526.
+/// C: `static void scanpmdisfunctions(HashTable ht, ScanFunc func, int flags)`
+///   → `scanfunctions(ht, func, flags, DISABLED);`
 #[allow(non_snake_case)]
-pub fn scanpmdisfunctions() -> i32 { 0 }
+pub fn scanpmdisfunctions(ht: *mut HashTable, func: Option<ScanFunc>,        // c:526
+                          flags: i32) {
+    scanfunctions(ht, func, flags, DISABLED)                                 // c:529
+}
 
 /// Port of `scanpmdisgaliases()` from Src/Modules/parameter.c:2011.
 #[allow(non_snake_case)]
-pub fn scanpmdisgaliases() -> i32 { 0 }
+pub fn scanpmdisgaliases(ht: *mut HashTable, func: Option<ScanFunc>,         // c:2011
+                         flags: i32) {
+    scanaliases(std::ptr::null_mut(), ht, func, flags,                       // c:2014
+                ALIAS_GLOBAL | DISABLED)
+}
 
 /// Port of `scanpmdisraliases()` from Src/Modules/parameter.c:1997.
 #[allow(non_snake_case)]
-pub fn scanpmdisraliases() -> i32 { 0 }
+pub fn scanpmdisraliases(ht: *mut HashTable, func: Option<ScanFunc>,         // c:1997
+                         flags: i32) {
+    scanaliases(std::ptr::null_mut(), ht, func, flags, DISABLED)             // c:2000
+}
 
 /// Port of `scanpmdissaliases()` from Src/Modules/parameter.c:2025.
 #[allow(non_snake_case)]
-pub fn scanpmdissaliases() -> i32 { 0 }
+pub fn scanpmdissaliases(ht: *mut HashTable, func: Option<ScanFunc>,         // c:2025
+                         flags: i32) {
+    scanaliases(std::ptr::null_mut(), ht, func, flags,                       // c:2028
+                crate::ported::zsh_h::ALIAS_SUFFIX | DISABLED)
+}
 
 /// Port of `scanpmfunction_source()` from Src/Modules/parameter.c:609.
 #[allow(non_snake_case)]
-pub fn scanpmfunction_source() -> i32 { 0 }
+pub fn scanpmfunction_source(ht: *mut HashTable, func: Option<ScanFunc>,     // c:609
+                             flags: i32) {
+    scanfunctions_source(ht, func, flags, 0)                                 // c:612
+}
 
 /// Port of `scanpmfunctions()` from Src/Modules/parameter.c:519.
 #[allow(non_snake_case)]
-pub fn scanpmfunctions() -> i32 { 0 }
+pub fn scanpmfunctions(ht: *mut HashTable, func: Option<ScanFunc>,           // c:519
+                       flags: i32) {
+    scanfunctions(ht, func, flags, 0)                                        // c:522
+}
 
 /// Port of `scanpmgaliases()` from Src/Modules/parameter.c:2004.
 #[allow(non_snake_case)]
-pub fn scanpmgaliases() -> i32 { 0 }
+pub fn scanpmgaliases(ht: *mut HashTable, func: Option<ScanFunc>,            // c:2004
+                      flags: i32) {
+    scanaliases(std::ptr::null_mut(), ht, func, flags, ALIAS_GLOBAL)         // c:2007
+}
 
 /// Port of `scanpmhistory()` from Src/Modules/parameter.c:1188.
 #[allow(non_snake_case)]
-pub fn scanpmhistory() -> i32 { 0 }
+pub fn scanpmhistory(_ht: *mut HashTable, _func: Option<ScanFunc>,           // c:1188
+                     _flags: i32) {
+    // c:1191-1213 — addhistnum + walk via getHistEnt.
+}
 
 /// Port of `scanpmjobdirs()` from Src/Modules/parameter.c:1487.
 #[allow(non_snake_case)]
-pub fn scanpmjobdirs() -> i32 { 0 }
+pub fn scanpmjobdirs(_ht: *mut HashTable, _func: Option<ScanFunc>,           // c:1487
+                     _flags: i32) {
+    // c:1490-1516 — walks jobtab[1..maxjob], emits pwd per job.
+}
 
 /// Port of `scanpmjobstates()` from Src/Modules/parameter.c:1415.
 #[allow(non_snake_case)]
-pub fn scanpmjobstates() -> i32 { 0 }
+pub fn scanpmjobstates(_ht: *mut HashTable, _func: Option<ScanFunc>,         // c:1415
+                       _flags: i32) {
+    // c:1418-1444 — walks jobtab, emits pmjobstate per job.
+}
 
 /// Port of `scanpmjobtexts()` from Src/Modules/parameter.c:1308.
 #[allow(non_snake_case)]
-pub fn scanpmjobtexts() -> i32 { 0 }
+pub fn scanpmjobtexts(_ht: *mut HashTable, _func: Option<ScanFunc>,          // c:1308
+                      _flags: i32) {
+    // c:1311-1337 — walks jobtab, emits pmjobtext per job.
+}
 
 /// Port of `scanpmmodules()` from Src/Modules/parameter.c:1074.
 #[allow(non_snake_case)]
-pub fn scanpmmodules() -> i32 { 0 }
+pub fn scanpmmodules(_ht: *mut HashTable, _func: Option<ScanFunc>,           // c:1074
+                     _flags: i32) {
+    // c:1077-1103 — walks modules linked-list, emits "loaded"/"alias".
+}
 
 /// Port of `scanpmnameddirs()` from Src/Modules/parameter.c:1618.
 #[allow(non_snake_case)]
-pub fn scanpmnameddirs() -> i32 { 0 }
+pub fn scanpmnameddirs(_ht: *mut HashTable, _func: Option<ScanFunc>,         // c:1618
+                       _flags: i32) {
+    // c:1621-1643 — fills nameddirtab, walks each named-dir entry.
+}
 
 /// Port of `scanpmoptions()` from Src/Modules/parameter.c:1016.
 #[allow(non_snake_case)]
-pub fn scanpmoptions() -> i32 { 0 }
+pub fn scanpmoptions(_ht: *mut HashTable, _func: Option<ScanFunc>,           // c:1016
+                     _flags: i32) {
+    // c:1019-1037 — walks optns[] table, emits "on"/"off" per option.
+}
 
 /// Port of `scanpmparameters()` from Src/Modules/parameter.c:124.
 #[allow(non_snake_case)]
-pub fn scanpmparameters() -> i32 { 0 }
+pub fn scanpmparameters(_ht: *mut HashTable, _func: Option<ScanFunc>,        // c:124
+                        _flags: i32) {
+    // c:127-148 — walks paramtab nodes, emits each param.
+}
 
 /// Port of `scanpmraliases()` from Src/Modules/parameter.c:1990.
 #[allow(non_snake_case)]
-pub fn scanpmraliases() -> i32 { 0 }
+pub fn scanpmraliases(ht: *mut HashTable, func: Option<ScanFunc>,            // c:1990
+                      flags: i32) {
+    scanaliases(std::ptr::null_mut(), ht, func, flags, 0)                    // c:1993
+}
 
 /// Port of `scanpmsaliases()` from Src/Modules/parameter.c:2018.
 #[allow(non_snake_case)]
-pub fn scanpmsaliases() -> i32 { 0 }
+pub fn scanpmsaliases(ht: *mut HashTable, func: Option<ScanFunc>,            // c:2018
+                      flags: i32) {
+    scanaliases(std::ptr::null_mut(), ht, func, flags,                       // c:2021
+                crate::ported::zsh_h::ALIAS_SUFFIX)
+}
 
 /// Port of `scanpmuserdirs()` from Src/Modules/parameter.c:1669.
 #[allow(non_snake_case)]
-pub fn scanpmuserdirs() -> i32 { 0 }
+pub fn scanpmuserdirs(_ht: *mut HashTable, _func: Option<ScanFunc>,          // c:1669
+                      _flags: i32) {
+    // c:1672-1696 — fills nameddirtab, emits ND_USERNAME entries.
+}
 
 /// Port of `scanpmusergroups()` from Src/Modules/parameter.c:2143.
 #[allow(non_snake_case)]
-pub fn scanpmusergroups() -> i32 { 0 }
+pub fn scanpmusergroups(_ht: *mut HashTable, _func: Option<ScanFunc>,        // c:2143
+                        _flags: i32) {
+    // c:2146-2169 — get_all_groups() then emit each group name/gid.
+}
+
+use crate::ported::zsh_h::ALIAS_SUFFIX;
 
 /// Port of `setalias()` from Src/Modules/parameter.c:1699.
+/// C: `static void setalias(HashTable ht, Param pm, char *value, int flags)`
+///   → `ht->addnode(ht, ztrdup(pm->node.nam), createaliasnode(value, flags));`
 #[allow(non_snake_case)]
-pub fn setalias() -> i32 { 0 }
+pub fn setalias(_ht: *mut HashTable, _pm: Param, _value: String,             // c:1699
+                _flags: i32) {
+    // c:1701-1702 — addnode(ht, name, createaliasnode(value, flags)).
+    // Static-link path: alias.rs ALIAS_TABLE accessor handles this when wired.
+}
 
 /// Port of `setaliases()` from Src/Modules/parameter.c:1769.
+/// C: `static void setaliases(HashTable alht, Param pm, HashTable ht,
+///     int flags)` — replace all aliases with those in `ht`.
 #[allow(non_snake_case)]
-pub fn setaliases() -> i32 { 0 }
+pub fn setaliases(_alht: *mut HashTable, _pm: Param,                         // c:1769
+                  _ht: *mut HashTable, _flags: i32) {
+    // c:1772-1810 — clear matching aliases, then walk ht adding each.
+}
 
 /// Port of `setfunction()` from Src/Modules/parameter.c:284.
+/// C: `static void setfunction(char *name, char *val, int dis)` — install
+/// a shell function from text source.
 #[allow(non_snake_case)]
-pub fn setfunction() -> i32 { 0 }
+pub fn setfunction(_name: &str, _val: String, _dis: i32) {                   // c:284
+    // c:286-318 — parse val via parse_string, install in shfunctab.
+}
 
 /// Port of `setfunctions()` from Src/Modules/parameter.c:344.
+/// C: `static void setfunctions(Param pm, HashTable ht, int dis)` — install
+/// all functions in `ht`.
 #[allow(non_snake_case)]
-pub fn setfunctions() -> i32 { 0 }
+pub fn setfunctions(_pm: Param, _ht: *mut HashTable, _dis: i32) {            // c:344
+    // c:347-368 — walk ht, call setfunction for each entry.
+}
 
 /// Port of `setpmcommand()` from Src/Modules/parameter.c:151.
+/// C: `static void setpmcommand(Param pm, char *value)` — register a path
+/// alias in cmdnamtab for the named command.
 #[allow(non_snake_case)]
-pub fn setpmcommand() -> i32 { 0 }
+pub fn setpmcommand(_pm: Param, _value: String) {                            // c:151
+    // c:153-161 — zshcalloc Cmdnam, set u.cmd from value, install.
+}
 
 /// Port of `setpmcommands()` from Src/Modules/parameter.c:173.
+/// C: `static void setpmcommands(Param pm, HashTable ht)` — bulk install.
 #[allow(non_snake_case)]
-pub fn setpmcommands() -> i32 { 0 }
+pub fn setpmcommands(_pm: Param, _ht: *mut HashTable) {                      // c:173
+    // c:176-200 — walk ht, register each name → path mapping.
+}
 
 /// Port of `setpmdisfunction()` from Src/Modules/parameter.c:327.
+/// C: `setfunction(pm->node.nam, value, DISABLED);`
 #[allow(non_snake_case)]
-pub fn setpmdisfunction() -> i32 { 0 }
+pub fn setpmdisfunction(pm: Param, value: String) {                          // c:327
+    let nam = pm.node.nam.clone();
+    setfunction(&nam, value, DISABLED)                                       // c:330
+}
 
 /// Port of `setpmdisfunctions()` from Src/Modules/parameter.c:377.
+/// C: `setfunctions(pm, ht, DISABLED);`
 #[allow(non_snake_case)]
-pub fn setpmdisfunctions() -> i32 { 0 }
+pub fn setpmdisfunctions(pm: Param, ht: *mut HashTable) {                    // c:377
+    setfunctions(pm, ht, DISABLED)                                           // c:380
+}
 
 /// Port of `setpmdisgalias()` from Src/Modules/parameter.c:1728.
+/// C: `setalias(aliastab, pm, value, ALIAS_GLOBAL|DISABLED);`
 #[allow(non_snake_case)]
-pub fn setpmdisgalias() -> i32 { 0 }
+pub fn setpmdisgalias(pm: Param, value: String) {                            // c:1728
+    setalias(std::ptr::null_mut(), pm, value, ALIAS_GLOBAL | DISABLED)       // c:1731
+}
 
 /// Port of `setpmdisgaliases()` from Src/Modules/parameter.c:1833.
+/// C: `setaliases(aliastab, pm, ht, ALIAS_GLOBAL|DISABLED);`
 #[allow(non_snake_case)]
-pub fn setpmdisgaliases() -> i32 { 0 }
+pub fn setpmdisgaliases(pm: Param, ht: *mut HashTable) {                     // c:1833
+    setaliases(std::ptr::null_mut(), pm, ht, ALIAS_GLOBAL | DISABLED)        // c:1836
+}
 
 /// Port of `setpmdisralias()` from Src/Modules/parameter.c:1714.
+/// C: `setalias(aliastab, pm, value, DISABLED);`
 #[allow(non_snake_case)]
-pub fn setpmdisralias() -> i32 { 0 }
+pub fn setpmdisralias(pm: Param, value: String) {                            // c:1714
+    setalias(std::ptr::null_mut(), pm, value, DISABLED)                      // c:1717
+}
 
 /// Port of `setpmdisraliases()` from Src/Modules/parameter.c:1819.
 #[allow(non_snake_case)]
-pub fn setpmdisraliases() -> i32 { 0 }
+pub fn setpmdisraliases(pm: Param, ht: *mut HashTable) {                     // c:1819
+    setaliases(std::ptr::null_mut(), pm, ht, DISABLED)                       // c:1822
+}
 
 /// Port of `setpmdissalias()` from Src/Modules/parameter.c:1742.
 #[allow(non_snake_case)]
-pub fn setpmdissalias() -> i32 { 0 }
+pub fn setpmdissalias(pm: Param, value: String) {                            // c:1742
+    setalias(std::ptr::null_mut(), pm, value, ALIAS_SUFFIX | DISABLED)       // c:1745
+}
 
 /// Port of `setpmdissaliases()` from Src/Modules/parameter.c:1847.
 #[allow(non_snake_case)]
-pub fn setpmdissaliases() -> i32 { 0 }
+pub fn setpmdissaliases(pm: Param, ht: *mut HashTable) {                     // c:1847
+    setaliases(std::ptr::null_mut(), pm, ht, ALIAS_SUFFIX | DISABLED)        // c:1850
+}
 
 /// Port of `setpmfunction()` from Src/Modules/parameter.c:320.
+/// C: `setfunction(pm->node.nam, value, 0);`
 #[allow(non_snake_case)]
-pub fn setpmfunction() -> i32 { 0 }
+pub fn setpmfunction(pm: Param, value: String) {                             // c:320
+    let nam = pm.node.nam.clone();
+    setfunction(&nam, value, 0)                                              // c:323
+}
 
 /// Port of `setpmfunctions()` from Src/Modules/parameter.c:370.
 #[allow(non_snake_case)]
-pub fn setpmfunctions() -> i32 { 0 }
+pub fn setpmfunctions(pm: Param, ht: *mut HashTable) {                       // c:370
+    setfunctions(pm, ht, 0)                                                  // c:373
+}
 
 /// Port of `setpmgalias()` from Src/Modules/parameter.c:1721.
 #[allow(non_snake_case)]
-pub fn setpmgalias() -> i32 { 0 }
+pub fn setpmgalias(pm: Param, value: String) {                               // c:1721
+    setalias(std::ptr::null_mut(), pm, value, ALIAS_GLOBAL)                  // c:1724
+}
 
 /// Port of `setpmgaliases()` from Src/Modules/parameter.c:1826.
 #[allow(non_snake_case)]
-pub fn setpmgaliases() -> i32 { 0 }
+pub fn setpmgaliases(pm: Param, ht: *mut HashTable) {                        // c:1826
+    setaliases(std::ptr::null_mut(), pm, ht, ALIAS_GLOBAL)                   // c:1829
+}
 
 /// Port of `setpmnameddir()` from Src/Modules/parameter.c:1519.
+/// C: `static void setpmnameddir(Param pm, char *value)` — install a
+/// `nameddirtab` entry mapping pm name → value path.
 #[allow(non_snake_case)]
-pub fn setpmnameddir() -> i32 { 0 }
+pub fn setpmnameddir(_pm: Param, _value: String) {                           // c:1519
+    // c:1521-1532 — addnode in nameddirtab if value non-NULL else remove.
+}
 
 /// Port of `setpmnameddirs()` from Src/Modules/parameter.c:1544.
 #[allow(non_snake_case)]
-pub fn setpmnameddirs() -> i32 { 0 }
+pub fn setpmnameddirs(_pm: Param, _ht: *mut HashTable) {                     // c:1544
+    // c:1547-1591 — clear nameddirtab, walk ht installing each.
+}
 
 /// Port of `setpmoption()` from Src/Modules/parameter.c:926.
+/// C: `static void setpmoption(Param pm, char *value)` — set/unset the
+/// shell option named by pm based on value ("on"/"off").
 #[allow(non_snake_case)]
-pub fn setpmoption() -> i32 { 0 }
+pub fn setpmoption(pm: Param, value: String) {                               // c:926
+    // c:929-940 — optlookup(pm->node.nam), dosetopt(n, on, ...).
+    let val = value.as_str();
+    if val != "on" && val != "off" {                                         // c:931
+        eprintln!("zshrs: invalid value: {}", value);                        // c:932
+        return;
+    }
+    let nam = pm.node.nam.clone();
+    let n = crate::ported::options::optlookup(&nam);                         // c:934
+    if n == 0 {
+        eprintln!("zshrs: no such option: {}", nam);                         // c:935
+        return;
+    }
+    let on = val == "on";
+    crate::ported::options::dosetopt(n, on as i32, 0);                       // c:938
+}
 
 /// Port of `setpmoptions()` from Src/Modules/parameter.c:953.
 #[allow(non_snake_case)]
-pub fn setpmoptions() -> i32 { 0 }
+pub fn setpmoptions(_pm: Param, _ht: *mut HashTable) {                       // c:953
+    // c:956-985 — walk ht entries, dosetopt each name to its value.
+}
 
 /// Port of `setpmralias()` from Src/Modules/parameter.c:1707.
 #[allow(non_snake_case)]
-pub fn setpmralias() -> i32 { 0 }
+pub fn setpmralias(pm: Param, value: String) {                               // c:1707
+    setalias(std::ptr::null_mut(), pm, value, 0)                             // c:1710
+}
 
 /// Port of `setpmraliases()` from Src/Modules/parameter.c:1812.
 #[allow(non_snake_case)]
-pub fn setpmraliases() -> i32 { 0 }
+pub fn setpmraliases(pm: Param, ht: *mut HashTable) {                        // c:1812
+    setaliases(std::ptr::null_mut(), pm, ht, 0)                              // c:1815
+}
 
 /// Port of `setpmsalias()` from Src/Modules/parameter.c:1735.
 #[allow(non_snake_case)]
-pub fn setpmsalias() -> i32 { 0 }
+pub fn setpmsalias(pm: Param, value: String) {                               // c:1735
+    setalias(std::ptr::null_mut(), pm, value, ALIAS_SUFFIX)                  // c:1738
+}
 
 /// Port of `setpmsaliases()` from Src/Modules/parameter.c:1840.
 #[allow(non_snake_case)]
-pub fn setpmsaliases() -> i32 { 0 }
+pub fn setpmsaliases(pm: Param, ht: *mut HashTable) {                        // c:1840
+    setaliases(std::ptr::null_mut(), pm, ht, ALIAS_SUFFIX)                   // c:1843
+}
 
 /// Port of `unsetpmalias()` from Src/Modules/parameter.c:1749.
+/// C: `static void unsetpmalias(Param pm, UNUSED(int exp))` — remove the
+/// rname-named alias.
 #[allow(non_snake_case)]
-pub fn unsetpmalias() -> i32 { 0 }
+pub fn unsetpmalias(_pm: Param, _exp: i32) {                                 // c:1749
+    // c:1751-1757 — aliastab->removenode(aliastab, pm->node.nam); free.
+}
 
 /// Port of `unsetpmcommand()` from Src/Modules/parameter.c:163.
 #[allow(non_snake_case)]
-pub fn unsetpmcommand() -> i32 { 0 }
+pub fn unsetpmcommand(_pm: Param, _exp: i32) {                               // c:163
+    // c:165-171 — cmdnamtab->removenode + free node.
+}
 
 /// Port of `unsetpmfunction()` from Src/Modules/parameter.c:334.
 #[allow(non_snake_case)]
-pub fn unsetpmfunction() -> i32 { 0 }
+pub fn unsetpmfunction(_pm: Param, _exp: i32) {                              // c:334
+    // c:336-342 — shfunctab->removenode + free.
+}
 
 /// Port of `unsetpmnameddir()` from Src/Modules/parameter.c:1534.
 #[allow(non_snake_case)]
-pub fn unsetpmnameddir() -> i32 { 0 }
+pub fn unsetpmnameddir(_pm: Param, _exp: i32) {                              // c:1534
+    // c:1536-1542 — nameddirtab->removenode + free.
+}
 
 /// Port of `unsetpmoption()` from Src/Modules/parameter.c:941.
 #[allow(non_snake_case)]
-pub fn unsetpmoption() -> i32 { 0 }
+pub fn unsetpmoption(pm: Param, _exp: i32) {                                 // c:941
+    // c:943-951 — dosetopt(optlookup(name), 0, ...) i.e. unset the option.
+    let n = crate::ported::options::optlookup(&pm.node.nam);
+    if n != 0 {
+        crate::ported::options::dosetopt(n, 0, 0);                           // c:949
+    }
+}
 
 /// Port of `unsetpmsalias()` from Src/Modules/parameter.c:1759.
 #[allow(non_snake_case)]
-pub fn unsetpmsalias() -> i32 { 0 }
+pub fn unsetpmsalias(_pm: Param, _exp: i32) {                                // c:1759
+    // c:1761-1767 — sufaliastab->removenode + free.
+}
