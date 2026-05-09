@@ -779,7 +779,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_ZSYSTEM, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_zsystem(&args));
+        let status = with_executor(|exec|
+            crate::modules::system::bin_zsystem(exec, "zsystem", &args));
         Value::Status(status)
     });
 

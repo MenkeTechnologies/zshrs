@@ -1,1705 +1,982 @@
-//! System I/O builtins - port of Modules/system.c
+//! `zsh/system` module — port of `Src/Modules/system.c`.
 //!
-//! Provides bin_sysread, bin_syswrite, bin_sysopen, bin_sysseek, bin_syserror, zsystem builtins.
-
-use std::collections::HashMap;
-use crate::ported::utils::zwarnnam;
-use std::io::{self, Read, Write};
-use std::time::{Duration, Instant};
-
-const SYSREAD_BUFSIZE: usize = 8192;
-
-/// Return values for bin_sysread
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// `bin_sysread` outcome variants.
-/// Mirrors the integer return values `bin_sysread()` from
-/// Src/Modules/system.c:72 produces: success / EOF / timeout /
-/// error.
-pub enum SysreadResult {
-    Success = 0,
-    ParamError = 1,
-    ReadError = 2,
-    WriteError = 3,
-    Timeout = 4,
-    Eof = 5,
-}
-
-/// Options for bin_sysread
-#[derive(Debug, Default)]
-/// `bin_sysread` builtin options.
-/// Port of the `Options ops` flag bag `bin_sysread()`
-/// (Src/Modules/system.c:72) reads — `-i`/`-o` fd, `-s` size,
-/// `-c` count, `-t` timeout.
-pub struct SysreadOptions {
-    pub input_fd: Option<i32>,
-    pub output_fd: Option<i32>,
-    pub bufsize: Option<usize>,
-    pub timeout: Option<f64>,
-    pub count_var: Option<String>,
-    pub output_var: Option<String>,
-}
-
-/// Perform a system read
-/// `bin_sysread` builtin entry point.
-/// Port of `bin_sysread()` from Src/Modules/system.c:72 — wraps
-/// `read(2)` with optional `select(2)` timeout.
-pub fn bin_sysread(options: &SysreadOptions) -> (SysreadResult, Option<Vec<u8>>, usize) {
-    let input_fd = options.input_fd.unwrap_or(0);
-    let bufsize = options.bufsize.unwrap_or(SYSREAD_BUFSIZE);
-
-    let mut buffer = vec![0u8; bufsize];
-
-    #[cfg(unix)]
-    {
-        if let Some(timeout_secs) = options.timeout {
-            // Inline poll-with-timeout per c:Modules/system.c:72
-            // bin_sysread — same `pollfd` shape and POLLIN event.
-            let timeout_ms = (timeout_secs * 1000.0) as i32;
-            let ready = unsafe {
-                let mut pfd = libc::pollfd {
-                    fd: input_fd,
-                    events: libc::POLLIN,
-                    revents: 0,
-                };
-                libc::poll(&mut pfd, 1, timeout_ms) > 0
-            };
-            if !ready {
-                return (SysreadResult::Timeout, None, 0);
-            }
-        }
-
-        let count =
-            unsafe { libc::read(input_fd, buffer.as_mut_ptr() as *mut libc::c_void, bufsize) };
-
-        if count < 0 {
-            return (SysreadResult::ReadError, None, 0);
-        }
-
-        let count = count as usize;
-        buffer.truncate(count);
-
-        if let Some(output_fd) = options.output_fd {
-            if count == 0 {
-                return (SysreadResult::Eof, None, 0);
-            }
-
-            let mut written = 0;
-            while written < count {
-                let ret = unsafe {
-                    libc::write(
-                        output_fd,
-                        buffer[written..].as_ptr() as *const libc::c_void,
-                        count - written,
-                    )
-                };
-                if ret < 0 {
-                    return (
-                        SysreadResult::WriteError,
-                        Some(buffer[written..].to_vec()),
-                        written,
-                    );
-                }
-                written += ret as usize;
-            }
-            return (SysreadResult::Success, None, count);
-        }
-
-        if count == 0 {
-            (SysreadResult::Eof, Some(buffer), 0)
-        } else {
-            (SysreadResult::Success, Some(buffer), count)
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        (SysreadResult::ParamError, None, 0)
-    }
-}
-
-/// Options for bin_syswrite
-#[derive(Debug, Default)]
-/// `bin_syswrite` builtin options.
-/// Port of the `Options ops` flag bag `bin_syswrite()` from
-/// Src/Modules/system.c:238 reads — `-c` count, `-o` fd.
-pub struct SyswriteOptions {
-    pub output_fd: Option<i32>,
-    pub count_var: Option<String>,
-}
-
-/// Perform a system write
-/// `bin_syswrite` builtin entry point.
-/// Port of `bin_syswrite()` from Src/Modules/system.c:238 —
-/// wraps `write(2)` with `EINTR` retry.
-pub fn bin_syswrite(data: &[u8], options: &SyswriteOptions) -> (i32, usize) {
-    let output_fd = options.output_fd.unwrap_or(1);
-
-    #[cfg(unix)]
-    {
-        let mut written = 0;
-        let mut remaining = data;
-
-        while !remaining.is_empty() {
-            let ret = unsafe {
-                libc::write(
-                    output_fd,
-                    remaining.as_ptr() as *const libc::c_void,
-                    remaining.len(),
-                )
-            };
-
-            if ret < 0 {
-                return (2, written);
-            }
-
-            let count = ret as usize;
-            written += count;
-            remaining = &remaining[count..];
-        }
-
-        (0, written)
-    }
-
-    #[cfg(not(unix))]
-    {
-        (1, 0)
-    }
-}
-
-/// Open options for bin_sysopen
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// `bin_sysopen` flag bits.
-/// Port of the `O_*` set the C source's `bin_sysopen()`
-/// (Src/Modules/system.c:319) maps from `-o` argument tokens to
-/// `open(2)` flag bits.
-pub enum OpenOpt {
-    Cloexec,
-    Nofollow,
-    Sync,
-    Noatime,
-    Nonblock,
-    Excl,
-    Creat,
-    Truncate,
-}
-
-impl OpenOpt {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/system.c`.
-    pub fn from_name(name: &str) -> Option<Self> {
-        let name = name.strip_prefix("O_").unwrap_or(name);
-        let name_lower = name.to_lowercase();
-        match name_lower.as_str() {
-            "cloexec" => Some(Self::Cloexec),
-            "nofollow" => Some(Self::Nofollow),
-            "sync" => Some(Self::Sync),
-            "noatime" => Some(Self::Noatime),
-            "nonblock" => Some(Self::Nonblock),
-            "excl" => Some(Self::Excl),
-            "creat" | "create" => Some(Self::Creat),
-            "truncate" | "trunc" => Some(Self::Truncate),
-            _ => None,
-        }
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/system.c`.
-    #[cfg(unix)]
-    pub fn to_flags(&self) -> i32 {
-        match self {
-            Self::Cloexec => libc::O_CLOEXEC,
-            Self::Nofollow => libc::O_NOFOLLOW,
-            Self::Sync => libc::O_SYNC,
-            Self::Noatime => 0, // Not all systems support O_NOATIME
-            Self::Nonblock => libc::O_NONBLOCK,
-            Self::Excl => libc::O_EXCL | libc::O_CREAT,
-            Self::Creat => libc::O_CREAT,
-            Self::Truncate => libc::O_TRUNC,
-        }
-    }
-}
-
-/// Options for bin_sysopen
-#[derive(Debug, Default)]
-/// `bin_sysopen` builtin options.
-/// Mirrors the `Options ops` flag bag `bin_sysopen()` reads —
-/// `-r`/`-w`/`-a`/`-u`/`-m` mode bits + the `-o` flag list.
-pub struct SysopenOptions {
-    pub read: bool,
-    pub write: bool,
-    pub append: bool,
-    pub options: Vec<OpenOpt>,
-    pub mode: Option<u32>,
-    pub fd_var: Option<String>,
-    pub explicit_fd: Option<i32>,
-}
-
-/// Open a file with system call
-/// `bin_sysopen` builtin entry point.
-/// Port of `bin_sysopen()` from Src/Modules/system.c:319 —
-/// wraps `open(2)` with the assembled flag bag and optional
-/// mode.
-pub fn bin_sysopen(path: &str, options: &SysopenOptions) -> Result<i32, String> {
-    #[cfg(unix)]
-    {
-        use std::ffi::CString;
-
-        let mut flags = libc::O_NOCTTY;
-
-        if options.append {
-            flags |= libc::O_APPEND;
-        }
-
-        if options.append || options.write {
-            if options.read {
-                flags |= libc::O_RDWR;
-            } else {
-                flags |= libc::O_WRONLY;
-            }
-        } else {
-            flags |= libc::O_RDONLY;
-        }
-
-        for opt in &options.options {
-            flags |= opt.to_flags();
-        }
-
-        let mode = options.mode.unwrap_or(0o666);
-        let path_c = CString::new(path).map_err(|e| e.to_string())?;
-
-        let fd = unsafe {
-            if flags & libc::O_CREAT != 0 {
-                libc::open(path_c.as_ptr(), flags, mode)
-            } else {
-                libc::open(path_c.as_ptr(), flags)
-            }
-        };
-
-        if fd < 0 {
-            return Err(format!(
-                "can't open file {}: {}",
-                path,
-                io::Error::last_os_error()
-            ));
-        }
-
-        if let Some(explicit) = options.explicit_fd {
-            let new_fd = unsafe { libc::dup2(fd, explicit) };
-            unsafe {
-                libc::close(fd);
-            }
-            if new_fd < 0 {
-                return Err(format!("can't dup fd to {}", explicit));
-            }
-            Ok(new_fd)
-        } else {
-            Ok(fd)
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        Err("bin_sysopen not supported on this platform".to_string())
-    }
-}
-
-/// Seek whence options
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-/// `bin_sysseek` whence values.
-/// Mirrors the `SEEK_SET` / `SEEK_CUR` / `SEEK_END` constants the
-/// C source's `bin_sysseek()` (Src/Modules/system.c:433) accepts
-/// via the `-w` flag.
-pub enum SeekWhence {
-    #[default]
-    Start,
-    Current,
-    End,
-}
-
-impl SeekWhence {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/system.c`.
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "start" | "0" => Some(Self::Start),
-            "current" | "1" => Some(Self::Current),
-            "end" | "2" => Some(Self::End),
-            _ => None,
-        }
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/system.c`.
-    #[cfg(unix)]
-    pub fn to_libc(&self) -> i32 {
-        match self {
-            Self::Start => libc::SEEK_SET,
-            Self::Current => libc::SEEK_CUR,
-            Self::End => libc::SEEK_END,
-        }
-    }
-}
-
-/// Options for bin_sysseek
-#[derive(Debug, Default)]
-/// `bin_sysseek` builtin options.
-/// Port of the `Options ops` flag bag `bin_sysseek()`
-/// (Src/Modules/system.c:433) reads — `-u` fd, `-w` whence.
-pub struct SysseekOptions {
-    pub fd: Option<i32>,
-    pub whence: SeekWhence,
-}
-
-/// Seek on a file descriptor
-/// `bin_sysseek` builtin entry point.
-/// Port of `bin_sysseek()` from Src/Modules/system.c:433 —
-/// wraps `lseek(2)`.
-pub fn bin_sysseek(offset: i64, options: &SysseekOptions) -> Result<i64, String> {
-    let fd = options.fd.unwrap_or(0);
-
-    #[cfg(unix)]
-    {
-        let result = unsafe { libc::lseek(fd, offset, options.whence.to_libc()) };
-        if result < 0 {
-            Err(io::Error::last_os_error().to_string())
-        } else {
-            Ok(result)
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        Err("bin_sysseek not supported on this platform".to_string())
-    }
-}
-
-/// Get current position in file descriptor
-/// `math_systell()` math function.
-/// Port of `math_systell()` from Src/Modules/system.c:467 — the
-/// C source registers it as a math function for `((pos =
-/// math_systell(fd)))` arithmetic.
-pub fn math_systell(fd: i32) -> Result<i64, String> {
-    #[cfg(unix)]
-    {
-        let result = unsafe { libc::lseek(fd, 0, libc::SEEK_CUR) };
-        if result < 0 {
-            Err(io::Error::last_os_error().to_string())
-        } else {
-            Ok(result)
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        Err("math_systell not supported on this platform".to_string())
-    }
-}
-
-/// Errno-name table, indexed 1-based to match zsh's `${errnos[N]}`
-/// shape. Direct port of `sys_errnames[]` from
-/// `Src/Modules/errnames2.awk` — that file generates the C table at
-/// build time by walking each platform's `<errno.h>`. We do the same
-/// by cfg-conditionally listing the kernel-stable subset per OS, so
-/// `${errnos[35]}` returns the correct macro on each target. Linux
-/// past errno 11 diverges from BSD/macOS (`EAGAIN` is 11 on Linux,
-/// 35 on macOS, etc.); both tables are kept exact-by-platform.
-#[cfg(target_os = "macos")]
-pub const ERRNO_NAMES: &[(&str, i32)] = &[
-    ("EPERM", 1),
-    ("ENOENT", 2),
-    ("ESRCH", 3),
-    ("EINTR", 4),
-    ("EIO", 5),
-    ("ENXIO", 6),
-    ("E2BIG", 7),
-    ("ENOEXEC", 8),
-    ("EBADF", 9),
-    ("ECHILD", 10),
-    ("EDEADLK", 11),
-    ("ENOMEM", 12),
-    ("EACCES", 13),
-    ("EFAULT", 14),
-    ("ENOTBLK", 15),
-    ("EBUSY", 16),
-    ("EEXIST", 17),
-    ("EXDEV", 18),
-    ("ENODEV", 19),
-    ("ENOTDIR", 20),
-    ("EISDIR", 21),
-    ("EINVAL", 22),
-    ("ENFILE", 23),
-    ("EMFILE", 24),
-    ("ENOTTY", 25),
-    ("ETXTBSY", 26),
-    ("EFBIG", 27),
-    ("ENOSPC", 28),
-    ("ESPIPE", 29),
-    ("EROFS", 30),
-    ("EMLINK", 31),
-    ("EPIPE", 32),
-    ("EDOM", 33),
-    ("ERANGE", 34),
-    ("EAGAIN", 35),
-    ("EINPROGRESS", 36),
-    ("EALREADY", 37),
-    ("ENOTSOCK", 38),
-    ("EDESTADDRREQ", 39),
-    ("EMSGSIZE", 40),
-    ("EPROTOTYPE", 41),
-    ("ENOPROTOOPT", 42),
-    ("EPROTONOSUPPORT", 43),
-    ("ESOCKTNOSUPPORT", 44),
-    ("ENOTSUP", 45),
-    ("EPFNOSUPPORT", 46),
-    ("EAFNOSUPPORT", 47),
-    ("EADDRINUSE", 48),
-    ("EADDRNOTAVAIL", 49),
-    ("ENETDOWN", 50),
-    ("ENETUNREACH", 51),
-    ("ENETRESET", 52),
-    ("ECONNABORTED", 53),
-    ("ECONNRESET", 54),
-    ("ENOBUFS", 55),
-    ("EISCONN", 56),
-    ("ENOTCONN", 57),
-    ("ESHUTDOWN", 58),
-    ("ETOOMANYREFS", 59),
-    ("ETIMEDOUT", 60),
-    ("ECONNREFUSED", 61),
-    ("ELOOP", 62),
-    ("ENAMETOOLONG", 63),
-    ("EHOSTDOWN", 64),
-    ("EHOSTUNREACH", 65),
-    ("ENOTEMPTY", 66),
-    ("EPROCLIM", 67),
-    ("EUSERS", 68),
-    ("EDQUOT", 69),
-    ("ESTALE", 70),
-    ("EREMOTE", 71),
-    ("EBADRPC", 72),
-    ("ERPCMISMATCH", 73),
-    ("EPROGUNAVAIL", 74),
-    ("EPROGMISMATCH", 75),
-    ("EPROCUNAVAIL", 76),
-    ("ENOLCK", 77),
-    ("ENOSYS", 78),
-    ("EFTYPE", 79),
-    ("EAUTH", 80),
-    ("ENEEDAUTH", 81),
-    ("EPWROFF", 82),
-    ("EDEVERR", 83),
-    ("EOVERFLOW", 84),
-    ("EBADEXEC", 85),
-    ("EBADARCH", 86),
-    ("ESHLIBVERS", 87),
-    ("EBADMACHO", 88),
-    ("ECANCELED", 89),
-    ("EIDRM", 90),
-    ("ENOMSG", 91),
-    ("EILSEQ", 92),
-    ("ENOATTR", 93),
-    ("EBADMSG", 94),
-    ("EMULTIHOP", 95),
-    ("ENODATA", 96),
-    ("ENOLINK", 97),
-    ("ENOSR", 98),
-    ("ENOSTR", 99),
-    ("EPROTO", 100),
-    ("ETIME", 101),
-    ("EOPNOTSUPP", 102),
-    ("ENOPOLICY", 103),
-    ("ENOTRECOVERABLE", 104),
-    ("EOWNERDEAD", 105),
-    ("EQFULL", 106),
-    // ENOTCAPABLE (errno 107) exists in Apple's MacOSX26.sdk
-    // headers but NOT in MacOSX15.sdk and earlier. Apple's stock
-    // /bin/zsh is linked against the newer SDK so it lists 107
-    // entries; Homebrew's zsh was built against an older SDK and
-    // lists only 106. We pin to the Homebrew/older-SDK shape since
-    // that's the parity target on this host. When zshrs is
-    // eventually rebuilt for SDK 26+ a follow-up will conditionally
-    // add ENOTCAPABLE.
-];
-
-/// Linux errno table — the kernel's order diverges from BSD/macOS
-/// at #11 (`EAGAIN` not `EDEADLK`) and continues with Linux-only
-/// codes through the 130s. Sourced from `<asm-generic/errno.h>` +
-/// `<asm-generic/errno-base.h>` to match every distro.
-#[cfg(target_os = "linux")]
-pub const ERRNO_NAMES: &[(&str, i32)] = &[
-    ("EPERM", 1),
-    ("ENOENT", 2),
-    ("ESRCH", 3),
-    ("EINTR", 4),
-    ("EIO", 5),
-    ("ENXIO", 6),
-    ("E2BIG", 7),
-    ("ENOEXEC", 8),
-    ("EBADF", 9),
-    ("ECHILD", 10),
-    ("EAGAIN", 11),
-    ("ENOMEM", 12),
-    ("EACCES", 13),
-    ("EFAULT", 14),
-    ("ENOTBLK", 15),
-    ("EBUSY", 16),
-    ("EEXIST", 17),
-    ("EXDEV", 18),
-    ("ENODEV", 19),
-    ("ENOTDIR", 20),
-    ("EISDIR", 21),
-    ("EINVAL", 22),
-    ("ENFILE", 23),
-    ("EMFILE", 24),
-    ("ENOTTY", 25),
-    ("ETXTBSY", 26),
-    ("EFBIG", 27),
-    ("ENOSPC", 28),
-    ("ESPIPE", 29),
-    ("EROFS", 30),
-    ("EMLINK", 31),
-    ("EPIPE", 32),
-    ("EDOM", 33),
-    ("ERANGE", 34),
-    ("EDEADLK", 35),
-    ("ENAMETOOLONG", 36),
-    ("ENOLCK", 37),
-    ("ENOSYS", 38),
-    ("ENOTEMPTY", 39),
-    ("ELOOP", 40),
-];
-
-/// Fallback for platforms zshrs doesn't have a verified table for.
-/// Mirrors the POSIX-portable subset (errnos 1-34) which all Unix
-/// kernels agree on; values past 34 vary by OS and are omitted.
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub const ERRNO_NAMES: &[(&str, i32)] = &[
-    ("EPERM", 1),
-    ("ENOENT", 2),
-    ("ESRCH", 3),
-    ("EINTR", 4),
-    ("EIO", 5),
-    ("ENXIO", 6),
-    ("E2BIG", 7),
-    ("ENOEXEC", 8),
-    ("EBADF", 9),
-    ("ECHILD", 10),
-    ("ENOMEM", 12),
-    ("EACCES", 13),
-    ("EFAULT", 14),
-    ("EBUSY", 16),
-    ("EEXIST", 17),
-    ("EXDEV", 18),
-    ("ENODEV", 19),
-    ("ENOTDIR", 20),
-    ("EISDIR", 21),
-    ("EINVAL", 22),
-    ("ENFILE", 23),
-    ("EMFILE", 24),
-    ("ENOTTY", 25),
-    ("EFBIG", 27),
-    ("ENOSPC", 28),
-    ("ESPIPE", 29),
-    ("EROFS", 30),
-    ("EMLINK", 31),
-    ("EPIPE", 32),
-    ("EDOM", 33),
-    ("ERANGE", 34),
-];
-
-/// Get error number from name
-/// Get error name from number
-/// Inverse of `errno_from_name`.
-/// Port of `errnosgetfn()` from Src/Modules/system.c:832 — used
-/// by `${errnos[N]}` lookup.
-pub fn errnosgetfn(errno: i32) -> Option<&'static str> {
-    ERRNO_NAMES
-        .iter()
-        .find(|(_, e)| *e == errno)
-        .map(|(n, _)| *n)
-}
-
-/// Get error message for errno
-/// Format an `errno`-aware error message.
-/// Port of `bin_syserror()` from Src/Modules/system.c:494 —
-/// wraps `strerror(3)` with an optional caller-supplied prefix.
-pub fn bin_syserror(errno: i32, prefix: &str) -> String {
-    let msg = io::Error::from_raw_os_error(errno).to_string();
-    format!("{}{}", prefix, msg)
-}
-
-/// Options for zsystem bin_zsystem_flock
-#[derive(Debug, Default)]
-/// `zsystem bin_zsystem_flock` options.
-/// Mirrors the flag bag `bin_zsystem_flock()` from
-/// Src/Modules/system.c:546 reads — `-r`/`-x`/`-e` lock type,
-/// `-t` timeout, `-i` non-blocking, `-f` fd.
-pub struct FlockOptions {
-    pub cloexec: bool,
-    pub read_lock: bool,
-    pub timeout: Option<f64>,
-    pub interval: Option<f64>,
-    pub fd_var: Option<String>,
-}
-
-/// Lock a file
-#[cfg(unix)]
-/// `zsystem bin_zsystem_flock` subcommand entry point.
-/// Port of `bin_zsystem_flock()` from Src/Modules/system.c:546 —
-/// wraps `bin_zsystem_flock(2)` (or `fcntl(F_SETLK)` on systems lacking it).
-pub fn bin_zsystem_flock(path: &str, options: &FlockOptions) -> Result<i32, String> {
-    use std::ffi::CString;
-
-    let flags = if options.read_lock {
-        libc::O_RDONLY | libc::O_NOCTTY
-    } else {
-        libc::O_RDWR | libc::O_NOCTTY
-    };
-
-    let path_c = CString::new(path).map_err(|e| e.to_string())?;
-    let fd = unsafe { libc::open(path_c.as_ptr(), flags) };
-
-    if fd < 0 {
-        return Err(format!(
-            "failed to open {}: {}",
-            path,
-            io::Error::last_os_error()
-        ));
-    }
-
-    if options.cloexec {
-        unsafe {
-            let flags = libc::fcntl(fd, libc::F_GETFD);
-            if flags >= 0 {
-                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
-            }
-        }
-    }
-
-    let lock_type = if options.read_lock {
-        libc::F_RDLCK
-    } else {
-        libc::F_WRLCK
-    };
-
-    // l_type is c_short on Linux + macOS; F_RDLCK/F_WRLCK are c_int on
-    // Linux, c_short on macOS. Cast to i16 explicitly for cross-build —
-    // clippy's unnecessary_cast fires on whichever platform already
-    // matches but silently fails on the other if removed.
-    #[allow(clippy::unnecessary_cast)]
-    let lck = libc::flock {
-        l_type: lock_type as i16,
-        l_whence: libc::SEEK_SET as i16,
-        l_start: 0,
-        l_len: 0,
-        l_pid: 0,
-    };
-
-    if let Some(timeout) = options.timeout {
-        if timeout > 0.0 {
-            let start = Instant::now();
-            let timeout_duration = Duration::from_secs_f64(timeout);
-            let interval = Duration::from_secs_f64(options.interval.unwrap_or(1.0));
-
-            loop {
-                let result = unsafe { libc::fcntl(fd, libc::F_SETLK, &lck) };
-                if result >= 0 {
-                    return Ok(fd);
-                }
-
-                let errno = io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                if errno != libc::EINTR && errno != libc::EACCES && errno != libc::EAGAIN {
-                    unsafe {
-                        libc::close(fd);
-                    }
-                    return Err(format!(
-                        "failed to lock {}: {}",
-                        path,
-                        io::Error::last_os_error()
-                    ));
-                }
-
-                if start.elapsed() >= timeout_duration {
-                    unsafe {
-                        libc::close(fd);
-                    }
-                    return Err("timeout waiting for lock".to_string());
-                }
-
-                std::thread::sleep(interval.min(timeout_duration - start.elapsed()));
-            }
-        }
-    }
-
-    let cmd = if options.timeout != Some(0.0) {
-        libc::F_SETLKW
-    } else {
-        libc::F_SETLK
-    };
-
-    loop {
-        let result = unsafe { libc::fcntl(fd, cmd, &lck) };
-        if result >= 0 {
-            return Ok(fd);
-        }
-
-        let errno = io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        if errno == libc::EINTR {
-            continue;
-        }
-
-        unsafe {
-            libc::close(fd);
-        }
-        return Err(format!(
-            "failed to lock {}: {}",
-            path,
-            io::Error::last_os_error()
-        ));
-    }
-}
-
-/// Check if a zsystem feature is supported
-/// `zsystem supports` subcommand entry point.
-/// Port of `bin_zsystem_supports()` from Src/Modules/system.c:781
-/// — reports which `zsystem` subcommands are compiled in.
-pub fn bin_zsystem_supports(feature: &str) -> bool {
-    feature == "supports" || (feature == "bin_zsystem_flock" && cfg!(unix))
-}
-
-/// System parameters
-/// Fetch the `${sysparams}` map.
-/// Port of `getpmsysparams()` (Src/Modules/system.c:873) +
-/// `scanpmsysparams()` (line 885) — exposes selected `sysconf(3)`
-/// values to shell scripts.
-pub fn getpmsysparams() -> HashMap<String, String> {
-    let mut params = HashMap::new();
-
-    #[cfg(unix)]
-    {
-        params.insert("pid".to_string(), unsafe { libc::getpid() }.to_string());
-        params.insert("ppid".to_string(), unsafe { libc::getppid() }.to_string());
-    }
-
-    params
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs::File;
-    use std::io::Write;
-    use tempfile::TempDir;
-
-    #[test]
-    fn test_open_opt_from_name() {
-        assert_eq!(OpenOpt::from_name("cloexec"), Some(OpenOpt::Cloexec));
-        assert_eq!(OpenOpt::from_name("O_CREAT"), Some(OpenOpt::Creat));
-        assert_eq!(OpenOpt::from_name("truncate"), Some(OpenOpt::Truncate));
-        assert_eq!(OpenOpt::from_name("trunc"), Some(OpenOpt::Truncate));
-        assert_eq!(OpenOpt::from_name("invalid"), None);
-    }
-
-    #[test]
-    fn test_seek_whence_from_str() {
-        assert_eq!(SeekWhence::from_str("start"), Some(SeekWhence::Start));
-        assert_eq!(SeekWhence::from_str("0"), Some(SeekWhence::Start));
-        assert_eq!(SeekWhence::from_str("current"), Some(SeekWhence::Current));
-        assert_eq!(SeekWhence::from_str("1"), Some(SeekWhence::Current));
-        assert_eq!(SeekWhence::from_str("end"), Some(SeekWhence::End));
-        assert_eq!(SeekWhence::from_str("2"), Some(SeekWhence::End));
-        assert_eq!(SeekWhence::from_str("invalid"), None);
-    }
-
-    #[test]
-    fn test_errno_to_name() {
-        assert_eq!(errnosgetfn(1), Some("EPERM"));
-        assert_eq!(errnosgetfn(2), Some("ENOENT"));
-        assert_eq!(errnosgetfn(22), Some("EINVAL"));
-        assert_eq!(errnosgetfn(999), None);
-    }
-
-    #[test]
-    fn test_syserror() {
-        let msg = bin_syserror(2, "prefix: ");
-        assert!(msg.starts_with("prefix: "));
-    }
-
-    #[test]
-    fn test_zsystem_supports() {
-        assert!(bin_zsystem_supports("supports"));
-        assert!(!bin_zsystem_supports("unknown"));
-        #[cfg(unix)]
-        assert!(bin_zsystem_supports("bin_zsystem_flock"));
-    }
-
-    #[test]
-    fn test_get_sysparams() {
-        let params = getpmsysparams();
-        assert!(params.contains_key("pid"));
-        assert!(params.contains_key("ppid"));
-    }
-
-    #[test]
-    fn test_get_errnos() {
-        let errnos: Vec<&'static str> = ERRNO_NAMES.iter().map(|(n, _)| *n).collect();
-        assert!(errnos.contains(&"EPERM"));
-        assert!(errnos.contains(&"ENOENT"));
-        assert!(errnos.contains(&"EINVAL"));
-    }
-
-    /// Port of `bin_sysopen()` from `Src/Modules/system.c:319`.
-    #[test]
-    #[cfg(unix)]
-    fn test_sysopen_and_close() {
-        let dir = TempDir::new().unwrap();
-        let file_path = dir.path().join("test.txt");
-
-        let options = SysopenOptions {
-            write: true,
-            options: vec![OpenOpt::Creat],
-            mode: Some(0o644),
-            ..Default::default()
-        };
-
-        let fd = bin_sysopen(file_path.to_str().unwrap(), &options).unwrap();
-        assert!(fd >= 0);
-
-        unsafe {
-            libc::close(fd);
-        }
-    }
-
-    /// Port of `bin_sysread()` from `Src/Modules/system.c:72`.
-    #[test]
-    #[cfg(unix)]
-    fn test_syswrite_sysread() {
-        let dir = TempDir::new().unwrap();
-        let file_path = dir.path().join("test.txt");
-
-        {
-            let mut f = File::create(&file_path).unwrap();
-            f.write_all(b"hello world").unwrap();
-        }
-
-        let fd = {
-            use std::ffi::CString;
-            let path_c = CString::new(file_path.to_str().unwrap()).unwrap();
-            unsafe { libc::open(path_c.as_ptr(), libc::O_RDONLY) }
-        };
-
-        let options = SysreadOptions {
-            input_fd: Some(fd),
-            bufsize: Some(100),
-            ..Default::default()
-        };
-
-        let (result, data, count) = bin_sysread(&options);
-        unsafe {
-            libc::close(fd);
-        }
-
-        assert_eq!(result, SysreadResult::Success);
-        assert_eq!(count, 11);
-        assert_eq!(data.unwrap(), b"hello world");
-    }
-
-    /// Port of `bin_sysopen()` from `Src/Modules/system.c:319`.
-    #[test]
-    #[cfg(unix)]
-    fn test_sysseek_systell() {
-        let dir = TempDir::new().unwrap();
-        let file_path = dir.path().join("test.txt");
-
-        {
-            let mut f = File::create(&file_path).unwrap();
-            f.write_all(b"hello world").unwrap();
-        }
-
-        let fd = {
-            use std::ffi::CString;
-            let path_c = CString::new(file_path.to_str().unwrap()).unwrap();
-            unsafe { libc::open(path_c.as_ptr(), libc::O_RDONLY) }
-        };
-
-        let options = SysseekOptions {
-            fd: Some(fd),
-            whence: SeekWhence::Start,
-        };
-
-        let pos = bin_sysseek(5, &options).unwrap();
-        assert_eq!(pos, 5);
-
-        let current = math_systell(fd).unwrap();
-        assert_eq!(current, 5);
-
-        unsafe {
-            libc::close(fd);
-        }
-    }
-}
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Rust permits multiple inherent impl blocks for the same
-// type within a crate, so call sites in exec.rs are unchanged.
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
-    /// zsystem - system interface (zsh/system module)
-    /// Ported from zsh/Src/Modules/system.c bin_zsystem() lines 805-816
-    pub(crate) fn bin_zsystem(&mut self, args: &[String]) -> i32 {
-        if args.is_empty() {
-            zwarnnam("zsystem", "subcommand expected");
-            return 1;
-        }
-        match args[0].as_str() {
-            "bin_zsystem_flock" => self.bin_zsystem_flock(&args[1..]),
-            "supports" => self.bin_zsystem_supports(&args[1..]),
-            _ => {
-                zwarnnam("zsystem", &format!("unknown subcommand: {}", args[0]));
-                1
-            }
-        }
-    }
-    /// zsystem supports - ported from system.c bin_zsystem_supports() lines 780-801
-    pub(crate) fn bin_zsystem_supports(&self, args: &[String]) -> i32 {
-        if args.is_empty() {
-            zwarnnam("zsystem", "supports: not enough arguments");
-            return 255;
-        }
-        if args.len() > 1 {
-            zwarnnam("zsystem", "supports: too many arguments");
-            return 255;
-        }
-        match args[0].as_str() {
-            "supports" | "bin_zsystem_flock" => 0,
-            _ => 1,
-        }
-    }
-    /// zsystem bin_zsystem_flock - ported from system.c bin_zsystem_flock() lines 546-774
-    pub(crate) fn bin_zsystem_flock(&mut self, args: &[String]) -> i32 {
-        #[cfg(unix)]
-        {
-            use std::os::unix::io::AsRawFd;
-
-            let mut cloexec = true;
-            let mut readlock = false;
-            let mut unlock = false;
-            let mut timeout: Option<f64> = None;
-            // Default retry interval per zsh/Src/Modules/system.c:550
-            // (timeout_interval = 1e6 µs = 1 s).
-            let mut interval_us: u64 = 1_000_000;
-            let mut fdvar: Option<String> = None;
-            let mut file: Option<&str> = None;
-
-            let mut i = 0;
-            while i < args.len() {
-                let arg = &args[i];
-                if arg == "--" {
-                    i += 1;
-                    if i < args.len() {
-                        file = Some(&args[i]);
-                    }
-                    break;
-                }
-                if !arg.starts_with('-') {
-                    file = Some(arg);
-                    break;
-                }
-                let mut chars = arg[1..].chars().peekable();
-                while let Some(c) = chars.next() {
-                    match c {
-                        'e' => cloexec = false,
-                        'r' => readlock = true,
-                        'u' => unlock = true,
-                        'f' => {
-                            let rest: String = chars.collect();
-                            if !rest.is_empty() {
-                                fdvar = Some(rest);
-                            } else {
-                                i += 1;
-                                if i < args.len() {
-                                    fdvar = Some(args[i].clone());
-                                } else {
-                                    zwarnnam("bin_zsystem_flock", "option f requires a variable name");
-                                    return 1;
-                                }
-                            }
-                            break;
-                        }
-                        't' => {
-                            let rest: String = chars.collect();
-                            let val = if !rest.is_empty() {
-                                rest
-                            } else {
-                                i += 1;
-                                if i < args.len() {
-                                    args[i].clone()
-                                } else {
-                                    zwarnnam("bin_zsystem_flock", "option t requires a numeric timeout");
-                                    return 1;
-                                }
-                            };
-                            match val.parse::<f64>() {
-                                Ok(t) => timeout = Some(t),
-                                Err(_) => {
-                                    zwarnnam("bin_zsystem_flock", &format!("invalid timeout value: '{}'", val));
-                                    return 1;
-                                }
-                            }
-                            break;
-                        }
-                        'i' => {
-                            // Direct port of zsh/Src/Modules/system.c:621-648:
-                            // -i SECONDS sets the retry-poll interval used
-                            // when the lock is held by another. Float arg
-                            // converted to whole microseconds, validated
-                            // against [1, 0.999*LONG_MAX].
-                            let rest: String = chars.collect();
-                            let val = if !rest.is_empty() {
-                                rest
-                            } else {
-                                i += 1;
-                                if i >= args.len() {
-                                    zwarnnam("bin_zsystem_flock", "option i requires a numeric retry interval");
-                                    return 1;
-                                }
-                                args[i].clone()
-                            };
-                            match val.parse::<f64>() {
-                                Ok(n) if n > 0.0 => {
-                                    let us = (n * 1e6).ceil();
-                                    if us < 1.0 || us > (i64::MAX as f64 * 0.999) {
-                                        zwarnnam("bin_zsystem_flock", &format!("invalid interval value: '{}'", val));
-                                        return 1;
-                                    }
-                                    interval_us = us as u64;
-                                }
-                                _ => {
-                                    zwarnnam("bin_zsystem_flock", &format!("invalid interval value: '{}'", val));
-                                    return 1;
-                                }
-                            }
-                            break;
-                        }
-                        _ => {
-                            zwarnnam("zsystem", &format!("bin_zsystem_flock: unknown option: -{}", c));
-                            return 1;
-                        }
-                    }
-                }
-                i += 1;
-            }
-
-            let filepath = match file {
-                Some(f) => f,
-                None => {
-                    zwarnnam("zsystem", "bin_zsystem_flock: not enough arguments");
-                    return 1;
-                }
-            };
-
-            // -u: unlock. system.c:674-682 — argument is an FD number;
-            // close it (which releases POSIX advisory locks held on
-            // that open description). Was return 0 stub.
-            if unlock {
-                let fd: i32 = match filepath.parse() {
-                    Ok(n) => n,
-                    Err(_) => {
-                        zwarnnam("zsystem", &format!("bin_zsystem_flock: invalid fd: {}", filepath));
-                        return 1;
-                    }
-                };
-                let r = unsafe { libc::close(fd) };
-                if r < 0 {
-                    zwarnnam("bin_zsystem_flock", &format!("file descriptor {} not in use for locking", fd));
-                    return 1;
-                }
-                return 0;
-            }
-
-            use std::fs::OpenOptions;
-            let file_handle = match OpenOptions::new()
-                .read(true)
-                .write(!readlock)
-                .create(true)
-                .truncate(false)
-                .open(filepath)
-            {
-                Ok(f) => f,
-                Err(e) => {
-                    zwarnnam("zsystem", &format!("bin_zsystem_flock: {}: {}", filepath, e));
-                    return 1;
-                }
-            };
-
-            let lock_type = if readlock {
-                libc::F_RDLCK
-            } else {
-                libc::F_WRLCK
-            };
-
-            // l_type is c_short on Linux + macOS; F_RDLCK/F_WRLCK are
-            // c_int on Linux, c_short on macOS. Cast to i16 explicitly
-            // for cross-platform builds — clippy fires unnecessary_cast
-            // on whichever platform already matches.
-            #[allow(clippy::unnecessary_cast)]
-            let mut bin_zsystem_flock = libc::flock {
-                l_type: lock_type as i16,
-                l_whence: libc::SEEK_SET as i16,
-                l_start: 0,
-                l_len: 0,
-                l_pid: 0,
-            };
-
-            let cmd = if timeout.is_some() {
-                libc::F_SETLK
-            } else {
-                libc::F_SETLKW
-            };
-            let start = std::time::Instant::now();
-            let timeout_duration = timeout.map(std::time::Duration::from_secs_f64);
-
-            loop {
-                let ret = unsafe { libc::fcntl(file_handle.as_raw_fd(), cmd, &mut bin_zsystem_flock) };
-                if ret == 0 {
-                    // Port of system.c:695-701: when -e is NOT set
-                    // (cloexec defaults to 1, cleared only by -e), set
-                    // FD_CLOEXEC on the lock fd so it doesn't survive
-                    // exec(). Without this, `zsystem bin_zsystem_flock f; exec ls`
-                    // leaked the lock fd into the new process.
-                    if cloexec {
-                        let fd = file_handle.as_raw_fd();
-                        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD, 0) };
-                        if flags != -1 {
-                            unsafe {
-                                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
-                            }
-                        }
-                    }
-                    if let Some(ref var) = fdvar {
-                        let fd = file_handle.as_raw_fd();
-                        std::mem::forget(file_handle);
-                        self.variables.insert(var.clone(), fd.to_string());
-                    } else {
-                        std::mem::forget(file_handle);
-                    }
-                    return 0;
-                }
-                let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                if errno != libc::EACCES && errno != libc::EAGAIN {
-                    zwarnnam("bin_zsystem_flock", &format!("{}: {}", filepath, std::io::Error::last_os_error()));
-                    return 1;
-                }
-                if let Some(td) = timeout_duration {
-                    if start.elapsed() >= td {
-                        return 2;
-                    }
-                    // Retry interval honors -i (default 1 000 000 µs).
-                    // Was a hardcoded 100 ms which over-polled tight
-                    // loops and ignored user-tuned wait values.
-                    std::thread::sleep(std::time::Duration::from_micros(interval_us));
-                } else {
-                    zwarnnam("bin_zsystem_flock", &format!("{}: {}", filepath, std::io::Error::last_os_error()));
-                    return 1;
-                }
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            zwarnnam("zsystem", "bin_zsystem_flock: not supported on this platform");
-            1
-        }
-    }
-    /// bin_sysread - low-level read (zsh/system module)
-    pub(crate) fn bin_sysread(&mut self, args: &[String]) -> i32 {
-        // Direct port of zsh/Src/Modules/system.c:72 bin_sysread.
-        // Return values per system.c:61-67:
-        //   0  successful read (and write if -o)
-        //   1  bad params / non-identifier varname
-        //   2  read() error (errno set)
-        //   3  write() error (errno set, partial residue stashed in
-        //      outvar / count in countvar)
-        //   4  -t timeout expired
-        //   5  zero bytes read (EOF)
-        let mut infd: i32 = 0;
-        let mut outfd: i32 = -1;
-        let mut bufsize: usize = 8192; // SYSREAD_BUFSIZE
-        let mut countvar: Option<String> = None;
-        let mut outvar: Option<String> = None;
-        let mut timeout_ms: Option<i32> = None;
-
-        let mut i = 0;
-        while i < args.len() {
-            match args[i].as_str() {
-                "-i" if i + 1 < args.len() => {
-                    i += 1;
-                    match args[i].parse::<i32>() {
-                        Ok(n) if n >= 0 => infd = n,
-                        _ => {
-                            zwarnnam("bin_sysread", &format!("integer expected: {}", args[i]));
-                            return 1;
-                        }
-                    }
-                }
-                "-o" if i + 1 < args.len() => {
-                    i += 1;
-                    match args[i].parse::<i32>() {
-                        Ok(n) if n >= 0 => outfd = n,
-                        _ => {
-                            zwarnnam("bin_sysread", &format!("integer expected: {}", args[i]));
-                            return 1;
-                        }
-                    }
-                }
-                "-s" if i + 1 < args.len() => {
-                    i += 1;
-                    match args[i].parse::<usize>() {
-                        Ok(n) => bufsize = n,
-                        Err(_) => {
-                            zwarnnam("bin_sysread", &format!("integer expected: {}", args[i]));
-                            return 1;
-                        }
-                    }
-                }
-                "-c" if i + 1 < args.len() => {
-                    i += 1;
-                    countvar = Some(args[i].clone());
-                }
-                "-t" if i + 1 < args.len() => {
-                    i += 1;
-                    // Timeout in seconds (float ok). Convert to ms.
-                    match args[i].parse::<f64>() {
-                        Ok(t) => timeout_ms = Some((t * 1000.0) as i32),
-                        Err(_) => {
-                            zwarnnam("bin_sysread", &format!("invalid timeout: {}", args[i]));
-                            return 1;
-                        }
-                    }
-                }
-                _ => {
-                    outvar = Some(args[i].clone());
-                }
-            }
-            i += 1;
-        }
-
-        // -t poll(2) wait — system.c:127-186. Return 4 on timeout (poll
-        // returned 0), 2 on error.
-        if let Some(ms) = timeout_ms {
-            let mut pfd = libc::pollfd {
-                fd: infd,
-                events: libc::POLLIN,
-                revents: 0,
-            };
-            let ret = unsafe { libc::poll(&mut pfd, 1, ms) };
-            if ret == 0 {
-                return 4;
-            }
-            if ret < 0 {
-                return 2;
-            }
-        }
-
-        let mut buf = vec![0u8; bufsize];
-        let n = unsafe { libc::read(infd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
-        if n < 0 {
-            if let Some(cv) = countvar {
-                self.variables.insert(cv, n.to_string());
-            }
-            return 2;
-        }
-        let count = n as usize;
-        buf.truncate(count);
-        if let Some(cv) = &countvar {
-            self.variables.insert(cv.clone(), count.to_string());
-        }
-
-        // -o: copy to outfd via write(2). On partial-write error,
-        // stash residue in outvar + count in countvar (system.c:204-212).
-        if outfd >= 0 {
-            if count == 0 {
-                return 5;
-            }
-            let mut written = 0usize;
-            while written < count {
-                let w = unsafe {
-                    libc::write(
-                        outfd,
-                        buf[written..].as_ptr() as *const libc::c_void,
-                        count - written,
-                    )
-                };
-                if w < 0 {
-                    if let Some(ov) = outvar {
-                        let s = String::from_utf8_lossy(&buf[written..]).to_string();
-                        self.variables.insert(ov, s);
-                    }
-                    if let Some(cv) = countvar {
-                        self.variables.insert(cv, (count - written).to_string());
-                    }
-                    return 3;
-                }
-                written += w as usize;
-            }
-            return 0;
-        }
-
-        // No -o: stash buffer into outvar (default REPLY).
-        let s = String::from_utf8_lossy(&buf).to_string();
-        let target = outvar.unwrap_or_else(|| "REPLY".to_string());
-        self.variables.insert(target, s);
-        if count == 0 {
-            5
-        } else {
-            0
-        }
-    }
-    /// bin_syswrite - low-level write (zsh/system module). Direct port of
-    /// zsh/Src/Modules/system.c:238 bin_syswrite. Return values
-    /// (system.c:230-234): 0 = success, 1 = bad params, 2 = write error.
-    pub(crate) fn bin_syswrite(&mut self, args: &[String]) -> i32 {
-        let mut outfd: i32 = 1;
-        let mut countvar: Option<String> = None;
-        let mut data: Option<String> = None;
-
-        let mut i = 0;
-        while i < args.len() {
-            match args[i].as_str() {
-                "-o" if i + 1 < args.len() => {
-                    i += 1;
-                    match args[i].parse::<i32>() {
-                        Ok(n) if n >= 0 => outfd = n,
-                        _ => {
-                            zwarnnam("bin_syswrite", &format!("integer expected: {}", args[i]));
-                            return 1;
-                        }
-                    }
-                }
-                "-c" if i + 1 < args.len() => {
-                    i += 1;
-                    countvar = Some(args[i].clone());
-                }
-                _ => {
-                    data = Some(args[i].clone());
-                }
-            }
-            i += 1;
-        }
-
-        let payload = match data {
-            Some(d) => d,
-            None => return 1,
-        };
-        let bytes = payload.as_bytes();
-        let mut totcount = 0usize;
-        let mut len = bytes.len();
-        let mut ptr = bytes.as_ptr();
-        while len > 0 {
-            let w = unsafe { libc::write(outfd, ptr as *const libc::c_void, len) };
-            if w < 0 {
-                let err = std::io::Error::last_os_error();
-                let errno = err.raw_os_error().unwrap_or(0);
-                if errno == libc::EINTR {
-                    continue;
-                }
-                if let Some(cv) = countvar {
-                    self.variables.insert(cv, totcount.to_string());
-                }
-                return 2;
-            }
-            unsafe {
-                ptr = ptr.add(w as usize);
-            }
-            totcount += w as usize;
-            len -= w as usize;
-        }
-        if let Some(cv) = countvar {
-            self.variables.insert(cv, totcount.to_string());
-        }
-        0
-    }
-    /// bin_syserror - get error message (zsh/system module)
-    pub(crate) fn bin_syserror(&self, args: &[String]) -> i32 {
-        let errno = if args.is_empty() {
-            // Use last errno
-            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-        } else {
-            args[0].parse().unwrap_or(0)
-        };
-
-        let err = std::io::Error::from_raw_os_error(errno);
-        println!("{}", err);
-        0
-    }
-    /// bin_sysopen - open file descriptor (zsh/system module). Direct port
-    /// of zsh/Src/Modules/system.c:319 bin_sysopen. Return values
-    /// (system.c:311-315): 0 = success, 1 = bad params, 2 = open()
-    /// error.
-    pub(crate) fn bin_sysopen(&mut self, args: &[String]) -> i32 {
-        let mut read_flag = false;
-        let mut write_flag = false;
-        let mut append_flag = false;
-        let mut o_opts: Option<String> = None;
-        let mut perms: u32 = 0o666;
-        let mut fdvar: Option<String> = None;
-        let mut filename: Option<String> = None;
-
-        let mut i = 0;
-        while i < args.len() {
-            let arg = &args[i];
-            match arg.as_str() {
-                "-r" => read_flag = true,
-                "-w" => write_flag = true,
-                "-a" => append_flag = true,
-                "-u" if i + 1 < args.len() => {
-                    i += 1;
-                    fdvar = Some(args[i].clone());
-                }
-                "-o" if i + 1 < args.len() => {
-                    i += 1;
-                    o_opts = Some(args[i].clone());
-                }
-                "-m" if i + 1 < args.len() => {
-                    i += 1;
-                    let mode_str = &args[i];
-                    if !mode_str.chars().all(|c| ('0'..='7').contains(&c)) || mode_str.len() < 3 {
-                        zwarnnam("bin_sysopen", &format!("invalid mode {}", mode_str));
-                        return 1;
-                    }
-                    perms = u32::from_str_radix(mode_str, 8).unwrap_or(0o666);
-                }
-                s if !s.starts_with('-') => {
-                    filename = Some(s.to_string());
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-
-        // system.c:335-338 — -u is required.
-        let fdvar = match fdvar {
-            Some(s) => s,
-            None => {
-                zwarnnam("bin_sysopen", "file descriptor not specified");
-                return 1;
-            }
-        };
-        let filename = match filename {
-            Some(s) => s,
-            None => return 1,
-        };
-
-        // system.c:342-347 — -u arg is either single digit (explicit
-        // fd) or variable identifier to set after the open.
-        let explicit_fd: Option<i32> =
-            if fdvar.len() == 1 && fdvar.chars().next().unwrap().is_ascii_digit() {
-                Some(fdvar.parse().unwrap())
-            } else {
-                None
-            };
-
-        // system.c:323-325 — base flags from -r/-w/-a.
-        let base = libc::O_NOCTTY
-            | (if append_flag { libc::O_APPEND } else { 0 })
-            | if append_flag || write_flag {
-                if read_flag {
-                    libc::O_RDWR
-                } else {
-                    libc::O_WRONLY
-                }
-            } else {
-                libc::O_RDONLY
-            };
-
-        // system.c:350-369 — comma-list of O_* names, case-insensitive,
-        // optional 'O_' prefix.
-        let mut flags = base;
-        if let Some(opts) = &o_opts {
-            for tok in opts.split(',') {
-                let mut t = tok.to_uppercase();
-                if t.starts_with("O_") {
-                    t = t[2..].to_string();
-                }
-                let f = match t.as_str() {
-                    "CLOEXEC" => libc::O_CLOEXEC,
-                    "NOFOLLOW" => libc::O_NOFOLLOW,
-                    "SYNC" => libc::O_SYNC,
-                    "NONBLOCK" => libc::O_NONBLOCK,
-                    "EXCL" => libc::O_EXCL | libc::O_CREAT,
-                    "CREAT" | "CREATE" => libc::O_CREAT,
-                    "TRUNCATE" | "TRUNC" => libc::O_TRUNC,
-                    #[cfg(target_os = "linux")]
-                    "NOATIME" => libc::O_NOATIME,
-                    _ => {
-                        zwarnnam("bin_sysopen", &format!("unsupported option: {}", tok));
-                        return 1;
-                    }
-                };
-                flags |= f;
-            }
-        }
-
-        let cstr = match std::ffi::CString::new(filename.as_bytes()) {
-            Ok(s) => s,
-            Err(_) => return 1,
-        };
-        let fd = unsafe {
-            if (flags & libc::O_CREAT) != 0 {
-                libc::open(cstr.as_ptr(), flags, perms as libc::c_uint)
-            } else {
-                libc::open(cstr.as_ptr(), flags)
-            }
-        };
-        if fd == -1 {
-            let e = std::io::Error::last_os_error();
-            zwarnnam("bin_sysopen", &format!("can't open file {}: {}", filename, e));
-            return 2;
-        }
-
-        // system.c:392 — redup(fd, explicit) or movefd(fd) to land
-        // outside the user's interactive 0-9 range. Use dup2 for
-        // explicit; for default, just use the kernel-assigned fd.
-        let final_fd = if let Some(target) = explicit_fd {
-            let r = unsafe { libc::dup2(fd, target) };
-            unsafe {
-                libc::close(fd);
-            }
-            if r == -1 {
-                let e = std::io::Error::last_os_error();
-                zwarnnam("bin_sysopen", &format!("dup2 failed: {}", e));
-                return 2;
-            }
-            target
-        } else {
-            fd
-        };
-
-        // system.c:406-410 — when O_CLOEXEC was requested but the fd
-        // got moved (dup2 strips CLOEXEC), reapply via fcntl.
-        if (flags & libc::O_CLOEXEC) != 0 && fd != final_fd {
-            unsafe {
-                libc::fcntl(final_fd, libc::F_SETFD, libc::FD_CLOEXEC);
-            }
-        }
-
-        if explicit_fd.is_none() {
-            self.variables.insert(fdvar, final_fd.to_string());
-        }
-        0
-    }
-    /// bin_sysseek - seek on file descriptor (zsh/system module). Direct
-    /// port of zsh/Src/Modules/system.c:433 bin_sysseek. Return values
-    /// (system.c:425-428): 0 = success, 1 = bad params, 2 = lseek error.
-    pub(crate) fn bin_sysseek(&mut self, args: &[String]) -> i32 {
-        let mut fd: i32 = 0;
-        let mut whence: i32 = libc::SEEK_SET;
-        let mut pos_arg: Option<String> = None;
-
-        let mut i = 0;
-        while i < args.len() {
-            match args[i].as_str() {
-                "-u" if i + 1 < args.len() => {
-                    i += 1;
-                    match args[i].parse::<i32>() {
-                        Ok(n) if n >= 0 => fd = n,
-                        _ => {
-                            zwarnnam("bin_sysseek", &format!("integer expected: {}", args[i]));
-                            return 1;
-                        }
-                    }
-                }
-                "-w" if i + 1 < args.len() => {
-                    i += 1;
-                    let w = args[i].to_lowercase();
-                    whence = match w.as_str() {
-                        "current" | "cur" | "1" => libc::SEEK_CUR,
-                        "end" | "2" => libc::SEEK_END,
-                        "start" | "set" | "0" => libc::SEEK_SET,
-                        _ => {
-                            zwarnnam("bin_sysseek", &format!("unknown argument to -w: {}", args[i]));
-                            return 1;
-                        }
-                    };
-                }
-                s if !s.starts_with('-') => pos_arg = Some(s.to_string()),
-                _ => {}
-            }
-            i += 1;
-        }
-
-        let pos: i64 = match pos_arg.as_deref().and_then(|s| s.parse().ok()) {
-            Some(n) => n,
-            None => {
-                zwarnnam("bin_sysseek", "position required");
-                return 1;
-            }
-        };
-
-        // system.c:461-462 — lseek(fd, pos, w); return 2 on -1.
-        let new = unsafe { libc::lseek(fd, pos, whence) };
-        if new == -1 {
-            return 2;
-        }
-        0
-    }
-}
-// END moved-from-exec-rs
-
-/// Module loader entry — port of `setup_()` from Src/Modules/system.c:920.
-pub fn setup_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `features_()` from Src/Modules/system.c:927.
-pub fn features_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `enables_()` from Src/Modules/system.c:935.
-pub fn enables_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `boot_()` from Src/Modules/system.c:942.
-pub fn boot_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `cleanup_()` from Src/Modules/system.c:950.
-pub fn cleanup_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `finish_()` from Src/Modules/system.c:957.
-pub fn finish_() -> i32 {
-    0
-}
-
-// === auto-generated stubs ===
-// Direct ports of static helpers from Src/Modules/system.c not
-// yet covered above. zshrs links modules statically; live
-// state owned by the module's typed struct. Name-parity shims.
+//! Provides the system-call builtins: `sysread`, `syswrite`, `sysopen`,
+//! `sysseek`, `syserror`, `zsystem` (with subcommands `flock` and
+//! `supports`); the `systell` math function; the `errnos` and
+//! `sysparams` special parameters.
+//!
+//! C source: 21 fns total — `getposint`, `bin_sysread`, `bin_syswrite`,
+//! `bin_sysopen`, `bin_sysseek`, `math_systell`, `bin_syserror`,
+//! `bin_zsystem_flock`, `bin_zsystem_supports`, `bin_zsystem`,
+//! `errnosgetfn`, `fillpmsysparams`, `getpmsysparams`,
+//! `scanpmsysparams`, plus 6 module loaders (`setup_`, `features_`,
+//! `enables_`, `boot_`, `cleanup_`, `finish_`).
+//!
+//! Zero `struct` / `enum` definitions in system.c (only the
+//! `static struct { const char *name; int oflag; } openopts[]` ad-hoc
+//! anonymous-struct array at c:283 — mirrored as a Rust
+//! `&[(&str, i32)]` slice; not a public type).
+//!
+//! Order in this file mirrors C source order verbatim.
+
+use crate::ported::exec::ShellExecutor;
+use crate::ported::math::{Mnumber, MN_INTEGER, MN_FLOAT};
+use crate::ported::params::{setiparam, setsparam, setiparam_no_convert};
+use crate::ported::utils::{isident, metafy, unmetafy_dup, zwarnnam, zclose, movefd};
+
+const SYSREAD_BUFSIZE: usize = 8192;                                     // c:41
 
 /// Port of `getposint()` from `Src/Modules/system.c:45`. Parses
-/// `instr` as a non-negative integer (zstrtol with base 10);
-/// emits `zwarnnam` and returns -1 on parse error or negative.
+/// `instr` as a non-negative integer (zstrtol with base 10); emits
+/// `zwarnnam` and returns -1 on parse error or negative.
 ///
 /// C signature: `static int getposint(char *instr, char *nam)`.
 pub fn getposint(instr: &str, nam: &str) -> i32 {                        // c:45
     // c:50 — `ret = (int)zstrtol(instr, &eptr, 10);`
     let (ret, eptr) = crate::ported::utils::zstrtol(instr, 10);
     let ret = ret as i32;
-    // c:51 — `if (*eptr || ret < 0)`.
+    // c:51 — `if (*eptr || ret < 0)`
     if !eptr.is_empty() || ret < 0 {
-        crate::ported::utils::zwarnnam(nam, &format!("integer expected: {}", instr));
+        zwarnnam(nam, &format!("integer expected: {}", instr));          // c:52
         return -1;                                                       // c:53
     }
     ret                                                                  // c:56
+}
+
+/// Port of `bin_sysread()` from `Src/Modules/system.c:72`.
+///
+/// C signature: `static int bin_sysread(char *nam, char **args,
+///                                       Options ops, int func)`.
+/// Builtin spec: `"c:i:o:s:t:"` (system.c:820). `Options ops` is the
+/// parsed-flag bitmap; per PORT_CHECKLIST.md rule 3 the Rust port
+/// parses `args` inline rather than introducing an Options struct.
+///
+/// Return values per c:60-67:
+///   0 — Successfully read (and written if `-o`)
+///   1 — Error in parameters
+///   2 — Read error (errno set)
+///   3 — Write error (errno set; partial residue stashed)
+///   4 — Timeout on read
+///   5 — Zero bytes read (EOF)
+pub fn bin_sysread(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:72
+    // c:74 — `int infd = 0, outfd = -1, bufsize = SYSREAD_BUFSIZE, count;`
+    let mut infd: i32 = 0;
+    let mut outfd: i32 = -1;
+    let mut bufsize: usize = SYSREAD_BUFSIZE;
+    // c:75 — `char *outvar = NULL, *countvar = NULL, *inbuf;`
+    let mut outvar: Option<String> = None;
+    let mut countvar: Option<String> = None;
+    let mut timeout_arg: Option<String> = None;
+
+    // Parse the "c:i:o:s:t:" option string + positional outvar arg.
+    let mut i = 0usize;
+    while i < args.len() {
+        let arg = &args[i];
+        // c:80 — `if (OPT_ISSET(ops, 'i')) { infd = getposint(OPT_ARG(ops,'i'),nam); ...}`
+        match arg.as_str() {
+            "-i" if i + 1 < args.len() => {                              // c:80
+                i += 1;
+                infd = getposint(&args[i], nam);                         // c:81
+                if infd < 0 { return 1; }                                // c:82-83
+            }
+            "-o" if i + 1 < args.len() => {                              // c:87
+                i += 1;
+                outfd = getposint(&args[i], nam);                        // c:88
+                if outfd < 0 { return 1; }                               // c:89-90
+            }
+            "-s" if i + 1 < args.len() => {                              // c:94
+                i += 1;
+                let v = getposint(&args[i], nam);                        // c:95
+                if v < 0 { return 1; }                                   // c:96-97
+                bufsize = v as usize;
+            }
+            "-c" if i + 1 < args.len() => {                              // c:101
+                i += 1;
+                let cv = args[i].clone();                                // c:102
+                if !isident(&cv) {                                       // c:103
+                    zwarnnam(nam, &format!("not an identifier: {}", cv));// c:104
+                    return 1;                                            // c:105
+                }
+                countvar = Some(cv);
+            }
+            "-t" if i + 1 < args.len() => {                              // c:127
+                i += 1;
+                timeout_arg = Some(args[i].clone());
+            }
+            other if !other.starts_with('-') => {                        // c:109 *args
+                let ov = other.to_string();                              // c:116
+                if !isident(&ov) {                                       // c:117
+                    zwarnnam(nam, &format!("not an identifier: {}", ov));// c:118
+                    return 1;                                            // c:119
+                }
+                outvar = Some(ov);
+                break;
+            }
+            _ => break,
+        }
+        i += 1;
+    }
+
+    // c:123 — `inbuf = zhalloc(bufsize);`
+    let mut inbuf = vec![0u8; bufsize];                                  // c:123
+
+    // c:127-185 — `-t` poll(2) wait. C uses HAVE_POLL → poll(); else
+    // select(). Rust has poll(2) on every supported unix; pick the
+    // poll branch (c:129-152).
+    if let Some(t_str) = timeout_arg {
+        // c:137 — `to_mn = matheval(OPT_ARG(ops,'t'));`
+        let to_mn = match crate::ported::math::matheval(&t_str) {
+            Ok(m) => m,
+            Err(_) => return 1,                                          // c:138-139 errflag
+        };
+        // c:140-143 — float→int conversion of seconds × 1000.
+        let to_int: i32 = if to_mn.type_ == MN_FLOAT {
+            (1000.0 * to_mn.d) as i32                                    // c:141
+        } else {
+            (1000 * to_mn.l) as i32                                      // c:143
+        };
+        // c:145-148 — `while ((ret = poll(...)) < 0) { if (errno != EINTR ...) break; }`
+        let mut ret;
+        loop {
+            let mut pfd = libc::pollfd {                                 // c:130-135
+                fd: infd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            ret = unsafe { libc::poll(&mut pfd, 1, to_int) };
+            if ret >= 0 {
+                break;
+            }
+            let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            if eno != libc::EINTR {
+                break;                                                   // c:146 EINTR retry
+            }
+        }
+        // c:149-151 — `if (ret <= 0) return ret ? 2 : 4;`
+        if ret <= 0 {
+            return if ret != 0 { 2 } else { 4 };
+        }
+    }
+
+    // c:188-191 — `while ((count = read(infd, inbuf, bufsize)) < 0) ...`
+    let mut count: isize;
+    loop {
+        count = unsafe {
+            libc::read(infd, inbuf.as_mut_ptr() as *mut libc::c_void, bufsize)
+        };
+        if count >= 0 { break; }
+        let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        if eno != libc::EINTR { break; }                                 // c:189
+    }
+    // c:192-193 — `if (countvar) setiparam(countvar, count);`
+    if let Some(ref cv) = countvar {
+        setiparam(&mut exec.variables, &mut exec.arrays,
+                  &mut exec.assoc_arrays, cv, count as i64);
+    }
+    // c:194-195 — `if (count < 0) return 2;`
+    if count < 0 {
+        return 2;
+    }
+    let count = count as usize;
+
+    // c:197-218 — outfd write path with EINTR retry + partial residue.
+    if outfd >= 0 {                                                      // c:197
+        if count == 0 { return 5; }                                      // c:198-199
+        let mut p = 0usize;
+        let mut remaining = count;
+        while remaining > 0 {                                            // c:200
+            let ret = unsafe {
+                libc::write(outfd,
+                            inbuf[p..].as_ptr() as *const libc::c_void,
+                            remaining)
+            };
+            if ret < 0 {                                                 // c:204
+                let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                if eno == libc::EINTR {                                  // c:205-207
+                    continue;
+                }
+                // c:208-211 — stash residue + remaining count.
+                if let Some(ref ov) = outvar {
+                    let buf_remaining = String::from_utf8_lossy(&inbuf[p..p+remaining]);
+                    let m = metafy(&buf_remaining);
+                    setsparam(&mut exec.variables, &mut exec.arrays,
+                              &mut exec.assoc_arrays, ov, &m);
+                }
+                if let Some(ref cv) = countvar {
+                    setiparam(&mut exec.variables, &mut exec.arrays,
+                              &mut exec.assoc_arrays, cv, remaining as i64);
+                }
+                return 3;                                                // c:212
+            }
+            p += ret as usize;                                           // c:214
+            remaining -= ret as usize;                                   // c:215
+        }
+        return 0;                                                        // c:217
+    }
+
+    // c:220-225 — no outfd: stash buffer in `outvar` (default REPLY).
+    let target = outvar.unwrap_or_else(|| "REPLY".to_string());          // c:220-221
+    let buf_str = String::from_utf8_lossy(&inbuf[..count]);
+    let m = metafy(&buf_str);
+    setsparam(&mut exec.variables, &mut exec.arrays,
+              &mut exec.assoc_arrays, &target, &m);                      // c:223
+    if count != 0 { 0 } else { 5 }                                       // c:225
+}
+
+/// Port of `bin_syswrite()` from `Src/Modules/system.c:238`.
+///
+/// C signature: `static int bin_syswrite(char *nam, char **args,
+///                                        Options ops, int func)`.
+/// Builtin spec: `"c:o:"` (system.c:821), 1 mandatory positional
+/// arg.
+///
+/// Return values per c:230-233:
+///   0 — Successfully written
+///   1 — Error in parameters
+///   2 — Write error (errno set)
+pub fn bin_syswrite(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:238
+    // c:240-241 — `int outfd = 1, len, count, totcount;
+    //              char *countvar = NULL;`
+    let mut outfd: i32 = 1;
+    let mut countvar: Option<String> = None;
+    let mut data_arg: Option<String> = None;
+
+    // Parse "c:o:" + positional data arg.
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" if i + 1 < args.len() => {                              // c:246
+                i += 1;
+                outfd = getposint(&args[i], nam);                        // c:247
+                if outfd < 0 { return 1; }                               // c:248-249
+            }
+            "-c" if i + 1 < args.len() => {                              // c:253
+                i += 1;
+                let cv = args[i].clone();                                // c:254
+                if !isident(&cv) {                                       // c:255
+                    zwarnnam(nam, &format!("not an identifier: {}", cv));// c:256
+                    return 1;                                            // c:257
+                }
+                countvar = Some(cv);
+            }
+            other if !other.starts_with('-') => {                        // c:262 *args
+                data_arg = Some(other.to_string());
+                break;
+            }
+            _ => break,
+        }
+        i += 1;
+    }
+
+    let data = match data_arg {
+        Some(d) => d,
+        None => return 1,
+    };
+
+    // c:262 — `unmetafy(*args, &len);`
+    let unmeta = unmetafy_dup(&data);
+    let bytes = unmeta.as_bytes();
+    let mut totcount: usize = 0;                                         // c:261
+    let mut len = bytes.len();
+    let mut p = 0usize;
+
+    // c:263-275 — write loop with EINTR retry and partial residue.
+    while len > 0 {                                                      // c:263
+        let count = unsafe {
+            libc::write(outfd,
+                        bytes[p..].as_ptr() as *const libc::c_void,
+                        len)
+        };
+        if count < 0 {                                                   // c:264
+            let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            if eno != libc::EINTR {                                      // c:265
+                if let Some(ref cv) = countvar {                         // c:267-268
+                    setiparam(&mut exec.variables, &mut exec.arrays,
+                              &mut exec.assoc_arrays, cv, totcount as i64);
+                }
+                return 2;                                                // c:269
+            }
+            continue;
+        }
+        p += count as usize;                                             // c:272 *args += count
+        totcount += count as usize;                                      // c:273
+        len -= count as usize;                                           // c:274
+    }
+    // c:276-277 — `if (countvar) setiparam(countvar, totcount);`
+    if let Some(ref cv) = countvar {
+        setiparam(&mut exec.variables, &mut exec.arrays,
+                  &mut exec.assoc_arrays, cv, totcount as i64);
+    }
+    0                                                                    // c:279
+}
+
+/// Port of `bin_sysopen()` from `Src/Modules/system.c:319`.
+///
+/// C signature: `static int bin_sysopen(char *nam, char **args,
+///                                       Options ops, int func)`.
+/// Builtin spec: `"rwau:o:m:"` (system.c:822), 1 mandatory
+/// positional arg (the file path).
+///
+/// Return values per c:312-314: 0 success / 1 bad params / 2 open error.
+pub fn bin_sysopen(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:319
+    // c:321-323 — `int read = OPT_ISSET(ops, 'r');` etc.
+    let mut read_flag = false;
+    let mut write_flag = false;
+    let mut append_flag = false;
+    let mut fdvar_arg: Option<String> = None;
+    let mut o_arg: Option<String> = None;
+    let mut m_arg: Option<String> = None;
+    let mut path_arg: Option<String> = None;
+
+    // Parse "rwau:o:m:" + positional path arg.
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-r" => read_flag = true,                                    // c:321
+            "-w" => write_flag = true,                                   // c:322
+            "-a" => append_flag = true,                                  // c:323
+            "-u" if i + 1 < args.len() => { i += 1; fdvar_arg = Some(args[i].clone()); }
+            "-o" if i + 1 < args.len() => { i += 1; o_arg = Some(args[i].clone()); }
+            "-m" if i + 1 < args.len() => { i += 1; m_arg = Some(args[i].clone()); }
+            other if !other.starts_with('-') => { path_arg = Some(other.to_string()); break; }
+            _ => break,
+        }
+        i += 1;
+    }
+
+    // c:323-325 — flags = O_NOCTTY | append | (RDWR/WRONLY/RDONLY).
+    let append_flag_bit = if append_flag { libc::O_APPEND } else { 0 };
+    let mut flags = libc::O_NOCTTY | append_flag_bit | if append_flag || write_flag {
+        if read_flag { libc::O_RDWR } else { libc::O_WRONLY }
+    } else {
+        libc::O_RDONLY
+    };
+
+    // c:328 — `mode_t perms = 0666;`
+    let mut perms: u32 = 0o666;
+    let mut explicit: i32 = -1;                                          // c:327
+
+    // c:335 — `if (!OPT_ISSET(ops, 'u')) { ... return 1; }`
+    let fdvar = match fdvar_arg {
+        Some(s) => s,
+        None => {
+            zwarnnam(nam, "file descriptor not specified");              // c:336
+            return 1;                                                    // c:337
+        }
+    };
+    let path = match path_arg {
+        Some(p) => p,
+        None => return 1,
+    };
+
+    // c:341-347 — fdvar is either single digit (explicit fd) or identifier.
+    if fdvar.len() == 1 && fdvar.chars().next().unwrap().is_ascii_digit() {
+        explicit = fdvar.parse().unwrap();                               // c:343
+    } else if !isident(&fdvar) {                                         // c:344
+        zwarnnam(nam, &format!("not an identifier: {}", fdvar));         // c:345
+        return 1;                                                        // c:346
+    }
+
+    // c:350-369 — comma-list of O_* names from -o, case-insensitive,
+    // optional `O_` prefix.
+    if let Some(opts) = o_arg {
+        for tok in opts.split(',') {                                     // c:355 strchr ','
+            let mut name = tok;
+            // c:353 — `if (!strncasecmp(opt, "O_", 2)) opt += 2;`
+            if name.len() >= 2 && name[..2].eq_ignore_ascii_case("O_") {
+                name = &name[2..];
+            }
+            // c:357-358 — case-insensitive lookup in openopts[].
+            // openopts[] is the c:283-308 anonymous-struct table:
+            // `static struct { const char *name; int oflag; } openopts[]`.
+            // Inlined here as a const slice so the lookup is bit-for-bit
+            // identical to C (same name/oflag rows, same order, walked
+            // backwards via `for (o = N-1; o >= 0; o--)` at c:357).
+            #[cfg(unix)]
+            {
+                const OPENOPTS: &[(&str, i32)] = &[
+                    ("cloexec",  libc::O_CLOEXEC),                       // c:285
+                    ("nofollow", libc::O_NOFOLLOW),                      // c:292
+                    ("sync",     libc::O_SYNC),                          // c:295
+                    #[cfg(target_os = "linux")]
+                    ("noatime",  libc::O_NOATIME),                       // c:298
+                    ("nonblock", libc::O_NONBLOCK),                      // c:301
+                    ("excl",     libc::O_EXCL | libc::O_CREAT),          // c:303
+                    ("creat",    libc::O_CREAT),                         // c:304
+                    ("create",   libc::O_CREAT),                         // c:305
+                    ("truncate", libc::O_TRUNC),                         // c:306
+                    ("trunc",    libc::O_TRUNC),                         // c:307
+                ];
+                let mut found: Option<i32> = None;
+                for (n, oflag) in OPENOPTS.iter().rev() {                // c:357 walks backwards
+                    if n.eq_ignore_ascii_case(name) {
+                        found = Some(*oflag);
+                        break;
+                    }
+                }
+                let oflag = match found {
+                    Some(f) => f,
+                    None => {
+                        zwarnnam(nam, &format!("unsupported option: {}\n", tok));  // c:360
+                        return 1;                                                  // c:361
+                    }
+                };
+                flags |= oflag;                                          // c:367
+            }
+        }
+    }
+
+    // c:372-381 — -m: octal permissions string.
+    if let Some(m) = m_arg {
+        let mode_str = m.as_str();
+        // c:374-375 — `while (*ptr >= '0' && *ptr <= '7') ptr++;`
+        let mut ptr = 0;
+        let bytes = mode_str.as_bytes();
+        while ptr < bytes.len() && (b'0'..=b'7').contains(&bytes[ptr]) {
+            ptr += 1;
+        }
+        // c:376 — `if (*ptr || ptr - opt < 3)`
+        if ptr < bytes.len() || ptr < 3 {
+            zwarnnam(nam, &format!("invalid mode {}", mode_str));        // c:377
+            return 1;                                                    // c:378
+        }
+        // c:380 — `perms = zstrtol(opt, 0, 8);`
+        let (v, _) = crate::ported::utils::zstrtol(mode_str, 8);
+        perms = v as u32;
+    }
+
+    // c:383-391 — `open(*args, flags[, perms])`; `*args` is path.
+    let path_c = match std::ffi::CString::new(path.as_bytes()) {
+        Ok(s) => s,
+        Err(_) => return 1,
+    };
+    let fd = unsafe {
+        if (flags & libc::O_CREAT) != 0 {                                // c:383
+            libc::open(path_c.as_ptr(), flags, perms as libc::c_uint)    // c:384
+        } else {
+            libc::open(path_c.as_ptr(), flags)                           // c:386
+        }
+    };
+    if fd == -1 {                                                        // c:388
+        let e = std::io::Error::last_os_error();
+        zwarnnam(nam, &format!("can't open file {}: {}", path, e));      // c:389
+        return 2;                                                        // c:390
+    }
+
+    // c:392 — `moved_fd = (explicit > -1) ? redup(fd, explicit) : movefd(fd);`
+    let moved_fd: i32 = if explicit > -1 {
+        crate::ported::utils::redup(fd, explicit)                        // c:392 redup branch
+    } else {
+        movefd(fd)                                                       // c:392 movefd branch
+    };
+    if moved_fd == -1 {                                                  // c:393
+        zwarnnam(nam, &format!("can't open file {}", path));             // c:394
+        return 2;                                                        // c:395
+    }
+
+    // c:398-411 — reapply FD_CLOEXEC after dup2 if requested.
+    if (flags & libc::O_CLOEXEC) != 0 && fd != moved_fd {                // c:406
+        unsafe { libc::fcntl(moved_fd, libc::F_SETFD, libc::FD_CLOEXEC); }   // c:410
+    }
+
+    // c:412 — `fdtable[moved_fd] = FDT_EXTERNAL;` (zshrs's fdtable
+    // manager owns this; not yet wired — no-op for now).
+
+    // c:413-418 — `if (explicit == -1) { setiparam(fdvar, moved_fd); ... }`
+    if explicit == -1 {
+        setiparam(&mut exec.variables, &mut exec.arrays,
+                  &mut exec.assoc_arrays, &fdvar, moved_fd as i64);      // c:414
+    }
+
+    0                                                                    // c:420
+}
+
+/// Port of `bin_sysseek()` from `Src/Modules/system.c:433`.
+///
+/// C signature: `static int bin_sysseek(char *nam, char **args,
+///                                       Options ops, int func)`.
+/// Builtin spec: `"u:w:"` (system.c:823), 1 mandatory positional
+/// arg (the offset).
+///
+/// Return values per c:425-428: 0 success / 1 bad params / 2 lseek error.
+pub fn bin_sysseek(_exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:433
+    // c:435 — `int w = SEEK_SET, fd = 0;`
+    let mut w: i32 = libc::SEEK_SET;
+    let mut fd: i32 = 0;
+    let mut pos_arg: Option<String> = None;
+
+    // Parse "u:w:" + positional offset.
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-u" if i + 1 < args.len() => {                              // c:442
+                i += 1;
+                fd = getposint(&args[i], nam);                           // c:443
+                if fd < 0 { return 1; }                                  // c:444-445
+            }
+            "-w" if i + 1 < args.len() => {                              // c:449
+                i += 1;
+                let whence = &args[i];                                   // c:450
+                // c:451 — `!(strcasecmp(whence, "current") && strcmp(whence, "1"))`
+                if whence.eq_ignore_ascii_case("current") || whence == "1" {
+                    w = libc::SEEK_CUR;                                  // c:452
+                } else if whence.eq_ignore_ascii_case("end") || whence == "2" {
+                    w = libc::SEEK_END;                                  // c:454
+                } else if !whence.eq_ignore_ascii_case("start") && whence != "0" {
+                    zwarnnam(nam, &format!("unknown argument to -w: {}", whence));  // c:456
+                    return 1;                                                       // c:457
+                }
+            }
+            other if !other.starts_with('-') => { pos_arg = Some(other.to_string()); break; }
+            _ => break,
+        }
+        i += 1;
+    }
+
+    let pos_str = match pos_arg {
+        Some(s) => s,
+        None => return 1,
+    };
+
+    // c:461 — `pos = (off_t)mathevali(*args);`
+    let pos = match crate::ported::math::mathevali(&pos_str) {
+        Ok(v) => v,
+        Err(_) => return 1,
+    };
+    // c:462 — `return (lseek(fd, pos, w) == -1) ? 2 : 0;`
+    if unsafe { libc::lseek(fd, pos as libc::off_t, w) } == -1 {
+        2
+    } else {
+        0
+    }
+}
+
+/// Port of `math_systell()` from `Src/Modules/system.c:467`.
+///
+/// C signature: `static mnumber math_systell(char *name, int argc,
+///                                            mnumber *argv, int id)`.
+/// Returns the current `lseek(fd, 0, SEEK_CUR)` position of `argv[0]`
+/// as an `mnumber`. Negative fds error via `zerr` and return 0.
+pub fn math_systell(_name: &str, _argc: i32, argv: &[Mnumber], _id: i32) -> Mnumber {  // c:467
+    // c:469 — `int fd = (argv->type == MN_INTEGER) ? argv->u.l : (int)argv->u.d;`
+    let fd: i32 = if argv[0].type_ == MN_INTEGER {
+        argv[0].l as i32
+    } else {
+        argv[0].d as i32
+    };
+    // c:470-472 — `mnumber ret; ret.type = MN_INTEGER; ret.u.l = 0;`
+    let mut ret = Mnumber {
+        type_: MN_INTEGER,                                               // c:471
+        l: 0,                                                            // c:472
+        d: 0.0,
+    };
+    // c:474-477 — `if (fd < 0) { zerr("file descriptor out of range"); return ret; }`
+    if fd < 0 {
+        crate::ported::utils::zwarn("file descriptor out of range");
+        return ret;
+    }
+    // c:478 — `ret.u.l = lseek(fd, 0, SEEK_CUR);`
+    ret.l = unsafe { libc::lseek(fd, 0, libc::SEEK_CUR) } as i64;
+    ret                                                                  // c:479
+}
+
+/// Port of `bin_syserror()` from `Src/Modules/system.c:494`.
+///
+/// C signature: `static int bin_syserror(char *nam, char **args,
+///                                        Options ops, int func)`.
+/// Builtin spec: `"e:p:"` (system.c:819), 0-1 positional args
+/// (the errno number or symbolic name).
+///
+/// Return values per c:485-489: 0 success / 1 bad params / 2 unknown errno name.
+pub fn bin_syserror(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:494
+    // c:496-497 — `int num = 0; char *errvar = NULL, *msg, *pfx = "", *str;`
+    let mut num: i32 = 0;
+    let mut errvar: Option<String> = None;
+    let mut pfx: String = String::new();
+    let mut name_arg: Option<String> = None;
+
+    // Parse "e:p:" + optional positional name.
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-e" if i + 1 < args.len() => {                              // c:500
+                i += 1;
+                let ev = args[i].clone();                                // c:501
+                if !isident(&ev) {                                       // c:502
+                    zwarnnam(nam, &format!("not an identifier: {}", ev));// c:503
+                    return 1;                                            // c:504
+                }
+                errvar = Some(ev);
+            }
+            "-p" if i + 1 < args.len() => {                              // c:508
+                i += 1;
+                pfx = args[i].clone();                                   // c:509
+            }
+            other if !other.starts_with('-') => { name_arg = Some(other.to_string()); break; }
+            _ => break,
+        }
+        i += 1;
+    }
+
+    // c:511-530 — name parse: empty → use current errno; all-digit →
+    // atoi; symbolic → lookup in sys_errnames, return 2 on miss.
+    if name_arg.is_none() {
+        // c:512 — `num = errno;`
+        num = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    } else {
+        let arg = name_arg.unwrap();
+        let bytes = arg.as_bytes();
+        let mut ptr = 0usize;
+        // c:514-516 — `while (*ptr && idigit(*ptr)) ptr++;`
+        while ptr < bytes.len() && bytes[ptr].is_ascii_digit() {
+            ptr += 1;
+        }
+        if ptr == bytes.len() && ptr > 0 {                               // c:517
+            num = arg.parse::<i32>().unwrap_or(0);                       // c:518
+        } else {                                                         // c:519
+            // c:521-526 — walk SYS_ERRNAMES looking for *args.
+            let mut found = false;
+            for (idx, (ename, _)) in SYS_ERRNAMES.iter().enumerate() {
+                if *ename == arg {                                       // c:522
+                    num = (idx as i32) + 1;                              // c:523
+                    found = true;
+                    break;                                               // c:524
+                }
+            }
+            if !found {                                                  // c:527
+                return 2;                                                // c:528
+            }
+        }
+    }
+
+    // c:532 — `msg = strerror(num);`
+    let msg = std::io::Error::from_raw_os_error(num).to_string();
+    // c:533-539 — write back to errvar or stderr.
+    if let Some(ev) = errvar {
+        let str_out = format!("{}{}", pfx, msg);                         // c:534-535
+        setsparam(&mut exec.variables, &mut exec.arrays,
+                  &mut exec.assoc_arrays, &ev, &str_out);                // c:536
+    } else {
+        eprintln!("{}{}", pfx, msg);                                     // c:538
+    }
+    0                                                                    // c:541
+}
+
+/// Port of `bin_zsystem_flock()` from `Src/Modules/system.c:546`.
+///
+/// C signature: `static int bin_zsystem_flock(char *nam, char **args,
+///                                              Options ops, int func)`.
+/// Subcommand of `zsystem flock`. Parses its own option chain (no
+/// builtin opt-spec since the parent `zsystem` BUILTIN at c:824 has
+/// `optstr=NULL`).
+///
+/// Return values per inline comments: 0 success / 1 param/lock error
+/// / 2 timeout exhausted / 255 not supported on this platform.
+pub fn bin_zsystem_flock(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:546
+    // c:548-551 — option-state locals.
+    let mut cloexec: bool = true;                                        // c:548
+    let mut unlock: bool = false;
+    let mut readlock: bool = false;
+    let mut timeout: f64 = -1.0;                                         // c:549
+    // c:550 — `long timeout_interval = 1e6;` (microseconds).
+    let mut timeout_interval: i64 = 1_000_000;
+    let mut fdvar: Option<String> = None;                                // c:552
+
+    // c:558-661 — option-chain parser. `while (*args && **args == '-')`.
+    let mut i = 0usize;
+    while i < args.len() && args[i].starts_with('-') {
+        let arg = &args[i];
+        i += 1;
+        let optptr = &arg[1..];
+        if optptr.is_empty() || optptr == "-" {                          // c:562
+            break;
+        }
+        let chars: Vec<char> = optptr.chars().collect();
+        let mut idx = 0usize;
+        while idx < chars.len() {
+            let opt = chars[idx];
+            match opt {
+                'e' => {                                                 // c:566 keep lock on exec
+                    cloexec = false;                                     // c:568
+                }
+                'f' => {                                                 // c:571 fd variable
+                    let rest: String = chars[idx + 1..].iter().collect();
+                    let fdvar_str = if !rest.is_empty() {
+                        idx = chars.len();                               // c:574-575 consume rest
+                        rest
+                    } else if i < args.len() {
+                        let v = args[i].clone();                         // c:577
+                        i += 1;
+                        v
+                    } else {
+                        zwarnnam(nam, &format!(
+                            "flock: option {} requires a variable name", opt));
+                        return 1;
+                    };
+                    if !isident(&fdvar_str) {                            // c:579
+                        zwarnnam(nam, &format!(
+                            "flock: option {} requires a variable name", opt));
+                        return 1;                                        // c:582
+                    }
+                    fdvar = Some(fdvar_str);
+                    break;
+                }
+                'r' => readlock = true,                                  // c:586-588
+                't' => {                                                 // c:591 timeout in seconds
+                    let rest: String = chars[idx + 1..].iter().collect();
+                    let optarg = if !rest.is_empty() {
+                        idx = chars.len();
+                        rest
+                    } else if i < args.len() {
+                        let v = args[i].clone();
+                        i += 1;
+                        v
+                    } else {
+                        zwarnnam(nam, &format!(
+                            "flock: option {} requires a numeric timeout", opt));
+                        return 1;
+                    };
+                    let tp = match crate::ported::math::matheval(&optarg) {
+                        Ok(m) => m,
+                        Err(_) => return 1,
+                    };
+                    timeout = if (tp.type_ & MN_FLOAT) != 0 {            // c:604
+                        tp.d
+                    } else {
+                        tp.l as f64
+                    };
+                    // c:614-618 — overflow guard at 2^30-1.
+                    if timeout > 1073741823.0 {
+                        zwarnnam(nam, &format!("flock: invalid timeout value: '{}'", optarg));
+                        return 1;
+                    }
+                    break;
+                }
+                'i' => {                                                 // c:621 retry interval
+                    let rest: String = chars[idx + 1..].iter().collect();
+                    let optarg = if !rest.is_empty() {
+                        idx = chars.len();
+                        rest
+                    } else if i < args.len() {
+                        let v = args[i].clone();
+                        i += 1;
+                        v
+                    } else {
+                        zwarnnam(nam, &format!(
+                            "flock: option {} requires a numeric retry interval", opt));
+                        return 1;
+                    };
+                    let mut tp = match crate::ported::math::matheval(&optarg) {
+                        Ok(m) => m,
+                        Err(_) => return 1,
+                    };
+                    if (tp.type_ & MN_FLOAT) == 0 {                      // c:636
+                        tp.type_ = MN_FLOAT;
+                        tp.d = tp.l as f64;
+                    }
+                    tp.d = (tp.d * 1e6).ceil();                          // c:640
+                    if tp.d < 1.0 || tp.d > 0.999 * (i64::MAX as f64) {  // c:641
+                        zwarnnam(nam, &format!("flock: invalid interval value: '{}'", optarg));
+                        return 1;                                        // c:645
+                    }
+                    timeout_interval = tp.d as i64;                      // c:647
+                    break;
+                }
+                'u' => unlock = true,                                    // c:650-652
+                _ => {
+                    zwarnnam(nam, &format!("flock: unknown option: {}", opt));  // c:656
+                    return 1;                                            // c:657
+                }
+            }
+            idx += 1;
+        }
+    }
+
+    // c:664-667 — `if (!args[0]) { zwarnnam("flock: not enough arguments"); return 1; }`
+    if i >= args.len() {
+        zwarnnam(nam, "flock: not enough arguments");
+        return 1;
+    }
+    if i + 1 < args.len() {                                              // c:668-671
+        zwarnnam(nam, "flock: too many arguments");
+        return 1;
+    }
+    let path = &args[i];
+
+    // c:674-682 — -u: unlock. argument is fd; close releases POSIX lock.
+    if unlock {
+        let flock_fd: i32 = match crate::ported::math::mathevali(path) {
+            Ok(v) => v as i32,
+            Err(_) => return 1,
+        };
+        // c:676 — zcloselockfd(flock_fd) returns -1 if not in our lockfd table.
+        if crate::ported::utils::zcloselockfd(flock_fd) < 0 {            // c:676
+            zwarnnam(nam, &format!(
+                "flock: file descriptor {} not in use for locking", flock_fd));
+            return 1;
+        }
+        return 0;                                                        // c:681
+    }
+
+    // c:684-687 — flags = readlock ? O_RDONLY|O_NOCTTY : O_RDWR|O_NOCTTY.
+    let flags = if readlock {
+        libc::O_RDONLY | libc::O_NOCTTY
+    } else {
+        libc::O_RDWR | libc::O_NOCTTY
+    };
+    // c:688 — open(unmeta(args[0]), flags).
+    let path_unmeta = unmetafy_dup(path);
+    let path_c = match std::ffi::CString::new(path_unmeta) {
+        Ok(s) => s,
+        Err(_) => return 1,
+    };
+    let mut flock_fd = unsafe { libc::open(path_c.as_ptr(), flags) };    // c:688
+    if flock_fd < 0 {
+        let e = std::io::Error::last_os_error();
+        zwarnnam(nam, &format!("failed to open {} for writing: {}", path, e));
+        return 1;
+    }
+    // c:692 — `flock_fd = movefd(flock_fd);`
+    flock_fd = movefd(flock_fd);                                         // c:692
+    if flock_fd == -1 { return 1; }                                      // c:693-694
+
+    // c:695-702 — set FD_CLOEXEC if cloexec.
+    if cloexec {
+        let fdflags = unsafe { libc::fcntl(flock_fd, libc::F_GETFD, 0) };
+        if fdflags != -1 {
+            unsafe { libc::fcntl(flock_fd, libc::F_SETFD, fdflags | libc::FD_CLOEXEC); }
+        }
+    }
+    // c:703 — `addlockfd(flock_fd, cloexec);`
+    crate::ported::utils::addlockfd(flock_fd, cloexec);                  // c:703
+
+    // c:705-708 — assemble struct flock.
+    let lock_type: libc::c_short = if readlock {
+        libc::F_RDLCK as libc::c_short
+    } else {
+        libc::F_WRLCK as libc::c_short
+    };
+    #[allow(clippy::unnecessary_cast)]
+    let lck = libc::flock {
+        l_type: lock_type,                                               // c:705
+        l_whence: libc::SEEK_SET as libc::c_short,                       // c:706
+        l_start: 0,                                                      // c:707
+        l_len: 0,                                                        // c:708
+        l_pid: 0,
+    };
+
+    if timeout > 0.0 {                                                   // c:710
+        // c:711-749 — timed retry loop. zshrs uses a simple
+        // monotonic Instant-based deadline; matches the C
+        // behavior bit-by-bit (poll with EAGAIN/EACCES retry,
+        // EINTR retry, EOTHER → fail, deadline → return 2).
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_secs_f64(timeout);
+        loop {
+            let r = unsafe { libc::fcntl(flock_fd, libc::F_SETLK, &lck) };
+            if r >= 0 { break; }
+            let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            if eno != libc::EINTR && eno != libc::EACCES && eno != libc::EAGAIN {
+                zclose(flock_fd);                                        // c:735
+                let e = std::io::Error::last_os_error();
+                zwarnnam(nam, &format!("failed to lock file {}: {}", path, e));
+                return 1;
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                zclose(flock_fd);                                        // c:742
+                return 2;                                                // c:743
+            }
+            let remaining = deadline - now;
+            let remaining_us = remaining.as_micros() as i64;
+            let interval = remaining_us.min(timeout_interval);
+            std::thread::sleep(std::time::Duration::from_micros(interval as u64));
+        }
+    } else {
+        // c:751-762 — no timeout: F_SETLK if timeout==0 (non-blocking),
+        // else F_SETLKW (blocking). EINTR retry.
+        let cmd = if timeout == 0.0 { libc::F_SETLK } else { libc::F_SETLKW };
+        loop {
+            let r = unsafe { libc::fcntl(flock_fd, cmd, &lck) };
+            if r >= 0 { break; }
+            let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            if eno == libc::EINTR { continue; }                          // c:756-757
+            zclose(flock_fd);                                            // c:758
+            let e = std::io::Error::last_os_error();
+            zwarnnam(nam, &format!("failed to lock file {}: {}", path, e));
+            return 1;
+        }
+    }
+
+    // c:764-765 — `if (fdvar) setiparam(fdvar, flock_fd);`
+    if let Some(ref var) = fdvar {
+        setiparam(&mut exec.variables, &mut exec.arrays,
+                  &mut exec.assoc_arrays, var, flock_fd as i64);
+    }
+    0                                                                    // c:767
+}
+
+/// Port of `bin_zsystem_supports()` from `Src/Modules/system.c:781`.
+///
+/// C signature: `static int bin_zsystem_supports(char *nam, char **args,
+///                                                 Options ops, int func)`.
+///
+/// Returns 0 if the named feature is supported, 1 if not, 255 on
+/// argument-count error.
+pub fn bin_zsystem_supports(_exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:781
+    // c:784-787 — `if (!args[0]) ... return 255;`
+    if args.is_empty() {
+        zwarnnam(nam, "supports: not enough arguments");
+        return 255;
+    }
+    // c:788-791 — `if (args[1]) ... return 255;`
+    if args.len() > 1 {
+        zwarnnam(nam, "supports: too many arguments");
+        return 255;
+    }
+    // c:794 — `if (!strcmp(*args, "supports")) return 0;`
+    if args[0] == "supports" { return 0; }                               // c:794-795
+    // c:796-799 — HAVE_FCNTL_H gate; flock is universal on supported unix.
+    #[cfg(unix)]
+    if args[0] == "flock" { return 0; }                                  // c:797-798
+    1                                                                    // c:800
+}
+
+/// Port of `bin_zsystem()` from `Src/Modules/system.c:806`.
+///
+/// C signature: `static int bin_zsystem(char *nam, char **args,
+///                                       Options ops, int func)`.
+/// The `zsystem` builtin dispatcher — peels the first arg and routes
+/// to `bin_zsystem_flock` or `bin_zsystem_supports`.
+pub fn bin_zsystem(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:806
+    if args.is_empty() {
+        zwarnnam(nam, "subcommand expected");
+        return 1;
+    }
+    // c:809 — `if (!strcmp(*args, "flock"))`
+    if args[0] == "flock" {
+        return bin_zsystem_flock(exec, nam, &args[1..]);                 // c:810
+    }
+    // c:811 — `else if (!strcmp(*args, "supports"))`
+    if args[0] == "supports" {
+        return bin_zsystem_supports(exec, nam, &args[1..]);              // c:812
+    }
+    zwarnnam(nam, &format!("unknown subcommand: {}", args[0]));          // c:814
+    1                                                                    // c:815
+}
+
+// ---------------------------------------------------------------------------
+// Special-parameter callbacks (errnos + sysparams).
+// ---------------------------------------------------------------------------
+
+/// Port of `errnosgetfn()` from `Src/Modules/system.c:832`. The
+/// getter for the `${errnos}` special array. C body returns
+/// `arrdup((char **)sys_errnames)` — a fresh duplicate of the
+/// errno-name table. Rust port returns the names as `Vec<String>`.
+///
+/// C signature: `static char **errnosgetfn(Param pm)`.
+pub fn errnosgetfn() -> Vec<String> {                                    // c:832
+    SYS_ERRNAMES.iter().map(|(n, _)| n.to_string()).collect()            // c:835 arrdup
 }
 
 /// Port of `fillpmsysparams()` from `Src/Modules/system.c:846`.
@@ -1707,32 +984,335 @@ pub fn getposint(instr: &str, nam: &str) -> i32 {                        // c:45
 /// `${sysparams[NAME]}` keys: `pid` / `ppid` / `procsubstpid`.
 ///
 /// C signature: `static void fillpmsysparams(Param pm, const char *name)`.
-/// Rust port returns the rendered string (or None for UNSET) since
-/// zshrs doesn't model the synthesised Param node here.
+/// Rust port returns the rendered string (or None for PM_UNSET) since
+/// zshrs's magic-assoc dispatcher reads the value directly.
 pub fn fillpmsysparams(name: &str) -> Option<String> {                   // c:846
-    // c:855 — `if (!strcmp(name, "pid")) num = (int)getpid();`
+    // c:854-862 — name dispatch.
     let num: i32 = match name {
-        "pid" => unsafe { libc::getpid() },                              // c:856
-        "ppid" => unsafe { libc::getppid() },                            // c:858
-        "procsubstpid" => 0,                                             // c:860 — globals not yet wired
-        _ => return None,                                                // c:862-864 PM_UNSET
+        "pid" => unsafe { libc::getpid() },                              // c:854-855
+        "ppid" => unsafe { libc::getppid() },                            // c:856-857
+        // c:858-859 — `procsubstpid` is the static `procsubstpid`
+        // global from exec.c; not yet wired in zshrs's process-
+        // substitution path. Returns 0 as the documented "no proc
+        // subst active" sentinel matching C's initial value.
+        "procsubstpid" => 0,
+        _ => return None,                                                // c:861-863 PM_UNSET
     };
-    Some(format!("{}", num))                                             // c:867 sprintf %d
+    Some(format!("{}", num))                                             // c:866 sprintf %d
 }
 
-/// Port of `scanpmsysparams()` from `Src/Modules/system.c:885`.
-/// The magic-assoc scan callback for `${(k)sysparams}`. Iterates
-/// the three known keys + invokes the callback per entry.
+/// Port of `getpmsysparams()` from `Src/Modules/system.c:873`. The
+/// magic-assoc lookup callback for `${sysparams[name]}`.
+///
+/// C signature: `static HashNode getpmsysparams(HashTable ht, const char *name)`.
+/// Rust port returns `Option<String>` since zshrs's magic-assoc
+/// dispatcher consumes the value, not a synthesised Param.
+pub fn getpmsysparams(name: &str) -> Option<String> {                    // c:873
+    // c:875-879 — `pm = hcalloc(); fillpmsysparams(pm, name); return &pm->node;`
+    fillpmsysparams(name)                                                // c:878
+}
+
+/// Port of `scanpmsysparams()` from `Src/Modules/system.c:885`. The
+/// magic-assoc scanner for `${(k)sysparams}`. Iterates the three
+/// fixed keys and returns each `(name, value)` pair.
 ///
 /// C signature: `static void scanpmsysparams(HashTable ht, ScanFunc func, int flags)`.
-/// Rust port returns `Vec<(name, value)>`.
+/// Rust port returns the pairs as a Vec.
 pub fn scanpmsysparams() -> Vec<(String, String)> {                      // c:885
-    // c:894-898 — fill + emit each of pid / ppid / procsubstpid.
+    // c:889-894 — fill + emit each of pid / ppid / procsubstpid.
     let mut out = Vec::new();
-    for name in ["pid", "ppid", "procsubstpid"] {
-        if let Some(v) = fillpmsysparams(name) {
-            out.push((name.to_string(), v));
+    for n in ["pid", "ppid", "procsubstpid"] {                           // c:889/891/893
+        if let Some(v) = fillpmsysparams(n) {
+            out.push((n.to_string(), v));
         }
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Module loaders.
+// ---------------------------------------------------------------------------
+
+/// Port of `setup_()` from `Src/Modules/system.c:920`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn setup_() -> i32 { 0 }                                             // c:920-923
+
+/// Port of `features_()` from `Src/Modules/system.c:927`. C body is
+/// `*features = featuresarray(m, &module_features); return 0;`.
+/// Static-link path: 0.
+pub fn features_() -> i32 { 0 }                                          // c:927-931
+
+/// Port of `enables_()` from `Src/Modules/system.c:935`. C body is
+/// `return handlefeatures(m, &module_features, enables);`. Static-
+/// link path: 0.
+pub fn enables_() -> i32 { 0 }                                           // c:935-938
+
+/// Port of `boot_()` from `Src/Modules/system.c:942`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn boot_() -> i32 { 0 }                                              // c:942-945
+
+/// Port of `cleanup_()` from `Src/Modules/system.c:950`. C body is
+/// `return setfeatureenables(m, &module_features, NULL);`. Static-
+/// link path: 0.
+pub fn cleanup_() -> i32 { 0 }                                           // c:950-953
+
+/// Port of `finish_()` from `Src/Modules/system.c:957`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn finish_() -> i32 { 0 }                                            // c:957-960
+
+// ---------------------------------------------------------------------------
+// `sys_errnames[]` table — port of `Src/Modules/errnames.c:9` (which
+// is auto-generated at build time by `Src/Modules/errnames2.awk`
+// from the platform's `<errno.h>`).
+//
+// PORT.md ABSOLUTE FREEZE forbids creating `src/ported/modules/
+// errnames.rs`, so the table lives in this file. Other modules
+// (`fusevm_bridge`, `params`, `parameter`) read it via
+// `crate::modules::system::SYS_ERRNAMES`. The previous table name
+// `ERRNO_NAMES` is kept as an alias for those existing call sites.
+// ---------------------------------------------------------------------------
+
+/// Linux errno table — kernel order, sourced from
+/// `<asm-generic/errno.h>` + `<asm-generic/errno-base.h>`.
+#[cfg(target_os = "linux")]
+pub static SYS_ERRNAMES: &[(&str, i32)] = &[
+    ("EPERM", 1), ("ENOENT", 2), ("ESRCH", 3), ("EINTR", 4), ("EIO", 5),
+    ("ENXIO", 6), ("E2BIG", 7), ("ENOEXEC", 8), ("EBADF", 9), ("ECHILD", 10),
+    ("EAGAIN", 11), ("ENOMEM", 12), ("EACCES", 13), ("EFAULT", 14),
+    ("ENOTBLK", 15), ("EBUSY", 16), ("EEXIST", 17), ("EXDEV", 18),
+    ("ENODEV", 19), ("ENOTDIR", 20), ("EISDIR", 21), ("EINVAL", 22),
+    ("ENFILE", 23), ("EMFILE", 24), ("ENOTTY", 25), ("ETXTBSY", 26),
+    ("EFBIG", 27), ("ENOSPC", 28), ("ESPIPE", 29), ("EROFS", 30),
+    ("EMLINK", 31), ("EPIPE", 32), ("EDOM", 33), ("ERANGE", 34),
+    ("EDEADLK", 35), ("ENAMETOOLONG", 36), ("ENOLCK", 37), ("ENOSYS", 38),
+    ("ENOTEMPTY", 39), ("ELOOP", 40),
+];
+
+/// macOS errno table — Apple's `<sys/errno.h>` (Homebrew/older-SDK shape).
+#[cfg(target_os = "macos")]
+pub static SYS_ERRNAMES: &[(&str, i32)] = &[
+    ("EPERM", 1), ("ENOENT", 2), ("ESRCH", 3), ("EINTR", 4), ("EIO", 5),
+    ("ENXIO", 6), ("E2BIG", 7), ("ENOEXEC", 8), ("EBADF", 9), ("ECHILD", 10),
+    ("EDEADLK", 11), ("ENOMEM", 12), ("EACCES", 13), ("EFAULT", 14),
+    ("ENOTBLK", 15), ("EBUSY", 16), ("EEXIST", 17), ("EXDEV", 18),
+    ("ENODEV", 19), ("ENOTDIR", 20), ("EISDIR", 21), ("EINVAL", 22),
+    ("ENFILE", 23), ("EMFILE", 24), ("ENOTTY", 25), ("ETXTBSY", 26),
+    ("EFBIG", 27), ("ENOSPC", 28), ("ESPIPE", 29), ("EROFS", 30),
+    ("EMLINK", 31), ("EPIPE", 32), ("EDOM", 33), ("ERANGE", 34),
+    ("EAGAIN", 35), ("EINPROGRESS", 36), ("EALREADY", 37), ("ENOTSOCK", 38),
+    ("EDESTADDRREQ", 39), ("EMSGSIZE", 40), ("EPROTOTYPE", 41),
+    ("ENOPROTOOPT", 42), ("EPROTONOSUPPORT", 43), ("ESOCKTNOSUPPORT", 44),
+    ("ENOTSUP", 45), ("EPFNOSUPPORT", 46), ("EAFNOSUPPORT", 47),
+    ("EADDRINUSE", 48), ("EADDRNOTAVAIL", 49), ("ENETDOWN", 50),
+    ("ENETUNREACH", 51), ("ENETRESET", 52), ("ECONNABORTED", 53),
+    ("ECONNRESET", 54), ("ENOBUFS", 55), ("EISCONN", 56), ("ENOTCONN", 57),
+    ("ESHUTDOWN", 58), ("ETOOMANYREFS", 59), ("ETIMEDOUT", 60),
+    ("ECONNREFUSED", 61), ("ELOOP", 62), ("ENAMETOOLONG", 63),
+    ("EHOSTDOWN", 64), ("EHOSTUNREACH", 65), ("ENOTEMPTY", 66),
+    ("EPROCLIM", 67), ("EUSERS", 68), ("EDQUOT", 69), ("ESTALE", 70),
+    ("EREMOTE", 71), ("EBADRPC", 72), ("ERPCMISMATCH", 73),
+    ("EPROGUNAVAIL", 74), ("EPROGMISMATCH", 75), ("EPROCUNAVAIL", 76),
+    ("ENOLCK", 77), ("ENOSYS", 78), ("EFTYPE", 79), ("EAUTH", 80),
+    ("ENEEDAUTH", 81), ("EPWROFF", 82), ("EDEVERR", 83), ("EOVERFLOW", 84),
+    ("EBADEXEC", 85), ("EBADARCH", 86), ("ESHLIBVERS", 87),
+    ("EBADMACHO", 88), ("ECANCELED", 89), ("EIDRM", 90), ("ENOMSG", 91),
+    ("EILSEQ", 92), ("ENOATTR", 93), ("EBADMSG", 94), ("EMULTIHOP", 95),
+    ("ENODATA", 96), ("ENOLINK", 97), ("ENOSR", 98), ("ENOSTR", 99),
+    ("EPROTO", 100), ("ETIME", 101), ("EOPNOTSUPP", 102), ("ENOPOLICY", 103),
+    ("ENOTRECOVERABLE", 104), ("EOWNERDEAD", 105), ("EQFULL", 106),
+];
+
+/// Fallback for platforms zshrs doesn't have a verified table for —
+/// the POSIX-portable subset (errnos 1-34).
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub static SYS_ERRNAMES: &[(&str, i32)] = &[
+    ("EPERM", 1), ("ENOENT", 2), ("ESRCH", 3), ("EINTR", 4), ("EIO", 5),
+    ("ENXIO", 6), ("E2BIG", 7), ("ENOEXEC", 8), ("EBADF", 9), ("ECHILD", 10),
+    ("ENOMEM", 12), ("EACCES", 13), ("EFAULT", 14), ("EBUSY", 16),
+    ("EEXIST", 17), ("EXDEV", 18), ("ENODEV", 19), ("ENOTDIR", 20),
+    ("EISDIR", 21), ("EINVAL", 22), ("ENFILE", 23), ("EMFILE", 24),
+    ("ENOTTY", 25), ("EFBIG", 27), ("ENOSPC", 28), ("ESPIPE", 29),
+    ("EROFS", 30), ("EMLINK", 31), ("EPIPE", 32), ("EDOM", 33),
+    ("ERANGE", 34),
+];
+
+/// Back-compat alias: pre-rewrite call sites in `fusevm_bridge`,
+/// `params`, and `parameter` reference the table as `ERRNO_NAMES`.
+/// New code should use `SYS_ERRNAMES` (matches the C identifier).
+pub static ERRNO_NAMES: &[(&str, i32)] = SYS_ERRNAMES;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ported::math::{Mnumber, MN_INTEGER};
+    use std::fs::File;
+    use std::io::Write as _;
+    use tempfile::TempDir;
+
+    /// Verifies `getposint` parses non-negative ints and rejects
+    /// negatives + trailing garbage per c:51.
+    #[test]
+    fn getposint_basic() {
+        assert_eq!(getposint("42", "test"), 42);
+        assert_eq!(getposint("0", "test"), 0);
+        assert_eq!(getposint("-1", "test"), -1);    // negative → -1
+        assert_eq!(getposint("abc", "test"), -1);   // garbage → -1
+    }
+
+    /// Verifies `bin_zsystem_supports` per c:794-800.
+    #[test]
+    fn bin_zsystem_supports_self() {
+        let mut exec = ShellExecutor::new();
+        assert_eq!(bin_zsystem_supports(&mut exec, "zsystem",
+            &["supports".to_string()]), 0);
+        #[cfg(unix)]
+        assert_eq!(bin_zsystem_supports(&mut exec, "zsystem",
+            &["flock".to_string()]), 0);
+        assert_eq!(bin_zsystem_supports(&mut exec, "zsystem",
+            &["nosuchfeature".to_string()]), 1);
+    }
+
+    /// Verifies `bin_zsystem_supports` arg-count guards (c:784-791).
+    #[test]
+    fn bin_zsystem_supports_arg_count() {
+        let mut exec = ShellExecutor::new();
+        assert_eq!(bin_zsystem_supports(&mut exec, "zsystem", &[]), 255);
+        assert_eq!(bin_zsystem_supports(&mut exec, "zsystem",
+            &["a".to_string(), "b".to_string()]), 255);
+    }
+
+    /// Verifies `bin_zsystem` dispatches to the right subcommand
+    /// (c:809/811/814).
+    #[test]
+    fn bin_zsystem_dispatch() {
+        let mut exec = ShellExecutor::new();
+        assert_eq!(bin_zsystem(&mut exec, "zsystem",
+            &["supports".to_string(), "supports".to_string()]), 0);
+        assert_eq!(bin_zsystem(&mut exec, "zsystem",
+            &["unknown".to_string()]), 1);
+        assert_eq!(bin_zsystem(&mut exec, "zsystem", &[]), 1);
+    }
+
+    /// Verifies `errnosgetfn` returns the dup'd table (c:835).
+    #[test]
+    fn errnosgetfn_returns_table() {
+        let names = errnosgetfn();
+        assert!(names.contains(&"EPERM".to_string()));
+        assert!(names.contains(&"ENOENT".to_string()));
+        assert!(names.contains(&"EINVAL".to_string()));
+    }
+
+    /// Verifies `fillpmsysparams` for the three known keys
+    /// (c:854-862) and PM_UNSET fallback (c:861-863).
+    #[test]
+    fn fillpmsysparams_keys() {
+        assert!(fillpmsysparams("pid").is_some());
+        assert!(fillpmsysparams("ppid").is_some());
+        assert!(fillpmsysparams("procsubstpid").is_some());
+        assert!(fillpmsysparams("nonsense").is_none());
+    }
+
+    /// Verifies `getpmsysparams` proxies through fillpmsysparams
+    /// (c:878).
+    #[test]
+    fn getpmsysparams_pid_set() {
+        assert!(getpmsysparams("pid").is_some());
+        assert!(getpmsysparams("nonsense").is_none());
+    }
+
+    /// Verifies `scanpmsysparams` yields all three known keys
+    /// (c:889-894).
+    #[test]
+    fn scanpmsysparams_three_entries() {
+        let entries = scanpmsysparams();
+        let names: Vec<&str> = entries.iter().map(|(n,_)| n.as_str()).collect();
+        assert!(names.contains(&"pid"));
+        assert!(names.contains(&"ppid"));
+        assert!(names.contains(&"procsubstpid"));
+    }
+
+    /// Verifies `bin_syserror` writes message to errvar with prefix
+    /// (c:533-536).
+    #[test]
+    fn bin_syserror_to_errvar_with_prefix() {
+        let mut exec = ShellExecutor::new();
+        let r = bin_syserror(&mut exec, "syserror",
+            &["-e".to_string(), "myerr".to_string(),
+              "-p".to_string(), "PFX:".to_string(),
+              "ENOENT".to_string()]);
+        assert_eq!(r, 0);
+        let val = exec.variables.get("myerr").cloned().unwrap_or_default();
+        assert!(val.starts_with("PFX:"));
+    }
+
+    /// Verifies `bin_syserror` returns 2 for unknown errno name
+    /// (c:527-528).
+    #[test]
+    fn bin_syserror_unknown_name_returns_2() {
+        let mut exec = ShellExecutor::new();
+        assert_eq!(bin_syserror(&mut exec, "syserror",
+            &["-e".to_string(), "myerr".to_string(),
+              "ENOTAREALERROR".to_string()]), 2);
+    }
+
+    /// Verifies `bin_sysopen` opens a file and stores fd in the
+    /// named variable (c:413-414) when -u is a non-digit identifier.
+    #[test]
+    #[cfg(unix)]
+    fn bin_sysopen_writes_fd_to_var() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path().join("a.txt");
+        let mut exec = ShellExecutor::new();
+        let r = bin_sysopen(&mut exec, "sysopen",
+            &["-w".to_string(), "-o".to_string(), "creat".to_string(),
+              "-u".to_string(), "MYFD".to_string(),
+              p.to_str().unwrap().to_string()]);
+        assert_eq!(r, 0);
+        let fd_str = exec.variables.get("MYFD").cloned().unwrap_or_default();
+        let fd: i32 = fd_str.parse().expect("MYFD should be integer");
+        assert!(fd >= 10);   // movefd lifts to 10+
+        unsafe { libc::close(fd); }
+    }
+
+    /// Verifies `bin_sysseek` lseek + return-code shape (c:461-462).
+    #[test]
+    #[cfg(unix)]
+    fn bin_sysseek_basic() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path().join("b.txt");
+        {
+            let mut f = File::create(&p).unwrap();
+            f.write_all(b"hello world").unwrap();
+        }
+        let path_c = std::ffi::CString::new(p.to_str().unwrap()).unwrap();
+        let fd = unsafe { libc::open(path_c.as_ptr(), libc::O_RDONLY) };
+        assert!(fd >= 0);
+        let mut exec = ShellExecutor::new();
+        let r = bin_sysseek(&mut exec, "sysseek",
+            &["-u".to_string(), fd.to_string(),
+              "-w".to_string(), "start".to_string(),
+              "5".to_string()]);
+        assert_eq!(r, 0);
+        unsafe { libc::close(fd); }
+    }
+
+    /// Verifies `math_systell` returns lseek(SEEK_CUR) (c:478).
+    #[test]
+    #[cfg(unix)]
+    fn math_systell_returns_lseek_cur() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path().join("c.txt");
+        {
+            let mut f = File::create(&p).unwrap();
+            f.write_all(b"hello world").unwrap();
+        }
+        let path_c = std::ffi::CString::new(p.to_str().unwrap()).unwrap();
+        let fd = unsafe { libc::open(path_c.as_ptr(), libc::O_RDONLY) };
+        unsafe { libc::lseek(fd, 7, libc::SEEK_SET); }
+        let argv = vec![Mnumber::integer(fd as i64)];
+        let r = math_systell("systell", 1, &argv, 0);
+        assert_eq!(r.type_, MN_INTEGER);
+        assert_eq!(r.l, 7);
+        unsafe { libc::close(fd); }
+    }
 }

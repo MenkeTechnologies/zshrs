@@ -1950,21 +1950,38 @@ pub fn write_loop(fd: i32, buf: &[u8]) -> io::Result<usize> {
     }
 }
 
-/// Redup: duplicate fd x to y (from utils.c redup)
-pub fn redup(x: i32, y: i32) {
+/// Port of `redup()` from `Src/utils.c:2021`.
+///
+/// C signature: `int redup(int x, int y)`.
+/// "Move fd x to y. If x == -1, fd y is closed. Returns y for
+/// success, -1 for failure." (c:2014-2016 docstring.)
+///
+/// Body mirrors c:2023-2068: when `x == -1`, close `y` (return `y`);
+/// when `x == y`, no-op (return `y`); otherwise `dup2(x, y)` +
+/// `close(x)`. The `fpurge` block at c:2025-2045 and the `fdtable[]`
+/// updates at c:2053-2063 require the fdtable global which isn't
+/// ported yet — those side effects are skipped, the dup2/close pair
+/// is preserved.
+pub fn redup(x: i32, y: i32) -> i32 {                                    // c:2021
+    let mut ret = y;                                                     // c:2023
     #[cfg(unix)]
     {
-        if x != y {
-            unsafe {
-                libc::dup2(x, y);
-                libc::close(x);
+        if x < 0 {                                                       // c:2047
+            zclose(y);                                                   // c:2048
+        } else if x != y {                                               // c:2049
+            if unsafe { libc::dup2(x, y) } == -1 {                       // c:2050
+                ret = -1;                                                // c:2051
             }
+            // c:2053-2063 — fdtable copy + FLOCK handling (skipped:
+            // fdtable global not yet ported to Rust).
+            zclose(x);                                                   // c:2064
         }
     }
     #[cfg(not(unix))]
     {
         let _ = (x, y);
     }
+    ret                                                                  // c:2067
 }
 
 /// Check if a character type at end of string (from utils.c itype_end)
@@ -2517,9 +2534,31 @@ pub fn addlockfd(fd: i32, cloexec: bool) {
     }
 }
 
-/// Close lock file descriptor (from utils.c zcloselockfd)
-pub fn zcloselockfd(fd: i32) {
-    zclose(fd);
+/// Port of `zcloselockfd()` from `Src/utils.c:2156`.
+///
+/// C signature: `int zcloselockfd(int fd)`.
+/// "Close an fd returning 0 if used for locking; return -1 if it
+/// isn't." (c:2150-2152 docstring.)
+///
+/// C body (c:2156-2164):
+/// ```c
+/// if (fd > max_zsh_fd) return -1;
+/// if (fdtable[fd] != FDT_FLOCK && fdtable[fd] != FDT_FLOCK_EXEC)
+///     return -1;
+/// zclose(fd);
+/// return 0;
+/// ```
+/// The `fdtable[]` / `max_zsh_fd` global state is not yet ported to
+/// Rust, so the FDT_FLOCK check at c:2160-2161 is skipped — the
+/// Rust port closes the fd unconditionally and reports success.
+/// Callers (e.g. `bin_zsystem_flock` -u path at system.c:676) treat
+/// `-1` as "not in lockfd table"; until the fdtable is ported,
+/// returning `0` matches the most common case (the user typed an fd
+/// they really did `flock` earlier in the same shell).
+pub fn zcloselockfd(fd: i32) -> i32 {                                    // c:2156
+    // c:2158-2161 — fdtable check skipped (no Rust fdtable global).
+    zclose(fd);                                                          // c:2162
+    0                                                                    // c:2163
 }
 
 /// Port of `zstrtol_underscore()` from `Src/utils.c:2436`.
