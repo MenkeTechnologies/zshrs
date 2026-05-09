@@ -103,13 +103,13 @@ impl ArgumentsSpec {
 
     /// Parse a single option spec string
     ///
-    /// Format: `[exclusions]opt[description]:arg-name:action`
+    /// Format: `\[exclusions\]opt\[description\]:arg-name:action`
     /// Examples:
-    /// - `-v[verbose mode]`
-    /// - `--help[show help]`
-    /// - `(-v --verbose)'{-v,--verbose}'[be verbose]`
-    /// - `*-d[debug mode]` (repeatable)
-    /// - `--file=[file to use]:filename:_files`
+    /// - `-v\[verbose mode\]`
+    /// - `--help\[show help\]`
+    /// - `(-v --verbose)'{-v,--verbose}'\[be verbose\]`
+    /// - `*-d\[debug mode\]` (repeatable)
+    /// - `--file=\[file to use\]:filename:_files`
     pub fn parse_opt_spec(spec: &str) -> Option<OptSpec> {
         let spec = spec.trim();
         if spec.is_empty() {

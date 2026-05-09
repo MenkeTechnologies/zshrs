@@ -792,7 +792,7 @@ pub fn is_interact() -> bool {
 pub fn install_handler(sig: i32) {
     unsafe {
         let mut act: libc::sigaction = std::mem::zeroed();
-        act.sa_sigaction = zhandler as usize;
+        act.sa_sigaction = zhandler as *const () as usize;
         libc::sigemptyset(&mut act.sa_mask);
         // SA_INTERRUPT isn't in the libc crate's POSIX feature set;
         // when running interactively we'd prefer to leave SA_RESTART

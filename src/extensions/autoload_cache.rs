@@ -9,10 +9,10 @@
 //!     header: { magic, format_version, zshrs_version, pointer_width, built_at_secs },
 //!     entries: HashMap<function_name, AutoloadEntry>,
 //!   }
-//!   AutoloadEntry { binary_mtime_at_cache, cached_at_secs, chunk_blob: Vec<u8> }
+//!   AutoloadEntry { binary_mtime_at_cache, cached_at_secs, chunk_blob: `Vec<u8>` }
 //!
 //! Inner `chunk_blob` is bincode-encoded `fusevm::Chunk` (same constraint as
-//! [`script_cache`] — `fusevm::Chunk` is upstream and only derives serde).
+//! [`script_cache`](crate::script_cache) module — `fusevm::Chunk` is upstream and only derives serde).
 //!
 //! Invalidation:
 //!   - zshrs binary mtime newer than `binary_mtime_at_cache` ⇒ entry stale
@@ -21,16 +21,16 @@
 //!     fpath dirs / .zwc archives and the existing `compsys::cache::autoloads`
 //!     SQLite row tracks the source file/offset/size. Rebuild logic relies on
 //!     `compinit` clearing the whole rkyv shard at recompute time (see
-//!     [`AutoloadShardWriter`] — used by the compinit bulk-prewarm path).
+//!     `AutoloadShardWriter` — used by the compinit bulk-prewarm path).
 //!
 //! Bulk-write: compinit prewarms 16k+ autoload bytecodes in one go. Per-batch
 //! shard rewrites (the SQLite-era pattern) would re-serialize 16k entries
-//! 160 times. Instead the new API exposes [`AutoloadShardWriter`]: accumulate
+//! 160 times. Instead the new API exposes `AutoloadShardWriter`: accumulate
 //! all `(name, blob)` pairs in memory, then `commit()` writes the shard once.
 //! The single-add `try_save_one` path remains for the cold-start case where
 //! one autoload at a time is compiled by the interactive shell.
 //!
-//! The on-disk shape mirrors [`script_cache::ScriptShard`] — same header,
+//! The on-disk shape mirrors [`ScriptShard`](crate::script_cache::ScriptShard) — same header,
 //! same magic-version-pointer_width discipline, same atomic-rename writes.
 
 use std::collections::HashMap;

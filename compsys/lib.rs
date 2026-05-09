@@ -18,7 +18,7 @@
 //! - Full zsh behavior for debugging/compatibility
 //!
 //! # Usage
-//! ```ignore
+//! ```text
 //! // Default mode (recommended)
 //! zshrs -c 'compinit'
 //!

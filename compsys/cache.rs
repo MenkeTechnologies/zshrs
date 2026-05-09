@@ -368,7 +368,7 @@ impl CompsysCache {
     /// Count autoloads with a non-NULL body. Replaces the legacy
     /// `count_autoloads_missing_bytecode` — bytecode coverage is now derived
     /// by subtracting the rkyv shard's `cached_names` set from this count
-    /// (caller-side, see [`zsh::autoload_cache`]).
+    /// (caller-side, see the `autoload_cache` module in the `zsh` / zshrs library crate).
     pub fn count_autoloads_with_body(&self) -> rusqlite::Result<usize> {
         self.conn.query_row(
             "SELECT COUNT(*) FROM autoloads WHERE body IS NOT NULL",

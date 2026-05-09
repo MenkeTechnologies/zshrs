@@ -940,7 +940,7 @@ pub fn optison(_name: &str, _s: &str) -> i32 {
     0
 }
 
-/// Port of `cond_str()` from Src/cond.c:525 — return arg[num] after
+/// Port of `cond_str()` from Src/cond.c:525 — return `arg[num]` after
 /// running it through `singsub()` if it contains shell tokens, then
 /// optionally `untokenize()`. The Rust port stores already-expanded
 /// argument strings in the cond evaluator, so this collapses to an

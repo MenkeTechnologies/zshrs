@@ -1079,7 +1079,7 @@ fn complete_math_functions(prefix: &str) -> CompletionGroup {
     group
 }
 
-/// Complete condition operators for [[ ]] context
+/// Complete condition operators for \[\[ \]\] context
 fn complete_condition_operators(prefix: &str) -> CompletionGroup {
     let mut group = CompletionGroup::new("condition operator");
     group.explanation = Some("condition operator".to_string());
@@ -1134,7 +1134,7 @@ fn complete_condition_operators(prefix: &str) -> CompletionGroup {
     group
 }
 
-/// Complete subscript flags for array[subscript] context  
+/// Complete subscript flags for array\[subscript\] context
 fn complete_subscript_flags(prefix: &str) -> CompletionGroup {
     let mut group = CompletionGroup::new("subscript flag");
     group.explanation = Some("subscript flag".to_string());
@@ -1649,7 +1649,7 @@ fn complete_subcommands_from_cache(
     }
 }
 
-/// Parse a single option spec like '--foo[description]' or '(-x --exclude)--foo[desc]'
+/// Parse a single option spec like '--foo\[description\]' or '(-x --exclude)--foo\[desc\]'
 fn parse_option_spec(spec: &str) -> Option<(String, String)> {
     let spec = spec.trim();
 

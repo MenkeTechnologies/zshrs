@@ -244,7 +244,7 @@ impl MenuColors {
         None
     }
 
-    /// Simple glob matching (*, ?, [])
+    /// Simple glob matching (*, ?, \[\])
     fn glob_match(pattern: &str, text: &str) -> bool {
         // Handle case-insensitive flag (#i) at start
         let (pattern, case_insensitive) = if let Some(rest) = pattern.strip_prefix("(#i)") {
@@ -612,7 +612,7 @@ pub struct MenuState {
 
     // === Position grid (zsh mtab/mgtab) ===
     /// Match table: maps screen position to item index (zsh: mtab)
-    /// Size is mcols * mlines, indexed as [line * mcols + col]
+    /// Size is mcols * mlines, indexed as \[line * mcols + col\]
     mtab: Vec<Option<usize>>,
     /// Group table: maps screen position to group index (zsh: mgtab)
     mgtab: Vec<usize>,

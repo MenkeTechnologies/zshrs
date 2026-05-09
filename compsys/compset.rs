@@ -18,7 +18,7 @@ pub enum CompsetOp {
     SuffixPat(String),
     /// -n begin end: restrict words to numeric range
     RangeNum(i32, i32),
-    /// -N begin [end]: restrict words to pattern range
+    /// -N begin \[end\]: restrict words to pattern range
     RangePat(String, Option<String>),
     /// -q: quote removal (set up for subword completion)
     Quote,
@@ -568,7 +568,7 @@ fn quote_for_completion(s: &str, for_pattern: bool) -> String {
 /// compcall options
 #[derive(Clone, Debug, Default)]
 pub struct CompcallOpts {
-    /// -T: use completion for command specified by words[1] (like -T flag to compctl)
+    /// -T: use completion for command specified by words\[1\] (like -T flag to compctl)
     pub use_command: bool,
     /// -D: use default completion
     pub use_default: bool,

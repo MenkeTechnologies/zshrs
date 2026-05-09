@@ -8541,7 +8541,7 @@ pub const BUILTIN_XTRACE_NEWLINE: u16 = 526;
 
 /// Bridge into subst_port::substitute_brace_array for nested forms
 /// that need to PRESERVE array shape across the expand_string
-/// boundary. Stack: [content_string]. Returns Value::Array of the
+/// boundary. Stack: `[content_string]`. Returns Value::Array of the
 /// per-element words. Used by the compile path for
 /// `${(@)<nested>...##pat}` shapes — the standard substitute_brace
 /// returns String which collapses array→scalar; this builtin

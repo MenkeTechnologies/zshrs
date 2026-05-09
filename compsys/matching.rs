@@ -29,7 +29,7 @@ pub enum PatternElement {
     Char(char),
     /// Any single character (?)
     Any,
-    /// Character class [abc] or [^abc]
+    /// Character class \[abc\] or \[^abc\]
     Class { chars: String, negated: bool },
     /// Equivalence class {a-z}
     Equiv(String),
