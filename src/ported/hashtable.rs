@@ -1246,6 +1246,121 @@ mod tests {
         let output = format_reswd(if_rw, print_flags::WHENCE_WORD);
         assert!(output.contains("reserved"));
     }
+
+    // -------------------------------------------------------------
+    // Tests for the global shfunctab singleton & GSU callbacks.
+    //
+    // Tests are serialised via SHFUNCTAB_TEST_LOCK because they
+    // mutate the process-wide singleton.
+    // -------------------------------------------------------------
+
+    static SHFUNCTAB_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn fresh_shfunctab() {
+        let mut tab = shfunctab_lock().lock().expect("shfunctab poisoned");
+        tab.clear();
+    }
+
+    #[test]
+    fn test_createshfunctable_idempotent() {
+        let _g = SHFUNCTAB_TEST_LOCK.lock();
+        createshfunctable();
+        createshfunctable();
+        // Singleton handle stable across calls.
+        let h1 = shfunctab_lock() as *const _;
+        let h2 = shfunctab_lock() as *const _;
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_shfunctab_add_get_remove() {
+        let _g = SHFUNCTAB_TEST_LOCK.lock();
+        fresh_shfunctab();
+        {
+            let mut tab = shfunctab_lock().lock().unwrap();
+            tab.add(ShFunc::with_body("greet", "echo hello"));
+        }
+        {
+            let tab = shfunctab_lock().lock().unwrap();
+            assert!(tab.get("greet").is_some());
+            assert_eq!(
+                tab.get("greet").unwrap().body.as_deref(),
+                Some("echo hello")
+            );
+        }
+        let removed = removeshfuncnode("greet");
+        assert!(removed.is_some());
+        assert!(shfunctab_lock().lock().unwrap().get("greet").is_none());
+    }
+
+    #[test]
+    fn test_shfunctab_disable_enable() {
+        let _g = SHFUNCTAB_TEST_LOCK.lock();
+        fresh_shfunctab();
+        {
+            let mut tab = shfunctab_lock().lock().unwrap();
+            tab.add(ShFunc::with_body("f", "true"));
+        }
+        disableshfuncnode("f");
+        // get() filters disabled; get_including_disabled doesn't.
+        {
+            let tab = shfunctab_lock().lock().unwrap();
+            assert!(tab.get("f").is_none());
+            assert!(tab.get_including_disabled("f").is_some());
+        }
+        enableshfuncnode("f");
+        assert!(shfunctab_lock().lock().unwrap().get("f").is_some());
+        removeshfuncnode("f");
+    }
+
+    #[test]
+    fn test_simple_glob_match() {
+        assert!(simple_glob_match("foo", "foo"));
+        assert!(!simple_glob_match("foo", "bar"));
+        assert!(simple_glob_match("f*", "foo"));
+        assert!(simple_glob_match("f*", "f"));
+        assert!(simple_glob_match("*o", "foo"));
+        assert!(simple_glob_match("*", ""));
+        assert!(simple_glob_match("?oo", "foo"));
+        assert!(!simple_glob_match("?oo", "fo"));
+        assert!(simple_glob_match("f*o", "frogspawn-suo"));
+    }
+
+    #[test]
+    fn test_scanmatchshfunc_matches_pattern() {
+        let _g = SHFUNCTAB_TEST_LOCK.lock();
+        fresh_shfunctab();
+        {
+            let mut tab = shfunctab_lock().lock().unwrap();
+            tab.add(ShFunc::with_body("foo", "echo a"));
+            tab.add(ShFunc::with_body("foobar", "echo b"));
+            tab.add(ShFunc::with_body("baz", "echo c"));
+        }
+        let mut matched: Vec<String> = Vec::new();
+        let count = scanmatchshfunc(Some("foo*"), |name, _| matched.push(name.to_string()));
+        assert_eq!(count, 2);
+        matched.sort();
+        assert_eq!(matched, vec!["foo".to_string(), "foobar".to_string()]);
+        // No-pattern walks all.
+        let total = scanshfunc(|_, _| {});
+        assert_eq!(total, 3);
+        fresh_shfunctab();
+    }
+
+    #[test]
+    fn test_getshfuncfile_returns_filename() {
+        let _g = SHFUNCTAB_TEST_LOCK.lock();
+        fresh_shfunctab();
+        {
+            let mut tab = shfunctab_lock().lock().unwrap();
+            let mut f = ShFunc::with_body("f", "true");
+            f.filename = Some("/tmp/zshrs-fns/f".to_string());
+            tab.add(f);
+        }
+        assert_eq!(getshfuncfile("f"), Some("/tmp/zshrs-fns/f".to_string()));
+        assert_eq!(getshfuncfile("nonexistent"), None);
+        fresh_shfunctab();
+    }
 }
 
 // ===========================================================
@@ -1356,43 +1471,243 @@ pub fn fillcmdnamtable() {}
 /// one cmdnamtab entry. Rust drops via Drop; shim.
 pub fn freecmdnamnode() {}
 
-/// Port of `createshfunctable()` from Src/hashtable.c:812 —
-/// allocate `shfunctab` (the user-defined-function table). Shim.
-pub fn createshfunctable() {}
+// ===========================================================
+// shfunctab — the global shell-function table.
+//
+// Port of `mod_export HashTable shfunctab` from
+// `Src/hashtable.c:808` and the GSU callbacks built around it
+// (`createshfunctable` and the `*shfuncnode` family).
+//
+// C zsh dispatches every `function f() { … }` definition,
+// `unfunction`, `disable -f`, `enable -f`, `whence`, and trap-
+// function lookup through `shfunctab`. zshrs uses a singleton
+// `OnceLock<Mutex<ShFuncTable>>` exposed via `shfunctab_lock()`
+// so the GSU-style C names below can mutate it without taking a
+// `ShellExecutor` parameter (matching the C signatures, where
+// the table is global).
+// ===========================================================
 
-/// Port of `removeshfuncnode()` from Src/hashtable.c:836 — drop
-/// one shell function entry. Shim.
-pub fn removeshfuncnode() {}
+/// Singleton accessor for the global `shfunctab`.
+/// Mirrors C's `mod_export HashTable shfunctab` (hashtable.c:808).
+/// Lazily initialised on first access.
+pub fn shfunctab_lock() -> &'static std::sync::Mutex<ShFuncTable> {
+    static SHFUNCTAB: std::sync::OnceLock<std::sync::Mutex<ShFuncTable>> =
+        std::sync::OnceLock::new();
+    SHFUNCTAB.get_or_init(|| std::sync::Mutex::new(ShFuncTable::new()))
+}
 
-/// Port of `disableshfuncnode()` from Src/hashtable.c:855 —
-/// `disable -f NAME` entry. Shim.
-pub fn disableshfuncnode() {}
+/// Port of `createshfunctable()` from `Src/hashtable.c:812`.
+///
+/// C body:
+/// ```c
+/// shfunctab = newhashtable(7, "shfunctab", NULL);
+/// shfunctab->hash        = hasher;
+/// shfunctab->cmpnodes    = strcmp;
+/// shfunctab->addnode     = addhashnode;
+/// shfunctab->getnode     = gethashnode;
+/// shfunctab->getnode2    = gethashnode2;
+/// shfunctab->removenode  = removeshfuncnode;
+/// shfunctab->disablenode = disableshfuncnode;
+/// shfunctab->enablenode  = enableshfuncnode;
+/// shfunctab->freenode    = freeshfuncnode;
+/// shfunctab->printnode   = printshfuncnode;
+/// ```
+///
+/// Rust port: idempotent — touching the OnceLock initialises the
+/// singleton on first call. The GSU function-pointer assignments
+/// from C are encoded as the free-fn names below (each callable
+/// directly without a vtable lookup).
+pub fn createshfunctable() {
+    let _ = shfunctab_lock();
+}
 
-/// Port of `enableshfuncnode()` from Src/hashtable.c:873 —
-/// `enable -f NAME` entry. Shim.
-pub fn enableshfuncnode() {}
+/// Port of `removeshfuncnode()` from `Src/hashtable.c:836`.
+///
+/// C body:
+/// ```c
+/// if (!strncmp(nam, "TRAP", 4) && (sigidx = getsigidx(nam + 4)) != -1)
+///     hn = removetrap(sigidx);
+/// else
+///     hn = removehashnode(shfunctab, nam);
+/// return hn;
+/// ```
+///
+/// Drops the named function from `shfunctab`. If the name is a
+/// `TRAP<sig>` form, also clears the trap via signals.rs.
+/// Returns the removed function (or None if absent).
+pub fn removeshfuncnode(nam: &str) -> Option<ShFunc> {
+    if let Some(sig_part) = nam.strip_prefix("TRAP") {
+        if let Some(sig) = crate::ported::signals::getsigidx(sig_part) {
+            crate::ported::signals::removetrap(sig);
+        }
+    }
+    shfunctab_lock()
+        .lock()
+        .expect("shfunctab poisoned")
+        .remove(nam)
+}
 
-/// Port of `freeshfuncnode()` from Src/hashtable.c:888 — free
-/// one shfunctab entry (function body + name). Shim.
-pub fn freeshfuncnode() {}
+/// Port of `disableshfuncnode()` from `Src/hashtable.c:855`.
+///
+/// C body:
+/// ```c
+/// hn->flags |= DISABLED;
+/// if (!strncmp(hn->nam, "TRAP", 4)) {
+///     int sigidx = getsigidx(hn->nam + 4);
+///     if (sigidx != -1) {
+///         sigtrapped[sigidx] &= ~ZSIG_FUNC;
+///         unsettrap(sigidx);
+///     }
+/// }
+/// ```
+///
+/// Sets the DISABLED flag on the function entry; for TRAP*
+/// functions, also unsettraps the corresponding signal so the
+/// shell stops invoking the (now-disabled) trap.
+pub fn disableshfuncnode(nam: &str) {
+    {
+        let mut tab = shfunctab_lock().lock().expect("shfunctab poisoned");
+        tab.disable(nam);
+    }
+    if let Some(sig_part) = nam.strip_prefix("TRAP") {
+        if let Some(sig) = crate::ported::signals::getsigidx(sig_part) {
+            crate::ported::signals::unsettrap(sig);
+        }
+    }
+}
 
-/// Port of `scanmatchshfunc()` from Src/hashtable.c:1013 —
-/// pattern-walk over shfunctab. Shim.
-pub fn scanmatchshfunc() {}
+/// Port of `enableshfuncnode()` from `Src/hashtable.c:873`.
+///
+/// C body:
+/// ```c
+/// shf->node.flags &= ~DISABLED;
+/// if (!strncmp(shf->node.nam, "TRAP", 4)) {
+///     int sigidx = getsigidx(shf->node.nam + 4);
+///     if (sigidx != -1) settrap(sigidx, NULL, ZSIG_FUNC);
+/// }
+/// ```
+///
+/// Clears the DISABLED flag; for TRAP* functions, re-installs
+/// the signal handler with `ZSIG_FUNC` semantics so the shell
+/// dispatches the trap function on the next signal delivery.
+pub fn enableshfuncnode(nam: &str) {
+    {
+        let mut tab = shfunctab_lock().lock().expect("shfunctab poisoned");
+        tab.enable(nam);
+    }
+    if let Some(sig_part) = nam.strip_prefix("TRAP") {
+        if let Some(sig) = crate::ported::signals::getsigidx(sig_part) {
+            let _ = crate::ported::signals::settrap(
+                sig,
+                crate::ported::signals::TrapAction::Function(nam.to_string()),
+            );
+        }
+    }
+}
 
-/// Port of `scanshfunc()` from Src/hashtable.c:1031 — walk every
-/// shfunctab node calling `func()`. Shim.
-pub fn scanshfunc() {}
+/// Port of `freeshfuncnode()` from `Src/hashtable.c:888`.
+///
+/// C body frees the function name, body Eprog, redir Eprog,
+/// filename string, and sticky options struct. Rust port: drop
+/// runs all of this when the entry is removed; this helper just
+/// removes from the table to trigger the drop chain.
+pub fn freeshfuncnode(nam: &str) {
+    shfunctab_lock()
+        .lock()
+        .expect("shfunctab poisoned")
+        .remove(nam);
+}
 
-/// Port of `printshfuncexpand()` from Src/hashtable.c:1042 —
-/// `functions -e` output (expand-prompt-aware). Shim.
-pub fn printshfuncexpand() {}
+/// Port of `scanmatchshfunc()` from `Src/hashtable.c:1013`.
+///
+/// C body iterates `shfunctab` and calls `func(node)` on every
+/// entry whose name matches the compiled pattern `pprog`. Rust
+/// port walks the singleton with a closure callback.
+///
+/// Returns the count of matched entries (mirrors C's int return).
+pub fn scanmatchshfunc<F>(pattern: Option<&str>, mut func: F) -> i32
+where
+    F: FnMut(&str, &ShFunc),
+{
+    let tab = shfunctab_lock().lock().expect("shfunctab poisoned");
+    let mut count = 0;
+    for (name, entry) in tab.iter() {
+        let matches = match pattern {
+            None => true,
+            Some(p) => simple_glob_match(p, name),
+        };
+        if matches {
+            func(name, entry);
+            count += 1;
+        }
+    }
+    count
+}
 
-/// Port of `getshfuncfile()` from Src/hashtable.c:1059 — return
-/// the source-file path for a defined function (`functions -T`-
-/// style output). Shim.
-pub fn getshfuncfile() -> String {
-    String::new()
+/// Port of `scanshfunc()` from `Src/hashtable.c:1031`.
+///
+/// C body walks every `shfunctab` entry calling `func(node, flags)`.
+/// Rust port delegates to scanmatchshfunc with no pattern.
+pub fn scanshfunc<F>(func: F) -> i32
+where
+    F: FnMut(&str, &ShFunc),
+{
+    scanmatchshfunc(None, func)
+}
+
+/// Port of `printshfuncexpand()` from `Src/hashtable.c:1042`.
+///
+/// C body wraps `printshfuncnode` to expand tabs in the function
+/// body for prompt-display purposes (`functions -e`). Rust port
+/// returns the formatted entry as a string.
+pub fn printshfuncexpand(nam: &str, _flags: i32) -> Option<String> {
+    let tab = shfunctab_lock().lock().expect("shfunctab poisoned");
+    let func = tab.get_including_disabled(nam)?;
+    let body = func.body.clone().unwrap_or_default();
+    Some(format!(
+        "{} () {{\n\t{}\n}}",
+        nam,
+        body.replace('\t', "    ")
+    ))
+}
+
+/// Port of `getshfuncfile()` from `Src/hashtable.c:1059`.
+///
+/// C body returns `shf->filename`, the path to the file that
+/// defined the function (used by `functions -T` and `whence -v`
+/// to show the source location).
+pub fn getshfuncfile(nam: &str) -> Option<String> {
+    let tab = shfunctab_lock().lock().expect("shfunctab poisoned");
+    tab.get_including_disabled(nam)
+        .and_then(|f| f.filename.clone())
+}
+
+/// Glob-style match — supports `*` and `?` only. Used by
+/// `scanmatchshfunc` for `print -l` / `unfunction` glob args.
+/// C uses the full `patmatch` engine; the Rust simplification
+/// covers the common cases.
+fn simple_glob_match(pattern: &str, name: &str) -> bool {
+    let pat_bytes = pattern.as_bytes();
+    let name_bytes = name.as_bytes();
+    glob_match_inner(pat_bytes, name_bytes)
+}
+
+fn glob_match_inner(pat: &[u8], name: &[u8]) -> bool {
+    if pat.is_empty() {
+        return name.is_empty();
+    }
+    match pat[0] {
+        b'*' => {
+            for i in 0..=name.len() {
+                if glob_match_inner(&pat[1..], &name[i..]) {
+                    return true;
+                }
+            }
+            false
+        }
+        b'?' => !name.is_empty() && glob_match_inner(&pat[1..], &name[1..]),
+        c => !name.is_empty() && name[0] == c && glob_match_inner(&pat[1..], &name[1..]),
+    }
 }
 
 /// Port of `createreswdtable()` from Src/hashtable.c:1120 —
