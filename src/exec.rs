@@ -302,7 +302,6 @@ pub use crate::ported::zle::computil::{CompSpec, CompMatch, CompGroup, CompState
 pub use crate::ported::modules::zutil::ZStyle;
 pub use crate::ported::modules::zpty::ZptyState;
 pub use crate::ported::modules::zprof::ProfileEntry;
-pub use crate::ported::modules::socket::UnixSocketState;
 // `ScheduledCommand` (Rust-only) deleted; use `crate::builtins::sched::schedcmd`
 // (port of `struct schedcmd` from Src/Builtins/sched.c:43) for live state.
 pub use crate::ported::builtin::AutoloadFlags;
@@ -555,8 +554,6 @@ pub struct ShellExecutor {
     // zprof - profiling data
     pub profile_data: HashMap<String, ProfileEntry>,
     pub profiling_enabled: bool,
-    // zsocket - Unix domain sockets
-    pub unix_sockets: HashMap<i32, UnixSocketState>,
     // compsys - completion system cache
     pub compsys_cache: Option<CompsysCache>,
     // Background compinit — receiver for async fpath scan result
@@ -889,7 +886,6 @@ impl ShellExecutor {
             next_fd: 10,
             profile_data: HashMap::new(),
             profiling_enabled: false,
-            unix_sockets: HashMap::new(),
             compsys_cache: {
                 let cache_path = compsys::cache::default_cache_path();
                 if cache_path.exists() {
