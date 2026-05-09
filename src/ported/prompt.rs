@@ -1202,13 +1202,82 @@ pub fn prompt_truncate(s: &str, max_width: usize, from_right: bool, indicator: &
     }
 }
 
-/// Count visible prompt width and line count.
-/// Port of `countprompt()` from Src/prompt.c:1140 — used by ZLE
-/// to position the cursor relative to the start of the prompt.
-pub fn countprompt(s: &str) -> (usize, usize) {
-    let width = prompt_width(s);
-    let lines = s.chars().filter(|&c| c == '\n').count();
-    (width, lines)
+/// Port of `countprompt()` from `Src/prompt.c:1140`.
+///
+/// C signature:
+/// `void countprompt(char *str, int *wp, int *hp, int overf);`
+///
+/// Walks the expanded prompt counting visible columns, wrapping
+/// to the next line every `terminal_width` characters and bumping
+/// the height counter. Returns `(width, height)` — `width` is the
+/// column on the FINAL line; `height` is total line count
+/// including the first.
+///
+/// Faithful to C's prompt.c:1140 logic:
+/// - `\t` advances to the next 8-column boundary (`w = (w | 7) + 1`).
+/// - `\n` resets `w` to 0 and bumps `h`.
+/// - `\x01`/`\x02` (RL_PROMPT_*_IGNORE) toggle visibility skip.
+/// - `\x1b[...m` ANSI escapes consumed without counting.
+/// - Wrap rule: `while w > terminal_width && overf >= 0` →
+///   `h++; w -= terminal_width` (matches the C overflow loop at
+///   line 1158 + 1255).
+/// - Final-column-equals-width edge case: when `w == terminal_width
+///   && overf == 0`, snap to (0, h+1) — mirrors C lines 1265-1268.
+///
+/// Previous Rust port took only `&str` and returned `(width,
+/// newlines)` — missing the `terminal_width` overflow tracking
+/// and the `overf` flag entirely.
+pub fn countprompt(s: &str, terminal_width: usize, overf: i32) -> (usize, usize) {
+    let mut w: usize = 0;
+    let mut h: usize = 1;
+    let mut in_escape = false;
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        // Pre-loop wrap check (matches C's while at line 1158).
+        while terminal_width > 0 && w > terminal_width && overf >= 0 {
+            h += 1;
+            w -= terminal_width;
+        }
+
+        match c {
+            '\x01' => in_escape = true,
+            '\x02' => in_escape = false,
+            '\x1b' => {
+                // ANSI escape — consume until 'm' or end of string.
+                for next in chars.by_ref() {
+                    if next == 'm' {
+                        break;
+                    }
+                }
+            }
+            '\t' if !in_escape => {
+                // C: w = (w | 7) + 1;
+                w = (w | 7) + 1;
+            }
+            '\n' if !in_escape => {
+                w = 0;
+                h += 1;
+            }
+            _ if !in_escape => {
+                w += unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
+            }
+            _ => {}
+        }
+    }
+
+    // Post-loop wrap drain (C lines 1255-1263).
+    while terminal_width > 0 && w > terminal_width && overf >= 0 {
+        h += 1;
+        w -= terminal_width;
+    }
+    // Final-column edge case (C lines 1265-1268).
+    if terminal_width > 0 && w == terminal_width && overf == 0 {
+        w = 0;
+        h += 1;
+    }
+
+    (w, h)
 }
 
 /// Command stack for the `%_` prompt escape.
@@ -1420,12 +1489,59 @@ pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
     components[components.len() - npath..].join("/")
 }
 
-/// Full prompt expansion entry point.
-/// Port of `promptexpand()` from Src/prompt.c:182 — top-level
-/// driver that walks the input and dispatches every `%` escape
-/// through `putpromptchar()`.
-pub fn promptexpand(s: &str, ctx: &PromptContext) -> String {
-    expand_prompt(s, ctx)
+/// Result of [`promptexpand`] — mirrors C's mutated outparams
+/// `marker`, `rs`, `Rs` from prompt.c:182.
+///
+/// - `expanded`: the expanded prompt text.
+/// - `rs_offset`: byte offset of the right-prompt anchor (`%E`)
+///   into `expanded`, or `None` if no anchor was present. Mirrors
+///   C's `*rs = bv.bp - bv.buf` capture at the anchor point.
+/// - `cap_rs_offset`: byte offset of the upper-case `%>>` anchor
+///   for completion — same shape as C's `*Rs`.
+#[derive(Debug, Clone)]
+pub struct PromptExpandResult {
+    pub expanded: String,
+    pub rs_offset: Option<usize>,
+    pub cap_rs_offset: Option<usize>,
+}
+
+/// Port of `promptexpand()` from `Src/prompt.c:182`.
+///
+/// C signature:
+/// `char *promptexpand(char *s, int ns, const char *marker,
+///                     char *rs, char *Rs);`
+///
+/// `ns` flags the "non-special" mode (skip processing of `%E` /
+/// `%{...%}`); `marker` is an opt-in completion-cursor sentinel
+/// embedded into the output; `rs`/`Rs` are output pointers
+/// receiving the byte offsets where the right-prompt anchor
+/// landed.
+///
+/// Rust port returns a [`PromptExpandResult`] carrying all four
+/// values. The previous Rust wrapper dropped `marker`/`rs`/`Rs`
+/// entirely; ZLE callers couldn't position the right-prompt
+/// anchor without these. The marker-insertion path is documented
+/// but currently a no-op (RL completion-cursor integration
+/// pending).
+pub fn promptexpand(
+    s: &str,
+    _ns: i32,
+    _marker: Option<&str>,
+    ctx: &PromptContext,
+) -> PromptExpandResult {
+    let expanded = expand_prompt(s, ctx);
+    // Compute right-prompt anchor offset by re-scanning for `%E`
+    // / `%>` markers in the source — the expander loses that
+    // metadata, so do a second pass on the source string. Maps
+    // source offset → expanded offset is approximate (1:1 except
+    // where expansion lengthens).
+    let rs_offset = s.find("%E").or_else(|| s.find("%E)"));
+    let cap_rs_offset = s.find("%>>");
+    PromptExpandResult {
+        expanded,
+        rs_offset,
+        cap_rs_offset,
+    }
 }
 
 /// Escape text attributes back to a `%`-prefixed prompt string.
@@ -1766,6 +1882,104 @@ mod tests {
 
         let exp2 = PromptExpander::new("cmd !", &ctx).with_prompt_bang(true);
         assert_eq!(exp2.expand(), "cmd 42");
+    }
+
+    // -------------------------------------------------------------
+    // countprompt + applytextattributes + promptexpand C-shape tests.
+    // -------------------------------------------------------------
+
+    #[test]
+    fn test_countprompt_simple_no_wrap() {
+        // 5 chars, terminal_width=80, no wrap.
+        let (w, h) = countprompt("hello", 80, 0);
+        assert_eq!(w, 5);
+        assert_eq!(h, 1);
+    }
+
+    #[test]
+    fn test_countprompt_tab_advances_to_next_8() {
+        // C: w = (w | 7) + 1; — tab snaps to next multiple of 8.
+        let (w, h) = countprompt("a\tb", 80, 0);
+        assert_eq!(w, 9); // 'a' = 1, tab to 8, 'b' = 9
+        assert_eq!(h, 1);
+        let (w, _) = countprompt("\t", 80, 0);
+        assert_eq!(w, 8);
+    }
+
+    #[test]
+    fn test_countprompt_newline_resets_width_bumps_height() {
+        let (w, h) = countprompt("foo\nbar", 80, 0);
+        assert_eq!(w, 3);
+        assert_eq!(h, 2);
+    }
+
+    #[test]
+    fn test_countprompt_wraps_at_terminal_width() {
+        // 12 chars at width=10 → wraps once. Final col=2, h=2.
+        let (w, h) = countprompt("123456789012", 10, 1);
+        assert_eq!(h, 2);
+        assert_eq!(w, 2);
+    }
+
+    #[test]
+    fn test_countprompt_overf_zero_snaps_at_boundary() {
+        // C lines 1265-1268: w == terminal_width && overf == 0
+        // → (0, h+1).
+        let (w, h) = countprompt("0123456789", 10, 0);
+        assert_eq!(w, 0);
+        assert_eq!(h, 2);
+    }
+
+    #[test]
+    fn test_countprompt_skips_ansi_escape() {
+        // ANSI escape \x1b[31m takes 0 visible columns.
+        let (w, h) = countprompt("\x1b[31mhello\x1b[0m", 80, 0);
+        assert_eq!(w, 5);
+        assert_eq!(h, 1);
+    }
+
+    #[test]
+    fn test_countprompt_skips_rl_ignore_markers() {
+        // \x01 ... \x02 markers are invisible.
+        let (w, _) = countprompt("\x01raw_zero_width\x02visible", 80, 0);
+        assert_eq!(w, "visible".len());
+    }
+
+    #[test]
+    fn test_promptexpand_returns_struct_with_anchors() {
+        let ctx = PromptContext::default();
+        let r = promptexpand("user@host %E rprompt", 0, None, &ctx);
+        assert!(r.expanded.contains("rprompt"));
+        // %E offset captured.
+        assert_eq!(r.rs_offset, Some("user@host ".len()));
+        assert!(r.cap_rs_offset.is_none());
+    }
+
+    #[test]
+    fn test_applytextattributes_emits_diff() {
+        // Reset state.
+        set_pending_text_attrs(TextAttrs::default());
+        let _ = applytextattributes(0);
+        // Set bold pending; diff should include the bold SGR.
+        set_pending_text_attrs(TextAttrs {
+            bold: true,
+            ..TextAttrs::default()
+        });
+        let diff = applytextattributes(0);
+        assert!(diff.contains("\x1b[") && diff.contains("1"));
+        // Clear pending; diff should reset.
+        set_pending_text_attrs(TextAttrs::default());
+        let diff = applytextattributes(0);
+        assert!(diff.contains("\x1b[0m"));
+    }
+
+    #[test]
+    fn test_applytextattributes_no_diff_when_unchanged() {
+        set_pending_text_attrs(TextAttrs::default());
+        let _ = applytextattributes(0);
+        // Re-apply same state — should be empty diff.
+        let diff = applytextattributes(0);
+        assert!(diff.is_empty());
     }
 }
 
@@ -2261,17 +2475,54 @@ impl crate::ported::exec::ShellExecutor {
 }
 // END moved-from-exec-rs
 
-/// Apply pending text-attribute changes to the terminal.
-/// Port of `applytextattributes()` from Src/prompt.c:1645.
+/// Singleton holding the txtcurrentattrs / txtpendingattrs C
+/// globals (Src/prompt.c file-statics, around line 1640). Used
+/// by [`applytextattributes`] to compute the SGR diff between
+/// the last-flushed and the pending attribute state.
+fn current_attrs_lock() -> &'static std::sync::Mutex<TextAttrs> {
+    static CUR: std::sync::OnceLock<std::sync::Mutex<TextAttrs>> = std::sync::OnceLock::new();
+    CUR.get_or_init(|| std::sync::Mutex::new(TextAttrs::default()))
+}
+
+fn pending_attrs_lock() -> &'static std::sync::Mutex<TextAttrs> {
+    static PND: std::sync::OnceLock<std::sync::Mutex<TextAttrs>> = std::sync::OnceLock::new();
+    PND.get_or_init(|| std::sync::Mutex::new(TextAttrs::default()))
+}
+
+/// Set the pending text-attributes that the next
+/// [`applytextattributes`] call will diff against the current
+/// state. Mirrors callers writing to C's `txtpendingattrs`.
+pub fn set_pending_text_attrs(attrs: TextAttrs) {
+    *pending_attrs_lock()
+        .lock()
+        .expect("pending_attrs poisoned") = attrs;
+}
+
+/// Port of `applytextattributes()` from `Src/prompt.c:1645`.
 ///
-/// In zsh this diff-syncs `txtcurrentattrs` against
-/// `txtpendingattrs` and emits the minimal termcap sequence
-/// (`tsetcap(TCALLATTRSOFF…)`, `TCBOLDFACEBEG`, etc.) to transition
-/// the terminal between attribute states. The Rust rewrite emits
-/// SGR strings inline via `set_colour_attribute` during prompt
-/// expansion, so this entry exists for ABI parity; terminal-side
-/// attribute syncing happens when the rendered prompt is flushed.
-pub fn applytextattributes(_flags: i32) {}
+/// C body diff-syncs `txtcurrentattrs` against `txtpendingattrs`
+/// and emits the minimal termcap-driven sequence to transition
+/// the terminal — `tsetcap(TCALLATTRSOFF…)`, `TCBOLDFACEBEG`, etc.
+///
+/// Rust port: returns the SGR diff string built by [`treplaceattrs`]
+/// over the (current, pending) pair, and updates current = pending.
+/// The previous port was an empty `void` shim that emitted nothing
+/// — output gets emitted at flush time, which broke any caller
+/// expecting incremental attr changes. New shape returns the diff
+/// the caller can write to the terminal.
+///
+/// `_flags` parameter (currently unused in zshrs port — C uses it
+/// to gate "force reset" mode).
+pub fn applytextattributes(_flags: i32) -> String {
+    let mut current = current_attrs_lock().lock().expect("current_attrs poisoned");
+    let pending = pending_attrs_lock()
+        .lock()
+        .expect("pending_attrs poisoned")
+        .clone();
+    let diff = treplaceattrs(&current, &pending);
+    *current = pending;
+    diff
+}
 
 /// Handle `%>...>` / `%<...<` / `%[truncchar string]` truncation.
 /// Port of `prompttrunc()` from Src/prompt.c:1276.

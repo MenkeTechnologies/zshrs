@@ -301,6 +301,15 @@ interact_lock
 set_interact
 is_interact
 
+# prompt.rs — Rust-only OnceLock<Mutex<TextAttrs>> singletons for the
+# C file-statics txtcurrentattrs / txtpendingattrs (Src/prompt.c:1640+).
+# C dereferences the globals directly; Rust port wraps each in a
+# OnceLock plus a `set_pending_text_attrs` writer that callers use
+# instead of the global assignment. Same pattern as utils.rs locks.
+current_attrs_lock
+pending_attrs_lock
+set_pending_text_attrs
+
 # hashtable.rs HashNodeFlags trait — Rust-only abstraction over C's
 # `struct hashnode { char *nam; int flags; ... }` header. Each typed
 # table value impls this so the generic gethashnode/disablehashnode/etc.
