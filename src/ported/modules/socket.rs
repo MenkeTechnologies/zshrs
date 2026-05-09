@@ -348,17 +348,14 @@ impl crate::ported::exec::ShellExecutor {
 
 // ─── moved from src/ported/exec.rs (drift extraction) ───
 
-/// Unix domain socket state
-/// One zsocket session.
-/// Port of the per-session state Src/Modules/socket.c keeps
-/// (`bin_zsocket()` line 57) — fd / path / role.
-pub struct UnixSocketState {
-    pub path: Option<PathBuf>,
-    pub listening: bool,
-    pub stream: Option<std::os::unix::net::UnixStream>,
-    pub listener: Option<std::os::unix::net::UnixListener>,
-}
-
+// Note: There is NO per-session UnixSocketState in C zsh. C
+// `bin_zsocket()` (Src/Modules/socket.c:57) opens the socket via
+// `socket()` then registers the fd in the shell-wide `fdtable[]`
+// as `FDT_EXTERNAL` (socket.c:131); it keeps no struct for the
+// path/listener/stream. A previous Rust port aggregated those
+// into `UnixSocketState` + a `HashMap<i32, UnixSocketState>` on
+// `ShellExecutor`, which was bag-of-globals + dead code (never
+// inserted, never read). Deleted per PORT_PLAN Phase 2.
 
 /// Module loader entry — port of `setup_()` from Src/Modules/socket.c:291.
 pub fn setup_() -> i32 {
