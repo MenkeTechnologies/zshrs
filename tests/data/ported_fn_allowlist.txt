@@ -293,6 +293,14 @@ dircache_lock
 text_buffer_lock
 text_buffer_reset
 
+# signals.rs — Rust-only AtomicBool singleton + accessor pair for the
+# C global `int interact` (Src/init.c). C dereferences the global
+# directly; Rust port wraps in OnceLock-style AtomicBool. Same pattern
+# as utils.rs scriptname_lock / errflag_lock.
+interact_lock
+set_interact
+is_interact
+
 # hashtable.rs HashNodeFlags trait — Rust-only abstraction over C's
 # `struct hashnode { char *nam; int flags; ... }` header. Each typed
 # table value impls this so the generic gethashnode/disablehashnode/etc.
