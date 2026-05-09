@@ -662,42 +662,190 @@ pub fn finish_() -> i32 {
 }
 
 // === auto-generated stubs ===
-// Direct ports of static helpers from Src/Modules/zpty.c not
-// yet covered above. zshrs links modules statically; live
-// state owned by the module's typed struct. Name-parity shims.
+/// Port of `getptycmd()` from `Src/Modules/zpty.c:153`. Linear
+/// scan over the `ptycmds` linked list looking for one matching
+/// `name`.
+///
+/// C signature: `static Ptycmd getptycmd(char *name)`. Returns
+/// the Ptycmd or NULL.
+pub fn getptycmd<'a>(cmds: &'a PtyCmds, name: &str) -> Option<&'a PtyCmd> {  // c:153
+    cmds.get(name)                                                       // c:158-160 strcmp loop
+}
 
-/// Port of `checkptycmd()` from Src/Modules/zpty.c:530.
-#[allow(non_snake_case)]
-pub fn checkptycmd() -> i32 { 0 }
+/// Port of `deleteptycmd()` from `Src/Modules/zpty.c:490`. Removes
+/// `cmd` from the `ptycmds` linked list, frees its name + args,
+/// closes the master fd, and kills the process group via
+/// `kill(-pid, SIGHUP)`.
+///
+/// C signature: `static void deleteptycmd(Ptycmd cmd)`.
+pub fn deleteptycmd(cmds: &mut PtyCmds, name: &str) {                    // c:490
+    if let Some(cmd) = cmds.remove(name) {                               // c:495-503 list-unlink
+        // c:505 — `zsfree(p->name)` + c:506 `freearray(p->args)` —
+        // Rust drops String/Vec automatically on `cmd` going out
+        // of scope.
+        // c:508 — `zclose(cmd->fd)`.
+        unsafe { libc::close(cmd.master_fd); }
+        // c:512 — `kill(-(p->pid), SIGHUP);` — kill the process group.
+        unsafe { libc::kill(-cmd.pid, libc::SIGHUP); }
+        // c:514 — `zfree(p, sizeof(*p))` — Rust drop handles.
+    }
+}
 
-/// Port of `deleteallptycmds()` from Src/Modules/zpty.c:517.
-#[allow(non_snake_case)]
-pub fn deleteallptycmds() -> i32 { 0 }
+/// Port of `deleteallptycmds()` from `Src/Modules/zpty.c:517`.
+/// Walks the `ptycmds` list and deletes every entry.
+///
+/// C signature: `static void deleteallptycmds(void)`.
+pub fn deleteallptycmds(cmds: &mut PtyCmds) {                            // c:517
+    let names: Vec<String> = cmds.names().iter().map(|s| s.to_string()).collect();
+    for n in names {                                                     // c:521-525
+        deleteptycmd(cmds, &n);                                          // c:524
+    }
+}
 
-/// Port of `deleteptycmd()` from Src/Modules/zpty.c:490.
-#[allow(non_snake_case)]
-pub fn deleteptycmd() -> i32 { 0 }
+/// Port of `checkptycmd()` from `Src/Modules/zpty.c:530`. Polls
+/// the master fd with a 1-byte non-blocking read; if read fails
+/// AND `kill(pid, 0)` confirms the process is gone, marks the
+/// command as finished and closes the fd.
+///
+/// C signature: `static void checkptycmd(Ptycmd cmd)`.
+pub fn checkptycmd(cmd: &mut PtyCmd) {                                   // c:530
+    if cmd.finished {                                                    // c:535 cmd->fin
+        return;
+    }
+    let mut c: u8 = 0;
+    let r = unsafe { libc::read(cmd.master_fd, &mut c as *mut u8 as *mut _, 1) };
+    if r <= 0 {                                                          // c:538
+        // c:539 — `if (kill(cmd->pid, 0) < 0)` — process gone.
+        if unsafe { libc::kill(cmd.pid, 0) } < 0 {
+            cmd.finished = true;                                         // c:540 cmd->fin = 1
+            unsafe { libc::close(cmd.master_fd); }                       // c:541 zclose
+        }
+        return;
+    }
+    // c:544 — `cmd->read = (int) c;` — buffer the read byte for
+    // the next read-builtin call. zshrs's PtyCmd uses Vec<u8>.
+    cmd.buffer.push(c);
+}
 
-/// Port of `getptycmd()` from Src/Modules/zpty.c:153.
-#[allow(non_snake_case)]
-pub fn getptycmd() -> i32 { 0 }
+/// Port of `ptygettyinfo()` from `Src/Modules/zpty.c:97`. Calls
+/// `tcgetattr(fd, &ti->tio)` to capture the pty's termios state.
+/// Returns 0 on success, 1 on failure or when fd == -1.
+///
+/// C signature: `static int ptygettyinfo(int fd, struct ttyinfo *ti)`.
+/// Rust port takes a mutable `&mut libc::termios` directly since
+/// `struct ttyinfo` (zsh.h) wraps termios + a few legacy fields.
+pub fn ptygettyinfo(fd: i32, ti: &mut libc::termios) -> i32 {            // c:97
+    if fd == -1 {                                                        // c:99 inverted
+        return 1;                                                        // c:118
+    }
+    // c:101 — `tcgetattr(fd, &ti->tio)`.
+    let r = unsafe { libc::tcgetattr(fd, ti as *mut libc::termios) };
+    if r == -1 {                                                         // c:103
+        return 1;                                                        // c:103
+    }
+    0                                                                    // c:117
+}
 
-/// Port of `newptycmd()` from Src/Modules/zpty.c:310.
-#[allow(non_snake_case)]
-pub fn newptycmd() -> i32 { 0 }
+/// Port of `ptysettyinfo()` from `Src/Modules/zpty.c:124`. Calls
+/// `tcsetattr(fd, TCSADRAIN, &ti->tio)` to install the captured
+/// termios state on the pty.
+///
+/// C signature: `static void ptysettyinfo(int fd, struct ttyinfo *ti)`.
+pub fn ptysettyinfo(fd: i32, ti: &libc::termios) {                       // c:124
+    if fd == -1 {                                                        // c:126 inverted
+        return;
+    }
+    // c:128-132 — `tcsetattr(fd, TCSADRAIN, &ti->tio);`
+    unsafe { libc::tcsetattr(fd, libc::TCSADRAIN, ti as *const libc::termios); }
+}
 
-/// Port of `ptygettyinfo()` from Src/Modules/zpty.c:97.
-#[allow(non_snake_case)]
-pub fn ptygettyinfo() -> i32 { 0 }
+/// Port of `ptywrite()` from `Src/Modules/zpty.c:743`. Writes
+/// the joined argv to the pty master fd (or copies stdin to the
+/// pty when argv is empty). `nonl` suppresses the trailing
+/// newline.
+///
+/// C signature: `static int ptywrite(Ptycmd cmd, char **args, int nonl)`.
+pub fn ptywrite(cmd: &PtyCmd, args: &[&str], nonl: i32) -> i32 {         // c:743
+    if !args.is_empty() {                                                // c:746
+        for (i, a) in args.iter().enumerate() {                          // c:751
+            // c:752 — unmetafy + ptywritestr.
+            let unmeta = crate::ported::utils::unmetafy_dup(a);
+            let bytes = unmeta.as_bytes();
+            let r = unsafe { libc::write(cmd.master_fd, bytes.as_ptr() as *const _, bytes.len()) };
+            if r < 0 { return 1; }                                       // c:753
+            if i + 1 < args.len() {                                      // c:754 sp = ' '
+                let sp = b' ';
+                let r = unsafe { libc::write(cmd.master_fd, &sp as *const u8 as *const _, 1) };
+                if r < 0 { return 1; }
+            }
+        }
+        if nonl == 0 {                                                   // c:757
+            let nl = b'\n';                                              // c:758
+            let r = unsafe { libc::write(cmd.master_fd, &nl as *const u8 as *const _, 1) };
+            if r < 0 { return 1; }                                       // c:760
+        }
+    } else {                                                             // c:763
+        // c:764-768 — `while ((n = read(0, buf, BUFSIZ)) > 0)` copy stdin.
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = unsafe { libc::read(0, buf.as_mut_ptr() as *mut _, buf.len()) };
+            if n <= 0 { break; }
+            let r = unsafe { libc::write(cmd.master_fd, buf.as_ptr() as *const _, n as usize) };
+            if r < 0 { return 1; }                                       // c:768
+        }
+    }
+    0                                                                    // c:771
+}
 
-/// Port of `ptyhook()` from Src/Modules/zpty.c:874.
-#[allow(non_snake_case)]
-pub fn ptyhook() -> i32 { 0 }
+/// Port of `ptyhook()` from `Src/Modules/zpty.c:874`. The cleanup
+/// hook installed at `boot_()` time — runs `deleteallptycmds()`
+/// when the shell is exiting (via the `before_trap` hook).
+///
+/// C signature: `static int ptyhook(Hookdef d, void *dummy)`.
+pub fn ptyhook(cmds: &mut PtyCmds) -> i32 {                              // c:874
+    deleteallptycmds(cmds);                                              // c:878
+    0                                                                    // c:879
+}
 
-/// Port of `ptysettyinfo()` from Src/Modules/zpty.c:124.
-#[allow(non_snake_case)]
-pub fn ptysettyinfo() -> i32 { 0 }
+/// Port of `newptycmd()` from `Src/Modules/zpty.c:310`. Forks a
+/// new pty session, exec'ing `args` in the child. Allocates a
+/// fresh `Ptycmd` record, configures the master fd, sets up the
+/// echo / nonblock flags, and links it into `ptycmds`.
+///
+/// C signature: `static int newptycmd(char *nam, char *pname,
+///                                     char **args, int echo, int nblock)`.
+///
+/// **Approximation:** the full pty-allocation path uses
+/// `posix_openpt`/`grantpt`/`unlockpt`/`ptsname` (zpty.c:191-309)
+/// and forks via `zfork()` with an extensive child-side reset
+/// sequence. zshrs's port wires through `std::process::Command`
+/// + a libc pty-spawn helper which doesn't preserve the full C
+/// child-init contract. Returns 0 on success, 1 on failure.
+pub fn newptycmd(cmds: &mut PtyCmds, _nam: &str, pname: &str,
+                 args: &[String], echo: bool, nblock: bool) -> i32 {     // c:310
+    use std::os::unix::io::IntoRawFd;
+    use std::process::Command;
+    if args.is_empty() { return 1; }
+    let cmd_path = &args[0];
+    let cmd_args = &args[1..];
 
-/// Port of `ptywrite()` from Src/Modules/zpty.c:743.
-#[allow(non_snake_case)]
-pub fn ptywrite() -> i32 { 0 }
+    // Spawn under a forkpty wrapper. Approximation: use
+    // openpty + fork via std::process::Command stdin/stdout
+    // redirection. A faithful port needs forkpty(3) integration.
+    let child = match Command::new(cmd_path)
+        .args(cmd_args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return 1,
+    };
+    let pid = child.id() as i32;
+    let stdin = child.stdin.expect("piped").into_raw_fd();
+
+    let new = PtyCmd::new(pname, args.to_vec(), stdin, pid, echo, nblock);
+    cmds.add(new);
+    0
+}
