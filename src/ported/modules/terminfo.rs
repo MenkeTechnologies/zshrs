@@ -115,7 +115,7 @@ pub const COMMON_STRING_CAPS: &[&str] = &[
 // BEGIN moved-from-exec-rs
 impl crate::ported::exec::ShellExecutor {
     /// echoti - output terminfo value
-    pub(crate) fn bin_echoti(&self, args: &[String]) -> i32 {
+    pub(crate) fn bin_echoti(&mut self, args: &[String]) -> i32 {
         // echoti uses TERMINFO names ('clear', 'home', 'el', etc.)
         // not termcap two-letter codes. Translate the common terminfo
         // names to their termcap equivalents and dispatch through

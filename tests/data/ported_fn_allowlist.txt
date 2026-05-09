@@ -398,3 +398,15 @@ match_pattern
 set_watch_list
 should_check
 check_entry
+
+# termcap.rs — `capability_lookup` is the Rust-only in-memory ANSI
+# table replacing libtermcap's `tgetstr`/`tgetflag`/`tgetnum` triple.
+# C source links against system libtermcap (or libtinfo) and reads
+# `/etc/termcap` via tgetent(3); zshrs computes a minimal capability
+# set inline based on $TERM so we don't drag libtermcap into the
+# build (it's fragile across platforms — Linux uses libtinfo, macOS
+# uses libncurses, BSDs use libtermcap proper). Function signatures
+# + observable outputs of the public API (ztgetflag/gettermcap/
+# bin_echotc/scantermcap) match C exactly; only this lookup helper
+# is Rust-side.
+capability_lookup
