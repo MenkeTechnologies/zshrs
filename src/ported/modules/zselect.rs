@@ -53,8 +53,13 @@ pub fn handle_digits(                                                    // c:40
 ///                                       Options ops, int func)`.
 /// Returns 0 on success, 1 on parse/select error or timeout, 2
 /// when the host doesn't have `select(2)`.
-pub fn bin_zselect(exec: &mut ShellExecutor, args: &[&str]) -> i32 {     // c:65
-    let nam = "zselect";
+pub fn bin_zselect(nam: &str, args: &[String],                               // c:65
+                   _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    // C source parses options inline (BUILTIN spec is NULL); the
+    // canonical sig still routes the empty `ops`/`func` pair through
+    // for shape-parity with the rest of the builtin family.
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let args = &args[..];
     // c:67-72 — locals.
     let mut fdset: [libc::fd_set; 3] = unsafe { std::mem::zeroed() };
     for s in &mut fdset {                                                // c:75-76 FD_ZERO
@@ -208,7 +213,10 @@ pub fn bin_zselect(exec: &mut ShellExecutor, args: &[&str]) -> i32 {     // c:65
                 }
             }
         }
-        exec.assoc_arrays.insert(hash_name.clone(), hash);                // c:241 sethparam
+        // c:241 — `sethparam(hashname, ...);` — encode as key=val tab-joined.
+        let pairs: Vec<String> = hash.into_iter()
+            .map(|(k, v)| format!("{}={}", k, v)).collect();
+        crate::ported::modules::ksh93::setsparam(hash_name, &pairs.join("\t"));
     } else {
         // Array form: list of fds preceded by `-r`/`-w`/`-e`.
         let mut out: Vec<String> = Vec::new();
@@ -224,7 +232,8 @@ pub fn bin_zselect(exec: &mut ShellExecutor, args: &[&str]) -> i32 {     // c:65
                 }
             }
         }
-        exec.arrays.insert(outarray, out);                                // c:243 setaparam
+        // c:243 — `setaparam(outarray, out);` — colon-join through env shim.
+        crate::ported::modules::ksh93::setsparam(&outarray, &out.join(":"));
     }
 
     0                                                                    // c:246
@@ -247,8 +256,13 @@ impl ShellExecutor {
     /// `zselect` builtin shim — adapts `&[String]` to `&[&str]`
     /// and forwards to the canonical `bin_zselect` above.
     pub(crate) fn bin_zselect(&mut self, args: &[String]) -> i32 {
-        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-        bin_zselect(self, &argv)
+        // Canonical bin_zselect now takes (name, args, ops, func) per
+        // Src/Modules/zselect.c:65; the C source parses options inline,
+        // so we forward an empty Options struct.
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                            argscount: 0, argsalloc: 0 };
+        bin_zselect("zselect", args, &ops, 0)
     }
 }
 
