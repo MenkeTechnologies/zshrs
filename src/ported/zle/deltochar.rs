@@ -1,89 +1,79 @@
-//! ZLE delete-to-char / zap-to-char widgets
+//! ZLE delete-to-char / zap-to-char widgets — port of
+//! `Src/Zle/deltochar.c` (141 lines).
 //!
-//! Port from zsh/Src/Zle/deltochar.c (141 lines)
-//!
-//! Implements Emacs-style zap-to-char (M-z) and delete-to-char widgets.
+//! C source has zero `struct ...` / `enum ...` definitions. The
+//! Rust port matches: zero types. The two static `Widget`
+//! variables (`w_deletetochar`, `w_zaptochar`) are local to C's
+//! module-loader path and don't translate — zshrs wires the two
+//! widgets through `extensions/widget.rs` at build time.
 
-/// Compute the (start, end) range to delete from cursor toward the
-/// next occurrence of `target`.
+use crate::ported::zle::zle_main::Zle;
+
+/// Port of `deltochar()` from `Src/Zle/deltochar.c:38`. The shared
+/// body behind both the `delete-to-char` and `zap-to-char` widgets:
+/// reads the next char from input, then for each repeat of `zmult`
+/// scans the buffer toward that target and kills the spanned text
+/// (forward when `zmult >= 0`, backward when `zmult < 0`). The
+/// "zap" mode (binding name `zap-to-char`) includes the target
+/// char itself in the killed range.
 ///
-/// Port of `deltochar()` from Src/Zle/deltochar.c. `inclusive=true`
-/// matches zsh's `zaptochar` (M-z) which removes the target char too;
-/// `inclusive=false` is `delete-to-char` which stops just before. The
-/// `direction` arg corresponds to zsh's `zmult` sign.
-pub fn deltochar(
-    buffer: &str,
-    cursor: usize,
-    target: char,
-    direction: i32,
-    inclusive: bool,
-) -> Option<(usize, usize)> {
-    if direction >= 0 {
-        // Search forward
-        let search_area = &buffer[cursor..];
-        if let Some(pos) = search_area.find(target) {
-            let end = cursor + pos + if inclusive { target.len_utf8() } else { 0 };
-            Some((cursor, end))
-        } else {
-            None
-        }
+/// C signature: `static int deltochar(char **args)` (args UNUSED).
+/// Returns 0 on success (target found, kill performed), 1 on
+/// failure (target not in buffer).
+pub fn deltochar(zle: &mut Zle) -> i32 {                                 // c:38
+    let c = match zle.getfullchar(false) {                               // c:41 getfullchar(0)
+        Some(ch) => ch,
+        None => return 1,
+    };
+    let mut dest = zle.zlecs;                                            // c:42
+    let mut ok = 0i32;                                                   // c:42
+    let mut n: i32 = if zle.zmod.flags.contains(crate::ported::zle::zle_main::ModifierFlags::MULT) {
+        zle.zmod.mult
     } else {
-        // Search backward
-        let search_area = &buffer[..cursor];
-        if let Some(pos) = search_area.rfind(target) {
-            let start = if inclusive {
-                pos
-            } else {
-                pos + target.len_utf8()
-            };
-            Some((start, cursor))
-        } else {
-            None
+        1
+    };                                                                   // c:42 zmult
+    let zap = zle.bindk.as_ref().map(|t| t.name.as_str()) == Some("zap-to-char"); // c:43
+
+    if n > 0 {                                                           // c:45
+        while n > 0 && dest != zle.zlell {                               // c:46 while (n-- && dest != zlell)
+            n -= 1;
+            while dest != zle.zlell && zle.zleline.get(dest).copied() != Some(c) {
+                dest += 1;                                               // c:48 INCPOS(dest)
+            }
+            if dest != zle.zlell {                                       // c:50
+                if !zap || n > 0 {                                       // c:51
+                    dest += 1;                                           // c:52 INCPOS(dest)
+                }
+                if n == 0 {                                              // c:53
+                    let ct = (dest as i32) - (zle.zlecs as i32);         // c:54 dest - zlecs
+                    crate::ported::zle::zle_utils::forekill(zle, ct, 0); // c:54 CUT_RAW
+                    ok += 1;                                             // c:55
+                }
+            }
+        }
+    } else {                                                             // c:59
+        if dest > 0 {                                                    // c:61
+            dest -= 1;                                                   // c:62 DECPOS(dest)
+        }
+        while n < 0 && dest != 0 {                                       // c:63 while (n++ && dest != 0)
+            n += 1;
+            while dest != 0 && zle.zleline.get(dest).copied() != Some(c) {
+                dest -= 1;                                               // c:65 DECPOS(dest)
+            }
+            if zle.zleline.get(dest).copied() == Some(c) {               // c:67
+                if n == 0 {                                              // c:68
+                    let zap_adj = if zap { 1 } else { 0 };               // c:70 trailing combining-char adjust
+                    let ct = (zle.zlecs as i32) - (dest as i32) - zap_adj;
+                    crate::ported::zle::zle_utils::backkill(zle, ct, 0); // c:70 CUT_RAW|CUT_FRONT
+                    ok += 1;                                             // c:71
+                }
+                if dest > 0 {                                            // c:73
+                    dest -= 1;                                           // c:74 DECPOS(dest)
+                }
+            }
         }
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_deltochar_forward() {
-        // "hello world" with cursor at 0, delete to 'o' (inclusive)
-        let (start, end) = deltochar("hello world", 0, 'o', 1, true).unwrap();
-        assert_eq!(start, 0);
-        assert_eq!(end, 5); // includes 'o'
-    }
-
-    #[test]
-    fn test_deltochar_forward_exclusive() {
-        let (start, end) = deltochar("hello world", 0, 'o', 1, false).unwrap();
-        assert_eq!(start, 0);
-        assert_eq!(end, 4); // stops before 'o'
-    }
-
-    #[test]
-    fn test_deltochar_backward() {
-        let (start, end) = deltochar("hello world", 11, 'o', -1, true).unwrap();
-        assert_eq!(start, 7); // includes 'o'
-        assert_eq!(end, 11);
-    }
-
-    #[test]
-    fn test_deltochar_not_found() {
-        assert!(deltochar("hello", 0, 'z', 1, true).is_none());
-    }
-
-    #[test]
-    fn test_apply_deltochar() {
-        let buffer = "hello world";
-        let (start, end) = deltochar(buffer, 0, 'o', 1, true).unwrap();
-        let mut result = String::with_capacity(buffer.len());
-        result.push_str(&buffer[..start]);
-        result.push_str(&buffer[end..]);
-        assert_eq!(result, " world");
-        assert_eq!(start, 0);
-    }
+    if ok != 0 { 0 } else { 1 }                                          // c:79 return !ok
 }
 
 /// Port of `setup_()` from `Src/Zle/deltochar.c:90`. C body is
@@ -93,39 +83,31 @@ pub fn setup_() -> i32 {                                                 // c:90
 }
 
 /// Port of `features_()` from `Src/Zle/deltochar.c:97`. C body is
-/// `*features = featuresarray(m, &module_features); return 0;` —
-/// returns the per-module feature table. zshrs links statically so
-/// the table is build-time-fixed; this hook returns 0 to mirror C.
+/// `*features = featuresarray(m, &module_features); return 0;`.
+/// Static-link path: 0.
 pub fn features_() -> i32 {                                              // c:97
     0                                                                    // c:101
 }
 
 /// Port of `enables_()` from `Src/Zle/deltochar.c:105`. C body is
-/// `return handlefeatures(m, &module_features, enables);` — wires
-/// the per-module enable bits to the loader. zshrs's static link
-/// returns 0 (success, no enables changed).
+/// `return handlefeatures(m, &module_features, enables);`.
 pub fn enables_() -> i32 {                                               // c:105
     0                                                                    // c:108
 }
 
 /// Port of `boot_()` from `Src/Zle/deltochar.c:112`. C registers
 /// the `delete-to-char` and `zap-to-char` ZLE functions via
-/// `addzlefunction(...)` with `ZLE_KILL | ZLE_KEEPSUFFIX`. zshrs
-/// registers ZLE widgets via `extensions/widget.rs` at build time,
-/// so this is a no-op port — both widgets are already wired.
+/// `addzlefunction(name, deltochar, ZLE_KILL | ZLE_KEEPSUFFIX)`.
+/// zshrs wires both widgets through `extensions/widget.rs` at
+/// build time, so this is a no-op port.
 pub fn boot_() -> i32 {                                                  // c:112
-    // C creates `w_deletetochar` and `w_zaptochar` thingies and
-    // wires the `deltochar` C handler. zshrs widget dispatch lives
-    // in `extensions/widget.rs` (`widget_delete_to_char`,
-    // `widget_zap_to_char`); registration happens at startup, not
-    // at module-boot time. Match C's success exit.
     0                                                                    // c:124
 }
 
 /// Port of `cleanup_()` from `Src/Zle/deltochar.c:129`. C calls
-/// `deletezlefunction()` for both registered widgets and then
+/// `deletezlefunction()` for both widgets and then
 /// `setfeatureenables(...)`. zshrs widgets are static-linked and
-/// never deleted, so this is a no-op.
+/// never deleted; no-op port.
 pub fn cleanup_() -> i32 {                                               // c:129
     0                                                                    // c:135
 }

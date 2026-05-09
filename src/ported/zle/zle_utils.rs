@@ -853,8 +853,28 @@ pub fn applychange() -> i32 { 0 }
 /// Port of `backdel()` from Src/Zle/zle_utils.c:1084. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn backdel() -> i32 { 0 }
 
-/// Port of `backkill()` from Src/Zle/zle_utils.c:1045. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn backkill() -> i32 { 0 }
+/// Port of `backkill()` from `Src/Zle/zle_utils.c:1045`. Cuts `ct`
+/// characters BACKWARD from the cursor (i.e. removes `[zlecs-ct,
+/// zlecs)` and pushes them onto the kill-ring head). C: `void
+/// backkill(int ct, int flags)`. Rust port takes `&mut Zle` so the
+/// killring + zlecs/zlell mutations stay on the typed shell state.
+/// `flags` is the `CUT_*` bitmask — `CUT_RAW` skips the multibyte
+/// DECCS adjustment loop the non-RAW path uses.
+pub fn backkill(zle: &mut crate::ported::zle::zle_main::Zle, ct: i32, flags: i32) {  // c:1045
+    let ct = ct as usize;
+    if ct == 0 || zle.zlecs == 0 { return; }
+    let _ = flags; // CUT_RAW path: no DECCS multibyte adjustment.
+    let take_n = ct.min(zle.zlecs);
+    let start = zle.zlecs - take_n;
+    let cut_chars: Vec<char> = zle.zleline.drain(start..zle.zlecs).collect();   // c:1057 cut + shiftchars
+    zle.zlell = zle.zleline.len();
+    zle.zlecs = start;
+    zle.killring.push_front(cut_chars);
+    if zle.killring.len() > zle.killringmax {
+        zle.killring.pop_back();
+    }
+    zle.resetneeded = true;                                              // c:1059 CCRIGHT
+}
 
 /// Port of `cut()` from Src/Zle/zle_utils.c:935. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn cut() -> i32 { 0 }
@@ -874,8 +894,28 @@ pub fn findline() -> i32 { 0 }
 /// Port of `foredel()` from Src/Zle/zle_utils.c:1105. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn foredel() -> i32 { 0 }
 
-/// Port of `forekill()` from Src/Zle/zle_utils.c:1064. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn forekill() -> i32 { 0 }
+/// Port of `forekill()` from `Src/Zle/zle_utils.c:1064`. Cuts `ct`
+/// characters FORWARD from the cursor (i.e. removes `[zlecs,
+/// zlecs+ct)` and pushes them onto the kill-ring head). C: `void
+/// forekill(int ct, int flags)`. Rust port takes `&mut Zle`. The
+/// `CUT_RAW` path (matching the C `flags & CUT_RAW` arm at
+/// zle_utils.c:1069) skips the multibyte INCCS adjustment loop —
+/// zshrs treats the buffer as `Vec<char>` and never needs that
+/// re-walk.
+pub fn forekill(zle: &mut crate::ported::zle::zle_main::Zle, ct: i32, flags: i32) {  // c:1064
+    let ct = ct as usize;
+    if ct == 0 || zle.zlecs >= zle.zlell { return; }
+    let _ = flags; // CUT_RAW path: no INCCS multibyte adjustment.
+    let take_n = ct.min(zle.zlell - zle.zlecs);
+    let i = zle.zlecs;
+    let cut_chars: Vec<char> = zle.zleline.drain(i..i + take_n).collect();      // c:1077 cut + shiftchars
+    zle.zlell = zle.zleline.len();
+    zle.killring.push_front(cut_chars);
+    if zle.killring.len() > zle.killringmax {
+        zle.killring.pop_back();
+    }
+    zle.resetneeded = true;                                              // c:1079 CCRIGHT
+}
 
 /// Port of `free_region_highlights_memos()` from Src/Zle/zle_utils.c:567. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn free_region_highlights_memos() -> i32 { 0 }
