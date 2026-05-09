@@ -16,24 +16,12 @@
 //! - unambig_data     → compute unambiguous prefix
 //! - build_pos_string → build position string for match
 
-/// Result of completion attempt
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CompResult {
-    /// No matches found
-    NoMatch,
-    /// Single unambiguous match — insert it
-    Single(String),
-    /// Multiple matches — show list or enter menu
-    Ambiguous {
-        prefix: String,
-        matches: Vec<String>,
-    },
-    /// Menu completion — cycling through matches
-    Menu {
-        current: usize,
-        matches: Vec<String>,
-    },
-}
+// `CompResult` enum (Rust-only) deleted per strict-rules. C source
+// (Src/Zle/compresult.c) has 0 enums; the completion-result is
+// communicated via globals (`amenu`, `lastambig`, `validlist`)
+// and the per-call `ret`/`ok` int variables of `do_ambiguous` /
+// `do_single` / `do_allmatches`. zshrs's port routes those
+// through the executor's completion state directly.
 
 /// Replace `[word_start, word_end)` in `buffer` with `replacement`,
 /// returning the new buffer plus updated cursor position.
@@ -108,21 +96,23 @@ pub fn do_single(
     instmatch(buffer, cursor, word_start, word_end, &replacement)
 }
 
-/// Build the result for an ambiguous completion (multiple matches).
-/// Port of `do_ambiguous()` from Src/Zle/compresult.c. The C source
-/// inserts the unambiguous prefix into the buffer and triggers the
-/// listing display; our Rust port returns a `CompResult` enum so
-/// the caller decides whether to insert + list.
-pub fn do_ambiguous(matches: &[String]) -> CompResult {
+/// Port of `do_ambiguous()` from `Src/Zle/compresult.c:744`. The
+/// ambiguous-completion handler — inserts the unambiguous prefix
+/// shared by all matches and triggers the listing display.
+///
+/// C signature: `static int do_ambiguous(void)`. Returns 1 if any
+/// completion text was inserted, 0 otherwise.
+///
+/// **Approximation:** the full C body uses globals (`lastambig`,
+/// `amenu`, `validlist`) + `instmatch` + `listmatches` not yet
+/// fully wired. Rust port returns 1 if there's a non-empty
+/// unambiguous prefix.
+pub fn do_ambiguous(matches: &[String]) -> i32 {                         // c:744
     let prefix = unambig_data(matches);
     if prefix.is_empty() && matches.is_empty() {
-        CompResult::NoMatch
-    } else {
-        CompResult::Ambiguous {
-            prefix,
-            matches: matches.to_vec(),
-        }
+        return 0;                                                        // c:nomatch
     }
+    if !prefix.is_empty() { 1 } else { 0 }
 }
 
 /// Insert every match into the buffer joined by `separator`.
