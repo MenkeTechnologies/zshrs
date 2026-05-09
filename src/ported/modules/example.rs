@@ -66,21 +66,38 @@ pub fn finish_() -> i32 {                                                // c:24
 /// (taking `&[String]` args + `Options`-shaped flags) without wiring
 /// in the side-effect param mutation since `intparam`/`strparam`/
 /// `arrparam` aren't allocated in the static-link path.
-pub fn bin_example(args: &[&str]) -> i32 {                               // c:42
+/// C signature: `static int bin_example(char *nam, char **args,
+///                                       Options ops, int func)`.
+/// `ops` is a 256-entry bitmask indexed by ASCII char (passed by
+/// the C builtin framework after parsing the option spec). Rust
+/// port takes `(nam: &str, args: &[&str], ops: &[bool; 256])`
+/// matching the C body's `OPT_ISSET(ops, c)` reads exactly.
+pub fn bin_example(nam: &str, args: &[&str], ops: &[bool; 256]) -> i32 {  // c:42
     use std::io::Write;
     let mut stdout = std::io::stdout().lock();
-    // C: `printf("Options: ");` (c:48) — flag dump skipped (zshrs
-    // doesn't model the C `Options ops` flag bag at this entry).
-    let _ = write!(stdout, "Options: \n");                               // c:48-52
-    let _ = write!(stdout, "Arguments:");                                // c:53
-    for a in args {                                                      // c:54
-        let _ = write!(stdout, " {}", a);                                // c:56
+    // c:46 — `printf("Options: ");`
+    let _ = write!(stdout, "Options: ");
+    // c:47-49 — `for (c = 32; ++c < 128;) if (OPT_ISSET(ops,c)) putchar(c);`
+    for c in 33u8..128u8 {
+        if ops[c as usize] {                                             // c:48 OPT_ISSET
+            let _ = write!(stdout, "{}", c as char);                     // c:49 putchar
+        }
     }
-    let _ = writeln!(stdout, "\nName: example");                         // c:58 nam
-    let _ = writeln!(stdout, "Integer Parameter: 0");                    // c:60-63
-    let _ = writeln!(stdout, "String Parameter: ");                      // c:64
-    let _ = writeln!(stdout, "Array Parameter:");                        // c:65
-    0                                                                    // c:73
+    // c:50 — `printf("\nArguments:");`
+    let _ = write!(stdout, "\nArguments:");
+    // c:51-54 — `for (; *args; i++, args++) { putchar(' '); fputs(*args, stdout); }`
+    for a in args {                                                      // c:51
+        let _ = write!(stdout, " {}", a);                                // c:52-53
+    }
+    // c:55 — `printf("\nName: %s\n", nam);`
+    let _ = writeln!(stdout, "\nName: {}", nam);
+    // c:57 — `printf("\nInteger Parameter: %ld\n", intparam);`
+    // intparam/strparam/arrparam are example-module file-statics
+    // that are never written in zshrs (module never loaded).
+    let _ = writeln!(stdout, "Integer Parameter: 0");                    // c:57-60
+    let _ = writeln!(stdout, "String Parameter: ");                      // c:61
+    let _ = writeln!(stdout, "Array Parameter:");                        // c:62
+    0                                                                    // c:72
 }
 
 /// Port of `cond_p_len()` from `Src/Modules/example.c:80`. The
@@ -89,62 +106,103 @@ pub fn bin_example(args: &[&str]) -> i32 {                               // c:42
 /// arg's integer value.
 ///
 /// C signature: `static int cond_p_len(char **a, int id)`.
-pub fn cond_p_len(a: &[&str]) -> bool {                                  // c:80
-    if a.is_empty() { return true; }                                     // c:84
-    if a.len() >= 2 {                                                    // c:84
-        let s1 = a[0];
-        let v: i64 = a[1].parse().unwrap_or(0);                          // c:85 cond_val
-        s1.chars().count() as i64 == v                                   // c:87
-    } else {                                                             // c:88
-        a[0].is_empty()                                                  // c:89 !s1[0]
+/// `id` is the cond-op id (ignored — only one `-len` op exists).
+pub fn cond_p_len(a: &[&str], _id: i32) -> i32 {                         // c:80
+    // c:83 — `s1 = cond_str(a, 0, 0);`
+    let s1 = if a.is_empty() { "" } else { a[0] };
+    if a.len() >= 2 {                                                    // c:85 a[1]
+        // c:86 — `v = cond_val(a, 1);`
+        let v: i64 = a[1].parse().unwrap_or(0);
+        // c:88 — `return strlen(s1) == v;`
+        if s1.chars().count() as i64 == v { 1 } else { 0 }
+    } else {                                                             // c:89
+        // c:90 — `return !s1[0];`
+        if s1.is_empty() { 1 } else { 0 }
     }
 }
 
 /// Port of `cond_i_ex()` from `Src/Modules/example.c:95`. The demo
 /// `-ex` infix cond op: true iff `s1 ++ s2 == "example"`.
-pub fn cond_i_ex(a: &[&str]) -> bool {                                   // c:95
-    if a.len() < 2 { return false; }
-    let s1 = a[0];
-    let s2 = a[1];
+///
+/// C signature: `static int cond_i_ex(char **a, int id)`.
+pub fn cond_i_ex(a: &[&str], _id: i32) -> i32 {                          // c:95
+    // c:99-100 — `s1 = cond_str(a, 0, 0); s2 = cond_str(a, 1, 0);`
+    let s1 = if a.is_empty() { "" } else { a[0] };
+    let s2 = if a.len() < 2 { "" } else { a[1] };
+    // c:102 — `return !strcmp("example", dyncat(s1, s2));`
     let mut combined = String::with_capacity(s1.len() + s2.len());
     combined.push_str(s1);
     combined.push_str(s2);
-    combined == "example"                                                // c:101
+    if combined == "example" { 1 } else { 0 }
 }
 
 /// Port of `math_sum()` from `Src/Modules/example.c:104`. The demo
 /// `sum(...)` math fn: variadic numeric sum. Promotes integer
-/// running total to float on first float arg (C's `f` flag).
+/// running total to float on the first float arg (C's `f` flag).
 ///
-/// Returns the sum as f64 — zshrs's math layer carries an mnumber
-/// equivalent (`f64` + integer-tag); the demo only needs to compute
-/// the value, not produce an mnumber here.
-pub fn math_sum(args: &[f64]) -> f64 {                                   // c:104
-    // C tracks integer vs float separately; Rust collapses to f64.
-    let mut s = 0.0;                                                     // c:111
-    for &a in args {                                                     // c:112
-        s += a;                                                          // c:113-124
+/// C signature: `static mnumber math_sum(char *name, int argc,
+///                                        mnumber *argv, int id)`.
+pub fn math_sum(_name: &str, argc: i32, argv: &[crate::ported::math::Mnumber], _id: i32)
+    -> crate::ported::math::Mnumber                                      // c:104
+{
+    use crate::ported::math::{Mnumber, MN_INTEGER, MN_FLOAT};
+    let mut ret = Mnumber::default();
+    let mut f = 0i32;                                                    // c:108 int f = 0;
+    ret.l = 0;                                                           // c:110 ret.u.l = 0;
+    let mut i = 0;
+    let mut argc = argc;
+    while argc > 0 {                                                     // c:111 while (argc--)
+        argc -= 1;
+        if argv[i].type_ == MN_INTEGER {                                 // c:112
+            if f != 0 {                                                  // c:113
+                ret.d += argv[i].l as f64;                               // c:114
+            } else {                                                     // c:115
+                ret.l += argv[i].l;                                      // c:116
+            }
+        } else {                                                         // c:117
+            if f != 0 {                                                  // c:118
+                ret.d += argv[i].d;                                      // c:119
+            } else {                                                     // c:120
+                ret.d = (ret.l as f64) + argv[i].d;                      // c:121-122
+                f = 1;                                                   // c:123
+            }
+        }
+        i += 1;                                                          // c:127 argv++
     }
-    s                                                                    // c:128
+    ret.type_ = if f != 0 { MN_FLOAT } else { MN_INTEGER };              // c:130
+    ret                                                                  // c:132
 }
 
 /// Port of `math_length()` from `Src/Modules/example.c:133`. The
 /// demo `length("...")` math fn: returns the string length.
-pub fn math_length(arg: &str) -> i64 {                                   // c:133
-    arg.chars().count() as i64                                            // c:139 strlen
+///
+/// C signature: `static mnumber math_length(char *name, char *arg,
+///                                            int id)`.
+pub fn math_length(_name: &str, arg: &str, _id: i32)
+    -> crate::ported::math::Mnumber                                      // c:133
+{
+    use crate::ported::math::{Mnumber, MN_INTEGER};
+    Mnumber {
+        type_: MN_INTEGER,                                               // c:138
+        l: arg.len() as i64,                                             // c:139 strlen(arg)
+        d: 0.0,
+    }
 }
 
 /// Port of `ex_wrapper()` from `Src/Modules/example.c:145`. The
 /// per-function wrapper hook: when the function name starts with
-/// "example", set `GLOBDOTS` for the duration of the call (so
-/// glob results include hidden dotfiles), then restore.
+/// "example", set `GLOBDOTS` for the duration of the call, then
+/// restore.
 ///
 /// C signature: `static int ex_wrapper(Eprog prog, FuncWrap w, char *name)`.
 /// Returns 1 to skip wrapping (name doesn't match), 0 after running.
-pub fn ex_wrapper(name: &str) -> i32 {                                   // c:145
-    if !name.starts_with("example") { return 1; }                        // c:147
-    // C: save GLOBDOTS, set to 1, run shfunc, restore.
-    // Static-link path: example module is never loaded, so the
-    // wrapper is never installed. Return 0 (wrapped + ran).
+pub fn ex_wrapper(_prog: i32, _w: i32, name: &str) -> i32 {              // c:145
+    // c:147 — `if (strncmp(name, "example", 7)) return 1;`
+    if !name.starts_with("example") {
+        return 1;
+    }
+    // c:149-153 — save opts[GLOBDOTS], set to 1, runshfunc(prog, w, name),
+    // restore. Static-link path: never loaded, so the runshfunc call
+    // is unwired; return 0 (wrapped + ran successfully).
     0                                                                    // c:155
 }
