@@ -287,31 +287,13 @@ pub fn bin_syswrite(nam: &str, args: &[String],                              // 
 /// positional arg (the file path).
 ///
 /// Return values per c:312-314: 0 success / 1 bad params / 2 open error.
-pub fn bin_sysopen(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:319
+pub fn bin_sysopen(nam: &str, args: &[String],                               // c:319
+                   ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
     // c:321-323 — `int read = OPT_ISSET(ops, 'r');` etc.
-    let mut read_flag = false;
-    let mut write_flag = false;
-    let mut append_flag = false;
-    let mut fdvar_arg: Option<String> = None;
-    let mut o_arg: Option<String> = None;
-    let mut m_arg: Option<String> = None;
-    let mut path_arg: Option<String> = None;
-
-    // Parse "rwau:o:m:" + positional path arg.
-    let mut i = 0usize;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-r" => read_flag = true,                                    // c:321
-            "-w" => write_flag = true,                                   // c:322
-            "-a" => append_flag = true,                                  // c:323
-            "-u" if i + 1 < args.len() => { i += 1; fdvar_arg = Some(args[i].clone()); }
-            "-o" if i + 1 < args.len() => { i += 1; o_arg = Some(args[i].clone()); }
-            "-m" if i + 1 < args.len() => { i += 1; m_arg = Some(args[i].clone()); }
-            other if !other.starts_with('-') => { path_arg = Some(other.to_string()); break; }
-            _ => break,
-        }
-        i += 1;
-    }
+    let read_flag   = OPT_ISSET(ops, b'r');                                   // c:321
+    let write_flag  = OPT_ISSET(ops, b'w');                                   // c:322
+    let append_flag = OPT_ISSET(ops, b'a');                                   // c:323
 
     // c:323-325 — flags = O_NOCTTY | append | (RDWR/WRONLY/RDONLY).
     let append_flag_bit = if append_flag { libc::O_APPEND } else { 0 };
@@ -326,17 +308,17 @@ pub fn bin_sysopen(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 
     let mut explicit: i32 = -1;                                          // c:327
 
     // c:335 — `if (!OPT_ISSET(ops, 'u')) { ... return 1; }`
-    let fdvar = match fdvar_arg {
-        Some(s) => s,
-        None => {
-            zwarnnam(nam, "file descriptor not specified");              // c:336
-            return 1;                                                    // c:337
-        }
-    };
-    let path = match path_arg {
-        Some(p) => p,
+    if !OPT_ISSET(ops, b'u') {
+        zwarnnam(nam, "file descriptor not specified");                  // c:336
+        return 1;                                                        // c:337
+    }
+    let fdvar = OPT_ARG(ops, b'u').unwrap_or("").to_string();            // c:340
+    let path = match args.first() {
+        Some(p) => p.clone(),
         None => return 1,
     };
+    let o_arg: Option<&str> = if OPT_ISSET(ops, b'o') { OPT_ARG(ops, b'o') } else { None };
+    let m_arg: Option<&str> = if OPT_ISSET(ops, b'm') { OPT_ARG(ops, b'm') } else { None };
 
     // c:341-347 — fdvar is either single digit (explicit fd) or identifier.
     if fdvar.len() == 1 && fdvar.chars().next().unwrap().is_ascii_digit() {
@@ -350,7 +332,7 @@ pub fn bin_sysopen(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 
     // optional `O_` prefix.
     if let Some(opts) = o_arg {
         for tok in opts.split(',') {                                     // c:355 strchr ','
-            let mut name = tok;
+            let mut name: &str = tok;
             // c:353 — `if (!strncasecmp(opt, "O_", 2)) opt += 2;`
             if name.len() >= 2 && name[..2].eq_ignore_ascii_case("O_") {
                 name = &name[2..];
@@ -397,7 +379,7 @@ pub fn bin_sysopen(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 
 
     // c:372-381 — -m: octal permissions string.
     if let Some(m) = m_arg {
-        let mode_str = m.as_str();
+        let mode_str: &str = m;
         // c:374-375 — `while (*ptr >= '0' && *ptr <= '7') ptr++;`
         let mut ptr = 0;
         let bytes = mode_str.as_bytes();
@@ -453,8 +435,7 @@ pub fn bin_sysopen(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 
 
     // c:413-418 — `if (explicit == -1) { setiparam(fdvar, moved_fd); ... }`
     if explicit == -1 {
-        setiparam(&mut exec.variables, &mut exec.arrays,
-                  &mut exec.assoc_arrays, &fdvar, moved_fd as i64);      // c:414
+        crate::ported::modules::ksh93::setiparam(&fdvar, moved_fd as i64);   // c:414
     }
 
     0                                                                    // c:420
@@ -468,52 +449,42 @@ pub fn bin_sysopen(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 
 /// arg (the offset).
 ///
 /// Return values per c:425-428: 0 success / 1 bad params / 2 lseek error.
-pub fn bin_sysseek(_exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:433
+pub fn bin_sysseek(nam: &str, args: &[String],                               // c:433
+                   ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
     // c:435 — `int w = SEEK_SET, fd = 0;`
-    let mut w: i32 = libc::SEEK_SET;
-    let mut fd: i32 = 0;
-    let mut pos_arg: Option<String> = None;
+    let mut w: i32 = libc::SEEK_SET;                                          // c:435
+    let mut fd: i32 = 0;                                                      // c:435
 
-    // Parse "u:w:" + positional offset.
-    let mut i = 0usize;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-u" if i + 1 < args.len() => {                              // c:442
-                i += 1;
-                fd = getposint(&args[i], nam);                           // c:443
-                if fd < 0 { return 1; }                                  // c:444-445
-            }
-            "-w" if i + 1 < args.len() => {                              // c:449
-                i += 1;
-                let whence = &args[i];                                   // c:450
-                // c:451 — `!(strcasecmp(whence, "current") && strcmp(whence, "1"))`
-                if whence.eq_ignore_ascii_case("current") || whence == "1" {
-                    w = libc::SEEK_CUR;                                  // c:452
-                } else if whence.eq_ignore_ascii_case("end") || whence == "2" {
-                    w = libc::SEEK_END;                                  // c:454
-                } else if !whence.eq_ignore_ascii_case("start") && whence != "0" {
-                    zwarnnam(nam, &format!("unknown argument to -w: {}", whence));  // c:456
-                    return 1;                                                       // c:457
-                }
-            }
-            other if !other.starts_with('-') => { pos_arg = Some(other.to_string()); break; }
-            _ => break,
+    // c:441-446 — `if (OPT_ISSET(ops, 'u')) { fd = getposint(OPT_ARG(ops,'u'),nam); ...}`
+    if OPT_ISSET(ops, b'u') {                                                 // c:441
+        fd = getposint(OPT_ARG(ops, b'u').unwrap_or(""), nam);                // c:442
+        if fd < 0 { return 1; }                                               // c:443-444
+    }
+    // c:449-460 — `-w` whence parse (case-insensitive).
+    if OPT_ISSET(ops, b'w') {                                                 // c:449
+        let whence = OPT_ARG(ops, b'w').unwrap_or("");                        // c:450
+        if whence.eq_ignore_ascii_case("current") || whence == "1" {          // c:451
+            w = libc::SEEK_CUR;                                               // c:452
+        } else if whence.eq_ignore_ascii_case("end") || whence == "2" {       // c:453
+            w = libc::SEEK_END;                                               // c:454
+        } else if !whence.eq_ignore_ascii_case("start") && whence != "0" {    // c:455
+            zwarnnam(nam, &format!("unknown argument to -w: {}", whence));    // c:456
+            return 1;                                                         // c:457
         }
-        i += 1;
     }
 
-    let pos_str = match pos_arg {
-        Some(s) => s,
+    // c:461 — `pos = (off_t)mathevali(*args);`
+    let pos_str = match args.first() {
+        Some(s) => s.clone(),
         None => return 1,
     };
-
-    // c:461 — `pos = (off_t)mathevali(*args);`
-    let pos = match crate::ported::math::mathevali(&pos_str) {
+    let pos = match crate::ported::math::mathevali(&pos_str) {                // c:461
         Ok(v) => v,
         Err(_) => return 1,
     };
     // c:462 — `return (lseek(fd, pos, w) == -1) ? 2 : 0;`
-    if unsafe { libc::lseek(fd, pos as libc::off_t, w) } == -1 {
+    if unsafe { libc::lseek(fd, pos as libc::off_t, w) } == -1 {              // c:462
         2
     } else {
         0
@@ -557,43 +528,35 @@ pub fn math_systell(_name: &str, _argc: i32, argv: &[Mnumber], _id: i32) -> Mnum
 /// (the errno number or symbolic name).
 ///
 /// Return values per c:485-489: 0 success / 1 bad params / 2 unknown errno name.
-pub fn bin_syserror(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:494
+pub fn bin_syserror(nam: &str, args: &[String],                              // c:494
+                    ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
     // c:496-497 — `int num = 0; char *errvar = NULL, *msg, *pfx = "", *str;`
     let mut num: i32 = 0;
     let mut errvar: Option<String> = None;
     let mut pfx: String = String::new();
-    let mut name_arg: Option<String> = None;
 
-    // Parse "e:p:" + optional positional name.
-    let mut i = 0usize;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-e" if i + 1 < args.len() => {                              // c:500
-                i += 1;
-                let ev = args[i].clone();                                // c:501
-                if !isident(&ev) {                                       // c:502
-                    zwarnnam(nam, &format!("not an identifier: {}", ev));// c:503
-                    return 1;                                            // c:504
-                }
-                errvar = Some(ev);
-            }
-            "-p" if i + 1 < args.len() => {                              // c:508
-                i += 1;
-                pfx = args[i].clone();                                   // c:509
-            }
-            other if !other.starts_with('-') => { name_arg = Some(other.to_string()); break; }
-            _ => break,
+    // c:500-505 — `if (OPT_ISSET(ops, 'e')) { errvar = OPT_ARG(...); isident...}`
+    if OPT_ISSET(ops, b'e') {                                                 // c:500
+        let ev = OPT_ARG(ops, b'e').unwrap_or("").to_string();                // c:501
+        if !isident(&ev) {                                                    // c:502
+            zwarnnam(nam, &format!("not an identifier: {}", ev));             // c:503
+            return 1;                                                         // c:504
         }
-        i += 1;
+        errvar = Some(ev);
+    }
+    // c:508 — `if (OPT_ISSET(ops, 'p')) pfx = OPT_ARG(ops, 'p');`
+    if OPT_ISSET(ops, b'p') {                                                 // c:508
+        pfx = OPT_ARG(ops, b'p').unwrap_or("").to_string();                   // c:509
     }
 
     // c:511-530 — name parse: empty → use current errno; all-digit →
     // atoi; symbolic → lookup in sys_errnames, return 2 on miss.
-    if name_arg.is_none() {
+    if args.is_empty() {                                                      // c:511
         // c:512 — `num = errno;`
         num = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
     } else {
-        let arg = name_arg.unwrap();
+        let arg = &args[0];
         let bytes = arg.as_bytes();
         let mut ptr = 0usize;
         // c:514-516 — `while (*ptr && idigit(*ptr)) ptr++;`
@@ -623,8 +586,7 @@ pub fn bin_syserror(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32
     // c:533-539 — write back to errvar or stderr.
     if let Some(ev) = errvar {
         let str_out = format!("{}{}", pfx, msg);                         // c:534-535
-        setsparam(&mut exec.variables, &mut exec.arrays,
-                  &mut exec.assoc_arrays, &ev, &str_out);                // c:536
+        crate::ported::modules::ksh93::setsparam(&ev, &str_out);             // c:536
     } else {
         eprintln!("{}{}", pfx, msg);                                     // c:538
     }
@@ -641,7 +603,8 @@ pub fn bin_syserror(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32
 ///
 /// Return values per inline comments: 0 success / 1 param/lock error
 /// / 2 timeout exhausted / 255 not supported on this platform.
-pub fn bin_zsystem_flock(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:546
+pub fn bin_zsystem_flock(nam: &str, args: &[String],                         // c:546
+                         _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     // c:548-551 — option-state locals.
     let mut cloexec: bool = true;                                        // c:548
     let mut unlock: bool = false;
@@ -879,8 +842,7 @@ pub fn bin_zsystem_flock(exec: &mut ShellExecutor, nam: &str, args: &[String]) -
 
     // c:764-765 — `if (fdvar) setiparam(fdvar, flock_fd);`
     if let Some(ref var) = fdvar {
-        setiparam(&mut exec.variables, &mut exec.arrays,
-                  &mut exec.assoc_arrays, var, flock_fd as i64);
+        crate::ported::modules::ksh93::setiparam(var, flock_fd as i64);      // c:765
     }
     0                                                                    // c:767
 }
@@ -892,7 +854,8 @@ pub fn bin_zsystem_flock(exec: &mut ShellExecutor, nam: &str, args: &[String]) -
 ///
 /// Returns 0 if the named feature is supported, 1 if not, 255 on
 /// argument-count error.
-pub fn bin_zsystem_supports(_exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:781
+pub fn bin_zsystem_supports(nam: &str, args: &[String],                      // c:781
+                            _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     // c:784-787 — `if (!args[0]) ... return 255;`
     if args.is_empty() {
         zwarnnam(nam, "supports: not enough arguments");
@@ -917,18 +880,19 @@ pub fn bin_zsystem_supports(_exec: &mut ShellExecutor, nam: &str, args: &[String
 ///                                       Options ops, int func)`.
 /// The `zsystem` builtin dispatcher — peels the first arg and routes
 /// to `bin_zsystem_flock` or `bin_zsystem_supports`.
-pub fn bin_zsystem(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:806
+pub fn bin_zsystem(nam: &str, args: &[String],                               // c:806
+                   ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
     if args.is_empty() {
         zwarnnam(nam, "subcommand expected");
         return 1;
     }
     // c:809 — `if (!strcmp(*args, "flock"))`
     if args[0] == "flock" {
-        return bin_zsystem_flock(exec, nam, &args[1..]);                 // c:810
+        return bin_zsystem_flock(nam, &args[1..], ops, func);            // c:810
     }
     // c:811 — `else if (!strcmp(*args, "supports"))`
     if args[0] == "supports" {
-        return bin_zsystem_supports(exec, nam, &args[1..]);              // c:812
+        return bin_zsystem_supports(nam, &args[1..], ops, func);         // c:812
     }
     zwarnnam(nam, &format!("unknown subcommand: {}", args[0]));          // c:814
     1                                                                    // c:815
