@@ -14,120 +14,11 @@ use std::path::Path;
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 
-/// Mapfile associative array emulation.
-/// Port of the `mapfile` HashTable special-parameter shape from
-/// Src/Modules/mapfile.c — the C source registers `$mapfile[k]`
-/// with `getpmmapfile()`/`setpmmapfile()`/`scanpmmapfile()`
-/// callbacks; this struct wraps the same public surface.
-#[derive(Debug, Default)]
-pub struct Mapfile {
-    readonly: bool,
-}
-
-impl Mapfile {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mapfile.c`.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mapfile.c`.
-    pub fn set_readonly(&mut self, readonly: bool) {
-        self.readonly = readonly;
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/mapfile.c`.
-    pub fn is_readonly(&self) -> bool {
-        self.readonly
-    }
-
-    /// Get file contents by filename (key).
-    /// Port of `getpmmapfile()` from Src/Modules/mapfile.c:217 —
-    /// the `getfn` slot of the per-key Param the C source builds on
-    /// the fly when `$mapfile[KEY]` is dereferenced.
-    pub fn get(&self, filename: &str) -> Option<String> {
-        get_contents(filename).ok()
-    }
-
-    /// Set file contents by filename (key).
-    /// Port of `setpmmapfile()` from Src/Modules/mapfile.c:68 — the
-    /// `setfn` slot the C source wires for `$mapfile[KEY]=VALUE`
-    /// assignment.
-    pub fn set(&self, filename: &str, contents: &str) -> io::Result<()> {
-        if self.readonly {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "mapfile is read-only",
-            ));
-        }
-        setpmmapfile(filename, contents)
-    }
-
-    /// Unset (delete) a file by filename (key).
-    /// Port of `unsetpmmapfile()` from Src/Modules/mapfile.c:126 —
-    /// the `unsetfn` slot the C source wires for `unset
-    /// 'mapfile[KEY]'`.
-    pub fn unset(&self, filename: &str) -> io::Result<()> {
-        if self.readonly {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "mapfile is read-only",
-            ));
-        }
-        fs::remove_file(filename)
-    }
-
-    /// Scan current directory for regular files.
-    /// Direct port of the directory-walk inside `scanpmmapfile()`
-    /// (Src/Modules/mapfile.c:241): readdir + lstat S_ISREG filter.
-    pub fn keys(&self) -> io::Result<Vec<String>> {
-        let mut files = Vec::new();
-        for entry in fs::read_dir(".")? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    files.push(name.to_string());
-                }
-            }
-        }
-        Ok(files)
-    }
-
-    /// Get all files in current directory as hash.
-    /// Port of `scanpmmapfile()` from Src/Modules/mapfile.c:241 —
-    /// the C source invokes a per-entry callback with each (key,
-    /// contents) pair; here we materialize them into a HashMap so
-    /// callers can drive the scan iteratively.
-    pub fn to_hash(&self) -> io::Result<HashMap<String, String>> {
-        let mut result = HashMap::new();
-        for filename in self.keys()? {
-            if let Ok(contents) = get_contents(&filename) {
-                result.insert(filename, contents);
-            }
-        }
-        Ok(result)
-    }
-
-    /// Set multiple files from a hash.
-    /// Port of `setpmmapfiles()` from Src/Modules/mapfile.c:141 —
-    /// the bulk-assignment slot the C source wires for `mapfile=(
-    /// k1 v1 k2 v2 ... )`.
-    pub fn from_hash(&self, files: &HashMap<String, String>) -> io::Result<()> {
-        if self.readonly {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "mapfile is read-only",
-            ));
-        }
-        for (filename, contents) in files {
-            setpmmapfile(filename, contents)?;
-        }
-        Ok(())
-    }
-}
+// C source has 0 structs/enums; Rust port matches. The
+// `mapfile` magic-assoc dispatch is wired through the C `partab[]`
+// paramdef (mapfile.c:209-211) that ties getpmmapfile / scanpmmapfile
+// + setpmmapfile / unsetpmmapfile callbacks. Each is a free fn in
+// this module.
 
 /// Read file contents using mmap when available.
 /// Port of `get_contents()` from Src/Modules/mapfile.c:167 — uses
@@ -263,34 +154,18 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn test_mapfile_new() {
-        let mf = Mapfile::new();
-        assert!(!mf.is_readonly());
+    fn getpmmapfile_nonexistent_returns_none() {
+        // c:217-225 — get_contents returns NULL → pm->u.str = ""
+        // + PM_UNSET. Rust port returns None for unset.
+        assert!(getpmmapfile("/nonexistent/file/path").is_none());
     }
 
     #[test]
-    fn test_mapfile_readonly() {
-        let mut mf = Mapfile::new();
-        mf.set_readonly(true);
-        assert!(mf.is_readonly());
-
-        let result = mf.set("test.txt", "content");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_get_nonexistent_file() {
-        let mf = Mapfile::new();
-        assert!(mf.get("/nonexistent/file/path").is_none());
-    }
-
-    #[test]
-    fn test_file_roundtrip() {
+    fn file_roundtrip() {
         let test_file = "/tmp/zsh_mapfile_test.txt";
         let content = "Hello, mapfile!";
 
-        let result = setpmmapfile(test_file, content);
-        assert!(result.is_ok());
+        assert!(setpmmapfile(test_file, content).is_ok());
 
         let read_content = get_contents(test_file).unwrap();
         assert_eq!(read_content, content);
@@ -299,12 +174,10 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_file() {
+    fn empty_file_roundtrip() {
         let test_file = "/tmp/zsh_mapfile_empty.txt";
 
-        let result = setpmmapfile(test_file, "");
-        assert!(result.is_ok());
-
+        assert!(setpmmapfile(test_file, "").is_ok());
         let read_content = get_contents(test_file).unwrap();
         assert!(read_content.is_empty());
 
@@ -312,27 +185,32 @@ mod tests {
     }
 
     #[test]
-    fn test_mapfile_keys_lists_regular_files() {
-        let mf = Mapfile::default();
-        let files = mf.keys();
-        assert!(files.is_ok());
+    fn scanpmmapfile_lists_regular_files() {
+        // c:241-269 — opens cwd, walks zreaddir, skips . / .. .
+        // Returns at least the test runner artefacts in cwd.
+        let entries = scanpmmapfile();
+        // Either non-empty (real cwd) or empty (sandboxed runner).
+        assert!(entries.iter().all(|n| n != "." && n != ".."));
     }
 
     #[test]
-    fn test_file_exists() {
-        assert!(Path::new(".").exists());
-        assert!(!Path::new("/nonexistent/path/to/file").exists());
-    }
-
-    #[test]
-    fn test_mapfile_unset() {
+    fn unsetpmmapfile_removes_file() {
         let test_file = "/tmp/zsh_mapfile_unset.txt";
         let _ = fs::write(test_file, "content");
 
-        let mf = Mapfile::new();
-        let result = mf.unset(test_file);
-        assert!(result.is_ok());
+        unsetpmmapfile(test_file, false);
         assert!(!Path::new(test_file).exists());
+    }
+
+    #[test]
+    fn unsetpmmapfile_readonly_skips() {
+        // c:133-134 — `if (!(pm->node.flags & PM_READONLY)) unlink(...)`
+        let test_file = "/tmp/zsh_mapfile_unset_ro.txt";
+        let _ = fs::write(test_file, "content");
+
+        unsetpmmapfile(test_file, true);
+        assert!(Path::new(test_file).exists());
+        let _ = fs::remove_file(test_file);
     }
 }
 
