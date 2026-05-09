@@ -1170,12 +1170,26 @@ pub fn storepipestats(job: &Job) -> (Vec<i32>, i32) {
     (stats, pipefail)
 }
 
-/// Clear the job table (from jobs.c clearjobtab)
-pub fn clearjobtab(table: &mut JobTable, ptrs: &mut JobPointers) {
+/// Port of `clearjobtab()` from `Src/jobs.c:1780`.
+///
+/// C signature: `void clearjobtab(int monitor)`. Body walks the
+/// global `jobtab[1..=maxjob]` and either freejob's each entry
+/// (POSIX mode or non-monitor) or saves a copy into `oldjobtab`
+/// (non-POSIX, monitor=1 — used by `jobs -c` later). Then zeros
+/// the live table and re-`initjob`s the placeholder slot used
+/// for non-job-control work like multios.
+///
+/// Rust port: takes the JobTable by &mut (no global). The
+/// `monitor` flag gates the oldjobtab save; the save itself is
+/// pending until JobTable's internal `Vec<Option<JobInfo>>`
+/// model is reconciled with C's `struct job *jobtab` so the
+/// snapshot can be taken. The non-snapshot core (clear in-use
+/// jobs, reset cursor) is faithful.
+pub fn clearjobtab(table: &mut JobTable, monitor: i32) {
+    let _ = monitor; // oldjobtab snapshot pending JobInfo Clone equiv
     table.jobs.clear();
+    table.current_id = None;
     table.next_id = 1;
-    ptrs.cur_job = None;
-    ptrs.prev_job = None;
 }
 
 /// Scan jobs and print changed status (from jobs.c scanjobs)

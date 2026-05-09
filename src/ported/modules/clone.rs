@@ -15,10 +15,13 @@
 #![allow(non_snake_case)]
 
 use crate::ported::exec::ShellExecutor;
+use crate::ported::init::{init_io, ShellState};
+use crate::ported::jobs::clearjobtab;
 use crate::ported::module::{
     featuresarray, handlefeatures, setfeatureenables, Builtin, Features, Module,
 };
-use crate::ported::utils::{zerrnam, zwarnnam};
+use crate::ported::params::setsparam;
+use crate::ported::utils::{unmetafy, zerrnam, zwarnnam};
 
 // =====================================================================
 // Port of `bin_clone()` from Src/Modules/clone.c:44.
@@ -32,6 +35,9 @@ use crate::ported::utils::{zerrnam, zwarnnam};
 /// `clone TTY`: open `TTY`, fork. Child sets up a new session,
 /// makes `TTY` its controlling terminal, and continues running the
 /// shell. Parent closes the tty and stores child pid in `$!`.
+///
+/// C body (clone.c:42-107) followed line-by-line. Notes on each
+/// C call site and the Rust equivalent below.
 #[cfg(unix)]
 pub(crate) fn bin_clone(s: &mut ShellExecutor, nam: &str, args: &[String], _func: i32) -> i32 {
     use std::ffi::CString;
@@ -39,7 +45,7 @@ pub(crate) fn bin_clone(s: &mut ShellExecutor, nam: &str, args: &[String], _func
 
     // C: BUILTIN("clone", ..., 1, 1, ...) guarantees args[0] exists,
     // but defend against direct calls from the Rust dispatcher.
-    let arg0 = match args.first() {
+    let arg0_in = match args.first() {
         Some(a) => a.as_str(),
         None => {
             zwarnnam(nam, "terminal required");
@@ -47,7 +53,15 @@ pub(crate) fn bin_clone(s: &mut ShellExecutor, nam: &str, args: &[String], _func
         }
     };
 
-    let tty_c = match CString::new(arg0) {
+    // C: clone.c:48 — unmetafy(*args, NULL); — strip Meta escapes
+    // before passing the path to open(2).
+    let mut arg0_bytes = arg0_in.as_bytes().to_vec();
+    unmetafy(&mut arg0_bytes);
+    let arg0 = std::str::from_utf8(&arg0_bytes)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|_| arg0_in.to_string());
+
+    let tty_c = match CString::new(arg0.clone()) {
         Ok(c) => c,
         Err(_) => {
             zwarnnam(nam, &format!("{}: invalid tty path", arg0));
@@ -55,7 +69,7 @@ pub(crate) fn bin_clone(s: &mut ShellExecutor, nam: &str, args: &[String], _func
         }
     };
 
-    // C: clone.c:49 — open(*args, O_RDWR|O_NOCTTY)
+    // C: clone.c:49 — ttyfd = open(*args, O_RDWR|O_NOCTTY);
     let ttyfd: RawFd = unsafe { libc::open(tty_c.as_ptr(), libc::O_RDWR | libc::O_NOCTTY) };
     if ttyfd < 0 {
         zwarnnam(nam, &format!("{}: {}", arg0, std::io::Error::last_os_error()));
@@ -66,27 +80,27 @@ pub(crate) fn bin_clone(s: &mut ShellExecutor, nam: &str, args: &[String], _func
     let pid = unsafe { libc::fork() };
     if pid == 0 {
         // CHILD path — clone.c:55-98.
+        // C: clone.c:56 — clearjobtab(0). Reset the inherited job
+        // table; the new shell starts with no background jobs.
+        clearjobtab(&mut s.jobs, 0);
+        // C: clone.c:57-58 — ppid = getppid(); mypid = getpid();
+        // zshrs reads these on demand from the system (no cached
+        // globals), so the call is implicit.
         unsafe {
-            // C: clone.c:56 — clearjobtab(0). zshrs's job table port
-            // is incomplete; the equivalent on ShellExecutor would
-            // clear `s.jobs`, but the child has its own copy via
-            // fork() COW so this is a no-op for correctness.
-            // WARNING: NOT IN CLONE.C — `clearjobtab(0)` lives in
-            // Src/jobs.c; pending the jobs.c full-state port.
-            //
-            // C: clone.c:57-58 — ppid = getppid(); mypid = getpid();
-            // zshrs reads these on demand from the system rather than
-            // caching globals, so no assignment needed here.
-            //
-            // C: clone.c:60 — setsid creates a new session and pgid.
-            // Failure is non-fatal; zsh just warns.
-            if libc::setsid() == -1 {
+            // C: clone.c:60 — setsid creates a new session+pgid.
+            // C uses `if (setsid() != mypid)` — the call returns the
+            // new session id which equals the calling pid on success,
+            // or -1 on failure. Rust port matches the C check exactly
+            // (mypid is fetched from getpid() since the C global isn't
+            // populated in this codepath yet).
+            let mypid = libc::getpid();
+            if libc::setsid() != mypid {
                 zwarnnam(
                     nam,
                     &format!("failed to create new session: {}", std::io::Error::last_os_error()),
                 );
             }
-            // C: clone.c:67-69 — dup2(ttyfd, 0/1/2)
+            // C: clone.c:67-69 — dup2(ttyfd, 0/1/2).
             libc::dup2(ttyfd, 0);
             libc::dup2(ttyfd, 1);
             libc::dup2(ttyfd, 2);
@@ -94,18 +108,17 @@ pub(crate) fn bin_clone(s: &mut ShellExecutor, nam: &str, args: &[String], _func
             if ttyfd > 2 {
                 libc::close(ttyfd);
             }
-            // C: clone.c:72 — closem(FDT_UNUSED, 0). Closes shell-
-            // internal fds. zshrs's fd-tracking port is incomplete;
-            // skipped here pending the io.c port.
-            //
+            // C: clone.c:72 — closem(FDT_UNUSED, 0). Close shell-
+            // internal fds (preserving 0/1/2 since they're not in
+            // FDT_UNUSED state after the dup2's). zshrs's
+            // ShellExecutor::closem (src/exec.rs:2248) walks fds 3+
+            // and closes them. Used here as the FDT_UNUSED equivalent
+            // since zshrs doesn't track the per-fd FDT_* type tags.
+            s.closem(&[]);
             // C: clone.c:73-74 — close(coprocin); close(coprocout);
-            // zshrs's coproc port doesn't track the pipe fds on
-            // ShellExecutor yet (the global `coprocin`/`coprocout`
-            // from Src/exec.c live elsewhere). Skipped pending the
-            // exec.c coproc-fd port; the new shell on the new tty
-            // would inherit closed coproc fds anyway because the
-            // closem-FDT_UNUSED loop above handles them in zsh's
-            // model.
+            // zshrs's coproc port doesn't yet expose the pipe fds via
+            // ShellExecutor; the closem() above already closes fds
+            // 3..256 which subsumes any open coproc pipes.
             // C: clone.c:76 — cttyfd = open(*args, O_RDWR);
             let cttyfd = libc::open(tty_c.as_ptr(), libc::O_RDWR);
             if cttyfd < 0 {
@@ -132,19 +145,49 @@ pub(crate) fn bin_clone(s: &mut ShellExecutor, nam: &str, args: &[String], _func
             } else {
                 libc::close(verify);
             }
-            // C: clone.c:95-96 — mypgrp = 0; init_io(NULL);
-            // WARNING: NOT IN CLONE.C — `init_io()` lives in Src/init.c;
-            // pending the init.c port. zshrs's I/O re-init is implicit
-            // via the dup2/setsid sequence above.
-            //
-            // C: clone.c:97 — setsparam("TTY", ztrdup(ttystrname));
-            // setsparam writes to the global param table; zshrs uses
-            // ShellExecutor.variables.
-            s.variables.insert("TTY".to_string(), arg0.to_string());
         }
-        // C: clone.c:106 — return 0; in the child. Parent's $! is
-        // set by the parent path below.
-        s.variables.insert("!".to_string(), "0".to_string());
+        // C: clone.c:95 — mypgrp = 0; (so acquire_pgrp picks up the
+        // new pgid). zshrs's pgrp tracking lives in libc::getpgrp()
+        // calls; nothing to clear here since there's no cached state.
+        //
+        // C: clone.c:96 — init_io(NULL); — re-establishes SHTTY etc.
+        // for the new controlling tty. The ported `init_io` operates
+        // on a `ShellState`, not `ShellExecutor`; instantiate a
+        // throwaway state for the call so the libc-side atty checks
+        // run against the fresh fd 0.
+        let mut state = ShellState::new();
+        init_io(&mut state);
+        // C: clone.c:97 — setsparam("TTY", ztrdup(ttystrname)).
+        // ttystrname in C is set by init_io from ttyname(SHTTY); look
+        // up the name of the freshly-installed controlling tty.
+        let tty_name = unsafe {
+            let ptr = libc::ttyname(0);
+            if ptr.is_null() {
+                arg0.clone()
+            } else {
+                std::ffi::CStr::from_ptr(ptr)
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        };
+        setsparam(
+            &mut s.variables,
+            &mut s.arrays,
+            &mut s.assoc_arrays,
+            "TTY",
+            &tty_name,
+        );
+        // Header comment of clone.c says: "$! is set to zero in the
+        // new instance of the shell". C zsh relies on lastpid being
+        // naturally cleared at process startup; Rust port pins it
+        // explicitly to match that documented contract.
+        setsparam(
+            &mut s.variables,
+            &mut s.arrays,
+            &mut s.assoc_arrays,
+            "!",
+            "0",
+        );
         return 0;
     }
     // PARENT path — clone.c:99-106.
@@ -154,7 +197,13 @@ pub(crate) fn bin_clone(s: &mut ShellExecutor, nam: &str, args: &[String], _func
         return 1;
     }
     // C: clone.c:105 — lastpid = pid;
-    s.variables.insert("!".to_string(), pid.to_string());
+    setsparam(
+        &mut s.variables,
+        &mut s.arrays,
+        &mut s.assoc_arrays,
+        "!",
+        &pid.to_string(),
+    );
     0
 }
 
