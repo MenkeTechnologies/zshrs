@@ -20,7 +20,7 @@ use crate::ported::exec::ShellExecutor;
 use crate::ported::module::{
     featuresarray, handlefeatures, setfeatureenables, Builtin, Features, Module,
 };
-use crate::ported::params::{setsparam, unsetparam};
+use crate::ported::params::{setaparam, setsparam, unsetparam};
 use crate::ported::utils::{metafy, unmetafy, zwarnnam};
 
 #[cfg(target_os = "macos")]
@@ -511,11 +511,17 @@ pub(crate) fn bin_listattr(s: &mut ShellExecutor, nam: &str, argv: &[String], sy
                     .iter()
                     .map(|n| metafy(&String::from_utf8_lossy(n)))
                     .collect();
-                // C: setaparam(param, array). zshrs's ShellExecutor
-                // uses a HashMap<String, Vec<String>> for arrays —
-                // direct insert is the equivalent of setaparam's
-                // table mutation.
-                s.arrays.insert(p.to_string(), metafied_names);
+                // C: setaparam(param, array). Routes through the
+                // canonical params.rs helper which drops any prior
+                // scalar/assoc value at `param` (matches C source's
+                // assignaparam dispatch at params.c:3357).
+                setaparam(
+                    &mut s.variables,
+                    &mut s.arrays,
+                    &mut s.assoc_arrays,
+                    p,
+                    metafied_names,
+                );
             } else {
                 // C: while (p < &value[list_len]) printf("%s\n", p);
                 for n in &raw_names {
