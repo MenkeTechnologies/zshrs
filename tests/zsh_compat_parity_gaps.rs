@@ -10,7 +10,8 @@
 //! larger scripted corpora, `corpus_dash_fc_surface_extra`, `corpus_dash_fc_compounds_misc`,
 //! `corpus_dash_fc_control_flow`, `corpus_dash_fc_params_redir`, `corpus_dash_fc_bulk_a`,
 //! `corpus_dash_fc_bulk_b`, `corpus_dash_fc_bulk_c`, `corpus_dash_fc_bulk_d`,
-//! `corpus_dash_fc_bulk_e`, `corpus_dash_fc_bulk_f`, `corpus_dash_fc_bulk_g`). Pass/fail is **stdout + exit** only (see `assert_parity`).
+//! `corpus_dash_fc_bulk_e`, `corpus_dash_fc_bulk_f`, `corpus_dash_fc_bulk_g`,
+//! `corpus_dash_fc_bulk_h`, `corpus_dash_fc_bulk_i`, `corpus_dash_fc_bulk_j`). Pass/fail is **stdout + exit** only (see `assert_parity`).
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -1299,7 +1300,7 @@ mod corpus_dash_fc_bulk_h {
         bulk_h_func_plus_funcfiletrace => (r#"funcfiletrace"#, r##"ffth() { print -r "fft=$#funcfiletrace"; }; ffth"##);
         bulk_h_percent_subst_capital_N => (r#"${(%):-%N}"#, r#"print ${(%):-%N}"#);
         bulk_h_read_delim_nul => (r#"read -d NUL"#, r##"read -d $'\\0' r0h <<< $'A\\0B'; print -r "$r0h""##);
-        bulk_h_unset_array_second_elt => (r#"unset a[2]"#, r##"typeset -a uah=(xh yh zh); unset 'uah[2]'; print -r "$#uah $uah[1] $uah[3]""##);
+        bulk_h_unset_array_second_elt => (r#"unset a[2]"#, r##"typeset -a uah=(xh yh zh); unset 'uah[2]'; print -r "$#uah $uah[1] $uah[3]"##);
         bulk_h_join_array_pipe_delim => (r#"join | array"#, r#"jah=( {1..3} ); print ${(j:|:)jah}"#);
         bulk_h_cond_executable_root_shell => (r#"[[ -x /bin/sh ]]"#, r##"[[ -x /bin/sh ]] || [[ -x /bin/bash ]]; print exsh=$?""##);
         bulk_h_cond_readable_hosts => (r#"[[ -r /etc/hosts ]]"#, r##"[[ -r /etc/hosts ]] || [[ -r /etc/hostname ]]; print rdh=$?""##);
@@ -1327,14 +1328,14 @@ mod corpus_dash_fc_bulk_h {
         bulk_h_zmodload_zsh_complete => (r#"zmodload zsh/complete"#, r##"zmodload zsh/complete 2>&1; print -r "ex=$?""##);
         bulk_h_zmodload_zsh_compwid => (r#"zmodload zsh/compwid"#, r##"zmodload zsh/compwid 2>&1; print -r "ex=$?""##);
         bulk_h_zmodload_zsh_zprof => (r#"zmodload zsh/zprof"#, r##"zmodload zsh/zprof 2>&1; print -r "ex=$?""##);
-        bulk_h_typeset_array_Unique => (r#"typeset -aU"#, r##"typeset -aU auh=(x x y); print -r "$auh""##);
+        bulk_h_typeset_array_Unique => (r#"typeset -aU"#, r#"typeset -aU auh=(x x y); print $auh"#);
         bulk_h_nullglob_star_N_in_tmp => (r#"nullglob *(N) argc"#, r##"tdn=$(mktemp -d); ( builtin cd $tdn && setopt nullglob && set -- *(N) && print argc=$# ); command rm -rf $tdn"##);
         bulk_h_bindkey_delete_byte => (r#"bindkey ^?"#, r##"bindkey '^?' 2>&1; print bkh=$?""##);
         bulk_h_sched_builtin_list => (r#"sched"#, r##"sched 2>&1; print sch=$?""##);
         bulk_h_param_e_double_expand => (r#"${(e):- }"#, r##"xeh=88; print ${(e):-v is $xeh}"##);
         bulk_h_cond_sized_file_hosts => (r#"[[ -s hosts ]]"#, r##"[[ -s /etc/hosts ]] || [[ -s /etc/hostname ]]; print szf=$?""##);
         bulk_h_unsetopt_errexit_after_false => (r#"unsetopt errexit"#, r##"setopt errexit; unsetopt errexit; false; print still_h"##);
-        bulk_h_param_Q_unquote => (r#"${(Q) }"#, r#"wqh='\"hi\"'; print ${(Q)wqh}"#);
+        bulk_h_param_Q_unquote => (r#"${(Q) }"#, r#"wqh='"hi"'; print ${(Q)wqh}"#);
         bulk_h_qqq_triple_quote_param => (r#"qqq words"#, r#"wq3='two words'; print ${(qqq)wq3}"#);
         bulk_h_glob_plain_files_only_tmp => (r#"*(.) one file"#, r##"tfg=$(mktemp -d); touch $tfg/only_f; mkdir $tfg/subd; ( builtin cd $tfg && print *(.) ); command rm -rf $tfg"##);
         bulk_h_anon_fn_local_wipes_outer => (r#"() { local }"#, r##"lh_o=outer; () { local lh_o=inner; }; print ${lh_o}"##);
@@ -1343,8 +1344,8 @@ mod corpus_dash_fc_bulk_h {
         bulk_h_arith_ternary_nested => (r#"?: nested"#, r#"print $(( 1 ? (0 ? 3 : 4) : 5 ))"#);
         bulk_h_scalar_hashhash_tail => (r#"##*/ tail"#, r#"svh=zz/yy/xx; print ${svh##*/}"#);
         bulk_h_print_dirstack_top => (r#"dirstack[1]"#, r#"print ${dirstack[1]:-no_ds}"#);
-        bulk_h_setopt_warnnestedvar_noop => (r#"setopt warnnestedvar"#, r##"setopt warnnestedvar 2>&1; print wnx=$?""##);
-        bulk_h_command_autoload_true => (r#"command autoload"#, r##"command autoload 2>&1; print acax=$?""##);
+        bulk_h_setopt_warnnestedvar_noop => (r#"setopt warnnestedvar"#, r##"setopt warnnestedvar 2>&1; print wnx=$?"##);
+        bulk_h_command_autoload_true => (r#"command autoload"#, r##"command autoload 2>&1; print acax=$?"##);
         bulk_h_false_true_colon_chain => (r#": : false true"#, r#":; :; false; true; print cch=$?"#);
         bulk_h_tilde_string_assign => (r#"~ in assignment"#, r##"th=~; print -r "tilde=${th:0:1}""##);
         bulk_h_logical_not_in_arith => (r#"! in (( ))"#, r#"print $(( !0 + !1 ))"#);
@@ -1369,5 +1370,235 @@ mod corpus_dash_fc_bulk_h {
         bulk_h_opt_singlelinezle => (r#"options[singlelinezle]"#, r#"print $options[singlelinezle]"#);
         bulk_h_opt_stdin => (r#"options[stdin]"#, r#"print $options[stdin]"#);
         bulk_h_opt_trackall => (r#"options[trackall]"#, r#"print $options[trackall]"#);
+    }
+}
+
+/// Ninth batch: **table sizes** (`${#commands}`, `${#builtins}`, …), **`ZSH_*` / `LANG` / `MACHTYPE`** reads,
+/// extra **`zmodload`** probes (**`zsh/nearcolor`**, **`zsh/attr`**, **`zsh/clone`**), **`fc -p` / `fc -P`**, **`coproc` + `wait`**,
+/// **`getopts`**, **`trap EXIT`**, background **`wait $!`**, **arith** (`**`, `[#16]`, `%`, xor), **expansion** (`(U)` / `(L)`, `${sv:n[:m]}`, `${ary:-1}`, `${ary:#pat}`, `(s:.:.)`, `(ok)`, `(Oa)`, `(u)`),
+/// **`[[ -e / ]]`**, **`ulimit -n`**, **`compaudit`**, **`options[rc_expand_param]`**, and assorted builtins/parameters.
+mod corpus_dash_fc_bulk_i {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_i_zmodload_zsh_nearcolor => (r#"zmodload zsh/nearcolor"#, r##"zmodload zsh/nearcolor 2>&1; print -r "ex=$?""##);
+        bulk_i_zmodload_zsh_attr => (r#"zmodload zsh/attr"#, r##"zmodload zsh/attr 2>&1; print -r "ex=$?""##);
+        bulk_i_zmodload_zsh_clone => (r#"zmodload zsh/clone"#, r##"zmodload zsh/clone 2>&1; print -r "ex=$?""##);
+        bulk_i_hash_num_commands => (r#"count commands"#, r#"print ${#commands}"#);
+        bulk_i_hash_num_patchars => (r#"count patchars"#, r#"print ${#patchars}"#);
+        bulk_i_hash_num_fpath => (r#"count fpath"#, r#"print ${#fpath}"#);
+        bulk_i_hash_num_path => (r#"count path"#, r#"print ${#path}"#);
+        bulk_i_hash_num_dis_builtins => (r#"count dis_builtins"#, r#"print ${#dis_builtins}"#);
+        bulk_i_hash_num_builtins => (r#"count builtins"#, r#"print ${#builtins}"#);
+        bulk_i_hash_num_widgets => (r#"count widgets"#, r#"print ${#widgets}"#);
+        bulk_i_param_ZSH_EXEC_CONTEXT => (r#"ZSH_EXEC_CONTEXT"#, r#"print $ZSH_EXEC_CONTEXT"#);
+        bulk_i_param_ZSH_ARGZERO => (r#"ZSH_ARGZERO"#, r#"print ${ZSH_ARGZERO:-no_zarg}"#);
+        bulk_i_param_CPUTYPE => (r#"CPUTYPE"#, r#"print ${CPUTYPE:-nocpu}"#);
+        bulk_i_param_HOSTTYPE => (r#"HOSTTYPE"#, r#"print ${HOSTTYPE:-nohostt}"#);
+        bulk_i_param_PPID => (r#"PPID"#, r#"print $PPID"#);
+        bulk_i_param_EGID => (r#"EGID"#, r#"print $EGID"#);
+        bulk_i_param_GID => (r#"GID"#, r#"print $GID"#);
+        bulk_i_param_SHLVL => (r#"SHLVL"#, r#"print $SHLVL"#);
+        bulk_i_argv_subscript_slice => (r#"$@[2,-1]"#, r#"set -- a b c d; print $@[2,-1]"#);
+        bulk_i_brace_sequence_descending => (r#"{10..1}"#, r#"print {10..1}"#);
+        bulk_i_for_double_vars_pairs => (r#"for i j pairs"#, r#"for i j in 1 2 3 4; do print -r "$i-$j"; done"#);
+        bulk_i_until_counter => (r#"until (( ))"#, r#"ui=0; until (( ui >= 2 )); do ui=$((ui+1)); done; print $ui"#);
+        bulk_i_repeat_body_count => (r#"repeat 3"#, r#"integer ri=0; repeat 3; do ri=$((ri+1)); done; print $ri"#);
+        bulk_i_typeset_float_precision_cap_f => (r#"typeset -F 6"#, r#"typeset -F 6 ffi_i=1.23456789; print $ffi_i"#);
+        bulk_i_typeset_zero_pad_width => (r#"typeset -Z5"#, r#"typeset -Z5 -i zzi_i=7; print $zzi_i"#);
+        bulk_i_typeset_integer_output_hex => (r#"typeset -i16"#, r#"typeset -i16 izi_i=15; print $izi_i"#);
+        bulk_i_float_plus_eq => (r#"float +="#, r#"float fpi_i=1.5; fpi_i+=0.25; print $fpi_i"#);
+        bulk_i_integer_plus_eq => (r#"integer +="#, r#"integer ii_i=2; ii_i+=7; print $ii_i"#);
+        bulk_i_arith_exp_2_pow_10 => (r#"arith 2**10"#, r#"print $(( 2 ** 10 ))"#);
+        bulk_i_arith_exp_7_pow_2 => (r#"arith 7**2"#, r#"print $(( 7 ** 2 ))"#);
+        bulk_i_arith_output_base_16_hash => (r#"[#16]"#, r#"print $(( [#16] 255 ))"#);
+        bulk_i_arith_output_base_8_hash => (r#"[#8]"#, r#"print $(( [#8] 64 ))"#);
+        bulk_i_kill_zero_current_shell => (r#"kill -0 $$"#, r#"kill -0 $$; print k0i=$?"#);
+        bulk_i_wait_no_child => (r#"wait no jobs"#, r#"wait 2>/dev/null; print wx_i=$?"#);
+        bulk_i_coproc_exit_wait_status => (r#"coproc wait"#, r##"coproc exit 0; wait; print -r "cwx=$?""##);
+        bulk_i_fc_push_pop_history_file => (r#"fc -p -P"#, r##"hi_i=$(mktemp); fc -p $hi_i 2>&1; fp1_i=$?; fc -P 2>/dev/null; fp2_i=$?; command rm -f $hi_i; print -r "$fp1_i $fp2_i""##);
+        bulk_i_functrace_nested_depth => (r#"functrace depth"#, r##"outer_ft_i() { inner_ft_i() { print -r "ft_i=$#functrace"; }; inner_ft_i; }; outer_ft_i"##);
+        bulk_i_funcstack_nested_depth => (r#"funcstack depth"#, r##"outer_fs_i() { inner_fs_i() { print -r "fs_i=$#funcstack"; }; inner_fs_i; }; outer_fs_i"##);
+        bulk_i_readonly_unset_in_subshell => (r#"readonly unset"#, r##"readonly roi_i=1; ( unset roi_i ) 2>/dev/null; print -r "ur_i=$?""##);
+        bulk_i_mktemp_executable_bit => (r#"chmod +x -x"#, r##"tx_i=$(mktemp); chmod +x $tx_i 2>/dev/null; [[ -x $tx_i ]]; print -r "xx_i=$?"; command rm -f $tx_i"##);
+        bulk_i_compaudit_stdout_discard => (r#"compaudit"#, r##"compaudit >/dev/null 2>&1; print -r "ca_i=$?""##);
+        bulk_i_command_subst_nested => (r#"nested $()"#, r##"nest_i() { print inner_i; }; print -r "$(nest_i)""##);
+        bulk_i_heredoc_indented_strip => (r#"here <<-"#, r##"read x_i <<-EOI
+	hi_line_i
+EOI
+print -r "x_i=$x_i""##);
+        bulk_i_shwordsplit_sets_argc => (r#"shwordsplit argc"#, r##"setopt shwordsplit; wsi_i="a b c"; set -- $wsi_i; print -r "argci=$#""##);
+        bulk_i_noglob_star_literal => (r#"noglob *"#, r##"setopt noglob; print -r *"##);
+        bulk_i_printf_lower_hex => (r#"printf %x"#, r#"printf '%x\n' 255"#);
+        bulk_i_expand_uppercase_flag_U => (r#"${(U) }"#, r#"mui_i=mixed; print ${(U)mui_i}"#);
+        bulk_i_expand_lowercase_flag_L => (r#"${(L) }"#, r#"uli_i=MiXeD; print ${(L)uli_i}"#);
+        bulk_i_pad_right_custom_char => (r#"pad (r:4::X:)"#, r#"print ${(r:4::X:)y}"#);
+        bulk_i_array_lit_count_three => (r#"array #=3"#, r#"typeset -a aw3_i=(one two three); print $#aw3_i"#);
+        bulk_i_pipestatus_after_false_true => (r#"pipestatus |"#, r##"false | true; print -r "$pipestatus[1] $pipestatus[2]""##);
+        bulk_i_getopts_cluster_abc => (r#"getopts abc"#, r##"set -- -abc; OPTIND=1; getopts 'abc' o1_i; print -r "g1=$o1_i"; getopts 'abc' o2_i; print -r "g2=$o2_i""##);
+        bulk_i_getopts_colon_optarg => (r#"getopts a:"#, r##"set -- -afoo_i; OPTIND=1; getopts 'a:' oa_i; print -r "$oa_i $OPTARG""##);
+        bulk_i_glob_double_star_nested_tmp => (r#"** / in tmp"#, r##"tds_i=$(mktemp -d); mkdir -p $tds_i/a/b; touch $tds_i/a/b/c_i; ( builtin cd $tds_i && print a/**/c_i(N) ); command rm -rf $tds_i"##);
+        bulk_i_background_wait_bang_statuses => (r#"wait $! bg"#, r##"true & wait $!; print -r "tw_i=$?"; false & wait $!; print -r "fw_i=$?""##);
+        bulk_i_float_cap_E_scientific => (r#"typeset -E"#, r#"typeset -E ei_i=1.5e2; print $ei_i"#);
+        bulk_i_arith_bit_xor => (r#"arith ^"#, r#"print $(( 5 ^ 3 ))"#);
+        bulk_i_shift_two_keeps_first_of_rest => (r#"shift 2"#, r#"set -- a b c d; shift 2; print $1"#);
+        bulk_i_arith_logical_or_in_parens => (r#"(( || ))"#, r#"(( 0 || 5 )); print aor_i=$?"#);
+        bulk_i_eval_string_print => (r#"eval print"#, r#"eval "print ev_i=1""#);
+        bulk_i_hash_reload_r => (r#"hash -r"#, r#"hash -r; print hri=$?"#);
+        bulk_i_whence_verbose_builtin => (r#"whence -v print"#, r##"whence -v print 2>&1"##);
+        bulk_i_arith_modulo_ten_three => (r#"10 % 3"#, r#"print $(( 10 % 3 ))"#);
+        bulk_i_substring_scalar_slice => (r#"${var:n:m}"#, r#"svi_i=abcdef; print ${svi_i:2:3}"#);
+        bulk_i_assoc_bracket_scalar => (r#"A[k]"#, r#"typeset -A aai_i=(ki vi); print ${aai_i[ki]}"#);
+        bulk_i_IFS_length => (r#"${#IFS}"#, r#"print ${#IFS}"#);
+        bulk_i_HISTCHARS_scalar => (r#"HISTCHARS"#, r#"print $HISTCHARS"#);
+        bulk_i_KEYBOARD_HACK_default => (r#"KEYBOARD_HACK"#, r#"print ${KEYBOARD_HACK:-nilkh}"#);
+        bulk_i_HISTCHARS_length => (r#"len HISTCHARS"#, r#"print ${#HISTCHARS}"#);
+        bulk_i_WORDCHARS_length => (r#"len WORDCHARS"#, r#"print ${#WORDCHARS}"#);
+        bulk_i_scheduled_events_count => (r#"#zsh_scheduled_events"#, r#"print ${#zsh_scheduled_events}"#);
+        bulk_i_jobdirs_count => (r#"#jobdirs"#, r#"print ${#jobdirs}"#);
+        bulk_i_watch_array_count => (r#"#watch"#, r#"print ${#watch}"#);
+        bulk_i_cdpath_element_count => (r#"$#cdpath"#, r#"print $#cdpath"#);
+        bulk_i_module_path_count => (r#"#module_path"#, r#"print ${#module_path}"#);
+        bulk_i_signals_assoc_count => (r#"#signals"#, r#"print ${#signals}"#);
+        bulk_i_reswords_assoc_count => (r#"#reswords"#, r#"print ${#reswords}"#);
+        bulk_i_usergroups_defined_p => (r#"$+usergroups"#, r#"print $+usergroups"#);
+        bulk_i_opt_rc_expand_param => (r#"options[rc_expand_param]"#, r#"print $options[rc_expand_param]"#);
+        bulk_i_autoload_zmv => (r#"autoload zmv"#, r##"autoload -Uz zmv 2>&1; print -r "zmv_i=$?""##);
+        bulk_i_param_LANG => (r#"LANG"#, r#"print ${LANG:-nil_LANG}"#);
+        bulk_i_param_ZSH_PATCHLEVEL => (r#"ZSH_PATCHLEVEL"#, r#"print $ZSH_PATCHLEVEL"#);
+        bulk_i_nullcmds_READNULL_and_NULL => (r#"NULL READNULL"#, r##"print -r "${NULLCMD:-N_nc}" "${READNULLCMD:-N_rd}""##);
+        bulk_i_CHOST_and_MACHTYPE => (r#"CHOST MACHTYPE"#, r##"print -r "${CHOST:-}"; print -r "$MACHTYPE""##);
+        bulk_i_commands_assoc_lookup_print => (r#"commands[print]"#, r##"print -r "${commands[print]:-noprintpath}""##);
+        bulk_i_split_scalar_on_colon_flag => (r#"(s:.:.)"#, r#"sci_i=a.b.c; print ${(s.:.)sci_i}"#);
+        bulk_i_assoc_sorted_keys_ok => (r#"(ok) assoc"#, r#"typeset -A oki_i=(bi 2 ai 1); print ${(ok)oki_i}"#);
+        bulk_i_array_reversed_flag_Oa => (r#"(Oa) rev"#, r#"ari_i=(1 2 3); print ${(Oa)ari_i}"#);
+        bulk_i_array_unique_flag_u => (r#"(u) uniq"#, r#"aui_i=(1 1 2); print ${(u)aui_i}"#);
+        bulk_i_arith_grouped_factors => (r#"(( (1+2)*(3+4) ))"#, r#"print $(( (1+2)*(3+4) ))"#);
+        bulk_i_arith_float_division => (r#"4 / 2.0"#, r#"print $(( 4 / 2.0 ))"#);
+        bulk_i_logical_and_or_shortcircuit => (r#"&& ||"#, r##"true && print -r "Ai=1"; false || print -r "Bi=1""##);
+        bulk_i_print_list_one_per_line => (r#"print -l"#, r#"print -l one_i two_i three_i"#);
+        bulk_i_array_append_paren_elems => (r#"a+=( )"#, r#"typeset -a api_i=(1); api_i+=(2 3); print -r "${api_i[@]}""#);
+        bulk_i_case_glob_branch => (r#"case * )"#, r#"case hi_i in hi*) print hit_i;; esac"#);
+        bulk_i_hash_special_param_flags => (r#"$+tables"#, r##"print -r "$+parameters $+options $+builtins $+commands $+functions""##);
+        bulk_i_trap_EXIT_prints => (r#"trap EXIT"#, r##"trap 'print -r Ti_exit' EXIT; :"##);
+        bulk_i_ulimit_minus_n => (r#"ulimit -n"#, r##"print -r "ULi=$(ulimit -n)""##);
+        bulk_i_filesystem_root_exists => (r#"[[ -e / ]]"#, r#"[[ -e / ]]; print eri=$?"#);
+        bulk_i_array_negative_subscript => (r#"ary[-1]"#, r#"ani_i=(a b c); print ${ani_i[-1]}"#);
+        bulk_i_array_filter_colon_num_pattern => (r#"${ary:#2}"#, r#"afi_i=(1 2 3); print ${afi_i:#2}"#);
+        bulk_i_substring_from_offset_scalar => (r#"${sv:3}"#, r#"svo_i=abcdef; print ${svo_i:3}"#);
+        bulk_i_default_colon_assign_REPLY => (r#"REPLY :="#, r#"unset REPLY; : ${REPLY:=rep_i}; print $REPLY"#);
+        bulk_i_anonymous_function_call => (r#"() { }"#, r##"() { print -r anon_i; }"##);
+        bulk_i_brace_comma_concat => (r#"{a,b}x"#, r#"print -r {a,b}_suf_i"#);
+    }
+}
+
+/// Tenth batch: **`typeset -L`/`-R`/`-i2`/`-F2`/`-Z3`**, **radix `2#…`**, **`(f)`/`(z)` word breaking**, **`(j:|:)`**, **`(#b)`** (`extendedglob`), **`let`**, **multios writes**, **`localoptions`**,
+/// **array sorts `(n)` / `(on)` / `(On)` / `(i)`**, **`${…//}` / `${…#}` / `${…%}`**, **glob in `[[ = ]]`**, **brace `{a..z..n}` steps**, **`cmp -s`**, **`[[ -k /tmp ]]`**, **`command -p`**, **`zmodload -L`**, **`emulate sh -c`**, **`$TRY_BLOCK_ERROR`**, **`$_`**, **`source` missing**, **`zstyle`/`bindkey` listings**, **`[[ =~ ]]`**, plus **`$options[bsdglob]`**, **`nohashdirs`**, **`errsilent`**.
+mod corpus_dash_fc_bulk_j {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_j_typeset_capital_L_pad => (r#"typeset -L 10"#, r##"typeset -L 10 lj_p=hi; print -r "[$lj_p]""##);
+        bulk_j_typeset_capital_R_pad => (r#"typeset -R 10"#, r##"typeset -R 10 rj_p=hi; print -r "[$rj_p]""##);
+        bulk_j_typeset_integer_base_two_display => (r#"typeset -i2"#, r#"typeset -i2 ij_tw=5; print $ij_tw"#);
+        bulk_j_typeset_float_two_decimals => (r#"typeset -F2"#, r#"typeset -F2 fj_r=1.239; print $fj_r"#);
+        bulk_j_typeset_Z3_width_integer => (r#"typeset -Z3 -i"#, r#"typeset -Z3 -i ij_z=7; print $ij_z"#);
+        bulk_j_arith_literal_binary_prefix => (r#"2#1011"#, r#"print $(( 2#1011 ))"#);
+        bulk_j_split_scalar_on_newlines_f_flag => (r#"split (f)"#, r##"vj_f=$'aj\nbj'; print -r "${(f)vj_f}""##);
+        bulk_j_tokenize_words_z_flag => (r#"split (z)"#, r##"zj_w='xj  yj'; print -r "${(z)zj_w}""##);
+        bulk_j_join_array_with_pipe_flag => (r#"join (j:|:)"#, r#"arj_j=( {1..3} ); print ${(j:|:)arj_j}"#);
+        bulk_j_extendedglob_hash_b_capture => (r#"(#b) capture"#, r##"setopt extendedglob; [[ abcj = (#b)(a)(b*) ]]; print -r "$match""##);
+        bulk_j_status_matches_dollar_question_false => (r#"status $?"#, r##"false; print -r "$status $?""##);
+        bulk_j_pipestatus_entries_after_true => (r#"$#pipestatus true"#, r##"true; print -r "psnj=$#pipestatus""##);
+        bulk_j_read_IFS_comma_two_fields => (r#"IFS , read"#, r##"IFS=,; read vj1 vj2 <<< 'pj,qj'; print -r "$vj1 $vj2""##);
+        bulk_j_pad_left_dash_fill => (r#"pad (l::-:)"#, r#"print ${(l:4::-:)9}"#);
+        bulk_j_read_herestring_one_line => (r#"read <<<"#, r##"read rj_hs <<< 'lin_j'; print -r "$rj_hs""##);
+        bulk_j_multios_same_string_two_files => (r#"two > files"#, r##"tdm=$(mktemp -d); print -r samej >$tdm/aj >$tdm/bj; read -r lj1 <$tdm/aj; read -r lj2 <$tdm/bj; print -r "$lj1 $lj2"; command rm -rf $tdm"##);
+        bulk_j_subshell_pwd_under_tmp => (r#"(cd /tmp)"#, r##"( builtin cd /tmp && print -r "subj=${PWD:t}" )""##);
+        bulk_j_let_arith_assign => (r#"let"#, r#"let 'lj_s=2+3'; print $lj_s"#);
+        bulk_j_function_return_status => (r#"return 9"#, r##"rj_fn() { return 9; }; rj_fn; print -r "rjex=$?""##);
+        bulk_j_while_break_twice => (r#"while break"#, r##"ij_w=0; while (( ij_w < 5 )); do ij_w=$((ij_w+1)); [[ $ij_w -eq 2 ]] && break; done; print -r "$ij_w""##);
+        bulk_j_while_continue_accum => (r#"while continue"#, r##"ij_c=0; sj_c=0; while (( ij_c < 4 )); do ij_c=$((ij_c+1)); [[ $ij_c -eq 2 ]] && continue; sj_c=$((sj_c+ij_c)); done; print -r "$sj_c""##);
+        bulk_j_cond_isatty_stdin => (r#"[[ -t 0 ]]"#, r##"[[ -t 0 ]]; print -r "tj0=$?""##);
+        bulk_j_cond_isatty_stdout => (r#"[[ -t 1 ]]"#, r##"[[ -t 1 ]]; print -r "tj1=$?""##);
+        bulk_j_cond_name_pipe_dev_null => (r#"[[ -p /dev/null ]]"#, r##"[[ -p /dev/null ]]; print -r "pndj=$?""##);
+        bulk_j_cond_readable_etc_hosts => (r#"[[ -r hosts ]]"#, r##"[[ -r /etc/hosts ]] || [[ -r /etc/hostname ]]; print -r "rhj=$?""##);
+        bulk_j_cond_not_plain_file => (r#"[[ ! -e ]]"#, r##"[[ ! -e /__no_exist_j_path__ ]]; print -r "nej=$?""##);
+        bulk_j_cond_logical_and_digits => (r#"[[ && -eq ]]"#, r##"[[ 1 -eq 1 && 2 -eq 2 ]]; print -r "andj=$?""##);
+        bulk_j_cond_nul_and_nonempty => (r#"[[ -z -n ]]"#, r##"[[ -z '' && -n x ]]; print -r "znj=$?""##);
+        bulk_j_alias_define_invoke_remove => (r#"alias cycle"#, r##"alias aj_pr='print ajv'; aj_pr; unalias aj_pr; print -r "has=${+aliases[aj_pr]}""##);
+        bulk_j_array_subscript_range_slice => (r#"ary[2,4]"#, r##"arj_sl=(1 2 3 4); print -r "${arj_sl[2,4]}""##);
+        bulk_j_print_OSTYPE_VENDOR_UID => (r#"OSTYPE VENDOR UID"#, r##"print -r "$OSTYPE $VENDOR $UID""##);
+        bulk_j_count_modules_tables => (r#"#modules #loaded"#, r##"print -r "${#modules} ${#loaded_modules}""##);
+        bulk_j_module_path_first => (r#"module_path[1]"#, r##"print -r "${module_path[1]:-nompath}""##);
+        bulk_j_zmodload_list_silent => (r#"zmodload -L"#, r##"zmodload -L >/dev/null 2>&1; print -r "zLLj=$?""##);
+        bulk_j_emulate_sh_one_cmd => (r#"emulate sh -c"#, r##"emulate sh -c 'print -r emj_sh' 2>&1"##);
+        bulk_j_localoptions_noglob_scoped => (r#"localoptions noglob"#, r##"setopt glob; loj_fn() { setopt localoptions; setopt noglob; print -r "in=${options[noglob]}"; }; loj_fn; print -r "out=${options[noglob]}""##);
+        bulk_j_assoc_copy_via_kv_at => (r#"A copy @kv"#, r##"typeset -A asrcj=(kj vjv); typeset -A adstj=("${(@kv)asrcj}"); print -r "${adstj[kj]}""##);
+        bulk_j_scalar_double_slash_subst => (r#"// repl"#, r##"svj_ds='aj1aj1'; print -r "${svj_ds//1/x}""##);
+        bulk_j_array_onthefly_slash_subst => (r#"ary //"#, r##"arj_sl=(pj qj rj); print -r "${arj_sl//qj/xj}""##);
+        bulk_j_remove_hash_shortest => (r#"# short"#, r##"svj_hs='ajXbj'; print -r "${svj_hs#*X}""##);
+        bulk_j_remove_percent_shortest => (r#"% short"#, r##"svj_ts='aj.bj.cj'; print -r "${svj_ts%.*}""##);
+        bulk_j_default_colon_minus_unset => (r#":- default"#, r##"unset vj_dm; print -r "${vj_dm:-defj}""##);
+        bulk_j_alternate_colon_plus_set => (r#":+ alt"#, r##"vj_ap=sj; print -r "${vj_ap:+yesj}""##);
+        bulk_j_name_reference_copy_argv => (r#"argv=( )"#, r##"argv=(tj1 tj2); print -r "$argv[1]""##);
+        bulk_j_brace_range_step_three => (r#"{2..8..3}"#, r#"print {2..8..3}"#);
+        bulk_j_brace_zero_padded_run => (r#"{01..03}"#, r#"print {01..03}"#);
+        bulk_j_arith_pre_increment => (r#"++x"#, r##"integer ij_pi=1; print -r "$(( ++ij_pi ))""##);
+        bulk_j_arith_post_decrement => (r#"x--"#, r##"integer ij_pd=3; print -r "$(( ij_pd-- )) $ij_pd""##);
+        bulk_j_arith_float_times_int => (r#"float * int"#, r#"print $(( 3 * 2.0 ))"#);
+        bulk_j_arith_bit_shift_left => (r#"<<"#, r#"print $(( 3 << 2 ))"#);
+        bulk_j_arith_bit_shift_right => (r#">>"#, r#"print $(( 32 >> 2 ))"#);
+        bulk_j_cmp_s_identical_hosts => (r#"cmp -s hosts"#, r##"cmp -s /etc/hosts /etc/hosts 2>/dev/null; print -r "cmj=$?""##);
+        bulk_j_builtin_test_slash_exists => (r#"test -e /"#, r##"test -e /; print -r "tej=$?""##);
+        bulk_j_cond_executable_sh_or_bash => (r#"[[ -x /bin/sh ]]"#, r##"[[ -x /bin/sh ]] || [[ -x /bin/bash ]]; print -r "exsj=$?""##);
+        bulk_j_command_builtin_succeed => (r#"command true"#, r##"command true; print -r "ctj=$?""##);
+        bulk_j_printf_unsigned_octal => (r#"printf %o"#, r#"printf '%o\n' 8"#);
+        bulk_j_columns_lines_default_zero => (r#"COLUMNS LINES"#, r##"print -r "${COLUMNS:-0} ${LINES:-0}""##);
+        bulk_j_prompt_eol_mark_param => (r#"PROMPT_EOL_MARK"#, r##"print -r "${PROMPT_EOL_MARK:-}""##);
+        bulk_j_zstyle_list_ok => (r#"zstyle -L"#, r##"zstyle -L >/dev/null 2>&1; print -r "zsj=$?""##);
+        bulk_j_bindkey_list_names_ok => (r#"bindkey -l"#, r##"bindkey -l >/dev/null 2>&1; print -r "bklj=$?""##);
+        bulk_j_sort_array_numeric_n_flag => (r#"sort (n)"#, r##"arj_n=(3 1 2); print -r "${(n)arj_n}""##);
+        bulk_j_sort_array_numeric_On_reverse => (r#"sort (On)"#, r##"arj_On=(3 1 2); print -r "${(On)arj_On}""##);
+        bulk_j_sort_array_name_on_flag => (r#"sort (on)"#, r##"arj_on=(banana apple); print -r "${(on)arj_on}""##);
+        bulk_j_sort_array_casefold_i_flag => (r#"sort (i)"#, r##"arj_i=(C a b); print -r "${(i)arj_i}""##);
+        bulk_j_path_array_first_element => (r#"path[1]"#, r##"print -r "${path[1]:-nopath1}""##);
+        bulk_j_ternary_arith_less_branch => (r#"?: lt"#, r#"print $(( 1 < 2 ? 30 : 40 ))"#);
+        bulk_j_ternary_arith_greater_branch => (r#"?: gt"#, r#"print $(( 5 > 9 ? 1 : 2 ))"#);
+        bulk_j_arith_float_less_than => (r#"float <"#, r##"(( 1.1 < 2.2 )); print -r "flj=$?""##);
+        bulk_j_array_prepend_copy => (r#"a=(1 $a)"#, r##"arj_pr=(2 3); arj_pr=(1 $arj_pr); print -r "${arj_pr[@]}""##);
+        bulk_j_set_doubledash_preserved => (r#"set -- --"#, r##"set -- -- -xj; print -r "$1""##);
+        bulk_j_print_argv_zero_string => (r#"$0"#, r##"print -r "$0""##);
+        bulk_j_zmodload_e_datetime_probe => (r#"zmodload -e"#, r##"zmodload -e zsh/datetime; print -r "zej=$?""##);
+        bulk_j_typeset_export_uppercase_t => (r#"typeset -x (t)"#, r##"typeset -x exj_v=1; print -r "${(t)exj_v}""##);
+        bulk_j_float_equals_integer_compare => (r#"2.0 == 2"#, r##"(( 2.0 == 2 )); print -r "feqj=$?""##);
+        bulk_j_tilde_in_scalar => (r#"tilde assign"#, r##"tj_hd=~; print -r "${tj_hd:t}""##);
+        bulk_j_scalar_head_colon_h => (r#":h head"#, r##"svj_bh=/xj/yj/zj; print -r "${svj_bh:h}""##);
+        bulk_j_scalar_tail_colon_t => (r#":t tail"#, r##"svj_tt=/xj/yj/zj; print -r "${svj_tt:t}""##);
+        bulk_j_PWD_colon_h_chop => (r#"PWD :h"#, r##"print -r "${PWD:h}""##);
+        bulk_j_param_match_tilde_unquoted => (r#"$~pat"#, r##"patj=z; [[ z = $~patj ]]; print -r "pmj=$?""##);
+        bulk_j_integer_division_negative => (r#"-7 / 3"#, r#"print $(( -7 / 3 ))"#);
+        bulk_j_modulo_negative => (r#"-7 % 3"#, r#"print $(( -7 % 3 ))"#);
+        bulk_j_string_eq_empty => (r#"'' = ''"#, r##"[[ '' = '' ]]; print -r "eqj=$?""##);
+        bulk_j_brace_run_suffix_literal => (r#"{a..c}_"#, r#"print -r {a..c}_j"#);
+        bulk_j_false_or_true_status => (r#"false || true"#, r##"false || true; print -r "foj=$?""##);
+        bulk_j_true_and_false_status => (r#"true && false"#, r##"true && false; print -r "afj=$?""##);
+        bulk_j_sticky_bit_tmpdir => (r#"[[ -k /tmp ]]"#, r##"[[ -k /tmp ]]; print -r "skj=$?""##);
+        bulk_j_funcstack_depth_toplevel => (r#"$#funcstack"#, r##"print -r "$#funcstack""##);
+        bulk_j_source_missing_file_status => (r#"source missing"#, r##"source /__src_missing_j__ 2>/dev/null; print -r "sxj=$?""##);
+        bulk_j_try_block_error_after_true => (r#"TRY_BLOCK"#, r##"true; print -r "tbej=$TRY_BLOCK_ERROR""##);
+        bulk_j_dollar_underscore_last_arg => (r#"$_"#, r##": lastj_arg; print -r "$_""##);
+        bulk_j_cond_string_equals_glob_pattern => (r#"[[ = * ]]"#, r##"[[ abcj = *b* ]]; print -r "gitj=$?""##);
+        bulk_j_LC_NUMERIC_param => (r#"LC_NUMERIC"#, r##"print -r "${LC_NUMERIC:-}""##);
+        bulk_j_command_p_path_true => (r#"command -p"#, r##"command -p true; print -r "cpj=$?""##);
+        bulk_j_dis_functions_count => (r#"#dis_functions"#, r##"print -r "${#dis_functions}""##);
+        bulk_j_jobstates_plus => (r#"$+jobstates"#, r##"print -r "$+jobstates""##);
+        bulk_j_zle_plus_param => (r#"$+ZLE"#, r##"print -r "$+ZLE""##);
+        bulk_j_histchars_subscript_one => (r#"HISTCHARS[1]"#, r##"print -r "${HISTCHARS[1]}""##);
+        bulk_j_opt_bsdglob => (r#"options[bsdglob]"#, r##"print -r "$options[bsdglob]""##);
+        bulk_j_opt_nohashdirs => (r#"options[nohashdirs]"#, r##"print -r "$options[nohashdirs]""##);
+        bulk_j_opt_errsilent => (r#"options[errsilent]"#, r##"print -r "$options[errsilent]""##);
+        bulk_j_unsetopt_nohup_print => (r#"unsetopt nohup"#, r##"unsetopt nohup 2>/dev/null; print -r "uoj=$?""##);
+        bulk_j_regex_paren_class_and => (r#"[[ =~ ]]"#, r##"[[ xyzj =~ '^x.*j$' ]]; print -r "rxj=$?""##);
     }
 }
