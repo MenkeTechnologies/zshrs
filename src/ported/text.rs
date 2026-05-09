@@ -1250,7 +1250,7 @@ pub fn taddstr(s: &str) {
 /// separated; trailing space is removed via `tptr--`.
 ///
 /// WARNING: the wordcode `Estate` walker isn't ported. Callers
-/// that hold their own list of strings should use [`taddlist_strs`]
+/// that hold their own list of strings should use `taddlist_strs`
 /// instead. This entry preserves the C signature shape — taking
 /// a slice of strings as a stand-in for the wordcode iteration.
 pub fn taddlist(words: &[String]) {

@@ -86,8 +86,8 @@ impl Thingy {
 
     /// Test whether this thingy is `name` or its dot-prefixed variant.
     /// The `.foo` form names the underlying built-in when a user has
-    /// aliased `foo` to something else — see `bin_zle_new`'s args[0]
-    /// vs args[1] split at zle_thingy.c:584. Callers use this when
+    /// aliased `foo` to something else — see `bin_zle_new`'s `args[0]`
+    /// vs `args[1]` split at zle_thingy.c:584. Callers use this when
     /// they want the canonical built-in regardless of user aliasing.
     pub fn is_thingy(&self, name: &str) -> bool {
         self.name == name || self.name == format!(".{}", name)

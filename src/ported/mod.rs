@@ -5,8 +5,8 @@
 //! full ruleset. `tests/port_purity.rs` enforces:
 //!   - Every `.rs` file under this directory has a matching `.c` file
 //!     under `src/zsh/Src/` (byte-for-byte identical stem).
-//!   - Every top-level `fn` carries a `/// Port of `<cname>()` from
-//!     `Src/<file>.c:NNNN`` doc-comment.
+//!   - Every top-level `fn` carries a doc comment matching the PORT.md
+//!     template: `/// Port of NAME() from Src/STEM.c:NNNN`.
 //!   - No file may carry the `WARNING: THIS IS ADHOC IMPLEMENTATION`
 //!     marker.
 //!

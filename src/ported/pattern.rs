@@ -1224,16 +1224,16 @@ pub struct PatternScope {
     pub disabled: Vec<String>,
 }
 
-/// Port of file-static pattern-disables stack from
-/// `Src/pattern.c:4220-4296` — the per-pattern-compile scope used
-/// by `disable -p` / `enable -p` to suppress named patterns
-/// locally inside a function body.
-///
-/// Bucket-1 per PORT_PLAN.md — file-static in C, per-evaluator in
-/// zshrs. Each worker thread compiling its own pattern owns its
-/// own scope chain; sharing across threads would corrupt the
-/// nesting (one thread's `endpatternscope` would pop another
-/// thread's `startpatternscope` push).
+// Port of file-static pattern-disables stack from
+// `Src/pattern.c:4220-4296` — the per-pattern-compile scope used
+// by `disable -p` / `enable -p` to suppress named patterns
+// locally inside a function body.
+//
+// Bucket-1 per PORT_PLAN.md — file-static in C, per-evaluator in
+// zshrs. Each worker thread compiling its own pattern owns its
+// own scope chain; sharing across threads would corrupt the
+// nesting (one thread's `endpatternscope` would pop another
+// thread's `startpatternscope` push).
 thread_local! {
     static PATTERN_SCOPES: std::cell::RefCell<Vec<PatternScope>> = const {
         std::cell::RefCell::new(Vec::new())

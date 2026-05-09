@@ -309,7 +309,7 @@ pub struct Zle {
     pub yank_ring_idx: Option<usize>,
     /// Vi named marks: 0..=25 are 'a'..'z', 26 is the implicit ' / ` mark
     /// (last position before a jump). Each entry is `(cursor, histline)`.
-    /// Port of `vimarkcs[27]` / `vimarkline[27]` in Src/Zle/zle_move.c.
+    /// Port of the 27-element `vimarkcs` / `vimarkline` arrays in Src/Zle/zle_move.c.
     pub vi_marks: [Option<(usize, i32)>; 27],
     /// Vi visual selection state: 0 = inactive, 1 = character-wise, 2 = line-wise.
     /// Port of the global `region_active` int in Src/Zle/zle_main.c (consumed

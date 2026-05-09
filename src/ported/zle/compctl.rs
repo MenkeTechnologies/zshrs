@@ -181,7 +181,7 @@ pub struct CompCtl {
     /// `+` — xor'd next compctl.
     pub xor: Option<Arc<CompCtl>>,
     /// `-M` — matcher control (Cmatcher in C).
-    /// Type kept as Option<String> placeholder until cmatch port lands.
+    /// Type kept as `Option<String>` placeholder until cmatch port lands.
     pub matcher: Option<String>,
     /// `-M` — matcher string.
     pub mstr: Option<String>,
@@ -210,7 +210,7 @@ pub struct CompCtlp {
 // =================================================================
 
 /// Global cmatcher list. Port of file-static `Cmlist cmatcher;` at
-/// Src/Zle/compctl.c:36. Type kept as Option<String> placeholder.
+/// Src/Zle/compctl.c:36. Type kept as `Option<String>` placeholder.
 static CMATCHER: Mutex<Option<String>> = Mutex::new(None);
 
 /// `compctltab` hash table — name → CompCtl.
@@ -221,17 +221,17 @@ static COMPCTL_TAB: Mutex<Option<HashMap<String, Arc<CompCtl>>>> = Mutex::new(No
 /// Src/Zle/compctl.c:51.
 static PATCOMPS: Mutex<Vec<(String, Arc<CompCtl>)>> = Mutex::new(Vec::new());
 
-/// `cclist` — flag for listing/command/default/first completion.
-/// Port of file-static `int cclist;` at Src/Zle/compctl.c:63.
-/// Bucket-1 per PORT_PLAN.md — per-completion-call scratch state,
-/// thread_local so concurrent completion invocations don't race.
+// `cclist` — flag for listing/command/default/first completion.
+// Port of file-static `int cclist;` at Src/Zle/compctl.c:63.
+// Bucket-1 per PORT_PLAN.md — per-completion-call scratch state,
+// thread_local so concurrent completion invocations don't race.
 thread_local! {
     static CCLIST: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
-/// `showmask` — mask determining what to print.
-/// Port of file-static `unsigned long showmask;` at Src/Zle/compctl.c:66.
-/// Bucket-1 per PORT_PLAN.md.
+// `showmask` — mask determining what to print.
+// Port of file-static `unsigned long showmask;` at Src/Zle/compctl.c:66.
+// Bucket-1 per PORT_PLAN.md.
 thread_local! {
     static SHOWMASK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
@@ -1273,9 +1273,9 @@ pub(crate) fn bin_compcall(name: &str, argv: &[String]) -> i32 {
     0
 }
 
-/// Are we inside a completion function? Set by the completion-driver
-/// entry/exit hooks (compctl_make / compctl_cleanup). Mirrors the C
-/// `incompfunc` global from Src/Zle/zle_tricky.c.
+// Are we inside a completion function? Set by the completion-driver
+// entry/exit hooks (compctl_make / compctl_cleanup). Mirrors the C
+// `incompfunc` global from Src/Zle/zle_tricky.c.
 thread_local! { static INCOMPFUNC: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
 
 /// `compctl -K`'s bound `compctlread` callback.
@@ -1350,9 +1350,9 @@ pub(crate) fn compctlread(name: &str, args: &[String]) -> i32 {
     0
 }
 
-/// True iff we're inside a function called via compctl -K. Mirrors
-/// the C `incompctlfunc` global from Src/Zle/zle_tricky.c — set by
-/// the dispatcher around the -K function call.
+// True iff we're inside a function called via compctl -K. Mirrors
+// the C `incompctlfunc` global from Src/Zle/zle_tricky.c — set by
+// the dispatcher around the -K function call.
 thread_local! { static INCOMPCTLFUNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
 /// Hook for completion-list build start.
@@ -1424,14 +1424,14 @@ pub mod addwhat_kind {
     pub const PARAM: i32           = -9;  // c:1944
 }
 
-/// File-thread `addwhat` global. Port of file-static `int addwhat;`
-/// from Src/Zle/compctl.c:1749. Set by the dispatcher before each
-/// addmatch / dumphashtable call to communicate the source kind.
+// File-thread `addwhat` global. Port of file-static `int addwhat;`
+// from Src/Zle/compctl.c:1749. Set by the dispatcher before each
+// addmatch / dumphashtable call to communicate the source kind.
 thread_local! { static ADDWHAT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
 
-/// Per-completion match list. Port of file-static `LinkList` of
-/// matches in zle_tricky.c. The Rust port keeps a per-call Vec so
-/// addmatch can accumulate results without touching ZLE globals.
+// Per-completion match list. Port of file-static `LinkList` of
+// matches in zle_tricky.c. The Rust port keeps a per-call Vec so
+// addmatch can accumulate results without touching ZLE globals.
 thread_local! { static MATCH_LIST: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) }; }
 
 /// Add a match to the per-call result list.
@@ -1698,10 +1698,10 @@ pub(crate) fn gen_matches_files(dirs: bool, execs: bool, all: bool) {
     }
 }
 
-/// Pre-cursor directory path (`prpre` global). Port of file-static
-/// `char *prpre` at Src/Zle/compctl.c:1736 — the directory portion
-/// of the path component the cursor is in, expanded for `opendir`.
-/// Set by the completion driver before calling gen_matches_files.
+// Pre-cursor directory path (`prpre` global). Port of file-static
+// `char *prpre` at Src/Zle/compctl.c:1736 — the directory portion
+// of the path component the cursor is in, expanded for `opendir`.
+// Set by the completion driver before calling gen_matches_files.
 thread_local! { static PRPRE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) }; }
 
 /// Find a node in a linked list by data-pointer equality.
@@ -1717,8 +1717,8 @@ pub(crate) fn findnode<T: PartialEq>(list: &[T], dat: &T) -> Option<usize> {
     list.iter().position(|x| x == dat)
 }
 
-/// `cdepth` recursion guard. Port of file-static `int cdepth = 0;`
-/// at Src/Zle/compctl.c:2300.
+// `cdepth` recursion guard. Port of file-static `int cdepth = 0;`
+// at Src/Zle/compctl.c:2300.
 thread_local! { static CDEPTH: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
 
 /// Maximum recursion depth — port of `MAX_CDEPTH 16` macro at
@@ -1726,9 +1726,9 @@ thread_local! { static CDEPTH: std::cell::Cell<i32> = const { std::cell::Cell::n
 /// compctl-driven completion and the wrapper.
 const MAX_CDEPTH: i32 = 16;
 
-/// `ccont` continuation flags. Port of file-static `unsigned long
-/// ccont;` at Src/Zle/compctl.c:1714. Bitmask of CC_CCCONT/etc.
-/// controlling whether the dispatch loop continues to next compctl.
+// `ccont` continuation flags. Port of file-static `unsigned long
+// ccont;` at Src/Zle/compctl.c:1714. Bitmask of CC_CCCONT/etc.
+// controlling whether the dispatch loop continues to next compctl.
 thread_local! { static CCONT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
 
 /// Build the completion list — top-level dispatch.
@@ -1867,9 +1867,9 @@ pub(crate) fn makecomplistcmd(os: &str, incmd: bool, flags: i32) -> i32 {
     ret
 }
 
-/// `cmdstr` — current command word being completed.
-/// Port of file-static `char *cmdstr` (zle_tricky.c). Set by the
-/// completion driver before invoking makecomplistcmd.
+// `cmdstr` — current command word being completed.
+// Port of file-static `char *cmdstr` (zle_tricky.c). Set by the
+// completion driver before invoking makecomplistcmd.
 thread_local! { static CMDSTR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) }; }
 
 /// Pattern compctl iteration — `compctl -p PAT cmd`.
@@ -1920,11 +1920,11 @@ pub(crate) fn makecomplistcc(cc: &Arc<CompCtl>, s: &str, incmd: bool) {
     makecomplistor(cc, s, incmd, 0, 0);
 }
 
-/// `ccused` — per-completion list of compctls used. Port of
-/// file-static `LinkList ccused` at Src/Zle/compctl.c:1702.
+// `ccused` — per-completion list of compctls used. Port of
+// file-static `LinkList ccused` at Src/Zle/compctl.c:1702.
 thread_local! { static CCUSED: std::cell::RefCell<Vec<Arc<CompCtl>>> = const { std::cell::RefCell::new(Vec::new()) }; }
 
-/// Walk the [x]or chain of compctls.
+/// Walk the xor chain of compctls.
 /// Port of `makecomplistor()` from Src/Zle/compctl.c:2573.
 ///
 /// C body:
@@ -1989,12 +1989,12 @@ pub(crate) fn makecomplistext(occ: &Arc<CompCtl>, os: &str, incmd: bool) {
 // C global's name + type (translated to Rust idioms).
 // =================================================================
 
-/// `we` / `wb` — word end / begin positions (1-based byte offsets
-/// into zlemetaline). Port of `int wb, we;` at Src/Zle/zle_tricky.c.
+// `we` / `wb` — word end / begin positions (1-based byte offsets
+// into zlemetaline). Port of `int wb, we;` at Src/Zle/zle_tricky.c.
 thread_local! { static WE: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
 thread_local! { static WB: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
 
-/// `zlemetacs` — cursor position (byte offset). Port of `int zlemetacs;`.
+// `zlemetacs` — cursor position (byte offset). Port of `int zlemetacs;`.
 thread_local! { static ZLEMETACS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
 
 /// `zlemetall` — line length in bytes. Port of `int zlemetall;`.

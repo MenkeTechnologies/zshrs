@@ -33,7 +33,7 @@ impl DescribeOpts {
     }
 
     /// Parse _describe arguments
-    /// Format: _describe [-t tag] description array ...
+    /// Format: _describe \[-t tag\] description array ...
     pub fn parse(args: &[String]) -> (Self, String, Vec<String>) {
         let mut opts = Self::new();
         let mut i = 0;

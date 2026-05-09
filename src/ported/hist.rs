@@ -1805,7 +1805,7 @@ pub fn hconsearch(hist: &History, needle: &str, start: Option<i64>) -> Option<i6
 /// Insert `hist.curline` (the in-progress edit) at the head of
 /// the ring and bump curhist. Port of `linkcurline()` from
 /// Src/hist.c. Adapted from C's circular doubly-linked-list
-/// splice to Vec<i64> push-front semantics — same observable
+/// splice to `Vec<i64>` push-front semantics — same observable
 /// effect: latest entry visible at ring index 0.
 pub fn linkcurline(hist: &mut History) {
     hist.curhist += 1;

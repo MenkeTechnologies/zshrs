@@ -262,7 +262,7 @@ pub struct PromptContext {
     /// mutates to function name inside a call). Backs `%x`. Mirrors
     /// C zsh's `scriptfilename` global (Src/init.c).
     pub scriptfilename: Option<String>,
-    /// `argzero` — argv[0] of the running binary.
+    /// `argzero` — `argv[0]` of the running binary.
     /// Backs the `%N` fallback per Src/prompt.c:555 when no
     /// scriptname is in scope.
     pub argzero: String,
@@ -2104,17 +2104,17 @@ pub fn set_colour_attribute(color: &Color, is_fg: bool) -> String {
 /// unbounded under runaway recursion.
 const CMDSTACKSZ: usize = 256;
 
-/// Port of file-static `cmdstack` from `Src/init.c` (declared as
-/// `extern unsigned char cmdstack[CMDSTACKSZ]` in `Src/zsh.h:2658`).
-/// Stack of parser-context tokens (`CS_*`) the parser pushes as it
-/// descends into nested compound commands (`if`/`for`/`while`/`{}`
-/// etc.). Read by the prompt expander for `%_` and `%^` to render
-/// which constructs are currently open.
-///
-/// Bucket-1 per PORT_PLAN.md — file-static in C, per-evaluator in
-/// zshrs. Each worker thread parses independently; sharing the
-/// stack across threads would corrupt nesting state. `RefCell`
-/// for interior mutability since the contents are owned `Vec<u8>`.
+// Port of file-static `cmdstack` from `Src/init.c` (declared as
+// `extern unsigned char cmdstack[CMDSTACKSZ]` in `Src/zsh.h:2658`).
+// Stack of parser-context tokens (`CS_*`) the parser pushes as it
+// descends into nested compound commands (`if`/`for`/`while`/`{}`
+// etc.). Read by the prompt expander for `%_` and `%^` to render
+// which constructs are currently open.
+//
+// Bucket-1 per PORT_PLAN.md — file-static in C, per-evaluator in
+// zshrs. Each worker thread parses independently; sharing the
+// stack across threads would corrupt nesting state. `RefCell`
+// for interior mutability since the contents are owned `Vec<u8>`.
 thread_local! {
     static CMDSTACK: std::cell::RefCell<Vec<u8>> = const {
         std::cell::RefCell::new(Vec::new())

@@ -455,11 +455,16 @@ pub struct QualifierSet {
     pub list_types: bool,
 }
 
-/// Main glob state
-/// Per-glob runtime state.
-/// Port of the per-call locals `zglob()` (Src/glob.c:1214) keeps
-/// — pathbuf, matched-list head, options, qualifier filter.
-pub struct GlobState {
+/// Main glob state — port of `struct globdata` from Src/glob.c:168.
+/// C zsh has a single file-static `static struct globdata curglobdata;`
+/// (glob.c:196) and accesses fields through a wall of #define macros
+/// (`matchsz`/`matchct`/`pathbuf`/`pathpos`/`quals`/...) that all
+/// resolve to `curglobdata.gd_*`. The Rust port collapses the
+/// `gd_matchsz`/`gd_matchct`/`gd_matchbuf`/`gd_matchptr` quartet into
+/// `matches: Vec<GlobMatch>` (the natural Rust shape) and folds the
+/// `gd_gf_*` glob-flag bag into `options: GlobOptions`, but the
+/// 1:1 correspondence to `struct globdata` is otherwise faithful.
+pub struct GlobData {
     pub options: GlobOptions,
     pub matches: Vec<GlobMatch>,
     pub qualifiers: Option<QualifierSet>,
@@ -467,9 +472,9 @@ pub struct GlobState {
     pathpos: usize,
 }
 
-impl GlobState {
+impl GlobData {
     pub fn new(options: GlobOptions) -> Self {
-        GlobState {
+        GlobData {
             options,
             matches: Vec::new(),
             qualifiers: None,
@@ -2408,7 +2413,7 @@ fn glob_emit_path(path: &std::path::Path) -> String {
 /// Top-level glob entry point with default options.
 /// Port of `zglob()` from Src/glob.c:1214.
 pub fn glob(pattern: &str) -> Vec<String> {
-    let mut state = GlobState::new(GlobOptions {
+    let mut state = GlobData::new(GlobOptions {
         null_glob: false,
         mark_dirs: false,
         no_glob_dots: true,
@@ -2429,7 +2434,7 @@ pub fn glob(pattern: &str) -> Vec<String> {
 /// Port of `zglob()` from Src/glob.c:1214 — same `LinkList`
 /// of expanded matches the C source threads through.
 pub fn glob_with_options(pattern: &str, options: GlobOptions) -> Vec<String> {
-    let mut state = GlobState::new(options);
+    let mut state = GlobData::new(options);
     state.glob(pattern)
 }
 
@@ -3307,7 +3312,7 @@ pub fn xpandredir(redir: &Redirect, options: &GlobOptions) -> Vec<Redirect> {
     }
 
     // Glob expand the target
-    let mut state = GlobState::new(options.clone());
+    let mut state = GlobData::new(options.clone());
     let matches = state.glob(&redir.target);
 
     if matches.is_empty() {
@@ -3425,7 +3430,7 @@ mod tests {
         let dir = setup_test_dir();
         let pattern = format!("{}/*.txt", dir.path().display());
 
-        let mut state = GlobState::new(GlobOptions::default());
+        let mut state = GlobData::new(GlobOptions::default());
         let results = state.glob(&pattern);
 
         assert_eq!(results.len(), 2);
@@ -3439,7 +3444,7 @@ mod tests {
         let pattern = format!("{}/*", dir.path().display());
 
         // With no_glob_dots = true (default)
-        let mut state = GlobState::new(GlobOptions {
+        let mut state = GlobData::new(GlobOptions {
             no_glob_dots: true,
             ..Default::default()
         });
@@ -3447,7 +3452,7 @@ mod tests {
         assert!(!results.iter().any(|s| s.contains(".hidden")));
 
         // With no_glob_dots = false
-        let mut state = GlobState::new(GlobOptions {
+        let mut state = GlobData::new(GlobOptions {
             no_glob_dots: false,
             ..Default::default()
         });

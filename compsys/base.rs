@@ -459,7 +459,7 @@ pub struct Value {
 }
 
 impl Value {
-    /// Parse "name[description]:arg-desc:action" format
+    /// Parse "name\[description\]:arg-desc:action" format
     pub fn parse(spec: &str) -> Option<Self> {
         let spec = spec.trim();
         if spec.is_empty() {

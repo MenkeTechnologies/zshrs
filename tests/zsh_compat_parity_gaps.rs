@@ -11,7 +11,7 @@
 //! `corpus_dash_fc_control_flow`, `corpus_dash_fc_params_redir`, `corpus_dash_fc_bulk_a`,
 //! `corpus_dash_fc_bulk_b`, `corpus_dash_fc_bulk_c`, `corpus_dash_fc_bulk_d`,
 //! `corpus_dash_fc_bulk_e`, `corpus_dash_fc_bulk_f`, `corpus_dash_fc_bulk_g`,
-//! `corpus_dash_fc_bulk_h`, `corpus_dash_fc_bulk_i`, `corpus_dash_fc_bulk_j`, `corpus_dash_fc_bulk_k`). Pass/fail is **stdout + exit** only (see `assert_parity`).
+//! `corpus_dash_fc_bulk_h`, `corpus_dash_fc_bulk_i`, `corpus_dash_fc_bulk_j`, `corpus_dash_fc_bulk_k`, `corpus_dash_fc_bulk_l`). Pass/fail is **stdout + exit** only (see `assert_parity`).
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -1662,3 +1662,149 @@ mod corpus_dash_fc_bulk_k {
         bulk_k_parameter_PWD_colon_t => (r#"PWD :t"#, r##"print -r "${PWD:t}""##);
         bulk_k_scalar_dirname_basename_combo => (r#":h :t"#, r##"sk_p=/one_k/two_k/three_k; print -r "${sk_p:h:t}""##);
         bulk_k_array_first_last_subscripts => (r#"[1] [-1]"#, r##"ak_fl=(u v w); print -r "$ak_fl[1] $ak_fl[-1]""##);
+        bulk_k_glob_plain_files_qual_dot_tmp => (r#"*(.) tmp"#, r##"tgk=$(mktemp -d); touch $tgk/only_kf; mkdir $tgk/dk; ( builtin cd $tgk && print *(.) ); eck=$?; command rm -rf $tgk; exit $eck"##);
+        bulk_k_print_capital_C_three_columns => (r#"print -C 3"#, r#"print -C 3 1 2 3 4 5 6"#);
+        bulk_k_repeat_builtin_twice => (r#"repeat 2"#, r##"repeat 2; do print -r rep_k; done"##);
+        bulk_k_while_read_from_pipe_line => (r#"print | read"#, r##"print line_k | while read -r rk_wl; do print -r "$rk_wl"; done"##);
+        bulk_k_parameter_module_path_last => (r#"module_path[-1]"#, r##"print -r "${module_path[-1]:-nomp}""##);
+        bulk_k_read_null_device_empty => (r#"read < /dev/null"#, r##"read -r rk_null </dev/null; print -r "len=${#rk_null}""##);
+        bulk_k_float_int_product => (r#"3.0 * 2"#, r##"print -r "$(( 3.0 * 2 ))""##);
+        bulk_k_literal_octal_ten => (r#"010"#, r##"print -r "$(( 010 ))""##);
+        bulk_k_test_bang_nonexistent => (r#"test ! -e"#, r##"test ! -e /__nope_k__; print -r "tnk=$?""##);
+        bulk_k_setopt_unsetopt_clobber_cycle => (r#"noclobber cycle"#, r##"setopt noclobber; unsetopt noclobber; print -r "$options[clobber]""##);
+        bulk_k_enable_hash_builtin => (r#"enable hash"#, r##"enable hash 2>/dev/null; print -r "ehk=$?""##);
+        bulk_k_read_capital_A_split => (r#"read -A"#, r##"read -A Ark_r <<< 'pk qk'; print -r "$Ark_r[2]""##);
+        bulk_k_param_SHELL_scalar => (r#"SHELL"#, r##"print -r "${SHELL:-nil_sh}""##);
+        bulk_k_funcfiletrace_len_top => (r#"$#funcfiletrace"#, r##"print -r "$#funcfiletrace""##);
+        bulk_k_jobs_builtin_none => (r#"jobs"#, r##"jobs -p 2>/dev/null; print -r "jbk=$?""##);
+        bulk_k_char_dev_null_stream => (r#"[[ -c /dev/null ]]"#, r##"[[ -c /dev/null ]]; print -r "cdevk=$?""##);
+        bulk_k_getopts_bad_option_status => (r#"getopts err"#, r##"set -- -bz; OPTIND=1; getopts 'a:' ogk 2>/dev/null; print -r "gok=$?""##);
+        bulk_k_unset_multiple_names => (r#"unset a b"#, r##"typeset uvk_a=1 uvk_b=2; unset uvk_a uvk_b; print -r "${+uvk_a}${+uvk_b}""##);
+        bulk_k_empty_array_count => (r#"empty array"#, r##"ak_e=(); print -r "$#ak_e""##);
+        bulk_k_bang_command_negate => (r#"! false"#, r##"! false; print -r "nfk=$?""##);
+        bulk_k_colon_chain_status => (r#": false true"#, r##"false; true; print -r "cck=$?""##);
+        bulk_k_string_eq_empty_brackets => (r#"[[ '' ]]"#, r##"[[ '' == '' ]]; print -r "eek=$?""##);
+        bulk_k_cond_identical_strings => (r#"[[ x = x ]]"#, r##"[[ zz_k = zz_k ]]; print -r "idk=$?""##);
+        bulk_k_arith_eq_zero_one => (r#"== 0 (( ))"#, r##"(( 0 == 0 )); print -r "eq0k=$?""##);
+        bulk_k_arith_ne_compare => (r#"!= (( ))"#, r##"(( 1 != 2 )); print -r "nek3=$?""##);
+        bulk_k_print_hyphen_n_dash => (r#"print - --"#, r##"print -r -- '-lead_k'"##);
+        bulk_k_readonly_assign_in_subshell => (r#"readonly in ( )"#, r##"readonly rk_k=1; ( rk_k=2 ) 2>/dev/null; print -r "irk=$?""##);
+        bulk_k_bindkey_default_zero => (r#"bindkey ^@"#, r##"bindkey '^@' 2>/dev/null; print -r "bk0k=$?""##);
+        bulk_k_zstyle_s_get => (r#"zstyle -g"#, r##"zstyle -g ZSK_reply '*' 2>/dev/null; print -r "zsgk=$?""##);
+        bulk_k_float_div_one => (r#"1.0/1"#, r##"print -r "$(( 1.0 / 1 ))""##);
+        bulk_k_integer_minus_times => (r#"-3 * 4"#, r##"print -r "$(( -3 * 4 ))""##);
+        bulk_k_assoc_subscript_bracket_key => (r#"A['x']"#, r##"typeset -A Ak_bq=(x vx); print -r "${Ak_bq[x]}""##);
+        bulk_k_array_append_bracket_plus => (r#"a+=""#, r##"ak_ap=(1); ak_ap+=(2); print -r "${#ak_ap}""##);
+        bulk_k_scalar_length_hash => (r#"${#scalar}"#, r##"sk_len=abcd; print -r "${#sk_len}""##);
+        bulk_k_glob_star_D_dotfiles_tmp => (r#"*(D) dot"#, r##"tdk=$(mktemp -d); touch $tdk/.hid_k $tdk/vis_k; ( builtin cd $tdk && print *(D) ); command rm -rf $tdk"##);
+        bulk_k_extendedglob_negate_class => (r#"^(pat)"#, r##"setopt extendedglob; [[ xyz =~ '^[^x]*$' ]]; print -r "nxk=$?""##);
+        bulk_k_assoc_values_only_capital_v => (r#"${(v)A}"#, r##"typeset -A Ak_vv=(k1 v1 k2 v2); print -r "${(v)Ak_vv}""##);
+        bulk_k_whitespace_trim_once => (r#"space trim"#, r##"setopt extendedglob; swk='   mid'; print -r "${swk##[[:space:]]#}""##);
+        bulk_k_exec_dot_slash_path => (r#"[[ -x path ]]"#, r##"tex=$(mktemp); printf '#!/bin/sh\necho tx\n' >$tex; chmod +x $tex; [[ -x $tex ]]; print -r "txk=$?"; command rm -f $tex"##);
+        bulk_k_rematch_pcre_off_still_regex => (r#"=~ off pcre"#, r##"unsetopt rematchpcre 2>/dev/null; [[ ab =~ '^a.b$' ]]; print -r "rmk=$?""##);
+        bulk_k_parameter_histchars_len => (r#"${#HISTCHARS}"#, r##"print -r "${#HISTCHARS}""##);
+        bulk_k_options_kshoptionprint => (r#"options[kshoptionprint]"#, r##"print -r "$options[kshoptionprint]""##);
+        bulk_k_options_kshzerosubscript => (r#"options[kshzerosubscript]"#, r##"print -r "$options[kshzerosubscript]""##);
+        bulk_k_options_loopinline => (r#"options[loopinline]"#, r##"print -r "$options[loopinline]""##);
+        bulk_k_options_overstrike => (r#"options[overstrike]"#, r##"print -r "$options[overstrike]""##);
+        bulk_k_options_promptbang => (r#"options[promptbang]"#, r##"print -r "$options[promptbang]""##);
+        bulk_k_options_promptcr => (r#"options[promptcr]"#, r##"print -r "$options[promptcr]""##);
+        bulk_k_options_promptpercent => (r#"options[promptpercent]"#, r##"print -r "$options[promptpercent]""##);
+        bulk_k_options_promptsp => (r#"options[promptsp]"#, r##"print -r "$options[promptsp]""##);
+        bulk_k_options_transientrprompt => (r#"options[transientrprompt]"#, r##"print -r "$options[transientrprompt]""##);
+        bulk_k_ulimit_soft_f_max => (r#"ulimit -f"#, r##"print -r "$(ulimit -f)""##);
+    }
+}
+
+/// Twelfth batch: env (**`TERM`**, **`ZDOTDIR`**, **`VISUAL`**, **`EMACS`**), **`zmodload zsh/deltochar`** (often fails on macOS), **regex capture** (`$MATCH`, `$MBEGIN`/`$MEND`), **`typeset` width / radix / float**, **`(oL)`** / **`(s.|.)`**, **`${…/pat/repl}`** on scalar & array,
+/// **extendedglob `ab#c`**, **`zparseopts`**, **`read -t 0`**, **`trap '' INT`**, **`(P)`** indirection, **`(%)` prompt flags**, **`(c)`** line split, **`(Mk)`** assoc match keys, **mathfunc `int`/`ceil`/`hypot`**, **glob `*(^/)`**, **`builtin cd`** to **`/`**, **`typeset -g`**, **`#dis_*` counts**, **`${(ok)options}` first key**, **`schedules`**, **`strftime`** with **`zsh/datetime`**, and assorted **`$options[…]`** / conditions.
+mod corpus_dash_fc_bulk_l {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_l_zmodload_zsh_deltochar => (r#"zmodload zsh/deltochar"#, r##"zmodload zsh/deltochar 2>&1; print -r "dex=$?""##);
+        bulk_l_param_TERM => (r#"TERM"#, r##"print -r "${TERM:-noterm}""##);
+        bulk_l_param_ZDOTDIR => (r#"ZDOTDIR"#, r##"print -r "${ZDOTDIR:-nil_zd}""##);
+        bulk_l_param_VISUAL => (r#"VISUAL"#, r##"print -r "${VISUAL:-nil_vis}""##);
+        bulk_l_param_EMACS => (r#"EMACS"#, r##"print -r "${EMACS:-nil_em}""##);
+        bulk_l_typeset_integer_hex_assign => (r#"typeset -i 16#"#, r##"typeset -i xl_h=16#ff; print -r "$xl_h""##);
+        bulk_l_printf_percent_b_escape => (r#"printf %b"#, r##"printf '%b\n' '\141'"##);
+        bulk_l_arith_literal_base_36 => (r#"36#zz"#, r##"print -r "$(( 36#zz ))""##);
+        bulk_l_typeset_Z5_negative_int => (r#"typeset -Z5 -i "-""#, r##"typeset -Z5 -i xl_n=-3; print -r "$xl_n""##);
+        bulk_l_array_sort_by_length_oL => (r#"sort (oL)"#, r##"al_oL=(aaa bb c); print -r "${(oL)al_oL}""##);
+        bulk_l_split_scalar_on_pipe_char => (r#"(s.|.)"#, r##"sl_pi='a|b|c'; print -r "${(s.|.)sl_pi}""##);
+        bulk_l_scalar_slash_replace_once => (r#"#/repl"#, r##"sl_sr='ap1'; print -r "${sl_sr/p1/P1}""##);
+        bulk_l_array_slash_replace_elt => (r#"ary /p/P"#, r##"al_sr=(ap b cp); print -r "${al_sr/p/P}""##);
+        bulk_l_extendedglob_hash_quantifier => (r#"ab#c"#, r##"setopt extendedglob; [[ abc = ab#c ]]; print -r "hq=$?""##);
+        bulk_l_options_aliasing => (r#"options[aliasing]"#, r##"print -r "$options[aliasing]""##);
+        bulk_l_options_histnomultiline => (r#"options[histnomultiline]"#, r##"print -r "$options[histnomultiline]""##);
+        bulk_l_options_localpatterns => (r#"options[localpatterns]"#, r##"print -r "$options[localpatterns]""##);
+        bulk_l_cond_writeable_tmp => (r#"[[ -w /tmp ]]"#, r##"[[ -w /tmp ]]; print -r "wtk=$?""##);
+        bulk_l_pad_left_width_six => (r#"(l:6)"#, r##"print -r "[${(l:6)hi}]""##);
+        bulk_l_param_indirect_P_flag => (r#"(P) indir"#, r##"nm_l=PWD; print -r "${(P)nm_l}""##);
+        bulk_l_typeset_F5_float_width => (r#"typeset -F5"#, r##"typeset -F5 fl_l=2.5; print -r "$fl_l""##);
+        bulk_l_arith_print_hex_ff => (r#"$((16#ff))"#, r##"print -r "$(( 16#ff ))""##);
+        bulk_l_arith_comma_assign_pair => (r#"(( a= , b= ))"#, r##"(( al_ca=1, bl_cb=2 )); print -r "$al_ca $bl_cb""##);
+        bulk_l_arith_ior_assign => (r#"|= (( ))"#, r##"integer il_ia=5; (( il_ia |= 2 )); print -r "$il_ia""##);
+        bulk_l_cond_owned_mktemp => (r#"[[ -O file ]]"#, r##"tfo=$(mktemp); [[ -O $tfo ]]; print -r "owk=$?"; command rm -f $tfo"##);
+        bulk_l_read_timeout_zero_herestring => (r#"read -t 0"#, r##"read -t 0 -r rl_rt0 <<< hi_l; print -r "ex=$? ln=$rl_rt0""##);
+        bulk_l_zparseopts_minus_x_flag => (r#"zparseopts x"#, r##"typeset -a al_zp=(); set -- -x; zparseopts -a al_zp x; print -r "n=$#al_zp v=$al_zp""##);
+        bulk_l_param_OLDPWD_default => (r#"OLDPWD"#, r##"print -r "${OLDPWD:-nil_op}""##);
+        bulk_l_count_dis_patchars => (r#"#dis_patchars"#, r##"print -r "${#dis_patchars}""##);
+        bulk_l_count_dis_reswords => (r#"#dis_reswords"#, r##"print -r "${#dis_reswords}""##);
+        bulk_l_brace_embed_prefix_suffix => (r#"pre_{u,v}_suf"#, r##"print -r pre_{u,v}_sx""##);
+        bulk_l_quote_flag_qq_words => (r#"${(qq) }"#, r##"wl_qq='a b'; print -r "${(qq)wl_qq}""##);
+        bulk_l_chars_split_flag_c_newlines => (r#"${(c) }"#, r##"vl_c=$'a\nb'; print -r "${(c)vl_c}""##);
+        bulk_l_rematch_MATCH_substring => (r#"$MATCH"#, r##"[[ abc_l =~ b ]]; print -r "$MATCH""##);
+        bulk_l_rematch_MBEGIN_MEND => (r#"MBEGIN MEND"#, r##"[[ xyx_l =~ x ]]; print -r "$MBEGIN $MEND""##);
+        bulk_l_builtin_cd_root_basename => (r#"cd / :t"#, r##"builtin cd /; print -r "${PWD:t}""##);
+        bulk_l_glob_non_directory_files => (r#"*(^/)"#, r##"td_nd=$(mktemp -d); touch $td_nd/fl_nd; mkdir $td_nd/dr_nd; ( builtin cd $td_nd && print *(^/) ); command rm -rf $td_nd"##);
+        bulk_l_mathfunc_int_ceil_hypot => (r#"int ceil hypot"#, r##"zmodload zsh/mathfunc 2>/dev/null; print -r "$(( int(2.2) )) $(( ceil(1.1) )) $(( hypot(6,8) ))""##);
+        bulk_l_ARGV_tied_to_argv => (r#"ARGV argv"#, r##"argv=(zl_one); print -r "${argv[1]}_${ARGV[1]:-na}""##);
+        bulk_l_trap_ignore_INT => (r#"trap INT"#, r##"trap '' INT; print -r trap_ign_ok""##);
+        bulk_l_test_n_empty_true => (r#"test -n \"\""#, r##"test -n ''; print -r "tnz=$?""##);
+        bulk_l_test_z_nonempty_false => (r#"test -z word"#, r##"test -z 'hi'; print -r "tzn=$?""##);
+        bulk_l_arith_chain_le_all => (r#"<= chain"#, r##"(( 1 <= 2 && 2 <= 3 )); print -r "lec=$?""##);
+        bulk_l_param_CDPATH_default => (r#"CDPATH"#, r##"print -r "${CDPATH:-empty_cd}""##);
+        bulk_l_strftime_year_epoch_datetime => (r#"strftime %Y"#, r##"zmodload zsh/datetime 2>/dev/null; strftime %Y 0 >/dev/null; print -r "stfl=$?""##);
+        bulk_l_unset_IFS_plus_test => (r#"unset IFS"#, r##"unset IFS; print -r "${IFS+ifs_set}""##);
+        bulk_l_typeset_global_in_function => (r#"typeset -g"#, r##"fn_gl() { typeset -g vl_gl=9; }; fn_gl; print -r "$vl_gl""##);
+        bulk_l_typeset_integer_binary_radix => (r#"typeset -i2"#, r##"typeset -i2 il_b=4; print -r "$il_b""##);
+        bulk_l_float_compare_gt => (r#"float >"#, r##"(( 2.2 > 2.1 )); print -r "fgt=$?""##);
+        bulk_l_case_insensitive_pattern_flag => (r#"(#i) ="#, r##"setopt extendedglob; [[ Ab_l = (#i)ab_l ]]; print -r "cik=$?""##);
+        bulk_l_cond_PWD_rooted_slash => (r#"PWD /*"#, r##"[[ $PWD = /* ]]; print -r "prk=$?""##);
+        bulk_l_print_LINENO_top => (r#"LINENO"#, r##"print -r "LNO=$LINENO""##);
+        bulk_l_fc_list_range_status => (r#"fc -l"#, r##"fc -l 1 1 2>/dev/null; print -r "fca=$?""##);
+        bulk_l_history_line_count => (r#"#history"#, r##"print -r "${#history}""##);
+        bulk_l_plus_historywords => (r#"$+historywords"#, r##"print -r "$+historywords""##);
+        bulk_l_subscript_I_pattern_match => (r#"[(I)pat]"#, r##"al_I=(ax_l bx_l cx_l); print -r "${al_I[(I)x*]}""##);
+        bulk_l_brace_range_zero_three => (r#"{0..3}"#, r##"print -r {0..3}""##);
+        bulk_l_getopts_exhaust_second_call => (r#"getopts done"#, r##"set -- -a foo_l; OPTIND=1; getopts 'a:' og1_l; getopts 'a:' og2_l 2>/dev/null; print -r "gex=$?""##);
+        bulk_l_setopt_nounset_print => (r#"setopt nounset"#, r##"setopt nounset 2>/dev/null; print -r "$options[nounset]""##);
+        bulk_l_PS3_prompt_var => (r#"PS3"#, r##"PS3='p3l'; print -r "$PS3""##);
+        bulk_l_RANDOM_after_seed => (r#"RANDOM="#, r##"RANDOM=99; print -r "$RANDOM""##);
+        bulk_l_schedules_table_count => (r#"#schedules"#, r##"print -r "${#schedules}""##);
+        bulk_l_zmodload_e_zsh_files => (r#"zmodload -e files"#, r##"zmodload -e zsh/files; print -r "efls=$?""##);
+        bulk_l_percent_expand_PS4 => (r#"${(%)PS4}"#, r##"PS4='+'; print -r "${(%)PS4}""##);
+        bulk_l_assoc_Mk_filter_keys => (r#"(Mk)"#, r##"typeset -A Amk_l=(Key_l vl_k other oth); print -r "${(Mk)Amk_l:#K*}""##);
+        bulk_l_cond_logical_or_in_test => (r#"[[ \|\| ]]"#, r##"[[ x = y || a = a ]]; print -r "lor=$?""##);
+        bulk_l_double_paren_bit_and => (r#"& (( ))"#, r##"print -r "$(( 7 & 3 ))""##);
+        bulk_l_double_paren_bit_or => (r#"| arith"#, r##"print -r "$(( 1 | 2 ))""##);
+        bulk_l_string_ord_le_two_digits => (r#"-lt two"#, r##"[[ 01 -lt 2 ]]; print -r "ltk=$?""##);
+        bulk_l_umask_minus_S_symbolic => (r#"umask -S"#, r##"print -r "$(umask -S)""##);
+        bulk_l_print_commands_assoc_some_key => (r#"commands[ls]"#, r##"print -r "${commands[ls]:-no_ls}""##);
+        bulk_l_builtin_whence_p_ls => (r#"whence -p ls"#, r##"whence -p ls 2>/dev/null"##);
+        bulk_l_print_first_sorted_option_key => (r#"(ok)options[1]"#, r##"olk=(${(ok)options}); print -r "${olk[1]}""##);
+        bulk_l_array_Omega_reverse_numeric => (r#"(On) dup"#, r##"al_On2=(9 1 4); print -r "${(On)al_On2}""##);
+        bulk_l_print_epochrealtime_plus => (r#"$+EPOCHREALTIME"#, r##"print -r "$+EPOCHREALTIME""##);
+        bulk_l_eval_arith_print => (r#"eval arith"#, r##"eval 'print -r $(( 4 + 5 ))'"##);
+        bulk_l_typeset_unique_array_flag => (r#"typeset -aU"#, r##"typeset -aU al_U=(z z y); print -r "$al_U""##);
+        bulk_l_scalar_anchor_replace_all => (r#"//#/"#, r##"sl_aa='ax/x/x'; print -r "${sl_aa//\/_}""##);
+        bulk_l_array_join_newline_j_flag => (r#"join newline"#, r##"al_jn=(u v); print -r "${(j:
+:)al_jn}""##);
+        bulk_l_disable_builtin_where => (r#"disable where"#, r##"disable where 2>/dev/null; print -r "dwh=$?"; enable where 2>/dev/null; print -r "ewh=$?""##);
+        bulk_l_unset_pattern_minus_m => (r#"unset -m"#, r##"unset -m 'uvp_l_*' 2>/dev/null; typeset uvp_l_x=1 uvp_l_y=2; unset -m 'uvp_l_*'; print -r "${+uvp_l_x}${+uvp_l_y}""##);
+        bulk_l_hyphen_paren_subshell_exit => (r#"( subshell )"#, r##"( exit 4 ); print -r "sex=$?""##);
+        bulk_l_command_true_then_print => (r#"command true"#, r##"command true; print -r no_ex_l"##);
+    }
+}

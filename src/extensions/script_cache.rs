@@ -10,7 +10,7 @@
 //!     entries: HashMap<canonical_path, ScriptEntry>,
 //!   }
 //!   ScriptEntry { mtime_secs, mtime_nsecs, binary_mtime_at_cache, cached_at_secs,
-//!                 chunk_blob: Vec<u8> }
+//!                 chunk_blob: `Vec<u8>` }
 //!
 //! Inner `chunk_blob` is bincode for now — `fusevm::Chunk` is owned by the
 //! upstream `fusevm` crate and only derives `serde::Serialize`/`Deserialize`,

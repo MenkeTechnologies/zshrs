@@ -1595,7 +1595,7 @@ pub fn maybeshrinkjobtab(jobtab: &mut Vec<Job>) {
 ///
 /// `name == None` → store `<fd:N>`; `name == Some(s)` → store `s`.
 /// `deletefilelist` parses the `<fd:N>` prefix and calls `close(N)`
-/// instead of `unlink`. WARNING: the Vec<String>+sentinel encoding
+/// instead of `unlink`. WARNING: the `Vec<String>`+sentinel encoding
 /// is a Rust port concession until `Jobfile` lands as a real type;
 /// once it does, this fn becomes a direct push of the enum variant.
 pub fn addfilelist(job: &mut Job, name: Option<&str>, fd: i32) {

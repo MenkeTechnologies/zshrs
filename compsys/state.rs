@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-/// Completion context type (compstate[context])
+/// Completion context type (compstate\[context\])
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum CompletionContext {
     #[default]
@@ -19,7 +19,7 @@ pub enum CompletionContext {
     Parameter,
     /// In brace parameter ${...}
     BraceParameter,
-    /// In condition [[ ]]
+    /// In condition \[\[ \]\]
     Condition,
     /// Array value assignment
     ArrayValue,
@@ -128,7 +128,7 @@ impl CompState {
         }
     }
 
-    /// Get a value by key name (for $compstate[key] access)
+    /// Get a value by key name (for $compstate\[key\] access)
     pub fn get(&self, key: &str) -> Option<String> {
         match key {
             "context" => Some(self.context.as_str().to_string()),
@@ -161,7 +161,7 @@ impl CompState {
         }
     }
 
-    /// Set a value by key name (for $compstate[key]=value)
+    /// Set a value by key name (for $compstate\[key\]=value)
     pub fn set(&mut self, key: &str, value: &str) -> bool {
         match key {
             "context" => {

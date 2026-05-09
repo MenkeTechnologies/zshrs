@@ -31,110 +31,24 @@ static CONT_FLAG: AtomicI32 = AtomicI32::new(0);
 /// each enclosing loop on exit.
 static BREAK_LEVEL: AtomicI32 = AtomicI32::new(0);
 
-/// Loop state for the executor.
-/// Port of the (`loops`, `breaks`, `contflag`) globals Src/loop.c
-/// uses to coordinate `break`/`continue` with the loop bodies.
-/// Bundling them into a struct gives us a single owner per executor
-/// thread instead of file-static globals.
-#[derive(Debug, Clone, Default)]
-pub struct LoopState {
-    /// Current nesting depth
-    pub depth: i32,
-    /// Break requested (and how many levels)
-    pub breaks: i32,
-    /// Continue requested (and how many levels)
-    pub contflag: i32,
-}
-
-impl LoopState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Enter a loop.
-    /// Port of the `loops++` increment Src/loop.c performs at the
-    /// top of every `execfor`/`execwhile`/etc. body before running
-    /// any iterations.
-    pub fn enter(&mut self) {
-        self.depth += 1;
-        LOOP_DEPTH.store(self.depth, Ordering::Relaxed);
-    }
-
-    /// Exit a loop.
-    /// Port of the `loops--` decrement Src/loop.c performs at the
-    /// end of each loop body. Also decrements pending `break` /
-    /// `continue` levels so the next-outer loop sees them satisfied.
-    pub fn exit(&mut self) {
-        self.depth -= 1;
-        if self.depth < 0 {
-            self.depth = 0;
-        }
-        LOOP_DEPTH.store(self.depth, Ordering::Relaxed);
-
-        // Decrement break/continue levels as we leave
-        if self.breaks > 0 {
-            self.breaks -= 1;
-        }
-        if self.contflag > 0 {
-            self.contflag -= 1;
-        }
-        BREAK_LEVEL.store(self.breaks, Ordering::Relaxed);
-        CONT_FLAG.store(self.contflag, Ordering::Relaxed);
-    }
-
-    /// Request break.
-    /// Port of the `breaks = nlevels` write inside `bin_break()`
-    /// (Src/builtin.c) — the C source clamps the level to the
-    /// active loop depth.
-    pub fn do_break(&mut self, levels: i32) {
-        self.breaks = levels.min(self.depth);
-        BREAK_LEVEL.store(self.breaks, Ordering::Relaxed);
-    }
-
-    /// Request continue.
-    /// Port of the `contflag = nlevels` write inside `bin_break()`
-    /// (Src/builtin.c) — same clamp to active loop depth.
-    pub fn do_continue(&mut self, levels: i32) {
-        self.contflag = levels.min(self.depth);
-        CONT_FLAG.store(self.contflag, Ordering::Relaxed);
-    }
-
-    /// Check if break is active.
-    /// Equivalent to the `breaks > 0` test inside `execfor`/etc.
-    /// (Src/loop.c) that triggers loop-body teardown.
-    pub fn should_break(&self) -> bool {
-        self.breaks > 0
-    }
-
-    /// Check if continue is active.
-    /// Equivalent to the `contflag > 0` test Src/loop.c uses to
-    /// skip the rest of the iteration body.
-    pub fn should_continue(&self) -> bool {
-        self.contflag > 0
-    }
-
-    /// Check if we're inside any loop.
-    /// Equivalent to the `loops > 0` test `bin_break()` uses to
-    /// reject `break`/`continue` outside of a loop.
-    pub fn in_loop(&self) -> bool {
-        self.depth > 0
-    }
-
-    /// Reset break/continue (after handling).
-    /// Port of the `contflag = 0` reset Src/loop.c performs at the
-    /// top of each loop iteration — the body has consumed the
-    /// continue request and is about to start fresh.
-    pub fn reset_flow(&mut self) {
-        self.contflag = 0;
-        CONT_FLAG.store(0, Ordering::Relaxed);
-    }
-
-    /// Get current nesting depth.
-    /// Returns the equivalent of the C source's `loops` value.
-    pub fn current_depth(&self) -> i32 {
-        self.depth
-    }
-}
+// Note: dead `LoopState` aggregate (and impl/tests) deleted per
+// PORT_PLAN Phase 2. It was a Rust-only invention that double-tracked
+// the same data already living in the file-statics LOOP_DEPTH /
+// CONT_FLAG / BREAK_LEVEL above (and on `ShellExecutor.breaking` /
+// `ShellExecutor.continuing` in src/exec.rs:572-573). Zero callers
+// outside its own test module.
+//
+// C source's actual loop-control file-globals at `Src/loop.c`:
+//
+//     int loops;                          // line 36
+//     mod_export int contflag;            // line 41
+//     mod_export volatile int breaks;     // line 46
+//
+// All `mod_export` (cross-compilation-unit), so they're PORT_PLAN
+// Phase 3 bucket-2 (Arc<RwLock>) work. Currently mirrored as the
+// AtomicI32 file-statics above (LOOP_DEPTH / CONT_FLAG / BREAK_LEVEL
+// — names should be renamed to `LOOPS` / `CONTFLAG` / `BREAKS` to
+// match C 1:1 in a follow-up).
 
 /// Select-menu display.
 /// Port of `selectlist()` from Src/loop.c:347 — formats the
@@ -172,167 +86,24 @@ pub fn selectlist(items: &[String], prompt: &str, columns: usize) -> String {
     output
 }
 
-/// `for` loop variable iteration helper.
-/// Port of the word-list walk inside `execfor()` (Src/loop.c:50)
-/// plus the integer-range walk inside `execfor`'s C-style branch.
-/// The Rust struct exposes both shapes through a single `Iterator`
-/// impl.
-pub struct ForIterator {
-    items: Vec<String>,
-    pos: usize,
-}
-
-impl ForIterator {
-    pub fn new(items: Vec<String>) -> Self {
-        ForIterator { items, pos: 0 }
-    }
-
-    pub fn from_range(start: i64, end: i64, step: i64) -> Self {
-        let mut items = Vec::new();
-        let step = if step == 0 { 1 } else { step };
-        if step > 0 {
-            let mut i = start;
-            while i <= end {
-                items.push(i.to_string());
-                i += step;
-            }
-        } else {
-            let mut i = start;
-            while i >= end {
-                items.push(i.to_string());
-                i += step;
-            }
-        }
-        ForIterator { items, pos: 0 }
-    }
-
-    pub fn len(&self) -> usize {
-        self.items.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
-    }
-}
-
-impl Iterator for ForIterator {
-    type Item = String;
-
-    fn next(&mut self) -> Option<String> {
-        if self.pos < self.items.len() {
-            let item = self.items[self.pos].clone();
-            self.pos += 1;
-            Some(item)
-        } else {
-            None
-        }
-    }
-}
-
-/// C-style `for` loop state (`(( init; cond; advance ))`).
-/// Port of the `cs` (C-style) branch flags inside `execfor()`
-/// (Src/loop.c:50). The C source threads init/cond/advance through
-/// the bytecode walker; we keep a tiny init-done flag for the
-/// equivalent first-iteration guard.
-pub struct CForState {
-    pub init_done: bool,
-}
-
-impl CForState {
-    pub fn new() -> Self {
-        CForState { init_done: false }
-    }
-}
-
-impl Default for CForState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Try/always block state.
-/// Port of the `try_errflag` / `try_retval` machinery
-/// `exectry()` from Src/loop.c:735 saves and restores around the
-/// `always { ... }` block. The C source uses globals here; we
-/// scope them per executor instance.
-#[derive(Debug, Clone, Default)]
-pub struct TryState {
-    pub in_try: bool,
-    pub try_errflag: i32,
-    pub try_retval: i32,
-}
-
-impl TryState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn enter_try(&mut self) {
-        self.in_try = true;
-        self.try_errflag = 0;
-        self.try_retval = 0;
-    }
-
-    pub fn exit_try(&mut self) {
-        self.in_try = false;
-    }
-
-    pub fn set_error(&mut self, errflag: i32, retval: i32) {
-        self.try_errflag = errflag;
-        self.try_retval = retval;
-    }
-}
+// Note: dead `ForIterator` / `CForState` / `TryState` aggregates
+// removed per PORT_PLAN Phase 2. None had production callers (only
+// internal test references). The actual control flow is lowered in
+// the fusevm compiler — every `for`/`while`/`select`/`repeat`/`try`
+// AST node becomes a fusevm Op (see `src/extensions/compile_zsh.rs`).
+//
+// C source's relevant try-block file-globals (loop.c:719-727):
+//
+//     zlong try_errflag = -1;       // line 719 (TRY_BLOCK_ERROR)
+//     zlong try_interrupt = -1;     // line 727 (TRY_BLOCK_INTERRUPT)
+//
+// Exported via `IPDEF6` paramdef in `Src/params.c:364`, so they're
+// cross-compilation-unit globals → PORT_PLAN Phase 3 bucket-2
+// (Arc<RwLock>) work, not the Phase 2 bucket-1 (thread_local!) wave.
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_loop_state() {
-        let mut state = LoopState::new();
-        assert!(!state.in_loop());
-
-        state.enter();
-        assert!(state.in_loop());
-        assert_eq!(state.current_depth(), 1);
-
-        state.enter();
-        assert_eq!(state.current_depth(), 2);
-
-        state.exit();
-        assert_eq!(state.current_depth(), 1);
-        assert!(state.in_loop());
-
-        state.exit();
-        assert!(!state.in_loop());
-    }
-
-    #[test]
-    fn test_break_continue() {
-        let mut state = LoopState::new();
-        state.enter();
-        state.enter();
-
-        state.do_break(1);
-        assert!(state.should_break());
-
-        state.exit();
-        assert!(!state.should_break());
-    }
-
-    #[test]
-    fn test_for_iterator() {
-        let iter = ForIterator::new(vec!["a".into(), "b".into(), "c".into()]);
-        let items: Vec<String> = iter.collect();
-        assert_eq!(items, vec!["a", "b", "c"]);
-    }
-
-    #[test]
-    fn test_for_range() {
-        let iter = ForIterator::from_range(1, 5, 1);
-        let items: Vec<String> = iter.collect();
-        assert_eq!(items, vec!["1", "2", "3", "4", "5"]);
-    }
 
     #[test]
     fn test_selectlist() {
@@ -341,22 +112,6 @@ mod tests {
         assert!(output.contains("1)"));
         assert!(output.contains("one"));
         assert!(output.contains("three"));
-    }
-
-    #[test]
-    fn test_try_state() {
-        let mut state = TryState::new();
-        assert!(!state.in_try);
-
-        state.enter_try();
-        assert!(state.in_try);
-
-        state.set_error(1, 42);
-        assert_eq!(state.try_errflag, 1);
-        assert_eq!(state.try_retval, 42);
-
-        state.exit_try();
-        assert!(!state.in_try);
     }
 }
 
