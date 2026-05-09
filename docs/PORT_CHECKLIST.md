@@ -203,6 +203,18 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - Old impl-on-ShellExecutor adapter (`pub(crate) fn bin_private(&mut self, args)`) deleted — bin_private is now a free fn taking `&mut ShellExecutor`.
   - 5/5 param_private tests pass: `bin_private_no_args_returns_zero`, `bin_private_scalar_assign`, `bin_private_integer_assign`, `bin_private_array_assign`, `module_loaders_return_zero`. Drift gate clean. NOT ticked DONE — see PARTIAL note (true scope semantics blocked on Param/locallevel port).
 
+- [x] `zle/zle_word.rs` ↔ `Zle/zle_word.c` — **FULL REWRITE.**
+  - Previous file had `WordStyle` enum + 3 Rust-only `Zle::find_word_start`/`find_word_end`/`get_current_word` impl methods + Rust-only `bufferwords(&[ZleChar]) -> Vec<(usize,usize)>` (the canonical home is `Src/hist.c::bufferwords`) + Rust-only signatures for `backwardword`/`forwardword` (took `(line, pos)` instead of C's `(args)`). All wrong. Full rewrite.
+  - C: 0 structs/enums • Rust: 0 structs/enums ✓ (the `WordStyle` enum was relocated to `src/extensions/widget.rs` where Rust-only types are sanctioned by PORT.md exception #1).
+  - C fns (23): `forwardword`, `wordclass`, `viforwardword`, `viforwardblankword`, `emacsforwardword`, `viforwardblankwordend`, `viforwardwordend`, `backwardword`, `vibackwardword`, `vibackwardblankword`, `vibackwardwordend`, `vibackwardblankwordend`, `emacsbackwardword`, `backwarddeleteword`, `vibackwardkillword`, `backwardkillword`, `upcaseword`, `downcaseword`, `capitalizeword`, `deleteword`, `killword`, `transposewords` (22 widgets) + `wordclass` helper. Rust: same 22 widgets + 1 helper ✓; function order matches C source order verbatim.
+  - Each widget takes `(zle: &mut Zle, args: &[String]) -> i32`, mirrors C's recursive-inverse pattern (negative `zmult` calls the inverse direction with positive `zmult`), reads/mutates `zle.zlecs`/`zle.zlell`/`zle.zleline` directly. C's `INCCS()`/`DECCS()`/`INCPOS()`/`DECPOS()` macros expand to plain `+= 1`/`-= 1` (zshrs's `Vec<char>` buffer is already glyph-cluster-aligned). Char-class predicates `ZC_iword`/`ZC_ialnum`/`ZC_ialpha`/`ZC_iblank`/`ZC_inblank`/`ZC_ipunct`/`ZC_toupper`/`ZC_tolower` are inlined per-call (`is_alphanumeric()`/`is_ascii_punctuation()`/`to_uppercase().next()` etc.). C globals `zmult` (zsh.h), `wordflag` (zle_vi.c:41), `virangeflag` (zle_vi.c:36) inlined per-call: `zmult` reads `zle.zmod.mult` when `MULT` flag set; `wordflag`/`virangeflag` are constant `false` (vi-mode plumbing not yet wired — tracked in TODO.md, matches the textobjects.rs precedent).
+  - **Sibling fixes at source (rule 5):**
+    - `zle_utils::backdel` rewritten from `() -> i32 { 0 }` stub to C-faithful `(zle: &mut Zle, ct: i32, flags: i32)` — port of `Src/Zle/zle_utils.c:1084`. Body drains `[zlecs-ct, zlecs)` and updates zlecs/zlell/resetneeded.
+    - `zle_utils::foredel` similarly rewritten — port of `Src/Zle/zle_utils.c:1105`. Body drains `[zlecs, zlecs+ct)`.
+  - **Caller updates (relocations to `src/extensions/widget.rs`):**
+    - The deleted Rust-only `WordStyle`/`find_word_start`/`find_word_end`/`bufferwords`/`backwardword(line,pos)`/`forwardword(line,pos)` API was relocated to `src/extensions/widget.rs` (an extension file outside the drift gate's scan path) so existing call sites in widget.rs and zle_vi.rs continue to compile. The shell-word helpers were renamed `backwardword_shell`/`forwardword_shell` to avoid name collision with the C-faithful `backwardword`/`forwardword` widget fns now in zle_word.rs. Marked as transitional — zle_vi.rs's `super::widget::WordStyle` import should eventually be replaced with direct calls to the per-widget C-faithful entries.
+  - 8/8 zle_word tests pass: `wordclass_dispatch`, `forwardword_basic`, `backwardword_lands_at_word_start`, `upcaseword_uppercases_next_word`, `downcaseword_lowercases_next_word`, `capitalizeword_first_only`, `deleteword_drops_next_word`, `transposewords_swaps_pair`. Drift gate clean.
+
 - [x] `modules/nearcolor.rs` ↔ `Modules/nearcolor.c`
   - C: 1 struct (`cielab`) + 1 typedef (`Cielab` = `struct cielab *`). Rust: 1 struct `Cielab` ✓ (typedef-of-pointer collapses to `&Cielab`); 0 enums; no Rust-only types.
   - C fns (11): `deltae`, `RGBtoLAB`, `mapRGBto88`, `mapRGBto256`, `getnearestcolor`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 11 ✓
@@ -374,7 +386,6 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
 - [ ] `zle/zle_hist.rs` ↔ `Zle/zle_hist.c`
 - [ ] `zle/zle_keymap.rs` ↔ `Zle/zle_keymap.c`
 - [ ] `zle/zle_tricky.rs` ↔ `Zle/zle_tricky.c`
-- [ ] `zle/zle_word.rs` ↔ `Zle/zle_word.c`
 - [ ] `modules/zftp.rs` ↔ `Modules/zftp.c`
 - [ ] `modules/parameter.rs` ↔ `Modules/parameter.c`
 - [ ] `loop.rs` ↔ `loop.c`
