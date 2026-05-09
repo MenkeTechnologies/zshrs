@@ -7,124 +7,86 @@ use regex::Regex;
 use crate::ported::utils::zwarnnam;
 use std::collections::HashMap;
 
-/// Compiled PCRE pattern state.
-/// Port of the file-static `pcre_pattern` / `pcre_extra` /
-/// `pcre_hints` slot Src/Modules/pcre.c keeps to share a compiled
-/// regex between `bin_pcre_compile` (line 70), `bin_pcre_study`
-/// (line 112), and `bin_pcre_match` (line 328). C zsh's source uses
-/// PCRE2's `pcre2_code *`; the Rust `regex` crate gives us an
-/// equivalent compiled handle.
-#[derive(Debug)]
-pub struct PcreState {
-    pattern: Option<Regex>,
-    pattern_str: Option<String>,
+// Per-evaluator PCRE compile state — bucket-1 dissolution per
+// PORT_PLAN.md Phase 2. C source has ONE file-static at
+// Src/Modules/pcre.c:41:
+//
+//     static pcre2_code *pcre_pattern;
+//
+// Previous Rust port aggregated this with a Rust-only `pattern_str`
+// cache into `pub struct PcreState`, which is the bag-of-globals
+// anti-pattern. Dissolved into a single `thread_local!` mirroring
+// the C declaration; each worker thread's `pcre_compile` builtin
+// owns its own compiled regex (file-static semantics preserve under
+// threading per PORT_PLAN bucket-1 rule).
+
+thread_local! {
+    /// Port of file-static `static pcre2_code *pcre_pattern;` at
+    /// `Src/Modules/pcre.c:41`. Compiled regex shared between the
+    /// `pcre_compile`/`pcre_study`/`pcre_match` builtins.
+    static PCRE_PATTERN: std::cell::RefCell<Option<Regex>> = const {
+        std::cell::RefCell::new(None)
+    };
 }
 
-impl Default for PcreState {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/pcre.c`.
-    fn default() -> Self {
-        Self::new()
+// WARNING: NOT IN PCRE.C — Rust-only helpers around the
+// thread_local PCRE_PATTERN state. C inlines the equivalent
+// pcre_pattern reads/writes directly inside `bin_pcre_compile`,
+// `bin_pcre_study`, `bin_pcre_match`, and `cond_pcre_match`. The
+// Rust port factors them into named fns because all four bin_*
+// + cond entry points would otherwise duplicate the
+// `with(|r| r.borrow_mut())` / option-flag-to-prefix translation.
+
+/// Internal-only: compile a pattern into the thread_local
+/// PCRE_PATTERN slot. Inline analog of the `pcre2_compile_8()` core
+/// of `bin_pcre_compile()` (Src/Modules/pcre.c:70).
+fn compile_pattern(
+    pattern: &str,
+    options: &PcreCompileOptions,
+) -> Result<(), String> {
+    let mut pattern_str = String::new();
+    if options.caseless {
+        pattern_str.push_str("(?i)");
+    }
+    if options.multiline {
+        pattern_str.push_str("(?m)");
+    }
+    if options.dotall {
+        pattern_str.push_str("(?s)");
+    }
+    if options.extended {
+        pattern_str.push_str("(?x)");
+    }
+    if options.anchored {
+        pattern_str.push('^');
+    }
+    pattern_str.push_str(pattern);
+    match Regex::new(&pattern_str) {
+        Ok(re) => {
+            PCRE_PATTERN.with(|r| *r.borrow_mut() = Some(re));
+            Ok(())
+        }
+        Err(e) => Err(format!("error in regex: {}", e)),
     }
 }
 
-impl PcreState {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/pcre.c`.
-    pub fn new() -> Self {
-        Self {
-            pattern: None,
-            pattern_str: None,
-        }
-    }
+/// Internal-only: query whether a pattern is compiled.
+fn has_pattern() -> bool {
+    PCRE_PATTERN.with(|r| r.borrow().is_some())
+}
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/pcre.c`.
-    pub fn has_pattern(&self) -> bool {
-        self.pattern.is_some()
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/pcre.c`.
-    pub fn clear(&mut self) {
-        self.pattern = None;
-        self.pattern_str = None;
-    }
-
-    /// Compile a PCRE pattern.
-    /// Port of the `pcre2_compile_8()` core inside `bin_pcre_compile()`
-    /// from Src/Modules/pcre.c:70 — translates the option flag bag
-    /// (`-i` caseless, `-x` extended, `-m` multiline, `-s` dotall,
-    /// `-a` anchored) into the `(?i)` / `(?x)` / `(?m)` / `(?s)` /
-    /// `^` prefixes the Rust `regex` crate accepts and stores the
-    /// compiled handle in `self` for later `do_match` / `study`.
-    pub fn compile(
-        &mut self,
-        pattern: &str,
-        options: &PcreCompileOptions,
-    ) -> Result<(), String> {
-        self.clear();
-
-        let mut pattern_str = String::new();
-
-        if options.caseless {
-            pattern_str.push_str("(?i)");
-        }
-        if options.multiline {
-            pattern_str.push_str("(?m)");
-        }
-        if options.dotall {
-            pattern_str.push_str("(?s)");
-        }
-        if options.extended {
-            pattern_str.push_str("(?x)");
-        }
-        if options.anchored {
-            pattern_str.push('^');
-        }
-
-        pattern_str.push_str(pattern);
-
-        match Regex::new(&pattern_str) {
-            Ok(re) => {
-                self.pattern = Some(re);
-                self.pattern_str = Some(pattern_str);
-                Ok(())
-            }
-            Err(e) => Err(format!("error in regex: {}", e)),
-        }
-    }
-
-    /// Study a compiled pattern (helper for `bin_pcre_study` —
-    /// Src/Modules/pcre.c:112). The C source calls
-    /// `pcre2_jit_compile()` to JIT-optimize the compiled pattern;
-    /// the Rust `regex` crate already builds an optimal NFA at
-    /// compile time, so this is a no-op other than the "no pattern"
-    /// guard the C source also returns.
-    pub fn study(&self) -> Result<(), String> {
-        if self.pattern.is_none() {
-            return Err("no pattern has been compiled for study".to_string());
-        }
-        Ok(())
-    }
-
-    /// Match a string against the compiled pattern.
-    /// Port of the `pcre2_match_8()` + `zpcre_get_substrings()` core of
-    /// `bin_pcre_match()` from Src/Modules/pcre.c:328 — runs the match,
-    /// captures numbered groups (the `ovector` walk in
-    /// `zpcre_get_substrings()` at line 157), and surfaces named
-    /// captures via the same `pcre2_substring_get_byname` lookup the C
-    /// source performs.
-    pub fn do_match(
-        &self,
-        text: &str,
-        options: &PcreMatchOptions,
-    ) -> Result<PcreMatchResult, String> {
-        let re = self
-            .pattern
+/// Internal-only: run the thread_local PCRE_PATTERN against `text`.
+/// Inline analog of `pcre2_match_8()` + `zpcre_get_substrings()`
+/// inside `bin_pcre_match()` (Src/Modules/pcre.c:328).
+fn match_pattern(
+    text: &str,
+    options: &PcreMatchOptions,
+) -> Result<PcreMatchResult, String> {
+    let result = PCRE_PATTERN.with(|r| {
+        let guard = r.borrow();
+        let re = guard
             .as_ref()
             .ok_or_else(|| "no pattern has been compiled".to_string())?;
-
         let search_text = if options.offset > 0 && options.offset < text.len() {
             &text[options.offset..]
         } else if options.offset >= text.len() {
@@ -132,28 +94,23 @@ impl PcreState {
         } else {
             text
         };
-
         let caps = match re.captures(search_text) {
             Some(c) => c,
             None => return Ok(PcreMatchResult::no_match()),
         };
-
         let full_match = caps.get(0).map(|m| m.as_str().to_string());
         let match_start = caps.get(0).map(|m| m.start() + options.offset);
         let match_end = caps.get(0).map(|m| m.end() + options.offset);
-
         let mut captures = Vec::new();
         for i in 1..caps.len() {
             captures.push(caps.get(i).map(|m| m.as_str().to_string()));
         }
-
         let mut named_captures = HashMap::new();
         for name in re.capture_names().flatten() {
             if let Some(m) = caps.name(name) {
                 named_captures.insert(name.to_string(), m.as_str().to_string());
             }
         }
-
         Ok(PcreMatchResult {
             matched: true,
             full_match,
@@ -162,7 +119,8 @@ impl PcreState {
             match_start,
             match_end,
         })
-    }
+    });
+    result
 }
 
 /// Options for pcre_compile
@@ -212,75 +170,72 @@ impl PcreMatchResult {
     }
 }
 
-/// `[[ s -pcre-match pat ]]` cond-test entry point.
-/// Port of `cond_pcre_match()` from Src/Modules/pcre.c:422 — the
-/// dispatch hook the lexer wires for the `-pcre-match` operator.
-/// Compiles `rhs` on the fly (no shared compile state required) and
-/// returns `(matched, result)` so the caller can decide whether to
-/// install the match-vars side effects.
+/// Port of `cond_pcre_match()` from `Src/Modules/pcre.c:422`. The
+/// `-pcre-match` operator dispatch hook the lexer wires for `[[ s
+/// -pcre-match pat ]]`. Compiles `rhs` on the fly (overwriting the
+/// thread_local PCRE_PATTERN) and returns `(matched, result)` so
+/// the caller can install match-var side effects.
 pub fn cond_pcre_match(lhs: &str, rhs: &str, caseless: bool) -> (bool, PcreMatchResult) {
     let options = PcreCompileOptions {                                          // c:422
         caseless,                                                               // c:422
         ..Default::default()                                                    // c:422
-    };                                                                          // c:422
-
-    let mut state = PcreState::new();                                           // c:422
-
-    if state.compile(rhs, &options).is_err() {                                  // c:422
-        return (false, PcreMatchResult::no_match());                            // c:422
-    }                                                                           // c:422
-
-    let match_options = PcreMatchOptions::default();                            // c:422
-
-    match state.do_match(lhs, &match_options) {                                 // c:422
-        Ok(result) => (result.matched, result),                                 // c:422
-        Err(_) => (false, PcreMatchResult::no_match()),                         // c:422
-    }                                                                           // c:422
+    };
+    if compile_pattern(rhs, &options).is_err() {                                // c:422
+        return (false, PcreMatchResult::no_match());
+    }
+    let match_options = PcreMatchOptions::default();
+    match match_pattern(lhs, &match_options) {                                  // c:422
+        Ok(result) => (result.matched, result),
+        Err(_) => (false, PcreMatchResult::no_match()),
+    }
 }
 
-/// `pcre_compile` builtin entry point.
-/// Port of `bin_pcre_compile()` from Src/Modules/pcre.c:70 — wraps
-/// `pcre_compile()` with the same "no args" diagnostic the C source
-/// emits.
+/// Port of `bin_pcre_compile()` from `Src/Modules/pcre.c:70`.
+///
+/// Mirrors C — reads positional args, validates non-empty, compiles
+/// into the file-static (thread_local in zshrs) PCRE_PATTERN. C
+/// signature has no state arg; the file-static is the implicit
+/// state. Returns (status, message).
 pub fn bin_pcre_compile(
     args: &[&str],
     options: &PcreCompileOptions,
-    state: &mut PcreState,
 ) -> (i32, String) {
     if args.is_empty() {
         return (1, "pcre_compile: pattern required\n".to_string());
     }
-
-    match state.compile(args[0], options) {
+    match compile_pattern(args[0], options) {
         Ok(()) => (0, String::new()),
         Err(e) => (1, format!("pcre_compile: {}\n", e)),
     }
 }
 
-/// `pcre_study` builtin entry point.
-/// Port of `bin_pcre_study()` from Src/Modules/pcre.c:112 — wraps
-/// `PcreState::study()` with the same exit-status convention.
-pub fn bin_pcre_study(state: &PcreState) -> (i32, String) {
-    match state.study() {
-        Ok(()) => (0, String::new()),
-        Err(e) => (1, format!("pcre_study: {}\n", e)),
+/// Port of `bin_pcre_study()` from `Src/Modules/pcre.c:112`. The C
+/// source calls `pcre2_jit_compile()` to JIT-optimize the compiled
+/// pattern; the Rust `regex` crate already builds an optimal NFA
+/// at compile time, so this is the "no pattern" guard the C source
+/// also returns and nothing else.
+pub fn bin_pcre_study() -> (i32, String) {
+    if !has_pattern() {
+        return (
+            1,
+            "pcre_study: no pattern has been compiled for study\n".to_string(),
+        );
     }
+    (0, String::new())
 }
 
-/// `pcre_match` builtin entry point.
-/// Port of `bin_pcre_match()` from Src/Modules/pcre.c:328 — wraps
-/// `pcre_match()` with the C source's "1 on no-match, 0 on match"
-/// exit-status convention.
+/// Port of `bin_pcre_match()` from `Src/Modules/pcre.c:328`. Runs
+/// the file-static (thread_local in zshrs) PCRE_PATTERN against
+/// `args[0]`. C's "1 on no-match, 0 on match" exit-status convention
+/// preserved.
 pub fn bin_pcre_match(
     args: &[&str],
     options: &PcreMatchOptions,
-    state: &PcreState,
 ) -> (i32, PcreMatchResult) {
     if args.is_empty() {
         return (1, PcreMatchResult::no_match());
     }
-
-    match state.do_match(args[0], options) {
+    match match_pattern(args[0], options) {
         Ok(result) => {
             if result.matched {
                 (0, result)
@@ -297,94 +252,87 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_pcre_state_new() {
-        let state = PcreState::new();
-        assert!(!state.has_pattern());
+    fn test_pcre_initial_no_pattern() {
+        assert!(!has_pattern());
     }
 
     #[test]
     fn test_pcre_compile_simple() {
-        let mut state = PcreState::new();
         let options = PcreCompileOptions::default();
 
-        let result = state.compile("hello", &options);
+        let result = compile_pattern("hello", &options);
         assert!(result.is_ok());
-        assert!(state.has_pattern());
+        assert!(has_pattern());
     }
 
     #[test]
     fn test_pcre_compile_invalid() {
-        let mut state = PcreState::new();
         let options = PcreCompileOptions::default();
 
-        let result = state.compile("[invalid", &options);
+        let result = compile_pattern("[invalid", &options);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_pcre_compile_caseless() {
-        let mut state = PcreState::new();
         let options = PcreCompileOptions {
             caseless: true,
             ..Default::default()
         };
 
-        let result = state.compile("hello", &options);
+        let result = compile_pattern("hello", &options);
         assert!(result.is_ok());
 
         let match_opts = PcreMatchOptions::default();
-        let result = state.do_match("HELLO WORLD", &match_opts).unwrap();
+        let result = match_pattern("HELLO WORLD", &match_opts).unwrap();
         assert!(result.matched);
     }
 
     #[test]
     fn test_pcre_study_no_pattern() {
-        let state = PcreState::new();
-        let result = state.study();
+        let (status, _) = bin_pcre_study();
+        let result: Result<(), &str> = if status == 0 { Ok(()) } else { Err("err") };
         assert!(result.is_err());
     }
 
     #[test]
     fn test_pcre_study_with_pattern() {
-        let mut state = PcreState::new();
         let options = PcreCompileOptions::default();
-        state.compile("hello", &options).unwrap();
+        compile_pattern("hello", &options).unwrap();
 
-        let result = state.study();
+        let (status, _) = bin_pcre_study();
+        let result: Result<(), &str> = if status == 0 { Ok(()) } else { Err("err") };
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_pcre_match_simple() {
-        let mut state = PcreState::new();
         let options = PcreCompileOptions::default();
-        state.compile("hello", &options).unwrap();
+        compile_pattern("hello", &options).unwrap();
 
         let match_opts = PcreMatchOptions::default();
-        let result = state.do_match("hello world", &match_opts).unwrap();
+        let result = match_pattern("hello world", &match_opts).unwrap();
         assert!(result.matched);
         assert_eq!(result.full_match, Some("hello".to_string()));
     }
 
     #[test]
     fn test_pcre_match_no_match() {
-        let mut state = PcreState::new();
         let options = PcreCompileOptions::default();
-        state.compile("hello", &options).unwrap();
+        compile_pattern("hello", &options).unwrap();
 
         let match_opts = PcreMatchOptions::default();
-        let result = state.do_match("goodbye world", &match_opts).unwrap();
+        let result = match_pattern("goodbye world", &match_opts).unwrap();
         assert!(!result.matched);
     }
 
     #[test]
     fn test_pcre_match_captures() {
-        let mut state = PcreState::new();
         let options = PcreCompileOptions::default();
-        state.compile(r"(\w+) (\w+)", &options).unwrap();
+        compile_pattern(r"(\w+) (\w+)", &options).unwrap();
 
         let match_opts = PcreMatchOptions::default();
-        let result = state.do_match("hello world", &match_opts).unwrap();
+        let result = match_pattern("hello world", &match_opts).unwrap();
         assert!(result.matched);
         assert_eq!(result.captures.len(), 2);
         assert_eq!(result.captures[0], Some("hello".to_string()));
@@ -393,12 +341,11 @@ mod tests {
 
     #[test]
     fn test_pcre_match_named_captures() {
-        let mut state = PcreState::new();
         let options = PcreCompileOptions::default();
-        state.compile(r"(?P<first>\w+) (?P<second>\w+)", &options).unwrap();
+        compile_pattern(r"(?P<first>\w+) (?P<second>\w+)", &options).unwrap();
 
         let match_opts = PcreMatchOptions::default();
-        let result = state.do_match("hello world", &match_opts).unwrap();
+        let result = match_pattern("hello world", &match_opts).unwrap();
         assert!(result.matched);
         assert_eq!(
             result.named_captures.get("first"),
@@ -412,15 +359,14 @@ mod tests {
 
     #[test]
     fn test_pcre_match_with_offset() {
-        let mut state = PcreState::new();
         let options = PcreCompileOptions::default();
-        state.compile("world", &options).unwrap();
+        compile_pattern("world", &options).unwrap();
 
         let match_opts = PcreMatchOptions {
             offset: 6,
             ..Default::default()
         };
-        let result = state.do_match("hello world", &match_opts).unwrap();
+        let result = match_pattern("hello world", &match_opts).unwrap();
         assert!(result.matched);
         assert_eq!(result.match_start, Some(6));
     }
@@ -439,17 +385,15 @@ mod tests {
 
     #[test]
     fn test_builtin_pcre_compile_no_args() {
-        let mut state = PcreState::new();
         let options = PcreCompileOptions::default();
-        let (status, _) = bin_pcre_compile(&[], &options, &mut state);
+        let (status, _) = bin_pcre_compile(&[], &options);
         assert_eq!(status, 1);
     }
 
     #[test]
     fn test_builtin_pcre_match_no_pattern() {
-        let state = PcreState::new();
         let options = PcreMatchOptions::default();
-        let (status, _) = bin_pcre_match(&["test"], &options, &state);
+        let (status, _) = bin_pcre_match(&["test"], &options);
         assert_eq!(status, 1);
     }
 }
@@ -483,9 +427,7 @@ impl crate::ported::exec::ShellExecutor {
                 _ => {}
             }
         }
-        let (status, output) = crate::pcre::bin_pcre_compile(
-            &positional, &options, &mut self.pcre_state,
-        );
+        let (status, output) = crate::pcre::bin_pcre_compile(&positional, &options);
         if !output.is_empty() {
             if status == 0 { print!("{}", output); } else { eprint!("{}", output); }
         }
@@ -521,9 +463,7 @@ impl crate::ported::exec::ShellExecutor {
             ..Default::default()
         };
 
-        let (status, result) = crate::pcre::bin_pcre_match(
-            &positional, &options, &self.pcre_state,
-        );
+        let (status, result) = crate::pcre::bin_pcre_match(&positional, &options);
         if status == 0 {
             if let Some(m) = result.full_match {
                 self.variables.insert(var_name, m);
@@ -535,13 +475,11 @@ impl crate::ported::exec::ShellExecutor {
     }
     /// pcre_study - optimize compiled PCRE (no-op in Rust regex)
     pub(crate) fn bin_pcre_study(&mut self, _args: &[String]) -> i32 {
-        match self.pcre_state.study() {
-            Ok(()) => 0,
-            Err(e) => {
-                zwarnnam("pcre_study", &format!("{}", e));
-                1
-            }
+        let (status, msg) = crate::pcre::bin_pcre_study();
+        if status != 0 {
+            zwarnnam("pcre_study", msg.trim_start_matches("pcre_study: ").trim_end());
         }
+        status
     }
 }
 // END moved-from-exec-rs

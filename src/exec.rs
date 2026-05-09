@@ -18,7 +18,6 @@ use crate::history::HistoryEngine;
 // MathState is private to math.rs (per math.c — no public state struct);
 // math API surface is matheval/mathevali/Mnumber.
 use crate::options::ZSH_OPTIONS_SET;
-use crate::pcre::PcreState;
 use crate::prompt::{expand_prompt, PromptContext};
 use crate::tcp::TcpSessions;
 use crate::zftp::Zftp;
@@ -576,7 +575,6 @@ pub struct ShellExecutor {
     pub breaking: i32,          // break level (0 = not breaking, N = break N levels)
     pub continuing: i32,        // continue level
     // New module state
-    pub pcre_state: PcreState,
     pub tcp_sessions: TcpSessions,
     pub zftp: Zftp,
     pub profiler: Profiler,
@@ -943,7 +941,6 @@ impl ShellExecutor {
             returning: None,
             breaking: 0,
             continuing: 0,
-            pcre_state: PcreState::new(),
             tcp_sessions: TcpSessions::new(),
             zftp: Zftp::new(),
             profiler: Profiler::new(),

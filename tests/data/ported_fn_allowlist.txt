@@ -378,3 +378,10 @@ set_shinstdin
 zwarning
 errflag
 argzero
+
+# pcre.rs — small Rust helpers wrapping pcre_exec-style usage for the
+# zsh/pcre module port; zsh C inlines this in module entrypoints rather
+# than naming these as separate C functions.
+compile_pattern
+has_pattern
+match_pattern
