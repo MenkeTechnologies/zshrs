@@ -1701,8 +1701,20 @@ impl ZshCompiler {
             if let Some(name) = bare_var_ref(&untoked) {
                 let idx = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(idx), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
+                // Special positional names (`argv` / `@` / `*`) in
+                // unquoted position must expand as an ARRAY of words,
+                // not a scalar IFS-joined string. C zsh: `print -l
+                // $argv` runs print with N args, one per positional;
+                // emitting BUILTIN_GET_VAR (scalar, IFS-joined)
+                // produced a single joined arg and lost the
+                // word-split. BUILTIN_ARRAY_ALL returns
+                // `Value::Array` which the VM splices into argv.
+                let opcode = if matches!(name, "argv" | "@" | "*") {
+                    crate::exec::BUILTIN_ARRAY_ALL
+                } else {
+                    crate::exec::BUILTIN_GET_VAR
+                };
+                self.builder.emit(Op::CallBuiltin(opcode, 1), 0);
                 return;
             }
         }

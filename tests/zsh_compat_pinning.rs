@@ -224,6 +224,30 @@ echo "len=${#argv}""#,
     }
 }
 
+mod conditionals_and_arith_cond {
+    use super::*;
+
+    #[test]
+    fn double_bracket_pattern_glob() {
+        assert_parity(r#"[[ xyz == *z ]] && echo glob"#);
+    }
+
+    #[test]
+    fn double_bracket_string_equality() {
+        assert_parity(r#"[[ a = a ]] && echo eq"#);
+    }
+
+    #[test]
+    fn double_bracket_n_empty() {
+        assert_parity(r#"[[ -n $PWD ]] && echo haspwd"#);
+    }
+
+    #[test]
+    fn arith_cond_numeric() {
+        assert_parity(r#"(( 7 > 3 )) && echo t"#);
+    }
+}
+
 mod small_language_surface {
     use super::*;
 

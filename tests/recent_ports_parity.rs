@@ -238,30 +238,50 @@ mod params_special_vars {
         assert_parity(r#"set -- a b c d; echo $#"#);
     }
 
-    /// `${argv[@]}` — array-context expansion of positional params.
-    /// Both shells expand to one word per positional, producing one
-    /// line per positional in `print -l`.
-    ///
-    /// Note on bare `$argv`: unindexed `$argv` in `print -l` came out
-    /// as one line in zshrs vs three in zsh — zsh treats unquoted
-    /// `$argv` (and `$@` / `$*`) as array-expanding into multiple
-    /// argv tokens, while zshrs's bytecode compiler currently emits
-    /// a scalar `BUILTIN_GET_VAR` that joins on IFS. The fix lives
-    /// at the compiler level (emit `BUILTIN_ARRAY_ALL` for these
-    /// names in unquoted position) — separate scope.
-    ///
-    /// This test uses `${argv[@]}` so both shells exercise the
-    /// `BUILTIN_ARRAY_ALL` / `getvaluearr` path that already works
-    /// for explicit array-context expansion.
+    /// `${argv[@]}` — explicit array-context expansion. Always
+    /// produced multi-word output via the BUILTIN_ARRAY_ALL path.
     #[test]
     fn dollar_argv_array_context() {
         assert_parity(r#"set -- a b c; print -l "${argv[@]}""#);
     }
 
+    /// `"$@"` — quoted positional splat. Same array path.
     #[test]
     fn dollar_argv_at_quoted() {
-        // Same array path via "$@".
         assert_parity(r#"set -- foo bar baz; print -l "$@""#);
+    }
+
+    /// Bare unquoted `$argv` in unquoted position must array-expand
+    /// (one word per positional), not IFS-join. The compiler fast
+    /// path at compile_zsh.rs:1700 now detects `argv`/`@`/`*` and
+    /// emits `BUILTIN_ARRAY_ALL` instead of `BUILTIN_GET_VAR` so the
+    /// VM splices `Value::Array` into argv. Without this fix,
+    /// `print -l $argv` produced one IFS-joined line; with the fix,
+    /// it produces N lines matching zsh.
+    #[test]
+    fn dollar_argv_bare_unquoted_print_l() {
+        assert_parity(r#"set -- a b c; print -l $argv"#);
+    }
+
+    /// `echo $argv` — bare unquoted positional splat. Both shells
+    /// produce "a b c" but via different routes: zsh array-expands
+    /// to 3 args then echo joins with space; zshrs (post-fix) does
+    /// the same. The output equality is preserved both ways.
+    #[test]
+    fn dollar_argv_bare_unquoted_echo() {
+        assert_parity(r#"set -- a b c; echo $argv"#);
+    }
+
+    /// `$@` and `$*` go through a separate AST path (already
+    /// emitting BUILTIN_ARRAY_ALL); test that path.
+    #[test]
+    fn dollar_at_bare_unquoted_print_l() {
+        assert_parity(r#"set -- a b c; print -l $@"#);
+    }
+
+    #[test]
+    fn dollar_star_bare_unquoted_print_l() {
+        assert_parity(r#"set -- a b c; print -l $*"#);
     }
 
     #[test]
