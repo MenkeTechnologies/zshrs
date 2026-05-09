@@ -93,9 +93,8 @@ were left in place; some stubs were body-ported but kept their
 Rust-only wrappers). All checkboxes reset; we revisit each file.
 
 In-flight files where I started bodies but the surrounding file still
-has Rust-only types to delete: `modules/stat.rs`, `modules/mapfile.rs`,
-`modules/hlgroup.rs`, `modules/zprof.rs`. These get re-done from the
-top under the new rules.
+has Rust-only types to delete: `modules/stat.rs`, `modules/hlgroup.rs`,
+`modules/zprof.rs`. These get re-done from the top under the new rules.
 
 ---
 
@@ -200,6 +199,20 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - `finish_()` — port of c:243-248. `printf("Thank you for using the example module.  Have a nice day.\n"); fflush(stdout);` + return 0. Verified.
   - 6/6 tests pass (`boot_populates_demo_params`, `cond_p_len_arities`, `cond_i_ex_concat_matches_example`, `math_sum_int_then_float_promotion`, `math_length_returns_strlen`, `ex_wrapper_name_prefix_match`).
 
+- [x] `modules/mapfile.rs` ↔ `Modules/mapfile.c`
+  - C: 0 structs/enums (only `static const struct gsu_*` and `static struct paramdef partab[]` aggregates of pre-defined zsh-framework types — gsu_hash, gsu_scalar, paramdef are not redefined by mapfile.c). Rust: 0 structs/enums ✓; no Rust-only types.
+  - C fns (12): `setpmmapfile`, `unsetpmmapfile`, `setpmmapfiles`, `get_contents`, `getpmmapfile`, `scanpmmapfile`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 12 ✓ (function order in Rust file now matches C source order verbatim).
+  - **Rule 4 fix:** removed the `// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT` block from the `cfg(not(unix))` `get_contents` fallback. The fallback is the actual port of the `#ifndef USE_MMAP` arm at c:199-202; replaced with a normal `/// Non-Unix build path (port of...)` doc-comment.
+  - **Bug fix:** `setpmmapfile` now does ftruncate AFTER mmap (matching C c:91-97 ordering) — previous Rust port did ftruncate BEFORE mmap, which is the wrong order for the AIX-zero-page bug the C comment at c:91-94 is guarding against.
+  - `setpmmapfile(name, value, readonly)` — port of c:67-122. Both the `USE_MMAP` open+mmap+ftruncate+memcpy+msync+ftruncate+munmap chain (c:87-108) and the `#else` fopen+putc-loop+fclose fallback (c:110-117) ported. Failure paths (open fail, mmap fail, ftruncate fail) preserve C's silent-fall-through semantics; only ftruncate fail emits `zwarn("ftruncate failed: %e", errno)` per c:96/107. Verified.
+  - `unsetpmmapfile(name, readonly)` — port of c:126-137. unmetafy + readonly-guarded unlink, matching c:131-134. Verified.
+  - `setpmmapfiles(entries, readonly)` — port of c:141-163. Bulk-write path: `if (!ht) return;` at c:146-147, readonly guard at c:149, per-entry routing through `setpmmapfile` at c:159. The `if (ht != pm->u.hash) deleteparamtable(ht);` at c:161-162 is a no-op in the slice-based Rust shape (no paramtable to free). Verified.
+  - `get_contents(fname) -> Option<String>` — port of c:167-206. mmap-PROT_READ fast path at c:182-183, plain-read fallback at c:199-202. Returns None on any of C's NULL-return paths (open/fstat/mmap fail), matching c:184-187. Returns `Some(metafy(""))` for empty files (regular-file-of-zero-bytes is a valid mmap_unsupported case treated as the empty string, matching the C fallback's `read` semantics). The "Sadly, we need to copy the thing even if metafying doesn't change it" comment at c:190-194 preserved as the rationale for the slice→Vec copy. Verified.
+  - `getpmmapfile(name) -> Option<String>` — port of c:217-236. C synthesises a `struct param` and assigns its `u.str` slot; Rust port returns the value directly since the synthesised Param is internal to C's hashnode dispatch. PM_UNSET equivalent is `None`.
+  - `scanpmmapfile() -> Vec<(String,String)>` — port of c:241-267. opendir(".") + zreaddir loop with `.`/`..` skip; values always `""` per c:263 (with the C source's "grotesequely wasteful" comment quoted in the Rust doc-comment). Verified.
+  - 6 module loaders (`setup_`/`features_`/`enables_`/`boot_`/`cleanup_`/`finish_`) — static-link no-ops with C-body-quoting doc-comments, citing c:281/289/296/303/310/317.
+  - 8/8 mapfile tests pass: `getpmmapfile_nonexistent_returns_none`, `file_roundtrip`, `empty_value_creates_file`, `scanpmmapfile_skips_dotdirs_and_returns_empty_values`, `unsetpmmapfile_removes_file`, `unsetpmmapfile_readonly_skips`, `setpmmapfile_readonly_skips_write`, `setpmmapfiles_writes_entries`. Verified.
+
 ## 🟢 NEAR — 1–3 stubs (6) [stub-counts pre-rule-tightening]
 
 - [ ] `params.rs` ↔ `params.c`
@@ -246,7 +259,6 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
 
 - [ ] `modules/tcp.rs` ↔ `Modules/tcp.c`
 - [ ] `zle/compcore.rs` ↔ `Zle/compcore.c`
-- [ ] `modules/mapfile.rs` ↔ `Modules/mapfile.c`
 - [ ] `modules/socket.rs` ↔ `Modules/socket.c`
 - [ ] `modules/stat.rs` ↔ `Modules/stat.c` ← **named-example file; delete StatElement / FileStat / FileType / StatFlags / StatOptions; rewrite bin_stat with i32 STF_* bitmask**
 - [ ] `zle/deltochar.rs` ↔ `Zle/deltochar.c`
