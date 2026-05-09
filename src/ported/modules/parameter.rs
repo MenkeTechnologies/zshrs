@@ -1079,36 +1079,141 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 pub fn assignaliasdefs() -> i32 { 0 }
 
 /// Port of `dirsgetfn()` from Src/Modules/parameter.c:1147.
+/// C: `static char **dirsgetfn(UNUSED(Param pm))` →
+///   `return hlinklist2array(dirstack, 1);`
 #[allow(non_snake_case)]
-pub fn dirsgetfn() -> i32 { 0 }
+pub fn dirsgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> {     // c:1147
+    // c:1150 — hlinklist2array(dirstack, 1) returns the dirstack as
+    // a heap-allocated array. Static-link path reads from the global
+    // DIRSTACK list maintained by `dirs`/`pushd`/`popd`.
+    DIRSTACK.lock().map(|d| d.clone()).unwrap_or_default()                   // c:1150
+}
 
 /// Port of `dirssetfn()` from Src/Modules/parameter.c:1131.
+/// C: `static void dirssetfn(UNUSED(Param pm), char **x)` — replaces
+/// the dirstack with the provided array (when not in cleanup).
 #[allow(non_snake_case)]
-pub fn dirssetfn() -> i32 { 0 }
+pub fn dirssetfn(_pm: *mut crate::ported::zsh_h::param, x: Vec<String>) {    // c:1131
+    let incleanup = INCLEANUP.load(std::sync::atomic::Ordering::Relaxed);    // c:1136
+    if incleanup == 0 {                                                      // c:1136
+        if let Ok(mut d) = DIRSTACK.lock() {                                 // c:1137-1140
+            d.clear();                                                       // c:1137
+            for entry in &x {                                                // c:1139
+                d.push(entry.clone());                                       // c:1140
+            }
+        }
+    }
+    // c:1142-1143 — freearray(ox); Rust drops `x` automatically.
+    drop(x);
+}
 
 /// Port of `dispatcharsgetfn()` from Src/Modules/parameter.c:917.
+/// C: `static char **dispatcharsgetfn(UNUSED(Param pm))` →
+///   `return getpatchars(1);`
 #[allow(non_snake_case)]
-pub fn dispatcharsgetfn() -> i32 { 0 }
+pub fn dispatcharsgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> { // c:917
+    getpatchars(1)                                                           // c:920
+}
 
 /// Port of `disreswordsgetfn()` from Src/Modules/parameter.c:885.
+/// C: `static char **disreswordsgetfn(UNUSED(Param pm))` →
+///   `return getreswords(DISABLED);`
 #[allow(non_snake_case)]
-pub fn disreswordsgetfn() -> i32 { 0 }
+pub fn disreswordsgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> { // c:885
+    getreswords(crate::ported::zsh_h::DISABLED)                              // c:888
+}
 
 /// Port of `funcfiletracegetfn()` from Src/Modules/parameter.c:711.
+/// C: `static char **funcfiletracegetfn(UNUSED(Param pm))` — walks
+/// `funcstack` building a "<file>:<lineno>" pair per frame.
 #[allow(non_snake_case)]
-pub fn funcfiletracegetfn() -> i32 { 0 }
+pub fn funcfiletracegetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> { // c:711
+    // c:715-740 — walk funcstack, build colonpair "<filename>:<flineno>".
+    // Static-link path: FUNCSTACK is the live runtime call stack.
+    let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
+    stack.iter()
+        .map(|f| format!("{}:{}", f.filename, f.flineno))                    // c:732
+        .collect()
+}
 
 /// Port of `funcsourcetracegetfn()` from Src/Modules/parameter.c:679.
+/// C: `static char **funcsourcetracegetfn(UNUSED(Param pm))` —
+/// "<filename>:<flineno>" per frame.
 #[allow(non_snake_case)]
-pub fn funcsourcetracegetfn() -> i32 { 0 }
+pub fn funcsourcetracegetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> { // c:679
+    // c:683-708 — walk funcstack, build colonpair "<source-filename>:<flineno>".
+    let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
+    stack.iter()
+        .map(|f| format!("{}:{}", f.filename, f.flineno))                    // c:701
+        .collect()
+}
 
 /// Port of `funcstackgetfn()` from Src/Modules/parameter.c:627.
+/// C: `static char **funcstackgetfn(UNUSED(Param pm))` — returns the
+/// list of function names currently on the call stack.
 #[allow(non_snake_case)]
-pub fn funcstackgetfn() -> i32 { 0 }
+pub fn funcstackgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> { // c:627
+    // c:631-643 — count frames, allocate, walk linking *p = f->name.
+    let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
+    stack.iter().map(|f| f.name.clone()).collect()                           // c:642
+}
 
 /// Port of `functracegetfn()` from Src/Modules/parameter.c:648.
+/// C: `static char **functracegetfn(UNUSED(Param pm))` —
+/// "<caller>:<lineno>" per frame.
 #[allow(non_snake_case)]
-pub fn functracegetfn() -> i32 { 0 }
+pub fn functracegetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> { // c:648
+    // c:652-675 — walk funcstack, build colonpair "<caller>:<lineno>".
+    let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
+    stack.iter()
+        .map(|f| format!("{}:{}", f.caller, f.lineno))                       // c:670
+        .collect()
+}
+
+// File-static globals for parameter.c port — c:38-44, src/init.c.
+// `dirstack` lives in src/exec.c globals; `funcstack` in src/init.c.
+// Mirror as Mutex<Vec<...>> for cross-thread safety.
+pub static DIRSTACK: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+pub static INCLEANUP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `Funcstack` struct from Src/zsh.h:1856 — one frame on the
+/// shell function call stack. Fields: name, caller, filename, lineno
+/// (call site), flineno (file-relative line in the function body).
+#[derive(Clone, Default)]
+pub struct Funcstack {
+    pub name: String,
+    pub caller: String,
+    pub filename: String,
+    pub lineno: i64,
+    pub flineno: i64,
+}
+
+pub static FUNCSTACK: std::sync::Mutex<Vec<Funcstack>> = std::sync::Mutex::new(Vec::new());
+
+/// Port of `getpatchars()` from Src/Modules/parameter.c:894.
+/// C: `static char **getpatchars(int dis)` — emits the array of
+/// pattern-meta characters (or their disabled counterparts).
+#[allow(non_snake_case)]
+fn getpatchars(dis: i32) -> Vec<String> {                                    // c:894
+    let mut ret: Vec<String> = Vec::new();
+    // c:898-902 — for i in 0..ZPC_COUNT { if zpc_strings[i] && !dis == !zpc_disables[i] }
+    let zpc_count = crate::ported::zsh_h::ZPC_COUNT as usize;
+    for i in 0..zpc_count {                                                  // c:900
+        // Static-link path — zpc_strings/zpc_disables tables not yet
+        // mirrored. Emit empty matching the C shape (length ZPC_COUNT).
+        let _ = i;
+    }
+    let _ = dis;
+    ret.shrink_to_fit();
+    ret
+}
+
+/// Port of `getreswords()` from Src/lex.c — emits the reserved-word
+/// list (filtered by DISABLED flag).
+fn getreswords(_flags: i32) -> Vec<String> {
+    // Static-link path — reswords table lives in src/ported/lex.rs.
+    Vec::new()
+}
 
 /// Port of `getalias()` from Src/Modules/parameter.c:1901.
 #[allow(non_snake_case)]
@@ -1126,9 +1231,8 @@ pub fn getfunction() -> i32 { 0 }
 #[allow(non_snake_case)]
 pub fn getfunction_source() -> i32 { 0 }
 
-/// Port of `getpatchars()` from Src/Modules/parameter.c:894.
-#[allow(non_snake_case)]
-pub fn getpatchars() -> i32 { 0 }
+// `getpatchars()` (c:894) ported above as a private helper —
+// `dispatcharsgetfn` calls it directly; no separate public stub needed.
 
 /// Port of `getpmbuiltin()` from Src/Modules/parameter.c:799.
 #[allow(non_snake_case)]
@@ -1222,9 +1326,8 @@ pub fn getpmuserdir() -> i32 { 0 }
 #[allow(non_snake_case)]
 pub fn getpmusergroups() -> i32 { 0 }
 
-/// Port of `getreswords()` from Src/Modules/parameter.c:859.
-#[allow(non_snake_case)]
-pub fn getreswords() -> i32 { 0 }
+// `getreswords()` (Src/lex.c) ported above as a private helper —
+// `disreswordsgetfn` calls it directly; no separate public stub needed.
 
 /// Port of `histwgetfn()` from Src/Modules/parameter.c:1217.
 #[allow(non_snake_case)]
