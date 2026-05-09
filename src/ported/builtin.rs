@@ -13642,3 +13642,114 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
     let _ = (expand, pflags);
     returnval
 }
+
+/// Port of `bin_pwd()` from Src/builtin.c:728.
+/// C: `int bin_pwd(UNUSED(char *name), UNUSED(char **argv), Options ops,
+///     UNUSED(int func))` — `-r`/`-P` or (CHASELINKS && !`-L`) →
+///   print resolved cwd via zgetcwd; else print the cached `pwd`.
+pub fn bin_pwd(_name: &str, _argv: &[String],                                // c:728
+               ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::OPT_ISSET;
+    let chaselinks = crate::ported::options::optlookup("chaselinks") > 0;
+    // c:730-731 — `if (OPT_ISSET(ops,'r') || OPT_ISSET(ops,'P') ||
+    //               (isset(CHASELINKS) && !OPT_ISSET(ops,'L')))`
+    if OPT_ISSET(ops, b'r') || OPT_ISSET(ops, b'P')                          // c:730
+        || (chaselinks && !OPT_ISSET(ops, b'L'))                             // c:731
+    {
+        // c:732 — `printf("%s\n", zgetcwd());`
+        println!("{}", crate::ported::utils::zgetcwd().unwrap_or_default()); // c:732
+    } else {
+        // c:734 — `zputs(pwd, stdout); putchar('\n');`
+        println!("{}", std::env::var("PWD")                                  // c:734
+                       .unwrap_or_else(|_|
+                           crate::ported::utils::zgetcwd().unwrap_or_default()));
+    }
+    0                                                                        // c:737
+}
+
+/// Port of `bin_shift()` from Src/builtin.c:5593.
+/// C: `int bin_shift(char *name, char **argv, Options ops, UNUSED(int func))`
+/// — shift positional params (or named arrays) by `num` positions; `-p`
+/// pops from the right end.
+pub fn bin_shift(name: &str, argv: &[String],                                // c:5593
+                 ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::OPT_ISSET;
+    let mut num: i32 = 1;                                                    // c:5595
+    let mut ret: i32 = 0;                                                    // c:5595
+    let mut idx = 0usize;
+    crate::ported::mem::queue_signals();                                     // c:5599
+    // c:5600-5605 — first arg parsed as math expr unless it's an array name.
+    if !argv.is_empty() {                                                    // c:5600
+        let first = &argv[0];
+        // Approximate `getaparam(*argv) == NULL` by checking PATH-style
+        // env array semantics from getaparam's static-link impl.
+        let is_array = std::env::var(first)
+            .map(|v| v.contains(':'))
+            .unwrap_or(false);
+        if !is_array {                                                       // c:5600
+            num = first.trim().parse::<i32>().unwrap_or_else(|_| {           // c:5601
+                ret = 1;
+                0
+            });
+            idx = 1;
+            if ret != 0 {
+                crate::ported::mem::unqueue_signals();                       // c:5604
+                return 1;
+            }
+        }
+    }
+
+    // c:5608-5611 — `if (num < 0)` reject.
+    if num < 0 {                                                             // c:5608
+        crate::ported::mem::unqueue_signals();                               // c:5609
+        crate::ported::utils::zwarnnam(name,
+            "argument to shift must be non-negative");                       // c:5610
+        return 1;                                                            // c:5611
+    }
+
+    // c:5614-5635 — named-array shift loop.
+    if idx < argv.len() {                                                    // c:5614
+        for arr_name in &argv[idx..] {                                       // c:5615
+            // c:5616 — `if ((s = getaparam(*argv)))` else silent skip.
+            let s: Vec<String> = std::env::var(arr_name)
+                .ok()
+                .map(|v| v.split(':').map(String::from).collect())
+                .unwrap_or_default();
+            if s.is_empty() && std::env::var(arr_name).is_err() { continue; }
+            // c:5617-5621 — arrlen_lt check.
+            if (s.len() as i32) < num {                                      // c:5617
+                crate::ported::utils::zwarnnam(name,
+                    "shift count must be <= $#");                            // c:5618
+                ret += 1;                                                    // c:5619
+                continue;                                                    // c:5620
+            }
+            // c:5622-5634 — -p shifts off the right end, otherwise the left.
+            let s2: Vec<String> = if OPT_ISSET(ops, b'p') {                  // c:5622
+                s[..s.len() - num as usize].to_vec()                         // c:5625-5628
+            } else {
+                s[num as usize..].to_vec()                                   // c:5631
+            };
+            std::env::set_var(arr_name, s2.join(":"));                       // c:5633
+        }
+    } else {
+        // c:5636-5654 — shift positional parameters ($1..$N).
+        // Static-link path: positional params live in src/ported/exec.rs;
+        // expose via PPARAMS Mutex<Vec<String>>.
+        let mut pp = PPARAMS.lock().unwrap_or_else(|e| { PPARAMS.clear_poison(); e.into_inner() });
+        let l = pp.len() as i32;
+        if num > l {                                                         // c:5636
+            crate::ported::utils::zwarnnam(name, "shift count must be <= $#"); // c:5637
+            ret = 1;                                                         // c:5638
+        } else if OPT_ISSET(ops, b'p') {                                     // c:5641
+            pp.truncate((l - num) as usize);                                 // c:5642-5644
+        } else {
+            pp.drain(..num as usize);                                        // c:5646-5650
+        }
+    }
+    crate::ported::mem::unqueue_signals();                                   // c:5658
+    ret                                                                      // c:5659
+}
+
+// `pparams` global from Src/init.c — positional parameters $1..$N.
+pub static PPARAMS: std::sync::Mutex<Vec<String>> =
+    std::sync::Mutex::new(Vec::new());
