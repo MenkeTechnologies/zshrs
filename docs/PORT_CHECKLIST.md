@@ -93,7 +93,7 @@ were left in place; some stubs were body-ported but kept their
 Rust-only wrappers). All checkboxes reset; we revisit each file.
 
 In-flight files where I started bodies but the surrounding file still
-has Rust-only types to delete: `modules/stat.rs`, `modules/zprof.rs`.
+has Rust-only types to delete: `modules/zprof.rs`.
 These get re-done from the top under the new rules. (`modules/hlgroup.rs`
 has no remaining Rust-only types but is BLOCKED on a real port of
 `Src/prompt.c`'s `match_highlight` and `zattrescape` — see TODO.md.)
@@ -251,6 +251,16 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - `bin_zsystem` callers updated: `fusevm_bridge.rs:782` now calls `crate::modules::system::bin_zsystem(exec, "zsystem", &args)` instead of the deleted `exec.bin_zsystem(&args)` method.
   - 13/13 system tests pass: `getposint_basic`, `bin_zsystem_supports_self`, `bin_zsystem_supports_arg_count`, `bin_zsystem_dispatch`, `errnosgetfn_returns_table`, `fillpmsysparams_keys`, `getpmsysparams_pid_set`, `scanpmsysparams_three_entries`, `bin_syserror_to_errvar_with_prefix`, `bin_syserror_unknown_name_returns_2`, `bin_sysopen_writes_fd_to_var`, `bin_sysseek_basic`, `math_systell_returns_lseek_cur`. 39/39 utils tests still pass (no regression from the redup/zcloselockfd signature changes).
 
+- [x] `modules/stat.rs` ↔ `Modules/stat.c`
+  - C: 2 anonymous int-constant `enum` blocks (`statnum`, `statflags` at c:33-38). Rust: 0 `pub enum` — exposed as `pub const ST_*: i32` and `pub const STF_*: i32` matching C names verbatim. The earlier in-flight Rust-only types (`StatElement`, `StatFlags`, `FileStat`, `FileType`, `StatOptions`) had already been deleted in a prior pass.
+  - C fns (14): `statmodeprint`, `statuidprint`, `statgidprint`, `stattimeprint`, `statulprint`, `statlinkprint`, `statprint`, `bin_stat`, `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 14 ✓; function order matches C source order verbatim.
+  - **Removed**: tail `impl ShellExecutor` block (the `bin_stat(args)` and `builtin_zstat(args)` adapter methods) — they were Rust-only shims. The `bin_stat` free fn now takes `(exec, nam, args)` directly per the established zselect.rs / system.rs precedent, with the `Options` bitmap allocated locally inside the body (matches PORT_CHECKLIST.md rule 3 — `Options ops` is a bitmask, not a struct, parsed inline).
+  - `bin_stat(exec, nam, args) -> i32` — port of c:368-634. Inline parser for the `+ELEMENT` (c:385-405) / `-flag` (c:406-457) / `-A NAME` (c:412-417) / `-H NAME` (c:418-426) / `-f FD` (c:427-441) / `-F FORMAT` (c:442-451) syntax. STF_ARRAY/STF_HASH conflict guard per c:459-466. `-l` listing path per c:467-491. `-f` vs file-args mutual exclusion per c:493-499. Per-file `lstat`/`stat`/`fstat` dispatch per c:556-571. `STATELTS`-walk dispatch through `statprint` per c:582-605. Final `setaparam` / `sethparam` writeback per c:613-631 (Rust uses `exec.arrays.insert` / `exec.assoc_arrays.insert`).
+  - `statmodeprint`, `statuidprint`, `statgidprint`, `stattimeprint`, `statulprint`, `statlinkprint` — all individual print fns body-ported with C-cited bit twiddling (S_ISUID/S_ISGID/S_ISVTX handling at c:115-120, "?rwxrwxrwx" mode-char rendering, getpwuid/getgrgid lookup with numeric fallback per c:140-152 / c:169-181, ztrftime via the `crate::ported::utils::ztrftime` helper).
+  - `statprint(meta, fname, iwhich, flags) -> String` — full ST_* dispatch table per c:245-329, calling the 6 individual print fns above.
+  - `fusevm_bridge.rs:9734` updated: `"zstat" => return crate::modules::stat::bin_stat(self, "zstat", &rest_vec);` (was `self.builtin_zstat(...)` calling the deleted ShellExecutor adapter).
+  - 6/6 stat tests pass: `statelts_count_matches_st_count`, `statmodeprint_octal_only`, `statmodeprint_string_only`, `statmodeprint_directory`, `statulprint_decimal`, `statprint_size_via_index`. Drift gate clean.
+
 ## 🟢 NEAR — 1–3 stubs (6) [stub-counts pre-rule-tightening]
 
 - [ ] `params.rs` ↔ `params.c`
@@ -297,7 +307,6 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
 - [ ] `modules/tcp.rs` ↔ `Modules/tcp.c`
 - [ ] `zle/compcore.rs` ↔ `Zle/compcore.c`
 - [ ] `modules/socket.rs` ↔ `Modules/socket.c`
-- [ ] `modules/stat.rs` ↔ `Modules/stat.c` ← **named-example file; delete StatElement / FileStat / FileType / StatFlags / StatOptions; rewrite bin_stat with i32 STF_* bitmask**
 - [ ] `zle/deltochar.rs` ↔ `Zle/deltochar.c`
 - [ ] `zle/complist.rs` ↔ `Zle/complist.c`
 - [ ] `modules/zutil.rs` ↔ `Modules/zutil.c`

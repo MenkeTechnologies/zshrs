@@ -269,15 +269,20 @@ pub fn statprint(meta: &fs::Metadata, fname: &str, iwhich: i32, flags: i32) -> S
 ///
 /// C signature: `static int bin_stat(char *name, char **args,
 ///                                    Options ops, int func)`.
-pub fn bin_stat(exec: &mut ShellExecutor, nam: &str, args: &[&str], ops: &mut [bool; 256])
-    -> i32                                                                // c:368
-{
+pub fn bin_stat(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:368
+    // c:370-374 — locals.
     let mut iwhich: i32 = -1;                                            // c:373
     let mut flags: i32 = 0;
     let mut found = 0i32;                                                // c:375
     let mut arrnam: Option<String> = None;
     let mut hashnam: Option<String> = None;
     let mut fd: i32 = 0;
+    // The C `Options ops` bitmap is parsed inline by this fn (the
+    // BUILTIN spec at c:637 is `NULL`, so the framework doesn't pre-
+    // parse). Per PORT_CHECKLIST.md rule 3 we keep `ops` as a local
+    // 256-entry bitmap rather than introducing a Rust-only struct.
+    let mut ops = [false; 256];
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let mut argv: Vec<&str> = Vec::with_capacity(args.len());
     let mut i = 0;
     // c:381 — arg loop.
@@ -554,23 +559,3 @@ mod tests {
     }
 }
 
-// =====================================================
-// Methods moved verbatim from src/ported/exec.rs
-// =====================================================
-
-impl ShellExecutor {
-    /// `zstat` / `stat` builtin shim — adapts `&[String]` argv to
-    /// `bin_stat` over a `&mut [bool; 256]` ops bitmask. zshrs's
-    /// builtin dispatcher invokes this directly via two names
-    /// (zstat is the canonical, stat is the alias) — both go
-    /// through this entry.
-    pub(crate) fn bin_stat(&mut self, args: &[String]) -> i32 {
-        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-        let mut ops = [false; 256];
-        bin_stat(self, "stat", &argv, &mut ops)
-    }
-
-    pub(crate) fn builtin_zstat(&mut self, args: &[String]) -> i32 {
-        self.bin_stat(args)
-    }
-}

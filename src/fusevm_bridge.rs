@@ -9731,7 +9731,7 @@ impl crate::ported::exec::ShellExecutor {
             // statically linked so we keep `stat` routing to the
             // external command and only intercept the unambiguous
             // `zstat` name.
-            "zstat" => return self.builtin_zstat(&rest_vec),
+            "zstat" => return crate::modules::stat::bin_stat(self, "zstat", &rest_vec),
             _ => {}
         }
 
