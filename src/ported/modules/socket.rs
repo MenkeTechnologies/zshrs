@@ -123,10 +123,17 @@ pub fn bin_zsocket(args: &[&str]) -> (i32, String, Option<RawFd>) {     // c:57
         })();
         return match listen_result {
             Ok(fd) => {
+                crate::ported::utils::addmodulefd(fd);                  // c:118
+                let final_fd = if targetfd != 0 {                       // c:120
+                    crate::ported::utils::redup(fd, targetfd);          // c:121
+                    targetfd                                            // c:121
+                } else {                                                 // c:124
+                    crate::ported::utils::movefd(fd)                    // c:125
+                };
                 if verbose {                                            // c:135
-                    output.push_str(&format!("{} listener is on fd {}\n", path, fd));
+                    output.push_str(&format!("{} listener is on fd {}\n", path, final_fd));
                 }
-                (0, output, Some(fd))                                   // c:137
+                (0, output, Some(final_fd))                             // c:137
             }
             Err(e) => (
                 1,
@@ -205,10 +212,17 @@ pub fn bin_zsocket(args: &[&str]) -> (i32, String, Option<RawFd>) {     // c:57
         })();
         return match accept_result {
             Ok((fd, path)) => {
+                crate::ported::utils::addmodulefd(fd);                  // c:208
+                let final_fd = if targetfd != 0 {                       // c:210
+                    crate::ported::utils::redup(fd, targetfd);          // c:211
+                    targetfd
+                } else {                                                 // c:215
+                    crate::ported::utils::movefd(fd)                    // c:216
+                };
                 if verbose {                                            // c:198
-                    output.push_str(&format!("new connection from {} is on fd {}\n", path, fd));
+                    output.push_str(&format!("new connection from {} is on fd {}\n", path, final_fd));
                 }
-                (0, output, Some(fd))                                   // c:200
+                (0, output, Some(final_fd))                             // c:200
             }
             Err(e) => (
                 1,
@@ -260,10 +274,17 @@ pub fn bin_zsocket(args: &[&str]) -> (i32, String, Option<RawFd>) {     // c:57
     })();
     match connect_result {
         Ok(fd) => {
-            if verbose {                                                // c:265
-                output.push_str(&format!("{} is now on fd {}\n", path, fd));
+            crate::ported::utils::addmodulefd(fd);                       // c:252
+            let final_fd = if targetfd != 0 {                            // c:254
+                crate::ported::utils::redup(fd, targetfd);               // c:255
+                targetfd
+            } else {                                                     // c:259
+                crate::ported::utils::movefd(fd)                         // c:260
+            };
+            if verbose {                                                 // c:265
+                output.push_str(&format!("{} is now on fd {}\n", path, final_fd));
             }
-            (0, output, Some(fd))                                       // c:267
+            (0, output, Some(final_fd))                                  // c:267
         }
         Err(e) => (1, format!("zsocket: connection failed: {}\n", e), None),
     }
@@ -316,9 +337,18 @@ impl crate::ported::exec::ShellExecutor {
     /// `&[String]` argv to the canonical `&[&str]` shape.
     pub(crate) fn bin_zsocket(&mut self, args: &[String]) -> i32 {
         let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-        let (status, output, _fd) = crate::socket::bin_zsocket(&argv);
+        let (status, output, fd) = crate::socket::bin_zsocket(&argv);
         if !output.is_empty() {
             if status == 0 { print!("{}", output); } else { eprint!("{}", output); }
+        }
+        // c:135/204/268 — setiparam_no_convert("REPLY", sfd) on
+        // every successful socket()/accept()/connect() path. The
+        // canonical `bin_zsocket` returns the post-redup/movefd
+        // fd; here we assign it to $REPLY so scripts can read it.
+        if status == 0 {
+            if let Some(fd_val) = fd {
+                self.variables.insert("REPLY".to_string(), fd_val.to_string());
+            }
         }
         status
     }
