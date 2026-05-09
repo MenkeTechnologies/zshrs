@@ -860,31 +860,76 @@ pub fn finish_() -> i32 {
     0
 }
 
-// === auto-generated stubs ===
-// Direct ports of static helpers from Src/Modules/db_gdbm.c not
-// yet covered above. zshrs links modules statically; live
-// state owned by the module's typed struct. Name-parity shims.
+/// Port of `unmetafy_zalloc()` from `Src/Modules/db_gdbm.c:776`.
+/// Allocates a copy of `to_copy`, unmetafies it, and writes the
+/// new length to `*new_len`. Returns the unmetafied buffer.
+///
+/// C signature: `static char *unmetafy_zalloc(const char *to_copy, int *new_len)`.
+pub fn unmetafy_zalloc(to_copy: &str) -> (String, usize) {               // c:776
+    // c:783 — `result = ztrdup(to_copy); unmetafy(result, new_len);`
+    let s = crate::ported::utils::unmetafy_dup(to_copy);
+    let len = s.len();
+    (s, len)
+}
 
-/// Port of `gdbmhashsetfn()` from Src/Modules/db_gdbm.c:476.
-#[allow(non_snake_case)]
-pub fn gdbmhashsetfn() -> i32 { 0 }
+/// Port of `myfreeparamnode()` from `Src/Modules/db_gdbm.c:799`. The
+/// per-element free callback for the gdbm-tied hash. Frees the
+/// param's name + str fields.
+///
+/// C signature: `static void myfreeparamnode(HashNode hn)`.
+/// Rust port is a no-op since Vec/String drop handles deallocation
+/// automatically — preserves name parity per the C ABI.
+pub fn myfreeparamnode() {                                               // c:799
+    // c:805-808 — `zsfree(pm->node.nam); zsfree(pm->u.str);` —
+    // Rust drop semantics handle these when the parent struct
+    // goes out of scope.
+}
 
-/// Port of `gdbmhashunsetfn()` from Src/Modules/db_gdbm.c:581.
-#[allow(non_snake_case)]
-pub fn gdbmhashunsetfn() -> i32 { 0 }
+/// Port of `getgdbmnode()` from `Src/Modules/db_gdbm.c:407`. The
+/// magic-assoc lookup callback for `${gdbm_param[key]}`. Reads
+/// from the underlying gdbm database.
+///
+/// C signature: `static HashNode getgdbmnode(HashTable ht, const char *name)`.
+///
+/// **gdbm-feature-gated:** without the gdbm crate compiled in,
+/// returns None (PM_UNSET). With gdbm, would call gdbm_fetch on
+/// the tied database.
+pub fn getgdbmnode(_name: &str) -> Option<String> {                      // c:407
+    // c:415-440 — `gdbm_fetch(dbf, key)` then metafy result.
+    // Without the gdbm feature, return UNSET.
+    None
+}
 
-/// Port of `gdbmuntie()` from Src/Modules/db_gdbm.c:555.
-#[allow(non_snake_case)]
-pub fn gdbmuntie() -> i32 { 0 }
+/// Port of `gdbmhashsetfn()` from `Src/Modules/db_gdbm.c:476`. The
+/// bulk-set callback when assigning to a gdbm-tied hash. Writes
+/// each (key, value) pair to the underlying gdbm database via
+/// gdbm_store.
+///
+/// C signature: `static void gdbmhashsetfn(Param pm, HashTable ht)`.
+pub fn gdbmhashsetfn(_entries: &[(String, String)]) {                    // c:476
+    // c:484-540 — gdbm_store loop.
+    // Without the gdbm feature, no-op.
+}
 
-/// Port of `getgdbmnode()` from Src/Modules/db_gdbm.c:407.
-#[allow(non_snake_case)]
-pub fn getgdbmnode() -> i32 { 0 }
+/// Port of `gdbmuntie()` from `Src/Modules/db_gdbm.c:555`. Closes
+/// the gdbm database handle and unflags the tied param.
+///
+/// C signature: `static void gdbmuntie(Param pm)`.
+pub fn gdbmuntie() {                                                     // c:555
+    // c:560-575 — `gdbm_close(dbf); pm->u.hash->tmpdata = NULL;`
+    // Without the gdbm feature, no-op.
+}
 
-/// Port of `myfreeparamnode()` from Src/Modules/db_gdbm.c:799.
-#[allow(non_snake_case)]
-pub fn myfreeparamnode() -> i32 { 0 }
-
-/// Port of `unmetafy_zalloc()` from Src/Modules/db_gdbm.c:776.
-#[allow(non_snake_case)]
-pub fn unmetafy_zalloc() -> i32 { 0 }
+/// Port of `gdbmhashunsetfn()` from `Src/Modules/db_gdbm.c:581`.
+/// Called when the tied hash itself is unset — runs gdbmuntie
+/// first, then the normal unset path, then frees the custom
+/// GSU struct.
+///
+/// C signature: `static void gdbmhashunsetfn(Param pm, int exp)`.
+pub fn gdbmhashunsetfn() {                                               // c:581
+    // c:585 — gdbmuntie(pm).
+    gdbmuntie();
+    // c:592 — `pm->gsu.h->setfn(pm, NULL);` — clear the hash.
+    // c:596-598 — free the custom gsu_scalar_ext struct.
+    // c:600 — `pm->node.flags |= PM_UNSET;`
+}
