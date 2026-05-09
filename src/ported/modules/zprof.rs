@@ -203,9 +203,11 @@ pub fn cmpparcs(a: &Parc, b: &Parc) -> std::cmp::Ordering {              // c:13
 /// sort by self-time, print the c:170 header + per-function row,
 /// re-sort by total-time, print the c:184 per-function caller/callee
 /// blocks.
-pub fn bin_zprof(_exec: &mut ShellExecutor, _nam: &str, args: &[String]) -> i32 {  // c:139
+pub fn bin_zprof(_nam: &str, _args: &[String],                               // c:139
+                 ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::OPT_ISSET;
     // c:140 — `if (OPT_ISSET(ops,'c'))`
-    let opt_c = args.iter().any(|a| a == "-c");
+    let opt_c = OPT_ISSET(ops, b'c');
 
     if opt_c {
         // c:141-147 — free both tables + reset counters.

@@ -269,7 +269,8 @@ pub fn statprint(meta: &fs::Metadata, fname: &str, iwhich: i32, flags: i32) -> S
 ///
 /// C signature: `static int bin_stat(char *name, char **args,
 ///                                    Options ops, int func)`.
-pub fn bin_stat(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:368
+pub fn bin_stat(nam: &str, args: &[String],                                  // c:368
+                _ops_unused: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     // c:370-374 — locals.
     let mut iwhich: i32 = -1;                                            // c:373
     let mut flags: i32 = 0;
@@ -387,8 +388,9 @@ pub fn bin_stat(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  
     if ops[b'l' as usize] {                                              // c:467
         // List elements + return.
         if let Some(ref name) = arrnam {                                 // c:469
-            let names: Vec<String> = STATELTS.iter().map(|s| s.to_string()).collect();
-            exec.arrays.insert(name.clone(), names);
+            // c:472 — `setaparam(arrnam, names);` — array of element names.
+            let joined: Vec<&str> = STATELTS.iter().copied().collect();
+            crate::ported::modules::ksh93::setsparam(name, &joined.join(":"));
         } else {
             let joined: Vec<&str> = STATELTS.iter().copied().collect();
             println!("{}", joined.join(" "));                            // c:478 putchar
@@ -467,11 +469,16 @@ pub fn bin_stat(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  
     }
 
     if let Some(name) = arrnam {                                         // c:setaparam
-        exec.arrays.insert(name, array_out);
+        // c — `setaparam(name, zarrdup(array_out));` — colon-join through
+        // the static-link env-var bridge until the typed array writer is wired.
+        crate::ported::modules::ksh93::setsparam(&name, &array_out.join(":"));
     }
     if let Some(name) = hashnam {                                        // c:sethparam
-        let map: indexmap::IndexMap<String, String> = hash_out.into_iter().collect();
-        exec.assoc_arrays.insert(name, map);
+        // c — `sethparam(name, ...);` — encode as `key=val` pairs joined
+        // by tabs for the static-link env-var bridge.
+        let pairs: Vec<String> = hash_out.into_iter()
+            .map(|(k, v)| format!("{}={}", k, v)).collect();
+        crate::ported::modules::ksh93::setsparam(&name, &pairs.join("\t"));
     }
     0
 }

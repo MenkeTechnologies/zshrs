@@ -10659,7 +10659,15 @@ impl crate::ported::exec::ShellExecutor {
             "zmodload" => self.bin_zmodload(cmd_args),
             "zcompile" => self.bin_zcompile(cmd_args),
             "zformat" => self.bin_zformat(cmd_args),
-            "zprof" => crate::modules::zprof::bin_zprof(self, "zprof", cmd_args),
+            "zprof" => {
+                // bin_zprof now takes the canonical C signature
+                // (name, args, ops, func) per Src/Modules/zprof.c:139.
+                use crate::ported::zsh_h::{options, MAX_OPS};
+                let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                        argscount: 0, argsalloc: 0 };
+                if cmd_args.iter().any(|a| a == "-c") { ops.ind[b'c' as usize] = 1; }
+                crate::modules::zprof::bin_zprof("zprof", cmd_args, &ops, 0)
+            }
             "print" => self.bin_print(cmd_args),
             "printf" => self.builtin_printf(cmd_args),
             "command" => self.builtin_command(cmd_args, redirects),
