@@ -1160,7 +1160,6 @@ mod tests {
     /// (c:809/811/814).
     #[test]
     fn bin_zsystem_dispatch() {
-        let mut exec = ShellExecutor::new();
         assert_eq!(bin_zsystem(&mut exec, "zsystem",
             &["supports".to_string(), "supports".to_string()]), 0);
         assert_eq!(bin_zsystem(&mut exec, "zsystem",
