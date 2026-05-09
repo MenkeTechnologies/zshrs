@@ -562,20 +562,21 @@ impl ShellExecutor {
         }
 
         if args[0] == "--clear" {
-            self.profiler = crate::zprof::Profiler::new();
+            // Route through bin_zprof -c so the C-faithful clear path
+            // resets CALLS/NCALLS/ARCS/NARCS uniformly (zprof.c:141-147).
+            crate::zprof::bin_zprof(self, "profile", &["-c".to_string()]);
             println!("profile data cleared");
             return 0;
         }
 
         if args[0] == "--dump" {
-            let (_, output) = crate::zprof::bin_zprof(
-                &mut self.profiler,
-                &crate::zprof::ZprofOptions { clear: false },
-            );
-            if !output.is_empty() {
-                print!("{}", output);
-            } else {
+            // bin_zprof prints to stdout directly (matches C
+            // zprof.c:170+ printf chain); on empty state nothing is
+            // emitted, so check NCALLS for the "no data" hint.
+            if crate::zprof::NCALLS.load(std::sync::atomic::Ordering::SeqCst) == 0 {
                 println!("{}", dim("no profile data"));
+            } else {
+                crate::zprof::bin_zprof(self, "profile", &[]);
             }
             return 0;
         }
@@ -603,7 +604,9 @@ impl ShellExecutor {
         // Enable profiling, run, collect results
         let was_enabled = self.profiling_enabled;
         self.profiling_enabled = true;
-        self.profiler = crate::zprof::Profiler::new(); // fresh data for this run
+        // Reset zprof state through the C-faithful -c path so the
+        // module-level CALLS/NCALLS/ARCS/NARCS tables start fresh.
+        crate::zprof::bin_zprof(self, "profile", &["-c".to_string()]);
 
         let t0 = std::time::Instant::now();
         let result = self.execute_script(&code);
@@ -631,14 +634,12 @@ impl ShellExecutor {
         println!("  status:    {}", status);
         println!();
 
-        // Show function-level breakdown from profiler
-        let (_, output) = crate::zprof::bin_zprof(
-            &mut self.profiler,
-            &crate::zprof::ZprofOptions { clear: false },
-        );
-        if !output.is_empty() {
+        // Show function-level breakdown from zprof (printed inline by
+        // the bin_zprof body — c:170+ printf chain). Suppress when no
+        // calls were profiled.
+        if crate::zprof::NCALLS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
             println!("{}", bold("function breakdown"));
-            print!("{}", output);
+            crate::zprof::bin_zprof(self, "profile", &[]);
         }
 
         // Per-command breakdown from tracing (if tracing is at debug level)
