@@ -1958,13 +1958,13 @@ pub fn zfwrite(fd: i32, bf: &[u8], sz: i64, tmout: i32) -> i32 {             // 
 /// frame the data with a `struct zfheader` and write block + payload.
 #[allow(non_snake_case)]
 pub fn zfwrite_block(fd: i32, bf: &[u8], sz: i64, tmout: i32) -> i32 {       // c:1410
-    let mut hdr = zfheader { bytes: [0u8; 2], flags: 0u8 };                  // c:1413
+    let mut hdr = zfheader { bytes: [0u8; 2], flags: 0i8 };                  // c:1413
     let mut n: i32;
     // c:1418-1424 — emit header, retry on EINTR.
     loop {
         hdr.bytes[0] = ((sz & 0xff00) >> 8) as u8;                           // c:1419
         hdr.bytes[1] = (sz & 0xff) as u8;                                    // c:1420
-        hdr.flags = if sz != 0 { 0 } else { ZFHD_EOFB as u8 };               // c:1421
+        hdr.flags = if sz != 0 { 0i8 } else { ZFHD_EOFB as i8 };             // c:1421
         let hdr_bytes = unsafe {
             std::slice::from_raw_parts(&hdr as *const _ as *const u8, 3)
         };
