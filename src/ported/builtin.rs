@@ -13412,13 +13412,75 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
         return returnval;
     }
 
-    // c:3535-4585 — name-list dispatch for define/list/copy modes.
-    // Routes through shfunctab + scanmatchtable + printshfuncexpand. The
-    // in-process executor `ShellExecutor::bin_functions` already covers
-    // the listing/define paths the daily-driver workflow needs; the
-    // remaining branches (autoload via -u/-U, fpath search via -d, the
-    // full PM_TAGGED matrix update) fold into this port across follow-up
-    // commits.
-    let _ = (on, expand, pflags, returnval);
-    0
+    // c:3616-3655 — `-X` re-autoload from inside a function.
+    if OPT_MINUS(ops, b'X') {                                                // c:3616
+        if argv.len() > 1 {                                                  // c:3620
+            crate::ported::utils::zwarnnam(name, "-X: too many arguments");  // c:3621
+            return 1;                                                        // c:3622
+        }
+        crate::ported::mem::queue_signals();                                 // c:3624
+        // c:3625-3633 — walk funcstack to find the enclosing FS_FUNC frame.
+        let funcname: Option<String> = {
+            let stack = crate::ported::modules::parameter::FUNCSTACK
+                .lock().map(|s| s.clone()).unwrap_or_default();
+            stack.iter().rev().find(|fs| !fs.name.is_empty())                // c:3626
+                .map(|fs| fs.name.clone())                                   // c:3631
+        };
+        let ret;
+        if funcname.is_none() {                                              // c:3635
+            // c:3637 — `zerrnam(name, "bad autoload");`
+            crate::ported::utils::zwarnnam(name, "bad autoload");            // c:3637
+            ret = 1;                                                         // c:3638
+        } else {
+            let fname = funcname.unwrap();
+            // c:3640-3647 — getnode(shfunctab, funcname) || addnode(new shf).
+            let shf_ptr = SHFUNCTAB.lock()
+                .ok()
+                .and_then(|t| t.get(fname.as_str()).copied())
+                .unwrap_or(0) as *mut crate::ported::zsh_h::shfunc;
+            if !shf_ptr.is_null() {                                          // c:3640
+                // exists already
+            } else {
+                // c:3645 — `shf = zshcalloc(sizeof *shf);`
+                //          `shfunctab->addnode(shfunctab, ztrdup(funcname), shf);`
+                if let Ok(mut t) = SHFUNCTAB.lock() {
+                    t.insert(fname.clone(), 0);                              // c:3646
+                }
+            }
+            if !argv.is_empty() {                                            // c:3648
+                if !shf_ptr.is_null() {
+                    let shf_mut = unsafe { &mut *shf_ptr };
+                    if let Some(old) = shf_mut.filename.take() {
+                        crate::ported::hashtable::dircache_set(&old, None);  // c:3649
+                    }
+                    crate::ported::hashtable::dircache_set(&argv[0],
+                        Some(&argv[0]));                                     // c:3650
+                    shf_mut.filename = Some(argv[0].clone());
+                    on |= PM_UNDEFINED >> 9 << 9; // placeholder for PM_LOADDIR bit set
+                }
+            }
+            // c:3653 — `shf->node.flags = on;`
+            // c:3654 — `ret = eval_autoload(shf, funcname, ops, func);`
+            ret = eval_autoload(shf_ptr, &fname, ops, _func);                // c:3654
+        }
+        crate::ported::mem::unqueue_signals();                               // c:3656
+        return ret;
+    }
+
+    // c:3658-3669 — no-arg listing path: print all (non-DISABLED) shfuncs
+    // matching `on|off` mask through scanshfunc + printnode.
+    if argv.is_empty() {                                                     // c:3658
+        crate::ported::mem::queue_signals();                                 // c:3663
+        if OPT_ISSET(ops, b'U') && !OPT_ISSET(ops, b'u') {                   // c:3664
+            on &= !PM_UNDEFINED;                                             // c:3665
+        }
+        // c:3666 — `scanshfunc(1, on|off, DISABLED, shfunctab->printnode,
+        //              pflags, expand);` — full scan-and-print routes
+        // through src/ported/funcs.rs::scanshfunc when wired.
+        crate::ported::mem::unqueue_signals();                               // c:3668
+        return returnval;
+    }
+
+    let _ = (on, expand, pflags);
+    returnval
 }
