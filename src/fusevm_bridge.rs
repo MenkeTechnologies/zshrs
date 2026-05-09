@@ -2175,7 +2175,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 "langinfo" => {
                     if idx == "@" || idx == "*" {
                         return Some(Value::Array(
-                            crate::langinfo::LANGINFO_NAMES
+                            crate::langinfo::NL_NAMES
                                 .iter()
                                 .map(|s| Value::str(*s))
                                 .collect(),

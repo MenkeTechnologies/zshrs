@@ -1,211 +1,202 @@
-//! Langinfo module - port of Modules/langinfo.c
+//! Langinfo module — port of `Src/Modules/langinfo.c`.
 //!
-//! Provides access to locale information via the langinfo special parameter.
+//! C source has zero `struct ...` / `enum ...` definitions. Rust
+//! port matches: zero types. Three substantive functions
+//! (`liitem`, `getlanginfo`, `scanlanginfo`) plus the 6 module
+//! loaders.
+//!
+//! Provides the `${langinfo[NAME]}` magic-assoc backed by libc
+//! `nl_langinfo(3)`.
 
-use std::collections::HashMap;
-
-/// Available langinfo items
-pub static LANGINFO_NAMES: &[&str] = &[
-    "CODESET",
-    "D_T_FMT",
-    "D_FMT",
-    "T_FMT",
-    "RADIXCHAR",
-    "THOUSEP",
-    "YESEXPR",
-    "NOEXPR",
-    "CRNCYSTR",
-    "ABDAY_1",
-    "ABDAY_2",
-    "ABDAY_3",
-    "ABDAY_4",
-    "ABDAY_5",
-    "ABDAY_6",
-    "ABDAY_7",
-    "DAY_1",
-    "DAY_2",
-    "DAY_3",
-    "DAY_4",
-    "DAY_5",
-    "DAY_6",
-    "DAY_7",
-    "ABMON_1",
-    "ABMON_2",
-    "ABMON_3",
-    "ABMON_4",
-    "ABMON_5",
-    "ABMON_6",
-    "ABMON_7",
-    "ABMON_8",
-    "ABMON_9",
-    "ABMON_10",
-    "ABMON_11",
-    "ABMON_12",
-    "MON_1",
-    "MON_2",
-    "MON_3",
-    "MON_4",
-    "MON_5",
-    "MON_6",
-    "MON_7",
-    "MON_8",
-    "MON_9",
-    "MON_10",
-    "MON_11",
-    "MON_12",
-    "T_FMT_AMPM",
-    "AM_STR",
-    "PM_STR",
-    "ERA",
-    "ERA_D_FMT",
-    "ERA_D_T_FMT",
-    "ERA_T_FMT",
-    "ALT_DIGITS",
+/// `nl_names[]` — port of the static name-array at `langinfo.c:65`.
+/// Each entry pairs with the parallel `nl_vals[]` array of `nl_item`
+/// integer keys. Used by `liitem()` for name→item lookup and by
+/// `scanlanginfo()` to enumerate every entry.
+pub static NL_NAMES: &[&str] = &[                                         // c:65 nl_names
+    "CODESET", "D_T_FMT", "D_FMT", "T_FMT",
+    "RADIXCHAR", "THOUSEP", "YESEXPR", "NOEXPR", "CRNCYSTR",
+    "ABDAY_1", "ABDAY_2", "ABDAY_3", "ABDAY_4",
+    "ABDAY_5", "ABDAY_6", "ABDAY_7",
+    "DAY_1", "DAY_2", "DAY_3", "DAY_4", "DAY_5", "DAY_6", "DAY_7",
+    "ABMON_1", "ABMON_2", "ABMON_3", "ABMON_4", "ABMON_5", "ABMON_6",
+    "ABMON_7", "ABMON_8", "ABMON_9", "ABMON_10", "ABMON_11", "ABMON_12",
+    "MON_1", "MON_2", "MON_3", "MON_4", "MON_5", "MON_6",
+    "MON_7", "MON_8", "MON_9", "MON_10", "MON_11", "MON_12",
+    "T_FMT_AMPM", "AM_STR", "PM_STR",
+    "ERA", "ERA_D_FMT", "ERA_D_T_FMT", "ERA_T_FMT", "ALT_DIGITS",
 ];
 
-/// Look up a locale string by langinfo item name.
-/// Port of `bin_getln`/`getlanginfo` shape from Src/Modules/langinfo.c.
-/// The C source registers `${langinfo[NAME]}` as a special-parameter
-/// hash whose getfn calls `nl_langinfo(3)`; this Rust function is
-/// the equivalent direct lookup, used by both the `Langinfo`
-/// parameter wrapper and the prompt-expansion code that reads
-/// `%D`/`%T` formats.
+/// Port of `liitem()` from `Src/Modules/langinfo.c:379`. Walks the
+/// parallel `nl_names[]` / `nl_vals[]` arrays looking for `name`;
+/// returns the nl_item integer when found, None otherwise.
+///
+/// C signature: `static nl_item *liitem(const char *name)`.
+/// Rust port collapses C's pointer return to `Option<libc::nl_item>`
+/// — the C call sites only need the integer value, never write
+/// through the pointer.
 #[cfg(unix)]
-pub fn getlanginfo(name: &str) -> Option<String> {
-    use std::ffi::CStr;
-
-    let item = match name {
-        "CODESET" => libc::CODESET,
-        "D_T_FMT" => libc::D_T_FMT,
-        "D_FMT" => libc::D_FMT,
-        "T_FMT" => libc::T_FMT,
-        "RADIXCHAR" => libc::RADIXCHAR,
-        "THOUSEP" => libc::THOUSEP,
-        "YESEXPR" => libc::YESEXPR,
-        "NOEXPR" => libc::NOEXPR,
+pub fn liitem(name: &str) -> Option<libc::nl_item> {                     // c:379
+    // C: walk the parallel arrays nl_names + nl_vals; nl_vals is
+    // a hardcoded list of nl_item integers in name order. The
+    // Rust port maps the name string directly via match.
+    Some(match name {                                                    // c:386 strcmp
+        "CODESET"     => libc::CODESET,
+        "D_T_FMT"     => libc::D_T_FMT,
+        "D_FMT"       => libc::D_FMT,
+        "T_FMT"       => libc::T_FMT,
+        "RADIXCHAR"   => libc::RADIXCHAR,
+        "THOUSEP"     => libc::THOUSEP,
+        "YESEXPR"     => libc::YESEXPR,
+        "NOEXPR"      => libc::NOEXPR,
         #[cfg(target_os = "linux")]
-        "CRNCYSTR" => libc::CRNCYSTR,
-        "ABDAY_1" => libc::ABDAY_1,
-        "ABDAY_2" => libc::ABDAY_2,
-        "ABDAY_3" => libc::ABDAY_3,
-        "ABDAY_4" => libc::ABDAY_4,
-        "ABDAY_5" => libc::ABDAY_5,
-        "ABDAY_6" => libc::ABDAY_6,
-        "ABDAY_7" => libc::ABDAY_7,
-        "DAY_1" => libc::DAY_1,
-        "DAY_2" => libc::DAY_2,
-        "DAY_3" => libc::DAY_3,
-        "DAY_4" => libc::DAY_4,
-        "DAY_5" => libc::DAY_5,
-        "DAY_6" => libc::DAY_6,
-        "DAY_7" => libc::DAY_7,
-        "ABMON_1" => libc::ABMON_1,
-        "ABMON_2" => libc::ABMON_2,
-        "ABMON_3" => libc::ABMON_3,
-        "ABMON_4" => libc::ABMON_4,
-        "ABMON_5" => libc::ABMON_5,
-        "ABMON_6" => libc::ABMON_6,
-        "ABMON_7" => libc::ABMON_7,
-        "ABMON_8" => libc::ABMON_8,
-        "ABMON_9" => libc::ABMON_9,
-        "ABMON_10" => libc::ABMON_10,
-        "ABMON_11" => libc::ABMON_11,
-        "ABMON_12" => libc::ABMON_12,
-        "MON_1" => libc::MON_1,
-        "MON_2" => libc::MON_2,
-        "MON_3" => libc::MON_3,
-        "MON_4" => libc::MON_4,
-        "MON_5" => libc::MON_5,
-        "MON_6" => libc::MON_6,
-        "MON_7" => libc::MON_7,
-        "MON_8" => libc::MON_8,
-        "MON_9" => libc::MON_9,
-        "MON_10" => libc::MON_10,
-        "MON_11" => libc::MON_11,
-        "MON_12" => libc::MON_12,
-        "T_FMT_AMPM" => libc::T_FMT_AMPM,
-        "AM_STR" => libc::AM_STR,
-        "PM_STR" => libc::PM_STR,
-        "ERA" => libc::ERA,
-        "ERA_D_FMT" => libc::ERA_D_FMT,
+        "CRNCYSTR"    => libc::CRNCYSTR,
+        "ABDAY_1"     => libc::ABDAY_1,
+        "ABDAY_2"     => libc::ABDAY_2,
+        "ABDAY_3"     => libc::ABDAY_3,
+        "ABDAY_4"     => libc::ABDAY_4,
+        "ABDAY_5"     => libc::ABDAY_5,
+        "ABDAY_6"     => libc::ABDAY_6,
+        "ABDAY_7"     => libc::ABDAY_7,
+        "DAY_1"       => libc::DAY_1,
+        "DAY_2"       => libc::DAY_2,
+        "DAY_3"       => libc::DAY_3,
+        "DAY_4"       => libc::DAY_4,
+        "DAY_5"       => libc::DAY_5,
+        "DAY_6"       => libc::DAY_6,
+        "DAY_7"       => libc::DAY_7,
+        "ABMON_1"     => libc::ABMON_1,
+        "ABMON_2"     => libc::ABMON_2,
+        "ABMON_3"     => libc::ABMON_3,
+        "ABMON_4"     => libc::ABMON_4,
+        "ABMON_5"     => libc::ABMON_5,
+        "ABMON_6"     => libc::ABMON_6,
+        "ABMON_7"     => libc::ABMON_7,
+        "ABMON_8"     => libc::ABMON_8,
+        "ABMON_9"     => libc::ABMON_9,
+        "ABMON_10"    => libc::ABMON_10,
+        "ABMON_11"    => libc::ABMON_11,
+        "ABMON_12"    => libc::ABMON_12,
+        "MON_1"       => libc::MON_1,
+        "MON_2"       => libc::MON_2,
+        "MON_3"       => libc::MON_3,
+        "MON_4"       => libc::MON_4,
+        "MON_5"       => libc::MON_5,
+        "MON_6"       => libc::MON_6,
+        "MON_7"       => libc::MON_7,
+        "MON_8"       => libc::MON_8,
+        "MON_9"       => libc::MON_9,
+        "MON_10"      => libc::MON_10,
+        "MON_11"      => libc::MON_11,
+        "MON_12"      => libc::MON_12,
+        "T_FMT_AMPM"  => libc::T_FMT_AMPM,
+        "AM_STR"      => libc::AM_STR,
+        "PM_STR"      => libc::PM_STR,
+        "ERA"         => libc::ERA,
+        "ERA_D_FMT"   => libc::ERA_D_FMT,
         "ERA_D_T_FMT" => libc::ERA_D_T_FMT,
-        "ERA_T_FMT" => libc::ERA_T_FMT,
-        "ALT_DIGITS" => libc::ALT_DIGITS,
-        _ => return None,
-    };
+        "ERA_T_FMT"   => libc::ERA_T_FMT,
+        "ALT_DIGITS"  => libc::ALT_DIGITS,
+        _ => return None,                                                // c:391 return NULL
+    })
+}
 
+/// Non-Unix fallback for `liitem` — `nl_item` is POSIX-only.
+#[cfg(not(unix))]
+pub fn liitem(_name: &str) -> Option<i32> {
+    None
+}
+
+/// Port of `getlanginfo()` from `Src/Modules/langinfo.c:396`. The
+/// magic-assoc lookup callback for `${langinfo[NAME]}`. Looks up
+/// `name` via `liitem`, runs `nl_langinfo(*elem)`, and returns
+/// the resulting locale string (or `None` for unset).
+///
+/// C signature: `static HashNode getlanginfo(HashTable ht,
+///                                            const char *name)`.
+/// Rust port returns `Option<String>` matching the observable
+/// "u.str + PM_UNSET" duality C builds into the Param node.
+#[cfg(unix)]
+pub fn getlanginfo(name: &str) -> Option<String> {                       // c:396
+    use std::ffi::CStr;
+    // c:413 — `if (name) elem = liitem(name); else elem = NULL;`
+    let elem = liitem(name)?;                                            // c:415
     unsafe {
-        let ptr = libc::nl_langinfo(item);
+        // c:418 — `listr = nl_langinfo(*elem)`.
+        let ptr = libc::nl_langinfo(elem);                               // c:418
         if ptr.is_null() {
+            return None;                                                 // c:425 PM_UNSET
+        }
+        let s = CStr::from_ptr(ptr).to_string_lossy().into_owned();
+        if s.is_empty() {
+            // c:425 — empty result also flags PM_UNSET.
             return None;
         }
-        Some(CStr::from_ptr(ptr).to_string_lossy().into_owned())
+        Some(s)                                                          // c:419 dupstring
     }
 }
 
-/// Port of `getlanginfo()` from `Src/Modules/langinfo.c:396`.
-/// Non-Unix fallback for `getlanginfo` — `nl_langinfo(3)` is POSIX-only.
-/// On Windows / WASI / sandboxed builds the parameter always reads
-/// as unset, matching how Src/Modules/langinfo.c behaves when the
-/// build doesn't link against libc's locale.
+/// Non-Unix fallback for `getlanginfo` — `nl_langinfo(3)` is
+/// POSIX-only.
 #[cfg(not(unix))]
 pub fn getlanginfo(_name: &str) -> Option<String> {
     None
 }
 
-/// Langinfo parameter interface
-#[derive(Debug, Default)]
-pub struct Langinfo;
-
-impl Langinfo {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/langinfo.c`.
-    /// Construct the langinfo parameter handle.
-    /// Equivalent to the special-parameter installation done by
-    /// `setup_langinfo_module()` in Src/Modules/langinfo.c — the C
-    /// source registers a `langinfo` Param backed by getfn/scanfn
-    /// callbacks; this struct holds the same role on the Rust side.
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/langinfo.c`.
-    /// `${langinfo[NAME]}` getter.
-    /// Equivalent to the `getfn` slot of the `langinfo` Param in
-    /// Src/Modules/langinfo.c.
-    pub fn get(&self, name: &str) -> Option<String> {
-        getlanginfo(name)
-    }
-
-    /// `${(kv)langinfo}` enumeration. Direct port of the loop body in
-    /// `scanlanginfo()` (Src/Modules/langinfo.c:430) — walks `nl_names`
-    /// (LANGINFO_NAMES here), skips items where `nl_langinfo` returns
-    /// NULL, emits each (name, value) pair to the caller. The C source
-    /// pushes through a ScanFunc callback; Rust returns an Iterator.
-    pub fn iter(&self) -> impl Iterator<Item = (String, String)> {
-        let mut result = HashMap::new();
-        for name in LANGINFO_NAMES {
-            if let Some(value) = getlanginfo(name) {
-                result.insert(name.to_string(), value);
-            }
+/// Port of `scanlanginfo()` from `Src/Modules/langinfo.c:430`. The
+/// magic-assoc scan callback for `${(k)langinfo}` /
+/// `${(kv)langinfo}`. Walks the `nl_names[]` array, calls
+/// `nl_langinfo` for each entry, and yields every (name, value)
+/// pair where the value is non-NULL.
+///
+/// C signature: `static void scanlanginfo(HashTable ht, ScanFunc
+///                                         func, int flags)`.
+/// Rust port returns the (name, value) pairs as a Vec since the
+/// callback-driven C API doesn't translate cleanly.
+pub fn scanlanginfo() -> Vec<(String, String)> {                         // c:430
+    let mut out = Vec::new();
+    for &name in NL_NAMES {                                              // c:444 walk nl_names
+        if let Some(v) = getlanginfo(name) {                             // c:446 nl_langinfo
+            out.push((name.to_string(), v));                             // c:451 emit
         }
-        result.into_iter()
     }
+    out
+}
 
-    /// Snapshot every langinfo item to a name→value map. Same scan
-    /// loop as `iter()` (scanlanginfo at langinfo.c:430), collected
-    /// into a HashMap for callers that want a single materialised
-    /// view rather than streaming.
-    pub fn to_hash(&self) -> HashMap<String, String> {
-        let mut result = HashMap::new();
-        for name in LANGINFO_NAMES {
-            if let Some(value) = getlanginfo(name) {
-                result.insert(name.to_string(), value);
-            }
-        }
-        result
-    }
+/// Port of `setup_()` from `Src/Modules/langinfo.c:472`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn setup_() -> i32 {                                                 // c:472
+    0                                                                    // c:475
+}
+
+/// Port of `features_()` from `Src/Modules/langinfo.c:479`. C body
+/// is `*features = featuresarray(m, &module_features); return 0;`.
+/// Static-link path: 0.
+pub fn features_() -> i32 {                                              // c:479
+    0                                                                    // c:483
+}
+
+/// Port of `enables_()` from `Src/Modules/langinfo.c:487`. C body
+/// is `return handlefeatures(m, &module_features, enables);`.
+pub fn enables_() -> i32 {                                               // c:487
+    0                                                                    // c:490
+}
+
+/// Port of `boot_()` from `Src/Modules/langinfo.c:494`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn boot_() -> i32 {                                                  // c:494
+    0                                                                    // c:497
+}
+
+/// Port of `cleanup_()` from `Src/Modules/langinfo.c:501`. C body
+/// is `return setfeatureenables(m, &module_features, NULL);`.
+pub fn cleanup_() -> i32 {                                               // c:501
+    0                                                                    // c:504
+}
+
+/// Port of `finish_()` from `Src/Modules/langinfo.c:508`. C body
+/// is `return 0;` (UNUSED `Module m`).
+pub fn finish_() -> i32 {                                                // c:508
+    0                                                                    // c:511
 }
 
 #[cfg(test)]
@@ -213,85 +204,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_langinfo_names() {
-        assert!(LANGINFO_NAMES.contains(&"CODESET"));
-        assert!(LANGINFO_NAMES.contains(&"D_T_FMT"));
+    fn nl_names_includes_codeset() {
+        assert!(NL_NAMES.contains(&"CODESET"));
+        assert!(NL_NAMES.contains(&"D_T_FMT"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn getlanginfo_codeset_is_some() {
+        assert!(getlanginfo("CODESET").is_some());
     }
 
     #[test]
-    fn test_get_langinfo_codeset() {
-        #[cfg(unix)]
-        {
-            let result = getlanginfo("CODESET");
-            assert!(result.is_some());
-        }
+    fn getlanginfo_invalid_returns_none() {
+        assert!(getlanginfo("INVALID_NAME").is_none());
     }
 
+    #[cfg(unix)]
     #[test]
-    fn test_get_langinfo_invalid() {
-        let result = getlanginfo("INVALID_NAME");
-        assert!(result.is_none());
+    fn liitem_codeset_resolves() {
+        assert!(liitem("CODESET").is_some());
+        assert!(liitem("DOES_NOT_EXIST").is_none());
     }
 
+    #[cfg(unix)]
     #[test]
-    fn test_langinfo_struct() {
-        let li = Langinfo::new();
-        #[cfg(unix)]
-        {
-            assert!(li.get("CODESET").is_some());
-        }
-    }
-
-    #[test]
-    fn test_langinfo_iter_emits_items() {
-        let li = Langinfo::new();
-        let all: HashMap<String, String> = li.iter().collect();
-        #[cfg(unix)]
-        {
-            assert!(!all.is_empty());
-        }
+    fn scanlanginfo_emits_items() {
+        let v = scanlanginfo();
+        assert!(!v.is_empty());
+        assert!(v.iter().any(|(k, _)| k == "CODESET"));
     }
 }
-
-/// Module loader entry — port of `setup_()` from Src/Modules/langinfo.c:472.
-pub fn setup_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `features_()` from Src/Modules/langinfo.c:479.
-pub fn features_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `enables_()` from Src/Modules/langinfo.c:487.
-pub fn enables_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `boot_()` from Src/Modules/langinfo.c:494.
-pub fn boot_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `cleanup_()` from Src/Modules/langinfo.c:501.
-pub fn cleanup_() -> i32 {
-    0
-}
-
-/// Module loader entry — port of `finish_()` from Src/Modules/langinfo.c:508.
-pub fn finish_() -> i32 {
-    0
-}
-
-// === auto-generated stubs ===
-// Direct ports of static helpers from Src/Modules/langinfo.c not
-// yet covered above. zshrs links modules statically; live
-// state owned by the module's typed struct. Name-parity shims.
-
-/// Port of `liitem()` from Src/Modules/langinfo.c:379.
-#[allow(non_snake_case)]
-pub fn liitem() -> i32 { 0 }
-
-/// Port of `scanlanginfo()` from Src/Modules/langinfo.c:430.
-#[allow(non_snake_case)]
-pub fn scanlanginfo() -> i32 { 0 }
