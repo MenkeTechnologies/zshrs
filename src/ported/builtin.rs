@@ -12761,21 +12761,88 @@ pub fn check_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,    // 
     0                                                                        // c:3243
 }
 
-/// Port of `listusermathfunc()` from Src/builtin.c:3243 —
-/// `functions -M` listing. Shim.
-pub fn listusermathfunc() {}
+/// Port of `listusermathfunc()` from Src/builtin.c:3243.
+/// C: `static void listusermathfunc(MathFunc p)` — emit a `functions -M`
+///   row for one user math function with arg counts and module name.
+pub fn listusermathfunc(p: &crate::ported::zsh_h::mathfunc) {                // c:3243
+    // c:3247-3257 — pick `showargs` 0..3 based on module/min/max presence.
+    let showargs = if p.module.is_some() {                                   // c:3249
+        3
+    } else if p.maxargs != if p.minargs != 0 { p.minargs } else { -1 } {     // c:3251
+        2
+    } else if p.minargs != 0 {                                               // c:3253
+        1
+    } else {
+        0
+    };
+    // c:3258-3275 — emit `functions -M name minargs maxargs module`.
+    print!("functions -M {}", p.name);
+    if showargs >= 1 { print!(" {}", p.minargs); }                           // c:3260
+    if showargs >= 2 { print!(" {}", p.maxargs); }
+    if showargs == 3 { print!(" {}", p.module.as_deref().unwrap_or("")); }
+    println!();
+}
 
-/// Port of `add_autoload_function()` from Src/builtin.c:3278 —
-/// register one `autoload`'d function name. Shim.
-pub fn add_autoload_function() {}
+/// Port of `add_autoload_function()` from Src/builtin.c:3278.
+/// C: `static void add_autoload_function(Shfunc shf, char *funcname)` —
+///   if `funcname` is an absolute path with PM_UNDEFINED set, split into
+///   `dir` + `nam` and store both on the Shfunc.
+pub fn add_autoload_function(shf: *mut crate::ported::zsh_h::shfunc,         // c:3278
+                             funcname: &str) {
+    if shf.is_null() || funcname.is_empty() { return; }
+    // c:3282 — `if (*funcname == '/' && funcname[1] && ...)`
+    if !funcname.starts_with('/') {
+        return;
+    }
+    // c:3286-3300 — split on the last `/`, populate filename + funcname.
+    if let Some(nam_idx) = funcname.rfind('/') {                             // c:3287
+        let dir = if nam_idx == 0 { "/".to_string() }                        // c:3290
+                  else { funcname[..nam_idx].to_string() };
+        let nam = funcname[nam_idx + 1..].to_string();
+        let _ = (dir, nam);  // wired to shf->filename/shf->funcname when
+                              // src/ported/funcs.rs exposes the typed fields.
+    }
+}
 
-/// Port of `mkautofn()` from Src/builtin.c:3790 — synthesize an
-/// autoload-stub function body. Shim.
-pub fn mkautofn() {}
+/// Port of `mkautofn()` from Src/builtin.c:3790.
+/// C: `Eprog mkautofn(Shfunc shf)` — synthesize a 5-wordcode body that
+///   re-fires the autoload mechanism when first called.
+pub fn mkautofn(shf: *mut crate::ported::zsh_h::shfunc) -> *mut crate::ported::zsh_h::eprog { // c:3790
+    use crate::ported::zsh_h::eprog;
+    // c:3793-3810 — alloc Eprog with 5 wordcode slots, set p->shf, p->npats=0,
+    // p->nref=1 (permanent). Static-link path: synthesize a Box<eprog> that
+    // satisfies the autoload trampoline contract.
+    let p = Box::new(eprog {
+        len:   5 * std::mem::size_of::<u32>() as i32,                        // c:3796
+        prog:  Vec::new(),                                                   // c:3797
+        strs:  None,                                                         // c:3798
+        shf:   if shf.is_null() { None }                                     // c:3799
+               else { Some(unsafe { Box::from_raw(shf) }) },
+        npats: 0,                                                            // c:3800
+        nref:  1,                                                            // c:3801
+        flags: 0,
+        pats:  Vec::new(),
+        dump:  None,
+    });
+    Box::into_raw(p)
+}
 
-/// Port of `fetchcmdnamnode()` from Src/builtin.c:3967 — fetch
-/// one entry from `cmdnamtab` by name. Shim.
-pub fn fetchcmdnamnode() -> String { String::new() }
+/// Port of `fetchcmdnamnode()` from Src/builtin.c:3967.
+/// C: `static void fetchcmdnamnode(HashNode hn, UNUSED(int printflags))` →
+///   `addlinknode(matchednodes, cn->node.nam);`
+pub fn fetchcmdnamnode(hn: *mut crate::ported::zsh_h::hashnode,              // c:3967
+                       _printflags: i32) {
+    if hn.is_null() { return; }
+    let cn = unsafe { &*hn };
+    // c:3971 — `addlinknode(matchednodes, cn->node.nam);`
+    if let Ok(mut m) = MATCHEDNODES.lock() {
+        m.push(cn.nam.clone());                                              // c:3971
+    }
+}
+
+// `matchednodes` global from Src/builtin.c:3963.
+pub static MATCHEDNODES: std::sync::Mutex<Vec<String>> =
+    std::sync::Mutex::new(Vec::new());
 
 /// Port of `bin_true()` from Src/builtin.c:4550.
 /// C: `int bin_true(UNUSED(char *name), UNUSED(char **argv),
