@@ -170,6 +170,216 @@ Rust struct that aggregates them all.
 
 ---
 
+## EXACT TRANSLATION — Same Names, Same Types, Same Calls, Every Line Cited
+
+A true port is a **LINE-BY-LINE EXACT TRANSLATION** of the C source.
+"Faithful port" is not a vibe; it is a checklist of literal
+correspondences any reviewer can audit in seconds. If your port fails
+any of the rules below, it is not a port — it is a paraphrase, and it
+gets deleted.
+
+### 1. Argument names match C exactly (case-sensitive)
+
+C `bin_unlimit(char *nam, char **argv, Options ops, UNUSED(int func))`
+ports as Rust `bin_unlimit(nam: &str, argv: &[String], ops: &options, _func: i32)`.
+
+- `nam`, NOT `name`. `argv`, NOT `args`. `ops`, NOT `opts`. `lim`,
+  NOT `limit`. `func`, NOT `funcid`. The C name is the canonical
+  name; renaming for "Rust idiom" is a violation.
+- UNUSED parameters in C stay as parameters in Rust, with a leading
+  underscore: `_func: i32`. Never delete a parameter just because
+  it is unused — call sites bind to position.
+
+### 2. Argument datatypes match C through the canonical type map
+
+| C type        | Rust type                          |
+|---------------|------------------------------------|
+| `char *`      | `&str`                             |
+| `char **`     | `&[String]`                        |
+| `int`         | `i32`                              |
+| `Options`     | `&options` (`= struct options *`)  |
+| `rlim_t`      | `rlim_t` (libc-typed)              |
+| `uid_t`       | `libc::uid_t`                      |
+| `void *`      | context-dependent — match nearest semantic |
+| `struct foo *`| `&foo` (read) / `&mut foo` (write) |
+
+If the right-hand-side type doesn't exist as a Rust port yet, port
+the underlying `struct` first (matching name + fields), then use it.
+Do NOT substitute a `[bool; 256]` for `Options ops`, do NOT pass split
+`hard: bool, soft: bool` instead of the real `&options` — the port
+must round-trip through the same data shape C operates on.
+
+### 3. Called function names match C exactly
+
+If C calls `zstrtol(s, NULL, 10)`, Rust calls `zstrtol(s, 10)`.
+NEVER `parse_number_i32`, NEVER `parse_leading_decimal`, NEVER
+`atoi_safe`. Same for every helper: `getrlimit`, `setrlimit`,
+`geteuid`, `OPT_ISSET`, `zwarnnam`, `zsetlimit`, `setlimits`,
+`do_limit`, `do_unlimit`, `printrlim`, `printulimit`, `showlimits`,
+`showlimitvalue`, `find_resource`, `set_resinfo`, `free_resinfo`,
+`zstrtorlimt`. The drift gate (build.rs) rejects fn names with no C
+counterpart for exactly this reason — if you find yourself wanting a
+new helper name, the right move is either to find the existing C
+function it duplicates or to stub the missing C function in its
+proper file (per Rule 1 below) and call THAT.
+
+### 4. Every line carries a `// c:NNN` citation
+
+```rust
+hard = OPT_ISSET(ops, b'h');                                       // c:526
+if OPT_ISSET(ops, b's') && argv.is_empty() {
+    return setlimits("");                                          // c:527-528
+}
+/* without arguments, display limits */                            // c:529
+if argv.is_empty() {
+    return showlimits(nam, hard, -1);                              // c:531
+}
+```
+
+Every Rust statement that ports a C statement carries a comment with
+the C source line. Block-level `// c:NNN-MMM` is acceptable for
+contiguous chunks. The doc-comment above the `fn` cites the function
+origin (existing Rule 2 below); the inline `// c:NNN` comments cite
+each statement. Both are required.
+
+### 5. Local variables: same names, same order, same scope
+
+C declares locals at function top:
+
+```c
+char *s;
+int hard, limnum, lim;
+rlim_t val;
+int ret = 0;
+```
+
+Rust mirrors that block:
+
+```rust
+let hard: bool;
+let mut limnum: i32;
+let mut lim: i32;
+let mut val: rlim_t;
+let mut ret: i32 = 0;
+```
+
+Same names (`hard`, `limnum`, `lim`, `val`, `ret`), same order, same
+visibility (function-scope, not block-scope). Don't combine into
+tuples, don't reorder, don't `let mut` only the ones Rust forces you
+to — be conservative.
+
+### 6. Control flow keeps C idioms
+
+| C construct                              | Rust mirror                                      |
+|------------------------------------------|--------------------------------------------------|
+| `while ((s = *argv++))`                  | `let mut argi = argv.iter(); while let Some(s_owned) = argi.next() { let s = s_owned.as_str(); ... }` |
+| `for (i = 0; i != N; i++)`               | `i = 0; while i != N { ...; i += 1; }` (preserve `!=`) |
+| `for (i = 0; i < N; i++)`                | `for i in 0..N` (preserve `<`)                   |
+| `do { ... } while (cond);`               | `loop { ...; if !(cond) { break; } }`            |
+| `goto label;` / `label:`                 | labelled `'label: loop { ... break 'label; }`    |
+| `if (a && (b = f()))`                    | preserve order — assignment-in-condition becomes a let-binding immediately before the if |
+
+Don't "improve" C control flow into iterator chains. The structure of
+the C code IS the structure of the Rust code.
+
+### 7. C source comments port over
+
+`/* without arguments, display limits */` becomes
+`// without arguments, display limits` (Rust `//`) in the same
+position, on the same line or block, as the C source. Don't drop them,
+don't paraphrase them, don't translate idioms ("get the limit in
+question" stays as-is).
+
+### 8. Top-level declaration order matches C exactly
+
+The order of `enum` / `struct` / `typedef` / `#define` / `static`
+table / `static` global / function definitions in the Rust port
+mirrors the order in the C source file, top to bottom.
+
+- If `Src/Builtins/rlimits.c` declares `enum zlimtype` at line 35,
+  `struct resinfo_T` at line 43, `static const resinfo_T known_resources[]`
+  at line 60, `static const resinfo_T **resinfo` at line 190,
+  then `set_resinfo()`, `free_resinfo()`, `find_resource()`,
+  `printrlim()`, `zstrtorlimt()`, `showlimitvalue()`, `showlimits()`,
+  `printulimit()`, `do_limit()`, `bin_limit()`, `do_unlimit()`,
+  `bin_unlimit()`, `bin_ulimit()`, then the module loaders — the Rust
+  port declares them in **that exact order**.
+- This makes side-by-side review trivial: a reviewer with `rlimits.c`
+  open in one pane and `rlimits.rs` in the other can scroll both at
+  the same rate and check correspondence by eye.
+- It also lets the `// c:NNN` citations climb monotonically down the
+  Rust file. If two adjacent Rust fns cite `c:670` then `c:519`, the
+  ordering is wrong — fix it before committing.
+- Internal-helper Rust-only fns (allowlisted ones like `nlimits`,
+  `ensure_limits_initialized`) sit alongside the C fn that needs them,
+  not piled at the top or bottom. Same principle: a reviewer skimming
+  the Rust file sees content in the same logical sequence as the C.
+- Reorder ONLY when forced by Rust's compiler (e.g., a `pub use`
+  re-export that must precede its consumers); document the deviation
+  with a `// reordered from c:NNN — Rust requires X` comment.
+
+### 9. Function bodies port too — never bare-`return` a fn whose body is unported
+
+When porting a fn whose body depends on subsystems not yet ported
+(param-table, locallevel, funcstack, options, ZLE globals), DO NOT
+take the shortcut of "this depends on X which isn't ported, so the
+whole body returns 1 / 0 / no-op." The body lives in the same C file
+as the function declaration — by Rule 1 above, it must be ported in
+full.
+
+The correct approach for an in-file fn body:
+
+1. Port the FULL C body line-by-line, every C statement → matching
+   Rust statement with `// c:NNN` citation.
+2. Stub the EXTERN dependencies (fns / globals from OTHER C files)
+   locally with file:line citations to their home file. Stubs are
+   minimal: `fn createparam(_n, _f) -> *mut param { std::ptr::null_mut() }`,
+   `static funcstack: Mutex<usize> = Mutex::new(0);`, etc.
+3. The body STILL EXECUTES — branches still take, increments still
+   happen, mutations to module-local statics (e.g., `sh_edmode`,
+   `sh_edchar`) still apply. The extern-dep return values produce a
+   degenerate runtime trace until the real ports land.
+4. Add a test that exercises the full body (e.g., flip the relevant
+   global into the "execute everything" state) to prove the body
+   actually runs without panicking and that increment/decrement
+   bookkeeping nets to zero.
+
+**Why the body shortcut is structurally worse than the file shortcut:**
+the file-shortcut leaves a clearly-named gap. The body-shortcut
+produces a fn that LOOKS like a complete port — same signature, same
+name, drift gate green — but silently elides 80 lines of
+state-mutating logic. When the dependent subsystem later lands, the
+engineer has to re-examine the original C body to figure out what
+should have been there. By porting the full body NOW, the eventual
+integration is "swap the stubs for real impls," not "translate the C
+from scratch a second time."
+
+**Reference example:** `src/ported/modules/ksh93.rs::ksh93_wrapper`
+after the 2026-05 fix — full c:152-227 ported with
+`funcstack`/`locallevel`/`emulation`/`curkeymapname`/`varedarg` as
+`Mutex`/`Atomic` statics matching the C global names, and
+`createparam`/`setloopvar`/`setsparam`/`setiparam`/`getsparam`/
+`getaparam`/`getiparam`/`isset` as local stubs citing their home C
+file. Body executes top-to-bottom; branches take based on stub
+return values; nothing is skipped.
+
+### 10. The canonical reference: `src/ported/builtins/rlimits.rs`
+
+When in doubt, read `src/ported/builtins/rlimits.rs` after the
+2026-05 rewrite. It is the worked example. Every fn there shows the
+above rules applied: exact arg names + types from `Src/Builtins/rlimits.c`,
+called fns named identically (`OPT_ISSET`, `zwarnnam`, `zstrtol`,
+`getrlimit`, `setrlimit`, `geteuid`, `do_limit`, `do_unlimit`,
+`zsetlimit`, `setlimits`, `printrlim`, `printulimit`, `showlimits`,
+`showlimitvalue`, `find_resource`, `set_resinfo`, `zstrtorlimt`),
+locals at top mirroring the C `int hard, limnum, lim;` pattern, every
+non-trivial statement carrying `// c:NNN`, dispatcher bridge code
+extracted out to `src/extensions/ext_builtins.rs` (because it is the
+analogue of `Src/builtin.c:execbuiltin` + `parseopts`, not part of
+rlimits.c itself).
+
+---
+
 ## The Three Hard Rules
 
 ### 1. PORT-ONLY. NO ADHOC IMPLEMENTATIONS.

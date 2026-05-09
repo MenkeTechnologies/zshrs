@@ -180,41 +180,68 @@ pub fn scantermcap() -> Vec<(String, String)> {                          // c:20
     out
 }
 
-/// Port of `setup_()` from `Src/Modules/termcap.c:323`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn setup_() -> i32 {                                                 // c:323
-    0                                                                    // c:326
+// =====================================================================
+// static struct features module_features                            c:314 (termcap.c)
+// =====================================================================
+
+use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::{features as features_t, module};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None, bn_size: 1,                                       // bintab[1]: echotc
+        cd_list: None, cd_size: 0,
+        mf_list: None, mf_size: 0,
+        pd_list: None, pd_size: 1,                                       // partab[1]: termcap
+        n_abstract: 0,
+    }))
 }
 
-/// Port of `features_()` from `Src/Modules/termcap.c:330`. C body
-/// is `*features = featuresarray(m, &module_features); return 0;`.
-pub fn features_() -> i32 {                                              // c:330
-    0                                                                    // c:334
+/// Port of `setup_()` from `Src/Modules/termcap.c:323`.
+pub fn setup_(_m: *const module) -> i32 { 0 }                           // c:323-326
+
+/// Port of `features_()` from `Src/Modules/termcap.c:330`.
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, module_features());
+    0
 }
 
-/// Port of `enables_()` from `Src/Modules/termcap.c:338`. C body
-/// is `return handlefeatures(m, &module_features, enables);`.
-pub fn enables_() -> i32 {                                               // c:338
-    0                                                                    // c:341
+/// Port of `enables_()` from `Src/Modules/termcap.c:338`.
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_()` from `Src/Modules/termcap.c:345`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn boot_() -> i32 {                                                  // c:345
-    0                                                                    // c:348
+/// Port of `boot_()` from `Src/Modules/termcap.c:345`.
+pub fn boot_(_m: *const module) -> i32 { 0 }                            // c:345-348
+
+/// Port of `cleanup_()` from `Src/Modules/termcap.c:355`.
+/// C body: `return setfeatureenables(m, &module_features, NULL);`
+pub fn cleanup_(m: *const module) -> i32 {
+    setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `cleanup_()` from `Src/Modules/termcap.c:355`. C body
-/// is `return setfeatureenables(m, &module_features, NULL);`.
-pub fn cleanup_() -> i32 {                                               // c:355
-    0                                                                    // c:358
-}
+/// Port of `finish_()` from `Src/Modules/termcap.c:365`.
+pub fn finish_(_m: *const module) -> i32 { 0 }                          // c:365-368
 
-/// Port of `finish_()` from `Src/Modules/termcap.c:365`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn finish_() -> i32 {                                                // c:365
-    0                                                                    // c:368
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:echotc".to_string(), "p:termcap".to_string()]
 }
+fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() {
+        *enables = Some(getfeatureenables(m, f));
+    } else if let Some(e) = enables.as_ref() {
+        return setfeatureenables(m, f, Some(e));
+    }
+    0
+}
+fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    vec![0; (g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract) as usize]
+}
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }
 
 #[cfg(test)]
 mod tests {

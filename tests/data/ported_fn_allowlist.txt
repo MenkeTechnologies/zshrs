@@ -77,6 +77,21 @@ parse_assign
 save_state
 restore_state
 
+# module_features (rlimits.rs and other modules) — Rust-only OnceLock
+# accessor for the C `static struct features module_features` global
+# (rlimits.c:873). C inits the static at compile-time; Rust requires
+# get-or-init since `features` contains fn-pointer fields that aren't
+# const-initializable. Same name as the C static.
+module_features
+
+# index_to_name (options.rs) — reverse-direction lookup of zsh's
+# `OPT_*` index → option name. C source iterates `optiontab` (HashTable
+# keyed by name) and reads `Optname.optno` to map name→index; the
+# reverse direction has no C counterpart since it's implicit in the
+# order of OPT_* enum entries paired with the `optns[]` array. The
+# Rust port collapses both into one match-based lookup.
+index_to_name
+
 # rlimits.rs — Rust-only helpers in the faithful port of
 # Src/Builtins/rlimits.c. C uses preprocessor / direct globals where
 # Rust needs runtime helpers:
@@ -96,35 +111,19 @@ leak_unknown_name
 lookup_resinfo
 
 # sched.rs — Rust-only helpers in the faithful port of
-# Src/Builtins/sched.c. C inlines or uses libc primitives where Rust
-# needs runtime helpers:
+# Src/Builtins/sched.c. After the 2026-05 line-by-line rewrite, the
+# only Rust-only fns remaining are:
 #   schedcmds_lock / schedcmdtimed_lock — OnceLock get-or-init for the
-#     two module statics; C dereferences `schedcmds`/`schedcmdtimed`
-#     directly.
-#   checksched_thunk — fn() adapter for `addtimedfn`; C `checksched`
-#     returns void, Rust port returns i32 so module entries can use it.
-#   now_secs — wraps SystemTime to return seconds; C uses `time(NULL)`.
-#   parse_time_spec — extracts the `bin_sched` time-parsing block
-#     (sched.c:236-306) into its own fn; C inlines.
-#   parse_leading_decimal — Rust port of the `zstrtol(s, &s, 10)`
-#     pointer-advance idiom; C uses zstrtol directly.
-#   midnight_today_local — Rust port of C's `localtime()`+arithmetic
-#     for "epoch second of midnight today (local TZ)".
-#   format_localtime — wraps chrono's strftime to mirror C's
-#     `ztrftime("%a %b %e %k:%M:%S")`.
-#   addtimedfn / deltimedfn — stubs for utils.c declarations pending
-#     the timed-fn machinery port. Note: these names ARE in C but
-#     in utils.c, not sched.c — they're stubs locally.
-#   execstring — stub for the exec.c declaration; rewires to fusevm
-#     bytecode VM when `checksched` is invoked from the eval loop.
+#     two module statics (`static struct schedcmd *schedcmds;` /
+#     `static int schedcmdtimed;`). C dereferences directly; Rust
+#     can't because OnceLock requires get-or-init.
+#   checksched_thunk — `fn()` adapter for `addtimedfn` whose signature
+#     is `fn(fn(), i64)`. C `checksched` returns void, Rust port
+#     returns i32 so module entries can propagate status; thunk drops
+#     the return.
 schedcmds_lock
 schedcmdtimed_lock
 checksched_thunk
-now_secs
-parse_time_spec
-parse_leading_decimal
-midnight_today_local
-format_localtime
 
 # curses.rs — Rust-only helpers in the faithful port of
 # Src/Modules/curses.c. C dereferences libncurses globals directly

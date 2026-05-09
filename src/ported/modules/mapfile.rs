@@ -340,46 +340,73 @@ pub fn scanpmmapfile() -> Vec<(String, String)> {                        // c:24
 // Module loaders.
 // ---------------------------------------------------------------------------
 
-/// Port of `setup_()` from `Src/Modules/mapfile.c:279`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn setup_() -> i32 {                                                 // c:279
-    0                                                                    // c:281
+// =====================================================================
+// static struct paramdef partab[]                                   c:212
+// static struct features module_features                            c:267
+// =====================================================================
+
+use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::{features as features_t, module};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None, bn_size: 0,
+        cd_list: None, cd_size: 0,
+        mf_list: None, mf_size: 0,
+        pd_list: None, pd_size: 1,                                       // c:271 partab[1]
+        n_abstract: 0,
+    }))
 }
 
-/// Port of `features_()` from `Src/Modules/mapfile.c:286`. C body is
-/// `*features = featuresarray(m, &module_features); return 0;`. The
-/// only entry in `module_features` is the `mapfile` paramdef
-/// (c:212), which zshrs wires through static-link dispatch instead
-/// of a runtime feature table; body returns 0.
-pub fn features_() -> i32 {                                              // c:286
+/// Port of `setup_()` from `Src/Modules/mapfile.c:279`.
+pub fn setup_(_m: *const module) -> i32 { 0 }                           // c:279-281
+
+/// Port of `features_()` from `Src/Modules/mapfile.c:286`.
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, module_features());                    // c:288
     0                                                                    // c:289
 }
 
-/// Port of `enables_()` from `Src/Modules/mapfile.c:294`. C body is
-/// `return handlefeatures(m, &module_features, enables);`. Static-
-/// link path: 0.
-pub fn enables_() -> i32 {                                               // c:294
-    0                                                                    // c:296
+/// Port of `enables_()` from `Src/Modules/mapfile.c:294`.
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, module_features(), enables)                       // c:296
 }
 
-/// Port of `boot_()` from `Src/Modules/mapfile.c:301`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn boot_() -> i32 {                                                  // c:301
-    0                                                                    // c:303
+/// Port of `boot_()` from `Src/Modules/mapfile.c:301`.
+pub fn boot_(_m: *const module) -> i32 { 0 }                            // c:301-303
+
+/// Port of `cleanup_()` from `Src/Modules/mapfile.c:308`.
+/// C body: `return setfeatureenables(m, &module_features, NULL);`
+pub fn cleanup_(m: *const module) -> i32 {
+    setfeatureenables(m, module_features(), None)                       // c:310
 }
 
-/// Port of `cleanup_()` from `Src/Modules/mapfile.c:308`. C body is
-/// `return setfeatureenables(m, &module_features, NULL);`. Static-
-/// link path: 0.
-pub fn cleanup_() -> i32 {                                               // c:308
-    0                                                                    // c:310
+/// Port of `finish_()` from `Src/Modules/mapfile.c:315`.
+pub fn finish_(_m: *const module) -> i32 { 0 }                          // c:315-317
+
+// `featuresarray` — Src/module.c:3275.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["p:mapfile".to_string()]
 }
 
-/// Port of `finish_()` from `Src/Modules/mapfile.c:315`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn finish_() -> i32 {                                                // c:315
-    0                                                                    // c:317
+// `handlefeatures` — Src/module.c:3370.
+fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() {
+        *enables = Some(getfeatureenables(m, f));
+    } else if let Some(e) = enables.as_ref() {
+        return setfeatureenables(m, f, Some(e));
+    }
+    0
 }
+fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
+    vec![0; total as usize]
+}
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }
 
 #[cfg(test)]
 mod tests {

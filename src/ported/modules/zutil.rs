@@ -1552,35 +1552,73 @@ pub struct ZStyle {
 }
 
 
-/// Module loader entry — port of `setup_()` from Src/Modules/zutil.c:2152.
-pub fn setup_() -> i32 {
+// =====================================================================
+// static struct features module_features                            c:2143
+// =====================================================================
+
+use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::{features as features_t, module};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None, bn_size: 4,                                       // c:2144 bintab[4] (zstyle, zformat, zregexparse, zparseopts)
+        cd_list: None, cd_size: 0,
+        mf_list: None, mf_size: 0,
+        pd_list: None, pd_size: 0,
+        n_abstract: 0,
+    }))
+}
+
+/// Port of `setup_()` from `Src/Modules/zutil.c:2152`.
+pub fn setup_(_m: *const module) -> i32 { 0 }
+
+/// Port of `features_()` from `Src/Modules/zutil.c:2161`.
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, module_features());
     0
 }
 
-/// Module loader entry — port of `features_()` from Src/Modules/zutil.c:2161.
-pub fn features_() -> i32 {
-    0
+/// Port of `enables_()` from `Src/Modules/zutil.c:2169`.
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, module_features(), enables)
 }
 
-/// Module loader entry — port of `enables_()` from Src/Modules/zutil.c:2169.
-pub fn enables_() -> i32 {
-    0
+/// Port of `boot_()` from `Src/Modules/zutil.c:2176`.
+pub fn boot_(_m: *const module) -> i32 { 0 }
+
+/// Port of `cleanup_()` from `Src/Modules/zutil.c:2183`.
+/// C body: `return setfeatureenables(m, &module_features, NULL);`
+pub fn cleanup_(m: *const module) -> i32 {
+    setfeatureenables(m, module_features(), None)
 }
 
-/// Module loader entry — port of `boot_()` from Src/Modules/zutil.c:2176.
-pub fn boot_() -> i32 {
-    0
+/// Port of `finish_()` from `Src/Modules/zutil.c:2190`.
+pub fn finish_(_m: *const module) -> i32 { 0 }
+
+// `featuresarray` — Src/module.c:3275.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:zstyle".to_string(), "b:zformat".to_string(),
+         "b:zregexparse".to_string(), "b:zparseopts".to_string()]
 }
 
-/// Module loader entry — port of `cleanup_()` from Src/Modules/zutil.c:2183.
-pub fn cleanup_() -> i32 {
+// `handlefeatures` — Src/module.c:3370.
+fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() {
+        *enables = Some(getfeatureenables(m, f));
+    } else if let Some(e) = enables.as_ref() {
+        return setfeatureenables(m, f, Some(e));
+    }
     0
 }
-
-/// Module loader entry — port of `finish_()` from Src/Modules/zutil.c:2190.
-pub fn finish_() -> i32 {
-    0
+fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
+    vec![0; total as usize]
 }
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }
 
 // === auto-generated stubs ===
 // Direct ports of static helpers from Src/Modules/zutil.c not

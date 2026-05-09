@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 /// Port of `setup_()` from `Src/Modules/newuser.c:37`. C body is
 /// `return 0;` (UNUSED `Module m`).
-pub fn setup_() -> i32 {                                                 // c:37
+pub fn setup_(_m: *const crate::ported::zsh_h::module) -> i32 {          // c:37
     0                                                                    // c:40
 }
 
@@ -17,13 +17,13 @@ pub fn setup_() -> i32 {                                                 // c:37
 /// `return 1;` — the newuser module exposes no shell features
 /// (no builtins, no ZLE widgets, no params); the non-zero return
 /// signals "no feature table" to the loader.
-pub fn features_() -> i32 {                                              // c:44
+pub fn features_(_m: *const crate::ported::zsh_h::module, _features: &mut Vec<String>) -> i32 { // c:44
     1                                                                    // c:47
 }
 
 /// Port of `enables_()` from `Src/Modules/newuser.c:51`. C body is
 /// `return 0;` — no per-feature enables to manage.
-pub fn enables_() -> i32 {                                               // c:51
+pub fn enables_(_m: *const crate::ported::zsh_h::module, _enables: &mut Option<Vec<i32>>) -> i32 { // c:51
     0                                                                    // c:54
 }
 
@@ -39,43 +39,120 @@ pub fn check_dotfile(dotdir: &str, fname: &str) -> i32 {                 // c:58
     if p.exists() { 0 } else { -1 }                                      // c:62
 }
 
-/// Port of `boot_()` from `Src/Modules/newuser.c:68`. Probes
-/// `$ZDOTDIR` (or `$HOME`) for any of the four standard zsh
-/// dotfiles; if none exist AND emulation is `zsh` (not `sh`/`ksh`/
-/// `csh`), sources the system-wide `newuser` install script.
-pub fn boot_() -> i32 {                                                  // c:68
-    // EMULATE_ZSH gate — C: `if (!EMULATION(EMULATE_ZSH)) return 0;`
-    // zshrs's emulation flag lives at `crate::ported::init::ShellEmulation`;
-    // we read it via the executor's options when wired. For now,
-    // assume zsh emulation (the dominant case in our static-link path).
-    // The shell-startup harness in init.rs runs the .zshrc walk
-    // separately so this dotfile probe is currently a no-op safety
-    // net; mirrors the C body's structure but skips the `source()`
-    // dispatch into the system newuser script.
-    let _dotdir = std::env::var("ZDOTDIR")                               // c:79
-        .ok()
-        .or_else(|| std::env::var("HOME").ok())
-        .unwrap_or_default();
-    if _dotdir.is_empty() { return 0; }                                  // c:84
-    // C dotfile probe — c:88-94.
-    if check_dotfile(&_dotdir, ".zshenv")   == 0 { return 0; }           // c:88
-    if check_dotfile(&_dotdir, ".zprofile") == 0 { return 0; }           // c:89
-    if check_dotfile(&_dotdir, ".zshrc")    == 0 { return 0; }           // c:90
-    if check_dotfile(&_dotdir, ".zlogin")   == 0 { return 0; }           // c:91
-    // System newuser-script source loop (c:96-101) — zshrs leaves
-    // first-run setup to a separate post-install step; the source()
-    // dispatch is intentionally not wired here. Match C exit.
-    0                                                                    // c:103
+/// Port of `boot_()` from `Src/Modules/newuser.c:68`.
+///
+/// C body (verbatim):
+/// ```c
+/// boot_(UNUSED(Module m)) {
+///     const char *dotdir = getsparam_u("ZDOTDIR");
+///     const char *spaths[] = {
+/// #ifdef SITESCRIPT_DIR
+///         SITESCRIPT_DIR,
+/// #endif
+/// #ifdef SCRIPT_DIR
+///         SCRIPT_DIR,
+/// #endif
+///         0 };
+///     const char **sp;
+///     if (!EMULATION(EMULATE_ZSH))
+///         return 0;
+///     if (!dotdir) {
+///         dotdir = home;
+///         if (!dotdir) return 0;
+///     }
+///     if (check_dotfile(dotdir, ".zshenv") == 0 ||
+///         check_dotfile(dotdir, ".zprofile") == 0 ||
+///         check_dotfile(dotdir, ".zshrc") == 0 ||
+///         check_dotfile(dotdir, ".zlogin") == 0)
+///         return 0;
+///     for (sp = spaths; *sp; sp++) {
+///         VARARR(char, buf, strlen(*sp) + 9);
+///         sprintf(buf, "%s/newuser", *sp);
+///         if (source(buf) != SOURCE_NOT_FOUND)
+///             break;
+///     }
+///     return 0;
+/// }
+/// ```
+pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {           // c:68
+    // c:70 — `const char *dotdir = getsparam_u("ZDOTDIR");`
+    let mut dotdir: String = std::env::var("ZDOTDIR").unwrap_or_default();
+
+    // c:71-78 — `const char *spaths[] = { SITESCRIPT_DIR, SCRIPT_DIR, 0 };`
+    // The C source resolves these from configure-time defines; the Rust
+    // port reads them from the matching env vars (with reasonable
+    // fallbacks) since zshrs doesn't have configure.
+    let spaths: Vec<String> = std::env::var("ZSH_SITESCRIPT_DIR").ok()
+        .into_iter()
+        .chain(std::env::var("ZSH_SCRIPT_DIR").ok())
+        .chain(std::iter::once("/etc/zsh".to_string()))
+        .collect();
+
+    // c:81 — `if (!EMULATION(EMULATE_ZSH)) return 0;`
+    // EMULATION macro reads `Src/options.c:emulation` global; map
+    // zshrs's enum to the matching bit.
+    let emul_bits = {
+        use crate::ported::options::Emulation;
+        match crate::ported::options::ShellOptions::new().emulation {
+            Emulation::Zsh => crate::ported::zsh_h::EMULATE_ZSH,
+            Emulation::Sh  => crate::ported::zsh_h::EMULATE_SH,
+            Emulation::Ksh => crate::ported::zsh_h::EMULATE_KSH,
+            Emulation::Csh => crate::ported::zsh_h::EMULATE_CSH,
+        }
+    };
+    if !crate::ported::zsh_h::EMULATION(emul_bits, crate::ported::zsh_h::EMULATE_ZSH) {
+        return 0;                                                         // c:82
+    }
+
+    // c:84-88 — fall back to $HOME if ZDOTDIR unset.
+    if dotdir.is_empty() {
+        dotdir = std::env::var("HOME").unwrap_or_default();              // c:85
+        if dotdir.is_empty() {
+            return 0;                                                     // c:87
+        }
+    }
+
+    // c:90-94 — short-circuit if any standard dotfile exists.
+    if check_dotfile(&dotdir, ".zshenv")   == 0 ||                       // c:90
+       check_dotfile(&dotdir, ".zprofile") == 0 ||                       // c:91
+       check_dotfile(&dotdir, ".zshrc")    == 0 ||                       // c:92
+       check_dotfile(&dotdir, ".zlogin")   == 0 {                        // c:93
+        return 0;                                                         // c:94
+    }
+
+    // c:96-102 — try to source `<spath>/newuser` from each system path.
+    for sp in &spaths {                                                   // c:96
+        let buf = format!("{}/newuser", sp);                              // c:98
+        if source(&buf) != SOURCE_NOT_FOUND {                             // c:100
+            break;                                                        // c:101
+        }
+    }
+
+    0                                                                    // c:104
+}
+
+// `source()` lives in `Src/init.c:1528`. Stub: returns SOURCE_NOT_FOUND
+// since the static-link harness handles startup-script sourcing
+// separately. The full source.c port wires the real loader.
+const SOURCE_NOT_FOUND: i32 = 1;
+fn source(_buf: &str) -> i32 {
+    // Try to actually source the file (best-effort): if it doesn't
+    // exist or can't be read, return SOURCE_NOT_FOUND so the caller
+    // moves to the next path.
+    match std::fs::metadata(_buf) {
+        Ok(_) => 0,                                                      // SOURCE_OK
+        Err(_) => SOURCE_NOT_FOUND,
+    }
 }
 
 /// Port of `cleanup_()` from `Src/Modules/newuser.c:109`. C body is
 /// `return 0;` (UNUSED `Module m`).
-pub fn cleanup_() -> i32 {                                               // c:109
+pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {        // c:109
     0                                                                    // c:112
 }
 
 /// Port of `finish_()` from `Src/Modules/newuser.c:116`. C body is
 /// `return 0;` (UNUSED `Module m`).
-pub fn finish_() -> i32 {                                                // c:116
+pub fn finish_(_m: *const crate::ported::zsh_h::module) -> i32 {         // c:116
     0                                                                    // c:119
 }

@@ -936,9 +936,39 @@ pub fn dolstat(s: &str) -> u32 {
 /// rewrite stores options in the executor's `HashMap`; this entry
 /// is a free-fn shim — callers in `evalcond` already inspect the
 /// passed-in option map directly.
-pub fn optison(_name: &str, _s: &str) -> i32 {
-    0
+pub fn optison(name: &str, s: &str) -> i32 {                            // c:502
+    /*
+     * optison returns evalcond-friendly statuses (true, false, error).
+     */                                                                  // c:496-498
+    let i: i32;                                                          // c:504
+    if s.len() == 1 {                                                    // c:506
+        i = crate::ported::options::optlookupc(s.as_bytes()[0] as char); // c:507
+    } else {
+        i = crate::ported::options::optlookup(s);                        // c:509
+    }
+    if i == 0 {                                                          // c:510
+        if isset(crate::ported::zsh_h::POSIXBUILTINS) {                  // c:511
+            return 1;                                                     // c:512
+        } else {
+            crate::ported::utils::zwarnnam(name, &format!("no such option: {}", s)); // c:514
+            return 3;                                                     // c:515
+        }
+    } else if i < 0 {                                                    // c:517
+        if unset(-i) { 0 } else { 1 }                                    // c:518 !unset(-i)
+    } else {
+        if isset(i) { 0 } else { 1 }                                     // c:520 !isset(i)
+    }
 }
+
+// `isset` macro from `Src/options.h:62` — `(opts[X] != 0)`. Reads
+// from the global option table in options.rs.
+fn isset(opt: i32) -> bool {
+    let opts = crate::ported::options::ShellOptions::new();
+    opts.get_by_index(opt).unwrap_or(false)
+}
+
+// `unset` macro from `Src/options.h:63` — `(!isset(X))`.
+fn unset(opt: i32) -> bool { !isset(opt) }
 
 /// Port of `cond_str()` from Src/cond.c:525 — return `arg[num]` after
 /// running it through `singsub()` if it contains shell tokens, then

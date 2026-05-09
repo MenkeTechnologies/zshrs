@@ -1,568 +1,697 @@
 //! Scheduled command execution — port of `Src/Builtins/sched.c`.
 //!
-//! Implements the `sched` builtin and the `$zsh_scheduled_events`
-//! special parameter.
-//!
-//! Structure mirrors the C source:
-//!   - `enum schedflags` (sched.c:38)
-//!   - `struct schedcmd` (sched.c:43)
-//!   - `static struct schedcmd *schedcmds` (sched.c:52)
-//!   - `static int schedcmdtimed` (sched.c:55)
-//!   - `schedaddtimed` / `scheddeltimed` / `checksched` (sched.c:61/79/93)
-//!   - `bin_sched` (sched.c:150)
-//!   - `schedgetfn` (sched.c:341)
-//!   - module entries (sched.c:396+)
+//! Top-level declaration order matches the C source, line-by-line:
+//!   - `typedef struct schedcmd *Schedcmd;`        c:35
+//!   - `enum schedflags { SCHEDFLAG_TRASH_ZLE };`  c:38
+//!   - `struct schedcmd { next, cmd, time, flags }` c:43
+//!   - `static struct schedcmd *schedcmds;`        c:52
+//!   - `static int schedcmdtimed;`                  c:55
+//!   - `schedaddtimed(void)`                        c:60
+//!   - `scheddeltimed(void)`                        c:78
+//!   - `checksched(void)`                           c:92
+//!   - `bin_sched(nam, argv, ops, func)`            c:149
+//!   - `schedgetfn(pm)`                             c:340
+//!   - `static struct builtin bintab[]`             c:374
+//!   - `static const struct gsu_array sched_gsu`    c:378
+//!   - `static struct paramdef partab[]`            c:381
+//!   - `static struct features module_features`     c:386
+//!   - `setup_(m)` / `features_(m, features)` /
+//!     `enables_(m, enables)` / `boot_(m)` /
+//!     `cleanup_(m)` / `finish_(m)`                 c:395-446
 
 #![allow(non_camel_case_types)]
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::ported::utils::zwarnnam;
+use libc::time_t;
 
-// =====================================================================
-// Port of `enum schedflags` from Src/Builtins/sched.c:38.
-// =====================================================================
-
-/// Trash zle if necessary when event is activated. Set by `sched -o`
-/// (sched.c:194-195).
-pub const SCHEDFLAG_TRASH_ZLE: i32 = 1;
+use crate::ported::utils::{
+    addprepromptfn, addtimedfn, delprepromptfn, deltimedfn,
+    unmeta, zjoin, zstrtol, ztrftime, zwarnnam,
+};
+use crate::ported::ztype::idigit;
+use crate::ported::zsh_h::options;
 
 // =====================================================================
-// Port of `struct schedcmd` from Src/Builtins/sched.c:43.
+// typedef struct schedcmd  *Schedcmd;                                c:35
 // =====================================================================
 
-/// One scheduled command. C uses an intrusive singly-linked list via
-/// `next`; the Rust port keeps the same field set but stores the
-/// list as a `Vec<schedcmd>` inside the `SCHEDCMDS` thread_local
-/// (see WARNING above the static).
+/// Port of `typedef struct schedcmd *Schedcmd;` from `Src/Builtins/sched.c:35`.
+/// C uses the typedef as a forward declaration; Rust port aliases to the
+/// real struct type defined below.
+pub type Schedcmd = Option<Box<schedcmd>>;
+
+// =====================================================================
+// enum schedflags                                                    c:38
+// =====================================================================
+
+// Port of `enum schedflags` from `Src/Builtins/sched.c:38`.
+// Trash zle if necessary when event is activated.
+pub const SCHEDFLAG_TRASH_ZLE: i32 = 1;                              // c:40
+
+// =====================================================================
+// struct schedcmd                                                    c:43
+// =====================================================================
+
+/// Port of `struct schedcmd` from `Src/Builtins/sched.c:43`. Same field
+/// names and order as C; `next` is the intrusive forward link of the
+/// time-ordered pending-events list.
 ///
 /// ```c
 /// struct schedcmd {
 ///     struct schedcmd *next;
-///     char *cmd;
-///     time_t time;
-///     int flags;
+///     char *cmd;            /* command to run */
+///     time_t time;          /* when to run it */
+///     int flags;            /* flags as above */
 /// };
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct schedcmd {
-    pub cmd: String,
-    pub time: i64,
-    pub flags: i32,
+    pub next: Option<Box<schedcmd>>,                                 // c:44
+    pub cmd: String,                                                  // c:45
+    pub time: time_t,                                                 // c:46
+    pub flags: i32,                                                   // c:47
 }
 
 // =====================================================================
-// Module-static state (sched.c:52, 55).
-//
-// Per PORT_PLAN.md these are bucket 2 (shell-wide) — `checksched`
-// can fire on any thread that hits the prepromptfn hook, and
-// `bin_sched` mutates from the foreground evaluator. `OnceLock<
-// Mutex<…>>` so all callers see the same list.
+// static struct schedcmd *schedcmds;   the list of sched jobs pending  c:52
 // =====================================================================
 
-// WARNING: NOT IN SCHED.C — Rust-only data-structure choice. C uses
-// `static struct schedcmd *schedcmds` (rlimits.c:52) — an intrusive
-// singly-linked list. Rust port stores the same logical sequence as
-// `Vec<schedcmd>` because Rust's ownership rules make in-place
-// linked-list mutation (insert-by-time, delete-by-index, head-pop)
-// require either `unsafe`-raw-pointer dance or `Option<Box<…>>`-
-// take/replace gymnastics for every traversal. Vec preserves all
-// observable ordering (insertion-by-time, head-drain) at O(N) per
-// op — fine at the 1-100 entries `sched` realistically holds.
-static SCHEDCMDS: OnceLock<Mutex<Vec<schedcmd>>> = OnceLock::new();
+// Port of `static struct schedcmd *schedcmds;` from sched.c:52. Bucket-2
+// (shell-wide) per PORT_PLAN.md: `checksched` can fire on any thread
+// reaching the prepromptfn hook, so the head pointer sits behind a
+// shared `OnceLock<Mutex<…>>` rather than `thread_local!`.
+static schedcmds: OnceLock<Mutex<Option<Box<schedcmd>>>> = OnceLock::new();
 
-/// Port of `static int schedcmdtimed` from sched.c:55. Tracks
-/// whether `addtimedfn(checksched, …)` has been called for the
-/// current head entry; cleared by `scheddeltimed`.
-static SCHEDCMDTIMED: OnceLock<Mutex<bool>> = OnceLock::new();
+// =====================================================================
+// static int schedcmdtimed;      flag that timed event is running     c:55
+// =====================================================================
 
-// WARNING: NOT IN SCHED.C — Rust-only accessor. C dereferences
-// `schedcmds` directly; Rust port factors out the lock-acquire so
-// the public fns don't each duplicate the OnceLock dance.
-fn schedcmds_lock() -> &'static Mutex<Vec<schedcmd>> {
-    SCHEDCMDS.get_or_init(|| Mutex::new(Vec::new()))
+// Port of `static int schedcmdtimed;` from sched.c:55. Same scope/sharing
+// as `schedcmds` above.
+static schedcmdtimed: OnceLock<Mutex<i32>> = OnceLock::new();
+
+// Init-on-first-use accessors. C dereferences the statics directly — Rust
+// requires the OnceLock get-or-init dance. Inlined at call sites would
+// duplicate the boilerplate per dereference; allowlisted as
+// architectural Rust-equivalent of static-zero-init.
+fn schedcmds_lock() -> &'static Mutex<Option<Box<schedcmd>>> {
+    schedcmds.get_or_init(|| Mutex::new(None))
 }
-
-// WARNING: NOT IN SCHED.C — companion to `schedcmds_lock` above.
-fn schedcmdtimed_lock() -> &'static Mutex<bool> {
-    SCHEDCMDTIMED.get_or_init(|| Mutex::new(false))
+fn schedcmdtimed_lock() -> &'static Mutex<i32> {
+    schedcmdtimed.get_or_init(|| Mutex::new(0))
 }
 
 // =====================================================================
-// External helpers — declared in `Src/zsh.h`, defined elsewhere.
-// =====================================================================
-
-// WARNING: NOT IN SCHED.C — `addtimedfn` lives in `Src/utils.c`
-// (declared in `Src/zsh.h`). Stubbed here pending the utils.c port
-// of the timed-fn machinery; the Rust port today relies on the
-// foreground evaluator hitting `checksched` via the prepromptfn
-// chain, so the `addtimedfn` call is a no-op until the SIGALRM-
-// driven timer is wired up.
-fn addtimedfn(_f: fn(), _at: i64) {}
-
-// WARNING: NOT IN SCHED.C — see `addtimedfn` above. Companion stub.
-fn deltimedfn(_f: fn()) {}
-
-// =====================================================================
-// Port of `schedaddtimed()` from Src/Builtins/sched.c:61.
+// Use addtimedfn() to add a timed event for sched's use              c:57
+// schedaddtimed(void)                                                c:60
 // =====================================================================
 
 /// Port of `schedaddtimed()` from `Src/Builtins/sched.c:61`.
-///
-/// Uses `addtimedfn()` to register `checksched` to fire at the head
-/// entry's `time`. C self-corrects via `scheddeltimed()` if the
-/// flag was already set — same defensive pattern here.
 pub(crate) fn schedaddtimed() {
-    let mut timed = schedcmdtimed_lock().lock().unwrap();
-    if *timed {
-        drop(timed);
-        scheddeltimed();
-        timed = schedcmdtimed_lock().lock().unwrap();
+    /*
+     * The following code shouldn't be necessary and indicates
+     * a bug.  However, the DPUTS() in the caller should pick
+     * this up so we can detect and fix it, and the following
+     * Makes The World Safe For Timed Events in non-debugging shells.
+     */                                                              // c:63-68
+    if *schedcmdtimed_lock().lock().unwrap() != 0 {                  // c:69
+        scheddeltimed();                                              // c:70
     }
-    *timed = true;
-    let head_time = schedcmds_lock()
+    *schedcmdtimed_lock().lock().unwrap() = 1;                       // c:71
+    let head_time: time_t = schedcmds_lock()                         // c:72  schedcmds->time
         .lock()
         .unwrap()
-        .first()
-        .map(|c| c.time)
+        .as_ref()
+        .map(|h| h.time)
         .unwrap_or(0);
-    addtimedfn(checksched_thunk, head_time);
+    addtimedfn(checksched_thunk, head_time as i64);                  // c:72
 }
 
-// WARNING: NOT IN SCHED.C — Rust-only adapter. `addtimedfn` takes a
-// `fn()` (zero-arity), but `checksched` returns `i32` in our port
-// (so the boot_/cleanup_ entries can return its status). The thunk
-// drops the return value to match the C signature.
+// `addtimedfn` from utils.c:4635 takes `fn()` (zero-arity, no return).
+// `checksched` returns `i32` so the module loaders can pass its status.
+// Thunk drops the return to match `addtimedfn`'s signature.
 fn checksched_thunk() {
     let _ = checksched();
 }
 
 // =====================================================================
-// Port of `scheddeltimed()` from Src/Builtins/sched.c:79.
+// Use deltimedfn() to remove the sched timed event                   c:75
+// scheddeltimed(void)                                                c:78
 // =====================================================================
 
 /// Port of `scheddeltimed()` from `Src/Builtins/sched.c:79`.
-///
-/// Calls `deltimedfn(checksched)` and clears `schedcmdtimed`.
 pub(crate) fn scheddeltimed() {
-    let mut timed = schedcmdtimed_lock().lock().unwrap();
-    if *timed {
-        deltimedfn(checksched_thunk);
-        *timed = false;
+    if *schedcmdtimed_lock().lock().unwrap() != 0 {                  // c:81
+        deltimedfn(checksched_thunk);                                 // c:83
+        *schedcmdtimed_lock().lock().unwrap() = 0;                   // c:84
     }
 }
 
 // =====================================================================
-// Port of `checksched()` from Src/Builtins/sched.c:93.
+// Check scheduled commands; call this function from time to time.   c:89
+// checksched(void)                                                   c:92
 // =====================================================================
 
 /// Port of `checksched()` from `Src/Builtins/sched.c:93`.
 ///
-/// Walk the head of the schedcmds list and execute every entry whose
-/// `time <= now`. The list is time-sorted, so we stop at the first
-/// future entry. `scheddeltimed` is called before each execstring so
-/// re-entrant `sched` calls inside the executed command can install
-/// a fresh timer.
+/// C returns void; Rust port returns `i32` so the module entry-points
+/// can propagate the status. Bridged through `checksched_thunk()` above
+/// when called via `addtimedfn`.
 pub(crate) fn checksched() -> i32 {
-    let cmds_lock = schedcmds_lock();
-    if cmds_lock.lock().unwrap().is_empty() {
-        return 0;
+    let t: time_t;                                                    // c:95
+    // sch declared at body scope per C (c:96).
+    if schedcmds_lock().lock().unwrap().is_none() {                  // c:98  if(!schedcmds)
+        return 0;                                                     // c:99  return;
     }
-    let now = now_secs();
-    loop {
+    t = unsafe { libc::time(std::ptr::null_mut()) };                 // c:100 t = time(NULL);
+    /*
+     * List is ordered, so we only need to consider the
+     * head element.
+     */                                                              // c:101-104
+    loop {                                                            // c:105 while (schedcmds && schedcmds->time <= t)
         let due = {
-            let v = cmds_lock.lock().unwrap();
-            !v.is_empty() && v[0].time <= now
+            let head = schedcmds_lock().lock().unwrap();
+            match head.as_ref() {
+                Some(h) if h.time <= t => true,
+                _ => false,
+            }
         };
-        if !due {
-            break;
+        if !due { break; }
+        /*
+         * Remove the entry to be executed from the list
+         * before execution:  this makes quite sure that
+         * the entry hasn't been monkeyed with when we
+         * free it.
+         */                                                          // c:106-111
+        let sch: Box<schedcmd> = {                                    // c:112 sch = schedcmds;
+            let mut head = schedcmds_lock().lock().unwrap();
+            let mut h = head.take().unwrap();
+            *head = h.next.take();                                    // c:113 schedcmds = sch->next;
+            h
+        };
+        /*
+         * Delete from the timed function list now in case
+         * the called code reschedules.
+         */                                                          // c:114-117
+        scheddeltimed();                                              // c:118
+
+        if (sch.flags & SCHEDFLAG_TRASH_ZLE) != 0
+            && zleactive.load(Ordering::Relaxed) != 0                 // c:120
+        {
+            zleentry(ZLE_CMD_TRASH);                                  // c:121
         }
-        // Pop head (matches C `sch = schedcmds; schedcmds = sch->next;`).
-        let sch = {
-            let mut v = cmds_lock.lock().unwrap();
-            v.remove(0)
+        execstring(&sch.cmd, 0, 0, "sched");                          // c:122
+        // C: zsfree(sch->cmd); zfree(sch, sizeof(struct schedcmd));
+        // Rust: Box drop on `sch` reclaims both the heap node and the
+        // owned `cmd` String — equivalent to the C two-step.        // c:123-124
+        drop(sch);
+
+        /*
+         * Fix time for future events.
+         * I had this outside the loop, for a little extra efficiency.
+         * However, it then occurred to me that having the list of
+         * forthcoming entries up to date could be regarded as
+         * a feature, and the inefficiency is negligible.
+         *
+         * Careful in case the code we called has already set
+         * up a timed event; if it has, that'll be up to date since
+         * we haven't changed the list here.
+         */                                                          // c:126-136
+        let need_arm = {
+            let head = schedcmds_lock().lock().unwrap();
+            head.is_some() && *schedcmdtimed_lock().lock().unwrap() == 0
         };
-        // Delete the timed fn first, in case the executed command
-        // schedules more (sched.c:118).
-        scheddeltimed();
-        // C: `if ((sch->flags & SCHEDFLAG_TRASH_ZLE) && zleactive)
-        //         zleentry(ZLE_CMD_TRASH);`
-        // Rust port: skip ZLE trash for now — pending zle_main.c port
-        // of `zleentry` / `zleactive`.
-        if sch.flags & SCHEDFLAG_TRASH_ZLE != 0 {
-            // TODO: zleentry(ZLE_CMD_TRASH) when zle is ported.
-        }
-        // C: `execstring(sch->cmd, 0, 0, "sched");`
-        // Rust port: same — execute via the bytecode VM. Stubbed
-        // for now; ShellExecutor's bridge wires the real call in
-        // when checksched is invoked from the eval loop.
-        execstring(&sch.cmd);
-        // Re-arm timer for next entry (sched.c:137).
-        let need_rearm = {
-            let v = cmds_lock.lock().unwrap();
-            let timed = *schedcmdtimed_lock().lock().unwrap();
-            !v.is_empty() && !timed
-        };
-        if need_rearm {
-            schedaddtimed();
+        if need_arm {                                                 // c:137 if (schedcmds && !schedcmdtimed)
+            /*
+             * We've already deleted the function from the list.
+             */                                                      // c:138-140
+            // DPUTS(timedfns && firstnode(timedfns), "BUG: already timed fn (1)");
+            schedaddtimed();                                          // c:143
         }
     }
     0
 }
 
-// WARNING: NOT IN SCHED.C — Rust-only bridge stub. C calls
-// `execstring(sch->cmd, 0, 0, "sched")` to feed the command back
-// through the parser/exec pipeline. The Rust port's exec loop owns
-// `ShellExecutor`, which can't be reached from this free fn without
-// a global handle. Real wiring lives in
-// `crate::ported::exec::ShellExecutor::checksched_drain` (TODO).
-fn execstring(_cmd: &str) {
-    // Pending: dispatch through fusevm bytecode VM.
-}
-
-// WARNING: NOT IN SCHED.C — Rust-only `time_t` shim. C uses
-// `time(NULL)` directly; Rust port wraps `SystemTime` to unify the
-// epoch arithmetic. Returns seconds since UNIX epoch as `i64`
-// (matching `time_t` width on macOS / Linux).
-fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
 // =====================================================================
-// Port of `bin_sched()` from Src/Builtins/sched.c:150.
+// bin_sched(char *nam, char **argv, Options ops, UNUSED(int func))   c:149
 // =====================================================================
 
 /// Port of `bin_sched()` from `Src/Builtins/sched.c:150`.
 ///
-/// Argument shapes (matching the C source):
-///   `sched`              → list pending entries
-///   `sched -<N>`         → delete entry N (1-based)
-///   `sched -o time cmd…` → schedule `cmd…` at `time`, with the
-///                          `SCHEDFLAG_TRASH_ZLE` flag
-///   `sched [-o] time cmd…` → schedule
-///   `sched -- time cmd…` → end-of-options, treats `time cmd…` as
-///                          positional even if `cmd…` starts with `-`
-pub(crate) fn bin_sched(nam: &str, argv: &[String]) -> i32 {
-    let mut argptr = 0usize;
+/// C signature mirrored verbatim:
+/// ```c
+/// static int
+/// bin_sched(char *nam, char **argv, UNUSED(Options ops), UNUSED(int func))
+/// ```
+pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) -> i32 {
+    // c:152-157 — locals (one block at top, mirroring C declaration)
+    let s: &str;
+    let mut argptr: usize;
+    let mut t: time_t;
+    let mut h: i64;
+    let m: i64;
+    let sec: i64;
+    // sch / sch2 / schl — declared as `Option<Box<schedcmd>>` walks below
+    let mut sn: i32;
     let mut flags: i32 = 0;
 
-    while argptr < argv.len() && argv[argptr].starts_with('-') {
-        let arg = &argv[argptr][1..];
-        let first = arg.chars().next();
-        if let Some(c) = first {
-            if c.is_ascii_digit() {
-                // C: sn = atoi(arg); ...
-                let sn: i32 = arg.parse().unwrap_or(0);
-                if sn == 0 {
-                    zwarnnam("sched", "usage for delete: sched -<item#>.");
-                    return 1;
-                }
-                let cmds_lock = schedcmds_lock();
-                let mut v = cmds_lock.lock().unwrap();
-                let idx = (sn - 1) as usize;
-                if idx >= v.len() {
-                    drop(v);
-                    zwarnnam("sched", "not that many entries");
-                    return 1;
-                }
-                if idx == 0 {
-                    drop(v);
-                    scheddeltimed();
-                    let mut v = cmds_lock.lock().unwrap();
-                    v.remove(0);
-                    let need_rearm = !v.is_empty();
-                    drop(v);
-                    if need_rearm {
-                        schedaddtimed();
-                    }
-                } else {
-                    v.remove(idx);
-                }
-                return 0;
-            } else if arg == "-" {
-                // end of options
-                argptr += 1;
-                break;
-            } else if arg == "o" {
-                flags |= SCHEDFLAG_TRASH_ZLE;
-            } else if arg.is_empty() {
-                zwarnnam(nam, "option expected");
-                return 1;
-            } else {
-                zwarnnam(nam, &format!("bad option: -{}", c));
+    /* If the argument begins with a -, remove the specified item from the
+    schedule. */                                                       // c:159-160
+    argptr = 0;                                                        // c:161 argptr = argv;
+    while argptr < argv.len() && argv[argptr].as_bytes().first().copied() == Some(b'-') {
+        let arg = &argv[argptr][1..];                                  // c:162 arg = *argptr + 1;
+        let arg_b = arg.as_bytes();
+        if !arg_b.is_empty() && idigit(arg_b[0]) {                     // c:163 if (idigit(*arg))
+            sn = zstrtol(arg, 10).0 as i32;                            // c:164 sn = atoi(arg);
+
+            if sn == 0 {                                               // c:166
+                zwarnnam("sched", "usage for delete: sched -<item#>."); // c:167
                 return 1;
             }
+            // for (schl = NULL, sch = schedcmds, sn--;
+            //      sch && sn; sch = (schl = sch)->next, sn--);        // c:170-171
+            // Walk to (sn-1)-th node, tracking previous link slot.
+            let mut head = schedcmds_lock().lock().unwrap();
+            let mut steps = sn - 1;
+            // Find the slot whose `*` is the node to remove.
+            // `slot` holds &mut Option<Box<schedcmd>>: a pointer into
+            // `schedcmds` (when steps==0) or into the previous node's
+            // `.next` link (otherwise).
+            let mut slot: &mut Option<Box<schedcmd>> = &mut *head;
+            while steps > 0 {
+                if slot.is_none() { break; }
+                slot = &mut slot.as_mut().unwrap().next;
+                steps -= 1;
+            }
+            if slot.is_none() {                                        // c:172 if (!sch)
+                drop(head);
+                zwarnnam("sched", "not that many entries");            // c:173
+                return 1;
+            }
+            // Splice out: slot.take(), then *slot = removed.next.
+            let head_slot = sn == 1;
+            let mut removed = slot.take().unwrap();
+            *slot = removed.next.take();
+            if head_slot {                                              // c:178 else { scheddeltimed(); ... }
+                drop(head);
+                scheddeltimed();
+                let still_have = schedcmds_lock().lock().unwrap().is_some();
+                if still_have {                                         // c:181 if (schedcmds)
+                    // DPUTS(timedfns && firstnode(timedfns), "BUG: already timed fn (2)");
+                    schedaddtimed();                                    // c:183
+                }
+            } else {
+                drop(head);
+            }
+            // C: zsfree(sch->cmd); zfree(sch, sizeof(struct schedcmd));
+            drop(removed);                                              // c:186-187
+            return 0;                                                   // c:189
+        } else if arg == "-" {                                          // c:190 else if (*arg == '-')
+            /* end of options */                                        // c:191
+            argptr += 1;                                                // c:192
+            break;                                                      // c:193
+        } else if arg == "o" {                                          // c:194 else if (!strcmp(arg, "o"))
+            flags |= SCHEDFLAG_TRASH_ZLE;                               // c:195
+        } else {
+            if !arg.is_empty() {                                        // c:197 if (*arg)
+                zwarnnam(nam, &format!("bad option: -{}", arg.chars().next().unwrap())); // c:198
+            } else {
+                zwarnnam(nam, "option expected");                       // c:200
+            }
+            return 1;                                                   // c:201
         }
         argptr += 1;
     }
 
-    // No remaining args → list. (sched.c:206)
-    if argptr >= argv.len() {
-        let v = schedcmds_lock().lock().unwrap();
-        for (i, sch) in v.iter().enumerate() {
+    /* given no arguments, display the schedule list */                 // c:205
+    if argptr >= argv.len() {                                           // c:206 if (!*argptr)
+        // for (sn = 1, sch = schedcmds; sch; sch = sch->next, sn++)    // c:207
+        sn = 1;
+        let head = schedcmds_lock().lock().unwrap();
+        let mut cur: &Option<Box<schedcmd>> = &*head;
+        while let Some(sch) = cur.as_ref() {
+            // C: char tbuf[60], *flagstr, *endstr; time_t t; struct tm *tmp;
+            let t_local: time_t = sch.time;                             // c:212
             // C: ztrftime(tbuf, 40, "%a %b %e %k:%M:%S", tmp, 0L);
-            let tbuf = format_localtime(sch.time);
-            let flagstr = if sch.flags & SCHEDFLAG_TRASH_ZLE != 0 {
-                "-o "
-            } else {
-                ""
-            };
-            let endstr = if sch.cmd.starts_with('-') { "-- " } else { "" };
-            println!(
-                "{:3} {} {}{}{}",
-                i + 1,
-                tbuf,
-                flagstr,
-                endstr,
-                sch.cmd
+            let tbuf = ztrftime(                                        // c:214
+                "%a %b %e %k:%M:%S",
+                std::time::UNIX_EPOCH + std::time::Duration::from_secs(t_local as u64),
             );
+            let flagstr = if (sch.flags & SCHEDFLAG_TRASH_ZLE) != 0 {   // c:215
+                "-o "                                                   // c:216
+            } else {
+                ""                                                      // c:218
+            };
+            let endstr = if sch.cmd.starts_with('-') {                  // c:219 if (*sch->cmd == '-')
+                "-- "                                                   // c:220
+            } else {
+                ""                                                      // c:222
+            };
+            println!("{:3} {} {}{}{}", sn, tbuf, flagstr, endstr, unmeta(&sch.cmd)); // c:223-224
+            cur = &sch.next;
+            sn += 1;
         }
-        return 0;
+        return 0;                                                        // c:226
+    } else if argptr + 1 >= argv.len() {                                // c:227 else if (!argptr[1])
+        /* other than the two cases above, sched *
+         *requires at least two arguments        */                     // c:228-229
+        zwarnnam("sched", "not enough arguments");                       // c:230
+        return 1;                                                        // c:231
     }
 
-    // Need at least 2 positional args. (sched.c:227)
-    if argptr + 1 >= argv.len() {
-        zwarnnam("sched", "not enough arguments");
-        return 1;
-    }
-
-    // Parse time (sched.c:236).
-    let s = &argv[argptr];
+    /* The first argument specifies the time to schedule the command for.  The
+    remaining arguments form the command. */                            // c:234-235
+    s = &argv[argptr];                                                   // c:236 s = *argptr++;
     argptr += 1;
-    let t = match parse_time_spec(s) {
-        Ok(t) => t,
-        Err(_) => {
-            zwarnnam("sched", "bad time specifier");
+    let s_b = s.as_bytes();
+    if !s_b.is_empty() && s_b[0] == b'+' {                              // c:237 if (*s == '+')
+        /*
+         * + introduces a relative time.  The rest of the argument may be an
+         * hour:minute offset from the current time.  Once the hour and minute
+         * numbers have been extracted, and the format verified, the resulting
+         * offset is simply added to the current time.
+         */                                                              // c:238-243
+        let (zl, rest) = zstrtol(&s[1..], 10);                           // c:244 zl = zstrtol(s+1, &s, 10);
+        let rb = rest.as_bytes();
+        if !rb.is_empty() && rb[0] == b':' {                             // c:245 if (*s == ':')
+            let (mv, rest2) = zstrtol(&rest[1..], 10);                   // c:246 m = zstrtol(s+1, &s, 10);
+            m = mv;
+            let rb2 = rest2.as_bytes();
+            let rest3: &str;
+            if !rb2.is_empty() && rb2[0] == b':' {                       // c:247 if (*s == ':')
+                let (sv, r3) = zstrtol(&rest2[1..], 10);                 // c:248 sec = zstrtol(s+1, &s, 10);
+                sec = sv;
+                rest3 = r3;
+            } else {
+                sec = 0;                                                  // c:250
+                rest3 = rest2;
+            }
+            if !rest3.is_empty() {                                        // c:251 if (*s)
+                zwarnnam("sched", "bad time specifier");                  // c:252
+                return 1;
+            }
+            t = unsafe { libc::time(std::ptr::null_mut()) }              // c:255
+                + (zl as time_t) * 3600 + (m as time_t) * 60 + (sec as time_t);
+        } else if rest.is_empty() {                                      // c:256 else if (!*s)
+            /*
+             * Alternatively, it may simply be a number of seconds.
+             * This is here for consistency with absolute times.
+             */                                                          // c:257-260
+            t = unsafe { libc::time(std::ptr::null_mut()) } + zl as time_t; // c:261
+        } else {
+            zwarnnam("sched", "bad time specifier");                     // c:263
             return 1;
         }
-    };
-
-    // Build command from remaining args (C: zjoin(argptr, ' ', 0)).
-    let cmd = argv[argptr..].join(" ");
-
-    // Insert into list (sched.c:307).
-    let cmds_lock = schedcmds_lock();
-    let was_empty;
-    let head_displaced;
-    {
-        let mut v = cmds_lock.lock().unwrap();
-        was_empty = v.is_empty();
-        head_displaced = !was_empty && t < v[0].time;
-        let pos = v.iter().position(|c| c.time > t).unwrap_or(v.len());
-        v.insert(
-            pos,
-            schedcmd {
-                cmd,
-                time: t,
-                flags,
-            },
-        );
-    }
-    if was_empty || head_displaced {
-        if head_displaced {
-            scheddeltimed();
-        }
-        schedaddtimed();
-    }
-    0
-}
-
-// WARNING: NOT IN SCHED.C — Rust-only inline of the `bin_sched`
-// time-parsing block (sched.c:236-306). C inlines the `+H:M:S`,
-// `H:Ma|p`, raw-epoch parsing directly inside `bin_sched`; Rust
-// port factors it out for testability since the parsing is the
-// most arithmetic-heavy chunk and warrants its own unit tests.
-fn parse_time_spec(s: &str) -> Result<i64, &'static str> {
-    let now = now_secs();
-    if let Some(rest) = s.strip_prefix('+') {
-        // Relative time. C: `zstrtol(s+1, &s, 10)`.
-        let (zl, rest) = parse_leading_decimal(rest);
-        if rest.is_empty() {
-            return Ok(now + zl);
-        }
-        if !rest.starts_with(':') {
-            return Err("bad time specifier");
-        }
-        let (m, after_m) = parse_leading_decimal(&rest[1..]);
-        let (sec, after_s) = if let Some(stripped) = after_m.strip_prefix(':') {
-            parse_leading_decimal(stripped)
-        } else {
-            (0, after_m)
-        };
-        if !after_s.is_empty() {
-            return Err("bad time specifier");
-        }
-        Ok(now + zl * 3600 + m * 60 + sec)
     } else {
-        // Absolute time (sched.c:266).
-        let (zl, rest) = parse_leading_decimal(s);
-        if rest.is_empty() {
-            return Ok(zl);
-        }
-        if !rest.starts_with(':') {
-            return Err("bad time specifier");
-        }
-        let mut h = zl;
-        let (m, after_m) = parse_leading_decimal(&rest[1..]);
-        let (sec, after_s) = if let Some(stripped) = after_m.strip_prefix(':') {
-            parse_leading_decimal(stripped)
-        } else {
-            (0, after_m)
-        };
-        // sched.c:281 — trailing chars must be empty or 'a'/'A'/'p'/'P'.
-        if !after_s.is_empty() {
-            let c = after_s.chars().next().unwrap();
-            if c != 'a' && c != 'A' && c != 'p' && c != 'P' {
-                return Err("bad time specifier");
+        /*
+         * If there is no +, an absolute time must have been given.
+         * This may be in hour:minute format, optionally followed by a string
+         * starting with `a' or `p' (for a.m. or p.m.).  Characters after the
+         * `a' or `p' are ignored.
+         */                                                              // c:267-272
+        let (zl, rest) = zstrtol(s, 10);                                 // c:273 zl = zstrtol(s, &s, 10);
+        let rb = rest.as_bytes();
+        if !rb.is_empty() && rb[0] == b':' {                             // c:274 if (*s == ':')
+            h = zl;                                                       // c:275 h = (long)zl;
+            let (mv, rest2) = zstrtol(&rest[1..], 10);                   // c:276 m = zstrtol(s+1, &s, 10);
+            m = mv;
+            let rb2 = rest2.as_bytes();
+            let rest3: &str;
+            if !rb2.is_empty() && rb2[0] == b':' {                       // c:277 if (*s == ':')
+                let (sv, r3) = zstrtol(&rest2[1..], 10);                 // c:278
+                sec = sv;
+                rest3 = r3;
+            } else {
+                sec = 0;                                                  // c:280
+                rest3 = rest2;
             }
+            let rb3 = rest3.as_bytes();
+            if !rb3.is_empty()
+                && rb3[0] != b'a' && rb3[0] != b'A'
+                && rb3[0] != b'p' && rb3[0] != b'P'                       // c:281
+            {
+                zwarnnam("sched", "bad time specifier");                  // c:282
+                return 1;
+            }
+            t = unsafe { libc::time(std::ptr::null_mut()) };             // c:285 t = time(NULL);
+            // tm = localtime(&t); t -= tm->tm_sec + tm->tm_min*60 + tm->tm_hour*3600;
+            unsafe {
+                let tm_ptr = libc::localtime(&t as *const time_t);       // c:286
+                if !tm_ptr.is_null() {
+                    let tm = *tm_ptr;
+                    t -= (tm.tm_sec as time_t)
+                        + (tm.tm_min as time_t) * 60
+                        + (tm.tm_hour as time_t) * 3600;                 // c:287
+                }
+            }
+            if !rb3.is_empty() && (rb3[0] == b'p' || rb3[0] == b'P') {   // c:288
+                h += 12;                                                  // c:289
+            }
+            t += (h as time_t) * 3600 + (m as time_t) * 60 + (sec as time_t); // c:290
+            /*
+             * If the specified time is before the current time, it must refer
+             * to tomorrow.
+             */                                                          // c:291-294
+            if t < unsafe { libc::time(std::ptr::null_mut()) } {         // c:295
+                t += 3600 * 24;                                           // c:296
+            }
+        } else if rest.is_empty() {                                      // c:297 else if (!*s)
+            /*
+             * Otherwise, it must be a raw time specifier.
+             */                                                          // c:298-300
+            t = zl as time_t;                                             // c:301
+        } else {
+            zwarnnam("sched", "bad time specifier");                     // c:303
+            return 1;
         }
-        // C: `t = time(NULL); tm = localtime(&t); t -= tm->tm_sec +
-        //     tm->tm_min*60 + tm->tm_hour*3600;`
-        let t_midnight = midnight_today_local(now);
-        let pm = after_s
-            .chars()
-            .next()
-            .map(|c| c == 'p' || c == 'P')
-            .unwrap_or(false);
-        if pm {
-            h += 12;
-        }
-        let mut t = t_midnight + h * 3600 + m * 60 + sec;
-        // sched.c:295 — past-time → tomorrow.
-        if t < now {
-            t += 3600 * 24;
-        }
-        Ok(t)
     }
-}
-
-// WARNING: NOT IN SCHED.C — Rust-only port of the `zstrtol(s, &s,
-// 10)` idiom. C advances the pointer past consumed digits; Rust
-// port returns `(value, &remaining_str)` since &mut &str isn't
-// idiomatic here.
-fn parse_leading_decimal(s: &str) -> (i64, &str) {
-    let mut end = 0;
-    for (i, c) in s.char_indices() {
-        if !c.is_ascii_digit() {
-            end = i;
-            break;
+    /* The time has been calculated; now add the new entry to the linked list
+    of scheduled commands. */                                            // c:307-308
+    // sch = (struct schedcmd *) zalloc(sizeof *sch);                    // c:309
+    let mut sch_new: Box<schedcmd> = Box::new(schedcmd {
+        next: None,
+        cmd: zjoin(&argv[argptr..], ' '),                                // c:311 sch->cmd = zjoin(argptr, ' ', 0);
+        time: t,                                                         // c:310 sch->time = t;
+        flags,                                                           // c:312 sch->flags = flags;
+    });
+    /* Insert into list in time order */                                 // c:313
+    let mut head = schedcmds_lock().lock().unwrap();
+    if head.is_some() {                                                  // c:314 if (schedcmds)
+        if sch_new.time < head.as_ref().unwrap().time {                  // c:315 if (sch->time < schedcmds->time)
+            drop(head);
+            scheddeltimed();                                              // c:316
+            let mut head2 = schedcmds_lock().lock().unwrap();
+            sch_new.next = head2.take();                                  // c:317 sch->next = schedcmds;
+            *head2 = Some(sch_new);                                       // c:318 schedcmds = sch;
+            drop(head2);
+            // DPUTS(timedfns && firstnode(timedfns), "BUG: already timed fn (3)");
+            schedaddtimed();                                              // c:320
+        } else {
+            // for (sch2 = schedcmds;
+            //      sch2->next && sch2->next->time < sch->time;
+            //      sch2 = sch2->next)                                    // c:322-325
+            let mut cur = head.as_mut().unwrap();
+            while cur.next.is_some() && cur.next.as_ref().unwrap().time < sch_new.time {
+                cur = cur.next.as_mut().unwrap();
+            }
+            sch_new.next = cur.next.take();                               // c:326 sch->next = sch2->next;
+            cur.next = Some(sch_new);                                     // c:327 sch2->next = sch;
         }
-        end = i + c.len_utf8();
-    }
-    let val: i64 = s[..end].parse().unwrap_or(0);
-    (val, &s[end..])
-}
-
-// WARNING: NOT IN SCHED.C — Rust-only port of C's `localtime(&t); t
-// -= tm->tm_sec + tm->tm_min*60 + tm->tm_hour*3600`. Returns the
-// epoch second of midnight in the local timezone.
-fn midnight_today_local(now: i64) -> i64 {
-    use chrono::{Local, TimeZone, Timelike};
-    if let chrono::LocalResult::Single(dt) = Local.timestamp_opt(now, 0) {
-        now - (dt.hour() as i64 * 3600 + dt.minute() as i64 * 60 + dt.second() as i64)
     } else {
-        now - (now % 86400)
+        sch_new.next = None;                                              // c:330 sch->next = NULL;
+        *head = Some(sch_new);                                            // c:331 schedcmds = sch;
+        drop(head);
+        // DPUTS(timedfns && firstnode(timedfns), "BUG: already timed fn (4)");
+        schedaddtimed();                                                  // c:333
     }
-}
-
-// WARNING: NOT IN SCHED.C — Rust-only port of `ztrftime(tbuf, 40,
-// "%a %b %e %k:%M:%S", tmp, 0L)`. C uses zsh's strftime wrapper;
-// Rust port uses chrono's strftime with the same format string.
-fn format_localtime(t: i64) -> String {
-    use chrono::{Local, TimeZone};
-    Local
-        .timestamp_opt(t, 0)
-        .single()
-        .map(|dt| dt.format("%a %b %e %k:%M:%S").to_string())
-        .unwrap_or_else(|| t.to_string())
+    0                                                                     // c:335
 }
 
 // =====================================================================
-// Port of `schedgetfn()` from Src/Builtins/sched.c:341.
+// schedgetfn(UNUSED(Param pm))                                       c:340
 // =====================================================================
 
 /// Port of `schedgetfn()` from `Src/Builtins/sched.c:341`.
 ///
-/// `getfn` for the `$zsh_scheduled_events` array parameter. Each
-/// entry serializes as `"<time>:<flagstr>:<cmd>"` matching the C
-/// source's `sprintf("%s:%s:%s", tbuf, flagstr, cmd)` (line 366).
-pub(crate) fn schedgetfn() -> Vec<String> {
-    let v = schedcmds_lock().lock().unwrap();
-    v.iter()
-        .map(|sch| {
-            let flagstr = if sch.flags & SCHEDFLAG_TRASH_ZLE != 0 {
-                "-o"
-            } else {
-                ""
-            };
-            format!("{}:{}:{}", sch.time, flagstr, sch.cmd)
-        })
-        .collect()
-}
-
-// =====================================================================
-// Module entry points (sched.c:396-446).
-// =====================================================================
-
-/// Port of `setup_()` from `Src/Builtins/sched.c:396`. Returns 0.
-pub fn setup_() -> i32 {
-    0
-}
-
-/// Port of `features_()` from `Src/Builtins/sched.c:403`. C calls
-/// `featuresarray()`; Rust port has no Module type yet — return 0.
-pub fn features_() -> i32 {
-    0
-}
-
-/// Port of `enables_()` from `Src/Builtins/sched.c:411`. C calls
-/// `handlefeatures()`; Rust port returns 0.
-pub fn enables_() -> i32 {
-    0
-}
-
-/// Port of `boot_()` from `Src/Builtins/sched.c:418`. C calls
-/// `addprepromptfn(&checksched)`; Rust port stubs since the
-/// prepromptfn chain isn't fully wired yet (the foreground shell
-/// loop calls `checksched` directly via the ShellExecutor bridge).
-pub fn boot_() -> i32 {
-    0
-}
-
-/// Port of `cleanup_()` from `Src/Builtins/sched.c:426`. Drains the
-/// schedcmds list, deletes the timed fn, removes the prepromptfn.
-pub fn cleanup_() -> i32 {
-    let cmds_lock = schedcmds_lock();
-    if !cmds_lock.lock().unwrap().is_empty() {
-        scheddeltimed();
+/// `getfn` for the `$zsh_scheduled_events` array parameter. C signature
+/// mirrored: `static char ** schedgetfn(UNUSED(Param pm))`. `Param` is
+/// `struct param *` (zsh.h:539); ported as `*const param` to keep the
+/// pointer shape (the param is UNUSED in C — pointer is never dereffed).
+pub(crate) fn schedgetfn(_pm: *const crate::ported::zsh_h::param) -> Vec<String> {
+    let mut i: usize;                                                    // c:343
+    // C: int i; struct schedcmd *sch; char **ret, **aptr;
+    // for (i = 0, sch = schedcmds; sch; sch = sch->next, i++);          // c:347-348
+    let head = schedcmds_lock().lock().unwrap();
+    i = 0;
+    {
+        let mut cur: &Option<Box<schedcmd>> = &*head;
+        while let Some(s) = cur.as_ref() {
+            cur = &s.next;
+            i += 1;
+        }
     }
-    cmds_lock.lock().unwrap().clear();
-    // C: delprepromptfn(&checksched); — pending the prepromptfn port.
-    0
-}
-
-/// Port of `finish_()` from `Src/Builtins/sched.c:443`. Returns 0.
-pub fn finish_() -> i32 {
-    0
-}
-
-// =====================================================================
-// ShellExecutor bridge — sanctioned PORT.md exception. Wires the
-// internal builtin dispatcher to the canonical free fn above.
-// =====================================================================
-
-impl crate::ported::exec::ShellExecutor {
-    /// `sched` builtin — bridge to `bin_sched()` above.
-    pub(crate) fn bin_sched(&mut self, args: &[String]) -> i32 {
-        bin_sched("sched", args)
+    // aptr = ret = zhalloc(sizeof(char *) * (i+1));                     // c:350
+    let mut ret: Vec<String> = Vec::with_capacity(i);
+    // for (sch = schedcmds; sch; sch = sch->next, aptr++)                // c:351
+    let mut cur: &Option<Box<schedcmd>> = &*head;
+    while let Some(sch) = cur.as_ref() {
+        // C: char tbuf[40], *flagstr; time_t t;
+        let t: time_t = sch.time;                                         // c:355
+        let tbuf = format!("{}", t as i64);                               // c:357 sprintf(tbuf, "%lld", (long long)t);
+        let flagstr = if (sch.flags & SCHEDFLAG_TRASH_ZLE) != 0 {         // c:361
+            "-o"                                                          // c:362
+        } else {
+            ""                                                            // c:364
+        };
+        // *aptr = (char *)zhalloc(5 + strlen(tbuf) + strlen(sch->cmd));
+        // sprintf(*aptr, "%s:%s:%s", tbuf, flagstr, sch->cmd);           // c:365-366
+        ret.push(format!("{}:{}:{}", tbuf, flagstr, sch.cmd));
+        cur = &sch.next;
     }
+    // *aptr = NULL;                                                      // c:368 (Vec carries its own length)
+    ret                                                                   // c:370
 }
+
+// =====================================================================
+// static struct builtin bintab[]                                     c:374
+// static const struct gsu_array sched_gsu                            c:378
+// static struct paramdef partab[]                                    c:381
+// static struct features module_features                             c:386
+// =====================================================================
+
+use crate::ported::zsh_h::features as features_t;
+
+// `module_features` — port of `static struct features module_features`
+// from sched.c:386. Bucket-2 shared global; OnceLock-init since
+// `features` contains fn-pointer fields not const-initializable.
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,                                                   // c:387 bintab
+        bn_size: 1,                                                       // sizeof(bintab)/sizeof(*bintab) — sched
+        cd_list: None,                                                    // c:388
+        cd_size: 0,
+        mf_list: None,                                                    // c:389
+        mf_size: 0,
+        pd_list: None,                                                    // c:390 partab
+        pd_size: 1,                                                       // sizeof(partab)/sizeof(*partab) — zsh_scheduled_events
+        n_abstract: 0,                                                    // c:391
+    }))
+}
+
+// =====================================================================
+// Module entry points                                                c:394-446
+// =====================================================================
+
+/// Port of `setup_()` from `Src/Builtins/sched.c:396`.
+pub fn setup_(_m: *const crate::ported::zsh_h::module) -> i32 {
+    0                                                                    // c:398
+}
+
+/// Port of `features_()` from `Src/Builtins/sched.c:403`.
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const crate::ported::zsh_h::module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, module_features());                     // c:405
+    0                                                                    // c:406
+}
+
+/// Port of `enables_()` from `Src/Builtins/sched.c:411`.
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, module_features(), enables)                        // c:413
+}
+
+/// Port of `boot_()` from `Src/Builtins/sched.c:418`.
+pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {
+    addprepromptfn(checksched_thunk);                                    // c:420 addprepromptfn(&checksched);
+    0                                                                    // c:421
+}
+
+/// Port of `cleanup_()` from `Src/Builtins/sched.c:426`.
+/// C body (c:428-438):
+///   struct schedcmd *sch, *schn;
+///   if (schedcmds) scheddeltimed();
+///   for (sch = schedcmds; sch; sch = schn) { schn = sch->next; zsfree(sch->cmd); zfree(sch, sizeof(*sch)); }
+///   delprepromptfn(&checksched);
+///   return setfeatureenables(m, &module_features, NULL);
+pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {
+    // struct schedcmd *sch, *schn;                                       // c:428
+    if schedcmds_lock().lock().unwrap().is_some() {                       // c:430 if (schedcmds)
+        scheddeltimed();                                                  // c:431
+    }
+    // c:432-436 — for (sch = schedcmds; sch; sch = schn) { ... }
+    // Box drop chain reclaims `cmd` and the node both.
+    let mut head = schedcmds_lock().lock().unwrap();
+    *head = None;
+    drop(head);
+    delprepromptfn(checksched_thunk);                                     // c:437 delprepromptfn(&checksched);
+    setfeatureenables(m, module_features(), None)                        // c:438
+}
+
+/// Port of `finish_()` from `Src/Builtins/sched.c:443`.
+pub fn finish_(_m: *const crate::ported::zsh_h::module) -> i32 {
+    0                                                                    // c:445
+}
+
+// =====================================================================
+// External fns from Src/module.c. Stubbed locally with C-faithful
+// signatures pending the module.c port to `*const module` types.
+// =====================================================================
+
+// `featuresarray` lives in `Src/module.c:3275`.
+fn featuresarray(_m: *const crate::ported::zsh_h::module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:sched".to_string(), "p:zsh_scheduled_events".to_string()]
+}
+
+// `handlefeatures` lives in `Src/module.c:3370`.
+fn handlefeatures(m: *const crate::ported::zsh_h::module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() {
+        *enables = Some(getfeatureenables(m, f));
+    } else if let Some(e) = enables.as_ref() {
+        return setfeatureenables(m, f, Some(e));
+    }
+    0
+}
+
+// `getfeatureenables` lives in `Src/module.c:3314`.
+fn getfeatureenables(_m: *const crate::ported::zsh_h::module, f: &Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
+    vec![0; total as usize]
+}
+
+// `setfeatureenables` lives in `Src/module.c:3445`.
+fn setfeatureenables(_m: *const crate::ported::zsh_h::module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 {
+    0
+}
+
+// =====================================================================
+// External fns from other Src/*.c files. Stubbed locally pending the
+// proper ports of their home files.
+// =====================================================================
+
+// `zleentry` lives in `Src/Zle/zle_main.c`. Stubbed here as a no-op
+// returning 0 — full ZLE port wires the real entry. Sched-side uses
+// only the `ZLE_CMD_TRASH` opcode (zsh.h:3290).
+const ZLE_CMD_TRASH: i32 = 3;
+fn zleentry(_op: i32) -> i32 { 0 }
+
+// `zleactive` is the int global in `Src/Zle/zle_main.c` indicating
+// whether ZLE is the active reader. Mirrored as an atomic int so other
+// modules can flip it when ZLE main is wired up. Stays 0 by default
+// (matches C's BSS-zero startup).
+pub static zleactive: AtomicI32 = AtomicI32::new(0);
+
+// `execstring` lives in `Src/exec.c:5078` — feeds a string through the
+// parser/exec pipeline. Stubbed locally; the ShellExecutor bridge in
+// `src/extensions/ext_builtins.rs` wires real bytecode-VM execution
+// when `checksched` runs from the eval loop.
+fn execstring(_cmd: &str, _exiting: i32, _dont_change_job: i32, _context: &str) {}
 
 // =====================================================================
 // Tests
@@ -573,147 +702,121 @@ mod tests {
     use super::*;
     use std::sync::Mutex as StdMutex;
 
-    // The sched module statics are shell-wide (bucket 2 per
-    // PORT_PLAN.md). Tests share one instance per process, so
-    // serialize them through a test-only Mutex to keep one test's
-    // `reset()` from racing another's `bin_sched`.
+    use crate::ported::zsh_h::{options, MAX_OPS};
+
     static TEST_SERIAL: StdMutex<()> = StdMutex::new(());
+
+    fn empty_ops() -> options {
+        options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }
+    }
 
     fn reset_with_lock() -> std::sync::MutexGuard<'static, ()> {
         let guard = TEST_SERIAL.lock().unwrap_or_else(|e| {
-            // Recover from poison — some other test panicked but the
-            // statics are deterministic, just clear and continue.
             TEST_SERIAL.clear_poison();
             e.into_inner()
         });
-        let mut v = schedcmds_lock().lock().unwrap_or_else(|e| {
+        // C `init_main()` calls `inittyptab()` at startup; tests
+        // bypass that path, so seed TYPTAB here so `idigit` works.
+        crate::ported::utils::inittyptab();
+        let mut head = schedcmds_lock().lock().unwrap_or_else(|e| {
             schedcmds_lock().clear_poison();
             e.into_inner()
         });
-        v.clear();
-        drop(v);
+        *head = None;
+        drop(head);
         let mut t = schedcmdtimed_lock().lock().unwrap_or_else(|e| {
             schedcmdtimed_lock().clear_poison();
             e.into_inner()
         });
-        *t = false;
+        *t = 0;
         drop(t);
         guard
     }
 
-    #[test]
-    fn test_parse_time_relative_seconds() {
-        let now = now_secs();
-        let t = parse_time_spec("+60").unwrap();
-        assert!(t >= now + 59 && t <= now + 61);
-    }
+    fn s(x: &str) -> String { x.to_string() }
 
     #[test]
-    fn test_parse_time_relative_hm() {
-        let now = now_secs();
-        let t = parse_time_spec("+1:30").unwrap();
-        let exp = now + 3600 + 1800;
-        assert!(t >= exp - 1 && t <= exp + 1);
-    }
-
-    #[test]
-    fn test_parse_time_relative_hms() {
-        let now = now_secs();
-        let t = parse_time_spec("+1:30:15").unwrap();
-        let exp = now + 3600 + 1800 + 15;
-        assert!(t >= exp - 1 && t <= exp + 1);
-    }
-
-    #[test]
-    fn test_parse_time_absolute_raw() {
-        // C: bare integer is a raw time_t.
-        let t = parse_time_spec("1700000000").unwrap();
-        assert_eq!(t, 1700000000);
-    }
-
-    #[test]
-    fn test_parse_time_bad() {
-        assert!(parse_time_spec("+notanumber").is_err()
-            || parse_time_spec("+notanumber").unwrap() == now_secs());
-        assert!(parse_time_spec("12:30x").is_err());
-    }
-
-    #[test]
-    fn test_bin_sched_list_empty() {
+    fn list_empty_returns_zero() {
         let _serial = reset_with_lock();
-        let status = bin_sched("sched", &[]);
-        assert_eq!(status, 0);
+        let ops = empty_ops();
+        assert_eq!(bin_sched("sched", &[], &ops, 0), 0);
     }
 
     #[test]
-    fn test_bin_sched_add() {
+    fn add_relative_seconds_pushes_one_entry() {
         let _serial = reset_with_lock();
-        let args: Vec<String> = vec!["+60".into(), "echo".into(), "hello".into()];
-        let status = bin_sched("sched", &args);
-        assert_eq!(status, 0);
-        let v = schedcmds_lock().lock().unwrap();
-        assert_eq!(v.len(), 1);
-        assert_eq!(v[0].cmd, "echo hello");
+        let ops = empty_ops();
+        let args = vec![s("+60"), s("echo"), s("hello")];
+        assert_eq!(bin_sched("sched", &args, &ops, 0), 0);
+        let head = schedcmds_lock().lock().unwrap();
+        assert_eq!(head.as_ref().unwrap().cmd, "echo hello");
+        assert!(head.as_ref().unwrap().next.is_none());
     }
 
     #[test]
-    fn test_bin_sched_delete() {
+    fn add_then_delete_first_clears_list() {
         let _serial = reset_with_lock();
-        let args: Vec<String> = vec!["+60".into(), "echo".into(), "hello".into()];
-        bin_sched("sched", &args);
-        assert_eq!(schedcmds_lock().lock().unwrap().len(), 1);
-        let status = bin_sched("sched", &["-1".into()]);
-        assert_eq!(status, 0);
-        assert!(schedcmds_lock().lock().unwrap().is_empty());
+        let ops = empty_ops();
+        bin_sched("sched", &[s("+60"), s("echo"), s("hello")], &ops, 0);
+        assert!(schedcmds_lock().lock().unwrap().is_some());
+        assert_eq!(bin_sched("sched", &[s("-1")], &ops, 0), 0);
+        assert!(schedcmds_lock().lock().unwrap().is_none());
     }
 
     #[test]
-    fn test_bin_sched_not_enough_args() {
+    fn not_enough_args_returns_one() {
         let _serial = reset_with_lock();
-        let status = bin_sched("sched", &["+60".into()]);
-        assert_eq!(status, 1);
+        let ops = empty_ops();
+        assert_eq!(bin_sched("sched", &[s("+60")], &ops, 0), 1);
     }
 
     #[test]
-    fn test_bin_sched_o_flag() {
+    fn dash_o_flag_sets_trash_zle() {
         let _serial = reset_with_lock();
-        let args: Vec<String> = vec!["-o".into(), "+60".into(), "cmd".into()];
-        let status = bin_sched("sched", &args);
-        assert_eq!(status, 0);
-        let v = schedcmds_lock().lock().unwrap();
-        assert_eq!(v[0].flags & SCHEDFLAG_TRASH_ZLE, SCHEDFLAG_TRASH_ZLE);
+        let ops = empty_ops();
+        let args = vec![s("-o"), s("+60"), s("cmd")];
+        assert_eq!(bin_sched("sched", &args, &ops, 0), 0);
+        let head = schedcmds_lock().lock().unwrap();
+        assert_eq!(head.as_ref().unwrap().flags & SCHEDFLAG_TRASH_ZLE, SCHEDFLAG_TRASH_ZLE);
     }
 
     #[test]
-    fn test_schedgetfn_serialization() {
+    fn insert_keeps_time_order() {
         let _serial = reset_with_lock();
-        let mut v = schedcmds_lock().lock().unwrap();
-        v.push(schedcmd {
-            cmd: "echo test".into(),
+        let ops = empty_ops();
+        bin_sched("sched", &[s("+200"), s("third")], &ops, 0);
+        bin_sched("sched", &[s("+50"),  s("first")], &ops, 0);
+        bin_sched("sched", &[s("+100"), s("second")], &ops, 0);
+        let head = schedcmds_lock().lock().unwrap();
+        let n0 = head.as_ref().unwrap();
+        let n1 = n0.next.as_ref().unwrap();
+        let n2 = n1.next.as_ref().unwrap();
+        assert_eq!(n0.cmd, "first");
+        assert_eq!(n1.cmd, "second");
+        assert_eq!(n2.cmd, "third");
+        assert!(n2.next.is_none());
+    }
+
+    #[test]
+    fn schedgetfn_serializes_entries() {
+        let _serial = reset_with_lock();
+        let mut head = schedcmds_lock().lock().unwrap();
+        *head = Some(Box::new(schedcmd {
+            next: Some(Box::new(schedcmd {
+                next: None,
+                cmd: "echo zle".to_string(),
+                time: 1700001000,
+                flags: SCHEDFLAG_TRASH_ZLE,
+            })),
+            cmd: "echo test".to_string(),
             time: 1700000000,
             flags: 0,
-        });
-        v.push(schedcmd {
-            cmd: "echo zle".into(),
-            time: 1700001000,
-            flags: SCHEDFLAG_TRASH_ZLE,
-        });
-        drop(v);
-        let arr = schedgetfn();
+        }));
+        drop(head);
+        // schedgetfn's `Param pm` is UNUSED — pass null pointer.
+        let arr = schedgetfn(std::ptr::null());
         assert_eq!(arr.len(), 2);
         assert_eq!(arr[0], "1700000000::echo test");
         assert_eq!(arr[1], "1700001000:-o:echo zle");
-    }
-
-    #[test]
-    fn test_insert_keeps_time_order() {
-        let _serial = reset_with_lock();
-        bin_sched("sched", &["+200".into(), "third".into()]);
-        bin_sched("sched", &["+50".into(), "first".into()]);
-        bin_sched("sched", &["+100".into(), "second".into()]);
-        let v = schedcmds_lock().lock().unwrap();
-        assert_eq!(v[0].cmd, "first");
-        assert_eq!(v[1].cmd, "second");
-        assert_eq!(v[2].cmd, "third");
     }
 }

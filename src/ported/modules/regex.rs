@@ -249,40 +249,59 @@ mod tests {
     }
 }
 
-/// Port of `setup_()` from `Src/Modules/regex.c:229`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn setup_() -> i32 {                                                 // c:229
-    0                                                                    // c:232
+// =====================================================================
+// static struct features module_features                            c:217 (regex.c)
+// =====================================================================
+
+use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::{features as features_t, module};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None, bn_size: 0,
+        cd_list: None, cd_size: 1,                                       // cotab[1]: regex-match
+        mf_list: None, mf_size: 0,
+        pd_list: None, pd_size: 0,
+        n_abstract: 0,
+    }))
 }
 
-/// Port of `features_()` from `Src/Modules/regex.c:236`. C body is
-/// `*features = featuresarray(m, &module_features); return 0;`.
-/// Static-link path: 0.
-pub fn features_() -> i32 {                                              // c:236
-    0                                                                    // c:240
+/// Port of `setup_()` from `Src/Modules/regex.c:229`.
+pub fn setup_(_m: *const module) -> i32 { 0 }                           // c:229-232
+
+/// Port of `features_()` from `Src/Modules/regex.c:236`.
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, module_features());
+    0
 }
 
-/// Port of `enables_()` from `Src/Modules/regex.c:244`. C body is
-/// `return handlefeatures(m, &module_features, enables);`.
-/// Static-link path: 0.
-pub fn enables_() -> i32 {                                               // c:244
-    0                                                                    // c:247
+/// Port of `enables_()` from `Src/Modules/regex.c:244`.
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_()` from `Src/Modules/regex.c:251`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn boot_() -> i32 {                                                  // c:251
-    0                                                                    // c:254
+/// Port of `boot_()` from `Src/Modules/regex.c:251`.
+pub fn boot_(_m: *const module) -> i32 { 0 }                            // c:251-254
+
+/// Port of `cleanup_()` from `Src/Modules/regex.c:258`.
+pub fn cleanup_(m: *const module) -> i32 {
+    setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `cleanup_()` from `Src/Modules/regex.c:258`. C body is
-/// `return setfeatureenables(m, &module_features, NULL);`.
-pub fn cleanup_() -> i32 {                                               // c:258
-    0                                                                    // c:261
-}
+/// Port of `finish_()` from `Src/Modules/regex.c:265`.
+pub fn finish_(_m: *const module) -> i32 { 0 }                          // c:265-268
 
-/// Port of `finish_()` from `Src/Modules/regex.c:265`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn finish_() -> i32 {                                                // c:265
-    0                                                                    // c:268
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["C:regex-match".to_string()]
 }
+fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() { *enables = Some(getfeatureenables(m, f)); }
+    else if let Some(e) = enables.as_ref() { return setfeatureenables(m, f, Some(e)); }
+    0
+}
+fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    vec![0; (g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract) as usize]
+}
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }

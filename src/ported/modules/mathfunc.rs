@@ -341,41 +341,77 @@ mod tests {
     }
 }
 
-/// Port of `setup_()` from `Src/Modules/mathfunc.c:548`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn setup_() -> i32 {                                                 // c:548
-    0                                                                    // c:551
+// =====================================================================
+// static struct mathfunc mftab[]                                    c:497
+// static struct features module_features                            c:540
+// =====================================================================
+
+use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::{features as features_t, module};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None, bn_size: 0,
+        cd_list: None, cd_size: 0,
+        mf_list: None, mf_size: 33,                                      // c:543 mftab[33]
+        pd_list: None, pd_size: 0,
+        n_abstract: 0,
+    }))
 }
 
-/// Port of `features_()` from `Src/Modules/mathfunc.c:555`. C body
-/// is `*features = featuresarray(m, &module_features); return 0;`.
-/// Static-link path: the math-function table is build-time-fixed
-/// and dispatched directly from the math evaluator.
-pub fn features_() -> i32 {                                              // c:555
+const MATH_FN_NAMES: &[&str] = &[
+    "abs", "acos", "acosh", "asin", "asinh", "atan", "atanh", "cbrt",
+    "ceil", "cos", "cosh", "erf", "erfc", "exp", "expm1", "fabs",
+    "float", "floor", "gamma", "int", "j0", "j1", "lgamma", "log",
+    "log10", "log1p", "log2", "logb", "sin", "sinh", "sqrt", "tan", "tanh",
+];
+
+/// Port of `setup_()` from `Src/Modules/mathfunc.c:548`.
+pub fn setup_(_m: *const module) -> i32 { 0 }                           // c:548-551
+
+/// Port of `features_()` from `Src/Modules/mathfunc.c:555`.
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, module_features());                    // c:557
     0                                                                    // c:559
 }
 
-/// Port of `enables_()` from `Src/Modules/mathfunc.c:563`. C body
-/// is `return handlefeatures(m, &module_features, enables);`.
-pub fn enables_() -> i32 {                                               // c:563
-    0                                                                    // c:566
+/// Port of `enables_()` from `Src/Modules/mathfunc.c:563`.
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, module_features(), enables)                       // c:566
 }
 
-/// Port of `boot_()` from `Src/Modules/mathfunc.c:570`. C body is
-/// `return 0;` (UNUSED `Module m`).
-pub fn boot_() -> i32 {                                                  // c:570
-    0                                                                    // c:573
+/// Port of `boot_()` from `Src/Modules/mathfunc.c:570`.
+pub fn boot_(_m: *const module) -> i32 { 0 }                            // c:570-573
+
+/// Port of `cleanup_()` from `Src/Modules/mathfunc.c:577`.
+/// C body: `return setfeatureenables(m, &module_features, NULL);`
+pub fn cleanup_(m: *const module) -> i32 {
+    setfeatureenables(m, module_features(), None)                       // c:580
 }
 
-/// Port of `cleanup_()` from `Src/Modules/mathfunc.c:577`. C body
-/// is `return setfeatureenables(m, &module_features, NULL);`.
-/// Static-link path: math fns are never disabled, so 0.
-pub fn cleanup_() -> i32 {                                               // c:577
-    0                                                                    // c:580
+/// Port of `finish_()` from `Src/Modules/mathfunc.c:584`.
+pub fn finish_(_m: *const module) -> i32 { 0 }                          // c:584-587
+
+// `featuresarray` — Src/module.c:3275.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    MATH_FN_NAMES.iter().map(|n| format!("f:{}", n)).collect()
 }
 
-/// Port of `finish_()` from `Src/Modules/mathfunc.c:584`. C body
-/// is `return 0;` (UNUSED `Module m`).
-pub fn finish_() -> i32 {                                                // c:584
-    0                                                                    // c:587
+// `handlefeatures` — Src/module.c:3370.
+fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
+    if enables.is_none() {
+        *enables = Some(getfeatureenables(m, f));
+    } else if let Some(e) = enables.as_ref() {
+        return setfeatureenables(m, f, Some(e));
+    }
+    0
 }
+fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
+    let g = f.lock().unwrap();
+    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
+    vec![0; total as usize]
+}
+fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }
