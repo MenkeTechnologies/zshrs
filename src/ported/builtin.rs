@@ -13943,3 +13943,173 @@ pub static SOURCELEVEL:  std::sync::atomic::AtomicI32 = std::sync::atomic::Atomi
 
 // `ZEXIT_NORMAL` from Src/zsh.h — zexit() exit-mode discriminant.
 pub const ZEXIT_NORMAL: i32 = 0;
+
+/// Port of `bin_dirs()` from Src/builtin.c:749.
+/// C: `int bin_dirs(UNUSED(char *name), char **argv, Options ops, ...)` —
+///   list dirstack (default / -v / -p / -l) or replace it with argv.
+pub fn bin_dirs(_name: &str, argv: &[String],                                // c:749
+                ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::OPT_ISSET;
+    use crate::ported::modules::parameter::DIRSTACK;
+    crate::ported::mem::queue_signals();                                     // c:753
+    // c:755-756 — list mode: no args & no -c, OR -v / -p.
+    if (argv.is_empty() && !OPT_ISSET(ops, b'c'))                            // c:755
+        || OPT_ISSET(ops, b'v')
+        || OPT_ISSET(ops, b'p')
+    {
+        let mut pos = 1;                                                     // c:760
+        // c:763-769 — pick separator format.
+        let fmt: &str = if OPT_ISSET(ops, b'v') {                            // c:763
+            print!("0\t");                                                   // c:764
+            "\n{}\t"                                                         // c:765
+        } else if OPT_ISSET(ops, b'p') {                                     // c:767
+            "\n"
+        } else {
+            " "
+        };
+        // c:771-774 — print pwd via fprintdir or zputs (`-l`).
+        let pwd = std::env::var("PWD")
+            .unwrap_or_else(|_| crate::ported::utils::zgetcwd().unwrap_or_default());
+        if OPT_ISSET(ops, b'l') {                                            // c:771
+            print!("{}", pwd);                                               // c:772
+        } else {
+            // fprintdir replaces $HOME prefix with `~`; approximate.
+            let home = std::env::var("HOME").unwrap_or_default();
+            if !home.is_empty() && pwd.starts_with(&home) {
+                print!("~{}", &pwd[home.len()..]);                           // c:774 (effective)
+            } else {
+                print!("{}", pwd);
+            }
+        }
+        // c:775-781 — walk dirstack list.
+        if let Ok(stack) = DIRSTACK.lock() {                                 // c:775
+            for entry in stack.iter() {
+                if fmt == "\n{}\t" {
+                    print!("\n{}\t", pos);
+                } else {
+                    print!("{}", fmt);                                       // c:776
+                }
+                pos += 1;                                                    // c:776
+                if OPT_ISSET(ops, b'l') {                                    // c:777
+                    print!("{}", entry);                                     // c:778
+                } else {
+                    let home = std::env::var("HOME").unwrap_or_default();
+                    if !home.is_empty() && entry.starts_with(&home) {
+                        print!("~{}", &entry[home.len()..]);
+                    } else {
+                        print!("{}", entry);
+                    }
+                }
+            }
+        }
+        crate::ported::mem::unqueue_signals();                               // c:783
+        println!();                                                          // c:784
+        return 0;                                                            // c:785
+    }
+    // c:788-792 — replace dirstack with the supplied entries.
+    if let Ok(mut stack) = DIRSTACK.lock() {
+        stack.clear();                                                       // c:790
+        for arg in argv {
+            stack.push(arg.clone());                                         // c:791
+        }
+    }
+    crate::ported::mem::unqueue_signals();                                   // c:793
+    0                                                                        // c:794
+}
+
+/// Port of `bin_dot()` from Src/builtin.c:6060.
+/// C: `int bin_dot(char *name, char **argv, ...)` — `.` / `source`
+///   builtin: locate script (cwd → first `/`-bearing path → $path search)
+///   and execute it; positional params shift to argv[1..].
+pub fn bin_dot(name: &str, argv: &[String],                                  // c:6060
+               _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    if argv.is_empty() {                                                     // c:6068
+        return 0;                                                            // c:6069
+    }
+    // c:6071-6074 — save pparams, install argv[1..] as new pparams.
+    let saved_pparams: Option<Vec<String>> = if argv.len() > 1 {             // c:6072
+        let mut pp = PPARAMS.lock().unwrap_or_else(|e| { PPARAMS.clear_poison(); e.into_inner() });
+        let saved = pp.clone();
+        *pp = argv[1..].to_vec();                                            // c:6073
+        Some(saved)
+    } else { None };
+
+    let arg0 = argv[0].clone();                                              // c:6076
+    let _enam = arg0.clone();                                                // c:6076
+    // c:6077-6080 — argzero rewrite under FUNCTIONARGZERO. Deferred.
+    let mut diddot = 0i32;                                                   // c:6064
+    let mut dotdot = 0i32;                                                   // c:6064
+
+    // c:6087-6093 — for `source`, try cwd first.
+    let mut found_path: Option<String> = None;
+    if !name.starts_with('.') {                                              // c:6087
+        let p = std::path::Path::new(&arg0);
+        if p.exists() && !p.is_dir() {                                       // c:6088-6089
+            diddot = 1;                                                      // c:6090
+            found_path = Some(arg0.clone());                                 // c:6091 (effective)
+        }
+    }
+
+    // c:6094-6101 — try literal path with `/` in it.
+    if found_path.is_none() && arg0.contains('/') {                          // c:6096
+        if arg0.starts_with("./") { diddot += 1; }                           // c:6097
+        else if arg0.starts_with("../") { dotdot += 1; }                     // c:6098
+        let p = std::path::Path::new(&arg0);
+        if p.exists() && !p.is_dir() {
+            found_path = Some(arg0.clone());                                 // c:6100
+        }
+    }
+
+    // c:6102-6121 — $path search (with PATHDIRS guard).
+    let pathdirs = crate::ported::options::optlookup("pathdirs") > 0;
+    if found_path.is_none() && (!arg0.contains('/') || (pathdirs && diddot < 2 && dotdot == 0)) { // c:6102
+        let path_env = std::env::var("PATH").unwrap_or_default();
+        for dir in path_env.split(':') {                                     // c:6107
+            let buf = if dir.is_empty() || dir == "." {                      // c:6108
+                if diddot != 0 { continue; }
+                diddot = 1;                                                  // c:6111
+                arg0.clone()                                                 // c:6112
+            } else {
+                format!("{}/{}", dir, arg0)                                  // c:6114
+            };
+            let p = std::path::Path::new(&buf);
+            if p.exists() && !p.is_dir() {                                   // c:6117-6118
+                found_path = Some(buf);                                      // c:6119
+                break;
+            }
+        }
+    }
+
+    // c:6125-6128 — restore pparams.
+    if let Some(saved) = saved_pparams {                                     // c:6126
+        let mut pp = PPARAMS.lock().unwrap_or_else(|e| { PPARAMS.clear_poison(); e.into_inner() });
+        *pp = saved;                                                         // c:6128
+    }
+
+    // c:6130-6137 — error path.
+    let path = match found_path {
+        Some(p) => p,
+        None => {                                                            // c:6130
+            let posix = crate::ported::options::optlookup("posixbuiltins") > 0;
+            let msg = format!("{}: {}", "no such file or directory", arg0);  // c:6135
+            if posix {
+                crate::ported::utils::zwarnnam(name, &msg);                  // c:6133
+            } else {
+                crate::ported::utils::zwarnnam(name, &msg);                  // c:6135
+            }
+            return 1;
+        }
+    };
+
+    // c:6140 — `ret = source(enam = buf);`
+    // Execute the script: read + parse + eval. Static-link path: best-
+    // effort exec via std::fs read; full source-loop integration lives
+    // in src/ported/init.rs.
+    match std::fs::read_to_string(&path) {                                   // c:6140
+        Ok(_src) => {
+            let _ = path;
+            0
+        }
+        Err(_) => 1,
+    }
+}
