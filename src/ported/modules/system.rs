@@ -1137,34 +1137,35 @@ mod tests {
     /// Verifies `bin_zsystem_supports` per c:794-800.
     #[test]
     fn bin_zsystem_supports_self() {
-        let mut exec = ShellExecutor::new();
-        assert_eq!(bin_zsystem_supports(&mut exec, "zsystem",
-            &["supports".to_string()]), 0);
+        let ops = empty_ops();
+        assert_eq!(bin_zsystem_supports("zsystem",
+            &["supports".to_string()], &ops, 0), 0);
         #[cfg(unix)]
-        assert_eq!(bin_zsystem_supports(&mut exec, "zsystem",
-            &["flock".to_string()]), 0);
-        assert_eq!(bin_zsystem_supports(&mut exec, "zsystem",
-            &["nosuchfeature".to_string()]), 1);
+        assert_eq!(bin_zsystem_supports("zsystem",
+            &["flock".to_string()], &ops, 0), 0);
+        assert_eq!(bin_zsystem_supports("zsystem",
+            &["nosuchfeature".to_string()], &ops, 0), 1);
     }
 
     /// Verifies `bin_zsystem_supports` arg-count guards (c:784-791).
     #[test]
     fn bin_zsystem_supports_arg_count() {
-        let mut exec = ShellExecutor::new();
-        assert_eq!(bin_zsystem_supports(&mut exec, "zsystem", &[]), 255);
-        assert_eq!(bin_zsystem_supports(&mut exec, "zsystem",
-            &["a".to_string(), "b".to_string()]), 255);
+        let ops = empty_ops();
+        assert_eq!(bin_zsystem_supports("zsystem", &[], &ops, 0), 255);
+        assert_eq!(bin_zsystem_supports("zsystem",
+            &["a".to_string(), "b".to_string()], &ops, 0), 255);
     }
 
     /// Verifies `bin_zsystem` dispatches to the right subcommand
     /// (c:809/811/814).
     #[test]
     fn bin_zsystem_dispatch() {
-        assert_eq!(bin_zsystem(&mut exec, "zsystem",
-            &["supports".to_string(), "supports".to_string()]), 0);
-        assert_eq!(bin_zsystem(&mut exec, "zsystem",
-            &["unknown".to_string()]), 1);
-        assert_eq!(bin_zsystem(&mut exec, "zsystem", &[]), 1);
+        let ops = empty_ops();
+        assert_eq!(bin_zsystem("zsystem",
+            &["supports".to_string(), "supports".to_string()], &ops, 0), 0);
+        assert_eq!(bin_zsystem("zsystem",
+            &["unknown".to_string()], &ops, 0), 1);
+        assert_eq!(bin_zsystem("zsystem", &[], &ops, 0), 1);
     }
 
     /// Verifies `errnosgetfn` returns the dup'd table (c:835).
@@ -1205,28 +1206,43 @@ mod tests {
         assert!(names.contains(&"procsubstpid"));
     }
 
+    fn empty_ops() -> crate::ported::zsh_h::options {
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                  argscount: 0, argsalloc: 0 }
+    }
+    fn ops_with(args: &[(u8, &str)]) -> crate::ported::zsh_h::options {
+        let mut ops = empty_ops();
+        for (idx, (opt, val)) in args.iter().enumerate() {
+            ops.ind[*opt as usize] = (idx + 4) as u8;
+            ops.args.push(val.to_string());
+            ops.argscount = (idx + 1) as i32;
+            ops.argsalloc = (idx + 1) as i32;
+        }
+        ops
+    }
+
     /// Verifies `bin_syserror` writes message to errvar with prefix
     /// (c:533-536).
     #[test]
     fn bin_syserror_to_errvar_with_prefix() {
-        let mut exec = ShellExecutor::new();
-        let r = bin_syserror(&mut exec, "syserror",
-            &["-e".to_string(), "myerr".to_string(),
-              "-p".to_string(), "PFX:".to_string(),
-              "ENOENT".to_string()]);
+        let ops = ops_with(&[(b'e', "myerr"), (b'p', "PFX:")]);
+        let r = bin_syserror("syserror",
+            &["ENOENT".to_string()], &ops, 0);
         assert_eq!(r, 0);
-        let val = exec.variables.get("myerr").cloned().unwrap_or_default();
-        assert!(val.starts_with("PFX:"));
+        // Side-effect param now flows through ksh93::setsparam env-var
+        // bridge — read back via std::env.
+        let val = std::env::var("myerr").unwrap_or_default();
+        assert!(val.starts_with("PFX:"), "expected PFX: prefix, got {:?}", val);
     }
 
     /// Verifies `bin_syserror` returns 2 for unknown errno name
     /// (c:527-528).
     #[test]
     fn bin_syserror_unknown_name_returns_2() {
-        let mut exec = ShellExecutor::new();
-        assert_eq!(bin_syserror(&mut exec, "syserror",
-            &["-e".to_string(), "myerr".to_string(),
-              "ENOTAREALERROR".to_string()]), 2);
+        let ops = ops_with(&[(b'e', "myerr2")]);
+        assert_eq!(bin_syserror("syserror",
+            &["ENOTAREALERROR".to_string()], &ops, 0), 2);
     }
 
     /// Verifies `bin_sysopen` opens a file and stores fd in the
@@ -1236,13 +1252,14 @@ mod tests {
     fn bin_sysopen_writes_fd_to_var() {
         let dir = TempDir::new().unwrap();
         let p = dir.path().join("a.txt");
-        let mut exec = ShellExecutor::new();
-        let r = bin_sysopen(&mut exec, "sysopen",
-            &["-w".to_string(), "-o".to_string(), "creat".to_string(),
-              "-u".to_string(), "MYFD".to_string(),
-              p.to_str().unwrap().to_string()]);
+        let ops = ops_with(&[(b'u', "MYFD"), (b'o', "creat")]);
+        // Set the -w flag manually (no arg).
+        let mut ops = ops;
+        ops.ind[b'w' as usize] = 1;
+        let r = bin_sysopen("sysopen",
+            &[p.to_str().unwrap().to_string()], &ops, 0);
         assert_eq!(r, 0);
-        let fd_str = exec.variables.get("MYFD").cloned().unwrap_or_default();
+        let fd_str = std::env::var("MYFD").unwrap_or_default();
         let fd: i32 = fd_str.parse().expect("MYFD should be integer");
         assert!(fd >= 10);   // movefd lifts to 10+
         unsafe { libc::close(fd); }
@@ -1261,11 +1278,8 @@ mod tests {
         let path_c = std::ffi::CString::new(p.to_str().unwrap()).unwrap();
         let fd = unsafe { libc::open(path_c.as_ptr(), libc::O_RDONLY) };
         assert!(fd >= 0);
-        let mut exec = ShellExecutor::new();
-        let r = bin_sysseek(&mut exec, "sysseek",
-            &["-u".to_string(), fd.to_string(),
-              "-w".to_string(), "start".to_string(),
-              "5".to_string()]);
+        let ops = ops_with(&[(b'u', &fd.to_string()), (b'w', "start")]);
+        let r = bin_sysseek("sysseek", &["5".to_string()], &ops, 0);
         assert_eq!(r, 0);
         unsafe { libc::close(fd); }
     }

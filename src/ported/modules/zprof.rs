@@ -555,8 +555,11 @@ mod tests {
         NCALLS.store(1, Ordering::SeqCst);
         NARCS.store(1, Ordering::SeqCst);
 
-        let mut exec = ShellExecutor::new();
-        let r = bin_zprof(&mut exec, "zprof", &["-c".to_string()]);
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                argscount: 0, argsalloc: 0 };
+        ops.ind[b'c' as usize] = 1;
+        let r = bin_zprof("zprof", &["-c".to_string()], &ops, 0);
         assert_eq!(r, 0);
         assert!(CALLS.lock().unwrap().is_empty());
         assert!(ARCS.lock().unwrap().is_empty());

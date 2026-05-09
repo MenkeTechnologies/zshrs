@@ -353,35 +353,48 @@ mod tests {
         assert!((0..1_000_000_000).contains(&nanos));
     }
 
+    /// Build an `Options` struct populated for the canonical
+    /// `output_strftime(name, argv, ops, func)` signature, with
+    /// flag `flag` set and (optionally) -s SCALAR slot encoded.
+    fn ops_for(flags: &[u8], scalar: Option<&str>) -> crate::ported::zsh_h::options {
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                argscount: 0, argsalloc: 0 };
+        for f in flags { ops.ind[*f as usize] = 1; }
+        if let Some(s) = scalar {
+            ops.ind[b's' as usize] = 4;
+            ops.args.push(s.to_string());
+            ops.argscount = 1;
+            ops.argsalloc = 1;
+        }
+        ops
+    }
+
     #[test]
     fn test_output_strftime_nanoseconds() {
-        let mut e = fresh_exec();
-        let mut ops = [false; 256];
-        ops[b'n' as usize] = true;
-        let r = output_strftime(&mut e, "strftime", &["%9N", "1700000000", "123456789"],
-                                 &ops, Some("OUT"));
+        let ops = ops_for(&[b'n'], Some("OUT"));
+        let r = output_strftime("strftime",
+            &["%9N", "1700000000", "123456789"], &ops, 0);
         assert_eq!(r, 0);
-        assert_eq!(e.variables.get("OUT").map(|s| s.as_str()), Some("123456789"));
-        let r = output_strftime(&mut e, "strftime", &["%3N", "1700000000", "123456789"],
-                                 &ops, Some("OUT"));
+        assert_eq!(std::env::var("OUT").as_deref(), Ok("123456789"));
+        let r = output_strftime("strftime",
+            &["%3N", "1700000000", "123456789"], &ops, 0);
         assert_eq!(r, 0);
-        assert_eq!(e.variables.get("OUT").map(|s| s.as_str()), Some("123"));
+        assert_eq!(std::env::var("OUT").as_deref(), Ok("123"));
     }
 
     #[test]
     fn test_output_strftime_to_scalar() {
-        let mut e = fresh_exec();
-        let mut ops = [false; 256];
-        ops[b'n' as usize] = true; // suppress newline
-        let r = output_strftime(&mut e, "strftime", &["%s", "1700000000"], &ops, Some("OUT"));
+        let ops = ops_for(&[b'n'], Some("OUT2"));
+        let r = output_strftime("strftime", &["%s", "1700000000"], &ops, 0);
         assert_eq!(r, 0);
-        assert_eq!(e.variables.get("OUT").map(|s| s.as_str()), Some("1700000000"));
+        assert_eq!(std::env::var("OUT2").as_deref(), Ok("1700000000"));
     }
 
     #[test]
     fn test_output_strftime_format_required() {
-        let mut e = fresh_exec();
-        let r = output_strftime(&mut e, "strftime", &[], &[false; 256], None);
+        let ops = ops_for(&[], None);
+        let r = output_strftime("strftime", &[], &ops, 0);
         assert_eq!(r, 1);
     }
 }

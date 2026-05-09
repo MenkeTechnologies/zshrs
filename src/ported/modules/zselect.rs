@@ -356,6 +356,15 @@ mod tests {
 
     fn fresh_exec() -> ShellExecutor { ShellExecutor::new() }
 
+    fn empty_ops_zs() -> crate::ported::zsh_h::options {
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                  argscount: 0, argsalloc: 0 }
+    }
+    fn s(args: &[&str]) -> Vec<String> {
+        args.iter().map(|a| a.to_string()).collect()
+    }
+
     #[test]
     fn empty_args_with_zero_timeout_returns_one() {
         // C zsh body: with `-t 0` and no fds, select() returns 0
@@ -363,29 +372,29 @@ mod tests {
         // path). Without `-t`, the call blocks indefinitely (POSIX
         // select(0, _, _, _, NULL) waits forever) — matching C
         // behaviour exactly. Tests therefore always pass `-t 0`.
-        let mut e = fresh_exec();
-        let r = bin_zselect(&mut e, &["-t", "0"]);
+        let ops = empty_ops_zs();
+        let r = bin_zselect("zselect", &s(&["-t", "0"]), &ops, 0);
         assert_eq!(r, 1);
     }
 
     #[test]
     fn invalid_array_name_returns_one() {
-        let mut e = fresh_exec();
-        let r = bin_zselect(&mut e, &["-a", "1bad"]);
+        let ops = empty_ops_zs();
+        let r = bin_zselect("zselect", &s(&["-a", "1bad"]), &ops, 0);
         assert_eq!(r, 1);
     }
 
     #[test]
     fn timeout_garbage_returns_one() {
-        let mut e = fresh_exec();
-        let r = bin_zselect(&mut e, &["-t", "100x"]);
+        let ops = empty_ops_zs();
+        let r = bin_zselect("zselect", &s(&["-t", "100x"]), &ops, 0);
         assert_eq!(r, 1);
     }
 
     #[test]
     fn no_arg_after_a_returns_one() {
-        let mut e = fresh_exec();
-        let r = bin_zselect(&mut e, &["-a"]);
+        let ops = empty_ops_zs();
+        let r = bin_zselect("zselect", &s(&["-a"]), &ops, 0);
         assert_eq!(r, 1);
     }
 

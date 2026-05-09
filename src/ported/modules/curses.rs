@@ -1626,6 +1626,19 @@ mod tests {
 
     static TEST_SERIAL: StdMutex<()> = StdMutex::new(());
 
+    /// Empty Options struct for test invocations of bin_zcurses (whose
+    /// canonical sig per Src/Modules/curses.c:1568 takes Options).
+    /// All zccmd_* subcommands parse their own opts inline, so the
+    /// dispatcher passes through a no-op ops bag.
+    #[allow(non_upper_case_globals)]
+    const _test_ops_: crate::ported::zsh_h::options =
+        crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+
     fn reset() -> std::sync::MutexGuard<'static, ()> {
         let guard = TEST_SERIAL.lock().unwrap_or_else(|e| {
             TEST_SERIAL.clear_poison();
@@ -1728,7 +1741,7 @@ mod tests {
         let _g = reset();
         let mut s = ShellExecutor::new();
         let init_args: Vec<String> = vec!["init".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &init_args, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &init_args, &_test_ops_, 0), 0);
         assert!(zcurses_getwindowbyname("stdscr"));
         let add_args: Vec<String> = vec![
             "addwin".into(),
@@ -1738,10 +1751,10 @@ mod tests {
             "0".into(),
             "0".into(),
         ];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &add_args, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &add_args, &_test_ops_, 0), 0);
         assert!(zcurses_getwindowbyname("win1"));
         let del_args: Vec<String> = vec!["delwin".into(), "win1".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &del_args, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &del_args, &_test_ops_, 0), 0);
         assert!(!zcurses_getwindowbyname("win1"));
     }
 
@@ -1757,14 +1770,14 @@ mod tests {
             "0".into(),
             "0".into(),
         ];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &add_args, 0), 1);
+        assert_eq!(bin_zcurses("zcurses", &add_args, &_test_ops_, 0), 1);
     }
 
     #[test]
     fn test_bin_zcurses_addwin_duplicate_rejected() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let add_args: Vec<String> = vec![
             "addwin".into(),
             "win1".into(),
@@ -1773,10 +1786,10 @@ mod tests {
             "0".into(),
             "0".into(),
         ];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &add_args, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &add_args, &_test_ops_, 0), 0);
         // Second add of same name fails — zcurses_validate_window
         // sets ZCURSES_EDEFINED.
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &add_args, 0), 1);
+        assert_eq!(bin_zcurses("zcurses", &add_args, &_test_ops_, 0), 1);
         assert_eq!(zc_errno_get(), ZCURSES_EDEFINED);
     }
 
@@ -1784,9 +1797,9 @@ mod tests {
     fn test_bin_zcurses_delwin_undefined_rejected() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let del_args: Vec<String> = vec!["delwin".into(), "ghost".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &del_args, 0), 1);
+        assert_eq!(bin_zcurses("zcurses", &del_args, &_test_ops_, 0), 1);
         assert_eq!(zc_errno_get(), ZCURSES_EUNDEFINED);
     }
 
@@ -1794,19 +1807,19 @@ mod tests {
     fn test_bin_zcurses_delwin_stdscr_rejected() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let del_args: Vec<String> = vec!["delwin".into(), "stdscr".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &del_args, 0), 1);
+        assert_eq!(bin_zcurses("zcurses", &del_args, &_test_ops_, 0), 1);
     }
 
     #[test]
     fn test_bin_zcurses_too_few_args() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         // addwin needs 5 args but we only give 2.
         let bad_args: Vec<String> = vec!["addwin".into(), "win1".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &bad_args, 0), 1);
+        assert_eq!(bin_zcurses("zcurses", &bad_args, &_test_ops_, 0), 1);
     }
 
     #[test]
@@ -1814,7 +1827,7 @@ mod tests {
         let _g = reset();
         let mut s = ShellExecutor::new();
         assert_eq!(
-            bin_zcurses(&mut s, "zcurses", &["nope".into()], 0),
+            bin_zcurses("zcurses", &["nope".into()], &_test_ops_, 0),
             1
         );
     }
@@ -1822,22 +1835,21 @@ mod tests {
     #[test]
     fn test_bin_zcurses_no_args() {
         let _g = reset();
-        let mut s = ShellExecutor::new();
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &[], 0), 1);
+        assert_eq!(bin_zcurses("zcurses", &[], &_test_ops_, 0), 1);
     }
 
     #[test]
     fn test_zccmd_char_writes_into_buffer() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let add: Vec<String> = vec![
             "addwin".into(), "w".into(), "5".into(), "10".into(),
             "0".into(), "0".into(),
         ];
-        bin_zcurses(&mut s, "zcurses", &add, 0);
+        bin_zcurses("zcurses", &add, &_test_ops_, 0);
         let ch: Vec<String> = vec!["char".into(), "w".into(), "X".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &ch, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &ch, &_test_ops_, 0), 0);
         let wins = windows_lock().lock().unwrap();
         assert_eq!(wins.get("w").unwrap().buffer[0][0], 'X');
         assert_eq!(wins.get("w").unwrap().cursor_x, 1);
@@ -1847,14 +1859,14 @@ mod tests {
     fn test_zccmd_border_draws_box() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let add: Vec<String> = vec![
             "addwin".into(), "box".into(), "3".into(), "5".into(),
             "0".into(), "0".into(),
         ];
-        bin_zcurses(&mut s, "zcurses", &add, 0);
+        bin_zcurses("zcurses", &add, &_test_ops_, 0);
         assert_eq!(
-            bin_zcurses(&mut s, "zcurses", &["border".into(), "box".into()], 0),
+            bin_zcurses("zcurses", &["border".into(), "box".into()], &_test_ops_, 0),
             0
         );
         let wins = windows_lock().lock().unwrap();
@@ -1871,20 +1883,20 @@ mod tests {
     fn test_zccmd_scroll_on_off() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let add: Vec<String> = vec![
             "addwin".into(), "sw".into(), "5".into(), "10".into(),
             "0".into(), "0".into(),
         ];
-        bin_zcurses(&mut s, "zcurses", &add, 0);
+        bin_zcurses("zcurses", &add, &_test_ops_, 0);
         let on: Vec<String> = vec!["scroll".into(), "sw".into(), "on".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &on, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &on, &_test_ops_, 0), 0);
         assert_eq!(
             windows_lock().lock().unwrap().get("sw").unwrap().flags & ZCWF_SCROLL,
             ZCWF_SCROLL
         );
         let off: Vec<String> = vec!["scroll".into(), "sw".into(), "off".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &off, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &off, &_test_ops_, 0), 0);
         assert_eq!(
             windows_lock().lock().unwrap().get("sw").unwrap().flags & ZCWF_SCROLL,
             0
@@ -1895,16 +1907,16 @@ mod tests {
     fn test_zccmd_scroll_integer_advances_buffer() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let add: Vec<String> = vec![
             "addwin".into(), "sw".into(), "3".into(), "5".into(),
             "0".into(), "0".into(),
         ];
-        bin_zcurses(&mut s, "zcurses", &add, 0);
+        bin_zcurses("zcurses", &add, &_test_ops_, 0);
         // Pre-fill row 0 with 'A' to detect the shift.
         windows_lock().lock().unwrap().get_mut("sw").unwrap().buffer[0][0] = 'A';
         let scr: Vec<String> = vec!["scroll".into(), "sw".into(), "1".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &scr, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &scr, &_test_ops_, 0), 0);
         // Row 0 'A' shifted out — bottom row is fresh spaces.
         let wins = windows_lock().lock().unwrap();
         assert_eq!(wins.get("sw").unwrap().buffer[0][0], ' ');
@@ -1914,14 +1926,14 @@ mod tests {
     fn test_zccmd_timeout_stores_value() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let add: Vec<String> = vec![
             "addwin".into(), "tw".into(), "5".into(), "10".into(),
             "0".into(), "0".into(),
         ];
-        bin_zcurses(&mut s, "zcurses", &add, 0);
+        bin_zcurses("zcurses", &add, &_test_ops_, 0);
         let to: Vec<String> = vec!["timeout".into(), "tw".into(), "100".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &to, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &to, &_test_ops_, 0), 0);
         assert_eq!(
             windows_lock().lock().unwrap().get("tw").unwrap().timeout_ms,
             100
@@ -1932,16 +1944,16 @@ mod tests {
     fn test_zccmd_position_writes_array() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let add: Vec<String> = vec![
             "addwin".into(), "pw".into(), "10".into(), "20".into(),
             "2".into(), "3".into(),
         ];
-        bin_zcurses(&mut s, "zcurses", &add, 0);
+        bin_zcurses("zcurses", &add, &_test_ops_, 0);
         let mv: Vec<String> = vec!["move".into(), "pw".into(), "5".into(), "7".into()];
-        bin_zcurses(&mut s, "zcurses", &mv, 0);
+        bin_zcurses("zcurses", &mv, &_test_ops_, 0);
         let pos: Vec<String> = vec!["position".into(), "pw".into(), "result".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &pos, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &pos, &_test_ops_, 0), 0);
         let arr = s.arrays.get("result").unwrap();
         assert_eq!(arr, &vec![
             "5".to_string(),  // cursor_y
@@ -1957,18 +1969,18 @@ mod tests {
     fn test_zccmd_querychar_writes_reply() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let add: Vec<String> = vec![
             "addwin".into(), "qw".into(), "5".into(), "10".into(),
             "0".into(), "0".into(),
         ];
-        bin_zcurses(&mut s, "zcurses", &add, 0);
+        bin_zcurses("zcurses", &add, &_test_ops_, 0);
         let chr: Vec<String> = vec!["char".into(), "qw".into(), "Z".into()];
-        bin_zcurses(&mut s, "zcurses", &chr, 0);
+        bin_zcurses("zcurses", &chr, &_test_ops_, 0);
         let mv: Vec<String> = vec!["move".into(), "qw".into(), "0".into(), "0".into()];
-        bin_zcurses(&mut s, "zcurses", &mv, 0);
+        bin_zcurses("zcurses", &mv, &_test_ops_, 0);
         let q: Vec<String> = vec!["querychar".into(), "qw".into(), "out".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &q, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &q, &_test_ops_, 0), 0);
         let arr = s.arrays.get("out").unwrap();
         assert_eq!(arr[0], "Z");
         assert_eq!(arr[1], "default");
@@ -1978,11 +1990,11 @@ mod tests {
     fn test_zccmd_touch_validates_each() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let touch_ok: Vec<String> = vec!["touch".into(), "stdscr".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &touch_ok, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &touch_ok, &_test_ops_, 0), 0);
         let touch_bad: Vec<String> = vec!["touch".into(), "ghost".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &touch_bad, 0), 1);
+        assert_eq!(bin_zcurses("zcurses", &touch_bad, &_test_ops_, 0), 1);
         assert_eq!(zc_errno_get(), ZCURSES_EUNDEFINED);
     }
 
@@ -1990,9 +2002,9 @@ mod tests {
     fn test_zccmd_resize_changes_stdscr() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let rs: Vec<String> = vec!["resize".into(), "30".into(), "100".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &rs, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &rs, &_test_ops_, 0), 0);
         let wins = windows_lock().lock().unwrap();
         let stdscr = wins.get("stdscr").unwrap();
         assert_eq!(stdscr.rows, 30);
@@ -2005,30 +2017,30 @@ mod tests {
     fn test_zccmd_resize_bad_third_arg() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let rs: Vec<String> = vec![
             "resize".into(),
             "30".into(),
             "100".into(),
             "junk".into(),
         ];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &rs, 0), 1);
+        assert_eq!(bin_zcurses("zcurses", &rs, &_test_ops_, 0), 1);
     }
 
     #[test]
     fn test_zccmd_mouse_motion_toggle() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         // Default mask should not have REPORT_MOUSE_POSITION.
         let mouse_on: Vec<String> = vec!["mouse".into(), "+motion".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &mouse_on, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &mouse_on, &_test_ops_, 0), 0);
         assert_ne!(
             *mouse_mask_lock().lock().unwrap() & REPORT_MOUSE_POSITION,
             0
         );
         let mouse_off: Vec<String> = vec!["mouse".into(), "-motion".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &mouse_off, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &mouse_off, &_test_ops_, 0), 0);
         assert_eq!(
             *mouse_mask_lock().lock().unwrap() & REPORT_MOUSE_POSITION,
             0
@@ -2039,14 +2051,14 @@ mod tests {
     fn test_zccmd_bg_with_color_pair() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let add: Vec<String> = vec![
             "addwin".into(), "bgw".into(), "5".into(), "10".into(),
             "0".into(), "0".into(),
         ];
-        bin_zcurses(&mut s, "zcurses", &add, 0);
+        bin_zcurses("zcurses", &add, &_test_ops_, 0);
         let bg: Vec<String> = vec!["bg".into(), "bgw".into(), "red/black".into()];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &bg, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &bg, &_test_ops_, 0), 0);
         // Pair was allocated; bg_chtype encodes the pair in the high bits.
         assert_ne!(
             windows_lock().lock().unwrap().get("bgw").unwrap().bg_chtype,
@@ -2058,7 +2070,7 @@ mod tests {
     fn test_addwin_with_parent() {
         let _g = reset();
         let mut s = ShellExecutor::new();
-        bin_zcurses(&mut s, "zcurses", &["init".into()], 0);
+        bin_zcurses("zcurses", &["init".into()], &_test_ops_, 0);
         let parent_args: Vec<String> = vec![
             "addwin".into(),
             "parent".into(),
@@ -2067,7 +2079,7 @@ mod tests {
             "0".into(),
             "0".into(),
         ];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &parent_args, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &parent_args, &_test_ops_, 0), 0);
         let child_args: Vec<String> = vec![
             "addwin".into(),
             "child".into(),
@@ -2077,7 +2089,7 @@ mod tests {
             "1".into(),
             "parent".into(),
         ];
-        assert_eq!(bin_zcurses(&mut s, "zcurses", &child_args, 0), 0);
+        assert_eq!(bin_zcurses("zcurses", &child_args, &_test_ops_, 0), 0);
         let wins = windows_lock().lock().unwrap();
         assert_eq!(wins.get("child").unwrap().parent.as_deref(), Some("parent"));
         assert_eq!(wins.get("parent").unwrap().children, vec!["child".to_string()]);
