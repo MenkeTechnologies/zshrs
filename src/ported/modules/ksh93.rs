@@ -610,14 +610,14 @@ fn getiparam(name: &str) -> i64 {                                            // 
 // Port of `setsparam()` from Src/params.c:3350.
 // C: `mod_export Param setsparam(char *s, char *val)` — assigns scalar
 //   `val` to param `s` (creates if absent).
-fn setsparam(name: &str, value: &str) {                                      // c:3350
+pub fn setsparam(name: &str, value: &str) {                                  // c:3350
     std::env::set_var(name, value);                                          // c:3360
 }
 
 // Port of `setiparam()` from Src/params.c:3765.
 // C: `mod_export Param setiparam(char *s, zlong val)` — assigns integer
 //   `val` to param `s`.
-fn setiparam(name: &str, value: i64) {                                       // c:3765
+pub fn setiparam(name: &str, value: i64) {                                   // c:3765
     std::env::set_var(name, value.to_string());                              // c:3777
 }
 

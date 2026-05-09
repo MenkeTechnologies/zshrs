@@ -118,20 +118,24 @@ pub fn liitem(_name: &str) -> Option<i32> {
 #[cfg(unix)]
 pub fn getlanginfo(name: &str) -> Option<String> {                       // c:396
     use std::ffi::CStr;
-    // c:413 — `if (name) elem = liitem(name); else elem = NULL;`
-    let elem = liitem(name)?;                                            // c:415
+    // c:403-404 — `nameu = dupstring(name); unmetafy(nameu, &len);`
+    let mut buf = name.as_bytes().to_vec();                              // c:403
+    crate::ported::utils::unmetafy(&mut buf);                            // c:404
+    let nameu = std::str::from_utf8(&buf).ok()?;
+    // c:411-415 — `if (name) elem = liitem(name); else elem = NULL;`
+    let elem = liitem(nameu)?;                                           // c:412
     unsafe {
-        // c:418 — `listr = nl_langinfo(*elem)`.
-        let ptr = libc::nl_langinfo(elem);                               // c:418
+        // c:416 — `listr = nl_langinfo(*elem)`.
+        let ptr = libc::nl_langinfo(elem);                               // c:416
         if ptr.is_null() {
-            return None;                                                 // c:425 PM_UNSET
+            return None;                                                 // c:421 PM_UNSET
         }
         let s = CStr::from_ptr(ptr).to_string_lossy().into_owned();
         if s.is_empty() {
-            // c:425 — empty result also flags PM_UNSET.
+            // c:421 — empty result also flags PM_UNSET.
             return None;
         }
-        Some(s)                                                          // c:419 dupstring
+        Some(s)                                                          // c:417 dupstring (no metafy — C uses dupstring not metafy here)
     }
 }
 
