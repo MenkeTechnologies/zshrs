@@ -13944,6 +13944,271 @@ pub static SOURCELEVEL:  std::sync::atomic::AtomicI32 = std::sync::atomic::Atomi
 // `ZEXIT_NORMAL` from Src/zsh.h — zexit() exit-mode discriminant.
 pub const ZEXIT_NORMAL: i32 = 0;
 
+/// Port of `bin_hash()` from Src/builtin.c:4234.
+/// C: `int bin_hash(char *name, char **argv, Options ops, ...)` —
+///   manage `cmdnamtab` (default) or `nameddirtab` (`-d`); `-r` empties,
+///   `-f` fills, `-L` sets PRINT_LIST, `-m` is a glob.
+pub fn bin_hash(name: &str, argv: &[String],                                 // c:4234
+                ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_ISSET, PRINT_LIST};
+    let mut returnval = 0i32;                                                // c:4239
+    let mut printflags = 0i32;                                               // c:4240
+    let dir_mode = OPT_ISSET(ops, b'd');                                     // c:4242
+
+    // c:4247-4263 — `-r` empty / `-f` fill (no other args).
+    if OPT_ISSET(ops, b'r') || OPT_ISSET(ops, b'f') {                        // c:4247
+        if !argv.is_empty() {                                                // c:4249
+            crate::ported::utils::zwarnnam("hash", "too many arguments");    // c:4250
+            return 1;                                                        // c:4251
+        }
+        if OPT_ISSET(ops, b'r') {                                            // c:4255
+            // Empty the table.
+            if dir_mode {
+                if let Ok(mut t) = crate::ported::hashnameddir::nameddir_table().lock() {
+                    t.clear();                                               // c:4256
+                }
+            } else {
+                // cmdnamtab clear lives in src/ported/hashtable.rs's
+                // CMDNAMTAB accessor; deferred to typed wireup.
+            }
+        }
+        if OPT_ISSET(ops, b'f') {                                            // c:4259
+            if dir_mode {
+                crate::ported::hashnameddir::fillnameddirtable();            // c:4260
+            } else {
+                // cmdnamtab fill = `rehash` (walk $PATH); deferred.
+            }
+        }
+        return 0;                                                            // c:4262
+    }
+
+    // c:4265 — `-L` enables PRINT_LIST.
+    if OPT_ISSET(ops, b'L') { printflags |= PRINT_LIST; }                    // c:4265
+
+    // c:4268-4273 — no args: list table.
+    if argv.is_empty() {                                                     // c:4268
+        crate::ported::mem::queue_signals();                                 // c:4269
+        if dir_mode {
+            if let Ok(t) = crate::ported::hashnameddir::nameddir_table().lock() {
+                for (n, d) in t.iter() {                                     // c:4270
+                    crate::ported::hashnameddir::printnameddirnode(n, d, printflags);
+                }
+            }
+        }
+        crate::ported::mem::unqueue_signals();                               // c:4271
+        return 0;                                                            // c:4272
+    }
+
+    // c:4276-4329 — name-list dispatch, both literal and -m glob.
+    crate::ported::mem::queue_signals();                                     // c:4276
+    let mut idx = 0;
+    while idx < argv.len() {                                                 // c:4277
+        let arg = &argv[idx];
+        idx += 1;
+        if OPT_ISSET(ops, b'm') {                                            // c:4279
+            // c:4280-4290 — glob-match path.
+            let pprog = crate::ported::pattern::patcompile(arg,              // c:4282
+                crate::ported::pattern::PatFlags::default()).ok();
+            if let Some(prog) = pprog {
+                if dir_mode {
+                    if let Ok(t) = crate::ported::hashnameddir::nameddir_table().lock() {
+                        for (n, d) in t.iter() {
+                            if crate::ported::pattern::pattry(&prog, n) {    // c:4286
+                                crate::ported::hashnameddir::printnameddirnode(n, d, printflags);
+                            }
+                        }
+                    }
+                }
+            } else {
+                crate::ported::utils::zwarnnam(name,
+                    &format!("bad pattern : {}", arg));                      // c:4292
+                returnval = 1;                                               // c:4293
+            }
+            continue;
+        }
+        // c:4297-4317 — literal name=value or name-only.
+        let (n, val) = match arg.find('=') {
+            Some(eq) => (&arg[..eq], Some(&arg[eq + 1..])),
+            None     => (arg.as_str(), None),
+        };
+        if let Some(v) = val {                                               // c:4302
+            // Define entry.
+            if dir_mode {                                                    // c:4302
+                // c:4303-4310 — `itype_end(asg->name, IUSER, 0)` validates;
+                // dir name must be all-IUSER chars.
+                if !n.chars().all(|c| c.is_alphanumeric() || c == '_') {     // c:4305
+                    crate::ported::utils::zwarnnam(name,
+                        &format!("invalid character in directory name: {}", n)); // c:4306
+                    returnval = 1;                                           // c:4308
+                    continue;                                                // c:4309
+                }
+                crate::ported::hashnameddir::addnameddirnode(n, v);          // c:4314
+            } else {
+                // c:4316 — `cn->u.cmd = ztrdup(value);` in cmdnamtab.
+                // Static-link path: store in PATH-style env.
+                std::env::set_var(format!("__zshrs_hash_{}", n), v);
+            }
+            if OPT_ISSET(ops, b'v') {                                        // c:4321
+                if dir_mode {
+                    crate::ported::hashnameddir::printnameddirnode(n, v, 0); // c:4322
+                }
+            }
+        } else {
+            // c:4323-4334 — display existing entry / look up.
+            if dir_mode {
+                let found = crate::ported::hashnameddir::nameddir_table()
+                    .lock().ok().and_then(|t| t.get(n).cloned());
+                match found {
+                    Some(d) => {
+                        if OPT_ISSET(ops, b'v') {                            // c:4337
+                            crate::ported::hashnameddir::printnameddirnode(n, &d, 0);
+                        }
+                    }
+                    None => {
+                        crate::ported::utils::zwarnnam(name,
+                            &format!("no such directory name: {}", n));      // c:4327
+                        returnval = 1;                                       // c:4328
+                    }
+                }
+            } else {
+                // c:4332-4334 — `if (!hashcmd(name, path)) zwarnnam("no such command")`
+                let found = std::env::var("PATH").ok().is_some_and(|p| {
+                    p.split(':').any(|d|
+                        !d.is_empty() && std::path::Path::new(&format!("{}/{}", d, n)).exists()
+                    )
+                });
+                if !found {
+                    crate::ported::utils::zwarnnam(name,
+                        &format!("no such command: {}", n));                 // c:4333
+                    returnval = 1;                                           // c:4334
+                }
+            }
+        }
+    }
+    crate::ported::mem::unqueue_signals();                                   // c:4339
+    returnval                                                                // c:4340
+}
+
+/// Port of `bin_unhash()` from Src/builtin.c:4346.
+/// C: `int bin_unhash(char *name, char **argv, Options ops, int func)` —
+///   remove entries from cmdnamtab/aliastab/sufaliastab/nameddirtab/
+///   shfunctab. `-a` clears all, `-m` is a glob.
+pub fn bin_unhash(name: &str, argv: &[String],                               // c:4346
+                  ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
+    use crate::ported::zsh_h::OPT_ISSET;
+    let mut returnval = 0i32;                                                // c:4351
+    let mut all = 0i32;                                                      // c:4351
+    let mut match_count = 0i32;                                              // c:4351
+
+    // c:4355-4373 — table-pick dispatch.
+    enum Tab { CmdNam, NamedDir, Shfunc, Alias, SufAlias }
+    let tab: Tab;
+    if func == BIN_UNALIAS {                                                 // c:4356
+        tab = if OPT_ISSET(ops, b's') { Tab::SufAlias } else { Tab::Alias }; // c:4357
+        if OPT_ISSET(ops, b'a') {                                            // c:4361
+            if !argv.is_empty() {                                            // c:4362
+                crate::ported::utils::zwarnnam(name, "-a: too many arguments"); // c:4363
+                return 1;                                                    // c:4364
+            }
+            all = 1;                                                         // c:4366
+        } else if argv.is_empty() {                                          // c:4367
+            crate::ported::utils::zwarnnam(name, "not enough arguments");    // c:4368
+            return 1;                                                        // c:4369
+        }
+    } else if OPT_ISSET(ops, b'd') { tab = Tab::NamedDir;                    // c:4370
+    } else if OPT_ISSET(ops, b'f') { tab = Tab::Shfunc;                      // c:4372
+    } else if OPT_ISSET(ops, b's') { tab = Tab::SufAlias;                    // c:4374
+    } else if func == BIN_UNHASH && OPT_ISSET(ops, b'a') { tab = Tab::Alias; // c:4376
+    } else { tab = Tab::CmdNam; }                                            // c:4378
+
+    // Helper: clear entire table.
+    let clear_all = |t: &Tab| match t {
+        Tab::Alias => { let _ = crate::ported::hashtable::aliastab_lock().lock().map(|mut g| g.clear()); }
+        Tab::SufAlias => { let _ = crate::ported::hashtable::sufaliastab_lock().lock().map(|mut g| g.clear()); }
+        Tab::NamedDir => { let _ = crate::ported::hashnameddir::nameddir_table().lock().map(|mut g| g.clear()); }
+        Tab::Shfunc => { let _ = SHFUNCTAB.lock().map(|mut g| g.clear()); }
+        Tab::CmdNam => { /* deferred to cmdnamtab.rs */ }
+    };
+    let remove_one = |t: &Tab, nm: &str| -> bool {
+        match t {
+            Tab::Alias => crate::ported::hashtable::aliastab_lock().lock()
+                .map(|mut g| g.remove(nm).is_some()).unwrap_or(false),
+            Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().lock()
+                .map(|mut g| g.remove(nm).is_some()).unwrap_or(false),
+            Tab::NamedDir => crate::ported::hashnameddir::nameddir_table().lock()
+                .map(|mut g| g.remove(nm).is_some()).unwrap_or(false),
+            Tab::Shfunc => SHFUNCTAB.lock()
+                .map(|mut g| g.remove(nm).is_some()).unwrap_or(false),
+            Tab::CmdNam => false,
+        }
+    };
+
+    if all != 0 {                                                            // c:4382
+        crate::ported::mem::queue_signals();                                 // c:4383
+        clear_all(&tab);                                                     // c:4384-4389
+        crate::ported::mem::unqueue_signals();                               // c:4390
+        return 0;                                                            // c:4391
+    }
+
+    // c:4395-4421 — `-m` glob branch.
+    if OPT_ISSET(ops, b'm') {                                                // c:4395
+        for arg in argv {                                                    // c:4396
+            crate::ported::mem::queue_signals();                             // c:4397
+            let pprog = crate::ported::pattern::patcompile(arg,              // c:4400
+                crate::ported::pattern::PatFlags::default()).ok();
+            if let Some(prog) = pprog {
+                // Collect names then remove (avoid iterator/mutation conflict).
+                let names: Vec<String> = match &tab {
+                    Tab::Alias => crate::ported::hashtable::aliastab_lock().lock()
+                        .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
+                    Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().lock()
+                        .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
+                    Tab::NamedDir => crate::ported::hashnameddir::nameddir_table().lock()
+                        .map(|t| t.keys().cloned().collect()).unwrap_or_default(),
+                    Tab::Shfunc => SHFUNCTAB.lock()
+                        .map(|t| t.keys().cloned().collect()).unwrap_or_default(),
+                    Tab::CmdNam => Vec::new(),
+                };
+                for nm in &names {
+                    if crate::ported::pattern::pattry(&prog, nm) {           // c:4408
+                        if remove_one(&tab, nm) {
+                            match_count += 1;                                // c:4410
+                        }
+                    }
+                }
+            } else {
+                crate::ported::utils::zwarnnam(name,
+                    &format!("bad pattern : {}", arg));                      // c:4416
+                returnval = 1;                                               // c:4417
+            }
+            crate::ported::mem::unqueue_signals();                           // c:4419
+        }
+        if match_count == 0 {                                                // c:4424
+            returnval = 1;                                                   // c:4425
+        }
+        return returnval;                                                    // c:4426
+    }
+
+    // c:4429-4439 — literal-name removals.
+    crate::ported::mem::queue_signals();                                     // c:4430
+    for arg in argv {                                                        // c:4431
+        if remove_one(&tab, arg) {                                           // c:4432
+            // freed
+        } else if func == BIN_UNSET
+            && crate::ported::options::optlookup("posixbuiltins") > 0
+        {
+            // c:4434 — POSIX: unset of nonexistent isn't an error.
+            returnval = 0;                                                   // c:4435
+        } else {
+            crate::ported::utils::zwarnnam(name,
+                &format!("no such hash table element: {}", arg));            // c:4437
+            returnval = 1;                                                   // c:4438
+        }
+    }
+    crate::ported::mem::unqueue_signals();                                   // c:4440
+    returnval                                                                // c:4441
+}
+
 /// Port of `bin_alias()` from Src/builtin.c:4450.
 /// C: `int bin_alias(char *name, char **argv, Options ops, ...)` — list,
 ///   define, glob-list, or display aliases. `-r`/`-g`/`-s` filter type;
