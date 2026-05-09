@@ -338,36 +338,111 @@ impl crate::ported::exec::ShellExecutor {
 // parity shims for the drift gate.
 // ===========================================================
 
-/// Port of `createnameddirtable()` from Src/hashnameddir.c:59 —
-/// allocates the global `nameddirtab` HashTable and registers
-/// node lifecycle callbacks. Rust uses `HashMap`; shim.
-pub fn createnameddirtable() {}
+/// Port of `createnameddirtable()` from Src/hashnameddir.c:59.
+/// C: `void createnameddirtable(void)` — newhashtable(201, "nameddirtab"),
+///   wire hash/cmp/add/get/empty/fill/freenode/printnode callbacks.
+pub fn createnameddirtable() {                                               // c:59
+    // c:62-77 — allocate + assign 12 callbacks. Static-link path: the
+    // Rust port uses NAMEDDIR_TABLE static HashMap with allusersadded
+    // tracker; nothing to construct dynamically.
+    ALLUSERSADDED.store(0, std::sync::atomic::Ordering::Relaxed);            // c:63
+}
 
-/// Port of `emptynameddirtable()` from Src/hashnameddir.c:84 —
-/// drops auto-populated `~user` entries (flag `ND_USERNAME`),
-/// preserving user-defined `hash -d` entries. Shim.
-pub fn emptynameddirtable() {}
+/// Port of `emptynameddirtable()` from Src/hashnameddir.c:84.
+/// C: `static void emptynameddirtable(HashTable ht)` — drop everything,
+///   reset `allusersadded` and `finddir(NULL)` cache.
+pub fn emptynameddirtable() {                                                // c:84
+    // c:87 — `emptyhashtable(ht);`
+    if let Ok(mut t) = NAMEDDIR_TABLE.lock() {
+        t.clear();                                                           // c:87
+    }
+    // c:88 — `allusersadded = 0;`
+    ALLUSERSADDED.store(0, std::sync::atomic::Ordering::Relaxed);            // c:88
+    // c:89 — `finddir(NULL);` — clear the cache (no-op in static-link path).
+}
 
-/// Port of `fillnameddirtable()` from Src/hashnameddir.c:96 —
-/// walks `/etc/passwd` via `getpwent(3)` to pre-populate `~user`
-/// entries. Rust resolves lazily in `expand_tilde`; shim.
-pub fn fillnameddirtable() {}
+/// Port of `fillnameddirtable()` from Src/hashnameddir.c:96.
+/// C: `static void fillnameddirtable(UNUSED(HashTable ht))` — walk
+///   `getpwent(3)` and add each user as a named-dir entry.
+pub fn fillnameddirtable() {                                                 // c:96
+    use std::sync::atomic::Ordering;
+    // c:99 — `if (!allusersadded) { setpwent(); ... endpwent(); allusersadded = 1; }`
+    if ALLUSERSADDED.load(Ordering::Relaxed) != 0 {
+        return;
+    }
+    unsafe {
+        libc::setpwent();                                                    // c:103
+        loop {
+            let pw = libc::getpwent();                                       // c:107
+            if pw.is_null() { break; }
+            let name_c = std::ffi::CStr::from_ptr((*pw).pw_name);
+            let dir_c  = std::ffi::CStr::from_ptr((*pw).pw_dir);
+            if let (Ok(name), Ok(dir)) = (name_c.to_str(), dir_c.to_str()) {
+                addnameddirnode(name, dir);                                  // c:115
+            }
+        }
+        libc::endpwent();                                                    // c:127
+    }
+    ALLUSERSADDED.store(1, Ordering::Relaxed);                               // c:128
+}
 
-/// Port of `addnameddirnode()` from Src/hashnameddir.c:121 —
-/// HashTable insertion callback. Rust uses `HashMap::insert`;
-/// shim.
-pub fn addnameddirnode(_name: &str, _path: &str) {}
+/// Port of `addnameddirnode()` from Src/hashnameddir.c:121.
+/// C: `static void addnameddirnode(HashTable ht, char *nam, void *ndptr)`
+///   — install one entry into nameddirtab.
+pub fn addnameddirnode(name: &str, path: &str) {                             // c:121
+    if let Ok(mut t) = NAMEDDIR_TABLE.lock() {
+        t.insert(name.to_string(), path.to_string());                        // c:131
+    }
+}
 
 /// Port of `removenameddirnode()` from Src/hashnameddir.c:135 —
-/// HashTable removal callback (`hash -d -r NAME`). Shim.
-pub fn removenameddirnode(_name: &str) {}
+/// HashTable removal callback (`hash -d -r NAME`).
+pub fn removenameddirnode(name: &str) {                                      // c:135
+    if let Ok(mut t) = NAMEDDIR_TABLE.lock() {
+        t.remove(name);                                                      // c:142
+    }
+}
 
-/// Port of `freenameddirnode()` from Src/hashnameddir.c:148 —
-/// HashTable node free callback. Rust drops via `String::Drop`;
-/// shim.
-pub fn freenameddirnode() {}
+/// Port of `freenameddirnode()` from Src/hashnameddir.c:148.
+/// C: `static void freenameddirnode(HashNode hn)` — zsfree(nam), zsfree(dir),
+///   zfree(nd). Rust drop covers all of this.
+pub fn freenameddirnode() {                                                  // c:148
+    // Rust drop handles String free; nothing to do explicitly.
+}
 
-/// Port of `printnameddirnode()` from Src/hashnameddir.c:161 —
-/// `hash -d` listing emitter for one node. Rust printing lives
-/// on `NamedDirTable::print_entry`; shim.
-pub fn printnameddirnode() {}
+/// Port of `printnameddirnode()` from Src/hashnameddir.c:161.
+/// C: `static void printnameddirnode(HashNode hn, int printflags)` —
+///   emit `hash -d` row for `nd`. PRINT_NAMEONLY: just the name.
+///   PRINT_LIST: `hash -d nam=dir`. Otherwise `nam   dir`.
+pub fn printnameddirnode(name: &str, dir: &str, printflags: i32) {           // c:161
+    use crate::ported::zsh_h::{PRINT_NAMEONLY, PRINT_LIST};
+    if (printflags & PRINT_NAMEONLY) != 0 {                                  // c:166
+        println!("{}", name);                                                // c:167-168
+        return;
+    }
+    if (printflags & PRINT_LIST) != 0 {                                      // c:172
+        println!("hash -d {}={}", name, dir);                                // c:175-178
+        return;
+    }
+    println!("{}\t{}", name, dir);                                           // c:182-184
+}
+
+// Globals from Src/hashnameddir.c:34/53.
+// HashMap::new() isn't const; use OnceLock for lazy init.
+pub static NAMEDDIR_TABLE_INNER: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+    std::sync::OnceLock::new();
+pub fn nameddir_table() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    NAMEDDIR_TABLE_INNER.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+pub static ALLUSERSADDED: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+#[allow(non_upper_case_globals)]
+pub struct NameddirTableAccessor;
+impl NameddirTableAccessor {
+    pub fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'static, std::collections::HashMap<String, String>>> {
+        nameddir_table().lock()
+    }
+}
+#[allow(non_upper_case_globals)]
+pub static NAMEDDIR_TABLE: NameddirTableAccessor = NameddirTableAccessor;

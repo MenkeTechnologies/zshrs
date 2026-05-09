@@ -1610,14 +1610,18 @@ pub fn digitcount(s: &str) -> usize {
     s.chars().take_while(|c| c.is_ascii_digit()).count()
 }
 
-/// No-op history word handler (from hist.c nohw)
-pub fn nohw(_c: char) {}
+/// Port of `nohw()` from Src/hist.c:1062.
+/// C: `static void nohw(UNUSED(int c))` — dummy function used instead
+///   of hwaddc when history-word collection isn't needed. Empty body.
+pub fn nohw(_c: char) {}                                                     // c:1062
 
-/// No-op history word abort (from hist.c nohwabort)
-pub fn nohwabort() {}
+/// Port of `nohwabort()` from Src/hist.c:1067.
+/// C: `static void nohwabort(void)` — dummy hwbegin replacement. Empty.
+pub fn nohwabort() {}                                                        // c:1067
 
-/// No-op history word end (from hist.c nohwe)
-pub fn nohwe() {}
+/// Port of `nohwe()` from Src/hist.c:1072.
+/// C: `static void nohwe(void)` — dummy hwend replacement. Empty.
+pub fn nohwe() {}                                                            // c:1072
 
 /// Put old history entry on top of ring (from hist.c putoldhistentryontop)
 pub fn putoldhistentryontop(hist: &mut History) -> bool {
