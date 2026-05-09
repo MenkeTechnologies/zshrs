@@ -2027,7 +2027,7 @@ pub fn itype_end(s: &str, allow_digits_start: bool) -> usize {
 ///   11. Walk $IFS adding ISEP and IWSEP for blanks.
 ///
 /// This first-pass port covers steps 1-7. Steps 8-11 require Meta /
-/// Marker / Pound / Snull / Nularg constants from zsh.rs/zsh.h and
+/// Marker / Pound / Snull / Nularg constants from zsh_h/zsh.h and
 /// the `ifs` global; the remaining Meta/IFS marks are skipped until
 /// those land. Idempotent — safe to call multiple times.
 pub fn inittyptab() {                                                    // utils.c:4155
