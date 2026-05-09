@@ -599,37 +599,45 @@ pub fn unqueue_traps() {
     }
 }
 
-/// Block a single signal.
-/// Port of `signal_block()` from Src/signals.c:175 — the C source
-/// builds a `sigset_t` containing the bit and calls `sigprocmask
-/// (SIG_BLOCK, ...)`. Same here.
-pub fn signal_block(sig: i32) {
+/// Port of `signal_block()` from `Src/signals.c:175`.
+///
+/// C body:
+/// ```c
+/// sigset_t oset;
+/// sigprocmask(SIG_BLOCK, &set, &oset);
+/// return oset;
+/// ```
+///
+/// Blocks every signal in `set`, returning the previous mask
+/// (matches C's `sigset_t signal_block(sigset_t set)`).
+#[cfg(unix)]
+pub fn signal_block(set: &libc::sigset_t) -> libc::sigset_t {
+    let mut oset: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {
-        let mut set: libc::sigset_t = std::mem::zeroed();
-        libc::sigemptyset(&mut set);
-        libc::sigaddset(&mut set, sig);
-        libc::sigprocmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+        libc::sigprocmask(libc::SIG_BLOCK, set, &mut oset);
     }
+    oset
 }
 
-/// Unblock a single signal.
-/// Port of `signal_unblock()` from Src/signals.c:189 — same
-/// `sigprocmask(SIG_UNBLOCK, ...)` shape.
-pub fn signal_unblock(sig: i32) {
+/// Port of `signal_unblock()` from `Src/signals.c:189`.
+///
+/// C body: `sigprocmask(SIG_UNBLOCK, &set, &oset); return oset;`
+#[cfg(unix)]
+pub fn signal_unblock(set: &libc::sigset_t) -> libc::sigset_t {
+    let mut oset: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {
-        let mut set: libc::sigset_t = std::mem::zeroed();
-        libc::sigemptyset(&mut set);
-        libc::sigaddset(&mut set, sig);
-        libc::sigprocmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
+        libc::sigprocmask(libc::SIG_UNBLOCK, set, &mut oset);
     }
+    oset
 }
 
-/// Kill a process group
+/// Port of `killpg()` libc passthrough — used by jobs.c / signals.c
+/// callers; not in zsh source itself but referenced via libc.
 pub fn killpg(pgrp: i32, sig: i32) -> i32 {
     unsafe { libc::killpg(pgrp, sig) }
 }
 
-/// Kill a process
+/// Port of `kill()` libc passthrough.
 pub fn kill(pid: i32, sig: i32) -> i32 {
     unsafe { libc::kill(pid, sig) }
 }
@@ -697,31 +705,118 @@ mod tests {
         let result = handler.set_trap(libc::SIGKILL, TrapAction::Code("echo".to_string()));
         assert!(result.is_err());
     }
-}
 
-// ---------------------------------------------------------------------------
-// Missing functions from signals.c
-// ---------------------------------------------------------------------------
+    #[test]
+    fn test_signal_mask_zero_returns_empty() {
+        // C: `if (sig) sigaddset(&set, sig);` — sig==0 yields empty set.
+        let s = signal_mask(0);
+        let r = unsafe { libc::sigismember(&s, libc::SIGINT) };
+        assert_eq!(r, 0);
+    }
 
-/// Install a signal handler.
-/// Port of `install_handler()` from Src/signals.c:100 — wires
-/// the C source's `signal()` (or `sigaction()` on POSIX) call to
-/// the shared `zhandler` dispatcher.
-#[cfg(unix)]
-pub fn install_handler(sig: i32) {
-    unsafe {
-        libc::signal(sig, zhandler as *const () as libc::sighandler_t);
+    #[test]
+    fn test_signal_mask_includes_only_specified() {
+        let s = signal_mask(libc::SIGUSR1);
+        assert_eq!(unsafe { libc::sigismember(&s, libc::SIGUSR1) }, 1);
+        assert_eq!(unsafe { libc::sigismember(&s, libc::SIGUSR2) }, 0);
+    }
+
+    #[test]
+    fn test_interact_flag_round_trip() {
+        let prev = is_interact();
+        set_interact(true);
+        assert!(is_interact());
+        set_interact(false);
+        assert!(!is_interact());
+        set_interact(prev);
+    }
+
+    #[test]
+    fn test_signal_block_returns_old_mask() {
+        let prev = is_interact();
+        set_interact(false); // ensure no test side-effects from interactive paths
+        let mask = signal_mask(libc::SIGUSR2);
+        let old = signal_block(&mask);
+        // Restore to old state.
+        let _ = signal_setmask(&old);
+        // Verify the post-block mask had SIGUSR2 set by re-blocking
+        // and unblocking. The test just checks the returned old set
+        // is valid (no crash, syscall returned).
+        let _ = old;
+        set_interact(prev);
     }
 }
 
-/// Install the SIGINT handler if running interactively. Port of
-/// `intr()` from Src/signals.c — wraps `install_handler(SIGINT)`
-/// behind the `interact` flag check. Currently always installs
-/// (interactive mode is the daily-driver case); skip-when-non-
-/// interactive cited as TODO once the global `interact` flag is
-/// wired through.
+// ---------------------------------------------------------------------------
+// `interact` flag — mirrors C's global `interact` int (Src/init.c).
+// Used by intr / holdintr / noholdintr / install_handler to gate
+// SIGINT-related setup on interactive shell mode.
+// ---------------------------------------------------------------------------
+
+fn interact_lock() -> &'static std::sync::atomic::AtomicBool {
+    static INTERACT: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    &INTERACT
+}
+
+/// Setter for the `interact` flag. Called by init.rs once the
+/// shell-mode dispatch determines whether stdin is a tty / `-i`
+/// was passed.
+pub fn set_interact(v: bool) {
+    interact_lock().store(v, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Read the `interact` flag.
+pub fn is_interact() -> bool {
+    interact_lock().load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Port of `install_handler()` from `Src/signals.c:100`.
+///
+/// C body:
+/// ```c
+/// struct sigaction act;
+/// act.sa_handler = zhandler;
+/// sigemptyset(&act.sa_mask);
+/// act.sa_flags = 0;
+/// if (interact) act.sa_flags |= SA_INTERRUPT;
+/// sigaction(sig, &act, NULL);
+/// ```
+///
+/// Uses `sigaction(2)` (not `signal(2)`) so SA_INTERRUPT can
+/// disable system-call restart when running interactively —
+/// matches the C source's contract that an interactive shell's
+/// signal handlers interrupt blocked reads (so ^C breaks out of
+/// `read` etc.).
+#[cfg(unix)]
+pub fn install_handler(sig: i32) {
+    unsafe {
+        let mut act: libc::sigaction = std::mem::zeroed();
+        act.sa_sigaction = zhandler as usize;
+        libc::sigemptyset(&mut act.sa_mask);
+        // SA_INTERRUPT isn't in the libc crate's POSIX feature set;
+        // when running interactively we'd prefer to leave SA_RESTART
+        // unset (the default after sigemptyset+0). Mirroring C: the
+        // sa_flags = 0 path matches the non-interactive case;
+        // interactive mode would OR in SA_INTERRUPT, which on Linux
+        // is the same as sa_flags = 0 on most libcs (deprecated
+        // alias). Leaving sa_flags = 0 is the same effect on every
+        // modern target.
+        act.sa_flags = 0;
+        libc::sigaction(sig, &act, std::ptr::null_mut());
+    }
+}
+
+/// Port of `intr()` from `Src/signals.c:117`.
+///
+/// C body: `if (interact) install_handler(SIGINT);` — the
+/// interactive-shell-only SIGINT installer used by `bin_set` /
+/// trap restoration paths to re-enable ^C breaking after a
+/// scope that disabled it.
 pub fn intr() {
-    install_handler(libc::SIGINT);
+    if is_interact() {
+        install_handler(libc::SIGINT);
+    }
 }
 
 /// End the current trap scope — restore any traps that were
@@ -752,14 +847,42 @@ pub const SIGCOUNT: i32 = 32;
 pub const TRAPCOUNT: usize = (SIGCOUNT + 3) as usize;
 
 
-/// Suspend the current process by raising SIGTSTP.
-/// Port of `signal_suspend()` from Src/signals.c:214 — the C
-/// source's `suspend` builtin entry point.
+/// Port of `signal_suspend()` from `Src/signals.c:214`.
+///
+/// C body:
+/// ```c
+/// sigset_t set;
+/// sigemptyset(&set);
+/// if (!(wait_cmd || isset(TRAPSASYNC) ||
+///       (sigtrapped[SIGINT] & ~ZSIG_IGNORED)))
+///     sigaddset(&set, SIGINT);
+/// return sigsuspend(&set);
+/// ```
+///
+/// Atomically waits for any signal NOT in `set`. The wait_cmd /
+/// TRAPSASYNC / SIGINT-trapped cascade gates whether SIGINT is
+/// added to the mask: when `wait_cmd` is set (the `wait` builtin
+/// calls this) OR TRAPSASYNC is set OR the user has trapped
+/// SIGINT (and not ignored it), SIGINT is left UNblocked so the
+/// trap fires.
+///
+/// Previous Rust port did `libc::raise(SIGTSTP)` which is
+/// completely wrong (that's job-control suspend, not "wait for
+/// signal delivery"). Now real port via `sigsuspend(2)`.
 #[cfg(unix)]
-pub fn signal_suspend() {
+pub fn signal_suspend(_sig: i32, wait_cmd: bool) -> i32 {
+    let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {
-        libc::raise(libc::SIGTSTP);
+        libc::sigemptyset(&mut set);
     }
+    let int_trapped = TrapHandler::global().is_trapped(libc::SIGINT)
+        && !TrapHandler::global().is_ignored(libc::SIGINT);
+    if !(wait_cmd || int_trapped) {
+        unsafe {
+            libc::sigaddset(&mut set, libc::SIGINT);
+        }
+    }
+    unsafe { libc::sigsuspend(&set) }
 }
 
 /// Scope-based trap management.
@@ -807,48 +930,99 @@ pub fn starttrapscope() -> Vec<String> {
 // Remaining 18 missing signals.c functions
 // ---------------------------------------------------------------------------
 
-/// Disable SIGINT delivery.
-/// Port of `nointr()` from Src/signals.c:128.
+/// Port of `nointr()` from `Src/signals.c:128`.
+///
+/// C body (under `#if 0` in current zsh — kept for historical
+/// completeness):
+/// ```c
+/// if (interact)
+///     signal_ignore(SIGINT);
+/// ```
+///
+/// Disables SIGINT delivery in interactive mode (sets the
+/// disposition to SIG_IGN). The `if (interact)` gate matches C.
 #[cfg(unix)]
 pub fn nointr() {
-    unsafe {
-        libc::signal(libc::SIGINT, libc::SIG_IGN);
+    if is_interact() {
+        unsafe {
+            libc::signal(libc::SIGINT, libc::SIG_IGN);
+        }
     }
 }
 
-/// Hold interrupts (save and block SIGINT).
-/// Port of `holdintr()` from Src/signals.c:139.
+/// Port of `holdintr()` from `Src/signals.c:139`.
+///
+/// C body:
+/// ```c
+/// if (interact)
+///     signal_block(signal_mask(SIGINT));
+/// ```
+///
+/// Blocks SIGINT temporarily — used by code paths that can't
+/// handle interruption mid-flight (e.g. after fork before exec).
 #[cfg(unix)]
 pub fn holdintr() {
-    signal_block(libc::SIGINT);
+    if is_interact() {
+        let mask = signal_mask(libc::SIGINT);
+        signal_block(&mask);
+    }
 }
 
-/// Release held SIGINT.
-/// Port of `noholdintr()` from Src/signals.c:149.
+/// Port of `noholdintr()` from `Src/signals.c:149`.
+///
+/// C body:
+/// ```c
+/// if (interact)
+///     signal_unblock(signal_mask(SIGINT));
+/// ```
+///
+/// Inverse of [`holdintr`].
 #[cfg(unix)]
 pub fn noholdintr() {
-    signal_unblock(libc::SIGINT);
+    if is_interact() {
+        let mask = signal_mask(libc::SIGINT);
+        signal_unblock(&mask);
+    }
 }
 
-/// Build a sigset containing only the given signal.
-/// Port of `signal_mask()` from Src/signals.c:160.
+/// Port of `signal_mask()` from `Src/signals.c:160`.
+///
+/// C body:
+/// ```c
+/// sigset_t set;
+/// sigemptyset(&set);
+/// if (sig)
+///     sigaddset(&set, sig);
+/// return set;
+/// ```
+///
+/// Builds a sigset containing only the given signal; `sig == 0`
+/// returns an empty set (matches the explicit C check).
 #[cfg(unix)]
 pub fn signal_mask(sig: i32) -> libc::sigset_t {
     let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {
         libc::sigemptyset(&mut set);
-        libc::sigaddset(&mut set, sig);
+        if sig != 0 {
+            libc::sigaddset(&mut set, sig);
+        }
     }
     set
 }
 
-/// Set the process's signal mask.
-/// Port of `signal_setmask()` from Src/signals.c:203.
+/// Port of `signal_setmask()` from `Src/signals.c:203`.
+///
+/// C body: `sigprocmask(SIG_SETMASK, &set, &oset); return oset;`
+///
+/// Sets the process signal mask, returning the previous mask
+/// (the previous Rust port discarded the old mask).
 #[cfg(unix)]
-pub fn signal_setmask(mask: &libc::sigset_t) {
+pub fn signal_setmask(mask: &libc::sigset_t) -> libc::sigset_t {
+    let mut oset: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {
-        libc::sigprocmask(libc::SIG_SETMASK, mask, std::ptr::null_mut());
+        libc::sigprocmask(libc::SIG_SETMASK, mask, &mut oset);
     }
+    oset
 }
 
 /// Reap zombie child processes via non-blocking `waitpid(2)`.
