@@ -44,12 +44,8 @@ pub fn getposint(instr: &str, nam: &str) -> i32 {                        // c:45
 }
 
 /// Port of `bin_sysread()` from `Src/Modules/system.c:72`.
-///
-/// C signature: `static int bin_sysread(char *nam, char **args,
-///                                       Options ops, int func)`.
-/// Builtin spec: `"c:i:o:s:t:"` (system.c:820). `Options ops` is the
-/// parsed-flag bitmap; per PORT_CHECKLIST.md rule 3 the Rust port
-/// parses `args` inline rather than introducing an Options struct.
+/// C: `int bin_sysread(char *nam, char **args, Options ops, int func)`.
+/// Builtin spec: `"c:i:o:s:t:"` (system.c:820).
 ///
 /// Return values per c:60-67:
 ///   0 — Successfully read (and written if `-o`)
@@ -58,64 +54,54 @@ pub fn getposint(instr: &str, nam: &str) -> i32 {                        // c:45
 ///   3 — Write error (errno set; partial residue stashed)
 ///   4 — Timeout on read
 ///   5 — Zero bytes read (EOF)
-pub fn bin_sysread(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:72
+pub fn bin_sysread(nam: &str, args: &[String],                               // c:72
+                   ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
     // c:74 — `int infd = 0, outfd = -1, bufsize = SYSREAD_BUFSIZE, count;`
-    let mut infd: i32 = 0;
-    let mut outfd: i32 = -1;
-    let mut bufsize: usize = SYSREAD_BUFSIZE;
+    let mut infd: i32 = 0;                                                    // c:74
+    let mut outfd: i32 = -1;                                                  // c:74
+    let mut bufsize: usize = SYSREAD_BUFSIZE;                                 // c:74
     // c:75 — `char *outvar = NULL, *countvar = NULL, *inbuf;`
-    let mut outvar: Option<String> = None;
-    let mut countvar: Option<String> = None;
-    let mut timeout_arg: Option<String> = None;
+    let mut outvar: Option<String> = None;                                    // c:75
+    let mut countvar: Option<String> = None;                                  // c:75
 
-    // Parse the "c:i:o:s:t:" option string + positional outvar arg.
-    let mut i = 0usize;
-    while i < args.len() {
-        let arg = &args[i];
-        // c:80 — `if (OPT_ISSET(ops, 'i')) { infd = getposint(OPT_ARG(ops,'i'),nam); ...}`
-        match arg.as_str() {
-            "-i" if i + 1 < args.len() => {                              // c:80
-                i += 1;
-                infd = getposint(&args[i], nam);                         // c:81
-                if infd < 0 { return 1; }                                // c:82-83
-            }
-            "-o" if i + 1 < args.len() => {                              // c:87
-                i += 1;
-                outfd = getposint(&args[i], nam);                        // c:88
-                if outfd < 0 { return 1; }                               // c:89-90
-            }
-            "-s" if i + 1 < args.len() => {                              // c:94
-                i += 1;
-                let v = getposint(&args[i], nam);                        // c:95
-                if v < 0 { return 1; }                                   // c:96-97
-                bufsize = v as usize;
-            }
-            "-c" if i + 1 < args.len() => {                              // c:101
-                i += 1;
-                let cv = args[i].clone();                                // c:102
-                if !isident(&cv) {                                       // c:103
-                    zwarnnam(nam, &format!("not an identifier: {}", cv));// c:104
-                    return 1;                                            // c:105
-                }
-                countvar = Some(cv);
-            }
-            "-t" if i + 1 < args.len() => {                              // c:127
-                i += 1;
-                timeout_arg = Some(args[i].clone());
-            }
-            other if !other.starts_with('-') => {                        // c:109 *args
-                let ov = other.to_string();                              // c:116
-                if !isident(&ov) {                                       // c:117
-                    zwarnnam(nam, &format!("not an identifier: {}", ov));// c:118
-                    return 1;                                            // c:119
-                }
-                outvar = Some(ov);
-                break;
-            }
-            _ => break,
-        }
-        i += 1;
+    // c:80 — `if (OPT_ISSET(ops, 'i')) { infd = getposint(OPT_ARG(ops,'i'),nam); ...}`
+    if OPT_ISSET(ops, b'i') {                                                 // c:80
+        infd = getposint(OPT_ARG(ops, b'i').unwrap_or(""), nam);              // c:81
+        if infd < 0 { return 1; }                                             // c:82-83
     }
+    // c:87 — `if (OPT_ISSET(ops, 'o')) { outfd = getposint(OPT_ARG(ops,'o'),nam); ...}`
+    if OPT_ISSET(ops, b'o') {                                                 // c:87
+        outfd = getposint(OPT_ARG(ops, b'o').unwrap_or(""), nam);             // c:88
+        if outfd < 0 { return 1; }                                            // c:89-90
+    }
+    // c:94 — `if (OPT_ISSET(ops, 's')) bufsize = getposint(OPT_ARG(ops,'s'),nam);`
+    if OPT_ISSET(ops, b's') {                                                 // c:94
+        let v = getposint(OPT_ARG(ops, b's').unwrap_or(""), nam);             // c:95
+        if v < 0 { return 1; }                                                // c:96-97
+        bufsize = v as usize;
+    }
+    // c:101 — `if (OPT_ISSET(ops, 'c')) { countvar = OPT_ARG(ops,'c'); isident...}`
+    if OPT_ISSET(ops, b'c') {                                                 // c:101
+        let cv = OPT_ARG(ops, b'c').unwrap_or("").to_string();                // c:102
+        if !isident(&cv) {                                                    // c:103
+            zwarnnam(nam, &format!("not an identifier: {}", cv));             // c:104
+            return 1;                                                         // c:105
+        }
+        countvar = Some(cv);
+    }
+    // c:109 — `if (*args) { outvar = *args; isident... }`
+    if !args.is_empty() {                                                     // c:109
+        let ov = args[0].clone();                                             // c:116
+        if !isident(&ov) {                                                    // c:117
+            zwarnnam(nam, &format!("not an identifier: {}", ov));             // c:118
+            return 1;                                                         // c:119
+        }
+        outvar = Some(ov);
+    }
+    let timeout_arg: Option<&str> = if OPT_ISSET(ops, b't') {                 // c:127
+        OPT_ARG(ops, b't')
+    } else { None };
 
     // c:123 — `inbuf = zhalloc(bufsize);`
     let mut inbuf = vec![0u8; bufsize];                                  // c:123
@@ -125,7 +111,7 @@ pub fn bin_sysread(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 
     // poll branch (c:129-152).
     if let Some(t_str) = timeout_arg {
         // c:137 — `to_mn = matheval(OPT_ARG(ops,'t'));`
-        let to_mn = match crate::ported::math::matheval(&t_str) {
+        let to_mn = match crate::ported::math::matheval(t_str) {
             Ok(m) => m,
             Err(_) => return 1,                                          // c:138-139 errflag
         };
@@ -170,8 +156,7 @@ pub fn bin_sysread(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 
     }
     // c:192-193 — `if (countvar) setiparam(countvar, count);`
     if let Some(ref cv) = countvar {
-        setiparam(&mut exec.variables, &mut exec.arrays,
-                  &mut exec.assoc_arrays, cv, count as i64);
+        crate::ported::modules::ksh93::setiparam(cv, count as i64);          // c:192
     }
     // c:194-195 — `if (count < 0) return 2;`
     if count < 0 {
@@ -199,12 +184,10 @@ pub fn bin_sysread(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 
                 if let Some(ref ov) = outvar {
                     let buf_remaining = String::from_utf8_lossy(&inbuf[p..p+remaining]);
                     let m = metafy(&buf_remaining);
-                    setsparam(&mut exec.variables, &mut exec.arrays,
-                              &mut exec.assoc_arrays, ov, &m);
+                    crate::ported::modules::ksh93::setsparam(ov, &m);        // c:209
                 }
                 if let Some(ref cv) = countvar {
-                    setiparam(&mut exec.variables, &mut exec.arrays,
-                              &mut exec.assoc_arrays, cv, remaining as i64);
+                    crate::ported::modules::ksh93::setiparam(cv, remaining as i64); // c:210
                 }
                 return 3;                                                // c:212
             }
@@ -218,8 +201,7 @@ pub fn bin_sysread(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 
     let target = outvar.unwrap_or_else(|| "REPLY".to_string());          // c:220-221
     let buf_str = String::from_utf8_lossy(&inbuf[..count]);
     let m = metafy(&buf_str);
-    setsparam(&mut exec.variables, &mut exec.arrays,
-              &mut exec.assoc_arrays, &target, &m);                      // c:223
+    crate::ported::modules::ksh93::setsparam(&target, &m);                   // c:223
     if count != 0 { 0 } else { 5 }                                       // c:225
 }
 
@@ -234,42 +216,31 @@ pub fn bin_sysread(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 
 ///   0 — Successfully written
 ///   1 — Error in parameters
 ///   2 — Write error (errno set)
-pub fn bin_syswrite(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32 {  // c:238
+pub fn bin_syswrite(nam: &str, args: &[String],                              // c:238
+                    ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
     // c:240-241 — `int outfd = 1, len, count, totcount;
     //              char *countvar = NULL;`
-    let mut outfd: i32 = 1;
-    let mut countvar: Option<String> = None;
-    let mut data_arg: Option<String> = None;
+    let mut outfd: i32 = 1;                                                   // c:240
+    let mut countvar: Option<String> = None;                                  // c:241
 
-    // Parse "c:o:" + positional data arg.
-    let mut i = 0usize;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-o" if i + 1 < args.len() => {                              // c:246
-                i += 1;
-                outfd = getposint(&args[i], nam);                        // c:247
-                if outfd < 0 { return 1; }                               // c:248-249
-            }
-            "-c" if i + 1 < args.len() => {                              // c:253
-                i += 1;
-                let cv = args[i].clone();                                // c:254
-                if !isident(&cv) {                                       // c:255
-                    zwarnnam(nam, &format!("not an identifier: {}", cv));// c:256
-                    return 1;                                            // c:257
-                }
-                countvar = Some(cv);
-            }
-            other if !other.starts_with('-') => {                        // c:262 *args
-                data_arg = Some(other.to_string());
-                break;
-            }
-            _ => break,
-        }
-        i += 1;
+    // c:246 — `if (OPT_ISSET(ops, 'o')) { outfd = getposint(OPT_ARG(ops,'o'),nam); ...}`
+    if OPT_ISSET(ops, b'o') {                                                 // c:246
+        outfd = getposint(OPT_ARG(ops, b'o').unwrap_or(""), nam);             // c:247
+        if outfd < 0 { return 1; }                                            // c:248-249
     }
-
-    let data = match data_arg {
-        Some(d) => d,
+    // c:253 — `if (OPT_ISSET(ops, 'c')) { countvar = OPT_ARG(ops,'c'); isident...}`
+    if OPT_ISSET(ops, b'c') {                                                 // c:253
+        let cv = OPT_ARG(ops, b'c').unwrap_or("").to_string();                // c:254
+        if !isident(&cv) {                                                    // c:255
+            zwarnnam(nam, &format!("not an identifier: {}", cv));             // c:256
+            return 1;                                                         // c:257
+        }
+        countvar = Some(cv);
+    }
+    // c:262 — `unmetafy(*args, &len);` — first positional arg = data.
+    let data = match args.first() {                                           // c:262
+        Some(d) => d.clone(),
         None => return 1,
     };
 
@@ -291,8 +262,7 @@ pub fn bin_syswrite(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32
             let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             if eno != libc::EINTR {                                      // c:265
                 if let Some(ref cv) = countvar {                         // c:267-268
-                    setiparam(&mut exec.variables, &mut exec.arrays,
-                              &mut exec.assoc_arrays, cv, totcount as i64);
+                    crate::ported::modules::ksh93::setiparam(cv, totcount as i64); // c:268
                 }
                 return 2;                                                // c:269
             }
@@ -304,8 +274,7 @@ pub fn bin_syswrite(exec: &mut ShellExecutor, nam: &str, args: &[String]) -> i32
     }
     // c:276-277 — `if (countvar) setiparam(countvar, totcount);`
     if let Some(ref cv) = countvar {
-        setiparam(&mut exec.variables, &mut exec.arrays,
-                  &mut exec.assoc_arrays, cv, totcount as i64);
+        crate::ported::modules::ksh93::setiparam(cv, totcount as i64);       // c:277
     }
     0                                                                    // c:279
 }
