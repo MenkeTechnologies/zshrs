@@ -273,6 +273,27 @@ shfunctab_lock
 simple_glob_match
 glob_match_inner
 
+# hashtable.rs additional singleton accessors. C declares these as
+# `mod_export HashTable cmdnamtab/aliastab/sufaliastab/reswdtab/histtab`
+# globals; Rust port wraps each in OnceLock<Mutex<…>>. plus dircache_lock
+# for the refcounted directory cache from C's static dircache array.
+cmdnamtab_lock
+aliastab_lock
+sufaliastab_lock
+reswdtab_lock
+histtab_lock
+dircache_lock
+
+# hashtable.rs HashNodeFlags trait — Rust-only abstraction over C's
+# `struct hashnode { char *nam; int flags; ... }` header. Each typed
+# table value impls this so the generic gethashnode/disablehashnode/etc.
+# can filter+mutate without per-table dispatch. C uses raw ptr+offset
+# into the embedded header.
+HashNodeFlags
+flags
+set_disabled
+is_disabled
+
 # utils.rs zwarn/zerrnam family — module-static get/setters for the
 # C globals scriptname / argzero / errflag / noerrs / locallevel /
 # lineno (declared in Src/init.c, populated by the parser/source/fn
