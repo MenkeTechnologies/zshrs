@@ -250,6 +250,19 @@ shtimer_lock
 pparams_lock
 zunderscore_lock
 
+# jobs.rs — Rust-only OnceLock<Mutex<…>> singleton accessors for the
+# C globals `oldjobtab` / `oldmaxjob` (the snapshot used by `jobs -c`)
+# and `origpgrp` (the parent shell's pgrp captured at startup, used by
+# release_pgrp). Same pattern as the params.rs locks — Rust can't
+# const-init non-trivial values. Plus capture_origpgrp() exposes a
+# settable hook for shell startup; close_or_remove_filelist_entry is
+# a pure helper for the fd-vs-name dispatch in deletefilelist that
+# C inlines.
+oldjobtab_lock
+origpgrp_lock
+capture_origpgrp
+close_or_remove_filelist_entry
+
 # utils.rs zwarn/zerrnam family — module-static get/setters for the
 # C globals scriptname / argzero / errflag / noerrs / locallevel /
 # lineno (declared in Src/init.c, populated by the parser/source/fn
