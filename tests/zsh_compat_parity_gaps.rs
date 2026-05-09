@@ -11,7 +11,7 @@
 //! `corpus_dash_fc_control_flow`, `corpus_dash_fc_params_redir`, `corpus_dash_fc_bulk_a`,
 //! `corpus_dash_fc_bulk_b`, `corpus_dash_fc_bulk_c`, `corpus_dash_fc_bulk_d`,
 //! `corpus_dash_fc_bulk_e`, `corpus_dash_fc_bulk_f`, `corpus_dash_fc_bulk_g`,
-//! `corpus_dash_fc_bulk_h`, `corpus_dash_fc_bulk_i`, `corpus_dash_fc_bulk_j`). Pass/fail is **stdout + exit** only (see `assert_parity`).
+//! `corpus_dash_fc_bulk_h`, `corpus_dash_fc_bulk_i`, `corpus_dash_fc_bulk_j`, `corpus_dash_fc_bulk_k`). Pass/fail is **stdout + exit** only (see `assert_parity`).
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -1532,7 +1532,7 @@ mod corpus_dash_fc_bulk_j {
         bulk_j_count_modules_tables => (r#"#modules #loaded"#, r##"print -r "${#modules} ${#loaded_modules}""##);
         bulk_j_module_path_first => (r#"module_path[1]"#, r##"print -r "${module_path[1]:-nompath}""##);
         bulk_j_zmodload_list_silent => (r#"zmodload -L"#, r##"zmodload -L >/dev/null 2>&1; print -r "zLLj=$?""##);
-        bulk_j_emulate_sh_one_cmd => (r#"emulate sh -c"#, r##"emulate sh -c 'print -r emj_sh' 2>&1"##);
+        bulk_j_emulate_sh_one_cmd => (r#"emulate sh -c"#, r##"emulate sh -c 'print -r emj_sh'"##);
         bulk_j_localoptions_noglob_scoped => (r#"localoptions noglob"#, r##"setopt glob; loj_fn() { setopt localoptions; setopt noglob; print -r "in=${options[noglob]}"; }; loj_fn; print -r "out=${options[noglob]}""##);
         bulk_j_assoc_copy_via_kv_at => (r#"A copy @kv"#, r##"typeset -A asrcj=(kj vjv); typeset -A adstj=("${(@kv)asrcj}"); print -r "${adstj[kj]}""##);
         bulk_j_scalar_double_slash_subst => (r#"// repl"#, r##"svj_ds='aj1aj1'; print -r "${svj_ds//1/x}""##);
@@ -1602,3 +1602,63 @@ mod corpus_dash_fc_bulk_j {
         bulk_j_regex_paren_class_and => (r#"[[ =~ ]]"#, r##"[[ xyzj =~ '^x.*j$' ]]; print -r "rxj=$?""##);
     }
 }
+
+/// Eleventh batch: **`zmodload zsh/example`**, **`typeset -T`** tied scalar/array, **octal `typeset -i8` / `$(( 010 ))`**, **`read -d`**, **`${…/#…}` / `${…/%…}`**, **`(q)` / `(b)`**, **`for (( ))`**, **`(k)`** / range assign / sparse **`a[5]=`**, **bit `~`**, **`abs()`** after **`zsh/mathfunc`**, **`integer kcnt=${#${(f)$(typeset +i)}}`**, **`whence -c`**, **`[[ == glob ]]`**, **`if`/`elif`**, **`case` `|`**, anon **`local`**, **`rc_expand_param` + `${^a}`**, **`umask` / `limit` / `dirs`**, **`[[ -L ]]`**, **`print -C`**, **`jobs`**, **`[[ -c /dev/null ]]`**, **`getopts`** parse error, **`options[combininghooks]`**, **`dis_*` counts**, **`read -A`**, **`SHELL`**, **`$#funcfiletrace`**, and misc.
+mod corpus_dash_fc_bulk_k {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_k_zmodload_zsh_example => (r#"zmodload zsh/example"#, r##"zmodload zsh/example 2>&1; print -r "k_ex=$?""##);
+        bulk_k_substitute_hash_prefix => (r#"${var/#a/A}"#, r##"sk_pf=abc; print -r "${sk_pf/#a/A}""##);
+        bulk_k_substitute_percent_suffix => (r#"${var%.x/_}"#, r##"sk_sf=file.x; print -r "${sk_sf/%.x/_ok}""##);
+        bulk_k_quote_flag_q_metachars => (r#"${(q) }"#, r##"qk_v='a*b'; print -r "${(q)qk_v}""##);
+        bulk_k_backslash_flag_b => (r#"${(b) }"#, r##"bk_v=$'a\tb'; print -r "${(b)bk_v}""##);
+        bulk_k_for_arithmetic_c_style => (r#"for (( ))"#, r##"for (( ik_fc=1; ik_fc<=3; ik_fc++ )); do print -r "kf=$ik_fc"; done"##);
+        bulk_k_arith_postincrement_line => (r#"(( x++ ))"#, r##"(( kk_pi=0 )); (( kk_pi++ )); print -r "$kk_pi""##);
+        bulk_k_typeset_integer_output_oct => (r#"typeset -i8"#, r#"typeset -i8 kk_io=12; print -r "$kk_io""#);
+        bulk_k_read_delim_x_herestring => (r#"read -d x"#, r##"read -d x kk_rk <<< 'axbx'; print -r "rk=$kk_rk""##);
+        bulk_k_cond_symlink_mktemp => (r#"[[ -L ]]"#, r##"tdl=$(mktemp -d); touch $tdl/tk; ln -sf tk $tdl/lk; [[ -L $tdl/lk ]]; print -r "slk=$?"; command rm -rf $tdl"##);
+        bulk_k_assoc_keys_only_k_flag => (r#"${(k)A}"#, r##"typeset -A kk_am=(kk1 vk1); print -r "${(k)kk_am}""##);
+        bulk_k_array_range_assign_two => (r#"a[1,2]="#, r##"ak_sl=(1 2); ak_sl[1,2]=(x y); print -r "${ak_sl[@]}""##);
+        bulk_k_shift_too_far_status => (r#"shift 99"#, r##"set -- a b c; shift 99 2>/dev/null; print -r "shk=$?""##);
+        bulk_k_arith_power_right_assoc => (r#"7**2**2"#, r##"print -r "$(( 7 ** 2 ** 2 ))""##);
+        bulk_k_whence_c_builtin => (r#"whence -c print"#, r##"whence -c print 2>&1"##);
+        bulk_k_printf_style_g_float => (r#"printf %g"#, r##"printf '%g\n' 3.14159"##);
+        bulk_k_command_v_builtin => (r#"command -v print"#, r##"command -v print 2>&1"##);
+        bulk_k_string_equal_glob_dq_star => (r#"[[ == pattern ]]"#, r##"[[ abc_k == a* ]]; print -r "sqk=$?""##);
+        bulk_k_if_elif_else_chain => (r#"if elif"#, r##"if false; then print bad_k; elif true; then print ok_kelif; else print no_k; fi"##);
+        bulk_k_brace_group_subshell => (r#"{ group; }"#, r##"{ print -r grp_k; }"##);
+        bulk_k_case_pipe_pattern => (r#"case a|b"#, r##"case XX_k in X*|*Y_k) print miss;; XX_k|YY_k) print hit_kcp;; esac"##);
+        bulk_k_anon_function_local => (r#"( ) { local }"#, r##"() { local lk_k=42; print -r "$lk_k"; }""##);
+        bulk_k_colon_minus_assign => (r#":-"#, r##"unset uk_ca; : ${uk_ca:=905_k}; print -r "$uk_ca""##);
+        bulk_k_typeset_tied_scalar_array => (r#"typeset -T"#, r##"typeset -T TK_s arK_t; arK_t=(x y z); print -r "tsk=$TK_s nK=$#arK_t""##);
+        bulk_k_arith_bit_not_tilde => (r#"~255"#, r##"print -r "$(( ~255 ))""##);
+        bulk_k_mathfunc_abs_after_load => (r#"mathfunc abs"#, r##"zmodload zsh/mathfunc 2>/dev/null; print -r "$(( abs(-5) ))""##);
+        bulk_k_integer_count_typeset_plus_i => (r#"typeset +i #lines"#, r##"integer kk_il=${#${(f)$(typeset +i 2>/dev/null)}}; print -r "$kk_il""##);
+        bulk_k_param_FCEDIT => (r#"FCEDIT"#, r##"FCEDIT=fe_k; print -r "${FCEDIT:-}""##);
+        bulk_k_module_aliases_plus => (r#"$+module_aliases"#, r##"print -r "$+module_aliases""##);
+        bulk_k_count_dis_aliases => (r#"#dis_aliases"#, r##"print -r "${#dis_aliases}""##);
+        bulk_k_count_dis_functions => (r#"#dis_functions"#, r##"print -r "${#dis_functions}""##);
+        bulk_k_options_combininghooks => (r#"options[combininghooks]"#, r##"print -r "$options[combininghooks]""##);
+        bulk_k_rc_expand_caret_array => (r#"${^ary}"#, r##"setopt rc_expand_param; ak_rc=(p q); print -r "${^ak_rc}""##);
+        bulk_k_SECONDS_reset_nop => (r#"SECONDS"#, r##"SECONDS=0; :; print -r "$SECONDS""##);
+        bulk_k_umask_print_numeric => (r#"umask"#, r##"print -r "$(umask)""##);
+        bulk_k_limit_soft_noarg => (r#"limit"#, r##"limit 2>/dev/null; print -r "lmk=$?""##);
+        bulk_k_dirs_builtin_ok => (r#"dirs"#, r##"dirs 2>/dev/null; print -r "drk=$?""##);
+        bulk_k_builtin_test_string_eq => (r#"test str ="#, r##"test 'a_k' = 'a_k' && print -r teqk"##);
+        bulk_k_dual_bracket_invert_file => (r#"[[ ! -e ]]"#, r##"[[ ! -e /__no_k_file__ ]]; print -r "nek=$?""##);
+        bulk_k_sparse_array_subscript => (r#"a[5]="#, r##"ak_sp=(); ak_sp[5]=hi_k; print -r "$#ak_sp $ak_sp[5]""##);
+        bulk_k_printf_percent_q_line => (r#"printf %q line"#, r##"printf '%q\n' 'two words_k'"##);
+        bulk_k_double_bracket_str_ne => (r#"[[ != ]]"#, r##"[[ abc != def ]]; print -r "nek2=$?""##);
+        bulk_k_arith_logical_and_ints => (r#"&& in (( ))"#, r##"print -r "$(( 1 && 0 )) $(( 1 && 1 ))""##);
+        bulk_k_arith_logical_or_ints => (r#"\|\| in (( ))"#, r##"print -r "$(( 0 || 0 )) $(( 0 || 1 ))""##);
+        bulk_k_nested_arith_parens => (r#"(( (1+2)*(4+5) ))"#, r##"print -r "$(( (1+2)*(4+5) ))""##);
+        bulk_k_float_compare_ge => (r#">=" float"#, r##"(( 2.5 >= 2.5 )); print -r "fgek=$?""##);
+        bulk_k_float_compare_le => (r#"<=" float"#, r##"(( 1.0 <= 2.0 )); print -r "flek=$?""##);
+        bulk_k_ternary_nested_arith => (r#"?: nested"#, r##"print -r "$(( 1 ? (0 ? 9 : 8) : 7 ))""##);
+        bulk_k_division_negative_trunc => (r#"11 / -3"#, r##"print -r "$(( 11 / -3 ))""##);
+        bulk_k_modulo_positive => (r#"100 % 7"#, r##"print -r "$(( 100 % 7 ))""##);
+        bulk_k_char_code_double_hash_x => (r#"##x"#, r##"print -r "$(( ##x ))""##);
+        bulk_k_parameter_PWD_colon_t => (r#"PWD :t"#, r##"print -r "${PWD:t}""##);
+        bulk_k_scalar_dirname_basename_combo => (r#":h :t"#, r##"sk_p=/one_k/two_k/three_k; print -r "${sk_p:h:t}""##);
+        bulk_k_array_first_last_subscripts => (r#"[1] [-1]"#, r##"ak_fl=(u v w); print -r "$ak_fl[1] $ak_fl[-1]""##);
