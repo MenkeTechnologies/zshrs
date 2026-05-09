@@ -564,7 +564,13 @@ impl ShellExecutor {
         if args[0] == "--clear" {
             // Route through bin_zprof -c so the C-faithful clear path
             // resets CALLS/NCALLS/ARCS/NARCS uniformly (zprof.c:141-147).
-            crate::zprof::bin_zprof(self, "profile", &["-c".to_string()]);
+            {
+                use crate::ported::zsh_h::{options, MAX_OPS};
+                let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                        argscount: 0, argsalloc: 0 };
+                ops.ind[b'c' as usize] = 1;
+                crate::zprof::bin_zprof("profile", &["-c".to_string()], &ops, 0);
+            };
             println!("profile data cleared");
             return 0;
         }
@@ -576,7 +582,12 @@ impl ShellExecutor {
             if crate::zprof::NCALLS.load(std::sync::atomic::Ordering::SeqCst) == 0 {
                 println!("{}", dim("no profile data"));
             } else {
-                crate::zprof::bin_zprof(self, "profile", &[]);
+                {
+                use crate::ported::zsh_h::{options, MAX_OPS};
+                let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                    argscount: 0, argsalloc: 0 };
+                crate::zprof::bin_zprof("profile", &[], &ops, 0);
+            };
             }
             return 0;
         }
@@ -606,7 +617,13 @@ impl ShellExecutor {
         self.profiling_enabled = true;
         // Reset zprof state through the C-faithful -c path so the
         // module-level CALLS/NCALLS/ARCS/NARCS tables start fresh.
-        crate::zprof::bin_zprof(self, "profile", &["-c".to_string()]);
+        {
+                use crate::ported::zsh_h::{options, MAX_OPS};
+                let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                        argscount: 0, argsalloc: 0 };
+                ops.ind[b'c' as usize] = 1;
+                crate::zprof::bin_zprof("profile", &["-c".to_string()], &ops, 0);
+            };
 
         let t0 = std::time::Instant::now();
         let result = self.execute_script(&code);
@@ -639,7 +656,12 @@ impl ShellExecutor {
         // calls were profiled.
         if crate::zprof::NCALLS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
             println!("{}", bold("function breakdown"));
-            crate::zprof::bin_zprof(self, "profile", &[]);
+            {
+                use crate::ported::zsh_h::{options, MAX_OPS};
+                let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                    argscount: 0, argsalloc: 0 };
+                crate::zprof::bin_zprof("profile", &[], &ops, 0);
+            };
         }
 
         // Per-command breakdown from tracing (if tracing is at debug level)
