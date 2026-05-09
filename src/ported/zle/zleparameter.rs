@@ -294,20 +294,41 @@ mod tests {
     }
 }
 
-/// Port of `boot_()` from Src/Zle/zleparameter.c:169. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn boot_() -> i32 { 0 }
+/// Port of `setup_()` from `Src/Zle/zleparameter.c:147`. C body
+/// is `return 0;` (UNUSED `Module m`).
+pub fn setup_() -> i32 {                                                 // c:147
+    0                                                                    // c:150
+}
 
-/// Port of `cleanup_()` from Src/Zle/zleparameter.c:176. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn cleanup_() -> i32 { 0 }
+/// Port of `features_()` from `Src/Zle/zleparameter.c:154`. C body
+/// is `*features = featuresarray(m, &module_features); return 0;`.
+/// Static-link path: 0.
+pub fn features_() -> i32 {                                              // c:154
+    0                                                                    // c:158
+}
 
-/// Port of `enables_()` from Src/Zle/zleparameter.c:162. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn enables_() -> i32 { 0 }
+/// Port of `enables_()` from `Src/Zle/zleparameter.c:162`. C body
+/// is `return handlefeatures(m, &module_features, enables);`.
+/// Static-link path: 0.
+pub fn enables_() -> i32 {                                               // c:162
+    0                                                                    // c:165
+}
 
-/// Port of `features_()` from Src/Zle/zleparameter.c:154. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn features_() -> i32 { 0 }
+/// Port of `boot_()` from `Src/Zle/zleparameter.c:169`. C body is
+/// `return 0;` (UNUSED `Module m`).
+pub fn boot_() -> i32 {                                                  // c:169
+    0                                                                    // c:172
+}
 
-/// Port of `finish_()` from Src/Zle/zleparameter.c:183. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn finish_() -> i32 { 0 }
+/// Port of `cleanup_()` from `Src/Zle/zleparameter.c:176`. C body
+/// is `return setfeatureenables(m, &module_features, NULL);`.
+/// Static-link path: 0.
+pub fn cleanup_() -> i32 {                                               // c:176
+    0                                                                    // c:179
+}
 
-/// Port of `setup_()` from Src/Zle/zleparameter.c:147. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn setup_() -> i32 { 0 }
+/// Port of `finish_()` from `Src/Zle/zleparameter.c:183`. C body
+/// is `return 0;` (UNUSED `Module m`).
+pub fn finish_() -> i32 {                                                // c:183
+    0                                                                    // c:186
+}
