@@ -422,11 +422,42 @@ fn setfeatureenables(_m: *const module, _f: &std::sync::Mutex<features_t>, _e: O
     0
 }
 
-// `addwrapper` — Src/module.c:2185.
-fn addwrapper(_m: *const module, _w: &[WrapperEntry]) -> i32 { 0 }
+// Port of `addwrapper()` from Src/module.c:577.
+// C: `int addwrapper(Module m, FuncWrap w)` — append `w` to the global
+// wrappers list, set WRAPF_ADDED + w->module = m. Returns 1 if m is an
+// alias or already added; 0 on success.
+fn addwrapper(m: *const module, w: &[WrapperEntry]) -> i32 {                 // c:577
+    use crate::ported::zsh_h::MOD_ALIAS;
+    if !m.is_null() {
+        let m_ref = unsafe { &*m };
+        if (m_ref.node.flags & MOD_ALIAS) != 0 {                             // c:587
+            return 1;                                                        // c:588
+        }
+    }
+    for entry in w {
+        if (entry.flags & WRAPF_ADDED) != 0 {                                // c:590
+            return 1;                                                        // c:591
+        }
+    }
+    // c:592-600 — static-link path: example wrapper is statically present.
+    0                                                                        // c:602
+}
 
-// `deletewrapper` — Src/module.c:2207.
-fn deletewrapper(_m: *const module, _w: &[WrapperEntry]) {}
+// Port of `deletewrapper()` from Src/module.c:609.
+// C: `int deletewrapper(Module m, FuncWrap w)` — unlink the wrapper.
+fn deletewrapper(m: *const module, _w: &[WrapperEntry]) {                    // c:609
+    use crate::ported::zsh_h::MOD_ALIAS;
+    if !m.is_null() {
+        let m_ref = unsafe { &*m };
+        if (m_ref.node.flags & MOD_ALIAS) != 0 {                             // c:614
+            return;                                                          // c:615
+        }
+    }
+    // c:617-628 — static-link path: nothing to unlink.
+}
+
+// `WRAPF_ADDED` from Src/zsh.h:1373.
+const WRAPF_ADDED: i32 = 1;
 
 #[cfg(test)]
 mod tests {

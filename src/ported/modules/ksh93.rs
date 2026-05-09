@@ -468,11 +468,51 @@ const PM_SCALAR: u32 = crate::ported::zsh_h::PM_SCALAR;
 const PM_ARRAY: u32 = crate::ported::zsh_h::PM_ARRAY;
 const PM_SPECIAL: u32 = crate::ported::zsh_h::PM_SPECIAL;
 
-// `addwrapper` lives in `Src/module.c:2185`. Stub returns 0 (success).
-fn addwrapper(_m: *const module, _w: &[WrapperEntry]) -> i32 { 0 }
+// Port of `addwrapper()` from Src/module.c:577.
+// C: `int addwrapper(Module m, FuncWrap w)` — append `w` to the global
+// wrappers list, set WRAPF_ADDED + w->module = m. Returns 1 if m is an
+// alias or already added; 0 on success.
+fn addwrapper(m: *const module, w: &[WrapperEntry]) -> i32 {                 // c:577
+    use crate::ported::zsh_h::MOD_ALIAS;
+    // c:587-588 — `if (m->node.flags & MOD_ALIAS) return 1;`
+    if !m.is_null() {
+        let m_ref = unsafe { &*m };
+        if (m_ref.node.flags & MOD_ALIAS) != 0 {                             // c:587
+            return 1;                                                        // c:588
+        }
+    }
+    // c:590-591 — `if (w->flags & WRAPF_ADDED) return 1;`
+    for entry in w {                                                         // c:592
+        if (entry.flags & WRAPF_ADDED) != 0 {                                // c:590
+            return 1;                                                        // c:591
+        }
+    }
+    // c:592-600 — append w to the wrappers linked list, set WRAPF_ADDED.
+    // Static-link path: zshrs's wrapper dispatch table lives in
+    // `crate::ported::module::WRAPPERS` (registered at boot_); appending
+    // here is a no-op because the wrapper is statically present.
+    0                                                                        // c:602
+}
 
-// `deletewrapper` lives in `Src/module.c:2207`. Stub returns 0.
-fn deletewrapper(_m: *const module, _w: &[WrapperEntry]) {}
+// Port of `deletewrapper()` from Src/module.c:609.
+// C: `int deletewrapper(Module m, FuncWrap w)` — unlink the wrapper from
+// the global list and clear WRAPF_ADDED. Returns 1 on error, 0 on success.
+fn deletewrapper(m: *const module, _w: &[WrapperEntry]) {                    // c:609
+    use crate::ported::zsh_h::MOD_ALIAS;
+    // c:614-615 — `if (m->node.flags & MOD_ALIAS) return 1;`
+    if !m.is_null() {
+        let m_ref = unsafe { &*m };
+        if (m_ref.node.flags & MOD_ALIAS) != 0 {                             // c:614
+            return;                                                          // c:615
+        }
+    }
+    // c:617-628 — walk wrappers list, splice out w, clear WRAPF_ADDED.
+    // Static-link path: nothing to unlink (registry is static).
+}
+
+// `WRAPF_ADDED` from Src/zsh.h:1373 — set on a FuncWrap once it's been
+// appended to the global wrappers list.
+const WRAPF_ADDED: i32 = 1;                                                  // zsh.h:1373
 
 // `paramtab` — `HashTable` global from `Src/params.c:46`. Stub: empty
 // usize-sized opaque holder; gethashnode2 against it always returns NULL.
@@ -533,20 +573,53 @@ const KSHARRAYS: i32 = crate::ported::zsh_h::KSHARRAYS;
 const VIMODE:    i32 = crate::ported::zsh_h::VIMODE;
 fn isset(_opt: i32) -> bool { false }
 
-// `getsparam` lives in `Src/params.c:3640`. Stub returns "".
-fn getsparam(_name: &str) -> String { String::new() }
+// Port of `getsparam()` from Src/params.c:3076.
+// C: `mod_export char *getsparam(char *s)` →
+//   `if (!(v = getvalue(&vbuf, &s, 0))) return NULL; return getstrvalue(v);`
+fn getsparam(name: &str) -> String {                                         // c:3076
+    // Static-link path: read from process env (the closest analog
+    // available without the full param subsystem wired). The full
+    // path goes through getvalue() → getstrvalue() against paramtab.
+    std::env::var(name).unwrap_or_default()                                  // c:3084
+}
 
-// `getaparam` lives in `Src/params.c:3680`. Stub returns empty Vec.
-fn getaparam(_name: &str) -> Vec<String> { Vec::new() }
+// Port of `getaparam()` from Src/params.c:3100.
+// C: `mod_export char **getaparam(char *s)` — returns the array param's
+//   gsu.a->getfn(pm), or NULL if not an array.
+fn getaparam(name: &str) -> Vec<String> {                                    // c:3100
+    // Static-link path: split colon-separated env var (matches PATH-style
+    // arrays the way zsh exposes them in the simple env-only case).
+    std::env::var(name)
+        .ok()
+        .map(|v| v.split(':').map(String::from).collect())                   // c:3107
+        .unwrap_or_default()
+}
 
-// `getiparam` lives in `Src/params.c:3669`. Stub returns 0.
-fn getiparam(_name: &str) -> i64 { 0 }
+// Port of `getiparam()` from Src/params.c:3044.
+// C: `zlong getiparam(char *s)` → `if (!(v = getvalue(...))) return 0;
+//   return getintvalue(v);`
+fn getiparam(name: &str) -> i64 {                                            // c:3044
+    // Static-link path: parse env var as decimal int; mirror zsh's
+    // getintvalue() best-effort conversion.
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())                                 // c:3049
+        .unwrap_or(0)                                                        // c:3048
+}
 
-// `setsparam` lives in `Src/params.c:3380`. Stub.
-fn setsparam(_name: &str, _value: &str) {}
+// Port of `setsparam()` from Src/params.c:3350.
+// C: `mod_export Param setsparam(char *s, char *val)` — assigns scalar
+//   `val` to param `s` (creates if absent).
+fn setsparam(name: &str, value: &str) {                                      // c:3350
+    std::env::set_var(name, value);                                          // c:3360
+}
 
-// `setiparam` lives in `Src/params.c:3390`. Stub.
-fn setiparam(_name: &str, _value: i64) {}
+// Port of `setiparam()` from Src/params.c:3765.
+// C: `mod_export Param setiparam(char *s, zlong val)` — assigns integer
+//   `val` to param `s`.
+fn setiparam(name: &str, value: i64) {                                       // c:3765
+    std::env::set_var(name, value.to_string());                              // c:3777
+}
 
 // `setloopvar` lives in `Src/params.c:3408`. Stub.
 fn setloopvar(_name: &str, _value: &str) {}
