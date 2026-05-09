@@ -109,3 +109,25 @@ src/ported/signals_h.rs::winch_block
 src/ported/signals_h.rs::winch_unblock
 src/ported/signals_h.rs::signal_ignore
 src/ported/signals_h.rs::signal_default
+
+# Port of zsh.h's macro family. C indexes them across many .c files
+# (subst.c, glob.c, params.c, zle_*.c, etc.) since they're
+# preprocessor macros expanded at every call site. Canonical home
+# is zsh.h which maps to zsh_h.rs.
+src/ported/zsh_h.rs::IS_DASH
+src/ported/zsh_h.rs::minimum
+src/ported/zsh_h.rs::MB_METACHARINIT
+src/ported/zsh_h.rs::MB_METACHARLEN
+src/ported/zsh_h.rs::MB_METACHARLENCONV
+src/ported/zsh_h.rs::MB_METASTRLEN
+src/ported/zsh_h.rs::MB_METASTRWIDTH
+src/ported/zsh_h.rs::MB_METASTRLEN2
+src/ported/zsh_h.rs::MB_CHARINIT
+src/ported/zsh_h.rs::MB_CHARLEN
+src/ported/zsh_h.rs::MB_CHARLENCONV
+src/ported/zsh_h.rs::WCWIDTH
+src/ported/zsh_h.rs::WCWIDTH_WINT
+src/ported/zsh_h.rs::IS_COMBINING
+src/ported/zsh_h.rs::IS_BASECHAR
+src/ported/zsh_h.rs::OPT_ARG
+src/ported/zsh_h.rs::OPT_ARG_SAFE

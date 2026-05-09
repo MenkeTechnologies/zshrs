@@ -437,3 +437,11 @@ PM_TYPE
 WC_ZISTYPE
 WC_ISPRINT
 ZISPRINT
+
+# Port of zsh.h's `QT_IS_SINGLE(x)` macro (zsh.h:294) and
+# `MB_CHARLENCONV(str, len, cp)` macro (zsh.h:3287). Both are
+# preprocessor macros — not C function definitions — so they don't
+# appear in zsh_c_fn_names.txt. Same convention as the other
+# zsh.h/ztype.h macro ports above.
+QT_IS_SINGLE
+MB_CHARLENCONV
