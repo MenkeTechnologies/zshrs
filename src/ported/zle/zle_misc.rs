@@ -67,6 +67,16 @@ fn suffixlist() -> &'static std::sync::Mutex<Vec<SuffixSet>> {
 /// Suppresses inserted-character suffix removal when set.
 pub static SUFFIXNOINSREM: AtomicI32 = AtomicI32::new(0);                    // c:1549
 
+/// Port of `static ZLE_INT_T vfindchar` from `Src/Zle/zle_move.c:734`.
+/// The character argument to the most recent vi-find* command.
+pub static VFINDCHAR: AtomicI32 = AtomicI32::new(0);                         // c:734
+
+/// Port of `static int vfinddir, tailadd` from `Src/Zle/zle_move.c:735`.
+/// vfinddir = +1 forward, -1 backward; tailadd = +1 land just after,
+/// -1 land just before, 0 land on the char itself.
+pub static VFINDDIR: AtomicI32 = AtomicI32::new(0);                          // c:735
+pub static TAILADD:  AtomicI32 = AtomicI32::new(0);                          // c:735
+
 // ===== Pre/post-display strings (Src/Zle/zle_main.c) =====
 //
 // `ZLE_STRING_T predisplay` / `ZLE_STRING_T postdisplay` — text
