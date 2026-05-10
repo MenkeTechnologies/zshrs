@@ -407,16 +407,23 @@ pub fn get_compqstack(_pm: *mut crate::ported::zsh_h::param) -> String {     // 
 }
 
 /// Direct port of `cond_psfix()` from `Src/Zle/complete.c:1662`.
-/// C body (c:1664-1672): `if (comp_check())` then dispatch to
-/// do_comp_vars with id=CVT_PREPAT|CVT_SUFPAT and the arg as the
-/// pattern (or arg[0] as the pattern with arg[1] as the count).
-pub fn cond_psfix(a: &[String], _id: i32) -> i32 {                           // c:1662
+/// Direct port of `int cond_psfix(char **a, int id)` from
+/// `Src/Zle/complete.c:1662-1672`.
+/// ```c
+/// if (comp_check())
+///     return do_comp_vars(id, getn(a, 0), a[1], 0, NULL, 0);
+/// return 0;
+/// ```
+///
+/// `do_comp_vars` is the canonical Rust port at complete.rs:807,
+/// which dispatches the CVT_PRENUM/PRENUM/SUFNUM/SUFPAT/RANGENUM/
+/// RANGEPAT operations. We forward through it directly.
+pub fn cond_psfix(a: &[String], id: i32) -> i32 {                            // c:1662
     if comp_check() != 0 {                                                   // c:1664
-        // c:1665-1670 — do_comp_vars dispatch. Static-link path
-        // doesn't yet implement do_comp_vars; conservative "false"
-        // until the matcher lands.
-        let _ = a;
-        return 0;
+        let n: i32 = a.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let sa = a.get(1).map(|s| s.as_str()).unwrap_or("");
+        // c:1665-1670 — `do_comp_vars(id, getn(a,0), a[1], 0, NULL, 0)`.
+        return do_comp_vars(id, n, sa, 0, "", 0);                            // c:1666
     }
     0                                                                        // c:1671
 }
