@@ -2,6 +2,11 @@
 //!
 //! Direct port from zsh/Src/Zle/zle_misc.c
 //!
+//! insert a zle string, with repetition and suffix removal                  // c:33
+//! Set the base for a digit argument.                                       // c:1034
+//! Suffix system                                                            // c:1500
+//! Fix the suffix in place, if there is one, making it non-removable.       // c:1820
+//!
 //! Implements misc editing widgets:
 //! - self-insert, self-insert-unmeta
 //! - accept-line, accept-and-hold
@@ -33,6 +38,14 @@ pub static DONE: AtomicI32 = AtomicI32::new(0);                              // 
 /// position for the region (set by `set-mark-command`, consumed by
 /// `kill-region`, `copy-region-as-kill`, `regionlines`, etc.).
 pub static MARK: AtomicI32 = AtomicI32::new(0);                              // c:84
+
+/// Port of `mod_export int suffixlen` from `Src/Zle/zle_misc.c:1553`.
+/// Length of the currently active, auto-removable suffix.
+pub static SUFFIXLEN: AtomicI32 = AtomicI32::new(0);                         // c:1553
+
+/// Port of `int suffixnoinsrem` from `Src/Zle/zle_misc.c:1549`.
+/// Suppresses inserted-character suffix removal when set.
+pub static SUFFIXNOINSREM: AtomicI32 = AtomicI32::new(0);                    // c:1549
 
 /// Clipboard/paste buffer for yank operations
 // yankb, yanke; mark the start and end of last yank in editing buffer.    // c:526

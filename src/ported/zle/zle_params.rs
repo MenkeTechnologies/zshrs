@@ -266,14 +266,50 @@ pub fn get_region_active(zle: &crate::ported::zle::zle_main::Zle) -> i64 {   // 
 /// Port of `get_registers()` from Src/Zle/zle_params.c:807. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn get_registers() -> i32 { 0 }
 
-/// Port of `get_suffixactive()` from Src/Zle/zle_params.c:612. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_suffixactive() -> i32 { 0 }
+/// Port of `get_suffixactive()` from `Src/Zle/zle_params.c:611`.
+/// ```c
+/// static zlong
+/// get_suffixactive(UNUSED(Param pm))
+/// {
+///     return suffixlen;
+/// }
+/// ```
+/// `$SUFFIX_ACTIVE` getter — returns the length of the currently
+/// active auto-removable suffix.
+pub fn get_suffixactive() -> i64 {                                           // c:611
+    use std::sync::atomic::Ordering;
+    crate::ported::zle::zle_misc::SUFFIXLEN.load(Ordering::Relaxed) as i64   // c:614 return suffixlen
+}
 
-/// Port of `get_suffixend()` from Src/Zle/zle_params.c:605. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_suffixend() -> i32 { 0 }
+/// Port of `get_suffixend()` from `Src/Zle/zle_params.c:604`.
+/// ```c
+/// static zlong
+/// get_suffixend(UNUSED(Param pm))
+/// {
+///     return zlecs;
+/// }
+/// ```
+/// `$SUFFIX_END` getter — returns the cursor position (suffixes are
+/// auto-removed FROM the cursor backward).
+pub fn get_suffixend(zle: &crate::ported::zle::zle_main::Zle) -> i64 {       // c:604
+    zle.zlecs as i64                                                         // c:607 return zlecs
+}
 
-/// Port of `get_suffixstart()` from Src/Zle/zle_params.c:598. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_suffixstart() -> i32 { 0 }
+/// Port of `get_suffixstart()` from `Src/Zle/zle_params.c:597`.
+/// ```c
+/// static zlong
+/// get_suffixstart(UNUSED(Param pm))
+/// {
+///     return zlecs - suffixlen;
+/// }
+/// ```
+/// `$SUFFIX_START` getter — start byte of the active suffix
+/// (cursor minus suffix length).
+pub fn get_suffixstart(zle: &crate::ported::zle::zle_main::Zle) -> i64 {     // c:597
+    use std::sync::atomic::Ordering;
+    let suffixlen = crate::ported::zle::zle_misc::SUFFIXLEN.load(Ordering::Relaxed);
+    (zle.zlecs as i64) - (suffixlen as i64)                                  // c:600 zlecs - suffixlen
+}
 
 /// Port of `get_widget()` from Src/Zle/zle_params.c:414. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn get_widget() -> i32 { 0 }
@@ -473,5 +509,41 @@ mod numeric_tests {
         // Unchanged.
         assert_eq!(z.zmod.mult, 5);
         assert!(z.zmod.flags.contains(ModifierFlags::MULT));
+    }
+}
+
+#[cfg(test)]
+mod suffix_tests {
+    use super::*;
+    use crate::ported::zle::zle_main::Zle;
+    use crate::ported::zle::zle_misc::SUFFIXLEN;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn get_suffixactive_reads_suffixlen() {
+        // c:614 — `return suffixlen`.
+        SUFFIXLEN.store(7, Ordering::SeqCst);
+        assert_eq!(get_suffixactive(), 7);
+        SUFFIXLEN.store(0, Ordering::SeqCst);
+        assert_eq!(get_suffixactive(), 0);
+    }
+
+    #[test]
+    fn get_suffixend_reads_zlecs() {
+        // c:607 — `return zlecs`.
+        let mut z = Zle::default();
+        z.zlecs = 11;
+        assert_eq!(get_suffixend(&z), 11);
+    }
+
+    #[test]
+    fn get_suffixstart_subtracts_suffixlen() {
+        // c:600 — `return zlecs - suffixlen`.
+        let mut z = Zle::default();
+        z.zlecs = 20;
+        SUFFIXLEN.store(5, Ordering::SeqCst);
+        assert_eq!(get_suffixstart(&z), 15);
+        SUFFIXLEN.store(0, Ordering::SeqCst);
+        assert_eq!(get_suffixstart(&z), 20);
     }
 }
