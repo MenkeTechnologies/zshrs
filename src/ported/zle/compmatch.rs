@@ -1296,13 +1296,60 @@ pub fn add_match_sub(
 pub static MATCHLASTSUB: std::sync::OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>>
     = std::sync::OnceLock::new();                                            // c:294
 
-/// Port of `bld_line()` from Src/Zle/compmatch.c:1736.
-pub fn bld_line(_line: &mut String, _mword: &str, _word: &str,               // c:1736
-                _sfx: i32) -> i32 {
-    // C body c:1738-1992 — runs the matcher engine to construct the
-    //                      `line` string from `word` per active matcher
-    //                      list. Substrate deferred; 0.
-    0
+/// Direct port of `static int bld_line(Cmatcher mp, ZLE_STRING_T line,
+///                                     char *mword, char *word,
+///                                     int wlen, int sfx)`
+/// from `Src/Zle/compmatch.c:1736-1992`. Constructs the `line`
+/// string from `word` per the supplied matcher, returning the
+/// number of word chars consumed.
+///
+/// **Substrate trade-off:** the full C body builds a per-position
+/// generic-pattern array (`genpatarr`) from `mp->line`, handling
+/// CPAT_EQUIV → query mword for the equivalence class to deduce
+/// the line char, then runs `pattern_match_restrict` against the
+/// bmatchers chain. The 250-line orchestration depends on the
+/// metafied-byte conversion path (`MB_METACHARLENCONV`) which
+/// doesn't translate to Rust's wide-char Vec<char> as a line-for-
+/// line port.
+///
+/// The Rust port handles the common case (lpat all CPAT_CHAR) by
+/// emitting those chars directly into `line`, which gives the
+/// correct result whenever the matcher's line pattern is a fixed
+/// literal sequence — i.e. when the user wrote e.g. `bindkey -M
+/// emacs "abc" cmd` whose `abc` becomes a literal char pattern.
+pub fn bld_line(
+    mp: &crate::ported::zle::comp_h::Cmatcher,                               // c:1736
+    line: &mut Vec<char>,
+    mword: &str,
+    word: &str,
+    wlen: i32,
+    _sfx: i32,
+) -> i32 {
+    use crate::ported::zle::comp_h::CPAT_CHAR;
+    let _ = mword;
+    let _ = word;
+
+    // c:1772 — walk mp->line, emitting literal chars when CPAT_CHAR.
+    let mut consumed: i32 = 0;
+    let mut lpat = Some(&*mp.line.as_deref().unwrap());
+    while let Some(p) = lpat {
+        if p.tp == CPAT_CHAR {
+            if let Some(ch) = char::from_u32(p.chr) {
+                line.push(ch);                                               // c:1798
+                consumed += 1;
+                if consumed >= wlen { break; }
+            }
+        } else {
+            // Non-literal pattern entry — the full CPAT_EQUIV/CCLASS
+            // resolution path needs the bmatchers + pattern_match_restrict
+            // chain orchestration which is the 200-line body above.
+            // Without it we cannot synthesize a line char for this
+            // position; bail.
+            break;
+        }
+        lpat = p.next.as_deref();
+    }
+    consumed                                                                 // c:1991
 }
 
 /// Port of `bld_parts()` from Src/Zle/compmatch.c:1638.
