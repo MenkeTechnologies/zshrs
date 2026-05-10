@@ -127,6 +127,33 @@ pub mod cct {
     pub const QUOTE: i32    = 13;  // compctl.h:89
 }
 
+/// Continuation-flag bits — port of `CC_*` from
+/// Src/Zle/compctl.h:152-158. Stored in `cc.mask2` to drive the
+/// makecomplist dispatch loop's "continue to next compctl" decision.
+pub mod cc_cont {
+    /// Port of `CC_NOSORT` from `Src/Zle/compctl.h:152`. Don't sort
+    /// the matches from this compctl.
+    pub const NOSORT:   u32 = 1 << 0;                                        // c:152
+    /// Port of `CC_XORCONT` from `compctl.h:153`. Continue with the
+    /// xor-target compctl on no match.
+    pub const XORCONT:  u32 = 1 << 1;                                        // c:153
+    /// Port of `CC_CCCONT` from `compctl.h:154`. Continue dispatching
+    /// to the next compctl regardless of match result.
+    pub const CCCONT:   u32 = 1 << 2;                                        // c:154
+    /// Port of `CC_PATCONT` from `compctl.h:155`. Continue to the
+    /// pattern-bound compctl chain.
+    pub const PATCONT:  u32 = 1 << 3;                                        // c:155
+    /// Port of `CC_DEFCONT` from `compctl.h:156`. Continue to the
+    /// default compctl after the current.
+    pub const DEFCONT:  u32 = 1 << 4;                                        // c:156
+    /// Port of `CC_UNIQCON` from `compctl.h:157`. Strip consecutive
+    /// duplicate matches.
+    pub const UNIQCON:  u32 = 1 << 5;                                        // c:157
+    /// Port of `CC_UNIQALL` from `compctl.h:158`. Strip all duplicate
+    /// matches (not just consecutive).
+    pub const UNIQALL:  u32 = 1 << 6;                                        // c:158
+}
+
 /// Internal `cclist` flags — port of `COMP_*` from
 /// Src/Zle/compctl.c:53-58.
 pub mod comp_op {
