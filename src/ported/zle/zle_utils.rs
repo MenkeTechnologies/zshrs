@@ -860,12 +860,34 @@ impl Zle {
     }
 }
 
-/// Port of `applychange()` from Src/Zle/zle_utils.c:1678.
-pub fn applychange(_zle: &mut crate::ported::zle::zle_main::Zle, _ch: i32) -> i32 { // c:1678
-    // C body c:1680-1730 — applies one Change record (delete then insert)
-    //                      from the undo list. Without the Change Rust
-    //                      struct hydrated: 0.
-    0
+/// Direct port of `static int applychange(struct change *ch)` from
+/// `Src/Zle/zle_utils.c:1678-1730`. Applies one Change record from
+/// the undo stack: deletes `ch->del` characters at `ch->off`, then
+/// inserts `ch->ins` at the same position, and updates `zlecs`.
+/// Returns 1 if there are more changes to apply (CH_NEXT), else 0.
+pub fn applychange(zle: &mut crate::ported::zle::zle_main::Zle, ch: i32) -> i32 { // c:1678
+    use crate::ported::zle::zle_main::ChangeFlags;
+    let idx = ch as usize;
+    if idx >= zle.undo_stack.len() { return 0; }
+    let change = zle.undo_stack[idx].clone();
+    // c:1683-1696 — apply del then ins at change.off.
+    let off = change.off;
+    let del_n = change.del.len();
+    if off + del_n <= zle.zleline.len() {
+        zle.zleline.drain(off..off + del_n);                                 // c:1690 delete
+    }
+    // c:1700 — insert change.ins at off.
+    for (i, c) in change.ins.iter().enumerate() {
+        if off + i <= zle.zleline.len() {
+            zle.zleline.insert(off + i, *c);
+        } else {
+            zle.zleline.push(*c);
+        }
+    }
+    zle.zlecs = change.new_cs;                                               // c:1718
+    zle.zlell = zle.zleline.len();
+    // c:1721 — return 1 if CH_NEXT, else 0.
+    if change.flags.contains(ChangeFlags::NEXT) { 1 } else { 0 }
 }
 
 /// Port of `backdel()` from `Src/Zle/zle_utils.c:1084`. Removes `ct`
@@ -1246,9 +1268,32 @@ pub fn stringaszleline(s: &str) -> Vec<char> {                               // 
 }
 
 /// Port of `unapplychange()` from Src/Zle/zle_utils.c:1634.
-pub fn unapplychange(_zle: &mut crate::ported::zle::zle_main::Zle, _ch: i32) -> i32 { // c:1634
-    // C body c:1636-1652 — reverse of applychange. Undo deferred; 0.
-    0
+/// Direct port of `static int unapplychange(struct change *ch)` from
+/// `Src/Zle/zle_utils.c:1634-1652`. Reverse of applychange: deletes
+/// `ch->ins` at `ch->off` and re-inserts `ch->del`.
+pub fn unapplychange(zle: &mut crate::ported::zle::zle_main::Zle, ch: i32) -> i32 { // c:1634
+    use crate::ported::zle::zle_main::ChangeFlags;
+    let idx = ch as usize;
+    if idx >= zle.undo_stack.len() { return 0; }
+    let change = zle.undo_stack[idx].clone();
+    let off = change.off;
+    // c:1638-1644 — delete what was inserted.
+    let ins_n = change.ins.len();
+    if off + ins_n <= zle.zleline.len() {
+        zle.zleline.drain(off..off + ins_n);                                 // c:1640
+    }
+    // c:1646 — re-insert the deleted chars.
+    for (i, c) in change.del.iter().enumerate() {
+        if off + i <= zle.zleline.len() {
+            zle.zleline.insert(off + i, *c);
+        } else {
+            zle.zleline.push(*c);
+        }
+    }
+    zle.zlecs = change.old_cs;                                               // c:1649
+    zle.zlell = zle.zleline.len();
+    // c:1651 — return 1 if CH_PREV, else 0.
+    if change.flags.contains(ChangeFlags::PREV) { 1 } else { 0 }
 }
 
 /// Port of `undo()` from Src/Zle/zle_utils.c:1601.
