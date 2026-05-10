@@ -479,3 +479,12 @@ printf_format
 # the same fields without leaking borrow guards across statements.
 sess_get
 sess_with
+
+# fdtable_lock / fdtable_get / fdtable_set (utils.rs) — Rust-only
+# accessors for the `fdtable[]` global from Src/utils.c:67. The C
+# source dereferences `fdtable[fd]` directly; Rust needs a Mutex<Vec>
+# accessor pair so the table can grow lazily without a `growfdtable`
+# port. addmodulefd in C just sets `fdtable[fd] = FDT_MODULE` inline.
+fdtable_lock
+fdtable_get
+fdtable_set

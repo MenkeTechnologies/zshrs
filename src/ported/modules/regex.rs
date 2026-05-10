@@ -16,8 +16,6 @@
 //! (uses libc's `regex_t` / `regmatch_t` directly). Rust port
 //! matches: zero types.
 
-use crate::ported::exec::ShellExecutor;
-
 /// `ZREGEX_EXTENDED` from `Src/Modules/regex.c:36`.
 /// `#define ZREGEX_EXTENDED 0`. The id passed to
 /// `zcond_regex_match` for the only currently-supported flavour.
@@ -29,8 +27,8 @@ pub const ZREGEX_EXTENDED: i32 = 0;                                      // c:36
 /// Returns 1 on match, 0 on no match. The capture writeback into
 /// `$MATCH` / `$match[]` / `$MBEGIN` / `$MEND` / `$mbegin[]` /
 /// `$mend[]` (or `$BASH_REMATCH` under BASHREMATCH) happens
-/// inline at regex.c:96-185. Rust port mirrors that writeback by
-/// taking `&mut ShellExecutor` so the param-table mutation has
+/// inline at regex.c:96-185. Rust port mirrors that writeback
+/// so the param-table mutation has
 /// the same observable effect.
 ///
 /// `a` is the cond-op argv: `a[0]` is the LHS string, `a[1]` is

@@ -2580,6 +2580,37 @@ pub fn addmodulefd(fd: i32) {
     {
         let _ = fd;
     }
+    fdtable_set(fd, crate::ported::zsh_h::FDT_MODULE);
+}
+
+// `fdtable[]` from `Src/utils.c:67` — per-fd "what is this fd used
+// for" enum (`FDT_UNUSED` / `FDT_INTERNAL` / `FDT_EXTERNAL` /
+// `FDT_MODULE` / etc.). C uses a flat `unsigned char *fdtable`
+// resized as `max_zsh_fd` grows. Rust port stores the same map.
+static FDTABLE: std::sync::OnceLock<std::sync::Mutex<Vec<i32>>> =
+    std::sync::OnceLock::new();
+fn fdtable_lock() -> &'static std::sync::Mutex<Vec<i32>> {
+    FDTABLE.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+/// Read the current `fdtable[fd]` slot. Returns `FDT_UNUSED` for any
+/// fd that has not been explicitly set (matching the C source's
+/// behaviour after `growfdtable` zero-fills the new slots).
+pub fn fdtable_get(fd: i32) -> i32 {                                     // c:utils.c:67 fdtable[]
+    if fd < 0 { return crate::ported::zsh_h::FDT_UNUSED; }
+    let g = fdtable_lock().lock().unwrap();
+    g.get(fd as usize).copied().unwrap_or(crate::ported::zsh_h::FDT_UNUSED)
+}
+
+/// Write `fdtable[fd] = kind`. Grows the table on demand to mirror
+/// `Src/utils.c::addmodulefd`'s `growfdtable` call.
+pub fn fdtable_set(fd: i32, kind: i32) {                                 // c:utils.c:67 fdtable[]
+    if fd < 0 { return; }
+    let mut g = fdtable_lock().lock().unwrap();
+    if (fd as usize) >= g.len() {
+        g.resize((fd as usize) + 1, crate::ported::zsh_h::FDT_UNUSED);
+    }
+    g[fd as usize] = kind;
 }
 
 /// Add lock file descriptor (from utils.c addlockfd)

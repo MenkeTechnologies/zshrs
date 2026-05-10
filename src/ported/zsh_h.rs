@@ -87,6 +87,16 @@ pub const META: char = '\u{83}';                                         // c:14
 pub const DEFAULT_IFS: &str = " \t\n\u{83} ";                            // c:149
 pub const DEFAULT_IFS_SH: &str = " \t\n";                                // c:153
 
+/// `DEFAULT_FCEDIT` from `Src/zsh/config.h:16` (`#define DEFAULT_FCEDIT "vi"`).
+/// Fallback editor for `bin_fc` when neither `$FCEDIT` nor `$EDITOR`
+/// is set (Src/builtin.c:1654).
+pub const DEFAULT_FCEDIT: &str = "vi";                                   // config.h:16
+
+/// `DEFAULT_HISTSIZE` from `Src/zsh.h:104` — fallback HISTSIZE when
+/// `bin_fc -p` is invoked without a numeric size argument and the
+/// running shell has no histsiz set yet.
+pub const DEFAULT_HISTSIZE: i64 = 30;                                    // c:zsh.h:104
+
 pub const POUND: char     = '\u{84}';                                    // c:159 #
 pub const STRING_TOK: char = '\u{85}';                                   // c:160 $
 pub const HAT: char       = '\u{86}';                                    // c:161 ^
