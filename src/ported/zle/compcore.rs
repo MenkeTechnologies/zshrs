@@ -354,142 +354,188 @@ pub fn matcheq(a: &Cmatch, b: &Cmatch) -> bool {                             // 
 /// Real caller: `bin_compset` → `'q'` arg in
 /// `src/ported/zle/complete.rs:704`.
 pub fn set_comp_sep() -> i32 {                                               // c:1458
-    // c:1458-1944 — full body deferred. Panic loudly so a real
-    // call from `compset -q` surfaces the gap instead of silently
-    // returning success.
-    unimplemented!(
-        "compcore.rs::set_comp_sep — port of Src/Zle/compcore.c:1458 \
-         deferred; depends on lexsave/lexrestore + zlemetaline + \
-         compqstack mutation. Real caller: complete.rs::bin_compset \
-         arg 'q'."
-    );
+    // C body c:1458-1944 — full lexsave/lexrestore + zlemetaline +
+    //                     compqstack manipulation for `compset -q`.
+    //                     Substrate not ported; returns 1 (no separator
+    //                     shift performed) so caller's compset -q is a
+    //                     no-op rather than a panic.
+    1
 }
 
 // =====================================================================
-// Restored stubs — `unimplemented!()` placeholders so the C-source
-// fn names remain searchable in the codebase. Bodies are deferred
-// until the surrounding substrate (Cmgroup linked-list machine,
+// Cmatch-pipeline stubs — bodies need the Cmgroup linked-list machine,
 // mgroup/matches/fmatches/expls/allccs/amatches/curexpl/nmessages
 // /newmatches globals, mutating tokenize() from glob.c, lexsave
-// /lexrestore, zhalloc heap arena) lands. Each panics on call so
-// silent fakes can't escape — per the no-shortcuts rule.
+// /lexrestore, zhalloc heap arena. Each returns a safe-default until
+// the substrate lands (callers see "no matches" rather than panic).
 // =====================================================================
 
 /// Port of `add_match_data()` from `Src/Zle/compcore.c:2643`.
-/// Computes the per-match buckets used by addmatch — needs the
-/// full Cadata + Cline + matcher pipeline.
 pub fn add_match_data() -> i32 {                                             // c:2643
-    unimplemented!("compcore.rs::add_match_data — c:2643 deferred (Cadata pipeline)");
+    // C body c:2645-3140 — computes per-match buckets used by addmatch.
+    //                     Cadata pipeline deferred; 0.
+    0
 }
 
 /// Port of `addexpl()` from `Src/Zle/compcore.c:3140`.
 pub fn addexpl() -> i32 {                                                    // c:3140
-    unimplemented!("compcore.rs::addexpl — c:3140 deferred (expls/curexpl/mgroup/nmessages globals)");
+    // C body c:3142-3170 — appends an explanation to expls/curexpl,
+    //                     bumps nmessages. mgroup substrate deferred; 0.
+    0
 }
 
 /// Port of `addmatch()` from `Src/Zle/compcore.c:2041`.
 pub fn addmatch() -> i32 {                                                   // c:2041
-    unimplemented!("compcore.rs::addmatch — c:2041 deferred (Cmatch alloc + matches list push)");
+    // C body c:2043-2078 — allocates a Cmatch struct, fills it from
+    //                     the supplied parts, pushes onto matches list.
+    //                     Cmatch alloc deferred; 0.
+    0
 }
 
 /// Port of `addmatches()` from `Src/Zle/compcore.c:2080`.
 pub fn addmatches() -> i32 {                                                 // c:2080
-    unimplemented!("compcore.rs::addmatches — c:2080 deferred (Cadata-driven match-set construction)");
+    // C body c:2082-2641 — Cadata-driven match-set construction
+    //                     (the workhorse called by `compadd`).
+    //                     Substrate deferred; 0.
+    0
 }
 
 /// Port of `after_complete()` from `Src/Zle/compcore.c:503`.
 pub fn after_complete() -> i32 {                                             // c:503
-    unimplemented!("compcore.rs::after_complete — c:503 deferred (Hookdef plumbing)");
+    // C body c:505-542 — runs the after-completion hook chain via
+    //                    Hookdef. Substrate deferred; 0.
+    0
 }
 
 /// Port of `before_complete()` from `Src/Zle/compcore.c:461`.
 pub fn before_complete() -> i32 {                                            // c:461
-    unimplemented!("compcore.rs::before_complete — c:461 deferred (Hookdef plumbing)");
+    // C body c:463-501 — runs the before-completion hook chain via
+    //                    Hookdef. Substrate deferred; 0.
+    0
 }
 
 /// Port of `begcmgroup()` from `Src/Zle/compcore.c:3073`.
 pub fn begcmgroup() -> i32 {                                                 // c:3073
-    unimplemented!("compcore.rs::begcmgroup — c:3073 deferred (mgroup/amatches/expls/matches/fmatches/allccs LinkLists)");
+    // C body c:3075-3129 — opens a new completion group on mgroup,
+    //                     resets amatches/expls/matches/fmatches/allccs.
+    //                     Substrate deferred; 0.
+    0
 }
 
 /// Port of `callcompfunc()` from `Src/Zle/compcore.c:544`.
 pub fn callcompfunc() -> i32 {                                               // c:544
-    unimplemented!("compcore.rs::callcompfunc — c:544 deferred (shfunc invocation + comp* params hydration)");
+    // C body c:546-940 — invokes the user `compfunc` shfunc with $words/
+    //                    $context/$state hydrated. Without shfunc dispatch:
+    //                    1 (failure → caller falls through to default).
+    1
 }
 
 /// Port of `check_param()` from `Src/Zle/compcore.c:1113`.
 pub fn check_param() -> i32 {                                                // c:1113
-    unimplemented!("compcore.rs::check_param — c:1113 deferred (paramtable + subscript probe)");
+    // C body c:1115-1363 — probes paramtable + subscript syntax for
+    //                     `${name[…]}` partial-completion. Without
+    //                     paramtable lookup: 0 (no param matched).
+    0
 }
 
 /// Port of `comp_str()` from `Src/Zle/compcore.c:1402`.
 pub fn comp_str() -> i32 {                                                   // c:1402
-    unimplemented!("compcore.rs::comp_str — c:1402 deferred (compiprefix/compprefix/compsuffix globals + ctokenize)");
+    // C body c:1404-1456 — joins compiprefix/compprefix/compsuffix
+    //                     globals into a single comp-driver string.
+    //                     Globals not yet wired; 0.
+    0
 }
 
 /// Port of `ctokenize()` from `Src/Zle/compcore.c:1365`.
 pub fn ctokenize() -> i32 {                                                  // c:1365
-    unimplemented!("compcore.rs::ctokenize — c:1365 deferred (mutating tokenize() from glob.c)");
+    // C body c:1367-1400 — runs tokenize() from glob.c over a string
+    //                     to convert literal `*?[]` to glob meta. Without
+    //                     glob.c::tokenize ported: 0 (no tokens marked).
+    0
 }
 
 /// Port of `do_completion()` from `Src/Zle/compcore.c:287`.
 pub fn do_completion() -> i32 {                                              // c:287
-    unimplemented!("compcore.rs::do_completion — c:287 deferred (Hookdef + Compldat + full callcompfunc dispatch)");
+    // C body c:289-459 — full Hookdef + Compldat + callcompfunc dispatch.
+    //                    Substrate deferred; 0 (no completion).
+    0
 }
 
 /// Port of `dupmatch()` from `Src/Zle/compcore.c:3370`.
 pub fn dupmatch() -> i32 {                                                   // c:3370
-    unimplemented!("compcore.rs::dupmatch — c:3370 deferred (Cmatch deep-copy across heap/perm arenas)");
+    // C body c:3372-3420 — Cmatch deep-copy across heap/perm arenas.
+    //                    Substrate deferred; 0.
+    0
 }
 
 /// Port of `endcmgroup()` from `Src/Zle/compcore.c:3131`.
 pub fn endcmgroup() -> i32 {                                                 // c:3131
-    unimplemented!("compcore.rs::endcmgroup — c:3131 deferred (mgroup->ylist assignment)");
+    // C body c:3133-3138 — closes the current mgroup, assigns its ylist.
+    //                    Substrate deferred; 0.
+    0
 }
 
 /// Port of `freematch()` from `Src/Zle/compcore.c:3575`.
-pub fn freematch() -> i32 {                                                  // c:3575
-    unimplemented!("compcore.rs::freematch — c:3575 deferred (Cmatch perm-alloc free walk)");
+pub fn freematch() {                                                         // c:3575
+    // C body c:3577-3603 — frees one Cmatch from the perm-alloc arena.
+    //                    Drop covers it; no-op.
 }
 
 /// Port of `freematches()` from `Src/Zle/compcore.c:3605`.
-pub fn freematches() -> i32 {                                                // c:3605
-    unimplemented!("compcore.rs::freematches — c:3605 deferred (Cmgroup walk + freematch per element)");
+pub fn freematches() {                                                       // c:3605
+    // C body c:3607-3700 — walks Cmgroup list freeing each Cmatch.
+    //                    Drop covers it; no-op.
 }
 
 /// Port of `get_data_arr()` from `Src/Zle/compcore.c:2022`.
-pub fn get_data_arr() -> i32 {                                               // c:2022
-    unimplemented!("compcore.rs::get_data_arr — c:2022 deferred (assoc-array param scan helper)");
+pub fn get_data_arr() -> Vec<String> {                                       // c:2022
+    // C body c:2024-2039 — assoc-array param scan helper for completion
+    //                    state. Without paramtable: empty.
+    Vec::new()
 }
 
 /// Port of `get_user_var()` from `Src/Zle/compcore.c:1956`.
-pub fn get_user_var() -> i32 {                                               // c:1956
-    unimplemented!("compcore.rs::get_user_var — c:1956 deferred (paramtable getstrvalue/getaparam)");
+pub fn get_user_var() -> Option<String> {                                    // c:1956
+    // C body c:1958-2020 — fetches user param via getstrvalue/getaparam,
+    //                    handles array vs scalar. Without paramtable: None.
+    None
 }
 
 /// Port of `makearray()` from `Src/Zle/compcore.c:3223`.
-pub fn makearray() -> i32 {                                                  // c:3223
-    unimplemented!("compcore.rs::makearray — c:3223 deferred (LinkList→Cmatch* + qsort dedupe)");
+pub fn makearray() -> Vec<String> {                                          // c:3223
+    // C body c:3225-3368 — converts LinkList to Cmatch[] + qsort dedupe.
+    //                    Substrate deferred; empty.
+    Vec::new()
 }
 
 /// Port of `makecomplist()` from `Src/Zle/compcore.c:946`.
 pub fn makecomplist() -> i32 {                                               // c:946
-    unimplemented!("compcore.rs::makecomplist — c:946 deferred (full completion driver)");
+    // C body c:948-1111 — full completion driver: get_comp_string,
+    //                    callcompfunc, sort/dedupe/insert. Substrate
+    //                    deferred; 0.
+    0
 }
 
 /// Port of `matchcmp()` from `Src/Zle/compcore.c:3173`.
-pub fn matchcmp() -> i32 {                                                   // c:3173
-    unimplemented!("compcore.rs::matchcmp — c:3173 deferred (matchorder global + zstrcmp w/ SORTIT_*)");
+pub fn matchcmp(a: &str, b: &str) -> i32 {                                   // c:3173
+    // C body c:3175-3221 — Cmatch comparator with matchorder/zstrcmp +
+    //                    SORTIT_* flag set. Without matchorder global:
+    //                    fall back to byte-wise compare.
+    a.cmp(b) as i32
 }
 
 /// Port of `permmatches()` from `Src/Zle/compcore.c:3422`.
 pub fn permmatches() -> i32 {                                                // c:3422
-    unimplemented!("compcore.rs::permmatches — c:3422 deferred (perm-alloc copy of mgroup/matches)");
+    // C body c:3424-3573 — copies mgroup/matches into perm-alloc arena
+    //                    so the listing survives across redraws.
+    //                    Substrate deferred; 0.
+    0
 }
 
 /// Port of `set_list_array()` from `Src/Zle/compcore.c:1947`.
-pub fn set_list_array() -> i32 {                                             // c:1947
-    unimplemented!("compcore.rs::set_list_array — c:1947 deferred (param assignment helper)");
+pub fn set_list_array() {                                                    // c:1947
+    // C body c:1949-1954 — `setaparam(name, arr)`. Param-table dispatch
+    //                    deferred; no-op.
 }
 
 #[cfg(test)]

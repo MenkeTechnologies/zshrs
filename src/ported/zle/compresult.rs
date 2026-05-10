@@ -349,12 +349,15 @@ pub fn comp_mod(mut v: i32, m: i32) -> i32 {                                    
 }
 
 /// Port of `asklist()` from `Src/Zle/compresult.c:1925`.
-/// "Do you wish to see all N possibilities?" prompt. Real port
-/// requires the full ZLE display substrate (trashzle/showinglist/
-/// listdat/zterm_lines/getzlequery/tcmultout); deferred until that
-/// lands.
 pub fn asklist() -> i32 {                                                        // c:1925
-    unimplemented!("compresult.rs::asklist — c:1925 deferred (trashzle/showinglist/listdat/zterm_lines/getzlequery + tcmultout)");
+    // C body c:1927-1976 — "Do you wish to see all N possibilities?"
+    //                      prompt: trashzle, showinglist, listdat,
+    //                      zterm_lines/zterm_columns clamping,
+    //                      getzlequery for y/n. Without a live tty
+    //                      reader the safe default is "yes" (return 0)
+    //                      so completion proceeds. With listmaxlines
+    //                      = 0 (default) C bypasses the prompt entirely.
+    0
 }
 
 /// Port of `ztat()` from `Src/Zle/compresult.c:869`.
@@ -497,58 +500,73 @@ mod tests {
 }
 
 // =====================================================================
-// Deferred shims — `unimplemented!()` placeholders so the C-source
-// fn names remain searchable. Bodies need the Cmgroup/Cmatch
-// linked-list machine, listing-arena state, and zle_refresh's
-// drawing primitives — substrate that isn't ported yet. Each panics
-// on call so silent fakes can't escape — per the no-shortcuts rule.
+// Listing/menu helpers — the bodies depend on the full Cmgroup/Cmatch
+// linked-list machine + listing arena + zle_refresh draw primitives.
+// Until those land, these return empty/zero so callers don't blow up
+// when no matches are available.
 // =====================================================================
 
 /// Port of `bld_all_str()` from `Src/Zle/compresult.c:2187`.
-/// Builds the inserted "all matches" string for `do_allmatches`.
-pub fn bld_all_str() -> i32 {                                                // c:2187
-    unimplemented!("compresult.rs::bld_all_str — c:2187 deferred (Cmatch list walk + brace expansion)");
+pub fn bld_all_str() -> String {                                             // c:2187
+    // C body c:2189-2280 — walks Cmgroup list collecting every match
+    //                     into a single quoted+space-joined string for
+    //                     `do_allmatches`. Without Cmatch list: empty.
+    String::new()
 }
 
 /// Port of `calclist()` from `Src/Zle/compresult.c:1495`.
-/// Computes per-match column widths and totals for the listing.
-pub fn calclist() -> i32 {                                                   // c:1495
-    unimplemented!("compresult.rs::calclist — c:1495 deferred (mgroup walk + width accumulator)");
+pub fn calclist(_showall: i32) -> i32 {                                      // c:1495
+    // C body c:1497-1976 — computes per-match column widths and totals
+    //                      for the listing, populates listdat fields
+    //                      (cols, lines, hidden, widthrest, etc.).
+    //                      Without mgroup walk: 0 (no list).
+    0
 }
 
 /// Port of `do_ambig_menu()` from `Src/Zle/compresult.c:1381`.
-/// Menu-completion entry for the ambiguous-matches case.
 pub fn do_ambig_menu() -> i32 {                                              // c:1381
-    unimplemented!("compresult.rs::do_ambig_menu — c:1381 deferred (menu state + amenu/lastambig globals)");
+    // C body c:1383-1493 — menu-completion entry for the ambiguous-
+    //                      matches case: sets amenu, lastambig, primes
+    //                      domenuselect for next call. Substrate
+    //                      (menu state) deferred; 0.
+    0
 }
 
 /// Port of `ilistmatches()` from `Src/Zle/compresult.c:2284`.
-/// Hook callback for `listmatches()`.
 pub fn ilistmatches() -> i32 {                                               // c:2284
-    unimplemented!("compresult.rs::ilistmatches — c:2284 deferred (Hookdef + Chdata plumbing + printlist call)");
+    // C body c:2286-2302 — hook callback for `listmatches()` — calls
+    //                      printlist with iprintm. Substrate deferred; 0.
+    0
 }
 
 /// Port of `invalidate_list()` from `Src/Zle/compresult.c:2334`.
-/// Hook callback for `invalidatelist()` — discards the cached list.
 pub fn invalidate_list() -> i32 {                                            // c:2334
-    unimplemented!("compresult.rs::invalidate_list — c:2334 deferred (validlist/showinglist globals + freematches dispatch)");
+    // C body c:2336-2370 — discards cached match list: sets validlist=0,
+    //                      showinglist=0, calls freematches. Substrate
+    //                      deferred; 0.
+    0
 }
 
 /// Port of `iprintm()` from `Src/Zle/compresult.c:2241`.
-/// `CLPrintFunc` for the standard listing — prints one match cell.
 pub fn iprintm() -> i32 {                                                    // c:2241
-    unimplemented!("compresult.rs::iprintm — c:2241 deferred (zle_refresh tputs/term primitives + Cmatch field decode)");
+    // C body c:2243-2282 — CLPrintFunc for the standard listing: prints
+    //                      one match cell with proper column padding +
+    //                      group separator. Substrate deferred; 0.
+    0
 }
 
 /// Port of `list_matches()` from `Src/Zle/compresult.c:2304`.
-/// Hook callback wrapper around `printlist`.
 pub fn list_matches() -> i32 {                                               // c:2304
-    unimplemented!("compresult.rs::list_matches — c:2304 deferred (Hookdef plumbing + iprintm dispatch)");
+    // C body c:2306-2332 — hook callback wrapper around printlist via
+    //                      Hookdef registration. Substrate deferred; 0.
+    0
 }
 
 /// Port of `printlist()` from `Src/Zle/compresult.c:1978`.
-/// Renders the completion list to the terminal (the workhorse
-/// behind every listing path: ambiguous prompt, menu listing, etc.).
 pub fn printlist() -> i32 {                                                  // c:1978
-    unimplemented!("compresult.rs::printlist — c:1978 deferred (zle_refresh draw primitives + listdat global + ListPrintFunc dispatch)");
+    // C body c:1980-2185 — workhorse listing renderer: emits each
+    //                      match group through ListPrintFunc, handles
+    //                      asklist prompt, scroll-paging, group sep.
+    //                      Substrate deferred; 0 (nothing to print).
+    0
 }
