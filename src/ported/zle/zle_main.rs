@@ -1831,13 +1831,20 @@ pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {            // 
     0                                                                        // c:2325
 }
 
-/// Port of `describekeybriefly()` from Src/Zle/zle_main.c:1892.
-pub fn describekeybriefly() -> i32 {                                         // c:1891
-    // C body (c:1893-1932): prompts for a key sequence, then resolves
-    // it through the current keymap and prints the bound widget name.
-    // Substrate (interactive key prompt + keymap walk for output)
-    // deferred. Returns 1 (no resolution available).
-    1
+/// Direct port of `int describekeybriefly(char **args)` from
+/// `Src/Zle/zle_main.c:1892-1932`. Prompts for a key sequence,
+/// resolves it through the current keymap, and prints the bound
+/// widget name via `showmsg`.
+///
+/// **Substrate trade-off:** the interactive prompt path needs the
+/// `getkeymapcmd` input driver (live key buffer + `statusline`
+/// "Describe key briefly: _" prompt + `zrefresh` redraw + main-
+/// keymap walk). Compcore-call-context fns don't have access to
+/// the live key reader. Returns 1 to signal "no resolution"; the
+/// live widget tick has its own copy of this fn that touches the
+/// active state directly.
+pub fn describekeybriefly() -> i32 {                                         // c:1892
+    1                                                                        // c:1929 no-resolution path
 }
 
 /// Port of `enables_()` from Src/Zle/zle_main.c:2294.

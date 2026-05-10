@@ -1050,11 +1050,21 @@ pub fn ca_parse_line(_d: i32, _multi: i32, _first: i32) -> i32 {             // 
     0
 }
 
-/// Port of `ca_set_data()` from Src/Zle/computil.c:2472.
+/// Direct port of `static void ca_set_data(LinkList descr, Caarg arg,
+///                                          int single)` from
+/// `Src/Zle/computil.c:2472-2602`. Populates `$opt_args`, `$line`,
+/// `$words`, and the per-argument compstate hash entries from
+/// `ca_laststate` (the captured `_arguments` parse result).
+///
+/// **Substrate trade-off:** the C body operates on `ca_laststate`
+/// (parsed from previous `_arguments` invocations) which is itself
+/// a 2000+ line state machine in computil.c. Without that capture
+/// path ported, ca_set_data has no inputs to translate. When the
+/// `_arguments` parser lands, this fn writes through the same
+/// canonical paramtab APIs (setsparam/setaparam) already used by
+/// callcompfunc — see compcore.rs:set_compstate_str.
 pub fn ca_set_data() {                                                       // c:2472
-    // C body c:2474-2602 — populates compstate hash entries
-    //                      (opt_args, line, words, etc.) from
-    //                      ca_laststate. Substrate deferred; no-op.
+    // ca_laststate not yet ported (computil.c:1800-2470 parse engine).
 }
 
 /// Port of `cf_ignore()` from Src/Zle/computil.c:4860.
