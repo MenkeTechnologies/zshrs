@@ -5236,7 +5236,7 @@ impl crate::ported::exec::ShellExecutor {
                 if key == "@" || key == "*" {
                     return Some(builtins.join(" "));
                 }
-                if builtins.contains(&key) {
+                if builtins.iter().any(|b| b == key) {
                     Some("defined".to_string())
                 } else {
                     Some(String::new())
