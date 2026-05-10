@@ -360,7 +360,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_EXEC, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_exec(&args));
+        let status = with_executor(|exec| exec.builtin_exec(&args, &[]));
         Value::Status(status)
     });
 

@@ -319,16 +319,6 @@ mod tests {
 // Phase: drift
 // ===========================================================
 
-// BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
-    /// Add a named directory (hash -d name=path)
-    pub fn add_named_dir(&mut self, name: &str, path: &str) {
-        self.named_dirs
-            .insert(name.to_string(), PathBuf::from(path));
-    }
-}
-// END moved-from-exec-rs
-
 // ===========================================================
 // Direct ports of the static `nameddirtab` HashTable lifecycle /
 // printer routines from Src/hashnameddir.c. The Rust executor
