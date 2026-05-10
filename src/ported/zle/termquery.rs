@@ -317,10 +317,131 @@ mod tests {
         assert_eq!(base64_encode(b""), "");
         assert_eq!(base64_encode(b"a"), "YQ==");
     }
+
+    // ---------- base64_decode real-port tests ----------
+
+    #[test]
+    fn base64_decode_round_trip_with_encode() {
+        // Encode then decode round-trip to verify C-faithful semantics.
+        // c:579 — stops at '=' (the standard base64 terminator).
+        let encoded = base64_encode(b"hello");
+        // "aGVsbG8=" → "hello"
+        assert_eq!(base64_decode(&encoded), b"hello");
+    }
+
+    #[test]
+    fn base64_decode_well_known() {
+        // c:580-584 — verify character-class table.
+        // 'TWFu' → 'Man' (RFC 4648 example).
+        assert_eq!(base64_decode("TWFu"), b"Man");
+    }
+
+    #[test]
+    fn base64_decode_with_padding() {
+        // 'YQ==' → 'a'
+        assert_eq!(base64_decode("YQ=="), b"a");
+        // 'YWI=' → 'ab'
+        assert_eq!(base64_decode("YWI="), b"ab");
+        // 'YWJj' → 'abc' (no padding)
+        assert_eq!(base64_decode("YWJj"), b"abc");
+    }
+
+    #[test]
+    fn base64_decode_handles_plus_slash() {
+        // c:583-584 — '+' = 62, '/' = 63.
+        // 4 base64 chars → 24 bits → 3 bytes.
+        //   '+' = 62 = 111110
+        //   'z' = 51 = 110011 (z is lowercase, c-'a'+26 = 25+26 = 51)
+        //   '/' = 63 = 111111
+        //   '+' = 62 = 111110
+        // Concatenated: 11111011 00111111 11111110 = 0xfb 0x3f 0xfe.
+        assert_eq!(base64_decode("+z/+"), vec![0xfb, 0x3f, 0xfe]);
+    }
+
+    #[test]
+    fn base64_decode_empty_input() {
+        // c:579 — `len && ...` guards against zero-length input.
+        assert_eq!(base64_decode(""), Vec::<u8>::new());
+    }
 }
 
-/// Port of `base64_decode()` from Src/Zle/termquery.c:571. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn base64_decode() -> i32 { 0 }
+/// Port of `base64_decode()` from `Src/Zle/termquery.c:570`.
+/// ```c
+/// static char*
+/// base64_decode(const char *src, size_t len)
+/// {
+///     int i = 0;
+///     unsigned int n;
+///     char *buf = hcalloc((3 * len) / 4 + 1);
+///     char *b = buf;
+///     char c;
+///     while (len && (c = src[i]) != '=') {
+///         n = isdigit(c) ? c - '0' + 52 :
+///             islower(c) ? c - 'a' + 26 :
+///             isupper(c) ? c - 'A' :
+///             (c == '+') ? 62 :
+///             (c == '/') ? 63 : 0;
+///         if (i % 4)
+///             *b++ |= n >> (2 * (3 - (i % 4)));
+///         if (++i >= len)
+///             break;
+///         *b = n << (2 * (i % 4));
+///     }
+///     return buf;
+/// }
+/// ```
+/// Decode a base64-encoded byte string. Stops at the first `=`
+/// (terminator) or end of input. Used by `system_clipget` to parse
+/// OSC52 clipboard responses (terminal returns base64-encoded
+/// clipboard contents in `\e]52;c;<base64>\e\\`).
+///
+/// The C body has a peculiar bit-pattern: it accumulates 6-bit
+/// groups across 4 input chars into 3 output bytes, but the
+/// "current output byte" is reset to `n << (2 * (i % 4))` BEFORE
+/// `b++`, then later iterations OR-in the high bits. This mirrors
+/// the standard base64 decode but with an unusual write pattern.
+pub fn base64_decode(src: &str) -> Vec<u8> {                                 // c:570
+    let bytes = src.as_bytes();
+    let len = bytes.len();
+    // c:575 — `hcalloc((3 * len) / 4 + 1)`. Pre-size the output;
+    // hcalloc zeros, so we mirror that with a Vec<u8> of zeros.
+    let mut buf = vec![0u8; (3 * len) / 4 + 1];
+    let mut i: usize = 0;
+    let mut b: usize = 0;
+    while i < len && bytes[i] != b'=' {                                      // c:579
+        let c = bytes[i];
+        // c:580-584 — character class → 6-bit value.
+        let n: u32 = if c.is_ascii_digit() {                                 // c:580
+            (c - b'0') as u32 + 52
+        } else if c.is_ascii_lowercase() {                                   // c:581
+            (c - b'a') as u32 + 26
+        } else if c.is_ascii_uppercase() {                                   // c:582
+            (c - b'A') as u32
+        } else if c == b'+' {                                                // c:583
+            62
+        } else if c == b'/' {                                                // c:584
+            63
+        } else {
+            0
+        };
+        if i % 4 != 0 {                                                      // c:585
+            // c:586 — `*b++ |= n >> (2 * (3 - (i % 4)))`.
+            buf[b] |= (n >> (2 * (3 - (i % 4)))) as u8;
+            b += 1;
+        }
+        i += 1;                                                              // c:587 ++i
+        if i >= len {                                                        // c:587
+            break;                                                           // c:588
+        }
+        // c:589 — `*b = n << (2 * (i % 4))`. Sets next slot's high bits.
+        if b < buf.len() {
+            buf[b] = (n << (2 * (i % 4))) as u8;
+        }
+    }
+    // C's `hcalloc((3*len)/4 + 1)` overallocates; trim to actual b.
+    buf.truncate(b);
+    buf                                                                      // c:591 return buf
+}
 
 /// Port of `collate_seq()` from Src/Zle/termquery.c:676. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn collate_seq() -> i32 { 0 }
