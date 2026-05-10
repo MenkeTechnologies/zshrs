@@ -651,11 +651,11 @@ pub fn cond_range(a: &[String], id: i32) -> i32 {                            // 
 /// -U usemenu, -1 unique, -2 partial, -o ordering, -M matcher),
 /// builds a `cadata`/`mdata` pair, then dispatches to addmatches.
 ///
-/// Static-link path: cadata/mdata aren't yet typed-out in Rust, and
-/// addmatches isn't ported. The Rust port handles the incompfunc
-/// guard, parses the flag-letter shape, but defers the actual
-/// match-emission. Returns 1 (no matches added) which is what the
-/// shell sees when compadd isn't producing matches anyway.
+/// Cadata is now typed in `comp_h.rs:566` and `addmatches` is ported
+/// in `compcore.rs`. The Rust port handles the incompfunc guard,
+/// parses the flag-letter shape, then forwards the residual argv
+/// through `compcore::addmatches` with a minimally-populated Cadata.
+/// Per-flag arg capture into Cadata fields is the next refinement.
 pub fn bin_compadd(name: &str, argv: &[String],                              // c:603
                    _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;
@@ -686,9 +686,12 @@ pub fn bin_compadd(name: &str, argv: &[String],                              // 
         }
     }
     // c:822-840 — addmatches dispatch with the parsed cadata + the
-    // remaining argv as the literal-match list. Deferred.
-    let _matches = &argv[idx..];                                             // c:822
-    1                                                                        // c:840 no matches
+    // remaining argv as the literal-match list. Routes through the
+    // ported compcore::addmatches with a minimally-populated Cadata.
+    let matches = &argv[idx..];                                              // c:822
+    let mut dat = crate::ported::zle::comp_h::Cadata::default();
+    dat.dummies = -1;
+    crate::ported::zle::compcore::addmatches(&mut dat, matches)              // c:828
 }
 
 /// Direct port of `bin_compset()` from `Src/Zle/complete.c:1137`.
