@@ -223,7 +223,7 @@ impl Zle {
 
     /// Copy region as kill
     /// Port of copyregionaskill() from zle_misc.c
-    pub fn copy_region_as_kill(&mut self) {
+    pub fn copy_region_as_kill(&mut self) {                                  // c:494
         let (start, end) = if self.zlecs < self.mark {
             (self.zlecs, self.mark)
         } else {
@@ -239,7 +239,7 @@ impl Zle {
 
     /// Kill region (between point and mark)
     /// Port of killregion() from zle_misc.c
-    pub fn kill_region(&mut self) {
+    pub fn kill_region(&mut self) {                                          // c:463
         let (start, end) = if self.zlecs < self.mark {
             (self.zlecs, self.mark)
         } else {
@@ -260,7 +260,7 @@ impl Zle {
 
     /// Yank - insert from kill ring
     /// Port of yank() from zle_misc.c
-    pub fn yank(&mut self) {
+    pub fn yank(&mut self) {                                                 // c:533
         if let Some(text) = self.killring.front() {
             self.mark = self.zlecs;
             for &c in text {
@@ -275,7 +275,7 @@ impl Zle {
 
     /// Yank pop - cycle through kill ring
     /// Port of yankpop() from zle_misc.c
-    pub fn yank_pop(&mut self) {
+    pub fn yank_pop(&mut self) {                                             // c:728
         if !self.yanklast || self.killring.is_empty() {
             return;
         }
@@ -867,8 +867,33 @@ pub fn digitargument(zle: &mut Zle) -> i32 {                                 // 
     0                                                                        // c:1061
 }
 
-/// Port of `doinsert()` from Src/Zle/zle_misc.c:37. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn doinsert() -> i32 { 0 }
+/// Port of `doinsert()` from `Src/Zle/zle_misc.c:37`.
+/// ```c
+/// mod_export void
+/// doinsert(ZLE_STRING_T zstr, int len) {
+///     ...
+///     m = abs(zmult); count = m * len;
+///     ...insert m copies of zstr at cursor (or after, if zmult < 0)...
+/// }
+/// ```
+/// Insert `zstr` `|zmod.mult|` times at the cursor. Negative count
+/// inserts AFTER the cursor (cursor stays put). Simplified port —
+/// the full body has INSMODE/overwrite handling and suffix
+/// machinery that needs the suffixlist substrate.
+pub fn doinsert(zle: &mut Zle, zstr: &[char]) {                              // c:37
+    let m = zle.zmod.mult.unsigned_abs() as usize;
+    let neg = zle.zmod.mult < 0;
+    for _ in 0..m {
+        for (i, &c) in zstr.iter().enumerate() {
+            zle.zleline.insert(zle.zlecs + i, c);
+        }
+        if !neg {
+            zle.zlecs += zstr.len();
+        }
+        zle.zlell += zstr.len();
+    }
+    zle.resetneeded = true;
+}
 
 /// Port of `executenamedcommand()` from Src/Zle/zle_misc.c:1261. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn executenamedcommand() -> i32 { 0 }
