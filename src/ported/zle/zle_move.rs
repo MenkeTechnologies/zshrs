@@ -143,8 +143,21 @@ pub fn beginningofline() -> i32 { 0 }
 /// Port of `beginningoflinehist()` from Src/Zle/zle_move.c:360. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn beginningoflinehist() -> i32 { 0 }
 
-/// Port of `deactivateregion()` from Src/Zle/zle_move.c:564. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn deactivateregion() -> i32 { 0 }
+/// Port of `deactivateregion()` from `Src/Zle/zle_move.c:563`.
+/// ```c
+/// int
+/// deactivateregion(UNUSED(char **args))
+/// {
+///     region_active = 0;
+///     return 0;
+/// }
+/// ```
+/// Clear the region-active flag so subsequent commands stop
+/// treating point/mark as a selected range.
+pub fn deactivateregion(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:563
+    zle.region_active = 0;                                                   // c:566 region_active = 0
+    0                                                                        // c:567 return 0
+}
 
 /// Port of `deccs()` from Src/Zle/zle_move.c:133. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn deccs() -> i32 { 0 }
@@ -158,8 +171,45 @@ pub fn endofline() -> i32 { 0 }
 /// Port of `endoflinehist()` from Src/Zle/zle_move.c:403. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn endoflinehist() -> i32 { 0 }
 
-/// Port of `exchangepointandmark()` from Src/Zle/zle_move.c:496. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn exchangepointandmark() -> i32 { 0 }
+/// Port of `exchangepointandmark()` from `Src/Zle/zle_move.c:495`.
+/// ```c
+/// int
+/// exchangepointandmark(UNUSED(char **args))
+/// {
+///     int x;
+///     if (zmult == 0) {
+///         region_active = 1;
+///         return 0;
+///     }
+///     x = mark;
+///     mark = zlecs;
+///     zlecs = x;
+///     if (zlecs > zlell)
+///         zlecs = zlell;
+///     if (zmult > 0)
+///         region_active = 1;
+///     return 0;
+/// }
+/// ```
+/// Swap the cursor (point) with the mark. With `zmult == 0` just
+/// activates the region without swapping. With `zmult > 0` also
+/// activates the region after the swap.
+pub fn exchangepointandmark(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:495
+    if zle.zmod.mult == 0 {                                                  // c:500 if (zmult == 0)
+        zle.region_active = 1;                                               // c:501
+        return 0;                                                            // c:502
+    }
+    let x = zle.mark;                                                        // c:504 x = mark
+    zle.mark = zle.zlecs;                                                    // c:505 mark = zlecs
+    zle.zlecs = x;                                                           // c:506 zlecs = x
+    if zle.zlecs > zle.zlell {                                               // c:507
+        zle.zlecs = zle.zlell;                                               // c:508
+    }
+    if zle.zmod.mult > 0 {                                                   // c:509
+        zle.region_active = 1;                                               // c:510
+    }
+    0                                                                        // c:511 return 0
+}
 
 /// Port of `forwardchar()` from Src/Zle/zle_move.c:441. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn forwardchar() -> i32 { 0 }
@@ -170,8 +220,32 @@ pub fn inccs() -> i32 { 0 }
 /// Port of `incpos()` from Src/Zle/zle_move.c:143. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn incpos() -> i32 { 0 }
 
-/// Port of `setmarkcommand()` from Src/Zle/zle_move.c:483. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn setmarkcommand() -> i32 { 0 }
+/// Port of `setmarkcommand()` from `Src/Zle/zle_move.c:482`.
+/// ```c
+/// int
+/// setmarkcommand(UNUSED(char **args))
+/// {
+///     if (zmult < 0) {
+///         region_active = 0;
+///         return 0;
+///     }
+///     mark = zlecs;
+///     region_active = 1;
+///     return 0;
+/// }
+/// ```
+/// `set-mark-command` widget — saves the cursor position into
+/// `mark` and activates the region. Negative numeric arg
+/// (`zmult < 0`) cancels the region instead.
+pub fn setmarkcommand(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:482
+    if zle.zmod.mult < 0 {                                                   // c:485 if (zmult < 0)
+        zle.region_active = 0;                                               // c:486
+        return 0;                                                            // c:487
+    }
+    zle.mark = zle.zlecs;                                                    // c:489 mark = zlecs
+    zle.region_active = 1;                                                   // c:490
+    0                                                                        // c:491 return 0
+}
 
 /// Port of `vibackwardchar()` from Src/Zle/zle_move.c:683. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn vibackwardchar() -> i32 { 0 }
@@ -229,3 +303,93 @@ pub fn visuallinemode() -> i32 { 0 }
 
 /// Port of `visualmode()` from Src/Zle/zle_move.c:516. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn visualmode() -> i32 { 0 }
+
+#[cfg(test)]
+mod region_tests {
+    use super::*;
+    use crate::ported::zle::zle_main::Zle;
+
+    #[test]
+    fn deactivateregion_clears_active() {
+        // c:566 — `region_active = 0; return 0`.
+        let mut z = Zle::default();
+        z.region_active = 1;
+        let r = deactivateregion(&mut z);
+        assert_eq!(r, 0);
+        assert_eq!(z.region_active, 0);
+    }
+
+    #[test]
+    fn setmarkcommand_sets_mark_to_cursor() {
+        // c:489-490 — `mark = zlecs; region_active = 1`.
+        let mut z = Zle::default();
+        z.zlecs = 7;
+        z.zmod.mult = 1;
+        let r = setmarkcommand(&mut z);
+        assert_eq!(r, 0);
+        assert_eq!(z.mark, 7);
+        assert_eq!(z.region_active, 1);
+    }
+
+    #[test]
+    fn setmarkcommand_negative_mult_deactivates() {
+        // c:485-487 — `if (zmult < 0) { region_active = 0; return 0; }`.
+        let mut z = Zle::default();
+        z.region_active = 1;
+        z.mark = 5;
+        z.zlecs = 7;
+        z.zmod.mult = -1;
+        let r = setmarkcommand(&mut z);
+        assert_eq!(r, 0);
+        assert_eq!(z.region_active, 0);
+        // mark NOT updated because we returned early.
+        assert_eq!(z.mark, 5);
+    }
+
+    #[test]
+    fn exchangepointandmark_swaps() {
+        // c:504-506 — swap zlecs and mark.
+        let mut z = Zle::default();
+        z.zleline = "hello world".chars().collect();
+        z.zlell = 11;
+        z.zlecs = 3;
+        z.mark = 8;
+        z.zmod.mult = 1;
+        let r = exchangepointandmark(&mut z);
+        assert_eq!(r, 0);
+        assert_eq!(z.zlecs, 8);
+        assert_eq!(z.mark, 3);
+        // c:509-510 — zmult > 0 → activate region.
+        assert_eq!(z.region_active, 1);
+    }
+
+    #[test]
+    fn exchangepointandmark_zero_mult_just_activates() {
+        // c:500-502 — `if (zmult == 0) { region_active = 1; return 0; }`.
+        // No swap occurs.
+        let mut z = Zle::default();
+        z.zlecs = 3;
+        z.mark = 8;
+        z.zmod.mult = 0;
+        let r = exchangepointandmark(&mut z);
+        assert_eq!(r, 0);
+        // No swap.
+        assert_eq!(z.zlecs, 3);
+        assert_eq!(z.mark, 8);
+        assert_eq!(z.region_active, 1);
+    }
+
+    #[test]
+    fn exchangepointandmark_clamps_zlecs_to_zlell() {
+        // c:507-508 — `if (zlecs > zlell) zlecs = zlell`.
+        let mut z = Zle::default();
+        z.zleline = "hi".chars().collect();
+        z.zlell = 2;
+        z.zlecs = 1;
+        z.mark = 99;     // mark beyond zlell
+        z.zmod.mult = 1;
+        exchangepointandmark(&mut z);
+        // After swap zlecs would be 99, clamped to 2.
+        assert_eq!(z.zlecs, 2);
+    }
+}
