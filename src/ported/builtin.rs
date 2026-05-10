@@ -483,12 +483,15 @@ pub fn init_builtins() {                                                     // 
     }
 }
 
+/// Port of `OPT_ALLOC_CHUNK` from `Src/builtin.c:223`. Number of
+/// `ops->args[]` slots `new_optarg()` grows the array by when full.
+pub const OPT_ALLOC_CHUNK: i32 = 16;                                         // c:223
+
 /// Port of `new_optarg()` from Src/builtin.c:227.
 /// C: `static int new_optarg(Options ops)` — grow the `ops->args[]`
 ///   array by `OPT_ALLOC_CHUNK` slots when full. Returns 1 on overflow
 ///   (>=63 args), 0 on success.
 pub fn new_optarg(ops: &mut crate::ported::zsh_h::options) -> i32 {          // c:227
-    const OPT_ALLOC_CHUNK: i32 = 16;                                         // c:225
     // c:231 — `if (ops->argscount == 63) return 1;`
     if ops.argscount == 63 {                                                 // c:231
         return 1;

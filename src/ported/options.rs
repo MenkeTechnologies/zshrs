@@ -1178,6 +1178,19 @@ pub(crate) static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::n
 /// Src/options.c:714.
 pub const OPT_INVALID: i32 = -10000;
 
+// =====================================================================
+// Per-emulation option-set masks — `Src/options.c:55-67`. The OPT_CSH
+// /OPT_KSH/OPT_SH/OPT_ZSH/OPT_ALL/OPT_BOURNE/OPT_BSHELL/OPT_NONBOURNE
+// /OPT_NONZSH bits live as private `const` items at lines 28-36 above
+// (they're internal to the optns[] table builder). Documented here for
+// search-anchor parity with C source: every C `#define OPT_CSH
+// EMULATE_CSH` etc. has a corresponding `const OPT_CSH: u8 = 1`
+// declaration above, just using compact bit positions instead of the
+// EMULATE_* re-export so the optns[] u8 emulation field stays narrow.
+//
+// `OPT_EMULATE` (c:67) and `OPT_SPECIAL` (c:69) and `OPT_ALIAS` (c:71)
+// also live as private u16 consts at lines 40-44 above.
+
 /// Build the global option name → option-data table.
 /// Port of `createoptiontable()` from Src/options.c:471. The C
 /// source allocates a HashTable and stuffs every entry from the
