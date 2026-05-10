@@ -1,15 +1,52 @@
 //! Pattern matching engine for zshrs
 //!
-//! Direct port from zsh/Src/pattern.c
+//! ====================================================================
+//! !!! WARNING: STRUCTURAL DIVERGENCE FROM Src/pattern.c !!!
+//! ====================================================================
 //!
-//! This implements a bytecode-compiled pattern matching engine supporting:
-//! - Basic wildcards: *, ?, [...]
-//! - Extended glob patterns: #, ##, ~, ^
-//! - KSH glob patterns: ?(pat), *(pat), +(pat), !(pat), @(pat)
-//! - Backreferences with parentheses
-//! - Case-insensitive matching
-//! - Approximate matching (error tolerance)
-//! - Numeric ranges: `<n-m>`
+//! The C source (4375 lines) implements pattern matching as a
+//! bytecode-compiled engine: `patcompile()` (c:540) emits a flat
+//! `char *patcode` byte buffer of `P_*` opcodes (declared at
+//! Src/zsh.h:1100+), and `pattry()` (c:2223) interprets that
+//! bytecode. The compiler itself is recursive-descent across
+//! `patcompswitch` / `patcompbranch` / `patcompiece` / `patcomppiece`
+//! (c:765 / c:942 / c:1057 / c:1141), each emitting opcodes via
+//! `patadd()` (c:412).
+//!
+//! THIS RUST PORT DOES NOT MATCH THAT ARCHITECTURE.
+//!
+//! Instead, the Rust port uses an AST-based design:
+//! `PatCompiler::compile()` builds a `Vec<PatNode>` tree (a typed
+//! AST) and `PatMatcher::try_match()` walks the AST recursively.
+//! The `PatOp` enum below mirrors the C `P_*` opcodes for naming
+//! parity, but the actual matcher doesn't execute opcodes — it
+//! pattern-matches against `PatNode` variants.
+//!
+//! Implications:
+//!   - The C-named "compiler internal" entry points (`patadd`,
+//!     `patcompstart`, `patcompcharsset`, `patcompswitch`,
+//!     `patcompbranch`, `patcomppiece`, `pattrystart`, etc.) ARE
+//!     STUBS — they exist for ABI parity but the real compilation
+//!     happens inside `PatCompiler` which doesn't decompose into
+//!     these named entry points.
+//!   - Coverage: basic globs (*/?/[]), extendedglob (#/##/~/^),
+//!     kshglob (?(pat)/*(pat)/+(pat)/!(pat)/@(pat)), backrefs,
+//!     case-insensitive matching, numeric ranges (<n-m>) all work.
+//!   - GAP: multibyte/EUC/UTF-8-shift-state handling per
+//!     `metacharinc()` (c:336), `clear_shiftstate()` (c:327) — the
+//!     Rust port assumes UTF-8 throughout and the helpers are
+//!     no-ops.
+//!   - GAP: the `Patprog` compiled-program byte-buffer + `progptr`
+//!     opcode walk used by `pattryrefs` / `patmatchlen` for
+//!     backref capture position tracking is approximated, not
+//!     ported.
+//!
+//! Honest path to a faithful port: rewrite `PatCompiler` as a
+//! bytecode emitter producing `Vec<u8>` per the `P_*` opcodes; port
+//! `pattry()` as the matching opcode interpreter from c:2223+. That
+//! is a 4000-line rewrite. Until then this file is a Rust-AST
+//! re-imagining, not a 1:1 port.
+//! ====================================================================
 
 /// Pattern opcodes — port of the `P_*` constants from Src/zsh.h.
 /// The C source emits these as bytes into `patcode`; we keep them
