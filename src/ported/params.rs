@@ -7,7 +7,6 @@
 //! tied parameters, and all special parameter get/set functions.
 
 #[allow(unused_imports)]
-use crate::ported::exec::{self, ShellExecutor};
 use crate::ported::utils::zerr;
 use crate::ported::text::FuncBodyFmt;
 use indexmap::IndexMap;
@@ -5012,7 +5011,7 @@ pub(crate) fn getarg<'a>(
             } else if exact {
                 target == pat
             } else {
-                crate::ported::exec::ShellExecutor::glob_match_static(target, pat)
+                crate::ported::pattern::patmatch(pat, target)
             }
         };
         if return_all {
@@ -5167,7 +5166,7 @@ pub(crate) fn getarg<'a>(
             let hit = if exact {
                 s == pat
             } else {
-                crate::ported::exec::ShellExecutor::glob_match_static(s, pat_used)
+                crate::ported::pattern::patmatch(pat_used, s)
             };
             if hit {
                 remaining -= 1;
@@ -5279,7 +5278,7 @@ pub(crate) fn getarg<'a>(
                     let hit = if flags.contains('e') {
                         cand == pat
                     } else {
-                        crate::ported::exec::ShellExecutor::glob_match_static(&cand, pat)
+                        crate::ported::pattern::patmatch(pat, &cand)
                     };
                     if hit {
                         remaining -= 1;

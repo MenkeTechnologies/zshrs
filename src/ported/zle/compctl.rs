@@ -1889,7 +1889,7 @@ pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {
     let pats = PATCOMPS.lock().unwrap().clone();
     for (pat, cc) in &pats {
         // C: c:2542 — compile pattern, try match against cmdstr
-        if crate::exec::ShellExecutor::glob_match_static(&cmd, pat) {
+        if crate::ported::pattern::patmatch(pat, &cmd) {
             makecomplistcc(cc, os, incmd);
             ret |= 2;
             if (CCONT.with(|c| c.get()) & cc_flags2::CCCONT) == 0 {

@@ -1922,7 +1922,7 @@ pub fn paramsubst(                                          // c:1625
                     let mut out: Vec<String> = Vec::new();
                     for (k, v) in map.iter() {
                         let hay = if by_key { k.as_str() } else { v.as_str() };
-                        if crate::exec::ShellExecutor::glob_match_static(hay, &pat) {
+                        if crate::ported::pattern::patmatch(&pat, hay) {
                             out.push(if by_key { k.clone() } else { v.clone() });
                             if !return_all { break; }
                         }
@@ -1954,7 +1954,7 @@ pub fn paramsubst(                                          // c:1625
                     let return_all = flags.contains('I') || flags.contains('R');
                     let mut out: Vec<String> = Vec::new();
                     for (idx, elem) in arr.iter().enumerate() {
-                        if crate::exec::ShellExecutor::glob_match_static(elem, &pat) {
+                        if crate::ported::pattern::patmatch(&pat, elem) {
                             if return_index {
                                 out.push((idx + 1).to_string());
                             } else {
@@ -2041,7 +2041,7 @@ pub fn paramsubst(                                          // c:1625
                         };
                         for len in lengths {
                             let cand: String = s_chars[start..start + len].iter().collect();
-                            if crate::exec::ShellExecutor::glob_match_static(&cand, &pat) {
+                            if crate::ported::pattern::patmatch(&pat, &cand) {
                                 found = Some((start, start + len));
                                 if !want_last { break 'outer; }
                                 break;
@@ -2053,7 +2053,7 @@ pub fn paramsubst(                                          // c:1625
                         for start in (0..=n).rev() {
                             for len in 1..=(n - start) {
                                 let cand: String = s_chars[start..start + len].iter().collect();
-                                if crate::exec::ShellExecutor::glob_match_static(&cand, &pat) {
+                                if crate::ported::pattern::patmatch(&pat, &cand) {
                                     found = Some((start, start + len));
                                     break;
                                 }
@@ -2310,7 +2310,7 @@ pub fn paramsubst(                                          // c:1625
                 if let Some(arr) = state.arrays.get(&var_name).cloned().filter(|_| !has_subscript) {
                     let kept: Vec<String> = arr.into_iter() // c:3540
                         .filter(|elem| {                      // c:3540
-                            let m = crate::exec::ShellExecutor::glob_match_static(elem, &p); // c:3540
+                            let m = crate::ported::pattern::patmatch(&p, elem); // c:3540
                             if invert { m } else { !m }      // c:3540
                         })                                    // c:3540
                         .collect();
@@ -2321,7 +2321,7 @@ pub fn paramsubst(                                          // c:1625
                     // only the kept elements.
                     split_parts = Some(kept);                // c:3540
                 } else {                                      // c:3540
-                    let m = crate::exec::ShellExecutor::glob_match_static(&raw_value, &p); // c:3540
+                    let m = crate::ported::pattern::patmatch(&p, &raw_value); // c:3540
                     value = if invert {                       // c:3540
                         if m { raw_value.clone() } else { String::new() } // c:3540
                     } else {                                  // c:3540
@@ -2485,7 +2485,7 @@ pub fn paramsubst(                                          // c:1625
                     let new_arr: Vec<String> = arr
                         .into_iter()
                         .map(|elem| {
-                            if crate::exec::ShellExecutor::glob_match_static(&elem, &pat) {
+                            if crate::ported::pattern::patmatch(&pat, &elem) {
                                 repl.clone()
                             } else {
                                 elem
@@ -2494,7 +2494,7 @@ pub fn paramsubst(                                          // c:1625
                         .collect();
                     value = new_arr.join(" ");                  // c:3870
                     split_parts = Some(new_arr);                // c:3870
-                } else if crate::exec::ShellExecutor::glob_match_static(&raw_value, &pat) {
+                } else if crate::ported::pattern::patmatch(&pat, &raw_value) {
                     value = repl;                                // c:3870
                 } else {
                     value = raw_value.clone();                   // c:3870
@@ -2579,7 +2579,7 @@ pub fn paramsubst(                                          // c:1625
                         let mut m: Option<usize> = None;
                         for e in (q + 1..=nn).rev() {
                             let c: String = cv[q..e].iter().collect();
-                            if crate::exec::ShellExecutor::glob_match_static(&c, &pat) {
+                            if crate::ported::pattern::patmatch(&pat, &c) {
                                 m = Some(e); break;
                             }
                         }
@@ -2634,7 +2634,7 @@ pub fn paramsubst(                                          // c:1625
                     let mut matched: Option<usize> = None;          // c:3870
                     for end in (p + 1..=n).rev() {                  // c:3870
                         let cand: String = chars_v[p..end].iter().collect(); // c:3870
-                        if crate::exec::ShellExecutor::glob_match_static(&cand, &pat) { // c:3870
+                        if crate::ported::pattern::patmatch(&pat, &cand) { // c:3870
                             matched = Some(end);                     // c:3870
                             break;                                   // c:3870
                         }                                            // c:3870
@@ -2726,7 +2726,7 @@ pub fn paramsubst(                                          // c:1625
                         let nn = cv.len();
                         for end in (0..=nn).rev() {
                             let cand: String = cv[..end].iter().collect();
-                            if crate::exec::ShellExecutor::glob_match_static(&cand, anchor_pat) {
+                            if crate::ported::pattern::patmatch(anchor_pat, &cand) {
                                 return format!("{}{}", repl, cv[end..].iter().collect::<String>());
                             }
                         }
@@ -2736,7 +2736,7 @@ pub fn paramsubst(                                          // c:1625
                         let nn = cv.len();
                         for start in 0..=nn {
                             let cand: String = cv[start..].iter().collect();
-                            if crate::exec::ShellExecutor::glob_match_static(&cand, anchor_pat) {
+                            if crate::ported::pattern::patmatch(anchor_pat, &cand) {
                                 return format!("{}{}", cv[..start].iter().collect::<String>(), repl);
                             }
                         }
@@ -2747,7 +2747,7 @@ pub fn paramsubst(                                          // c:1625
                         for start in 0..nn {
                             for end in (start + 1..=nn).rev() {
                                 let cand: String = cv[start..end].iter().collect();
-                                if crate::exec::ShellExecutor::glob_match_static(&cand, &pat) {
+                                if crate::ported::pattern::patmatch(&pat, &cand) {
                                     let mut out = String::with_capacity(val.len());
                                     out.extend(cv[..start].iter());
                                     out.push_str(&repl);
@@ -2794,7 +2794,7 @@ pub fn paramsubst(                                          // c:1625
                             let mut k = nn;
                             loop {
                                 let prefix: String = cv[..k].iter().collect();
-                                if crate::exec::ShellExecutor::glob_match_static(&prefix, &p) {
+                                if crate::ported::pattern::patmatch(&p, &prefix) {
                                     return cv[k..].iter().collect();
                                 }
                                 if k == 0 { break; }
@@ -2823,7 +2823,7 @@ pub fn paramsubst(                                          // c:1625
                     let total = cv.len();
                     for k in 0..=total {
                         let prefix: String = cv[..k].iter().collect();
-                        if crate::exec::ShellExecutor::glob_match_static(&prefix, &p) {
+                        if crate::ported::pattern::patmatch(&p, &prefix) {
                             return cv[k..].iter().collect();
                         }
                     }
@@ -2848,7 +2848,7 @@ pub fn paramsubst(                                          // c:1625
                     let mut k = total;
                     loop {
                         let suffix: String = cv[total - k..].iter().collect();
-                        if crate::exec::ShellExecutor::glob_match_static(&suffix, &p) {
+                        if crate::ported::pattern::patmatch(&p, &suffix) {
                             return cv[..total - k].iter().collect();
                         }
                         if k == 0 { break; }
@@ -2874,7 +2874,7 @@ pub fn paramsubst(                                          // c:1625
                     let total = cv.len();
                     for k in 0..=total {
                         let suffix: String = cv[total - k..].iter().collect();
-                        if crate::exec::ShellExecutor::glob_match_static(&suffix, &p) {
+                        if crate::ported::pattern::patmatch(&p, &suffix) {
                             return cv[..total - k].iter().collect();
                         }
                     }
@@ -3948,7 +3948,7 @@ pub fn paramsubst(                                          // c:1625
                     let mut out: Vec<String> = Vec::new();
                     for (k, v) in map.iter() {
                         let hay = if by_key { k.as_str() } else { v.as_str() };
-                        if crate::exec::ShellExecutor::glob_match_static(hay, &pat) {
+                        if crate::ported::pattern::patmatch(&pat, hay) {
                             out.push(if by_key { k.clone() } else { v.clone() });
                             if !return_all { break; }
                         }
@@ -3977,7 +3977,7 @@ pub fn paramsubst(                                          // c:1625
                     let return_all = flags.contains('I') || flags.contains('R');
                     let mut out: Vec<String> = Vec::new();
                     for (idx, elem) in arr.iter().enumerate() {
-                        if crate::exec::ShellExecutor::glob_match_static(elem, &pat) {
+                        if crate::ported::pattern::patmatch(&pat, elem) {
                             if return_index {
                                 out.push((idx + 1).to_string());
                             } else {
@@ -5064,10 +5064,7 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
                     for start in 0..=n {
                         for end in start..=n {
                             let span: String = cv[start..end].iter().collect();
-                            if crate::exec::ShellExecutor::glob_match_static(
-                                &span,
-                                &eff_pat,
-                            ) {
+                            if crate::ported::pattern::patmatch(&eff_pat, &span) {
                                 // Convert char positions to byte positions.
                                 let bs: usize = cv[..start].iter()
                                     .map(|c| c.len_utf8()).sum();
@@ -5091,10 +5088,7 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
                     let mut found: Option<usize> = None;
                     for end in 0..=n {
                         let span: String = cv[..end].iter().collect();
-                        if crate::exec::ShellExecutor::glob_match_static(
-                            &span,
-                            &eff_pat,
-                        ) {
+                        if crate::ported::pattern::patmatch(&eff_pat, &span) {
                             found = Some(cv[..end].iter()
                                 .map(|c| c.len_utf8()).sum());
                             break;
@@ -5113,10 +5107,7 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
                     let mut found: Option<usize> = None;
                     for start in 0..=n {
                         let span: String = cv[start..].iter().collect();
-                        if crate::exec::ShellExecutor::glob_match_static(
-                            &span,
-                            &eff_pat,
-                        ) {
+                        if crate::ported::pattern::patmatch(&eff_pat, &span) {
                             found = Some(cv[..start].iter()
                                 .map(|c| c.len_utf8()).sum());
                             break;
