@@ -650,3 +650,119 @@ pub fn settags() -> i32 { 0 }
 
 /// Port of `setup_()` from Src/Zle/computil.c:5124. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn setup_() -> i32 { 0 }
+
+// =====================================================================
+// bin_compquote / bin_comptags / bin_comptry / bin_compvalues —
+// Src/Zle/computil.c. Each is a structural port matching the C
+// signature exactly so the dispatch surface lands; the underlying
+// state-mutation paths (compqstack rewrite, tags-stack walk,
+// compvalues table) depend on infrastructure (getvalue / setstrvalue
+// / compstate hash / cv_* helpers) that's open work.
+// =====================================================================
+
+/// Direct port of `bin_compquote()` from `Src/Zle/computil.c:3679`.
+/// C body (c:3683-3725):
+/// ```c
+/// if (incompfunc != 1) { error; return 1; }
+/// if (!compqstack || !*compqstack) return 0;
+/// while ((name = *args++)) {
+///     if ((v = getvalue(...))) {
+///         switch (PM_TYPE(v->pm->node.flags)) {
+///         case PM_SCALAR/NAMEREF:
+///             setstrvalue(v, comp_quote(getstrvalue(v), -p));
+///         case PM_ARRAY:
+///             foreach val in array: comp_quote each
+///         default: zwarnnam("invalid parameter type");
+///         }
+///     }
+/// }
+/// ```
+/// Static-link path: the comp_quote helper currently returns 0 (stub);
+/// without it, every quote() call is a no-op, but the entry still
+/// validates incompfunc + compqstack guards correctly.
+pub fn bin_compquote(nam: &str, args: &[String],                             // c:3679
+                     ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::utils::zwarnnam;
+    use crate::ported::zsh_h::OPT_ISSET;
+    use crate::ported::zle::compcore::{INCOMPFUNC, COMPQSTACK};
+    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3686
+        zwarnnam(nam, "can only be called from completion function");        // c:3687
+        return 1;                                                            // c:3688
+    }
+    // c:3692-3693 — `if (!compqstack || !*compqstack) return 0;`
+    let qstack_empty = COMPQSTACK.get()
+        .map(|m| m.lock().map(|s| s.is_empty()).unwrap_or(true))
+        .unwrap_or(true);
+    if qstack_empty { return 0; }                                            // c:3693
+    let _p = OPT_ISSET(ops, b'p');                                           // c:3704 -p flag
+    // c:3697-3722 — for each arg, getvalue + dispatch on PM_TYPE.
+    // Static-link path: getvalue / setstrvalue not yet wired.
+    for _name in args {                                                      // c:3697
+        // Deferred: getvalue + setstrvalue + comp_quote chain.
+    }
+    0                                                                        // c:3725
+}
+
+/// Direct port of `bin_comptags()` from `Src/Zle/computil.c:3831`.
+/// Dispatcher for `comptags -i/-C/-T/-N/-A/-L`. Each subcommand
+/// manipulates the per-completion tag-stack (curtags / curset /
+/// curnos). Static-link path: tag-stack globals aren't yet exposed
+/// in compcore.rs; structural port preserves the dispatch shape so
+/// the subcommand-name parser matches C.
+pub fn bin_comptags(nam: &str, args: &[String],                              // c:3831
+                    _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::utils::zwarnnam;
+    use crate::ported::zle::compcore::INCOMPFUNC;
+    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3838
+        zwarnnam(nam, "can only be called from completion function");        // c:3839
+        return 1;                                                            // c:3840
+    }
+    if args.is_empty() {                                                     // c:3842
+        zwarnnam(nam, "missing arguments");
+        return 1;
+    }
+    // c:3845-3955 — dispatch on first arg: -i (init), -C (current),
+    // -T (test), -N (next), -A (args), -L (list). Each path mutates
+    // curtags via cv_* helpers (defined elsewhere in computil.c).
+    // Deferred until the tag-stack globals land.
+    let _ = args;
+    0                                                                        // c:3955
+}
+
+/// Direct port of `bin_comptry()` from `Src/Zle/computil.c:3961`.
+/// C body (c:3965-4138): manages the "tried tags" set per
+/// completion call. Subcommands -i (init), -p (push), -m (mode),
+/// -t (test), -A (assign-to-array). Static-link path: triedtags
+/// global isn't yet stored; structural port for dispatch parity.
+pub fn bin_comptry(nam: &str, args: &[String],                               // c:3961
+                   _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::utils::zwarnnam;
+    use crate::ported::zle::compcore::INCOMPFUNC;
+    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3968
+        zwarnnam(nam, "can only be called from completion function");        // c:3969
+        return 1;                                                            // c:3970
+    }
+    if args.is_empty() { return 0; }                                         // c:3972 default success
+    // c:3975-4135 — subcommand dispatch. Deferred.
+    let _ = args;
+    0                                                                        // c:4137
+}
+
+/// Direct port of `bin_compvalues()` from `Src/Zle/computil.c:3475`.
+/// C body (c:3479-3656): manages the compvalues parameter table —
+/// the per-context value-list that completion functions populate.
+/// Subcommands -i/-D/-C/-V/-T/-v/-d/-l etc. Static-link path: the
+/// compvalues table isn't yet stored; structural port for parity.
+pub fn bin_compvalues(nam: &str, args: &[String],                            // c:3475
+                      _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::utils::zwarnnam;
+    use crate::ported::zle::compcore::INCOMPFUNC;
+    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3482
+        zwarnnam(nam, "can only be called from completion function");        // c:3483
+        return 1;                                                            // c:3484
+    }
+    if args.is_empty() { return 0; }
+    // c:3489-3650 — full subcommand dispatch. Deferred.
+    let _ = args;
+    0                                                                        // c:3653
+}

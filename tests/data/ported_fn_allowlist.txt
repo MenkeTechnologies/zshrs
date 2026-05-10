@@ -555,3 +555,16 @@ findjobnam_c
 # would `&compprefix` now writes `lock_str(&COMPPREFIX).lock()`.
 lock_str
 lock_vec
+
+# jobs.rs Rust-only OnceLock get-or-init wrappers for jobtab /
+# maxjob / curjob / prevjob / thisjob — C dereferences these as
+# bare globals from Src/jobs.c (file-scope `int maxjob`,
+# `struct job *jobtab`, etc.). Rust port wraps each in OnceLock<
+# Mutex<…>> with these get-or-init helpers since `Mutex::new` is
+# not const for that wrapper.
+jobtab_global
+maxjob_global
+curjob_global
+prevjob_global
+thisjob_global
+isset_posixbuiltins
