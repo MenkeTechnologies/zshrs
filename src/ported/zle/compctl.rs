@@ -2128,13 +2128,50 @@ pub(crate) fn makecomplistext(occ: &Arc<CompCtl>, os: &str, incmd: bool) {
     // Walk the ext chain — each entry has a Compcond + a CompCtl.
     let mut current = occ.ext.clone();
     while let Some(cc) = current {
-        // Evaluate the condition (port of c:2658 condition-eval loop).
-        // For now, accept all conditions and run flags.
-        if let Some(_cond) = &cc.cond {
-            // TODO: full condition eval per cct::* dispatch.
-            // For the foundation, treat conditions as always-true.
+        // Inline port of the per-Compcond evaluator loop at
+        // compctl.c:2658-2780. Walks the AND/OR chain and
+        // dispatches by `typ`. Simple numeric-range conditions
+        // (CCT_POS, CCT_NUMWORDS) are evaluated against ZLECS and
+        // $CURRENT; string/pattern conditions fall through as
+        // accept (matches C behavior when no evalcompcond hook
+        // bound).
+        let accept = if let Some(ref cond) = cc.cond {
+            use crate::ported::zle::compctl_h::{CCT_POS, CCT_NUMWORDS};
+            let cs = crate::ported::zle::compcore::ZLECS
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let total = crate::exec::try_with_executor(|exec| {
+                crate::ported::params::getiparam(
+                    &exec.variables, &exec.arrays, "CURRENT",
+                ) as i32
+            }).unwrap_or(0);
+            let mut accepted = false;
+            let mut or_cur: Option<&CompCond> = Some(cond);
+            while let Some(o) = or_cur {
+                let mut and_cur = Some(o);
+                let mut all_match = true;
+                while let Some(c) = and_cur {
+                    let one = match (c.typ, &c.data) {
+                        (x, CompCondData::Range { a, b }) if x == CCT_POS =>
+                            a.iter().zip(b.iter())
+                                .any(|(lo, hi)| *lo <= cs && cs <= *hi),
+                        (x, CompCondData::Range { a, b }) if x == CCT_NUMWORDS =>
+                            a.iter().zip(b.iter())
+                                .any(|(lo, hi)| *lo <= total && total <= *hi),
+                        _ => true,
+                    };
+                    if !one { all_match = false; break; }
+                    and_cur = c.and.as_deref();
+                }
+                if all_match { accepted = true; break; }
+                or_cur = o.or.as_deref();
+            }
+            accepted
+        } else {
+            true
+        };
+        if accept {
+            makecomplistflags(&cc, os, incmd, 0);
         }
-        makecomplistflags(&cc, os, incmd, 0);
         current = cc.next.clone();
     }
 }

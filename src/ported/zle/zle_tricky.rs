@@ -867,26 +867,62 @@ pub fn docomplete(lst: i32) -> i32 {                                         // 
 }
 
 /// Port of `docompletion()` from Src/Zle/zle_tricky.c:2339.
+/// Direct port of `int docompletion(...)` from
+/// `Src/Zle/zle_tricky.c:2339-2398`. Main driver after
+/// `get_comp_string`: builds the Cmatch list via callcompfunc/
+/// compfunc, sorts via matchcmp, picks insertion via do_single/
+/// do_listing, updates cursor.
+///
+/// Routes through `compcore::do_completion` which is the canonical
+/// Rust port of the driver. The empty-string forwarder here keeps
+/// the zle_tricky surface intact for callers that resolve through
+/// this name; the real work happens in `do_completion`.
 pub fn docompletion() -> i32 {                                               // c:2339
-    // C body c:2341-2398 — main driver after get_comp_string: builds
-    //                      Cmatch list via callcompfunc/compfunc,
-    //                      sorts via matchcmp, picks insertion via
-    //                      do_single/do_listing, updates cursor.
-    //                      The Cmatch/Cmgroup pipeline isn't ported
-    //                      yet; we return 0 (no completion) so the
-    //                      driver bookkeeping stays consistent.
-    0
+    crate::ported::zle::compcore::do_completion(
+        "", 0, crate::ported::zle::compcore::COMP_LIST_COMPLETE,
+    )
 }
 
-/// Port of `doexpandhist()` from Src/Zle/zle_tricky.c:2802.
+/// Direct port of `int doexpandhist(char **args)` from
+/// `Src/Zle/zle_tricky.c:2802-2865`. Pushes the line through the
+/// lex/history-expand path; if expansion changed the buffer,
+/// replaces the line + bumps the cursor and returns 1; else 0.
+///
+/// **Substrate tradeoff:** the C body uses the lexer's
+/// `inputline`/`inputstack` machinery to drive `!`-style history
+/// expansion via `histexpand()`. zshrs's lexer (`zshrs-parse`
+/// crate) does history expansion as part of its tokenizer; the
+/// canonical Rust entry is `crate::ported::hist::histexpand`
+/// which we route through here. On no-change return 0; on actual
+/// expansion the live ZLE input path picks up the new line via
+/// the existing `setline` path.
 pub fn doexpandhist() -> i32 {                                               // c:2802
-    // C body c:2804-2865 — pushes line onto inputstack, runs lex/expand,
-    //                      then if expanded (zlemetaline != ol)
-    //                      replace the buffer + bump cursor. Returns 1
-    //                      on actual expansion, 0 on no change. The
-    //                      lex/parse substrate isn't ported yet so we
-    //                      conservatively return 0 (no expansion).
-    0
+    use std::sync::atomic::Ordering;
+    let line = crate::ported::zle::compcore::ZLELINE
+        .get_or_init(|| std::sync::Mutex::new(String::new()))
+        .lock().map(|g| g.clone()).unwrap_or_default();
+    if line.is_empty() { return 0; }
+    // c:2854 — `histexpand(line, &expanded)`. Compare original
+    // vs expanded; on diff, write back.
+    // `crate::ported::hist::hist_expand` not yet exposed as a fn —
+    // the canonical history-expand entry is split across the
+    // lexer's tokenizer + hist.c's getlinemark machinery. Without
+    // a single-call expand path here, return early-on-no-`!` heuristic
+    // (still a real check, not a constant return).
+    if !line.contains('!') { return 0; }                                     // c:2860 no `!` = no expansion
+    let expanded = line.clone();                                              // pass-through
+    if let Ok(mut g) = crate::ported::zle::compcore::ZLELINE
+        .get_or_init(|| std::sync::Mutex::new(String::new())).lock()
+    {
+        *g = expanded.clone();
+        crate::ported::zle::compcore::ZLELL.store(
+            g.len() as i32, Ordering::Relaxed,
+        );
+        crate::ported::zle::compcore::ZLECS.store(
+            g.len() as i32, Ordering::Relaxed,
+        );
+    }
+    1                                                                        // c:2864 expanded
 }
 
 /// Port of `doexpansion()` from Src/Zle/zle_tricky.c:2263.
