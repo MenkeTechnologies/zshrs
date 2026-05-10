@@ -1074,9 +1074,59 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 // yet covered above. zshrs links modules statically; live
 // state owned by the module's typed struct. Name-parity shims.
 
-/// Port of `assignaliasdefs()` from Src/Modules/parameter.c:1867.
+/// Direct port of `assignaliasdefs()` from Src/Modules/parameter.c:1867.
+/// C signature: `static void assignaliasdefs(Param pm, int flags)`.
+/// C body sets `pm->node.flags = PM_SCALAR` (c:1869) then dispatches
+/// `pm->gsu.s` to one of six static gsu_scalar handler tables based
+/// on the alias-flavour bits (raw/global/suffix × normal/disabled).
+/// Static-link path: the gsu table machinery is not yet ported; the
+/// flag-to-handler mapping is recorded in a side-map keyed by the
+/// param's name so future gsu lookups resolve the right handler.
 #[allow(non_snake_case)]
-pub fn assignaliasdefs() -> i32 { 0 }
+pub fn assignaliasdefs(pm: *mut crate::ported::zsh_h::param,                 // c:1867
+                       flags: i32) {
+    use crate::ported::zsh_h::{PM_SCALAR, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED};
+    if !pm.is_null() {
+        unsafe { (*pm).node.flags = PM_SCALAR as i32; }                      // c:1869
+    }
+    // c:1871-1893 — switch on flag combination to pick the gsu table.
+    let handler = match flags {                                              // c:1873
+        0                              => "pmralias_gsu",                    // c:1874
+        f if f == ALIAS_GLOBAL          => "pmgalias_gsu",                   // c:1877
+        f if f == ALIAS_SUFFIX          => "pmsalias_gsu",                   // c:1880
+        f if f == DISABLED              => "pmdisralias_gsu",                // c:1883
+        f if f == ALIAS_GLOBAL|DISABLED => "pmdisgalias_gsu",                // c:1886
+        f if f == ALIAS_SUFFIX|DISABLED => "pmdissalias_gsu",                // c:1889
+        _ => return,
+    };
+    if !pm.is_null() {
+        let name = unsafe { (*pm).node.nam.clone() };
+        let m = ALIAS_GSU_HANDLER.get_or_init(|| std::sync::Mutex::new(
+            std::collections::HashMap::new()));
+        if let Ok(mut g) = m.lock() {
+            g.insert(name, handler.to_string());
+        }
+    }
+}
+
+// =====================================================================
+// !!! WARNING: RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
+// =====================================================================
+//
+// `ALIAS_GSU_HANDLER` records which `pm*alias_gsu` static dispatch
+// table assignaliasdefs() selected for each parameter name. The C
+// source stores this directly on `Param->gsu.s` as a function-table
+// pointer (Src/Modules/parameter.c:1842-1860). Until the gsu_scalar
+// dispatch table machinery is ported in full, this side-map is the
+// bridge so future gsu lookups can resolve the right handler.
+//
+// !!! Remove this side-map once the gsu_scalar dispatch table is
+// ported in src/ported/params.rs and assignaliasdefs() can write
+// `pm->gsu.s = &pmralias_gsu` directly. !!!
+// =====================================================================
+static ALIAS_GSU_HANDLER: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, String>>> =
+    std::sync::OnceLock::new();
 
 /// Port of `dirsgetfn()` from Src/Modules/parameter.c:1147.
 /// C: `static char **dirsgetfn(UNUSED(Param pm))` →
@@ -1208,11 +1258,30 @@ fn getpatchars(dis: i32) -> Vec<String> {                                    // 
     ret
 }
 
-/// Port of `getreswords()` from Src/lex.c — emits the reserved-word
-/// list (filtered by DISABLED flag).
-fn getreswords(_flags: i32) -> Vec<String> {
-    // Static-link path — reswords table lives in src/ported/lex.rs.
-    Vec::new()
+/// Direct port of `getreswords()` from Src/Modules/parameter.c:858.
+/// C body (c:863-873):
+/// ```c
+/// p = ret = zhalloc((reswdtab->ct + 1) * sizeof(char *));
+/// for (i = 0; i < reswdtab->hsize; i++)
+///     for (hn = reswdtab->nodes[i]; hn; hn = hn->next)
+///         if (dis ? (hn->flags & DISABLED) : !(hn->flags & DISABLED))
+///             *p++ = dupstring(hn->nam);
+/// *p = NULL; return ret;
+/// ```
+fn getreswords(dis: i32) -> Vec<String> {                                    // c:858
+    let g = match crate::ported::hashtable::reswdtab_lock().lock() {
+        Ok(g) => g,
+        Err(_) => return Vec::new(),
+    };
+    let mut ret: Vec<String> = Vec::with_capacity(g.iter().count() + 1);     // c:866
+    for (name, node) in g.iter() {                                           // c:868-871
+        let disabled = (node.flags & crate::ported::zsh_h::DISABLED as u32) != 0;
+        let pass = if dis != 0 { disabled } else { !disabled };              // c:870
+        if pass {
+            ret.push(name.clone());                                          // c:871 dupstring
+        }
+    }
+    ret                                                                      // c:874
 }
 
 use crate::ported::zsh_h::{HashTable, HashNode, Param, param as ParamStruct};
