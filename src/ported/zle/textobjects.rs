@@ -35,7 +35,7 @@ pub fn selectword(zle: &mut Zle) -> i32 {                                // c:41
     } else {
         1
     };
-    let widget = zle.bindk.as_ref().map(|t| t.name.as_str()).unwrap_or("");
+    let widget = zle.bindk.as_ref().map(|t| t.nam.as_str()).unwrap_or("");
     let is_aword       = widget == "select-a-word";
     let is_inword      = widget == "select-in-word";
     let is_ablankword  = widget == "select-a-blank-word";

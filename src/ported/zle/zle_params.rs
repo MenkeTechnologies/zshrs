@@ -274,7 +274,7 @@ pub fn get_lsearch() -> String {                                             // 
 /// Port of `get_lwidget()` from Src/Zle/zle_params.c:449.
 pub fn get_lwidget(zle: &crate::ported::zle::zle_main::Zle) -> String {      // c:448
     // c:451 — `return (lbindk ? lbindk->nam : "")`.
-    zle.lbindk.as_ref().map(|t| t.name.clone()).unwrap_or_default()
+    zle.lbindk.as_ref().map(|t| t.nam.clone()).unwrap_or_default()
 }
 
 /// Port of `get_postdisplay()` from Src/Zle/zle_params.c:907.
@@ -412,7 +412,7 @@ pub fn get_suffixstart(zle: &crate::ported::zle::zle_main::Zle) -> i64 {     // 
 /// Port of `get_widget()` from Src/Zle/zle_params.c:414.
 pub fn get_widget(zle: &crate::ported::zle::zle_main::Zle) -> String {       // c:413
     // c:416 — `return bindk ? bindk->nam : ""`.
-    zle.bindk.as_ref().map(|t| t.name.clone()).unwrap_or_default()
+    zle.bindk.as_ref().map(|t| t.nam.clone()).unwrap_or_default()
 }
 
 /// Port of `get_widgetfunc()` from Src/Zle/zle_params.c:421.
@@ -453,7 +453,7 @@ pub fn get_widgetstyle(zle: &crate::ported::zle::zle_main::Zle) -> String {  // 
     if w.flags.contains(WidgetFlags::INT) {
         return ".internal".to_string();
     }
-    // No NCOMP comp.wid in current shape — would be t.name for
+    // No NCOMP comp.wid in current shape — would be t.nam for
     // a -C-bound completion widget. Fall through to "".
     String::new()                                                            // c:444
 }

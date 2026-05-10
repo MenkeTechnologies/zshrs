@@ -183,7 +183,7 @@ pub fn bindlistout(km: &KeymapManager, keymap: &str) -> Vec<(String, String)> { 
         for (i, thingy) in map.first.iter().enumerate() {
             if let Some(t) = thingy {
                 let seq = printbind(&[i as u8]);
-                bindings.push((seq, t.name.clone()));
+                bindings.push((seq, t.nam.clone()));
             }
         }
 
@@ -191,7 +191,7 @@ pub fn bindlistout(km: &KeymapManager, keymap: &str) -> Vec<(String, String)> { 
         for (seq, binding) in &map.multi {
             if let Some(t) = &binding.bind {
                 let seq_str = printbind(seq);
-                bindings.push((seq_str, t.name.clone()));
+                bindings.push((seq_str, t.nam.clone()));
             } else if let Some(s) = &binding.str {
                 let seq_str = printbind(seq);
                 bindings.push((seq_str, format!("send-string \"{}\"", s)));
