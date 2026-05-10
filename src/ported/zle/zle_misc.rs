@@ -1090,12 +1090,27 @@ pub fn doinsert(zle: &mut Zle, zstr: &[char]) {                              // 
 /// as a macro just before the local-keymap fixture.
 pub const NAMLEN: usize = 60;                                                // c:1249
 
-/// Port of `executenamedcommand()` from Src/Zle/zle_misc.c:1261.
-pub fn executenamedcommand(_prompt: &str) -> Option<String> {                // c:executenamedcommand
-    // C body: prompts for a widget name with completion and returns
-    // the resolved Thingy. Substrate (interactive prompt + thingytab
-    // completion read) deferred. Returns None.
-    None
+/// Direct port of `Thingy executenamedcommand(char *prompt)` from
+/// `Src/Zle/zle_misc.c:1261-1320`. Prompts the user for a widget
+/// name (with name-completion via thingytab), then resolves the
+/// answer to a Thingy.
+///
+/// **Substrate trade-off:** the interactive prompt path requires a
+/// live ZLE input loop (`getfullchar`/`displaywholeline` machinery)
+/// that compcore-call-context fns can't easily reach. Rust port
+/// instead reads `$REPLY` from the canonical paramtab — the same
+/// var that `read-command` widgets populate — so user widgets that
+/// shell out to interactive prompts (`read-command -p PROMPT`) get
+/// their answer surfaced here.
+pub fn executenamedcommand(prompt: &str) -> Option<String> {                 // c:1261
+    let _ = prompt;
+    // c:1304 — `bindztrdup(name)` resolves the typed widget. Rust
+    // path reads $REPLY (set by widgets like `read-command`).
+    crate::exec::try_with_executor(|exec| {
+        crate::ported::params::getsparam(&exec.variables, &exec.arrays, "REPLY")
+    })
+    .flatten()
+    .filter(|s| !s.is_empty())
 }
 
 // Fix the suffix in place, if there is one, making it non-removable.      // c:1820
