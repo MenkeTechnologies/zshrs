@@ -715,6 +715,100 @@ pub const MS_WRAPPED: i32 = 2;                                               // 
 /// menu-status line shows.
 pub const MAX_STATUS: usize = 128;                                           // c:2200
 
+// =====================================================================
+// Menu-select / list-render file-statics — `Src/Zle/complist.c:52-148`.
+// All AtomicI32 so the multi-threaded shell can flip them between
+// widget invocations without locking. (C source uses plain int file-
+// statics in single-threaded compilation units.)
+// =====================================================================
+
+/// Port of `static int noselect` from `complist.c:52`. Suppress the
+/// menu-select cursor highlight when set.
+pub static NOSELECT:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+/// Port of `static int mselect` from `complist.c:52`. Currently
+/// selected match index (-1 = none).
+pub static MSELECT:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:52
+/// Port of `static int inselect` from `complist.c:52`. Inside menu-
+/// select dispatch loop.
+pub static INSELECT:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+/// Port of `static int mcol` from `complist.c:52`. Current column.
+pub static MCOL:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+/// Port of `static int mline` from `complist.c:52`. Current line.
+pub static MLINE:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+/// Port of `static int mcols` from `complist.c:52`. Total columns.
+pub static MCOLS:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+/// Port of `static int mlines` from `complist.c:52`. Total lines.
+pub static MLINES:    std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+
+/// Port of `static int selected` from `complist.c:62`. Match was
+/// selected (Enter/Tab pressed in menu).
+pub static SELECTED:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:62
+/// Port of `static int mlbeg = -1` from `complist.c:62`. First visible
+/// menu line.
+pub static MLBEG:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:62
+/// Port of `static int mlend = 9999999` from `complist.c:62`. Last
+/// visible menu line.
+pub static MLEND:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(9_999_999); // c:62
+/// Port of `static int mscroll` from `complist.c:62`. Scroll-mode
+/// active.
+pub static MSCROLL:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:62
+/// Port of `static int mrestlines` from `complist.c:62`. Lines remaining
+/// before next asklistscroll prompt.
+pub static MRESTLINES:std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:62
+
+/// Port of `static int mnew` from `complist.c:76`. Match list is new
+/// (vs. continuation of prior cycle).
+pub static MNEW:        std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+/// Port of `static int mlastcols` from `complist.c:76`. Previous columns.
+pub static MLASTCOLS:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+/// Port of `static int mlastlines` from `complist.c:76`. Previous lines.
+pub static MLASTLINES:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+/// Port of `static int mhasstat` from `complist.c:76`. Status line is shown.
+pub static MHASSTAT:    std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+/// Port of `static int mfirstl` from `complist.c:76`. First line of menu.
+pub static MFIRSTL:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+/// Port of `static int mlastm` from `complist.c:76`. Last match index.
+pub static MLASTM:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+
+/// Port of `static int mlprinted` from `complist.c:88`. Lines actually printed.
+pub static MLPRINTED:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
+/// Port of `static int molbeg = -2` from `complist.c:88`. Old menu beg.
+pub static MOLBEG:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-2); // c:88
+/// Port of `static int mocol` from `complist.c:88`. Old column.
+pub static MOCOL:       std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
+/// Port of `static int moline` from `complist.c:88`. Old line.
+pub static MOLINE:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
+/// Port of `static int mstatprinted` from `complist.c:88`. Status was printed.
+pub static MSTATPRINTED:std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
+
+/// Port of `static int mtab_been_reallocated` from `complist.c:106`.
+pub static MTAB_BEEN_REALLOCATED: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                                    // c:106
+
+/// Port of `static int mgtabsize` from `complist.c:117`. Size of mgtab.
+pub static MGTABSIZE:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:117
+
+/// Port of `static int nrefs` from `complist.c:139`. Number of group
+/// pattern references in the current LS_COLORS spec.
+pub static NREFS:       std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:139
+
+/// Port of `static int curisbeg` from `complist.c:140`. Current
+/// "is-begin-pos" iterator state.
+pub static CURISBEG:    std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:140
+/// Port of `static int curissend` from `complist.c:142`. Current
+/// "is-sorted-end-pos" iterator state.
+pub static CURISSEND:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:142
+/// Port of `static int curiscol` from `complist.c:144`. Current
+/// "is-color" iterator state.
+pub static CURISCOL:    std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:144
+
+/// Port of `static int lr_caplen` from `complist.c:269`. Left-right
+/// cap length (current).
+pub static LR_CAPLEN:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:269
+/// Port of `static int max_caplen` from `complist.c:269`. Maximum
+/// observed cap length.
+pub static MAX_CAPLEN:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:269
+
 /// Port of `filecol()` from `Src/Zle/complist.c:487-498`.
 /// ```c
 /// static Filecol
