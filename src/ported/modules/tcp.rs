@@ -662,7 +662,10 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 /// Port of `setup_()` from `Src/Modules/tcp.c:714`.
-pub fn setup_(_m: *const module) -> i32 { 0 }                           // c:714-717
+pub fn setup_(_m: *const module) -> i32 {                                    // c:714
+    // C body c:716-717 — `return 0`. Faithful empty-body port.
+    0
+}
 
 /// Port of `features_()` from `Src/Modules/tcp.c:721`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -678,7 +681,13 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 }
 
 /// Port of `boot_()` from `Src/Modules/tcp.c:736`.
-pub fn boot_(_m: *const module) -> i32 { 0 }                            // c:736-740
+pub fn boot_(_m: *const module) -> i32 {                                     // c:736
+    // C body c:738-739 — `ztcp_sessions = znewlinklist(); return 0`.
+    //                    Reset the per-thread sessions Vec to empty
+    //                    so module reload state is clean.
+    ZTCP_SESSIONS.with(|s| s.borrow_mut().clear());                          // c:738
+    0
+}
 
 /// Port of `cleanup_()` from `Src/Modules/tcp.c:745`.
 /// C body: `tcp_cleanup(); return setfeatureenables(m, &module_features, NULL);`
@@ -688,7 +697,11 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_()` from `Src/Modules/tcp.c:754`.
-pub fn finish_(_m: *const module) -> i32 { 0 }                          // c:754-757
+pub fn finish_(_m: *const module) -> i32 {                                   // c:754
+    // C body c:756-757 — `return 0`. Faithful empty-body port; the
+    //                    actual session teardown happens in cleanup_.
+    0
+}
 
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:ztcp".to_string()]

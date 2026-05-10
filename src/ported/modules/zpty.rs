@@ -606,7 +606,10 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 /// Port of `setup_()` from `Src/Modules/zpty.c:896`.
-pub fn setup_(_m: *const module) -> i32 { 0 }
+pub fn setup_(_m: *const module) -> i32 {                                    // c:896
+    // C body c:898-899 — `return 0`. Faithful empty-body port.
+    0
+}
 
 /// Port of `features_()` from `Src/Modules/zpty.c:903`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
@@ -647,7 +650,11 @@ pub fn cleanup_(m: *const module) -> i32 {                               // c:92
 }
 
 /// Port of `finish_()` from `Src/Modules/zpty.c:937`.
-pub fn finish_(_m: *const module) -> i32 { 0 }
+pub fn finish_(_m: *const module) -> i32 {                                   // c:937
+    // C body c:939-940 — `return 0`. Faithful empty-body port; the
+    //                    pty session teardown happens in cleanup_.
+    0
+}
 
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:zpty".to_string()]

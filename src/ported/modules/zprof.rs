@@ -447,7 +447,12 @@ pub fn cleanup_(m: *const module) -> i32 {                               // c:36
 }
 
 /// Port of `finish_()` from `Src/Modules/zprof.c:377`.
-pub fn finish_(_m: *const module) -> i32 { 0 }                          // c:377-380
+pub fn finish_(_m: *const module) -> i32 {                                   // c:377
+    // C body c:379-380 — `return 0`. Faithful empty-body port; the
+    //                    profiling tables get freed by cleanup_ via
+    //                    setfeatureenables/zprof_cleanup.
+    0
+}
 
 // `featuresarray` — Src/module.c:3275.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {

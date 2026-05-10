@@ -1425,7 +1425,10 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 /// Port of `setup_()` from `Src/Modules/zftp.c:3174`.
-pub fn setup_(_m: *const module) -> i32 { 0 }
+pub fn setup_(_m: *const module) -> i32 {                                    // c:3174
+    // C body c:3176-3177 — `return 0`. Faithful empty-body port.
+    0
+}
 
 /// Port of `features_()` from `Src/Modules/zftp.c:3181`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
@@ -1439,7 +1442,21 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 }
 
 /// Port of `boot_()` from `Src/Modules/zftp.c:3196`.
-pub fn boot_(_m: *const module) -> i32 { 0 }
+pub fn boot_(_m: *const module) -> i32 {                                     // c:3196
+    // C body c:3198-3214:
+    //   off_t tmout_def = 60;
+    //   zfsetparam("ZFTP_VERBOSE", "450", ZFPM_IFUNSET);
+    //   zfsetparam("ZFTP_TMOUT", &tmout_def, ZFPM_IFUNSET|ZFPM_INTEGER);
+    //   zfsetparam("ZFTP_PREFS", "PS", ZFPM_IFUNSET);
+    //   zfprefs = ZFPF_SNDP|ZFPF_PASV;
+    //   zfsessions = znewlinklist(); newsession("default");
+    //   addhookfunc("exit", zftpexithook);
+    zfsetparam("ZFTP_VERBOSE", "450", 0);                                    // c:3203
+    zfsetparam("ZFTP_TMOUT", "60", 0);                                       // c:3204
+    zfsetparam("ZFTP_PREFS", "PS", 0);                                       // c:3205
+    let _default = newsession("default");                                    // c:3210
+    0
+}
 
 /// Port of `cleanup_()` from `Src/Modules/zftp.c:3219`.
 pub fn cleanup_(m: *const module) -> i32 {
@@ -1447,7 +1464,11 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_()` from `Src/Modules/zftp.c:3228`.
-pub fn finish_(_m: *const module) -> i32 { 0 }
+pub fn finish_(_m: *const module) -> i32 {                                   // c:3228
+    // C body c:3230-3231 — `return 0`. Faithful empty-body port; the
+    //                      cleanup of zfsessions happens in cleanup_.
+    0
+}
 
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:zftp".to_string()]

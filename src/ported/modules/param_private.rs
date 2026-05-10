@@ -813,7 +813,17 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 /// Port of `setup_()` from `Src/Modules/param_private.c:670`.
-pub fn setup_(_m: *const module) -> i32 { 0 }                           // c:670
+pub fn setup_(_m: *const module) -> i32 {                                    // c:670
+    // C body c:672-689 — installs `private` builtin by hijacking
+    //                    the existing `local` builtintab node, swaps
+    //                    paramtab getnode/getnode2/printnode out for
+    //                    private variants, and registers the `private`
+    //                    reserved word.
+    //                    Substrate (builtintab/realparamtab/reswdtab
+    //                    overrides) is not yet wired in zshrs; the
+    //                    `private` builtin is currently a no-op.
+    0
+}
 
 /// Port of `features_()` from `Src/Modules/param_private.c:694`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -829,7 +839,13 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 }
 
 /// Port of `boot_()` from `Src/Modules/param_private.c:709`.
-pub fn boot_(_m: *const module) -> i32 { 0 }                            // c:709
+pub fn boot_(_m: *const module) -> i32 {                                     // c:709
+    // C body c:711-712 — `emptytable = newparamtable(1, "private");
+    //                     return addwrapper(m, wrapper)`.
+    //                    The wrapper substrate (paramtab swap-on-call)
+    //                    isn't ported; structural dispatch deferred.
+    0
+}
 
 /// Port of `cleanup_()` from `Src/Modules/param_private.c:717`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
@@ -838,7 +854,15 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_()` from `Src/Modules/param_private.c:734`.
-pub fn finish_(_m: *const module) -> i32 { 0 }                          // c:734
+pub fn finish_(_m: *const module) -> i32 {                                   // c:734
+    // C body c:736-743 — restores realparamtab->getnode/getnode2/
+    //                    printnode to their save_* originals and
+    //                    restores `local` builtintab node from
+    //                    save_local, then deletes `private` reswd.
+    //                    Reverse of setup_; deferred until substrate
+    //                    overrides land.
+    0
+}
 
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:private".to_string()]
