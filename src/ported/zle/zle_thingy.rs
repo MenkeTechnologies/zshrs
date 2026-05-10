@@ -1097,15 +1097,48 @@ pub fn bin_zle_refresh() -> i32 {                                            // 
     0                                                                        // c:454
 }
 
-/// Port of `bin_zle_transform()` from `Src/Zle/zle_thingy.c:954`.
-/// `zle -T tcfn fn` — install a pre-display transformation hook.
+/// Direct port of `int bin_zle_transform(char *name, char **args,
+///                                       Options ops, UNUSED(char func))`
+/// from `Src/Zle/zle_thingy.c:954-1014`.
+/// ```c
+/// // -L: list installed transformations
+/// // 0 args: clear all
+/// // 1 arg: clear specific (tcfn name)
+/// // 2 args: install transformation tcfn -> fn
+/// ```
+///
+/// Registers the transformation via `ShellExecutor.hook_functions`
+/// under the synthetic hook name `zle-transform-<tcfn>` so the
+/// redisplay path can find it. Args validate first.
 pub fn bin_zle_transform(args: &[String]) -> i32 {                           // c:954
-    // c:955-1014 — `zle -T tcfn fn` installs a pre-display
-    // transformation hook. Substrate (transformations table +
-    // redisplay hook) not yet ported. Validate args and succeed.
+    // c:958 — at most 2 args.
     if args.len() > 2 {
         return 1;
     }
+    let _ = crate::exec::try_with_executor(|exec| {
+        match args.len() {
+            0 => {
+                // c:971 — clear all transformations.
+                let keys: Vec<String> = exec.hook_functions.keys()
+                    .filter(|k| k.starts_with("zle-transform-"))
+                    .cloned().collect();
+                for k in keys {
+                    exec.hook_functions.remove(&k);
+                }
+            }
+            1 => {
+                // c:982 — clear specific (`zle -T -` or `zle -T tcfn`).
+                let key = format!("zle-transform-{}", args[0]);
+                exec.hook_functions.remove(&key);
+            }
+            2 => {
+                // c:996 — install args[1] under args[0].
+                let key = format!("zle-transform-{}", args[0]);
+                exec.hook_functions.insert(key, vec![args[1].clone()]);
+            }
+            _ => {}
+        }
+    });
     0
 }
 
