@@ -112,7 +112,7 @@ impl Default for CompLine {
 /// Walk two parallel `Cpattern` chains testing structural equality
 /// (same `tp` + same `str` for class types or same `chr` for
 /// CPAT_CHAR). Used by `cmatchers_same` to dedupe matcher specs.
-pub fn cpatterns_same(
+pub fn cpatterns_same(                                                       // c:44
     mut a: Option<&crate::ported::zle::comp_h::Cpattern>,
     mut b: Option<&crate::ported::zle::comp_h::Cpattern>,
 ) -> bool {                                                                  // c:42
@@ -166,7 +166,7 @@ pub fn cpatterns_same(
 /// ```
 /// Test two matchers for full structural equality — flags, lengths,
 /// patterns, and (if anchored) anchor patterns must all match.
-pub fn cmatchers_same(
+pub fn cmatchers_same(                                                       // c:84
     a: &crate::ported::zle::comp_h::Cmatcher,
     b: &crate::ported::zle::comp_h::Cmatcher,
 ) -> bool {                                                                  // c:82
@@ -325,7 +325,7 @@ pub fn cline_matched(p: &mut Option<Box<crate::ported::zle::comp_h::Cline>>) {  
 /// }
 /// ```
 /// Reverse a Cline `next`-chained list in place; returns the new head.
-pub fn revert_cline(
+pub fn revert_cline(                                                         // c:270
     mut p: Option<Box<crate::ported::zle::comp_h::Cline>>,
 ) -> Option<Box<crate::ported::zle::comp_h::Cline>> {                        // c:269
     let mut r: Option<Box<crate::ported::zle::comp_h::Cline>> = None;        // c:272 r = NULL
@@ -363,7 +363,7 @@ pub fn revert_cline(
 /// Deep- or shallow-copy a Cline list. `deep` recursively copies
 /// the prefix/suffix sub-lists too. The C source draws from a
 /// freecl free-list when available — Rust just heap-allocates.
-pub fn cp_cline(
+pub fn cp_cline(                                                             // c:190
     l: Option<&crate::ported::zle::comp_h::Cline>,
     deep: i32,
 ) -> Option<Box<crate::ported::zle::comp_h::Cline>> {                        // c:189
@@ -507,7 +507,7 @@ pub fn abort_match() {                                                       // 
 /// and produces a Cline describing the match; our simplified
 /// version returns just a bool — sufficient for the substring +
 /// case-fold matchers most users wire via `-M`.
-pub fn match_str(
+pub fn match_str(                                                            // c:500
     line: &str,
     word: &str,
     matchers: &[CompMatcher],
@@ -577,7 +577,7 @@ pub fn match_str(
 /// uses the resulting list to highlight matching subsequence runs
 /// in the completion menu — every `(start, end)` here is one
 /// matched character (multi-byte aware).
-pub fn match_parts(line: &str, word: &str, flags: &MatchFlags) -> Vec<(usize, usize)> {
+pub fn match_parts(line: &str, word: &str, flags: &MatchFlags) -> Vec<(usize, usize)> { // c:1092
     let mut parts = Vec::new();
     let line_lower = if flags.case_insensitive {
         line.to_lowercase()
@@ -605,7 +605,7 @@ pub fn match_parts(line: &str, word: &str, flags: &MatchFlags) -> Vec<(usize, us
 /// Port of `comp_match()` from Src/Zle/compmatch.c — the C source
 /// is the entry point that the completion engine calls to filter
 /// candidates. Returns `true` iff `match_str()` produces a Cline.
-pub fn comp_match(line: &str, word: &str, flags: &MatchFlags) -> bool {
+pub fn comp_match(line: &str, word: &str, flags: &MatchFlags) -> bool {      // c:1123
     match_str(line, word, &[], flags).is_some()
 }
 
@@ -614,7 +614,7 @@ pub fn comp_match(line: &str, word: &str, flags: &MatchFlags) -> bool {
 // upstream by C-faithful real ports keyed off comp_h::Cline.)
 
 /// Pattern match with equivalence classes (from compmatch.c pattern_match_equivalence)
-pub fn pattern_match_equivalence(a: char, b: char, case_insensitive: bool) -> bool {
+pub fn pattern_match_equivalence(a: char, b: char, case_insensitive: bool) -> bool { // c:1316
     if case_insensitive {
         a.eq_ignore_ascii_case(&b)
     } else {
@@ -650,7 +650,7 @@ pub fn parse_cmatcher(spec: &str) -> Vec<CompMatcher> {
 }
 
 /// Update bmatchers (from compmatch.c add_bmatchers/update_bmatchers)
-pub fn update_bmatchers(matchers: &mut Vec<CompMatcher>, new: Vec<CompMatcher>) {
+pub fn update_bmatchers(matchers: &mut Vec<CompMatcher>, new: Vec<CompMatcher>) { // c:121
     *matchers = new;
 }
 

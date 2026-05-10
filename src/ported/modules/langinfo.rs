@@ -102,7 +102,7 @@ pub fn liitem(name: &str) -> Option<libc::nl_item> {                     // c:37
 
 /// Non-Unix fallback for `liitem` — `nl_item` is POSIX-only.
 #[cfg(not(unix))]
-pub fn liitem(_name: &str) -> Option<i32> {
+pub fn liitem(_name: &str) -> Option<i32> {                                  // c:379
     None
 }
 
@@ -142,7 +142,7 @@ pub fn getlanginfo(name: &str) -> Option<String> {                       // c:39
 /// Non-Unix fallback for `getlanginfo` — `nl_langinfo(3)` is
 /// POSIX-only.
 #[cfg(not(unix))]
-pub fn getlanginfo(_name: &str) -> Option<String> {
+pub fn getlanginfo(_name: &str) -> Option<String> {                          // c:396
     None
 }
 

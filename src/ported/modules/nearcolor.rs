@@ -273,39 +273,39 @@ pub fn getnearestcolor(_dummy: *const hookdef, col: *const color_rgb) -> i32 { /
 // =====================================================================
 
 /// Port of `setup_()` from `Src/Modules/nearcolor.c:169`.
-pub fn setup_(_m: *const module) -> i32 {
+pub fn setup_(_m: *const module) -> i32 {                                    // c:169
     0                                                                  // c:171
 }
 
 /// Port of `features_()` from `Src/Modules/nearcolor.c:176`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:176
     *features = featuresarray(m, module_features());                   // c:178
     0                                                                  // c:179
 }
 
 /// Port of `enables_()` from `Src/Modules/nearcolor.c:184`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:184
     handlefeatures(m, module_features(), enables)                       // c:186
 }
 
 /// Port of `boot_()` from `Src/Modules/nearcolor.c:191`.
 /// C body: `addhookfunc("get_color_attr", (Hookfn) getnearestcolor); return 0;`
-pub fn boot_(_m: *const module) -> i32 {
+pub fn boot_(_m: *const module) -> i32 {                                     // c:191
     addhookfunc("get_color_attr", getnearestcolor);              // c:193
     0                                                                  // c:194
 }
 
 /// Port of `cleanup_()` from `Src/Modules/nearcolor.c:199`.
 /// C body: `deletehookfunc("get_color_attr", ...); return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {
+pub fn cleanup_(m: *const module) -> i32 {                                   // c:199
     deletehookfunc("get_color_attr", getnearestcolor);            // c:201
     setfeatureenables(m, module_features(), None)                       // c:202
 }
 
 /// Port of `finish_()` from `Src/Modules/nearcolor.c:207`.
-pub fn finish_(_m: *const module) -> i32 {
+pub fn finish_(_m: *const module) -> i32 {                                   // c:207
     0                                                                  // c:209
 }
 

@@ -52,7 +52,7 @@ pub static ttystrname: Mutex<String> = Mutex::new(String::new());
 /// bin_clone(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))
 /// ```
 #[cfg(unix)]
-pub fn bin_clone(nam: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
+pub fn bin_clone(nam: &str, args: &[String], _ops: &options, _func: i32) -> i32 { // c:44
     use std::ffi::CString;
     use std::os::unix::io::RawFd;
 
@@ -202,36 +202,36 @@ fn module_features() -> &'static Mutex<features_t> {
 // =====================================================================
 
 /// Port of `setup_()` from `Src/Modules/clone.c:123`.
-pub fn setup_(_m: *const module) -> i32 {
+pub fn setup_(_m: *const module) -> i32 {                                    // c:123
     0                                                                    // c:125
 }
 
 /// Port of `features_()` from `Src/Modules/clone.c:130`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:130
     *features = featuresarray(m, module_features());                     // c:132
     0                                                                    // c:133
 }
 
 /// Port of `enables_()` from `Src/Modules/clone.c:138`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:138
     handlefeatures(m, module_features(), enables)                        // c:140
 }
 
 /// Port of `boot_()` from `Src/Modules/clone.c:145`.
-pub fn boot_(_m: *const module) -> i32 {
+pub fn boot_(_m: *const module) -> i32 {                                     // c:145
     0                                                                    // c:147
 }
 
 /// Port of `cleanup_()` from `Src/Modules/clone.c:152`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {
+pub fn cleanup_(m: *const module) -> i32 {                                   // c:152
     setfeatureenables(m, module_features(), None)                        // c:154
 }
 
 /// Port of `finish_()` from `Src/Modules/clone.c:159`.
-pub fn finish_(_m: *const module) -> i32 {
+pub fn finish_(_m: *const module) -> i32 {                                   // c:159
     0                                                                    // c:161
 }
 

@@ -120,7 +120,7 @@ pub struct ListLayout {
 /// row product fits the available rows; this Rust port uses the
 /// simpler `term_width / max_item_width` heuristic — sufficient for
 /// the common single-screen listing.
-pub fn calclist(
+pub fn calclist(                                                             // c:complist.c
     matches: &[String],
     term_width: usize,
     descriptions: &[Option<String>],
@@ -167,7 +167,7 @@ pub fn calclist(
 /// match (matching the per-cell `clprintm()` call in the C source),
 /// and reverse-videos the optional `selected` index for
 /// menu-selection mode.
-pub fn compprintlist(
+pub fn compprintlist(                                                        // c:1367
     matches: &[String],
     descriptions: &[Option<String>],
     groups: &[Option<String>],
@@ -243,7 +243,7 @@ pub fn compprintlist(
 /// emits "--More--" plus a percent indicator and reads y/n via
 /// `getzlequery`; ours produces the prompt string and leaves the
 /// input read to the caller.
-pub fn asklistscroll(total: usize, shown: usize) -> String {
+pub fn asklistscroll(total: usize, shown: usize) -> String {                 // c:1001
     let _remaining = total.saturating_sub(shown);
     format!("--More--({}/{})", shown, total)
 }
@@ -265,7 +265,7 @@ pub fn compprintfmt(format: &str, matches_count: usize, group: &str) -> String {
 /// characters from a prior frame don't bleed through.
 /// Port of `cleareol()` from Src/Zle/complist.c (the C source
 /// fronts the same `\\e[K` escape via `tcout(TCCLEAREOL)`).
-pub fn cleareol() -> &'static str {
+pub fn cleareol() -> &'static str {                                          // c:608
     "\x1b[K"
 }
 
@@ -273,7 +273,7 @@ pub fn cleareol() -> &'static str {
 /// code, then reset.
 /// Port of `zcputs()` from Src/Zle/complist.c. The C source uses
 /// this for per-match colour application during list paint.
-pub fn zcputs(s: &str, color: Option<&str>) -> String {
+pub fn zcputs(s: &str, color: Option<&str>) -> String {                      // c:580
     match color {
         Some(c) => format!("\x1b[{}m{}\x1b[0m", c, s),
         None => s.to_string(),
