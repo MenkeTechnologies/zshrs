@@ -71,6 +71,109 @@ pub const TRAPCOUNT: i32 = VSIGCOUNT;                                    // c:42
 pub const SIGEXIT: i32 = 0;                                              // c:46
 
 // ---------------------------------------------------------------------------
+// Signal name table — port of the `sigs[SIGCOUNT+4]` array generated
+// by `Src/signames2.awk` at build time. The C source feeds this awk
+// the platform's `<signal.h>` and produces `signames.c` with one
+// `"NAME"` entry per real signal plus the bookend pseudo-signal
+// names (`"EXIT"` at slot 0, `"ZERR"` / `"DEBUG"` after the real
+// signals, `NULL` terminator).
+//
+// Rust port collects the same data at compile time using the
+// `libc::SIG*` constants. Each entry is `(canonical_name, signum)`;
+// `sigs_name(idx)` and `sigs_number(name)` provide the same
+// dispatch the awk-generated array gives C callers.
+// ---------------------------------------------------------------------------
+
+/// Port of `sigs[]` from `signames.c` (auto-generated). Lists the
+/// canonical zsh signal name for every real signal — name without
+/// the `SIG` prefix. Entries are platform-conditional via libc
+/// constants so the table matches the running OS's `<signal.h>`.
+pub static SIGS: &[(&str, i32)] = &[                                      // c:signames.c sigs[]
+    ("HUP",    libc::SIGHUP),    ("INT",    libc::SIGINT),
+    ("QUIT",   libc::SIGQUIT),   ("ILL",    libc::SIGILL),
+    ("TRAP",   libc::SIGTRAP),   ("ABRT",   libc::SIGABRT),
+    ("BUS",    libc::SIGBUS),    ("FPE",    libc::SIGFPE),
+    ("KILL",   libc::SIGKILL),   ("USR1",   libc::SIGUSR1),
+    ("SEGV",   libc::SIGSEGV),   ("USR2",   libc::SIGUSR2),
+    ("PIPE",   libc::SIGPIPE),   ("ALRM",   libc::SIGALRM),
+    ("TERM",   libc::SIGTERM),   ("CHLD",   libc::SIGCHLD),
+    ("CONT",   libc::SIGCONT),   ("STOP",   libc::SIGSTOP),
+    ("TSTP",   libc::SIGTSTP),   ("TTIN",   libc::SIGTTIN),
+    ("TTOU",   libc::SIGTTOU),   ("URG",    libc::SIGURG),
+    ("XCPU",   libc::SIGXCPU),   ("XFSZ",   libc::SIGXFSZ),
+    ("VTALRM", libc::SIGVTALRM), ("PROF",   libc::SIGPROF),
+    ("WINCH",  libc::SIGWINCH),  ("IO",     libc::SIGIO),
+    ("SYS",    libc::SIGSYS),
+];
+
+/// Port of `alt_sigs[]` from `Src/jobs.c:2740`. Cross-platform name
+/// aliases — names like `CLD` / `IO` / `IOT` map to the same number
+/// as the canonical zsh name on platforms where the underlying
+/// C macro pair coincides.
+pub static ALT_SIGS: &[(&str, i32)] = &[                                  // c:jobs.c:2740
+    ("CLD", libc::SIGCHLD),                                               // c:2742-2746
+    ("IOT", libc::SIGABRT),                                               // c:2752-2756
+    ("ERR", SIGZERR),                                                     // c:2762
+];
+
+/// Port of the `sig_msg[]` array from `signames.c` (auto-generated
+/// by signames2.awk). Pretty-printed messages keyed by signal number,
+/// used in the `printjob`/`printtime` output paths when zsh wants
+/// to render a signal as e.g. `"hangup"` or `"floating point exception"`
+/// rather than just `"SIGFPE"`. Each entry is `(signum, message)`.
+pub static SIG_MSG: &[(i32, &str)] = &[                                   // c:signames.c sig_msg[]
+    (libc::SIGHUP,    "hangup"),
+    (libc::SIGINT,    "interrupt"),
+    (libc::SIGQUIT,   "quit"),
+    (libc::SIGILL,    "illegal hardware instruction"),
+    (libc::SIGTRAP,   "trace trap"),
+    (libc::SIGABRT,   "abort"),
+    (libc::SIGBUS,    "bus error"),
+    (libc::SIGFPE,    "floating point exception"),
+    (libc::SIGKILL,   "killed"),
+    (libc::SIGUSR1,   "user-defined signal 1"),
+    (libc::SIGSEGV,   "segmentation fault"),
+    (libc::SIGUSR2,   "user-defined signal 2"),
+    (libc::SIGPIPE,   "broken pipe"),
+    (libc::SIGALRM,   "alarm"),
+    (libc::SIGTERM,   "terminated"),
+    (libc::SIGCHLD,   "death of child"),
+    (libc::SIGCONT,   "continued"),
+    (libc::SIGSTOP,   "stopped (signal)"),
+    (libc::SIGTSTP,   "stopped"),
+    (libc::SIGTTIN,   "stopped (tty input)"),
+    (libc::SIGTTOU,   "stopped (tty output)"),
+    (libc::SIGURG,    "urgent condition"),
+    (libc::SIGXCPU,   "cpu limit exceeded"),
+    (libc::SIGXFSZ,   "file size limit exceeded"),
+    (libc::SIGVTALRM, "virtual time alarm"),
+    (libc::SIGPROF,   "profile signal"),
+    (libc::SIGWINCH,  "window size changed"),
+    (libc::SIGIO,     "i/o ready"),
+    (libc::SIGSYS,    "invalid system call"),
+];
+
+/// Look up the canonical signal name for `idx` (sans `SIG` prefix).
+/// Returns `"EXIT"` for slot 0, `"ZERR"`/`"DEBUG"` for the pseudo-
+/// signal slots, the SIGS-table name for real signals, or `None`
+/// when out of range. Mirrors C's `sigs[idx]` indexed lookup.
+pub fn sigs_name(idx: i32) -> Option<&'static str> {                      // c:signames.c sigs[]
+    if idx == 0           { return Some("EXIT"); }                        // c:slot 0
+    if idx == SIGZERR     { return Some("ZERR"); }                        // c:SIGCOUNT+1
+    if idx == SIGDEBUG    { return Some("DEBUG"); }                       // c:SIGCOUNT+2
+    SIGS.iter().find(|(_, n)| *n == idx).map(|(name, _)| *name)
+}
+
+/// Reverse of `sigs_name` — accepts a name (with or without leading
+/// `SIG`) and returns the libc signal number. Walks SIGS first, then
+/// ALT_SIGS for cross-platform aliases.
+pub fn sigs_number(name: &str) -> Option<i32> {                           // c:jobs.c:2828 lookup
+    let bare = name.strip_prefix("SIG").unwrap_or(name);
+    SIGS.iter().find(|(n, _)| *n == bare).map(|(_, num)| *num)
+        .or_else(|| ALT_SIGS.iter().find(|(n, _)| *n == bare).map(|(_, num)| *num))
+}
+
+// ---------------------------------------------------------------------------
 // SIGRTMIN/SIGRTMAX-aware index ↔ number conversion (c:39-44).
 // ---------------------------------------------------------------------------
 
