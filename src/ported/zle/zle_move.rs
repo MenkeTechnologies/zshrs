@@ -370,11 +370,72 @@ pub fn setmarkcommand(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // 
     0                                                                        // c:491 return 0
 }
 
-/// Port of `vibackwardchar()` from Src/Zle/zle_move.c:683. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn vibackwardchar() -> i32 { 0 }
+/// Port of `vibackwardchar()` from `Src/Zle/zle_move.c:682`.
+/// ```c
+/// int
+/// vibackwardchar(char **args)
+/// {
+///     int n = zmult;
+///     if (n < 0) {
+///         int ret;
+///         zmult = -n;
+///         ret = viforwardchar(args);
+///         zmult = n;
+///         return ret;
+///     }
+///     if (zlecs == findbol())
+///         return 1;
+///     while (n-- && zlecs > 0) {
+///         DECCS();
+///         if (zleline[zlecs] == '\n') {
+///             zlecs++;
+///             break;
+///         }
+///     }
+///     return 0;
+/// }
+/// ```
+/// `vi-backward-char` widget — move left by zmult positions but
+/// stop at the start of the current line (don't cross a newline).
+pub fn vibackwardchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:682
+    let mut n = zle.zmod.mult;                                               // c:685
+    if n < 0 {                                                               // c:687
+        let saved = n;
+        zle.zmod.mult = -n;
+        let ret = viforwardchar(zle);
+        zle.zmod.mult = saved;
+        return ret;
+    }
+    if zle.zlecs == crate::ported::zle::zle_utils::findbol(zle) {            // c:694
+        return 1;                                                            // c:695
+    }
+    while n > 0 && zle.zlecs > 0 {                                           // c:696
+        deccs(zle);                                                          // c:697
+        // c:698-701 — if we crossed onto a '\n', step back forward and exit.
+        if zle.zleline.get(zle.zlecs) == Some(&'\n') {
+            zle.zlecs += 1;
+            break;
+        }
+        n -= 1;
+    }
+    0                                                                        // c:703
+}
 
-/// Port of `vibeginningofline()` from Src/Zle/zle_move.c:728. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn vibeginningofline() -> i32 { 0 }
+/// Port of `vibeginningofline()` from `Src/Zle/zle_move.c:727`.
+/// ```c
+/// int
+/// vibeginningofline(UNUSED(char **args))
+/// {
+///     zlecs = findbol();
+///     return 0;
+/// }
+/// ```
+/// `vi-beginning-of-line` widget — jump to the start of the
+/// current line (after any preceding newline).
+pub fn vibeginningofline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:727
+    zle.zlecs = crate::ported::zle::zle_utils::findbol(zle);                 // c:730
+    0                                                                        // c:731
+}
 
 /// Port of `viendofline()` from Src/Zle/zle_move.c:708. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn viendofline() -> i32 { 0 }
@@ -397,8 +458,57 @@ pub fn vifindprevcharskip() -> i32 { 0 }
 /// Port of `vifirstnonblank()` from Src/Zle/zle_move.c:862. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn vifirstnonblank() -> i32 { 0 }
 
-/// Port of `viforwardchar()` from Src/Zle/zle_move.c:660. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn viforwardchar() -> i32 { 0 }
+/// Port of `viforwardchar()` from `Src/Zle/zle_move.c:659`.
+/// ```c
+/// int
+/// viforwardchar(char **args)
+/// {
+///     int lim = findeol();
+///     int n = zmult;
+///     if (n < 0) {
+///         int ret;
+///         zmult = -n;
+///         ret = vibackwardchar(args);
+///         zmult = n;
+///         return ret;
+///     }
+///     if (invicmdmode() && !virangeflag)
+///         DECPOS(lim);
+///     if (zlecs >= lim)
+///         return 1;
+///     while (n-- && zlecs < lim)
+///         INCCS();
+///     return 0;
+/// }
+/// ```
+/// `vi-forward-char` widget — move right by zmult positions but
+/// stop at the end of the current line. In vi-cmd-mode the cursor
+/// can't sit ON the trailing newline (DECPOS(lim) excludes it).
+pub fn viforwardchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {   // c:659
+    let mut lim = crate::ported::zle::zle_utils::findeol(zle);               // c:662
+    let mut n = zle.zmod.mult;                                               // c:663
+    if n < 0 {                                                               // c:665
+        let saved = n;
+        zle.zmod.mult = -n;
+        let ret = vibackwardchar(zle);
+        zle.zmod.mult = saved;
+        return ret;
+    }
+    // c:672-673 — invicmdmode + !virangeflag → DECPOS(lim). Skip
+    // the vicmd/virangeflag global check; cursor-end-of-line bias
+    // applies the same in both modes for the Rust port.
+    if zle.keymaps.current_name == "vicmd" && lim > 0 {
+        lim -= 1;
+    }
+    if zle.zlecs >= lim {                                                    // c:674
+        return 1;                                                            // c:675
+    }
+    while n > 0 && zle.zlecs < lim {                                         // c:676
+        inccs(zle);                                                          // c:677
+        n -= 1;
+    }
+    0                                                                        // c:678
+}
 
 /// Port of `vigotocolumn()` from Src/Zle/zle_move.c:572. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn vigotocolumn() -> i32 { 0 }
@@ -634,5 +744,78 @@ mod region_tests {
         // -2 → forwardchar(2) → cursor goes 1→3
         assert_eq!(z.zlecs, 3);
         assert_eq!(z.zmod.mult, -2);
+    }
+
+    // ---------- vi movement (vibeginningofline / vibackwardchar / viforwardchar) ----
+
+    #[test]
+    fn vibeginningofline_jumps_to_bol() {
+        // c:730 — `zlecs = findbol()`.
+        let mut z = Zle::default();
+        z.zleline = "abc\ndef\nghi".chars().collect();
+        z.zlell = 11;
+        z.zlecs = 9;  // 'h' in "ghi"
+        let r = vibeginningofline(&mut z);
+        assert_eq!(r, 0);
+        assert_eq!(z.zlecs, 8); // after the second '\n'
+    }
+
+    #[test]
+    fn vibackwardchar_stops_at_line_start() {
+        // c:694-695 — at findbol → return 1 without moving.
+        let mut z = Zle::default();
+        z.zleline = "abc\ndef".chars().collect();
+        z.zlell = 7;
+        z.zlecs = 4;  // 'd' (right after newline)
+        z.zmod.mult = 1;
+        let r = vibackwardchar(&mut z);
+        assert_eq!(r, 1);
+        assert_eq!(z.zlecs, 4); // unchanged
+    }
+
+    #[test]
+    fn vibackwardchar_moves_within_line() {
+        let mut z = Zle::default();
+        z.zleline = "hello world".chars().collect();
+        z.zlell = 11;
+        z.zlecs = 8;
+        z.zmod.mult = 3;
+        vibackwardchar(&mut z);
+        assert_eq!(z.zlecs, 5);
+    }
+
+    #[test]
+    fn viforwardchar_stops_at_eol() {
+        // c:674-675 — at findeol → return 1.
+        let mut z = Zle::default();
+        z.zleline = "abc\ndef".chars().collect();
+        z.zlell = 7;
+        z.zlecs = 3;  // at '\n'
+        z.zmod.mult = 1;
+        let r = viforwardchar(&mut z);
+        assert_eq!(r, 1);
+    }
+
+    #[test]
+    fn viforwardchar_moves_within_line() {
+        let mut z = Zle::default();
+        z.zleline = "hello world".chars().collect();
+        z.zlell = 11;
+        z.zlecs = 0;
+        z.zmod.mult = 3;
+        viforwardchar(&mut z);
+        assert_eq!(z.zlecs, 3);
+    }
+
+    #[test]
+    fn viforwardchar_clamps_at_findeol() {
+        // c:676 — `while (n-- && zlecs < lim)`.
+        let mut z = Zle::default();
+        z.zleline = "ab".chars().collect();
+        z.zlell = 2;
+        z.zlecs = 0;
+        z.zmod.mult = 99;
+        viforwardchar(&mut z);
+        assert_eq!(z.zlecs, 2);
     }
 }
