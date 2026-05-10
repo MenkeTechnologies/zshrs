@@ -359,7 +359,7 @@ pub fn funcfiletracegetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> 
     // Static-link path: FUNCSTACK is the live runtime call stack.
     let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
     stack.iter()
-        .map(|f| format!("{}:{}", f.filename, f.flineno))                    // c:732
+        .map(|f| format!("{}:{}", f.filename.as_deref().unwrap_or(""), f.flineno))  // c:732
         .collect()
 }
 
@@ -371,7 +371,7 @@ pub fn funcsourcetracegetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String
     // c:683-708 — walk funcstack, build colonpair "<source-filename>:<flineno>".
     let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
     stack.iter()
-        .map(|f| format!("{}:{}", f.filename, f.flineno))                    // c:701
+        .map(|f| format!("{}:{}", f.filename.as_deref().unwrap_or(""), f.flineno))  // c:701
         .collect()
 }
 
@@ -393,7 +393,7 @@ pub fn functracegetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> { //
     // c:652-675 — walk funcstack, build colonpair "<caller>:<lineno>".
     let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
     stack.iter()
-        .map(|f| format!("{}:{}", f.caller, f.lineno))                       // c:670
+        .map(|f| format!("{}:{}", f.caller.as_deref().unwrap_or(""), f.lineno))  // c:670
         .collect()
 }
 
@@ -403,19 +403,11 @@ pub fn functracegetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> { //
 pub static DIRSTACK: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 pub static INCLEANUP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
-/// Port of `Funcstack` struct from Src/zsh.h:1856 — one frame on the
-/// shell function call stack. Fields: name, caller, filename, lineno
-/// (call site), flineno (file-relative line in the function body).
-#[derive(Clone, Default)]
-pub struct Funcstack {
-    pub name: String,
-    pub caller: String,
-    pub filename: String,
-    pub lineno: i64,
-    pub flineno: i64,
-}
-
-pub static FUNCSTACK: std::sync::Mutex<Vec<Funcstack>> = std::sync::Mutex::new(Vec::new());
+// `funcstack` global from Src/exec.c:340 — head of the active shell
+// function call stack. Rust port mirrors the chain as Vec snapshot
+// (the C source walks `funcstack->prev` to produce array params).
+pub static FUNCSTACK: std::sync::Mutex<Vec<crate::ported::zsh_h::funcstack>>
+    = std::sync::Mutex::new(Vec::new());
 
 /// Port of `getpatchars()` from Src/Modules/parameter.c:894.
 /// C: `static char **getpatchars(int dis)` — emits the array of
