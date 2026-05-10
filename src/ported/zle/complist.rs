@@ -302,6 +302,68 @@ mod tests {
             "Showing 42 matches in files"
         );
     }
+
+    // ---------- Real-port tests ------------------------------------------
+
+    #[test]
+    fn col_indices_match_c() {
+        // c:167-191 — exact integer indices used by mcolors.files[i].
+        assert_eq!(col::NO, 0);
+        assert_eq!(col::DI, 2);
+        assert_eq!(col::EX, 15);
+        assert_eq!(col::LC, 16);
+        assert_eq!(col::EC, 18);
+        assert_eq!(col::SA, 24);
+    }
+
+    #[test]
+    fn num_cols_matches_c() {
+        // c:193 — must match the colnames[] / defcols[] array length.
+        assert_eq!(NUM_COLS, 25);
+        assert_eq!(COLNAMES.len(), 25);
+        assert_eq!(DEFCOLS.len(), 25);
+    }
+
+    #[test]
+    fn colnames_match_c() {
+        // c:197-201 — two-letter LS_COLORS keys.
+        assert_eq!(COLNAMES[col::NO], "no");
+        assert_eq!(COLNAMES[col::DI], "di");
+        assert_eq!(COLNAMES[col::LN], "ln");
+        assert_eq!(COLNAMES[col::EX], "ex");
+        assert_eq!(COLNAMES[col::MA], "ma");
+    }
+
+    #[test]
+    fn defcols_match_c() {
+        // c:205-209 — default ANSI codes.
+        assert_eq!(DEFCOLS[col::NO], Some("0"));
+        assert_eq!(DEFCOLS[col::DI], Some("1;31"));
+        assert_eq!(DEFCOLS[col::EX], Some("1;32"));
+        assert_eq!(DEFCOLS[col::OR], None);    // default for orphan: fallback to ln
+        assert_eq!(DEFCOLS[col::MI], None);    // default for missing: fallback to fi
+        assert_eq!(DEFCOLS[col::LC], Some("\x1b["));
+        assert_eq!(DEFCOLS[col::RC], Some("m"));
+    }
+
+    #[test]
+    fn filecol_allocates_with_defaults() {
+        // c:487-498 — fresh Filecol: prog=NULL, col=arg, next=NULL.
+        let fc = filecol("0;32");
+        assert_eq!(fc.col, "0;32");
+        assert!(fc.prog.is_none());
+        assert!(fc.next.is_none());
+    }
+
+    #[test]
+    fn filecol_empty_string() {
+        // The "no LS_COLORS set" path at c:515-516 calls filecol("")
+        // for every slot.
+        let fc = filecol("");
+        assert_eq!(fc.col, "");
+        assert!(fc.prog.is_none());
+        assert!(fc.next.is_none());
+    }
 }
 
 /// Port of `adjust_mcol()` from Src/Zle/complist.c:2127. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
@@ -343,8 +405,100 @@ pub fn enables_() -> i32 { 0 }
 /// Port of `features_()` from Src/Zle/complist.c:3518. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn features_() -> i32 { 0 }
 
-/// Port of `filecol()` from Src/Zle/complist.c:488. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn filecol() -> i32 { 0 }
+// =====================================================================
+// Substrate for the LS_COLORS / ZLS_COLORS subsystem —
+// `Src/Zle/complist.c:165-269`.
+// =====================================================================
+
+/// Port of the `COL_*` `#define` block from `Src/Zle/complist.c:167-194`.
+/// Index into `mcolors.files[]` for each file-type color slot.
+pub mod col {                                                                // c:167
+    pub const NO:  usize = 0;                                                // c:167
+    pub const FI:  usize = 1;                                                // c:168
+    pub const DI:  usize = 2;                                                // c:169
+    pub const LN:  usize = 3;                                                // c:170
+    pub const PI:  usize = 4;                                                // c:171
+    pub const SO:  usize = 5;                                                // c:172
+    pub const BD:  usize = 6;                                                // c:173
+    pub const CD:  usize = 7;                                                // c:174
+    pub const OR:  usize = 8;                                                // c:175
+    pub const MI:  usize = 9;                                                // c:176
+    pub const SU:  usize = 10;                                               // c:177
+    pub const SG:  usize = 11;                                               // c:178
+    pub const TW:  usize = 12;                                               // c:179
+    pub const OW:  usize = 13;                                               // c:180
+    pub const ST:  usize = 14;                                               // c:181
+    pub const EX:  usize = 15;                                               // c:182
+    pub const LC:  usize = 16;                                               // c:183
+    pub const RC:  usize = 17;                                               // c:184
+    pub const EC:  usize = 18;                                               // c:185
+    pub const TC:  usize = 19;                                               // c:186
+    pub const SP:  usize = 20;                                               // c:187
+    pub const MA:  usize = 21;                                               // c:188
+    pub const HI:  usize = 22;                                               // c:189
+    pub const DU:  usize = 23;                                               // c:190
+    pub const SA:  usize = 24;                                               // c:191
+}
+/// Port of `NUM_COLS` from `Src/Zle/complist.c:193`.
+pub const NUM_COLS: usize = 25;                                              // c:193
+
+/// Port of `colnames[]` from `Src/Zle/complist.c:197-201`.
+/// Two-letter LS_COLORS keys, parallel-indexed with `col::*`.
+pub static COLNAMES: &[&str] = &[                                            // c:197
+    "no", "fi", "di", "ln", "pi", "so", "bd", "cd", "or", "mi",
+    "su", "sg", "tw", "ow", "st", "ex",
+    "lc", "rc", "ec", "tc", "sp", "ma", "hi", "du", "sa",
+];
+
+/// Port of `defcols[]` from `Src/Zle/complist.c:205-209`.
+/// Default ANSI escape codes when LS_COLORS doesn't override.
+pub static DEFCOLS: &[Option<&str>] = &[                                     // c:205
+    Some("0"), Some("0"), Some("1;31"), Some("1;36"), Some("33"),
+    Some("1;35"), Some("1;33"), Some("1;33"), None, None,
+    Some("37;41"), Some("30;43"), Some("30;42"), Some("34;42"), Some("37;44"),
+    Some("1;32"), Some("\x1b["), Some("m"), None, Some("0"),
+    Some("0"), Some("7"), None, None, Some("0"),
+];
+
+/// Port of `struct filecol` / `typedef struct filecol *Filecol` from
+/// `Src/Zle/complist.c:213-219`. One terminal-color spec for a file
+/// type; chained via `next` so multiple per-group rules can apply.
+///
+/// `prog` mirrors C's `Patprog prog` (NULL → applies to all groups).
+/// Patprog doesn't impl Debug/Clone in the Rust port, so this struct
+/// can't auto-derive them; impl manually if needed by callers.
+#[derive(Default)]
+pub struct Filecol {                                                         // c:215
+    /// Group pattern (NULL → applies to all groups).
+    pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:216
+    /// Color string (ANSI escape-code body).
+    pub col: String,                                                         // c:217
+    /// Next entry chained for the same color slot.
+    pub next: Option<Box<Filecol>>,                                          // c:218
+}
+
+/// Port of `filecol()` from `Src/Zle/complist.c:487-498`.
+/// ```c
+/// static Filecol
+/// filecol(char *col)
+/// {
+///     Filecol fc;
+///     fc = (Filecol) zhalloc(sizeof(*fc));
+///     fc->prog = NULL;
+///     fc->col = col;
+///     fc->next = NULL;
+///     return fc;
+/// }
+/// ```
+/// Allocate a fresh Filecol with no group pattern and the given
+/// color string. Caller is expected to chain it via `mcolors.files[i]`.
+pub fn filecol(col: &str) -> Filecol {                                       // c:487
+    Filecol {                                                                // c:492 zhalloc
+        prog: None,                                                          // c:493 fc->prog = NULL
+        col:  col.to_string(),                                               // c:494 fc->col = col
+        next: None,                                                          // c:495 fc->next = NULL
+    }                                                                        // c:497 return fc
+}
 
 /// Port of `finish_()` from Src/Zle/complist.c:3601. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn finish_() -> i32 { 0 }
