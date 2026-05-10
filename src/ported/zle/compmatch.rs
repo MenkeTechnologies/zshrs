@@ -1946,11 +1946,53 @@ pub fn join_sub(md: &mut Cmdata, str_: &str, len: i32, mlen: &mut i32,       // 
             }
             // c:2255-2294 — the bld_line-driven branch (join != 0)
             // tries to construct a synthetic line that matches both
-            // strings. `bld_line` is still substrate-pending; the
-            // early-return path above covers the common case where
-            // both strings already line up under the matcher.
-            let _ = join;
-            let _ = CLF_JOIN;
+            // strings.
+            if join != 0 && mp.wlen <= ol && mp.wlen <= nl {                 // c:2255
+                let ow_off = if sfx != 0 { ol - mp.wlen } else { 0 };
+                let nw_off = if sfx != 0 { nl - mp.wlen } else { 0 };
+                let mp_word = mp.word.as_deref();
+                let ow_slice = &ow[ow_off as usize..];
+                let nw_slice = &nw[nw_off as usize..];
+
+                let t = if pattern_match(mp_word, ow_slice, None, "") != 0 {
+                    1
+                } else if pattern_match(mp_word, nw_slice, None, "") != 0 {
+                    2
+                } else { 0 };
+
+                if t != 0 {                                                  // c:2258
+                    let (mw_slice, other_slice, other_len) = if t == 1 {
+                        (ow_slice, nw_slice, nl)
+                    } else {
+                        (nw_slice, ow_slice, ol)
+                    };
+                    let _ = mw_slice;
+
+                    let mut line: Vec<char> = Vec::new();
+                    let bl = bld_line(
+                        mp, &mut line, "", other_slice, other_len, sfx,
+                    );
+                    if bl > 0 {                                              // c:2274
+                        let new_nl = if t == 1 { bl } else { mp.wlen };
+                        let new_ol = if t == 1 { mp.wlen } else { bl };
+                        if sfx != 0 {
+                            md.str_ = md.str_.chars().take(
+                                md.str_.chars().count().saturating_sub(new_nl as usize),
+                            ).collect();
+                        } else {
+                            md.str_ = md.str_.chars().skip(new_nl as usize).collect();
+                        }
+                        md.len -= new_nl;                                    // c:2281
+                        *mlen = new_ol;                                      // c:2283
+
+                        let line_str: String = line.iter().collect();
+                        return Some(get_cline(                               // c:2285
+                            None, 0,
+                            Some(line_str), mp.llen, None, 0, CLF_JOIN,
+                        ));
+                    }
+                }
+            }
         }
         cur = ms.next.as_deref();
     }
