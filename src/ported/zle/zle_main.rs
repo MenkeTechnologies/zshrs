@@ -173,8 +173,10 @@ pub const ZMAXTIMEOUT: u64 = 1 << 21;
 
 /// The main ZLE state
 pub struct Zle {
+    // The input line assembled so far                                       // c:40
     /// The input line assembled so far
     pub zleline: ZleString,
+    // Cursor position and line length in zle                               // c:45
     /// Cursor position
     pub zlecs: usize,
     /// Line length
@@ -1614,6 +1616,55 @@ mod tests {
         zle.keymaps.current_name = "vicmd".to_string();
         assert!(zle.in_vi_cmd_mode());
     }
+
+    // ---------- ungetbytes_unmeta real-port tests ----------
+
+    #[test]
+    fn ungetbytes_unmeta_plain_bytes() {
+        // c:375 — non-Meta bytes pushed back in reverse.
+        let mut zle = Zle::new();
+        // Pre-clear unget_buf in case Zle::new() leaves anything.
+        zle.unget_buf.clear();
+        ungetbytes_unmeta(&mut zle, b"abc");
+        // After backward walk: ungetbyte('c'), then 'b', then 'a'
+        // → unget_buf front = ['a', 'b', 'c'] in read order.
+        assert_eq!(zle.unget_buf.pop_front(), Some(b'a'));
+        assert_eq!(zle.unget_buf.pop_front(), Some(b'b'));
+        assert_eq!(zle.unget_buf.pop_front(), Some(b'c'));
+    }
+
+    #[test]
+    fn ungetbytes_unmeta_decodes_meta_pair() {
+        // c:370-373 — `\x83 X` decodes to (X XOR 0x20). Meta = 0x83.
+        // Encode 'a' meta-quoted: 0x83 followed by 'a' XOR 0x20 = 0x41.
+        // So [0x83, 0x41] → emit 0x41 ^ 0x20 = 0x61 = 'a'.
+        let mut zle = Zle::new();
+        zle.unget_buf.clear();
+        ungetbytes_unmeta(&mut zle, &[0x83, 0x41]);
+        assert_eq!(zle.unget_buf.pop_front(), Some(b'a'));
+        assert!(zle.unget_buf.is_empty());
+    }
+
+    #[test]
+    fn ungetbytes_unmeta_mixed_meta_and_plain() {
+        // 'X' + Meta + 'a'XOR0x20 + 'Z' → 3 chars: 'X', 'a', 'Z'.
+        // Encoded: [0x58, 0x83, 0x41, 0x5a].
+        let mut zle = Zle::new();
+        zle.unget_buf.clear();
+        ungetbytes_unmeta(&mut zle, &[0x58, 0x83, 0x41, 0x5a]);
+        assert_eq!(zle.unget_buf.pop_front(), Some(b'X'));
+        assert_eq!(zle.unget_buf.pop_front(), Some(b'a'));
+        assert_eq!(zle.unget_buf.pop_front(), Some(b'Z'));
+        assert!(zle.unget_buf.is_empty());
+    }
+
+    #[test]
+    fn ungetbytes_unmeta_empty_input() {
+        let mut zle = Zle::new();
+        zle.unget_buf.clear();
+        ungetbytes_unmeta(&mut zle, b"");
+        assert!(zle.unget_buf.is_empty());
+    }
 }
 
 // ===========================================================
@@ -1673,8 +1724,44 @@ pub fn scanfindfunc() -> i32 { 0 }
 /// Port of `setup_()` from Src/Zle/zle_main.c:2243. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn setup_() -> i32 { 0 }
 
-/// Port of `ungetbytes_unmeta()` from Src/Zle/zle_main.c:366. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn ungetbytes_unmeta() -> i32 { 0 }
+/// Port of `ungetbytes_unmeta()` from `Src/Zle/zle_main.c:365`.
+/// ```c
+/// void
+/// ungetbytes_unmeta(char *s, int len)
+/// {
+///     s += len;
+///     while (len--) {
+///         if (len && s[-2] == Meta) {
+///             ungetbyte(*--s ^ 32);
+///             len--;
+///             s--;
+///         } else
+///             ungetbyte(*--s);
+///     }
+/// }
+/// ```
+/// Push back a byte slice that may contain `Meta`-quoted (0x83 ch
+/// XOR 0x20) sequences, decoding them as we go. C walks backward
+/// through `s` because `ungetbyte` is a stack push — to surface
+/// `s[0]` first on subsequent read, the last byte goes on first.
+pub fn ungetbytes_unmeta(zle: &mut Zle, s: &[u8]) {                          // c:365
+    let mut i = s.len();                                                     // c:368 s += len
+    while i > 0 {                                                            // c:369 while (len--)
+        // c:370 — `if (len && s[-2] == Meta)`. We check the byte
+        // BEFORE the current s-1 position. After `*--s`, the index
+        // becomes i-1. So `s[-2]` is `s[i-2]`.
+        if i >= 2 && s[i - 2] == 0x83 {                                      // c:370 Meta = 0x83
+            // c:371-373 — decode Meta-escape: emit (s[i-1] XOR 32),
+            // skip the Meta byte.
+            zle.ungetbyte(s[i - 1] ^ 32);
+            i -= 2;
+        } else {
+            // c:375 — emit raw byte.
+            zle.ungetbyte(s[i - 1]);
+            i -= 1;
+        }
+    }
+}
 
 /// Port of `zle_resetprompt()` from Src/Zle/zle_main.c:2058. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn zle_resetprompt() -> i32 { 0 }
