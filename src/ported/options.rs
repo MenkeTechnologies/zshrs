@@ -1235,9 +1235,217 @@ pub fn printoptionnode(name: &str, set: bool) {                              // 
 // state. Replace with the optns[] flag-table walk once that ports. !!!
 // =====================================================================
 
+// #define defset(X, my_emulation) (!!((X)->node.flags & my_emulation))  // c:73
+/// Port of `defset()` macro from `Src/options.c:73`.
+/// Returns true if the option is on by default for the given emulation.
+#[inline]
+pub fn defset(optname: &str, emulation: i32) -> bool {
+    let flags = optns_flags(optname);
+    (flags & (emulation as u16)) != 0
+}
+
+/// Get the flags for an option from the optns[] table.
+/// Port of looking up `optns[optno].node.flags`.
+fn optns_flags(name: &str) -> u16 {
+    match name.to_lowercase().as_str() {
+        "aliases" => OPT_EMULATE | (OPT_ALL as u16),                         // c:80
+        "aliasfuncdef" => OPT_EMULATE | (OPT_BOURNE as u16),                  // c:81
+        "allexport" => OPT_EMULATE,                                          // c:82
+        "alwayslastprompt" => OPT_ALL as u16,                                 // c:83
+        "alwaystoend" => 0,                                                  // c:84
+        "appendcreate" => OPT_EMULATE | (OPT_BOURNE as u16),                  // c:85
+        "appendhistory" => OPT_ALL as u16,                                    // c:86
+        "autocd" => OPT_EMULATE,                                             // c:87
+        "autocontinue" => 0,                                                 // c:88
+        "autolist" => OPT_ALL as u16,                                         // c:89
+        "automenu" => OPT_ALL as u16,                                         // c:90
+        "autonamedirs" => 0,                                                 // c:91
+        "autoparamkeys" => OPT_ALL as u16,                                    // c:92
+        "autoparamslash" => OPT_ALL as u16,                                   // c:93
+        "autopushd" => 0,                                                    // c:94
+        "autoremoveslash" => OPT_ALL as u16,                                  // c:95
+        "autoresume" => 0,                                                   // c:96
+        "badpattern" => OPT_EMULATE | (OPT_NONBOURNE as u16),                 // c:97
+        "banghist" => OPT_NONBOURNE as u16,                                   // c:98
+        "bareglobqual" => OPT_EMULATE | (OPT_ZSH as u16),                     // c:99
+        "bashautolist" => 0,                                                 // c:100
+        "bashrematch" => OPT_EMULATE,                                        // c:101
+        "beep" => OPT_ALL as u16,                                             // c:102
+        "bgnice" => OPT_EMULATE | (OPT_NONBOURNE as u16),                     // c:103
+        "braceccl" => 0,                                                     // c:104
+        "bsdecho" => OPT_EMULATE,                                            // c:105
+        "caseglob" => OPT_ALL as u16,                                         // c:106
+        "casematch" => OPT_ALL as u16,                                        // c:107
+        "cbases" => 0,                                                       // c:108
+        "cdablevars" => OPT_EMULATE,                                         // c:109
+        "cdsilent" => 0,                                                     // c:110
+        "chasedots" => 0,                                                    // c:111
+        "chaselinks" => 0,                                                   // c:112
+        "checkjobs" => OPT_EMULATE | (OPT_ZSH as u16),                        // c:113
+        "checkrunningjobs" => OPT_EMULATE | (OPT_ZSH as u16),                 // c:114
+        "clobber" => OPT_EMULATE | (OPT_ALL as u16),                          // c:115
+        "combiningchars" => 0,                                               // c:116
+        "completealiases" => 0,                                              // c:117
+        "completeinword" => 0,                                               // c:118
+        "correct" => 0,                                                      // c:119
+        "correctall" => 0,                                                   // c:120
+        "cprecedences" => OPT_EMULATE,                                       // c:121
+        "cshjunkiehistory" => OPT_EMULATE,                                   // c:122
+        "cshjunkieloops" => OPT_EMULATE,                                     // c:123
+        "cshjunkiequotes" => OPT_EMULATE,                                    // c:124
+        "cshnullcmd" => OPT_EMULATE,                                         // c:125
+        "cshnullglob" => OPT_EMULATE,                                        // c:126
+        "debugbeforecmd" => OPT_ALL as u16,                                   // c:127
+        "emacs" => 0,                                                        // c:128
+        "equals" => OPT_EMULATE | (OPT_NONBOURNE as u16),                     // c:129
+        "errexit" => OPT_EMULATE,                                            // c:130
+        "errreturn" => OPT_EMULATE,                                          // c:131
+        "exec" => OPT_ALL as u16,                                             // c:132
+        "extendedglob" => OPT_EMULATE,                                       // c:133
+        "extendedhistory" => OPT_CSH as u16,                                  // c:134
+        "evallineno" => OPT_EMULATE | (OPT_ZSH as u16),                       // c:135
+        "flowcontrol" => OPT_ALL as u16,                                      // c:136
+        "forcefloat" => 0,                                                   // c:137
+        "functionargzero" => OPT_EMULATE | (OPT_NONBOURNE as u16),            // c:138
+        "glob" => OPT_EMULATE | (OPT_ALL as u16),                             // c:139
+        "globalexport" => OPT_EMULATE | (OPT_ZSH as u16),                     // c:140
+        "globalrcs" => OPT_ALL as u16,                                        // c:141
+        "globassign" => OPT_EMULATE,                                         // c:142
+        "globcomplete" => 0,                                                 // c:143
+        "globdots" => OPT_EMULATE,                                           // c:144
+        "globstarshort" => OPT_EMULATE,                                      // c:145
+        "globsubst" => OPT_EMULATE | (OPT_NONZSH as u16),                     // c:146
+        "hashcmds" => OPT_ALL as u16,                                         // c:147
+        "hashdirs" => OPT_ALL as u16,                                         // c:148
+        "hashexecutablesonly" => 0,                                          // c:149
+        "hashlistall" => OPT_ALL as u16,                                      // c:150
+        "histallowclobber" => 0,                                             // c:151
+        "histbeep" => OPT_ALL as u16,                                         // c:152
+        "histexpiredupsfirst" => 0,                                          // c:153
+        "histfcntllock" => 0,                                                // c:154
+        "histfindnodups" => 0,                                               // c:155
+        "histignorealldups" => 0,                                            // c:156
+        "histignoredups" => 0,                                               // c:157
+        "histignorespace" => 0,                                              // c:158
+        "histlexwords" => 0,                                                 // c:159
+        "histnofunctions" => 0,                                              // c:160
+        "histnostore" => 0,                                                  // c:161
+        "histreduceblanks" => 0,                                             // c:162
+        "histsavebycopy" => OPT_ALL as u16,                                   // c:163
+        "histsavenodups" => 0,                                               // c:164
+        "histsubstpattern" => OPT_EMULATE,                                   // c:165
+        "histverify" => 0,                                                   // c:166
+        "hup" => OPT_EMULATE | (OPT_ZSH as u16),                              // c:167
+        "ignorebraces" => OPT_EMULATE | (OPT_SH as u16),                      // c:168
+        "ignoreclosebraces" => 0,                                            // c:169
+        "ignoreeof" => 0,                                                    // c:170
+        "incappendhistory" => 0,                                             // c:171
+        "incappendhistorytime" => 0,                                         // c:172
+        "interactive" => OPT_SPECIAL as u16,                                  // c:173
+        "interactivecomments" => OPT_EMULATE | (OPT_BOURNE as u16),           // c:174
+        "ksharrays" => OPT_EMULATE | (OPT_BOURNE as u16),                     // c:175
+        "kshautoload" => OPT_EMULATE | (OPT_BOURNE as u16),                   // c:176
+        "kshglob" => OPT_EMULATE | (OPT_KSH as u16),                          // c:177
+        "kshoptionprint" => OPT_EMULATE | (OPT_KSH as u16),                   // c:178
+        "kshtypeset" => OPT_EMULATE | (OPT_BOURNE as u16),                    // c:179
+        "kshzerosubscript" => OPT_EMULATE | (OPT_BOURNE as u16),              // c:180
+        "listambiguous" => OPT_ALL as u16,                                    // c:181
+        "listbeep" => OPT_ALL as u16,                                         // c:182
+        "listpacked" => 0,                                                   // c:183
+        "listrowsfirst" => 0,                                                // c:184
+        "listtypes" => OPT_ALL as u16,                                        // c:185
+        "localoptions" => OPT_EMULATE | (OPT_KSH as u16),                     // c:186
+        "localloops" => 0,                                                   // c:187
+        "localpatterns" => 0,                                                // c:188
+        "localtraps" => OPT_EMULATE | (OPT_KSH as u16),                       // c:189
+        "loginshell" => OPT_SPECIAL as u16,                                   // c:190
+        "longlistjobs" => 0,                                                 // c:191
+        "magicequalsubst" => OPT_EMULATE,                                    // c:192
+        "mailwarning" => 0,                                                  // c:193
+        "markdirs" => 0,                                                     // c:194
+        "menucomplete" => 0,                                                 // c:195
+        "monitor" => OPT_SPECIAL as u16,                                      // c:196
+        "multibyte" => 0,                                                    // c:197
+        "multifuncdef" => OPT_EMULATE | (OPT_ZSH as u16),                     // c:198
+        "multios" => OPT_EMULATE | (OPT_ZSH as u16),                          // c:199
+        "nomatch" => OPT_EMULATE | (OPT_NONBOURNE as u16),                    // c:200
+        "notify" => OPT_EMULATE | (OPT_ZSH as u16),                           // c:201
+        "nullglob" => OPT_EMULATE,                                           // c:202
+        "numericglobsort" => 0,                                              // c:203
+        "octalzeroes" => OPT_EMULATE | (OPT_SH as u16),                       // c:204
+        "overstrike" => 0,                                                   // c:205
+        "pathdirs" => 0,                                                     // c:206
+        "pathscript" => OPT_EMULATE | (OPT_BOURNE as u16),                    // c:207
+        "pipefail" => OPT_EMULATE,                                           // c:208
+        "posixaliases" => OPT_EMULATE | (OPT_BOURNE as u16),                  // c:209
+        "posixargzero" => OPT_EMULATE | (OPT_BOURNE as u16),                  // c:210
+        "posixbuiltins" => OPT_EMULATE | (OPT_BOURNE as u16),                 // c:211
+        "posixcd" => OPT_EMULATE | (OPT_BOURNE as u16),                       // c:212
+        "posixidentifiers" => OPT_EMULATE | (OPT_BOURNE as u16),              // c:213
+        "posixjobs" => OPT_EMULATE | (OPT_BOURNE as u16),                     // c:214
+        "posixstrings" => OPT_EMULATE | (OPT_BOURNE as u16),                  // c:215
+        "posixtraps" => OPT_EMULATE | (OPT_BOURNE as u16),                    // c:216
+        "printeightbit" => 0,                                                // c:217
+        "printexitvalue" => 0,                                               // c:218
+        "privileged" => OPT_SPECIAL as u16,                                   // c:219
+        "promptbang" => OPT_EMULATE | (OPT_KSH as u16),                       // c:220
+        "promptcr" => OPT_ALL as u16,                                         // c:221
+        "promptpercent" => OPT_EMULATE | (OPT_NONBOURNE as u16),              // c:222
+        "promptsp" => OPT_ALL as u16,                                         // c:223
+        "promptsubst" => OPT_EMULATE | (OPT_BOURNE as u16),                   // c:224
+        "pushdignoredups" => 0,                                              // c:225
+        "pushdminus" => 0,                                                   // c:226
+        "pushdsilent" => 0,                                                  // c:227
+        "pushdtohome" => 0,                                                  // c:228
+        "rcexpandparam" => OPT_EMULATE,                                      // c:229
+        "rcquotes" => 0,                                                     // c:230
+        "rcs" => OPT_ALL as u16,                                              // c:231
+        "recexact" => 0,                                                     // c:232
+        "rematchpcre" => 0,                                                  // c:233
+        "restricted" => OPT_SPECIAL as u16,                                   // c:234
+        "rmstarsilent" => OPT_EMULATE | (OPT_BOURNE as u16),                  // c:235
+        "rmstarwait" => 0,                                                   // c:236
+        "sharehistory" => 0,                                                 // c:237
+        "shfileexpansion" => OPT_EMULATE | (OPT_BOURNE as u16),               // c:238
+        "shglob" => OPT_EMULATE | (OPT_BOURNE as u16),                        // c:239
+        "shinstdin" => OPT_SPECIAL as u16,                                    // c:240
+        "shnullcmd" => OPT_EMULATE | (OPT_BOURNE as u16),                     // c:241
+        "shoptionletters" => OPT_EMULATE | (OPT_BOURNE as u16),               // c:242
+        "shortloops" => OPT_EMULATE | (OPT_NONBOURNE as u16),                 // c:243
+        "shortrepeat" => OPT_EMULATE | (OPT_ZSH as u16),                      // c:244
+        "shwordsplit" => OPT_EMULATE | (OPT_BOURNE as u16),                   // c:245
+        "singlecommand" => OPT_SPECIAL as u16,                                // c:246
+        "singlelinezle" => 0,                                                // c:247
+        "sourcetrace" => 0,                                                  // c:248
+        "sunkeyboardhack" => 0,                                              // c:249
+        "transientrprompt" => 0,                                             // c:250
+        "trapsasync" => 0,                                                   // c:251
+        "typesetsilent" => OPT_EMULATE | (OPT_BOURNE as u16),                 // c:252
+        "unset" => OPT_EMULATE | (OPT_BSHELL as u16),                         // c:253
+        "verbose" => OPT_EMULATE,                                            // c:254
+        "vi" => 0,                                                           // c:255
+        "warncreateglobal" => 0,                                             // c:256
+        "warnnestedvar" => 0,                                                // c:257
+        "xtrace" => OPT_EMULATE,                                             // c:258
+        "zle" => OPT_SPECIAL as u16,                                          // c:259
+        "dvorak" => 0,                                                       // c:260
+        _ => 0,
+    }
+}
+
 /// !!! RUST-ONLY HELPER — see WARNING block above.
+/// Returns options that are on by default for zsh emulation.
 fn default_on_options() -> std::collections::HashSet<&'static str> {
-    std::collections::HashSet::new()
+    // Default-on options have OPT_ZSH bit set in their flags
+    let zsh_emu = crate::ported::zsh_h::EMULATE_ZSH as u16;
+    let mut set = std::collections::HashSet::new();
+    for name in ZSH_OPTIONS_SET.iter() {
+        let flags = optns_flags(name);
+        if (flags & zsh_emu) != 0 && (flags & OPT_SPECIAL) == 0 {
+            set.insert(*name);
+        }
+    }
+    set
 }
 
 /// Direct port of `setemulate()` from Src/options.c:507.
