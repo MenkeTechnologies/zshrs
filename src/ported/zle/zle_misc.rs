@@ -700,10 +700,69 @@ pub fn argumentbase(zle: &mut Zle, args: &[String]) -> i32 {                 // 
 }
 
 /// Port of `backwarddeletechar()` from Src/Zle/zle_misc.c:180. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn backwarddeletechar() -> i32 { 0 }
+pub fn backwarddeletechar(zle: &mut Zle) -> i32 {                            // c:180
+    // c:182-188 — `if (zmult < 0) { negate, recurse to forward,
+    //               restore zmult, return ret }`.
+    let n = zle.zmod.mult;
+    if n < 0 {
+        let saved = n;
+        zle.zmod.mult = -n;
+        let ret = deletechar(zle);
+        zle.zmod.mult = saved;
+        return ret;
+    }
+    // c:189 — `backdel(zmult > zlecs ? zlecs : zmult, 0)`.
+    let count = (n as usize).min(zle.zlecs);
+    for _ in 0..count {
+        if zle.zlecs > 0 {
+            zle.zlecs -= 1;
+            zle.zleline.remove(zle.zlecs);
+            zle.zlell -= 1;
+        }
+    }
+    zle.resetneeded = true;
+    0                                                                        // c:190
+}
 
 /// Port of `backwardkillline()` from Src/Zle/zle_misc.c:225. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn backwardkillline() -> i32 { 0 }
+pub fn backwardkillline(zle: &mut Zle) -> i32 {                              // c:225
+    // c:227-234 — `if (n < 0) { negate, recurse killline, restore }`.
+    let n = zle.zmod.mult;
+    if n < 0 {
+        zle.zmod.mult = -n;
+        let ret = killline(zle);
+        zle.zmod.mult = n;
+        return ret;
+    }
+    let mut nn = n;
+    let mut i = 0_usize;
+    // c:236-242 — walk back; '\n' on the LEFT bumps zlecs--, i++.
+    while nn > 0 {
+        if zle.zlecs > 0 && zle.zleline[zle.zlecs - 1] == '\n' {
+            zle.zlecs -= 1;
+            i += 1;
+        } else {
+            while zle.zlecs > 0 && zle.zleline[zle.zlecs - 1] != '\n' {
+                zle.zlecs -= 1;
+                i += 1;
+            }
+        }
+        nn -= 1;
+    }
+    // c:243 — `forekill(i, CUT_FRONT|CUT_RAW)`. Drain forward from
+    // current zlecs by i chars; push to killring with FRONT semantics
+    // (prepended to the existing front entry if present, else new).
+    if i > 0 {
+        let text: Vec<char> = zle.zleline.drain(zle.zlecs..zle.zlecs + i).collect();
+        zle.killring.push_front(text);
+        if zle.killring.len() > zle.killringmax {
+            zle.killring.pop_back();
+        }
+        zle.zlell -= i;
+    }
+    zle.resetneeded = true;
+    0                                                                        // c:245
+}
 
 /// Port of `bracketedpaste()` from Src/Zle/zle_misc.c:814. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn bracketedpaste() -> i32 { 0 }
@@ -718,10 +777,68 @@ pub fn copyprevshellword() -> i32 { 0 }
 pub fn copyprevword() -> i32 { 0 }
 
 /// Port of `copyregionaskill()` from Src/Zle/zle_misc.c:494. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn copyregionaskill() -> i32 { 0 }
+pub fn copyregionaskill(zle: &mut Zle, args: &[String]) -> i32 {             // c:493
+    // c:497-501 — `if (*args) { stringaszleline; cuttext(line, len, CUT_REPLACE) }`.
+    if let Some(arg) = args.first() {
+        let text: Vec<char> = arg.chars().collect();
+        zle.killring.push_front(text);
+        if zle.killring.len() > zle.killringmax {
+            zle.killring.pop_back();
+        }
+        return 0;
+    }
+    // c:503-512 — copy region between point and mark.
+    if zle.mark > zle.zlell {
+        zle.mark = zle.zlell;
+    }
+    let (start, end) = if zle.mark > zle.zlecs {
+        (zle.zlecs, zle.mark)
+    } else {
+        (zle.mark, zle.zlecs)
+    };
+    let text: Vec<char> = zle.zleline[start..end].to_vec();
+    zle.killring.push_front(text);
+    if zle.killring.len() > zle.killringmax {
+        zle.killring.pop_back();
+    }
+    0
+}
 
 /// Port of `deletechar()` from Src/Zle/zle_misc.c:157. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn deletechar() -> i32 { 0 }
+pub fn deletechar(zle: &mut Zle) -> i32 {                                    // c:157
+    // c:160-166 — `if (zmult < 0) { negate, recurse to backward,
+    //               restore zmult, return ret }`.
+    let mut n = zle.zmod.mult;
+    if n < 0 {
+        let saved = n;
+        zle.zmod.mult = -n;
+        let ret = backwarddeletechar(zle);
+        zle.zmod.mult = saved;
+        return ret;
+    }
+    n = zle.zmod.mult;
+    // c:169-173 — `while (n--) { if (zlecs == zlell) return 1; INCCS() }`.
+    while n > 0 {
+        if zle.zlecs == zle.zlell {
+            return 1;
+        }
+        crate::ported::zle::zle_move::inccs(zle);
+        n -= 1;
+    }
+    // c:174 — `backdel(zmult, 0)`. Method delete_char does forward.
+    let count = zle.zmod.mult.max(0) as usize;
+    for _ in 0..count {
+        if zle.zlecs > 0 {
+            zle.zlecs -= 1;
+            if zle.zlecs < zle.zleline.len() {
+                zle.zleline.remove(zle.zlecs);
+                zle.zlell -= 1;
+            }
+        }
+    }
+    zle.resetneeded = true;
+    0                                                                        // c:175
+}
 
 /// Port of `digitargument()` from Src/Zle/zle_misc.c:950. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn digitargument(zle: &mut Zle) -> i32 {                                 // c:1042
@@ -761,7 +878,17 @@ pub fn executenamedcommand() -> i32 { 0 }
 pub fn fixsuffix() -> i32 { 0 }                                              // c:1824
 
 /// Port of `fixunmeta()` from Src/Zle/zle_misc.c:130. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn fixunmeta() -> i32 { 0 }
+pub fn fixunmeta(zle: &mut Zle) {                                            // c:130
+    // c:132 — `lastchar &= 0x7f`. Strip Meta/high bit.
+    zle.lastchar &= 0x7f;
+    // c:133-134 — `if (lastchar == '\\r') lastchar = '\\n'`.
+    if zle.lastchar == b'\r' as i32 {
+        zle.lastchar = b'\n' as i32;
+    }
+    // c:140 — `lastchar_wide = (ZLE_INT_T)lastchar`. Sync wide.
+    zle.lastchar_wide = zle.lastchar;
+    zle.lastchar_wide_valid = true;
+}
 
 /// Port of `gosmacstransposechars()` from Src/Zle/zle_misc.c:274. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn gosmacstransposechars() -> i32 { 0 }
@@ -771,22 +898,153 @@ pub fn gosmacstransposechars() -> i32 { 0 }
 pub fn iremovesuffix() -> i32 { 0 }                                          // c:1699
 
 /// Port of `killbuffer()` from Src/Zle/zle_misc.c:215. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn killbuffer() -> i32 { 0 }
+pub fn killbuffer(zle: &mut Zle) -> i32 {                                    // c:215
+    // c:217-219 — `zlecs = 0; forekill(zlell, CUT_RAW); clearlist=1`.
+    zle.zlecs = 0;
+    if !zle.zleline.is_empty() {
+        let text: Vec<char> = zle.zleline.drain(..).collect();
+        zle.killring.push_front(text);
+        if zle.killring.len() > zle.killringmax {
+            zle.killring.pop_back();
+        }
+        zle.zlell = 0;
+    }
+    zle.resetneeded = true;
+    0                                                                        // c:220
+}
 
 /// Port of `killline()` from Src/Zle/zle_misc.c:419. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn killline() -> i32 { 0 }
+pub fn killline(zle: &mut Zle) -> i32 {                                      // c:418
+    // c:421-428 — `if (n < 0) { backward delegate w/ negated zmult }`.
+    let n_orig = zle.zmod.mult;
+    if n_orig < 0 {
+        zle.zmod.mult = -n_orig;
+        let ret = backwardkillline(zle);
+        zle.zmod.mult = n_orig;
+        return ret;
+    }
+    let mut n = n_orig;
+    let start = zle.zlecs;
+    let mut i = 0_usize;
+    // c:430-436 — walk to next newline; skip past existing newline.
+    while n > 0 {
+        if zle.zlecs < zle.zleline.len() && zle.zleline[zle.zlecs] == '\n' {
+            zle.zlecs += 1;
+            i += 1;
+        } else {
+            while zle.zlecs != zle.zlell && zle.zleline[zle.zlecs] != '\n' {
+                zle.zlecs += 1;
+                i += 1;
+            }
+        }
+        n -= 1;
+    }
+    // c:437 — `backkill(i, CUT_RAW)`. Drain the killed range and
+    // push to killring; cursor returns to start.
+    if i > 0 {
+        let text: Vec<char> = zle.zleline.drain(start..start + i).collect();
+        zle.killring.push_front(text);
+        if zle.killring.len() > zle.killringmax {
+            zle.killring.pop_back();
+        }
+        zle.zlell -= i;
+        zle.zlecs = start;
+    }
+    zle.resetneeded = true;
+    0                                                                        // c:439
+}
 
 /// Port of `killregion()` from Src/Zle/zle_misc.c:463. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn killregion() -> i32 { 0 }
+pub fn killregion(zle: &mut Zle) -> i32 {                                    // c:462
+    // c:465-466 — `if (mark > zlell) mark = zlell`.
+    if zle.mark > zle.zlell {
+        zle.mark = zle.zlell;
+    }
+    // c:467-479 — region_active==2 (visual-line); skip the line-mode
+    // path for the simplified port.
+    let (start, end) = if zle.mark > zle.zlecs {
+        (zle.zlecs, zle.mark)
+    } else {
+        (zle.mark, zle.zlecs)
+    };
+    if start < end {
+        let text: Vec<char> = zle.zleline.drain(start..end).collect();
+        zle.killring.push_front(text);
+        if zle.killring.len() > zle.killringmax {
+            zle.killring.pop_back();
+        }
+        zle.zlell -= end - start;
+        zle.zlecs = start;
+        zle.mark = start;
+    }
+    zle.resetneeded = true;
+    0
+}
 
 /// Port of `killwholeline()` from Src/Zle/zle_misc.c:195. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn killwholeline() -> i32 { 0 }
+pub fn killwholeline(zle: &mut Zle) -> i32 {                                 // c:194
+    let mut n = zle.zmod.mult;
+    if n < 0 {                                                               // c:199
+        return 1;                                                            // c:200
+    }
+    while n > 0 {                                                            // c:201
+        // c:202-203 — last-line edge: at zlell with non-empty buffer
+        // step back one so the trailing '\n' belongs to this line.
+        let _fg = zle.zlecs > 0 && zle.zlecs == zle.zlell;
+        if _fg {
+            zle.zlecs -= 1;
+        }
+        // c:204-205 — walk back to bol.
+        while zle.zlecs > 0 && zle.zleline[zle.zlecs - 1] != '\n' {
+            zle.zlecs -= 1;
+        }
+        // c:206 — `for (i=zlecs; i!=zlell && zleline[i]!='\n'; i++)`.
+        let mut i = zle.zlecs;
+        while i != zle.zlell && zle.zleline[i] != '\n' {
+            i += 1;
+        }
+        // c:207 — `forekill(i - zlecs + (i != zlell), ...)`. Include
+        // the trailing '\n' if there is one.
+        let drop = i - zle.zlecs + (if i != zle.zlell { 1 } else { 0 });
+        if drop > 0 {
+            let text: Vec<char> = zle.zleline.drain(zle.zlecs..zle.zlecs + drop).collect();
+            zle.killring.push_front(text);
+            if zle.killring.len() > zle.killringmax {
+                zle.killring.pop_back();
+            }
+            zle.zlell -= drop;
+        }
+        n -= 1;
+    }
+    zle.resetneeded = true;
+    0                                                                        // c:210
+}
 
 /// Port of `makeparamsuffix()` from Src/Zle/zle_misc.c:1623. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn makeparamsuffix() -> i32 { 0 }
 
 /// Port of `makequote()` from Src/Zle/zle_misc.c:1201. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn makequote() -> i32 { 0 }
+pub fn makequote(s: &[char]) -> Vec<char> {                                  // c:1166
+    // c:1170-1173 — count qtct = number of `'` chars.
+    let qtct = s.iter().filter(|&&c| c == '\'').count();
+    // c:1174 — `*len += 2 + qtct*3`. Output capacity: 2 (outer
+    // quotes) + len + qtct*3 (each ' becomes '\\'').
+    let mut out = Vec::<char>::with_capacity(s.len() + 2 + qtct * 3);
+    out.push('\'');                                                          // c:1176 *l++ = '\''
+    for &c in s {                                                            // c:1177-1184
+        if c == '\'' {
+            // c:1179-1182 — ' → '\''
+            out.push('\'');
+            out.push('\\');
+            out.push('\'');
+            out.push('\'');
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');                                                          // c:1185 *l++ = '\''
+    out
+}
 
 /// Port of `makesuffix()` from Src/Zle/zle_misc.c:1598. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn makesuffix() -> i32 { 0 }
@@ -864,7 +1122,41 @@ pub fn parsedigit(zle: &Zle, inkey: i32) -> i32 {                            // 
 }
 
 /// Port of `pastebuf()` from Src/Zle/zle_misc.c:558. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn pastebuf() -> i32 { 0 }
+pub fn pastebuf(zle: &mut Zle, buf: &[char], mult: i32, position: i32) -> i32 {  // c:557
+    // Simplified port of pastebuf. The C source dispatches on
+    // CUTBUFFER_LINE flag (insert as full lines vs char-wise),
+    // computes position 0/1/2 (before/after/split), and updates
+    // yankb/yanke. Without the LINE-flag check (we treat all as
+    // char-wise) plus the simple before/after path we get the
+    // common case.
+    if buf.is_empty() {
+        return 0;
+    }
+    // c:591-592 — `if (position == 1 && zlecs != findeol()) INCCS()`.
+    if position == 1 && zle.zlecs < zle.zlell {
+        zle.zlecs += 1;
+    }
+    // c:593 — `yankb = zlecs`.
+    zle.yank_start = zle.zlecs;
+    // c:595-599 — `while (mult--) { spaceinline(cc); ZS_memcpy; zlecs += cc }`.
+    let mut n = mult;
+    while n > 0 {
+        for (i, &c) in buf.iter().enumerate() {
+            zle.zleline.insert(zle.zlecs + i, c);
+        }
+        zle.zlecs += buf.len();
+        zle.zlell += buf.len();
+        n -= 1;
+    }
+    // c:600 — `yanke = zlecs`.
+    zle.yank_end = zle.zlecs;
+    // c:601-602 — vicmd → DECCS.
+    if zle.zlecs > 0 && zle.keymaps.current_name == "vicmd" {
+        zle.zlecs -= 1;
+    }
+    zle.resetneeded = true;
+    0
+}
 
 /// Port of `poundinsert()` from Src/Zle/zle_misc.c:369. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn poundinsert() -> i32 { 0 }
@@ -876,22 +1168,108 @@ pub fn putreplaceselection() -> i32 { 0 }
 pub fn quotedinsert() -> i32 { 0 }
 
 /// Port of `quoteline()` from Src/Zle/zle_misc.c:1187. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn quoteline() -> i32 { 0 }
+pub fn quoteline(zle: &mut Zle) -> i32 {                                     // c:1188
+    // c:1192 — `len = zlell`. Quote whole buffer.
+    let quoted = makequote(&zle.zleline[..zle.zlell]);
+    let len = quoted.len();
+    // c:1193-1195 — `sizeline; ZS_memcpy; zlecs = zlell = len`.
+    zle.zleline = quoted;
+    zle.zlell = len;
+    zle.zlecs = len;
+    zle.resetneeded = true;
+    0                                                                        // c:1196
+}
 
 /// Port of `quoteregion()` from Src/Zle/zle_misc.c:1152. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn quoteregion() -> i32 { 0 }
+pub fn quoteregion(zle: &mut Zle) -> i32 {                                   // c:1151
+    // c:1156 — `int extra = invicmdmode()`. Vi-cmd-mode bias.
+    let mut extra = zle.keymaps.current_name == "vicmd";
+    // c:1158-1159 — `if (mark > zlell) mark = zlell`.
+    if zle.mark > zle.zlell {
+        zle.mark = zle.zlell;
+    }
+    // c:1160-1170 — visual-line vs. char modes; normalize zlecs/mark.
+    if zle.region_active == 2 {
+        let (a, b) = regionlines(zle);
+        zle.zlecs = a;
+        zle.mark = b;
+        extra = false;
+    } else if zle.mark < zle.zlecs {
+        std::mem::swap(&mut zle.mark, &mut zle.zlecs);
+    }
+    // c:1171-1172 — `if (extra) INCPOS(mark)`. Include cursor cell.
+    if extra && zle.mark < zle.zlell {
+        zle.mark += 1;
+    }
+    // c:1173-1175 — copy region into temp str; foredel; quote; insert.
+    let region: Vec<char> = zle.zleline[zle.zlecs..zle.mark].to_vec();
+    let len = region.len();
+    let quoted = makequote(&region);
+    let qlen = quoted.len();
+    // c:1176 — `foredel(len, CUT_RAW)` — delete region (no kill).
+    zle.zleline.drain(zle.zlecs..zle.zlecs + len);
+    zle.zlell -= len;
+    // c:1178-1179 — insert quoted text at cursor.
+    for (i, &c) in quoted.iter().enumerate() {
+        zle.zleline.insert(zle.zlecs + i, c);
+    }
+    zle.zlell += qlen;
+    // c:1180-1181 — `mark = zlecs; zlecs += len`.
+    zle.mark = zle.zlecs;
+    zle.zlecs += qlen;
+    zle.resetneeded = true;
+    0
+}
 
 /// Port of `regionlines()` from Src/Zle/zle_misc.c:444. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn regionlines() -> i32 { 0 }
+pub fn regionlines(zle: &mut Zle) -> (usize, usize) {                        // c:443
+    use crate::ported::zle::zle_utils::{findbol, findeol};
+    // c:446 — `int origcs = zlecs`. Save cursor.
+    let origcs = zle.zlecs;
+    let start;
+    let end;
+    if zle.zlecs < zle.mark {                                                // c:449
+        // c:450-452 — start=findbol(); zlecs=min(mark,zlell); end=findeol().
+        start = findbol(zle);
+        zle.zlecs = if zle.mark > zle.zlell { zle.zlell } else { zle.mark };
+        end = findeol(zle);
+    } else {
+        // c:454-456 — end=findeol(); zlecs=mark; start=findbol().
+        end = findeol(zle);
+        zle.zlecs = zle.mark;
+        start = findbol(zle);
+    }
+    // c:458 — `zlecs = origcs`. Restore.
+    zle.zlecs = origcs;
+    (start, end)
+}
 
 /// Port of `scancompcmd()` from Src/Zle/zle_misc.c:1235. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn scancompcmd() -> i32 { 0 }
 
 /// Port of `selfinsert()` from Src/Zle/zle_misc.c:113. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn selfinsert() -> i32 { 0 }
+pub fn selfinsert(zle: &mut Zle) -> i32 {                                    // c:112
+    // c:118-122 — multibyte substrate not yet ported; the
+    // lastchar_wide_valid check + getrestchar call live in the
+    // multibyte input path. Without that, treat ASCII lastchar as
+    // the wide char.
+    if !zle.lastchar_wide_valid {
+        zle.lastchar_wide = zle.lastchar;
+        zle.lastchar_wide_valid = true;
+    }
+    // c:123-124 — `tmp = LASTFULLCHAR; doinsert(&tmp, 1)`.
+    if let Some(c) = char::from_u32(zle.lastchar_wide as u32) {
+        zle.self_insert(c);
+    }
+    0
+}
 
 /// Port of `selfinsertunmeta()` from Src/Zle/zle_misc.c:149. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn selfinsertunmeta() -> i32 { 0 }
+pub fn selfinsertunmeta(zle: &mut Zle) -> i32 {                              // c:149
+    // c:151-152 — `fixunmeta(); return selfinsert(args)`.
+    fixunmeta(zle);
+    selfinsert(zle)
+}
 
 /// Port of `sendbreak()` from `Src/Zle/zle_misc.c:1144`.
 /// ```c
@@ -982,7 +1360,39 @@ pub fn viputbefore() -> i32 { 0 }
 pub fn whatcursorposition() -> i32 { 0 }
 
 /// Port of `yankpop()` from Src/Zle/zle_misc.c:728. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn yankpop() -> i32 { 0 }
+pub fn yankpop(zle: &mut Zle) -> i32 {                                       // c:728
+    use crate::ported::zle::widget::WidgetFlags;
+    // c:730-735 — `if (!(lastcmd & ZLE_YANK) || !kring || !kctbuf)
+    //               return 1`.
+    if !zle.lastcmd.contains(WidgetFlags::YANK) || zle.killring.is_empty() {
+        return 1;
+    }
+    // C body cycles the kill ring index `kct` and re-inserts the
+    // previous yank. zshrs uses VecDeque<ZleString> with the rotation
+    // index `yank_ring_idx`. Simplified: rotate front entry to back,
+    // delete previous yank text from line, insert new front.
+    let prev_start = zle.yank_start;
+    let prev_end   = zle.yank_end;
+    if prev_end > prev_start && prev_end <= zle.zleline.len() {
+        zle.zleline.drain(prev_start..prev_end);
+        zle.zlell -= prev_end - prev_start;
+        zle.zlecs = prev_start;
+    }
+    if let Some(top) = zle.killring.pop_front() {
+        zle.killring.push_back(top);
+    }
+    if let Some(next) = zle.killring.front().cloned() {
+        for (i, &c) in next.iter().enumerate() {
+            zle.zleline.insert(zle.zlecs + i, c);
+        }
+        zle.yank_start = zle.zlecs;
+        zle.zlecs += next.len();
+        zle.zlell += next.len();
+        zle.yank_end = zle.zlecs;
+    }
+    zle.resetneeded = true;
+    0
+}
 
 #[cfg(test)]
 mod tests {
@@ -1306,5 +1716,246 @@ mod tests {
         transpose_swap(&mut z, 3, 5, 7);
         let s: String = z.zleline.iter().collect();
         assert_eq!(s, "0125634789");
+    }
+
+    // ---------- Batch tests for fixunmeta/selfinsert/deletechar/etc ----------
+
+    #[test]
+    fn fixunmeta_strips_meta_and_normalizes_cr() {
+        let mut z = Zle::new();
+        z.lastchar = 0x80 | b'a' as i32;
+        fixunmeta(&mut z);
+        assert_eq!(z.lastchar, b'a' as i32);
+        z.lastchar = b'\r' as i32;
+        fixunmeta(&mut z);
+        assert_eq!(z.lastchar, b'\n' as i32);
+    }
+
+    #[test]
+    fn selfinsert_inserts_lastchar() {
+        let mut z = Zle::new();
+        z.zleline = "abc".chars().collect();
+        z.zlell = 3;
+        z.zlecs = 1;
+        z.lastchar = b'X' as i32;
+        z.lastchar_wide_valid = false;
+        selfinsert(&mut z);
+        let s: String = z.zleline.iter().collect();
+        assert_eq!(s, "aXbc");
+    }
+
+    #[test]
+    fn selfinsertunmeta_chains_fixunmeta_and_selfinsert() {
+        let mut z = Zle::new();
+        z.zleline = "ab".chars().collect();
+        z.zlell = 2;
+        z.zlecs = 1;
+        z.lastchar = 0x80 | b'X' as i32;
+        z.lastchar_wide_valid = false;
+        selfinsertunmeta(&mut z);
+        let s: String = z.zleline.iter().collect();
+        assert_eq!(s, "aXb");
+    }
+
+    #[test]
+    fn deletechar_removes_n_chars() {
+        let mut z = Zle::new();
+        z.zleline = "hello".chars().collect();
+        z.zlell = 5;
+        z.zlecs = 0;
+        z.zmod.mult = 2;
+        let r = deletechar(&mut z);
+        assert_eq!(r, 0);
+        let s: String = z.zleline.iter().collect();
+        assert_eq!(s, "llo");
+    }
+
+    #[test]
+    fn deletechar_returns_one_at_eol() {
+        let mut z = Zle::new();
+        z.zleline = "ab".chars().collect();
+        z.zlell = 2;
+        z.zlecs = 2;
+        z.zmod.mult = 1;
+        assert_eq!(deletechar(&mut z), 1);
+    }
+
+    #[test]
+    fn backwarddeletechar_clamps_to_zlecs() {
+        let mut z = Zle::new();
+        z.zleline = "abc".chars().collect();
+        z.zlell = 3;
+        z.zlecs = 2;
+        z.zmod.mult = 99;
+        backwarddeletechar(&mut z);
+        let s: String = z.zleline.iter().collect();
+        assert_eq!(s, "c");
+        assert_eq!(z.zlecs, 0);
+    }
+
+    #[test]
+    fn killline_kills_to_eol_and_pushes_killring() {
+        let mut z = Zle::new();
+        z.zleline = "hello world".chars().collect();
+        z.zlell = 11;
+        z.zlecs = 6;
+        z.zmod.mult = 1;
+        killline(&mut z);
+        let s: String = z.zleline.iter().collect();
+        assert_eq!(s, "hello ");
+        assert_eq!(z.zlecs, 6);
+        assert_eq!(z.killring.front().map(|v| v.iter().collect::<String>()),
+                   Some("world".to_string()));
+    }
+
+    #[test]
+    fn killbuffer_clears_and_pushes() {
+        let mut z = Zle::new();
+        z.zleline = "abc".chars().collect();
+        z.zlell = 3;
+        z.zlecs = 2;
+        killbuffer(&mut z);
+        assert!(z.zleline.is_empty());
+        assert_eq!(z.zlell, 0);
+        assert_eq!(z.zlecs, 0);
+        assert_eq!(z.killring.front().map(|v| v.iter().collect::<String>()),
+                   Some("abc".to_string()));
+    }
+
+    #[test]
+    fn killwholeline_drops_one_line() {
+        let mut z = Zle::new();
+        z.zleline = "abc\ndef\nghi".chars().collect();
+        z.zlell = 11;
+        z.zlecs = 5; // 'e' in 'def'
+        z.zmod.mult = 1;
+        killwholeline(&mut z);
+        let s: String = z.zleline.iter().collect();
+        assert_eq!(s, "abc\nghi");
+    }
+
+    #[test]
+    fn copyregionaskill_copies_between_point_mark() {
+        let mut z = Zle::new();
+        z.zleline = "hello".chars().collect();
+        z.zlell = 5;
+        z.zlecs = 0;
+        z.mark = 3;
+        copyregionaskill(&mut z, &[]);
+        assert_eq!(z.killring.front().map(|v| v.iter().collect::<String>()),
+                   Some("hel".to_string()));
+        // Buffer unchanged
+        let s: String = z.zleline.iter().collect();
+        assert_eq!(s, "hello");
+    }
+
+    #[test]
+    fn regionlines_returns_bol_eol_around_region() {
+        let mut z = Zle::new();
+        z.zleline = "abc\ndef\nghi".chars().collect();
+        z.zlell = 11;
+        z.zlecs = 1;
+        z.mark = 5;
+        let (start, end) = regionlines(&mut z);
+        // mark > zlecs branch: start=findbol(zlecs)=0, end=findeol(mark)=7
+        assert_eq!(start, 0);
+        assert_eq!(end, 7);
+    }
+
+    #[test]
+    fn killregion_drains_between_mark_and_cursor() {
+        let mut z = Zle::new();
+        z.zleline = "abcdef".chars().collect();
+        z.zlell = 6;
+        z.zlecs = 1;
+        z.mark = 4;
+        killregion(&mut z);
+        let s: String = z.zleline.iter().collect();
+        assert_eq!(s, "aef");
+        assert_eq!(z.killring.front().map(|v| v.iter().collect::<String>()),
+                   Some("bcd".to_string()));
+    }
+
+    #[test]
+    fn quoteline_wraps_in_single_quotes() {
+        let mut z = Zle::new();
+        z.zleline = "abc".chars().collect();
+        z.zlell = 3;
+        quoteline(&mut z);
+        let s: String = z.zleline.iter().collect();
+        assert_eq!(s, "'abc'");
+    }
+
+    #[test]
+    fn quoteline_escapes_internal_quote() {
+        let mut z = Zle::new();
+        z.zleline = "it's".chars().collect();
+        z.zlell = 4;
+        quoteline(&mut z);
+        let s: String = z.zleline.iter().collect();
+        assert_eq!(s, "'it'\\''s'");
+    }
+
+    #[test]
+    fn makequote_handles_no_quotes() {
+        let s: Vec<char> = "abc".chars().collect();
+        let q = makequote(&s);
+        assert_eq!(q.iter().collect::<String>(), "'abc'");
+    }
+
+    #[test]
+    fn makequote_escapes_quotes() {
+        let s: Vec<char> = "a'b".chars().collect();
+        let q = makequote(&s);
+        assert_eq!(q.iter().collect::<String>(), "'a'\\''b'");
+    }
+
+    #[test]
+    fn pastebuf_inserts_at_cursor_position_zero() {
+        let mut z = Zle::new();
+        z.zleline = "foo".chars().collect();
+        z.zlell = 3;
+        z.zlecs = 1;
+        let buf: Vec<char> = "XX".chars().collect();
+        pastebuf(&mut z, &buf, 1, 0);
+        let s: String = z.zleline.iter().collect();
+        assert_eq!(s, "fXXoo");
+    }
+
+    #[test]
+    fn pastebuf_inserts_after_cursor_position_one() {
+        let mut z = Zle::new();
+        z.zleline = "foo".chars().collect();
+        z.zlell = 3;
+        z.zlecs = 1;
+        let buf: Vec<char> = "XX".chars().collect();
+        pastebuf(&mut z, &buf, 1, 1);
+        // position=1 → INCCS first → insert at zlecs+1
+        let s: String = z.zleline.iter().collect();
+        assert_eq!(s, "foXXo");
+    }
+
+    #[test]
+    fn yankpop_returns_one_when_lastcmd_not_yank() {
+        let mut z = Zle::new();
+        // Default lastcmd = empty (no YANK flag).
+        assert_eq!(yankpop(&mut z), 1);
+    }
+
+    #[test]
+    fn zle_usable_when_active_and_no_compfunc() {
+        use crate::ported::builtins::sched::zleactive;
+        use crate::ported::zle::complete::INCOMPFUNC;
+        use std::sync::atomic::Ordering;
+        zleactive.store(1, Ordering::SeqCst);
+        INCOMPFUNC.store(0, Ordering::SeqCst);
+        assert_eq!(super::super::zle_thingy::zle_usable(), 1);
+        // With incompfunc set → 0
+        INCOMPFUNC.store(1, Ordering::SeqCst);
+        assert_eq!(super::super::zle_thingy::zle_usable(), 0);
+        // Reset
+        INCOMPFUNC.store(0, Ordering::SeqCst);
+        zleactive.store(0, Ordering::SeqCst);
+        assert_eq!(super::super::zle_thingy::zle_usable(), 0);
     }
 }

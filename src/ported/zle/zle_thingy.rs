@@ -777,9 +777,26 @@ pub fn scanlistwidgets() -> i32 {                                            // 
 }
 
 /// Port of `zle_usable()` from `Src/Zle/zle_thingy.c:632`.
-/// True iff a ZLE session is currently active.
+/// ```c
+/// static int
+/// zle_usable(void)
+/// {
+///     return zleactive && !incompctlfunc && !incompfunc;
+/// }
+/// ```
+/// True iff a ZLE session is currently active and we're not
+/// inside a compctl-fn or comp-fn call (zle widgets can't run
+/// from inside completion functions).
 pub fn zle_usable() -> i32 {                                                 // c:632
-    unimplemented!("zle_thingy.rs::zle_usable — c:632 deferred (zle_active global)");
+    use std::sync::atomic::Ordering;
+    let active   = crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0;
+    // c:636 — `incompctlfunc` not yet ported as a global; the C
+    // source guards against re-entering ZLE during compctl run. The
+    // Rust port doesn't (yet) have the compctl-call entry path
+    // wired, so this branch is always false.
+    let incompctlfunc = false;
+    let incompfunc = crate::ported::zle::complete::INCOMPFUNC.load(Ordering::Relaxed) != 0;
+    if active && !incompctlfunc && !incompfunc { 1 } else { 0 }
 }
 
 #[cfg(test)]
