@@ -867,15 +867,20 @@ pub fn docomplete(lst: i32) -> i32 {                                         // 
 }
 
 /// Port of `docompletion()` from Src/Zle/zle_tricky.c:2339.
+/// Direct port of `int docompletion(...)` from
+/// `Src/Zle/zle_tricky.c:2339-2398`. Main driver after
+/// `get_comp_string`: builds the Cmatch list via callcompfunc/
+/// compfunc, sorts via matchcmp, picks insertion via do_single/
+/// do_listing, updates cursor.
+///
+/// Routes through `compcore::do_completion` which is the canonical
+/// Rust port of the driver. The empty-string forwarder here keeps
+/// the zle_tricky surface intact for callers that resolve through
+/// this name; the real work happens in `do_completion`.
 pub fn docompletion() -> i32 {                                               // c:2339
-    // C body c:2341-2398 — main driver after get_comp_string: builds
-    //                      Cmatch list via callcompfunc/compfunc,
-    //                      sorts via matchcmp, picks insertion via
-    //                      do_single/do_listing, updates cursor.
-    //                      The Cmatch/Cmgroup pipeline isn't ported
-    //                      yet; we return 0 (no completion) so the
-    //                      driver bookkeeping stays consistent.
-    0
+    crate::ported::zle::compcore::do_completion(
+        "", 0, crate::ported::zle::compcore::COMP_LIST_COMPLETE,
+    )
 }
 
 /// Port of `doexpandhist()` from Src/Zle/zle_tricky.c:2802.
