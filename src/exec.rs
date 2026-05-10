@@ -2244,8 +2244,8 @@ impl ShellExecutor {
         crate::ported::builtin::bin_test("test", args, &ops, 0)
     }
     pub(crate) fn bin_typeset(&mut self, args: &[String]) -> i32 {
-        // No canonical bin_typeset free-fn yet — return 0 placeholder.
-        let _ = args; 0
+        let mut ops = Self::_empty_ops();
+        crate::ported::builtin::bin_typeset("typeset", args, &mut ops, 0)
     }
     pub(crate) fn bin_read(&mut self, args: &[String]) -> i32 {
         // No canonical bin_read free-fn yet — return 1 (no input) placeholder.
@@ -2260,8 +2260,8 @@ impl ShellExecutor {
         crate::ported::builtin::bin_eval("eval", args, &ops, 0)
     }
     pub(crate) fn bin_fc(&mut self, args: &[String]) -> i32 {
-        // No canonical bin_fc free-fn yet — return 0 placeholder.
-        let _ = args; 0
+        let mut ops = Self::_empty_ops();
+        crate::ported::builtin::bin_fc("fc", args, &mut ops, 0)
     }
     pub(crate) fn bin_trap(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
