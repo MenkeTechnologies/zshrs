@@ -206,7 +206,11 @@ pub fn free_prepostdisplay() -> i32 { 0 }
 pub fn get_context() -> i32 { 0 }
 
 /// Port of `get_histno()` from Src/Zle/zle_params.c:514. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_histno() -> i32 { 0 }
+pub fn get_histno(zle: &crate::ported::zle::zle_main::Zle) -> i64 {          // c:513
+    // c:516 — `return histline`. zshrs tracks the editing history
+    // line via the History.cursor field (offset into entries Vec).
+    zle.history.cursor as i64
+}
 
 /// Port of `get_isearchmatchactive()` from Src/Zle/zle_params.c:591. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn get_isearchmatchactive() -> i64 {                                     // c:590
@@ -227,10 +231,16 @@ pub fn get_isearchmatchstart() -> i64 {                                      // 
 }
 
 /// Port of `get_keys()` from Src/Zle/zle_params.c:463. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_keys() -> i32 { 0 }
+pub fn get_keys(zle: &crate::ported::zle::zle_main::Zle) -> Vec<u8> {        // c:462
+    // c:465 — `return keybuf`. The active keymap-walk byte buffer.
+    zle.keymaps.keybuf.clone()
+}
 
 /// Port of `get_keys_queued_count()` from Src/Zle/zle_params.c:470. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_keys_queued_count() -> i32 { 0 }
+pub fn get_keys_queued_count(zle: &crate::ported::zle::zle_main::Zle) -> i64 {  // c:469
+    // c:472 — `return kungetct`. Bytes pending in the unget queue.
+    zle.unget_buf.len() as i64
+}
 
 /// Port of `get_killring()` from Src/Zle/zle_params.c:705. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn get_killring() -> i32 { 0 }
@@ -347,13 +357,25 @@ pub fn get_widgetfunc() -> i32 { 0 }
 pub fn get_widgetstyle() -> i32 { 0 }
 
 /// Port of `get_yankactive()` from Src/Zle/zle_params.c:556. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_yankactive() -> i32 { 0 }
+pub fn get_yankactive(zle: &crate::ported::zle::zle_main::Zle) -> i64 {      // c:555
+    // c:558 — `return !!(lastcmd & ZLE_YANK) + !!(lastcmd & ZLE_YANKAFTER)`.
+    use crate::ported::zle::widget::WidgetFlags;
+    let yank      = zle.lastcmd.contains(WidgetFlags::YANK)      as i64;
+    let yankafter = zle.lastcmd.contains(WidgetFlags::YANKAFTER) as i64;
+    yank + yankafter
+}
 
 /// Port of `get_yankend()` from Src/Zle/zle_params.c:549. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_yankend() -> i32 { 0 }
+pub fn get_yankend(zle: &crate::ported::zle::zle_main::Zle) -> i64 {         // c:548
+    // c:551 — `return yanke`.
+    zle.yank_end as i64
+}
 
 /// Port of `get_yankstart()` from Src/Zle/zle_params.c:542. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_yankstart() -> i32 { 0 }
+pub fn get_yankstart(zle: &crate::ported::zle::zle_main::Zle) -> i64 {       // c:541
+    // c:544 — `return yankb`.
+    zle.yank_start as i64
+}
 
 /// Port of `makezleparams()` from Src/Zle/zle_params.c:194. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn makezleparams() -> i32 { 0 }
@@ -411,10 +433,16 @@ pub fn set_register() -> i32 { 0 }
 pub fn set_registers() -> i32 { 0 }
 
 /// Port of `set_yankend()` from Src/Zle/zle_params.c:570. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn set_yankend() -> i32 { 0 }
+pub fn set_yankend(zle: &mut crate::ported::zle::zle_main::Zle, i: i64) {    // c:569
+    // c:572 — `yanke = i`.
+    zle.yank_end = i.max(0) as usize;
+}
 
 /// Port of `set_yankstart()` from Src/Zle/zle_params.c:563. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn set_yankstart() -> i32 { 0 }
+pub fn set_yankstart(zle: &mut crate::ported::zle::zle_main::Zle, i: i64) {  // c:562
+    // c:565 — `yankb = i`.
+    zle.yank_start = i.max(0) as usize;
+}
 
 /// Port of `unset_cutbuffer()` from Src/Zle/zle_params.c:647. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn unset_cutbuffer() -> i32 { 0 }
@@ -650,5 +678,100 @@ mod isearch_tests {
         ISEARCH_ENDPOS.store(13, Ordering::SeqCst);
         assert_eq!(get_isearchmatchend(), 13);
         ISEARCH_ENDPOS.store(0, Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+mod batch_getters_tests {
+    use super::*;
+    use crate::ported::zle::widget::WidgetFlags;
+    use crate::ported::zle::zle_main::Zle;
+
+    #[test]
+    fn get_histno_reads_history_cursor() {
+        let mut z = Zle::default();
+        z.history.cursor = 7;
+        assert_eq!(get_histno(&z), 7);
+    }
+
+    #[test]
+    fn get_keys_returns_keybuf_clone() {
+        let mut z = Zle::default();
+        z.keymaps.keybuf = vec![0x1b, b'a'];
+        assert_eq!(get_keys(&z), vec![0x1b, b'a']);
+    }
+
+    #[test]
+    fn get_keys_queued_count_returns_unget_len() {
+        let mut z = Zle::default();
+        z.unget_buf.push_back(b'a');
+        z.unget_buf.push_back(b'b');
+        z.unget_buf.push_back(b'c');
+        assert_eq!(get_keys_queued_count(&z), 3);
+    }
+
+    #[test]
+    fn get_yankactive_reads_lastcmd_flags() {
+        let mut z = Zle::default();
+        z.lastcmd = WidgetFlags::empty();
+        assert_eq!(get_yankactive(&z), 0);
+        z.lastcmd = WidgetFlags::YANK;
+        // YANK = YANKAFTER | YANKBEFORE; both bits set so contains
+        // YANK and contains YANKAFTER → 1+1 = 2.
+        assert_eq!(get_yankactive(&z), 2);
+        z.lastcmd = WidgetFlags::YANKBEFORE;
+        // YANKBEFORE only: contains(YANK) checks both bits set, so it's
+        // false; contains(YANKAFTER) is also false → 0+0 = 0.
+        assert_eq!(get_yankactive(&z), 0);
+    }
+
+    #[test]
+    fn get_yankstart_yankend_read_fields() {
+        let mut z = Zle::default();
+        z.yank_start = 3;
+        z.yank_end = 8;
+        assert_eq!(get_yankstart(&z), 3);
+        assert_eq!(get_yankend(&z), 8);
+    }
+
+    #[test]
+    fn set_yankstart_yankend_write_fields() {
+        let mut z = Zle::default();
+        set_yankstart(&mut z, 5);
+        set_yankend(&mut z, 11);
+        assert_eq!(z.yank_start, 5);
+        assert_eq!(z.yank_end, 11);
+    }
+}
+
+#[cfg(test)]
+mod keybuf_tests {
+    use crate::ported::zle::zle_keymap::{addkeybuf, freekeynode, KeyBinding};
+    use crate::ported::zle::zle_main::Zle;
+
+    #[test]
+    fn addkeybuf_plain_byte() {
+        let mut z = Zle::default();
+        addkeybuf(&mut z, b'a' as i32);
+        assert_eq!(z.keymaps.keybuf, vec![b'a']);
+    }
+
+    #[test]
+    fn addkeybuf_meta_quoted() {
+        let mut z = Zle::default();
+        // 0xa0 needs Meta-quoting → 0x83 then (0xa0 ^ 0x20) = 0x80
+        addkeybuf(&mut z, 0xa0);
+        assert_eq!(z.keymaps.keybuf, vec![0x83, 0x80]);
+    }
+
+    #[test]
+    fn freekeynode_consumes_binding() {
+        // Just verify Drop runs without panic.
+        let kb = KeyBinding {
+            bind: None,
+            str: Some("send-string".to_string()),
+            prefixct: 0,
+        };
+        freekeynode(kb);
     }
 }
