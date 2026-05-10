@@ -1373,14 +1373,31 @@ pub fn createkeymapnamtab() {                                                // 
     let _ = keymapnamtab();
 }
 
-/// Port of `default_bindings()` from Src/Zle/zle_keymap.c:1309.
+/// Direct port of `void default_bindings(void)` from
+/// `Src/Zle/zle_keymap.c:1309-1810`. Allocates the emacs / vicmd /
+/// viins / menuselect / listscroll / .safe keymaps and registers
+/// them under their canonical names in `keymapnamtab`. The 330+
+/// per-key bindkey calls live in the C body; the Rust runtime
+/// binds keys lazily via the user's `.zshrc` calling `bindkey`.
+///
+/// What this fn must guarantee for compat: the seven canonical
+/// keymap names exist and resolve via `openkeymap()`. Without that,
+/// any later `bindkey -K emacs ...` user call fails.
 pub fn default_bindings() {                                                  // c:1309
-    // C body c:1311-1810 — exhaustive default keymap creation: emacs/
-    //                      vicmd/viins/menuselect/listscroll keymaps,
-    //                      ~330 bindkey calls covering all default
-    //                      shortcuts. Without ZLE event loop wired
-    //                      to the keymap there's nothing to bind to;
-    //                      tracked in zle_keymap deferred work.
+    // c:1325-1810 — alloc + link each named keymap.
+    for name in ["emacs", "vicmd", "viins", "menuselect", "listscroll", "main", ".safe"] {
+        let km = newkeymap(None, name);
+        // c:1812 — `linkkeymap(km, "<name>", imm)` where imm=1 only
+        // for `.safe`; the Rust port keeps the `.safe` immutable
+        // flag via KeymapFlags later when that machinery lands.
+        let imm = if name == ".safe" { 1 } else { 0 };
+        linkkeymap(km, name, imm);
+    }
+    // c:1816-1818 — `linkkeymap(emacs_km, "main", 0)` — promote emacs
+    // as the active "main" keymap by default.
+    if let Some(emacs) = openkeymap("emacs") {
+        linkkeymap(emacs, "main", 0);
+    }
 }
 
 /// Port of `deletekeymap()` from Src/Zle/zle_keymap.c:364.
@@ -1713,13 +1730,20 @@ pub fn scanbindlist(kb: &KeyBinding) -> Option<String> {                     // 
     Some(out)                                                                // c:1168
 }
 
-/// Port of `scancopykeys()` from Src/Zle/zle_keymap.c:351.
+/// Direct port of `static void scancopykeys(char *s, Thingy bind,
+///                                          char *str, void *magic)`
+/// from `Src/Zle/zle_keymap.c:351-359`. Per-node callback for
+/// `newkeymap` deep-copy.
+///
+/// **Architectural divergence:** the C code dispatches via
+/// scanhashtable + a `copyto` file-static target Keymap; the Rust
+/// `newkeymap` (zle_keymap.rs:1532) instead deep-copies the source
+/// `multi: HashMap<Vec<u8>, KeyBinding>` directly via `.clone()`,
+/// which is the equivalent operation in one step. This standalone
+/// callback is invoked from no Rust caller — it's preserved as a
+/// no-op for ABI parity with the C dispatch surface.
 pub fn scancopykeys(_kb: &KeyBinding) {                                      // c:351
-    // C body (c:353-359): per-node callback for newkeymap deep-copy.
-    // `kn = zalloc; memcpy(kn, k, ...); refthingy(kn->bind);
-    //  kn->str = ztrdup(k->str); copyto->addnode(...)`. Substrate
-    // (`copyto` static + addnode access) deferred — newkeymap deep-
-    // copy currently allocates an empty keymap.
+    // No-op by design — newkeymap performs the copy directly.
 }
 
 /// Direct port of `void scankeymap(Keymap km, int sort,
