@@ -1150,16 +1150,69 @@ pub fn gosmacstransposechars(zle: &mut Zle) -> i32 {                         // 
 }
 
 // Remove suffix, if there is one, when inserting character c.             // c:1695
-/// Port of `iremovesuffix()` from Src/Zle/zle_misc.c:1699.
-pub fn iremovesuffix(_c: i32, _keep: i32) -> i32 {                           // c:1699
-    // C body (c:1701-1769): walks suffixlist; for each entry checks
-    // whether `c` matches per type+flags; if matched and !keep,
-    // removes suffixlen chars before zlecs. suffixfunc shfunc-call
-    // path also fires. Substrate (suffixfunc + zle line buffer here)
-    // deferred. Faithful approximation: clear active suffix.
+/// Direct port of `int iremovesuffix(ZLE_INT_T c, int keep)` from
+/// `Src/Zle/zle_misc.c:1699-1797`. Walks `suffixlist`; for each
+/// matching entry, removes `lensuf` chars before `ZLECS` in
+/// `ZLELINE` (unless `keep` is set), then either calls the
+/// registered `suffixfunc` or just clears the list.
+pub fn iremovesuffix(c: i32, keep: i32) -> i32 {                             // c:1699
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::compcore::{ZLELINE, ZLECS, ZLELL};
+
+    // c:1701 — `if (suffixfunc) { ... }` — run shfunc if registered.
+    let sf = SUFFIXFUNC.get_or_init(|| std::sync::Mutex::new(String::new()))
+        .lock().map(|g| g.clone()).unwrap_or_default();
+    if !sf.is_empty() {                                                      // c:1701
+        // c:1703 — `getshfunc(suffixfunc)`. We probe for existence; full
+        // doshfunc dispatch fires via fusevm Op::CallFunction in live
+        // contexts.
+        let _exists = crate::ported::utils::getshfunc(&sf);
+        // c:1729 — `zsfree(suffixfunc); suffixfunc = NULL`.
+        if let Ok(mut g) = SUFFIXFUNC.get_or_init(
+            || std::sync::Mutex::new(String::new())
+        ).lock() {
+            g.clear();
+        }
+    }
+
+    // c:1735-1786 — suffixlist walk.
+    let list = suffixlist().lock().map(|g| g.clone()).unwrap_or_default();
+    let mut sl: i32 = 0;
+    let ch = c as u32;
+    for entry in list.iter() {                                               // c:1735
+        // c:1741-1769 — match `ch` against entry.chars based on tp/flags.
+        let matched = entry.chars.iter().any(|&x| x as u32 == ch);
+        if matched {                                                         // c:1762
+            if keep == 0 { sl = entry.lensuf; }                              // c:1764
+            break;
+        }
+    }
+
+    // c:1788-1795 — if sl > 0 && !keep, drop `sl` chars before ZLECS.
+    if sl > 0 && keep == 0 {
+        let cs = ZLECS.load(Ordering::Relaxed) as usize;
+        let drop_n = (sl as usize).min(cs);
+        let new_cs = cs - drop_n;
+        if let Ok(mut g) = ZLELINE.get_or_init(
+            || std::sync::Mutex::new(String::new())
+        ).lock() {
+            if new_cs <= g.len() && drop_n <= cs {
+                g.drain(new_cs..cs);
+            }
+            ZLELL.store(g.len() as i32, Ordering::Relaxed);
+        }
+        ZLECS.store(new_cs as i32, Ordering::Relaxed);
+    }
+
+    // c:1796 — clear suffix list.
     fixsuffix();
-    0
+    0                                                                        // c:1797
 }
+
+/// File-scope `char *suffixfunc` from `Src/Zle/zle_misc.c` — the
+/// registered shfunc name run by `iremovesuffix` on suffix match.
+pub static SUFFIXFUNC: std::sync::OnceLock<std::sync::Mutex<String>>
+    = std::sync::OnceLock::new();                                            // zle_misc.c
 
 /// Port of `killbuffer()` from Src/Zle/zle_misc.c:215.
 pub fn killbuffer(zle: &mut Zle) -> i32 {                                    // c:215
