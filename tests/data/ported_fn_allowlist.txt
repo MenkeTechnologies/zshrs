@@ -556,15 +556,20 @@ findjobnam_c
 lock_str
 lock_vec
 
-# jobs.rs Rust-only OnceLock get-or-init wrappers for jobtab /
-# maxjob / curjob / prevjob / thisjob — C dereferences these as
-# bare globals from Src/jobs.c (file-scope `int maxjob`,
-# `struct job *jobtab`, etc.). Rust port wraps each in OnceLock<
-# Mutex<…>> with these get-or-init helpers since `Mutex::new` is
-# not const for that wrapper.
-jobtab_global
-maxjob_global
-curjob_global
-prevjob_global
-thisjob_global
-isset_posixbuiltins
+# zsh.h macro ports (zsh.h:2559-2564) — C `#define` macros aren't
+# functions so they don't appear in zsh_c_fn_names.txt. Rust ports
+# them as inline fns for the same lookup semantics. `opt_name` is
+# the reverse-lookup helper that maps optno constant → option name
+# string for the HashMap-based OPTS_LIVE (C uses direct array index).
+isset
+unset
+interact
+jobbing
+islogin
+opt_name
+
+# options.c macro + table ports (options.c:73, optns[] at c:79) —
+# `defset` is a C `#define` macro, `optns_flags` extracts the flags
+# field from the `optns[]` static table. Neither are C functions.
+defset
+optns_flags

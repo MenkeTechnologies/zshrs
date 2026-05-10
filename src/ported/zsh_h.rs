@@ -2221,6 +2221,228 @@ pub const OPT_SIZE:          i32 = 186;
 
 pub type OptIndex = u8;                                                  // c:2556
 
+// #define isset(X) (opts[X])                                               // c:2559
+/// Port of `isset(X)` macro from `Src/zsh.h:2559`.
+/// Returns true if option is set.
+#[inline]
+pub fn isset(opt: i32) -> bool {
+    crate::ported::options::opt_state_get(&opt_name(opt)).unwrap_or(false)
+}
+
+// #define unset(X) (!opts[X])                                              // c:2560
+/// Port of `unset(X)` macro from `Src/zsh.h:2560`.
+/// Returns true if option is NOT set.
+#[inline]
+pub fn unset(opt: i32) -> bool {
+    !isset(opt)
+}
+
+// #define interact (isset(INTERACTIVE))                                    // c:2562
+/// Port of `interact` macro from `Src/zsh.h:2562`.
+#[inline]
+pub fn interact() -> bool {
+    isset(INTERACTIVE)
+}
+
+// #define jobbing  (isset(MONITOR))                                        // c:2563
+/// Port of `jobbing` macro from `Src/zsh.h:2563`.
+#[inline]
+pub fn jobbing() -> bool {
+    isset(MONITOR)
+}
+
+// #define islogin  (isset(LOGINSHELL))                                     // c:2564
+/// Port of `islogin` macro from `Src/zsh.h:2564`.
+#[inline]
+pub fn islogin() -> bool {
+    isset(LOGINSHELL)
+}
+
+/// Helper: convert option constant to its name for lookup.
+fn opt_name(opt: i32) -> &'static str {
+    match opt {
+        x if x == ALLEXPORT => "allexport",
+        x if x == ALWAYSLASTPROMPT => "alwayslastprompt",
+        x if x == ALWAYSTOEND => "alwaystoend",
+        x if x == APPENDHISTORY => "appendhistory",
+        x if x == AUTOCD => "autocd",
+        x if x == AUTOCONTINUE => "autocontinue",
+        x if x == AUTOLIST => "autolist",
+        x if x == AUTOMENU => "automenu",
+        x if x == AUTONAMEDIRS => "autonamedirs",
+        x if x == AUTOPARAMKEYS => "autoparamkeys",
+        x if x == AUTOPARAMSLASH => "autoparamslash",
+        x if x == AUTOPUSHD => "autopushd",
+        x if x == AUTOREMOVESLASH => "autoremoveslash",
+        x if x == AUTORESUME => "autoresume",
+        x if x == BADPATTERN => "badpattern",
+        x if x == BANGHIST => "banghist",
+        x if x == BAREGLOBQUAL => "bareglobqual",
+        x if x == BASHAUTOLIST => "bashautolist",
+        x if x == BASHREMATCH => "bashrematch",
+        x if x == BEEP => "beep",
+        x if x == BGNICE => "bgnice",
+        x if x == BRACECCL => "braceccl",
+        x if x == BSDECHO => "bsdecho",
+        x if x == CASEGLOB => "caseglob",
+        x if x == CASEMATCH => "casematch",
+        x if x == CBASES => "cbases",
+        x if x == CDABLEVARS => "cdablevars",
+        x if x == CDSILENT => "cdsilent",
+        x if x == CHASEDOTS => "chasedots",
+        x if x == CHASELINKS => "chaselinks",
+        x if x == CHECKJOBS => "checkjobs",
+        x if x == CHECKRUNNINGJOBS => "checkrunningjobs",
+        x if x == CLOBBER => "clobber",
+        x if x == COMBININGCHARS => "combiningchars",
+        x if x == COMPLETEALIASES => "completealiases",
+        x if x == COMPLETEINWORD => "completeinword",
+        x if x == CORRECT => "correct",
+        x if x == CORRECTALL => "correctall",
+        x if x == CPRECEDENCES => "cprecedences",
+        x if x == CSHJUNKIEHISTORY => "cshjunkiehistory",
+        x if x == CSHJUNKIELOOPS => "cshjunkieloops",
+        x if x == CSHJUNKIEQUOTES => "cshjunkiequotes",
+        x if x == CSHNULLCMD => "cshnullcmd",
+        x if x == CSHNULLGLOB => "cshnullglob",
+        x if x == DEBUGBEFORECMD => "debugbeforecmd",
+        x if x == EMACSMODE => "emacs",
+        x if x == EQUALSOPT => "equals",
+        x if x == ERREXIT => "errexit",
+        x if x == ERRRETURN => "errreturn",
+        x if x == EXECOPT => "exec",
+        x if x == EXTENDEDGLOB => "extendedglob",
+        x if x == EXTENDEDHISTORY => "extendedhistory",
+        x if x == EVALLINENO => "evallineno",
+        x if x == FLOWCONTROL => "flowcontrol",
+        x if x == FORCEFLOAT => "forcefloat",
+        x if x == FUNCTIONARGZERO => "functionargzero",
+        x if x == GLOBOPT => "glob",
+        x if x == GLOBALEXPORT => "globalexport",
+        x if x == GLOBALRCS => "globalrcs",
+        x if x == GLOBASSIGN => "globassign",
+        x if x == GLOBCOMPLETE => "globcomplete",
+        x if x == GLOBDOTS => "globdots",
+        x if x == GLOBSTARSHORT => "globstarshort",
+        x if x == GLOBSUBST => "globsubst",
+        x if x == HASHCMDS => "hashcmds",
+        x if x == HASHDIRS => "hashdirs",
+        x if x == HASHEXECUTABLESONLY => "hashexecutablesonly",
+        x if x == HASHLISTALL => "hashlistall",
+        x if x == HISTALLOWCLOBBER => "histallowclobber",
+        x if x == HISTBEEP => "histbeep",
+        x if x == HISTEXPIREDUPSFIRST => "histexpiredupsfirst",
+        x if x == HISTFCNTLLOCK => "histfcntllock",
+        x if x == HISTFINDNODUPS => "histfindnodups",
+        x if x == HISTIGNOREALLDUPS => "histignorealldups",
+        x if x == HISTIGNOREDUPS => "histignoredups",
+        x if x == HISTIGNORESPACE => "histignorespace",
+        x if x == HISTLEXWORDS => "histlexwords",
+        x if x == HISTNOFUNCTIONS => "histnofunctions",
+        x if x == HISTNOSTORE => "histnostore",
+        x if x == HISTREDUCEBLANKS => "histreduceblanks",
+        x if x == HISTSAVEBYCOPY => "histsavebycopy",
+        x if x == HISTSAVENODUPS => "histsavenodups",
+        x if x == HISTSUBSTPATTERN => "histsubstpattern",
+        x if x == HISTVERIFY => "histverify",
+        x if x == HUP => "hup",
+        x if x == IGNOREBRACES => "ignorebraces",
+        x if x == IGNORECLOSEBRACES => "ignoreclosebraces",
+        x if x == IGNOREEOF => "ignoreeof",
+        x if x == INCAPPENDHISTORY => "incappendhistory",
+        x if x == INCAPPENDHISTORYTIME => "incappendhistorytime",
+        x if x == INTERACTIVE => "interactive",
+        x if x == INTERACTIVECOMMENTS => "interactivecomments",
+        x if x == KSHARRAYS => "ksharrays",
+        x if x == KSHAUTOLOAD => "kshautoload",
+        x if x == KSHGLOB => "kshglob",
+        x if x == KSHOPTIONPRINT => "kshoptionprint",
+        x if x == KSHTYPESET => "kshtypeset",
+        x if x == KSHZEROSUBSCRIPT => "kshzerosubscript",
+        x if x == LISTAMBIGUOUS => "listambiguous",
+        x if x == LISTBEEP => "listbeep",
+        x if x == LISTPACKED => "listpacked",
+        x if x == LISTROWSFIRST => "listrowsfirst",
+        x if x == LISTTYPES => "listtypes",
+        x if x == LOCALOPTIONS => "localoptions",
+        x if x == LOCALLOOPS => "localloops",
+        x if x == LOCALPATTERNS => "localpatterns",
+        x if x == LOCALTRAPS => "localtraps",
+        x if x == LOGINSHELL => "loginshell",
+        x if x == LONGLISTJOBS => "longlistjobs",
+        x if x == MAGICEQUALSUBST => "magicequalsubst",
+        x if x == MAILWARNING => "mailwarning",
+        x if x == MARKDIRS => "markdirs",
+        x if x == MENUCOMPLETE => "menucomplete",
+        x if x == MONITOR => "monitor",
+        x if x == MULTIBYTE => "multibyte",
+        x if x == MULTIFUNCDEF => "multifuncdef",
+        x if x == MULTIOS => "multios",
+        x if x == NOMATCH => "nomatch",
+        x if x == NOTIFY => "notify",
+        x if x == NULLGLOB => "nullglob",
+        x if x == NUMERICGLOBSORT => "numericglobsort",
+        x if x == OCTALZEROES => "octalzeroes",
+        x if x == OVERSTRIKE => "overstrike",
+        x if x == PATHDIRS => "pathdirs",
+        x if x == PATHSCRIPT => "pathscript",
+        x if x == PIPEFAIL => "pipefail",
+        x if x == POSIXALIASES => "posixaliases",
+        x if x == POSIXARGZERO => "posixargzero",
+        x if x == POSIXBUILTINS => "posixbuiltins",
+        x if x == POSIXCD => "posixcd",
+        x if x == POSIXIDENTIFIERS => "posixidentifiers",
+        x if x == POSIXJOBS => "posixjobs",
+        x if x == POSIXSTRINGS => "posixstrings",
+        x if x == POSIXTRAPS => "posixtraps",
+        x if x == PRINTEIGHTBIT => "printeightbit",
+        x if x == PRINTEXITVALUE => "printexitvalue",
+        x if x == PRIVILEGED => "privileged",
+        x if x == PROMPTBANG => "promptbang",
+        x if x == PROMPTCR => "promptcr",
+        x if x == PROMPTPERCENT => "promptpercent",
+        x if x == PROMPTSP => "promptsp",
+        x if x == PROMPTSUBST => "promptsubst",
+        x if x == PUSHDIGNOREDUPS => "pushdignoredups",
+        x if x == PUSHDMINUS => "pushdminus",
+        x if x == PUSHDSILENT => "pushdsilent",
+        x if x == PUSHDTOHOME => "pushdtohome",
+        x if x == RCEXPANDPARAM => "rcexpandparam",
+        x if x == RCQUOTES => "rcquotes",
+        x if x == RCS => "rcs",
+        x if x == RECEXACT => "recexact",
+        x if x == REMATCHPCRE => "rematchpcre",
+        x if x == RESTRICTED => "restricted",
+        x if x == RMSTARSILENT => "rmstarsilent",
+        x if x == RMSTARWAIT => "rmstarwait",
+        x if x == SHAREHISTORY => "sharehistory",
+        x if x == SHFILEEXPANSION => "shfileexpansion",
+        x if x == SHGLOB => "shglob",
+        x if x == SHINSTDIN => "shinstdin",
+        x if x == SHNULLCMD => "shnullcmd",
+        x if x == SHOPTIONLETTERS => "shoptionletters",
+        x if x == SHORTLOOPS => "shortloops",
+        x if x == SHORTREPEAT => "shortrepeat",
+        x if x == SHWORDSPLIT => "shwordsplit",
+        x if x == SINGLECOMMAND => "singlecommand",
+        x if x == SINGLELINEZLE => "singlelinezle",
+        x if x == SOURCETRACE => "sourcetrace",
+        x if x == SUNKEYBOARDHACK => "sunkeyboardhack",
+        x if x == TRANSIENTRPROMPT => "transientrprompt",
+        x if x == TRAPSASYNC => "trapsasync",
+        x if x == TYPESETSILENT => "typesetsilent",
+        x if x == UNSET => "unset",
+        x if x == VERBOSE => "verbose",
+        x if x == ALIASESOPT => "aliases",
+        x if x == WARNCREATEGLOBAL => "warncreateglobal",
+        x if x == WARNNESTEDVAR => "warnnestedvar",
+        x if x == XTRACE => "xtrace",
+        x if x == USEZLE => "zle",
+        x if x == DVORAK => "dvorak",
+        _ => "",
+    }
+}
+
 // =============================================================================
 // 36. Terminal control (zsh.h:2633-2680).
 // =============================================================================

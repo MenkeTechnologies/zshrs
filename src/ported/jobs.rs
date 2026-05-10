@@ -1103,7 +1103,8 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
         .lock().expect("prevjob poisoned");
     let thisjob = *THISJOB.get_or_init(|| Mutex::new(-1))
         .lock().expect("thisjob poisoned");
-    let posixbuiltins = crate::ported::options::opt_state_get("posixbuiltins").unwrap_or(false);
+    let posixbuiltins = crate::ported::zsh_h::isset(                         // c:isset(POSIXBUILTINS)
+        crate::ported::zsh_h::POSIXBUILTINS);
 
     let s_bytes = s.as_bytes();
     let mut idx = 0usize;
