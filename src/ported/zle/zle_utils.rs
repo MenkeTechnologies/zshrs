@@ -858,8 +858,13 @@ impl Zle {
     }
 }
 
-/// Port of `applychange()` from Src/Zle/zle_utils.c:1678. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn applychange() -> i32 { 0 }
+/// Port of `applychange()` from Src/Zle/zle_utils.c:1678.
+pub fn applychange(_zle: &mut crate::ported::zle::zle_main::Zle, _ch: i32) -> i32 { // c:1678
+    // C body c:1680-1730 — applies one Change record (delete then insert)
+    //                      from the undo list. Without the Change Rust
+    //                      struct hydrated: 0.
+    0
+}
 
 /// Port of `backdel()` from `Src/Zle/zle_utils.c:1084`. Removes `ct`
 /// characters BACKWARD from the cursor (i.e. drops `[zlecs-ct,
@@ -904,11 +909,53 @@ pub fn backkill(zle: &mut crate::ported::zle::zle_main::Zle, ct: i32, flags: i32
     zle.resetneeded = true;                                              // c:1059 CCRIGHT
 }
 
-/// Port of `cut()` from Src/Zle/zle_utils.c:935. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn cut() -> i32 { 0 }
+/// Port of `cut()` from Src/Zle/zle_utils.c:935.
+/// `i` is the start byte offset; `ct` is the count to cut; `dir` is
+/// the cut direction flag (0=after, non-zero=before).
+pub fn cut(zle: &mut crate::ported::zle::zle_main::Zle, i: i32,              // c:935
+           ct: i32, dir: i32) -> i32 {
+    // C body c:937-944 — `cuttext(zleline+i, ct, dir)`. Fold to a
+    //                    single helper that pushes a slice into the
+    //                    kill ring (or vibuf when MOD_VIBUF is set).
+    if ct <= 0 || i < 0 {
+        return 0;
+    }
+    let start = i as usize;
+    let end = (start + ct as usize).min(zle.zleline.len());
+    if start >= end {
+        return 0;
+    }
+    let chunk: Vec<char> = zle.zleline[start..end].to_vec();
+    cuttext(zle, &chunk, dir);
+    0
+}
 
-/// Port of `cuttext()` from Src/Zle/zle_utils.c:946. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn cuttext() -> i32 { 0 }
+/// Port of `cuttext()` from Src/Zle/zle_utils.c:946.
+pub fn cuttext(zle: &mut crate::ported::zle::zle_main::Zle, txt: &[char],    // c:946
+               dir: i32) {
+    use crate::ported::zle::zle_main::ModifierFlags;
+    // C body c:948-1043 — pushes `txt` into vibuf[zmod.vibuf] when
+    //                     MOD_VIBUF is set, else front of killring.
+    //                     CUT_APPEND/CUT_REPLACE flag handling skipped
+    //                     in this distilled body.
+    let chars: Vec<char> = txt.to_vec();
+    if zle.zmod.flags.contains(ModifierFlags::VIBUF) {                       // c:961
+        let idx = zle.zmod.vibuf as usize;
+        if idx < zle.vibuf.len() {
+            if dir != 0 {
+                zle.vibuf[idx] = chars;
+            } else {
+                zle.vibuf[idx].extend(chars);
+            }
+        }
+    } else {
+        zle.killring.push_front(chars);                                      // c:996
+        let max = zle.killringmax;
+        if zle.killring.len() > max {
+            zle.killring.pop_back();
+        }
+    }
+}
 
 /// Port of `findbol()` from `Src/Zle/zle_utils.c:1157`.
 /// ```c
@@ -1007,23 +1054,45 @@ pub fn forekill(zle: &mut crate::ported::zle::zle_main::Zle, ct: i32, flags: i32
     zle.resetneeded = true;                                              // c:1079 CCRIGHT
 }
 
-/// Port of `free_region_highlights_memos()` from Src/Zle/zle_utils.c:567. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn free_region_highlights_memos() -> i32 { 0 }
+/// Port of `free_region_highlights_memos()` from Src/Zle/zle_utils.c:567.
+pub fn free_region_highlights_memos() {                                      // c:567
+    // C body c:569-580 — walks region_highlights_memos free list,
+    //                    calls zfree on each. Drop covers it; no-op.
+}
 
-/// Port of `freechanges()` from Src/Zle/zle_utils.c:1472. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn freechanges() -> i32 { 0 }
+/// Port of `freechanges()` from Src/Zle/zle_utils.c:1472.
+pub fn freechanges() {                                                       // c:1472
+    // C body c:1474-1484 — walks Change linked list, frees del/ins
+    //                      strings + the Change node. Drop covers it.
+}
 
-/// Port of `freeundo()` from Src/Zle/zle_utils.c:1461. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn freeundo() -> i32 { 0 }
+/// Port of `freeundo()` from Src/Zle/zle_utils.c:1461.
+pub fn freeundo() {                                                          // c:1461
+    // C body c:1463-1470 — `freechanges(curchange); freechanges(...)
+    //                      etc. for the whole undo chain`. Drop covers.
+}
 
-/// Port of `get_undo_current_change()` from Src/Zle/zle_utils.c:1785. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_undo_current_change() -> i32 { 0 }
+/// Port of `get_undo_current_change()` from Src/Zle/zle_utils.c:1785.
+pub fn get_undo_current_change() -> i64 {                                    // c:1785
+    // C body c:1787-1810 — `if (!curchange) return -1; return curchange->changeno`.
+    //                      Without curchange tracker: -1 (no change).
+    -1
+}
 
-/// Port of `get_undo_limit_change()` from Src/Zle/zle_utils.c:1812. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_undo_limit_change() -> i32 { 0 }
+/// Port of `get_undo_limit_change()` from Src/Zle/zle_utils.c:1812.
+pub fn get_undo_limit_change() -> i64 {                                      // c:1812
+    // C body c:1814-1817 — `return undo_limit_change`. Returns the
+    //                      undo-limit anchor change number.
+    -1
+}
 
-/// Port of `getzlequery()` from Src/Zle/zle_utils.c:1197. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn getzlequery() -> i32 { 0 }
+/// Port of `getzlequery()` from Src/Zle/zle_utils.c:1197.
+pub fn getzlequery() -> i32 {                                                // c:1197
+    // C body c:1199-1300 — reads y/n response from terminal interactive
+    //                      prompt. Without a live tty read we report
+    //                      cancel (-1).
+    -1
+}
 
 /// Port of `handlefeep()` from `Src/Zle/zle_utils.c:1404`.
 /// ```c
@@ -1040,74 +1109,225 @@ pub fn handlefeep() -> i32 {                                                 // 
     0                                                                        // c:1408 return 0
 }
 
-/// Port of `handlesuffix()` from Src/Zle/zle_utils.c:1415. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn handlesuffix() -> i32 { 0 }
+/// Port of `handlesuffix()` from Src/Zle/zle_utils.c:1415.
+pub fn handlesuffix(zle: &mut crate::ported::zle::zle_main::Zle, c: i32) -> i32 { // c:1415
+    // C body c:1417-1444 — peeks the next byte; if SUFFIXLEN is set
+    //                      and the byte is in the suffix's noinsert
+    //                      set, drop the suffix; else keep + insert.
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_misc::SUFFIXLEN;
+    let _ = (c, zle);
+    let len = SUFFIXLEN.load(Ordering::SeqCst);
+    if len > 0 {
+        SUFFIXLEN.store(0, Ordering::SeqCst);
+    }
+    0
+}
 
-/// Port of `initundo()` from Src/Zle/zle_utils.c:1446. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn initundo() -> i32 { 0 }
+/// Port of `initundo()` from Src/Zle/zle_utils.c:1446.
+pub fn initundo() {                                                          // c:1446
+    // C body c:1448-1459 — `nextchanges = endnextchanges = NULL;
+    //                       lastline = ...; freeundo()`.
+    //                      Undo chain isn't a Rust struct yet; no-op.
+    freeundo();
+}
 
-/// Port of `mergeundo()` from Src/Zle/zle_utils.c:1733. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn mergeundo() -> i32 { 0 }
+/// Port of `mergeundo()` from Src/Zle/zle_utils.c:1733.
+pub fn mergeundo() {                                                         // c:1733
+    // C body c:1735-1755 — collapses next-changes into curchange.
+    //                      Undo chain deferred; no-op.
+}
 
-/// Port of `redo()` from Src/Zle/zle_utils.c:1661. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn redo() -> i32 { 0 }
+/// Port of `redo()` from Src/Zle/zle_utils.c:1661.
+pub fn redo() -> i32 {                                                       // c:1661
+    // C body c:1663-1668 — applies the next Change in the undo
+    //                      chain. Undo chain deferred; 1 (nothing).
+    1
+}
 
-/// Port of `set_undo_limit_change()` from Src/Zle/zle_utils.c:1819. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn set_undo_limit_change() -> i32 { 0 }
+/// Port of `set_undo_limit_change()` from Src/Zle/zle_utils.c:1819.
+pub fn set_undo_limit_change(_n: i64) -> i32 {                               // c:1819
+    // C body c:1821-1825 — `undo_limit_change = n; return 0`.
+    //                      Without undo_limit_change global: 0.
+    0
+}
 
-/// Port of `setline()` from Src/Zle/zle_utils.c:1129. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn setline() -> i32 { 0 }
+/// Port of `setline()` from Src/Zle/zle_utils.c:1129.
+pub fn setline(zle: &mut crate::ported::zle::zle_main::Zle, s: &str,         // c:1129
+               flags: i32) {
+    // C body c:1131-1156 — replaces zleline with `s`; if !ZSL_KEEPCS
+    //                      reset zlecs to 0 or len(s). flags bit
+    //                      ZSL_KEEPCS = 1.
+    zle.zleline.clear();
+    zle.zleline.extend(s.chars());
+    zle.zlell = zle.zleline.len();
+    if flags & 1 == 0 {
+        zle.zlecs = zle.zlell;                                               // c:1145
+    }
+    zle.resetneeded = true;
+}
 
-/// Port of `shiftchars()` from Src/Zle/zle_utils.c:846. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn shiftchars() -> i32 { 0 }
+/// Port of `shiftchars()` from Src/Zle/zle_utils.c:846.
+pub fn shiftchars(zle: &mut crate::ported::zle::zle_main::Zle, to: i32, cnt: i32) { // c:846
+    // C body c:848-865 — `if (to + cnt < zlell) memmove(line+to,
+    //                     line+to+cnt, (zlell-(to+cnt)) * char_t);
+    //                     zlell -= cnt`. Pure shift-left of `cnt`
+    //                     chars at offset `to`.
+    let to = to as usize;
+    let cnt = cnt as usize;
+    if to + cnt > zle.zleline.len() {
+        return;
+    }
+    zle.zleline.drain(to..to + cnt);
+    zle.zlell = zle.zleline.len();
+}
 
-/// Port of `showmsg()` from Src/Zle/zle_utils.c:1303. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn showmsg() -> i32 { 0 }
+/// Port of `showmsg()` from Src/Zle/zle_utils.c:1303.
+pub fn showmsg(msg: &str) {                                                  // c:1303
+    // C body c:1305-1402 — prints msg below the prompt with cursor
+    //                      position save/restore. Without curses
+    //                      substrate we emit via tracing.
+    tracing::info!(target: "zle", "{}", msg);
+}
 
-/// Port of `sizeline()` from Src/Zle/zle_utils.c:67. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn sizeline() -> i32 { 0 }
+/// Port of `sizeline()` from Src/Zle/zle_utils.c:67.
+pub fn sizeline(zle: &mut crate::ported::zle::zle_main::Zle, sz: usize) {    // c:67
+    // C body c:69-87 — `if (sz > linesz) { linesz = sz + 256; line =
+    //                  zrealloc(line, (linesz+1) * char_t) }`. Vec
+    //                  grows on demand; just reserve.
+    if sz > zle.zleline.len() {
+        zle.zleline.reserve(sz - zle.zleline.len() + 256);
+    }
+}
 
-/// Port of `spaceinline()` from Src/Zle/zle_utils.c:777. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn spaceinline() -> i32 { 0 }
+/// Port of `spaceinline()` from Src/Zle/zle_utils.c:777.
+pub fn spaceinline(zle: &mut crate::ported::zle::zle_main::Zle, ct: i32) {   // c:777
+    // C body c:779-844 — opens `ct` chars of space at zlecs by
+    //                    moving zleline[zlecs..zlell] forward `ct`,
+    //                    growing buffer if needed. zlell += ct.
+    if ct <= 0 {
+        return;
+    }
+    let ct = ct as usize;
+    for _ in 0..ct {
+        zle.zleline.insert(zle.zlecs, '\0');
+    }
+    zle.zlell = zle.zleline.len();
+}
 
-/// Port of `splitundo()` from Src/Zle/zle_utils.c:1721. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn splitundo() -> i32 { 0 }
+/// Port of `splitundo()` from Src/Zle/zle_utils.c:1721.
+pub fn splitundo() {                                                         // c:1721
+    // C body c:1723-1731 — flushes pending undo changes into a new
+    //                      change-group boundary. Undo deferred; no-op.
+}
 
-/// Port of `stringaszleline()` from Src/Zle/zle_utils.c:375. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn stringaszleline() -> i32 { 0 }
+/// Port of `stringaszleline()` from Src/Zle/zle_utils.c:375.
+pub fn stringaszleline(s: &str) -> Vec<char> {                               // c:375
+    // C body c:377-580 — converts a metafied string into ZLE_CHAR_T
+    //                    array (multibyte decode + meta unescape).
+    //                    Vec<char> is already wide-char; demeta and
+    //                    return.
+    let mut out = Vec::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == 0x83 && i + 1 < bytes.len() {                                // Meta byte
+            i += 1;
+            out.push((bytes[i] ^ 32) as char);
+        } else {
+            out.push(b as char);
+        }
+        i += 1;
+    }
+    out
+}
 
-/// Port of `unapplychange()` from Src/Zle/zle_utils.c:1634. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn unapplychange() -> i32 { 0 }
+/// Port of `unapplychange()` from Src/Zle/zle_utils.c:1634.
+pub fn unapplychange(_zle: &mut crate::ported::zle::zle_main::Zle, _ch: i32) -> i32 { // c:1634
+    // C body c:1636-1652 — reverse of applychange. Undo deferred; 0.
+    0
+}
 
-/// Port of `undo()` from Src/Zle/zle_utils.c:1601. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn undo() -> i32 { 0 }
+/// Port of `undo()` from Src/Zle/zle_utils.c:1601.
+pub fn undo() -> i32 {                                                       // c:1601
+    // C body c:1603-1632 — applies one undo step from the change list.
+    //                      Undo deferred; 1 (nothing to undo).
+    1
+}
 
-/// Port of `viundochange()` from Src/Zle/zle_utils.c:1705. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn viundochange() -> i32 { 0 }
+/// Port of `viundochange()` from Src/Zle/zle_utils.c:1705.
+pub fn viundochange() -> i32 {                                               // c:1705
+    // C body c:1707-1719 — vi `u` widget; one-step undo. Delegates to
+    //                      undo. Undo deferred; 1.
+    1
+}
 
-/// Port of `zle_free_positions()` from Src/Zle/zle_utils.c:747. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zle_free_positions() -> i32 { 0 }
+/// Port of `zle_free_positions()` from Src/Zle/zle_utils.c:747.
+pub fn zle_free_positions() {                                                // c:747
+    // C body c:749-775 — frees the linked list of saved cursor positions
+    //                    pushed by zle_save_positions. Drop covers it.
+}
 
-/// Port of `zle_restore_positions()` from Src/Zle/zle_utils.c:677. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zle_restore_positions() -> i32 { 0 }
+/// Port of `zle_restore_positions()` from Src/Zle/zle_utils.c:677.
+pub fn zle_restore_positions() {                                             // c:677
+    // C body c:679-745 — pops one (zlecs, zlell, zleline-snapshot)
+    //                    off the position stack. Stack deferred; no-op.
+}
 
-/// Port of `zle_save_positions()` from Src/Zle/zle_utils.c:619. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zle_save_positions() -> i32 { 0 }
+/// Port of `zle_save_positions()` from Src/Zle/zle_utils.c:619.
+pub fn zle_save_positions() {                                                // c:619
+    // C body c:621-675 — pushes (zlecs, zlell, zleline-snapshot) onto
+    //                    the position stack. Stack deferred; no-op.
+}
 
-/// Port of `zleaddtoline()` from Src/Zle/zle_utils.c:102. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zleaddtoline() -> i32 { 0 }
+/// Port of `zleaddtoline()` from Src/Zle/zle_utils.c:102.
+pub fn zleaddtoline(zle: &mut crate::ported::zle::zle_main::Zle, ch: i32) {  // c:102
+    // C body c:104-115 — `sizeline(zlell+1); zleline[zlell] = ch;
+    //                    zleline[++zlell] = '\\0'`.
+    zle.zleline.push(ch as u8 as char);
+    zle.zlell = zle.zleline.len();
+}
 
-/// Port of `zlecallhook()` from Src/Zle/zle_utils.c:1755. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zlecallhook() -> i32 { 0 }
+/// Port of `zlecallhook()` from Src/Zle/zle_utils.c:1755.
+pub fn zlecallhook(name: &str, arg: Option<&str>) {                          // c:1755
+    // C body c:1757-1840 — looks up shfunc `name` and dispatches via
+    //                      execzlefunc. Without exec hook we record
+    //                      via tracing.
+    tracing::debug!(target: "zle", "zlecallhook({}, {:?})", name, arg);
+}
 
 /// Port of `zlecharasstring()` from Src/Zle/zle_utils.c:117. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zlecharasstring() -> i32 { 0 }
+pub fn zlecharasstring(c: char, buf: &mut String) -> i32 {                   // c:117
+    // C body c:119-145 — converts a ZLE_CHAR_T to its display form
+    //                    (UTF-8 multibyte if MULTIBYTE_SUPPORT, else
+    //                    raw byte). Vec<char> is wide-char already;
+    //                    just append.
+    let start = buf.len();
+    buf.push(c);
+    (buf.len() - start) as i32
+}
 
 /// Port of `zlegetline()` from Src/Zle/zle_utils.c:547. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zlegetline() -> i32 { 0 }
+pub fn zlegetline(zle: &crate::ported::zle::zle_main::Zle,                   // c:148
+                  ll: &mut usize, cs: &mut usize) -> Vec<char> {
+    // C body c:150-200 — `if (zlemetaline) { *ll=zlemetall; *cs=zlemetacs;
+    //                     return ztrdup(zlemetaline) } else
+    //                     return zlelineasstring(...)`. Snapshot of the
+    //                     current line + cursor.
+    *ll = zle.zlell;
+    *cs = zle.zlecs;
+    zle.zleline.clone()
+}
 
 /// Port of `zlelineasstring()` from Src/Zle/zle_utils.c:192. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zlelineasstring() -> i32 { 0 }
+pub fn zlelineasstring(line: &[char], ll: usize, _flags: i32) -> String {    // c:282
+    // C body c:284-373 — encodes ZLE_CHAR_T array to a metafied
+    //                    multibyte string. Vec<char> → String is
+    //                    direct; meta encoding skipped (we don't run
+    //                    through zsh's parser path).
+    line.iter().take(ll).collect()
+}
 
 #[cfg(test)]
 mod findbol_findeol_tests {
