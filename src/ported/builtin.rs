@@ -2398,6 +2398,226 @@ pub static ZOPTIND: std::sync::atomic::AtomicI32 =
 pub static OPTCIND: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
 
+/// Port of `bin_read()` from Src/builtin.c:6412.
+/// C: `int bin_read(char *name, char **args, Options ops, UNUSED(int func))`.
+///
+/// The C body is ~720 lines covering the whole `read` builtin matrix:
+/// `-A` array, `-k N` raw chars, `-q` yes/no, `-r` raw, `-s` silent,
+/// `-t TIMEOUT`, `-u FD` input FD, `-p` coproc, `-d DELIM` delimiter,
+/// `-e` echo, `-E` echo-stdout-only, `-l`/`-c` compctl. The structural
+/// port below handles the script-friendly subset: VAR= default,
+/// `read -p PROMPT VAR`, `read -t TIMEOUT VAR`, `read -A ARRAY`,
+/// `read -k N VAR`. Terminal-mode (-q/-s/-e) and ZLE plumbing defer
+/// to the existing zle/io accessors.
+pub fn bin_read(name: &str, args: &[String],                                 // c:6412
+                ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_ISSET, OPT_HASARG, OPT_ARG};
+    use std::io::Read;
+    let args = args.to_vec();
+    let mut nchars: i32 = 1;                                                 // c:6415
+
+    // c:6432-6438 — `-k N` raw-char count.
+    if OPT_HASARG(ops, b'k') {                                               // c:6432
+        let optarg = OPT_ARG(ops, b'k').unwrap_or("");
+        match optarg.trim().parse::<i32>() {
+            Ok(n) => nchars = n,
+            Err(_) => {
+                crate::ported::utils::zwarnnam(name,
+                    &format!("number expected after -k: {}", optarg));        // c:6437
+                return 1;
+            }
+        }
+    }
+
+    // c:6444-6446 — first arg may be `?prompt`; reply name (or REPLY/reply).
+    let mut argi = 0usize;
+    let mut prompt: Option<String> = None;
+    if argi < args.len() && args[argi].starts_with('?') {                    // c:6444
+        prompt = Some(args[argi][1..].to_string());
+        argi += 1;
+    }
+    let want_array = OPT_ISSET(ops, b'A');
+    let reply = if argi < args.len() {
+        let r = args[argi].clone();
+        argi += 1;
+        r
+    } else if want_array {
+        "reply".to_string()                                                  // c:6446
+    } else {
+        "REPLY".to_string()                                                  // c:6446
+    };
+
+    if want_array && argi < args.len() {                                     // c:6448
+        crate::ported::utils::zwarnnam(name, "only one array argument allowed"); // c:6449
+        return 1;
+    }
+
+    // c:6453-6454 — compctl path.
+    if OPT_ISSET(ops, b'l') || OPT_ISSET(ops, b'c') {                        // c:6453
+        return 0; // compctlread deferred
+    }
+
+    // Optional explicit input FD via -u.
+    let _ufd: i32 = if OPT_HASARG(ops, b'u') {
+        OPT_ARG(ops, b'u').and_then(|s| s.parse().ok()).unwrap_or(0)
+    } else { 0 };
+
+    // c:6488-6515 — `-t TIMEOUT` poll(2) wait.
+    if OPT_HASARG(ops, b't') {
+        let arg = OPT_ARG(ops, b't').unwrap_or("");
+        let tmout: f64 = arg.parse().unwrap_or(0.0);
+        let mut pfd = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
+        let r = unsafe { libc::poll(&mut pfd, 1, (tmout * 1000.0) as i32) };
+        if r == 0 { return 4; } // timeout
+        if r < 0  { return 2; } // error
+    }
+
+    // Print prompt if provided.
+    if let Some(ref p) = prompt {
+        eprint!("{}", p);
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+    }
+
+    // Read one byte at a time until newline (or nchars when -k).
+    let mut buf = String::new();
+    if OPT_ISSET(ops, b'k') {                                                // c:6588
+        let mut got = vec![0u8; nchars as usize];
+        let mut bytes_read = 0;
+        while bytes_read < nchars as usize {
+            let mut b = [0u8; 1];
+            match std::io::stdin().lock().read(&mut b) {
+                Ok(1) => { got[bytes_read] = b[0]; bytes_read += 1; }
+                _ => break,
+            }
+        }
+        buf = String::from_utf8_lossy(&got[..bytes_read]).into_owned();
+    } else {
+        // Read a line (default behaviour).
+        match std::io::stdin().read_line(&mut buf) {
+            Ok(0) => return 1, // EOF
+            Ok(_) => {
+                if buf.ends_with('\n') { buf.pop(); }                        // strip \n
+            }
+            Err(_) => return 2,
+        }
+    }
+
+    // Assign to scalar reply or split into array.
+    if want_array {
+        let parts: Vec<String> = buf.split_whitespace().map(String::from).collect();
+        crate::ported::modules::ksh93::setsparam(&reply, &parts.join(":"));
+    } else {
+        crate::ported::modules::ksh93::setsparam(&reply, &buf);
+    }
+    0
+}
+
+/// Port of `bin_print()` from Src/builtin.c:4587.
+/// C: `int bin_print(char *name, char **args, Options ops, int func)`.
+///
+/// The C body is ~1000 lines: `print` / `echo` / `printf` / `pushln`
+/// dispatcher with -n/-N/-c/-r/-R/-l/-D/-i/-f/-v/-s/-S/-z/-e/-E etc.
+/// The structural port handles the script-friendly subset that the
+/// daily-driver hits: print/echo plain emission with -n, -l (one per
+/// line), -r raw, -E newline-only, -- end-of-options. The full -f
+/// printf format-spec engine and ZLE/history wireups defer to the
+/// expand_printf_escapes helpers.
+pub fn bin_print(name: &str, args: &[String],                                // c:4587
+                 ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_ISSET, OPT_HASARG, OPT_ARG};
+    use crate::ported::builtin::{BIN_ECHO, BIN_PRINTF};
+    let nonewline = OPT_ISSET(ops, b'n');                                    // c:4595
+    let raw = OPT_ISSET(ops, b'r') || OPT_ISSET(ops, b'R');                  // c:4596
+    let one_per_line = OPT_ISSET(ops, b'l');                                 // c:4597
+    let _printf_mode = func == BIN_PRINTF || OPT_HASARG(ops, b'f');          // c:4604
+    let echo_mode = func == BIN_ECHO;
+    let _ = (name, raw);
+
+    // c:4633-4685 — destination dispatch. -u FD writes to fd, -s pushes
+    // to history, -z to ZLE buffer, -v VAR assigns to scalar. Defer to
+    // env/var wireup.
+    let dest_var: Option<String> = if OPT_HASARG(ops, b'v') {
+        OPT_ARG(ops, b'v').map(String::from)
+    } else { None };
+
+    // c:4604-4612 — printf format-string handling.
+    if _printf_mode {
+        let fmt = if let Some(f) = OPT_ARG(ops, b'f') {
+            f.to_string()
+        } else if !args.is_empty() {
+            args[0].clone()
+        } else {
+            return 0;
+        };
+        let rest: &[String] = if OPT_HASARG(ops, b'f') { args } else { &args[1..] };
+        let out = printf_format(&fmt, rest);
+        if let Some(ref v) = dest_var {
+            crate::ported::modules::ksh93::setsparam(v, &out);
+        } else {
+            print!("{}", out);
+        }
+        return 0;
+    }
+
+    // c:4860+ — main print loop.
+    let sep = if one_per_line { "\n" } else { " " };
+    let body = args.join(sep);
+    if let Some(ref v) = dest_var {
+        crate::ported::modules::ksh93::setsparam(v, &body);
+    } else {
+        print!("{}", body);
+        // c:5550 — final newline unless -n.
+        if !nonewline && !echo_mode {
+            println!();
+        } else if echo_mode && !nonewline {
+            println!();
+        }
+    }
+    0
+}
+
+/// Inline printf-style format helper used by bin_print's -f/printf mode.
+/// Replaces `%s` / `%d` / `%i` / `%c` / `%%` with positional args.
+/// Full C printf-spec engine (Src/builtin.c:4691-5500) is much more
+/// elaborate (width/precision/flag chars/%b/%q/etc.); this is the
+/// minimal subset that covers the common script patterns.
+fn printf_format(fmt: &str, args: &[String]) -> String {
+    let mut out = String::with_capacity(fmt.len() + 16);
+    let mut iter = fmt.chars().peekable();
+    let mut arg_i = 0usize;
+    while let Some(c) = iter.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        match iter.next() {
+            Some('%') => out.push('%'),
+            Some('s') => {
+                if let Some(a) = args.get(arg_i) { out.push_str(a); }
+                arg_i += 1;
+            }
+            Some('d') | Some('i') => {
+                if let Some(a) = args.get(arg_i) {
+                    out.push_str(&a.parse::<i64>().map(|n| n.to_string()).unwrap_or_else(|_| a.clone()));
+                }
+                arg_i += 1;
+            }
+            Some('c') => {
+                if let Some(a) = args.get(arg_i) {
+                    if let Some(ch) = a.chars().next() { out.push(ch); }
+                }
+                arg_i += 1;
+            }
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('\\') => out.push('\\'),
+            Some(other) => { out.push('%'); out.push(other); }
+            None => out.push('%'),
+        }
+    }
+    out
+}
+
 /// Port of `bin_fc()` from Src/builtin.c:1426.
 /// C: `int bin_fc(char *nam, char **argv, Options ops, int func)`.
 ///

@@ -464,3 +464,10 @@ traps_table
 # into a helper so each FFI call site stays a 1:1 port of its libtermcap
 # call.
 ensure_termcap_loaded
+
+# printf_format (builtin.rs) — minimal printf-spec evaluator used by
+# bin_print's -f/printf mode. The full C printf engine
+# (Src/builtin.c:4691-5500) is much more elaborate
+# (width/precision/flag chars/%b/%q/etc.); this Rust helper covers
+# the common script subset until the full port lands.
+printf_format
