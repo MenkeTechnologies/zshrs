@@ -1828,7 +1828,7 @@ mod tests {
 /// `recorder_attrs_for(name)` (readonly/export/global) — array shape
 /// and APPEND get OR'd in by emit_array_assign.
 #[cfg(feature = "recorder")]
-fn emit_path_or_assign(
+pub(crate) fn emit_path_or_assign(
     name: &str,
     values: &[String],
     attrs: crate::recorder::ParamAttrs,
@@ -2217,7 +2217,10 @@ impl ShellExecutor {
     }
 
     pub(crate) fn dispatch_pending_traps(&mut self) {}
-    pub(crate) fn recorder_ctx(&self) -> std::sync::Arc<()> { std::sync::Arc::new(()) }
+    // Note: `recorder_ctx()` lives in src/extensions/recorder.rs
+    // (gated behind --features recorder). Do not stub it here or
+    // you'll get a duplicate-definition error when the recorder
+    // feature is enabled.
 
     pub(crate) fn bin_cd(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();

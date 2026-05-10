@@ -2822,6 +2822,75 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
         PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_WITH_NAMESPACE,
         EMULATE_KSH,
     };
+
+    // PFA-SMR aspect: bin_typeset is the C dispatch site for
+    // typeset/declare/integer/float/local/export/readonly/private —
+    // every one of those state-mutating builtins lands here with a
+    // funcid (BIN_EXPORT/BIN_READONLY/BIN_TYPESET/...) discriminant.
+    // Emit a per-name event per the recorder schema.
+    #[cfg(feature = "recorder")]
+    if crate::recorder::is_enabled() {
+        let ctx = crate::recorder::recorder_ctx_global();
+        // Collect option letters (`-x`/`+x` body) so ParamAttrs reflects
+        // the typeset flag set the C source sees in `on`.
+        let mut letters = String::new();
+        let mut tied_mode = false;
+        for a in argv {
+            if a.starts_with('-') || a.starts_with('+') {
+                let body = &a[1..];
+                letters.push_str(body);
+                if body.contains('T') { tied_mode = true; }
+            }
+        }
+        // Funcid-driven attr seeding: BIN_EXPORT seeds nothing
+        // (recorder uses emit_export for those), BIN_READONLY seeds
+        // SCALAR|READONLY, BIN_FLOAT seeds FLOAT, BIN_INTEGER seeds
+        // INTEGER. Otherwise pass the letter set through
+        // ParamAttrs::from_flag_chars verbatim.
+        let mut attrs = crate::recorder::ParamAttrs::from_flag_chars(&letters);
+        match func {
+            crate::ported::builtin::BIN_READONLY => {
+                attrs.set(crate::recorder::ParamAttrs::SCALAR);
+                attrs.set(crate::recorder::ParamAttrs::READONLY);
+            }
+            _ => {}
+        }
+        // BIN_EXPORT routes to emit_export (different schema row).
+        if func == crate::ported::builtin::BIN_EXPORT {
+            for a in argv {
+                if a == "-p" || a.starts_with('-') { continue; }
+                if let Some((k, v)) = a.split_once('=') {
+                    crate::recorder::emit_export(k, Some(v), ctx.clone());
+                } else {
+                    crate::recorder::emit_export(a, None, ctx.clone());
+                }
+            }
+        } else {
+            // Suppress the emit when invoked as `local`/`private` inside
+            // a function — those scope to the frame and don't merit a
+            // top-level state-mutation row. local_scope_depth is tracked
+            // by the executor; defer to the global LOCALLEVEL counter.
+            let is_locallike = matches!(name, "local" | "private");
+            let inside_function =
+                LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) > 0;
+            if !is_locallike || !inside_function {
+                let mut tied_seen = 0usize;
+                for a in argv {
+                    if a.starts_with('-') || a.starts_with('+') { continue; }
+                    if tied_mode {
+                        // For `typeset -T X Y [SEP]`, only X and Y are names.
+                        tied_seen += 1;
+                        if tied_seen > 2 { break; }
+                    }
+                    if let Some((k, v)) = a.split_once('=') {
+                        crate::recorder::emit_typeset_attrs(k, Some(v), attrs, ctx.clone());
+                    } else {
+                        crate::recorder::emit_typeset_attrs(a, None, attrs, ctx.clone());
+                    }
+                }
+            }
+        }
+    }
     let mut ops = ops.clone();
     let mut on: u32 = 0;                                                     // c:2661
     let mut off: u32 = 0;                                                    // c:2661
@@ -3369,6 +3438,18 @@ pub fn bin_unset(name: &str, argv: &[String],                                // 
     let mut returnval = 0i32;                                                // c:3823
     let mut match_count = 0i32;                                              // c:3823
 
+    // PFA-SMR aspect: emit unset events for each named param. The
+    // recorder tracks state-mutations across the shell session for
+    // the zshrs-recorder binary's replay/inspect tooling.
+    #[cfg(feature = "recorder")]
+    if crate::recorder::is_enabled() {
+        let ctx = crate::recorder::recorder_ctx_global();
+        for a in argv {
+            if a.starts_with('-') || a == "--" { continue; }
+            crate::recorder::emit_unset(a, ctx.clone());
+        }
+    }
+
     // c:3826 — `if (OPT_ISSET(ops,'f')) return bin_unhash(name, argv, ops, func);`
     if OPT_ISSET(ops, b'f') {                                                // c:3826
         return bin_unhash(name, argv, ops, func);                            // c:3827
@@ -3442,6 +3523,22 @@ pub fn bin_unset(name: &str, argv: &[String],                                // 
 ///   set signal traps.
 pub fn bin_trap(name: &str, argv: &[String],                                 // c:7347
                 _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    // PFA-SMR aspect: record `trap HANDLER SIG...` calls. Skip
+    // listing-only forms (`trap`, `trap -l`, `trap -p`) — those don't
+    // mutate state.
+    #[cfg(feature = "recorder")]
+    if crate::recorder::is_enabled() {
+        let listing = argv.is_empty()
+            || (argv.len() == 1 && (argv[0] == "-l" || argv[0] == "-p"));
+        if !listing && argv.len() >= 2 {
+            let ctx = crate::recorder::recorder_ctx_global();
+            let handler = &argv[0];
+            for sig in &argv[1..] {
+                crate::recorder::emit_trap(sig, handler, ctx.clone());
+            }
+        }
+    }
+
     let mut argv = argv.to_vec();
     // c:7353 — `if (*argv && !strcmp(*argv, "--")) argv++;`
     if !argv.is_empty() && argv[0] == "--" {                                 // c:7353
@@ -3681,6 +3778,20 @@ pub fn bin_hash(name: &str, argv: &[String],                                 // 
     let mut printflags = 0i32;                                               // c:4240
     let dir_mode = OPT_ISSET(ops, b'd');                                     // c:4242
 
+    // PFA-SMR aspect: only `hash -d NAME=PATH` mutates the named-dir
+    // table; the default `hash CMD=PATH` form populates a runtime
+    // command cache that the recorder doesn't re-apply.
+    #[cfg(feature = "recorder")]
+    if crate::recorder::is_enabled() && dir_mode {
+        let ctx = crate::recorder::recorder_ctx_global();
+        for a in argv {
+            if a.starts_with('-') { continue; }
+            if let Some((k, v)) = a.split_once('=') {
+                crate::recorder::emit_hash_d(k, v, ctx.clone());
+            }
+        }
+    }
+
     // c:4247-4263 — `-r` empty / `-f` fill (no other args).
     if OPT_ISSET(ops, b'r') || OPT_ISSET(ops, b'f') {                        // c:4247
         if !argv.is_empty() {                                                // c:4249
@@ -3825,6 +3936,17 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
     let mut returnval = 0i32;                                                // c:4351
     let mut all = 0i32;                                                      // c:4351
     let mut match_count = 0i32;                                              // c:4351
+
+    // PFA-SMR aspect: when invoked as `unalias`, record the un-alias
+    // events so the replay can suppress earlier `alias` calls.
+    #[cfg(feature = "recorder")]
+    if crate::recorder::is_enabled() && func == crate::ported::builtin::BIN_UNALIAS {
+        let ctx = crate::recorder::recorder_ctx_global();
+        for a in argv {
+            if a.starts_with('-') && a != "-" { continue; }
+            crate::recorder::emit_unalias(a, ctx.clone());
+        }
+    }
 
     // c:4355-4373 — table-pick dispatch.
     enum Tab { CmdNam, NamedDir, Shfunc, Alias, SufAlias }
@@ -4354,6 +4476,14 @@ pub fn bin_dot(name: &str, argv: &[String],                                  // 
     if argv.is_empty() {                                                     // c:6068
         return 0;                                                            // c:6069
     }
+
+    // PFA-SMR aspect: record the source path so the replay tool can
+    // re-apply the same source/dot at the same call site.
+    #[cfg(feature = "recorder")]
+    if crate::recorder::is_enabled() && !argv[0].is_empty() {
+        let ctx = crate::recorder::recorder_ctx_global();
+        crate::recorder::emit_source(&argv[0], ctx);
+    }
     // c:6071-6074 — save pparams, install argv[1..] as new pparams.
     let saved_pparams: Option<Vec<String>> = if argv.len() > 1 {             // c:6072
         let mut pp = PPARAMS.lock().unwrap_or_else(|e| { PPARAMS.clear_poison(); e.into_inner() });
@@ -4449,6 +4579,32 @@ pub fn bin_dot(name: &str, argv: &[String],                                  // 
 pub fn bin_set(nam: &str, args: &[String],                                   // c:601
                _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::{EMULATE_ZSH, EMULATION};
+
+    // PFA-SMR aspect: emit setopt/unsetopt events for the POSIX
+    // `set -o NAME` / `set +o NAME` form. This is the third option
+    // syntax (alongside setopt NAME / unsetopt NAME); a recorder
+    // user expects all three to surface in `zwhere -k setopt`.
+    #[cfg(feature = "recorder")]
+    if crate::recorder::is_enabled() && !args.is_empty() {
+        let ctx = crate::recorder::recorder_ctx_global();
+        let mut iter = args.iter().peekable();
+        while let Some(a) = iter.next() {
+            match a.as_str() {
+                "-o" => {
+                    if let Some(name) = iter.next() {
+                        crate::recorder::emit_setopt(name, ctx.clone());
+                    }
+                }
+                "+o" => {
+                    if let Some(name) = iter.next() {
+                        crate::recorder::emit_unsetopt(name, ctx.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     let mut argv: Vec<String> = args.to_vec();
     let mut hadopt = false;                                                  // c:603
     let mut hadplus = false;                                                 // c:603
@@ -4626,228 +4782,3 @@ pub fn bin_set(nam: &str, args: &[String],                                   // 
     0                                                                        // c:715
 }
 
-// =====================================================================
-// RECORDER HOOKS PRESERVED FROM DELETED IMPL ShellExecutor BLOCKS
-// =====================================================================
-//
-// The bin_* methods on ShellExecutor were deleted per user feedback
-// ("each of those bin_* is fake anyways"). The recorder emission
-// blocks they contained are preserved here as commented code so the
-// PFA-SMR (Plugin-Framework-Agnostic State-Modification Recorder)
-// integration can be re-wired into the canonical bin_* free-fn ports
-// elsewhere in this file in follow-up work.
-//
-// --- snippet 1 ---
-//         if crate::recorder::is_enabled() {
-//             let ctx = self.recorder_ctx();
-//             for a in args {
-//                 if a == "-p" || a.starts_with('-') {
-//                     continue;
-//                 }
-//                 if let Some((k, v)) = a.split_once('=') {
-//                     crate::recorder::emit_export(k, Some(v), ctx.clone());
-//                 } else {
-//                     crate::recorder::emit_export(a, None, ctx.clone());
-//                 }
-//             }
-//         }
-//
-// --- snippet 2 ---
-//         if crate::recorder::is_enabled() {
-//             let ctx = self.recorder_ctx();
-//             for a in args {
-//                 if a.starts_with('-') || a == "--" {
-//                     continue;
-//                 }
-//                 crate::recorder::emit_unset(a, ctx.clone());
-//             }
-//         }
-//
-// --- snippet 3 ---
-//         if crate::recorder::is_enabled() && !args[0].is_empty() {
-//             let ctx = self.recorder_ctx();
-//             crate::recorder::emit_source(&args[0], ctx);
-//         }
-//
-// --- snippet 4 ---
-//             let cache_disabled = crate::recorder::is_enabled()
-//                 || !crate::script_cache::cache_enabled();
-//
-// --- snippet 5 ---
-//         if crate::recorder::is_enabled() {
-//             let ctx = self.recorder_ctx();
-//             let mut letters = String::new();
-//             let mut tied_mode = false;
-//             for a in args {
-//                 if a.starts_with('-') || a.starts_with('+') {
-//                     let body = &a[1..];
-//                     letters.push_str(body);
-//                     if body.contains('T') {
-//                         tied_mode = true;
-//                     }
-//                     continue;
-//                 }
-//             }
-//             // builtin_typeset_named is also reachable as `local`,
-//             // `declare`, `private`. Inside a function scope `local NAME`
-//             // is a true local variable, NOT global state, so skip the
-//             // emit. At top level (depth 0) `local` is an error and
-//             // never reaches this hook anyway.
-//             let is_locallike = matches!(invoked_as, "local" | "private");
-//             if !is_locallike || self.local_scope_depth == 0 {
-//                 let attrs = crate::recorder::ParamAttrs::from_flag_chars(&letters);
-//                 let mut tied_seen = 0usize;
-//                 for a in args {
-//                     if a.starts_with('-') || a.starts_with('+') {
-//                         continue;
-//                     }
-//                     // For `typeset -T X Y [SEP]`, only X and Y are names.
-//                     if tied_mode {
-//                         tied_seen += 1;
-//                         if tied_seen > 2 {
-//                             break;
-//                         }
-//                     }
-//                     if let Some((k, v)) = a.split_once('=') {
-//                         crate::recorder::emit_typeset_attrs(k, Some(v), attrs, ctx.clone());
-//                     } else {
-//                         crate::recorder::emit_typeset_attrs(a, None, attrs, ctx.clone());
-//                     }
-//                 }
-//             }
-//         }
-//
-// --- snippet 6 ---
-//         if crate::recorder::is_enabled() {
-//             let ctx = self.recorder_ctx();
-//             for a in args {
-//                 if a == "--" || a.starts_with('-') || a.starts_with('+') {
-//                     continue;
-//                 }
-//                 crate::recorder::emit_function(a, Some("autoload"), ctx.clone());
-//             }
-//         }
-//
-// --- snippet 7 ---
-//         if crate::recorder::is_enabled() {
-//             // Skip listing-only forms (`trap`, `trap -l`, `trap -p`).
-//             let listing = args.is_empty()
-//                 || (args.len() == 1 && (args[0] == "-l" || args[0] == "-p"));
-//             if !listing && args.len() >= 2 {
-//                 let ctx = self.recorder_ctx();
-//                 let handler = &args[0];
-//                 for sig in &args[1..] {
-//                     crate::recorder::emit_trap(sig, handler, ctx.clone());
-//                 }
-//             }
-//         }
-//
-// --- snippet 8 ---
-//         if crate::recorder::is_enabled() {
-//             let ctx = self.recorder_ctx();
-//             for a in args {
-//                 if a.starts_with('-') && a != "-" {
-//                     continue;
-//                 }
-//                 crate::recorder::emit_unalias(a, ctx.clone());
-//             }
-//         }
-//
-// --- snippet 9 ---
-//         if crate::recorder::is_enabled() && !args.is_empty() {
-//             let ctx = self.recorder_ctx();
-//             let mut iter = args.iter().peekable();
-//             while let Some(a) = iter.next() {
-//                 match a.as_str() {
-//                     "-o" => {
-//                         if let Some(name) = iter.next() {
-//                             crate::recorder::emit_setopt(name, ctx.clone());
-//                         }
-//                     }
-//                     "+o" => {
-//                         if let Some(name) = iter.next() {
-//                             crate::recorder::emit_unsetopt(name, ctx.clone());
-//                         }
-//                     }
-//                     _ => {}
-//                 }
-//             }
-//         }
-//
-// --- snippet 10 ---
-//         if crate::recorder::is_enabled() {
-//             let dir_mode = args.iter().any(|a| {
-//                 a.starts_with('-') && a.len() > 1 && a[1..].chars().any(|c| c == 'd')
-//             });
-//             if dir_mode {
-//                 let ctx = self.recorder_ctx();
-//                 for a in args {
-//                     if a.starts_with('-') {
-//                         continue;
-//                     }
-//                     if let Some((k, v)) = a.split_once('=') {
-//                         crate::recorder::emit_hash_d(k, v, ctx.clone());
-//                     }
-//                 }
-//             }
-//         }
-//
-// --- snippet 11 ---
-//         if crate::recorder::is_enabled() {
-//             let ctx = self.recorder_ctx();
-//             let mut attrs = crate::recorder::ParamAttrs::NONE;
-//             attrs.set(crate::recorder::ParamAttrs::FLOAT);
-//             for a in args {
-//                 if a.starts_with('-') {
-//                     continue;
-//                 }
-//                 if let Some((k, v)) = a.split_once('=') {
-//                     crate::recorder::emit_typeset_attrs(k, Some(v), attrs, ctx.clone());
-//                 } else {
-//                     crate::recorder::emit_typeset_attrs(a, None, attrs, ctx.clone());
-//                 }
-//             }
-//         }
-//
-// --- snippet 12 ---
-//         if crate::recorder::is_enabled() {
-//             let ctx = self.recorder_ctx();
-//             let mut letters = String::from("i");
-//             for a in args {
-//                 if let Some(rest) = a.strip_prefix('-') {
-//                     letters.push_str(rest);
-//                 } else if let Some(rest) = a.strip_prefix('+') {
-//                     letters.push_str(rest);
-//                 }
-//             }
-//             let attrs = crate::recorder::ParamAttrs::from_flag_chars(&letters);
-//             for a in args {
-//                 if a.starts_with('-') {
-//                     continue;
-//                 }
-//                 if let Some((k, v)) = a.split_once('=') {
-//                     crate::recorder::emit_typeset_attrs(k, Some(v), attrs, ctx.clone());
-//                 } else {
-//                     crate::recorder::emit_typeset_attrs(a, None, attrs, ctx.clone());
-//                 }
-//             }
-//         }
-//
-// --- snippet 13 ---
-//         if crate::recorder::is_enabled() {
-//             let ctx = self.recorder_ctx();
-//             let mut attrs = crate::recorder::ParamAttrs::NONE;
-//             attrs.set(crate::recorder::ParamAttrs::SCALAR);
-//             attrs.set(crate::recorder::ParamAttrs::READONLY);
-//             for a in args {
-//                 if a == "-p" || a.starts_with('-') {
-//                     continue;
-//                 }
-//                 if let Some((k, v)) = a.split_once('=') {
-//                     crate::recorder::emit_typeset_attrs(k, Some(v), attrs, ctx.clone());
-//                 } else {
-//                     crate::recorder::emit_typeset_attrs(a, None, attrs, ctx.clone());
-//                 }
-//             }
-//         }
-//

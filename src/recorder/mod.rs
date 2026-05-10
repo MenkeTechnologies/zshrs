@@ -292,6 +292,32 @@ pub fn is_enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
+/// Free-fn equivalent of `ShellExecutor::recorder_ctx()` — synthesizes
+/// a RecordCtx from the live env vars (`$LINENO`, `$ZSH_SCRIPT`,
+/// `$funcstack`) so canonical free-fn ports of C builtins (which
+/// don't take a `&ShellExecutor`) can emit recorder events without
+/// the executor in scope. Mirrors src/extensions/recorder.rs at
+/// line 62 — same source-of-truth, different binding.
+pub fn recorder_ctx_global() -> RecordCtx {
+    let line = std::env::var("LINENO").ok().and_then(|s| s.parse::<u32>().ok());
+    let file = std::env::var("ZSH_SCRIPT").ok()
+        .or_else(|| std::env::var("ZSH_ARGZERO").ok())
+        .or_else(|| std::env::var("0").ok());
+    // funcstack is an array param exposed as a colon-joined env var via
+    // ksh93::setsparam (the canonical free-fn bridge); split + reverse
+    // to match the executor-side `funcstack > parent > grand` chain.
+    let fn_chain = std::env::var("funcstack").ok().and_then(|s| {
+        if s.is_empty() {
+            None
+        } else {
+            let mut parts: Vec<&str> = s.split(':').collect();
+            parts.reverse();
+            Some(parts.join(" > "))
+        }
+    });
+    RecordCtx { file, line, fn_chain }
+}
+
 #[inline]
 pub fn set_daemon_disabled(v: bool) {
     DAEMON_DISABLED.store(v, Ordering::Relaxed);
