@@ -1345,7 +1345,7 @@ impl Default for CmdStack {
 /// Port of `match_named_colour()` from Src/prompt.c:1915 —
 /// recognises the same eight-name palette plus `default`, then
 /// falls through to numeric parsing.
-pub fn match_named_colour(name: &str) -> Option<u8> {
+pub fn match_named_colour(name: &str) -> Option<u8> {                        // c:1915
     match name.to_lowercase().as_str() {
         "black" => Some(0),
         "red" => Some(1),
@@ -1487,7 +1487,7 @@ pub fn transient_prompt(_original: &str) -> String {
 /// Port of `promptpath()` from Src/prompt.c:134 — used for `%~`,
 /// `%/`, `%c`, etc. The `npath` argument trims to the last N
 /// components.
-pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
+pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String { // c:134
     let display = if tilde && !home.is_empty() && path.starts_with(home) {
         let rest = &path[home.len()..];
         if rest.is_empty() || rest.starts_with('/') {
@@ -1570,7 +1570,7 @@ pub fn promptexpand(                                                         // 
 /// Escape text attributes back to a `%`-prefixed prompt string.
 /// Port of `zattrescape()` from Src/prompt.c:257 — inverse of
 /// `parsehighlight()`; used by the `print -P` output path.
-pub fn zattrescape(attrs: &TextAttrs) -> String {
+pub fn zattrescape(attrs: &TextAttrs) -> String {                            // c:257
     let mut result = String::new();
     if attrs.bold {
         result.push_str("%B");
@@ -1608,7 +1608,7 @@ fn color_name(c: &Color) -> String {
 
 /// Parse a single colour character from a `%F{...}` argument.
 /// Port of `parsecolorchar()` from Src/prompt.c:318.
-pub fn parsecolorchar(arg: &str, is_fg: bool) -> Option<(Color, String)> {
+pub fn parsecolorchar(arg: &str, is_fg: bool) -> Option<(Color, String)> {   // c:318
     let color = Color::from_name(arg)?;
     let ansi = if is_fg {
         color.to_ansi_fg()
@@ -1622,7 +1622,7 @@ pub fn parsecolorchar(arg: &str, is_fg: bool) -> Option<(Color, String)> {
 /// Port of `pputc()` from Src/prompt.c:976 — the C source's
 /// per-character buffer-append helper. Rust's `String::push`
 /// covers it directly; this wrapper exists for call-site parity.
-pub fn pputc(buf: &mut String, c: char) {
+pub fn pputc(buf: &mut String, c: char) {                                    // c:976
     buf.push(c);
 }
 
@@ -1637,7 +1637,7 @@ pub fn addbufspc(_buf: &mut String, _need: usize) {                         // c
 
 /// Append a string to the prompt buffer.
 /// Port of `stradd()` from Src/prompt.c:1016.
-pub fn stradd(buf: &mut String, s: &str) {
+pub fn stradd(buf: &mut String, s: &str) {                                   // c:1016
     buf.push_str(s);
 }
 
@@ -1645,7 +1645,7 @@ pub fn stradd(buf: &mut String, s: &str) {
 /// Port of `tsetcap()` from Src/prompt.c:1083 — the C source
 /// resolves termcap/terminfo names; we map the most-common ones
 /// directly onto ANSI sequences.
-pub fn tsetcap(cap: &str) -> String {
+pub fn tsetcap(cap: &str) -> String {                                        // c:1083
     // Map common capability names to ANSI sequences
     match cap {
         "md" | "bold" => "\x1b[1m".to_string(),

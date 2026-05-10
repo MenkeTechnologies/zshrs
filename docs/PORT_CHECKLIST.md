@@ -85,19 +85,27 @@ isn't ticked until ALL of them pass.
 
 ---
 
-## Status — RESET (all unchecked, restarting from beginning)
+## Status Summary (updated 2026-05-10)
 
-The earlier session ticked 10 files (`9c9d52e688`, `1c8d3681e3`, etc.)
-but those passes did NOT enforce rules 1–4 above (Rust-only structs
-were left in place; some stubs were body-ported but kept their
-Rust-only wrappers). All checkboxes reset; we revisit each file.
+**Codebase metrics:**
+- `src/ported/`: 187k lines, 89 files (FROZEN)
+- `// c:NNN` citations: subst.rs (2428), builtin.rs (1650), zsh_h.rs (681), module.rs (364)
+- `/// Port of` citations: params.rs (173), zsh_h.rs (118), utils.rs (96)
 
-In-flight cleanup of files with Rust-only types: complete (the
-`modules/{stat,nearcolor,example,mapfile,hlgroup,zprof}.rs` set
-flagged earlier are all done or BLOCKED with TODO.md tracking).
-(`modules/hlgroup.rs`
-has no remaining Rust-only types but is BLOCKED on a real port of
-`Src/prompt.c`'s `match_highlight` and `zattrescape` — see TODO.md.)
+**ADHOC warnings still present (should be deleted/ported):**
+| File | Count |
+|------|-------|
+| `modules/parameter.rs` | 72 |
+| `modules/db_gdbm.rs` | 21 |
+| `modules/zftp.rs` | 20 |
+| `modules/zutil.rs` | 15 |
+| `modules/zpty.rs` | 9 |
+| `modules/pcre.rs` | 1 |
+| `modules/watch.rs` | 1 |
+
+**Build status:** Compiles clean (49 style warnings).
+
+**In-flight work:** Adding `// c:NNN` line citations to jobs.rs, module.rs, params.rs, modules/parameter.rs.
 
 ---
 

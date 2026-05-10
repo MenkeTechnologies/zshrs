@@ -41,6 +41,30 @@ pub static MENUCMP: AtomicI32 = AtomicI32::new(0);                           // 
 /// the word up to the cursor as the prefix.
 pub static COMPPREF: AtomicI32 = AtomicI32::new(0);                          // c:78
 
+/// Port of `mod_export int validlist` from `Src/Zle/zle_tricky.c:122`.
+/// Non-zero when the cached list of completion matches is still
+/// usable (didn't fall victim to a `clearlist` / `invalidate_list`).
+pub static VALIDLIST: AtomicI32 = AtomicI32::new(0);                         // c:122
+
+/// Port of `mod_export int showagain` from `Src/Zle/zle_tricky.c:127`.
+/// Set by `comp_list` when the user re-asks for the same list — drives
+/// the "redraw without re-running compfunc" branch in `before_complete`.
+pub static SHOWAGAIN: AtomicI32 = AtomicI32::new(0);                         // c:127
+
+/// Port of `mod_export int lastambig` from `Src/Zle/zle_tricky.c:157`.
+/// Sticky flag set when the last completion left the line in an
+/// ambiguous state — drives automenu kick-in via `before_complete`.
+pub static LASTAMBIG: AtomicI32 = AtomicI32::new(0);                         // c:157
+
+/// Port of `mod_export int bashlistfirst` from
+/// `Src/Zle/zle_tricky.c:157`. Sets the listing style.
+pub static BASHLISTFIRST: AtomicI32 = AtomicI32::new(0);                     // c:157
+
+/// Port of `mod_export int amenu` from `Src/Zle/zle_tricky.c`. Set
+/// non-zero while a menu-completion is in progress — drives the
+/// list-with-cursor refresh path.
+pub static AMENU: AtomicI32 = AtomicI32::new(0);                             // c:zle_tricky.c
+
 /// Completion state
 // The line before completion was tried.                                    // c:70
 // Words on the command line, for use in completion                         // c:77
@@ -439,7 +463,7 @@ pub const META: char = '\u{83}';
 
 /// Metafy a line (escape special chars)
 /// Port of metafy_line() from zle_tricky.c
-pub fn metafy_line(s: &str) -> String {
+pub fn metafy_line(s: &str) -> String {                                      // c:978
     let mut result = String::with_capacity(s.len() * 2);
     for c in s.chars() {
         if c == META || (c as u32) >= 0x83 {
@@ -454,7 +478,7 @@ pub fn metafy_line(s: &str) -> String {
 
 /// Unmetafy a line (unescape special chars)
 /// Port of unmetafy_line() from zle_tricky.c
-pub fn unmetafy_line(s: &str) -> String {
+pub fn unmetafy_line(s: &str) -> String {                                    // c:995
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
 
@@ -497,7 +521,7 @@ pub fn has_real_token(s: &str) -> bool {
 
 /// Get length of common prefix
 /// Port of pfxlen() from zle_tricky.c
-pub fn pfxlen(s1: &str, s2: &str) -> usize {
+pub fn pfxlen(s1: &str, s2: &str) -> usize {                                 // c:2359
     s1.chars()
         .zip(s2.chars())
         .take_while(|(a, b)| a == b)
@@ -506,7 +530,7 @@ pub fn pfxlen(s1: &str, s2: &str) -> usize {
 
 /// Get length of common suffix
 /// Port of sfxlen() from zle_tricky.c
-pub fn sfxlen(s1: &str, s2: &str) -> usize {
+pub fn sfxlen(s1: &str, s2: &str) -> usize {                                 // c:2411
     s1.chars()
         .rev()
         .zip(s2.chars().rev())

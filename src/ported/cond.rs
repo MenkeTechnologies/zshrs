@@ -978,7 +978,7 @@ fn unset(opt: i32) -> bool { !isset(opt) }
 /// optionally `untokenize()`. The Rust port stores already-expanded
 /// argument strings in the cond evaluator, so this collapses to an
 /// indexed read.
-pub fn cond_str(args: &[String], num: usize, _raw: bool) -> String {
+pub fn cond_str(args: &[String], num: usize, _raw: bool) -> String {         // c:525
     args.get(num).cloned().unwrap_or_default()
 }
 
@@ -986,7 +986,7 @@ pub fn cond_str(args: &[String], num: usize, _raw: bool) -> String {
 /// then runs `mathevali()` to coerce the result to an integer. The
 /// Rust port handles math evaluation through `crate::math::eval`;
 /// here we parse the trimmed argument as a base-10 integer.
-pub fn cond_val(args: &[String], num: usize) -> i64 {
+pub fn cond_val(args: &[String], num: usize) -> i64 {                        // c:539
     args.get(num)
         .and_then(|s| s.trim().parse::<i64>().ok())
         .unwrap_or(0)
@@ -995,7 +995,7 @@ pub fn cond_val(args: &[String], num: usize) -> i64 {
 /// Port of `cond_match()` from Src/cond.c:552 — `[[ str = pat ]]`
 /// pattern test. Runs `singsub()` on the pattern, then defers to
 /// `matchpat()` (Src/glob.c).
-pub fn cond_match(args: &[String], num: usize, str_: &str) -> bool {
+pub fn cond_match(args: &[String], num: usize, str_: &str) -> bool {         // c:552
     args.get(num)
         .map(|p| matchpat(str_, p, true, true))
         .unwrap_or(false)
@@ -1006,7 +1006,7 @@ pub fn cond_match(args: &[String], num: usize, str_: &str) -> bool {
 /// op + args to stderr in the same shape the C source uses (infix
 /// for binary, prefix for unary). Used only when the `XTRACE`
 /// option is enabled and a third-party module supplies a cond.
-pub fn tracemodcond(name: &str, args: &[String], inf: bool) {
+pub fn tracemodcond(name: &str, args: &[String], inf: bool) {                // c:563
     use std::io::Write;
     let stderr = std::io::stderr();
     let mut out = stderr.lock();

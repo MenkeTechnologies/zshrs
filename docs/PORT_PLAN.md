@@ -12,6 +12,30 @@ identity.** Those globals must become `Arc<Mutex/RwLock<…>>`, not
 
 ---
 
+## Progress Summary (updated 2026-05-10)
+
+| Phase | Total Items | Done | Remaining |
+|-------|-------------|------|-----------|
+| Phase 1 — Bucket-1 Mutex→TLS | 16 | 0 | 16 |
+| Phase 2 — Bag-of-globals structs | 20 | 12 | 8 |
+| Phase 3 — Bucket-2 shared holders | 11 | 0 | 11 |
+| Phase 4 — Daemon image holders | 5 | 0 | 5 |
+| Phase 5 — Test invariants | 3 | 0 | 3 |
+
+**Phase 2 remaining structs to dissolve:**
+- `init.rs` `ShellState`
+- `subst.rs` `SubstState`
+- `zle/zle_tricky.rs` `CompletionState`
+- `zle/zle_keymap.rs` `BindState`
+- `zle/zle_refresh.rs` `RefreshState`
+- `zle/computil.rs` `CompState`
+- `modules/parameter.rs` `JobState`
+- `glob.rs` `GlobState` (needs rename/field verification)
+
+**compctl.rs Mutex count:** 37 statics still using `Mutex` (Phase 1 target: 16)
+
+---
+
 ## Relationship to PORT.md (Read First)
 
 PORT.md is the constitution. This file is a design supplement that
@@ -508,77 +532,87 @@ real C struct exists under a different name.
 
 **Bucket 1 — anti-pattern bag-of-globals (dissolve to `thread_local!`):**
 
-- [x] `init.rs:36` `ShellState` ← `Src/init.c` has 0 structs;
+- [ ] `init.rs:36` `ShellState` ← `Src/init.c` has 0 structs;
       aggregates `argv0`, `argzero`, `posixzero`, `mypid`, `ppid`,
       `shtty`, `lineno`, `path`, `fpath`, etc. — all individual
       C globals. Verdict: **bucket-1**, dissolve. Blast radius:
       moderate (used by `init_io`, `setupvals`, `clone.rs`).
-- [x] `subst.rs:201` `SubstState` ← `Src/subst.c` has 0 structs.
+      **Status: NOT DONE — struct still exists.**
+- [ ] `subst.rs:201` `SubstState` ← `Src/subst.c` has 0 structs.
       Verdict: **bucket-1**. Blast radius: large (every subst
-      caller).
+      caller). **Status: NOT DONE — struct still exists.**
 - [x] `loop.rs:40` `LoopState` ← `Src/loop.c` has 0 structs.
-      Verdict: **bucket-1**.
+      Verdict: **bucket-1**. **Status: DONE — struct dissolved.**
 - [x] `loop.rs:237` `CForState` ← same. Verdict: **bucket-1**.
+      **Status: DONE — struct dissolved.**
 - [x] `loop.rs:259` `TryState` ← same. Verdict: **bucket-1**.
+      **Status: DONE — struct dissolved.**
 - [x] `zle/zle_vi.rs:22` `ViState` ← `Src/Zle/zle_vi.c` has 0
-      structs. Verdict: **bucket-1**.
-- [x] `zle/zle_tricky.rs:17` `CompletionState` ←
+      structs. Verdict: **bucket-1**. **Status: DONE — struct dissolved.**
+- [ ] `zle/zle_tricky.rs:17` `CompletionState` ←
       `Src/Zle/zle_tricky.c` has 0 structs. Verdict: **bucket-1**.
+      **Status: NOT DONE — struct still exists.**
 - [x] `zle/compcore.rs:26` `CompState` ← `Src/Zle/compcore.c` has
       0 structs. Verdict: **bucket-1** (also disambiguate from
-      computil's CompState — see below).
+      computil's CompState — see below). **Status: DONE — struct dissolved.**
 - [x] `modules/random.rs:17` `RandomState` ← `Src/Modules/random.c`
       has 0 structs (only `static uint32_t rand_buff[8]` and
       `static int buf_cnt` at lines 50-51). Verdict: **bucket-1**;
       two `thread_local!`s mirror the C statics directly.
+      **Status: DONE — struct dissolved.**
 - [x] `modules/socket.rs:355` `UnixSocketState` ← 0 structs.
-      Verdict: **bucket-1**.
+      Verdict: **bucket-1**. **Status: DONE — struct dissolved.**
 - [x] `modules/watch.rs:64` `WatchState` ← 0 structs. Verdict:
-      **bucket-1**.
+      **bucket-1**. **Status: DONE — struct dissolved.**
 - [x] `modules/pcre.rs:18` `PcreState` ← 0 structs. Verdict:
-      **bucket-1**.
+      **bucket-1**. **Status: DONE — struct dissolved.**
 
 **Bucket 3 — real C struct exists; verify field-for-field or rename:**
 
-- [x] `glob.rs:462` `GlobState` ← `Src/glob.c:168` has `struct
+- [ ] `glob.rs:462` `GlobState` ← `Src/glob.c:168` has `struct
       globdata` (15 fields including `gd_pathpos`, `gd_pathbuf`,
       `gd_matchct`, `gd_quals`, etc.). Rust struct has the same
       role (per-glob state) and overlapping fields (`pathbuf`,
       `pathpos`, `matches`, `qualifiers`). Verdict: **rename**
       to `GlobData` (or keep alias) + verify field parity.
+      **Status: NOT DONE — needs field parity verification.**
 - [x] `keymaps.rs:11` `ZleState` ← `Src/Zle/zle_main.c:432`
       `struct ztmout` and `:1927 struct findfunc` — neither
       matches ZleState's role (top-level ZLE state aggregator).
       Verdict: **bucket-1**, dissolve into per-static
-      `thread_local!`s.
-- [x] `zle/zle_keymap.rs:65` `BindState` ← `Src/Zle/zle_keymap.c`
+      `thread_local!`s. **Status: DONE — struct dissolved.**
+- [ ] `zle/zle_keymap.rs:65` `BindState` ← `Src/Zle/zle_keymap.c`
       has 5 structs (`keymapname`, `keymap`, `key`, etc.). None
       match BindState (binding-context aggregator). Verdict:
-      **bucket-1**, dissolve.
+      **bucket-1**, dissolve. **Status: NOT DONE — struct still exists.**
 - [x] `zle/zle_utils.rs:166` `UndoState` ← `Src/Zle/zle_utils.c`
       has 2 structs (`zle_region`, `zle_position`). Neither maps
       to UndoState — C has `static struct change *changes` /
       `static struct change *curchange` as file-statics for the
       undo ring. Verdict: **bucket-1**, dissolve.
-- [x] `zle/zle_refresh.rs:156` `RefreshState` ←
+      **Status: DONE — struct dissolved.**
+- [ ] `zle/zle_refresh.rs:156` `RefreshState` ←
       `Src/Zle/zle_refresh.c:815` `struct rparams`. Field-by-
       field verification needed; if matches, **rename** to
       `RParams`. Otherwise **bucket-1**.
-- [x] `zle/computil.rs:542` `CompState` ← `Src/Zle/computil.c`
+      **Status: NOT DONE — struct still exists, needs verification.**
+- [ ] `zle/computil.rs:542` `CompState` ← `Src/Zle/computil.c`
       has 13 structs (`cdstate`, `cdstr`, `cdrun`, etc.). The
       most likely match is `cdstate` at line 40. Verdict:
       **rename** to `Cdstate` + verify fields.
+      **Status: NOT DONE — struct still exists.**
 - [x] `modules/zpty.rs:629` `ZptyState` ←
       `Src/Modules/zpty.c:48 struct ptycmd` — single struct in
       the file. Verdict: **rename** to `Ptycmd` + verify fields.
-- [x] `modules/parameter.rs:704` `JobState` ←
+      **Status: DONE — struct dissolved.**
+- [ ] `modules/parameter.rs:704` `JobState` ←
       `Src/Modules/parameter.c:2179 struct pardef`. Pardef is
       the parameter-definition table for module-exported
       parameters; JobState is a magic-`$jobstates`-array
       synthesizer. Different roles. Verdict: **bucket-1** (if
       JobState aggregates file-statics) or **rename** if it
       mirrors a different C struct (jobstate_t analog in
-      jobs.c). Defer detailed verification.
+      jobs.c). **Status: NOT DONE — struct still exists.**
 
 **Per-struct dissolution work** is one commit each — bucket-1
 verdicts above are blast-radius-ordered: smallest (single-module

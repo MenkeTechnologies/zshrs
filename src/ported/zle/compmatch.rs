@@ -1061,21 +1061,97 @@ pub fn check_cmdata(_d: i32, _sfx: i32) -> i32 {                             // 
 // (cline_setlens / cline_sublen wrong-sig duplicates removed —
 // real C-faithful ports are above keyed off comp_h::Cline.)
 
-/// Port of `cmp_anchors()` from Src/Zle/compmatch.c:2107.
-pub fn cmp_anchors(_a: i32, _b: i32, _wl: i32) -> i32 {                      // c:2107
-    // C body c:2109-2150 — compares two Cline anchors (front+back
-    //                      strings + lengths). Used by join_clines /
-    //                      bld_parts. Substrate deferred; 0 = no match.
-    0
+/// Port of `static int cmp_anchors(Cline o, Cline n, int join)` from
+/// Src/Zle/compmatch.c:2107.
+///
+/// Compares two Cline anchors. Returns:
+///   - `1` if exact word/line match (and may set `CLF_LINE` on `o`)
+///   - `2` if `join` is set and `join_strs` produced a merged anchor
+///     (sets `CLF_JOIN` and rewrites `o->word`/`wlen`)
+///   - `0` otherwise.
+pub fn cmp_anchors(o: &mut crate::ported::zle::comp_h::Cline,                // c:2107
+                   n: &crate::ported::zle::comp_h::Cline,
+                   join: i32) -> i32 {
+    use crate::ported::zle::comp_h::{CLF_JOIN, CLF_LINE};
+    // Inline `!strncmp(a, b, n)` predicate from C.
+    let strncmp_eq = |a: &Option<String>, b: &Option<String>, n: usize| -> bool {
+        match (a, b) {
+            (Some(x), Some(y)) => {
+                let xb = x.as_bytes();
+                let yb = y.as_bytes();
+                xb.len() >= n && yb.len() >= n && xb[..n] == yb[..n]
+            }
+            _ => false,
+        }
+    };
+    // c:2113 — try exact word/line match.
+    let word_match = (o.flags & CLF_LINE) == 0
+        && o.wlen == n.wlen
+        && (o.word.is_none()
+            || strncmp_eq(&o.word, &n.word, o.wlen as usize));
+    let line_match = !word_match && {
+        let both_empty = o.line.is_none() && n.line.is_none()
+            && o.wlen == 0 && n.wlen == 0;
+        let both_lines = o.llen == n.llen
+            && o.line.is_some() && n.line.is_some()
+            && strncmp_eq(&o.line, &n.line, o.llen as usize);
+        both_empty || both_lines                                             // c:2115-2117
+    };
+    if word_match || line_match {                                            // c:2118
+        if line_match {
+            o.flags |= CLF_LINE;
+            o.word = None;                                                   // c:2120
+            o.wlen = 0;                                                      // c:2121
+        }
+        return 1;                                                            // c:2123
+    }
+    // c:2126-2132 — fall back to merged anchor via join_strs.
+    if join != 0 && (o.flags & CLF_JOIN) == 0
+        && o.word.is_some() && n.word.is_some()
+    {
+        if let Some(j) = join_strs(
+            o.wlen,
+            o.word.as_deref().unwrap(),
+            n.wlen,
+            n.word.as_deref().unwrap(),
+        ) {
+            o.flags |= CLF_JOIN;                                             // c:2128
+            o.wlen = j.len() as i32;                                         // c:2129
+            o.word = Some(j);                                                // c:2130
+            return 2;                                                        // c:2132
+        }
+    }
+    0                                                                        // c:2134
 }
 
-/// Port of `get_cline()` from Src/Zle/compmatch.c:144.
-pub fn get_cline(_l: &str, _ll: i32, _w: &str, _wl: i32, _o: &str,           // c:144
-                 _ol: i32, _flags: i32) -> i32 {
-    // C body c:146-294 — Cline allocator + populator. Allocates one
-    //                    Cline node; sets word/wlen/line/llen/orig/
-    //                    olen/flags. Cline pool deferred; 0.
-    0
+/// Port of `Cline get_cline(char *l, int ll, char *w, int wl, char *o,
+///                            int ol, int fl)` from Src/Zle/compmatch.c:144.
+///
+/// "Returns a new Cline structure." The C version pools freed Clines
+/// via the `freecl` heap; Rust uses normal allocation so the pool
+/// dance collapses to a `Box::new`. Sets `word`/`wlen`/`line`/`llen`/
+/// `orig`/`olen`/`flags` per the args; clears `prefix`/`suffix`/`min`/
+/// `max`/`slen`.
+pub fn get_cline(l: Option<String>, ll: i32, w: Option<String>, wl: i32,    // c:144
+                 o: Option<String>, ol: i32, fl: i32)
+    -> Box<crate::ported::zle::comp_h::Cline>
+{
+    use crate::ported::zle::comp_h::Cline;
+    Box::new(Cline {
+        next:   None,                                                        // c:156
+        line:   l,                                                           // c:157
+        llen:   ll,
+        word:   w,                                                           // c:158
+        wlen:   wl,
+        orig:   o,                                                           // c:160
+        olen:   ol,
+        slen:   0,                                                           // c:161
+        flags:  fl,                                                          // c:162
+        prefix: None,                                                        // c:163
+        suffix: None,
+        min:    0,                                                           // c:164
+        max:    0,
+    })
 }
 
 /// Port of `join_clines()` from Src/Zle/compmatch.c:2706.
@@ -1099,11 +1175,19 @@ pub fn join_psfx(_ot: i32, _nt: i32, _o: i32, _n: i32, _sfx: i32) -> i32 {   // 
     0
 }
 
-/// Port of `join_strs()` from Src/Zle/compmatch.c:1994.
+/// Port of `static char *join_strs(int la, char *sa, int lb, char *sb)`
+/// from Src/Zle/compmatch.c:1994.
+///
+/// "Joins two strings via the matcher equivalence map; returns the
+/// merged string or NULL if they can't be merged." The full body
+/// walks the global `bmatchers` Cmlist for each character of `sa`
+/// vs `sb`, applying matcher patterns to find a unifying byte.
+///
+/// Blocked on: `bmatchers` global Cmlist, `pattern_match1`, the
+/// `cmatcher`-driven equivalence map, `matchbuf`/`matchbuflen`
+/// growable buffer, `start_match`/`end_match` framing. Returns
+/// `None` until `pattern_match1` lands.
 pub fn join_strs(_la: i32, _sa: &str, _lb: i32, _sb: &str) -> Option<String> { // c:1994
-    // C body c:1996-2105 — joins two strings via the matcher
-    //                      equivalence map; returns the merged string
-    //                      or NULL if they can't be merged.
     None
 }
 

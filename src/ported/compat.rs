@@ -175,7 +175,7 @@ pub fn zopenmax() -> i64 {                                                   // 
 /// Port of `zgetcwd()` from Src/compat.c:559 — wraps
 /// `getcwd(3)` with a long-path-tolerant fallback. Rust's
 /// `current_dir()` covers the same range.
-pub fn zgetcwd() -> Option<String> {
+pub fn zgetcwd() -> Option<String> {                                        // c:559
     env::current_dir()
         .ok()
         .and_then(|p| p.to_str().map(|s| s.to_string()))
@@ -198,7 +198,7 @@ pub struct DirSav {
 /// Port of `zgetdir()` from Src/compat.c:355 — when called with
 /// a `dirsav` slot, fills inode/device the C source uses to
 /// detect rename-replace cases.
-pub fn zgetdir(d: Option<&mut DirSav>) -> Option<String> {
+pub fn zgetdir(d: Option<&mut DirSav>) -> Option<String> {                  // c:355
     let cwd = env::current_dir().ok()?;
     let cwd_str = cwd.to_str()?.to_string();
 
@@ -225,7 +225,7 @@ pub fn zgetdir(d: Option<&mut DirSav>) -> Option<String> {
 /// component-by-component descent when a single `chdir(2)` call
 /// fails (typically `ENAMETOOLONG`). Returns `0` on success,
 /// `-1` on normal failure, `-2` if the cwd was lost mid-walk.
-pub fn zchdir(dir: &str) -> i32 {
+pub fn zchdir(dir: &str) -> i32 {                                           // c:579
     if dir.is_empty() {
         return 0;
     }
@@ -266,7 +266,7 @@ pub fn zchdir(dir: &str) -> i32 {
 /// Port of `output64()` from Src/compat.c:638 — needed in C
 /// because `%lld` printf support varied; Rust's `to_string()`
 /// handles every target.
-pub fn output64(val: i64) -> String {
+pub fn output64(val: i64) -> String {                                        // c:638
     val.to_string()
 }
 
@@ -305,7 +305,7 @@ pub fn convbase(val: i64, base: u32) -> String {
 /// Port of the `gethostname()` shim from Src/compat.c:64 — the C
 /// source provides this as a fallback for systems that lack the
 /// POSIX prototype. Rust just uses the `hostname` crate.
-pub fn gethostname() -> Option<String> {
+pub fn gethostname() -> Option<String> {                                     // c:64
     hostname::get().ok().and_then(|h| h.into_string().ok())
 }
 
@@ -313,7 +313,7 @@ pub fn gethostname() -> Option<String> {
 /// Port of `isprint_ascii()` from Src/compat.c:785 — locale-
 /// independent printable check the C source uses when locale
 /// data isn't safe to read (signal handlers, early init).
-pub fn isprint_ascii(c: char) -> bool {
+pub fn isprint_ascii(c: char) -> bool {                                      // c:785
     let b = c as u32;
     (0x20..=0x7e).contains(&b)
 }
@@ -323,7 +323,7 @@ pub fn isprint_ascii(c: char) -> bool {
 /// ships its own Unicode 9 u9_wcwidth fallback because system
 /// `u9_wcwidth(3)` data ages with libc. Rust uses the
 /// `unicode-width` crate which tracks the latest UCD.
-pub fn u9_wcwidth(c: char) -> i32 {
+pub fn u9_wcwidth(c: char) -> i32 {                                          // c:760
     unicode_width::UnicodeWidthChar::width(c)
         .map(|w| w as i32)
         .unwrap_or(if c.is_control() { -1 } else { 1 })
@@ -331,7 +331,7 @@ pub fn u9_wcwidth(c: char) -> i32 {
 
 /// Check whether a wide character is printable.
 /// Port of `u9_iswprint()` from Src/compat.c:770.
-pub fn u9_iswprint(c: char) -> bool {
+pub fn u9_iswprint(c: char) -> bool {                                        // c:770
     !c.is_control() && u9_wcwidth(c) >= 0
 }
 

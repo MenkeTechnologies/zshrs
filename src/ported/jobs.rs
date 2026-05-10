@@ -672,7 +672,7 @@ pub fn get_clktck() -> i64 {                                                 // 
 /// Format time as hh:mm:ss.xx (from jobs.c printhhmmss lines 752-765)
 /// Format a duration as `H:MM:SS` / `M:SS`.
 /// Port of `printhhmmss()` from Src/jobs.c:752.
-pub fn printhhmmss(secs: f64) -> String {
+pub fn printhhmmss(secs: f64) -> String {                                   // c:752
     let mins = (secs / 60.0) as i32;
     let hours = mins / 60;
     let secs = secs - (mins * 60) as f64;
@@ -692,7 +692,7 @@ pub fn printhhmmss(secs: f64) -> String {
 /// Port of `printtime()` from Src/jobs.c:768 — same
 /// `%U`/`%S`/`%E`/`%P`/`%J`/`%c`/`%R`/etc. directive set the
 /// `time` keyword's output uses.
-pub fn printtime(
+pub fn printtime(                                                            // c:768
     elapsed_secs: f64,
     user_secs: f64,
     system_secs: f64,
@@ -853,7 +853,7 @@ impl PipeStats {
 /// Signal message lookup (from jobs.c sigmsg lines 1106-1118)
 /// Render a signal number as a one-line description.
 /// Port of `sigmsg()` from Src/jobs.c:1107.
-pub fn sigmsg(sig: i32) -> &'static str {
+pub fn sigmsg(sig: i32) -> &'static str {                                    // c:1107
     match sig {
         libc::SIGHUP => "hangup",
         libc::SIGINT => "interrupt",
@@ -958,7 +958,7 @@ pub fn waitforpid(pid: i32) -> Option<i32> {                                 // 
 }
 
 /// Wait for job (from jobs.c zwaitjob lines 1673-1750)
-pub fn zwaitjob(job: &mut Job) -> Option<i32> {
+pub fn zwaitjob(job: &mut Job) -> Option<i32> {                              // c:1673
     if job.procs.is_empty() {
         return Some(0);
     }
@@ -994,14 +994,14 @@ pub fn zwaitjob(job: &mut Job) -> Option<i32> {
 /// filelist. Walks the whole table — the previous Rust port took
 /// a single `&Job` and returned `!job.filelist.is_empty()`, which
 /// is the wrong shape (C iterates).
-pub fn havefiles(jobtab: &[Job]) -> bool {
+pub fn havefiles(jobtab: &[Job]) -> bool {                                   // c:1605
     jobtab
         .iter()
         .any(|j| j.stat != 0 && !j.filelist.is_empty())
 }
 
 /// Delete job (from jobs.c deletejob lines 1511-1526)
-pub fn deletejob(job: &mut Job, disowning: bool) {
+pub fn deletejob(job: &mut Job, disowning: bool) {                          // c:1511
     if !disowning {
         job.filelist.clear();
     }
@@ -1011,7 +1011,7 @@ pub fn deletejob(job: &mut Job, disowning: bool) {
 }
 
 /// Free job (from jobs.c freejob lines 1456-1508)
-pub fn freejob(job: &mut Job, notify: bool) {
+pub fn freejob(job: &mut Job, notify: bool) {                               // c:1456
     let _ = notify;
     job.procs.clear();
     job.auxprocs.clear();
@@ -1022,7 +1022,7 @@ pub fn freejob(job: &mut Job, notify: bool) {
 }
 
 /// Add process to job (from jobs.c addproc lines 1537-1597)
-pub fn addproc(job: &mut Job, pid: i32, text: &str, aux: bool) {
+pub fn addproc(job: &mut Job, pid: i32, text: &str, aux: bool) {            // c:1537
     let proc = Process::new(pid);
     let proc = Process {
         pid,
@@ -1045,7 +1045,7 @@ pub fn addproc(job: &mut Job, pid: i32, text: &str, aux: bool) {
 
 // Find the super-job of a sub-job.                                         // c:256
 /// Super job tracking (from jobs.c super_job lines 393-417)
-pub fn super_job(jobtab: &[Job], job_idx: usize) -> Option<usize> {
+pub fn super_job(jobtab: &[Job], job_idx: usize) -> Option<usize> {          // c:260
     for (i, job) in jobtab.iter().enumerate() {
         if (job.stat & stat::SUPERJOB) != 0 && job.other == job_idx {
             return Some(i);
@@ -1105,7 +1105,7 @@ impl Default for JobPointers {
 ///
 /// Returns job index or -1 on error. `prog` is the program name for
 /// `zwarnnam` error messages (pass empty string to suppress warnings).
-pub fn getjob(s: &str, prog: &str) -> i32 {
+pub fn getjob(s: &str, prog: &str) -> i32 {                                  // c:2063
     let mut jobnum: i32;                                                     // c:2065
     let mymaxjob: i32;                                                       // c:2065
     let myjobtab: Vec<Job>;                                                  // c:2066
@@ -1259,7 +1259,7 @@ fn findjobnam(s: &str, jobtab: &[Job], maxjob: i32, thisjob: i32) -> Option<i32>
 /// jobspec is `%N` (numeric, with optional leading minus) versus
 /// `%name`. The previous Rust port required all-digits which
 /// rejected valid jobspecs like `-1` (the previous job).
-pub fn isanum(s: &str) -> bool {
+pub fn isanum(s: &str) -> bool {                                             // c:2010
     !s.is_empty()
         && s.bytes().all(|b| b == b'-' || b.is_ascii_digit())
 }
@@ -1811,7 +1811,7 @@ pub fn setjobpwd(job: &mut Job) {
 }
 
 /// Spawn a job (mark as started, from jobs.c spawnjob)
-pub fn spawnjob(job: &mut Job, fg: bool) {
+pub fn spawnjob(job: &mut Job, fg: bool) {                                  // c:1894
     job.stat |= stat::INUSE;
     if !fg {
         // Background job

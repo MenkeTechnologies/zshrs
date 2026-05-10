@@ -170,6 +170,59 @@ impl zc_win {
 }
 
 // =====================================================================
+// Port of `struct colorpairnode` from `Src/Modules/curses.c:76`.
+// =====================================================================
+
+/// Hash-table node mapping a color-pair name to its allocated short.
+/// C uses `struct hashnode` as the first field to support direct
+/// HashTable insertion; Rust uses (name → ColorPairNode) HashMap so
+/// the node carries only the colorpair short here.
+///
+/// C definition (c:76-79):
+/// ```c
+/// struct colorpairnode {
+///     struct hashnode node;
+///     short colorpair;
+/// };
+/// typedef struct colorpairnode *Colorpairnode;
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct ColorPairNode {                                                   // c:76
+    /// Color pair index (libncurses `init_pair` slot).
+    pub colorpair: i16,                                                      // c:78
+}
+
+/// Port of `enum zcurses_mouse_event_types` from `Src/Modules/curses.c:146`.
+/// Mouse-event discriminator bits returned by `zcurses input` mouse
+/// reads.
+pub const ZCME_PRESSED:         i32 = 0;                                     // c:147
+pub const ZCME_RELEASED:        i32 = 1;                                     // c:148
+pub const ZCME_CLICKED:         i32 = 2;                                     // c:149
+pub const ZCME_DOUBLE_CLICKED:  i32 = 3;                                     // c:150
+pub const ZCME_TRIPLE_CLICKED:  i32 = 4;                                     // c:151
+
+/// Port of `struct zcurses_mouse_event` from `Src/Modules/curses.c:163`.
+/// Maps a libncurses button bit to a (button-number, event-kind) pair.
+///
+/// C definition (c:163-167):
+/// ```c
+/// struct zcurses_mouse_event {
+///     int button;
+///     int what;
+///     mmask_t event;
+/// };
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct ZcursesMouseEvent {                                               // c:163
+    /// Mouse button number (1..=5).
+    pub button: i32,                                                         // c:164
+    /// Event kind (`ZCME_*` from above).
+    pub what: i32,                                                           // c:165
+    /// libncurses mmask_t event bit (BUTTON1_PRESSED etc.).
+    pub event: u64,                                                          // c:166
+}
+
+// =====================================================================
 // Port of `struct zcurses_namenumberpair` from `curses.c:71`.
 // =====================================================================
 

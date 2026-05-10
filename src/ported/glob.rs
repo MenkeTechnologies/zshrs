@@ -1514,7 +1514,7 @@ enum PatternComponent {
 /// Port of the `haswilds()` macro inline in Src/glob.c —
 /// short-circuits `zglob()` so plain literal paths skip the
 /// scanner.
-pub fn haswilds(s: &str) -> bool {
+pub fn haswilds(s: &str) -> bool {                                          // c:4306
     let mut in_bracket = false;
     let mut escape = false;
 
@@ -2589,7 +2589,7 @@ pub fn is_symlink(path: &str) -> bool {
 /// Edit-distance helper for `setopt CORRECT` glob fallback.
 /// Port of the `spdist()`-driven correction inside
 /// `findcmd()` (Src/exec.c) when adapted for glob targets.
-pub fn mindist(dir: &str, name: &str, best: &mut String, exact: bool) -> usize {
+pub fn mindist(dir: &str, name: &str, best: &mut String, exact: bool) -> usize { // c:4624
     let Ok(entries) = std::fs::read_dir(dir) else {
         return usize::MAX;
     };

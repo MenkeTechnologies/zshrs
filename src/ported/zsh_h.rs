@@ -408,6 +408,18 @@ pub struct timedfn {                                                     // c:63
     pub when: i64,                                                       // time_t
 }
 
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(non_camel_case_types)]
+pub enum CaseMod {
+    CASMOD_NONE,                                                                    // c:3123
+    CASMOD_UPPER,                                                                   // c:3124
+    CASMOD_LOWER,                                                                   // c:3125
+    CASMOD_CAPS,                                                                    // c:3126
+}
+
+
+
 /// Port of `typedef int (*CondHandler)(...)` from `Src/zsh.h:681`.
 pub type CondHandler = fn(args: &[String], id: i32) -> i32;
 

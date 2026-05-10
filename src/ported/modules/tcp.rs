@@ -318,7 +318,7 @@ pub fn tcp_connect(sess: TcpSessionHandle, addr: &[u8; 4], d_port: u16) -> i32 {
 /// the `ztcp` builtin: connect / listen / accept / close / list, with
 /// the same `-acdflLtv` flags as the C source.
 #[allow(non_snake_case)]
-pub fn bin_ztcp(nam: &str, args: &[String],
+pub fn bin_ztcp(nam: &str, args: &[String],                                  // c:342
                 ops: &crate::ported::zsh_h::options, _func: i32) -> i32 { // c:342
     use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
     use crate::ported::utils::{zwarnnam, zerrnam};

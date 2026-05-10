@@ -115,8 +115,9 @@ fn schedcmdtimed_lock() -> &'static Mutex<i32> {
 // schedaddtimed(void)                                                c:60
 // =====================================================================
 
+// Use addtimedfn() to add a timed event for sched's use                  // c:57
 /// Port of `schedaddtimed()` from `Src/Builtins/sched.c:61`.
-pub(crate) fn schedaddtimed() {
+pub(crate) fn schedaddtimed() {                                             // c:61
     /*
      * The following code shouldn't be necessary and indicates
      * a bug.  However, the DPUTS() in the caller should pick
@@ -149,7 +150,7 @@ fn checksched_thunk() {
 // =====================================================================
 
 /// Port of `scheddeltimed()` from `Src/Builtins/sched.c:79`.
-pub(crate) fn scheddeltimed() {
+pub(crate) fn scheddeltimed() {                                             // c:79
     if *schedcmdtimed_lock().lock().unwrap() != 0 {                  // c:81
         deltimedfn(checksched_thunk);                                 // c:83
         *schedcmdtimed_lock().lock().unwrap() = 0;                   // c:84
@@ -161,12 +162,13 @@ pub(crate) fn scheddeltimed() {
 // checksched(void)                                                   c:92
 // =====================================================================
 
+// Check scheduled commands; call this function from time to time.        // c:89
 /// Port of `checksched()` from `Src/Builtins/sched.c:93`.
 ///
 /// C returns void; Rust port returns `i32` so the module entry-points
 /// can propagate the status. Bridged through `checksched_thunk()` above
 /// when called via `addtimedfn`.
-pub(crate) fn checksched() -> i32 {
+pub(crate) fn checksched() -> i32 {                                         // c:93
     let t: time_t;                                                    // c:95
     // sch declared at body scope per C (c:96).
     if schedcmds_lock().lock().unwrap().is_none() {                  // c:98  if(!schedcmds)
@@ -252,7 +254,7 @@ pub(crate) fn checksched() -> i32 {
 /// static int
 /// bin_sched(char *nam, char **argv, UNUSED(Options ops), UNUSED(int func))
 /// ```
-pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) -> i32 {
+pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) -> i32 { // c:150
     // c:152-157 — locals (one block at top, mirroring C declaration)
     let s: &str;
     let mut argptr: usize;

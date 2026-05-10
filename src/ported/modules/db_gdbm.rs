@@ -176,7 +176,7 @@ impl GdbmDatabase {
 
     /// Port of `gdbmgetfn()` from `Src/Modules/db_gdbm.c:282`.
     #[cfg(feature = "gdbm")]
-    pub fn get(&self, key: &str) -> Option<String> {
+    pub fn get(&self, key: &str) -> Option<String> {                        // c:282
         let key_bytes = key.as_bytes();
         let key_datum = Datum::from_bytes(key_bytes);
 
@@ -224,7 +224,7 @@ impl GdbmDatabase {
 
     /// Port of `gdbmhashsetfn()` from `Src/Modules/db_gdbm.c:476`.
     #[cfg(feature = "gdbm")]
-    pub fn set(&self, key: &str, value: &str) -> Result<(), String> {
+    pub fn set(&self, key: &str, value: &str) -> Result<(), String> {       // c:476
         if self.readonly {
             return Err("Database is read-only".to_string());
         }
@@ -266,9 +266,9 @@ impl GdbmDatabase {
         Err("GDBM support not compiled in".to_string())
     }
 
-    /// Port of `gdbmgetfn()` from `Src/Modules/db_gdbm.c:282`.
+    // Port of `gdbmunsetfn()` from `Src/Modules/db_gdbm.c:399`.
     #[cfg(feature = "gdbm")]
-    pub fn delete(&self, key: &str) -> Result<(), String> {
+    pub fn delete(&self, key: &str) -> Result<(), String> {                 // c:399
         if self.readonly {
             return Err("Database is read-only".to_string());
         }

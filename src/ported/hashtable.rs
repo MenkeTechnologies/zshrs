@@ -41,7 +41,7 @@ pub fn hasher(s: &str) -> u32 {                                              // 
 /// Hasher tuned for the history table.
 /// Port of the per-history hash specialization Src/hist.c uses
 /// — the C source bypasses leading whitespace before mixing.
-pub fn histhasher(s: &str) -> u32 {
+pub fn histhasher(s: &str) -> u32 {                                         // c:1365
     let mut hashval: u32 = 0;
     let mut chars = s.chars().peekable();
 
@@ -78,7 +78,7 @@ pub fn histhasher(s: &str) -> u32 {
 /// Compare two history entries with optional blank-reduction.
 /// Port of the comparator the C source's `addhistnode()` from
 /// Src/hist.c uses to detect duplicate history lines.
-pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering {
+pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering { // c:1396
     let s1 = s1.trim_start();
     let s2 = s2.trim_start();
 

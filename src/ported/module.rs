@@ -379,7 +379,7 @@ impl ModuleTable {
     // ------- Builtin management (from module.c addbuiltin/deletebuiltin) -------
 
     /// Register a builtin (from module.c addbuiltin)
-    pub fn addbuiltin(&mut self, name: &str, module: &str) {
+    pub fn addbuiltin(&mut self, name: &str, module: &str) {                // c:409
         if let Some(m) = self.modules.get_mut(module) {
             m.features.push(ModuleFeature {
                 name: name.to_string(),
@@ -390,7 +390,7 @@ impl ModuleTable {
     }
 
     /// Unregister a builtin (from module.c deletebuiltin)
-    pub fn deletebuiltin(&mut self, name: &str, module: &str) {
+    pub fn deletebuiltin(&mut self, name: &str, module: &str) {             // c:449
         if let Some(m) = self.modules.get_mut(module) {
             m.features
                 .retain(|f| f.name != name || f.feature_type != FeatureType::Builtin);
@@ -398,13 +398,14 @@ impl ModuleTable {
     }
 
     /// Register autoloading builtin (from module.c add_autobin)
-    pub fn add_autobin(&mut self, name: &str, module: &str) {
+    pub fn add_autobin(&mut self, name: &str, module: &str) {               // c:426
         self.autoload_builtins
             .insert(name.to_string(), module.to_string());
     }
 
+    // Remove an autoloaded added by add_autobin                             // c:460
     /// Remove autoloading builtin (from module.c del_autobin)
-    pub fn del_autobin(&mut self, name: &str) {
+    pub fn del_autobin(&mut self, name: &str) {                             // c:464
         self.autoload_builtins.remove(name);
     }
 
@@ -418,7 +419,7 @@ impl ModuleTable {
     // ------- Condition management (from module.c addconddef/deleteconddef) -------
 
     /// Register a condition (from module.c addconddef)
-    pub fn addconddef(&mut self, name: &str, module: &str) {
+    pub fn addconddef(&mut self, name: &str, module: &str) {                // c:703
         if let Some(m) = self.modules.get_mut(module) {
             m.features.push(ModuleFeature {
                 name: name.to_string(),
@@ -462,7 +463,7 @@ impl ModuleTable {
     // ------- Hook management (from module.c addhookdef/deletehookdef) -------
 
     /// Register a hook (from module.c addhookdef)
-    pub fn addhookdef(&mut self, name: &str) {
+    pub fn addhookdef(&mut self, name: &str) {                              // c:864
         self.hooks.entry(name.to_string()).or_default();
     }
 
@@ -473,8 +474,9 @@ impl ModuleTable {
         }
     }
 
+    // Delete hook definitions.                                              // c:898
     /// Unregister a hook (from module.c deletehookdef)
-    pub fn deletehookdef(&mut self, name: &str) {
+    pub fn deletehookdef(&mut self, name: &str) {                           // c:902
         self.hooks.remove(name);
     }
 
@@ -505,8 +507,9 @@ impl ModuleTable {
         self.hooks.get(name)
     }
 
+    // Run the function(s) for a hook.                                       // c:986
     /// Run hook functions (from module.c runhookdef)
-    pub fn runhookdef(&self, name: &str) -> Vec<String> {
+    pub fn runhookdef(&self, name: &str) -> Vec<String> {                   // c:990
         self.hooks.get(name).cloned().unwrap_or_default()
     }
 

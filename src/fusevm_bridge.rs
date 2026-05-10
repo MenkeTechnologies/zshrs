@@ -3762,11 +3762,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // and lowercases mid-word uppercase letters.
                     state = match state {
                         St::S(s) => {
-                            St::S(crate::ported::hist::casemodify(&s, crate::ported::hist::CaseMod::Caps))
+                            St::S(crate::ported::hist::casemodify(&s, crate::ported::hist::CaseMod::CASMOD_CAPS))
                         }
                         St::A(a) => St::A(
                             a.into_iter()
-                                .map(|s| crate::ported::hist::casemodify(&s, crate::ported::hist::CaseMod::Caps))
+                                .map(|s| crate::ported::hist::casemodify(&s, crate::ported::hist::CaseMod::CASMOD_CAPS))
                                 .collect(),
                         ),
                     };

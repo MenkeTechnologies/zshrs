@@ -406,7 +406,7 @@ where
 /// The dirsav-based chdir-back stack (c:396-399, c:438-446) is omitted
 /// in the Rust port — std::fs operations take absolute paths so the
 /// chdir dance C uses to safely descend isn't needed.
-pub fn recursivecmd<P, R, L>(
+pub fn recursivecmd<P, R, L>(                                                // c:378
     nam: &str, opt_noerr: i32, opt_recurse: i32, opt_safe: i32,
     args: &[String], dirpre_func: P, dirpost_func: R, leaf_func: L,
 ) -> i32                                                                     // c:378
@@ -432,7 +432,7 @@ where
 /// Direct port of `recursivecmd_doone()` from `Src/Modules/files.c:450`.
 /// C body (c:455-462): lstat the path; if recurse + S_ISDIR → dive
 /// via recursivecmd_dorec; else call leaf_func.
-pub fn recursivecmd_doone<P, R, L>(
+pub fn recursivecmd_doone<P, R, L>(                                          // c:450
     reccmd: &recursivecmd<P, R, L>, arg: &str, rp: &str, first: i32,
 ) -> i32                                                                     // c:450
 where
@@ -455,7 +455,7 @@ where
 /// Direct port of `recursivecmd_dorec()` from `Src/Modules/files.c:465`.
 /// C body (c:475-525): dirpre callback, opendir + readdir each entry,
 /// recurse via recursivecmd_doone, then dirpost callback.
-pub fn recursivecmd_dorec<P, R, L>(
+pub fn recursivecmd_dorec<P, R, L>(                                          // c:465
     reccmd: &recursivecmd<P, R, L>, arg: &str, rp: &str,
     sp: &std::fs::Metadata, _first: i32,
 ) -> i32                                                                     // c:465

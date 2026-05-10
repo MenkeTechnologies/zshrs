@@ -513,7 +513,7 @@ pub fn pph_getfn(pm: *mut crate::ported::zsh_h::param) -> Option<()> {   // c:45
 }
 
 /// Port of `pph_setfn()` from `Src/Modules/param_private.c:463`.
-pub fn pph_setfn(pm: *mut crate::ported::zsh_h::param,
+pub fn pph_setfn(pm: *mut crate::ported::zsh_h::param,                       // c:463
                  x: Option<crate::ported::zsh_h::HashTable>) {            // c:463
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
@@ -768,7 +768,7 @@ pub fn scopeprivate(pm: *mut crate::ported::zsh_h::param, onoff: i32) {  // c:51
 /// every private param `PM_UNSET|PM_READONLY` so the wrapped function
 /// can't see them; on exit, restores their saved state. Returns 0
 /// when the wrapper ran (private_wraplevel < locallevel), 1 otherwise.
-pub fn wrap_private(_prog: *const crate::ported::zsh_h::eprog,
+pub fn wrap_private(_prog: *const crate::ported::zsh_h::eprog,               // c:550
                     _w: *const crate::ported::zsh_h::funcwrap,
                     _name: *mut libc::c_char) -> i32 {                    // c:550
     let local = crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed);

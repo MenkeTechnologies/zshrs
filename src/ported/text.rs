@@ -1180,7 +1180,7 @@ pub fn dec_tindent() {
 /// significant newline ([`tdopending`]) the buffered string is
 /// emitted prefixed with `\n`. Multiple calls concatenate (each
 /// preceded by `\n`).
-pub fn taddpending(str1: &str, str2: &str) {
+pub fn taddpending(str1: &str, str2: &str) {                                // c:89
     let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
     let combined = format!("{}{}", str1, str2);
     match b.pending.as_mut() {
@@ -1192,6 +1192,7 @@ pub fn taddpending(str1: &str, str2: &str) {
     }
 }
 
+// Output the pending string where appropriate                              // c:111
 /// Port of `tdopending()` from `Src/text.c:113`.
 ///
 /// C body:
@@ -1203,7 +1204,7 @@ pub fn taddpending(str1: &str, str2: &str) {
 ///     tpending = NULL;
 /// }
 /// ```
-pub fn tdopending() {
+pub fn tdopending() {                                                       // c:114
     let drained = {
         let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
         b.pending.take()
@@ -1257,7 +1258,7 @@ pub fn taddstr(s: &str) {                                                   // c
 /// that hold their own list of strings should use `taddlist_strs`
 /// instead. This entry preserves the C signature shape — taking
 /// a slice of strings as a stand-in for the wordcode iteration.
-pub fn taddlist(words: &[String]) {
+pub fn taddlist(words: &[String]) {                                         // c:170
     if words.is_empty() {
         return;
     }
@@ -1272,12 +1273,13 @@ pub fn taddlist(words: &[String]) {
     }
 }
 
+// add an assignment                                                        // c:181
 /// Port of `taddassign()` from `Src/text.c:184`.
 ///
 /// Emits `name=value` (or `name+=value`) to the buffer. For array
 /// assignments emits `name=(v1 v2 …)`. The `typeset` flag enables
 /// the typeset-style "name only" emission for `WC_ASSIGN_INC`.
-pub fn taddassign(name: &str, value: Option<&str>, augment: bool, typeset: bool) {
+pub fn taddassign(name: &str, value: Option<&str>, augment: bool, typeset: bool) { // c:184
     let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
     b.buf.push_str(name);
     if augment {
@@ -1357,7 +1359,7 @@ pub fn taddnl(no_semicolon: i32) {                                          // c
 ///
 /// Rust port writes to a writeable target (typically stdout)
 /// matching the same expansion rules.
-pub fn zoutputtab<W: std::io::Write>(outf: &mut W) -> std::io::Result<()> {
+pub fn zoutputtab<W: std::io::Write>(outf: &mut W) -> std::io::Result<()> {  // c:263
     let expand_tabs = text_buffer_lock()
         .lock()
         .expect("text buffer poisoned")
@@ -1382,7 +1384,7 @@ pub fn zoutputtab<W: std::io::Write>(outf: &mut W) -> std::io::Result<()> {
 /// recursively (Rust's stack), so the explicit Tstack isn't
 /// kept. The fn is provided for C name parity; it just bumps
 /// the indent counter via `dec_tindent`'s inverse.
-pub fn tpush(increment: i32) {
+pub fn tpush(increment: i32) {                                               // c:396
     if increment != 0 {
         let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
         b.indent = b.indent.saturating_add(1);
@@ -1402,7 +1404,7 @@ pub fn tpush(increment: i32) {
 /// the typed AST. This entry preserves the C name; calling it
 /// is equivalent to "the formatter has already run via
 /// getpermtext" — so it's a finalise-buffer no-op.
-pub fn gettext2() {}
+pub fn gettext2() {}                                                         // c:415
 
 /// Port of `getredirs()` from `Src/text.c:1019`.
 ///
@@ -1413,7 +1415,7 @@ pub fn gettext2() {}
 ///
 /// Per the C source, the buffer is space-padded then the trailing
 /// space is decremented (`tptr--`); same here via `pop()`.
-pub fn getredirs(redirs: &[Redirect]) {
+pub fn getredirs(redirs: &[Redirect]) {                                      // c:1019
     taddchr(b' ' as i32);
     let formatter = TextFormatter::new(TextConfig::default());
     let snippet = formatter.format_redirects_only(redirs);

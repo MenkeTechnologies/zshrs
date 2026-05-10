@@ -225,7 +225,7 @@ pub fn check_entry(entry: &UtmpEntry, current_user: &str) -> bool {
 /// Match a `$watch` pattern against an actual user/host/tty.
 /// Port of `watchlog_match()` from Src/Modules/watch.c:434 — same
 /// `user@host:tty` triple-component matching.
-pub fn watchlog_match(pattern: &str, value: &str) -> bool {
+pub fn watchlog_match(pattern: &str, value: &str) -> bool {                  // c:434
     if pattern == value {
         return true;
     }
@@ -242,7 +242,7 @@ pub fn watchlog_match(pattern: &str, value: &str) -> bool {
 /// Port of `watch3ary()` from Src/Modules/watch.c:206 (the
 /// per-format-character branch of `watchlog2()` line 242) — same
 /// `%n`/`%M`/`%l`/`%a`/`%T`/`%t`/`%w`/`%W`/`%D` directives.
-pub fn watch3ary(entry: &UtmpEntry, logged_in: bool, fmt: &str) -> String {
+pub fn watch3ary(entry: &UtmpEntry, logged_in: bool, fmt: &str) -> String {  // c:206
     let mut result = String::new();
     let mut chars = fmt.chars().peekable();
 
@@ -497,7 +497,7 @@ pub fn dowatch(current_user: &str) -> Vec<(UtmpEntry, bool)> {              // c
 /// Port of `bin_log()` from Src/Modules/watch.c:681 — emits the
 /// last seen watch events using the user's `$WATCHFMT` (or the
 /// supplied override).
-pub fn bin_log(current_user: &str, fmt: Option<&str>) -> String {
+pub fn bin_log(current_user: &str, fmt: Option<&str>) -> String {            // c:681
     let fmt_str = fmt
         .map(|s| s.to_string())
         .unwrap_or_else(|| {

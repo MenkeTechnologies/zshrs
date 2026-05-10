@@ -186,7 +186,7 @@ impl PcreMatchResult {
 /// -pcre-match pat ]]`. Compiles `rhs` on the fly (overwriting the
 /// thread_local PCRE_PATTERN) and returns `(matched, result)` so
 /// the caller can install match-var side effects.
-pub fn cond_pcre_match(lhs: &str, rhs: &str, caseless: bool) -> (bool, PcreMatchResult) {
+pub fn cond_pcre_match(lhs: &str, rhs: &str, caseless: bool) -> (bool, PcreMatchResult) { // c:422
     let options = PcreCompileOptions {                                          // c:422
         caseless,                                                               // c:422
         ..Default::default()                                                    // c:422
@@ -207,7 +207,7 @@ pub fn cond_pcre_match(lhs: &str, rhs: &str, caseless: bool) -> (bool, PcreMatch
 /// into the file-static (thread_local in zshrs) PCRE_PATTERN. C
 /// signature has no state arg; the file-static is the implicit
 /// state. Returns (status, message).
-pub fn bin_pcre_compile(
+pub fn bin_pcre_compile(                                                     // c:70
     args: &[&str],
     options: &PcreCompileOptions,
 ) -> (i32, String) {
@@ -225,7 +225,7 @@ pub fn bin_pcre_compile(
 /// pattern; the Rust `regex` crate already builds an optimal NFA
 /// at compile time, so this is the "no pattern" guard the C source
 /// also returns and nothing else.
-pub fn bin_pcre_study() -> (i32, String) {
+pub fn bin_pcre_study() -> (i32, String) {                                   // c:112
     if !has_pattern() {
         return (
             1,
@@ -239,7 +239,7 @@ pub fn bin_pcre_study() -> (i32, String) {
 /// the file-static (thread_local in zshrs) PCRE_PATTERN against
 /// `args[0]`. C's "1 on no-match, 0 on match" exit-status convention
 /// preserved.
-pub fn bin_pcre_match(
+pub fn bin_pcre_match(                                                       // c:328
     args: &[&str],
     options: &PcreMatchOptions,
 ) -> (i32, PcreMatchResult) {

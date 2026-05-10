@@ -37,7 +37,7 @@ const XATTR_NOFOLLOW: i32 = 0x0001;
 /// for `size`. Empty slice queries required size — same as C
 /// `value=NULL, size=0` (attr.c:107).
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub fn xgetxattr(path: &str, name: &str, value: &mut [u8], symlink: i32) -> isize {
+pub fn xgetxattr(path: &str, name: &str, value: &mut [u8], symlink: i32) -> isize { // c:37
     let path_c = match CString::new(path) { Ok(c) => c, Err(_) => return -1 };
     let name_c = match CString::new(name) { Ok(c) => c, Err(_) => return -1 };
     let val_ptr = if value.is_empty() {
@@ -72,7 +72,7 @@ pub fn xgetxattr(_path: &str, _name: &str, _value: &mut [u8], _symlink: i32) -> 
 
 /// Port of `xlistxattr()` from `Src/Modules/attr.c:51`.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub fn xlistxattr(path: &str, list: &mut [u8], symlink: i32) -> isize {
+pub fn xlistxattr(path: &str, list: &mut [u8], symlink: i32) -> isize {      // c:52
     let path_c = match CString::new(path) { Ok(c) => c, Err(_) => return -1 };
     let list_ptr = if list.is_empty() {
         std::ptr::null_mut()
@@ -107,7 +107,7 @@ pub fn xlistxattr(_path: &str, _list: &mut [u8], _symlink: i32) -> isize { -1 }
 
 /// Port of `xsetxattr()` from `Src/Modules/attr.c:66`.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub fn xsetxattr(path: &str, name: &str, value: &[u8], flags: i32, symlink: i32) -> i32 {
+pub fn xsetxattr(path: &str, name: &str, value: &[u8], flags: i32, symlink: i32) -> i32 { // c:67
     let path_c = match CString::new(path) { Ok(c) => c, Err(_) => return -1 };
     let name_c = match CString::new(name) { Ok(c) => c, Err(_) => return -1 };
     let val_ptr = value.as_ptr() as *const libc::c_void;
@@ -139,7 +139,7 @@ pub fn xsetxattr(_path: &str, _name: &str, _value: &[u8], _flags: i32, _symlink:
 
 /// Port of `xremovexattr()` from `Src/Modules/attr.c:82`.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub fn xremovexattr(path: &str, name: &str, symlink: i32) -> i32 {
+pub fn xremovexattr(path: &str, name: &str, symlink: i32) -> i32 {           // c:83
     let path_c = match CString::new(path) { Ok(c) => c, Err(_) => return -1 };
     let name_c = match CString::new(name) { Ok(c) => c, Err(_) => return -1 };
     #[cfg(target_os = "macos")]
@@ -166,7 +166,7 @@ pub fn xremovexattr(_path: &str, _name: &str, _symlink: i32) -> i32 { -1 }
 // =====================================================================
 
 /// Port of `bin_getattr()` from `Src/Modules/attr.c:97`.
-pub fn bin_getattr(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 {
+pub fn bin_getattr(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 { // c:98
     // c:100 — `int ret = 0;`
     let mut ret: i32 = 0;
     // c:101 — `int val_len = 0, attr_len = 0, slen;`
@@ -228,7 +228,7 @@ pub fn bin_getattr(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32
 // =====================================================================
 
 /// Port of `bin_setattr()` from `Src/Modules/attr.c:132`.
-pub fn bin_setattr(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 {
+pub fn bin_setattr(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 { // c:133
     // c:135 — `int ret = 0, slen, vlen;`
     let _slen: usize;
     let vlen: usize;

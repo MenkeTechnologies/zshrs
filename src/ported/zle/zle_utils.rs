@@ -204,17 +204,19 @@ impl Zle {
         self.zleline[..pos].iter().filter(|&&c| c == '\n').count()
     }
 
+    // make sure that the line buffer has at least sz chars               // c:63
     /// Ensure line has enough space
     /// Port of sizeline() from zle_utils.c
-    pub fn size_line(&mut self, needed: usize) {
+    pub fn size_line(&mut self, needed: usize) {                            // c:67
         if self.zleline.capacity() < needed {
             self.zleline.reserve(needed - self.zleline.len());
         }
     }
 
+    // insert space for ct chars at cursor position                        // c:773
     /// Make space in line at position
     /// Port of spaceinline() from zle_utils.c
-    pub fn space_in_line(&mut self, pos: usize, count: usize) {
+    pub fn space_in_line(&mut self, pos: usize, count: usize) {             // c:777
         for _ in 0..count {
             self.zleline.insert(pos, ' ');
         }
@@ -226,7 +228,7 @@ impl Zle {
 
     /// Shift characters in line
     /// Port of shiftchars() from zle_utils.c
-    pub fn shift_chars(&mut self, from: usize, count: i32) {
+    pub fn shift_chars(&mut self, from: usize, count: i32) {                // c:846
         if count > 0 {
             for _ in 0..count {
                 self.zleline.insert(from, ' ');
@@ -243,7 +245,7 @@ impl Zle {
 
     /// Delete forward
     /// Port of foredel() from zle_utils.c
-    pub fn fore_del(&mut self, count: usize, flags: CutFlags) {
+    pub fn fore_del(&mut self, count: usize, flags: CutFlags) {             // c:1105
         let count = count.min(self.zlell - self.zlecs);
         if count == 0 {
             return;
@@ -268,7 +270,7 @@ impl Zle {
 
     /// Delete backward
     /// Port of backdel() from zle_utils.c
-    pub fn back_del(&mut self, count: usize, flags: CutFlags) {
+    pub fn back_del(&mut self, count: usize, flags: CutFlags) {             // c:1084
         let count = count.min(self.zlecs);
         if count == 0 {
             return;
@@ -294,7 +296,7 @@ impl Zle {
 
     /// Kill forward
     /// Port of forekill() from zle_utils.c
-    pub fn fore_kill(&mut self, count: usize, append: bool) {
+    pub fn fore_kill(&mut self, count: usize, append: bool) {               // c:1064
         let count = count.min(self.zlell - self.zlecs);
         if count == 0 {
             return;
@@ -325,7 +327,7 @@ impl Zle {
 
     /// Kill backward
     /// Port of backkill() from zle_utils.c
-    pub fn back_kill(&mut self, count: usize, append: bool) {
+    pub fn back_kill(&mut self, count: usize, append: bool) {               // c:1045
         let count = count.min(self.zlecs);
         if count == 0 {
             return;
@@ -359,7 +361,7 @@ impl Zle {
 
     /// Cut text to buffer
     /// Port of cut() / cuttext() from zle_utils.c
-    pub fn cut_text(&mut self, start: usize, end: usize, dir: CutDirection) {
+    pub fn cut_text(&mut self, start: usize, end: usize, dir: CutDirection) { // c:946
         if start >= end || end > self.zlell {
             return;
         }
@@ -1263,22 +1265,62 @@ pub fn viundochange() -> i32 {                                               // 
     1
 }
 
-/// Port of `zle_free_positions()` from Src/Zle/zle_utils.c:747.
+/// Port of `struct zle_position` from Src/Zle/zle_utils.c:594.
+/// Saved (cs, mark, ll) for a stacked position.
+#[derive(Debug, Clone)]
+pub struct ZlePosition {                                                     // c:594
+    /// Cursor position.
+    pub cs: usize,                                                           // c:599
+    /// Mark.
+    pub mk: usize,                                                           // c:601
+    /// Line length.
+    pub ll: usize,                                                           // c:603
+    // c:604 region_highlights chain — region-highlight system not yet
+    // a static-link Rust struct; saved positions don't carry region
+    // state until that lands.
+}
+
+/// Port of `static struct zle_position *zle_positions` from
+/// Src/Zle/zle_utils.c:608. LIFO stack of saved positions.
+pub static ZLE_POSITIONS: std::sync::Mutex<Vec<ZlePosition>> =               // c:608
+    std::sync::Mutex::new(Vec::new());
+
+/// Port of `mod_export void zle_save_positions(void)` from
+/// Src/Zle/zle_utils.c:619.
+///
+/// "Save positions including cursor, end-of-line and (non-special)
+/// region highlighting. Must be matched by a subsequent
+/// `zle_restore_positions()`."
+pub fn zle_save_positions(zle: &crate::ported::zle::zle_main::Zle) {         // c:619
+    let pos = ZlePosition {                                                  // c:625 newpos = zalloc
+        mk: zle.mark,                                                        // c:627
+        cs: zle.zlecs,                                                       // c:634 (no zlemetaline branch)
+        ll: zle.zlell,                                                       // c:635
+    };
+    if let Ok(mut s) = ZLE_POSITIONS.lock() {                                // c:665 push
+        s.push(pos);
+    }
+}
+
+/// Port of `mod_export void zle_restore_positions(void)` from
+/// Src/Zle/zle_utils.c:677. Pops the last saved (cs, mark, ll).
+pub fn zle_restore_positions(zle: &mut crate::ported::zle::zle_main::Zle) {  // c:677
+    if let Ok(mut s) = ZLE_POSITIONS.lock() {
+        if let Some(oldpos) = s.pop() {                                      // c:679-684
+            zle.mark = oldpos.mk;                                            // c:686
+            zle.zlecs = oldpos.cs.min(zle.zlell);                            // c:693
+            zle.zlell = oldpos.ll;                                           // c:694
+        }
+    }
+}
+
+/// Port of `mod_export void zle_free_positions(void)` from
+/// Src/Zle/zle_utils.c:747. Discards the top of stack without
+/// applying it.
 pub fn zle_free_positions() {                                                // c:747
-    // C body c:749-775 — frees the linked list of saved cursor positions
-    //                    pushed by zle_save_positions. Drop covers it.
-}
-
-/// Port of `zle_restore_positions()` from Src/Zle/zle_utils.c:677.
-pub fn zle_restore_positions() {                                             // c:677
-    // C body c:679-745 — pops one (zlecs, zlell, zleline-snapshot)
-    //                    off the position stack. Stack deferred; no-op.
-}
-
-/// Port of `zle_save_positions()` from Src/Zle/zle_utils.c:619.
-pub fn zle_save_positions() {                                                // c:619
-    // C body c:621-675 — pushes (zlecs, zlell, zleline-snapshot) onto
-    //                    the position stack. Stack deferred; no-op.
+    if let Ok(mut s) = ZLE_POSITIONS.lock() {
+        s.pop();                                                             // c:749 oldpos = zle_positions; zle_positions = next
+    }
 }
 
 /// Port of `zleaddtoline()` from Src/Zle/zle_utils.c:102.

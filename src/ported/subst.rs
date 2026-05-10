@@ -415,7 +415,7 @@ fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> {
 /// glob expansion to fully resolve `${...}` / `$(...)` /
 /// `$((...))` / `~user` / `=cmd` / `{a,b}`.
 // Do substitutions before fork.                                            // c:82
-pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut SubstState) {
+pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut SubstState) { // c:100
     // c:100
     let mut node_idx = 0; // c:100
     let mut stop_idx: Option<usize> = None; // c:100
@@ -5230,7 +5230,7 @@ impl SubscriptFlags {
 /// Faithful port of the C ladder — covers `~`, `~+`, `~-`, `~N`/`~-N`
 /// (dirstack), `~user` (libc getpwnam), and `=cmd` (PATH lookup via
 /// equalsubstr).
-pub fn filesubstr(s: &str, assign: bool, state: &SubstState) -> Option<String> {
+pub fn filesubstr(s: &str, assign: bool, state: &SubstState) -> Option<String> { // c:737
     // c:737
     if s.is_empty() {
         // c:737
@@ -5647,7 +5647,7 @@ pub mod multsub_flags {
 /// Single-string substitution.
 /// Port of `singsub()` from Src/subst.c:514.
 // perform substitution on a single word                                    // c:510
-pub fn singsub(s: &str, state: &mut SubstState) -> String {
+pub fn singsub(s: &str, state: &mut SubstState) -> String {                  // c:514
     // c:514
     let mut list = {
         let mut _l = LinkList::default();
@@ -5688,7 +5688,7 @@ pub fn singsub(s: &str, state: &mut SubstState) -> String {
 /// caller side and folded into `state.variables["IFS"]` for now;
 /// pending an explicit sep arg if a caller needs it. The return tuple
 /// carries (joined-scalar, array, isarr, ms_flags).
-pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<String>, bool, u32) {
+pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<String>, bool, u32) { // c:544
     // c:544
     let mut ms_flags = 0u32; // c:551
     let mut x = s.to_string(); // c:550 (`x = *s`)
@@ -5841,7 +5841,7 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
 /// Port of modify() from subst.c lines 4530-4873
 /// Apply a `:` modifier chain (`:t:r:s/x/y/`...).
 /// Port of `modify()` from Src/subst.c:4531.
-pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String {
+pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String {  // c:4531
     // c:4531
     let mut result = s.to_string(); // c:4531
     let mut chars: std::iter::Peekable<std::str::Chars> = modifiers.chars().peekable(); // c:4531
@@ -6235,8 +6235,8 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String {
                 // returned the extension and `${path:e}` returned the root.
                 'r' => Some(remtext(w)),   // c:4585 (:r root)
                 'e' => Some(rembutext(w)), // c:4585 (:e ext)
-                'l' => Some(casemodify(w, CaseMod::Lower)), // c:4585 (:l)
-                'u' => Some(casemodify(w, CaseMod::Upper)), // c:4585 (:u)
+                'l' => Some(casemodify(w, CaseMod::CASMOD_LOWER)), // c:4585 (:l)
+                'u' => Some(casemodify(w, CaseMod::CASMOD_UPPER)), // c:4585 (:u)
                 'q' => Some(crate::ported::utils::quotestring(
                     // c:4585 (:q)
                     w,
@@ -6383,7 +6383,7 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String {
 ///   0 → always 1 (legacy / no multibyte)
 ///   1 → u9_wcwidth(wc); zero if negative
 ///   * → boolean: 1 if u9_wcwidth>0 else 0
-pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {
+pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {                       // c:848
     // c:848
     // u9_wcwidth fallback lives in utils.rs (canonical port of
     // Src/utils.c::zwcwidth). Use the unicode_width-backed
@@ -6443,7 +6443,7 @@ pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {
 ///   2. parsestr / parsestrnoerr depending on `err` flag — fails → return 1
 ///   3. If !single, walk buffer: outside DNULL (`"`) regions convert
 ///      `Qstring` → `String` and `Qtick` → `Tick`. DNULL toggles qt.
-pub fn subst_parse_str(s: &str, single: bool, err: bool) -> Option<String> {
+pub fn subst_parse_str(s: &str, single: bool, err: bool) -> Option<String> { // c:1460
     // c:1460
     let _ = err; // c:1466 (parsestr error path
                  //         deferred — full C
@@ -6517,7 +6517,7 @@ pub fn subst_parse_str(s: &str, single: bool, err: bool) -> Option<String> {
 /// Rust signature: takes the dirstack slice + pwd + the PUSHDMINUS
 /// option flag (callers read it from the live executor's options
 /// table). Returns Option.
-pub fn dstackent(
+pub fn dstackent(                                                            // c:4902
     ch: char,
     val: i32,
     dirstack: &[String],
@@ -6601,7 +6601,7 @@ pub struct SortOptions {
 /// `multi_width` controls cell-counting per the (m) flag (subst.c:2376):
 ///   • 0  → every char counts as one cell (C zsh's MULTIBYTE_SUPPORT off)
 ///   • 1+ → use wcpadwidth (CJK wide=2, combining=0, ZWJ=0).
-pub fn dopadding(
+pub fn dopadding(                                                            // c:893
     // c:893
     s: &str,               // c:893
     prenum: usize,         // c:893
@@ -6777,7 +6777,7 @@ pub fn dopadding(
 /// Port of get_strarg() from subst.c
 /// Parse a `:STR:`-delimited flag argument.
 /// Port of `get_strarg()` from Src/subst.c:1348.
-pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {
+pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {                 // c:1348
     // c:1348
     let mut chars = s.chars().peekable(); // c:1348
 
@@ -6833,7 +6833,7 @@ pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {
 ///
 /// Body: get_strarg → parsestr → singsub → mathevali, then absolute
 /// value. The math eval lets `(l:$n:)` etc. work.
-pub fn get_intarg(s: &str) -> Option<(i64, &str)> {
+pub fn get_intarg(s: &str) -> Option<(i64, &str)> {                          // c:1428
     // c:1428
     // C: `char *t = get_strarg(*s, &arglen);` — get the delimited
     // expression text + delimiter length.
@@ -6882,7 +6882,7 @@ pub fn get_intarg(s: &str) -> Option<(i64, &str)> {
 /// The trailing `remnulargs()` strips Bnull tokens so this is
 /// consistent with the other substitution forms (indicating quotes
 /// have been fully processed).
-pub fn quotesubst(s: &str, _state: &mut SubstState) -> String {
+pub fn quotesubst(s: &str, _state: &mut SubstState) -> String {              // c:463
     // c:463
     let mut result = s.to_string(); // c:465
     let mut pos = 0_usize; // c:466
@@ -6930,7 +6930,7 @@ pub fn quotesubst(s: &str, _state: &mut SubstState) -> String {
 ///
 /// Routes through `ShellExecutor::expand_glob` (the canonical
 /// glob.rs port of zsh's zglob) for filesystem matching.
-pub fn globlist(list: &mut LinkList, flags: u32, state: &mut SubstState) {
+pub fn globlist(list: &mut LinkList, flags: u32, state: &mut SubstState) {   // c:489
     // c:489
     // C: `badcshglob = 0;` — reset the csh-glob diagnostic counter
     // (we don't track this; csh-glob option is rare).
@@ -7032,7 +7032,7 @@ pub mod sub_flags {
 /// with the concat result and returns a pointer past the src
 /// segment. The Rust version returns the full concatenation; callers
 /// can recover the post-src position via prefix.len() + src.len().
-pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> String {
+pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> String { // c:814
     // c:814
     // C: `if (!pl && (!s || !*s)) { *d = dest = (copied ? src :
     //     dupstring(src)); if (glbsub) shtokenize(dest); }`
@@ -7303,18 +7303,18 @@ mod tests {
     fn casemodify_lower_uppercases_via_lowercase() {
         // utils.c:6915
         // Src/hist.c:CASMOD_LOWER applies tolower() per char.
-        assert_eq!(casemodify("Hello World", CaseMod::Lower), "hello world"); // utils.c:6915
-        assert_eq!(casemodify("MIXED-Case_42", CaseMod::Lower), "mixed-case_42"); // utils.c:6915
-        assert_eq!(casemodify("", CaseMod::Lower), ""); // utils.c:6915
+        assert_eq!(casemodify("Hello World", CaseMod::CASMOD_LOWER), "hello world"); // utils.c:6915
+        assert_eq!(casemodify("MIXED-Case_42", CaseMod::CASMOD_LOWER), "mixed-case_42"); // utils.c:6915
+        assert_eq!(casemodify("", CaseMod::CASMOD_LOWER), ""); // utils.c:6915
     } // utils.c:6915
 
     #[test] // utils.c:6915
     fn casemodify_upper_uppercases_each_char() {
         // utils.c:6915
         // Src/hist.c:CASMOD_UPPER applies toupper() per char.
-        assert_eq!(casemodify("Hello World", CaseMod::Upper), "HELLO WORLD"); // utils.c:6915
-        assert_eq!(casemodify("ünicode", CaseMod::Upper), "ÜNICODE"); // utils.c:6915
-        assert_eq!(casemodify("", CaseMod::Upper), ""); // utils.c:6915
+        assert_eq!(casemodify("Hello World", CaseMod::CASMOD_UPPER), "HELLO WORLD"); // utils.c:6915
+        assert_eq!(casemodify("ünicode", CaseMod::CASMOD_UPPER), "ÜNICODE"); // utils.c:6915
+        assert_eq!(casemodify("", CaseMod::CASMOD_UPPER), ""); // utils.c:6915
     } // utils.c:6915
 
     #[test] // utils.c:6915
@@ -7322,8 +7322,8 @@ mod tests {
         // utils.c:6915
         // Src/hist.c:CASMOD_CAPS — uppercase first letter of each word,
         // lowercase the rest. zsh treats whitespace as a word boundary.
-        assert_eq!(casemodify("hello world", CaseMod::Caps), "Hello World"); // utils.c:6915
-        assert_eq!(casemodify("FOO BAR", CaseMod::Caps), "Foo Bar"); // utils.c:6915
+        assert_eq!(casemodify("hello world", CaseMod::CASMOD_CAPS), "Hello World"); // utils.c:6915
+        assert_eq!(casemodify("FOO BAR", CaseMod::CASMOD_CAPS), "Foo Bar"); // utils.c:6915
     } // utils.c:6915
 
     #[test] // utils.c:6915
@@ -7332,8 +7332,8 @@ mod tests {
         // Port of CASMOD_CAPS from Src/hist.c — non-alphanumerics
         // (incl. `-`, `.`, digits-then-alpha) reset `nextupper`.
         // Verified live: `print -r -- ${(C)"a-b c.d"}` → `A-B C.D`.
-        assert_eq!(casemodify("a-b c.d", CaseMod::Caps), "A-B C.D"); // utils.c:6915
-        assert_eq!(casemodify("foo_bar.baz", CaseMod::Caps), "Foo_Bar.Baz"); // utils.c:6915
+        assert_eq!(casemodify("a-b c.d", CaseMod::CASMOD_CAPS), "A-B C.D"); // utils.c:6915
+        assert_eq!(casemodify("foo_bar.baz", CaseMod::CASMOD_CAPS), "Foo_Bar.Baz"); // utils.c:6915
     } // utils.c:6915
 
     // ─── remtpath (Src/hist.c:2055-2118) ────────────────────────────

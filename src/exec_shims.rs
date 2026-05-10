@@ -3302,11 +3302,11 @@ impl crate::ported::exec::ShellExecutor {
                     // with CASMOD_LOWER. Use the faithful
                     // casemodify port instead of plain to_lowercase
                     // for Unicode-correct multibyte handling.
-                    result = casemodify(&result, CaseMod::Lower);
+                    result = casemodify(&result, CaseMod::CASMOD_LOWER);
                 }
                 'u' => {
                     // `:u` uppercase. Port of src/zsh/Src/hist.c:934-936.
-                    result = casemodify(&result, CaseMod::Upper);
+                    result = casemodify(&result, CaseMod::CASMOD_UPPER);
                 }
                 'C' => {
                     // `:C` capitalize. zsh-only modifier per
@@ -3316,7 +3316,7 @@ impl crate::ported::exec::ShellExecutor {
                     // `(C)` parameter flag did. Same semantics:
                     // word-aware capitalization with mid-word
                     // lowercase enforcement.
-                    result = casemodify(&result, CaseMod::Caps);
+                    result = casemodify(&result, CaseMod::CASMOD_CAPS);
                 }
                 'q' => {
                     // zsh `:q` uses backslash quoting, not single-bslashquote

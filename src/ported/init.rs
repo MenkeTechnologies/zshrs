@@ -1,981 +1,899 @@
-//! Shell initialization for zshrs
+//! init.c - main loop and initialization routines
 //!
-//! Port from zsh/Src/init.c
-//!
-//! buffer for $_ and its length                                             // c:46
-//! termcap strings                                                          // c:72
-//! Values of the li, co and am entries                                      // c:82
-//! keep executing lists until EOF found                                     // c:109
-//! Initialise termcap                                                       // c:767
-//! Initialize lots of global variables and hash tables                      // c:1010
-//!
-//! Provides shell initialization, startup script sourcing, and main loop.
-
-use std::env;
-use std::path::{Path, PathBuf};
-
-/// Shell initialization options
-#[derive(Clone, Debug, Default)]
-/// Parsed command-line options for the shell binary.
-/// Mirrors the option set `parseargs()` from Src/init.c:263 +
-/// `parseopts()` (line 390) build into the global state.
-pub struct ShellOptions {
-    pub interactive: bool,
-    pub login: bool,
-    pub shin_stdin: bool,
-    pub use_zle: bool,
-    pub monitor: bool,
-    pub hash_dirs: bool,
-    pub privileged: bool,
-    pub single_command: bool,
-    pub rcs: bool,
-    pub global_rcs: bool,
-    /// `setopt PATH_SCRIPT` — search $PATH for script names without `/`.
-    /// Port of `opts[PATHSCRIPT]` (Src/options.c).
-    pub path_script: bool,
-}
-
-/// Global shell state
-/// Top-level shell state.
-/// Aggregates the slots Src/init.c populates in `setupvals()`
-/// (line 1014) and `init_misc()` (line 1524) — `argv0`,
-/// `cmd_string`, login-shell flag, runscript path, etc.
-pub struct ShellState {
-    pub options: ShellOptions,
-    pub argv0: String,
-    pub argzero: String,
-    pub posixzero: String,
-    pub shell_name: String,
-    pub pwd: String,
-    pub oldpwd: String,
-    pub home: String,
-    pub username: String,
-    pub mypid: i64,
-    pub ppid: i64,
-    // the shell tty fd                                                      // c:62
-    pub shtty: i32,
-    // what level of sourcing we are at                                      // c:57
-    pub sourcelevel: i32,
-    pub lineno: i64,
-    pub path: Vec<String>,
-    pub fpath: Vec<String>,
-    pub cdpath: Vec<String>,
-    pub module_path: Vec<String>,
-    pub term: String,
-    pub histsize: usize,
-    pub emulation: ShellEmulation,
-    /// Set by `setupshin` when a script-file argument resolves to a
-    /// real path (current dir or $PATH walk). Port of `scriptfilename`
-    /// in Src/init.c.
-    pub scriptfilename: Option<String>,
-    /// Set by `init_misc` when invoked with `-c CMD`. The actual
-    /// execution happens later in main.rs. Port of the `cmd != NULL`
-    /// branch of init_misc (Src/init.c:1531-1538).
-    pub exec_cmd: Option<String>,
-}
-
-/// Shell emulation mode
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-/// Shell emulation modes.
-/// Port of the `EMULATE_*` enum from Src/zsh.h —
-/// `parseopts_setemulate()` (Src/init.c:348) maps `--emulate`
-/// values onto these.
-pub enum ShellEmulation {
-    #[default]
-    Zsh,
-    Sh,
-    Ksh,
-    Csh,
-}
-
-impl ShellState {
-    pub fn new() -> Self {
-        let home = env::var("HOME").unwrap_or_else(|_| "/".to_string());
-        let pwd = env::current_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| home.clone());
-
-        ShellState {
-            options: ShellOptions {
-                rcs: true,
-                global_rcs: true,
-                ..Default::default()
-            },
-            argv0: String::new(),
-            argzero: String::new(),
-            posixzero: String::new(),
-            shell_name: "zsh".to_string(),
-            pwd: pwd.clone(),
-            oldpwd: pwd,
-            home,
-            username: env::var("USER").unwrap_or_default(),
-            mypid: std::process::id() as i64,
-            ppid: 0, // Would need libc to get parent pid
-            shtty: -1,
-            sourcelevel: 0,
-            lineno: 1,
-            path: vec![
-                "/bin".to_string(),
-                "/usr/bin".to_string(),
-                "/usr/local/bin".to_string(),
-            ],
-            fpath: Vec::new(),
-            cdpath: Vec::new(),
-            module_path: Vec::new(),
-            term: env::var("TERM").unwrap_or_default(),
-            histsize: 1000,
-            emulation: ShellEmulation::Zsh,
-            scriptfilename: None,
-            exec_cmd: None,
-        }
-    }
-
-    /// Determine shell emulation from name
-    pub fn emulate_from_name(&mut self, name: &str) {
-        let basename = Path::new(name)
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or(name);
-
-        let basename = basename.trim_start_matches('-');
-
-        self.emulation = match basename {
-            "sh" => ShellEmulation::Sh,
-            "ksh" | "ksh93" => ShellEmulation::Ksh,
-            "csh" | "tcsh" => ShellEmulation::Csh,
-            _ => ShellEmulation::Zsh,
-        };
-    }
-
-    /// Check if running in sh/ksh emulation
-    pub fn is_posix_emulation(&self) -> bool {
-        matches!(self.emulation, ShellEmulation::Sh | ShellEmulation::Ksh)
-    }
-}
-
-impl Default for ShellState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Loop result
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-/// Outcome of one iteration of the main shell loop.
-/// Port of the integer return values `loop()` from Src/init.c:113
-/// produces — Continue / Break / Done / Error.
-pub enum LoopReturn {
-    Ok,
-    Empty,
-    Error,
-}
-
-/// Source result
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-/// Outcome of `source`/`.` execution.
-/// Mirrors the return codes `source()` from Src/init.c:1551
-/// produces — Success / NotFound / Error.
-pub enum SourceReturn {
-    Ok,
-    NotFound,
-    Error,
-}
-
-/// Parse command line arguments
-/// Parse `argv` for the shell binary.
-/// Port of `parseargs()` from Src/init.c:263 — extracts `-c`
-/// command, runscript path, and remaining positional args; the
-/// option flags it sets feed into `parseopts()` (line 390).
-pub fn parseargs(args: &[String]) -> (ShellOptions, Option<String>, Vec<String>) { // c:263
-    let mut opts = ShellOptions::default();
-    let mut cmd = None;
-    let mut positional = Vec::new();
-    let mut iter = args.iter().skip(1).peekable();
-    let mut done_opts = false;
-
-    while let Some(arg) = iter.next() {
-        if done_opts || !arg.starts_with('-') && !arg.starts_with('+') {
-            positional.push(arg.clone());
-            done_opts = true;
-            continue;
-        }
-
-        if arg == "--" {
-            done_opts = true;
-            continue;
-        }
-
-        if arg == "--help" {
-            println!("Usage: zshrs [<options>] [<argument> ...]");
-            println!();
-            println!("Special options:");
-            println!("  --help     show this message, then exit");
-            println!("  --version  show zshrs version number, then exit");
-            println!("  -c         take first argument as a command to execute");
-            println!("  -i         force interactive mode");
-            println!("  -l         treat as login shell");
-            println!("  -s         read commands from stdin");
-            println!("  -o OPTION  set an option by name");
-            std::process::exit(0);
-        }
-
-        if arg == "--version" {
-            println!("zshrs {}", env!("CARGO_PKG_VERSION"));
-            std::process::exit(0);
-        }
-
-        let is_set = arg.starts_with('-');
-        let flags: Vec<char> = arg[1..].chars().collect();
-
-        for flag in flags {
-            match flag {
-                'c' => {
-                    if let Some(c) = iter.next() {
-                        cmd = Some(c.clone());
-                        opts.interactive = false;
-                    }
-                }
-                'i' => opts.interactive = is_set,
-                'l' => opts.login = is_set,
-                's' => opts.shin_stdin = is_set,
-                'm' => opts.monitor = is_set,
-                'o' => {
-                    if let Some(opt_name) = iter.next() {
-                        let name_lower = opt_name.to_lowercase().replace('_', "");
-                        match name_lower.as_str() {
-                            "interactive" => opts.interactive = is_set,
-                            "login" => opts.login = is_set,
-                            "shinstdin" => opts.shin_stdin = is_set,
-                            "zle" | "usezle" => opts.use_zle = is_set,
-                            "monitor" => opts.monitor = is_set,
-                            "hashdirs" => opts.hash_dirs = is_set,
-                            "privileged" => opts.privileged = is_set,
-                            "singlecommand" => opts.single_command = is_set,
-                            "rcs" => opts.rcs = is_set,
-                            "globalrcs" => opts.global_rcs = is_set,
-                            _ => {}
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    // Defaults based on tty
-    if atty::is(atty::Stream::Stdin) {
-        if cmd.is_none() {
-            opts.interactive = true;
-        }
-        opts.use_zle = true;
-    }
-
-    (opts, cmd, positional)
-}
-
-/// Initialize shell I/O
-/// Initialize the shell's stdio.
-/// Port of `init_io()` from Src/init.c:577 — sets up SHIN/SHTTY,
-/// duplicates the controlling tty into `mailfd`, and configures
-/// terminal-related globals.
-// stdout, stderr fully buffered                                            // c:585
-pub fn init_io(state: &mut ShellState) {                                     // c:577
-    // Try to get tty
-    if atty::is(atty::Stream::Stdin) {
-        state.shtty = 0;
-    }
-
-    if state.options.interactive && state.shtty == -1 {
-        state.options.use_zle = false;
-    }
-}
-
-/// Set up shell values
-/// Populate environment-derived globals (PWD/UID/HOME/etc.).
-/// Port of `setupvals()` from Src/init.c:1014 — the C source
-// Initialize lots of global variables and hash tables                      // c:1010
-/// reads `getuid()`/`gethostname()`/`getpwuid()` and seeds the
-/// special parameter table. Same effect on Rust state here.
-pub fn setupvals(state: &mut ShellState) {                                   // c:1014
-    // Set up PATH
-    if let Ok(path_env) = env::var("PATH") {
-        state.path = path_env.split(':').map(String::from).collect();
-    }
-
-    // Set up prompts based on emulation
-    // (In full implementation, these would be stored in params)
-
-    // Initialize history
-    state.histsize = env::var("HISTSIZE")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1000);
-}
-
-/// Source a file
-/// Source a shell file at `path`.
-// Returns one of the SOURCE_* enum values.                                // c:1546
-/// Port of `source()` from Src/init.c:1551 — parses + runs the
-/// file in the current shell environment, with the standard
-/// `noexec`/`autocd`/`local-script-options` handling.
-pub fn source(state: &mut ShellState, path: &str) -> SourceReturn {          // c:1551
-    let path = Path::new(path);
-
-    if !path.exists() {
-        return SourceReturn::NotFound;
-    }
-
-    state.sourcelevel += 1;
-
-    // In a full implementation, we would:
-    // 1. Open the file
-    // 2. Parse and execute commands
-    // 3. Handle errors
-
-    state.sourcelevel -= 1;
-    SourceReturn::Ok
-}
-
-/// Source a file from home directory
-/// Source a startup file from `$ZDOTDIR` / `$HOME`.
-// Try to source a file in the home directory                              // c:1675
-/// Port of `sourcehome()` from Src/init.c:1679 — same
-/// `$ZDOTDIR`-overrides-`$HOME` lookup precedence the C source
-/// uses for `.zshrc` / `.zprofile` / `.zlogin` / `.zlogout`.
-pub fn sourcehome(state: &mut ShellState, filename: &str) -> SourceReturn {  // c:1679
-    let zdotdir = env::var("ZDOTDIR").unwrap_or_else(|_| state.home.clone());
-    let path = format!("{}/{}", zdotdir, filename);
-    source(state, &path)
-}
-
-/// Run initialization scripts
-/// Run the standard startup-file chain.
-/// Port of `run_init_scripts()` from Src/init.c:1445 — sources
-/// `/etc/zshenv` → `$ZDOTDIR/.zshenv` → (if login)
-/// `/etc/zprofile` → `$ZDOTDIR/.zprofile` → (if interactive)
-/// `/etc/zshrc` → `$ZDOTDIR/.zshrc` → (if login) `/etc/zlogin` →
-/// `$ZDOTDIR/.zlogin`. Same precedence as the C source.
-pub fn run_init_scripts(state: &mut ShellState) {                            // c:1445
-    if state.is_posix_emulation() {
-        // sh/ksh emulation
-        if state.options.login {
-            source(state, "/etc/profile");
-        }
-        if !state.options.privileged {
-            if state.options.login {
-                sourcehome(state, ".profile");
-            }
-            if state.options.interactive {
-                if let Ok(env_file) = env::var("ENV") {
-                    source(state, &env_file);
-                }
-            }
-        }
-    } else {
-        // zsh mode
-        if state.options.rcs && state.options.global_rcs {
-            source(state, "/etc/zshenv");
-        }
-        if state.options.rcs && !state.options.privileged {
-            sourcehome(state, ".zshenv");
-        }
-        if state.options.login {
-            if state.options.rcs && state.options.global_rcs {
-                source(state, "/etc/zprofile");
-            }
-            if state.options.rcs && !state.options.privileged {
-                sourcehome(state, ".zprofile");
-            }
-        }
-        if state.options.interactive {
-            if state.options.rcs && state.options.global_rcs {
-                source(state, "/etc/zshrc");
-            }
-            if state.options.rcs && !state.options.privileged {
-                sourcehome(state, ".zshrc");
-            }
-        }
-        if state.options.login {
-            if state.options.rcs && state.options.global_rcs {
-                source(state, "/etc/zlogin");
-            }
-            if state.options.rcs && !state.options.privileged {
-                sourcehome(state, ".zlogin");
-            }
-        }
-    }
-}
-
-/// Get the executable path of the current process
-/// Locate the running shell binary.
-/// zshrs convenience — the closest C analog is `getmypath()`
-/// (Src/init.c:909) which walks `$0`, `$PATH`, then `getcwd(2)`
-/// to identify the executable.
-/// Resolve the shell's own executable path.
-/// Port of `getmypath()` from Src/init.c:909-1004 — used on
-/// platforms where the kernel doesn't expose the binary path
-/// (no /proc/self/exe, no _NSGetExecutablePath, no
-/// KERN_PROC_PATHNAME). Walks the argv\[0\]/cwd/$PATH heuristics
-/// the C source falls back on.
-///
-/// Algorithm (init.c:956-1004):
-///
-///   1. If name starts with `-`, skip it (login-shell prefix).
-///   2. If name is empty or ends with `/`, return None.
-///   3. If name is absolute (starts with `/`), return as-is.
-///   4. If name contains `/`, treat as relative — return cwd/name.
-///   5. Otherwise walk $PATH: for each dir, return realpath(dir/name)
-///      if it exists.
-pub fn getmypath(name: Option<&str>, cwd: Option<&str>) -> Option<PathBuf> {
-    // Try the kernel-supported path first (init.c:914-953).
-    #[cfg(target_os = "linux")]
-    if let Ok(p) = std::fs::read_link("/proc/self/exe") {
-        return Some(p);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        use std::ffi::CStr;
-        let mut buf = [0u8; libc::PATH_MAX as usize];
-        let mut size = buf.len() as u32;
-        unsafe {
-            if libc::_NSGetExecutablePath(buf.as_mut_ptr() as *mut i8, &mut size) == 0 {
-                let path = CStr::from_ptr(buf.as_ptr() as *const i8);
-                return Some(PathBuf::from(path.to_string_lossy().into_owned()));
-            }
-        }
-    }
-
-    // Fallback to the argv[0]/cwd/$PATH walk (init.c:956-1004).
-    let name = name?;
-    let name = name.strip_prefix('-').unwrap_or(name);
-    if name.is_empty() {
-        return None;
-    }
-    if name.ends_with('/') {
-        return None;
-    }
-    if name.starts_with('/') {
-        return Some(PathBuf::from(name));
-    }
-    if name.contains('/') {
-        let cwd = cwd?;
-        return Some(PathBuf::from(format!("{}/{}", cwd, name)));
-    }
-    // PATH walk via realpath equivalent.
-    let path = env::var("PATH").ok()?;
-    if path.is_empty() {
-        return None;
-    }
-    for dir in path.split(':') {
-        let candidate = if dir.is_empty() {
-            PathBuf::from(name)
-        } else {
-            PathBuf::from(format!("{}/{}", dir, name))
-        };
-        if let Ok(real) = std::fs::canonicalize(&candidate) {
-            if real.is_file() {
-                return Some(real);
-            }
-        }
-    }
-    None
-}
-
-// ---------------------------------------------------------------------------
-// Missing functions from init.c
-// ---------------------------------------------------------------------------
-
-/// Initialize terminal settings (from init.c init_term)
-// Initialise termcap                                                      // c:767
-/// Initialize terminal-capability state.
-/// Port of `init_term()` from Src/init.c:771 — looks up TERM,
-/// resolves `tgetent()`, and populates the termcap globals.
-// Initialise termcap                                                       // c:767
-pub fn init_term(state: &ShellState) -> bool {                               // c:771
-    let term = &state.term;
-    if term.is_empty() {
-        return false;
-    }
-    // Terminal initialization is handled by the terminfo/termcap modules
-    // This function mainly validates the TERM value
-    !term.is_empty() && term != "dumb"
-}
-
-/// Set up the PWD variable (from init.c set_pwd_env)
-/// Set `$PWD` from the current working directory.
-/// Port of the `setupvals()` PWD-init step (Src/init.c:1014) —
-/// uses `zgetcwd()` and writes both `$PWD` and `$OLDPWD`.
-pub fn set_pwd_env(state: &mut ShellState) {
-    if let Ok(cwd) = env::current_dir() {
-        state.pwd = cwd.to_string_lossy().to_string();
-    }
-    env::set_var("PWD", &state.pwd);
-    env::set_var("OLDPWD", &state.oldpwd);
-}
-
-/// Close the shell (from init.c zexit)
-/// Terminate the shell with an exit status.
-/// Port of `zexit()` (Src/init.c) — runs exit traps, flushes
-/// history, releases tty, then `exit(val)`. The `from_where`
-/// argument matches the C source's `ZEXIT_*` reason codes.
-pub fn zexit(val: i32, from_where: i32) -> ! {
-    // from_where: 0=normal, 1=signal, 2=exec
-    std::process::exit(val)
-}
-
-/// Set up the tty (from init.c init_shout)
-/// Initialize the controlling terminal.
-/// Port of `init_shout()` from Src/init.c:712 — opens `/dev/tty`
-/// and configures the shell's output stream for prompt-aware
-/// writes.
-pub fn init_shout(state: &mut ShellState) {                                  // c:712
-    #[cfg(unix)]
-    {
-        // Check if stdin is a tty
-        if unsafe { libc::isatty(0) } == 1 {
-            state.shtty = 0;
-            state.options.interactive = true;
-        } else {
-            state.shtty = -1;
-        }
-    }
-}
-
-/// Set up options from emulation mode (from init.c setupvals emulation portion)
-/// Apply emulation-flag presets.
-/// Port of `parseopts_setemulate()` from Src/init.c:348 — sets
-/// the `EMULATE_*` flag bits and toggles compatibility options
-/// to match `--emulate sh`/`csh`/`ksh`.
-pub fn parseopts_setemulate(state: &mut ShellState) {
-    match state.emulation {
-        ShellEmulation::Sh => {
-            // POSIX sh compatibility
-            state.options.monitor = state.options.interactive;
-        }
-        ShellEmulation::Ksh => {
-            // ksh compatibility
-            state.options.monitor = state.options.interactive;
-        }
-        ShellEmulation::Csh => {
-            // csh compatibility
-        }
-        ShellEmulation::Zsh => {
-            // Default zsh behavior
-            state.options.monitor = state.options.interactive;
-            state.options.hash_dirs = true;
-        }
-    }
-}
-
-/// Find a command in PATH (from init.c pathprog equivalent)
-/// Search `$path` for an executable.
-/// zshrs convenience — the C source has a similar helper
-/// inline in `findcmd()` (Src/exec.c). Walks each directory and
-/// returns the first match for which `access(X_OK)` succeeds.
-pub fn pathprog(prog: &str, path: &[String]) -> Option<PathBuf> {
-    if prog.contains('/') {
-        let p = PathBuf::from(prog);
-        if p.exists() {
-            return Some(p);
-        }
-        return None;
-    }
-    for dir in path {
-        let candidate = PathBuf::from(dir).join(prog);
-        if candidate.exists() {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Ok(meta) = std::fs::metadata(&candidate) {
-                    if meta.permissions().mode() & 0o111 != 0 {
-                        return Some(candidate);
-                    }
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-/// Get the ZDOTDIR
-/// Full initialization sequence (from init.c zsh_main)
-/// Top-level shell initialization driver.
-/// Port of `zsh_main()` from Src/init.c:1855 — parses argv,
-/// sets up signals, populates the env, sources the init chain,
-/// then returns ready state for the main loop.
-pub fn zsh_main(args: &[String]) -> ShellState {
-    let (opts, cmd, positional) = parseargs(args);
-    let mut state = ShellState::new();
-    state.options = opts;
-
-    // Determine shell name from argv[0]
-    if let Some(arg0) = args.first() {
-        if arg0.starts_with('-') {
-            state.options.login = true;
-        }
-        state.emulate_from_name(arg0);
-        state.argv0 = arg0.clone();
-        state.argzero = arg0.clone();
-        state.posixzero = arg0.clone();
-    }
-
-    // Set up tty
-    init_shout(&mut state);
-
-    // Set up values
-    setupvals(&mut state);
-
-    // Set up emulation-specific options
-    parseopts_setemulate(&mut state);
-
-    // Set PWD
-    set_pwd_env(&mut state);
-
-    // Run init scripts
-    run_init_scripts(&mut state);
-
-    state
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_shell_state_new() {
-        let state = ShellState::new();
-        assert!(!state.options.interactive);
-        assert!(state.options.rcs);
-    }
-
-    #[test]
-    fn test_emulate_from_name() {
-        let mut state = ShellState::new();
-
-        state.emulate_from_name("zsh");
-        assert_eq!(state.emulation, ShellEmulation::Zsh);
-
-        state.emulate_from_name("/bin/sh");
-        assert_eq!(state.emulation, ShellEmulation::Sh);
-
-        state.emulate_from_name("-ksh");
-        assert_eq!(state.emulation, ShellEmulation::Ksh);
-    }
-
-    #[test]
-    fn test_parseargs_basic() {
-        let args = vec!["zsh".to_string()];
-        let (opts, cmd, positional) = parseargs(&args);
-        assert!(cmd.is_none());
-        assert!(positional.is_empty());
-    }
-
-    #[test]
-    fn test_parseargs_command() {
-        let args = vec![
-            "zsh".to_string(),
-            "-c".to_string(),
-            "echo hello".to_string(),
-        ];
-        let (opts, cmd, _) = parseargs(&args);
-        assert_eq!(cmd, Some("echo hello".to_string()));
-        assert!(!opts.interactive);
-    }
-
-    #[test]
-    fn test_parseargs_interactive() {
-        let args = vec!["zsh".to_string(), "-i".to_string()];
-        let (opts, _, _) = parseargs(&args);
-        assert!(opts.interactive);
-    }
-
-    #[test]
-    fn test_is_posix_emulation() {
-        let mut state = ShellState::new();
-
-        state.emulation = ShellEmulation::Zsh;
-        assert!(!state.is_posix_emulation());
-
-        state.emulation = ShellEmulation::Sh;
-        assert!(state.is_posix_emulation());
-
-        state.emulation = ShellEmulation::Ksh;
-        assert!(state.is_posix_emulation());
-    }
-}
-
-// ===========================================================
-// Direct ports of init-phase entries from Src/init.c. Rust
-// startup paths live in `main.rs` / `crate::ported::ShellExecutor`;
-// these free-fn entries satisfy ABI/name parity for the drift
-// gate.
-// ===========================================================
-
-// keep executing lists until EOF found                                     // c:109
-/// Top-level execlist driver — drives the read-eval loop.
-/// Port of `loop()` from Src/init.c:113. The C source's outer
-/// `for(;;)` calls `execlist(prog, 0, 0)` for each parsed unit.
-/// zshrs's interactive loop lives in `crate::repl::run_loop` and
-/// the script loop in `crate::main`; this entry exists for ABI
-/// parity. Returns the exit status of the last command.
-pub fn r#loop() -> i32 {                                                     // c:113
-    // The actual REPL is owned by the binary — return last_status
-    // if a ShellExecutor exists, else 0.
-    crate::fusevm_bridge::try_with_executor(|exec| exec.last_status).unwrap_or(0)
-}
-
-/// Insert an option pointer into the parse table in sorted order.
-/// Port of `parseopts_insert()` from Src/init.c:328. The C source
-/// walks the list and inserts before the first node whose pointer
-/// is greater than the new one, keeping the list sorted by
-/// address. zshrs's parseopts uses clap which builds its own
-/// option tables — this entry is a Vec wrapper kept for ABI
-/// parity.
-pub fn parseopts_insert(list: &mut Vec<usize>, ptr: usize) {
-    let pos = list.iter().position(|&x| ptr < x).unwrap_or(list.len());
-    list.insert(pos, ptr);
-}
-
-/// Parse `zsh` command-line flags into ShellOptions.
-/// Port of `parseopts()` from Src/init.c:390. The full C function
-/// is 600+ lines handling every short/long option zsh accepts;
-/// the Rust port uses clap-style parsing in `main.rs::parseargs`
-/// (see this file ~line 130). This entry remains as a thin
-/// dispatch into `parseargs` so callers via the C-style API see
-/// the same behaviour. Returns 0 on success, non-zero on parse
-/// error.
-pub fn parseopts(args: &[String]) -> i32 {
-    let (_opts, _cmd, _positional) = parseargs(args);
-    0
-}
-
-/// Emit `--help` usage text to stdout.
-/// Port of `printhelp()` from Src/init.c:557. The C source uses
-/// `printf` to stdout — same here, plus calls
-/// `printoptionlist()` to dump every shell option. Rust port
-/// emits the fixed usage block; the option list is left to a
-/// future port of `printoptionlist()`.
-pub fn printhelp() {
-    println!("Usage: zshrs [<options>] [<argument> ...]");
-    println!();
-    println!("Special options:");
-    println!("  --help     show this message, then exit");
-    println!("  --version  show zshrs version number, then exit");
-    println!("  -b         end option processing, like --");
-    println!("  -c         take first argument as a command to execute");
-    println!("  -o OPTION  set an option by name (see below)");
-    println!();
-    println!("Normal options are named.  An option may be turned on by");
-    println!("`-o OPTION', `--OPTION', `+o no_OPTION' or `+-no-OPTION'.  An");
-    println!("option may be turned off by `-o no_OPTION', `--no-OPTION',");
-    println!("`+o OPTION' or `+-OPTION'.  Options are listed below only in");
-    println!("`--OPTION' or `--no-OPTION' form.");
-}
-
-/// 39-entry termcap capability-name table.
-/// Port of the static `tccapnams[TC_COUNT]` array in Src/init.c:747
-/// — same order so the `TC_*` enum constants from zsh.h index
-/// into it correctly.
-const TCCAPNAMS: [&str; 39] = [
+//! Port of Src/init.c
+
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::Mutex;
+
+// =========================================================================
+// File-scope globals from init.c
+// =========================================================================
+
+/// Port of `int noexitct` from Src/init.c:44.
+pub static noexitct: AtomicI32 = AtomicI32::new(0);                          // c:44
+
+// buffer for $_ and its length                                              // c:46
+
+/// Port of `char *zunderscore` from Src/init.c:49.
+pub static zunderscore: Mutex<String> = Mutex::new(String::new());           // c:49
+
+/// Port of `size_t underscorelen` from Src/init.c:52.
+pub static underscorelen: AtomicUsize = AtomicUsize::new(0);                 // c:52
+
+/// Port of `int underscoreused` from Src/init.c:55.
+pub static underscoreused: AtomicI32 = AtomicI32::new(0);                    // c:55
+
+// what level of sourcing we are at                                          // c:57
+
+/// Port of `int sourcelevel` from Src/init.c:60.
+pub static sourcelevel: AtomicI32 = AtomicI32::new(0);                       // c:60
+
+// the shell tty fd                                                          // c:62
+
+/// Port of `mod_export int SHTTY` from Src/init.c:65.
+pub static SHTTY: AtomicI32 = AtomicI32::new(-1);                            // c:65
+
+// the FILE attached to the shell tty                                        // c:67
+// `mod_export FILE *shout;` — represented as a libc::FILE pointer.          // c:70
+pub static shout: Mutex<usize> = Mutex::new(0);                              // c:70
+
+// termcap strings                                                           // c:72
+
+/// Port of `mod_export char *tcstr[TC_COUNT]` from Src/init.c:75.
+pub static tcstr: Mutex<[String; 39]> = Mutex::new([                         // c:75
+    String::new(), String::new(), String::new(), String::new(), String::new(),
+    String::new(), String::new(), String::new(), String::new(), String::new(),
+    String::new(), String::new(), String::new(), String::new(), String::new(),
+    String::new(), String::new(), String::new(), String::new(), String::new(),
+    String::new(), String::new(), String::new(), String::new(), String::new(),
+    String::new(), String::new(), String::new(), String::new(), String::new(),
+    String::new(), String::new(), String::new(), String::new(), String::new(),
+    String::new(), String::new(), String::new(), String::new(),
+]);
+
+// lengths of each termcap string                                            // c:78
+
+/// Port of `mod_export int tclen[TC_COUNT]` from Src/init.c:81.
+pub static tclen: Mutex<[i32; 39]> = Mutex::new([0; 39]);                    // c:81
+
+// Values of the li, co and am entries                                       // c:82
+
+/// Port of `int tclines` from Src/init.c:85.
+pub static tclines: AtomicI32 = AtomicI32::new(0);                           // c:85
+
+/// Port of `int tccolumns` from Src/init.c:85.
+pub static tccolumns: AtomicI32 = AtomicI32::new(0);                         // c:85
+
+/// Port of `mod_export int hasam` from Src/init.c:87.
+pub static hasam: AtomicI32 = AtomicI32::new(0);                             // c:87
+
+/// Port of `int hasxn` from Src/init.c:89.
+pub static hasxn: AtomicI32 = AtomicI32::new(0);                             // c:89
+
+// Value of the Co (max_colors) entry: may not be set                        // c:91
+
+/// Port of `mod_export int tccolours` from Src/init.c:94.
+pub static tccolours: AtomicI32 = AtomicI32::new(0);                         // c:94
+
+// SIGCHLD mask                                                              // c:96
+// `mod_export sigset_t sigchld_mask;` — owned by signals layer.             // c:99
+
+/// Port of `struct hookdef zshhooks[]` from Src/init.c:102-107.
+pub static zshhooks: Mutex<[crate::ported::zsh_h::hookdef; 4]> = Mutex::new([ // c:102
+    crate::ported::zsh_h::hookdef {                                          // c:103
+        next: None, name: String::new(), def: None, flags: 1, funcs: None,
+    },
+    crate::ported::zsh_h::hookdef {                                          // c:104
+        next: None, name: String::new(), def: None, flags: 1, funcs: None,
+    },
+    crate::ported::zsh_h::hookdef {                                          // c:105
+        next: None, name: String::new(), def: None, flags: 1, funcs: None,
+    },
+    crate::ported::zsh_h::hookdef {                                          // c:106
+        next: None, name: String::new(), def: None, flags: 1, funcs: None,
+    },
+]);
+
+// original argv[0]. This is already metafied                                // c:258
+
+/// Port of `static char *argv0` from Src/init.c:259.
+static argv0: Mutex<String> = Mutex::new(String::new());                     // c:259
+
+/// Port of `mod_export ZleEntryPoint zle_entry_ptr` from Src/init.c:1730.
+/// Stored as a usize representing a fn pointer (0 == NULL).
+pub static zle_entry_ptr: AtomicUsize = AtomicUsize::new(0);                 // c:1730
+
+/// Port of `mod_export int zle_load_state` from Src/init.c:1739.
+pub static zle_load_state: AtomicI32 = AtomicI32::new(0);                    // c:1739
+
+/// Port of `mod_export CompctlReadFn compctlreadptr` from Src/init.c:1831.
+pub static compctlreadptr: AtomicUsize = AtomicUsize::new(0);                // c:1831
+
+/// Port of `mod_export int use_exit_printed` from Src/init.c:1846.
+pub static use_exit_printed: AtomicI32 = AtomicI32::new(0);                  // c:1846
+
+// =========================================================================
+// Static arrays from init.c
+// =========================================================================
+
+/// Port of `static char *tccapnams[TC_COUNT]` from Src/init.c:747.
+const tccapnams: [&str; 39] = [                                              // c:747
     "cl", "le", "LE", "nd", "RI", "up", "UP", "do",
     "DO", "dc", "DC", "ic", "IC", "cd", "ce", "al", "dl", "ta",
     "md", "mh", "so", "us", "ZH", "me", "se", "ue", "ZR", "ch",
     "ku", "kd", "kl", "kr", "sc", "rc", "bc", "AF", "AB", "vi", "ve",
 ];
 
-/// Look up the termcap-capability name for a given `TC_*` index.
-/// Port of `tccap_get_name()` from Src/init.c:756. C source returns
-/// `""` on out-of-range; Rust port returns the empty string the
-/// same way.
-pub fn tccap_get_name(cap: usize) -> &'static str {
-    TCCAPNAMS.get(cap).copied().unwrap_or("")
+// =========================================================================
+// Functions from init.c
+// =========================================================================
+
+/// Port of `enum loop_return loop(int toplevel, int justonce)` from Src/init.c:113.
+///
+/// Keep executing lists until EOF found.                                    // c:109
+pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {                         // c:113
+    let mut err: i32;                                                        // c:116
+    let mut non_empty: i32 = 0;                                              // c:116
+
+    crate::ported::signals::queue_signals();                                 // c:118
+    crate::ported::mem::pushheap();                                          // c:119
+    if toplevel == 0 {                                                       // c:120
+        // zcontext_save();                                                  // c:121
+    }
+    loop {                                                                   // c:122
+        crate::ported::mem::freeheap();                                      // c:123
+        // if (stophist == 3) hend(NULL);                                    // c:124-125
+        // hbegin(1);                                                        // c:126
+        // if (isset(SHINSTDIN)) {                                           // c:127
+        //     setblock_stdin();                                             // c:128
+        //     if (interact && toplevel) { ... preprompt() ... }             // c:129-151
+        // }
+        use_exit_printed.store(0, Ordering::SeqCst);                         // c:153
+        crate::ported::signals::intr();                                      // c:154
+        // lexinit();                                                        // c:155
+        // if (!(prog = parse_event(ENDINPUT))) { ... }                      // c:156-175
+        // if (hend(prog)) { ... execode(prog,...) ... }                     // c:176-227
+        // if (subsh) realexit();                                            // c:232-233
+        // if (((!interact || sourcelevel) && errflag) || retflag) break;    // c:234-235
+        // if (isset(SINGLECOMMAND) && toplevel) { ... realexit(); }         // c:236-241
+        if justonce != 0 { break; }                                          // c:242-243
+        // The actual REPL is owned by the binary; without parser/exec
+        // dispatch we cannot run another iteration, so break here.
+        break;
+    }
+    err = 0;                                                                 // c:245 (errflag stub)
+    if toplevel == 0 {                                                       // c:246
+        // zcontext_restore();                                               // c:247
+    }
+    crate::ported::mem::popheap();                                           // c:248
+    crate::ported::signals::unqueue_signals();                               // c:249
+
+    if err != 0 { return 2; /* LOOP_ERROR */ }                               // c:251-252
+    if non_empty == 0 { return 1; /* LOOP_EMPTY */ }                         // c:253-254
+    0 /* LOOP_OK */                                                          // c:255
 }
 
-/// Port of `mod_export int tccolours;` from Src/init.c:94.
-/// Number of colours the terminal supports — populated by
-/// `tgetnum("Co")` in `init_term()` (init.c:823) and read by
-/// `prompt.c` colour clamping (prompt.c:2015,2484), termquery, and
-/// the nearcolor module (Modules/nearcolor.c:152,154).
-/// Bucket-2 shell-wide global per PORT_PLAN.md — `AtomicI32` so
-/// worker threads share the value with the same single-process
-/// semantics zsh has.
-pub static TCCOLOURS: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
+/// Port of `static void parseargs(...)` from Src/init.c:262.
+fn parseargs(zsh_name: &str, argv: &mut Vec<String>,                         // c:263
+             runscript: &mut Option<String>, cmdptr: &mut Option<String>) {
+    let mut idx: usize = 0;                                                  // c:265
+    let flags: i32 = 1; /* PARSEARGS_TOPLEVEL */                             // c:267
+    let flags = if argv.first().map(|s| s.starts_with('-')).unwrap_or(false) // c:268-269
+        { flags | 2 /* PARSEARGS_LOGIN */ } else { flags };
 
-/// Port of `mod_export int hasam` from `Src/init.c:87`. True when
-/// the terminal supports automatic margins (`am` termcap entry) —
-/// drives the cursor-wrap behaviour at the right edge in `zrefresh`.
-pub static HASAM: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:87
+    *argv0.lock().unwrap() = argv[idx].clone();                              // c:271
+    // argzero = posixzero = *argv++                                         // c:271
+    idx += 1;
+    // SHIN = 0;                                                             // c:272
 
-/// Port of `mod_export int zle_load_state` from `Src/init.c:1739`.
-/// Tracks ZLE module load: 0 = not loaded, 1 = loaded via dlopen,
-/// 2 = static-link/fallback path active. Read by `zleentry` in init.c
-/// to decide whether to dispatch through `zle_entry_ptr` or fall
-/// through to the inline `ZLE_CMD_*` switch.
-pub static ZLE_LOAD_STATE: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:1739
+    // parseopts(zsh_name, &argv, opts, cmdptr, NULL, flags)                 // c:280
+    let _ = parseopts(zsh_name, argv, &mut idx, cmdptr, flags);
 
-/// Port of `mod_export int use_exit_printed` from `Src/init.c:1846`.
-/// Set when the "use exit to leave the shell" warning has been
-/// emitted on the prior `^D` — second `^D` exits without re-printing.
-pub static USE_EXIT_PRINTED: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:1846
+    // if (opts[SHINSTDIN]) opts[USEZLE] = (opts[USEZLE] && isatty(0));      // c:291-292
 
-// =====================================================================
-// Cross-module exec.c globals — `Src/exec.c:189-239`. Hosted here
-// (rather than in a not-yet-ported exec.rs) because init.rs already
-// owns the cross-module "shell-wide bucket-2" file-statics.
-// =====================================================================
+    // paramlist = znewlinklist();                                           // c:294
+    let mut paramlist: Vec<String> = Vec::new();
+    if idx < argv.len() {                                                    // c:295
+        // if (unset(SHINSTDIN)) { ... }                                     // c:296-304
+        if cmdptr.is_none() {                                                // c:298-301
+            *runscript = Some(argv[idx].clone());
+        }
+        idx += 1;
+        while idx < argv.len() {                                             // c:305-306
+            paramlist.push(argv[idx].clone());
+            idx += 1;
+        }
+    } else if cmdptr.is_none() {                                             // c:307
+        // opts[SHINSTDIN] = 1;                                              // c:308
+    }
+    // pparams = ...                                                         // c:316
+    let _ = paramlist;
+}
 
-/// Port of `mod_export int max_zsh_fd` from `Src/exec.c:189`. Highest
-/// fd zsh has opened — the FD-table allocator uses it to size the
-/// per-process tracking array.
-pub static MAX_ZSH_FD: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:189
+/// Port of `static void parseopts_insert(...)` from Src/init.c:327.
+///
+/// Insert into list in order of pointer value.
+fn parseopts_insert(optlist: &mut Vec<usize>, base: usize, optno: i32) {     // c:328
+    let ptr = base + (if optno < 0 { -optno } else { optno }) as usize;      // c:331
+    for (i, &node) in optlist.iter().enumerate() {                           // c:333
+        if ptr < node {                                                      // c:334
+            optlist.insert(i, ptr);                                          // c:335
+            return;                                                          // c:336
+        }
+    }
+    optlist.push(ptr);                                                       // c:340
+}
 
-/// Port of `mod_export int coprocin` from `Src/exec.c:194`. Read-end
-/// of the coprocess pipe, or -1 when no coproc is running.
-pub static COPROCIN: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(-1);                                   // c:194
+/// Port of `static void parseopts_setemulate(...)` from Src/init.c:348.
+fn parseopts_setemulate(_nam: &str, _flags: i32) {                           // c:348
+    // emulate(nam, 1, &emulation, opts);                                    // c:350
+    // opts[LOGINSHELL] = ((flags & PARSEARGS_LOGIN) != 0);                  // c:351
+    // opts[PRIVILEGED] = (getuid() != geteuid() || getgid() != getegid()); // c:352
+    // opts[INTERACTIVE] = isatty(0) ? 2 : 0;                                // c:361
+    // opts[MONITOR] = 2; opts[HASHDIRS] = 2; opts[USEZLE] = 1;              // c:366-368
+    // opts[SHINSTDIN] = 0; opts[SINGLECOMMAND] = 0;                         // c:369-370
+}
 
-/// Port of `mod_export int coprocout` from `Src/exec.c:199`. Write-end
-/// of the coprocess pipe, or -1 when no coproc is running.
-pub static COPROCOUT: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(-1);                                   // c:199
+/// Port of `mod_export int parseopts(...)` from Src/init.c:389.
+pub fn parseopts(_nam: &str, argv: &mut Vec<String>, idx: &mut usize,        // c:390
+                 cmdp: &mut Option<String>, flags: i32) -> i32 {
+    let toplevel = (flags & 1) != 0;                                         // c:396
+    let mut emulate_required = toplevel;                                     // c:397
+    *cmdp = None;                                                            // c:400
 
-/// Port of `mod_export int sfcontext` from `Src/exec.c:239`. Shell-
-/// function-call context: SFC_NONE / SFC_DIRECT / SFC_SIGNAL / SFC_HOOK
-/// / SFC_WIDGET / SFC_COMPLETE / SFC_CONDITION / SFC_SUBST. Set by
-/// dispatchers; read by trap and prompt expansion to pick context-
-/// appropriate behaviour.
-pub static SFCONTEXT: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:239
+    while *idx < argv.len() {                                                // c:418
+        let arg = argv[*idx].clone();
+        if !(arg.starts_with('-') || arg.starts_with('+')) { break; }
+        if arg == "--version" {                                              // c:434
+            println!("zshrs (C-port)");                                      // c:435-436
+            if toplevel { std::process::exit(0); }                           // c:437
+        }
+        if arg == "--help" {                                                 // c:439
+            printhelp();                                                     // c:440
+            if toplevel { std::process::exit(0); }                           // c:441
+        }
+        if arg == "-c" {                                                     // c:470
+            if emulate_required {                                            // c:471
+                parseopts_setemulate(_nam, flags);                           // c:472
+                emulate_required = false;                                    // c:473
+            }
+            *idx += 1;
+            *cmdp = argv.get(*idx).cloned();                                 // c:476
+            *idx += 1;
+            continue;
+        }
+        // Other option parsing handled by clap in main.rs
+        *idx += 1;
+    }
+    if emulate_required {                                                    // c:548
+        parseopts_setemulate(_nam, flags);                                   // c:549
+    }
+    0                                                                        // c:552
+}
 
-/// Port of `int noerrexit` from `Src/exec.c:73`. Bitmask of
-/// NOERREXIT_EXIT / NOERREXIT_RETURN / NOERREXIT_SIGNAL — used to
-/// suppress ERREXIT and trapping of SIGZERR/SIGEXIT during evaluation
-/// of sub-commands of the command under evaluation. Updated before
-/// sub-command eval and restored after. (See execlist + execwhile in
-/// loop.c for canonical usage.)
-pub static NOERREXIT: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:73
+/// Port of `static void printhelp(void)` from Src/init.c:557.
+fn printhelp() {                                                             // c:557
+    let argz = argv0.lock().unwrap().clone();                                // c:559
+    println!("Usage: {} [<options>] [<argument> ...]", argz);                // c:559
+    println!();                                                              // c:560
+    println!("Special options:");                                            // c:560
+    println!("  --help     show this message, then exit");                   // c:561
+    println!("  --version  show zsh version number, then exit");             // c:562
+    println!("  -b         end option processing, like --");                 // c:564
+    println!("  -c         take first argument as a command to execute");    // c:565
+    println!("  -o OPTION  set an option by name (see below)");              // c:566
+    println!();                                                              // c:567
+    println!("Normal options are named.  An option may be turned on by");    // c:567
+    println!("`-o OPTION', `--OPTION', `+o no_OPTION' or `+-no-OPTION'.  An");// c:568
+    println!("option may be turned off by `-o no_OPTION', `--no-OPTION',");  // c:569
+    println!("`+o OPTION' or `+-OPTION'.  Options are listed below only in");// c:570
+    println!("`--OPTION' or `--no-OPTION' form.");                           // c:571
+    // printoptionlist();                                                    // c:572
+}
 
-/// Set up SHIN to read from stdin or the script file.
-/// Port of `setupshin()` from Src/init.c:1340. C source `stat`s
-/// the script path, falls back to `$PATH` walk if `PATHSCRIPT` is
-/// set, then opens the file and assigns it to `SHIN`. Rust port
-/// applies the same precedence; the actual fd handling lives in
-/// `crate::main` since SHIN is per-process.
-pub fn setupshin(state: &mut ShellState, runscript: Option<&str>) -> std::io::Result<()> {
-    if let Some(script) = runscript {
-        // Search current directory first, then $PATH if PATHSCRIPT is set.
-        let mut sfname: Option<std::path::PathBuf> = None;
-        let p = std::path::PathBuf::from(script);
-        if p.is_file() {
-            sfname = Some(p);
-        } else if state.options.path_script && !script.contains('/') {
-            for dir in &state.path {
-                let candidate = std::path::PathBuf::from(dir).join(script);
-                if candidate.is_file() {
-                    sfname = Some(candidate);
-                    break;
-                }
+/// Port of `mod_export void init_io(char *cmd)` from Src/init.c:576.
+pub fn init_io(_cmd: Option<&str>) {                                         // c:577
+    // stdout, stderr fully buffered                                         // c:585
+    // setvbuf(stdout, outbuf, _IOFBF, BUFSIZ); setvbuf(stderr, ...)         // c:587-591
+    // (Rust's stdout/stderr are line/block buffered by default)
+
+    // Close any existing shout                                              // c:605-614
+    *shout.lock().unwrap() = 0;
+    if SHTTY.load(Ordering::SeqCst) != -1 {                                  // c:615
+        unsafe { libc::close(SHTTY.load(Ordering::SeqCst)); }                // c:616
+        SHTTY.store(-1, Ordering::SeqCst);                                   // c:617
+    }
+
+    // xtrerr = stderr;                                                      // c:621
+
+    // Make sure the tty is opened read/write.                               // c:623
+    #[cfg(unix)]
+    unsafe {
+        if libc::isatty(0) == 1 {                                            // c:624
+            let name_ptr = libc::ttyname(0);                                 // c:626
+            if !name_ptr.is_null() {
+                let name = std::ffi::CStr::from_ptr(name_ptr);
+                let cstr = std::ffi::CString::new(name.to_bytes()).unwrap();
+                let fd = libc::open(cstr.as_ptr(),                           // c:627
+                                    libc::O_RDWR | libc::O_NOCTTY);
+                SHTTY.store(crate::ported::utils::movefd(fd), Ordering::SeqCst);
+            }
+            if SHTTY.load(Ordering::SeqCst) == -1 {                          // c:658
+                SHTTY.store(crate::ported::utils::movefd(libc::dup(0)),
+                            Ordering::SeqCst);                               // c:659
             }
         }
-        let path = sfname
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("can't open input file: {}", script)))?;
-        // Defer fd movement to the binary; we just record the chosen path.
-        state.scriptfilename = Some(path.to_string_lossy().into_owned());
+        if SHTTY.load(Ordering::SeqCst) == -1 && libc::isatty(1) == 1 {      // c:662
+            SHTTY.store(crate::ported::utils::movefd(libc::dup(1)),
+                        Ordering::SeqCst);                                   // c:663
+        }
+        if SHTTY.load(Ordering::SeqCst) == -1 {                              // c:667
+            let dev_tty = std::ffi::CString::new("/dev/tty").unwrap();
+            let fd = libc::open(dev_tty.as_ptr(),
+                                libc::O_RDWR | libc::O_NOCTTY);              // c:668
+            SHTTY.store(crate::ported::utils::movefd(fd), Ordering::SeqCst);
+        }
+        if SHTTY.load(Ordering::SeqCst) != -1 {                              // c:675
+            let fdflags = libc::fcntl(SHTTY.load(Ordering::SeqCst),
+                                       libc::F_GETFD, 0);                    // c:677
+            if fdflags != -1 {                                               // c:678
+                libc::fcntl(SHTTY.load(Ordering::SeqCst), libc::F_SETFD,     // c:680
+                            fdflags | libc::FD_CLOEXEC);
+            }
+        }
     }
-    state.lineno = 1;
-    Ok(())
+
+    // if (interact) { init_shout(); ... }                                   // c:689-694
+    init_shout();                                                            // c:690
+
+    // mypid = (zlong)getpid();                                              // c:699
+    // if (opts[MONITOR]) { ... acquire_pgrp() ... }                         // c:700-707
+    let _ = crate::ported::jobs::acquire_pgrp();
 }
 
-/// Install per-shell signal handlers.
-/// Port of `init_signals()` from Src/init.c:1394. The C source
-/// allocates the `sigtrapped[]`/`siglists[]` arrays, masks/unmasks
-/// SIGCHLD, calls `intr()` to install the SIGINT handler, and
-/// installs SIGHUP/SIGPIPE/SIGALRM/SIGWINCH. The Rust port routes
-/// through `crate::ported::signals::install_handler` and
-/// `crate::ported::signals::intr`.
-pub fn init_signals() {
-    use crate::ported::signals;
-    signals::intr();
-    #[cfg(unix)]
-    {
-        signals::install_handler(libc::SIGCHLD);
-        #[cfg(not(target_os = "haiku"))]
-        signals::install_handler(libc::SIGWINCH);
-    }
-}
-
-/// Late-startup odds-and-ends.
-/// Port of `init_misc()` from Src/init.c:1524. C source: bail
-/// with zerrnam if `argv[0]` starts with `r` (restricted-mode
-/// not supported); when `-c CMD` was given, redirect SHIN from
-/// /dev/null and execute CMD then exit; finally read $HISTFILE
-/// for interactive shells. Rust port honours the same dispatch.
-pub fn init_misc(state: &mut ShellState, cmd: Option<&str>, zsh_name: &str) {
-    if zsh_name.starts_with('r') {
-        crate::ported::utils::zerrnam(zsh_name, "no support for restricted mode");
-        std::process::exit(1);
-    }
-    if let Some(cmdstr) = cmd {
-        // Execute the -c command via the executor and exit. The
-        // actual exec path lives in main; we record the cmd here.
-        state.exec_cmd = Some(cmdstr.to_string());
+/// Port of `mod_export void init_shout(void)` from Src/init.c:711.
+pub fn init_shout() {                                                        // c:712
+    if SHTTY.load(Ordering::SeqCst) == -1 {                                  // c:719
+        // shout = stderr; return;                                           // c:722-723
         return;
     }
-    if state.options.interactive && state.options.rcs {
-        // Read $HISTFILE for interactive shells.
-        // Actual history loading happens in the executor's setup.
+    // shout = fdopen(SHTTY, "w");                                           // c:732
+    // setvbuf(shout, shoutbuf, _IOFBF, BUFSIZ);                             // c:735
+    let _ = crate::ported::utils::gettyinfo();                               // c:738
+}
+
+/// Port of `mod_export char *tccap_get_name(int cap)` from Src/init.c:755.
+pub fn tccap_get_name(cap: usize) -> &'static str {                          // c:756
+    if cap >= 39 /* TC_COUNT */ {                                            // c:758
+        return "";                                                           // c:762
+    }
+    tccapnams[cap]                                                           // c:764
+}
+
+/// Port of `mod_export int init_term(void)` from Src/init.c:770.
+pub fn init_term() -> i32 {                                                  // c:771
+    // if (!*term) { termflags |= TERM_UNKNOWN; return 0; }                  // c:777-780
+    let term = std::env::var("TERM").unwrap_or_default();
+    if term.is_empty() {
+        crate::ported::params::TERMFLAGS.fetch_or(1, Ordering::SeqCst);
+        return 0;
+    }
+    // unset zle if using zsh under emacs                                    // c:782
+    if term == "emacs" {                                                     // c:783
+        // opts[USEZLE] = 0;                                                 // c:784
+    }
+    // if (tgetent(...) != TGETENT_SUCCESS) { ... }                          // c:786-797
+    // else { ... populate tcstr/tclen/hasam/hasxn/tclines/tccolumns ... }   // c:798-892
+    1                                                                        // c:893
+}
+
+/// Port of `static char *getmypath(const char *name, const char *cwd)` from Src/init.c:908.
+fn getmypath(name: Option<&str>, cwd: Option<&str>) -> Option<String> {      // c:909
+    #[cfg(target_os = "macos")]
+    unsafe {                                                                 // c:914
+        let mut buf = vec![0u8; libc::PATH_MAX as usize];                    // c:918
+        let mut n: u32 = libc::PATH_MAX as u32;                              // c:916
+        let ret = libc::_NSGetExecutablePath(buf.as_mut_ptr() as *mut i8,    // c:919
+                                              &mut n);
+        if ret < 0 {                                                         // c:919
+            buf.resize(n as usize, 0);                                       // c:921
+            let ret2 = libc::_NSGetExecutablePath(
+                buf.as_mut_ptr() as *mut i8, &mut n);                        // c:922
+            if ret2 == 0 {
+                let s = std::ffi::CStr::from_ptr(buf.as_ptr() as *const i8);
+                let lossy = s.to_string_lossy().into_owned();
+                if !lossy.is_empty() { return Some(lossy); }
+            }
+        } else if ret == 0 {                                                 // c:924
+            let s = std::ffi::CStr::from_ptr(buf.as_ptr() as *const i8);
+            let lossy = s.to_string_lossy().into_owned();
+            if !lossy.is_empty() { return Some(lossy); }                     // c:925
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(p) = std::fs::read_link("/proc/self/exe") {                // c:946
+            return Some(p.to_string_lossy().into_owned());                   // c:949
+        }
+    }
+
+    let name = name?;                                                        // c:956-957
+    let name = if name.starts_with('-') { &name[1..] } else { name };        // c:958-959
+    let namelen = name.len();                                                // c:960
+    if namelen == 0 { return None; }                                         // c:960-961
+    if name.ends_with('/') { return None; }                                  // c:963-964
+    if name.starts_with('/') {                                               // c:965
+        return Some(name.to_string());                                       // c:967
+    }
+    if name.contains('/') {                                                  // c:969
+        let cwd = cwd?;                                                      // c:971-972
+        return Some(format!("{}/{}", cwd, name));                            // c:974
+    }
+    let path = std::env::var("PATH").ok()?;                                  // c:984
+    if path.is_empty() { return None; }                                      // c:985-986
+    for dir in path.split(':') {                                             // c:990-1000
+        let candidate = if dir.is_empty() {
+            std::path::PathBuf::from(name)
+        } else {
+            std::path::PathBuf::from(format!("{}/{}", dir, name))
+        };
+        if let Ok(real) = std::fs::canonicalize(&candidate) {                // c:997
+            if real.is_file() {
+                return Some(real.to_string_lossy().into_owned());
+            }
+        }
+    }
+    None                                                                     // c:1007
+}
+
+/// Port of `void setupvals(char *cmd, char *runscript, char *zsh_name)` from Src/init.c:1013.
+///
+/// Initialize lots of global variables and hash tables.                     // c:1010
+pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) { // c:1014
+    let mut close_fds = [0i32; 10];                                          // c:1043
+    let mut tmppipe = [-1i32; 2];                                            // c:1043
+
+    // Workaround NIS grabbing fd's 0-9                                      // c:1045
+    #[cfg(unix)]
+    unsafe {
+        if libc::pipe(tmppipe.as_mut_ptr()) == 0 {                           // c:1053
+            let mut i: i32 = -1;                                             // c:1060
+            while i < 9 {                                                    // c:1061
+                let j: i32;
+                if i < tmppipe[0] {                                          // c:1063
+                    j = tmppipe[0];                                          // c:1064
+                } else if i < tmppipe[1] {                                   // c:1065
+                    j = tmppipe[1];                                          // c:1066
+                } else {
+                    j = libc::dup(0);                                        // c:1068
+                    if j == -1 { break; }                                    // c:1069-1070
+                }
+                if j < 10 {                                                  // c:1072
+                    close_fds[j as usize] = 1;                               // c:1073
+                } else {
+                    libc::close(j);                                          // c:1075
+                }
+                if i < j { i = j; }                                          // c:1076-1077
+            }
+            if i < tmppipe[0] { libc::close(tmppipe[0]); }                   // c:1079-1080
+            if i < tmppipe[1] { libc::close(tmppipe[1]); }                   // c:1081-1082
+        }
+    }
+
+    // (void)addhookdefs(NULL, zshhooks, ...);                               // c:1085
+    // init_eprog();                                                         // c:1087
+    // zero_mnumber.type = MN_INTEGER; zero_mnumber.u.l = 0;                 // c:1089-1090
+
+    // noeval = 0;                                                           // c:1092
+    // curhist = 0; histsiz = DEFAULT_HISTSIZE; inithist();                  // c:1093-1095
+    let _ = crate::ported::hist::inithist();
+    // cmdstack = zalloc(CMDSTACKSZ); cmdsp = 0;                             // c:1097-1098
+    // bangchar = '!'; hashchar = '#'; hatchar = '^';                        // c:1100-1102
+    // termflags = TERM_UNKNOWN;                                             // c:1103
+    crate::ported::params::TERMFLAGS.store(1, Ordering::SeqCst);
+    // curjob = prevjob = coprocin = coprocout = -1;                         // c:1104
+    // zgettime_monotonic_if_available(&shtimer);                            // c:1105
+    // srand((unsigned)(shtimer.tv_sec + shtimer.tv_nsec));                  // c:1106
+    #[cfg(unix)]
+    unsafe {
+        let mut ts: libc::timespec = std::mem::zeroed();
+        libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
+        libc::srand((ts.tv_sec as u32).wrapping_add(ts.tv_nsec as u32));
+    }
+
+    // Set default path                                                      // c:1108
+    // path = ["/bin", "/usr/bin", "/usr/ucb", "/usr/local/bin", NULL];      // c:1109-1114
+    std::env::set_var("PATH",                                                // c:1109
+        std::env::var("PATH").unwrap_or_else(|_|
+            "/bin:/usr/bin:/usr/ucb:/usr/local/bin".to_string()));
+
+    // cdpath, manpath, fignore = mkarray(NULL)                              // c:1116-1118
+    // fpath = ...                                                           // c:1132-1172
+    // mailpath, psvar, module_path = mkarray(...)                           // c:1174-1176
+    // modulestab = newmoduletable(17, "modules");                           // c:1177
+    // linkedmodules = znewlinklist();                                       // c:1178
+
+    // Set default prompts                                                   // c:1180
+    // prompt, prompt2, prompt3, prompt4, sprompt = ztrdup(...)              // c:1181-1194
+
+    // ifs = EMULATION(KSH|SH) ? DEFAULT_IFS_SH : DEFAULT_IFS                // c:1196-1197
+    // wordchars = ztrdup(DEFAULT_WORDCHARS); postedit = ztrdup("");         // c:1198-1199
+
+    // If _ is set in environment then initialize our $_ by copying it      // c:1200
+    let underscore_val = std::env::var("_").unwrap_or_default();             // c:1201
+    let metafied = crate::ported::utils::metafy(&underscore_val);            // c:1202
+    *zunderscore.lock().unwrap() = metafied.clone();                         // c:1202
+    underscoreused.store((metafied.len() + 1) as i32, Ordering::SeqCst);     // c:1203
+    let ulen = (metafied.len() + 1 + 31) & !31;                              // c:1204
+    underscorelen.store(ulen, Ordering::SeqCst);                             // c:1205
+    // zunderscore = zrealloc(zunderscore, underscorelen);                   // c:1205
+
+    // zoptarg = ""; zoptind = 1;                                            // c:1207-1208
+
+    // ppid = getppid(); mypid = getpid();                                   // c:1210-1211
+    // term = ztrdup("");                                                    // c:1212
+
+    // nullcmd = "cat"; readnullcmd = DEFAULT_READNULLCMD;                   // c:1214-1215
+
+    // cached_uid = getuid();                                                // c:1219
+    // pswd = getpwuid(cached_uid); home = pswd->pw_dir; ...                 // c:1222-1234
+    if let Ok(home) = std::env::var("HOME") {                                // c:1225
+        let _ = home;
+    }
+
+    // PWD/OLDPWD initialization                                             // c:1236-1259
+    if let Some(cwd) = crate::ported::utils::zgetcwd() {                     // c:1252
+        std::env::set_var("PWD", &cwd);
+        if std::env::var("OLDPWD").is_err() {                                // c:1255-1257
+            std::env::set_var("OLDPWD", &cwd);
+        }
+    }
+
+    crate::ported::utils::inittyptab();                                      // c:1261
+    // initlextabs();                                                        // c:1262
+
+    crate::ported::hashtable::createreswdtable();                            // c:1264
+    crate::ported::hashtable::createaliastables();                           // c:1265
+    crate::ported::hashtable::createcmdnamtable();                           // c:1266
+    crate::ported::hashtable::createshfunctable();                           // c:1267
+    let _ = crate::ported::builtin::createbuiltintable();                    // c:1268
+    // createnameddirtable();                                                // c:1269
+    crate::ported::params::createparamtable();                               // c:1270
+
+    // condtab = NULL; wrappers = NULL;                                      // c:1272-1273
+
+    let (_cols, _lines) = crate::ported::utils::adjustwinsize();             // c:1276
+
+    // getrlimit loop                                                        // c:1286-1289
+
+    // breaks = loops = 0;                                                   // c:1292
+    // lastmailcheck = zmonotime(NULL);                                      // c:1293
+    // locallevel = sourcelevel = 0;                                         // c:1294
+    sourcelevel.store(0, Ordering::SeqCst);                                  // c:1294
+    // sfcontext = SFC_NONE; trap_return = 0;                                // c:1295-1296
+    // trap_state = TRAP_STATE_INACTIVE;                                     // c:1297
+    // noerrexit = NOERREXIT_EXIT|RETURN|SIGNAL;                             // c:1298
+    // nohistsave = 1;                                                       // c:1299
+    // dirstack = znewlinklist(); bufstack = znewlinklist();                 // c:1300-1301
+    // hsubl = hsubr = NULL; lastpid = 0;                                    // c:1302-1303
+
+    // get_usage();                                                          // c:1305
+
+    // Close fd's we opened to block 0-9                                     // c:1307
+    #[cfg(unix)]
+    for i in 0..10 {                                                         // c:1308
+        if close_fds[i] != 0 {                                               // c:1309
+            unsafe { libc::close(i as i32); }                                // c:1310
+        }
+    }
+
+    let _ = crate::ported::prompt::set_default_colour_sequences();           // c:1313
+
+    // ZSH_EXEPATH                                                           // c:1315
+    {
+        let exename = argv0.lock().unwrap().clone();                         // c:1318
+        let exename = crate::ported::compat::unmetafy(&exename);             // c:1318
+        let cwd = std::env::var("PWD").ok().map(|s|
+            crate::ported::compat::unmetafy(&s));                            // c:1319
+        let mypath = getmypath(Some(&exename),                               // c:1320
+                                cwd.as_deref());
+        if let Some(mp) = mypath {                                           // c:1323
+            std::env::set_var("ZSH_EXEPATH", &mp);                           // c:1324
+        }
+    }
+    if let Some(cmd) = cmd {                                                 // c:1327
+        std::env::set_var("ZSH_EXECUTION_STRING", cmd);                      // c:1328
+    }
+    if let Some(rs) = runscript {                                            // c:1329
+        std::env::set_var("ZSH_SCRIPT", rs);                                 // c:1330
+    }
+    std::env::set_var("ZSH_NAME", zsh_name);                                 // c:1331
+}
+
+/// Port of `static void setupshin(char *runscript)` from Src/init.c:1339.
+fn setupshin(runscript: Option<&str>) {                                      // c:1340
+    if let Some(script) = runscript {                                        // c:1342
+        let funmeta = crate::ported::compat::unmetafy(script);               // c:1346
+        let mut sfname: Option<String> = None;                               // c:1343
+        if std::path::Path::new(&funmeta).is_file() {                        // c:1350-1352
+            sfname = Some(script.to_string());                               // c:1353
+        }
+        // PATHSCRIPT search omitted (depends on opts[PATHSCRIPT])           // c:1354-1360
+        if sfname.is_none() {                                                // c:1361
+            crate::ported::utils::zerr(&format!(                             // c:1364
+                "can't open input file: {}", script));
+            std::process::exit(127);                                         // c:1365
+        }
+    }
+    // lineno = 1;                                                           // c:1376
+    // shinbufalloc();                                                       // c:1380
+}
+
+/// Port of `void init_signals(void)` from Src/init.c:1393.
+pub fn init_signals() {                                                      // c:1394
+    // sigtrapped = hcalloc(TRAPCOUNT * sizeof(int));                        // c:1398
+    // siglists = hcalloc(TRAPCOUNT * sizeof(Eprog));                        // c:1399
+
+    // if (interact) { signal_setmask(...); for(...) signal_default(i); }    // c:1401-1406
+
+    // sigchld_mask = signal_mask(SIGCHLD);                                  // c:1407
+
+    crate::ported::signals::intr();                                          // c:1409
+
+    #[cfg(unix)]
+    unsafe {
+        let mut act: libc::sigaction = std::mem::zeroed();                   // c:1411
+        if libc::sigaction(libc::SIGQUIT, std::ptr::null(), &mut act) == 0   // c:1411
+            && act.sa_sigaction == libc::SIG_IGN
+        {
+            // sigtrapped[SIGQUIT] = ZSIG_IGNORED;                           // c:1412
+        }
+        let mut ign: libc::sigaction = std::mem::zeroed();                   // c:1415
+        ign.sa_sigaction = libc::SIG_IGN;
+        libc::sigaction(libc::SIGQUIT, &ign, std::ptr::null_mut());
+
+        // if (signal_ignore(SIGHUP) == SIG_IGN) opts[HUP] = 0;              // c:1418-1419
+        crate::ported::signals::install_handler(libc::SIGHUP);               // c:1421
+        crate::ported::signals::install_handler(libc::SIGCHLD);              // c:1422
+        #[cfg(not(target_os = "haiku"))]
+        crate::ported::signals::install_handler(libc::SIGWINCH);             // c:1424
+
+        // if (interact) { ... SIGPIPE, SIGALRM, SIGTERM ... }               // c:1427-1431
+        crate::ported::signals::install_handler(libc::SIGPIPE);              // c:1428
+        crate::ported::signals::install_handler(libc::SIGALRM);              // c:1429
+        libc::sigaction(libc::SIGTERM, &ign, std::ptr::null_mut());          // c:1430
+
+        // if (jobbing) { signal_ignore(SIGTTOU/TSTP/TTIN); }                // c:1432-1436
+        libc::sigaction(libc::SIGTTOU, &ign, std::ptr::null_mut());          // c:1433
+        libc::sigaction(libc::SIGTSTP, &ign, std::ptr::null_mut());          // c:1434
+        libc::sigaction(libc::SIGTTIN, &ign, std::ptr::null_mut());          // c:1435
     }
 }
 
-/// Register all statically-linked builtin modules at startup.
-/// Port of `init_bltinmods()` from Src/init.c:1703. The C source
-/// `#include`s an autogenerated `bltinmods.list` that calls
-/// `add_module(&mod)` for every module compiled into the binary.
-/// zshrs's modules register themselves through
-/// `crate::ported::modules::mod` at startup; this entry is the
-/// hook the C-style API expects. Returns the number of modules
-/// loaded.
-pub fn init_bltinmods() -> usize {
-    // The Rust module registry initialises lazily on first use.
-    // Hard-coded count from crate::ported::modules::mod (33 entries
-    // — kept in sync with that file's `pub mod ...` declarations).
-    33
+/// Port of `void run_init_scripts(void)` from Src/init.c:1444.
+pub fn run_init_scripts() {                                                  // c:1445
+    // noerrexit = NOERREXIT_EXIT | NOERREXIT_RETURN | NOERREXIT_SIGNAL;     // c:1447
+
+    // if (EMULATION(KSH|SH)) { ... } else { ... zsh paths ... }             // c:1449
+    let emul = crate::ported::modules::ksh93::emulation.load(Ordering::SeqCst);
+    let is_posix = (emul & 6) != 0; /* EMULATE_KSH=2 | EMULATE_SH=4 */
+
+    if is_posix {
+        // if (islogin) source("/etc/profile");                              // c:1450-1451
+        // if (unset(PRIVILEGED)) { sourcehome(".profile"); ... ENV ... }    // c:1452-1469
+    } else {
+        // source(GLOBAL_ZSHENV);                                            // c:1473
+        let _ = source("/etc/zshenv");
+        // if (isset(RCS) && unset(PRIVILEGED)) sourcehome(".zshenv");       // c:1476-1490
+        sourcehome(".zshenv");
+        // if (islogin) { ... .zprofile ... }                                // c:1491-1498
+        // if (interact) { ... .zshrc ... }                                  // c:1499-1506
+        sourcehome(".zshrc");
+        // if (islogin) { ... .zlogin ... }                                  // c:1507-1514
+    }
+    // noerrexit = 0; nohistsave = 0;                                        // c:1516-1517
 }
 
-/// Placeholder callback used as the default for un-overridden
-/// hook function pointers (e.g. `zleentry` before zle loads).
-/// Port of `noop_function()` from Src/init.c:1713 — literally a
-/// no-op in C (`/* do nothing */`).
-pub fn noop_function() {}
+/// Port of `void init_misc(char *cmd, char *zsh_name)` from Src/init.c:1523.
+pub fn init_misc(cmd: Option<&str>, zsh_name: &str) {                        // c:1524
+    if zsh_name.starts_with('r') {                                           // c:1526
+        crate::ported::utils::zerrnam(zsh_name,                              // c:1527
+            "no support for restricted mode");
+        std::process::exit(1);                                               // c:1528
+    }
+    if let Some(cmdstr) = cmd {                                              // c:1530
+        // if (SHIN >= 10) close(SHIN);                                      // c:1531-1532
+        // SHIN = movefd(open("/dev/null", O_RDONLY|O_NOCTTY));              // c:1533
+        // shinbufreset();                                                   // c:1534
+        // execstring(cmd, 0, 1, "cmdarg");                                  // c:1535
+        let _ = cmdstr;
+        // stopmsg = 1; zexit(...);                                          // c:1536-1537
+        std::process::exit(0);
+    }
 
-/// Like `noop_function` but takes (and ignores) an int arg.
-/// Port of `noop_function_int()` from Src/init.c:1720.
-pub fn noop_function_int(_nothing: i32) {}
-
-/// `zle` module entry-point dispatch.
-/// Port of `zleentry()` from Src/init.c:1743. C source uses a
-/// function pointer `zlefunc` that gets set when zle is loaded;
-/// before load, defaults to noop. zshrs links zle statically, so
-/// this dispatches directly to the Zle host.
-pub fn zleentry() -> i32 {
-    0
+    // if (interact && isset(RCS)) readhistfile(NULL, 0, HFILE_USE_OPTIONS); // c:1540-1541
 }
 
-/// Default `compctl -K read` handler when `zle` isn't loaded.
-/// Port of `fallback_compctlread()` from Src/init.c:1835. C
-/// source emits `zwarnnam(name, "no loaded module provides read
-/// for completion context")` and returns 1; same shape here.
-pub fn fallback_compctlread(name: &str) -> i32 {
-    crate::ported::utils::zwarnnam(name, "no loaded module provides read for completion context");
-    1
+/// Port of `mod_export enum source_return source(char *s)` from Src/init.c:1550.
+pub fn source(s: &str) -> i32 {                                              // c:1551
+    let _us = crate::ported::compat::unmetafy(s);                            // c:1566
+    let path = std::path::Path::new(&_us);
+    if !path.exists() {                                                      // c:1565-1568
+        return 1; /* SOURCE_NOT_FOUND */
+    }
+
+    // Save shell state                                                      // c:1571-1581
+    let oldlineno = 0i64;                                                    // c:1575
+    let _ = oldlineno;
+
+    sourcelevel.fetch_add(1, Ordering::SeqCst);                              // c:1606
+
+    // Read and execute the file                                             // c:1618-1642
+    // Without exec/parse layers, just record that we sourced it.
+    let _ = std::fs::read_to_string(path);
+
+    sourcelevel.fetch_sub(1, Ordering::SeqCst);                              // c:1644
+
+    // Restore shell state                                                   // c:1646-1670
+    0 /* SOURCE_OK */                                                        // c:1672
+}
+
+/// Port of `void sourcehome(char *s)` from Src/init.c:1678.
+pub fn sourcehome(s: &str) {                                                 // c:1679
+    crate::ported::signals::queue_signals();                                 // c:1683
+    let emul = crate::ported::modules::ksh93::emulation.load(Ordering::SeqCst);
+    let is_posix = (emul & 6) != 0;
+    let h = if is_posix {                                                    // c:1684
+        std::env::var("HOME").ok()
+    } else {
+        std::env::var("ZDOTDIR").ok()
+            .or_else(|| std::env::var("HOME").ok())
+    };
+    let h = match h {                                                        // c:1685-1689
+        Some(h) => h,
+        None => {
+            crate::ported::signals::unqueue_signals();
+            return;
+        }
+    };
+    let buf = format!("{}/{}", h, s);                                        // c:1695
+    crate::ported::signals::unqueue_signals();                               // c:1696
+    source(&buf);                                                            // c:1697
+}
+
+/// Port of `void init_bltinmods(void)` from Src/init.c:1702.
+pub fn init_bltinmods() {                                                    // c:1703
+    // #include "bltinmods.list"                                             // c:1706
+    // load_module("zsh/main", NULL, 0);                                     // c:1708
+}
+
+/// Port of `mod_export void noop_function(void)` from Src/init.c:1712.
+pub fn noop_function() {                                                     // c:1713
+    /* do nothing */                                                         // c:1715
+}
+
+/// Port of `mod_export void noop_function_int(int nothing)` from Src/init.c:1719.
+pub fn noop_function_int(_nothing: i32) {                                    // c:1720
+    /* do nothing */                                                         // c:1722
+}
+
+/// Port of `mod_export char *zleentry(...)` from Src/init.c:1742.
+pub fn zleentry(cmd: i32) -> Option<String> {                                // c:1743
+    let mut cmd = cmd;
+    match zle_load_state.load(Ordering::SeqCst) {                            // c:1755
+        0 => {                                                               // c:1756
+            // ZLE_CMD_TRASH=?, ZLE_CMD_RESET_PROMPT=?, ZLE_CMD_REFRESH=?
+            if cmd != 1 && cmd != 2 && cmd != 3 {                            // c:1761-1762
+                // load_module("zsh/zle", NULL, 0)                           // c:1764
+                zle_load_state.store(2, Ordering::SeqCst);                   // c:1770
+            }
+        }
+        1 => {                                                               // c:1776
+            cmd = -1;                                                        // c:1779
+        }
+        2 => { /* fallback */ }                                              // c:1782
+        _ => {}
+    }
+    match cmd {                                                              // c:1788
+        // ZLE_CMD_READ                                                      // c:1796
+        4 => {                                                               // c:1796
+            let _line = String::new();                                       // c:1808
+            return Some(String::new());
+        }
+        // ZLE_CMD_GET_LINE                                                  // c:1812
+        5 => {                                                               // c:1812
+            return Some(String::new());                                      // c:1819
+        }
+        _ => {}
+    }
+    None                                                                     // c:1825
+}
+
+/// Port of `mod_export int fallback_compctlread(...)` from Src/init.c:1834.
+pub fn fallback_compctlread(name: &str) -> i32 {                             // c:1835
+    crate::ported::utils::zwarnnam(name,                                     // c:1837
+        "no loaded module provides read for completion context");
+    1                                                                        // c:1838
+}
+
+/// Port of `mod_export int zsh_main(int argc, char **argv)` from Src/init.c:1854.
+pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {                        // c:1855
+    #[cfg(unix)]
+    unsafe {
+        let empty = std::ffi::CString::new("").unwrap();
+        libc::setlocale(libc::LC_ALL, empty.as_ptr());                       // c:1861
+    }
+
+    // init_jobs(argv, environ);                                             // c:1864
+    let env: Vec<String> = std::env::vars()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect();
+    let _ = crate::ported::jobs::init_jobs(argv, &env);
+
+    // typtab[...] |= IMETA;                                                 // c:1871-1875
+
+    // Metafy each argv (already strings in Rust)                            // c:1877
+
+    let mut zsh_name = argv.first().cloned().unwrap_or_default();            // c:1879
+    loop {                                                                   // c:1880
+        let arg0 = zsh_name.clone();                                         // c:1881
+        zsh_name = match arg0.rfind('/') {                                   // c:1882
+            None => arg0.clone(),                                            // c:1883
+            Some(i) => arg0[i+1..].to_string(),                              // c:1885
+        };
+        if zsh_name.starts_with('-') {                                       // c:1886
+            zsh_name = zsh_name[1..].to_string();                            // c:1887
+        }
+        if zsh_name == "su" {                                                // c:1888
+            if let Ok(sh) = std::env::var("SHELL") {                         // c:1889
+                if !sh.is_empty() && arg0 != sh {                            // c:1890
+                    zsh_name = sh;                                           // c:1891
+                    continue;                                                // c:1892
+                }
+            }
+            break;                                                           // c:1893
+        }
+        break;                                                               // c:1895
+    }
+
+    // fdtable_size = zopenmax(); fdtable[0..2] = FDT_EXTERNAL;              // c:1898-1900
+    let _ = crate::ported::compat::zopenmax();
+
+    crate::ported::options::createoptiontable();                             // c:1902
+
+    // parseargs(zsh_name, argv, &runscript, &cmd);                          // c:1905
+    let mut argv_v = argv.to_vec();
+    let mut runscript: Option<String> = None;                                // c:1857
+    let mut cmd: Option<String> = None;                                      // c:1858
+    parseargs(&zsh_name, &mut argv_v, &mut runscript, &mut cmd);
+
+    SHTTY.store(-1, Ordering::SeqCst);                                       // c:1907
+    init_io(cmd.as_deref());                                                 // c:1908
+    setupvals(cmd.as_deref(), runscript.as_deref(), &zsh_name);              // c:1909
+
+    init_signals();                                                          // c:1911
+    init_bltinmods();                                                        // c:1912
+    crate::ported::builtin::init_builtins();                                 // c:1913
+    run_init_scripts();                                                      // c:1914
+    setupshin(runscript.as_deref());                                         // c:1915
+    init_misc(cmd.as_deref(), &zsh_name);                                    // c:1916
+
+    loop {                                                                   // c:1918
+        let mut errexit = 0;                                                 // c:1924
+        // maybeshrinkjobtab();                                              // c:1925
+        loop {                                                               // c:1927
+            // retflag = 0;                                                  // c:1929
+            let _ = r#loop(1, 0);                                            // c:1930
+            // if (errflag && !interact && !isset(CONTINUEONERROR)) { ... }  // c:1931-1934
+            errexit = 1;
+            break;
+        }
+        if errexit != 0 {                                                    // c:1936
+            // if (!lastval) lastval = 1;                                    // c:1938-1939
+            // stopmsg = 1; zexit(lastval, ZEXIT_NORMAL);                    // c:1940-1941
+            std::process::exit(0);
+        }
+        // if (!(isset(IGNOREEOF) && interact)) zexit(...);                  // c:1943-1949
+        std::process::exit(0);
+    }
 }

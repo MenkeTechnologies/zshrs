@@ -120,7 +120,7 @@ impl PtyCmds {
 /// the fallback path on systems without `posix_openpt`). Wraps
 /// `posix_openpt` + `grantpt` + `unlockpt` + `ptsname` + `open`.
 #[cfg(unix)]
-pub fn get_pty() -> io::Result<(RawFd, RawFd)> {
+pub fn get_pty() -> io::Result<(RawFd, RawFd)> {                            // c:191
     let master_fd = unsafe {
         let fd = libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY);
         if fd < 0 {
@@ -160,7 +160,7 @@ pub fn get_pty() -> io::Result<(RawFd, RawFd)> {
 /// Port of `ptynonblock()` from Src/Modules/zpty.c:65 — wraps
 /// `fcntl(F_GETFL)` + `fcntl(F_SETFL, |O_NONBLOCK)`.
 #[cfg(unix)]
-pub fn ptynonblock(fd: RawFd) -> io::Result<()> {
+pub fn ptynonblock(fd: RawFd) -> io::Result<()> {                           // c:65
     unsafe {
         let flags = libc::fcntl(fd, libc::F_GETFL);
         if flags < 0 {
@@ -178,7 +178,7 @@ pub fn ptynonblock(fd: RawFd) -> io::Result<()> {
 /// Port of `ptyread()` from Src/Modules/zpty.c:548 — `poll(2)` +
 /// `read(2)` loop that bails when `pattern` is found in the
 /// accumulated buffer or when EOF/timeout fires.
-pub fn ptyread(fd: RawFd, pattern: Option<&str>, timeout_ms: Option<i32>) -> io::Result<String> {
+pub fn ptyread(fd: RawFd, pattern: Option<&str>, timeout_ms: Option<i32>) -> io::Result<String> { // c:548
     let mut buffer = vec![0u8; 4096];
     let mut result = Vec::new();
 
@@ -238,7 +238,7 @@ pub fn ptyread(fd: RawFd, pattern: Option<&str>, timeout_ms: Option<i32>) -> io:
 /// Write a string to a pty's master end.
 /// Port of `ptywritestr()` from Src/Modules/zpty.c:714 (which
 /// `ptywrite()` line 743 wraps with `-n` newline handling).
-pub fn ptywritestr(fd: RawFd, data: &str) -> io::Result<usize> {
+pub fn ptywritestr(fd: RawFd, data: &str) -> io::Result<usize> {            // c:714
     #[cfg(unix)]
     {
         let bytes = data.as_bytes();

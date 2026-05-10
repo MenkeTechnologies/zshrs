@@ -601,7 +601,7 @@ pub fn freewidget(w: Arc<Widget>) {                                          // 
 /// `.name` (immortal canonical) and `name` (user-rebindable) in
 /// the thingytab. Refuses if `.name` already taken by another
 /// immortal or if `name` starts with `.`.
-pub fn addzlefunction(
+pub fn addzlefunction(                                                       // c:281
     name: &str,
     ifunc: fn(&mut crate::ported::zle::Zle),
     flags: WidgetFlags,
@@ -1158,12 +1158,9 @@ pub fn scanlistwidgets() -> i32 {                                            // 
 /// from inside completion functions).
 pub fn zle_usable() -> i32 {                                                 // c:632
     use std::sync::atomic::Ordering;
-    let active   = crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0;
-    // c:636 — `incompctlfunc` not yet ported as a global; the C
-    // source guards against re-entering ZLE during compctl run. The
-    // Rust port doesn't (yet) have the compctl-call entry path
-    // wired, so this branch is always false.
-    let incompctlfunc = false;
+    let active = crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0;
+    let incompctlfunc = crate::ported::zle::compctl::INCOMPCTLFUNC               // c:636
+        .load(Ordering::Relaxed);
     let incompfunc = crate::ported::zle::complete::INCOMPFUNC.load(Ordering::Relaxed) != 0;
     if active && !incompctlfunc && !incompfunc { 1 } else { 0 }
 }

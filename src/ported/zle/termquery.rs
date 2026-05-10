@@ -563,11 +563,25 @@ pub fn handle_paste(_seq: &str, _len: usize) -> i32 {                        // 
     0
 }
 
-/// Port of `mark_output()` from Src/Zle/termquery.c:759.
-pub fn mark_output() -> i32 {                                                // c:759
-    // C body c:761-767 — emits OSC 133;C (FinalTerm prompt mark) for
-    //                    end-of-output annotation. No FinalTerm dispatch.
-    0
+/// Port of `void mark_output(int start)` from Src/Zle/termquery.c:759.
+///
+/// Emits the FinalTerm "command output" OSC 133 marker so terminal
+/// integrations like iTerm2 / WezTerm can fold previous output. Two
+/// flavors: `start=1` writes `\e]133;C\e\\` (begin output), else
+/// `\e]133;D\e\\` (end output). Gated on the `integration:output`
+/// extension toggle.
+pub fn mark_output(start: bool) {                                            // c:759
+    use std::sync::atomic::Ordering;
+    const START: &[u8] = b"\x1b]133;C\x1b\\";                                // c:761
+    const END:   &[u8] = b"\x1b]133;D\x1b\\";                                // c:762
+    if extension_enabled("integration") {                                    // c:763
+        let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        if shtty < 0 { return; }
+        let _ = crate::ported::utils::write_loop(                            // c:764
+            shtty,
+            if start { START } else { END },
+        );
+    }
 }
 
 /// Port of `match_cursorform()` from Src/Zle/termquery.c:798.
