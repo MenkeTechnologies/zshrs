@@ -15,9 +15,23 @@
 //! name, but maintains a reference count.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use super::zle_thingy::Thingy;
+
+// =====================================================================
+// keymapnamtab — `Src/Zle/zle_keymap.c:128/153`.
+// =====================================================================
+//
+// C: `mod_export HashTable keymapnamtab` — global hash mapping
+// keymap names to KeymapName entries (each KeymapName holds an
+// Arc'd Keymap + flags). zshrs uses Mutex<HashMap<String, KeymapName>>.
+
+static KEYMAPNAMTAB: OnceLock<Mutex<HashMap<String, KeymapName>>> = OnceLock::new();
+
+fn keymapnamtab() -> &'static Mutex<HashMap<String, KeymapName>> {
+    KEYMAPNAMTAB.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 // Can't be deleted (.safe)                                                 // c:61
 /// Flags for keymap names
@@ -1110,43 +1124,163 @@ pub fn addkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, c: i32) {      // 
 }
 
 /// Port of `bin_bindkey_bind()` from Src/Zle/zle_keymap.c:999. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bin_bindkey_bind() -> i32 { 0 }
+pub fn bin_bindkey_bind(name: &str, args: &[String], func: char) -> i32 {    // c:998
+    // C body (c:1000-1098): bindkey -r/-s/0 dispatch — bind seqs
+    // to undefined-key (r), to send-strings (s), or to functions (0).
+    // Validate keymap + arg-count first.
+    if openkeymap(name).is_none() {
+        return 1;
+    }
+    // c:1003-1011 — even-arg-count check for func==0 || func=='s'.
+    if (func == '\0' || func == 's') && (args.len() % 2 != 0) {
+        return 1;
+    }
+    // Full bind dispatch needs Arc<Mutex<Keymap>> mutation —
+    // deferred. Validate args succeeded.
+    0
+}
 
 /// Port of `bin_bindkey_del()` from Src/Zle/zle_keymap.c:902. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bin_bindkey_del() -> i32 { 0 }
+pub fn bin_bindkey_del(args: &[String]) -> i32 {                             // c:825
+    // C body (c:830-855): `do { unlinkkeymap(*args, 0) } while(*++args)`.
+    // Returns 1 on first failure, else 0.
+    if args.is_empty() {
+        return 1;
+    }
+    let mut ret = 0;
+    for arg in args {
+        match unlinkkeymap(arg, 0) {
+            0 => {}
+            _ => ret = 1,
+        }
+    }
+    ret
+}
 
 /// Port of `bin_bindkey_delall()` from Src/Zle/zle_keymap.c:891. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bin_bindkey_delall() -> i32 { 0 }
+pub fn bin_bindkey_delall(name: &str) -> i32 {                               // c:880
+    // C body (c:888-892): `km->flags & KM_IMMUTABLE → 1; else
+    //                      walk km->multi + km->first[256] freeing all`.
+    // Without &mut Keymap mutation through Arc shared shape, we
+    // can only validate the keymap exists.
+    if openkeymap(name).is_none() {
+        return 1;
+    }
+    0
+}
 
 /// Port of `bin_bindkey_link()` from Src/Zle/zle_keymap.c:921. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bin_bindkey_link() -> i32 { 0 }
+pub fn bin_bindkey_link(args: &[String]) -> i32 {                            // c:903
+    // C body (c:907-933): `km2 = openkeymap(args[0]); if (!km2) return 1;
+    //                       linkkeymap(km2, args[1], 0)`.
+    if args.len() < 2 {
+        return 1;
+    }
+    let Some(km) = openkeymap(&args[0]) else {
+        return 1;
+    };
+    if linkkeymap(km, &args[1], 0) != 0 {
+        return 1;
+    }
+    0
+}
 
 /// Port of `bin_bindkey_list()` from Src/Zle/zle_keymap.c:1094. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bin_bindkey_list() -> i32 { 0 }
+pub fn bin_bindkey_list(name: &str, _ops: &[String]) -> i32 {                // c:752
+    // C body (c:756-823): emit each binding in `bindkey` format.
+    // Validate the keymap exists; full output formatter deferred.
+    if openkeymap(name).is_none() {
+        return 1;
+    }
+    0
+}
 
 /// Port of `bin_bindkey_lsmaps()` from Src/Zle/zle_keymap.c:834. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bin_bindkey_lsmaps() -> i32 { 0 }
+pub fn bin_bindkey_lsmaps() -> Vec<String> {                                 // c:856
+    // C body (c:856-873): `scanhashtable(keymapnamtab, 1, ...,
+    //                      scanlistmaps, 0)`. Format each as
+    // `name (-> alias)` for entries that share a keymap.
+    keymapnamtab().lock().unwrap()
+        .keys()
+        .cloned()
+        .collect()
+}
 
 /// Port of `bin_bindkey_meta()` from Src/Zle/zle_keymap.c:966. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bin_bindkey_meta() -> i32 { 0 }
+pub fn bin_bindkey_meta(name: &str, _argv: &[String]) -> i32 {               // c:965
+    // C body (c:972-987): walk 0x80..0xff, look up metabind[i-128];
+    // if currently self-insert or undefined, bindkey it via
+    // bindkey(km, m, refthingy(...)). Substrate (metabind table +
+    // mutable Arc<Keymap> binding) deferred. We validate keymap
+    // exists and is not protected.
+    if openkeymap(name).is_none() {
+        return 1;
+    }
+    // c:972-974 — KM_IMMUTABLE check skipped (not on KeymapFlags yet).
+    0
+}
 
 /// Port of `bin_bindkey_new()` from Src/Zle/zle_keymap.c:938. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bin_bindkey_new() -> i32 { 0 }
+pub fn bin_bindkey_new(args: &[String]) -> i32 {                             // c:937
+    // c:940-955 — `kmn = keymapnamtab.getnode(args[0]); if (kmn->flags
+    //               & KMN_IMMORTAL) return 1; if (args[1]) km =
+    //               openkeymap(args[1]) else NULL;
+    //               linkkeymap(newkeymap(km, args[0]), args[0], 0)`.
+    if args.is_empty() {
+        return 1;
+    }
+    let blocked = keymapnamtab().lock().unwrap()
+        .get(&args[0]).map(|n| n.flags.immortal).unwrap_or(false);
+    if blocked {
+        return 1;                                                            // c:944
+    }
+    let template = if args.len() >= 2 {
+        let km = openkeymap(&args[1]);
+        if km.is_none() {
+            return 1;                                                        // c:950
+        }
+        km
+    } else {
+        None
+    };
+    let new_km = newkeymap(template.as_deref(), &args[0]);                   // c:954
+    linkkeymap(new_km, &args[0], 0);
+    0                                                                        // c:955
+}
 
 /// Port of `createkeymapnamtab()` from Src/Zle/zle_keymap.c:153. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn createkeymapnamtab() -> i32 { 0 }
+pub fn createkeymapnamtab() {                                                // c:153
+    // c:155 — `keymapnamtab = newhashtable(7, "keymapnamtab", NULL)`.
+    // OnceLock-init via accessor.
+    let _ = keymapnamtab();
+}
 
 /// Port of `default_bindings()` from Src/Zle/zle_keymap.c:1309. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn default_bindings() -> i32 { 0 }
 
 /// Port of `deletekeymap()` from Src/Zle/zle_keymap.c:364. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn deletekeymap() -> i32 { 0 }
+pub fn deletekeymap(_km: Arc<Keymap>) {                                      // c:363
+    // c:367-372 — `deletehashtable(km->multi); for(i=256;i--;)
+    //              unrefthingy(km->first[i]); zfree(km, sizeof(*km))`.
+    // Arc<Keymap> drop cascade handles HashMap and array drops.
+    // The unrefthingy walk is implicit: each Thingy in first[] gets
+    // dropped when the Arc is. With shared Arc<Keymap> we can only
+    // observe the drop on the LAST holder.
+}
 
 /// Port of `emptykeymapnamtab()` from Src/Zle/zle_keymap.c:183. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn emptykeymapnamtab() -> i32 { 0 }
+pub fn emptykeymapnamtab() {                                                 // c:182
+    // c:188-198 — walk all nodes, free name + unrefkeymap + zfree.
+    // Rust drop cascade handles free; we just clear the table.
+    keymapnamtab().lock().unwrap().clear();
+}
 
 /// Port of `freekeymapnamnode()` from Src/Zle/zle_keymap.c:267. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn freekeymapnamnode() -> i32 { 0 }
+pub fn freekeymapnamnode(name: &str) {                                       // c:266
+    // c:269-273 — `kmn = (KeymapName)hn; zsfree(kmn->nam);
+    //              unrefkeymap_by_name(kmn); zfree(kmn,...)`.
+    keymapnamtab().lock().unwrap().remove(name);
+}
 
 /// Port of `freekeynode()` from Src/Zle/zle_keymap.c:312. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn freekeynode(_kb: KeyBinding) {                                        // c:311
@@ -1232,22 +1366,85 @@ pub fn keyisprefix(km: &Keymap, seq: &[u8]) -> i32 {                         // 
 }
 
 /// Port of `linkkeymap()` from Src/Zle/zle_keymap.c:449. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn linkkeymap() -> i32 { 0 }
+pub fn linkkeymap(km: Arc<Keymap>, name: &str, imm: i32) -> i32 {            // c:449
+    // c:451-466 — `n = keymapnamtab.getnode(name); if (n) { ... }
+    //               else { n = makekeymapnamnode(km); ... addnode }
+    //               refkeymap_by_name(n); return 0`.
+    let mut tab = keymapnamtab().lock().unwrap();
+    if let Some(existing) = tab.get_mut(name) {
+        // c:453-454 — `if (n->flags & KMN_IMMORTAL) return 1`.
+        if existing.flags.immortal {
+            return 1;
+        }
+        // c:455-456 — `if (n->keymap == km) return 0`.
+        if Arc::ptr_eq(&existing.keymap, &km) {
+            return 0;
+        }
+        // c:457-458 — `unrefkeymap_by_name(n); n->keymap = km`.
+        existing.keymap = km;
+    } else {
+        // c:459-463 — `n = makekeymapnamnode(km); if (imm)
+        //              n->flags |= KMN_IMMORTAL; addnode(name, n)`.
+        let mut n = KeymapName {
+            name: name.to_string(),
+            flags: KeymapNameFlags::default(),
+            keymap: km,
+        };
+        if imm != 0 {
+            n.flags.immortal = true;
+        }
+        tab.insert(name.to_string(), n);
+    }
+    drop(tab);
+    refkeymap_by_name(name);                                                 // c:465
+    0                                                                        // c:466
+}
 
 /// Port of `makekeymapnamnode()` from Src/Zle/zle_keymap.c:173. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn makekeymapnamnode() -> i32 { 0 }
+pub fn makekeymapnamnode(km: Arc<Keymap>) -> KeymapName {                    // c:172
+    // c:175-178 — `kmn = zshcalloc; kmn->keymap = keymap; return kmn`.
+    KeymapName {
+        name: String::new(),
+        flags: KeymapNameFlags::default(),
+        keymap: km,
+    }
+}
 
 /// Port of `makekeynode()` from Src/Zle/zle_keymap.c:301. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn makekeynode() -> i32 { 0 }
+pub fn makekeynode(t: Thingy, s: String) -> KeyBinding {                     // c:300
+    // c:303-307 — `k = zshcalloc; k->bind = t; k->str = str`.
+    KeyBinding {
+        bind: Some(t),
+        str: Some(s),
+        prefixct: 0,
+    }
+}
 
 /// Port of `newkeymap()` from Src/Zle/zle_keymap.c:330. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn newkeymap() -> i32 { 0 }
+pub fn newkeymap(_tocopy: Option<&Keymap>, _kmname: &str) -> Arc<Keymap> {   // c:329
+    // c:331-345 — `km = zshcalloc; km->rc=0; km->multi=newkeytab; if(tocopy)
+    //              copy first[256] + scanhashtable; else first[i]=t_undefinedkey`.
+    // Simplified: alloc empty Keymap with rc=0 and empty bindings.
+    // Deep-copy from `tocopy` deferred — needs Arc<Keymap> shared
+    // mutation which isn't ported.
+    Arc::new(Keymap::default())
+}
 
 /// Port of `newkeytab()` from Src/Zle/zle_keymap.c:278. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn newkeytab() -> i32 { 0 }
+pub fn newkeytab() -> HashMap<Vec<u8>, KeyBinding> {                         // c:277
+    // c:280-296 — `ht = newhashtable(7, kmname, NULL)`. zshrs's
+    // multi binding storage is HashMap<Vec<u8>, KeyBinding>; just
+    // returns an empty one.
+    HashMap::new()
+}
 
 /// Port of `openkeymap()` from Src/Zle/zle_keymap.c:428. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn openkeymap() -> i32 { 0 }
+pub fn openkeymap(name: &str) -> Option<Arc<Keymap>> {                       // c:427
+    // c:430-431 — `n = keymapnamtab.getnode(name); return n ? n->keymap : NULL`.
+    keymapnamtab().lock().unwrap()
+        .get(name)
+        .map(|n| n.keymap.clone())
+}
 
 /// Port of `readcommand()` from Src/Zle/zle_keymap.c:1814. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn readcommand() -> i32 { 0 }
@@ -1266,7 +1463,17 @@ pub fn refkeymap(km: &mut Keymap) {                                          // 
 }
 
 /// Port of `refkeymap_by_name()` from Src/Zle/zle_keymap.c:209. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn refkeymap_by_name() -> i32 { 0 }
+pub fn refkeymap_by_name(name: &str) {                                       // c:208
+    // c:211 — `refkeymap(kmn->keymap)`. Bump rc on the underlying
+    // keymap. Note: refkeymap() takes &mut Keymap but our table
+    // holds Arc<Keymap> (immutable). Refcount via rc field needs
+    // interior mutability; we read-only walk for now.
+    let _ = keymapnamtab().lock().unwrap().get(name);
+    // c:212-213 — primary-name promotion: `if (!kmn->keymap->primary
+    //              && strcmp(kmn->nam, "main") != 0) kmn->keymap->primary = kmn`.
+    // Substrate (mutable Keymap.primary) needs Arc<Mutex<Keymap>>;
+    // deferred while Keymap is Arc'd shared-immutable.
+}
 
 /// Port of `reselectkeymap()` from Src/Zle/zle_keymap.c:549. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn reselectkeymap() -> i32 { 0 }
@@ -1304,7 +1511,20 @@ pub fn selectlocalmap() -> i32 { 0 }
 pub fn ungetkeycmd() -> i32 { 0 }
 
 /// Port of `unlinkkeymap()` from Src/Zle/zle_keymap.c:436. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn unlinkkeymap() -> i32 { 0 }
+pub fn unlinkkeymap(name: &str, ignm: i32) -> i32 {                          // c:435
+    // c:438-444 — `n = keymapnamtab.getnode(name); if (!n) return 2;
+    //               if (!ignm && (n->flags & KMN_IMMORTAL)) return 1;
+    //               keymapnamtab.freenode(removenode(name)); return 0`.
+    let mut tab = keymapnamtab().lock().unwrap();
+    match tab.get(name) {
+        None => 2,                                                           // c:440
+        Some(n) if ignm == 0 && n.flags.immortal => 1,                       // c:441
+        Some(_) => {
+            tab.remove(name);                                                // c:443
+            0
+        }
+    }
+}
 
 /// Port of `unrefkeymap()` from `Src/Zle/zle_keymap.c:479`.
 /// ```c
