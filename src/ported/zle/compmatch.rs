@@ -1006,65 +1006,155 @@ mod tests {
     }
 }
 
-/// Port of `add_bmatchers()` from Src/Zle/compmatch.c:101. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn add_bmatchers() -> i32 { 0 }
+/// Port of `add_bmatchers()` from Src/Zle/compmatch.c:101.
+pub fn add_bmatchers(_def: i32) {                                            // c:101
+    // C body c:103-141 — walks Cmlist `def->matcher`, prepends each
+    //                    Cmatcher whose flags & CMF_LINE to bmatchers
+    //                    via newcmlist alloc.
+    //                    Without bmatchers global hydrated: no-op.
+}
 
-/// Port of `add_match_part()` from Src/Zle/compmatch.c:373. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn add_match_part() -> i32 { 0 }
+/// Port of `add_match_part()` from Src/Zle/compmatch.c:373.
+pub fn add_match_part(_m: i32, _l: &str, _ll: i32, _w: &str, _wl: i32,       // c:373
+                      _o: &str, _ol: i32, _osl: i32, _sfx: i32) {
+    // C body c:375-444 — appends a partial match into matchparts via
+    //                    add_match_str. Substrate (matchparts global)
+    //                    deferred; no-op.
+}
 
-/// Port of `add_match_str()` from Src/Zle/compmatch.c:327. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn add_match_str() -> i32 { 0 }
+/// Port of `add_match_str()` from Src/Zle/compmatch.c:327.
+pub fn add_match_str(_m: i32, _l: &str, _w: &str, _wl: i32, _sfx: i32) {     // c:327
+    // C body c:329-371 — pushes a string into matchbuf, growing if
+    //                    needed. matchbuf global deferred; no-op.
+}
 
-/// Port of `add_match_sub()` from Src/Zle/compmatch.c:446. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn add_match_sub() -> i32 { 0 }
+/// Port of `add_match_sub()` from Src/Zle/compmatch.c:446.
+pub fn add_match_sub(_m: i32, _l: &str, _ll: i32, _w: &str, _wl: i32) {      // c:446
+    // C body c:448-509 — pushes a sub-match into matchsubs (used for
+    //                    comp matchers). Substrate deferred; no-op.
+}
 
-/// Port of `bld_line()` from Src/Zle/compmatch.c:1736. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bld_line() -> i32 { 0 }
+/// Port of `bld_line()` from Src/Zle/compmatch.c:1736.
+pub fn bld_line(_line: &mut String, _mword: &str, _word: &str,               // c:1736
+                _sfx: i32) -> i32 {
+    // C body c:1738-1992 — runs the matcher engine to construct the
+    //                      `line` string from `word` per active matcher
+    //                      list. Substrate deferred; 0.
+    0
+}
 
-/// Port of `bld_parts()` from Src/Zle/compmatch.c:1638. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bld_parts() -> i32 { 0 }
+/// Port of `bld_parts()` from Src/Zle/compmatch.c:1638.
+pub fn bld_parts(_str_: &str, _len: i32, _plen: i32, _lp: &mut i32) -> i32 { // c:1638
+    // C body c:1640-1734 — partitions a match into segments per
+    //                      matcher anchors; returns Cline list.
+    //                      Cline construction deferred; 0.
+    0
+}
 
-/// Port of `check_cmdata()` from Src/Zle/compmatch.c:2152. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn check_cmdata() -> i32 { 0 }
+/// Port of `check_cmdata()` from Src/Zle/compmatch.c:2152.
+pub fn check_cmdata(_d: i32, _sfx: i32) -> i32 {                             // c:2152
+    // C body c:2154-2186 — validates a Cmdata structure, computing
+    //                      lengths and consistency. Substrate deferred.
+    0
+}
 
 // (cline_setlens / cline_sublen wrong-sig duplicates removed —
 // real C-faithful ports are above keyed off comp_h::Cline.)
 
-/// Port of `cmp_anchors()` from Src/Zle/compmatch.c:2107. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn cmp_anchors() -> i32 { 0 }
+/// Port of `cmp_anchors()` from Src/Zle/compmatch.c:2107.
+pub fn cmp_anchors(_a: i32, _b: i32, _wl: i32) -> i32 {                      // c:2107
+    // C body c:2109-2150 — compares two Cline anchors (front+back
+    //                      strings + lengths). Used by join_clines /
+    //                      bld_parts. Substrate deferred; 0 = no match.
+    0
+}
 
-/// Port of `get_cline()` from Src/Zle/compmatch.c:144. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_cline() -> i32 { 0 }
+/// Port of `get_cline()` from Src/Zle/compmatch.c:144.
+pub fn get_cline(_l: &str, _ll: i32, _w: &str, _wl: i32, _o: &str,           // c:144
+                 _ol: i32, _flags: i32) -> i32 {
+    // C body c:146-294 — Cline allocator + populator. Allocates one
+    //                    Cline node; sets word/wlen/line/llen/orig/
+    //                    olen/flags. Cline pool deferred; 0.
+    0
+}
 
-/// Port of `join_clines()` from Src/Zle/compmatch.c:2706. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn join_clines() -> i32 { 0 }
+/// Port of `join_clines()` from Src/Zle/compmatch.c:2706.
+pub fn join_clines(_o: i32, _n: i32) -> i32 {                                // c:2706
+    // C body c:2708-2949 — merges two Cline lists in the matcher
+    //                      driver. Substrate deferred; 0.
+    0
+}
 
-/// Port of `join_mid()` from Src/Zle/compmatch.c:2608. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn join_mid() -> i32 { 0 }
+/// Port of `join_mid()` from Src/Zle/compmatch.c:2608.
+pub fn join_mid(_o: i32, _n: i32, _po: i32, _pn: i32) -> i32 {               // c:2608
+    // C body c:2610-2647 — joins two Cline middle fragments per
+    //                      matcher anchor rules. Substrate deferred; 0.
+    0
+}
 
-/// Port of `join_psfx()` from Src/Zle/compmatch.c:2444. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn join_psfx() -> i32 { 0 }
+/// Port of `join_psfx()` from Src/Zle/compmatch.c:2444.
+pub fn join_psfx(_ot: i32, _nt: i32, _o: i32, _n: i32, _sfx: i32) -> i32 {   // c:2444
+    // C body c:2446-2606 — joins prefixes/suffixes during Cline merge.
+    //                      Substrate deferred; 0.
+    0
+}
 
-/// Port of `join_strs()` from Src/Zle/compmatch.c:1994. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn join_strs() -> i32 { 0 }
+/// Port of `join_strs()` from Src/Zle/compmatch.c:1994.
+pub fn join_strs(_la: i32, _sa: &str, _lb: i32, _sb: &str) -> Option<String> { // c:1994
+    // C body c:1996-2105 — joins two strings via the matcher
+    //                      equivalence map; returns the merged string
+    //                      or NULL if they can't be merged.
+    None
+}
 
-/// Port of `join_sub()` from Src/Zle/compmatch.c:2212. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn join_sub() -> i32 { 0 }
+/// Port of `join_sub()` from Src/Zle/compmatch.c:2212.
+pub fn join_sub(_a: i32, _bp: i32, _bsfx: i32, _b: i32, _flags: i32) -> i32 {  // c:2212
+    // C body c:2214-2299 — splices a sub-match Cline list into the
+    //                      main Cline. Substrate deferred; 0.
+    0
+}
 
-/// Port of `pattern_match()` from Src/Zle/compmatch.c:1548. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn pattern_match() -> i32 { 0 }
+/// Port of `pattern_match()` from Src/Zle/compmatch.c:1548.
+pub fn pattern_match(_p: i32, _s: &str, _wp: &mut [u8], _wq: &mut [u8]) -> i32 { // c:1548
+    // C body c:1550-1636 — top-level pattern-vs-string match driver
+    //                      that calls pattern_match1 + pattern_match_restrict.
+    //                      Pattern (Patprog) substrate deferred; 0.
+    0
+}
 
-/// Port of `pattern_match_restrict()` from Src/Zle/compmatch.c:1383. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn pattern_match_restrict() -> i32 { 0 }
+/// Port of `pattern_match_restrict()` from Src/Zle/compmatch.c:1383.
+pub fn pattern_match_restrict(_p: i32, _s: &str, _wp: &mut [u8],             // c:1383
+                              _wq: &mut [u8], _restrict: u32) -> i32 {
+    // C body c:1385-1546 — restricted variant for nested patterns.
+    //                      Substrate deferred; 0.
+    0
+}
 
-/// Port of `pattern_match1()` from Src/Zle/compmatch.c:1269. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn pattern_match1() -> i32 { 0 }
+/// Port of `pattern_match1()` from Src/Zle/compmatch.c:1269.
+pub fn pattern_match1(_p: i32, _c: u32, _wp: &mut [u8], _wq: &mut [u8]) -> i32 { // c:1269
+    // C body c:1271-1381 — single-character pattern match (predicate
+    //                      check + char-class). Substrate deferred; 0.
+    0
+}
 
-/// Port of `sub_join()` from Src/Zle/compmatch.c:2649. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn sub_join() -> i32 { 0 }
+/// Port of `sub_join()` from Src/Zle/compmatch.c:2649.
+pub fn sub_join(_a: i32, _bp: i32, _bsfx: i32, _b: i32) -> i32 {             // c:2649
+    // C body c:2651-2704 — substring-anchor join helper for join_mid.
+    //                      Substrate deferred; 0.
+    0
+}
 
-/// Port of `sub_match()` from Src/Zle/compmatch.c:2301. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn sub_match() -> i32 { 0 }
+/// Port of `sub_match()` from Src/Zle/compmatch.c:2301.
+pub fn sub_match(_m: i32, _l: &str, _ll: i32, _w: &str, _wl: i32,            // c:2301
+                 _sfx: i32) -> i32 {
+    // C body c:2303-2442 — runs a Cmatcher's sub-pattern match against
+    //                      a substring. Substrate deferred; 0.
+    0
+}
 
-/// Port of `undo_cmdata()` from Src/Zle/compmatch.c:2188. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn undo_cmdata() -> i32 { 0 }
+/// Port of `undo_cmdata()` from Src/Zle/compmatch.c:2188.
+pub fn undo_cmdata(_d: i32, _sfx: i32) {                                     // c:2188
+    // C body c:2190-2210 — rewinds a Cmdata snapshot taken by
+    //                      check_cmdata to the previous state.
+    //                      Substrate deferred; no-op.
+}

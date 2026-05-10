@@ -736,18 +736,41 @@ pub fn setmstatus(_status: &str, _sline: i32, _scs: i32, _np: &mut i32, _nl: &mu
     0
 }
 
-/// Port of `setup_()` from Src/Zle/complist.c:3511. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn setup_() -> i32 { 0 }
+/// Port of `setup_()` from Src/Zle/complist.c:3511.
+pub fn setup_() -> i32 {                                                     // c:3511
+    // C body c:3513-3514 — `return 0`. Faithful empty body.
+    0
+}
 
-/// Port of `singlecalc()` from Src/Zle/complist.c:1909. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn singlecalc() -> i32 { 0 }
+/// Port of `singlecalc()` from Src/Zle/complist.c:1909.
+pub fn singlecalc(_cp: &mut i32, _ml: i32, _lcp: &mut i32) -> i32 {          // c:1909
+    // C body c:1911-1933 — computes scroll offset for single-column
+    //                      mode. Without mtab/mline substrate: 0.
+    0
+}
 
-/// Port of `singledraw()` from Src/Zle/complist.c:1934. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn singledraw() -> i32 { 0 }
+/// Port of `singledraw()` from Src/Zle/complist.c:1934.
+pub fn singledraw() -> i32 {                                                 // c:1934
+    // C body c:1936-1988 — repaints the menu in single-column mode.
+    //                      Substrate (mtab/curses) deferred; no-op.
+    0
+}
 
 // Turn off colouring.                                                     // c:594
-/// Port of `zcoff()` from Src/Zle/complist.c:597. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zcoff() -> i32 { 0 }                                                 // c:597
+/// Port of `zcoff()` from Src/Zle/complist.c:597.
+pub fn zcoff() {                                                            // c:597
+    // C body c:599-617 — emits the LS_COLORS no-color escape via
+    //                    tputs(mcolors.files[COL_NO]->col,...).
+    //                    No mcolors substrate: no-op.
+}
 
-/// Port of `zlrputs()` from Src/Zle/complist.c:564. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zlrputs() -> i32 { 0 }
+/// Port of `zlrputs()` from Src/Zle/complist.c:564.
+pub fn zlrputs(cap: &str) -> i32 {                                           // c:564
+    // C body c:566-595 — emits an LS_COLORS escape `\\033[<cap>m` to
+    //                    shout. Without curses substrate we emit via
+    //                    tracing for visual fallback.
+    if !cap.is_empty() {
+        tracing::debug!(target: "zle", "\x1b[{}m", cap);
+    }
+    0
+}

@@ -443,41 +443,121 @@ pub fn base64_decode(src: &str) -> Vec<u8> {                                 // 
     buf                                                                      // c:591 return buf
 }
 
-/// Port of `collate_seq()` from Src/Zle/termquery.c:676. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn collate_seq() -> i32 { 0 }
+/// Port of `collate_seq()` from Src/Zle/termquery.c:676.
+pub fn collate_seq(_seq: &str) -> Vec<u8> {                                  // c:676
+    // C body c:678-722 — collates a UTF-8 byte sequence into a single
+    //                    locale-aware key for sort comparison via
+    //                    strxfrm(). Without locale glue: identity.
+    _seq.as_bytes().to_vec()
+}
 
-/// Port of `cursor_form()` from Src/Zle/termquery.c:913. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn cursor_form() -> i32 { 0 }
+/// Port of `cursor_form()` from Src/Zle/termquery.c:913.
+pub fn cursor_form() -> Vec<String> {                                        // c:913
+    // C body c:915-902 — emits the current cursor-shape escape based
+    //                    on `cursor_form_list`. Without form list:
+    //                    empty.
+    Vec::new()
+}
 
-/// Port of `end_edit()` from Src/Zle/termquery.c:724. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn end_edit() -> i32 { 0 }
+/// Port of `end_edit()` from Src/Zle/termquery.c:724.
+pub fn end_edit() -> i32 {                                                   // c:724
+    // C body c:726-729 — emits the iTerm2 OSC 1337;EndEdit terminator
+    //                    via shout when zterm_supports_iterm2 is true.
+    //                    No iTerm2 dispatch in headless mode.
+    0
+}
 
-/// Port of `find_branch()` from Src/Zle/termquery.c:170. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn find_branch() -> i32 { 0 }
+/// Port of `find_branch()` from Src/Zle/termquery.c:170.
+pub fn find_branch(s: &str, ch: u8) -> Option<usize> {                       // c:170
+    // C body c:172-183 — scans `s` for the matching paren/bracket/
+    //                    brace branch open. We approximate by finding
+    //                    the first byte equal to `ch`.
+    s.bytes().position(|b| b == ch)
+}
 
-/// Port of `find_matching()` from Src/Zle/termquery.c:185. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn find_matching() -> i32 { 0 }
+/// Port of `find_matching()` from Src/Zle/termquery.c:185.
+pub fn find_matching(s: &str, open: u8, close: u8) -> Option<usize> {        // c:185
+    // C body c:187-218 — paired-bracket finder; scans forward
+    //                    counting opens until depth returns to 0.
+    let bytes = s.as_bytes();
+    let mut depth = 0i32;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == open {
+            depth += 1;
+        } else if b == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
 
-/// Port of `free_cursor_forms()` from Src/Zle/termquery.c:904. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn free_cursor_forms() -> i32 { 0 }
+/// Port of `free_cursor_forms()` from Src/Zle/termquery.c:904.
+pub fn free_cursor_forms() {                                                 // c:904
+    // C body c:906-911 — frees the cursor_form_list strings via
+    //                    zfree+next walk. Drop covers it; no-op.
+}
 
-/// Port of `handle_color()` from Src/Zle/termquery.c:438. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn handle_color() -> i32 { 0 }
+/// Port of `handle_color()` from Src/Zle/termquery.c:438.
+pub fn handle_color(_seq: &str) -> i32 {                                     // c:438
+    // C body c:440-593 — parses iTerm2 OSC 4;<idx>;rgb response,
+    //                    populates terminal color cache. Without
+    //                    iTerm2 dispatch: 0.
+    0
+}
 
-/// Port of `handle_paste()` from Src/Zle/termquery.c:595. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn handle_paste() -> i32 { 0 }
+/// Port of `handle_paste()` from Src/Zle/termquery.c:595.
+pub fn handle_paste(_seq: &str, _len: usize) -> i32 {                        // c:595
+    // C body c:597-674 — parses bracketed-paste OSC sequences and
+    //                    forwards content as a single `bracketed-paste`
+    //                    event. ZLE event queue deferred; 0.
+    0
+}
 
-/// Port of `mark_output()` from Src/Zle/termquery.c:759. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn mark_output() -> i32 { 0 }
+/// Port of `mark_output()` from Src/Zle/termquery.c:759.
+pub fn mark_output() -> i32 {                                                // c:759
+    // C body c:761-767 — emits OSC 133;C (FinalTerm prompt mark) for
+    //                    end-of-output annotation. No FinalTerm dispatch.
+    0
+}
 
-/// Port of `match_cursorform()` from Src/Zle/termquery.c:798. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn match_cursorform() -> i32 { 0 }
+/// Port of `match_cursorform()` from Src/Zle/termquery.c:798.
+pub fn match_cursorform(_name: &str) -> Option<String> {                     // c:798
+    // C body c:800-902 — looks up named cursor form (e.g. "block",
+    //                    "underline", "bar") in cursor_form_list and
+    //                    returns its escape. No form list: None.
+    None
+}
 
-/// Port of `prompt_markers()` from Src/Zle/termquery.c:731. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn prompt_markers() -> i32 { 0 }
+/// Port of `prompt_markers()` from Src/Zle/termquery.c:731.
+pub fn prompt_markers() -> i32 {                                             // c:731
+    // C body c:733-757 — emits OSC 133;A,B,C,D markers around the
+    //                    prompt for FinalTerm-aware terminals. No
+    //                    FinalTerm dispatch.
+    0
+}
 
-/// Port of `start_edit()` from Src/Zle/termquery.c:717. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn start_edit() -> i32 { 0 }
+/// Port of `start_edit()` from Src/Zle/termquery.c:717.
+pub fn start_edit() -> i32 {                                                 // c:717
+    // C body c:719-722 — emits OSC 1337;StartEdit (iTerm2). No
+    //                    iTerm2 dispatch in headless mode.
+    0
+}
 
-/// Port of `write_urlencoded()` from Src/Zle/termquery.c:769. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn write_urlencoded() -> i32 { 0 }
+/// Port of `write_urlencoded()` from Src/Zle/termquery.c:769.
+pub fn write_urlencoded(s: &str) -> String {                                 // c:769
+    // C body c:771-796 — URL-encodes a string for OSC 8 hyperlink
+    //                    emission. Real escape: convert non-printable
+    //                    + reserved bytes to %HH.
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~' | b'/' | b':') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
+}
