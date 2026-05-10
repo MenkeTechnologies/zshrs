@@ -1820,11 +1820,62 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str)               // 
         } else {
             // c:2013 — matcher-driven branch. Walks bmatchers looking
             // for a no-anchor matcher that pattern_matches one of the
-            // strings; if so, runs bld_line to synthesize the merge
-            // line. bld_line is still substrate-pending — without it
-            // we cannot produce a merge candidate, so we bail (same
-            // observable behavior as C when no matcher advances).
-            break;
+            // input strings; on hit calls bld_line to synthesize a
+            // line that matches the OTHER string, copies the result
+            // into `out`, and advances both inputs.
+            let bmatchers = crate::ported::zle::compcore::bmatchers
+                .get_or_init(|| std::sync::Mutex::new(None))
+                .lock().ok().and_then(|g| g.clone());
+            let mut advanced = false;
+            let mut cur = bmatchers.as_deref();
+            while let Some(ms) = cur {                                       // c:2018
+                let mp = &*ms.matcher;
+                let ok = mp.flags == 0 && mp.wlen > 0 && mp.llen > 0
+                       && mp.wlen <= la && mp.wlen <= lb;
+                if ok {
+                    // c:2025-2027 — try the word pattern against either side.
+                    let mp_word = mp.word.as_deref();
+                    let a_slice = &sa[a_idx..];
+                    let b_slice = &sb[b_idx..];
+                    let t = if pattern_match(mp_word, a_slice, None, "") != 0 {
+                        1
+                    } else if pattern_match(mp_word, b_slice, None, "") != 0 {
+                        2
+                    } else { 0 };
+                    if t != 0 {
+                        // c:2057-2087 — bld_line writes the synthesized
+                        // line into a local buffer + returns the
+                        // count consumed from the other string.
+                        let mut line: Vec<char> = Vec::new();
+                        let bl = bld_line(
+                            mp, &mut line,
+                            "", // mword — unused in our CPAT_CHAR-only path
+                            if t == 1 { b_slice } else { a_slice },
+                            if t == 1 { lb } else { la },
+                            0,
+                        );
+                        if bl > 0 {                                          // c:2068
+                            for ch in &line { out.push(*ch); }
+                            // Advance per t-direction:
+                            if t == 1 {
+                                a_idx += mp.wlen as usize;
+                                la -= mp.wlen;
+                                b_idx += bl as usize;
+                                lb -= bl;
+                            } else {
+                                b_idx += mp.wlen as usize;
+                                lb -= mp.wlen;
+                                a_idx += bl as usize;
+                                la -= bl;
+                            }
+                            advanced = true;
+                            break;
+                        }
+                    }
+                }
+                cur = ms.next.as_deref();
+            }
+            if !advanced { break; }
         }
     }
 
