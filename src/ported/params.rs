@@ -2,15 +2,6 @@
 //!
 //! Port from zsh/Src/params.c (6511 lines → full Rust port)
 //!
-//! Variables holding values of special parameters                          // c:56
-//! Standard methods for get/set/unset pointers in parameters               // c:154
-//! Nodes for special parameters for parameter hash table                   // c:271
-//! Copy a parameter hash table                                              // c:578
-//! Function to delete a parameter table.                                    // c:612
-//! Return 1 if the string s is a valid identifier, else return 0.         // c:1284
-//! assign various functions used for non-special parameters                // c:990
-//! Empty dummy function for special hash parameters.                       // c:1162
-//!
 //! Provides shell parameters (variables), special parameters, arrays,
 //! associative arrays, parameter attributes, namerefs, scoping,
 //! tied parameters, and all special parameter get/set functions.
@@ -480,20 +471,28 @@ impl Value {
 // Shell parameter
 // ---------------------------------------------------------------------------
 
+// Nodes for special parameters for parameter hash table                    // c:271
 #[derive(Clone, Debug)]
 /// One parameter table entry.
 /// Port of `struct param` from Src/zsh.h — `createparam()`
 /// (Src/params.c:1030) constructs them, `paramtab` HashTable
 /// stores them. Same `gsu` (get/set/unset) callback shape.
 pub struct Param {
+    // hash data                                                              // c:280
     pub name: String,
     pub value: ParamValue,
+    // PM_* flags (defined in zsh.h)                                         // c:281
     pub flags: u32,
-    pub base: i32,               // Output base for integers
-    pub width: i32,              // Output field width
-    pub level: i32,              // Scope level
-    pub ename: Option<String>,   // Environment/tied name
-    pub old: Option<Box<Param>>, // Previous parameter at higher scope
+    // output base                                                            // c:284
+    pub base: i32,
+    // output field width                                                     // c:285
+    pub width: i32,
+    // if (old != NULL), level of localness                                   // c:289
+    pub level: i32,
+    // name of corresponding environment var                                  // c:287
+    pub ename: Option<String>,
+    // old struct for use with local                                          // c:288
+    pub old: Option<Box<Param>>,
 }
 
 impl Param {
@@ -3440,7 +3439,7 @@ impl ParamTable {
     }
 
     /// Copy a parameter value
-    pub fn copyparam(&self, name: &str) -> Option<ParamValue> {
+    pub fn copyparam(&self, name: &str) -> Option<ParamValue> {             // c:1236
         self.params.get(name).map(|p| p.value.clone())
     }
 }
@@ -3459,7 +3458,7 @@ pub fn getintvalue(table: &ParamTable, name: &str) -> i64 {
 /// Get scalar (string) parameter (from params.c getstrvalue)
 /// Get a scalar parameter.
 /// Port of `getstrvalue()` from Src/params.c:2335.
-pub fn getstrvalue(table: &ParamTable, name: &str) -> Option<String> {
+pub fn getstrvalue(table: &ParamTable, name: &str) -> Option<String> {      // c:2335
     table.get_value(name).map(|v| v.as_string())
 }
 
@@ -3524,7 +3523,7 @@ pub fn getnumvalue(table: &ParamTable, name: &str) -> MNumber {
 /// Assign string parameter (from params.c setstrvalue)
 /// Assign a scalar parameter.
 /// Port of `setstrvalue()` from Src/params.c:2685.
-pub fn setstrvalue(table: &mut ParamTable, name: &str, val: &str) -> bool {
+pub fn setstrvalue(table: &mut ParamTable, name: &str, val: &str) -> bool { // c:2685
     table.set_scalar(name, val)
 }
 
@@ -3882,7 +3881,7 @@ pub fn getnparam(
 /// HashTable; our SubstState-style storage spans variables /
 /// arrays / assoc_arrays, so removal must touch all three to be
 /// thorough (matches `unsetparam_pm`'s flag-aware tear-down).
-pub fn unsetparam(
+pub fn unsetparam(                                                          // c:3819
     variables: &mut std::collections::HashMap<String, String>,
     arrays: &mut std::collections::HashMap<String, Vec<String>>,
     assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
@@ -3921,7 +3920,8 @@ pub fn endparamscope(table: &mut ParamTable) {
 // ---------------------------------------------------------------------------
 
 /// Check if string is valid identifier (from params.c isident)
-pub fn isident(s: &str) -> bool {
+// Return 1 if the string s is a valid identifier, else return 0.         // c:1284
+pub fn isident(s: &str) -> bool {                                           // c:1288
     if s.is_empty() {
         return false;
     }

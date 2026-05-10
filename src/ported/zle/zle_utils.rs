@@ -2,6 +2,13 @@
 //!
 //! Direct port from zsh/Src/Zle/zle_utils.c
 //!
+//! Primary cut buffer                                                        // c:33
+//! Emacs-style kill buffer ring                                              // c:38
+//! the line before last mod (for undo purposes)                              // c:51
+//! make sure that the line buffer has at least sz chars                      // c:63
+//! undo system                                                               // c:1421
+//! head of the undo list, and the current position                           // c:1424
+//!
 //! Implements:
 //! - Line manipulation: setline, sizeline, spaceinline, shiftchars
 //! - Undo: initundo, freeundo, handleundo, mkundoent, undo, redo
@@ -693,9 +700,10 @@ impl Zle {
         self.last_cs = self.zlecs;
     }
 
+    // add an entry to the undo system, if anything has changed              // c:1528
     /// If the line changed since the last snapshot, append a Change record
     /// describing the diff. Port of `mkundoent` (zle_utils.c:1532).
-    pub fn mkundoent(&mut self) {
+    pub fn mkundoent(&mut self) {                                             // c:1532
         if self.last_ll == self.zlell && self.last_line[..self.last_ll] == self.zleline[..self.zlell]
         {
             self.last_cs = self.zlecs;
@@ -739,11 +747,12 @@ impl Zle {
         self.cur_change = self.undo_stack.len();
     }
 
+    // register pending changes in the undo system                            // c:1484
     /// Pre-widget hook. Port of `handleundo` (zle_utils.c) — currently a thin
     /// stub since `mkundoent` runs after each widget; the C version uses it to
     /// flush in-flight `nextchanges` chains, which our one-change-per-widget
     /// model doesn't need.
-    pub fn handleundo(&mut self) {
+    pub fn handleundo(&mut self) {                                            // c:1488
         self.setlastline();
     }
 
@@ -815,8 +824,9 @@ impl Zle {
         true
     }
 
+    // move backwards through the change list                                 // c:1597
     /// Walk back one Change. Port of `undo` (zle_utils.c:1601).
-    pub fn undo_widget(&mut self) -> i32 {
+    pub fn undo_widget(&mut self) -> i32 {                                    // c:1601
         // Capture any in-flight edits into a Change before stepping back.
         self.mkundoent();
         if self.cur_change == 0 {
@@ -833,8 +843,9 @@ impl Zle {
         0
     }
 
+    // move forwards through the change list                                  // c:1657
     /// Walk forward one Change. Port of `redo` (zle_utils.c:1661).
-    pub fn redo_widget(&mut self) -> i32 {
+    pub fn redo_widget(&mut self) -> i32 {                                    // c:1661
         self.mkundoent();
         if self.cur_change >= self.undo_stack.len() {
             return 1;

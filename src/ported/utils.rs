@@ -2,22 +2,6 @@
 //!
 //! Port from zsh/Src/utils.c
 //!
-//! Output a single character, for the termcap routines.                    // c:430
-//! get a symlink-free pathname for s relative to PWD                       // c:788
-//! print a directory                                                        // c:1027
-//! add a named directory                                                    // c:1183
-//! Add a function to the list of pre-prompt functions.                     // c:1315
-//! Add a function to the list of timed functions.                          // c:1367
-//! do pre-prompt stuff                                                      // c:1526
-//! This prints the XTRACE prompt.                                          // c:1711
-//! the default tty state                                                    // c:1813
-//! window size changed                                                      // c:1824
-//! Close the given fd, and clear it from fdtable.                          // c:2123
-//! Check if a string contains a token                                       // c:2278
-//! Delete a character in a string                                           // c:2290
-//! Skip over a balanced pair of parenthesis.                                // c:2405
-//! spellcheck a word                                                        // c:3123
-//!
 //! Provides miscellaneous utilities: error handling, file operations,
 //! string utilities, and character classification.
 
@@ -54,6 +38,7 @@ static SCRIPTNAME: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
 static ARGZERO: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
     std::sync::OnceLock::new();
 
+// error flag: bits from enum errflag_bits                                 // c:124
 /// Port of `int errflag` from `Src/init.c`. Tracks whether an
 /// error has been raised (`ERRFLAG_ERROR = 1`) or break/return
 /// is in flight (`ERRFLAG_INT = 2`).
@@ -333,7 +318,7 @@ pub fn zerrmsg(msg: &str, errno: Option<i32>) {                              // 
 /// Render a control character as a printable form.
 /// Port of `nicechar()` from Src/utils.c — same `^X`/`M-X`
 /// /`\xNN` rules used by `print -P` and the prompt path.
-pub fn nicechar(c: char) -> String {
+pub fn nicechar(c: char) -> String {                                        // c:520
     if c.is_ascii_control() {
         match c {
             '\n' => "\\n".to_string(),
@@ -359,14 +344,14 @@ pub fn nicezputs(s: &str) -> String {
 /// Convert character to lowercase
 /// To-lowercase that respects locale.
 /// Port of `tulower()` from Src/utils.c.
-pub fn tulower(c: char) -> char {
+pub fn tulower(c: char) -> char {                                           // c:2302
     c.to_lowercase().next().unwrap_or(c)
 }
 
 /// Convert character to uppercase
 /// To-uppercase that respects locale.
 /// Port of `tuupper()` from Src/utils.c.
-pub fn tuupper(c: char) -> char {
+pub fn tuupper(c: char) -> char {                                           // c:2310
     c.to_uppercase().next().unwrap_or(c)
 }
 
@@ -397,6 +382,7 @@ pub fn zsleep(seconds: f64) {
 /// Close a file descriptor
 /// Close an fd with EINTR retry.
 /// Port of `zclose()` from Src/utils.c.
+// Close the given fd, and clear it from fdtable.                          // c:2123
 pub fn zclose(fd: i32) {
     #[cfg(unix)]
     unsafe {
@@ -960,12 +946,14 @@ pub fn gettempname(prefix: Option<&str>, dir: bool) -> Option<String> {
 }
 
 /// Check if metafied - port from zsh/Src/utils.c has_token()
-pub fn has_token(s: &str) -> bool {
+// Check if a string contains a token                                       // c:2278
+// Check if a string contains a token                                       // c:2278
+pub fn has_token(s: &str) -> bool {                                         // c:2282
     s.bytes().any(|b| b == 0x83) // Meta character
 }
 
 /// Array length - port from arrlen()
-pub fn arrlen<T>(arr: &[T]) -> usize {
+pub fn arrlen<T>(arr: &[T]) -> usize {                                      // c:2357
     arr.len()
 }
 
@@ -1411,7 +1399,7 @@ pub fn realpath(path: &str) -> Option<String> {
 /// `:a` modifier and the symlink-resolving `:A`/`:P` modifiers
 /// dispatch through this when the OS-level canonicalize fails
 /// (non-existent paths).
-pub fn xsymlinks(s: &str) -> std::io::Result<String> {
+pub fn xsymlinks(s: &str) -> std::io::Result<String> {                      // c:872
     if s.is_empty() {
         return Ok(String::new());
     }
@@ -1559,7 +1547,7 @@ pub fn printtime(secs: i64) -> String {
 // ---------------------------------------------------------------------------
 
 /// Split path into components (from utils.c slashsplit)
-pub fn slashsplit(s: &str) -> Vec<String> {
+pub fn slashsplit(s: &str) -> Vec<String> {                                 // c:837
     s.split('/')
         .filter(|s| !s.is_empty())
         .map(String::from)
@@ -1586,11 +1574,13 @@ pub fn freearray(_arr: Vec<String>) {
 }
 
 /// Check if s is a prefix of t (from utils.c strpfx)
+// Return non-zero if s is a prefix of t.                                  // c:7330
 pub fn strpfx(s: &str, t: &str) -> bool {
     t.starts_with(s)
 }
 
 /// Check if s is a suffix of t (from utils.c strsfx)
+// Return non-zero if s is a suffix of t.                                  // c:7341
 pub fn strsfx(s: &str, t: &str) -> bool {
     t.ends_with(s)
 }
@@ -1678,6 +1668,7 @@ pub fn lchdir(path: &str) -> io::Result<()> {
     Ok(())
 }
 
+// window size changed                                                      // c:1824
 /// Adjust terminal window size (from utils.c adjustwinsize)
 pub fn adjustwinsize() -> (usize, usize) {
     (adjustcolumns(), adjustlines())
@@ -1769,7 +1760,7 @@ pub fn checkrmall(path: &str) -> bool {
 /// `fs::canonicalize()` which is the libc `realpath(3)` wrapper —
 /// same semantics for the symlink-resolution path that `xsymlink`
 /// exercises.
-pub fn xsymlink(path: &str) -> Option<String> {
+pub fn xsymlink(path: &str) -> Option<String> {                             // c:971
     // C: if (*s != '/') return NULL;
     if !path.starts_with('/') {
         return None;
@@ -1867,7 +1858,8 @@ pub fn privasserted() -> bool {
 /// no parameter (returning the cwd) — completely wrong. New port
 /// matches C: takes `&str`, returns `Option<String>` (xsymlink can
 /// return NULL).
-pub fn findpwd(s: &str) -> Option<String> {
+// get a symlink-free pathname for s relative to PWD                        // c:788
+pub fn findpwd(s: &str) -> Option<String> {                                 // c:792
     if s.starts_with('/') {
         return xsymlink(s);
     }
@@ -1881,8 +1873,9 @@ pub fn findpwd(s: &str) -> Option<String> {
     xsymlink(&combined)
 }
 
+// print a directory                                                        // c:1027
 /// Print directory name with ~ substitution (from utils.c fprintdir)
-pub fn fprintdir(path: &str, home: &str) -> String {
+pub fn fprintdir(path: &str, home: &str) -> String {                        // c:1031
     if !home.is_empty() && path.starts_with(home) {
         let rest = &path[home.len()..];
         if rest.is_empty() || rest.starts_with('/') {
@@ -2455,8 +2448,9 @@ pub fn substnamedir(
     }
 }
 
+// ScanFunc used by finddir().                                              // c:1102
 /// Scan for named directory matches (from utils.c finddir_scan)
-pub fn finddir_scan(
+pub fn finddir_scan(                                                        // c:1106
     path: &str,
     named_dirs: &std::collections::HashMap<String, String>,
 ) -> Option<(String, String)> {
@@ -2475,7 +2469,7 @@ pub fn finddir_scan(
 }
 
 /// Find named directory for path (from utils.c finddir)
-pub fn finddir(
+pub fn finddir(                                                             // c:1127
     path: &str,
     home: &str,
     named_dirs: &std::collections::HashMap<String, String>,
@@ -2489,8 +2483,9 @@ pub fn finddir(
     finddir_scan(path, named_dirs).map(|(name, rest)| format!("~{}{}", name, rest))
 }
 
+// add a named directory                                                    // c:1183
 /// Add user directory (from utils.c adduserdir)
-pub fn adduserdir(
+pub fn adduserdir(                                                          // c:1187
     named_dirs: &mut std::collections::HashMap<String, String>,
     name: &str,
     dir: &str,
@@ -2513,6 +2508,7 @@ pub fn dircmp(s: &str, t: &str) -> bool {
     s == t
 }
 
+// the last time we checked mail                                            // c:1447
 /// Check mail paths (from utils.c checkmailpath)
 pub fn checkmailpath(paths: &[String]) -> Vec<String> {
     let mut messages = Vec::new();
@@ -3765,18 +3761,21 @@ pub fn struncpy(s: &str, n: usize, upper: bool) -> String {
     }
 }
 
+// Return TRUE iff arrlen(s) >= lower_bound, but more efficiently.          // c:2365
 /// Check if array length >= n (from utils.c arrlen_ge)
-pub fn arrlen_ge<T>(arr: &[T], n: usize) -> bool {
+pub fn arrlen_ge<T>(arr: &[T], n: usize) -> bool {                          // c:2369
     arr.len() >= n
 }
 
+// Return TRUE iff arrlen(s) > lower_bound, but more efficiently.           // c:2378
 /// Check if array length > n (from utils.c arrlen_gt)
-pub fn arrlen_gt<T>(arr: &[T], n: usize) -> bool {
+pub fn arrlen_gt<T>(arr: &[T], n: usize) -> bool {                          // c:2382
     arr.len() > n
 }
 
+// Return TRUE iff arrlen(s) < upper_bound, but more efficiently.           // c:2396
 /// Check if array length < n (from utils.c arrlen_lt)
-pub fn arrlen_lt<T>(arr: &[T], n: usize) -> bool {
+pub fn arrlen_lt<T>(arr: &[T], n: usize) -> bool {                          // c:2400
     arr.len() < n
 }
 
@@ -4106,20 +4105,23 @@ pub fn dputs(msg: &str) {
     }
 }
 
+// Delete a character in a string                                           // c:2290
 /// Remove character from string (from utils.c chuck)
-pub fn chuck(s: &mut String, pos: usize) {
+pub fn chuck(s: &mut String, pos: usize) {                                  // c:2294
     if pos < s.len() {
         s.remove(pos);
     }
 }
 
+// Return TRUE iff arrlen(s) <= upper_bound, but more efficiently.          // c:2387
 /// Check if array length <= n (from utils.c arrlen_le)
-pub fn arrlen_le<T>(arr: &[T], n: usize) -> bool {
+pub fn arrlen_le<T>(arr: &[T], n: usize) -> bool {                          // c:2391
     arr.len() <= n
 }
 
 /// Skip balanced parentheses (from utils.c skipparens)
-pub fn skipparens(s: &str, open: char, close: char) -> usize {
+// Skip over a balanced pair of parenthesis.                                // c:2405
+pub fn skipparens(s: &str, open: char, close: char) -> usize {              // c:2409
     let mut depth = 0;
     for (i, c) in s.char_indices() {
         if c == open {
@@ -4758,6 +4760,7 @@ pub fn callhookfunc(name: &str, args: Option<&[String]>, arrayp: bool) -> i32 {
     stat
 }
 
+// do pre-prompt stuff                                                      // c:1526
 /// Run pre-prompt machinery: precmd, periodic, prepromptfns.
 /// Port of `preprompt()` from Src/utils.c:1530. Rust port skips
 /// the `PROMPT_SP` heuristic + mailcheck (those need terminal +

@@ -85,10 +85,13 @@ pub struct History {
     ring: Vec<i64>,
     /// Current history number
     pub curhist: i64,
+    // current line count of allocated history entries                        // c:93
     /// History line count
     pub histlinect: i64,
+    // capacity of history lists                                                // c:105
     /// History size limit
     pub histsiz: i64,
+    // desired history-file size (in lines)                                     // c:110
     /// Save history size
     pub savehistsiz: i64,
     // state of the history mechanism                                        // c:121
@@ -2038,6 +2041,7 @@ pub fn hwget() -> Option<(i32, String)> {
 ///   - INCAPPENDHISTORYTIME conditional savehistfile
 ///   - linkcurline / defev (addhistnum) when entering interactive
 ///   - attachtty(mypgrp)
+// initialize the history mechanism                                         // c:1106
 pub fn hbegin(hist: &mut History, dohist: i32) {                             // c:1110
     use std::sync::atomic::Ordering;
 
@@ -2100,6 +2104,7 @@ pub fn hbegin(hist: &mut History, dohist: i32) {                             // 
 ///   - HISTIGNORESPACE / HISTIGNOREDUPS / HISTIGNOREALLDUPS
 ///   - INCAPPENDHISTORY / SHAREHISTORY savehistfile call
 ///   - histreduceblanks (we have it, just not invoked here)
+// say we're done using the history mechanism                               // c:1470
 pub fn hend(hist: &mut History, _new_text: Option<&str>) -> bool {           // c:1474
     use std::sync::atomic::Ordering;
     let was_active = (hist.histactive & HA_ACTIVE) != 0;
@@ -2216,6 +2221,7 @@ static EXIT_PENDING: std::sync::atomic::AtomicBool =
 ///   - `Some(c)` — pass the char on to the lexer (no
 ///     substitution happened OR substitution result's first char)
 ///   - `None`    — error; caller (ihgetc) sets lexstop+errflag
+// Perform history substitution, returning the next character afterwards.  // c:591
 pub fn histsubchar(c: char, input: &mut crate::ported::input::InputBuffer, hist: &History) -> Option<char> {
     // Only `!` triggers substitution. Pass non-bangchar through.
     if c != hist.bangchar {

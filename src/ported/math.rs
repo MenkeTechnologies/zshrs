@@ -2,10 +2,6 @@
 //!
 //! Direct port from zsh/Src/math.c
 //!
-//! nonzero means we are not evaluating, just parsing                        // c:37
-//! the value stack                                                          // c:302
-//! operator-precedence parse the string and execute                         // c:1590
-//!
 //! Supports:
 //! - Integer and floating point arithmetic
 //! - All C operators (+, -, *, /, %, <<, >>, &, |, ^, etc.)
@@ -357,12 +353,14 @@ thread_local! {
     /// `static int unary` (math.c:71) — 1 when the parser is expecting
     /// an operand (so `+`/`-` mean unary plus/minus).
     static M_UNARY: Cell<bool> = const { Cell::new(true) };
+    // nonzero means we are not evaluating, just parsing                    // c:37
     /// `int noeval` (math.c:40) — non-zero when in the parse-only side
     /// of `&&`/`||`/ternary; suppresses side-effects.
-    static M_NOEVAL: Cell<i32> = const { Cell::new(0) };
+    static M_NOEVAL: Cell<i32> = const { Cell::new(0) };                    // c:40
+    // last input base we used                                              // c:55
     /// `int lastbase` (math.c:58) — base of the last numeric literal
     /// (set by lexconstant, used by `$((…))` formatting).
-    static M_LASTBASE: Cell<i32> = const { Cell::new(-1) };
+    static M_LASTBASE: Cell<i32> = const { Cell::new(-1) };                 // c:58
     /// `int *prec` — active precedence table (Z_PREC or C_PREC).
     static M_PREC: Cell<&'static [u8; TOKCOUNT]> = const { Cell::new(&Z_PREC) };
     /// `setopt CPRECEDENCES` mirror.

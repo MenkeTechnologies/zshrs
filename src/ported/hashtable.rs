@@ -206,6 +206,7 @@ impl CmdName {
 }
 
 /// Command name hash table
+// hash table containing external commands                                  // c:587
 #[derive(Debug)]
 /// `$cmdtab` table of cached executable lookups.
 /// Port of `cmdnamtab` from Src/hashtable.c — `createcmdnamtable()`
@@ -407,6 +408,7 @@ impl ShFunc {
 }
 
 /// Shell function hash table
+// hash table containing the shell functions                                // c:805
 #[derive(Debug)]
 /// `$shfunctab` shell function table.
 /// Port of the `shfunctab` HashTable Src/hashtable.c builds —
@@ -554,6 +556,7 @@ impl Reswd {
 /// Reserved word hash table
 #[derive(Debug)]
 /// `$reswdtab` reserved-word table.
+// hash table containing the reserved words                                 // c:1111
 /// Port of the `reswdtab` HashTable from Src/hashtable.c — used
 /// by Src/lex.c to recognize keywords like `if`/`while`/`do`.
 pub struct ReswdTable {
@@ -704,6 +707,7 @@ impl Alias {
 #[derive(Debug)]
 /// `$aliastab` alias hash.
 /// Port of the `aliastab` HashTable from Src/hashtable.c —
+// hash table containing the aliases                                        // c:1174
 /// `bin_alias()` (Src/builtin.c) drives every mutation. Suffix
 /// aliases live in a separate `sufaliastab` instance.
 pub struct AliasTable {
@@ -1508,6 +1512,7 @@ mod tests {
 /// Returns a `(name, expected_size)` tuple — callers (the table-
 /// specific creators) typically discard since each Rust table
 /// type has its own constructor. Provided for C name parity.
+// Get a new hash table                                                     // c:96
 pub fn newhashtable(size: i32, name: &str) -> (String, i32) {
     (name.to_string(), size)
 }
@@ -1519,7 +1524,7 @@ pub fn newhashtable(size: i32, name: &str) -> (String, i32) {
 /// it falls out of scope. The free fn here calls clear on the
 /// passed map for C name parity at call sites that explicitly
 /// invoke deletehashtable.
-pub fn deletehashtable<T>(ht: &mut HashMap<String, T>) {
+pub fn deletehashtable<T>(ht: &mut HashMap<String, T>) {                    // c:129
     ht.clear();
 }
 
@@ -1537,16 +1542,18 @@ pub fn deletehashtable<T>(ht: &mut HashMap<String, T>) {
 /// `HashMap::insert` returns the old value; dropping it runs the
 /// equivalent of `freenode`). For typed table-specific entry
 /// shapes use the table's own `add()` method.
+// Add a node to a hash table, returning the old node on replacement.      // c:164
 pub fn addhashnode<T>(ht: &mut HashMap<String, T>, nam: &str, value: T) {    // c:157
     ht.insert(nam.to_string(), value);
 }
 
+// Add a node to a hash table, returning the old node on replacement.      // c:164
 /// Port of `addhashnode2()` from `Src/hashtable.c:168`.
 ///
 /// C body inserts and returns the OLD node (instead of freeing
 /// it via the freenode callback). Rust HashMap::insert already
 /// has this shape — return the displaced value.
-pub fn addhashnode2<T>(ht: &mut HashMap<String, T>, nam: &str, value: T) -> Option<T> {
+pub fn addhashnode2<T>(ht: &mut HashMap<String, T>, nam: &str, value: T) -> Option<T> { // c:168
     ht.insert(nam.to_string(), value)
 }
 
@@ -1568,7 +1575,7 @@ pub fn gethashnode<'a, T: HashNodeFlags>(                                    // 
 /// Port of `gethashnode2()` from `Src/hashtable.c:255`.
 ///
 /// Same as gethashnode but bypasses the DISABLED filter.
-pub fn gethashnode2<'a, T>(ht: &'a HashMap<String, T>, nam: &str) -> Option<&'a T> {
+pub fn gethashnode2<'a, T>(ht: &'a HashMap<String, T>, nam: &str) -> Option<&'a T> { // c:255
     ht.get(nam)
 }
 
@@ -1692,22 +1699,24 @@ pub fn resizehashtable<T>(ht: &mut HashMap<String, T>, newsize: i32) {
     }
 }
 
+// Generic method to empty a hash table                                    // c:515
 /// Port of `emptyhashtable()` from `Src/hashtable.c:519`.
 ///
 /// C body: `resizehashtable(ht, ht->hsize);` — drop all nodes
 /// while keeping the bucket array. Rust HashMap::clear preserves
 /// capacity, matching the semantic.
-pub fn emptyhashtable<T>(ht: &mut HashMap<String, T>) {
+pub fn emptyhashtable<T>(ht: &mut HashMap<String, T>) {                     // c:519
     ht.clear();
 }
 
+// Print info about hash table                                             // c:527
 /// Port of `printhashtabinfo()` from `Src/hashtable.c:533`.
 ///
 /// C body prints chain-length distribution stats for hash-table
 /// debug analysis (under ZSH_HASH_DEBUG). Rust HashMap doesn't
 /// expose chain-length info; emit count + capacity which is the
 /// equivalent visibility.
-pub fn printhashtabinfo<T>(name: &str, ht: &HashMap<String, T>) -> String {
+pub fn printhashtabinfo<T>(name: &str, ht: &HashMap<String, T>) -> String { // c:533
     format!(
         "name of table   : {}\nsize of nodes[] : {}\nnumber of nodes : {}",
         name,
@@ -1953,7 +1962,6 @@ pub fn freecmdnamnode(nam: &str) {
 // the table is global).
 // ===========================================================
 
-// hash table containing the shell functions                                // c:805
 /// Singleton accessor for the global `shfunctab`.
 /// Mirrors C's `mod_export HashTable shfunctab` (hashtable.c:808).
 /// Lazily initialised on first access.

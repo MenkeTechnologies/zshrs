@@ -6,6 +6,7 @@
 use std::io;
 
 /// Buffer size for pre-loading random integers
+// buffer to pre-load integers for SRANDOM to lessen the context switches  // c:49
 const RAND_BUFF_SIZE: usize = 8;
 
 // Per-evaluator random-buffer state — bucket-1 dissolution per

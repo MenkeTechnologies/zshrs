@@ -156,17 +156,17 @@ impl VideoBuffer {
 #[derive(Debug, Clone, Default)]
 pub struct RefreshState {
     /// Number of columns
-    pub columns: usize,
+    pub columns: usize,  // winw, window width                              // c:682
     /// Number of lines  
-    pub lines: usize,
+    pub lines: usize,  // winh, window height                               // c:682
     /// Current line on screen (cursor row)
-    pub vln: usize,
+    pub vln: usize,  // video cursor position line                          // c:680
     /// Current column on screen (cursor col)
-    pub vcs: usize,
+    pub vcs: usize,  // video cursor position column                        // c:680
     /// Prompt width (left)
-    pub lpromptw: usize,
+    pub lpromptw: usize,  // prompt widths on screen                        // c:676
     /// Right prompt width
-    pub rpromptw: usize,
+    pub rpromptw: usize,  // prompt widths on screen                        // c:676
     /// Scroll offset for horizontal scrolling
     pub scrolloff: usize,
     /// Region highlight start

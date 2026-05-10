@@ -25,6 +25,7 @@ use crate::ported::exec::{
 use crate::ported::pattern::PatternFlags;
 
 /// Sort specifier flags
+// Element of a glob sort                                                   // c:155
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Glob qualifier sort modes.
 /// Mirrors the `GS_*` sort-type constants from Src/glob.c —
@@ -116,6 +117,9 @@ impl RangeOp {
 }
 
 /// A glob qualifier function
+// Next qualifier, must match                                              // c:139
+// Alternative set of qualifiers to match                                   // c:140
+// Function to call to test match                                           // c:141
 #[derive(Debug, Clone)]
 /// One glob qualifier.
 /// Port of the `Qualifier` enum in Src/glob.c — drives the
@@ -433,7 +437,7 @@ pub struct GlobOptions {
 /// Mirrors the `struct qual *` linked list `parsepat()`
 /// (Src/glob.c:791) builds — every `(qual)` after a glob pattern
 /// adds to it.
-pub struct QualifierSet {
+pub struct QualifierSet {                                                   // c:138
     pub qualifiers: Vec<Qualifier>,
     pub alternatives: Vec<Vec<Qualifier>>,
     pub negated: bool,
@@ -464,12 +468,13 @@ pub struct QualifierSet {
 /// `matches: Vec<GlobMatch>` (the natural Rust shape) and folds the
 /// `gd_gf_*` glob-flag bag into `options: GlobOptions`, but the
 /// 1:1 correspondence to `struct globdata` is otherwise faithful.
-pub struct GlobData {
+// struct to easily save/restore current state                              // c:166
+pub struct GlobData {                                                       // c:168
     pub options: GlobOptions,
     pub matches: Vec<GlobMatch>,
     pub qualifiers: Option<QualifierSet>,
     pathbuf: String,
-    pathpos: usize,
+    pathpos: usize,  // position in pathbuf (needed by pattern code)        // c:106
 }
 
 impl GlobData {
@@ -3678,6 +3683,7 @@ pub(crate) fn find_top_level_tilde(pat: &str) -> Option<usize> {
 // ===========================================================
 
 /// Port of `insert()` from Src/glob.c:346.
+// add a match to the list                                                   // c:342
 /// C: `static void insert(char *s, int checked)` — record one matched
 ///   path `s` into the global glob result list, optionally re-stat'ing
 ///   for type/qualifier checks.

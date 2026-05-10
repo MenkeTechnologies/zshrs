@@ -27,6 +27,7 @@ pub struct NamedDir {
 /// off it. This struct holds the same role on the Rust side; the
 /// `finddir_cache` field mirrors the file-static cache C zsh keeps
 /// in `Src/utils.c:1096`.
+// hash table containing named directories                                  // c:45
 pub struct NamedDirTable {
     table: HashMap<String, NamedDir>,
     all_users_added: bool,
@@ -40,6 +41,7 @@ impl Default for NamedDirTable {
 }
 
 impl NamedDirTable {
+    // Create new hash table for named directories                           // c:55
     pub fn new() -> Self {
         NamedDirTable {
             table: HashMap::with_capacity(201),
@@ -49,6 +51,7 @@ impl NamedDirTable {
     }
 
     /// Empty the table.
+    // Empty the named directories table                                      // c:80
     /// Port of `emptynameddirtable()` from Src/hashnameddir.c:84.
     /// Drops every entry and clears the `finddir()` cache the same
     /// way the C source's `finddir(NULL)` call does.
@@ -401,6 +404,7 @@ pub fn freenameddirnode() {                                                  // 
 }
 
 /// Port of `printnameddirnode()` from Src/hashnameddir.c:161.
+// Print a named directory                                                   // c:157
 /// C: `static void printnameddirnode(HashNode hn, int printflags)` —
 ///   emit `hash -d` row for `nd`. PRINT_NAMEONLY: just the name.
 ///   PRINT_LIST: `hash -d nam=dir`. Otherwise `nam   dir`.

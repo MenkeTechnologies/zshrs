@@ -82,11 +82,12 @@ impl ContextManager {
         self.stack.is_empty()
     }
 
+    // save some or all of current context                                   // c:48
     /// Save some or all of the current context.
     /// Port of `zcontext_save_partial()` from Src/context.c:52 —
     /// the C source allocates a fresh `zcontext_stack` node, fills
     /// the slices selected by `parts`, and pushes onto the stack.
-    pub fn save_partial(
+    pub fn save_partial(                                                    // c:52
         &mut self,
         parts: u32,
         hist: &HistStack,
@@ -108,11 +109,12 @@ impl ContextManager {
         self.stack.push(ctx);
     }
 
+    // save context in full                                                  // c:76
     /// Save the full context.
     /// Port of `zcontext_save()` from Src/context.c:80 — wrapper
     /// over `save_partial(ZCONTEXT_HIST | ZCONTEXT_LEX |
     /// ZCONTEXT_PARSE, ...)`.
-    pub fn save(&mut self, hist: &HistStack, lex: &LexStack, parse: &ParseStack) {
+    pub fn save(&mut self, hist: &HistStack, lex: &LexStack, parse: &ParseStack) { // c:80
         self.save_partial(
             ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE,
             hist,
@@ -121,11 +123,12 @@ impl ContextManager {
         );
     }
 
+    // restore context or part thereof                                       // c:85
     /// Restore some or all of the saved context.
     /// Port of `zcontext_restore_partial()` from Src/context.c:89
     /// — pops the top stack node and copies back the slices
     /// selected by `parts`.
-    pub fn restore_partial(&mut self, parts: u32) -> Option<ContextStack> {
+    pub fn restore_partial(&mut self, parts: u32) -> Option<ContextStack> { // c:89
         let ctx = self.stack.pop()?;
 
         let mut result = ContextStack::default();
@@ -142,11 +145,12 @@ impl ContextManager {
         Some(result)
     }
 
+    // restore full context                                                  // c:113
     /// Restore the full context.
     /// Port of `zcontext_restore()` from Src/context.c:117 —
     /// wrapper over `restore_partial(ZCONTEXT_HIST | ZCONTEXT_LEX
     /// | ZCONTEXT_PARSE)`.
-    pub fn restore(&mut self) -> Option<ContextStack> {
+    pub fn restore(&mut self) -> Option<ContextStack> {                     // c:117
         self.restore_partial(ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE)
     }
 

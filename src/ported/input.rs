@@ -2,6 +2,13 @@
 //!
 //! Direct port from zsh/Src/input.c
 //!
+//! the shell input fd                                                       // c:78
+//! total # of characters waiting to be read                                 // c:88
+//! the flags controlling the input routines in input.c                      // c:93
+//! Reset the input buffer for SHIN, discarding any pending input            // c:155
+//! stuff a whole file into memory and return it                             // c:610
+//! flush input queue                                                        // c:661
+//!
 //! This module handles:
 //! - Reading input from files, strings, and the line editor
 //! - Input stack for alias expansion and history substitution
@@ -11,6 +18,7 @@
 use std::collections::VecDeque;
 use std::io::{self, BufRead, BufReader, Read};
 
+// Size of buffer for non-interactive command input                        // c:127
 /// Size of the shell input buffer
 const SHIN_BUF_SIZE: usize = 8192;
 
@@ -277,6 +285,7 @@ impl InputBuffer {
     /// Push a new input source onto the stack.
     /// Port of `inpush()` from Src/input.c:675 — used for
     // Set some new input onto a new element of the input stack             // c:671
+    // Set some new input onto a new element of the input stack               // c:671
     /// `eval`/`source`, alias expansion, and process
     /// substitution to layer a new input on top of the current
     /// one.
@@ -336,7 +345,7 @@ impl InputBuffer {
         }
     }
 
-    /// Pop the stack including all continuations
+    // Remove the top element of the stack and all its continuations.        // c:781
     /// Pop the top input source.
     /// Port of `inpop()` from Src/input.c:785.
     pub fn inpop(&mut self) {                                                // c:785
@@ -640,12 +649,13 @@ pub fn shinbufrestore() {
     INPUT.with(|b| b.borrow_mut().shin_buf_restore());
 }
 
+// Get a character from SHIN, -1 if none available                         // c:214
 /// Read one byte from SHIN; returns -1 on EOF.
 /// Port of `shingetchar()` from Src/input.c:218. C source pulls
 /// from `shinbuffer` first then falls through to `read(2)` on the
 /// SHIN fd; Rust mirrors via the InputBuffer's `shin_getchar`
 /// reading from `std::io::stdin`.
-pub fn shingetchar() -> i32 {
+pub fn shingetchar() -> i32 {                                               // c:218
     use std::io::BufReader;
     let stdin = std::io::stdin();
     let mut reader = BufReader::new(stdin.lock());
@@ -666,12 +676,13 @@ pub fn shingetline() -> String {
     INPUT.with(|b| b.borrow_mut().shin_getline(&mut reader).unwrap_or_default())
 }
 
+// Read a line from the current command stream and store it as input       // c:362
 /// Read one line into the input stack.
 /// Port of `inputline()` from Src/input.c:366. C source dispatches
 /// between zle / non-zle paths and `shingetline` /
 /// `zleentry(READ)`. Rust port reads via shingetline (no zle yet),
 /// returns "" on EOF and sets lexstop the same way.
-pub fn inputline() -> String {
+pub fn inputline() -> String {                                              // c:366
     let line = shingetline();
     if line.is_empty() {
         INPUT.with(|b| b.borrow_mut().lexstop = true);
@@ -696,6 +707,7 @@ pub fn stuff(filename: &str) -> i32 {
     0
 }
 
+// Remove the top element of the stack                                       // c:732
 /// Pop the topmost input-stack frame.
 /// Port of `inpoptop()` from Src/input.c:736.
 pub fn inpoptop() {

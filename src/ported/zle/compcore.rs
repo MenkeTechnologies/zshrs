@@ -32,6 +32,7 @@ use crate::ported::zle::comp_h::Cmatch;
 // Globals — `Src/Zle/compcore.c:170-185`.
 // =====================================================================
 
+// The number of messages.                                                  // c:169
 /// Port of `mod_export int nmessages` from `Src/Zle/compcore.c:172`.
 /// Total count of explanation messages displayed by `compadd -x`.
 pub static NMESSAGES: AtomicI32 = AtomicI32::new(0);                         // c:172

@@ -2,6 +2,13 @@
 //!
 //! Port from zsh/Src/init.c
 //!
+//! buffer for $_ and its length                                             // c:46
+//! termcap strings                                                          // c:72
+//! Values of the li, co and am entries                                      // c:82
+//! keep executing lists until EOF found                                     // c:109
+//! Initialise termcap                                                       // c:767
+//! Initialize lots of global variables and hash tables                      // c:1010
+//!
 //! Provides shell initialization, startup script sourcing, and main loop.
 
 use std::env;
@@ -271,6 +278,7 @@ pub fn parseargs(args: &[String]) -> (ShellOptions, Option<String>, Vec<String>)
 /// Port of `init_io()` from Src/init.c:577 — sets up SHIN/SHTTY,
 /// duplicates the controlling tty into `mailfd`, and configures
 /// terminal-related globals.
+// stdout, stderr fully buffered                                            // c:585
 pub fn init_io(state: &mut ShellState) {                                     // c:577
     // Try to get tty
     if atty::is(atty::Stream::Stdin) {
@@ -482,6 +490,7 @@ pub fn getmypath(name: Option<&str>, cwd: Option<&str>) -> Option<PathBuf> {
 /// Initialize terminal-capability state.
 /// Port of `init_term()` from Src/init.c:771 — looks up TERM,
 /// resolves `tgetent()`, and populates the termcap globals.
+// Initialise termcap                                                       // c:767
 pub fn init_term(state: &ShellState) -> bool {                               // c:771
     let term = &state.term;
     if term.is_empty() {

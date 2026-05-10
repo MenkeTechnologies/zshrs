@@ -94,9 +94,11 @@ pub fn zistype(x: u8, bits: u32) -> bool {                               // c:47
 
 /// Port of `#define iblank(X)` from `Src/ztype.h:50`. Blank, not
 /// including `\n`.
+// blank, not including \n                                                  // c:50
 #[inline] pub fn iblank(x: u8) -> bool { zistype(x, IBLANK as u32) }     // c:50
 
 /// Port of `#define inblank(X)` from `Src/ztype.h:51`. Blank or `\n`.
+// blank or \n                                                              // c:51
 #[inline] pub fn inblank(x: u8) -> bool { zistype(x, INBLANK as u32) }   // c:51
 
 /// Port of `#define itok(X)` from `Src/ztype.h:52`.
@@ -112,6 +114,7 @@ pub fn zistype(x: u8, bits: u32) -> bool {                               // c:47
 #[inline] pub fn iident(x: u8) -> bool { zistype(x, IIDENT as u32) }     // c:55
 
 /// Port of `#define iuser(X)` from `Src/ztype.h:56`. Username char.
+// username char                                                            // c:56
 #[inline] pub fn iuser(x: u8) -> bool { zistype(x, IUSER as u32) }       // c:56
 
 /// Port of `#define icntrl(X)` from `Src/ztype.h:57`.

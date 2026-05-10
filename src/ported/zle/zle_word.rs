@@ -470,6 +470,7 @@ pub fn backwarddeleteword(zle: &mut Zle, args: &[String]) -> i32 {       // c:42
 }
 
 /// Port of `vibackwardkillword()` from `Src/Zle/zle_word.c:462`.
+// this taken from "vibackwardword"                                         // c:469
 pub fn vibackwardkillword(zle: &mut Zle, _args: &[String]) -> i32 {      // c:462
     let mut x = zle.zlecs;                                               // c:464
     // c:464 — `lim = (viinsbegin > findbol()) ? viinsbegin : findbol();`

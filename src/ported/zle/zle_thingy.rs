@@ -1,6 +1,6 @@
 //! ZLE thingies - named bindings to widgets
 //!
-//! Direct port from zsh/Src/Zle/zle_keymap.c thingy structures
+//! Direct port from zsh/Src/Zle/zle_thingy.c
 //!
 //! A "thingy" is a named entity that refers to a widget. Multiple thingies
 //! can refer to the same widget. Thingies are reference-counted.
