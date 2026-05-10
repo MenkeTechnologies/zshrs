@@ -234,7 +234,10 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 /// Port of `setup_()` from `Src/Modules/regex.c:229`.
-pub fn setup_(_m: *const module) -> i32 { 0 }                           // c:229-232
+pub fn setup_(_m: *const module) -> i32 {                                    // c:229
+    // C body c:231-232 — `return 0`. Faithful empty-body port.
+    0
+}
 
 /// Port of `features_()` from `Src/Modules/regex.c:236`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
@@ -248,7 +251,11 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 }
 
 /// Port of `boot_()` from `Src/Modules/regex.c:251`.
-pub fn boot_(_m: *const module) -> i32 { 0 }                            // c:251-254
+pub fn boot_(_m: *const module) -> i32 {                                     // c:251
+    // C body c:253-254 — `return 0`. Faithful empty-body port; the
+    //                    regex-match condition registers via cd_list.
+    0
+}
 
 /// Port of `cleanup_()` from `Src/Modules/regex.c:258`.
 pub fn cleanup_(m: *const module) -> i32 {
@@ -256,7 +263,10 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_()` from `Src/Modules/regex.c:265`.
-pub fn finish_(_m: *const module) -> i32 { 0 }                          // c:265-268
+pub fn finish_(_m: *const module) -> i32 {                                   // c:265
+    // C body c:267-268 — `return 0`. Faithful empty-body port.
+    0
+}
 
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["C:regex-match".to_string()]

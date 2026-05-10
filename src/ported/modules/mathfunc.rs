@@ -368,7 +368,10 @@ const MATH_FN_NAMES: &[&str] = &[
 ];
 
 /// Port of `setup_()` from `Src/Modules/mathfunc.c:548`.
-pub fn setup_(_m: *const module) -> i32 { 0 }                           // c:548-551
+pub fn setup_(_m: *const module) -> i32 {                                    // c:548
+    // C body c:550-551 — `return 0`. Faithful empty-body port.
+    0
+}
 
 /// Port of `features_()` from `Src/Modules/mathfunc.c:555`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -384,7 +387,12 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 }
 
 /// Port of `boot_()` from `Src/Modules/mathfunc.c:570`.
-pub fn boot_(_m: *const module) -> i32 { 0 }                            // c:570-573
+pub fn boot_(_m: *const module) -> i32 {                                     // c:570
+    // C body c:572-573 — `return 0`. Faithful empty-body port; the
+    //                    math functions are registered via the mf_list
+    //                    feature dispatch, no extra boot work needed.
+    0
+}
 
 /// Port of `cleanup_()` from `Src/Modules/mathfunc.c:577`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
@@ -393,7 +401,11 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_()` from `Src/Modules/mathfunc.c:584`.
-pub fn finish_(_m: *const module) -> i32 { 0 }                          // c:584-587
+pub fn finish_(_m: *const module) -> i32 {                                   // c:584
+    // C body c:586-587 — `return 0`. Faithful empty-body port; the
+    //                    math functions are unregistered via cleanup_.
+    0
+}
 
 // `featuresarray` — Src/module.c:3275.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {

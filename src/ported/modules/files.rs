@@ -883,7 +883,10 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 /// Port of `setup_()` from `Src/Modules/files.c:838`.
-pub fn setup_(_m: *const module) -> i32 { 0 }                                // c:838
+pub fn setup_(_m: *const module) -> i32 {                                    // c:838
+    // C body c:840-841 — `return 0`. Faithful empty-body port.
+    0
+}
 
 /// Port of `features_()` from `Src/Modules/files.c:845`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:845
@@ -897,7 +900,12 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // 
 }
 
 /// Port of `boot_()` from `Src/Modules/files.c:860`.
-pub fn boot_(_m: *const module) -> i32 { 0 }                                 // c:860
+pub fn boot_(_m: *const module) -> i32 {                                     // c:860
+    // C body c:862-863 — `return 0`. Faithful empty-body port; the
+    //                    chmod/chown/chgrp/sync/etc. builtins register
+    //                    via the bn_list feature dispatch.
+    0
+}
 
 /// Port of `cleanup_()` from `Src/Modules/files.c:867`.
 pub fn cleanup_(m: *const module) -> i32 {                                   // c:867
@@ -905,7 +913,11 @@ pub fn cleanup_(m: *const module) -> i32 {                                   // 
 }
 
 /// Port of `finish_()` from `Src/Modules/files.c:874`.
-pub fn finish_(_m: *const module) -> i32 { 0 }                               // c:874
+pub fn finish_(_m: *const module) -> i32 {                                   // c:874
+    // C body c:876-877 — `return 0`. Faithful empty-body port; the
+    //                    builtins unregister via cleanup_'s setfeatureenables.
+    0
+}
 
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     BINTAB.iter().map(|b| format!("b:{}", b.name)).collect()
