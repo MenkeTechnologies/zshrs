@@ -42,6 +42,28 @@ pub static SUFFIXLEN: AtomicI32 = AtomicI32::new(0);                         // 
 /// Suppresses inserted-character suffix removal when set.
 pub static SUFFIXNOINSREM: AtomicI32 = AtomicI32::new(0);                    // c:1549
 
+// ===== Pre/post-display strings (Src/Zle/zle_main.c) =====
+//
+// `ZLE_STRING_T predisplay` / `ZLE_STRING_T postdisplay` — text
+// shown before/after the line buffer (used by `zle -K -P` and
+// completion menu rendering).
+
+/// Port of `ZLE_STRING_T predisplay` (zle_main.c). Storage for the
+/// `$PREDISPLAY` parameter value.
+pub static PREDISPLAY: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+
+/// Port of `ZLE_STRING_T postdisplay` (zle_main.c). Storage for the
+/// `$POSTDISPLAY` parameter value.
+pub static POSTDISPLAY: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+
+/// Port of `char *previous_search` from `Src/Zle/zle_hist.c`. Set
+/// by `historyincrementalsearch*` on accept; read by `$LSEARCH`.
+pub static PREVIOUS_SEARCH: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+
+/// Port of `char *previous_aborted_search` from
+/// `Src/Zle/zle_hist.c`. Set on isearch abort; read by `$LASEARCH`.
+pub static PREVIOUS_ABORTED_SEARCH: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+
 /// Clipboard/paste buffer for yank operations
 // yankb, yanke; mark the start and end of last yank in editing buffer.    // c:526
 // The original cutbuffer, either cutbuf or one of the vi buffers.         // c:528
