@@ -1154,6 +1154,32 @@ fn isrch_spots() -> &'static std::sync::Mutex<Vec<IsrchSpot>> {
     ISRCH_SPOTS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
+/// `ISEARCH_PROMPT` from `Src/Zle/zle_hist.c:1070`.
+/// Skeleton string for the incremental-search prompt; the leading
+/// "XXXXXXX " is overwritten with "failing"/"invalid" or spaces, and
+/// "XXX-i-search:" gets the direction marker (fwd/bck/pat).
+pub const ISEARCH_PROMPT: &str = "XXXXXXX XXX-i-search: ";                   // c:1070
+
+/// `FAILING_TEXT` from `Src/Zle/zle_hist.c:1071`.
+pub const FAILING_TEXT: &str = "failing";                                    // c:1071
+
+/// `INVALID_TEXT` from `Src/Zle/zle_hist.c:1072`.
+pub const INVALID_TEXT: &str = "invalid";                                    // c:1072
+
+/// `BAD_TEXT_LEN` from `Src/Zle/zle_hist.c:1073`.
+/// strlen("failing") == strlen("invalid") == 7.
+pub const BAD_TEXT_LEN: usize = 7;                                           // c:1073
+
+/// `NORM_PROMPT_POS` from `Src/Zle/zle_hist.c:1074`.
+/// `(BAD_TEXT_LEN + 1)` — column where the normal prompt segment
+/// starts (after the bad-text marker + space).
+pub const NORM_PROMPT_POS: usize = BAD_TEXT_LEN + 1;                         // c:1074
+
+/// `FIRST_SEARCH_CHAR` from `Src/Zle/zle_hist.c:1075`.
+/// `(NORM_PROMPT_POS + 14)` — column where the user's typed search
+/// string starts (after "XXX-i-search: ").
+pub const FIRST_SEARCH_CHAR: usize = NORM_PROMPT_POS + 14;                   // c:1075
+
 /// `ISS_FORWARD` from `Src/Zle/zle_hist.c:949`.
 pub const ISS_FORWARD: u16 = 1;
 /// `ISS_NOMATCH_SHIFT` from `Src/Zle/zle_hist.c:951`.
@@ -1837,5 +1863,34 @@ mod zlinecmp_zlinefind_tests {
         // "abcabc" with needle "a" starting at pos=1 finds the
         // second "a" at index 3.
         assert_eq!(zlinefind("abcabc", 1, "a", 1, 0), Some(3));
+    }
+}
+
+#[cfg(test)]
+mod isearch_prompt_tests {
+    use super::*;
+
+    #[test]
+    fn bad_text_strings_are_seven_chars() {
+        assert_eq!(FAILING_TEXT.len(), BAD_TEXT_LEN);
+        assert_eq!(INVALID_TEXT.len(), BAD_TEXT_LEN);
+    }
+
+    #[test]
+    fn norm_prompt_pos_after_bad_text_marker() {
+        // Column 8: skips "XXXXXXX " (BAD_TEXT_LEN + 1 trailing space).
+        assert_eq!(NORM_PROMPT_POS, 8);
+    }
+
+    #[test]
+    fn first_search_char_after_isearch_label() {
+        // Column 22: NORM_PROMPT_POS (8) + 14 chars of "XXX-i-search: ".
+        assert_eq!(FIRST_SEARCH_CHAR, 22);
+    }
+
+    #[test]
+    fn isearch_prompt_skeleton_has_correct_shape() {
+        assert!(ISEARCH_PROMPT.starts_with("XXXXXXX "));
+        assert!(ISEARCH_PROMPT.contains("XXX-i-search:"));
     }
 }

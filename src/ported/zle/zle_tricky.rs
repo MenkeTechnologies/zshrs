@@ -1064,6 +1064,15 @@ pub fn getcurcmd(zle: &crate::ported::zle::zle_main::Zle) -> Option<String> { //
     Some(cmd)
 }
 
+/// Port of the `inststr(X)` macro from `Src/Zle/compcore.c:278` and
+/// `Src/Zle/compresult.c:39` (both files share the same macro).
+/// `#define inststr(X) inststrlen((X),1,-1)` — insert string `X` at
+/// cursor with auto-len + cursor-advance semantics. Most common
+/// inserter wrapper used across the completion engine.
+pub fn inststr(zle: &mut crate::ported::zle::zle_main::Zle, s: &str) -> i32 { // c:278
+    inststrlen(zle, s, true, -1)
+}
+
 /// Port of `inststrlen()` from Src/Zle/zle_tricky.c:2231.
 pub fn inststrlen(                                                           // c:2231
     zle: &mut crate::ported::zle::zle_main::Zle,
