@@ -17,6 +17,12 @@
 
 use std::fmt::Write;
 
+/// Port of `GROUPVAR` from `Src/Modules/hlgroup.c:33`.
+/// `#define GROUPVAR ".zle.hlgroups"`. Name of the user-defined
+/// associative array that maps group names to highlight-attribute
+/// strings. Read by `getgroup` (c:82) + `scangroup` (c:117).
+pub const GROUPVAR: &str = ".zle.hlgroups";                                  // c:33
+
 /// Port of `convertattr()` from `Src/Modules/hlgroup.c:40`.
 ///
 /// C body (c:42-77):

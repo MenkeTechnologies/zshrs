@@ -7,8 +7,9 @@ use std::ffi::CString;
 use std::io::{self, Read, Write};
 use std::os::unix::io::RawFd;
 
-/// Maximum bytes to read at once
-pub const READ_MAX: usize = 1024 * 1024;
+/// Port of `READ_MAX` from `Src/Modules/zpty.c:44`. Maximum bytes
+/// to read at once from a pty's master end (1 MB).
+pub const READ_MAX: usize = 1024 * 1024;                                     // c:44
 
 /// A pseudo-terminal command session.
 /// Port of `struct ptycmd` from Src/Modules/zpty.c — the C
