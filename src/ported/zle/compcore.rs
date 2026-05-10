@@ -43,6 +43,31 @@ pub static NMESSAGES: AtomicI32 = AtomicI32::new(0);                         // 
 /// option string for "expl" / "messages" substrings.
 pub static ONLYEXPL: AtomicI32 = AtomicI32::new(0);                          // c:177
 
+/// Port of `static int oldmenucmp` from `Src/Zle/compcore.c:457`.
+/// Saved menucmp state — set by `before_complete` so `after_complete`
+/// can restore it (and the dispatch loop knows whether to leave the
+/// menu-completion mode active across hooks).
+pub static OLDMENUCMP: AtomicI32 = AtomicI32::new(0);                        // c:457
+
+/// Port of `static int parwb` from `Src/Zle/compcore.c:540`. Saved
+/// `wb` (word-begin) for the parameter-completion path inside
+/// `check_param`; restored after completion finishes.
+pub static PARWB: AtomicI32 = AtomicI32::new(0);                             // c:540
+
+/// Port of `static int parwe` from `Src/Zle/compcore.c:540`. Saved
+/// `we` (word-end) for parameter completion.
+pub static PARWE: AtomicI32 = AtomicI32::new(0);                             // c:540
+
+/// Port of `static int paroffs` from `Src/Zle/compcore.c:540`. Saved
+/// `offs` (cursor offset within the parameter word).
+pub static PAROFFS: AtomicI32 = AtomicI32::new(0);                           // c:540
+
+/// Port of `static int matchorder` from `Src/Zle/compcore.c:3169`.
+/// Sort order flag passed to `matchcmp` qsort comparator: bit-OR of
+/// `SORTIT_*` from comp.h. Drives whether matches sort by display
+/// string vs raw match, asc vs desc, numerically vs lexicographically.
+pub static MATCHORDER: AtomicI32 = AtomicI32::new(0);                        // c:3169
+
 // =====================================================================
 // rembslash — `Src/Zle/compcore.c:1322-1336`.
 // =====================================================================
