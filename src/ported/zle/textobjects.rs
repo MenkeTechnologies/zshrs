@@ -22,13 +22,12 @@ pub fn blankwordclass(x: char) -> i32 {                                  // c:34
 /// `Vec<char>` (already multibyte-aware at the storage layer; no
 /// per-char byte-walk needed).
 ///
-/// `virangeflag` is a `Src/Zle/zle_vi.c:36` file-global. The
-/// cursor-adjustment arm at `c:196-203` reads it. zshrs sets the
-/// flag during the live `vi`-operator-pending key-read loop on
-/// the Zle struct; standalone widget invocation reaches this fn
-/// with the flag clear, which is the only state the cursor-
-/// adjustment needs to handle (the `range`-set branch only fires
-/// from inside `getvirange`, which has its own copy).
+/// `virangeflag` is a `Src/Zle/zle_vi.c:36` file-global that is
+/// not yet ported (Phase 3 bucket-2 work). The cursor-adjustment
+/// arm at `c:196-203` reads it; here we treat it as false (the
+/// only reachable state during normal widget invocation — it is
+/// only set during `vi`-operator-pending evaluation, which zshrs
+/// dispatches through a different path). See TODO.md.
 pub fn selectword(zle: &mut Zle) -> i32 {                                // c:41
     let mut n: i32 = if zle.zmod.flags.contains(ModifierFlags::MULT) {   // c:42 zmult
         zle.zmod.mult

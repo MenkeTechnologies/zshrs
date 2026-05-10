@@ -102,42 +102,21 @@ fn errflag_set_error() {
 }
 
 // Token constants from zsh.h (mapped to char values > 127)
-pub mod tokens {
-    // c:N/A
-    // Token values MUST match `parse/src/tokens.rs::char_tokens` —
-    // the canonical lexer table. Earlier this module had its own
-    // independent values (POUND=0x80, TICK=0x83, etc.) that DIDN'T
-    // match the lexer's emitted markers (POUND=0x84, TICK=0x93,
-    // QTICK=0x99). Every `c == TICK` check in stringsubst silently
-    // missed every backtick `\`cmd\`` in real shell input because
-    // the lexer marks them with 0x93/0x99 not 0x83/0x84. Aligning
-    // these values is correctness-critical.
-    pub const POUND: char = '\u{84}'; // #                  // c:N/A
-    pub const STRING: char = '\u{85}'; // $                 // c:N/A
-    pub const QSTRING: char = '\u{8c}'; // Quoted $         // c:N/A
-    pub const TICK: char = '\u{93}'; // `                   // c:N/A
-    pub const QTICK: char = '\u{99}'; // Quoted `           // c:N/A
-    pub const INPAR: char = '\u{88}'; // (                  // c:N/A
-    pub const OUTPAR: char = '\u{8a}'; // )                 // c:N/A
-    pub const INBRACE: char = '\u{8f}'; // {                // c:N/A
-    pub const OUTBRACE: char = '\u{90}'; // }               // c:N/A
-    pub const INBRACK: char = '\u{91}'; // [                // c:N/A
-    pub const OUTBRACK: char = '\u{92}'; // ]               // c:N/A
-    pub const INANG: char = '\u{94}'; // <                  // c:N/A
-    pub const OUTANG: char = '\u{95}'; // >                 // c:N/A
-    pub const OUTANGPROC: char = '\u{96}'; // >( for process sub // c:N/A
-    pub const EQUALS: char = '\u{8d}'; // =                 // c:N/A
-    pub const NULARG: char = '\u{a1}'; // Null argument marker // c:N/A
-    pub const INPARMATH: char = '\u{89}'; // $((            // c:N/A
-    pub const OUTPARMATH: char = '\u{8b}'; // ))            // c:N/A
-    pub const SNULL: char = '\u{9d}'; // single bslashquote marker    // c:N/A
-    pub const DNULL: char = '\u{9e}'; // double bslashquote marker    // c:N/A
-    pub const MARKER: char = '\u{a2}'; // Array key-value marker // c:N/A
-    pub const BNULL: char = '\u{9f}'; // Backslash null     // c:N/A
-} // c:N/A
-
-use tokens::*;
-// c:N/A
+// `pub mod tokens { … }` — DELETED per user directive. Was a
+// Rust-only duplicate of the canonical token table in
+// `crate::ported::zsh_h` (port of `Src/zsh.h:159-224`). Two names
+// drifted: local `STRING` → canonical `STRING_TOK`, local
+// `OUTANGPROC` → canonical `OUTANG_PROC`. All other constants
+// matched bit-for-bit but living in two places invited future drift.
+use crate::ported::zsh_h::{
+    BNULL, DNULL, EQUALS, INANG, INBRACE, INBRACK, INPAR, INPARMATH, MARKER,
+    NULARG, OUTANG, OUTANG_PROC, OUTBRACE, OUTBRACK, OUTPAR, OUTPARMATH, POUND,
+    QSTRING, QTICK, SNULL, STRING_TOK, TICK,
+}; // c:zsh.h:159-224
+// Aliases for the two names that diverged in the local module.
+// Cite c:zsh.h:160 (`STRING`) and c:zsh.h:177 (`OUTANG`+proc-sub).
+const STRING: char = STRING_TOK; // c:zsh.h:160
+const OUTANGPROC: char = OUTANG_PROC; // c:zsh.h:177
 
 /// Port of `LF_ARRAY` from `Src/subst.c:33`.
 /// `#define LF_ARRAY 1`. Linked-list flag the substitution-result
@@ -7565,32 +7544,20 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
     result // c:1553
 } // c:1554
 
-/// Default IFS value
-pub const DEFAULT_IFS: &str = " \t\n"; // c:N/A
-
-// `impl SubstOptions { }` — DELETED (struct removed per user
-// "SubstState must be removed" directive; opts read via
-// `crate::ported::options::opt_state_get/set`).
-
-/// Text attribute type for prompt highlighting
-pub type ZAttr = u64; // c:N/A
-
-/// LEXFLAGS for (z) flag
-pub mod lexflags {
-    // c:N/A
-    pub const ACTIVE: u32 = 1; // c:N/A
-    pub const COMMENTS_KEEP: u32 = 2; // c:N/A
-    pub const COMMENTS_STRIP: u32 = 4; // c:N/A
-    pub const NEWLINE: u32 = 8; // c:N/A
-} // c:N/A
 
 // ============================================================================
 // Final functions for complete subst.c coverage
 // ============================================================================
 
-/// Token constants for Dnull, Snull, etc.
-pub const DNULL: char = '\u{97}'; // "                      // c:N/A
-pub const BNULLKEEP: char = '\u{95}'; // Backslash null that stays // c:N/A
+// Local `DNULL` / `BNULLKEEP` constants — DELETED per user
+// directive. Both were WRONG values masquerading as canonical
+// tokens: local `DNULL = '\u{97}'` is actually `QUEST` (zsh.h:178);
+// local `BNULLKEEP = '\u{95}'` is actually `OUTANG` (zsh.h:176).
+// Canonical values from `Src/zsh.h:194,200` are `DNULL = '\u{9e}'`
+// and `BNULLKEEP = '\u{a0}'`. Both already imported from
+// `crate::ported::zsh_h` at the top of this file (DNULL) and
+// available there (BNULLKEEP). Bringing BNULLKEEP into scope.
+use crate::ported::zsh_h::BNULLKEEP; // c:zsh.h:200
 
 /// Equal substitution (=cmd)
 /// Port of equalsubstr() from subst.c lines 706-722
@@ -7662,73 +7629,6 @@ pub fn equalsubstr(s: &str, assign: bool, nomatch: bool) -> Option<String> {
     }
 } // c:733
 
-/// Additional token constants
-pub mod extra_tokens {
-    // c:N/A
-    pub const TILDE: char = '\u{98}'; // c:N/A
-    pub const DASH: char = '\u{96}'; // c:N/A
-    pub const STAR: char = '\u{99}'; // c:N/A
-    pub const QUEST: char = '\u{9A}'; // c:N/A
-    pub const HAT: char = '\u{9B}'; // c:N/A
-    pub const BAR: char = '\u{9C}'; // c:N/A
-} // c:N/A
-
-/// Output radix for arithmetic (default 10)
-pub static OUTPUT_RADIX: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(10); // c:N/A
-
-/// Output underscore flag for arithmetic
-pub static OUTPUT_UNDERSCORE: std::sync::atomic::AtomicBool = // c:N/A
-    std::sync::atomic::AtomicBool::new(false); // c:N/A
-
-/// MN_FLOAT flag for math numbers
-pub const MN_FLOAT: u32 = 1; // c:N/A
-
-/// Math number type (mirrors mnumber union from C)
-#[derive(Clone, Copy)] // c:N/A
-pub struct MNumber {
-    // c:N/A
-    pub type_: u32,     // c:N/A
-    pub int_val: i64,   // c:N/A
-    pub float_val: f64, // c:N/A
-} // c:N/A
-
-impl std::fmt::Debug for MNumber {
-    // c:N/A
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // c:N/A
-        if self.type_ & MN_FLOAT != 0 {
-            // c:N/A
-            write!(f, "MNumber(float: {})", self.float_val) // c:N/A
-        } else {
-            // c:N/A
-            write!(f, "MNumber(int: {})", self.int_val) // c:N/A
-        } // c:N/A
-    } // c:N/A
-} // c:N/A
-
-impl Default for MNumber {
-    // c:N/A
-    fn default() -> Self {
-        // c:N/A
-        MNumber {
-            // c:N/A
-            type_: 0,       // c:N/A
-            int_val: 0,     // c:N/A
-            float_val: 0.0, // c:N/A
-        } // c:N/A
-    } // c:N/A
-} // c:N/A
-
-/// Brace expansion state
-#[derive(Debug, Clone)] // c:N/A
-pub struct BraceInfo {
-    // c:N/A
-    pub str_: String,  // c:N/A
-    pub pos: usize,    // c:N/A
-    pub inbrace: bool, // c:N/A
-} // c:N/A
-
-// =============================================================
 // Merged from former src/subst_paramsubst_port.rs:
 //   Faithful 1:1 port target for paramsubst (subst.c:1625-4473).
 //   Gated behind ZSHRS_NEW_PARAMSUBST=1; legacy paramsubst above

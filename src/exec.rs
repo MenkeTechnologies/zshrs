@@ -537,7 +537,11 @@ pub struct ShellExecutor {
     /// (`if`, `then`, `cmdand`, `cmdor`, `cmdsubst`, …).
     /// `build_prompt_context` clones this into PromptContext so
     /// the prompt expander sees the live stack.
-    pub cmd_stack: Vec<crate::prompt::CmdState>,
+    /// Direct port of `unsigned char *cmdstack; int cmdsp;` from
+    /// `Src/prompt.c:55-58`. Each byte is a `CS_*` value from
+    /// `zsh_h::CS_FOR..CS_ALWAYS` (`Src/zsh.h:2775-2806`); read by
+    /// `%_` and the xtrace prefix.
+    pub cmd_stack: Vec<u8>, // c:55
     /// IDs of history entries explicitly added during this session
     /// via `print -s`. `fc -l` uses this to scope listings to just
     /// the script-added entries (matches zsh's `-c` semantics where
@@ -1664,7 +1668,7 @@ impl ShellExecutor {
         // Src/exec.c:4783 `cmdpush(CS_CMDSUBST);` around execode().
         // Trace lines emitted by the inner program inherit this token
         // so their PS4 prefix shows "cmdsubst" matching zsh -x.
-        self.cmd_stack.push(crate::prompt::CmdState::CmdSubst);
+        self.cmd_stack.push(crate::ported::zsh_h::CS_CMDSUBST as u8); // c:zsh.h:2799
         // Save LINENO so the inner cmdsubst's line counter doesn't
         // leak into the outer trace — direct port of Src/exec.c:1407
         // `oldlineno = lineno;` followed by `lineno = oldlineno;`
