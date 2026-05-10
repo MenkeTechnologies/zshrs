@@ -14,7 +14,6 @@
 use crate::history::HistoryEngine;
 // MathState is private to math.rs (no public state struct in math.c).
 use crate::options::ZSH_OPTIONS_SET;
-use crate::prompt::{expand_prompt, PromptContext};
 // TcpSessions struct deleted — modules/tcp.rs uses ZTCP_SESSIONS thread_local.
 use crate::zftp::Zftp;
 // `Profiler` deleted — zprof state is module-level statics now.

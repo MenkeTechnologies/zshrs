@@ -10551,7 +10551,7 @@ fn test_v_flag_visible_control_chars() {
 fn test_print_P_L_uses_in_shell_shlvl() {
     // zsh: `print -P "%L"` outputs the in-shell SHLVL (already
     // incremented at startup over the parent's value). zshrs's
-    // `build_prompt_context` read `env::var("SHLVL")` which still
+    // `build_prompt_expand_env` read `env::var("SHLVL")` which still
     // held the parent's pre-increment value, so `%L` was off by 1.
     // Now reads `self.variables["SHLVL"]` first.
     let (_, output, _) = run_zshrs(r#"echo "SHLVL=$SHLVL"; print -P "L=%L""#);

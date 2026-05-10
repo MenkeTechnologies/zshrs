@@ -18,7 +18,6 @@ use crate::history::HistoryEngine;
 // MathState is private to math.rs (per math.c — no public state struct);
 // math API surface is matheval/mathevali/Mnumber.
 use crate::options::ZSH_OPTIONS_SET;
-use crate::prompt::{expand_prompt, PromptContext};
 // TcpSessions struct deleted — see modules/tcp.rs ZTCP_SESSIONS thread_local.
 use crate::zftp::Zftp;
 // `Profiler`/`ProfileEntry` deleted in the zprof.rs strict-rules
@@ -535,7 +534,7 @@ pub struct ShellExecutor {
     /// `%_` in PS4 / prompt expansion to render the cumulative
     /// control-flow context labels in the xtrace prefix
     /// (`if`, `then`, `cmdand`, `cmdor`, `cmdsubst`, …).
-    /// `build_prompt_context` clones this into PromptContext so
+    /// `build_prompt_expand_env` clones this into `PROMPT_EXPAND_ENV` so
     /// the prompt expander sees the live stack.
     /// Direct port of `unsigned char *cmdstack; int cmdsp;` from
     /// `Src/prompt.c:55-58`. Each byte is a `CS_*` value from

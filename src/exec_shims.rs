@@ -3452,8 +3452,9 @@ impl crate::ported::exec::ShellExecutor {
 impl crate::ported::exec::ShellExecutor {
     /// Expand prompt escape sequences using the full prompt module
     pub(crate) fn expand_prompt_string(&self, s: &str) -> String {
-        let ctx = self.build_prompt_context();
-        expand_prompt(s, &ctx)
+        let env = self.build_prompt_expand_env();
+        PROMPT_EXPAND_ENV.with(|c| *c.borrow_mut() = env);
+        expand_prompt(s)
     }
     /// Same as `expand_prompt_string` but strips the readline cursor-
     /// width markers (`\x01` / `\x02`) and any spurious leading-reset
@@ -3508,8 +3509,9 @@ impl crate::ported::exec::ShellExecutor {
         }
         out
     }
-    /// Build a PromptContext from current executor state
-    pub(crate) fn build_prompt_context(&self) -> PromptContext {
+    /// Build `prompt_expand_env` from current executor state (`Src/prompt.c`
+    /// globals: logical `$PWD`, `$?`, session history counter, jobs, …).
+    pub(crate) fn build_prompt_expand_env(&self) -> prompt_expand_env {
         // zsh's prompt expansion uses the *logical* pwd (`$PWD` env var
         // as set by `cd`), not the canonicalized `getcwd()` form. On
         // macOS, `cd /tmp` leaves `$PWD=/tmp` but `getcwd()` returns
@@ -3549,7 +3551,7 @@ impl crate::ported::exec::ShellExecutor {
             .or_else(|| env::var("SHLVL").ok().and_then(|s| s.parse().ok()))
             .unwrap_or(1);
 
-        PromptContext {
+        prompt_expand_env {
             pwd,
             home,
             user,

@@ -336,7 +336,7 @@ impl Default for prompt_expand_env {
 /// Per-thread prompt globals (C zsh: file-static / global bindings).
 /// `ShellExecutor::expand_prompt_string` overwrites this immediately
 /// before calling `expand_prompt`.
-pub(crate) thread_local! {
+thread_local! {
     pub(crate) static PROMPT_EXPAND_ENV: RefCell<prompt_expand_env> =
         RefCell::new(prompt_expand_env::default());
 }
@@ -367,7 +367,8 @@ pub(crate) thread_local! {
 /// can suppress them for sub-expansions (Src/prompt.c:328-330).
 #[allow(non_camel_case_types)]
 pub struct buf_vars<'a> {                                                   // c:Src/prompt.c:76
-    ctx: &'a PromptContext,
+    /// Snapshot of thread-local prompt globals at expand start (C globals).
+    env: prompt_expand_env,
     input: &'a str,           // c:104 (fm — format pointer)
     pos: usize,               // c:104 (fm cursor — Rust uses byte index)
     output: String,           // c:84  (buf — output buffer)
@@ -378,9 +379,10 @@ pub struct buf_vars<'a> {                                                   // c
 }
 
 impl<'a> buf_vars<'a> {
-    pub fn new(input: &'a str, ctx: &'a PromptContext) -> Self {
+    pub fn new(input: &'a str) -> Self {
+        let env = PROMPT_EXPAND_ENV.with(|c| c.borrow().clone());
         Self {
-            ctx,
+            env,
             input,
             pos: 0,
             output: String::with_capacity(input.len() * 2),
@@ -470,8 +472,8 @@ impl<'a> buf_vars<'a> {
 
     /// Get path with tilde substitution
     fn path_with_tilde(&self, path: &str) -> String {
-        if !self.ctx.home.is_empty() && path.starts_with(&self.ctx.home) {
-            format!("~{}", &path[self.ctx.home.len()..])
+        if !self.env.home.is_empty() && path.starts_with(&self.env.home) {
+            format!("~{}", &path[self.env.home.len()..])
         } else {
             path.to_string()
         }
@@ -583,7 +585,7 @@ impl<'a> buf_vars<'a> {
         let test = match cond_char {
             '/' | 'c' | '.' | '~' | 'C' => {
                 // Directory depth test
-                let path = self.path_with_tilde(&self.ctx.pwd);
+                let path = self.path_with_tilde(&self.env.pwd);
                 let depth = path.matches('/').count() as i32;
                 if arg == 0 {
                     depth > 0
@@ -591,22 +593,22 @@ impl<'a> buf_vars<'a> {
                     depth >= arg
                 }
             }
-            '?' => self.ctx.lastval == arg,
+            '?' => self.env.lastval == arg,
             '#' => {
                 let euid = unsafe { libc::geteuid() };
                 euid == arg as u32
             }
-            'L' => self.ctx.shlvl >= arg,
-            'j' => self.ctx.num_jobs >= arg,
-            'v' => (arg as usize) <= self.ctx.psvar.len(),
+            'L' => self.env.shlvl >= arg,
+            'j' => self.env.num_jobs >= arg,
+            'v' => (arg as usize) <= self.env.psvar.len(),
             'V' => {
-                if arg <= 0 || (arg as usize) > self.ctx.psvar.len() {
+                if arg <= 0 || (arg as usize) > self.env.psvar.len() {
                     false
                 } else {
-                    !self.ctx.psvar[arg as usize - 1].is_empty()
+                    !self.env.psvar[arg as usize - 1].is_empty()
                 }
             }
-            '_' => self.ctx.cmd_stack.len() >= arg as usize,
+            '_' => self.env.cmd_stack.len() >= arg as usize,
             't' | 'T' | 'd' | 'D' | 'w' => {
                 let now = chrono::Local::now();
                 match cond_char {
@@ -618,7 +620,7 @@ impl<'a> buf_vars<'a> {
                     _ => false,
                 }
             }
-            '!' => self.ctx.is_root,
+            '!' => self.env.is_root,
             _ => false,
         };
 
@@ -674,7 +676,7 @@ impl<'a> buf_vars<'a> {
 
         // Expand the appropriate branch
         let branch = if test { true_branch } else { false_branch };
-        let expanded = expand_prompt(branch, self.ctx);
+        let expanded = expand_prompt(branch);
         self.output.push_str(&expanded);
 
         true
@@ -699,21 +701,21 @@ impl<'a> buf_vars<'a> {
             // Directory
             '~' => {
                 let path = if arg == 0 {
-                    self.path_with_tilde(&self.ctx.pwd)
+                    self.path_with_tilde(&self.env.pwd)
                 } else if arg > 0 {
-                    self.trailing_path(&self.ctx.pwd, arg as usize, true)
+                    self.trailing_path(&self.env.pwd, arg as usize, true)
                 } else {
-                    self.leading_path(&self.path_with_tilde(&self.ctx.pwd), (-arg) as usize)
+                    self.leading_path(&self.path_with_tilde(&self.env.pwd), (-arg) as usize)
                 };
                 self.output.push_str(&path);
             }
             'd' | '/' => {
                 let path = if arg == 0 {
-                    self.ctx.pwd.clone()
+                    self.env.pwd.clone()
                 } else if arg > 0 {
-                    self.trailing_path(&self.ctx.pwd, arg as usize, false)
+                    self.trailing_path(&self.env.pwd, arg as usize, false)
                 } else {
-                    self.leading_path(&self.ctx.pwd, (-arg) as usize)
+                    self.leading_path(&self.env.pwd, (-arg) as usize)
                 };
                 self.output.push_str(&path);
             }
@@ -723,7 +725,7 @@ impl<'a> buf_vars<'a> {
                 } else {
                     arg.unsigned_abs() as usize
                 };
-                let path = self.trailing_path(&self.ctx.pwd, n, true);
+                let path = self.trailing_path(&self.env.pwd, n, true);
                 self.output.push_str(&path);
             }
             'C' => {
@@ -732,7 +734,7 @@ impl<'a> buf_vars<'a> {
                 } else {
                     arg.unsigned_abs() as usize
                 };
-                let path = self.trailing_path(&self.ctx.pwd, n, false);
+                let path = self.trailing_path(&self.env.pwd, n, false);
                 self.output.push_str(&path);
             }
 
@@ -742,10 +744,10 @@ impl<'a> buf_vars<'a> {
             // trailing path components (0 = full path).
             'N' => {
                 let name = self
-                    .ctx
+                    .env
                     .scriptname
                     .as_deref()
-                    .unwrap_or(&self.ctx.argzero);
+                    .unwrap_or(&self.env.argzero);
                 let n = if arg <= 0 {
                     0
                 } else {
@@ -758,16 +760,16 @@ impl<'a> buf_vars<'a> {
                 }
             }
             // User/host
-            'n' => self.output.push_str(&self.ctx.user),
-            'M' => self.output.push_str(&self.ctx.host),
+            'n' => self.output.push_str(&self.env.user),
+            'M' => self.output.push_str(&self.env.host),
             'm' => {
                 let n = if arg == 0 { 1 } else { arg };
                 if n > 0 {
-                    let parts: Vec<&str> = self.ctx.host.split('.').collect();
+                    let parts: Vec<&str> = self.env.host.split('.').collect();
                     let take = (n as usize).min(parts.len());
                     self.output.push_str(&parts[..take].join("."));
                 } else {
-                    let parts: Vec<&str> = self.ctx.host.split('.').collect();
+                    let parts: Vec<&str> = self.env.host.split('.').collect();
                     let skip = ((-n) as usize).min(parts.len());
                     self.output.push_str(&parts[skip..].join("."));
                 }
@@ -775,10 +777,10 @@ impl<'a> buf_vars<'a> {
 
             // TTY
             'l' => {
-                let tty = if self.ctx.tty.starts_with("/dev/tty") {
-                    &self.ctx.tty[8..]
-                } else if self.ctx.tty.starts_with("/dev/") {
-                    &self.ctx.tty[5..]
+                let tty = if self.env.tty.starts_with("/dev/tty") {
+                    &self.env.tty[8..]
+                } else if self.env.tty.starts_with("/dev/") {
+                    &self.env.tty[5..]
                 } else {
                     "()"
                 };
@@ -788,48 +790,48 @@ impl<'a> buf_vars<'a> {
                 // zsh: `%y` is the tty short name (without `/dev/`).
                 // When not connected to a tty (e.g. in `-c` mode or
                 // a pipe), zsh outputs `()` matching the `%l` form.
-                let tty = if self.ctx.tty.is_empty() {
+                let tty = if self.env.tty.is_empty() {
                     "()"
-                } else if self.ctx.tty.starts_with("/dev/") {
-                    &self.ctx.tty[5..]
+                } else if self.env.tty.starts_with("/dev/") {
+                    &self.env.tty[5..]
                 } else {
-                    &self.ctx.tty
+                    &self.env.tty
                 };
                 self.output.push_str(tty);
             }
 
             // Status
-            '?' => self.output.push_str(&self.ctx.lastval.to_string()),
-            '#' => self.output.push(if self.ctx.is_root { '#' } else { '%' }),
+            '?' => self.output.push_str(&self.env.lastval.to_string()),
+            '#' => self.output.push(if self.env.is_root { '#' } else { '%' }),
 
             // History
-            'h' | '!' => self.output.push_str(&self.ctx.histnum.to_string()),
+            'h' | '!' => self.output.push_str(&self.env.histnum.to_string()),
 
             // Jobs
-            'j' => self.output.push_str(&self.ctx.num_jobs.to_string()),
+            'j' => self.output.push_str(&self.env.num_jobs.to_string()),
 
             // Shell level
-            'L' => self.output.push_str(&self.ctx.shlvl.to_string()),
+            'L' => self.output.push_str(&self.env.shlvl.to_string()),
 
             // Line number
-            'i' => self.output.push_str(&self.ctx.lineno.to_string()),
+            'i' => self.output.push_str(&self.env.lineno.to_string()),
 
             // `%I` — line number being executed in the current
             // script / file / function. Port of Src/prompt.c case
             // 'I' which adds funcstack->flineno when inside a
             // function. At top-level (no funcstack), it falls
             // through to plain lineno. zshrs doesn't yet track
-            // funcstack-relative line numbers in PromptContext, so
+            // funcstack-relative line numbers in prompt_expand_env, so
             // emit the same lineno as `%i` — matches zsh at top
             // level and degrades gracefully inside functions.
-            'I' => self.output.push_str(&self.ctx.lineno.to_string()),
+            'I' => self.output.push_str(&self.env.lineno.to_string()),
 
             // `%x` — file containing the source code currently
             // being executed. Port of Src/prompt.c case 'x':
             // `promptpath(scriptfilename ? scriptfilename :
             // argzero, arg, 0)` (the funcstack->filename path
             // inside functions isn't modeled yet — same TODO as
-            // `%I`). zshrs's PromptContext.scriptname mirrors C
+            // `%I`). zshrs's prompt_expand_env.scriptname mirrors C
             // zsh's `scriptname`/`scriptfilename`; both globals
             // stay in sync (init.c:479, init.c:1591), so we read
             // scriptname here too. Honors the `arg` (npath) digit
@@ -845,11 +847,11 @@ impl<'a> buf_vars<'a> {
                 // so PS4 trace inside `f() { … }; f` shows
                 // `<file>\t<fn>\t…` not `<fn>\t<fn>\t…`.
                 let name = self
-                    .ctx
+                    .env
                     .scriptfilename
                     .as_deref()
-                    .or(self.ctx.scriptname.as_deref())
-                    .unwrap_or(&self.ctx.argzero);
+                    .or(self.env.scriptname.as_deref())
+                    .unwrap_or(&self.env.argzero);
                 let n = if arg <= 0 {
                     0
                 } else {
@@ -1028,8 +1030,8 @@ impl<'a> buf_vars<'a> {
             // psvar
             'v' => {
                 let idx = if arg == 0 { 1 } else { arg };
-                if idx > 0 && (idx as usize) <= self.ctx.psvar.len() {
-                    self.output.push_str(&self.ctx.psvar[idx as usize - 1]);
+                if idx > 0 && (idx as usize) <= self.env.psvar.len() {
+                    self.output.push_str(&self.env.psvar[idx as usize - 1]);
                 }
             }
 
@@ -1038,7 +1040,7 @@ impl<'a> buf_vars<'a> {
             // BOTTOM-UP (oldest first). arg < 0 prints the BOTTOM
             // `-arg` elements bottom-up. arg == 0 prints all.
             '_' => {
-                let cmdsp = self.ctx.cmd_stack.len();
+                let cmdsp = self.env.cmd_stack.len();
                 if cmdsp > 0 {
                     let names: Vec<&str> = if arg >= 0 {
                         let mut n = if arg == 0 { cmdsp } else { arg as usize };
@@ -1047,7 +1049,7 @@ impl<'a> buf_vars<'a> {
                         }
                         // Walk forward from `cmdsp - n` to top.
                         // c:Src/prompt.c:835 — `cmdnames[cmdstack[t0]]`
-                        self.ctx
+                        self.env
                             .cmd_stack
                             .iter()
                             .skip(cmdsp - n)
@@ -1060,7 +1062,7 @@ impl<'a> buf_vars<'a> {
                         }
                         // Walk forward from 0 to `n`.
                         // c:Src/prompt.c:872 — `cmdnames[cmdstack[t0]]`
-                        self.ctx
+                        self.env
                             .cmd_stack
                             .iter()
                             .take(n)
@@ -1101,7 +1103,7 @@ impl<'a> buf_vars<'a> {
                     self.advance();
                     self.output.push('!');
                 } else {
-                    self.output.push_str(&self.ctx.histnum.to_string());
+                    self.output.push_str(&self.env.histnum.to_string());
                 }
             } else {
                 self.output.push(c);
@@ -1182,14 +1184,13 @@ fn convert_zsh_time_format(fmt: &str) -> String {
 }
 
 /// Expand a prompt string
-pub fn expand_prompt(s: &str, ctx: &PromptContext) -> String {
-    buf_vars::new(s, ctx).expand() // c:Src/prompt.c:214 (new_vars init)
+pub fn expand_prompt(s: &str) -> String {
+    buf_vars::new(s).expand() // c:Src/prompt.c:214 (new_vars init)
 }
 
-/// Expand a prompt string with default context
+/// Same as [`expand_prompt`] — C call sites that used implicit globals only.
 pub fn expand_prompt_default(s: &str) -> String {
-    let ctx = PromptContext::default();
-    expand_prompt(s, &ctx)
+    expand_prompt(s)
 }
 
 /// Count the visible width of an expanded prompt (ignoring escape sequences)
@@ -1363,7 +1364,7 @@ pub fn countprompt(s: &str, terminal_width: usize, overf: i32) -> (usize, usize)
 // (`Src/prompt.c:55-58`) plus `cmdpush()`/`cmdpop()` functions
 // (`Src/prompt.c:1624-1632`). The Rust-only `CmdStack` wrapper had
 // zero callers outside this file. The canonical port lives on
-// `PromptContext.cmd_stack: Vec<u8>` and `ShellExecutor.cmd_stack:
+// `prompt_expand_env.cmd_stack: Vec<u8>` and `ShellExecutor.cmd_stack:
 // Vec<u8>`. `cmdpush()`/`cmdpop()` ports go on those.
 
 /// Resolve a color name to an ANSI base index.
@@ -1560,9 +1561,8 @@ pub fn promptexpand(                                                         // 
     s: &str,
     _ns: i32,
     _marker: Option<&str>,
-    ctx: &PromptContext,
 ) -> (String, Option<usize>, Option<usize>) {
-    let expanded = expand_prompt(s, ctx);
+    let expanded = expand_prompt(s);
     // C: `*rs = bv.bp - bv.buf` at `%E` / `%>` markers. Rust
     // expander loses that metadata, so a second pass on `s` is the
     // closest approximation. Source-offset → expanded-offset is
@@ -1787,8 +1787,16 @@ pub fn output_highlight(attrs: TextAttrs) -> String {
 mod tests {
     use super::*;
 
-    fn test_ctx() -> PromptContext {
-        PromptContext {
+    fn with_prompt_env<F: FnOnce()>(env: prompt_expand_env, f: F) {
+        PROMPT_EXPAND_ENV.with(|c| {
+            let prev = std::mem::replace(&mut *c.borrow_mut(), env);
+            f();
+            *c.borrow_mut() = prev;
+        });
+    }
+
+    fn test_ctx() -> prompt_expand_env {
+        prompt_expand_env {
             pwd: "/home/user/projects/test".to_string(),
             home: "/home/user".to_string(),
             user: "testuser".to_string(),
@@ -1812,65 +1820,81 @@ mod tests {
 
     #[test]
     fn test_directory() {
-        let ctx = test_ctx();
-        assert_eq!(expand_prompt("%~", &ctx), "~/projects/test");
-        assert_eq!(expand_prompt("%/", &ctx), "/home/user/projects/test");
-        assert_eq!(expand_prompt("%d", &ctx), "/home/user/projects/test");
-        assert_eq!(expand_prompt("%1~", &ctx), "test");
-        assert_eq!(expand_prompt("%2~", &ctx), "projects/test");
-        assert_eq!(expand_prompt("%c", &ctx), "test");
-        assert_eq!(expand_prompt("%2c", &ctx), "projects/test");
+        with_prompt_env(test_ctx(), || {
+            assert_eq!(expand_prompt("%~"), "~/projects/test");
+            assert_eq!(expand_prompt("%/"), "/home/user/projects/test");
+            assert_eq!(expand_prompt("%d"), "/home/user/projects/test");
+            assert_eq!(expand_prompt("%1~"), "test");
+            assert_eq!(expand_prompt("%2~"), "projects/test");
+            assert_eq!(expand_prompt("%c"), "test");
+            assert_eq!(expand_prompt("%2c"), "projects/test");
+        });
     }
 
     #[test]
     fn test_user_host() {
-        let ctx = test_ctx();
-        assert_eq!(expand_prompt("%n", &ctx), "testuser");
-        assert_eq!(expand_prompt("%M", &ctx), "myhost.example.com");
-        assert_eq!(expand_prompt("%m", &ctx), "myhost");
-        assert_eq!(expand_prompt("%2m", &ctx), "myhost.example");
+        with_prompt_env(test_ctx(), || {
+            assert_eq!(expand_prompt("%n"), "testuser");
+            assert_eq!(expand_prompt("%M"), "myhost.example.com");
+            assert_eq!(expand_prompt("%m"), "myhost");
+            assert_eq!(expand_prompt("%2m"), "myhost.example");
+        });
     }
 
     #[test]
     fn test_status() {
-        let mut ctx = test_ctx();
-        ctx.lastval = 127;
-        assert_eq!(expand_prompt("%?", &ctx), "127");
-        assert_eq!(expand_prompt("%#", &ctx), "%");
+        let mut e = test_ctx();
+        e.lastval = 127;
+        with_prompt_env(e, || {
+            assert_eq!(expand_prompt("%?"), "127");
+            assert_eq!(expand_prompt("%#"), "%");
+        });
     }
 
     #[test]
     fn test_history() {
-        let ctx = test_ctx();
-        assert_eq!(expand_prompt("%h", &ctx), "42");
-        assert_eq!(expand_prompt("%!", &ctx), "42");
+        with_prompt_env(test_ctx(), || {
+            assert_eq!(expand_prompt("%h"), "42");
+            assert_eq!(expand_prompt("%!"), "42");
+        });
     }
 
     #[test]
     fn test_misc() {
-        let ctx = test_ctx();
-        assert_eq!(expand_prompt("%L", &ctx), "2");
-        assert_eq!(expand_prompt("%j", &ctx), "1");
-        assert_eq!(expand_prompt("%i", &ctx), "10");
-        assert_eq!(expand_prompt("%%", &ctx), "%");
+        with_prompt_env(test_ctx(), || {
+            assert_eq!(expand_prompt("%L"), "2");
+            assert_eq!(expand_prompt("%j"), "1");
+            assert_eq!(expand_prompt("%i"), "10");
+            assert_eq!(expand_prompt("%%"), "%");
+        });
     }
 
     #[test]
     fn test_psvar() {
-        let ctx = test_ctx();
-        assert_eq!(expand_prompt("%v", &ctx), "one");
-        assert_eq!(expand_prompt("%1v", &ctx), "one");
-        assert_eq!(expand_prompt("%2v", &ctx), "two");
-        assert_eq!(expand_prompt("%3v", &ctx), ""); // out of bounds
+        with_prompt_env(test_ctx(), || {
+            assert_eq!(expand_prompt("%v"), "one");
+            assert_eq!(expand_prompt("%1v"), "one");
+            assert_eq!(expand_prompt("%2v"), "two");
+            assert_eq!(expand_prompt("%3v"), ""); // out of bounds
+        });
     }
 
     #[test]
     fn test_conditional() {
-        let mut ctx = test_ctx();
-        ctx.lastval = 0;
-        assert_eq!(expand_prompt("%(?.ok.fail)", &ctx), "ok");
-        ctx.lastval = 1;
-        assert_eq!(expand_prompt("%(?.ok.fail)", &ctx), "fail");
+        with_prompt_env({
+            let mut e = test_ctx();
+            e.lastval = 0;
+            e
+        }, || {
+            assert_eq!(expand_prompt("%(?.ok.fail)"), "ok");
+        });
+        with_prompt_env({
+            let mut e = test_ctx();
+            e.lastval = 1;
+            e
+        }, || {
+            assert_eq!(expand_prompt("%(?.ok.fail)"), "fail");
+        });
     }
 
     #[test]
@@ -1881,12 +1905,13 @@ mod tests {
 
     #[test]
     fn test_bang_expansion() {
-        let ctx = test_ctx();
-        let exp = buf_vars::new("cmd !!", &ctx).with_prompt_bang(true);
-        assert_eq!(exp.expand(), "cmd !");
+        with_prompt_env(test_ctx(), || {
+            let exp = buf_vars::new("cmd !!").with_prompt_bang(true);
+            assert_eq!(exp.expand(), "cmd !");
 
-        let exp2 = buf_vars::new("cmd !", &ctx).with_prompt_bang(true);
-        assert_eq!(exp2.expand(), "cmd 42");
+            let exp2 = buf_vars::new("cmd !").with_prompt_bang(true);
+            assert_eq!(exp2.expand(), "cmd 42");
+        });
     }
 
     // -------------------------------------------------------------
@@ -1952,13 +1977,14 @@ mod tests {
 
     #[test]
     fn test_promptexpand_returns_tuple_with_anchors() {
-        let ctx = PromptContext::default();
-        let (expanded, rs_offset, cap_rs_offset) =
-            promptexpand("user@host %E rprompt", 0, None, &ctx);
-        assert!(expanded.contains("rprompt"));
-        // %E offset captured.
-        assert_eq!(rs_offset, Some("user@host ".len()));
-        assert!(cap_rs_offset.is_none());
+        with_prompt_env(prompt_expand_env::default(), || {
+            let (expanded, rs_offset, cap_rs_offset) =
+                promptexpand("user@host %E rprompt", 0, None);
+            assert!(expanded.contains("rprompt"));
+            // %E offset captured.
+            assert_eq!(rs_offset, Some("user@host ".len()));
+            assert!(cap_rs_offset.is_none());
+        });
     }
 
     #[test]
@@ -1996,7 +2022,7 @@ mod tests {
 /// `%` escape dispatcher in the C source. The actual dispatch
 /// lives in `buf_vars::expand()`; this exists for call-site
 /// parity with C callers.
-pub fn putpromptchar(c: char, ctx: &PromptContext, buf: &mut String) {       // c:359
+pub fn putpromptchar(c: char, buf: &mut String) {       // c:359
     if c == '%' {
         // The full handling is in buf_vars::expand()
         // This function is called character by character in C

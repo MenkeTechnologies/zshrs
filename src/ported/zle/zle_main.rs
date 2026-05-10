@@ -1034,10 +1034,9 @@ impl Zle {
         // slots; we keep them on the Zle struct to avoid a global.
         self.lprompt_raw = lprompt.to_string();
         self.rprompt_raw = rprompt.to_string();
-        self.lprompt =
-            crate::prompt::expand_prompt(lprompt, &crate::prompt::PromptContext::default());
-        self.rprompt =
-            crate::prompt::expand_prompt(rprompt, &crate::prompt::PromptContext::default());
+        crate::ported::prompt::PROMPT_EXPAND_ENV.with(|c| *c.borrow_mut() = Default::default());
+        self.lprompt = crate::prompt::expand_prompt(lprompt);
+        self.rprompt = crate::prompt::expand_prompt(rprompt);
         self.zlereadflags = flags;
         self.zlecontext = context;
 
@@ -1131,11 +1130,12 @@ impl Zle {
     /// events that change values referenced by prompt escapes (PWD,
     /// command status, jobs count, sigwinch). Re-expands `lprompt_raw`
     /// and `rprompt_raw` via `prompt::expand_prompt` with a fresh
-    /// `PromptContext` so escapes pick up the latest env / state.
+    /// `PROMPT_EXPAND_ENV` (thread-local, refreshed from `Default`) so
+    /// escapes see a clean environment unless the caller prefilled it.
     pub fn reexpandprompt(&mut self) {
-        let ctx = crate::prompt::PromptContext::default();
-        self.lprompt = crate::prompt::expand_prompt(&self.lprompt_raw, &ctx);
-        self.rprompt = crate::prompt::expand_prompt(&self.rprompt_raw, &ctx);
+        crate::ported::prompt::PROMPT_EXPAND_ENV.with(|c| *c.borrow_mut() = Default::default());
+        self.lprompt = crate::prompt::expand_prompt(&self.lprompt_raw);
+        self.rprompt = crate::prompt::expand_prompt(&self.rprompt_raw);
         self.resetneeded = true;
     }
 
