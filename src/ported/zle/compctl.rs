@@ -1352,17 +1352,10 @@ pub(crate) fn cccleanuphookfn(_dat: ()) -> i32 {
 ///   ADDWHAT_EXEC_FILE       = -8  (executable files / command paths)
 ///   ADDWHAT_PARAM           = -9  (parameters)
 /// Positive values are CC_* flag bits (per the OR-mask path).
-pub mod addwhat_kind {
-    pub const FILES_OTHER: i32     = -1;  // c:1949
-    pub const UNQUOTED: i32        = -2;  // c:1948
-    pub const EXEC_CMD: i32        = -3;  // c:1947
-    pub const CDABLE_PARAM: i32    = -4;  // c:1946
-    pub const FILES: i32           = -5;  // c:1941
-    pub const GLOB_EXPAND: i32     = -6;  // c:1942
-    pub const CMD_NAME: i32        = -7;  // c:1945
-    pub const EXEC_FILE: i32       = -8;  // c:1943
-    pub const PARAM: i32           = -9;  // c:1944
-}
+// `addwhat` accept-thread values are C bare literals (Src/Zle/compctl.c:1941-1949):
+//   -1 files other / -2 unquoted / -3 exec cmd / -4 cdable param /
+//   -5 files / -6 glob expand / -7 cmd name / -8 exec file / -9 param
+// C uses bare integer comparisons inline; the Rust port follows.
 
 // File-thread `addwhat` global. Port of file-static `int addwhat;`
 // from Src/Zle/compctl.c:1749. Set by the dispatcher before each
@@ -1395,30 +1388,20 @@ thread_local! { static MATCH_LIST: std::cell::RefCell<Vec<String>> = const { std
 pub(crate) fn addmatch(s: &str, _t: Option<&str>) {
     let aw = ADDWHAT.with(|c| c.get());
     // C: c:1957-1990 — file-thread accept.
-    let file_thread = matches!(
-        aw,
-        addwhat_kind::FILES_OTHER
-            | addwhat_kind::FILES
-            | addwhat_kind::GLOB_EXPAND
-            | addwhat_kind::CMD_NAME
-            | addwhat_kind::EXEC_FILE
-    ) || (aw > 0 && (aw as u64 & CC_FILES) != 0);
+    // C body inline literals: -1, -5, -6, -7, -8 (files-other/files/
+    // glob-expand/cmd-name/exec-file) plus the CC_FILES-or-bigger arm.
+    let file_thread = matches!(aw, -1 | -5 | -6 | -7 | -8)
+        || (aw > 0 && (aw as u64 & CC_FILES) != 0);
     if file_thread {
         // C: c:1988 — for -7 (CMD_NAME), check findcmd; we accept
         // unconditionally here pending findcmd port.
         MATCH_LIST.with(|r| r.borrow_mut().push(s.to_string()));
         return;
     }
-    // C: c:1991-2014 — conditional-accept thread. We accept the
-    // simple unquoted / quote-flag / exec / cdable-param / param
-    // cases; per-Param flag filtering pending Param table port.
-    if matches!(
-        aw,
-        addwhat_kind::UNQUOTED
-            | addwhat_kind::EXEC_CMD
-            | addwhat_kind::CDABLE_PARAM
-            | addwhat_kind::PARAM
-    ) {
+    // C: c:1991-2014 — conditional-accept thread.
+    // C inline literals: -2 (unquoted), -3 (exec cmd), -4 (cdable
+    // param), -9 (param).
+    if matches!(aw, -2 | -3 | -4 | -9) {
         MATCH_LIST.with(|r| r.borrow_mut().push(s.to_string()));
         return;
     }
@@ -2011,17 +1994,10 @@ static ZLEMETALINE: Mutex<String> = Mutex::new(String::new());
 static NOERRS: Mutex<i32> = Mutex::new(0);
 static NOALIASES: Mutex<i32> = Mutex::new(0);
 
-/// `instring` — quoting context (QT_NONE/SINGLE/DOUBLE/DOLLARS/BACKSLASH/
-/// BACKTICK). Port of `int instring;`. Mirrors zsh.h QT_* enum.
-pub mod qt {
-    pub const NONE: i32      = 0;  // unquoted
-    pub const SINGLE: i32    = 1;  // '...'
-    pub const DOUBLE: i32    = 2;  // "..."
-    pub const DOLLARS: i32   = 3;  // $'...'
-    pub const BACKSLASH: i32 = 4;  // \X escape
-    pub const BACKTICK: i32  = 5;  // `...`
-}
-static INSTRING: Mutex<i32> = Mutex::new(qt::NONE);
+/// `instring` — quoting context. Port of `int instring;`. The QT_*
+/// values are the C enum at `Src/zsh.h:253-292` (ported in zsh_h.rs).
+use crate::ported::zsh_h::{QT_NONE, QT_BACKSLASH, QT_SINGLE, QT_DOUBLE, QT_DOLLARS, QT_BACKTICK};
+static INSTRING: Mutex<i32> = Mutex::new(QT_NONE);
 
 /// `inbackt` — inside backtick command-substitution. Port of `int inbackt;`.
 static INBACKT: Mutex<i32> = Mutex::new(0);
@@ -2074,16 +2050,12 @@ const LEXFLAGS_ZLE: i32 = 1 << 0;
 static BRANGE: Mutex<i32> = Mutex::new(0);
 static ERANGE: Mutex<i32> = Mutex::new(0);
 
-/// `linwhat` — line-context kind (IN_ENV/IN_MATH/IN_COND/IN_REDIR/0).
-/// Port of `int linwhat;` from zle_tricky.c.
-pub mod linwhat_kind {
-    pub const NONE: i32      = 0;
-    pub const IN_ENV: i32    = 1;
-    pub const IN_MATH: i32   = 2;
-    pub const IN_COND: i32   = 3;
-    pub const IN_REDIR: i32  = 4;
-}
-static LINWHAT: Mutex<i32> = Mutex::new(0);
+/// `linwhat` — line-context kind. Port of `mod_export int linwhat`
+/// from `Src/Zle/compcore.c:91`. Values are the `IN_*` enum at
+/// `Src/zsh.h:2321-2332` (ported in zsh_h.rs). NB: dead code is
+/// fake — the previous Rust `linwhat_kind` mod had `IN_ENV=1` and
+/// an invented `IN_REDIR=4`; both wrong vs the real C enum.
+static LINWHAT: Mutex<i32> = Mutex::new(crate::ported::zsh_h::IN_NOTHING);
 
 /// `linredir` — non-zero when completing inside a redirection.
 static LINREDIR: Mutex<i32> = Mutex::new(0);
@@ -2181,8 +2153,8 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     let tl = tmp.len() as i32;
 
     // C: c:2833 — apply rembslash if QT_BACKSLASH stack head
-    let qstack_head = COMPQSTACK.lock().unwrap().chars().next().unwrap_or(qt::NONE as u8 as char);
-    let remq = qstack_head as i32 == qt::BACKSLASH;
+    let qstack_head = COMPQSTACK.lock().unwrap().chars().next().unwrap_or(QT_NONE as u8 as char);
+    let remq = qstack_head as i32 == QT_BACKSLASH;
     if remq {
         // rembslash — strip backslashes
         let mut stripped = String::with_capacity(tmp.len());
@@ -2276,9 +2248,9 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
 
     if is_quoted_open {
         let new_instring = match first_char {
-            Some(SNULL) => qt::SINGLE,
-            Some(DNULL) => qt::DOUBLE,
-            _ => qt::DOLLARS,
+            Some(SNULL) => QT_SINGLE,
+            Some(DNULL) => QT_DOUBLE,
+            _ => QT_DOLLARS,
         };
         *INSTRING.lock().unwrap() = new_instring;
         *INBACKT.lock().unwrap() = 0;
@@ -2297,7 +2269,7 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
             *AUTOQ.lock().unwrap() = ts.clone();
         }
     } else {
-        *INSTRING.lock().unwrap() = qt::NONE;
+        *INSTRING.lock().unwrap() = QT_NONE;
         *AUTOQ.lock().unwrap() = String::new();
     }
 
@@ -2377,10 +2349,10 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     let occ = CCONT.with(|c| c.get());
 
     // C: c:2986-2989 — push current quote char onto compqstack
-    let new_quote_char = if *INSTRING.lock().unwrap() != qt::NONE {
+    let new_quote_char = if *INSTRING.lock().unwrap() != QT_NONE {
         char::from_u32(*INSTRING.lock().unwrap() as u32).unwrap_or('\\')
     } else {
-        char::from_u32(qt::BACKSLASH as u32).unwrap_or('\\')
+        char::from_u32(QT_BACKSLASH as u32).unwrap_or('\\')
     };
     let mut new_compqstack = String::new();
     new_compqstack.push(new_quote_char);
@@ -2466,17 +2438,17 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, s: &str, _incmd: bool, _compa
 
     // CC_FILES — c:3650+ in real impl
     if (cc.mask & CC_FILES) != 0 {
-        ADDWHAT.with(|c| c.set(addwhat_kind::FILES));
+        ADDWHAT.with(|c| c.set(-5));
         gen_matches_files(false, false, false);
     }
     // CC_DIRS — c:3680
     if (cc.mask & CC_DIRS) != 0 {
-        ADDWHAT.with(|c| c.set(addwhat_kind::FILES));
+        ADDWHAT.with(|c| c.set(-5));
         gen_matches_files(true, false, false);
     }
     // CC_NAMED — c:3742
     if (cc.mask & CC_NAMED) != 0 {
-        ADDWHAT.with(|c| c.set(addwhat_kind::FILES_OTHER));
+        ADDWHAT.with(|c| c.set(-1));
         maketildelist();
     }
     // Per-CC_* arms beyond these (CC_VARS, CC_SHFUNCS, etc.) need
@@ -2491,7 +2463,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, s: &str, _incmd: bool, _compa
     if let Some(s) = &cc.str_ {
         let expanded = getreal(s);
         // Push as a single match with addwhat=GLOB_EXPAND
-        ADDWHAT.with(|c| c.set(addwhat_kind::GLOB_EXPAND));
+        ADDWHAT.with(|c| c.set(-6));
         addmatch(&expanded, None);
     }
 }
@@ -2910,18 +2882,23 @@ mod tests {
     }
 
     #[test]
-    fn addwhat_kind_constants_match_c_compctl() {
-        assert_eq!(addwhat_kind::FILES_OTHER, -1);
-        assert_eq!(addwhat_kind::UNQUOTED, -2);
-        assert_eq!(addwhat_kind::FILES, -5);
-        assert_eq!(addwhat_kind::PARAM, -9);
+    fn addmatch_rejects_unset_addwhat() {
+        // C: c:2015 — `else` arm in addmatch falls through to drop the
+        // match when addwhat is 0 (neither file-thread nor
+        // conditional-accept set).
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        MATCH_LIST.with(|r| r.borrow_mut().clear());
+        ADDWHAT.with(|c| c.set(0));
+        addmatch("dropped", None);
+        let captured = MATCH_LIST.with(|r| r.borrow().clone());
+        assert!(captured.is_empty(), "addwhat=0 should drop matches");
     }
 
     #[test]
     fn addmatch_accepts_files_kind() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         MATCH_LIST.with(|r| r.borrow_mut().clear());
-        ADDWHAT.with(|c| c.set(addwhat_kind::FILES));
+        ADDWHAT.with(|c| c.set(-5));
         addmatch("foo.txt", None);
         addmatch("bar.txt", None);
         let m = MATCH_LIST.with(|r| r.borrow().clone());
@@ -2933,7 +2910,7 @@ mod tests {
     fn addmatch_accepts_param_kind() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         MATCH_LIST.with(|r| r.borrow_mut().clear());
-        ADDWHAT.with(|c| c.set(addwhat_kind::PARAM));
+        ADDWHAT.with(|c| c.set(-9));
         addmatch("HOME", None);
         let m = MATCH_LIST.with(|r| r.borrow().clone());
         assert_eq!(m.len(), 1);
@@ -2998,7 +2975,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         MATCH_LIST.with(|r| r.borrow_mut().clear());
         let entries = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
-        dumphashtable(entries, addwhat_kind::FILES);
+        dumphashtable(entries, -5);
         let m = MATCH_LIST.with(|r| r.borrow().clone());
         assert_eq!(m.len(), 3);
     }
@@ -3007,7 +2984,7 @@ mod tests {
     fn addhnmatch_forwards_to_addmatch() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         MATCH_LIST.with(|r| r.borrow_mut().clear());
-        ADDWHAT.with(|c| c.set(addwhat_kind::FILES));
+        ADDWHAT.with(|c| c.set(-5));
         addhnmatch("xyz", 0);
         let m = MATCH_LIST.with(|r| r.borrow().clone());
         assert_eq!(m.len(), 1);
@@ -3152,7 +3129,7 @@ mod tests {
         WB.with(|c| c.set(7));
         ZLEMETACS.with(|c| c.set(11));
         *ZLEMETALL.lock().unwrap() = 99;
-        *INSTRING.lock().unwrap() = qt::DOUBLE;
+        *INSTRING.lock().unwrap() = QT_DOUBLE;
         *INBACKT.lock().unwrap() = 1;
         *NOALIASES.lock().unwrap() = 1;
         *NOERRS.lock().unwrap() = 0;
@@ -3165,7 +3142,7 @@ mod tests {
         assert_eq!(WB.with(|c| c.get()), 7);
         assert_eq!(ZLEMETACS.with(|c| c.get()), 11);
         assert_eq!(*ZLEMETALL.lock().unwrap(), 99);
-        assert_eq!(*INSTRING.lock().unwrap(), qt::DOUBLE);
+        assert_eq!(*INSTRING.lock().unwrap(), QT_DOUBLE);
         assert_eq!(*INBACKT.lock().unwrap(), 1);
         assert_eq!(*NOALIASES.lock().unwrap(), 1);
         assert_eq!(*NOERRS.lock().unwrap(), 0);
@@ -3187,14 +3164,15 @@ mod tests {
     }
 
     #[test]
-    fn qt_constants_match_c_compctl() {
-        // C compctl.c:2902-2922 — instring values for sep_comp_string
-        // quote-prefix detection.
-        assert_eq!(qt::NONE, 0);
-        assert_eq!(qt::SINGLE, 1);
-        assert_eq!(qt::DOUBLE, 2);
-        assert_eq!(qt::DOLLARS, 3);
-        assert_eq!(qt::BACKSLASH, 4);
-        assert_eq!(qt::BACKTICK, 5);
+    fn qt_constants_match_c_zsh_h() {
+        // C: enum at Src/zsh.h:253-292 — QT_NONE / QT_BACKSLASH /
+        // QT_SINGLE / QT_DOUBLE / QT_DOLLARS / QT_BACKTICK in that
+        // declaration order, so values are 0..5.
+        assert_eq!(QT_NONE, 0);
+        assert_eq!(QT_BACKSLASH, 1);
+        assert_eq!(QT_SINGLE, 2);
+        assert_eq!(QT_DOUBLE, 3);
+        assert_eq!(QT_DOLLARS, 4);
+        assert_eq!(QT_BACKTICK, 5);
     }
 }
