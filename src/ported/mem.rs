@@ -113,29 +113,33 @@ thread_local! {
 }
 
 /// Push heap state.
+// save states of zsh heaps                                                 // c:287
 /// Port of `pushheap()` from Src/mem.c:291 — the global entry-point
 /// version that operates on the thread-local arena.
-pub fn pushheap() {
+pub fn pushheap() {                                                          // c:291
     HEAP.with(|h| h.borrow_mut().push());
 }
 
+// reset heap to previous state and destroy state information               // c:439
 /// Pop heap state and free allocations.
 /// Port of `popheap()` from Src/mem.c:443.
-pub fn popheap() {
+pub fn popheap() {                                                           // c:443
     HEAP.with(|h| h.borrow_mut().pop());
 }
 
+// reset heaps to previous state                                            // c:321
 /// Free current heap allocations but keep state.
 /// Port of `freeheap()` from Src/mem.c:325.
-pub fn freeheap() {
+pub fn freeheap() {                                                          // c:325
     HEAP.with(|h| h.borrow_mut().free_current());
 }
 
 /// Allocate memory.
+// allocate permanent memory                                                // c:955
 /// Port of `zalloc()` from Src/mem.c:959. In Rust we use `Box`
 /// rather than `malloc(3)`; the type-default initialization stands
 /// in for the C source's uninitialized buffer.
-pub fn zalloc<T: Default>() -> Box<T> {
+pub fn zalloc<T: Default>() -> Box<T> {                                      // c:959
     Box::default()
 }
 
@@ -162,10 +166,12 @@ where
 /// Port of `zfree()` from Src/mem.c:1433 (or :1869 in the
 /// MALLOC_DEBUG build). Takes a `Box<T>` rather than `T` so the
 /// C-port call sites read the same as the original `zfree(ptr)`
+// right size of this block, freeing it will be faster, though; the value // c:1428
+// 0 for this parameter means: `don't know'                                // c:1429
 /// (an explicit allocator release on a heap pointer). Drop happens
 /// automatically when the Box goes out of scope.
 #[allow(clippy::boxed_local)]
-pub fn zfree<T>(_ptr: Box<T>) {
+pub fn zfree<T>(_ptr: Box<T>) {                                              // c:1433
     // Drop happens automatically
 }
 
@@ -580,10 +586,11 @@ pub fn mmap_heap_alloc(n: &mut usize) -> *mut std::ffi::c_void {             // 
     }
 }
 
+// allocate memory from the current memory pool                             // c:573
 /// Port of `zhalloc()` from Src/mem.c:577 — heap-arena `malloc`
 /// (memory freed at the end of the current heap frame). Shim;
 /// Rust callers use owned `Vec`/`String`.
-pub fn zhalloc(_size: usize) -> usize { 0 }
+pub fn zhalloc(_size: usize) -> usize { 0 }                                  // c:577
 
 /// Port of `memory_validate()` from Src/mem.c:896.
 /// C: `int memory_validate(Heapid heap_id)` — under `ZSH_MEM_DEBUG`,

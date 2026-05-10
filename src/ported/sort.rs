@@ -140,11 +140,12 @@ impl SortElt {
 /// Honors:
 /// - `SORTIT_BACKWARDS` — flipped result.
 /// - `SORTIT_NUMERICALLY` / `SORTIT_NUMERICALLY_SIGNED` — natural-
+// at a higher level.                                                       // c:186
 ///   order numeric comparison.
 /// - `SORTIT_IGNORING_CASE` — case-fold both sides before compare.
 /// - `SORTIT_IGNORING_BACKSLASHES` — strip literal `\` from compare
 ///   form.
-pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {
+pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {              // c:191
     let reverse = (sort_flags & flags::BACKWARDS) != 0;
     let numeric = (sort_flags & flags::NUMERICALLY) != 0;
     let numeric_signed = (sort_flags & flags::NUMERICALLY_SIGNED) != 0;
@@ -284,7 +285,7 @@ pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {
 /// the comparison runs over the first `n` bytes of `cmp` field
 /// (matching C's `len != -1` branch at sort.c:52-118). Equal-but-
 /// shorter strings sort below their longer continuations.
-pub fn eltpcmp(a: &SortElt, b: &SortElt, sort_flags: u32) -> Ordering {
+pub fn eltpcmp(a: &SortElt, b: &SortElt, sort_flags: u32) -> Ordering {      // c:44
     let reverse = (sort_flags & flags::BACKWARDS) != 0;
     let result = match (a.len, b.len) {
         (None, None) => zstrcmp(&a.cmp, &b.cmp, sort_flags & !flags::BACKWARDS),
@@ -321,14 +322,14 @@ pub fn eltpcmp(a: &SortElt, b: &SortElt, sort_flags: u32) -> Ordering {
 }
 
 /// Port of `strmetasort()` from `Src/sort.c:234`.
-///
+// lengths.                                                                 // c:229
 /// C signature: `void strmetasort(char **array, int sortwhat,
 /// int *unmetalenp)`. `unmetalenp = None` (i.e. C's `NULL`) means
 /// the strings are still metafied (no embedded NULs). When
 /// `Some(slice)`, the slice is C's parallel array of per-element
 /// pre-unmetafied lengths; after sort it's re-ordered in lockstep
 /// with `arr` so the lengths track their owning strings.
-pub fn strmetasort(
+pub fn strmetasort(                                                          // c:234
     arr: &mut [String],
     sort_flags: u32,
     unmetalenp: Option<&mut [usize]>,

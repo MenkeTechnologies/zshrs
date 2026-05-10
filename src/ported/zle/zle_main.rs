@@ -951,10 +951,11 @@ impl Zle {
     /// source's full chain is: setup tty + signals → run zle-line-init
     /// hook → zlecore loop until done → run zle-line-finish hook →
     /// restore tty + return the line. Our Rust port stashes the
+    // - finish: "zle-line-finish"                                          // c:1211
     /// prompt templates, expands them, sets the read flags + context,
     /// then enters zlecore; the host (bin) handles the line-init /
     /// line-finish hooks via pending_hooks.
-    pub fn zleread(
+    pub fn zleread(                                                          // c:1216
         &mut self,
         lprompt: &str,
         rprompt: &str,
@@ -1424,7 +1425,7 @@ pub struct VaredOpts {
 
 /// ZLE main entry point for module
 /// Port of zle_main_entry() from zle_main.c
-pub fn zle_main_entry(op: ZleOperation, data: ZleData) -> i32 {
+pub fn zle_main_entry(op: ZleOperation, data: ZleData) -> i32 {              // c:2123
     match op {
         ZleOperation::Read => {
             // Would call zleread

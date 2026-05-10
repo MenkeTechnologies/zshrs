@@ -474,9 +474,10 @@ mod tests {
 // parity for the drift gate.
 // ===========================================================
 
+// Get an empty linked list header                                         // c:99
 /// Port of `newlinklist()` from Src/linklist.c:103 — heap-
 /// allocates a fresh empty list. Rust uses `LinkList::new()`.
-pub fn newlinklist() -> LinkList<String> {
+pub fn newlinklist() -> LinkList<String> {                                   // c:103
     LinkList::new()
 }
 
@@ -486,10 +487,11 @@ pub fn znewlinklist() -> LinkList<String> {
     LinkList::new()
 }
 
+// Insert a node in a linked list after a given node                       // c:129
 /// Port of `insertlinknode()` from Src/linklist.c:133 — insert
 /// after the supplied node. Rust callers use
 /// `LinkList::insert`/`push_back` directly; shim appends.
-pub fn insertlinknode<T>(list: &mut LinkList<T>, _after_idx: usize, value: T) {
+pub fn insertlinknode<T>(list: &mut LinkList<T>, _after_idx: usize, value: T) { // c:133
     list.push_back(value);
 }
 
@@ -515,9 +517,10 @@ pub fn insertlinklist<T: Clone>(list1: &mut LinkList<T>, _after_idx: usize, list
     }
 }
 
+// Pop the top node off a linked list and free it.                         // c:206
 /// Port of `getlinknode()` from Src/linklist.c:210 — pop and
 /// return the head value.
-pub fn getlinknode<T>(list: &mut LinkList<T>) -> Option<T> {
+pub fn getlinknode<T>(list: &mut LinkList<T>) -> Option<T> {                 // c:210
     list.pop_front()
 }
 
@@ -548,9 +551,10 @@ pub fn uremnode<T>(list: &mut LinkList<T>, idx: usize) -> Option<T> {
     }
 }
 
+// Free a linked list                                                       // c:283
 /// Port of `freelinklist()` from Src/linklist.c:287 — free every
 /// node + call the free-fn on each datum. Rust uses `clear()`.
-pub fn freelinklist<T>(list: &mut LinkList<T>) {
+pub fn freelinklist<T>(list: &mut LinkList<T>) {                             // c:287
     list.clear();
 }
 

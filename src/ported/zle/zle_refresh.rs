@@ -222,7 +222,7 @@ impl RefreshState {
 
     /// Drop both video buffers — used at ZLE shutdown.
     /// Port of `freevideo()` from Src/Zle/zle_refresh.c:700.
-    pub fn free_video(&mut self) {
+    pub fn free_video(&mut self) {                                           // c:700
         self.old_video = None;
         self.new_video = None;
     }
@@ -251,7 +251,7 @@ impl Zle {
     ///     `region_active` to paint mark..zlecs in standout),
     ///   * RPS1 / right-prompt rendering at the right margin
     ///     (zle_refresh.c `put_rpromptbuf` path).
-    pub fn zrefresh(&mut self) {
+    pub fn zrefresh(&mut self) {                                             // c:975
         let stdout = io::stdout();
         let mut handle = stdout.lock();
 
@@ -432,7 +432,7 @@ impl Zle {
 
     /// Clear the screen
     /// Port of clearscreen() from zle_refresh.c
-    pub fn clearscreen(&mut self) {
+    pub fn clearscreen(&mut self) {                                          // c:2366
         print!("\x1b[2J\x1b[H");
         let _ = io::stdout().flush();
         self.zrefresh();
@@ -440,13 +440,15 @@ impl Zle {
 
     /// Redisplay the current line
     /// Port of redisplay() from zle_refresh.c
-    pub fn redisplay(&mut self) {
+    pub fn redisplay(&mut self) {                                            // c:2377
         self.zrefresh();
     }
 
+    // move the cursor to line ln (relative to the prompt line),            // c:2100
+    // absolute column cl; update vln, vcs - video line and column          // c:2101
     /// Move cursor to position
     /// Port of moveto() from zle_refresh.c
-    pub fn moveto(&mut self, row: usize, col: usize) {
+    pub fn moveto(&mut self, row: usize, col: usize) {                       // c:2105
         // ANSI escape: ESC [ row ; col H (1-indexed)
         print!("\x1b[{};{}H", row + 1, col + 1);
         let _ = io::stdout().flush();

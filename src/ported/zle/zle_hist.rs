@@ -212,7 +212,7 @@ impl Zle {
     /// Move cursor up by `self.mult` lines within the multi-line buffer.
     /// Returns leftover count (positive = hit top of buffer before completing).
     /// Port of upline() from Src/Zle/zle_hist.c:243.
-    pub fn upline(&mut self) -> i32 {
+    pub fn upline(&mut self) -> i32 {                                        // c:243
         let mut n = self.mult;
         if n < 0 {
             self.mult = -self.mult;
@@ -245,7 +245,7 @@ impl Zle {
     /// Move cursor down by `self.mult` lines.
     /// Returns leftover count (positive = hit bottom before completing).
     /// Port of downline() from Src/Zle/zle_hist.c:332.
-    pub fn downline(&mut self) -> i32 {
+    pub fn downline(&mut self) -> i32 {                                      // c:332
         let mut n = self.mult;
         if n < 0 {
             self.mult = -self.mult;
@@ -277,7 +277,7 @@ impl Zle {
     /// Try to move cursor up one line; if at top of buffer, navigate history.
     /// Port of uplineorhistory() from Src/Zle/zle_hist.c:282.
     /// Returns 0 on success, 1 if exhausted (caller may beep).
-    pub fn up_line_or_history_widget(&mut self) -> i32 {
+    pub fn up_line_or_history_widget(&mut self) -> i32 {                     // c:282
         let ocs = self.zlecs;
         let n = self.upline();
         if n != 0 {
@@ -303,7 +303,7 @@ impl Zle {
 
     /// Try to move cursor down one line; if at bottom of buffer, navigate history.
     /// Port of downlineorhistory() from Src/Zle/zle_hist.c:370.
-    pub fn down_line_or_history_widget(&mut self) -> i32 {
+    pub fn down_line_or_history_widget(&mut self) -> i32 {                   // c:370
         let ocs = self.zlecs;
         let n = self.downline();
         if n != 0 {
@@ -999,7 +999,7 @@ pub fn beginningofhistory() -> i32 { 0 }
 pub fn doisearch() -> i32 { 0 }
 
 /// Port of `downhistory()` from Src/Zle/zle_hist.c:434. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn downhistory() -> i32 { 0 }
+pub fn downhistory() -> i32 { 0 }                                            // c:434
 
 /// Port of `downlineorhistory()` from Src/Zle/zle_hist.c:370. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn downlineorhistory() -> i32 { 0 }
@@ -1077,7 +1077,7 @@ pub fn set_isrch_spot() -> i32 { 0 }
 pub fn setlocalhistory() -> i32 { 0 }
 
 /// Port of `uphistory()` from Src/Zle/zle_hist.c:233. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn uphistory() -> i32 { 0 }
+pub fn uphistory() -> i32 { 0 }                                              // c:233
 
 /// Port of `uplineorhistory()` from Src/Zle/zle_hist.c:282. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn uplineorhistory() -> i32 { 0 }

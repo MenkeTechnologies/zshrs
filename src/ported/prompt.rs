@@ -1238,10 +1238,11 @@ pub fn prompt_truncate(s: &str, max_width: usize, from_right: bool, indicator: &
 /// - Final-column-equals-width edge case: when `w == terminal_width
 ///   && overf == 0`, snap to (0, h+1) — mirrors C lines 1265-1268.
 ///
+// by locating them and finding out their screen width.                    // c:1135
 /// Previous Rust port took only `&str` and returned `(width,
 /// newlines)` — missing the `terminal_width` overflow tracking
 /// and the `overf` flag entirely.
-pub fn countprompt(s: &str, terminal_width: usize, overf: i32) -> (usize, usize) {
+pub fn countprompt(s: &str, terminal_width: usize, overf: i32) -> (usize, usize) { // c:1140
     let mut w: usize = 0;
     let mut h: usize = 1;
     let mut in_escape = false;
@@ -1356,7 +1357,7 @@ pub fn match_named_colour(name: &str) -> Option<u8> {
 
 /// Build an ANSI escape for an indexed colour.
 /// Port of `output_colour()` from Src/prompt.c:2136.
-pub fn output_colour(colour: u8, is_fg: bool) -> String {
+pub fn output_colour(colour: u8, is_fg: bool) -> String {                    // c:2136
     let base = if is_fg { 30 } else { 40 };
     if colour < 8 {
         format!("\x1b[{}m", base + colour)
@@ -1376,9 +1377,10 @@ pub fn output_truecolor(r: u8, g: u8, b: u8, is_fg: bool) -> String {
 
 /// Parse a `,`-separated highlight specification.
 /// Port of `parsehighlight()` from Src/prompt.c:285 — handles
+// Parse the argument for %H                                                // c:282
 /// `bold` / `underline` / `standout` / `none` plus `fg=NAME` and
 /// `bg=NAME` color targets.
-pub fn parsehighlight(spec: &str) -> TextAttrs {
+pub fn parsehighlight(spec: &str) -> TextAttrs {                             // c:285
     let mut attrs = TextAttrs::default();
     for part in spec.split(',') {
         let part = part.trim();
@@ -1408,9 +1410,10 @@ pub fn parsehighlight(spec: &str) -> TextAttrs {
 }
 
 /// Apply text attributes as a single ANSI SGR escape.
+// functions for handling attributes                                        // c:1641
 /// Port of `applytextattributes()` from Src/prompt.c:1645 —
 /// builds one SGR sequence with all active codes joined.
-pub fn apply_text_attributes(attrs: &TextAttrs) -> String {
+pub fn apply_text_attributes(attrs: &TextAttrs) -> String {                  // c:1645
     let mut codes = Vec::new();
     if attrs.bold {
         codes.push("1");
@@ -1534,10 +1537,11 @@ pub struct PromptExpandResult {
 /// Rust port returns a [`PromptExpandResult`] carrying all four
 /// values. The previous Rust wrapper dropped `marker`/`rs`/`Rs`
 /// entirely; ZLE callers couldn't position the right-prompt
+// `glitch' space.                                                          // c:177
 /// anchor without these. The marker-insertion path is documented
 /// but currently a no-op (RL completion-cursor integration
 /// pending).
-pub fn promptexpand(
+pub fn promptexpand(                                                         // c:182
     s: &str,
     _ns: i32,
     _marker: Option<&str>,
@@ -2004,10 +2008,12 @@ mod tests {
 
 /// Core character-by-character prompt renderer.
 /// Port of `putpromptchar()` from Src/prompt.c:359 — the ~600-line
+// section is ended by an instance of endchar.  If doprint is 0, the valid // c:354
+// % sequences are merely skipped over, and nothing is stored.              // c:355
 /// `%` escape dispatcher in the C source. The actual dispatch
 /// lives in `PromptExpander::expand()`; this exists for call-site
 /// parity with C callers.
-pub fn putpromptchar(c: char, ctx: &PromptContext, buf: &mut String) {
+pub fn putpromptchar(c: char, ctx: &PromptContext, buf: &mut String) {       // c:359
     if c == '%' {
         // The full handling is in PromptExpander::expand()
         // This function is called character by character in C

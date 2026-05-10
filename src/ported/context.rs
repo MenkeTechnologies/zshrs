@@ -160,32 +160,36 @@ thread_local! {
     static CONTEXT_STACK: RefCell<ContextManager> = RefCell::new(ContextManager::new());
 }
 
+// save context in full                                                     // c:76
 /// Save the context in full (global entry point).
 /// Port of `zcontext_save()` from Src/context.c:80 — the global
 /// function the C source's eval/exec/parse paths call.
-pub fn zcontext_save(hist: &HistStack, lex: &LexStack, parse: &ParseStack) {
+pub fn zcontext_save(hist: &HistStack, lex: &LexStack, parse: &ParseStack) { // c:80
     CONTEXT_STACK.with(|cs| {
         cs.borrow_mut().save(hist, lex, parse);
     });
 }
 
+// save some or all of current context                                      // c:48
 /// Save partial context (global entry point).
 /// Port of `zcontext_save_partial()` from Src/context.c:52.
-pub fn zcontext_save_partial(parts: u32, hist: &HistStack, lex: &LexStack, parse: &ParseStack) {
+pub fn zcontext_save_partial(parts: u32, hist: &HistStack, lex: &LexStack, parse: &ParseStack) { // c:52
     CONTEXT_STACK.with(|cs| {
         cs.borrow_mut().save_partial(parts, hist, lex, parse);
     });
 }
 
+// restore full context                                                     // c:113
 /// Restore the full context (global entry point).
 /// Port of `zcontext_restore()` from Src/context.c:117.
-pub fn zcontext_restore() -> Option<ContextStack> {
+pub fn zcontext_restore() -> Option<ContextStack> {                          // c:117
     CONTEXT_STACK.with(|cs| cs.borrow_mut().restore())
 }
 
+// restore context or part thereof                                          // c:85
 /// Restore partial context (global entry point).
 /// Port of `zcontext_restore_partial()` from Src/context.c:89.
-pub fn zcontext_restore_partial(parts: u32) -> Option<ContextStack> {
+pub fn zcontext_restore_partial(parts: u32) -> Option<ContextStack> {        // c:89
     CONTEXT_STACK.with(|cs| cs.borrow_mut().restore_partial(parts))
 }
 

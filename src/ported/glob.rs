@@ -1445,7 +1445,7 @@ pub fn haswilds(s: &str) -> bool {
 /// Match a glob pattern against a single string.
 /// Port of `matchpat()` from Src/glob.c:2514 — same
 /// `EXTENDED_GLOB`/`NO_CASE_GLOB` option handling.
-pub fn matchpat(pattern: &str, text: &str, extended: bool, case_sensitive: bool) -> bool {
+pub fn matchpat(pattern: &str, text: &str, extended: bool, case_sensitive: bool) -> bool { // c:2514
     let pat = if case_sensitive {
         pattern.to_string()
     } else {
@@ -1594,7 +1594,7 @@ fn patmatchrange(pi: &mut std::iter::Peekable<std::str::Chars>, tc: char) -> boo
 /// Render a mode bitmap as the `*` qualifier letter (`d`/`b`/
 /// `c`/`l`/`s`/`p`/etc.).
 /// Port of `file_type()` from Src/glob.c:2018.
-pub fn file_type(mode: u32) -> char {
+pub fn file_type(mode: u32) -> char {                                        // c:2018
     let fmt = mode & libc::S_IFMT as u32;
     if fmt == libc::S_IFBLK as u32 {
         '#'
@@ -1626,7 +1626,7 @@ pub fn file_type(mode: u32) -> char {
 /// Check if string has brace expansion
 /// Check whether a string has brace-expansion `{a,b}` content.
 /// Port of `hasbraces()` from Src/glob.c:2042.
-pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
+pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {                         // c:2042
     let mut depth = 0;
     let mut has_comma = false;
     let mut has_dotdot = false;
@@ -1679,7 +1679,7 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
 /// Brace-expand a string into a flat list.
 /// Port of `xpandbraces()` from Src/glob.c:2276 — same
 /// `{a,b}` / `{1..10}` / `{a-z}` handling.
-pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
+pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {                // c:2276
     if !hasbraces(s, brace_ccl) {
         return vec![s.to_string()];
     }
@@ -2435,7 +2435,7 @@ pub fn glob(pattern: &str) -> Vec<String> {                                  // 
 /// Top-level glob entry point with explicit options.
 /// Port of `zglob()` from Src/glob.c:1214 — same `LinkList`
 /// of expanded matches the C source threads through.
-pub fn glob_with_options(pattern: &str, options: GlobOptions) -> Vec<String> {
+pub fn glob_with_options(pattern: &str, options: GlobOptions) -> Vec<String> { // c:1214
     let mut state = GlobData::new(options);
     state.glob(pattern)
 }
@@ -2443,7 +2443,7 @@ pub fn glob_with_options(pattern: &str, options: GlobOptions) -> Vec<String> {
 /// Add path component (from glob.c addpath lines 263-274)
 /// Append a path component to a glob path buffer.
 /// Port of `addpath()` from Src/glob.c:265.
-pub fn addpath(buf: &mut String, component: &str) {
+pub fn addpath(buf: &mut String, component: &str) {                          // c:265
     buf.push_str(component);
     if !buf.ends_with('/') {
         buf.push('/');
@@ -2453,7 +2453,7 @@ pub fn addpath(buf: &mut String, component: &str) {
 /// Stat full path (from glob.c statfullpath lines 282-347)
 /// `stat`/`lstat` a (pathbuf, name) tuple.
 /// Port of `statfullpath()` from Src/glob.c:283.
-pub fn statfullpath(pathbuf: &str, name: &str, follow: bool) -> Option<std::fs::Metadata> {
+pub fn statfullpath(pathbuf: &str, name: &str, follow: bool) -> Option<std::fs::Metadata> { // c:283
     let full = if name.is_empty() {
         if pathbuf.is_empty() {
             ".".to_string()
@@ -2519,7 +2519,7 @@ pub fn mindist(dir: &str, name: &str, best: &mut String, exact: bool) -> usize {
 /// Parse qualifier (from glob.c qgetnum)
 /// Parse a numeric glob-qualifier argument.
 /// Port of `qgetnum()` from Src/glob.c:827.
-pub fn qgetnum(s: &str) -> Option<(i64, &str)> {
+pub fn qgetnum(s: &str) -> Option<(i64, &str)> {                             // c:827
     let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
     if end == 0 {
         return None;

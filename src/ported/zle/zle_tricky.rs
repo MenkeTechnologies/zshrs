@@ -46,13 +46,13 @@ pub struct BraceInfo {
 impl Zle {
     /// Complete word - trigger completion
     /// Port of completeword() from zle_tricky.c
-    pub fn complete_word(&mut self, state: &mut CompletionState) {
+    pub fn complete_word(&mut self, state: &mut CompletionState) {           // c:216
         self.do_complete(state, false, false);
     }
 
     /// Menu complete - cycle through completions
     /// Port of menucomplete() from zle_tricky.c
-    pub fn menu_complete(&mut self, state: &mut CompletionState) {
+    pub fn menu_complete(&mut self, state: &mut CompletionState) {           // c:238
         if state.in_menu && !state.completions.is_empty() {
             // Cycle to next completion
             state.menu_index = (state.menu_index + 1) % state.completions.len();
@@ -77,7 +77,7 @@ impl Zle {
 
     /// Expand or complete - try expansion first, then completion
     /// Port of expandorcomplete() from zle_tricky.c
-    pub fn expand_or_complete(&mut self, state: &mut CompletionState) {
+    pub fn expand_or_complete(&mut self, state: &mut CompletionState) {      // c:299
         // First try expansion
         if !self.try_expand() {
             // Then try completion
@@ -85,9 +85,11 @@ impl Zle {
         }
     }
 
+    // Extra function added by AR Iano-Fletcher.                            // c:3036
+    // This is a expand/complete in the vein of wash.                       // c:3037
     /// Expand or complete prefix - expand/complete keeping suffix
     /// Port of expandorcompleteprefix() from zle_tricky.c
-    pub fn expand_or_complete_prefix(&mut self, state: &mut CompletionState) {
+    pub fn expand_or_complete_prefix(&mut self, state: &mut CompletionState) { // c:3041
         state.suffix = self.zleline[self.zlecs..].iter().collect();
         self.expand_or_complete(state);
     }

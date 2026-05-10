@@ -173,7 +173,7 @@ pub fn unmetafy(s: &str) -> String {
 impl Zle {
     /// Find beginning of line from position
     /// Port of findbol() from zle_utils.c
-    pub fn find_bol(&self, pos: usize) -> usize {
+    pub fn find_bol(&self, pos: usize) -> usize {                            // c:1158
         let mut p = pos;
         while p > 0 && self.zleline.get(p - 1) != Some(&'\n') {
             p -= 1;
@@ -183,7 +183,7 @@ impl Zle {
 
     /// Find end of line from position
     /// Port of findeol() from zle_utils.c
-    pub fn find_eol(&self, pos: usize) -> usize {
+    pub fn find_eol(&self, pos: usize) -> usize {                            // c:1169
         let mut p = pos;
         while p < self.zlell && self.zleline.get(p) != Some(&'\n') {
             p += 1;

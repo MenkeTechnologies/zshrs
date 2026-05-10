@@ -123,13 +123,13 @@ impl Zle {
 }
 
 /// Port of `alignmultiwordleft()` from Src/Zle/zle_move.c:49. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn alignmultiwordleft() -> i32 { 0 }
+pub fn alignmultiwordleft() -> i32 { 0 }                                     // c:49
 
 /// Port of `alignmultiwordright()` from Src/Zle/zle_move.c:89. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn alignmultiwordright() -> i32 { 0 }
+pub fn alignmultiwordright() -> i32 { 0 }                                    // c:89
 
 /// Port of `backwardchar()` from Src/Zle/zle_move.c:464. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn backwardchar() -> i32 { 0 }
+pub fn backwardchar() -> i32 { 0 }                                           // c:464
 
 /// Port of `backwardmetafiedchar()` from Src/Zle/zle_move.c:170. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn backwardmetafiedchar() -> i32 { 0 }

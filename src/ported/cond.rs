@@ -719,10 +719,11 @@ impl<'a> CondParser<'a> {
 /// Convenience function to evaluate a test expression
 /// Evaluate a POSIX `test`/`[[` expression.
 /// Top-level wrapper around `CondParser` + `CondEval`. Port of
+// -o does not exist".                                                      // c:65
 /// the `evalcond()` driver from Src/cond.c:70 — the C source's
 /// entry point that the `[[` keyword and the `test`/`[`
 /// builtins both delegate to.
-pub fn evalcond(
+pub fn evalcond(                                                             // c:70
     args: &[&str],
     options: &HashMap<String, bool>,
     variables: &HashMap<String, String>,
@@ -874,7 +875,7 @@ mod tests {
 /// same with a manual `fstat`-based check (an open fd always
 /// satisfies POSIX `R_OK`/`W_OK`/`X_OK` if its descriptor permits
 /// the action; portable equivalent for our uses).
-pub fn doaccess(s: &str, c: i32) -> i32 {
+pub fn doaccess(s: &str, c: i32) -> i32 {                                    // c:438
     if let Some(rest) = s.strip_prefix("/dev/fd/") {
         if rest.parse::<i32>().is_ok() {
             return 1;
@@ -904,7 +905,7 @@ pub fn doaccess(s: &str, c: i32) -> i32 {
 /// special-cases `/dev/fd/N` with `fstat()`. Returns the metadata or
 /// `None` on error. Replaces the C global `static struct stat st`
 /// with a returned `Metadata` value (Rust avoids globals here).
-pub fn getstat(s: &str) -> Option<std::fs::Metadata> {
+pub fn getstat(s: &str) -> Option<std::fs::Metadata> {                       // c:452
     if let Some(rest) = s.strip_prefix("/dev/fd/") {
         if let Ok(fd) = rest.parse::<i32>() {
             use std::os::unix::io::FromRawFd;
@@ -919,7 +920,7 @@ pub fn getstat(s: &str) -> Option<std::fs::Metadata> {
 /// Port of `dostat()` from Src/cond.c:474 — returns the file's
 /// `st_mode` or 0 on error. Used by `[[ -b/-c/-d/-f/-g/-h/-k/-p
 /// /-S/-u/-w/-x ]]` to inspect mode bits.
-pub fn dostat(s: &str) -> u32 {
+pub fn dostat(s: &str) -> u32 {                                              // c:474
     getstat(s).map(|m| m.mode()).unwrap_or(0)
 }
 

@@ -158,13 +158,13 @@ impl Zle {
 
     /// `;` — repeat last find in same direction.
     /// Port of virepeatfind() from Src/Zle/zle_move.c:835.
-    pub fn vi_repeat_find(&mut self) -> i32 {
+    pub fn vi_repeat_find(&mut self) -> i32 {                                // c:835
         self.vi_find_char_inner(true)
     }
 
     /// `,` — repeat last find in reverse direction.
     /// Port of virevrepeatfind() from Src/Zle/zle_move.c:842.
-    pub fn vi_rev_repeat_find(&mut self) -> i32 {
+    pub fn vi_rev_repeat_find(&mut self) -> i32 {                            // c:842
         let n = self.vi_get_arg();
         if n < 0 {
             return self.vi_find_char_inner(true);

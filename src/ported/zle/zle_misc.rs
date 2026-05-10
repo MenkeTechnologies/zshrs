@@ -26,7 +26,7 @@ pub struct PasteBuffer {
 impl Zle {
     /// Self insert - insert the typed character
     /// Port of selfinsert() from zle_misc.c
-    pub fn self_insert(&mut self, c: char) {
+    pub fn self_insert(&mut self, c: char) {                                 // c:113
         self.zleline.insert(self.zlecs, c);
         self.zlecs += 1;
         self.zlell += 1;
@@ -35,7 +35,7 @@ impl Zle {
 
     /// Self insert unmeta - insert character with meta bit stripped
     /// Port of selfinsertunmeta() from zle_misc.c
-    pub fn self_insert_unmeta(&mut self, c: char) {
+    pub fn self_insert_unmeta(&mut self, c: char) {                          // c:149
         let unmetaed = if (c as u32) >= 0x80 && (c as u32) < 0x100 {
             char::from_u32((c as u32) & 0x7f).unwrap_or(c)
         } else {
@@ -46,7 +46,7 @@ impl Zle {
 
     /// Accept line - return the current line for execution
     /// Port of acceptline() from zle_misc.c
-    pub fn accept_line(&self) -> String {
+    pub fn accept_line(&self) -> String {                                    // c:401
         self.zleline.iter().collect()
     }
 
@@ -80,7 +80,7 @@ impl Zle {
 
     /// Delete char under cursor
     /// Port of deletechar() from zle_misc.c
-    pub fn delete_char(&mut self) {
+    pub fn delete_char(&mut self) {                                          // c:157
         if self.zlecs < self.zlell {
             self.zleline.remove(self.zlecs);
             self.zlell -= 1;
@@ -101,7 +101,7 @@ impl Zle {
 
     /// Kill from cursor to end of line
     /// Port of killline() from zle_misc.c
-    pub fn kill_line(&mut self) {
+    pub fn kill_line(&mut self) {                                            // c:419
         if self.zlecs < self.zlell {
             let text: Vec<char> = self.zleline.drain(self.zlecs..).collect();
             self.killring.push_front(text);

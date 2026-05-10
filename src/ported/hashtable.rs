@@ -26,9 +26,10 @@ pub mod flags {
 /// Generic hash function (zsh's hasher)
 /// Compute the canonical zsh hash for a string.
 /// Port of `hasher()` from Src/hashtable.c:86 — uses the same
+// Generic hash function                                                    // c:82
 /// `hash * 33 + char` polynomial the C source uses for every
 /// HashTable lookup.
-pub fn hasher(s: &str) -> u32 {
+pub fn hasher(s: &str) -> u32 {                                              // c:86
     let mut hashval: u32 = 0;
     for c in s.bytes() {
         hashval = hashval.wrapping_add(hashval.wrapping_shl(5).wrapping_add(c as u32));
@@ -1531,10 +1532,12 @@ pub fn deletehashtable<T>(ht: &mut HashMap<String, T>) {
 /// ```
 ///
 /// Generic insert that drops the previous value at `nam` (Rust's
+// is now greater than twice the number of hash values,                    // c:152
+// the table is then expanded.                                              // c:153
 /// `HashMap::insert` returns the old value; dropping it runs the
 /// equivalent of `freenode`). For typed table-specific entry
 /// shapes use the table's own `add()` method.
-pub fn addhashnode<T>(ht: &mut HashMap<String, T>, nam: &str, value: T) {
+pub fn addhashnode<T>(ht: &mut HashMap<String, T>, nam: &str, value: T) {    // c:157
     ht.insert(nam.to_string(), value);
 }
 
@@ -1550,10 +1553,12 @@ pub fn addhashnode2<T>(ht: &mut HashMap<String, T>, nam: &str, value: T) -> Opti
 /// Port of `gethashnode()` from `Src/hashtable.c:231`.
 ///
 /// C body returns NULL if the entry has the DISABLED flag set;
+// the hashnode.  If the node is DISABLED                                  // c:226
+// or isn't found, it returns NULL                                          // c:227
 /// otherwise returns the node. Generic lookup helper — `T` must
 /// expose its DISABLED flag via the [`HashNodeFlags`] trait so
 /// the disabled filter applies.
-pub fn gethashnode<'a, T: HashNodeFlags>(
+pub fn gethashnode<'a, T: HashNodeFlags>(                                    // c:231
     ht: &'a HashMap<String, T>,
     nam: &str,
 ) -> Option<&'a T> {
@@ -1569,10 +1574,12 @@ pub fn gethashnode2<'a, T>(ht: &'a HashMap<String, T>, nam: &str) -> Option<&'a 
 
 /// Port of `removehashnode()` from `Src/hashtable.c:275`.
 ///
+// table and returns a pointer to it.  If there                            // c:270
+// is no such node, then it returns NULL                                    // c:271
 /// C body removes the node from the bucket chain and returns the
 /// removed pointer (or NULL). Rust `HashMap::remove` has the
 /// matching shape.
-pub fn removehashnode<T>(ht: &mut HashMap<String, T>, nam: &str) -> Option<T> {
+pub fn removehashnode<T>(ht: &mut HashMap<String, T>, nam: &str) -> Option<T> { // c:275
     ht.remove(nam)
 }
 

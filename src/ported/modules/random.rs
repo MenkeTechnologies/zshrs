@@ -42,7 +42,7 @@ thread_local! {
 /// `getfn` slot the C source wires for the `$SRANDOM` special
 /// parameter. Refills `rand_buff` via `getrandom_buffer()` when
 /// drained, then returns the next pre-loaded u32.
-pub fn get_srandom() -> u32 {
+pub fn get_srandom() -> u32 {                                                // c:143
     let cnt = BUF_CNT.with(|c| c.get());
     if cnt == 0 {                                                            // c:145
         let mut bytes = [0u8; RAND_BUFF_SIZE * 4];                           // c:143
@@ -122,7 +122,7 @@ pub fn bounded(max: u32) -> u32 {
 /// `arc4random_buf(3)` for macOS (BSD-derived), `getrandom(2)` on
 /// Linux, and `/dev/urandom` everywhere else.
 #[cfg(target_os = "macos")]
-pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {
+pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // c:62
     unsafe {
         libc::arc4random_buf(buf.as_mut_ptr() as *mut libc::c_void, buf.len());
     }
@@ -362,29 +362,29 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 /// Port of `setup_()` from `Src/Modules/random.c:243`.
-pub fn setup_(_m: *const module) -> i32 { 0 }
+pub fn setup_(_m: *const module) -> i32 { 0 }                                // c:243
 
 /// Port of `features_()` from `Src/Modules/random.c:267`.
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:267
     *features = featuresarray(m, module_features());
     0
 }
 
 /// Port of `enables_()` from `Src/Modules/random.c:275`.
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:275
     handlefeatures(m, module_features(), enables)
 }
 
 /// Port of `boot_()` from `Src/Modules/random.c:282`.
-pub fn boot_(_m: *const module) -> i32 { 0 }
+pub fn boot_(_m: *const module) -> i32 { 0 }                                 // c:282
 
 /// Port of `cleanup_()` from `Src/Modules/random.c:312`.
-pub fn cleanup_(m: *const module) -> i32 {
+pub fn cleanup_(m: *const module) -> i32 {                                   // c:312
     setfeatureenables(m, module_features(), None)
 }
 
 /// Port of `finish_()` from `Src/Modules/random.c:319`.
-pub fn finish_(_m: *const module) -> i32 { 0 }
+pub fn finish_(_m: *const module) -> i32 { 0 }                               // c:319
 
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["f:rand48".to_string(), "p:SRANDOM_FILE".to_string(), "p:ERAND48_SEED".to_string()]
