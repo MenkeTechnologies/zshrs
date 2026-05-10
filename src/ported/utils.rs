@@ -68,6 +68,30 @@ static SHINSTDIN_OPT: std::sync::OnceLock<std::sync::Mutex<bool>> = std::sync::O
 /// signal a fatal error has occurred.
 pub const ERRFLAG_ERROR: i32 = 1;
 
+/// Port of `mod_export int incompfunc` from `Src/utils.c:46`.
+/// Set non-zero while a `comp*` builtin is dispatching from inside
+/// a user-defined completion function — guards `comparguments` /
+/// `compset` / `compadd` / `compdescribe` / `comptags` / `compvalues`
+/// / `compfiles` / `compgroups` / `compquote` against being called
+/// outside the `compfunc` shfunc context (each builtin checks
+/// `INCOMPFUNC` early and emits "can only be called from completion
+/// function" when zero).
+pub static INCOMPFUNC: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:46
+
+/// Port of `mod_export int resetneeded` from `Src/utils.c:1821`.
+/// Set when the editor needs a redraw — incremented by widgets +
+/// signal handlers (e.g. SIGWINCH); the next prompt loop tick clears
+/// it after running zrefresh.
+pub static RESETNEEDED: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:1821
+
+/// Port of `mod_export int winchanged` from `Src/utils.c:1827`.
+/// Set by the SIGWINCH handler — the next refresh re-queries the
+/// terminal size and re-renders, then clears the flag.
+pub static WINCHANGED: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:1827
+
 // WARNING: NOT IN UTILS.C — Rust-only OnceLock get-or-init
 // helpers. C dereferences each global directly.
 fn scriptname_lock() -> &'static std::sync::Mutex<Option<String>> {
