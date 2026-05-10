@@ -558,6 +558,19 @@ pub mod col {                                                                // 
 /// Port of `NUM_COLS` from `Src/Zle/complist.c:193`.
 pub const NUM_COLS: usize = 25;                                              // c:193
 
+/// Port of `MMARK` from `Src/Zle/complist.c:126`. Tag bit used in
+/// the low bit of `Cmatch *` / `Cmgroup` pointers to mark a match
+/// as visited during the menu-select / hidden-row dispatch. Real C
+/// uses pointer tagging; the Rust port uses the same bit position
+/// (`u32 = 1`) as a search-anchor — actual marker storage lives on
+/// a separate `bool` per Cmatch when the substrate hydrates.
+pub const MMARK: u32 = 1;                                                    // c:126
+
+/// Port of `MAX_POS` from `Src/Zle/complist.c:137`. Maximum number
+/// of saved (mline, mcol) menu-select positions in the back-stack
+/// used by msearchpush/msearchpop.
+pub const MAX_POS: usize = 11;                                               // c:137
+
 /// Port of `colnames[]` from `Src/Zle/complist.c:197-201`.
 /// Two-letter LS_COLORS keys, parallel-indexed with `col::*`.
 pub static COLNAMES: &[&str] = &[                                            // c:197

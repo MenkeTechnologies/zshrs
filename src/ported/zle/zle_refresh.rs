@@ -1339,6 +1339,30 @@ pub const ZR_START_ELLIPSIS_SIZE: usize = ZR_START_ELLIPSIS.len();           // 
     x.max(0)
 }
 
+/// Port of `tc_delchars(X)` macro from `Src/Zle/zle_refresh.c:1726`.
+/// `(void) tcmultout(TCDEL, TCMULTDEL, (X))`. Emit `x` character-
+/// delete escapes via the multi-form helper. Without curses substrate
+/// it's a no-op.
+#[inline] pub fn tc_delchars(_x: i32) {                                      // c:1726
+    // c:1726 — `tcmultout(TCDEL, TCMULTDEL, x)` deferred until
+    //          tcmultout is wired to ncurses.
+}
+
+/// Port of `tc_inschars(X)` macro from `Src/Zle/zle_refresh.c:1727`.
+/// `(void) tcmultout(TCINS, TCMULTINS, (X))`.
+#[inline] pub fn tc_inschars(_x: i32) {                                      // c:1727
+}
+
+/// Port of `tc_upcurs(X)` macro from `Src/Zle/zle_refresh.c:1728`.
+/// `(void) tcmultout(TCUP, TCMULTUP, (X))`.
+#[inline] pub fn tc_upcurs(_x: i32) {                                        // c:1728
+}
+
+/// Port of `tc_leftcurs(X)` macro from `Src/Zle/zle_refresh.c:1729`.
+/// `(void) tcmultout(TCLEFT, TCMULTLEFT, (X))`.
+#[inline] pub fn tc_leftcurs(_x: i32) {                                      // c:1729
+}
+
 #[cfg(test)]
 mod zr_tests {
     use super::*;
