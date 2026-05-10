@@ -16,62 +16,24 @@
 //! Phase 2 bucket-1: file-statics → thread_local).
 
 use std::os::unix::io::RawFd;
+use crate::ported::modules::tcp_h::tcp_sockaddr;
+use crate::ported::modules::tcp_h::tcp_session;
+use crate::ported::modules::tcp_h::ZTCP_LISTEN;
+use crate::ported::modules::tcp_h::ZTCP_INBOUND;
+use crate::ported::modules::tcp_h::ZTCP_ZFTP;
 
-/// Port of `ZTCP_LISTEN` from `Src/Modules/tcp.h:85`.
-pub const ZTCP_LISTEN:  i32 = 1;                                         // c:tcp.h:85
-/// Port of `ZTCP_INBOUND` from `Src/Modules/tcp.h:86`.
-pub const ZTCP_INBOUND: i32 = 2;                                         // c:tcp.h:86
-/// Port of `ZTCP_ZFTP` from `Src/Modules/tcp.h:87`.
-pub const ZTCP_ZFTP:    i32 = 16;                                        // c:tcp.h:87
-
-/// Port of `union tcp_sockaddr` from `Src/Modules/tcp.h:74`.
-/// C definition:
-/// ```c
-/// union tcp_sockaddr {
-///     struct sockaddr a;
-///     struct sockaddr_in in;
-/// #ifdef SUPPORT_IPV6
-///     struct sockaddr_in6 in6;
-/// #endif
-/// };
-/// ```
-#[repr(C)]
-#[allow(non_camel_case_types)]
-pub union TcpSockaddr {
-    pub a: libc::sockaddr,
-    pub in_: libc::sockaddr_in,
-    pub in6: libc::sockaddr_in6,
-}
-
-impl Default for TcpSockaddr {
+impl Default for tcp_sockaddr {
     fn default() -> Self {
         Self { a: unsafe { std::mem::zeroed() } }
     }
 }
 
-/// Port of `struct tcp_session` from `Src/Modules/tcp.h:88`. C:
-/// ```c
-/// struct tcp_session {
-///     int fd;                    /* file descriptor */
-///     union tcp_sockaddr sock;   /* local address */
-///     union tcp_sockaddr peer;   /* remote address */
-///     int flags;
-/// };
-/// ```
-#[allow(non_camel_case_types)]
-pub struct Tcp_session {                                                 // c:tcp.h:88
-    pub fd: RawFd,
-    pub sock: TcpSockaddr,
-    pub peer: TcpSockaddr,
-    pub flags: i32,
-}
-
-impl Default for Tcp_session {
+impl Default for tcp_session {
     fn default() -> Self {
         Self {
             fd: -1,
-            sock: TcpSockaddr::default(),
-            peer: TcpSockaddr::default(),
+            sock: tcp_sockaddr::default(),
+            peer: tcp_sockaddr::default(),
             flags: 0,
         }
     }
@@ -81,7 +43,7 @@ impl Default for Tcp_session {
 // bucket-1, ported as a thread_local Vec.
 thread_local! {
     /// Port of file-static `ztcp_sessions` from `Src/Modules/tcp.c`.
-    static ZTCP_SESSIONS: std::cell::RefCell<Vec<Tcp_session>> = const {
+    static ZTCP_SESSIONS: std::cell::RefCell<Vec<tcp_session>> = const {
         std::cell::RefCell::new(Vec::new())
     };
 }
@@ -133,17 +95,30 @@ pub fn zsh_inet_pton(af: i32, src: &str, dst: &mut [u8]) -> i32 {        // c:12
 }
 
 /// Port of `zsh_gethostbyname2()` from `Src/Modules/tcp.c:146`.
-pub fn zsh_gethostbyname2(name: &str, _af: i32) -> Vec<String> {         // c:146
+pub fn zsh_gethostbyname2(name: &str, af: i32) -> Vec<[u8; 4]> {         // c:146
+    // C body wraps gethostbyname2(name, af); when AF_INET6 is unused
+    // it falls back to gethostbyname(name). The relevant payload is
+    // the `h_addr_list` array of in_addr/in6_addr bytes. For the
+    // current AF_INET-only call path we return 4-byte records.
     use std::net::ToSocketAddrs;
-    format!("{}:0", name)
-        .to_socket_addrs()
-        .map(|iter| iter.map(|sa| sa.ip().to_string()).collect())
-        .unwrap_or_default()
+    let mut out = Vec::new();
+    if af == libc::AF_INET {                                             // c:148
+        if let Ok(iter) = format!("{}:0", name).to_socket_addrs() {
+            for sa in iter {
+                if let std::net::SocketAddr::V4(v4) = sa {
+                    out.push(v4.ip().octets());
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Port of `zsh_getipnodebyname()` from `Src/Modules/tcp.c:170`.
-pub fn zsh_getipnodebyname(name: &str, af: i32) -> Vec<String> {         // c:170
-    zsh_gethostbyname2(name, af)
+/// C body falls through to `zsh_gethostbyname2(name, af)` and returns
+/// its `hostent`. Rust returns the AF_INET address list directly.
+pub fn zsh_getipnodebyname(name: &str, af: i32) -> Vec<[u8; 4]> {        // c:170
+    zsh_gethostbyname2(name, af)                                         // c:190
 }
 
 /// Port of `freehostent()` from `Src/Modules/tcp.c:198`. C body is
@@ -160,49 +135,72 @@ pub fn zts_alloc(ztflags: i32) -> usize {                                // c:21
     ZTCP_SESSIONS.with(|s| {
         let mut sessions = s.borrow_mut();
         let idx = sessions.len();
-        sessions.push(Tcp_session {                                      // c:218 zshcalloc
+        sessions.push(tcp_session {                                      // c:218 zshcalloc
             fd: -1,                                                      // c:220 sess->fd = -1
-            sock: TcpSockaddr::default(),
-            peer: TcpSockaddr::default(),
+            sock: tcp_sockaddr::default(),
+            peer: tcp_sockaddr::default(),
             flags: ztflags,                                              // c:221 sess->flags = ztflags
         });
         idx                                                              // c:226 return sess
     })
 }
 
-/// Port of `tcp_socket()` from `Src/Modules/tcp.c:231`. Allocates a
-/// session via zts_alloc, then opens a real socket via `socket(2)`
-/// and registers the fd in the shell-wide fdtable as `FDT_MODULE`.
-pub fn tcp_socket(domain: i32, ty: i32, protocol: i32, ztflags: i32) -> RawFd {  // c:231
+// ---------------------------------------------------------------------
+// Tcp_session handle and field accessors.
+// ---------------------------------------------------------------------
+// C `Tcp_session` is `struct tcp_session *` (a pointer into the
+// `ztcp_sessions` linked list). Rust models the same: a handle that
+// indexes into the thread-local `ZTCP_SESSIONS` Vec. NULL → None.
+type TcpSessionHandle = Option<usize>;
+
+fn sess_get<R, F: FnOnce(&tcp_session) -> R>(idx: usize, f: F) -> R {
+    ZTCP_SESSIONS.with(|s| {
+        let g = s.borrow();
+        f(&g[idx])
+    })
+}
+
+fn sess_with<F: FnOnce(&mut tcp_session)>(idx: usize, f: F) {
+    ZTCP_SESSIONS.with(|s| {
+        let mut g = s.borrow_mut();
+        f(&mut g[idx])
+    });
+}
+
+/// Port of `tcp_socket()` from `Src/Modules/tcp.c:231`.
+/// C body (c:235-243):
+/// ```c
+/// Tcp_session sess = zts_alloc(ztflags);
+/// sess->fd = socket(domain, type, protocol);
+/// addmodulefd(sess->fd, FDT_MODULE);
+/// return sess;
+/// ```
+pub fn tcp_socket(domain: i32, ty: i32, protocol: i32, ztflags: i32) -> TcpSessionHandle {  // c:231
     let idx = zts_alloc(ztflags);                                        // c:235
     let fd = unsafe { libc::socket(domain, ty, protocol) };              // c:238
+    sess_with(idx, |s| { s.fd = fd; });                                  // c:238 sess->fd = ...
     if fd >= 0 {
-        ZTCP_SESSIONS.with(|s| {
-            if let Some(sess) = s.borrow_mut().get_mut(idx) {
-                sess.fd = fd;
-            }
-        });
-        // c:241 — `addmodulefd(sess->fd, FDT_MODULE);`
-        crate::ported::utils::addmodulefd(fd);
+        crate::ported::utils::addmodulefd(fd);                           // c:241
     }
-    fd
+    Some(idx)                                                            // c:243 return sess
 }
 
 /// Port of `ztcp_free_session()` from `Src/Modules/tcp.c:245`.
+/// In the Rust port the Vec drop handles `zfree(sess, ...)`.
 pub fn ztcp_free_session(_idx: usize) -> i32 {                           // c:245
-    // c:248 — `zfree(sess, ...);` — Rust drop handles via zts_delete.
     0                                                                    // c:250
 }
 
 /// Port of `zts_delete()` from `Src/Modules/tcp.c:253`. Removes a
-/// session from the linked list and frees it.
+/// session from the list and frees its slot. Returns 0 on success,
+/// 1 if the fd has no matching session.
 pub fn zts_delete(fd: RawFd) -> i32 {                                    // c:253
     ZTCP_SESSIONS.with(|s| {
         let mut sessions = s.borrow_mut();
         let pos = sessions.iter().position(|sess| sess.fd == fd);        // c:259
         match pos {
-            Some(i) => {
-                sessions.remove(i);                                      // c:266 remnode
+            Some(i) => {                                                 // c:266 remnode + zfree
+                sessions.remove(i);
                 0                                                        // c:268
             }
             None => 1,                                                   // c:262 not found
@@ -211,10 +209,11 @@ pub fn zts_delete(fd: RawFd) -> i32 {                                    // c:25
 }
 
 /// Port of `zts_byfd()` from `Src/Modules/tcp.c:271`. Linear scan.
-/// Returns the session's flags (or None if not found).
-pub fn zts_byfd(fd: RawFd) -> Option<i32> {                              // c:271
+/// C returns `Tcp_session` (pointer to the session) or NULL. Rust
+/// returns the index handle or None.
+pub fn zts_byfd(fd: RawFd) -> TcpSessionHandle {                         // c:271
     ZTCP_SESSIONS.with(|s| {
-        s.borrow().iter().find(|sess| sess.fd == fd).map(|sess| sess.flags)  // c:275-278
+        s.borrow().iter().position(|sess| sess.fd == fd)                 // c:275-278
     })
 }
 
@@ -231,90 +230,393 @@ pub fn tcp_cleanup() {                                                   // c:28
     });
 }
 
-/// Port of `tcp_close()` from `Src/Modules/tcp.c:295`. Closes the
-/// session's fd and removes it from the list.
-pub fn tcp_close(fd: RawFd) -> i32 {                                     // c:295
-    if fd < 0 { return -1; }
-    let r = unsafe { libc::close(fd) };
-    let _ = zts_delete(fd);
-    if r < 0 { -1 } else { 0 }
-}
-
-/// Port of `tcp_connect()` from `Src/Modules/tcp.c:316`. Wraps
-/// `socket(2)` + `connect(2)` for the connect path of `ztcp host
-/// port`.
-pub fn tcp_connect(host: &str, port: u16) -> std::io::Result<RawFd> {    // c:316
-    use std::net::ToSocketAddrs;
-    use std::os::unix::io::IntoRawFd;
-    let addrs: Vec<_> = format!("{}:{}", host, port)
-        .to_socket_addrs()?
-        .collect();
-    if addrs.is_empty() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "host resolution failure",
-        ));
-    }
-    for addr in addrs {
-        let timeout = std::time::Duration::from_secs(10);
-        if let Ok(stream) = std::net::TcpStream::connect_timeout(&addr, timeout) {
-            let fd = stream.into_raw_fd();
-            // c:241-equivalent — register in fdtable.
-            crate::ported::utils::addmodulefd(fd);
-            return Ok(fd);
-        }
-    }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::ConnectionRefused,
-        "connection failed",
-    ))
-}
-
-/// Port of `bin_ztcp()` from `Src/Modules/tcp.c:342`. The `ztcp`
-/// builtin entry: parses `-l` (listen), `-a` (accept), `-c` (close),
-/// `-d FD`, `-f` (force), `-L` (list), `-t` (test), `-v` (verbose)
-/// flags + dispatch.
-///
-/// **Approximation:** the full bin_ztcp body is 350+ lines. Rust
-/// port currently provides the dispatch skeleton — close-by-fd
-/// path + list path. Full faithful port pending.
-pub fn bin_ztcp(args: &[&str], ops: &[bool; 256]) -> i32 {               // c:342
-    if ops[b'L' as usize] {                                              // c: -L list
-        ZTCP_SESSIONS.with(|s| {
-            for sess in s.borrow().iter() {
-                println!("{}", sess.fd);
+/// Port of `tcp_close()` from `Src/Modules/tcp.c:295`. Takes a session
+/// pointer (Rust handle), closes its fd, and removes it from the list.
+/// C body (c:298-313):
+/// ```c
+/// int err = -1;
+/// if (sess) {
+///     if (sess->fd != -1) {
+///         err = zclose(sess->fd);
+///         if (err) zwarn("connection close failed: %e", errno);
+///     }
+///     zts_delete(sess);
+///     return err;
+/// }
+/// return 0;
+/// ```
+pub fn tcp_close(sess: TcpSessionHandle) -> i32 {                        // c:295
+    if let Some(idx) = sess {                                            // c:298
+        let fd = sess_get(idx, |s| s.fd);
+        let mut err = -1;
+        if fd != -1 {                                                    // c:301
+            err = unsafe { libc::close(fd) };                            // c:303
+            if err != 0 {
+                crate::ported::utils::zwarn(&format!(
+                    "connection close failed: {}",
+                    std::io::Error::last_os_error()));
             }
-        });
-        return 0;
-    }
-    if ops[b'c' as usize] {                                              // c: -c close
-        if args.is_empty() {
-            tcp_cleanup();
-            return 0;
         }
-        // close specific fd
-        let mut err = 0;
-        for arg in args {
-            if let Ok(fd) = arg.parse::<RawFd>() {
-                if tcp_close(fd) != 0 { err = 1; }
-            } else { err = 1; }
+        // c:309 — zts_delete(sess); takes session by *pointer*. Rust
+        // resolves it back to the fd-indexed remove call.
+        let _ = zts_delete(fd);
+        return err;                                                      // c:311
+    }
+    0                                                                    // c:313 — NULL sess: noop
+}
+
+/// Port of `tcp_connect()` from `Src/Modules/tcp.c:316`. C body
+/// (c:319-340):
+/// ```c
+/// sess->peer.in.sin_family = zhost->h_addrtype;
+/// sess->peer.in.sin_port   = d_port;
+/// memcpy(&sess->peer.in.sin_addr, addr, zhost->h_length);
+/// return connect(sess->fd, (struct sockaddr *)&sess->peer.in,
+///                sizeof(struct sockaddr_in));
+/// ```
+pub fn tcp_connect(sess: TcpSessionHandle, addr: &[u8; 4], d_port: u16) -> i32 { // c:316
+    let idx = match sess { Some(i) => i, None => return -1 };
+    let fd = sess_get(idx, |s| s.fd);
+    let mut peer: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+    peer.sin_family = libc::AF_INET as _;                                // c:319
+    peer.sin_port = d_port;                                              // c:320
+    peer.sin_addr.s_addr = u32::from_be_bytes(*addr).to_be();            // c:321 memcpy
+    sess_with(idx, |s| { s.peer.in_ = peer; });
+    unsafe {
+        libc::connect(fd,                                                // c:323
+            &peer as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t)
+    }
+}
+
+
+/// Direct port of `bin_ztcp()` from `Src/Modules/tcp.c:342`. Implements
+/// the `ztcp` builtin: connect / listen / accept / close / list, with
+/// the same `-acdflLtv` flags as the C source.
+#[allow(non_snake_case)]
+pub fn bin_ztcp(nam: &str, args: &[String],
+                ops: &crate::ported::zsh_h::options, _func: i32) -> i32 { // c:342
+    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
+    use crate::ported::utils::{zwarnnam, zerrnam};
+
+    let mut err: i32 = 1;                                                // c:344
+    let destport: u16;                                                   // c:344
+    let mut force = 0i32;                                                // c:344
+    let mut verbose = 0i32;                                              // c:344
+    let mut test = 0i32;                                                 // c:344
+    let mut targetfd: i32 = 0;                                           // c:344
+    let mut len: libc::socklen_t;                                        // c:345 ZSOCKLEN_T
+    let desthost: String;                                                // c:346
+    // c:347 — `const char *localname, *remotename;` declared at top
+    // but only ever assigned + read inside the list-all loop; the
+    // Rust port inlines them as block-locals at that site.
+    let mut sess: TcpSessionHandle = None;                               // c:351
+
+    if OPT_ISSET(ops, b'f') { force = 1; }                               // c:353-354
+    if OPT_ISSET(ops, b'v') { verbose = 1; }                             // c:356-357
+    if OPT_ISSET(ops, b't') { test = 1; }                                // c:359-360
+
+    if OPT_ISSET(ops, b'd') {                                            // c:362
+        let darg = OPT_ARG(ops, b'd').unwrap_or("");
+        targetfd = darg.parse::<i32>().unwrap_or(0);                     // c:363 atoi
+        if targetfd == 0 {                                               // c:364
+            zwarnnam(nam, &format!("{} is an invalid argument to -d", darg));
+            return 1;                                                    // c:366
         }
-        return err;
     }
-    if ops[b'l' as usize] {                                              // c: -l listen
-        // Listen path; full port pending.
-        return 0;
-    }
-    if args.len() == 2 {                                                 // c: ztcp host port (connect)
-        let host = args[0];
-        if let Ok(port) = args[1].parse::<u16>() {
-            return match tcp_connect(host, port) {
-                Ok(_) => 0,
-                Err(_) => 1,
+
+    if OPT_ISSET(ops, b'c') {                                            // c:371
+        if args.is_empty() {                                             // c:372
+            tcp_cleanup();                                               // c:373
+        } else {
+            targetfd = args[0].parse::<i32>().unwrap_or(0);              // c:376 atoi
+            sess = zts_byfd(targetfd);                                   // c:377
+            if targetfd == 0 {                                           // c:378
+                zwarnnam(nam, &format!("{} is an invalid argument to -c", args[0]));
+                return 1;                                                // c:380
+            }
+            if let Some(sidx) = sess {                                   // c:384
+                let flags = sess_get(sidx, |s| s.flags);
+                if (flags & ZTCP_ZFTP) != 0 && force == 0 {              // c:386
+                    zwarnnam(nam, "use -f to force closure of a zftp control connection");
+                    return 1;                                            // c:388
+                }
+                tcp_close(sess);                                         // c:391
+                return 0;                                                // c:392
+            } else {                                                     // c:395
+                zwarnnam(nam, &format!("fd {} not found in tcp table", args[0]));
+                return 1;                                                // c:397
+            }
+        }
+    } else if OPT_ISSET(ops, b'l') {                                     // c:400
+        let lport: u16;                                                  // c:401
+        if args.is_empty() {                                             // c:403
+            zwarnnam(nam, "-l requires an argument");
+            return 1;                                                    // c:405
+        }
+        // c:407 srv = getservbyname(args[0], "tcp");
+        let srv = {
+            let cname = std::ffi::CString::new(args[0].as_str()).ok();
+            let cproto = std::ffi::CString::new("tcp").unwrap();
+            cname.and_then(|c| {
+                let p = unsafe { libc::getservbyname(c.as_ptr(), cproto.as_ptr()) };
+                if p.is_null() { None } else { Some(unsafe { (*p).s_port } as u16) }
+            })
+        };
+        lport = match srv {                                              // c:408-411
+            Some(p) => p,                                                // c:410 srv->s_port
+            None    => (args[0].parse::<u16>().unwrap_or(0)).to_be(),    // c:411 htons(atoi)
+        };
+        if lport == 0 {                                                  // c:412
+            zwarnnam(nam, "bad service name or port number");
+            return 1;                                                    // c:413
+        }
+        sess = tcp_socket(libc::PF_INET, libc::SOCK_STREAM, 0, ZTCP_LISTEN); // c:415
+        if sess.is_none() {                                              // c:417
+            zwarnnam(nam, "unable to allocate a TCP session slot");
+            return 1;                                                    // c:419
+        }
+        let sidx = sess.unwrap();
+        // c:421-423 SO_OOBINLINE
+        let one: i32 = 1;
+        let fd = sess_get(sidx, |s| s.fd);
+        unsafe {
+            libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_OOBINLINE,
+                &one as *const _ as *const libc::c_void,
+                std::mem::size_of::<i32>() as libc::socklen_t);
+        }
+        // c:425-429 — bind 0.0.0.0:lport
+        let mut sin: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+        sin.sin_family = libc::AF_INET as _;                             // c:432
+        sin.sin_port = lport;                                            // c:433
+        sin.sin_addr.s_addr = 0u32.to_be();                              // c:425 zsh_inet_aton("0.0.0.0")
+        sess_with(sidx, |s| { s.sock.in_ = sin; });
+        let r = unsafe {
+            libc::bind(fd,                                               // c:436
+                &sin as *const _ as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t)
+        };
+        if r != 0 {                                                      // c:436
+            zwarnnam(nam, &format!("could not bind to port {}: {}",      // c:440
+                u16::from_be(lport), std::io::Error::last_os_error()));
+            tcp_close(sess);                                             // c:441
+            return 1;                                                    // c:442
+        }
+        if unsafe { libc::listen(fd, 1) } != 0 {                         // c:445
+            zwarnnam(nam, &format!("could not listen on socket: {}",     // c:447
+                std::io::Error::last_os_error()));
+            tcp_close(sess);                                             // c:448
+            return 1;                                                    // c:449
+        }
+        if targetfd != 0 {                                               // c:452
+            let nfd = crate::ported::utils::redup(fd, targetfd);         // c:453
+            sess_with(sidx, |s| { s.fd = nfd; });
+        } else {
+            // c:457 — `sess->fd = movefd(sess->fd);` move so no one
+            // accidentally reads from it.
+            let nfd = crate::ported::utils::movefd(fd);                  // c:457
+            sess_with(sidx, |s| { s.fd = nfd; });
+        }
+        let nfd = sess_get(sidx, |s| s.fd);
+        if nfd == -1 {                                                   // c:460
+            zwarnnam(nam, &format!("cannot duplicate fd {}: {}", nfd,    // c:462
+                std::io::Error::last_os_error()));
+            tcp_close(sess);                                             // c:463
+            return 1;                                                    // c:464
+        }
+        crate::ported::modules::ksh93::setiparam("REPLY", nfd as i64);   // c:467 setiparam_no_convert
+        if verbose != 0 {                                                // c:469
+            println!("{} listener is on fd {}",                          // c:470
+                u16::from_be(lport), nfd);
+        }
+        return 0;                                                        // c:472
+    } else if OPT_ISSET(ops, b'a') {                                     // c:475
+        let lfd: i32;
+        let rfd: i32;
+        if args.is_empty() {                                             // c:478
+            zwarnnam(nam, "-a requires an argument");
+            return 1;                                                    // c:480
+        }
+        lfd = args[0].parse::<i32>().unwrap_or(0);                       // c:483
+        if lfd == 0 {                                                    // c:485
+            zwarnnam(nam, "invalid numerical argument");
+            return 1;                                                    // c:487
+        }
+        sess = zts_byfd(lfd);                                            // c:490
+        if sess.is_none() {                                              // c:491
+            zwarnnam(nam, &format!("fd {} is not registered as a tcp connection",
+                args[0]));
+            return 1;                                                    // c:493
+        }
+        let flags = sess_get(sess.unwrap(), |s| s.flags);
+        if (flags & ZTCP_LISTEN) == 0 {                                  // c:496
+            zwarnnam(nam, "tcp connection not a listener");
+            return 1;                                                    // c:499
+        }
+        if test != 0 {                                                   // c:502
+            // c:506-512 — HAVE_POLL branch
+            let mut pfd = libc::pollfd { fd: lfd, events: libc::POLLIN, revents: 0 };
+            let ret = unsafe { libc::poll(&mut pfd, 1, 0) };             // c:509
+            if ret == 0 { return 1; }                                    // c:510
+            else if ret == -1 {                                          // c:511
+                zwarnnam(nam, &format!("poll error: {}",                 // c:513
+                    std::io::Error::last_os_error()));
+                return 1;                                                // c:514
+            }
+        }
+        sess = Some(zts_alloc(ZTCP_INBOUND));                            // c:540
+        let sidx = sess.unwrap();
+        let mut peer: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+        len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t; // c:542
+        loop {                                                           // c:543
+            let r = unsafe { libc::accept(lfd,
+                &mut peer as *mut _ as *mut libc::sockaddr,
+                &mut len as *mut _) };
+            if r >= 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR)
+                || crate::ported::utils::errflag() != 0 {
+                rfd = r;
+                break;
+            }
+        }
+        sess_with(sidx, |s| { s.peer.in_ = peer; });
+        if rfd == -1 {                                                   // c:547
+            zwarnnam(nam, &format!("could not accept connection: {}",    // c:549
+                std::io::Error::last_os_error()));
+            tcp_close(sess);                                             // c:550
+            return 1;                                                    // c:551
+        }
+        crate::ported::utils::addmodulefd(rfd);                          // c:555
+        if targetfd != 0 {                                               // c:557
+            let nfd = crate::ported::utils::redup(rfd, targetfd);        // c:558
+            sess_with(sidx, |s| { s.fd = nfd; });
+            if nfd < 0 {                                                 // c:559
+                zerrnam(nam, &format!("could not duplicate socket fd to {}: {}",
+                    targetfd, std::io::Error::last_os_error()));
+                return 1;                                                // c:562
+            }
+        } else {
+            sess_with(sidx, |s| { s.fd = rfd; });                        // c:566
+        }
+        let nfd = sess_get(sidx, |s| s.fd);
+        crate::ported::modules::ksh93::setiparam("REPLY", nfd as i64);   // c:569 setiparam_no_convert
+        if verbose != 0 {                                                // c:571
+            println!("{} is on fd {}", u16::from_be(peer.sin_port), nfd); // c:572
+        }
+    } else {                                                             // c:574
+        if args.is_empty() {                                             // c:576
+            // c:578-616 — list-all path.
+            ZTCP_SESSIONS.with(|s| {
+                for sess in s.borrow().iter() {                          // c:579
+                    if sess.fd != -1 {                                   // c:582
+                        // c:587 — `inet_ntoa(sess->sock.in.sin_addr)` (libc).
+                        let lname = {
+                            let b = u32::from_be(unsafe { sess.sock.in_.sin_addr.s_addr }).to_be_bytes();
+                            format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3])
+                        };
+                        // c:590 — `inet_ntoa(sess->peer.in.sin_addr)` (libc).
+                        let pname = {
+                            let b = u32::from_be(unsafe { sess.peer.in_.sin_addr.s_addr }).to_be_bytes();
+                            format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3])
+                        };
+                        let lport = u16::from_be(unsafe { sess.sock.in_.sin_port });
+                        let pport = u16::from_be(unsafe { sess.peer.in_.sin_port });
+                        if OPT_ISSET(ops, b'L') {                        // c:592
+                            let schar = if (sess.flags & ZTCP_ZFTP)   != 0 { 'Z' }   // c:595
+                                   else if (sess.flags & ZTCP_LISTEN) != 0 { 'L' }   // c:597
+                                   else if (sess.flags & ZTCP_INBOUND)!= 0 { 'I' }   // c:599
+                                   else                                    { 'O' };  // c:601
+                            println!("{} {} {} {} {} {}",                // c:603
+                                sess.fd, schar, lname, lport, pname, pport);
+                        } else {                                         // c:608
+                            let arrow = if (sess.flags & ZTCP_LISTEN)  != 0 { "-<" }
+                                  else if (sess.flags & ZTCP_INBOUND) != 0 { "<-" }
+                                  else                                    { "->" };
+                            let zftp = if (sess.flags & ZTCP_ZFTP) != 0 { " ZFTP" } else { "" };
+                            println!("{}:{} {} {}:{} is on fd {}{}",      // c:609
+                                lname, lport, arrow, pname, pport, sess.fd, zftp);
+                        }
+                    }
+                }
+            });
+            return 0;                                                    // c:619
+        } else if args.len() == 1 {                                      // c:620
+            destport = (23u16).to_be();                                  // c:621 htons(23)
+        } else {
+            // c:624 srv = getservbyname(args[1], "tcp");
+            let srv = {
+                let cname = std::ffi::CString::new(args[1].as_str()).ok();
+                let cproto = std::ffi::CString::new("tcp").unwrap();
+                cname.and_then(|c| {
+                    let p = unsafe { libc::getservbyname(c.as_ptr(), cproto.as_ptr()) };
+                    if p.is_null() { None } else { Some(unsafe { (*p).s_port } as u16) }
+                })
+            };
+            destport = match srv {                                       // c:625
+                Some(p) => p,                                            // c:627
+                None    => (args[1].parse::<u16>().unwrap_or(0)).to_be(), // c:629 htons(atoi)
             };
         }
+        desthost = args[0].clone();                                      // c:632
+        let zthost = zsh_getipnodebyname(&desthost, libc::AF_INET);      // c:634
+        if zthost.is_empty() {                                           // c:635
+            zwarnnam(nam, &format!("host resolution failure: {}", desthost));
+            return 1;                                                    // c:638
+        }
+        sess = tcp_socket(libc::PF_INET, libc::SOCK_STREAM, 0, 0);       // c:642
+        if sess.is_none() {                                              // c:644
+            zwarnnam(nam, "unable to allocate a TCP session slot");
+            return 1;                                                    // c:647
+        }
+        let sidx = sess.unwrap();
+        let one: i32 = 1;
+        let fd = sess_get(sidx, |s| s.fd);
+        unsafe {                                                         // c:651-653 SO_OOBINLINE
+            libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_OOBINLINE,
+                &one as *const _ as *const libc::c_void,
+                std::mem::size_of::<i32>() as libc::socklen_t);
+        }
+        if fd < 0 {                                                      // c:656
+            zwarnnam(nam, &format!("socket creation failed: {}",         // c:658
+                std::io::Error::last_os_error()));
+            zts_delete(fd);                                              // c:660
+            return 1;                                                    // c:661
+        }
+        for addr in &zthost {                                            // c:664
+            // c:665 — h_length must be 4 for AF_INET; libc resolution
+            // already guarantees this so no length check needed.
+            loop {                                                       // c:667
+                err = tcp_connect(sess, addr, destport);                 // c:669
+                if err == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR)
+                    || crate::ported::utils::errflag() != 0 { break; }
+            }
+            if err == 0 { break; }
+        }
+        if err != 0 {                                                    // c:673
+            zwarnnam(nam, &format!("connection failed: {}",              // c:675
+                std::io::Error::last_os_error()));
+            tcp_close(sess);                                             // c:676
+            return 1;                                                    // c:677
+        } else {                                                         // c:680
+            if targetfd != 0 {                                           // c:681
+                let nfd = crate::ported::utils::redup(fd, targetfd);     // c:682
+                sess_with(sidx, |s| { s.fd = nfd; });
+                if nfd < 0 {                                             // c:683
+                    zerrnam(nam, &format!("could not duplicate socket fd to {}: {}",
+                        targetfd, std::io::Error::last_os_error()));     // c:684
+                    tcp_close(sess);                                     // c:686
+                    return 1;                                            // c:687
+                }
+            }
+            let nfd = sess_get(sidx, |s| s.fd);
+            crate::ported::modules::ksh93::setiparam("REPLY", nfd as i64); // c:691 setiparam_no_convert
+            if verbose != 0 {                                            // c:693
+                println!("{}:{} is now on fd {}",                        // c:694
+                    desthost, u16::from_be(destport), nfd);
+            }
+        }
     }
-    0
+    let _ = len;                                                         // silence unused-binding when -l not taken
+    0                                                                    // c:702
 }
 
 // =====================================================================
@@ -417,25 +719,46 @@ mod tests {
     }
 }
 
-// ShellExecutor::bin_ztcp shim — adapts `&[String]` argv + parses
-// flags inline matching the BUILTIN spec at tcp.c:710 ("acdflLtvz").
+// ShellExecutor::bin_ztcp shim — parses flags into the canonical
+// `options` struct matching the BUILTIN spec at tcp.c:710
+// ("acdflLtv") and invokes the C-faithful free-fn port.
 impl crate::ported::exec::ShellExecutor {
     pub(crate) fn bin_ztcp(&mut self, args: &[String]) -> i32 {
-        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-        let mut ops = [false; 256];
-        let mut positional: Vec<&str> = Vec::new();
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                argscount: 0, argsalloc: 0 };
+        let mut positional: Vec<String> = Vec::new();
         let mut i = 0;
-        while i < argv.len() {
-            let a = argv[i];
+        while i < args.len() {
+            let a = &args[i];
+            if a == "--" { i += 1; positional.extend_from_slice(&args[i..]); break; }
             if let Some(rest) = a.strip_prefix('-') {
-                for ch in rest.chars() {
-                    if ch.is_ascii_alphabetic() { ops[ch as u8 as usize] = true; }
+                if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
+                let chars: Vec<char> = rest.chars().collect();
+                let mut j = 0;
+                while j < chars.len() {
+                    let c = chars[j] as u8;
+                    if c == b'd' {
+                        // -d takes an arg: rest of token, or next argv.
+                        ops.ind[c as usize] = (ops.args.len() + 1) as u8;
+                        let rest_after = &rest[j + 1..];
+                        if !rest_after.is_empty() {
+                            ops.args.push(rest_after.to_string());
+                        } else {
+                            i += 1;
+                            ops.args.push(args.get(i).cloned().unwrap_or_default());
+                        }
+                        ops.argscount = ops.args.len() as i32;
+                        break;
+                    }
+                    if c.is_ascii_alphabetic() { ops.ind[c as usize] = 1; }
+                    j += 1;
                 }
             } else {
-                positional.push(a);
+                positional.push(a.clone());
             }
             i += 1;
         }
-        bin_ztcp(&positional, &ops)
+        bin_ztcp("ztcp", &positional, &ops, 0)
     }
 }
