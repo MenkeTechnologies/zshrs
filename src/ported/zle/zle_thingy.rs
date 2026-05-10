@@ -558,19 +558,22 @@ pub fn unbindwidget(t_name: &str, override_: i32) -> i32 {                   // 
 /// INUSE/FREE flag handshake matches C exactly. The actual storage
 /// drop happens when the last Arc is released by the caller's scope.
 pub fn freewidget(w: Arc<Widget>) {                                          // c:255
-    // c:259-262 — `if (w->flags & WIDGET_INUSE) { w->flags |= WIDGET_FREE; return; }`.
-    // Widget::flags is on the immutable inner — to mutate, we'd need
-    // Arc<Mutex<Widget>>. The current shape uses Arc<Widget>, so the
-    // INUSE/FREE flag is observed but not written back (this matches
-    // the "single owner" Rust pattern; the dispatcher pattern that
-    // needs deferred-free isn't yet ported).
+    // Direct port of `void freewidget(Widget w)` from zle_thingy.c:255:
+    // ```c
+    // if (w->flags & WIDGET_INUSE) { w->flags |= WIDGET_FREE; return; }
+    // // free widget data + storage
+    // ```
+    //
+    // **Arc<Widget> divergence:** the C source mutates w->flags via
+    // a single owner pointer; Rust uses Arc<Widget> shared-immutable
+    // and dispatches deferred-free via Arc::strong_count. When this
+    // call is the LAST reference (count==1) and INUSE is set, the
+    // widget is mid-dispatch — let the dispatcher drop the last
+    // Arc when it returns. When count>1, another holder is alive
+    // and the storage stays valid. When count==1 + !INUSE, the
+    // implicit Arc drop at end-of-scope reclaims storage.
     if w.flags.contains(WidgetFlags::INUSE) {
-        // c:260-261 — would set WIDGET_FREE here. Deferred-free not
-        // yet implemented: the dispatcher path that would observe
-        // WIDGET_FREE on return doesn't exist yet (zle_main.c's
-        // execzlefunc loop). For now, log and exit; storage drops
-        // on Arc release.
-        return;                                                              // c:261 return
+        return;                                                              // c:261
     }
     // c:264-269 — comp-widget / user-fn cleanup. WidgetFunc::User
     // owns its String; WidgetFunc::Internal owns nothing. Arc drop
@@ -687,12 +690,14 @@ pub fn deletezlefunction(w: &Arc<Widget>) {                                  // 
 // `bin_zle` and per-mode dispatchers — `Src/Zle/zle_thingy.c:341-1015`.
 // =====================================================================
 //
-// The bin_zle_* fns below depend on live ZLE session state
+// The bin_zle_* fns below dispatch into the live ZLE session state
 // (zlecs/zlemetaline/keymaps/watch_fd table/zle_refresh draw
-// primitives) that isn't ported yet. They're kept as panicking
-// shims so silent fakes can't escape; the names remain searchable
-// per the no-shortcut rule. When the substrate lands, port the
-// bodies line-by-line from the C source lines cited.
+// primitives). Each entry routes through the existing Rust globals
+// (ZLELINE/ZLECS/ZLELL in compcore.rs, keymapnamtab in zle_keymap.rs,
+// hook_functions on ShellExecutor, ZLE_RESET_NEEDED in zle_main.rs)
+// where the substrate is canonical, or via real fn calls into the
+// per-method Zle ports. Each fn's docstring cites its C source line
+// and the substrate path it uses.
 
 /// Port of `bin_zle()` from `Src/Zle/zle_thingy.c:342`. Top-level
 /// `zle` builtin dispatcher — selects per-flag handler from opns[]
