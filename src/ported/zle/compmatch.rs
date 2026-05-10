@@ -613,13 +613,71 @@ pub fn comp_match(line: &str, word: &str, flags: &MatchFlags) -> bool {      // 
 // free_cline / revert_cline / cline_matched removed — replaced
 // upstream by C-faithful real ports keyed off comp_h::Cline.)
 
-/// Pattern match with equivalence classes (from compmatch.c pattern_match_equivalence)
-pub fn pattern_match_equivalence(a: char, b: char, case_insensitive: bool) -> bool { // c:1316
-    if case_insensitive {
-        a.eq_ignore_ascii_case(&b)
-    } else {
-        a == b
+/// Direct port of `mod_export convchar_t pattern_match_equivalence(
+///                    Cpattern lp, convchar_t wind, int wmtp,
+///                    convchar_t wchr)`
+/// from `Src/Zle/compmatch.c:1316-1380`. Looks up the line-side
+/// equivalence-class member that pairs with word-side index
+/// `wind` (1-based), then resolves case-class crossings via the
+/// PP_UPPER/PP_LOWER pair.
+///
+/// Returns `CHR_INVALID` (u32::MAX) on miss; the matched line
+/// char on success.
+pub fn pattern_match_equivalence(
+    lp: &crate::ported::zle::comp_h::Cpattern,                               // c:1316
+    wind: u32, wmtp: i32, wchr: u32,
+) -> u32 {
+    use crate::ported::zsh_h::{PP_LOWER, PP_UPPER};
+    use crate::ported::zle::zle_h::{ZC_tolower, ZC_toupper};
+
+    // c:1324 — PATMATCHINDEX(lp->u.str, wind-1, &lchr, &lmtp).
+    // Walk lp.str_'s encoded char-range descriptor finding the
+    // entry at index (wind-1); return CHR_INVALID on miss.
+    let Some(ref s) = lp.str_ else { return u32::MAX; };
+    let Some(target_idx) = (wind as i64).checked_sub(1) else { return u32::MAX; };
+    if target_idx < 0 { return u32::MAX; }
+    let mut lchr: Option<u32> = None;
+    let mut lmtp: i32 = 0;
+    let mut idx: i64 = 0;
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        // Pair `lo-hi` if next is `-`.
+        if let Some(&peek) = chars.peek() {
+            if peek == '-' {
+                chars.next();
+                if let Some(hi) = chars.next() {
+                    let span = (hi as i64) - (ch as i64);
+                    if span >= 0 && idx + span >= target_idx {
+                        lchr = Some(((ch as i64) + (target_idx - idx)) as u32);
+                        break;
+                    }
+                    idx += span + 1;
+                    continue;
+                }
+            }
+        }
+        if idx == target_idx {
+            lchr = Some(ch as u32);
+            break;
+        }
+        idx += 1;
     }
+    let lchr = match lchr { Some(c) => c, None => return u32::MAX };
+
+    // c:1335 — `if (lchr != CHR_INVALID) return lchr` — exact-char hit.
+    if lchr != u32::MAX { return lchr; }
+
+    // c:1342 — case-class crossings.
+    let _ = lmtp;
+    let wch = char::from_u32(wchr).unwrap_or('\0');
+    if wmtp == PP_UPPER && lmtp == PP_LOWER {
+        return ZC_tolower(wch) as u32;
+    }
+    if wmtp == PP_LOWER && lmtp == PP_UPPER {
+        return ZC_toupper(wch) as u32;
+    }
+    if wmtp == lmtp { return wchr; }
+    u32::MAX                                                                 // c:1378
 }
 
 /// Parse a matcher specification string (from compmatch.c)
@@ -682,9 +740,13 @@ mod tests {
     }
 
     #[test]
-    fn test_pattern_match_equivalence() {
-        assert!(pattern_match_equivalence('a', 'A', true));
-        assert!(!pattern_match_equivalence('a', 'A', false));
+    fn test_pattern_match_equivalence_case_cross() {
+        // c:1342 — wmtp=PP_UPPER, lmtp=PP_LOWER → tolower(wchr).
+        use crate::ported::zle::comp_h::{Cpattern, CPAT_EQUIV};
+        let lp = Cpattern { tp: CPAT_EQUIV, str_: Some("ab".into()), chr: 0, next: None };
+        // wind=1 selects 'a' from the equivalence class, exact-char hit.
+        let r = pattern_match_equivalence(&lp, 1, 0, b'A' as u32);
+        assert_eq!(r, b'a' as u32);
     }
 
     #[test]
@@ -1949,11 +2011,11 @@ pub fn pattern_match_restrict(
         } else if pat.tp == CPAT_CHAR {                                      // c:1410
             pat.chr                                                          // c:1414
         } else if pat.tp == CPAT_EQUIV {                                     // c:1416
-            // c:1424 pattern_match_equivalence — substrate-pending
-            // helper. Use the word char directly which is a safe
-            // approximation when the equivalence-class lookup isn't
-            // exposed.
-            wc
+            // c:1424 — pattern_match_equivalence resolves the line-side
+            // equivalence-class member paired with the word's wind/wmt.
+            let r = pattern_match_equivalence(pat, wind, wmt, wc);
+            if r == u32::MAX { return 0; }                                   // c:1426 CHR_INVALID
+            r
         } else {                                                             // c:1432
             wc                                                               // c:1442 use *wsc
         };
