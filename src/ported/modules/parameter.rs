@@ -1560,12 +1560,35 @@ pub fn getpmnameddir(_ht: *mut HashTable, _name: &str) -> Option<Param> {    // 
 /// — emit "on"/"off" for the named shell option.
 #[allow(non_snake_case)]
 pub fn getpmoption(_ht: *mut HashTable, name: &str) -> Option<Param> {       // c:988
-    // c:991-1010 — synth Param: setval = (isset(opt)) ? "on" : "off".
-    let _on = crate::ported::options::optlookup(name) > 0;                   // c:1003
-    // Static-link path — `param` struct has no `Default` impl yet; the
-    // typed Param synthesis pass will revisit this when the param table
-    // exposes a proper builder. For now, signal "not synthesised".
-    None
+    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL};
+    // c:991-1010 — synth Param: u.str = (isset(opt)) ? "on" : "off".
+    // Static-link path: there is no global Options accessor inside
+    // src/ported/ (intentionally — Options state is held by the
+    // executor, and src/ported can't reach ShellExecutor). For now
+    // the synth records that the name is valid but the on/off value
+    // is empty; the executor-side caller (fusevm_bridge magic_assoc
+    // dispatch) substitutes the live value before returning.
+    let valid = crate::ported::options::optlookup(name) > 0;                 // c:1003
+    let (value, found) = if valid {
+        (String::new(), true)                                                // c:1005 (value-blank, executor fills)
+    } else {
+        (String::new(), false)                                               // c:1009
+    };
+    let pm = Box::new(crate::ported::zsh_h::param {                          // c:992 hcalloc
+        node: crate::ported::zsh_h::hashnode {
+            next: None, nam: name.to_string(),                               // c:993
+            flags: if found { (PM_SCALAR | PM_READONLY) as i32 }             // c:994
+                   else { (PM_SCALAR | PM_READONLY | PM_UNSET
+                           | PM_SPECIAL) as i32 },                           // c:1010
+        },
+        u_data: 0, u_arr: None,
+        u_str: Some(value),                                                  // c:1005 / c:1009
+        u_val: 0, u_dval: 0.0, u_hash: None,
+        gsu_s: None,                                                         // c:996 pmoption_gsu
+        gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+        base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+    });
+    Some(pm)                                                                 // c:1011
 }
 
 /// Port of `getpmparameter()` from Src/Modules/parameter.c:99.
@@ -1597,16 +1620,68 @@ pub fn getpmsalias(ht: *mut HashTable, name: &str) -> Option<Param> {        // 
 /// C: `static HashNode getpmuserdir(UNUSED(HashTable ht), const char *name)`
 /// — emit the home directory for `~user`.
 #[allow(non_snake_case)]
-pub fn getpmuserdir(_ht: *mut HashTable, _name: &str) -> Option<Param> {     // c:1646
-    None
+pub fn getpmuserdir(_ht: *mut HashTable, name: &str) -> Option<Param> {      // c:1646
+    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL};
+    // c:1651 — `nameddirtab->filltable(nameddirtab);` populates the
+    // nameddir table from /etc/passwd. Static-link path: query
+    // getpwnam(3) directly; same data source.
+    let cname = std::ffi::CString::new(name).ok()?;
+    let pwd = unsafe { libc::getpwnam(cname.as_ptr()) };                     // c:1657 nd lookup
+    let (value, found) = if !pwd.is_null() {
+        let dir = unsafe { std::ffi::CStr::from_ptr((*pwd).pw_dir) };
+        (dir.to_string_lossy().into_owned(), true)                           // c:1659 nd->dir
+    } else {
+        (String::new(), false)                                               // c:1662
+    };
+    let pm = Box::new(crate::ported::zsh_h::param {                          // c:1653 hcalloc
+        node: crate::ported::zsh_h::hashnode {
+            next: None, nam: name.to_string(),                               // c:1654
+            flags: if found { (PM_SCALAR | PM_READONLY) as i32 }             // c:1655
+                   else { (PM_SCALAR | PM_READONLY | PM_UNSET
+                           | PM_SPECIAL) as i32 },                           // c:1663
+        },
+        u_data: 0, u_arr: None,
+        u_str: Some(value),                                                  // c:1659 / c:1662
+        u_val: 0, u_dval: 0.0, u_hash: None,
+        gsu_s: None,                                                         // c:1656 nullsetscalar_gsu
+        gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+        base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+    });
+    Some(pm)                                                                 // c:1664
 }
 
 /// Port of `getpmusergroups()` from Src/Modules/parameter.c:2102.
 /// C: `static HashNode getpmusergroups(UNUSED(HashTable ht),
 ///     const char *name)` — emit group memberships for `name`.
 #[allow(non_snake_case)]
-pub fn getpmusergroups(_ht: *mut HashTable, _name: &str) -> Option<Param> {  // c:2102
-    None
+pub fn getpmusergroups(_ht: *mut HashTable, name: &str) -> Option<Param> {   // c:2102
+    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL};
+    // c:2106 — `Groupset gs = get_all_groups();` then walk gs->array
+    // matching name → gid. Static-link path: getgrnam(3) directly,
+    // since zshrs doesn't yet have a Groupset wrapper.
+    let cname = std::ffi::CString::new(name).ok()?;
+    let grp = unsafe { libc::getgrnam(cname.as_ptr()) };                     // c:2106
+    let (value, found) = if !grp.is_null() {
+        let gid = unsafe { (*grp).gr_gid };
+        (gid.to_string(), true)                                              // c:2128 sprintf "%d"
+    } else {
+        (String::new(), false)                                               // c:2134
+    };
+    let pm = Box::new(crate::ported::zsh_h::param {                          // c:2108 hcalloc
+        node: crate::ported::zsh_h::hashnode {
+            next: None, nam: name.to_string(),                               // c:2109
+            flags: if found { (PM_SCALAR | PM_READONLY) as i32 }             // c:2110
+                   else { (PM_SCALAR | PM_READONLY | PM_UNSET
+                           | PM_SPECIAL) as i32 },                           // c:2135
+        },
+        u_data: 0, u_arr: None,
+        u_str: Some(value),                                                  // c:2128 / c:2134
+        u_val: 0, u_dval: 0.0, u_hash: None,
+        gsu_s: None,                                                         // c:2111 nullsetscalar_gsu
+        gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+        base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+    });
+    Some(pm)                                                                 // c:2136
 }
 
 // `getreswords()` (Src/lex.c) ported above as a private helper —
