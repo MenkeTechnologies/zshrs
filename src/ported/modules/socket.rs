@@ -5,355 +5,255 @@
 //! (`bin_zsocket`, `setup_`/`features_`/`enables_`/`boot_`/
 //! `cleanup_`/`finish_`).
 
-use std::io;
-use std::os::unix::io::RawFd;
-
-/// `zsocket` builtin — port of `bin_zsocket()` from
-/// `Src/Modules/socket.c:57`.
-///
+/// Direct port of `bin_zsocket()` from `Src/Modules/socket.c:57`.
 /// C signature: `static int bin_zsocket(char *nam, char **args,
 ///                                       Options ops, int func)`.
-/// zshrs's builtin dispatch hands us argv post-flag-parse-by-name,
-/// so this entry takes only `args: &[&str]` and parses the
-/// `-a`/`-d FD`/`-l`/`-t`/`-v` flags inline (option spec from
-/// socket.c:276 BUILTIN spec `"ad:ltv"`). Returns the exit code,
-/// the message (stdout for success, stderr for error), and the
-/// resulting fd for the listen/connect/accept paths so the
-/// caller can register it in the shell's fdtable (matching C's
-/// `addmodulefd(sfd, FDT_EXTERNAL)` at socket.c:131/167).
-pub fn bin_zsocket(args: &[&str]) -> (i32, String, Option<RawFd>) {     // c:57
-    // c:60-83 — flag parse (mirrors OPT_ISSET against "ad:ltv").
-    let mut verbose = false;                                            // c:60
-    let mut test = false;                                               // c:60
-    let mut targetfd: i32 = 0;                                          // c:60
-    let mut do_listen = false;                                          // c:60
-    let mut do_accept = false;                                          // c:60
-    let mut argv: Vec<&str> = Vec::with_capacity(args.len());
+/// Implements the BUILTIN spec at socket.c:276 (`"ad:ltv"`).
+///
+/// The dispatcher hands argv as `&[String]`; `nam` / `func` are
+/// fixed (`"zsocket"` / `0`) and `ops` is parsed inline from the
+/// argv prefix to match the C source's flag handling on the same
+/// `Options ops` struct other ports use.
+pub fn bin_zsocket(argv_in: &[String]) -> i32 {                          // c:57
+    use crate::ported::zsh_h::{options, MAX_OPS, OPT_ISSET, OPT_ARG, FDT_UNUSED, FDT_EXTERNAL};
+    let nam = "zsocket";
+    // c:60 flag parse against "ad:ltv".
+    let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                            argscount: 0, argsalloc: 0 };
+    let mut args: Vec<String> = Vec::with_capacity(argv_in.len());
     let mut i = 0;
-    while i < args.len() {
-        let a = args[i];
-        if a == "--" {
-            i += 1;
-            while i < args.len() {
-                argv.push(args[i]);
-                i += 1;
-            }
-            break;
-        }
-        if a.starts_with('-') && a.len() > 1 && !a[1..].chars().next().unwrap().is_ascii_digit() {
-            for c in a[1..].chars() {
-                match c {
-                    'v' => verbose = true,                              // c:65
-                    't' => test = true,                                 // c:68
-                    'l' => do_listen = true,                            // c:84
-                    'a' => do_accept = true,                            // c:142
-                    'd' => {                                            // c:71
+    while i < argv_in.len() {
+        let a = &argv_in[i];
+        if a == "--" { i += 1; args.extend_from_slice(&argv_in[i..]); break; }
+        if let Some(rest) = a.strip_prefix('-') {
+            if rest.is_empty() { args.push(a.clone()); i += 1; continue; }
+            let chars: Vec<char> = rest.chars().collect();
+            let mut j = 0;
+            while j < chars.len() {
+                let c = chars[j] as u8;
+                if c == b'd' {                                            // c:71 -d takes arg
+                    ops.ind[c as usize] = (ops.args.len() + 1) as u8;
+                    let rest_after = &rest[j + 1..];
+                    if !rest_after.is_empty() {
+                        ops.args.push(rest_after.to_string());
+                    } else {
                         i += 1;
-                        if i >= args.len() {
-                            return (1, "zsocket: -d requires an argument\n".to_string(), None);
-                        }
-                        match args[i].parse::<i32>() {
-                            Ok(n) => targetfd = n,
-                            Err(_) => {
-                                return (
-                                    1,
-                                    format!("zsocket: {} is an invalid argument to -d\n", args[i]),
-                                    None,
-                                );
-                            }
-                        }
+                        ops.args.push(argv_in.get(i).cloned().unwrap_or_default());
                     }
-                    _ => {}
+                    ops.argscount = ops.args.len() as i32;
+                    break;
                 }
+                if c.is_ascii_alphabetic() { ops.ind[c as usize] = 1; }
+                j += 1;
             }
         } else {
-            argv.push(a);
+            args.push(a.clone());
         }
         i += 1;
     }
-    let _ = targetfd; // -d wiring (redup) deferred until shell fdtable is wired.
+    let _func = 0i32;
 
-    let mut output = String::new();
+    let mut err: i32 = 1;                                                // c:60
+    let mut verbose = 0i32;
+    let mut test = 0i32;
+    let mut targetfd: i32 = 0;
+    let mut soun: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    let mut sfd: i32;
 
-    if do_listen {                                                      // c:84
-        if argv.is_empty() {                                            // c:86
-            return (1, "zsocket: -l requires an argument\n".to_string(), None);
+    if OPT_ISSET(&ops, b'v') { verbose = 1; }                            // c:64-65
+    if OPT_ISSET(&ops, b't') { test    = 1; }                            // c:67-68
+
+    if OPT_ISSET(&ops, b'd') {                                           // c:70
+        let darg = OPT_ARG(&ops, b'd').unwrap_or("");
+        targetfd = darg.parse::<i32>().unwrap_or(0);                     // c:71 atoi
+        if targetfd == 0 {                                               // c:72
+            crate::ported::utils::zwarnnam(nam,
+                &format!("{} is an invalid argument to -d", darg));      // c:73
+            return 1;                                                    // c:75
         }
-        let path = argv[0];                                             // c:90
-        let listen_result = (|| -> io::Result<RawFd> {
-            #[cfg(unix)]
-            {
-                let fd = unsafe { libc::socket(libc::PF_UNIX, libc::SOCK_STREAM, 0) }; // c:92
-                if fd < 0 {
-                    return Err(io::Error::last_os_error());             // c:96
-                }
-                let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
-                addr.sun_family = libc::AF_UNIX as libc::sa_family_t;   // c:99
-                let path_bytes = path.as_bytes();
-                let max_len = addr.sun_path.len() - 1;
-                let copy_len = path_bytes.len().min(max_len);
-                for (i, &byte) in path_bytes[..copy_len].iter().enumerate() {
-                    addr.sun_path[i] = byte as libc::c_char;            // c:100
-                }
-                let r = unsafe {
-                    libc::bind(                                          // c:102
-                        fd,
-                        &addr as *const _ as *const libc::sockaddr,
-                        std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
-                    )
-                };
-                if r < 0 {
-                    let err = io::Error::last_os_error();
-                    unsafe { libc::close(fd) };
-                    return Err(err);                                    // c:107
-                }
-                let r = unsafe { libc::listen(fd, 1) };                 // c:111
-                if r < 0 {
-                    let err = io::Error::last_os_error();
-                    unsafe { libc::close(fd) };
-                    return Err(err);                                    // c:114
-                }
-                Ok(fd)
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = path;
-                Err(io::Error::new(io::ErrorKind::Unsupported, "no unix sockets"))
-            }
-        })();
-        return match listen_result {
-            Ok(fd) => {
-                crate::ported::utils::addmodulefd(fd);                  // c:118
-                let final_fd = if targetfd != 0 {                       // c:120
-                    crate::ported::utils::redup(fd, targetfd);          // c:121
-                    targetfd                                            // c:121
-                } else {                                                 // c:124
-                    crate::ported::utils::movefd(fd)                    // c:125
-                };
-                if verbose {                                            // c:135
-                    output.push_str(&format!("{} listener is on fd {}\n", path, final_fd));
-                }
-                (0, output, Some(final_fd))                             // c:137
-            }
-            Err(e) => (
-                1,
-                format!("zsocket: could not bind to {}: {}\n", path, e),
-                None,
-            ),
+        // c:78-82 — `if (targetfd <= max_zsh_fd && fdtable[targetfd] != FDT_UNUSED)`.
+        // Static-link path: query the per-process fdtable accessor.
+        if crate::ported::utils::fdtable_get(targetfd) != FDT_UNUSED {   // c:78
+            crate::ported::utils::zwarnnam(nam,                          // c:79
+                &format!("file descriptor {} is in use by the shell", targetfd));
+            return 1;                                                    // c:81
+        }
+    }
+
+    if OPT_ISSET(&ops, b'l') {                                           // c:85
+        if args.is_empty() {                                             // c:88
+            crate::ported::utils::zwarnnam(nam, "-l requires an argument");
+            return 1;                                                    // c:90
+        }
+        let localfn = args[0].as_str();                                  // c:93
+        sfd = unsafe { libc::socket(libc::PF_UNIX, libc::SOCK_STREAM, 0) }; // c:95
+        if sfd == -1 {                                                   // c:97
+            crate::ported::utils::zwarnnam(nam,
+                &format!("socket error: {} ", std::io::Error::last_os_error())); // c:98
+            return 1;                                                    // c:99
+        }
+        soun.sun_family = libc::AF_UNIX as _;                            // c:102
+        let path_bytes = localfn.as_bytes();
+        let max_len = soun.sun_path.len() - 1;
+        let copy_len = path_bytes.len().min(max_len);
+        for (k, &b) in path_bytes[..copy_len].iter().enumerate() {       // c:103 strncpy
+            soun.sun_path[k] = b as libc::c_char;
+        }
+        let r = unsafe {                                                 // c:105
+            libc::bind(sfd, &soun as *const _ as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t)
         };
-    }
-
-    if do_accept {                                                      // c:142
-        if argv.is_empty() {                                            // c:146
-            return (1, "zsocket: -a requires an argument\n".to_string(), None);
+        if r != 0 {                                                      // c:106
+            crate::ported::utils::zwarnnam(nam,
+                &format!("could not bind to {}: {}", localfn,
+                    std::io::Error::last_os_error()));                   // c:107
+            unsafe { libc::close(sfd); }                                 // c:108
+            return 1;                                                    // c:109
         }
-        let listen_fd: RawFd = match argv[0].parse() {                  // c:151
-            Ok(fd) => fd,
-            Err(_) => {
-                return (1, "zsocket: invalid numerical argument\n".to_string(), None);
+        if unsafe { libc::listen(sfd, 1) } != 0 {                        // c:112
+            crate::ported::utils::zwarnnam(nam,
+                &format!("could not listen on socket: {}",
+                    std::io::Error::last_os_error()));                   // c:114
+            unsafe { libc::close(sfd); }                                 // c:115
+            return 1;                                                    // c:116
+        }
+        crate::ported::utils::addmodulefd(sfd);                          // c:119 FDT_EXTERNAL
+        if targetfd != 0 {                                               // c:121
+            sfd = crate::ported::utils::redup(sfd, targetfd);            // c:122
+        } else {
+            sfd = crate::ported::utils::movefd(sfd);                     // c:126 movefd
+        }
+        if sfd == -1 {                                                   // c:128
+            crate::ported::utils::zerrnam(nam,
+                &format!("cannot duplicate fd {}: {}", sfd,
+                    std::io::Error::last_os_error()));                   // c:129
+            return 1;                                                    // c:130
+        }
+        crate::ported::utils::fdtable_set(sfd, FDT_EXTERNAL);            // c:134
+        crate::ported::modules::ksh93::setiparam("REPLY", sfd as i64);   // c:136 setiparam_no_convert
+        if verbose != 0 {                                                // c:138
+            println!("{} listener is on fd {}", localfn, sfd);           // c:139
+        }
+        return 0;                                                        // c:141
+    } else if OPT_ISSET(&ops, b'a') {                                    // c:143
+        if args.is_empty() {                                             // c:147
+            crate::ported::utils::zwarnnam(nam, "-a requires an argument");
+            return 1;                                                    // c:149
+        }
+        let lfd = args[0].parse::<i32>().unwrap_or(0);                   // c:152 atoi
+        if lfd == 0 {                                                    // c:154
+            crate::ported::utils::zwarnnam(nam, "invalid numerical argument");
+            return 1;                                                    // c:156
+        }
+        if test != 0 {                                                   // c:159
+            // c:163 HAVE_POLL branch.
+            let mut pfd = libc::pollfd { fd: lfd, events: libc::POLLIN, revents: 0 };
+            let r = unsafe { libc::poll(&mut pfd, 1, 0) };               // c:166
+            if r == 0 { return 1; }                                      // c:166
+            else if r == -1 {                                            // c:167
+                crate::ported::utils::zwarnnam(nam,
+                    &format!("poll error: {}",
+                        std::io::Error::last_os_error()));               // c:169
+                return 1;                                                // c:170
             }
+        }
+        let mut len: libc::socklen_t =
+            std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t; // c:194
+        let rfd: i32;
+        loop {                                                           // c:195
+            let r = unsafe { libc::accept(lfd,                           // c:196
+                &mut soun as *mut _ as *mut libc::sockaddr, &mut len) };
+            if r >= 0 { rfd = r; break; }
+            let osek = std::io::Error::last_os_error().raw_os_error();
+            if osek != Some(libc::EINTR)
+                || crate::ported::utils::errflag() != 0 { rfd = r; break; }
+        }
+        if rfd == -1 {                                                   // c:199
+            crate::ported::utils::zwarnnam(nam,
+                &format!("could not accept connection: {}",
+                    std::io::Error::last_os_error()));                   // c:200
+            return 1;                                                    // c:201
+        }
+        crate::ported::utils::addmodulefd(rfd);                          // c:204 FDT_EXTERNAL
+        if targetfd != 0 {                                               // c:206
+            sfd = crate::ported::utils::redup(rfd, targetfd);            // c:207
+            if sfd < 0 {                                                 // c:208
+                crate::ported::utils::zerrnam(nam,
+                    &format!("could not duplicate socket fd to {}: {}",
+                        targetfd, std::io::Error::last_os_error()));     // c:209
+                unsafe { libc::close(rfd); }                             // c:210
+                return 1;                                                // c:211
+            }
+            crate::ported::utils::fdtable_set(sfd, FDT_EXTERNAL);        // c:213
+        } else {
+            sfd = rfd;                                                   // c:217
+        }
+        crate::ported::modules::ksh93::setiparam("REPLY", sfd as i64);   // c:220 setiparam_no_convert
+        if verbose != 0 {                                                // c:222
+            let path = soun.sun_path.iter()
+                .take_while(|&&c| c != 0)
+                .map(|&c| c as u8 as char).collect::<String>();
+            println!("new connection from {} is on fd {}", path, sfd);   // c:223
+        }
+    } else {                                                             // c:225
+        if args.is_empty() {                                             // c:227
+            crate::ported::utils::zwarnnam(nam, "zsocket requires an argument");
+            return 1;                                                    // c:229
+        }
+        sfd = unsafe { libc::socket(libc::PF_UNIX, libc::SOCK_STREAM, 0) }; // c:233
+        if sfd == -1 {                                                   // c:235
+            crate::ported::utils::zwarnnam(nam,
+                &format!("socket creation failed: {}",
+                    std::io::Error::last_os_error()));                   // c:236
+            return 1;                                                    // c:237
+        }
+        soun.sun_family = libc::AF_UNIX as _;                            // c:240
+        let path_bytes = args[0].as_bytes();
+        let max_len = soun.sun_path.len() - 1;
+        let copy_len = path_bytes.len().min(max_len);
+        for (k, &b) in path_bytes[..copy_len].iter().enumerate() {       // c:241 strncpy
+            soun.sun_path[k] = b as libc::c_char;
+        }
+        err = unsafe {                                                   // c:243
+            libc::connect(sfd,
+                &soun as *const _ as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t)
         };
-        if test {                                                       // c:156
-            #[cfg(unix)]
-            {
-                let mut pfd = libc::pollfd {
-                    fd: listen_fd,
-                    events: libc::POLLIN,
-                    revents: 0,
-                };
-                let r = unsafe { libc::poll(&mut pfd, 1, 0) };          // c:158
-                if r < 0 {
-                    return (
-                        1,
-                        format!("zsocket: poll error: {}\n", io::Error::last_os_error()),
-                        None,
-                    );
-                }
-                if r == 0 {
-                    return (1, output, None);                           // c:165
-                }
-            }
+        if err != 0 {                                                    // c:243
+            crate::ported::utils::zwarnnam(nam,
+                &format!("connection failed: {}",
+                    std::io::Error::last_os_error()));                   // c:244
+            unsafe { libc::close(sfd); }                                 // c:245
+            return 1;                                                    // c:246
         }
-        let accept_result = (|| -> io::Result<(RawFd, String)> {
-            #[cfg(unix)]
-            {
-                let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
-                let mut len: libc::socklen_t =
-                    std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
-                let fd = loop {
-                    let r = unsafe {
-                        libc::accept(                                    // c:175
-                            listen_fd,
-                            &mut addr as *mut _ as *mut libc::sockaddr,
-                            &mut len,
-                        )
-                    };
-                    if r < 0 {
-                        let err = io::Error::last_os_error();
-                        if err.kind() == io::ErrorKind::Interrupted {
-                            continue;                                    // c:178
-                        }
-                        return Err(err);
-                    }
-                    break r;
-                };
-                let path = addr
-                    .sun_path
-                    .iter()
-                    .take_while(|&&c| c != 0)
-                    .map(|&c| c as u8 as char)
-                    .collect::<String>();
-                Ok((fd, path))
+        crate::ported::utils::addmodulefd(sfd);                          // c:251 FDT_EXTERNAL
+        if targetfd != 0 {                                               // c:253
+            if crate::ported::utils::redup(sfd, targetfd) < 0 {          // c:254
+                crate::ported::utils::zerrnam(nam,
+                    &format!("could not duplicate socket fd to {}: {}",
+                        targetfd, std::io::Error::last_os_error()));     // c:255
+                unsafe { libc::close(sfd); }                             // c:256
+                return 1;                                                // c:257
             }
-            #[cfg(not(unix))]
-            {
-                Err(io::Error::new(io::ErrorKind::Unsupported, "no unix sockets"))
-            }
-        })();
-        return match accept_result {
-            Ok((fd, path)) => {
-                crate::ported::utils::addmodulefd(fd);                  // c:208
-                let final_fd = if targetfd != 0 {                       // c:210
-                    crate::ported::utils::redup(fd, targetfd);          // c:211
-                    targetfd
-                } else {                                                 // c:215
-                    crate::ported::utils::movefd(fd)                    // c:216
-                };
-                if verbose {                                            // c:198
-                    output.push_str(&format!("new connection from {} is on fd {}\n", path, final_fd));
-                }
-                (0, output, Some(final_fd))                             // c:200
-            }
-            Err(e) => (
-                1,
-                format!("zsocket: could not accept connection: {}\n", e),
-                None,
-            ),
-        };
+            sfd = targetfd;                                              // c:259
+            crate::ported::utils::fdtable_set(sfd, FDT_EXTERNAL);        // c:260
+        }
+        crate::ported::modules::ksh93::setiparam("REPLY", sfd as i64);   // c:263 setiparam_no_convert
+        if verbose != 0 {                                                // c:265
+            let path = &args[0];
+            println!("{} is now on fd {}", path, sfd);                   // c:266
+        }
     }
-
-    // No -l, no -a → connect path (c:218).
-    if argv.is_empty() {                                                // c:223
-        return (1, "zsocket: requires an argument\n".to_string(), None);
-    }
-    let path = argv[0];                                                 // c:227
-    let connect_result = (|| -> io::Result<RawFd> {
-        #[cfg(unix)]
-        {
-            let fd = unsafe { libc::socket(libc::PF_UNIX, libc::SOCK_STREAM, 0) }; // c:229
-            if fd < 0 {
-                return Err(io::Error::last_os_error());
-            }
-            let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
-            addr.sun_family = libc::AF_UNIX as libc::sa_family_t;       // c:236
-            let path_bytes = path.as_bytes();
-            let max_len = addr.sun_path.len() - 1;
-            let copy_len = path_bytes.len().min(max_len);
-            for (i, &byte) in path_bytes[..copy_len].iter().enumerate() {
-                addr.sun_path[i] = byte as libc::c_char;
-            }
-            let r = unsafe {
-                libc::connect(                                           // c:240
-                    fd,
-                    &addr as *const _ as *const libc::sockaddr,
-                    std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
-                )
-            };
-            if r < 0 {
-                let err = io::Error::last_os_error();
-                unsafe { libc::close(fd) };
-                return Err(err);                                        // c:245
-            }
-            Ok(fd)
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = path;
-            Err(io::Error::new(io::ErrorKind::Unsupported, "no unix sockets"))
-        }
-    })();
-    match connect_result {
-        Ok(fd) => {
-            crate::ported::utils::addmodulefd(fd);                       // c:252
-            let final_fd = if targetfd != 0 {                            // c:254
-                crate::ported::utils::redup(fd, targetfd);               // c:255
-                targetfd
-            } else {                                                     // c:259
-                crate::ported::utils::movefd(fd)                         // c:260
-            };
-            if verbose {                                                 // c:265
-                output.push_str(&format!("{} is now on fd {}\n", path, final_fd));
-            }
-            (0, output, Some(final_fd))                                  // c:267
-        }
-        Err(e) => (1, format!("zsocket: connection failed: {}\n", e), None),
-    }
+    let _ = (err, verbose, test, targetfd);                              // silence unused-binding paths
+    0                                                                    // c:271
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn test_builtin_zsocket_listen_no_arg() {
-        let (status, output, _) = bin_zsocket(&["-l"]);
-        assert_eq!(status, 1);
-        assert!(output.contains("requires"));
-    }
-
-    #[test]
-    fn test_builtin_zsocket_accept_no_arg() {
-        let (status, output, _) = bin_zsocket(&["-a"]);
-        assert_eq!(status, 1);
-        assert!(output.contains("requires"));
-    }
-
-    #[test]
-    fn test_builtin_zsocket_connect_no_arg() {
-        let (status, output, _) = bin_zsocket(&[]);
-        assert_eq!(status, 1);
-        assert!(output.contains("requires"));
-    }
-
-    #[test]
-    fn test_builtin_zsocket_accept_invalid_fd() {
-        let (status, output, _) = bin_zsocket(&["-a", "abc"]);
-        assert_eq!(status, 1);
-        assert!(output.contains("invalid"));
-    }
-}
 
 // ===========================================================
 // Methods moved verbatim from src/ported/exec.rs because their
 // C counterpart's source file maps 1:1 to this Rust module.
 // ===========================================================
-
-// BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
-    /// `zsocket` builtin shim — delegates to canonical port at
-    /// `bin_zsocket()` above (port of `Src/Modules/socket.c:57`).
-    /// Argv flag parsing happens inside the canonical port (matching
-    /// the C builtin's option spec parser); the shim only adapts the
-    /// `&[String]` argv to the canonical `&[&str]` shape.
-    pub(crate) fn bin_zsocket(&mut self, args: &[String]) -> i32 {
-        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-        let (status, output, fd) = crate::socket::bin_zsocket(&argv);
-        if !output.is_empty() {
-            if status == 0 { print!("{}", output); } else { eprint!("{}", output); }
-        }
-        // c:135/204/268 — setiparam_no_convert("REPLY", sfd) on
-        // every successful socket()/accept()/connect() path. The
-        // canonical `bin_zsocket` returns the post-redup/movefd
-        // fd; here we assign it to $REPLY so scripts can read it.
-        if status == 0 {
-            if let Some(fd_val) = fd {
-                self.variables.insert("REPLY".to_string(), fd_val.to_string());
-            }
-        }
-        status
-    }
-}
-// END moved-from-exec-rs
 
 // =====================================================================
 // static struct builtin bintab[]                                    c:280

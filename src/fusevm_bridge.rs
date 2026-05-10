@@ -38,6 +38,7 @@ use std::io::Write;
 // ═══════════════════════════════════════════════════════════════════════════
 
 use std::cell::{Cell, RefCell};
+use crate::socket::bin_zsocket;
 
 thread_local! {
     /// Mirror of C zsh's `doneps4` local in execcmd_exec
@@ -9667,7 +9668,7 @@ impl crate::ported::exec::ShellExecutor {
             "getln" => return self.builtin_getln(&rest_vec),
             "zpty" => return self.bin_zpty(&rest_vec),
             "ztcp" => return self.bin_ztcp(&rest_vec),
-            "zsocket" => return self.bin_zsocket(&rest_vec),
+            "zsocket" => return bin_zsocket(&rest_vec),
             "private" => {
                 // bin_private now takes the canonical C signature
                 // (name, args, ops, func, assigns) per Src/Modules/

@@ -1708,6 +1708,16 @@ static CHWORDS: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
 static STOPHIST_FLAG: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
 
+/// Process-wide singleton History — the C source reaches its history
+/// state through file-static globals (`hist_ring`, `curhist`,
+/// `histsiz`, `savehistsiz`) inside `Src/hist.c`. Rust collects them
+/// into one `History` struct and parks it behind a `OnceLock<Mutex>`
+/// for the same single-instance reach. `bin_fc` and other call sites
+/// that mirror the C "operate on the global history" pattern lock
+/// this directly. Initialised on first access via `History::new()`.
+pub static HISTORY: std::sync::OnceLock<std::sync::Mutex<History>> =
+    std::sync::OnceLock::new();
+
 
 /// Whether the history file is currently locked by this process.
 /// Port of `histfileIsLocked()` from Src/hist.c.

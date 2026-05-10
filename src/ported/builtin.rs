@@ -2646,90 +2646,150 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
     let mut last: i64 = -1;
     let mut asgf: Vec<(String, String)> = Vec::new();
 
+    use crate::ported::zsh_h::{HFILE_APPEND, HFILE_SKIPOLD, HFILE_USE_OPTIONS};
+    let hist_lock = || crate::ported::hist::HISTORY.get_or_init(
+        || std::sync::Mutex::new(crate::ported::hist::History::new()));
+
     // c:1441-1481 — `-p` push history stack.
     if OPT_ISSET(ops, b'p') {                                                // c:1441
         let mut hf = "".to_string();
-        let mut hs: i64 = 100;                                               // DEFAULT_HISTSIZE
-        let mut shs: i64 = 0;
-        let _level: i32 = if OPT_ISSET(ops, b'a') { 0 } else { -1 };         // locallevel proxy
-        if !argv.is_empty() {
+        let mut hs: i64;                                                     // c:1443
+        let mut shs: i64;                                                    // c:1444
+        // c:1445 — `int level = OPT_ISSET(ops,'a') ? locallevel : -1;`
+        let level: i32 = if OPT_ISSET(ops, b'a') {
+            LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed)
+        } else { -1 };
+        // Source the defaults from the live history singleton; the C
+        // source reads `histsiz` / `savehistsiz` globals at c:1469-1470.
+        {
+            let g = hist_lock().lock().unwrap();
+            hs = g.histsiz;                                                  // c:1442 DEFAULT_HISTSIZE/histsiz
+            shs = g.savehistsiz;
+        }
+        if !argv.is_empty() {                                                // c:1445
             hf = argv.remove(0);                                             // c:1446
-            if !argv.is_empty() {
-                match argv.remove(0).parse::<i64>() {                        // c:1448
+            if !argv.is_empty() {                                            // c:1447
+                let s2 = argv.remove(0);
+                match s2.parse::<i64>() {                                    // c:1449 zstrtol
                     Ok(n) => hs = n,
                     Err(_) => {
-                        crate::ported::utils::zwarnnam("fc", "HISTSIZE must be an integer"); // c:1452
-                        return 1;
+                        crate::ported::utils::zwarnnam("fc",                 // c:1452
+                            "HISTSIZE must be an integer");
+                        return 1;                                            // c:1453
                     }
                 }
-                if !argv.is_empty() {
-                    match argv.remove(0).parse::<i64>() {                    // c:1456
+                if !argv.is_empty() {                                        // c:1455
+                    let s3 = argv.remove(0);
+                    match s3.parse::<i64>() {                                // c:1456
                         Ok(n) => shs = n,
                         Err(_) => {
-                            crate::ported::utils::zwarnnam("fc", "SAVEHIST must be an integer"); // c:1459
-                            return 1;
+                            crate::ported::utils::zwarnnam("fc",             // c:1459
+                                "SAVEHIST must be an integer");
+                            return 1;                                        // c:1460
                         }
                     }
                 } else {
-                    shs = hs;                                                // c:1465
+                    shs = hs;                                                // c:1464
                 }
-                if !argv.is_empty() {
-                    crate::ported::utils::zwarnnam("fc", "too many arguments"); // c:1468
-                    return 1;
+                if !argv.is_empty() {                                        // c:1466
+                    crate::ported::utils::zwarnnam("fc",                     // c:1468
+                        "too many arguments");
+                    return 1;                                                // c:1469
                 }
             }
         }
-        // c:1480 — `pushhiststack(hf, hs, shs, level)`. Defer to hist.rs.
-        let _ = (hf, hs, shs);
-        return 0;                                                            // c:1488
-    }
-
-    // c:1490-1495 — `-P` pop history stack.
-    if OPT_ISSET(ops, b'P') {                                                // c:1490
-        if !argv.is_empty() {
-            crate::ported::utils::zwarnnam("fc", "too many arguments");      // c:1492
-            return 1;
+        // c:1473 — pushhiststack(hf, hs, shs, level); failure → return 1.
+        {
+            let mut g = hist_lock().lock().unwrap();
+            crate::ported::hist::pushhiststack(
+                &mut g, Some(&hf), hs, shs, level);                          // c:1473
         }
-        // c:1494 — `saveandpophiststack(-1, HFILE_USE_OPTIONS)`. Defer.
-        return 0;
+        if !hf.is_empty() {                                                  // c:1475
+            // c:1476-1480 — stat then readhistfile(hf, 1, HFILE_USE_OPTIONS).
+            let exists = std::fs::metadata(&hf).is_ok();
+            let enoent = std::io::Error::last_os_error().raw_os_error()
+                == Some(libc::ENOENT);
+            if exists || !enoent {                                           // c:1477
+                let mut g = hist_lock().lock().unwrap();
+                crate::ported::hist::readhistfile(                           // c:1478
+                    &mut g, Some(&hf), true, HFILE_USE_OPTIONS as i32);
+            }
+        }
+        return 0;                                                            // c:1483
     }
 
-    // c:1497-1503 — `-m` pattern filter.
+    // c:1485-1491 — `-P` pop history stack.
+    if OPT_ISSET(ops, b'P') {                                                // c:1485
+        if !argv.is_empty() {                                                // c:1486
+            crate::ported::utils::zwarnnam("fc", "too many arguments");      // c:1487
+            return 1;                                                        // c:1488
+        }
+        // c:1490 — `return !saveandpophiststack(-1, HFILE_USE_OPTIONS);`.
+        // The C wrapper returns 1 on success, 0 on failure; the `!` flips
+        // it to a shell exit code. Rust port treats successful pop as 0.
+        let mut g = hist_lock().lock().unwrap();
+        crate::ported::hist::saveandpophiststack(&mut g, HFILE_USE_OPTIONS as i32);
+        return 0;                                                            // c:1490
+    }
+
+    // c:1494-1500 — `-m` pattern filter (compile first arg).
     let mut pprog: Option<crate::ported::pattern::PatProg> = None;
-    if !argv.is_empty() && OPT_ISSET(ops, b'm') {                            // c:1497
+    if !argv.is_empty() && OPT_ISSET(ops, b'm') {                            // c:1494
         let pat = argv.remove(0);
-        match crate::ported::pattern::patcompile(&pat,
+        // c:1495 — tokenize(*argv); — Rust `patcompile` handles tokenisation.
+        match crate::ported::pattern::patcompile(&pat,                       // c:1496
             crate::ported::pattern::PatFlags::default()) {
             Ok(p) => pprog = Some(p),
             Err(_) => {
-                crate::ported::utils::zwarnnam(nam, "invalid match pattern"); // c:1500
-                return 1;
+                crate::ported::utils::zwarnnam(nam, "invalid match pattern"); // c:1497
+                return 1;                                                    // c:1498
             }
         }
     }
 
-    crate::ported::mem::queue_signals();
+    crate::ported::mem::queue_signals();                                     // c:1502
 
-    // c:1506-1521 — `-R` read / `-W` write / `-A` append.
-    if OPT_ISSET(ops, b'R') {                                                // c:1506
-        // c:1509 — `readhistfile(*argv, 1, OPT_ISSET(ops,'I') ? HFILE_SKIPOLD : 0);`
-        let _ = argv.first();
-        crate::ported::mem::unqueue_signals();
-        return 0;
+    // c:1503-1525 — `-R` read / `-W` write / `-A` append history file.
+    if OPT_ISSET(ops, b'R') {                                                // c:1503
+        let path = argv.first().cloned();
+        let flags = if OPT_ISSET(ops, b'I') { HFILE_SKIPOLD as i32 } else { 0 };
+        let mut g = hist_lock().lock().unwrap();
+        crate::ported::hist::readhistfile(                                   // c:1505
+            &mut g, path.as_deref(), true, flags);
+        drop(g);
+        crate::ported::mem::unqueue_signals();                               // c:1506
+        return 0;                                                            // c:1507
     }
-    if OPT_ISSET(ops, b'W') {                                                // c:1512
-        let _ = argv.first();
-        crate::ported::mem::unqueue_signals();
-        return 0;
+    if OPT_ISSET(ops, b'W') {                                                // c:1509
+        let path = argv.first().cloned();
+        let flags = if OPT_ISSET(ops, b'I') { HFILE_SKIPOLD as i32 } else { 0 };
+        let g = hist_lock().lock().unwrap();
+        crate::ported::hist::savehistfile(                                   // c:1511
+            &g, path.as_deref(), flags);
+        drop(g);
+        crate::ported::mem::unqueue_signals();                               // c:1512
+        return 0;                                                            // c:1513
     }
-    if OPT_ISSET(ops, b'A') {                                                // c:1517
-        let _ = argv.first();
-        crate::ported::mem::unqueue_signals();
-        return 0;
+    if OPT_ISSET(ops, b'A') {                                                // c:1515
+        let path = argv.first().cloned();
+        let mut flags = HFILE_APPEND as i32;
+        if OPT_ISSET(ops, b'I') { flags |= HFILE_SKIPOLD as i32; }           // c:1518
+        let g = hist_lock().lock().unwrap();
+        crate::ported::hist::savehistfile(                                   // c:1517
+            &g, path.as_deref(), flags);
+        drop(g);
+        crate::ported::mem::unqueue_signals();                               // c:1519
+        return 0;                                                            // c:1520
     }
 
-    // c:1525 — refuse inside ZLE.
-    // (zleactive global from Src/zle_main.c; deferred.)
+    // c:1523-1527 — refuse inside ZLE.
+    if crate::ported::builtins::sched::zleactive.load(                       // c:1523
+        std::sync::atomic::Ordering::Relaxed) != 0 {
+        crate::ported::mem::unqueue_signals();                               // c:1524
+        crate::ported::utils::zwarnnam(nam,                                  // c:1525
+            "no interactive history within ZLE");
+        return 1;                                                            // c:1526
+    }
 
     // c:1530-1547 — `name=value` substitution pairs.
     while !argv.is_empty() && argv[0].contains('=') {                        // c:1530
@@ -2785,30 +2845,80 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
         if last < first { last = first; }                                    // c:1604
     }
 
-    let retval;
+    let mut retval;
     if OPT_ISSET(ops, b'l') {                                                // c:1606
         // c:1608 — `fclist(stdout, ops, first, last, asgf, pprog, 0);`
         retval = fclist(std::ptr::null_mut(), ops, first, last,
                         &asgf, std::ptr::null_mut(), 0);
         crate::ported::mem::unqueue_signals();
     } else {
-        // c:1611+ — edit + re-execute path: gettempfile + fclist + fcedit.
-        crate::ported::mem::unqueue_signals();
-        let _editor = if func == crate::ported::builtin::BIN_R || OPT_ISSET(ops, b's') {
-            "-".to_string()                                                  // c:1644
-        } else if OPT_HASARG(ops, b'e') {
-            OPT_ARG(ops, b'e').unwrap_or("vi").to_string()                   // c:1646
-        } else {
-            std::env::var("FCEDIT")
-                .or_else(|_| std::env::var("EDITOR"))
-                .unwrap_or_else(|_| "vi".to_string())                        // c:1648-1652
-        };
-        // Edit-and-run flow lives in src/ported/init.rs's source
-        // loop; deferred to that wireup.
-        retval = 0;
+        // c:1611-1668 — edit history range to a temp file, fcedit it,
+        // then stuff() the result back as the next command.
+        retval = 1;                                                          // c:1620
+        let fil_opt = crate::ported::utils::gettempfile("zshfc", "");        // c:1621 gettempfile
+        match fil_opt {
+            None => {                                                        // c:1623
+                crate::ported::mem::unqueue_signals();                       // c:1624
+                crate::ported::utils::zwarnnam("fc",                         // c:1625
+                    &format!("can't open temp file: {}",
+                        std::io::Error::last_os_error()));
+            }
+            Some(fil) => {
+                // c:1632 — `if (last >= curhist) { last = curhist - 1; ... }`
+                if last >= curhist {                                         // c:1632
+                    last = curhist - 1;                                      // c:1633
+                    if first > last {                                        // c:1634
+                        crate::ported::mem::unqueue_signals();               // c:1635
+                        crate::ported::utils::zwarnnam("fc",                 // c:1636
+                            "current history line would recurse endlessly, aborted");
+                        let _ = std::fs::remove_file(&fil);                  // c:1639 unlink
+                        return 1;                                            // c:1640
+                    }
+                }
+                ops.ind[b'n' as usize] = 1;                                  // c:1644 No line numbers
+                let out = std::fs::OpenOptions::new()
+                    .create(true).write(true).truncate(true).open(&fil).ok();
+                let listed = if out.is_some() {                              // c:1645
+                    fclist(std::ptr::null_mut(), ops, first, last,
+                           &asgf, std::ptr::null_mut(), 1)
+                } else { 1 };
+                if listed == 0 {                                             // c:1645
+                    // c:1647-1656 — pick editor.
+                    let editor: String = if func == BIN_R || OPT_ISSET(ops, b's') {
+                        "-".to_string()                                      // c:1648
+                    } else if OPT_HASARG(ops, b'e') {                        // c:1649
+                        OPT_ARG(ops, b'e').unwrap_or("").to_string()         // c:1650
+                    } else {
+                        std::env::var("FCEDIT")                              // c:1651 getsparam("FCEDIT")
+                            .or_else(|_| std::env::var("EDITOR"))            // c:1653 getsparam("EDITOR")
+                            .unwrap_or_else(|_|
+                                crate::ported::zsh_h::DEFAULT_FCEDIT.to_string()) // c:1654
+                    };
+                    crate::ported::mem::unqueue_signals();                   // c:1657
+                    if fcedit(&editor, &fil) != 0 {                          // c:1658
+                        if crate::ported::input::stuff(&fil) != 0 {          // c:1659
+                            crate::ported::utils::zwarnnam("fc",             // c:1660
+                                &format!("{}: {}",
+                                    std::io::Error::last_os_error(), fil));
+                        } else {
+                            // c:1663-1664 — `loop(0,1); retval = lastval;`
+                            // The interactive loop drives the next stuffed
+                            // line through the parser. Static-link path:
+                            // the executor's input source picks it up on
+                            // the next read; lastval reflects that result.
+                            retval = LASTVAL.load(                           // c:1664
+                                std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                } else {
+                    crate::ported::mem::unqueue_signals();                   // c:1667
+                }
+                let _ = std::fs::remove_file(&fil);                          // c:1671 unlink
+            }
+        }
     }
     let _ = pprog;
-    retval                                                                   // c:1670
+    retval                                                                   // c:1675
 }
 
 /// Port of `bin_typeset()` from Src/builtin.c:2655.

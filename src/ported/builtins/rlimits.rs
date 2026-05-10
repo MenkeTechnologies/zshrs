@@ -1448,7 +1448,7 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
     0
 }
 
-// Bridge fns `ShellExecutor::bin_limit` / `bin_unlimit` /
+// Bridge fns
 // `bin_ulimit` live in `src/extensions/ext_builtins.rs` (the
 // non-ported dispatcher layer). They construct a `struct options`
 // from the leading flag run and delegate to the free fns above.
