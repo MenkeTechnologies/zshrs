@@ -529,28 +529,28 @@ pub fn parse_ordering(arg: &str, flags: &mut Option<i32>) -> i32 {           // 
 /// hook the gsu vtable based on PM_TYPE. Static-link path just
 /// records the param-name registration via env-var bridge so
 /// callers can detect that the compparam tables exist.
-pub fn addcompparams(_cp: &[CompParam], _pp: &mut Vec<*mut crate::ported::zsh_h::param>) { // c:1297
+pub fn addcompparams(cp: &[compparam], _pp: &mut Vec<*mut crate::ported::zsh_h::param>) { // c:1297
     // c:1300 — walk cp->name; for each: createparam + assign gsu.
     // Static-link path: paramtab createparam isn't yet wired. The
     // table-walk shape is preserved so the dispatch surface lands.
-    for entry in _cp {
+    for entry in cp {
         let _ = entry.name;
         // c:1302 — `Param pm = createparam(cp->name, ...)`. Deferred.
         // c:1313-1322 — gsu hookup per PM_TYPE. Deferred.
     }
 }
 
-/// Stand-in for C `struct compparam` (Src/Zle/complete.c:1235).
+/// Direct port of `struct compparam` from `Src/Zle/complete.c:1215`.
 /// One entry per special completion parameter (e.g. PREFIX, SUFFIX,
 /// IPREFIX, words, current). `var` holds a pointer to the storage
 /// the gsu reads/writes; for the kparams it's a pointer into the
 /// global completion-state buffers.
 #[allow(non_camel_case_types)]
-pub struct CompParam {
-    pub name: &'static str,                                                  // c:1236
-    pub type_: i32,                                                          // c:1237 PM_*
-    pub var: usize,                                                          // c:1238 void *var
-    pub gsu: usize,                                                          // c:1239 GsuScalar/Integer/Array
+pub struct compparam {                                                       // c:1215
+    pub name: &'static str,                                                  // c:1216 char *name
+    pub r#type: i32,                                                         // c:1217 int type
+    pub var: usize,                                                          // c:1218 void *var
+    pub gsu: usize,                                                          // c:1219 GsuScalar gsu
 }
 
 /// Port of `makecompparams()` from `Src/Zle/complete.c:1333`.
@@ -578,19 +578,15 @@ pub fn makecompparams() {                                                    // 
 pub fn compunsetfn(pm: *mut crate::ported::zsh_h::param, exp: i32) {         // c:1489
     use crate::ported::zsh_h::{PM_TYPE, PM_SCALAR, PM_ARRAY, PM_HASHED};
     if pm.is_null() { return; }
-    let flags = unsafe { (*pm).node.flags };
-    let ptype = PM_TYPE(flags as u32);
     if exp != 0 {                                                            // c:1492
-        // c:1494 — PM_SCALAR: zero u.str
-        // c:1497 — PM_ARRAY: free + replace with empty array
-        // c:1500 — PM_HASHED: delete inner hashtable
-        match ptype {
+        // c:1494/1497/1500 — switch on PM_TYPE(pm->node.flags).
+        match PM_TYPE(unsafe { (*pm).node.flags } as u32) {
             PM_SCALAR => unsafe { (*pm).u_str = Some(String::new()); },      // c:1494
             PM_ARRAY  => unsafe { (*pm).u_arr = Some(Vec::new()); },         // c:1497
             PM_HASHED => unsafe { (*pm).u_hash = None; },                    // c:1500
             _ => {}
         }
-    } else if ptype == PM_HASHED {                                           // c:1505
+    } else if PM_TYPE(unsafe { (*pm).node.flags } as u32) == PM_HASHED {     // c:1505
         // c:1508 — `deletehashtable(pm->u.hash); pm->u.hash = NULL;`
         unsafe { (*pm).u_hash = None; }                                      // c:1509
         // c:1512 — null out compkpms[i] for each CP_KEYPARAMS entry.

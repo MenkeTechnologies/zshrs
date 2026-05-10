@@ -596,7 +596,7 @@ pub fn do_ambig_menu() -> i32 {                                              // 
     use std::sync::atomic::Ordering;
     use crate::ported::zle::compcore::{
         amatches, iforcemenu, insmnum, lastpermmnum, menuacc, oldins, oldlist,
-        MINFO, MenuInfoState,
+        MINFO,
     };
     use crate::ported::zle::zle_tricky::{MENUCMP, USEMENU};
 
@@ -609,7 +609,7 @@ pub fn do_ambig_menu() -> i32 {                                              // 
     if um != 3 {                                                             // c:1389
         MENUCMP.store(1, Ordering::Relaxed);                                 // c:1390
         menuacc.store(0, Ordering::Relaxed);                                 // c:1391
-        if let Ok(mut m) = MINFO.get_or_init(|| std::sync::Mutex::new(MenuInfoState::default())).lock() {
+        if let Ok(mut m) = MINFO.get_or_init(|| std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
             m.cur = None;                                                    // c:1392
         }
     } else {
@@ -624,7 +624,7 @@ pub fn do_ambig_menu() -> i32 {                                              // 
             }
         } else {
             if let Ok(mut m) = MINFO.get_or_init(
-                || std::sync::Mutex::new(MenuInfoState::default())
+                || std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())
             ).lock() {
                 m.cur = None;                                                // c:1399
             }
@@ -652,7 +652,7 @@ pub fn do_ambig_menu() -> i32 {                                              // 
 
     let Some(g) = chosen_group else {                                        // c:1440-1444
         if let Ok(mut m) = MINFO.get_or_init(
-            || std::sync::Mutex::new(MenuInfoState::default())
+            || std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())
         ).lock() {
             m.cur = None;
             m.asked = 0;
@@ -672,9 +672,9 @@ pub fn do_ambig_menu() -> i32 {                                              // 
         }
     }
     if let Ok(mut mst) = MINFO.get_or_init(
-        || std::sync::Mutex::new(MenuInfoState::default())
+        || std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())
     ).lock() {
-        mst.cur = mc;                                                        // c:1456
+        mst.cur = mc.map(Box::new);                                          // c:1456
     }
     0
 }

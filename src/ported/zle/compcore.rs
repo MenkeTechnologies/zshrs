@@ -1220,32 +1220,27 @@ fn selfinsert_stub() -> i32 {                                                 //
 pub static LASTCHAR: AtomicI32 = AtomicI32::new(0);                          // zle_main.c
 /// Direct port of `minfo.cur = NULL` — `Src/Zle/zle_tricky.c minfo`.
 fn minfo_clear_cur() {                                                        // zle_tricky.c minfo
-    if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(MenuInfoState::default())).lock() {
+    if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
         g.cur = None;
     }
 }
 /// Direct port of `minfo.asked = 0` — `Src/Zle/zle_tricky.c minfo`.
 fn minfo_asked_zero() {                                                       // zle_tricky.c minfo
-    if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(MenuInfoState::default())).lock() {
+    if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
         g.asked = 0;
     }
 }
 
-/// Trimmed mirror of `struct menuinfo` from `Src/Zle/comp.h:284-295`.
-/// Only the fields compcore actually reads/writes are projected here;
-/// the full struct lives in `comp_h.rs::Menuinfo` for the listing path.
-#[derive(Default, Clone)]
-pub struct MenuInfoState {                                                    // comp.h:284
-    pub cur: Option<Cmatch>,
-    pub asked: i32,
-}
-pub static MINFO: OnceLock<Mutex<MenuInfoState>> = OnceLock::new();           // zle_tricky.c minfo
+/// Direct port of `struct menuinfo minfo` — `Src/Zle/zle_tricky.c`
+/// (the single file-scope instance). The struct type itself lives
+/// in `comp_h.rs::Menuinfo` (port of comp.h:284-295).
+pub static MINFO: OnceLock<Mutex<crate::ported::zle::comp_h::Menuinfo>> = OnceLock::new(); // zle_tricky.c minfo
 
 /// Helper to set MINFO.cur from outside compcore.rs. Mirrors C's
 /// direct write `minfo.cur = &m;`.
 pub fn set_minfo_cur(m: Cmatch) {                                             // zle_tricky.c minfo
-    if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(MenuInfoState::default())).lock() {
-        g.cur = Some(m);
+    if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
+        g.cur = Some(Box::new(m));
     }
 }
 fn do_ambig_menu_stub() {                                                     // compresult.c:1381
@@ -1265,8 +1260,8 @@ fn do_ambiguous_stub() -> i32 {                                               //
 /// pick it up, matching the C behavior of routing the single-match
 /// insert through `minfo`.
 fn do_single_stub(m: Cmatch) {                                                // compresult.c:963
-    if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(MenuInfoState::default())).lock() {
-        g.cur = Some(m);
+    if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
+        g.cur = Some(Box::new(m));
     }
 }
 
@@ -3101,7 +3096,7 @@ mod tests {
     #[test]
     fn minfo_clear_and_asked_zero_mutate_state() {
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
-        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(MenuInfoState::default())).lock() {
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
             let mut cm = Cmatch::default();
             cm.str_ = Some("x".into());
             g.cur = Some(cm);
