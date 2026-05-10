@@ -216,21 +216,12 @@ pub fn setfn_error(pm: *mut crate::ported::zsh_h::param) {               // c:26
 /// state the C source tracks via `pm->gsu.X->unsetfn == pp{X}_unsetfn`
 /// pointer comparisons. Static-link path uses a name-set since the
 /// per-type GSU vtable pointers aren't a clean Rust mapping.
-static PRIVATE_PARAMS_INNER: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>>
-    = std::sync::OnceLock::new();
-
-pub struct PrivateParamsAccessor;
-impl PrivateParamsAccessor {
-    pub fn lock(&self) -> Result<std::sync::MutexGuard<'static, std::collections::HashSet<String>>,
-                                  std::sync::PoisonError<std::sync::MutexGuard<'static, std::collections::HashSet<String>>>> {
-        PRIVATE_PARAMS_INNER
-            .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
-            .lock()
-    }
-}
-
-#[allow(non_upper_case_globals)]
-pub static PRIVATE_PARAMS: PrivateParamsAccessor = PrivateParamsAccessor;
+// Static-link path: name registry of params marked PM_PRIVATE.
+// C tracks private-ness via PM_PRIVATE bit on each Param's
+// node.flags directly; this side-set is the bridge until paramtab
+// reads/writes use the real flag.
+pub static PRIVATE_PARAMS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>>
+    = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
 
 /// `private_wraplevel` — file-scope global from
 /// `Src/Modules/param_private.c`. Tracks the locallevel at which
