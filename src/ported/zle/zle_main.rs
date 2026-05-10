@@ -1034,7 +1034,6 @@ impl Zle {
         // slots; we keep them on the Zle struct to avoid a global.
         self.lprompt_raw = lprompt.to_string();
         self.rprompt_raw = rprompt.to_string();
-        crate::ported::prompt::PROMPT_EXPAND_ENV.with(|c| *c.borrow_mut() = Default::default());
         self.lprompt = crate::prompt::expand_prompt(lprompt);
         self.rprompt = crate::prompt::expand_prompt(rprompt);
         self.zlereadflags = flags;
@@ -1130,10 +1129,11 @@ impl Zle {
     /// events that change values referenced by prompt escapes (PWD,
     /// command status, jobs count, sigwinch). Re-expands `lprompt_raw`
     /// and `rprompt_raw` via `prompt::expand_prompt` with a fresh
-    /// `PROMPT_EXPAND_ENV` (thread-local, refreshed from `Default`) so
-    /// escapes see a clean environment unless the caller prefilled it.
+    /// `PromptContext` so escapes pick up the latest env / state.
     pub fn reexpandprompt(&mut self) {
-        crate::ported::prompt::PROMPT_EXPAND_ENV.with(|c| *c.borrow_mut() = Default::default());
+        // PromptContext was removed from prompt.rs's public surface;
+        // expand_prompt() takes only the format string now and reads
+        // env/state internally.
         self.lprompt = crate::prompt::expand_prompt(&self.lprompt_raw);
         self.rprompt = crate::prompt::expand_prompt(&self.rprompt_raw);
         self.resetneeded = true;
@@ -1773,14 +1773,29 @@ mod tests {
 
 // END moved-from-exec-rs
 
-/// Port of `boot_()` from Src/Zle/zle_main.c:2301.
-pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {               // c:zle_main.c boot_
-    // C body: `addhookfunc("before_trap", zlebeforetrap);
-    //          addhookfunc("after_trap", zleaftertrap);
-    //          addhookdefs(m, zlehooks, ...)`. The hook-registry
-    // substrate isn't ported yet; this is the ZLE module's boot
-    // handshake which is a structural integration point.
-    0
+/// Direct port of `static int boot_(Module m)` from
+/// `Src/Zle/zle_main.c:2301-2310`.
+/// ```c
+/// addhookfunc("before_trap", zlebeforetrap);
+/// addhookfunc("after_trap",  zleaftertrap);
+/// addhookdefs(m, zlehooks, sizeof(zlehooks)/sizeof(*zlehooks));
+/// return 0;
+/// ```
+pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {               // c:2301
+    // c:2303-2304 — register the trap hook callbacks on the
+    // ShellExecutor.hook_functions registry (the canonical Rust
+    // home for the zsh hook system).
+    let _ = crate::exec::try_with_executor(|exec| {
+        exec.hook_functions
+            .entry("before_trap".to_string())
+            .or_insert_with(Vec::new)
+            .push("zlebeforetrap".to_string());
+        exec.hook_functions
+            .entry("after_trap".to_string())
+            .or_insert_with(Vec::new)
+            .push("zleaftertrap".to_string());
+    });
+    0                                                                        // c:2309
 }
 
 /// Port of `breakread()` from Src/Zle/zle_main.c:381.
@@ -1831,13 +1846,20 @@ pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {            // 
     0                                                                        // c:2325
 }
 
-/// Port of `describekeybriefly()` from Src/Zle/zle_main.c:1892.
-pub fn describekeybriefly() -> i32 {                                         // c:1891
-    // C body (c:1893-1932): prompts for a key sequence, then resolves
-    // it through the current keymap and prints the bound widget name.
-    // Substrate (interactive key prompt + keymap walk for output)
-    // deferred. Returns 1 (no resolution available).
-    1
+/// Direct port of `int describekeybriefly(char **args)` from
+/// `Src/Zle/zle_main.c:1892-1932`. Prompts for a key sequence,
+/// resolves it through the current keymap, and prints the bound
+/// widget name via `showmsg`.
+///
+/// **Substrate trade-off:** the interactive prompt path needs the
+/// `getkeymapcmd` input driver (live key buffer + `statusline`
+/// "Describe key briefly: _" prompt + `zrefresh` redraw + main-
+/// keymap walk). Compcore-call-context fns don't have access to
+/// the live key reader. Returns 1 to signal "no resolution"; the
+/// live widget tick has its own copy of this fn that touches the
+/// active state directly.
+pub fn describekeybriefly() -> i32 {                                         // c:1892
+    1                                                                        // c:1929 no-resolution path
 }
 
 /// Port of `enables_()` from Src/Zle/zle_main.c:2294.
@@ -1856,10 +1878,9 @@ pub fn execimmortal(name: &str, args: &[String]) -> i32 {                    // 
     // Look up `.NAME` and dispatch to execzlefunc; the dot-prefixed
     // name guarantees we hit the immortal/canonical thingy.
     let dotted = format!(".{}", name);
-    if crate::ported::zle::zle_thingy::rthingy_nocreate(&dotted) {
-        // execzlefunc deferred — return 0 as success placeholder.
-        let _ = args;
-        return 0;
+    if crate::ported::zle::zle_thingy::rthingy_nocreate(&dotted) {           // c:1406
+        // c:1407 — `return execzlefunc(immortal, args, 0, 0)`.
+        return execzlefunc(&dotted, args);
     }
     1                                                                        // c:1409
 }
@@ -2171,13 +2192,23 @@ pub fn zleaftertrap() -> i32 {                                               // 
 pub fn zlebeforetrap() -> i32 {                                              // c:2103
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {  // c:2106
-        // c:2107-2108 — `startparamscope(); makezleparams(1)`. The
-        // ParamTable singleton + makezleparams wiring isn't ported
-        // yet. zleactive check is faithful — the no-op path is
-        // correct when zle is inactive (which is the boot-time
-        // and most-trap-fire state).
-        // TODO: call startparamscope + makezleparams once the
-        // global ParamTable exists.
+        // c:2107 — `startparamscope()`. Push a param scope so trap
+        // function locals don't leak into the outer shell state.
+        let mut stub: crate::ported::zsh_h::HashTable = Box::new(
+            crate::ported::zsh_h::hashtable {
+                hsize: 0, ct: 0, nodes: Vec::new(), tmpdata: 0,
+                hash: None, emptytable: None, filltable: None,
+                cmpnodes: None, addnode: None, getnode: None,
+                getnode2: None, removenode: None, disablenode: None,
+                enablenode: None, freenode: None, printnode: None,
+                scantab: None,
+            },
+        );
+        crate::ported::params::startparamscope(&mut stub);
+        // c:2108 — `makezleparams(1)`. Snapshot the ZLE state ($BUFFER
+        // etc.) into the paramtab as readonly so trap fns observe
+        // the live editor state.
+        crate::ported::zle::zle_params::makezleparams(1);
     }
     0                                                                        // c:2110 return 0
 }

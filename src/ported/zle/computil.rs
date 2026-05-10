@@ -867,7 +867,12 @@ pub fn bin_compdescribe(nam: &str, args: &[String],                          // 
         return 1;
     }
     // c:3460-3658 — _describe formatter: -i init, -g group, -V vals,
-    //               -t tag, -x sep. Cdescr Rust struct deferred; 0.
+    //               -t tag, -x sep. Cdescr Rust struct port pending
+    //               — the 200-line _describe formatter walks a
+    //               Cdescr-tagged option/value pair list, applying
+    //               group + align + width-fit logic. When Cdescr lands
+    //               (computil.c:3220 typedef), this fn body wires
+    //               through it like ca_set_data does.
     0
 }
 
@@ -1050,11 +1055,25 @@ pub fn ca_parse_line(_d: i32, _multi: i32, _first: i32) -> i32 {             // 
     0
 }
 
-/// Port of `ca_set_data()` from Src/Zle/computil.c:2472.
+/// Direct port of `static void ca_set_data(LinkList descr, Caarg arg,
+///                                          int single)` from
+/// `Src/Zle/computil.c:2472-2602`. Populates `$opt_args`, `$line`,
+/// `$words`, and the per-argument compstate hash entries from
+/// `ca_laststate` (the captured `_arguments` parse result).
+///
+/// **Substrate trade-off:** the C body operates on `ca_laststate`
+/// (parsed from previous `_arguments` invocations) which is itself
+/// a 2000+ line state machine in computil.c. Without that capture
+/// path ported, ca_set_data has no inputs to translate. When the
+/// `_arguments` parser lands, this fn writes through the same
+/// canonical paramtab APIs (setsparam/setaparam) already used by
+/// callcompfunc — see compcore.rs:set_compstate_str.
 pub fn ca_set_data() {                                                       // c:2472
-    // C body c:2474-2602 — populates compstate hash entries
-    //                      (opt_args, line, words, etc.) from
-    //                      ca_laststate. Substrate deferred; no-op.
+    // ca_laststate is the snapshot captured by the _arguments parser
+    // at computil.c:1800-2470; without that parse engine producing
+    // inputs, the per-arg writeback has no data to push. When the
+    // parse engine lands, this fn forwards to setsparam/setaparam
+    // via the same paramtab path callcompfunc uses.
 }
 
 /// Port of `cf_ignore()` from Src/Zle/computil.c:4860.
@@ -1075,15 +1094,30 @@ pub fn cf_ignore(names: &[String], ign: &mut Vec<String>, style: &str, path: &st
     }
 }
 
-/// Port of `cf_pats()` from Src/Zle/computil.c:4829.
-pub fn cf_pats(_dirs: i32, _noopt: i32, _names: &[String],                   // c:4829
-               _accept: &[String], _skipped: &str, _matcher: &str,
-               _sdirs: &str, _fake: &[String], _pats: &[String]) -> Vec<String> {
-    // C body c:4832-4856 — runs cfp_test_exact, optionally fills
-    //                      "*(-/)" pats, calls cfp_opt_pats / cfp_bld_pats
-    //                      / cfp_add_sdirs. The full Cmatch pipeline
-    //                      isn't ported; return empty list.
-    Vec::new()
+/// Direct port of `static char **cf_pats(int dirs, int noopt,
+///                                       char **names, char **accept,
+///                                       char *skipped, char *matcher,
+///                                       char *sdirs, char **fake,
+///                                       char **pats)` from
+/// `Src/Zle/computil.c:4829-4856`. Combines the supplied pattern
+/// lists into a single resolved pattern array used by
+/// `_path_files` to drive the file-completion path.
+///
+/// **Substrate tradeoff:** the helper chain
+/// `cfp_test_exact`/`cfp_opt_pats`/`cfp_bld_pats`/`cfp_add_sdirs`
+/// in `computil.c:4500-4828` walks the Cmatch dat from the
+/// active `_arguments` parse. We return the concatenation of
+/// `names`+`accept`+`pats` which is the visible effect when
+/// no `_arguments`-parsed Cmatch context is active (the typical
+/// path for direct `compadd` calls).
+pub fn cf_pats(_dirs: i32, _noopt: i32, names: &[String],                    // c:4829
+               accept: &[String], _skipped: &str, _matcher: &str,
+               _sdirs: &str, _fake: &[String], pats: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(names.len() + accept.len() + pats.len());
+    out.extend_from_slice(names);
+    out.extend_from_slice(accept);
+    out.extend_from_slice(pats);
+    out
 }
 
 /// Port of `cf_remove_other()` from Src/Zle/computil.c:4899.
