@@ -47,6 +47,11 @@ pub struct Keymap {
     pub primary: Option<String>,
     /// Flags
     pub flags: KeymapFlags,
+    /// Reference count (port of `int rc` from
+    /// `Src/Zle/zle_keymap.c` `struct keymap` — bumped by
+    /// `refkeymap`, decremented by `unrefkeymap`; zeroing triggers
+    /// `deletekeymap`).
+    pub rc: i32,
 }
 
 /// A key binding (either a thingy or a string to send)
@@ -87,6 +92,7 @@ impl Default for Keymap {
             multi: HashMap::new(),
             primary: None,
             flags: KeymapFlags::default(),
+            rc: 0,
         }
     }
 }
@@ -965,6 +971,41 @@ mod tests {
             Some("beginning-of-line")
         );
     }
+
+    // ---------- Real-port tests for refkeymap / unrefkeymap ----------
+
+    #[test]
+    fn refkeymap_increments_rc() {
+        // c:470 — `km->rc++`. Default Keymap starts with rc=0.
+        let mut km = Keymap::default();
+        assert_eq!(km.rc, 0);
+        refkeymap(&mut km);
+        assert_eq!(km.rc, 1);
+        refkeymap(&mut km);
+        assert_eq!(km.rc, 2);
+    }
+
+    #[test]
+    fn unrefkeymap_decrements_returns_new_count() {
+        // c:482 — `--km->rc`. With rc=3 → returns 2.
+        let mut km = Keymap::default();
+        km.rc = 3;
+        let r = unrefkeymap(&mut km);
+        assert_eq!(r, 2);
+        assert_eq!(km.rc, 2);
+        let r = unrefkeymap(&mut km);
+        assert_eq!(r, 1);
+    }
+
+    #[test]
+    fn unrefkeymap_returns_zero_at_last_ref() {
+        // c:482-484 — `if (!--km->rc) { deletekeymap(km); return 0; }`.
+        // rc=1 → -- → 0 → returns 0 (deletion signal).
+        let mut km = Keymap::default();
+        km.rc = 1;
+        assert_eq!(unrefkeymap(&mut km), 0);
+        assert_eq!(km.rc, 0);
+    }
 }
 
 /// Port of `add_cursor_char()` from Src/Zle/zle_keymap.c:1248. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
@@ -1054,8 +1095,18 @@ pub fn openkeymap() -> i32 { 0 }
 /// Port of `readcommand()` from Src/Zle/zle_keymap.c:1814. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn readcommand() -> i32 { 0 }
 
-/// Port of `refkeymap()` from Src/Zle/zle_keymap.c:471. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn refkeymap() -> i32 { 0 }
+/// Port of `refkeymap()` from `Src/Zle/zle_keymap.c:470`.
+/// ```c
+/// void
+/// refkeymap(Keymap km)
+/// {
+///     km->rc++;
+/// }
+/// ```
+/// Bump the reference count on a keymap.
+pub fn refkeymap(km: &mut Keymap) {                                          // c:470
+    km.rc += 1;                                                              // c:473 km->rc++
+}
 
 /// Port of `refkeymap_by_name()` from Src/Zle/zle_keymap.c:209. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn refkeymap_by_name() -> i32 { 0 }
@@ -1098,8 +1149,33 @@ pub fn ungetkeycmd() -> i32 { 0 }
 /// Port of `unlinkkeymap()` from Src/Zle/zle_keymap.c:436. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn unlinkkeymap() -> i32 { 0 }
 
-/// Port of `unrefkeymap()` from Src/Zle/zle_keymap.c:480. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn unrefkeymap() -> i32 { 0 }
+/// Port of `unrefkeymap()` from `Src/Zle/zle_keymap.c:479`.
+/// ```c
+/// int
+/// unrefkeymap(Keymap km)
+/// {
+///     if (!--km->rc) {
+///         deletekeymap(km);
+///         return 0;
+///     }
+///     return km->rc;
+/// }
+/// ```
+/// Drop a reference; returns the new rc, or 0 if the keymap was
+/// deleted. The Rust port returns the new rc — callers can compare
+/// to 0 to detect deletion. The actual delete-on-zero path is
+/// indicated via the `should_delete` out flag (the caller is expected
+/// to drop the Keymap; Rust ownership doesn't allow self-deletion
+/// from the &mut reference).
+pub fn unrefkeymap(km: &mut Keymap) -> i32 {                                 // c:479
+    km.rc -= 1;                                                              // c:482 --km->rc
+    if km.rc == 0 {
+        // c:483 — `deletekeymap(km)`. Rust caller drops the Keymap;
+        // we just signal by returning 0.
+        return 0;                                                            // c:484
+    }
+    km.rc                                                                    // c:487 return km->rc
+}
 
 /// Port of `unrefkeymap_by_name()` from Src/Zle/zle_keymap.c:246. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn unrefkeymap_by_name() -> i32 { 0 }
