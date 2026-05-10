@@ -371,10 +371,20 @@ pub fn ksh93_wrapper(_prog: *const eprog, _w: *const funcwrap, name: *mut libc::
 pub fn setup_(_m: *const module) -> i32 { 0 }                          // c:238
 
 /// Port of `features_()` from `Src/Modules/ksh93.c:243`.
-pub fn features_(_m: *const module) -> i32 { 0 }                       // c:246
+/// C body c:245-247 — `*features = featuresarray(m, &module_features);
+///                     return 0`. Static-link path: ksh93 module
+/// has no features beyond the autoloaded wrapper, so we report empty.
+pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {     // c:243
+    features.clear();
+    0
+}
 
 /// Port of `enables_()` from `Src/Modules/ksh93.c:251`.
-pub fn enables_(_m: *const module) -> i32 { 0 }                        // c:253
+/// C body c:253-254 — `return handlefeatures(m, &module_features, enables)`.
+/// Static-link path: no per-feature toggle, return success.
+pub fn enables_(_m: *const module, _enables: &mut Option<Vec<i32>>) -> i32 { // c:251
+    0
+}
 
 /// Port of `boot_()` from `Src/Modules/ksh93.c:258`.
 /// C body: `return addwrapper(m, wrapper);`
@@ -711,8 +721,10 @@ mod tests {
     fn module_loaders_return_zero() {
         let m: *const module = std::ptr::null();
         assert_eq!(setup_(m), 0);
-        assert_eq!(features_(m), 0);
-        assert_eq!(enables_(m), 0);
+        let mut features = Vec::new();
+        assert_eq!(features_(m, &mut features), 0);
+        let mut enables: Option<Vec<i32>> = None;
+        assert_eq!(enables_(m, &mut enables), 0);
         assert_eq!(boot_(m), 0);
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);

@@ -690,7 +690,14 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 /// Port of `setup_()` from `Src/Modules/watch.c:712`.
-pub fn setup_(_m: *const module) -> i32 { 0 }
+pub fn setup_(_m: *const module) -> i32 {                                    // c:712
+    // C body c:714-718 — `partab[0].gsu = (void *)&colonarr_gsu;
+    //                     partab[1].gsu = (void *)&vararray_gsu;
+    //                     return 0`. The GSU dispatch isn't part of
+    //                     the static-link Rust path — partab entries
+    //                     are passed through directly. Return success.
+    0
+}
 
 /// Port of `features_()` from `Src/Modules/watch.c:723`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -706,7 +713,15 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 }
 
 /// Port of `boot_()` from `Src/Modules/watch.c:738`.
-pub fn boot_(_m: *const module) -> i32 { 0 }
+pub fn boot_(_m: *const module) -> i32 {                                     // c:738
+    // C body c:740-770 — ties $watch and $WATCH (lower- and upper-
+    //                    case alias), creates empty `watch` array,
+    //                    sets WATCHFMT/LOGCHECK defaults if unset,
+    //                    installs the checksched preprompt hook.
+    //                    Without paramtab integration we can only
+    //                    record success.
+    0
+}
 
 /// Port of `cleanup_()` from `Src/Modules/watch.c:768`.
 /// C body: `delprepromptfn(checksched); return setfeatureenables(...);`
@@ -715,7 +730,12 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_()` from `Src/Modules/watch.c:776`.
-pub fn finish_(_m: *const module) -> i32 { 0 }
+pub fn finish_(_m: *const module) -> i32 {                                   // c:776
+    // C body c:778-779 — `return 0`. Faithful empty-body port; the
+    //                    watch utmpx descriptor is process-lifetime,
+    //                    not module-lifetime.
+    0
+}
 
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:log".to_string()]
