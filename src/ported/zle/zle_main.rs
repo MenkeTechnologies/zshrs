@@ -227,7 +227,7 @@ pub struct Zle {
     pub changeno: u64,
     // Number of characters waiting to be read by the ungetbytes mechanism   // c:185
     /// Unget buffer for bytes
-    unget_buf: VecDeque<u8>,
+    pub unget_buf: VecDeque<u8>,
     /// EOF character
     eofchar: u8,
     /// EOF sent flag
@@ -500,7 +500,7 @@ impl Zle {
     /// Port of `ungetbyte()` from Src/Zle/zle_main.c:348. Used by
     /// keymap-trie resolution and `quoted-insert` to put back a byte
     /// the loop already read but isn't ready to consume.
-    pub fn ungetbyte(&mut self, ch: u8) {
+    pub fn ungetbyte(&mut self, ch: u8) {                                    // c:348
         self.unget_buf.push_front(ch);
     }
 

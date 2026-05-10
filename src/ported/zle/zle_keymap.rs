@@ -1,5 +1,10 @@
 //! ZLE keymap and key bindings - Direct port from zsh/Src/Zle/zle_keymap.c
 //!
+//! currently selected keymap, and its name                                  // c:121
+//! the hash table of keymap names                                           // c:128
+//! key sequence reading data                                                // c:133
+//! main initialisation entry point                                          // c:1220
+//!
 //! Keymap structures:
 //!
 //! There is a hash table of keymap names. Each name just points to a keymap.
@@ -1077,7 +1082,32 @@ pub fn add_cursor_char() -> i32 { 0 }
 pub fn add_cursor_key() -> i32 { 0 }
 
 /// Port of `addkeybuf()` from Src/Zle/zle_keymap.c:1717. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn addkeybuf() -> i32 { 0 }
+pub fn addkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, c: i32) {      // c:1700
+    // C body (zle_keymap.c:1700):
+    //   addkeybuf(int c) {
+    //     if(keybuflen + 3 > keybufsz) keybuf = realloc(...);
+    //     if(imeta(c)) {
+    //       keybuf[keybuflen++] = Meta;
+    //       keybuf[keybuflen++] = c ^ 32;
+    //     } else
+    //       keybuf[keybuflen++] = c;
+    //     keybuf[keybuflen] = '\0';
+    //   }
+    //
+    // Vec<u8> grows automatically — no realloc bookkeeping needed.
+    let c = c & 0xff;
+    // c:imeta(c) — true if (c & 0x80) != 0 except for known
+    // safe single-byte values. zsh's imeta() returns true when
+    // byte needs Meta-quoting in the key buffer.
+    let is_meta = c >= 0x83 && c != 0x83 && c != 0x84;
+    if is_meta {
+        zle.keymaps.keybuf.push(0x83);                                       // Meta
+        zle.keymaps.keybuf.push((c ^ 32) as u8);
+    } else {
+        zle.keymaps.keybuf.push(c as u8);
+    }
+    // C terminates with '\0'; Rust Vec doesn't need that.
+}
 
 /// Port of `bin_bindkey_bind()` from Src/Zle/zle_keymap.c:999. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn bin_bindkey_bind() -> i32 { 0 }
@@ -1119,7 +1149,27 @@ pub fn emptykeymapnamtab() -> i32 { 0 }
 pub fn freekeymapnamnode() -> i32 { 0 }
 
 /// Port of `freekeynode()` from Src/Zle/zle_keymap.c:312. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn freekeynode() -> i32 { 0 }
+pub fn freekeynode(_kb: KeyBinding) {                                        // c:311
+    // C body (zle_keymap.c:312):
+    //   freekeynode(HashNode hn) {
+    //     Key k = (Key) hn;
+    //     zsfree(k->nam);
+    //     unrefthingy(k->bind);
+    //     zsfree(k->str);
+    //     zfree(k, sizeof(*k));
+    //   }
+    //
+    // C frees the name string, drops the Thingy refcount, frees the
+    // send-string, and zfrees the Key struct itself. Rust's Drop
+    // cascade handles the String drops; the Thingy unref needs to
+    // happen if `bind` is Some (refcount-tracked via thingytab).
+    if let Some(t) = _kb.bind {
+        // Match zle_thingy.c::unrefthingy semantics — drop a
+        // reference, removing from thingytab if rc hits 0.
+        crate::ported::zle::zle_thingy::unrefthingy(&t.name);
+    }
+    // KeyBinding consumed; String/Option fields auto-drop.
+}
 
 /// Port of `getkeybuf()` from Src/Zle/zle_keymap.c:1744. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn getkeybuf() -> i32 { 0 }
