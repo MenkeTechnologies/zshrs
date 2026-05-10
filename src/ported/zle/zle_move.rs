@@ -125,6 +125,13 @@ impl Zle {
     }
 }
 
+/// Port of `BMC_BUFSIZE` from `Src/Zle/zle_move.c:161`.
+/// `#define BMC_BUFSIZE MB_CUR_MAX`. Per-cluster buffer size for
+/// the multibyte combining-char walker; UTF-8 needs at most 4 bytes
+/// per codepoint, so this is conservatively 6 to match POSIX
+/// MB_CUR_MAX (some locales use legacy multi-byte encodings up to 6).
+pub const BMC_BUFSIZE: usize = 6;                                            // c:161
+
 /// Port of `alignmultiwordleft()` from Src/Zle/zle_move.c:49.
 pub fn alignmultiwordleft(_pos: &mut usize, _interactive: i32) {             // c:49
     // C body (c:51-87): walks back over zero-width combining-character

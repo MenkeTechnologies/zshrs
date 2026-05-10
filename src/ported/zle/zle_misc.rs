@@ -1026,6 +1026,12 @@ pub fn doinsert(zle: &mut Zle, zstr: &[char]) {                              // 
     zle.resetneeded = true;
 }
 
+/// Port of `NAMLEN` from `Src/Zle/zle_misc.c:1249`. Maximum length
+/// of a widget name buffer used by `executenamedcommand` for
+/// `execute-named-command` / `where-is`. The C source declares this
+/// as a macro just before the local-keymap fixture.
+pub const NAMLEN: usize = 60;                                                // c:1249
+
 /// Port of `executenamedcommand()` from Src/Zle/zle_misc.c:1261.
 pub fn executenamedcommand(_prompt: &str) -> Option<String> {                // c:executenamedcommand
     // C body: prompts for a widget name with completion and returns

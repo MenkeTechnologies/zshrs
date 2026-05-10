@@ -169,7 +169,18 @@ pub struct Timeout {
 }
 
 /// Maximum timeout value (about 24 days in 100ths of a second)
-pub const ZMAXTIMEOUT: u64 = 1 << 21;
+/// Port of `ZMAXTIMEOUT` macro from `Src/Zle/zle_main.c:429`.
+/// `#define ZMAXTIMEOUT ((time_t)1 << (sizeof(int)*8-11))`.
+/// Maximum keytimeout value clamped before passing to select(2),
+/// keeps the (microseconds * 100) product within `time_t` range.
+/// On a 32-bit `int` platform: `1 << 21` (~2.1M centiseconds = 21k sec).
+pub const ZMAXTIMEOUT: u64 = 1 << 21;                                        // c:429
+
+/// Port of `MAXFOUND` from `Src/Zle/zle_main.c:1925`.
+/// Hash-search saturation cap: stop walking after this many matches
+/// in the brief-key-description scan — keeps the prompt-line summary
+/// short enough to fit on screen.
+pub const MAXFOUND: usize = 4;                                               // c:1925
 
 /// The main ZLE state
 pub struct Zle {

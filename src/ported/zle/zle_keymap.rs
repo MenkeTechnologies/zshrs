@@ -20,6 +20,26 @@ use std::sync::{Arc, Mutex, OnceLock};
 use super::zle_thingy::Thingy;
 
 // =====================================================================
+// Flag constants — `Src/Zle/zle_keymap.c:62/83/114-115`.
+// =====================================================================
+
+/// Port of `KMN_IMMORTAL` from `Src/Zle/zle_keymap.c:62`. Marks a
+/// keymap-name node that can't be deleted (the `.safe` keymap).
+pub const KMN_IMMORTAL: u32 = 1 << 1;                                        // c:62
+
+/// Port of `KM_IMMUTABLE` from `Src/Zle/zle_keymap.c:83`. Marks a
+/// keymap that can't have its bindings modified.
+pub const KM_IMMUTABLE: u32 = 1 << 1;                                        // c:83
+
+/// Port of `BS_LIST` from `Src/Zle/zle_keymap.c:114`. `bin_bindkey -L`:
+/// list bindings in `bindkey -M` syntax.
+pub const BS_LIST: u32 = 1 << 0;                                             // c:114
+
+/// Port of `BS_ALL` from `Src/Zle/zle_keymap.c:115`. `bin_bindkey -aL`:
+/// list ALL bindings, including default sequences.
+pub const BS_ALL: u32 = 1 << 1;                                              // c:115
+
+// =====================================================================
 // keymapnamtab — `Src/Zle/zle_keymap.c:128/153`.
 // =====================================================================
 //
