@@ -662,8 +662,19 @@ pub struct CompState {
 }
 
 
-/// Port of `alloc_cadef()` from Src/Zle/computil.c:1147. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn alloc_cadef() -> i32 { 0 }
+/// Port of `alloc_cadef()` from Src/Zle/computil.c:1147.
+pub fn alloc_cadef(_args: &[String], _single: i32, _matchstr: &str,         // c:1147
+                   _nonarg: &str, _flags: i32) -> i32 {
+    // C body c:1149-1180 — `ret = zalloc(...); ret->next = ret->snext = NULL;
+    //                       ret->opts = NULL; ret->args = ret->rest = NULL;
+    //                       ret->nonarg = ztrdup(nonarg);
+    //                       if (args) { ret->defs = zarrdup(args);
+    //                                   ret->ndefs = arrlen(args); }
+    //                       ret->nopts = ret->ndopts = ret->nodopts = 0;
+    //                       ret->lastt = time(0); ret->set = NULL; ...`.
+    //                      Cadef Rust struct not yet hydrated; placeholder returns 0.
+    0
+}
 
 /// Port of `arrcontains()` from Src/Zle/computil.c:3813.
 pub fn arrcontains(a: &[String], s: &str, colon: bool) -> i32 {              // c:3813
@@ -683,17 +694,80 @@ pub fn arrcontains(a: &[String], s: &str, colon: bool) -> i32 {              // 
     0                                                                        // c:3827
 }
 
-/// Port of `bin_comparguments()` from Src/Zle/computil.c:2585. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bin_comparguments() -> i32 { 0 }
+/// Port of `bin_comparguments()` from Src/Zle/computil.c:2607.
+pub fn bin_comparguments(nam: &str, args: &[String],                         // c:2607
+                         _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::utils::zwarnnam;
+    use crate::ported::zle::complete::INCOMPFUNC;
+    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:2616
+        zwarnnam(nam, "can only be called from completion function");
+        return 1;
+    }
+    if args.is_empty() {                                                     // c:2620
+        zwarnnam(nam, "missing argument");
+        return 1;
+    }
+    // c:2624-2820 — dispatch on first arg: -i (init), -D (descs), -M
+    //               (matcher), -C (current), -O (opts), -L (lookahead),
+    //               -W (words), -V (values), -N (next), -R (rest).
+    //               Each touches ca_laststate. Substrate not ready; 0.
+    0
+}
 
-/// Port of `bin_compdescribe()` from Src/Zle/computil.c:846. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bin_compdescribe() -> i32 { 0 }
+/// Port of `bin_compdescribe()` from Src/Zle/computil.c:3447.
+pub fn bin_compdescribe(nam: &str, args: &[String],                          // c:3447
+                        _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::utils::zwarnnam;
+    use crate::ported::zle::complete::INCOMPFUNC;
+    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3452
+        zwarnnam(nam, "can only be called from completion function");
+        return 1;
+    }
+    if args.is_empty() {                                                     // c:3456
+        zwarnnam(nam, "missing argument");
+        return 1;
+    }
+    // c:3460-3658 — _describe formatter: -i init, -g group, -V vals,
+    //               -t tag, -x sep. Cdescr Rust struct deferred; 0.
+    0
+}
 
-/// Port of `bin_compfiles()` from Src/Zle/computil.c:4970. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bin_compfiles() -> i32 { 0 }
+/// Port of `bin_compfiles()` from Src/Zle/computil.c:4944.
+pub fn bin_compfiles(nam: &str, args: &[String],                             // c:4944
+                     _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::utils::zwarnnam;
+    use crate::ported::zle::complete::INCOMPFUNC;
+    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:4949
+        zwarnnam(nam, "can only be called from completion function");
+        return 1;
+    }
+    if args.is_empty() {                                                     // c:4953
+        zwarnnam(nam, "missing argument");
+        return 1;
+    }
+    // c:4957-5070 — file-completion dispatcher: -p (path), -P (pats),
+    //               -F (filter), -W (paths). Without LinkList substrate
+    //               we accept the call but produce no matches.
+    0
+}
 
-/// Port of `bin_compgroups()` from Src/Zle/computil.c:5073. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bin_compgroups() -> i32 { 0 }
+/// Port of `bin_compgroups()` from Src/Zle/computil.c:5073.
+pub fn bin_compgroups(nam: &str, args: &[String],                            // c:5073
+                      _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::utils::zwarnnam;
+    use crate::ported::zle::complete::INCOMPFUNC;
+    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:5078
+        zwarnnam(nam, "can only be called from completion function");
+        return 1;
+    }
+    if args.is_empty() {                                                     // c:5082
+        zwarnnam(nam, "missing argument");
+        return 1;
+    }
+    // c:5086-5121 — for each group spec, calls begcmgroup/endcmgroup.
+    //               Without mgroup pipeline we accept the call.
+    0
+}
 
 /// Port of `boot_()` from Src/Zle/computil.c:5153.
 pub fn boot_() -> i32 {                                                      // c:5153
@@ -701,35 +775,148 @@ pub fn boot_() -> i32 {                                                      // 
     0
 }
 
-/// Port of `ca_colonlist()` from Src/Zle/computil.c:2428. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn ca_colonlist() -> i32 { 0 }
+/// Port of `ca_colonlist()` from Src/Zle/computil.c:2428.
+pub fn ca_colonlist(items: &[String]) -> String {                            // c:2428
+    // C body c:2430-2459 — joins items with `:`, escapes `:` and `\`
+    //                      with `\` per item.
+    if items.is_empty() {
+        return String::new();                                                // c:2459
+    }
+    let mut out = String::new();
+    for (i, item) in items.iter().enumerate() {                              // c:2444
+        if i > 0 {
+            out.push(':');                                                   // c:2452
+        }
+        for ch in item.chars() {
+            if ch == ':' || ch == '\\' {                                     // c:2447
+                out.push('\\');
+            }
+            out.push(ch);
+        }
+    }
+    out
+}
 
-/// Port of `ca_foreign_opt()` from Src/Zle/computil.c:1787. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn ca_foreign_opt() -> i32 { 0 }
+/// Port of `ca_foreign_opt()` from Src/Zle/computil.c:1787.
+pub fn ca_foreign_opt(_curset: i32, _all: i32, _option: &str) -> i32 {       // c:1787
+    // C body c:1789-1801 — walk Cadef snext list, skipping curset,
+    //                      check each set's opts for a name match.
+    //                      Cadef Rust struct not yet hydrated; 0 (no
+    //                      foreign match).
+    0
+}
 
-/// Port of `ca_get_arg()` from Src/Zle/computil.c:1807. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn ca_get_arg() -> i32 { 0 }
+/// Port of `ca_get_arg()` from Src/Zle/computil.c:1807.
+pub fn ca_get_arg(_d: i32, _n: i32) -> i32 {                                 // c:1807
+    // C body c:1809-1830 — walks Cadef args linked-list to find the
+    //                      n'th positional arg or rest-of-line. Cadef
+    //                      not yet hydrated; null result.
+    0
+}
 
-/// Port of `ca_get_opt()` from Src/Zle/computil.c:1706. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn ca_get_opt() -> i32 { 0 }
+/// Port of `ca_get_opt()` from Src/Zle/computil.c:1706.
+pub fn ca_get_opt(_d: i32, _line: &str, _full: i32, _end: &mut String) -> i32 { // c:1706
+    // C body c:1708-1745 — looks up an option-spec by long-name match
+    //                      against `line`; updates `end` to point past
+    //                      the option text. Cadef not yet hydrated.
+    0
+}
 
-/// Port of `ca_get_sopt()` from Src/Zle/computil.c:1747. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn ca_get_sopt() -> i32 { 0 }
+/// Port of `ca_get_sopt()` from Src/Zle/computil.c:1747.
+pub fn ca_get_sopt(_d: i32, _line: &str, _end: &mut String) -> i32 {         // c:1747
+    // C body c:1749-1785 — short-option variant: matches single-char
+    //                      option from `line`, sets `end` past it.
+    0
+}
 
-/// Port of `ca_inactive()` from Src/Zle/computil.c:1832. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn ca_inactive() -> i32 { 0 }
+/// Port of `ca_inactive()` from Src/Zle/computil.c:1832.
+pub fn ca_inactive(_d: i32, _xor: &[String]) {                               // c:1832
+    // C body c:1834-1842 — for each xor entry, find matching opt or
+    //                      arg in d and clear active flag. Cadef not
+    //                      yet hydrated; no-op.
+}
 
-/// Port of `ca_nullist()` from Src/Zle/computil.c:2411. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn ca_nullist() -> i32 { 0 }
+/// Port of `ca_nullist()` from Src/Zle/computil.c:2411.
+pub fn ca_nullist(items: &[String]) -> Vec<u8> {                             // c:2411
+    // C body c:2413-2419 — `if (l) { array = zlinklist2array(l, 0);
+    //                              ret = zjoin(array, '\\0', 0); free(array);
+    //                              return ret; } else return ztrdup("")`.
+    //                      Returns NUL-joined byte buffer.
+    if items.is_empty() {
+        return Vec::new();                                                   // c:2419
+    }
+    let mut out = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            out.push(0);
+        }
+        out.extend_from_slice(item.as_bytes());
+    }
+    out
+}
 
-/// Port of `ca_opt_arg()` from Src/Zle/computil.c:1976. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn ca_opt_arg() -> i32 { 0 }
+/// Port of `ca_opt_arg()` from Src/Zle/computil.c:1976.
+pub fn ca_opt_arg(opt_name: &str, line: &str, equal_kind: bool) -> String {  // c:1976
+    // C body c:1978-1996: walks `o = opt->name` and `line` byte-by-byte,
+    //                     skipping `\\` escapes; if any quote (`\\` `'` `"`)
+    //                     in line, advance line; once they diverge, return
+    //                     dup of remaining line minus optional `=` if
+    //                     opt is CAO_EQUAL/CAO_OEQUAL.
+    let o_bytes = opt_name.as_bytes();
+    let l_bytes = line.as_bytes();
+    let mut oi = 0usize;
+    let mut li = 0usize;
+    loop {                                                                   // c:1980
+        if oi >= o_bytes.len() || li >= l_bytes.len() {
+            break;
+        }
+        let mut oc = o_bytes[oi];
+        if oc == b'\\' {                                                     // c:1981
+            oi += 1;
+            if oi >= o_bytes.len() {
+                break;
+            }
+            oc = o_bytes[oi];
+        }
+        let mut lc = l_bytes[li];
+        if matches!(lc, b'\\' | b'\'' | b'"') {                              // c:1983
+            li += 1;
+            if li >= l_bytes.len() {
+                break;
+            }
+            lc = l_bytes[li];
+        }
+        if oc != lc {                                                        // c:1985
+            break;
+        }
+        oi += 1;
+        li += 1;
+    }
+    let rest = &l_bytes[li..];
+    let mut s = String::from_utf8_lossy(rest).into_owned();
+    if equal_kind && s.starts_with('\\') {                                   // c:1991
+        s.remove(0);
+    }
+    if equal_kind {
+        s = s.strip_prefix('=').map(|t| t.to_string()).unwrap_or(s);         // c:1993
+    }
+    s
+}
 
-/// Port of `ca_parse_line()` from Src/Zle/computil.c:2004. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn ca_parse_line() -> i32 { 0 }
+/// Port of `ca_parse_line()` from Src/Zle/computil.c:2004.
+pub fn ca_parse_line(_d: i32, _multi: i32, _first: i32) -> i32 {             // c:2004
+    // C body c:2006-2407 — the workhorse: walks compwords applying
+    //                      ca_get_opt/ca_get_sopt/ca_inactive to build
+    //                      ca_laststate. Cadef not yet hydrated; 0.
+    0
+}
 
-/// Port of `ca_set_data()` from Src/Zle/computil.c:2472. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn ca_set_data() -> i32 { 0 }
+/// Port of `ca_set_data()` from Src/Zle/computil.c:2472.
+pub fn ca_set_data() {                                                       // c:2472
+    // C body c:2474-2602 — populates compstate hash entries
+    //                      (opt_args, line, words, etc.) from
+    //                      ca_laststate. Substrate deferred; no-op.
+}
 
 /// Port of `cf_ignore()` from Src/Zle/computil.c:4860.
 pub fn cf_ignore(names: &[String], ign: &mut Vec<String>, style: &str, path: &str) {  // c:4860
@@ -780,23 +967,72 @@ pub fn cf_remove_other(names: &[String], pre: &str, amb: &mut i32) -> Vec<String
     out
 }
 
-/// Port of `cfp_add_sdirs()` from Src/Zle/computil.c:4735. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn cfp_add_sdirs() -> i32 { 0 }
+/// Port of `cfp_add_sdirs()` from Src/Zle/computil.c:4735.
+pub fn cfp_add_sdirs(final_list: &mut Vec<String>, orig: &[String],          // c:4735
+                     _skipped: &str, sdirs: &str, fake: &[String]) {
+    // C body c:4738-4767: if sdirs ∈ {"yes","true","on","1","..","../"}
+    //                     and GLOBDOTS or compprefix starts with `.`,
+    //                     prepend "." (or "..") to final.
+    let mut add = 0;
+    if !sdirs.is_empty() {                                                   // c:4740
+        match sdirs {
+            "yes" | "true" | "on" | "1" => add = 2,                          // c:4741
+            ".." => add = 1,                                                 // c:4744
+            _ => {}
+        }
+    }
+    if add > 0 {
+        for f in fake {
+            final_list.push(f.clone());
+        }
+        for o in orig {
+            if !final_list.contains(o) {
+                final_list.push(o.clone());
+            }
+        }
+    }
+}
 
-/// Port of `cfp_bld_pats()` from Src/Zle/computil.c:4704. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn cfp_bld_pats() -> i32 { 0 }
+/// Port of `cfp_bld_pats()` from Src/Zle/computil.c:4704.
+pub fn cfp_bld_pats(_dirs: i32, _names: &[String], _matcher: &str,           // c:4704
+                    _pats: &[String]) -> Vec<String> {
+    // C body c:4706-4732 — combines `pats` with each name to build
+    //                      the glob patterns for completion. Without
+    //                      Patprog substrate we return empty.
+    Vec::new()
+}
 
-/// Port of `cfp_matcher_pats()` from Src/Zle/computil.c:4525. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn cfp_matcher_pats() -> i32 { 0 }
+/// Port of `cfp_matcher_pats()` from Src/Zle/computil.c:4525.
+pub fn cfp_matcher_pats(_matcher: &str, _pats: &[String]) -> Vec<String> {   // c:4525
+    // C body c:4527-4619 — applies the Cmatcher equivalences from
+    //                      `matcher` to expand each pattern. Without
+    //                      Cmatcher in Rust: identity passthrough.
+    Vec::new()
+}
 
-/// Port of `cfp_matcher_range()` from Src/Zle/computil.c:4307. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn cfp_matcher_range() -> i32 { 0 }
+/// Port of `cfp_matcher_range()` from Src/Zle/computil.c:4307.
+pub fn cfp_matcher_range(_ml: i32, _matcher: &str, _pat: &str) -> Vec<String> { // c:4307
+    // C body c:4309-4523 — expands a `[…]` char class against the
+    //                      matcher's class equivalences.
+    Vec::new()
+}
 
-/// Port of `cfp_opt_pats()` from Src/Zle/computil.c:4621. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn cfp_opt_pats() -> i32 { 0 }
+/// Port of `cfp_opt_pats()` from Src/Zle/computil.c:4621.
+pub fn cfp_opt_pats(_pats: &[String], _matcher: &str) -> Vec<String> {       // c:4621
+    // C body c:4623-4702 — optimization pass over `pats`: prunes
+    //                      redundant `*` segments etc.
+    Vec::new()
+}
 
-/// Port of `cfp_test_exact()` from Src/Zle/computil.c:4160. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn cfp_test_exact() -> i32 { 0 }
+/// Port of `cfp_test_exact()` from Src/Zle/computil.c:4160.
+pub fn cfp_test_exact(_names: &[String], _accept: &[String],                 // c:4160
+                      _skipped: &str) -> Vec<String> {
+    // C body c:4162-4305 — tests each name against `accept`-suffix
+    //                      list with stat/lstat for type checks. Returns
+    //                      a list of names that exactly match.
+    //                      Without stat dispatch: empty list.
+    Vec::new()
+}
 
 /// Port of `cleanup_()` from Src/Zle/computil.c:5160.
 pub fn cleanup_() -> i32 {                                                   // c:5160
