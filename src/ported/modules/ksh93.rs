@@ -368,7 +368,10 @@ pub fn ksh93_wrapper(_prog: *const eprog, _w: *const funcwrap, name: *mut libc::
 // =====================================================================
 
 /// Port of `setup_()` from `Src/Modules/ksh93.c:236`.
-pub fn setup_(_m: *const module) -> i32 { 0 }                          // c:238
+pub fn setup_(_m: *const module) -> i32 {                                    // c:236
+    // C body c:238-239 — `return 0`. Faithful empty-body port.
+    0
+}
 
 /// Port of `features_()` from `Src/Modules/ksh93.c:243`.
 /// C body c:245-247 — `*features = featuresarray(m, &module_features);
@@ -543,7 +546,12 @@ fn gethashnode2(_ht: &AtomicI32, _name: &str) -> *mut param {
 fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&Vec<i32>>) -> i32 { 0 }
 
 /// Port of `finish_()` from `Src/Modules/ksh93.c:284`.
-pub fn finish_(_m: *const module) -> i32 { 0 }                         // c:286
+pub fn finish_(_m: *const module) -> i32 {                                   // c:284
+    // C body c:286-287 — `return 0`. Faithful empty-body port; the
+    //                    ksh93 wrapper unregisters in cleanup_ via
+    //                    deletewrapper.
+    0
+}
 
 // =====================================================================
 // External fns / globals from other Src/*.c files. Stubbed locally
