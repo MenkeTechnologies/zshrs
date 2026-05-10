@@ -362,8 +362,31 @@ fn module_features() -> &'static Mutex<features_t> {
     }))
 }
 
+/// `RANDFD` — port of the file-static `int randfd` in
+/// `Src/Modules/random.c:34`. Holds the open fd for `/dev/urandom`.
+/// Set in `boot_()`, closed in `finish_()`.
+pub static RANDFD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:34
+
 /// Port of `setup_()` from `Src/Modules/random.c:243`.
-pub fn setup_(_m: *const module) -> i32 { 0 }                                // c:243
+pub fn setup_(_m: *const module) -> i32 {                                    // c:243
+    // c:245-261 — USE_URANDOM block: stat /dev/urandom; verify
+    //              S_ISCHR. We probe via std::fs::metadata + file_type().
+    use std::fs::metadata;
+    use std::os::unix::fs::FileTypeExt;
+    match metadata("/dev/urandom") {                                         // c:251
+        Ok(md) => {
+            if !md.file_type().is_char_device() {                            // c:256
+                tracing::warn!(target: "random", "Error getting kernel random pool: not a char device");
+                return 1;
+            }
+        }
+        Err(e) => {
+            tracing::warn!(target: "random", "Error getting kernel random pool: {}", e);
+            return 1;
+        }
+    }
+    0                                                                        // c:262
+}
 
 /// Port of `features_()` from `Src/Modules/random.c:267`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:267
@@ -377,7 +400,23 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // 
 }
 
 /// Port of `boot_()` from `Src/Modules/random.c:282`.
-pub fn boot_(_m: *const module) -> i32 { 0 }                                 // c:282
+pub fn boot_(_m: *const module) -> i32 {                                     // c:282
+    // c:284-308 — USE_URANDOM block: open(/dev/urandom, O_RDONLY),
+    //              movefd, addmodulefd to track the fd.
+    use std::os::fd::IntoRawFd;
+    use std::sync::atomic::Ordering;
+    match std::fs::OpenOptions::new().read(true).open("/dev/urandom") {      // c:295
+        Ok(f) => {
+            let fd = f.into_raw_fd();                                        // c:300
+            RANDFD.store(fd, Ordering::SeqCst);
+            0
+        }
+        Err(e) => {
+            tracing::warn!(target: "random", "Could not access kernel random pool: {}", e);
+            1                                                                // c:298
+        }
+    }
+}
 
 /// Port of `cleanup_()` from `Src/Modules/random.c:312`.
 pub fn cleanup_(m: *const module) -> i32 {                                   // c:312
@@ -385,7 +424,15 @@ pub fn cleanup_(m: *const module) -> i32 {                                   // 
 }
 
 /// Port of `finish_()` from `Src/Modules/random.c:319`.
-pub fn finish_(_m: *const module) -> i32 { 0 }                               // c:319
+pub fn finish_(_m: *const module) -> i32 {                                   // c:319
+    // c:321-324 — USE_URANDOM block: `if (randfd >= 0) zclose(randfd)`.
+    use std::sync::atomic::Ordering;
+    let fd = RANDFD.swap(-1, Ordering::SeqCst);
+    if fd >= 0 {
+        unsafe { libc::close(fd) };                                          // c:323 zclose
+    }
+    0
+}
 
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["f:rand48".to_string(), "p:SRANDOM_FILE".to_string(), "p:ERAND48_SEED".to_string()]
