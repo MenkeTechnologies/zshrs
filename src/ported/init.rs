@@ -806,6 +806,26 @@ pub fn tccap_get_name(cap: usize) -> &'static str {
 pub static TCCOLOURS: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
 
+/// Port of `mod_export int hasam` from `Src/init.c:87`. True when
+/// the terminal supports automatic margins (`am` termcap entry) —
+/// drives the cursor-wrap behaviour at the right edge in `zrefresh`.
+pub static HASAM: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:87
+
+/// Port of `mod_export int zle_load_state` from `Src/init.c:1739`.
+/// Tracks ZLE module load: 0 = not loaded, 1 = loaded via dlopen,
+/// 2 = static-link/fallback path active. Read by `zleentry` in init.c
+/// to decide whether to dispatch through `zle_entry_ptr` or fall
+/// through to the inline `ZLE_CMD_*` switch.
+pub static ZLE_LOAD_STATE: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:1739
+
+/// Port of `mod_export int use_exit_printed` from `Src/init.c:1846`.
+/// Set when the "use exit to leave the shell" warning has been
+/// emitted on the prior `^D` — second `^D` exits without re-printing.
+pub static USE_EXIT_PRINTED: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:1846
+
 /// Set up SHIN to read from stdin or the script file.
 /// Port of `setupshin()` from Src/init.c:1340. C source `stat`s
 /// the script path, falls back to `$PATH` walk if `PATHSCRIPT` is

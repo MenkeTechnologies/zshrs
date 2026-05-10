@@ -3651,6 +3651,12 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
     0
 }
 
+/// Port of `mod_export int ineval` from `Src/builtin.c:6389`. Set
+/// while `eval` is dispatching its body (incremented before
+/// `execode(prog, 1, 0, "eval")`, decremented after). Tested by
+/// `IN_EVAL_TRAP()` in zsh.h:2962 to determine trap-context state.
+pub static INEVAL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:6389
+
 // `loops` / `breaks` / `contflag` / `retflag` / `locallevel` / `sourcelevel`
 // globals from Src/loop.c + Src/init.c — control-flow state consulted by
 // the bin_break dispatcher.

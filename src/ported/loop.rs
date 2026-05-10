@@ -49,10 +49,11 @@ static BREAK_LEVEL: AtomicI32 = AtomicI32::new(0);
 //     mod_export volatile int breaks;     // line 46
 //
 // All `mod_export` (cross-compilation-unit), so they're PORT_PLAN
-// Phase 3 bucket-2 (Arc<RwLock>) work. Currently mirrored as the
-// AtomicI32 file-statics above (LOOP_DEPTH / CONT_FLAG / BREAK_LEVEL
-// — names should be renamed to `LOOPS` / `CONTFLAG` / `BREAKS` to
-// match C 1:1 in a follow-up).
+// Phase 3 bucket-2 (Arc<RwLock>) work. The canonical C-named ports
+// (LOOPS / CONTFLAG / BREAKS) live in `src/ported/builtin.rs:3657-3659`
+// where the bin_break dispatcher consults them; the local
+// LOOP_DEPTH / CONT_FLAG / BREAK_LEVEL above are this file's
+// internal mirrors.
 
 // And this is used to print select lists.                                 // c:343
 /// Select-menu display.
