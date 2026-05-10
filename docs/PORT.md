@@ -284,11 +284,50 @@ the C code IS the structure of the Rust code.
 
 ### 7. C source comments port over
 
+**This is a hard rule, not a "nice to have."** The C source's inline
+comments encode load-bearing context that the code alone doesn't:
+- WHY a flag combination is rejected ("see comment in optlookup()")
+- WHICH bug a workaround fixes ("Apparently SunOS does X")
+- WHEN a branch is reachable ("only if SUSER_RECURSE is set")
+- WHAT the C author considered (and rejected) elsewhere
+- The **WHY behind the WHAT** — every comment is a load-bearing
+  intent record. Stripping them and reconstructing intent later is
+  archaeology, not porting.
+
 `/* without arguments, display limits */` becomes
 `// without arguments, display limits` (Rust `//`) in the same
-position, on the same line or block, as the C source. Don't drop them,
-don't paraphrase them, don't translate idioms ("get the limit in
-question" stays as-is).
+position, on the same line or block, as the C source. Don't drop
+them, don't paraphrase them, don't translate idioms ("get the limit
+in question" stays as-is).
+
+**Required:**
+- Every C inline comment in the function body MUST appear in the
+  Rust port. Translate `/* ... */` to `//` line-form; preserve
+  multi-line block comments as `//`-prefixed blocks at the same
+  indentation.
+- C function-header comments (the descriptive paragraph above the C
+  signature) become Rust doc-comments (`///`) on the Rust port,
+  alongside the `/// Port of <name>() from Src/<file>.c:<line>.`
+  citation. Both go on the port, not just the citation.
+- The C struct + global comments (e.g. the comment above `struct
+  rmmagic` at jobs.c:537) carry over verbatim onto the Rust struct.
+- File-header comments (the multi-line block at top of every C
+  file describing copyright + purpose) become Rust `//!` module
+  doc-comments at the top of the corresponding `.rs` file.
+
+**Rust-only architectural notes** (e.g. "uses thread_local because
+the C source's file-static doesn't survive Rayon workers", or
+"!!! WARNING: RUST-ONLY HELPER !!!" blocks for borrow-checker
+adapters) go in their **OWN** comment block, separately from the
+verbatim C comment carry-overs. Don't conflate the two — a reader
+must be able to tell at a glance whether a comment originated in
+the C source or is a Rust-port-specific note.
+
+**Checking for completeness:** before declaring a port faithful,
+diff the C function's comment density against the Rust port. A
+faithful port has comparable comment density. A C body with 30
+inline comments porting to a Rust body with 3 comments is a
+warning sign — comments were dropped.
 
 ### 8. Top-level declaration order matches C exactly
 
