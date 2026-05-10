@@ -1856,10 +1856,9 @@ pub fn execimmortal(name: &str, args: &[String]) -> i32 {                    // 
     // Look up `.NAME` and dispatch to execzlefunc; the dot-prefixed
     // name guarantees we hit the immortal/canonical thingy.
     let dotted = format!(".{}", name);
-    if crate::ported::zle::zle_thingy::rthingy_nocreate(&dotted) {
-        // execzlefunc deferred — return 0 as success placeholder.
-        let _ = args;
-        return 0;
+    if crate::ported::zle::zle_thingy::rthingy_nocreate(&dotted) {           // c:1406
+        // c:1407 — `return execzlefunc(immortal, args, 0, 0)`.
+        return execzlefunc(&dotted, args);
     }
     1                                                                        // c:1409
 }
