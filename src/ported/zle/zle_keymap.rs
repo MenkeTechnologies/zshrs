@@ -39,6 +39,23 @@ pub const BS_LIST: u32 = 1 << 0;                                             // 
 /// list ALL bindings, including default sequences.
 pub const BS_ALL: u32 = 1 << 1;                                              // c:115
 
+/// Port of `mod_export char *curkeymapname` from `Src/Zle/zle_keymap.c:126`.
+/// Name of the currently active keymap (driven by `bindkey -A` and the
+/// `KEYMAP` parameter). The Rust port wraps in OnceLock<Mutex<>> for
+/// thread-safe access from widget bodies.
+pub static CURKEYMAPNAME: std::sync::OnceLock<std::sync::Mutex<String>> =
+    std::sync::OnceLock::new();                                              // c:126
+
+/// Get-or-init accessor for `CURKEYMAPNAME`. Mirrors the C convention
+/// of treating the string as always-initialised — first read seeds it
+/// with "main".
+pub fn curkeymapname() -> std::sync::MutexGuard<'static, String> {
+    CURKEYMAPNAME
+        .get_or_init(|| std::sync::Mutex::new(String::from("main")))
+        .lock()
+        .unwrap()
+}
+
 // =====================================================================
 // keymapnamtab — `Src/Zle/zle_keymap.c:128/153`.
 // =====================================================================

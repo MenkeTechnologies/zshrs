@@ -585,6 +585,14 @@ optns_flags
 # boilerplate from every caller.
 thingytab
 
+# curkeymapname (zle/zle_keymap.rs) — Rust-only get-or-init accessor
+# for the global `mod_export char *curkeymapname` from
+# Src/Zle/zle_keymap.c:126. C declares it as a top-level char* and
+# mutates via direct assignment from selectkeymap/bindkey -A. Rust uses
+# OnceLock<Mutex<String>> for thread-safe lazy init; this private helper
+# hides the get_or_init boilerplate from every caller.
+curkeymapname
+
 # keymapnamtab (zle/zle_keymap.rs) — Rust-only get-or-init accessor
 # for the global `keymapnamtab` HashTable from Src/Zle/zle_keymap.c:128.
 # Same pattern as thingytab — C declares it as `mod_export HashTable

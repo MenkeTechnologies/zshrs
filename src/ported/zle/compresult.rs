@@ -28,6 +28,13 @@
 // `do_single` / `do_allmatches`. zshrs's port routes those
 // through the executor's completion state directly.
 
+/// Port of `mod_export int invcount` from `Src/Zle/compresult.c:37`.
+/// Invalidation counter — bumped every time the cached completion
+/// list goes stale. `complistmatches` reads it to detect "we have a
+/// new list" without comparing the full Cmgroup chain.
+pub static INVCOUNT: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:37
+
 // scs is used to return the position where a automatically created suffix  // c:573
 // has to be inserted.                                                       // c:574
 /// Replace `[word_start, word_end)` in `buffer` with `replacement`,

@@ -201,6 +201,11 @@ pub static INCOMPFUNC: AtomicI32 = AtomicI32::new(0);                        // 
 /// being completed.
 pub static COMPCURRENT: AtomicI32 = AtomicI32::new(0);                       // c:complete.c
 
+/// Port of `mod_export zlong complistmax` from `Src/Zle/complete.c:37`.
+/// `$LISTMAX` value — maximum number of matches to list before asking
+/// the user via asklistscroll. 0 means no limit.
+pub static COMPLISTMAX: AtomicI64 = AtomicI64::new(0);                       // c:37
+
 /// Port of `int nmatches` — total matches accumulated this round.
 pub static NMATCHES_GLOBAL: AtomicI64 = AtomicI64::new(0);                   // c:compcore.c:160
 
