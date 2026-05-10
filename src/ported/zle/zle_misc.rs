@@ -77,6 +77,23 @@ pub static VFINDCHAR: AtomicI32 = AtomicI32::new(0);                         // 
 pub static VFINDDIR: AtomicI32 = AtomicI32::new(0);                          // c:735
 pub static TAILADD:  AtomicI32 = AtomicI32::new(0);                          // c:735
 
+/// Port of `static int kct` from `Src/Zle/zle_misc.c:523`. Index into
+/// the kill ring for the next yank-pop, or -1 for the original cutbuf
+/// at the start of a yank sequence.
+pub static KCT:    AtomicI32 = AtomicI32::new(-1);                           // c:523
+
+/// Port of `static int yankcs` from `Src/Zle/zle_misc.c:523`. Saved
+/// cursor position at the start of the most-recent yank — `yank-pop`
+/// rewinds to this and re-inserts the next ring entry.
+pub static YANKCS: AtomicI32 = AtomicI32::new(0);                            // c:523
+
+/// Port of `static int namedcmdambig` from `Src/Zle/zle_misc.c:1231`.
+/// Length of the longest unambiguous prefix among all matched
+/// `namedcmd` widget names — drives `execute-named-command` ambig
+/// resolution. Mirrored on `NamedCmdState.namedcmdambig` already;
+/// this is the searchable counterpart.
+pub static NAMEDCMDAMBIG: AtomicI32 = AtomicI32::new(0);                     // c:1231
+
 // ===== Pre/post-display strings (Src/Zle/zle_main.c) =====
 //
 // `ZLE_STRING_T predisplay` / `ZLE_STRING_T postdisplay` — text

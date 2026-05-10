@@ -1410,6 +1410,47 @@ pub static NUMSCROLLS:  std::sync::atomic::AtomicI32 =
 pub static ONUMSCROLLS: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);                                    // c:832
 
+// =====================================================================
+// mod_export refresh-state globals — `Src/Zle/zle_refresh.c:157-188`.
+// Exposed across translation units (other modules read them) so they
+// can't be inlined onto Zle. AtomicI32 for safe lock-free access.
+// =====================================================================
+
+/// Port of `mod_export int nlnct` from `Src/Zle/zle_refresh.c:157`.
+/// Number of lines counted in the prompt+buffer for the current
+/// refresh — drives nbuf allocation (`nlnct * winw` cells).
+pub static NLNCT:        std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:157
+
+/// Port of `mod_export int showinglist` from `Src/Zle/zle_refresh.c:165`.
+/// Non-zero when a completion-listing is currently displayed below
+/// the prompt; refreshes need to redraw it on next paint.
+pub static SHOWINGLIST:  std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:165
+
+/// Port of `mod_export int listshown` from `Src/Zle/zle_refresh.c:171`.
+/// Number of completion-listing lines actually shown last refresh —
+/// used by clear path to know how many lines to wipe.
+pub static LISTSHOWN:    std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:171
+
+/// Port of `mod_export int lastlistlen` from `Src/Zle/zle_refresh.c:176`.
+/// Length of the previous listing (separate from `listshown` because
+/// the listing might be paginated).
+pub static LASTLISTLEN:  std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:176
+
+/// Port of `mod_export int clearflag` from `Src/Zle/zle_refresh.c:183`.
+/// Request a full screen-clear on next refresh (set by `clear-screen`
+/// widget + Ctrl+L).
+pub static CLEARFLAG:    std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:183
+
+/// Port of `mod_export int clearlist` from `Src/Zle/zle_refresh.c:188`.
+/// Request the completion-listing be wiped on next refresh.
+pub static CLEARLIST:    std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:188
+
 /// Port of `struct rparams` from `Src/Zle/zle_refresh.c:815`. Workspace
 /// state threaded through `zrefresh` + `nextline` + `wpfx` — tracks the
 /// current line being painted, scroll budget, video cursor, and the
