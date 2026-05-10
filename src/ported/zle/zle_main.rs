@@ -1707,7 +1707,21 @@ pub fn features_() -> i32 { 0 }
 pub fn finish_() -> i32 { 0 }
 
 /// Port of `getrestchar()` from Src/Zle/zle_main.c:990. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn getrestchar() -> i32 { 0 }
+pub fn getrestchar(zle: &mut Zle, inchar: i32) -> i32 {                      // c:990
+    // c:1002 — `lastchar_wide_valid = 1`. Mark wide cache as valid.
+    zle.lastchar_wide_valid = true;
+    // c:1006-1009 — `if (inchar == EOF) return WEOF (cached)`.
+    if inchar < 0 {
+        zle.lastchar_wide = -1;
+        return -1;                                                           // c:1009 ZLEEOF
+    }
+    // c:1016+ — multibyte byte-stream → wide-char accumulator.
+    // zshrs is UTF-8 native; for an ASCII char inchar fits in
+    // lastchar_wide directly (mb_metacharlenconv state machine
+    // collapses to identity for the BMP single-byte path).
+    zle.lastchar_wide = inchar;
+    inchar
+}
 
 /// Port of `recursiveedit()` from Src/Zle/zle_main.c:1974. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn recursiveedit() -> i32 { 0 }
