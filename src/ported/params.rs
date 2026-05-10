@@ -220,6 +220,176 @@ impl ParamValue {
     }
 }
 
+
+// =============================================================================
+// IPDEF{1,2,4,5,5U,6,7,7R,7U,8,9,10} + LCIPDEF — special-parameter
+// table entry constructors. All defined as macros in
+// `Src/params.c:296-406`. Each produces one row of the
+// `special_params[]` table; the differences are flag combinations
+// + which gsu (getter/setter union) the entry binds.
+//
+// In C, `BR(p)` is `{(void *)(p)}` for the param's `u` data field;
+// `GSU(g)` is the `&g` of the named gsu_scalar/gsu_integer/etc.
+// The Rust port stores `var` and `gsu` as `usize` slot indexes
+// into per-evaluator tables, matching the existing PARAMDEF helper
+// above. The flag bit combinations mirror the C macros line-by-line.
+// =============================================================================
+
+/// Port of `IPDEF1(A,B,C)` from `Src/params.c:296` —
+/// `{{NULL,A,PM_INTEGER|PM_SPECIAL|C},BR(NULL),GSU(B),10,0,...}`.
+#[inline] #[allow(non_snake_case)]
+pub fn IPDEF1(name: &str, gsu: usize, extra_flags: i32) -> paramdef {        // c:params.c:296
+    paramdef {
+        name: name.to_string(),
+        flags: (PM_INTEGER | PM_SPECIAL) as i32 | extra_flags,
+        var: 0, gsu,
+        getnfn: None, scantfn: None, pm: None,
+    }
+}
+
+/// Port of `IPDEF2(A,B,C)` from `Src/params.c:309` —
+/// `{{NULL,A,PM_SCALAR|PM_SPECIAL|C},BR(NULL),GSU(B),0,0,...}`.
+#[inline] #[allow(non_snake_case)]
+pub fn IPDEF2(name: &str, gsu: usize, extra_flags: i32) -> paramdef {        // c:params.c:309
+    paramdef {
+        name: name.to_string(),
+        flags: (PM_SCALAR | PM_SPECIAL) as i32 | extra_flags,
+        var: 0, gsu,
+        getnfn: None, scantfn: None, pm: None,
+    }
+}
+
+/// Port of `IPDEF4(A,B)` from `Src/params.c:344` —
+/// `{{NULL,A,PM_INTEGER|PM_READONLY_SPECIAL},BR((void*)B),
+///   GSU(varint_readonly_gsu),10,0,...}`.
+#[inline] #[allow(non_snake_case)]
+pub fn IPDEF4(name: &str, var: usize) -> paramdef {                          // c:params.c:344
+    paramdef {
+        name: name.to_string(),
+        flags: (PM_INTEGER | PM_READONLY_SPECIAL) as i32,
+        var, gsu: 0,
+        getnfn: None, scantfn: None, pm: None,
+    }
+}
+
+/// Port of `IPDEF5(A,B,F)` from `Src/params.c:353` —
+/// `{{NULL,A,PM_INTEGER|PM_SPECIAL},BR((void*)B),GSU(F),10,0,...}`.
+#[inline] #[allow(non_snake_case)]
+pub fn IPDEF5(name: &str, var: usize, gsu: usize) -> paramdef {              // c:params.c:353
+    paramdef {
+        name: name.to_string(),
+        flags: (PM_INTEGER | PM_SPECIAL) as i32,
+        var, gsu,
+        getnfn: None, scantfn: None, pm: None,
+    }
+}
+
+/// Port of `IPDEF5U(A,B,F)` from `Src/params.c:354` — c:353 + PM_UNSET.
+#[inline] #[allow(non_snake_case)]
+pub fn IPDEF5U(name: &str, var: usize, gsu: usize) -> paramdef {             // c:params.c:354
+    paramdef {
+        name: name.to_string(),
+        flags: (PM_INTEGER | PM_SPECIAL | PM_UNSET) as i32,
+        var, gsu,
+        getnfn: None, scantfn: None, pm: None,
+    }
+}
+
+/// Port of `IPDEF6(A,B,F)` from `Src/params.c:362` — c:353 + PM_DONTIMPORT.
+#[inline] #[allow(non_snake_case)]
+pub fn IPDEF6(name: &str, var: usize, gsu: usize) -> paramdef {              // c:params.c:362
+    paramdef {
+        name: name.to_string(),
+        flags: (PM_INTEGER | PM_SPECIAL | PM_DONTIMPORT) as i32,
+        var, gsu,
+        getnfn: None, scantfn: None, pm: None,
+    }
+}
+
+/// Port of `IPDEF7(A,B)` from `Src/params.c:367` —
+/// `{{NULL,A,PM_SCALAR|PM_SPECIAL},BR((void*)B),GSU(varscalar_gsu),0,0,...}`.
+#[inline] #[allow(non_snake_case)]
+pub fn IPDEF7(name: &str, var: usize) -> paramdef {                          // c:params.c:367
+    paramdef {
+        name: name.to_string(),
+        flags: (PM_SCALAR | PM_SPECIAL) as i32,
+        var, gsu: 0,
+        getnfn: None, scantfn: None, pm: None,
+    }
+}
+
+/// Port of `IPDEF7R(A,B)` from `Src/params.c:368` — c:367 + PM_DONTIMPORT_SUID.
+#[inline] #[allow(non_snake_case)]
+pub fn IPDEF7R(name: &str, var: usize) -> paramdef {                         // c:params.c:368
+    paramdef {
+        name: name.to_string(),
+        flags: (PM_SCALAR | PM_SPECIAL | PM_DONTIMPORT_SUID) as i32,
+        var, gsu: 0,
+        getnfn: None, scantfn: None, pm: None,
+    }
+}
+
+/// Port of `IPDEF7U(A,B)` from `Src/params.c:369` — c:367 + PM_UNSET.
+#[inline] #[allow(non_snake_case)]
+pub fn IPDEF7U(name: &str, var: usize) -> paramdef {                         // c:params.c:369
+    paramdef {
+        name: name.to_string(),
+        flags: (PM_SCALAR | PM_SPECIAL | PM_UNSET) as i32,
+        var, gsu: 0,
+        getnfn: None, scantfn: None, pm: None,
+    }
+}
+
+/// Port of `IPDEF8(A,B,C,D)` from `Src/params.c:394` —
+/// `{{NULL,A,D|PM_SCALAR|PM_SPECIAL},BR((void*)B),GSU(colonarr_gsu),
+///   0,0,NULL,C,NULL,0}`.
+/// `C` is the colon-arr field; the Rust port stores it in `getnfn`
+/// since `paramdef` lacks a dedicated colon-arr slot until that's
+/// ported.
+#[inline] #[allow(non_snake_case)]
+pub fn IPDEF8(name: &str, var: usize, _colon: usize, extra_flags: i32) -> paramdef { // c:params.c:394
+    paramdef {
+        name: name.to_string(),
+        flags: (PM_SCALAR | PM_SPECIAL) as i32 | extra_flags,
+        var, gsu: 0,
+        getnfn: None, scantfn: None, pm: None,
+    }
+}
+
+/// Port of `IPDEF9(A,B,C,D)` from `Src/params.c:384` —
+/// `{{NULL,A,D|PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT},BR((void*)B),
+///   GSU(vararray_gsu),0,0,NULL,C,NULL,0}`.
+#[inline] #[allow(non_snake_case)]
+pub fn IPDEF9(name: &str, var: usize, _colon: usize, extra_flags: i32) -> paramdef { // c:params.c:384
+    paramdef {
+        name: name.to_string(),
+        flags: (PM_ARRAY | PM_SPECIAL | PM_DONTIMPORT) as i32 | extra_flags,
+        var, gsu: 0,
+        getnfn: None, scantfn: None, pm: None,
+    }
+}
+
+/// Port of `IPDEF10(A,B)` from `Src/params.c:406` —
+/// `{{NULL,A,PM_ARRAY|PM_SPECIAL},BR(NULL),GSU(B),10,0,...}`.
+#[inline] #[allow(non_snake_case)]
+pub fn IPDEF10(name: &str, gsu: usize) -> paramdef {                         // c:params.c:406
+    paramdef {
+        name: name.to_string(),
+        flags: (PM_ARRAY | PM_SPECIAL) as i32,
+        var: 0, gsu,
+        getnfn: None, scantfn: None, pm: None,
+    }
+}
+
+/// Port of `LCIPDEF(name)` from `Src/params.c:324` —
+/// `IPDEF2(name, lc_blah_gsu, PM_UNSET)`.
+#[inline] #[allow(non_snake_case)]
+pub fn LCIPDEF(name: &str) -> paramdef {                                     // c:params.c:324
+    IPDEF2(name, 0, PM_UNSET as i32)                                         // c:324 lc_blah_gsu (slot 0)
+}
+
+
+
 // ---------------------------------------------------------------------------
 // Numeric type for parameters (from params.c mnumber)
 // ---------------------------------------------------------------------------
@@ -5451,7 +5621,7 @@ impl VarAttr {
 
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
-
+use crate::zsh_h::{paramdef, PM_ARRAY, PM_DONTIMPORT, PM_DONTIMPORT_SUID, PM_INTEGER, PM_READONLY_SPECIAL, PM_SCALAR, PM_SPECIAL, PM_UNSET};
 // -----------------------------------------------------------
 // Module statics — one per C global referenced by the special-
 // param callbacks below. All initialised lazily on first read.

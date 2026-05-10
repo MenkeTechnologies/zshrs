@@ -8416,49 +8416,17 @@ impl crate::ported::exec::ShellExecutor {
 // =====================================================================
 
 impl crate::ported::exec::ShellExecutor {
-    /// echoti - output terminfo value
+    /// `echoti` shim — delegates to the canonical free-fn port at
+    /// `crate::ported::modules::terminfo::bin_echoti` (matching C
+    /// `bin_echoti(nam, args, ops, func)` per terminfo.c:64). The
+    /// previous shim mapped terminfo→termcap and routed through
+    /// bin_echotc; the canonical port now calls libcurses tigetstr/
+    /// tigetnum/tigetflag + tparm directly per the C source.
     pub(crate) fn bin_echoti(&mut self, args: &[String]) -> i32 {
-        // echoti uses TERMINFO names ('clear', 'home', 'el', etc.)
-        // not termcap two-letter codes. Translate the common terminfo
-        // names to their termcap equivalents and dispatch through
-        // bin_echotc which already handles the ANSI emit. Direct
-        // port of zsh/Src/Modules/terminfo.c bin_echoti's
-        // tparm-style path with the canonical mapping below.
-        if args.is_empty() {
-            zwarnnam("echoti", "not enough arguments");
-            return 1;
-        }
-        let cap = args[0].as_str();
-        // terminfo → termcap two-letter mapping (most-used subset).
-        let mapped = match cap {
-            "clear" => "cl",
-            "ed" => "cd",  // clear to end of display
-            "el" => "ce",  // clear to end of line
-            "cup" => "cm", // cursor position (with row, col)
-            "cuu1" => "up",
-            "cud1" => "do",
-            "cub1" => "le",
-            "cuf1" => "nd",
-            "home" => "ho",
-            "civis" => "vi",
-            "cnorm" => "ve",
-            "smso" => "so",
-            "rmso" => "se",
-            "smul" => "us",
-            "rmul" => "ue",
-            "bold" => "md",
-            "sgr0" => "me",
-            "rev" => "mr",
-            "setaf" => "AF",
-            "setab" => "AB",
-            "colors" => "Co",
-            "cols" => "co",
-            "lines" => "li",
-            other => other, // pass through unknown names; echotc rejects
-        };
-        let mut new_args = vec![mapped.to_string()];
-        new_args.extend(args[1..].iter().cloned());
-        self.bin_echotc(&new_args)
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                            argscount: 0, argsalloc: 0 };
+        crate::ported::modules::terminfo::bin_echoti("echoti", args, &ops, 0)
     }
 }
 
