@@ -4,7 +4,6 @@
 //! port matches: zero types. Two fns: `bin_zselect` and the
 //! static helper `handle_digits`, plus the 6 module loaders.
 
-use crate::ported::exec::ShellExecutor;
 use crate::ported::utils::zwarnnam;
 
 /// Port of static helper `handle_digits()` from
@@ -251,20 +250,10 @@ fn is_ident(s: &str) -> bool {
     chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
-// Shim for the executor's builtin-dispatch table.
-impl ShellExecutor {
-    /// `zselect` builtin shim — adapts `&[String]` to `&[&str]`
-    /// and forwards to the canonical `bin_zselect` above.
-    pub(crate) fn bin_zselect(&mut self, args: &[String]) -> i32 {
-        // Canonical bin_zselect now takes (name, args, ops, func) per
-        // Src/Modules/zselect.c:65; the C source parses options inline,
-        // so we forward an empty Options struct.
-        use crate::ported::zsh_h::{options, MAX_OPS};
-        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                            argscount: 0, argsalloc: 0 };
-        bin_zselect("zselect", args, &ops, 0)
-    }
-}
+// (impl ShellExecutor block moved to src/fusevm_bridge.rs at the
+// "zselect" call site — per the no-shellexecutor-in-src/ported
+// rule. Canonical bin_zselect above takes (name, args, ops, func)
+// per Src/Modules/zselect.c:65.)
 
 // =====================================================================
 // static struct builtin bintab[]                                    c:271
@@ -353,8 +342,6 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn fresh_exec() -> ShellExecutor { ShellExecutor::new() }
 
     fn empty_ops_zs() -> crate::ported::zsh_h::options {
         use crate::ported::zsh_h::{options, MAX_OPS};
