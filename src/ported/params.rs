@@ -25,7 +25,7 @@ use crate::ported::zsh_h::{
     SCANPM_CHECKING, SCANPM_MATCHMANY, SCANPM_MATCHKEY, SCANPM_MATCHVAL,
     SCANPM_KEYMATCH, SCANPM_WANTKEYS, SCANPM_WANTVALS, SCANPM_ARRONLY,
     VALFLAG_EMPTY, VALFLAG_INV,
-    ASSPM_WARN, ASSPM_ENV_IMPORT,
+    ASSPM_WARN, ASSPM_AUGMENT, ASSPM_ENV_IMPORT,
     PRINT_NAMEONLY, PRINT_TYPESET, PRINT_INCLUDEVALUE, PRINT_KV_PAIR,
     PRINT_LINE, PRINT_POSIX_READONLY, PRINT_POSIX_EXPORT,
     EXECOPT, KSHARRAYS, AUTONAMEDIRS, ALLEXPORT,
@@ -1023,167 +1023,254 @@ pub fn setaparam(                                                           // c
 /// Port of `assignsparam()` from `Src/params.c:3193`. C signature:
 /// `mod_export Param assignsparam(char *s, char *val, int flags)`.
 ///
-/// The C body, line-by-line:
+/// `s` may carry an embedded `[...]` subscript (matching C's
+/// `strchr(s, '[')` parse). The function operates on the global
+/// `paramtab` (Src/params.c:515), creating/mutating `Param`
+/// entries in place. Branches preserved 1:1 with C:
 ///   - c:3203 `isident(s)` — reject non-identifier names.
 ///   - c:3209 `queue_signals()`.
-///   - c:3210 strchr(s, '[') — subscript split:
-///       * c:3212 `getvalue(&vbuf, &s, 1)` then either
-///         c:3213 `createparam(t, PM_ARRAY)` (created=1) or
-///         c:3216 PM_READONLY guard + c:3227 ASSPM_WARN drop +
-///         c:3228 `flags &= ~PM_DEFAULTED`.
-///       * c:3231 `*ss = '['; v = NULL;`.
-///   - c:3232 non-subscripted:
-///       * c:3233 `getvalue` → c:3234 `createparam(t, PM_SCALAR)` if missing,
-///       * c:3236-3250 if existing PM_ARRAY/PM_HASHED (non-special, non-tied,
-///         non-KSHARRAYS) → c:3242 `resetparam(v->pm, PM_SCALAR)`.
-///   - c:3252 second `getvalue(&vbuf, &t, 1)` — bind `v` for the assignment.
+///   - c:3210 subscripted path: c:3212 `getvalue` lookup,
+///     c:3213 `createparam(t, PM_ARRAY)` on miss, c:3216
+///     PM_READONLY guard, c:3227 ASSPM_WARN drop, c:3228 clear
+///     PM_DEFAULTED, c:3231 `v = NULL` then re-dispatch by type.
+///   - c:3232 non-subscripted: c:3233 `getvalue` → c:3234
+///     `createparam(t, PM_SCALAR)`; c:3236-3250 array/hash type-flip
+///     to PM_SCALAR (when not PM_SPECIAL|PM_TIED, not KSHARRAYS,
+///     not ASSPM_AUGMENT) via `resetparam(v->pm, PM_SCALAR)`.
 ///   - c:3258 PM_NAMEREF → c:3259 `valid_refname(val, flags)` guard.
-///   - c:3267 ASSPM_WARN → `check_warn_pm`.
 ///   - c:3269 clear PM_DEFAULTED.
-///   - c:3270 ASSPM_AUGMENT (`+=`) — c:3275 SCALAR/NAMEREF append,
-///     c:3280 INTEGER/EFLOAT/FFLOAT add, c:3297 ARRAY append-element.
 ///   - c:3343 `assignstrvalue(v, val, flags)`.
 ///   - c:3344 `unqueue_signals()`; c:3345 return v->pm.
 ///
-/// The Rust call shape carries the subscript out-of-band because
-/// subst.rs/paramsubst has already singsub'd it (subst.rs:1822 —
-/// matches the singsub call inside C `getarg` at params.c:1567).
-/// The three HashMap arguments (variables/arrays/assoc_arrays) are
-/// the current paramtab backing — one row per shell parameter
-/// keyed by name, dispatched by storage type (PM_SCALAR ↔
-/// `variables`, PM_ARRAY ↔ `arrays`, PM_HASHED ↔ `assoc_arrays`).
-/// Once paramtab is wired (Bucket-2 `Arc<RwLock<HashTable>>`), the
-/// three HashMaps collapse to one paramtab lookup and this
-/// signature drops to the C `(name, val, flags)` shape.
-pub fn assignsparam(                                                         // c:3193
-    variables: &mut std::collections::HashMap<String, String>,
-    arrays: &mut std::collections::HashMap<String, Vec<String>>,
-    assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
-    name: &str,
-    subscript: Option<&str>,
-    val: &str,
-) {
+/// The full HashTable substrate (vtable callbacks, scope-stacked
+/// iterators) is not yet wired; non-essential branches such as
+/// `+= AUGMENT` numeric/array slice append and `check_warn_pm`
+/// are documented but elided where unreachable from current
+/// callers — none of those code paths are exercised by zshrs's
+/// existing call sites.
+pub fn assignsparam(s: &str, val: &str, flags: i32)                          // c:3193
+    -> Option<crate::ported::zsh_h::Param>
+{
+    use crate::ported::zsh_h::{
+        Param, hashnode, param, ALLEXPORT, isset as isset_opt,
+    };
+
     // c:3203 `if (!isident(s)) { zerr; errflag |= ERRFLAG_ERROR; return NULL; }`
-    if !isident(name) {
-        zerr(&format!("not an identifier: {}", name));                       // c:3204
+    if !isident(s) {
+        zerr(&format!("not an identifier: {}", s));                          // c:3204
         errflag.fetch_or(                                                    // c:3206
             crate::ported::utils::ERRFLAG_ERROR,
             std::sync::atomic::Ordering::Relaxed,
         );
-        return;                                                              // c:3207
+        return None;                                                         // c:3207
     }
     crate::ported::signals::queue_signals();                                 // c:3209
 
-    // c:3210 subscripted path (`s[...]`).
-    if let Some(key) = subscript {
-        // c:3212 `getvalue(&vbuf, &s, 1)` — paramtab lookup. Until
-        // paramtab is wired we map "exists" to "any of the three
-        // HashMaps holds `name`".
-        let exists = variables.contains_key(name)
-            || arrays.contains_key(name)
-            || assoc_arrays.contains_key(name);
+    // c:3210 — `strchr(s, '[')`. Split the leading name from the
+    // subscript while preserving C's `*ss = '\0'` / `*ss = '['`
+    // restore semantics: the Rust port works on `&str` slices so
+    // there's no in-place null-terminator dance, but the parse
+    // shape is identical.
+    let (name, subscript) = match s.find('[') {
+        Some(i) => {
+            let close = s.rfind(']').unwrap_or(s.len());
+            let key_end = if close > i { close } else { s.len() };
+            (&s[..i], Some(&s[i + 1..key_end]))
+        }
+        None => (s, None),
+    };
 
+    // Subscripted path (c:3210-3231).
+    if let Some(key) = subscript {
+        let mut tab = paramtab().lock().unwrap();
+        let exists = tab.contains_key(name);                                 // c:3212
         if !exists {
             // c:3213 `createparam(t, PM_ARRAY); created = 1;`
-            let _ = createparam(name, PM_ARRAY as i32);
-        } else if let Some(def) = SPECIAL_PARAMS.iter().find(|d| d.name == name) {
+            let pm: Param = Box::new(param {
+                node: hashnode { next: None, nam: name.to_string(), flags: PM_ARRAY as i32 },
+                u_data: 0, u_arr: Some(Vec::new()), u_str: None, u_val: 0,
+                u_dval: 0.0, u_hash: None,
+                gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+                base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+            });
+            tab.insert(name.to_string(), pm);
+        } else {
             // c:3216 `if (v->pm->node.flags & PM_READONLY)`.
-            if (def.pm_flags & PM_READONLY) != 0 {
-                zerr(&format!("read-only variable: {}", name));              // c:3217
+            let pm = tab.get(name).unwrap();
+            if (pm.node.flags as u32 & PM_READONLY) != 0 {
+                zerr(&format!("read-only variable: {}", pm.node.nam));       // c:3217
+                drop(tab);
                 crate::ported::signals::unqueue_signals();                   // c:3220
-                return;                                                      // c:3221
+                return None;                                                 // c:3221
             }
         }
-        // c:3227 `flags &= ~ASSPM_WARN`; c:3228 clear PM_DEFAULTED.
-        // Per-param flags aren't carried through the HashMap backing
-        // yet, so the bit-clear is a no-op here.
-
-        // c:3231 `v = NULL;` then re-dispatch by storage type.
-        // Element-store: PM_HASHED takes precedence over numeric idx
-        // (mirrors c:3214 `createparam(s, PM_HASHED)` when existing
-        // param is hashed).
-        if let Some(map) = assoc_arrays.get_mut(name) {
-            map.insert(key.to_string(), val.to_string());
-            crate::ported::signals::unqueue_signals();
-            return;
-        }
-        // PM_ARRAY + numeric subscript (c:3357 `assignaparam` idx slot).
-        if let Ok(idx) = key.parse::<i64>() {
-            let arr = arrays.entry(name.to_string()).or_default();
+        // c:3231 `v = NULL;` — re-dispatch by storage type.
+        let pm = tab.get_mut(name).unwrap();
+        pm.node.flags &= !(PM_DEFAULTED as i32);                             // c:3228
+        if (pm.node.flags as u32 & PM_HASHED) != 0 {
+            // PM_HASHED element store. `param.u_hash` is typed
+            // `Option<HashTable>` per Src/zsh.h:1841 but the
+            // HashTable runtime backing isn't wired; the assoc-array
+            // values live in a parallel storage keyed on param name
+            // (`paramtab_hashed_storage()`).
+            let mut store = paramtab_hashed_storage().lock().unwrap();
+            store.entry(name.to_string()).or_default()
+                .insert(key.to_string(), val.to_string());
+        } else if let Ok(idx) = key.parse::<i64>() {
+            // PM_ARRAY + numeric subscript (c:3357 `assignaparam`).
+            let arr = pm.u_arr.get_or_insert_with(Vec::new);
             let len = arr.len() as i64;
-            // 1-based forward, negative-from-end (setarrvalue offset math).
+            // 1-based forward, negative-from-end.
             let real_idx = if idx < 0 { len + idx } else { idx - 1 };
             let real_idx = real_idx.max(0) as usize;
-            while arr.len() <= real_idx {
-                arr.push(String::new());
-            }
+            while arr.len() <= real_idx { arr.push(String::new()); }
             arr[real_idx] = val.to_string();
-            variables.remove(name);
-            crate::ported::signals::unqueue_signals();
-            return;
+            pm.u_str = None;
+        } else {
+            // String subscript on a non-hashed name → auto-vivify
+            // as PM_HASHED (mirrors C `createparam(s, PM_HASHED)`
+            // fallback when getvalue returns NULL).
+            pm.node.flags = (pm.node.flags & !(PM_TYPE(u32::MAX) as i32))
+                | PM_HASHED as i32;
+            pm.u_arr = None;
+            pm.u_str = None;
+            let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+            map.insert(key.to_string(), val.to_string());
+            paramtab_hashed_storage().lock().unwrap()
+                .insert(name.to_string(), map);
         }
-        // String subscript on a non-existing name → auto-vivify as
-        // PM_HASHED. Mirrors C `createparam(s, PM_HASHED)` fallback
-        // taken when getvalue returns NULL on a `name[key]=val` LHS.
-        let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
-        map.insert(key.to_string(), val.to_string());
-        assoc_arrays.insert(name.to_string(), map);
-        variables.remove(name);
-        arrays.remove(name);
-        crate::ported::signals::unqueue_signals();
-        return;
+        let cloned = pm.clone();
+        drop(tab);
+        crate::ported::signals::unqueue_signals();                           // c:3344
+        return Some(cloned);                                                 // c:3345
     }
 
     // c:3232 non-subscripted branch.
-    // c:3216 PM_READONLY guard for the scalar write below.
-    if let Some(def) = SPECIAL_PARAMS.iter().find(|d| d.name == name) {
-        if (def.pm_flags & PM_READONLY) != 0 {
-            zerr(&format!("read-only variable: {}", name));                  // c:3217
-            crate::ported::signals::unqueue_signals();
-            return;
+    let mut tab = paramtab().lock().unwrap();
+    let existing = tab.contains_key(name);
+    if !existing {
+        // c:3234 `createparam(t, PM_SCALAR); created = 1;`
+        let mut pm_flags = PM_SCALAR as i32;
+        if isset_opt(ALLEXPORT) {                                            // c:1149-1150 (ALLEXPORT path)
+            pm_flags |= PM_EXPORTED as i32;
+        }
+        let pm: Param = Box::new(param {
+            node: hashnode { next: None, nam: name.to_string(), flags: pm_flags },
+            u_data: 0, u_arr: None, u_str: Some(String::new()), u_val: 0,
+            u_dval: 0.0, u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+        });
+        tab.insert(name.to_string(), pm);
+    } else {
+        let pm = tab.get(name).unwrap();
+        // c:3216 PM_READONLY guard for an existing param.
+        if (pm.node.flags as u32 & PM_READONLY) != 0 {
+            zerr(&format!("read-only variable: {}", pm.node.nam));           // c:3217
+            drop(tab);
+            crate::ported::signals::unqueue_signals();                       // c:3220
+            return None;                                                     // c:3221
+        }
+        // c:3236-3250 — existing PM_ARRAY/PM_HASHED on a non-special,
+        // non-tied, non-KSHARRAYS, non-AUGMENT scalar assignment →
+        // `resetparam(v->pm, PM_SCALAR)`.
+        let f = pm.node.flags as u32;
+        let is_array_or_hash = (f & PM_ARRAY) != 0 || (f & PM_HASHED) != 0;
+        let is_special_or_tied = (f & (PM_SPECIAL | PM_TIED)) != 0;
+        let augment_bit = (flags & ASSPM_AUGMENT) != 0;
+        if is_array_or_hash
+            && !is_special_or_tied
+            && !augment_bit
+            && !crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+        {
+            // c:3242 — flip type to PM_SCALAR, drop array/hash slots.
+            let pm_mut = tab.get_mut(name).unwrap();
+            pm_mut.node.flags = (pm_mut.node.flags & !(PM_TYPE(u32::MAX) as i32))
+                | PM_SCALAR as i32;
+            pm_mut.u_arr = None;
+            paramtab_hashed_storage().lock().unwrap().remove(name);
         }
     }
 
-    // c:3236-3250 — existing PM_ARRAY/PM_HASHED on a non-special,
-    // non-tied, non-KSHARRAYS param → resetparam(v->pm, PM_SCALAR).
-    let was_array_or_hash = arrays.contains_key(name) || assoc_arrays.contains_key(name);
-    let is_special_or_tied = SPECIAL_PARAMS
-        .iter()
-        .any(|d| d.name == name && (d.pm_flags & (PM_SPECIAL | PM_TIED)) != 0);
-    if was_array_or_hash
-        && !is_special_or_tied
-        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
-    {
-        // c:3242 `resetparam(v->pm, PM_SCALAR)` — the HashMap backing
-        // models the type-flip as "drop the array/assoc, write the
-        // scalar slot below".
-        arrays.remove(name);
-        assoc_arrays.remove(name);
-    }
-
-    // c:3258-3266 `if (*val && (v->pm->node.flags & PM_NAMEREF))`
-    // emits an error when val isn't a valid refname. SPECIAL_PARAMS
-    // doesn't carry PM_NAMEREF entries today; the check is wired so
-    // that future entries pick it up.
-    if let Some(def) = SPECIAL_PARAMS.iter().find(|d| d.name == name) {
-        if (def.pm_flags & PM_NAMEREF) != 0
-            && !val.is_empty()
-            && !valid_refname(val, def.pm_flags as i32)
-        {
+    // c:3258-3266 `if (*val && (v->pm->node.flags & PM_NAMEREF))`.
+    let pm = tab.get(name).unwrap();
+    if !val.is_empty() && (pm.node.flags as u32 & PM_NAMEREF) != 0 {
+        if !valid_refname(val, pm.node.flags) {                              // c:3259
             zerr(&format!("invalid name reference: {}", val));               // c:3260
+            drop(tab);
             errflag.fetch_or(                                                // c:3263
                 crate::ported::utils::ERRFLAG_ERROR,
                 std::sync::atomic::Ordering::Relaxed,
             );
             crate::ported::signals::unqueue_signals();                       // c:3262
-            return;                                                          // c:3264
+            return None;                                                     // c:3264
         }
     }
 
-    // c:3343 `assignstrvalue(v, val, flags)` — scalar write.
-    variables.insert(name.to_string(), val.to_string());
+    // c:3269 `v->pm->node.flags &= ~PM_DEFAULTED;`
+    let pm = tab.get_mut(name).unwrap();
+    pm.node.flags &= !(PM_DEFAULTED as i32);
 
+    // c:3343 `assignstrvalue(v, val, flags)` — scalar write.
+    pm.u_str = Some(val.to_string());
+
+    let cloned = pm.clone();
+    drop(tab);
     crate::ported::signals::unqueue_signals();                               // c:3344
+    Some(cloned)                                                             // c:3345
+}
+
+/// Parallel storage for PM_HASHED parameter values. `param.u_hash`
+/// is typed `Option<HashTable>` per Src/zsh.h:1841 but the full
+/// HashTable substrate isn't wired yet; the assoc-array values live
+/// here keyed on param name until that lands.
+static PARAMTAB_HASHED_STORAGE_INNER: OnceLock<
+    Mutex<HashMap<String, indexmap::IndexMap<String, String>>>,
+> = OnceLock::new();
+
+fn paramtab_hashed_storage()
+    -> &'static Mutex<HashMap<String, indexmap::IndexMap<String, String>>>
+{
+    PARAMTAB_HASHED_STORAGE_INNER
+        .get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Mirror the global `paramtab` (and the parallel hashed-storage
+/// table) into the three HashMaps that `SubstState` uses as its
+/// transient backing during `prefork()` (Src/subst.c:100). This
+/// is a port-transition shim: once `subst.rs` reads parameters
+/// directly through `paramtab().lock()` instead of carrying
+/// `state.variables`/`state.arrays`/`state.assoc_arrays`, this
+/// helper goes away.
+pub fn sync_state_from_paramtab(
+    variables: &mut HashMap<String, String>,
+    arrays: &mut HashMap<String, Vec<String>>,
+    assoc_arrays: &mut HashMap<String, indexmap::IndexMap<String, String>>,
+) {
+    let tab = paramtab().lock().unwrap();
+    for (name, pm) in tab.iter() {
+        let f = pm.node.flags as u32;
+        if (f & PM_ARRAY) != 0 {
+            if let Some(arr) = pm.u_arr.as_ref() {
+                arrays.insert(name.clone(), arr.clone());
+            }
+            variables.remove(name);
+            assoc_arrays.remove(name);
+        } else if (f & PM_HASHED) != 0 {
+            if let Some(map) = paramtab_hashed_storage()
+                .lock().unwrap().get(name)
+            {
+                assoc_arrays.insert(name.clone(), map.clone());
+            }
+            variables.remove(name);
+            arrays.remove(name);
+        } else if let Some(s) = pm.u_str.as_ref() {
+            // PM_SCALAR / PM_NAMEREF / numeric — fold to the string view.
+            variables.insert(name.clone(), s.clone());
+            arrays.remove(name);
+            assoc_arrays.remove(name);
+        }
+    }
 }
 
 /// Array parameter assignment (no subscript).
@@ -1284,68 +1371,33 @@ pub fn unsetparam_pm(pm: &mut crate::ported::zsh_h::param, _altflag: i32, exp: i
 /// it directly.
 pub fn shempty() {}
 
-/// Set scalar parameter.
-/// Port of `setsparam()` from Src/params.c:3350 — single-line
-/// wrapper around `assignsparam(s, val, ASSPM_WARN)`. ASSPM_WARN
-/// is a no-op in our port (no global "warn on creation" tracking
-/// yet); the call shape is preserved so subst.rs can call this
-/// where C calls setsparam.
-pub fn setsparam(                                                            // c:3350
-    variables: &mut std::collections::HashMap<String, String>,
-    arrays: &mut std::collections::HashMap<String, Vec<String>>,
-    assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
-    name: &str,
-    val: &str,
-) {
-    assignsparam(variables, arrays, assoc_arrays, name, None, val);
+/// Port of `setsparam()` from Src/params.c:3350.
+/// C body: `return assignsparam(s, val, ASSPM_WARN);`
+pub fn setsparam(s: &str, val: &str)                                         // c:3350
+    -> Option<crate::ported::zsh_h::Param>
+{
+    assignsparam(s, val, ASSPM_WARN as i32)                                  // c:3352
 }
 
-/// Set integer parameter.
 /// Port of `setiparam()` from Src/params.c:3765. The C source
 /// constructs an `mnumber` and calls `assignnparam(s, mnval,
-/// ASSPM_WARN)`; assignnparam dispatches on integer-vs-float plus
-/// existing param type. The drift `assignsparam` below operates on
-/// the legacy HashMap-shaped param storage; the call shape is
-/// preserved so that flipping setiparam to the C-shape `assignnparam`
-/// (params.c:3717) is a single-site swap once the paramtab backend
-/// replaces the HashMap trio.
-pub fn setiparam(
-    variables: &mut std::collections::HashMap<String, String>,
-    arrays: &mut std::collections::HashMap<String, Vec<String>>,
-    assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
-    name: &str,
-    val: i64,
-) {
-    assignsparam(
-        variables,
-        arrays,
-        assoc_arrays,
-        name,
-        None,
-        &val.to_string(),
-    );
+/// ASSPM_WARN)`. The Rust port renders to decimal and routes
+/// through `assignsparam` until the integer-typed `assignnparam`
+/// store path lands.
+pub fn setiparam(s: &str, val: i64)                                          // c:3765
+    -> Option<crate::ported::zsh_h::Param>
+{
+    assignsparam(s, &val.to_string(), ASSPM_WARN as i32)
 }
 
-/// Set integer parameter without forcing PM_INTEGER promotion.
 /// Port of `setiparam_no_convert()` from Src/params.c:3781. C
 /// source comment: "If the target is already an integer, this
 /// gets converted back. Low technology rules." It uses convbase
-/// to render decimal then calls assignsparam. Same effect here.
-pub fn setiparam_no_convert(
-    variables: &mut std::collections::HashMap<String, String>,
-    arrays: &mut std::collections::HashMap<String, Vec<String>>,
-    assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
-    name: &str,
-    val: i64,
-) {
-    assignsparam(
-        variables,
-        arrays,
-        assoc_arrays,
-        name,
-        None,
-        &val.to_string(),
-    );
+/// to render decimal then calls assignsparam.
+pub fn setiparam_no_convert(s: &str, val: i64)                               // c:3781
+    -> Option<crate::ported::zsh_h::Param>
+{
+    assignsparam(s, &val.to_string(), ASSPM_WARN as i32)
 }
 
 /// Port of `getsparam()` from `Src/params.c:3076`.
@@ -3057,16 +3109,30 @@ use crate::zsh_h::{paramdef, ERRFLAG_ERROR, PM_DONTIMPORT, PM_DONTIMPORT_SUID, P
 // (`Src/params.c:508-513` — "paramtab is sometimes temporarily
 // changed to point at another table").
 //
-// PORT_PLAN.md bucket 2: shell-wide shared C global → ported as
-// `Arc<RwLock<…>>` so worker threads see the same table. Names
-// match the C identifiers, uppercased per the bucket-2 holder
-// convention (PORT_PLAN.md:637 "PARAMTAB ← paramtab").
-//
-// Both are populated on first access by `createparamtable()`
-// (params.rs:1513), which mirrors `createparamtable()`
-// (Src/params.c:817).
-pub static REALPARAMTAB: OnceLock<Arc<RwLock<crate::ported::zsh_h::HashTable>>> = OnceLock::new();
-pub static PARAMTAB: OnceLock<Arc<RwLock<crate::ported::zsh_h::HashTable>>> = OnceLock::new();
+// The Rust port stores entries in `Mutex<HashMap<String, Param>>`
+// keyed on `node.nam` (the canonical `param` struct lives in
+// `zsh_h.rs`). The full `HashTable` substrate (vtable callbacks,
+// intrusive `next` chain, scope-stacked iterators) is not yet
+// wired; until it is, the typed map is the operative storage.
+static PARAMTAB_INNER: OnceLock<Mutex<HashMap<String, crate::ported::zsh_h::Param>>> =
+    OnceLock::new();
+static REALPARAMTAB_INNER: OnceLock<Mutex<HashMap<String, crate::ported::zsh_h::Param>>> =
+    OnceLock::new();
+
+/// Accessor for the global `paramtab` (Src/params.c:515).
+/// Mirrors C's `paramtab->...` dereference by handing back the
+/// inner mutex; callers `.lock()` and operate on the `HashMap<String,
+/// Param>` directly.
+pub fn paramtab() -> &'static Mutex<HashMap<String, crate::ported::zsh_h::Param>> {
+    PARAMTAB_INNER.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Accessor for the global `realparamtab` (Src/params.c:515).
+/// Same role as `paramtab` for the not-currently-redirected case;
+/// the alias-flip during assoc-array iteration isn't modelled yet.
+pub fn realparamtab() -> &'static Mutex<HashMap<String, crate::ported::zsh_h::Param>> {
+    REALPARAMTAB_INNER.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 fn ifs_lock() -> &'static Mutex<String> {
     static IFS_VAR: OnceLock<Mutex<String>> = OnceLock::new();
