@@ -1486,6 +1486,115 @@ static MODULE_FEATURES: Features = Features {
 };
 
 // =====================================================================
+// Special-parameter accessors — `Src/Modules/curses.c:1640-1710`.
+// Each backs one of zsh's `$zcurses_*` magic-assoc/array params.
+// =====================================================================
+
+/// Direct port of `zcurses_pairs_to_array()` from `Src/Modules/
+/// curses.c:213`. C body (c:215-228): walk the namenumberpair table,
+/// allocate a `char **` of length+1, fill with `dupstring(name)` per
+/// entry, NULL-terminate. Rust returns `Vec<String>` directly.
+pub fn zcurses_pairs_to_array(nnps: &[zcurses_namenumberpair])               // c:213
+    -> Vec<String>
+{
+    nnps.iter().map(|p| p.name.to_string()).collect()                        // c:222 dupstring
+}
+
+/// Direct port of `zcurses_colornode()` from `Src/Modules/curses.c:402`.
+/// C body (c:404-407): scanhashtable callback that compares each
+/// Colorpairnode's `colorpair` short field against `cp` and stashes
+/// the matching node in the global `cpn_match`. Static-link path:
+/// the Rust port returns the matching name directly so callers
+/// don't need a side-channel global.
+pub fn zcurses_colornode(name: &str, pair: i16, cp: i16) -> Option<String> { // c:402
+    if pair == cp { Some(name.to_string()) } else { None }                   // c:405
+}
+
+/// Direct port of `zcurses_colorget_reverse()` from `Src/Modules/
+/// curses.c:410`. C body (c:412-419): scanhashtable over
+/// `zcurses_colorpairs`, calling zcurses_colornode per node; returns
+/// `cpn_match`. Static-link path: walk the colorpairs table and
+/// return the first name whose pair matches.
+pub fn zcurses_colorget_reverse(cp: i16) -> Option<String> {                 // c:410
+    let g = colorpairs_lock().lock().ok()?;                                  // c:412
+    if g.is_empty() { return None; }                                         // c:413
+    for (name, pair) in g.iter() {                                           // c:417 scanhashtable
+        if let Some(matched) = zcurses_colornode(name, *pair, cp) {          // c:417
+            return Some(matched);                                            // c:418 cpn_match
+        }
+    }
+    None
+}
+
+/// Direct port of `freecolorpairnode()` from `Src/Modules/curses.c:422`.
+/// C body (c:424-427): `zsfree(hn->nam); zfree(hn, sizeof(struct
+/// colorpairnode));`. Rust drop handles both via Box ownership.
+pub fn freecolorpairnode(_name: &str) {                                      // c:422
+    // c:424-426 — frees handled by Rust drop; nothing to do.
+}
+
+/// Direct port of `zcurses_colorsarrgetfn()` from `Src/Modules/
+/// curses.c:1641`. C body: `return zcurses_pairs_to_array(zcurses_colors);`
+pub fn zcurses_colorsarrgetfn() -> Vec<String> {                             // c:1641
+    zcurses_pairs_to_array(zcurses_colors)                                   // c:1644
+}
+
+/// Direct port of `zcurses_attrgetfn()` from `Src/Modules/
+/// curses.c:1651`. C body: `return zcurses_pairs_to_array(zcurses_attributes);`
+pub fn zcurses_attrgetfn() -> Vec<String> {                                  // c:1651
+    zcurses_pairs_to_array(zcurses_attributes)                               // c:1654
+}
+
+/// Direct port of `zcurses_keycodesgetfn()` from `Src/Modules/
+/// curses.c:1661`. C body: `return zcurses_pairs_to_array(keypad_names);`
+/// Static-link path: walk the canonical KEY_* set the Rust port
+/// already enumerates via keypad_name.
+pub fn zcurses_keycodesgetfn() -> Vec<String> {                              // c:1661
+    let mut out = Vec::new();
+    for code in [KEY_DOWN, KEY_UP, KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END,
+                 KEY_DC, KEY_IC, KEY_NPAGE, KEY_PPAGE] {
+        if let Some(n) = keypad_name(code) { out.push(n); }
+    }
+    for f in 1..=64 {                                                        // F-keys
+        if let Some(n) = keypad_name(KEY_F0 + f) { out.push(n); }
+    }
+    out
+}
+
+/// Direct port of `zcurses_windowsgetfn()` from `Src/Modules/
+/// curses.c:1671`. C body (c:1675-1683): walk the `zcurses_windows`
+/// LinkList collecting each ZCWin's `name`. Rust port reads from
+/// the `order_lock` insertion-order tracker so the result preserves
+/// creation order matching C's LinkList walk.
+pub fn zcurses_windowsgetfn() -> Vec<String> {                               // c:1671
+    order_lock().lock().map(|g| g.clone()).unwrap_or_default()               // c:1681
+}
+
+/// Direct port of `zcurses_colorsintgetfn()` from `Src/Modules/
+/// curses.c:1691`. C body: `return COLORS;` (the ncurses global).
+/// Static-link path: probe the live ncurses COLORS via tigetnum.
+pub fn zcurses_colorsintgetfn() -> i64 {                                     // c:1691
+    let cap = std::ffi::CString::new("colors").unwrap();
+    let n = unsafe { libc_tigetnum(cap.as_ptr()) };                          // c:1693 COLORS
+    if n < 0 { 0 } else { n as i64 }
+}
+
+/// Direct port of `zcurses_colorpairsintgetfn()` from `Src/Modules/
+/// curses.c:1701`. C body: `return COLOR_PAIRS;`. Same probe as above
+/// against the `pairs` capability.
+pub fn zcurses_colorpairsintgetfn() -> i64 {                                 // c:1701
+    let cap = std::ffi::CString::new("pairs").unwrap();
+    let n = unsafe { libc_tigetnum(cap.as_ptr()) };                          // c:1703 COLOR_PAIRS
+    if n < 0 { 0 } else { n as i64 }
+}
+
+#[link(name = "ncurses")]
+extern "C" {
+    #[link_name = "tigetnum"]
+    fn libc_tigetnum(name: *const libc::c_char) -> libc::c_int;
+}
+
+// =====================================================================
 // Module entry points (curses.c:1744+).
 // =====================================================================
 

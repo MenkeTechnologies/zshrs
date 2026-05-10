@@ -527,3 +527,12 @@ opt_state_set
 # emulation flag bit off the per-option optns[] entry; placeholder
 # until the optns[] flag table is ported.
 default_on_options
+
+# signal_count / signal_name / signal_number (jobs.rs) — Rust
+# accessors over libc signal numbering. C uses sigs[]/alt_sigs[]/
+# SIGCOUNT from Src/signals.c which the Rust port has not yet
+# exposed as a global table. These wrappers map between numeric
+# signal IDs and zsh canonical names.
+signal_count
+signal_name
+signal_number
