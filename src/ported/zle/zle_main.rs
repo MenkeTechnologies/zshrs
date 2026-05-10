@@ -359,6 +359,10 @@ pub struct Zle {
     /// Lower bound on the change number that `undo` will accept.
     /// Port of `undo_limitno` from zle_utils.c — used by `vi-undo-change`.
     pub undo_limitno: u64,
+    /// Cursor position at insert-mode entry. Port of `viinsbegin` from
+    /// `Src/Zle/zle_vi.c:78` — used by `vi-backward-delete-char` and
+    /// the change-replay path.
+    pub viinsbegin: usize,
     /// Bounds of the most recent yank's inserted region. Used by yank-pop to
     /// know what to delete before pasting the previous kill-ring entry.
     /// Port of `yankb`/`yanke`/`yankcs` from zle_misc.c.
@@ -501,6 +505,7 @@ impl Zle {
             cur_change: 0,
             undo_changeno: 0,
             undo_limitno: 0,
+            viinsbegin: 0,
             yank_start: 0,
             yank_end: 0,
             yank_cs: 0,
