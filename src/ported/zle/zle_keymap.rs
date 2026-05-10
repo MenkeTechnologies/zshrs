@@ -25,19 +25,19 @@ use super::zle_thingy::Thingy;
 
 /// Port of `KMN_IMMORTAL` from `Src/Zle/zle_keymap.c:62`. Marks a
 /// keymap-name node that can't be deleted (the `.safe` keymap).
-pub const KMN_IMMORTAL: u32 = 1 << 1;                                        // c:62
+pub const KMN_IMMORTAL: i32 = 1 << 1;                                        // c:62
 
 /// Port of `KM_IMMUTABLE` from `Src/Zle/zle_keymap.c:83`. Marks a
 /// keymap that can't have its bindings modified.
-pub const KM_IMMUTABLE: u32 = 1 << 1;                                        // c:83
+pub const KM_IMMUTABLE: i32 = 1 << 1;                                        // c:83
 
 /// Port of `BS_LIST` from `Src/Zle/zle_keymap.c:114`. `bin_bindkey -L`:
 /// list bindings in `bindkey -M` syntax.
-pub const BS_LIST: u32 = 1 << 0;                                             // c:114
+pub const BS_LIST: i32 = 1 << 0;                                             // c:114
 
 /// Port of `BS_ALL` from `Src/Zle/zle_keymap.c:115`. `bin_bindkey -aL`:
 /// list ALL bindings, including default sequences.
-pub const BS_ALL: u32 = 1 << 1;                                              // c:115
+pub const BS_ALL: i32 = 1 << 1;                                              // c:115
 
 /// Port of `mod_export char *curkeymapname` from `Src/Zle/zle_keymap.c:126`.
 /// Name of the currently active keymap (driven by `bindkey -A` and the
@@ -70,79 +70,48 @@ pub(crate) fn keymapnamtab() -> &'static Mutex<HashMap<String, KeymapName>> {
     KEYMAPNAMTAB.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-// Can't be deleted (.safe)                                                 // c:61
-/// Flags for keymap names
-#[derive(Debug, Clone, Copy, Default)]
-pub struct KeymapNameFlags {
-    /// Can't be deleted (.safe)
-    pub immortal: bool,
-}
-
-/// A named reference to a keymap
+/// Direct port of `struct keymapname` from `Src/Zle/zle_keymap.c:54`.
+/// One node in the global `keymapnamtab` — maps a name to a Keymap
+/// + per-node flags (KMN_IMMORTAL for `.safe`).
 #[derive(Debug, Clone)]
-pub struct KeymapName {
-    pub name: String,
-    pub flags: KeymapNameFlags,
-    pub keymap: Arc<Keymap>,
+pub struct KeymapName {                                                      // c:54
+    pub nam: String,                                                         // c:56 char *nam
+    pub flags: i32,                                                          // c:57 int flags
+    pub keymap: Arc<Keymap>,                                                 // c:58 Keymap keymap
 }
 
-/// Flags for keymaps
-#[derive(Debug, Clone, Copy, Default)]
-pub struct KeymapFlags {
-    /// Keymap is immutable
-    pub immutable: bool,
-}
-
-// base binding of each character                                           // c:65
-// multi-character bindings                                                 // c:66
-/// A keymap - binding of keys to thingies
+/// Direct port of `struct keymap` from `Src/Zle/zle_keymap.c:64`.
+/// A keymap — binding of keys to thingies.
 #[derive(Debug, Clone)]
-pub struct Keymap {
-    /// Base binding of each character (0-255)
+pub struct Keymap {                                                          // c:64
+    /// `Thingy first[256]` — c:65, base binding for each byte.
     pub first: [Option<Thingy>; 256],
-    /// Multi-character bindings (key sequence -> binding)
+    /// `HashTable multi` — c:66, multi-character bindings.
     pub multi: HashMap<Vec<u8>, KeyBinding>,
-    /// Primary name of this keymap
+    /// `KeymapName primary` — c:78, primary alias for this map.
     pub primary: Option<String>,
-    /// Flags
-    pub flags: KeymapFlags,
-    /// Reference count (port of `int rc` from
-    /// `Src/Zle/zle_keymap.c` `struct keymap` — bumped by
-    /// `refkeymap`, decremented by `unrefkeymap`; zeroing triggers
-    /// `deletekeymap`).
+    /// `int flags` — c:79 (KM_IMMUTABLE).
+    pub flags: i32,
+    /// `int rc` — c:80, reference count (refkeymap/unrefkeymap/
+    /// deletekeymap).
     pub rc: i32,
 }
 
-/// A key binding (either a thingy or a string to send)
+/// Direct port of `struct key` from `Src/Zle/zle_keymap.c:85`.
+/// A key binding (either a thingy or a string to send).
 #[derive(Debug, Clone)]
-pub struct KeyBinding {
-    /// The thingy this key is bound to (None for send-string)
-    pub bind: Option<Thingy>,
-    /// String to send (metafied)
-    pub str: Option<String>,
-    /// Number of sequences for which this is a prefix
-    pub prefixct: i32,
+pub struct KeyBinding {                                                      // c:85
+    pub bind: Option<Thingy>,                                                // c:88 Thingy bind
+    pub str: Option<String>,                                                 // c:89 char *str
+    pub prefixct: i32,                                                       // c:90 int prefixct
 }
 
-/// State for listing keymaps
-#[derive(Debug, Clone, Default)]
-pub struct BindState {
-    pub flags: BindStateFlags,
-    pub kmname: String,
-    pub firstseq: Vec<u8>,
-    pub lastseq: Vec<u8>,
-    pub bind: Option<Thingy>,
-    pub str: Option<String>,
-    pub prefix: Vec<u8>,
-}
-
-bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy, Default)]
-    pub struct BindStateFlags: u32 {
-        const LIST = 1 << 0;
-        const ALL = 1 << 1;
-    }
-}
+// `BindState` / `BindStateFlags` deleted — the C `struct bindstate`
+// at zle_keymap.c:95 is only used as a local in `printbinding()`/
+// `scanbindings()`/`bin_bindkey -L`; ports of those fns will model
+// it as a stack-local struct when they land. The previous Rust
+// declaration had no callers (dead code) and used a fake bitflags
+// wrapper over a single int field.
 
 /// Port of `struct remprefstate` from `Src/Zle/zle_keymap.c:108`.
 /// Closure state for `scanremoveprefix` — removes every multi-char
@@ -174,7 +143,7 @@ impl Default for Keymap {
             first: std::array::from_fn(|_| None),
             multi: HashMap::new(),
             primary: None,
-            flags: KeymapFlags::default(),
+            flags: 0,
             rc: 0,
         }
     }
@@ -1415,7 +1384,7 @@ pub fn bin_bindkey_new(args: &[String]) -> i32 {                             // 
         return 1;
     }
     let blocked = keymapnamtab().lock().unwrap()
-        .get(&args[0]).map(|n| n.flags.immortal).unwrap_or(false);
+        .get(&args[0]).map(|n| n.flags & KMN_IMMORTAL != 0).unwrap_or(false);
     if blocked {
         return 1;                                                            // c:944
     }
@@ -1610,7 +1579,7 @@ pub fn linkkeymap(km: Arc<Keymap>, name: &str, imm: i32) -> i32 {            // 
     let mut tab = keymapnamtab().lock().unwrap();
     if let Some(existing) = tab.get_mut(name) {
         // c:453-454 — `if (n->flags & KMN_IMMORTAL) return 1`.
-        if existing.flags.immortal {
+        if existing.flags & KMN_IMMORTAL != 0 {
             return 1;
         }
         // c:455-456 — `if (n->keymap == km) return 0`.
@@ -1623,12 +1592,12 @@ pub fn linkkeymap(km: Arc<Keymap>, name: &str, imm: i32) -> i32 {            // 
         // c:459-463 — `n = makekeymapnamnode(km); if (imm)
         //              n->flags |= KMN_IMMORTAL; addnode(name, n)`.
         let mut n = KeymapName {
-            name: name.to_string(),
-            flags: KeymapNameFlags::default(),
+            nam: name.to_string(),
+            flags: 0,
             keymap: km,
         };
         if imm != 0 {
-            n.flags.immortal = true;
+            n.flags |= KMN_IMMORTAL;
         }
         tab.insert(name.to_string(), n);
     }
@@ -1641,8 +1610,8 @@ pub fn linkkeymap(km: Arc<Keymap>, name: &str, imm: i32) -> i32 {            // 
 pub fn makekeymapnamnode(km: Arc<Keymap>) -> KeymapName {                    // c:172
     // c:175-178 — `kmn = zshcalloc; kmn->keymap = keymap; return kmn`.
     KeymapName {
-        name: String::new(),
-        flags: KeymapNameFlags::default(),
+        nam: String::new(),
+        flags: 0,
         keymap: km,
     }
 }
@@ -1953,7 +1922,7 @@ pub fn unlinkkeymap(name: &str, ignm: i32) -> i32 {                          // 
     let mut tab = keymapnamtab().lock().unwrap();
     match tab.get(name) {
         None => 2,                                                           // c:440
-        Some(n) if ignm == 0 && n.flags.immortal => 1,                       // c:441
+        Some(n) if ignm == 0 && (n.flags & KMN_IMMORTAL) != 0 => 1,          // c:441
         Some(_) => {
             tab.remove(name);                                                // c:443
             0
