@@ -1345,10 +1345,70 @@ pub fn pattern_match_restrict(_p: i32, _s: &str, _wp: &mut [u8],             // 
 }
 
 /// Port of `pattern_match1()` from Src/Zle/compmatch.c:1269.
-pub fn pattern_match1(_p: i32, _c: u32, _wp: &mut [u8], _wq: &mut [u8]) -> i32 { // c:1269
-    // C body c:1271-1381 — single-character pattern match (predicate
-    //                      check + char-class). Substrate deferred; 0.
-    0
+/// Direct port of `mod_export convchar_t pattern_match1(Cpattern p,
+///                                    convchar_t c, int *mtp)`
+/// from `Src/Zle/compmatch.c:1269-1297`. Tests whether `p` matches
+/// the single char `c`, returning the matched-char (1 for ANY, the
+/// char for CHAR, or for EQUIV the equivalence-class index+1) or 0
+/// on miss. `mtp` is non-zero only for the EQUIV path.
+pub fn pattern_match1(p: &crate::ported::zle::comp_h::Cpattern,              // c:1269
+                      c: u32, mtp: &mut i32) -> u32
+{
+    use crate::ported::zle::comp_h::{CPAT_ANY, CPAT_CCLASS, CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS};
+    *mtp = 0;                                                                // c:1273
+    match p.tp {                                                             // c:1274
+        x if x == CPAT_CCLASS => {                                           // c:1275
+            // PATMATCHRANGE(p->u.str, c, NULL, NULL)
+            patmatchrange(p.str_.as_deref(), c, None, None) as u32           // c:1276
+        }
+        x if x == CPAT_NCLASS => {                                           // c:1278
+            if patmatchrange(p.str_.as_deref(), c, None, None) { 0 } else { 1 } // c:1279
+        }
+        x if x == CPAT_EQUIV => {                                            // c:1281
+            let mut ind: u32 = 0;
+            if patmatchrange(p.str_.as_deref(), c, Some(&mut ind), Some(mtp)) {
+                ind + 1                                                      // c:1283
+            } else {
+                0                                                            // c:1285
+            }
+        }
+        x if x == CPAT_ANY  => 1,                                            // c:1288-1289
+        x if x == CPAT_CHAR => if p.chr == c { c } else { 0 },               // c:1291-1292
+        _ => 0,                                                              // c:1294
+    }
+}
+
+/// Minimal port of `PATMATCHRANGE(str, c, indp, mtp)` macro from
+/// `Src/pattern.c`. Walks an encoded character-range descriptor in
+/// `str` and tests whether `c` falls inside. The full C version
+/// handles equivalence classes via `mtp`; this Rust port covers
+/// the literal-char + ASCII-range cases.
+fn patmatchrange(s: Option<&str>, c: u32, indp: Option<&mut u32>, _mtp: Option<&mut i32>) -> bool {
+    let Some(s) = s else { return false; };
+    let mut idx: u32 = 0;
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        // Pair `lo-hi` if next is `-`.
+        if let Some(&peek) = chars.peek() {
+            if peek == '-' {
+                chars.next();
+                if let Some(hi) = chars.next() {
+                    if c >= ch as u32 && c <= hi as u32 {
+                        if let Some(out) = indp { *out = idx; }
+                        return true;
+                    }
+                    idx += 1;
+                    continue;
+                }
+            }
+        }
+        if c == ch as u32 {
+            if let Some(out) = indp { *out = idx; }
+            return true;
+        }
+        idx += 1;
+    }
+    false
 }
 
 /// Port of `sub_join()` from Src/Zle/compmatch.c:2649.
