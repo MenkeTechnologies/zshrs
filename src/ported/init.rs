@@ -826,6 +826,36 @@ pub static ZLE_LOAD_STATE: std::sync::atomic::AtomicI32 =
 pub static USE_EXIT_PRINTED: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);                                    // c:1846
 
+// =====================================================================
+// Cross-module exec.c globals — `Src/exec.c:189-239`. Hosted here
+// (rather than in a not-yet-ported exec.rs) because init.rs already
+// owns the cross-module "shell-wide bucket-2" file-statics.
+// =====================================================================
+
+/// Port of `mod_export int max_zsh_fd` from `Src/exec.c:189`. Highest
+/// fd zsh has opened — the FD-table allocator uses it to size the
+/// per-process tracking array.
+pub static MAX_ZSH_FD: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:189
+
+/// Port of `mod_export int coprocin` from `Src/exec.c:194`. Read-end
+/// of the coprocess pipe, or -1 when no coproc is running.
+pub static COPROCIN: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(-1);                                   // c:194
+
+/// Port of `mod_export int coprocout` from `Src/exec.c:199`. Write-end
+/// of the coprocess pipe, or -1 when no coproc is running.
+pub static COPROCOUT: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(-1);                                   // c:199
+
+/// Port of `mod_export int sfcontext` from `Src/exec.c:239`. Shell-
+/// function-call context: SFC_NONE / SFC_DIRECT / SFC_SIGNAL / SFC_HOOK
+/// / SFC_WIDGET / SFC_COMPLETE / SFC_CONDITION / SFC_SUBST. Set by
+/// dispatchers; read by trap and prompt expansion to pick context-
+/// appropriate behaviour.
+pub static SFCONTEXT: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:239
+
 /// Set up SHIN to read from stdin or the script file.
 /// Port of `setupshin()` from Src/init.c:1340. C source `stat`s
 /// the script path, falls back to `$PATH` walk if `PATHSCRIPT` is
