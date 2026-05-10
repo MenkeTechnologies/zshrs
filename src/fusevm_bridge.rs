@@ -2816,17 +2816,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let body = vm.pop().to_str();
         let full = format!("${{{}}}", body);
         let result = with_executor(|exec| {
-            let mut state = crate::exec_shims::subst_state_from_executor(exec);
-            let mut ret_flags = 0u32;
+            let mut ret_flags: i32 = 0;
             let (_full_str, _new_pos, nodes) = crate::ported::subst::paramsubst(
                 &full,
                 0,
                 false,
-                0,
+                0i32,
                 &mut ret_flags,
-                &mut state,
             );
-            crate::exec_shims::subst_state_commit_to_executor(state, exec);
+            // c:Src/subst.c errflag bail — propagate to caller's
+            // exit status the way `subst_state_commit_to_executor`
+            // used to.
+            if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+                exec.last_status = 1;
+            }
             nodes
         });
         if result.is_empty() {
@@ -7647,10 +7650,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // helper. Direct port of the prefork SUB_FLAG | SKIP_FILESUB
         // pattern. PORT.md: no helpers without C counterpart.
         let repl = with_executor(|exec| {
-            let mut state = crate::exec_shims::subst_state_from_executor(exec);
-            state.skip_filesub = true;
-            let r = crate::ported::subst::singsub(&repl_raw, &mut state);
-            crate::exec_shims::subst_state_commit_to_executor(state, exec);
+            let saved = crate::ported::subst::SKIP_FILESUB.with(|c| c.get());
+            crate::ported::subst::SKIP_FILESUB.with(|c| c.set(true));
+            let r = crate::ported::subst::singsub(&repl_raw);
+            crate::ported::subst::SKIP_FILESUB.with(|c| c.set(saved));
+            if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+                exec.last_status = 1;
+            }
             r
         });
         let repl = crate::lex::untokenize(&repl);
