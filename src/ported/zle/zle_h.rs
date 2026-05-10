@@ -46,6 +46,24 @@ pub const ZLE_CHAR_SIZE: usize = 4;                                          // 
 /// Port of `ZLEEOF` from zle.h:37 / zle.h:112.
 pub const ZLEEOF: i32 = -1;                                                  // c:37 WEOF
 
+/// Port of `Th(X)` macro from zle.h:316. `#define Th(X) (&thingies[X])`.
+/// Resolves a fixed-thingy index into its Thingy reference. The
+/// `thingies[]` array (indexed by `t_completeword`/`t_acceptline`/etc.)
+/// is auto-generated at C build time from the `mod_export Thingy`
+/// declarations in zle.mdh; zshrs hasn't ported the auto-gen path so
+/// this helper is a search anchor — call sites currently use
+/// `lookup_thingy(name)` against THINGYTAB instead.
+#[inline] pub fn Th(_index: i32) -> Option<()> { None }                      // c:316
+
+/// Port of `invicmdmode()` macro from zle.h:324.
+/// `#define invicmdmode() (!strcmp(curkeymapname, "vicmd"))`.
+/// True when the current keymap is the vi command-mode keymap.
+/// The Rust `Zle::in_vi_cmd_mode()` method (zle_main.rs:815) is the
+/// state-bound counterpart; this free-fn uses the global keymap name.
+#[inline] pub fn invicmdmode(curkeymapname: &str) -> bool {                  // c:324
+    curkeymapname == "vicmd"
+}
+
 // =====================================================================
 // `ZS_*` wide-string macros — `Src/Zle/zle.h:40-51`.
 // C #defines route to wmemcpy/wcslen/etc. on MULTIBYTE_SUPPORT builds
@@ -810,5 +828,22 @@ mod tests {
         assert_eq!(ZC_tolower('A'), 'a');
         assert_eq!(ZC_toupper('a'), 'A');
         assert_eq!(ZC_tolower('1'), '1');
+    }
+
+    #[test]
+    fn invicmdmode_only_true_for_vicmd() {
+        assert!(invicmdmode("vicmd"));
+        assert!(!invicmdmode("main"));
+        assert!(!invicmdmode("emacs"));
+        assert!(!invicmdmode(""));
+    }
+
+    #[test]
+    fn th_returns_none_until_thingies_array_hydrated() {
+        // c:316 — Thingies array indexing is deferred (auto-gen path).
+        // The Rust port returns None as a search anchor; once the
+        // thingies[] array lands, this body will resolve to a Thingy ref.
+        assert_eq!(Th(0), None);
+        assert_eq!(Th(99), None);
     }
 }
