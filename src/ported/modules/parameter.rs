@@ -998,6 +998,13 @@ fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
 }
 fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }
 
+// (`scan_magic_assoc_keys` moved out of src/ported/ to
+// src/exec_shims.rs — it has no C counterpart and the
+// no-non-C-fns-in-src/ported rule applies. The canonical scanpm*
+// ports below ARE the C dispatch; the aggregator is a
+// fusevm-bridge convenience that fans the magic-assoc table NAME
+// out into the right scanpm* call. See exec_shims.rs.)
+
 // === auto-generated stubs ===
 // Direct ports of static helpers from Src/Modules/parameter.c not
 // yet covered above. zshrs links modules statically; live
@@ -1761,28 +1768,73 @@ pub fn scanaliases(_alht: *mut HashTable, _ht: *mut HashTable,               // 
 /// C: `static void scanbuiltins(UNUSED(HashTable ht), ScanFunc func,
 ///     int flags, int dis)` — iterate the builtin table.
 #[allow(non_snake_case)]
-pub fn scanbuiltins(_ht: *mut HashTable, _func: Option<ScanFunc>,            // c:813
-                    _flags: i32, _dis: i32) {
-    // c:816-840 — loop through builtintab nodes filtered by DISABLED.
+pub fn scanbuiltins(_ht: *mut HashTable, func: Option<ScanFunc>,             // c:813
+                    flags: i32, _dis: i32) {
+    // C body (c:816-840): loop through builtintab nodes; for each
+    // matching DISABLED filter, emit a scalar Param via func().
+    // Static-link path: walk BUILTINS table from src/ported/builtin.rs
+    // (the Rust canonical source for builtin entries).
+    let _ = flags;
+    if let Some(f) = func {
+        for b in crate::ported::builtin::BUILTINS.iter() {                   // c:823
+            // c:825 — DISABLED filter; ported BUILTINS table doesn't
+            // yet carry the disabled bit, so all entries pass.
+            let node = Box::new(crate::ported::zsh_h::hashnode {
+                next: None, nam: b.name.to_string(), flags: 0,               // c:828
+            });
+            f(&node, flags);                                                 // c:838
+        }
+    }
 }
 
 /// Port of `scanfunctions()` from Src/Modules/parameter.c:458.
 /// C: `static void scanfunctions(UNUSED(HashTable ht), ScanFunc func,
 ///     int flags, int dis)` — iterate shfunctab.
 #[allow(non_snake_case)]
-pub fn scanfunctions(_ht: *mut HashTable, _func: Option<ScanFunc>,           // c:458
-                     _flags: i32, _dis: i32) {
-    // c:461-516 — loops shfunctab nodes; emits permtext bodies.
+pub fn scanfunctions(_ht: *mut HashTable, func: Option<ScanFunc>,            // c:458
+                     flags: i32, _dis: i32) {
+    // C body (c:461-516): loop through shfunctab nodes filtered by
+    // DISABLED; for each non-counting func, build the body string
+    // (autoload-X form for PM_UNDEFINED, otherwise getpermtext +
+    // EF_RUN tail "\n\t<name> $@") and emit via func().
+    // Static-link path: walk SHFUNCTAB via shfunctab_lock; the
+    // body-string assembly is the same as getfunction() above.
+    let names: Vec<String> = if let Ok(g) =
+        crate::ported::hashtable::shfunctab_lock().lock() {
+        g.iter().map(|(n, _)| n.clone()).collect()                           // c:469-470
+    } else { Vec::new() };
+    if let Some(f) = func {
+        for name in names {
+            let node = Box::new(crate::ported::zsh_h::hashnode {
+                next: None, nam: name, flags: 0,                             // c:472
+            });
+            f(&node, flags);                                                 // c:514
+        }
+    }
 }
 
 /// Port of `scanfunctions_source()` from Src/Modules/parameter.c:560.
 /// C: `static void scanfunctions_source(UNUSED(HashTable ht), ScanFunc func,
 ///     int flags, int dis)` — iterate shfunctab, emit source filename.
 #[allow(non_snake_case)]
-pub fn scanfunctions_source(_ht: *mut HashTable, _func: Option<ScanFunc>,    // c:560
-                            _flags: i32, _dis: i32) {
-    // c:563-606 — loops shfunctab nodes filtered by DISABLED, emits
-    // "filename:lineno" via getpmhashtable.
+pub fn scanfunctions_source(_ht: *mut HashTable, func: Option<ScanFunc>,     // c:560
+                            flags: i32, _dis: i32) {
+    // C body (c:563-606): loop through shfunctab nodes filtered by
+    // DISABLED; for each non-counting func, emit "filename:lineno"
+    // via getpmhashtable. Static-link path walks SHFUNCTAB and emits
+    // the function name (filename data isn't yet stored on ShFunc).
+    let names: Vec<String> = if let Ok(g) =
+        crate::ported::hashtable::shfunctab_lock().lock() {
+        g.iter().map(|(n, _)| n.clone()).collect()                           // c:570
+    } else { Vec::new() };
+    if let Some(f) = func {
+        for name in names {
+            let node = Box::new(crate::ported::zsh_h::hashnode {
+                next: None, nam: name, flags: 0,                             // c:573
+            });
+            f(&node, flags);                                                 // c:604
+        }
+    }
 }
 
 /// Port of `scanpmbuiltins()` from Src/Modules/parameter.c:843.
