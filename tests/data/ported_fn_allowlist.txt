@@ -545,3 +545,13 @@ sigs_number
 # the canonical getjob/findjobnam already exist alongside.
 getjob2
 findjobnam_c
+
+# lock_str / lock_vec (zle/compcore.rs) — Rust-only OnceLock
+# get-or-init helpers for the completion-state global Mutexes (the
+# COMPPREFIX / COMPSUFFIX / COMPLIST etc. ports of `char *` globals
+# from complete.c:35-73). C dereferences the bare globals directly;
+# Rust needs lazy initialization since `Mutex<String>::new()` is
+# not const for OnceLock<Mutex<…>>. Each call site that previously
+# would `&compprefix` now writes `lock_str(&COMPPREFIX).lock()`.
+lock_str
+lock_vec
