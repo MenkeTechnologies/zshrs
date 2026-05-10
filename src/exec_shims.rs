@@ -4267,7 +4267,7 @@ impl crate::ported::exec::ShellExecutor {
                 // format (zsh: same thing — radix only affects
                 // integer results).
                 if let Some((base, no_prefix)) = output_radix {
-                    let n = result.to_int();
+                    let n = (if result.type_ == crate::ported::math::MN_FLOAT { result.d as i64 } else { result.l });
                     // Direct port of convbase_underscore at
                     // Src/params.c:5645 — handles `[#N_M]` underscore
                     // grouping (no-op when group is None / 0).
@@ -4322,7 +4322,11 @@ impl crate::ported::exec::ShellExecutor {
                 // extract_string_variables (storage) already uses
                 // %.10f via format_zsh; here for the substitution
                 // return value emulate zsh's %g style.
-                result.format_zsh_subst()
+                match result.type_ {
+                    MN_INTEGER => result.l.to_string(),
+                    crate::ported::math::MN_FLOAT => crate::ported::params::convfloat(result.d, 0, 0),
+                    _ => "0".to_string(),
+                }
             }
             Err(msg) => {
                 // zsh writes arith errors to stderr in `zsh:LINE: <msg>`
@@ -4437,7 +4441,7 @@ impl crate::ported::exec::ShellExecutor {
                         env::set_var(&k, &formatted);
                     }
                 }
-                result.to_int()
+                (if result.type_ == crate::ported::math::MN_FLOAT { result.d as i64 } else { result.l })
             }
             Err(msg) => {
                 // zsh writes arith errors (div-by-zero, bad expr, etc.) to
@@ -4490,7 +4494,7 @@ impl crate::ported::exec::ShellExecutor {
                         env::set_var(&k, &formatted);
                     }
                 }
-                result.to_float()
+                (if result.type_ == crate::ported::math::MN_FLOAT { result.d } else { result.l as f64 })
             }
             Err(_) => 0.0,
         }

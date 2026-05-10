@@ -1318,7 +1318,7 @@ mod tests {
         let path_c = std::ffi::CString::new(p.to_str().unwrap()).unwrap();
         let fd = unsafe { libc::open(path_c.as_ptr(), libc::O_RDONLY) };
         unsafe { libc::lseek(fd, 7, libc::SEEK_SET); }
-        let argv = vec![Mnumber::integer(fd as i64)];
+        let argv = vec![Mnumber { l: fd as i64, d: 0.0, type_: MN_INTEGER }];
         let r = math_systell("systell", 1, &argv, 0);
         assert_eq!(r.type_, MN_INTEGER);
         assert_eq!(r.l, 7);

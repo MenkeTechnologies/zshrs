@@ -997,13 +997,13 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 }
 
 /// Port of `features_()` from `Src/Modules/parameter.c:2318`.
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:2318
     *features = featuresarray(m, module_features());
     0
 }
 
 /// Port of `enables_()` from `Src/Modules/parameter.c:2326`.
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:2326
     handlefeatures(m, module_features(), enables)
 }
 
@@ -1017,7 +1017,7 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 }
 
 /// Port of `cleanup_()` from `Src/Modules/parameter.c:2348`.
-pub fn cleanup_(m: *const module) -> i32 {
+pub fn cleanup_(m: *const module) -> i32 {                                   // c:2348
     setfeatureenables(m, module_features(), None)
 }
 
@@ -1358,7 +1358,7 @@ pub fn getbuiltin(_ht: *mut HashTable, name: &str, _dis: i32)                // 
     // tracking isn't yet wired; until it is, the `dis` arm collapses
     // to "found means enabled".
     let entry = crate::ported::builtin::BUILTINS.iter()                      // c:784
-        .find(|b| b.name == name);
+        .find(|b| b.node.nam == name);
     let (value, found) = if let Some(_bn) = entry {                          // c:785
         // c:786-789 — `defined` if handler present (always true for
         // ported builtins) or BINF_PREFIX flag set.
@@ -1966,7 +1966,7 @@ pub fn scanbuiltins(_ht: *mut HashTable, func: Option<ScanFunc>,             // 
             // c:825 — DISABLED filter; ported BUILTINS table doesn't
             // yet carry the disabled bit, so all entries pass.
             let node = Box::new(crate::ported::zsh_h::hashnode {
-                next: None, nam: b.name.to_string(), flags: 0,               // c:828
+                next: None, nam: b.node.nam.clone(), flags: 0,               // c:828
             });
             f(&node, flags);                                                 // c:838
         }

@@ -669,14 +669,14 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 
 /// Port of `features_()` from `Src/Modules/tcp.c:721`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:721
     *features = featuresarray(m, module_features());                    // c:723
     0                                                                    // c:725
 }
 
 /// Port of `enables_()` from `Src/Modules/tcp.c:729`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:729
     handlefeatures(m, module_features(), enables)                       // c:731
 }
 
@@ -691,7 +691,7 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 
 /// Port of `cleanup_()` from `Src/Modules/tcp.c:745`.
 /// C body: `tcp_cleanup(); return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {
+pub fn cleanup_(m: *const module) -> i32 {                                   // c:745
     tcp_cleanup();                                                       // c:748
     setfeatureenables(m, module_features(), None)                       // c:751
 }

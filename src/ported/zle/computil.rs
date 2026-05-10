@@ -137,7 +137,7 @@ impl Default for CompDescSet {
 }
 
 /// Parse "word:description" format Port of `cd_get` from Src/Zle/computil.c.
-pub fn cd_get(spec: &str) -> CompDescItem {
+pub fn cd_get(spec: &str) -> CompDescItem {                                  // c:614
     if let Some((word, desc)) = spec.split_once(':') {
         CompDescItem {
             word: word.to_string(),
@@ -212,12 +212,12 @@ pub fn cd_arrcat(sets: &[CompDescSet]) -> Vec<String> {                      // 
 }
 
 /// Duplicate description set arrays Port of `cd_arrdup` from Src/Zle/computil.c.
-pub fn cd_arrdup(set: &CompDescSet) -> CompDescSet {
+pub fn cd_arrdup(set: &CompDescSet) -> CompDescSet {                         // c:599
     set.clone()
 }
 
 /// Free description sets Port of `freecdsets` from Src/Zle/computil.c. — no-op in Rust
-pub fn freecdsets(_sets: Vec<CompDescSet>) {}
+pub fn freecdsets(_sets: Vec<CompDescSet>) {}                                // c:97
 
 /// Group items by description Port of `cd_group` from Src/Zle/computil.c.
 // Find matches with same descriptions and group them.                      // c:124
@@ -270,7 +270,7 @@ pub struct CompCommandDef {
 }
 
 /// Parse a _arguments spec string Port of `parse_caarg` from Src/Zle/computil.c.
-pub fn parse_caarg(spec: &str) -> Option<CompArgDef> {
+pub fn parse_caarg(spec: &str) -> Option<CompArgDef> {                       // c:1100
     // Format: "N:description:action" or "*:description:action"
     let parts: Vec<&str> = spec.splitn(3, ':').collect();
     if parts.is_empty() {
@@ -295,7 +295,7 @@ pub fn parse_caarg(spec: &str) -> Option<CompArgDef> {
 }
 
 /// Parse an option spec Port of `set_cadef_opts` from Src/Zle/computil.c.
-pub fn parse_cadef(spec: &str) -> Option<CompOptDef> {
+pub fn parse_cadef(spec: &str) -> Option<CompOptDef> {                       // c:1196
     // Format: "-o[description]" or "--option[description]:arg_desc:action"
     // or "(-a -b)-c[description]"
 
@@ -459,8 +459,8 @@ pub fn single_index(pre: u8, opt: u8) -> i32 {                               // 
 }
 
 /// Free completion argument definitions Port of `freecaargs/freecadef` from Src/Zle/computil.c. — no-op
-pub fn freecaargs(_args: Vec<CompArgDef>) {}
-pub fn freecadef(_def: CompCommandDef) {}
+pub fn freecaargs(_args: Vec<CompArgDef>) {}                                 // c:996
+pub fn freecadef(_def: CompCommandDef) {}                                    // c:1013
 
 #[cfg(test)]
 mod cao_caa_tests {

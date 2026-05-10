@@ -660,3 +660,47 @@ ring_at
 ring_len
 ring_oldest
 ring_latest
+
+# Pre-existing internal unit tests for params.rs special-param round-trips.
+# These exercise the GSU callbacks/env-string/array-uniq helpers; no
+# C analog because they are Rust-side test scaffolding.
+test_libc_id_callbacks_match_libc
+test_random_returns_15_bit_value
+test_random_set_seeds_deterministically
+test_ifs_round_trip
+test_histsiz_clamps_to_1
+test_savehistsiz_clamps_to_0
+test_pipestat_round_trip
+test_simple_arrayuniq_first_wins
+test_split_env_string
+test_mkenvstr
+test_seconds_round_trip
+test_argzero_round_trip
+test_env_get_set
+test_keyboardhack_one_char
+test_histchars_default
+
+# Internal helpers added by the params.rs port for scanparamvals.
+# `pattry` is a per-port fallback for the pattern engine; the real
+# function lives in Src/pattern.c and will replace this wrapper.
+pattry
+
+locallevel
+inc_locallevel
+dec_locallevel
+
+# math.rs accessor for the C `lastbase` global (Src/math.c).
+lastbase
+
+# params.rs accessors for the C `static Param foundparam` global
+# (Src/params.c:640). Rust-side singleton getters/setters around
+# the OnceLock; no C analog because C accesses the global directly.
+foundparam_lock
+foundparam
+set_foundparam
+
+
+# Pre-existing zsh.h macro-shaped helpers (Src/zsh.h is a header,
+# not in zsh_c_fn_names.txt which only lists fns from .c files).
+IS_WRITE_FILE
+WC_SELECT_SKIP

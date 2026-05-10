@@ -1969,7 +1969,7 @@ pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {                 // 
     let is_function = crate::ported::builtin::SHFUNCTAB.lock()
         .map(|t| t.contains_key(&cmdstr)).unwrap_or(false);
     let is_builtin = crate::ported::builtin::BUILTINS.iter()
-        .any(|b| b.name == cmdstr);
+        .any(|b| b.node.nam == cmdstr);
     let s_resolved: Option<String> = if is_function || is_builtin {          // c:2537
         None                                                                 // c:2538 NULL
     } else {

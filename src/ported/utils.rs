@@ -129,6 +129,21 @@ pub fn set_scriptname(name: Option<String>) {
     *scriptname_lock().lock().unwrap() = name;
 }
 
+/// Read `locallevel` — function nesting depth.
+pub fn locallevel() -> i32 {
+    *locallevel_lock().lock().unwrap()
+}
+
+/// Bump `locallevel` (called by `startparamscope`).
+pub fn inc_locallevel() {
+    *locallevel_lock().lock().unwrap() += 1;
+}
+
+/// Decrement `locallevel` (called by `endparamscope`).
+pub fn dec_locallevel() {
+    *locallevel_lock().lock().unwrap() -= 1;
+}
+
 /// Setter for `argzero`. Called once at shell init from `parseargs`.
 pub fn set_argzero(name: Option<String>) {
     *argzero_lock().lock().unwrap() = name;
