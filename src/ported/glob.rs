@@ -373,7 +373,7 @@ impl GlobMatch {
 /// non-numeric arm (locale-aware string compare via `strcoll(3)`),
 /// since the other arms (size, mtime, depth) are dispatched
 /// elsewhere at the call site.
-pub fn gmatchcmp(a: &str, b: &str) -> Ordering {
+pub fn gmatchcmp(a: &str, b: &str) -> Ordering {                            // c:936
     let locale_is_c = {
         let lc_all = std::env::var("LC_ALL").unwrap_or_default();
         let lc_collate = std::env::var("LC_COLLATE").unwrap_or_default();
@@ -2537,7 +2537,7 @@ pub fn qgetnum(s: &str) -> Option<(i64, &str)> {                             // 
 /// Parse a time-unit glob-qualifier argument (`m`/`a`/`c`).
 /// Port of the time-conversion arms inside `qgetnum()`
 /// (Src/glob.c:827).
-pub fn qualtime(s: &str, units: char) -> Option<(i64, &str)> {
+pub fn qualtime(s: &str, units: char) -> Option<(i64, &str)> {              // c:827
     let (mut num, rest) = qgetnum(s)?;
 
     match units {

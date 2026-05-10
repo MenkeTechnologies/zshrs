@@ -556,7 +556,7 @@ pub static ZGDBM_TIED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec
 /// static int
 /// bin_ztie(char *nam, char **args, Options ops, UNUSED(int func))
 /// ```
-pub fn bin_ztie(nam: &str, args: &[String], ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+pub fn bin_ztie(nam: &str, args: &[String], ops: &crate::ported::zsh_h::options, _func: i32) -> i32 { // c:109
     // c:111-115 — locals
     let pmname: &str;
     let mut read_write: i32 = 0;                                          // c:114 GDBM_SYNC
@@ -661,7 +661,7 @@ pub fn bin_ztie(nam: &str, args: &[String], ops: &crate::ported::zsh_h::options,
 /// static int
 /// bin_zuntie(char *nam, char **args, Options ops, UNUSED(int func))
 /// ```
-pub fn bin_zuntie(nam: &str, args: &[String], ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+pub fn bin_zuntie(nam: &str, args: &[String], ops: &crate::ported::zsh_h::options, _func: i32) -> i32 { // c:201
     // c:203-205 — locals
     let mut ret: i32 = 0;                                                 // c:205
 
@@ -707,7 +707,7 @@ pub fn bin_zuntie(nam: &str, args: &[String], ops: &crate::ported::zsh_h::option
 /// static int
 /// bin_zgdbmpath(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))
 /// ```
-pub fn bin_zgdbmpath(nam: &str, args: &[String], _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+pub fn bin_zgdbmpath(nam: &str, args: &[String], _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 { // c:236
     // c:241 — `pmname = *args;`
     let pmname = match args.first() {
         Some(s) => s.as_str(),

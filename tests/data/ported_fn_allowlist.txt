@@ -601,3 +601,11 @@ keymapnamtab
 # walks+frees, iremovesuffix consumes. Rust uses OnceLock<Mutex<
 # Vec<SuffixSet>>>; this private helper hides the get_or_init.
 suffixlist
+
+# isrch_spots (zle/zle_hist.rs) — Rust-only get-or-init accessor for
+# the global `static struct isrch_spot *isrch_spots` + `int max_spot`
+# from Src/Zle/zle_hist.c:946-947. C realloc-grows the array on
+# demand; Rust uses OnceLock<Mutex<Vec<IsrchSpot>>>; this private
+# helper hides the get_or_init from set_isrch_spot/get_isrch_spot/
+# free_isrch_spots.
+isrch_spots

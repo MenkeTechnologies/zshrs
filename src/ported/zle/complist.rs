@@ -252,7 +252,8 @@ pub fn asklistscroll(total: usize, shown: usize) -> String {
 /// Port of `compprintfmt()` from Src/Zle/complist.c. The C source
 /// supports more escapes (per-group counts, etc.); the daily-driver
 /// subset (count + group + literal `%`) is honoured here.
-pub fn compprintfmt(format: &str, matches_count: usize, group: &str) -> String {
+// Stripped-down version of printfmt(). But can do in-string colouring.    // c:668
+pub fn compprintfmt(format: &str, matches_count: usize, group: &str) -> String { // c:1072
     format
         .replace("%d", &matches_count.to_string())
         .replace("%g", group)
@@ -539,8 +540,9 @@ pub fn msearchpush() -> i32 { 0 }
 /// Port of `putfilecol()` from Src/Zle/complist.c:910. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn putfilecol() -> i32 { 0 }
 
+// Get the terminal color string for the given match.                      // c:878
 /// Port of `putmatchcol()` from Src/Zle/complist.c:881. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn putmatchcol() -> i32 { 0 }
+pub fn putmatchcol() -> i32 { 0 }                                           // c:881
 
 /// Port of `setmstatus()` from Src/Zle/complist.c:2203. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn setmstatus() -> i32 { 0 }
@@ -554,8 +556,9 @@ pub fn singlecalc() -> i32 { 0 }
 /// Port of `singledraw()` from Src/Zle/complist.c:1934. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn singledraw() -> i32 { 0 }
 
+// Turn off colouring.                                                     // c:594
 /// Port of `zcoff()` from Src/Zle/complist.c:597. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zcoff() -> i32 { 0 }
+pub fn zcoff() -> i32 { 0 }                                                 // c:597
 
 /// Port of `zlrputs()` from Src/Zle/complist.c:564. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn zlrputs() -> i32 { 0 }

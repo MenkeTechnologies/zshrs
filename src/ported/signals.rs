@@ -1009,7 +1009,7 @@ pub fn killrunjobs(sig: i32) {
 /// Port of `killjb()` from Src/signals.c:529.
 // send a signal to a job (simply involves kill if monitoring is on)       // c:525
 #[cfg(unix)]
-pub fn killjb(pgrp: i32, sig: i32) -> i32 {
+pub fn killjb(pgrp: i32, sig: i32) -> i32 {                                 // c:529
     if pgrp > 0 {
         unsafe { libc::killpg(pgrp, sig) }
     } else {

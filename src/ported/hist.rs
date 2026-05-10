@@ -984,7 +984,7 @@ impl History {
     }
 
     /// Resize history entries to fit histsiz (from hist.c resizehistents lines 2620-2632)
-    pub fn resizehistents(&mut self) {
+    pub fn resizehistents(&mut self) {                                       // c:2620
         while self.histlinect > self.histsiz {
             if let Some(oldest) = self.ring.pop() {
                 self.entries.remove(&oldest);
@@ -3070,8 +3070,9 @@ pub fn hdynread(_hist: &History) -> Option<String> {
     None
 }
 
+// initialize the history mechanism                                         // c:1106
 /// Initialize history subsystem (from hist.c inithist)
-pub fn inithist() -> History {
+pub fn inithist() -> History {                                              // c:2613
     History::new()
 }
 

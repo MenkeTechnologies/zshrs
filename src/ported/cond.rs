@@ -929,7 +929,7 @@ pub fn dostat(s: &str) -> u32 {                                              // 
 /// Port of `dolstat()` from Src/cond.c:488 — like `dostat()` but
 /// uses `lstat(2)` so symlinks are *not* followed. Underpins
 /// `[[ -h ]]` / `[[ -L ]]`.
-pub fn dolstat(s: &str) -> u32 {
+pub fn dolstat(s: &str) -> u32 {                                            // c:488
     fs::symlink_metadata(s).map(|m| m.mode()).unwrap_or(0)
 }
 
