@@ -25,20 +25,23 @@ pub enum Emulation {
 }
 
 /// Emulation flags for option defaults
-const OPT_CSH: u8 = 1;
-const OPT_KSH: u8 = 2;
-const OPT_SH: u8 = 4;
-const OPT_ZSH: u8 = 8;
-const OPT_ALL: u8 = OPT_CSH | OPT_KSH | OPT_SH | OPT_ZSH;
-const OPT_BOURNE: u8 = OPT_KSH | OPT_SH;
-const OPT_BSHELL: u8 = OPT_KSH | OPT_SH | OPT_ZSH;
-const OPT_NONBOURNE: u8 = OPT_ALL & !OPT_BOURNE;
-const OPT_NONZSH: u8 = OPT_ALL & !OPT_ZSH;
+const OPT_CSH: u8 = 1;                                                       // c:55
+const OPT_KSH: u8 = 2;                                                       // c:56
+const OPT_SH: u8 = 4;                                                        // c:57
+const OPT_ZSH: u8 = 8;                                                       // c:58
+const OPT_ALL: u8 = OPT_CSH | OPT_KSH | OPT_SH | OPT_ZSH;                    // c:60
+const OPT_BOURNE: u8 = OPT_KSH | OPT_SH;                                     // c:61
+const OPT_BSHELL: u8 = OPT_KSH | OPT_SH | OPT_ZSH;                           // c:62
+const OPT_NONBOURNE: u8 = OPT_ALL & !OPT_BOURNE;                             // c:63
+const OPT_NONZSH: u8 = OPT_ALL & !OPT_ZSH;                                   // c:64
 
 /// Option flags
-const OPT_EMULATE: u16 = 0x100; // Relevant to emulation
-const OPT_SPECIAL: u16 = 0x200; // Never set by emulate()
-const OPT_ALIAS: u16 = 0x400; // Alias to another option
+// option is relevant to emulation                                          // c:66
+const OPT_EMULATE: u16 = 0x100;                                              // c:67
+// option should never be set by emulate()                                  // c:68
+const OPT_SPECIAL: u16 = 0x200;                                              // c:69
+// option is an alias to an other option                                    // c:70
+const OPT_ALIAS: u16 = 0x400;                                                // c:71
 
 /// Every recognised shell option.
 /// Port of the `OPT_*` enum from Src/zsh.h — the C source uses
@@ -728,7 +731,7 @@ impl ShellOptions {
     }
 
     /// Set emulation mode
-    pub fn emulate(&mut self, mode: &str, fully: bool) {
+    pub fn emulate(&mut self, mode: &str, fully: bool) {                     // c:533
         let ch = mode.chars().next().unwrap_or('z');
         let ch = if ch == 'r' {
             mode.chars().nth(1).unwrap_or('z')
@@ -1180,7 +1183,7 @@ pub const OPT_INVALID: i32 = -10000;
 /// `ShellOptions::new()` from the constant arrays at the top of
 /// this file; this entry triggers initialisation by constructing
 /// one (idempotent — the static defaults are pure data).
-pub fn createoptiontable() {
+pub fn createoptiontable() {                                                 // c:471
     let _ = ShellOptions::new();
 }
 
@@ -1504,10 +1507,11 @@ pub fn setoption(name: &str, value: i32) -> i32 {
 /// Translate an option name to a signed option index.
 /// Port of `optlookup()` from Src/options.c:684. The Rust port
 /// uses an FNV-1a hash of the name as a stable opaque ID;
+// Identify an option name                                                  // c:680
 /// negation encodes the `no` prefix (matches the C source's
 /// negative-encoding for inversion). Returns OPT_INVALID for
 /// unknown names.
-pub fn optlookup(name: &str) -> i32 {
+pub fn optlookup(name: &str) -> i32 {                                        // c:684
     let normalized = name.chars().filter(|&c| c != '_').flat_map(|c| c.to_lowercase()).collect::<String>();
     let opts = ShellOptions::new();
     let hash = |s: &str| -> i32 {
@@ -1531,10 +1535,11 @@ pub fn optlookup(name: &str) -> i32 {
     }
 }
 
+// Identify an option letter                                                // c:717
 /// Translate a single-letter option flag to its index.
 /// Port of `optlookupc()` from Src/options.c:721. Returns 0 for
 /// unrecognised letters.
-pub fn optlookupc(c: char) -> i32 {
+pub fn optlookupc(c: char) -> i32 {                                          // c:721
     let opts = ShellOptions::new();
     opts.lookup_letter(c)
         .map(|(name, _)| {

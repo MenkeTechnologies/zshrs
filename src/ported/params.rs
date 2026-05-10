@@ -19,6 +19,10 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 // Parameter flags (from zsh.h PM_* flags)
 // ---------------------------------------------------------------------------
 
+// What level of localness we are at.                                       // c:47
+//                                                                          // c:48
+// Hand-wavingly, this is incremented at every function call and decremented // c:49
+// at every function return.  See startparamscope().                        // c:50
 pub mod flags {
     pub const SCALAR: u32 = 1 << 0;
     pub const INTEGER: u32 = 1 << 1;
@@ -2777,8 +2781,10 @@ impl ParamTable {
     // Create parameter (from createparam in C)
     // -----------------------------------------------------------------------
 
+    // provided it is unset and not special.  If the parameter can't be     // c:1025
+    // created because it already exists, the PM_UNSET flag is cleared.     // c:1026
     /// Create a parameter with given flags. Returns false if already exists and set.
-    pub fn createparam(&mut self, name: &str, pm_flags: u32) -> bool {
+    pub fn createparam(&mut self, name: &str, pm_flags: u32) -> bool {       // c:1030
         if !isident(name) {
             return false;
         }
@@ -6622,8 +6628,10 @@ pub fn convbase_ptr(_v: i64, _base: i32) -> (String, i32) {
 /// Port of `copyparamtable()` from `Src/params.c:596`. WARNING: needs HashTable.
 pub fn copyparamtable() {}
 
+// parameter entries as well as setting up parameter table                 // c:812
+// entries for environment variables we inherit.                           // c:813
 /// Port of `createparamtable()` from `Src/params.c:817`. WARNING: needs HashTable.
-pub fn createparamtable() {}
+pub fn createparamtable() {}                                                 // c:817
 
 /// Port of `createspecialhash()` from `Src/params.c:1182`. WARNING: needs HashTable.
 pub fn createspecialhash() {}

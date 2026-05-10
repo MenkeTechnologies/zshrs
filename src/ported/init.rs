@@ -269,7 +269,7 @@ pub fn parseargs(args: &[String]) -> (ShellOptions, Option<String>, Vec<String>)
 /// Port of `init_io()` from Src/init.c:577 — sets up SHIN/SHTTY,
 /// duplicates the controlling tty into `mailfd`, and configures
 /// terminal-related globals.
-pub fn init_io(state: &mut ShellState) {
+pub fn init_io(state: &mut ShellState) {                                     // c:577
     // Try to get tty
     if atty::is(atty::Stream::Stdin) {
         state.shtty = 0;
@@ -303,10 +303,11 @@ pub fn setupvals(state: &mut ShellState) {
 
 /// Source a file
 /// Source a shell file at `path`.
+// Returns one of the SOURCE_* enum values.                                // c:1546
 /// Port of `source()` from Src/init.c:1551 — parses + runs the
 /// file in the current shell environment, with the standard
 /// `noexec`/`autocd`/`local-script-options` handling.
-pub fn source(state: &mut ShellState, path: &str) -> SourceReturn {
+pub fn source(state: &mut ShellState, path: &str) -> SourceReturn {          // c:1551
     let path = Path::new(path);
 
     if !path.exists() {
@@ -326,10 +327,11 @@ pub fn source(state: &mut ShellState, path: &str) -> SourceReturn {
 
 /// Source a file from home directory
 /// Source a startup file from `$ZDOTDIR` / `$HOME`.
+// Try to source a file in the home directory                              // c:1675
 /// Port of `sourcehome()` from Src/init.c:1679 — same
 /// `$ZDOTDIR`-overrides-`$HOME` lookup precedence the C source
 /// uses for `.zshrc` / `.zprofile` / `.zlogin` / `.zlogout`.
-pub fn sourcehome(state: &mut ShellState, filename: &str) -> SourceReturn {
+pub fn sourcehome(state: &mut ShellState, filename: &str) -> SourceReturn {  // c:1679
     let zdotdir = env::var("ZDOTDIR").unwrap_or_else(|_| state.home.clone());
     let path = format!("{}/{}", zdotdir, filename);
     source(state, &path)
@@ -473,10 +475,11 @@ pub fn getmypath(name: Option<&str>, cwd: Option<&str>) -> Option<PathBuf> {
 // ---------------------------------------------------------------------------
 
 /// Initialize terminal settings (from init.c init_term)
+// Initialise termcap                                                      // c:767
 /// Initialize terminal-capability state.
 /// Port of `init_term()` from Src/init.c:771 — looks up TERM,
 /// resolves `tgetent()`, and populates the termcap globals.
-pub fn init_term(state: &ShellState) -> bool {
+pub fn init_term(state: &ShellState) -> bool {                               // c:771
     let term = &state.term;
     if term.is_empty() {
         return false;
@@ -513,7 +516,7 @@ pub fn zexit(val: i32, from_where: i32) -> ! {
 /// Port of `init_shout()` from Src/init.c:712 — opens `/dev/tty`
 /// and configures the shell's output stream for prompt-aware
 /// writes.
-pub fn init_shout(state: &mut ShellState) {
+pub fn init_shout(state: &mut ShellState) {                                  // c:712
     #[cfg(unix)]
     {
         // Check if stdin is a tty

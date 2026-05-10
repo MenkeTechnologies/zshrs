@@ -2410,9 +2410,11 @@ fn glob_emit_path(path: &std::path::Path) -> String {
 }
 
 /// Glob with default options
+// np points to a node in the list which will be expanded                  // c:1209
+// into a series of nodes.                                                  // c:1210
 /// Top-level glob entry point with default options.
 /// Port of `zglob()` from Src/glob.c:1214.
-pub fn glob(pattern: &str) -> Vec<String> {
+pub fn glob(pattern: &str) -> Vec<String> {                                  // c:1214
     let mut state = GlobData::new(GlobOptions {
         null_glob: false,
         mark_dirs: false,

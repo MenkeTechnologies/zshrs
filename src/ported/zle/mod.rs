@@ -18,6 +18,7 @@
 pub mod zle_bindings;
 pub mod compctl;
 pub mod compcore;
+pub mod complete;
 pub mod complist;
 pub mod compmatch;
 pub mod compresult;
@@ -41,6 +42,7 @@ pub mod zle_word;
 pub mod zleparameter;
 pub mod compctl_h;
 pub mod comp_h;
+pub mod zle_h;
 
 // Re-export old API for compatibility with exec.rs
 pub use keymaps::{zle, Keymap as LegacyKeymap, KeymapName, ZleManager, ZleState};

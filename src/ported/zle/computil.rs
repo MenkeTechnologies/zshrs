@@ -684,7 +684,7 @@ pub fn bin_compquote(nam: &str, args: &[String],                             // 
                      ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;
     use crate::ported::zsh_h::OPT_ISSET;
-    use crate::ported::zle::compcore::{INCOMPFUNC, COMPQSTACK};
+    use crate::ported::zle::complete::{INCOMPFUNC, COMPQSTACK};
     if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3686
         zwarnnam(nam, "can only be called from completion function");        // c:3687
         return 1;                                                            // c:3688
@@ -712,7 +712,7 @@ pub fn bin_compquote(nam: &str, args: &[String],                             // 
 pub fn bin_comptags(nam: &str, args: &[String],                              // c:3831
                     _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;
-    use crate::ported::zle::compcore::INCOMPFUNC;
+    use crate::ported::zle::complete::INCOMPFUNC;
     if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3838
         zwarnnam(nam, "can only be called from completion function");        // c:3839
         return 1;                                                            // c:3840
@@ -737,7 +737,7 @@ pub fn bin_comptags(nam: &str, args: &[String],                              // 
 pub fn bin_comptry(nam: &str, args: &[String],                               // c:3961
                    _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;
-    use crate::ported::zle::compcore::INCOMPFUNC;
+    use crate::ported::zle::complete::INCOMPFUNC;
     if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3968
         zwarnnam(nam, "can only be called from completion function");        // c:3969
         return 1;                                                            // c:3970
@@ -756,7 +756,7 @@ pub fn bin_comptry(nam: &str, args: &[String],                               // 
 pub fn bin_compvalues(nam: &str, args: &[String],                            // c:3475
                       _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;
-    use crate::ported::zle::compcore::INCOMPFUNC;
+    use crate::ported::zle::complete::INCOMPFUNC;
     if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3482
         zwarnnam(nam, "can only be called from completion function");        // c:3483
         return 1;                                                            // c:3484

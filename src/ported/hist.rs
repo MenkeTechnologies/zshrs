@@ -65,6 +65,7 @@ impl HistEntry {
     }
 }
 
+// != 0 means history substitution is turned off                           // c:57
 /// History active bits
 pub const HA_ACTIVE: u32 = 1; // History mechanism is active
 pub const HA_NOINC: u32 = 2; // Don't store, curhist not incremented
@@ -143,8 +144,9 @@ impl History {
         self.histlinect = 0;
     }
 
+    // initialize the history mechanism                                      // c:1106
     /// Begin history for a new command
-    pub fn hbegin(&mut self, interactive: bool) {
+    pub fn hbegin(&mut self, interactive: bool) {                            // c:1110
         if (self.histactive & HA_ACTIVE) != 0 {
             return;
         }
@@ -158,8 +160,9 @@ impl History {
         }
     }
 
+    // say we're done using the history mechanism                            // c:1470
     /// End history for current command
-    pub fn hend(&mut self, text: Option<String>) -> bool {
+    pub fn hend(&mut self, text: Option<String>) -> bool {                   // c:1474
         if (self.histactive & HA_ACTIVE) == 0 {
             return false;
         }
@@ -940,7 +943,7 @@ impl History {
     }
 
     /// Add history number with offset (from hist.c addhistnum lines 1265-1280)
-    pub fn addhistnum(&self, hl: i64, n: i64) -> i64 {
+    pub fn addhistnum(&self, hl: i64, n: i64) -> i64 {                       // c:1266
         let target = hl + n;
         if target < 1 {
             0
@@ -1187,7 +1190,7 @@ pub fn hwrep(entry: &HistEntry, replacement: &str, word_idx: usize) -> String {
 /// Increment a history-event number with wrap protection.
 /// Port of the `addhistnum()` arithmetic Src/hist.c uses to
 /// keep `$HISTCMD` monotonic.
-pub fn addhistnum(base: i64, n: i64) -> i64 {
+pub fn addhistnum(base: i64, n: i64) -> i64 {                                // c:1266
     base + n
 }
 
@@ -2028,10 +2031,11 @@ pub fn hwget() -> Option<(i32, String)> {
 /// TODOs cited inline (need infrastructure not yet ported):
 ///   - callback-slot fn-ptr swaps (hgetc, hungetc, etc.)
 ///   - BANGHIST option → stophist=4
+// initialize the history mechanism                                         // c:1106
 ///   - INCAPPENDHISTORYTIME conditional savehistfile
 ///   - linkcurline / defev (addhistnum) when entering interactive
 ///   - attachtty(mypgrp)
-pub fn hbegin(hist: &mut History, dohist: i32) {
+pub fn hbegin(hist: &mut History, dohist: i32) {                             // c:1110
     use std::sync::atomic::Ordering;
 
     hist.histdone = 0;
@@ -2089,10 +2093,11 @@ pub fn hbegin(hist: &mut History, dohist: i32) {
 /// TODOs cited inline:
 ///   - HISTNOFUNCTIONS / HISTNOSTORE filters
 ///   - HISTREDUCEBLANKS pass on the recorded text
+// say we're done using the history mechanism                               // c:1470
 ///   - HISTIGNORESPACE / HISTIGNOREDUPS / HISTIGNOREALLDUPS
 ///   - INCAPPENDHISTORY / SHAREHISTORY savehistfile call
 ///   - histreduceblanks (we have it, just not invoked here)
-pub fn hend(hist: &mut History, _new_text: Option<&str>) -> bool {
+pub fn hend(hist: &mut History, _new_text: Option<&str>) -> bool {           // c:1474
     use std::sync::atomic::Ordering;
     let was_active = (hist.histactive & HA_ACTIVE) != 0;
     let no_inc = (hist.histactive & HA_NOINC) != 0;
