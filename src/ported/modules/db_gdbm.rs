@@ -923,7 +923,10 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 /// Port of `setup_()` from `Src/Modules/db_gdbm.c:613`.
-pub fn setup_(_m: *const module) -> i32 { 0 }
+pub fn setup_(_m: *const module) -> i32 {                                    // c:613
+    // C body c:615-616 — `return 0`. Faithful empty-body port.
+    0
+}
 
 /// Port of `features_()` from `Src/Modules/db_gdbm.c:620`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
@@ -937,7 +940,15 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 }
 
 /// Port of `boot_()` from `Src/Modules/db_gdbm.c:635`.
-pub fn boot_(_m: *const module) -> i32 { 0 }
+pub fn boot_(_m: *const module) -> i32 {                                     // c:635
+    // C body c:637-638 — `zgdbm_tied = zshcalloc((1) * sizeof(char *));
+    //                     return 0`. Initializes the tied-DB names
+    //                     array to empty (zero-element + NULL terminator).
+    if let Ok(mut tied) = ZGDBM_TIED.lock() {                                // c:637
+        tied.clear();
+    }
+    0
+}
 
 /// Port of `cleanup_()` from `Src/Modules/db_gdbm.c:643`.
 pub fn cleanup_(m: *const module) -> i32 {
@@ -945,7 +956,11 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_()` from `Src/Modules/db_gdbm.c:651`.
-pub fn finish_(_m: *const module) -> i32 { 0 }
+pub fn finish_(_m: *const module) -> i32 {                                   // c:651
+    // C body c:653-654 — `return 0`. Faithful empty-body port; tied-DB
+    //                     teardown happens in cleanup_ via untie+free.
+    0
+}
 
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:ztie".to_string(), "b:zuntie".to_string(), "b:zgdbmpath".to_string(), "b:zgdbm_tied".to_string()]
