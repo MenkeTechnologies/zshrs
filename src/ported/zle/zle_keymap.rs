@@ -1196,21 +1196,74 @@ pub fn addkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, c: i32) {      // 
     // C terminates with '\0'; Rust Vec doesn't need that.
 }
 
-/// Port of `bin_bindkey_bind()` from Src/Zle/zle_keymap.c:999.
-pub fn bin_bindkey_bind(name: &str, args: &[String], func: char) -> i32 {    // c:998
-    // C body (c:1000-1098): bindkey -r/-s/0 dispatch — bind seqs
-    // to undefined-key (r), to send-strings (s), or to functions (0).
-    // Validate keymap + arg-count first.
-    if openkeymap(name).is_none() {
-        return 1;
+/// Direct port of `static int bin_bindkey_bind(char *name, char *kmname,
+///                                              char **argv, Options ops,
+///                                              char func)`
+/// from `Src/Zle/zle_keymap.c:999-1098`. Walks `args` in (seq, cmd)
+/// pairs binding each in the named keymap. `func` selects the bind
+/// mode: 0=widget name, 's'=send-string, 'r'=remove (undefined-key).
+///
+/// Mutates the shared `Arc<Keymap>` in keymapnamtab via the
+/// rebuild-and-replace strategy: clone the underlying data, mutate
+/// the copy, swap the new Arc into every name that pointed at the
+/// old Arc (preserves C's "all sharing names see the change"
+/// semantic).
+pub fn bin_bindkey_bind(name: &str, args: &[String], func: char) -> i32 {    // c:999
+    use crate::ported::zle::zle_thingy::Thingy;
+
+    let Some(old_arc) = openkeymap(name) else { return 1; };                 // c:1002
+    // c:1003-1011 — bind seq+target pairs need even argv count
+    // (omit on '-r' / when func is the empty target).
+    let needs_pairs = func == '\0' || func == 's';
+    if needs_pairs && (args.len() % 2 != 0) { return 1; }
+
+    // Mutable clone of the shared Keymap.
+    let mut km: Keymap = (*old_arc).clone();
+
+    // c:1014-1090 — walk args in 1 or 2-step strides.
+    let stride = if func == 'r' { 1 } else { 2 };
+    let mut i = 0;
+    while i + (stride - 1) < args.len() {
+        let seq_bytes = args[i].as_bytes();
+        let target = if stride == 2 { Some(args[i + 1].clone()) } else { None };
+
+        let kb_value: KeyBinding = match func {                              // c:1027
+            'r' => KeyBinding { bind: None, str: None, prefixct: 0 },        // c:1024 undefined-key
+            's' => KeyBinding {                                              // c:1030 send-string
+                bind: None,
+                str: target,
+                prefixct: 0,
+            },
+            _   => KeyBinding {                                              // c:1037 thingy
+                bind: target.map(|n| Thingy::builtin(&n)),
+                str: None,
+                prefixct: 0,
+            },
+        };
+
+        // c:1051 — `bindkey(km, seq, bind, str)`.
+        if seq_bytes.len() == 1 {                                            // single-byte first[]
+            km.first[seq_bytes[0] as usize] = kb_value.bind.clone();
+        } else {
+            km.multi.insert(seq_bytes.to_vec(), kb_value);                   // c:1054 hashtable
+        }
+        i += stride;
     }
-    // c:1003-1011 — even-arg-count check for func==0 || func=='s'.
-    if (func == '\0' || func == 's') && (args.len() % 2 != 0) {
-        return 1;
+
+    // Rebuild the Arc + propagate to every name that shared the old.
+    let new_arc = std::sync::Arc::new(km);
+    if let Ok(mut tab) = keymapnamtab().lock() {
+        let names_to_update: Vec<String> = tab.iter()
+            .filter(|(_, kmn)| std::sync::Arc::ptr_eq(&kmn.keymap, &old_arc))
+            .map(|(n, _)| n.clone())
+            .collect();
+        for n in names_to_update {
+            if let Some(kmn) = tab.get_mut(&n) {
+                kmn.keymap = new_arc.clone();
+            }
+        }
     }
-    // Full bind dispatch needs Arc<Mutex<Keymap>> mutation —
-    // deferred. Validate args succeeded.
-    0
+    0                                                                        // c:1097
 }
 
 /// Port of `bin_bindkey_del()` from Src/Zle/zle_keymap.c:902.
