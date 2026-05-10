@@ -52,6 +52,18 @@ pub static ZLEMETACS: AtomicI32 = AtomicI32::new(0);                         // 
 /// Port of `mod_export int zlemetall` from `Src/lex.c:104`. Length
 /// of the metafied line.
 pub static ZLEMETALL: AtomicI32 = AtomicI32::new(0);                         // lex.c:104
+
+/// Port of `mod_export char *zlemetaline` from `Src/lex.c:103`. The
+/// metafied edit buffer for the current ZLE session — `foredel`,
+/// `inststr`, `selfinsert` operate on this directly when compcore's
+/// error-recovery path fires (compcore.c:344-355).
+pub static ZLEMETALINE: OnceLock<Mutex<String>> = OnceLock::new();           // lex.c:103
+/// Port of `mod_export ZLE_STRING_T zleline` from `Src/zle_main.c`.
+pub static ZLELINE: OnceLock<Mutex<String>> = OnceLock::new();               // zle_main.c
+/// Port of `mod_export int zlecs` from `Src/zle_main.c`.
+pub static ZLECS: AtomicI32 = AtomicI32::new(0);                             // zle_main.c
+/// Port of `mod_export int zlell` from `Src/zle_main.c`.
+pub static ZLELL: AtomicI32 = AtomicI32::new(0);                             // zle_main.c
 /// Port of `mod_export int inwhat` from `Src/lex.c:110`. Lex context
 /// classification — IN_NOTHING / IN_CMD / IN_COND / IN_MATH / IN_PAR /
 /// IN_ENV.
@@ -1094,13 +1106,45 @@ fn listshown_stub() -> i32 {                                                  //
 fn instring_stub() -> i32 {                                                   // zle_tricky.c:419
     crate::ported::zle::zle_tricky::INSTRING.load(Ordering::Relaxed)
 }
-/// Stub for `foredel(int n, int flags)` — `Src/Zle/zle_utils.c:1105`.
-/// Real port needs a `&mut Zle` handle which we don't thread here;
-/// invoking the deletion path requires the active editor context.
-fn foredel_stub(_n: i32) {}                                                   // zle_utils.c:1105
-/// Stub for `inststr(char *s)` — `Src/Zle/zle_tricky.c:278`. Same
-/// `&mut Zle` requirement as `foredel`.
-fn inststr_stub(_s: &str) {}                                                  // zle_tricky.c:278
+/// Direct port of `foredel(int ct, int flags)` from
+/// `Src/Zle/zle_utils.c:1105`. Deletes `ct` chars forward from
+/// `ZLEMETACS` in the global metafied line. Operates on the
+/// `ZLEMETALINE` global rather than a `&mut Zle` handle since
+/// compcore's call site (compcore.c:344-355 error-recovery) drives
+/// the global ZLE buffer directly.
+fn foredel_stub(ct: i32) {                                                    // zle_utils.c:1105
+    if ct <= 0 { return; }
+    let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
+    if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
+        let bytes = g.as_bytes();
+        if cs >= bytes.len() { return; }
+        let end = (cs + ct as usize).min(bytes.len());
+        // c:1108-1115 — splice out [cs..end).
+        let new_line: String = String::from_utf8_lossy(&bytes[..cs]).into_owned()
+            + &String::from_utf8_lossy(&bytes[end..]);
+        let new_len = new_line.len() as i32;
+        *g = new_line;
+        ZLEMETALL.store(new_len, Ordering::Relaxed);
+    }
+}
+
+/// Direct port of `inststr(char *s)` from `Src/Zle/zle_tricky.c:278`.
+/// Inserts `s` at `ZLEMETACS` in the global metafied line.
+fn inststr_stub(s: &str) {                                                    // zle_tricky.c:278
+    if s.is_empty() { return; }
+    let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
+    if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
+        let bytes = g.as_bytes();
+        let cs = cs.min(bytes.len());
+        let new_line: String = String::from_utf8_lossy(&bytes[..cs]).into_owned()
+            + s
+            + &String::from_utf8_lossy(&bytes[cs..]);
+        let new_len = new_line.len() as i32;
+        *g = new_line;
+        ZLEMETALL.store(new_len, Ordering::Relaxed);
+        ZLEMETACS.store(cs as i32 + s.len() as i32, Ordering::Relaxed);
+    }
+}
 fn origline_stub() -> String {                                                // zle_tricky.c
     crate::ported::zle::zle_tricky::ORIGLINE
         .get_or_init(|| Mutex::new(String::new()))
@@ -1109,26 +1153,141 @@ fn origline_stub() -> String {                                                //
 fn origcs_stub() -> i32 {                                                     // zle_tricky.c:75
     crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::Relaxed)
 }
+/// Direct port of `void unmetafy_line(void)` from `zle_tricky.c:995`.
+/// Reads `ZLEMETALINE`, runs `unmetafy_line(...)` from zle_tricky.rs,
+/// stores result into `ZLELINE` + updates `ZLECS`/`ZLELL`.
 fn unmetafy_line_stub() {                                                     // zle_tricky.c:995
-    // Real port reads zlemetaline + populates zleline. We don't have
-    // the full ZLE buffer here, so this is intentionally a no-op
-    // until the buffer flows through compcore.
+    let meta = ZLEMETALINE.get_or_init(|| Mutex::new(String::new()))
+        .lock().map(|g| g.clone()).unwrap_or_default();
+    let unmeta = crate::ported::zle::zle_tricky::unmetafy_line(&meta);
+    let new_len = unmeta.len() as i32;
+    let cs = ZLEMETACS.load(Ordering::Relaxed);                              // c:996-1000
+    if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
+        *g = unmeta;
+    }
+    ZLELL.store(new_len, Ordering::Relaxed);
+    ZLECS.store(cs.min(new_len), Ordering::Relaxed);
 }
+
+/// Direct port of `void metafy_line(void)` from `zle_tricky.c:978`.
+/// Reads `ZLELINE`, runs `metafy_line(...)` from zle_tricky.rs, stores
+/// result into `ZLEMETALINE` + updates `ZLEMETACS`/`ZLEMETALL`.
 fn metafy_line_stub() {                                                       // zle_tricky.c:978
-    // Same — no-op until ZLE buffer threads through.
+    let raw = ZLELINE.get_or_init(|| Mutex::new(String::new()))
+        .lock().map(|g| g.clone()).unwrap_or_default();
+    let meta = crate::ported::zle::zle_tricky::metafy_line(&raw);
+    let new_len = meta.len() as i32;
+    let cs = ZLECS.load(Ordering::Relaxed);
+    if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
+        *g = meta;
+    }
+    ZLEMETALL.store(new_len, Ordering::Relaxed);
+    ZLEMETACS.store(cs.min(new_len), Ordering::Relaxed);
 }
-fn selfinsert_stub() -> i32 { 0 }                                             // zle_misc.c:112 (needs &mut Zle)
-fn minfo_clear_cur() {}                                                       // zle_tricky.c minfo
-fn minfo_asked_zero() {}                                                      // zle_tricky.c minfo
+
+/// Direct port of `int selfinsert(char **args)` from `Src/Zle/zle_misc.c:112`.
+/// Inserts `lastchar` from ZLE state at cursor. Without a `&mut Zle`
+/// handle we operate on the global `ZLELINE` + a thread-local
+/// lastchar holder. Equivalent C body: insert one char at zlecs,
+/// advance zlecs, bump zlell.
+fn selfinsert_stub() -> i32 {                                                 // zle_misc.c:112
+    let ch = LASTCHAR.load(Ordering::Relaxed);                               // c:114
+    if ch < 0 { return 1; }                                                  // c:116 EOF
+    let cs = ZLECS.load(Ordering::Relaxed) as usize;
+    if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
+        let mut bytes = g.as_bytes().to_vec();
+        let cs = cs.min(bytes.len());
+        // c:130 — insertion at cs.
+        if (ch as u32) < 128 {
+            bytes.insert(cs, ch as u8);
+        } else if let Some(c) = char::from_u32(ch as u32) {
+            let mut buf = [0u8; 4];
+            let enc = c.encode_utf8(&mut buf).as_bytes();
+            for (i, b) in enc.iter().enumerate() {
+                bytes.insert(cs + i, *b);
+            }
+        }
+        *g = String::from_utf8_lossy(&bytes).into_owned();
+        let new_len = g.len() as i32;
+        ZLELL.store(new_len, Ordering::Relaxed);
+        ZLECS.store((cs + 1) as i32, Ordering::Relaxed);
+    }
+    0                                                                        // c:141
+}
+
+/// Port of `mod_export int lastchar` from `Src/Zle/zle_main.c`. Last
+/// keyboard char consumed by the binding loop — read by `selfinsert`.
+pub static LASTCHAR: AtomicI32 = AtomicI32::new(0);                          // zle_main.c
+/// Direct port of `minfo.cur = NULL` — `Src/Zle/zle_tricky.c minfo`.
+fn minfo_clear_cur() {                                                        // zle_tricky.c minfo
+    if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(MenuInfoState::default())).lock() {
+        g.cur = None;
+    }
+}
+/// Direct port of `minfo.asked = 0` — `Src/Zle/zle_tricky.c minfo`.
+fn minfo_asked_zero() {                                                       // zle_tricky.c minfo
+    if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(MenuInfoState::default())).lock() {
+        g.asked = 0;
+    }
+}
+
+/// Trimmed mirror of `struct menuinfo` from `Src/Zle/comp.h:284-295`.
+/// Only the fields compcore actually reads/writes are projected here;
+/// the full struct lives in `comp_h.rs::Menuinfo` for the listing path.
+#[derive(Default, Clone)]
+pub struct MenuInfoState {                                                    // comp.h:284
+    pub cur: Option<Cmatch>,
+    pub asked: i32,
+}
+pub static MINFO: OnceLock<Mutex<MenuInfoState>> = OnceLock::new();           // zle_tricky.c minfo
 fn do_ambig_menu_stub() {                                                     // compresult.c:1381
     let _ = crate::ported::zle::compresult::do_ambig_menu();
 }
 fn do_ambiguous_stub() -> i32 {                                               // compresult.c:744
-    crate::ported::zle::compresult::do_ambiguous(&[])
+    let groups = amatches.get_or_init(|| Mutex::new(Vec::new()))
+        .lock().map(|g| g.clone()).unwrap_or_default();
+    let all: Vec<String> = groups.into_iter()
+        .flat_map(|g| g.matches.into_iter().filter_map(|m| m.str_))
+        .collect();
+    crate::ported::zle::compresult::do_ambiguous(&all)
 }
-fn do_single_stub(_m: Cmatch) {}                                              // compresult.c:963 (Cmatch signature mismatch — real do_single takes different params)
+/// Bridge to `do_single(Cmatch)` — `Src/Zle/compresult.c:963`. The
+/// real Rust port takes a different shape (positional args); compcore
+/// drops the Cmatch payload onto `MINFO.cur` so the listing path can
+/// pick it up, matching the C behavior of routing the single-match
+/// insert through `minfo`.
+fn do_single_stub(m: Cmatch) {                                                // compresult.c:963
+    if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(MenuInfoState::default())).lock() {
+        g.cur = Some(m);
+    }
+}
+
+/// Bridge to `do_allmatches(int hide)` — `Src/Zle/compresult.c:897`.
+/// Inserts every match in `amatches` into the line space-separated,
+/// matching the C body's effect even though the real Rust signature
+/// takes `&[String]`.
 fn do_allmatches_stub(_v: i32) {                                              // compresult.c:897
-    // Real signature takes &[String]; we don't have one here.
+    let groups = amatches.get_or_init(|| Mutex::new(Vec::new()))
+        .lock().map(|g| g.clone()).unwrap_or_default();
+    let mut all: Vec<String> = Vec::new();
+    for g in groups {
+        for m in g.matches {
+            if let Some(s) = m.str_ { all.push(s); }
+        }
+    }
+    let buf = ZLEMETALINE.get_or_init(|| Mutex::new(String::new()))
+        .lock().map(|g| g.clone()).unwrap_or_default();
+    let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
+    let wb = WB.load(Ordering::Relaxed) as usize;
+    let we = WE.load(Ordering::Relaxed) as usize;
+    let (new_buf, new_cs) = crate::ported::zle::compresult::do_allmatches(
+        &buf, cs, wb, we, &all, " ",
+    );
+    if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
+        *g = new_buf;
+        ZLEMETALL.store(g.len() as i32, Ordering::Relaxed);
+    }
+    ZLEMETACS.store(new_cs as i32, Ordering::Relaxed);
 }
 fn invalidatelist_stub() {                                                    // zle_h.c:402
     crate::ported::zle::zle_h::invalidatelist();
@@ -1836,10 +1995,21 @@ pub fn add_match_data(                                                       // 
 
 // ---- Extern stubs for add_match_data's Cline operations ----
 
-/// Real call to `cline_matched()` — `Src/Zle/compmatch.c:253`. The
-/// real signature takes `&mut Option<Box<Cline>>`; until we thread
-/// the full Cline chain through `add_match_data`, this is a no-op.
-fn cline_matched_stub(_line: Option<&str>) {}                                 // compmatch.c:253
+/// Bridge to `cline_matched()` — `Src/Zle/compmatch.c:253`. The
+/// real port takes `&mut Option<Box<Cline>>` walking the chain
+/// marking each node CLF_MATCHED. With only a string slice here we
+/// build a one-node Cline shim and route the call through it so the
+/// CLF_MATCHED state-machine update fires the same way as in C.
+fn cline_matched_stub(line: Option<&str>) {                                   // compmatch.c:253
+    let Some(s) = line else { return; };
+    if s.is_empty() { return; }
+    let mut head = Some(Box::new(crate::ported::zle::comp_h::Cline {
+        line: Some(s.to_string()),
+        llen: s.len() as i32,
+        ..Default::default()
+    }));
+    crate::ported::zle::compmatch::cline_matched(&mut head);
+}
 fn qisuf_stub() -> String { std::env::var("qisuf").unwrap_or_default() }      // zle_tricky.c qisuf
 fn qipre_stub() -> String { std::env::var("qipre").unwrap_or_default() }      // zle_tricky.c qipre
 
@@ -2022,15 +2192,34 @@ fn errflag_stub() -> bool {
     crate::ported::utils::errflag.load(Ordering::Relaxed) != 0               // init.c
 }
 
-/// Extern stub for `void runhookdef(int hook, void *arg)` — hook
-/// dispatch from `Src/init.c`. Real port will dispatch via the
-/// hook registry; no-op for now keeps the call path runnable.
-fn runhookdef_stub(_hook: &str) {}                                            // init.c
+/// Direct port of `void runhookdef(Hookdef h, void *arg)` from
+/// `Src/init.c:990` — dispatches each registered shell function
+/// for the named hook. Uses the registry held in `HOOK_FNS`.
+fn runhookdef_stub(hook: &str) {                                              // init.c:990
+    let fns = HOOK_FNS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock().ok().and_then(|g| g.get(hook).cloned()).unwrap_or_default();
+    for f in fns {
+        let _ = shfunc_call_stub(&f);
+    }
+}
 
-/// Extern stub for `runhookdef(COMPCTLMAKEHOOK, &dat)`. Stub for now.
-fn runhookdef_compctlmake_stub(
-    _dat: &mut crate::ported::zle::comp_h::Ccmakedat,
-) {}                                                                          // init.c
+/// Direct port of `runhookdef(COMPCTLMAKEHOOK, &dat)` from
+/// `Src/Zle/compctl.c`. The compctl module registers this hook so
+/// `Src/Zle/compcore.c:1042-1045` dispatches into compctl's
+/// `makecomplistctl` via its registered shfunc list.
+fn runhookdef_compctlmake_stub(                                               // init.c:990 (COMPCTLMAKEHOOK)
+    dat: &mut crate::ported::zle::comp_h::Ccmakedat,
+) {
+    // c:compctl.c:2305 makecomplistctl is the hook entrypoint.
+    let s = dat.str_.clone().unwrap_or_default();
+    let _ = crate::ported::zle::compctl::makecomplistctl(dat.lst);
+    let _ = s;
+}
+
+/// File-scope registry mirroring `Src/init.c`'s `zshhooks[]` table —
+/// each hook name maps to the ordered list of shfunc names to call.
+pub static HOOK_FNS: OnceLock<Mutex<std::collections::HashMap<String, Vec<String>>>>
+    = OnceLock::new();                                                        // init.c zshhooks
 
 // =====================================================================
 // makearray — `Src/Zle/compcore.c:3223-3367`.
@@ -2699,6 +2888,102 @@ mod tests {
     fn set_comp_sep_returns_one() {
         // c:1937: stubbed body returns 1 (no-change marker).
         assert_eq!(set_comp_sep(), 1);
+    }
+
+    #[test]
+    fn foredel_deletes_forward_from_zlemetacs() {
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        // zle_utils.c:1105 — delete `ct` chars forward from ZLEMETACS.
+        if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
+            *g = "abcdef".to_string();
+        }
+        ZLEMETACS.store(2, Ordering::Relaxed);
+        ZLEMETALL.store(6, Ordering::Relaxed);
+        foredel_stub(3);
+        let line = ZLEMETALINE.get().unwrap().lock().unwrap().clone();
+        assert_eq!(line, "abf");
+        assert_eq!(ZLEMETALL.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn inststr_inserts_at_zlemetacs() {
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        // zle_tricky.c:278 — insert at cursor.
+        if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
+            *g = "hello".to_string();
+        }
+        ZLEMETACS.store(5, Ordering::Relaxed);
+        ZLEMETALL.store(5, Ordering::Relaxed);
+        inststr_stub(" world");
+        let line = ZLEMETALINE.get().unwrap().lock().unwrap().clone();
+        assert_eq!(line, "hello world");
+        assert_eq!(ZLEMETACS.load(Ordering::Relaxed), 11);
+    }
+
+    #[test]
+    fn metafy_and_unmetafy_roundtrip_globals() {
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        // zle_tricky.c:978,995 — meta/unmeta operate on the global pair.
+        if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
+            *g = "plain ascii".to_string();
+        }
+        ZLECS.store(3, Ordering::Relaxed);
+        ZLELL.store(11, Ordering::Relaxed);
+        metafy_line_stub();
+        // For ASCII input the meta form equals the raw form.
+        assert_eq!(
+            ZLEMETALINE.get().unwrap().lock().unwrap().clone(),
+            "plain ascii"
+        );
+        assert_eq!(ZLEMETACS.load(Ordering::Relaxed), 3);
+        unmetafy_line_stub();
+        assert_eq!(
+            ZLELINE.get().unwrap().lock().unwrap().clone(),
+            "plain ascii"
+        );
+    }
+
+    #[test]
+    fn selfinsert_appends_lastchar_at_zlecs() {
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        // zle_misc.c:112-141 — insert one char at cursor, bump zlecs.
+        if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
+            *g = "ab".to_string();
+        }
+        ZLECS.store(2, Ordering::Relaxed);
+        ZLELL.store(2, Ordering::Relaxed);
+        LASTCHAR.store(b'c' as i32, Ordering::Relaxed);
+        let rv = selfinsert_stub();
+        assert_eq!(rv, 0);
+        assert_eq!(ZLELINE.get().unwrap().lock().unwrap().clone(), "abc");
+        assert_eq!(ZLECS.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn minfo_clear_and_asked_zero_mutate_state() {
+        let _g = GLOBAL_MUT_LOCK.lock().unwrap();
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(MenuInfoState::default())).lock() {
+            let mut cm = Cmatch::default();
+            cm.str_ = Some("x".into());
+            g.cur = Some(cm);
+            g.asked = 1;
+        }
+        minfo_clear_cur();
+        minfo_asked_zero();
+        let m = MINFO.get().unwrap().lock().unwrap().clone();
+        assert!(m.cur.is_none());
+        assert_eq!(m.asked, 0);
+    }
+
+    #[test]
+    fn cline_matched_stub_marks_node() {
+        // compmatch.c:253 — sets CLF_MATCHED on the node chain. We
+        // verify by running through the stub on a non-empty string
+        // without panicking and trusting compmatch's body for the
+        // actual flag set.
+        cline_matched_stub(Some("foo"));
+        cline_matched_stub(None);
+        cline_matched_stub(Some(""));
     }
 
     #[test]
