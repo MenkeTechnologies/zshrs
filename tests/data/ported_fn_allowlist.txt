@@ -528,11 +528,12 @@ opt_state_set
 # until the optns[] flag table is ported.
 default_on_options
 
-# signal_count / signal_name / signal_number (jobs.rs) — Rust
-# accessors over libc signal numbering. C uses sigs[]/alt_sigs[]/
-# SIGCOUNT from Src/signals.c which the Rust port has not yet
-# exposed as a global table. These wrappers map between numeric
-# signal IDs and zsh canonical names.
-signal_count
-signal_name
-signal_number
+# sigs_name / sigs_number (signals_h.rs) — accessor wrappers over
+# the SIGS / ALT_SIGS pair-tables that port `sigs[]` and `alt_sigs[]`
+# from signames.c (auto-generated) and jobs.c:2740. C indexes the
+# `sigs[idx]` array directly (the awk-emitted layout is flat by
+# signum); Rust uses a (name, signum) tuple table because libc
+# signal numbers aren't dense or stable across platforms — the
+# named accessor walks the table to provide the same lookup.
+sigs_name
+sigs_number

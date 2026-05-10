@@ -29,44 +29,6 @@ pub mod trap_flags {
     pub const ZSIG_SHIFT: u32 = 3; // Bits to shift for local level
 }
 
-/// Well-known signal numbers (matching libc on most Unix systems).
-/// Mirrors the `sigs[]` lookup table Src/signals.c builds for the
-/// `kill -l` / `trap` builtin output. Numeric values come from the
-/// platform's `<signal.h>` via libc.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(i32)]
-pub enum Signal {
-    SIGHUP = libc::SIGHUP,
-    SIGINT = libc::SIGINT,
-    SIGQUIT = libc::SIGQUIT,
-    SIGILL = libc::SIGILL,
-    SIGTRAP = libc::SIGTRAP,
-    SIGABRT = libc::SIGABRT,
-    SIGBUS = libc::SIGBUS,
-    SIGFPE = libc::SIGFPE,
-    SIGKILL = libc::SIGKILL,
-    SIGUSR1 = libc::SIGUSR1,
-    SIGSEGV = libc::SIGSEGV,
-    SIGUSR2 = libc::SIGUSR2,
-    SIGPIPE = libc::SIGPIPE,
-    SIGALRM = libc::SIGALRM,
-    SIGTERM = libc::SIGTERM,
-    SIGCHLD = libc::SIGCHLD,
-    SIGCONT = libc::SIGCONT,
-    SIGSTOP = libc::SIGSTOP,
-    SIGTSTP = libc::SIGTSTP,
-    SIGTTIN = libc::SIGTTIN,
-    SIGTTOU = libc::SIGTTOU,
-    SIGURG = libc::SIGURG,
-    SIGXCPU = libc::SIGXCPU,
-    SIGXFSZ = libc::SIGXFSZ,
-    SIGVTALRM = libc::SIGVTALRM,
-    SIGPROF = libc::SIGPROF,
-    SIGWINCH = libc::SIGWINCH,
-    SIGIO = libc::SIGIO,
-    SIGSYS = libc::SIGSYS,
-}
-
 /// Pseudo-signals for shell traps.
 /// Port of the `SIGEXIT`/`SIGDEBUG`/`SIGZERR` macros from
 /// Src/zsh.h — used by the C source's `trap` builtin to register
@@ -74,47 +36,6 @@ pub enum Signal {
 pub const SIGEXIT: i32 = 0;
 pub const SIGDEBUG: i32 = -1;
 pub const SIGZERR: i32 = -2;
-
-/// Signal name → number lookup table.
-/// Port of the `sigs[]` array Src/signals.c builds at startup —
-/// drives the `kill -l` listing and the `trap NAME` parser. The
-/// `ERR` alias for `ZERR` matches the `trap` builtin's accepted
-/// shorthand.
-pub static SIGNAL_NAMES: &[(&str, i32)] = &[
-    ("EXIT", SIGEXIT),
-    ("HUP", libc::SIGHUP),
-    ("INT", libc::SIGINT),
-    ("QUIT", libc::SIGQUIT),
-    ("ILL", libc::SIGILL),
-    ("TRAP", libc::SIGTRAP),
-    ("ABRT", libc::SIGABRT),
-    ("BUS", libc::SIGBUS),
-    ("FPE", libc::SIGFPE),
-    ("KILL", libc::SIGKILL),
-    ("USR1", libc::SIGUSR1),
-    ("SEGV", libc::SIGSEGV),
-    ("USR2", libc::SIGUSR2),
-    ("PIPE", libc::SIGPIPE),
-    ("ALRM", libc::SIGALRM),
-    ("TERM", libc::SIGTERM),
-    ("CHLD", libc::SIGCHLD),
-    ("CONT", libc::SIGCONT),
-    ("STOP", libc::SIGSTOP),
-    ("TSTP", libc::SIGTSTP),
-    ("TTIN", libc::SIGTTIN),
-    ("TTOU", libc::SIGTTOU),
-    ("URG", libc::SIGURG),
-    ("XCPU", libc::SIGXCPU),
-    ("XFSZ", libc::SIGXFSZ),
-    ("VTALRM", libc::SIGVTALRM),
-    ("PROF", libc::SIGPROF),
-    ("WINCH", libc::SIGWINCH),
-    ("IO", libc::SIGIO),
-    ("SYS", libc::SIGSYS),
-    ("DEBUG", SIGDEBUG),
-    ("ZERR", SIGZERR),
-    ("ERR", SIGZERR), // Alias
-];
 
 /// Look up a signal number by name.
 /// Port of `getsigidx()` from Src/jobs.c — accepts canonical
@@ -124,7 +45,7 @@ pub fn getsigidx(name: &str) -> Option<i32> {
     let name_upper = name.to_uppercase();
     let lookup = name_upper.strip_prefix("SIG").unwrap_or(&name_upper);
 
-    for (sig_name, sig_num) in SIGNAL_NAMES {
+    for (sig_name, sig_num) in crate::ported::signals_h::SIGS {
         if *sig_name == lookup {
             return Some(*sig_num);
         }
@@ -138,7 +59,7 @@ pub fn getsigidx(name: &str) -> Option<i32> {
 /// Port of `getsigname()` from Src/jobs.c — inverse of
 /// `getsigidx`, walks the same `sigs[]` table.
 pub fn getsigname(sig: i32) -> Option<&'static str> {
-    for (name, num) in SIGNAL_NAMES {
+    for (name, num) in crate::ported::signals_h::SIGS {
         if *num == sig {
             return Some(name);
         }

@@ -2179,7 +2179,7 @@ pub fn bin_kill(nam: &str, argv: &[String],                                  // 
                     idx += 1;
                     if let Ok(n) = token.parse::<i32>() {                    // c:2821 numeric
                         let s = (n & !0o200) as i32;                         // c:2855
-                        if let Some(name) = signal_name(s) {                 // c:2856-2858
+                        if let Some(name) = crate::ported::signals_h::sigs_name(s) {                 // c:2856-2858
                             println!("{}", name);
                         } else {
                             println!("{}", n);                               // c:2862
@@ -2188,7 +2188,7 @@ pub fn bin_kill(nam: &str, argv: &[String],                                  // 
                         // c:2823 — symbolic; uppercase, strip SIG, look up.
                         let upper = token.to_ascii_uppercase();
                         let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
-                        if let Some(n) = signal_number(bare) {               // c:2828
+                        if let Some(n) = crate::ported::signals_h::sigs_number(bare) {               // c:2828
                             println!("{}", n);                               // c:2842
                         } else {
                             zwarnnam(nam,
@@ -2200,9 +2200,9 @@ pub fn bin_kill(nam: &str, argv: &[String],                                  // 
                 return returnval;                                            // c:2868
             }
             // c:2869-2876 — bare `-l`: print every signal name.
-            print!("{}", signal_name(1).unwrap_or_else(|| "HUP".to_string()));
-            for s in 2..=signal_count() {
-                if let Some(n) = signal_name(s) { print!(" {}", n); }
+            print!("{}", crate::ported::signals_h::sigs_name(1).unwrap_or("HUP"));
+            for s in 2..=crate::ported::signals_h::SIGCOUNT {
+                if let Some(n) = crate::ported::signals_h::sigs_name(s) { print!(" {}", n); }
             }
             println!();
             return 0;                                                        // c:2879
@@ -2212,8 +2212,8 @@ pub fn bin_kill(nam: &str, argv: &[String],                                  // 
         if body == "L" {                                                     // c:2880
             let cols = 4usize;
             let mut col = 0usize;
-            for s in 1..=signal_count() {
-                if let Some(n) = signal_name(s) {
+            for s in 1..=crate::ported::signals_h::SIGCOUNT {
+                if let Some(n) = crate::ported::signals_h::sigs_name(s) {
                     print!("{:>2} {:<10}", s, n);
                     col += 1;
                     if col % cols == 0 { println!(); }
@@ -2254,7 +2254,7 @@ pub fn bin_kill(nam: &str, argv: &[String],                                  // 
             let name = argv[idx].as_str();
             let upper = name.to_ascii_uppercase();
             let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
-            match signal_number(bare) {
+            match crate::ported::signals_h::sigs_number(bare) {
                 Some(n) => sig = n,
                 None => {
                     zwarnnam(nam,
@@ -2289,7 +2289,7 @@ pub fn bin_kill(nam: &str, argv: &[String],                                  // 
         // c:2960 — symbolic `-NAME` (no `s` prefix needed).
         let upper = body.to_ascii_uppercase();
         let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
-        match signal_number(bare) {
+        match crate::ported::signals_h::sigs_number(bare) {
             Some(n) => { sig = n; got_sig = true; idx += 1; }
             None => {
                 zwarnnam(nam, &format!("unknown signal: SIG{}", bare));      // c:2974
@@ -2351,63 +2351,6 @@ pub fn bin_kill(nam: &str, argv: &[String],                                  // 
     returnval                                                                // c:3045
 }
 
-// =====================================================================
-// !!! WARNING: RUST-ONLY HELPERS — NO DIRECT C COUNTERPART !!!
-// =====================================================================
-// signal_name / signal_number / signal_count are local accessors over
-// the libc signal numbering. C uses `sigs[]` / `alt_sigs[]` / `SIGCOUNT`
-// from Src/signals.c which the Rust port doesn't yet expose as a
-// global table. These wrappers map between numeric signal IDs and
-// canonical zsh names (sans `SIG` prefix) using a hand-written table
-// that mirrors the common signal set.
-// =====================================================================
-
-fn signal_count() -> i32 { 31 }                                              // c:signals.h SIGCOUNT
-
-fn signal_name(sig: i32) -> Option<String> {
-    let name = match sig {
-        libc::SIGHUP   => "HUP",   libc::SIGINT  => "INT",
-        libc::SIGQUIT  => "QUIT",  libc::SIGILL  => "ILL",
-        libc::SIGTRAP  => "TRAP",  libc::SIGABRT => "ABRT",
-        libc::SIGBUS   => "BUS",   libc::SIGFPE  => "FPE",
-        libc::SIGKILL  => "KILL",  libc::SIGUSR1 => "USR1",
-        libc::SIGSEGV  => "SEGV",  libc::SIGUSR2 => "USR2",
-        libc::SIGPIPE  => "PIPE",  libc::SIGALRM => "ALRM",
-        libc::SIGTERM  => "TERM",  libc::SIGCHLD => "CHLD",
-        libc::SIGCONT  => "CONT",  libc::SIGSTOP => "STOP",
-        libc::SIGTSTP  => "TSTP",  libc::SIGTTIN => "TTIN",
-        libc::SIGTTOU  => "TTOU",  libc::SIGURG  => "URG",
-        libc::SIGXCPU  => "XCPU",  libc::SIGXFSZ => "XFSZ",
-        libc::SIGVTALRM => "VTALRM", libc::SIGPROF => "PROF",
-        libc::SIGWINCH => "WINCH", libc::SIGIO => "IO",
-        libc::SIGSYS   => "SYS",
-        _ => return None,
-    };
-    Some(name.to_string())
-}
-
-fn signal_number(name: &str) -> Option<i32> {
-    let s = match name {
-        "HUP"  => libc::SIGHUP,   "INT"  => libc::SIGINT,
-        "QUIT" => libc::SIGQUIT,  "ILL"  => libc::SIGILL,
-        "TRAP" => libc::SIGTRAP,  "ABRT" => libc::SIGABRT,
-        "BUS"  => libc::SIGBUS,   "FPE"  => libc::SIGFPE,
-        "KILL" => libc::SIGKILL,  "USR1" => libc::SIGUSR1,
-        "SEGV" => libc::SIGSEGV,  "USR2" => libc::SIGUSR2,
-        "PIPE" => libc::SIGPIPE,  "ALRM" => libc::SIGALRM,
-        "TERM" => libc::SIGTERM,  "CHLD" => libc::SIGCHLD,
-        "CONT" => libc::SIGCONT,  "STOP" => libc::SIGSTOP,
-        "TSTP" => libc::SIGTSTP,  "TTIN" => libc::SIGTTIN,
-        "TTOU" => libc::SIGTTOU,  "URG"  => libc::SIGURG,
-        "XCPU" => libc::SIGXCPU,  "XFSZ" => libc::SIGXFSZ,
-        "VTALRM" => libc::SIGVTALRM, "PROF" => libc::SIGPROF,
-        "WINCH" => libc::SIGWINCH, "IO"  => libc::SIGIO,
-        "SYS"  => libc::SIGSYS,
-        _ => return None,
-    };
-    Some(s)
-}
-
 /// Direct port of `bin_suspend()` from `Src/jobs.c:3170`.
 /// C body (c:3173-3197):
 /// ```c
@@ -2437,6 +2380,7 @@ pub fn bin_suspend(name: &str, _argv: &[String],                             // 
         .unwrap_or(false);
 
     if jobbing {                                                             // c:3177
+        //stop ignoring signals
         signal_default(libc::SIGTTIN);                                       // c:3179
         signal_default(libc::SIGTSTP);                                       // c:3180
         signal_default(libc::SIGTTOU);                                       // c:3181
