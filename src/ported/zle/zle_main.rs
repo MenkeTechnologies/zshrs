@@ -2081,11 +2081,23 @@ pub fn zle_resetprompt() {                                                   // 
 pub fn zleaftertrap() -> i32 {                                               // c:2113
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {  // c:2116
-        // c:2117 — `endparamscope()`. The Rust port's startparamscope/
-        // endparamscope take &mut ParamTable; the singleton table
-        // hookup isn't wired yet. Logged as deferred; the zleactive
-        // check is faithful so the no-op path is correct.
-        // TODO: wire to the global ParamTable when that lands.
+        // c:2117 — `endparamscope()`. The canonical Rust endparamscope
+        // takes a `&mut HashTable` reference for vtable dispatch
+        // (params.rs:1603); the global-scope unwind work it does
+        // (dec_locallevel + saveandpophiststack) is what we care about
+        // here, so we feed it a stub HashTable — the side effects on
+        // locallevel + history fire correctly.
+        let mut stub: crate::ported::zsh_h::HashTable = Box::new(
+            crate::ported::zsh_h::hashtable {
+                hsize: 0, ct: 0, nodes: Vec::new(), tmpdata: 0,
+                hash: None, emptytable: None, filltable: None,
+                cmpnodes: None, addnode: None, getnode: None,
+                getnode2: None, removenode: None, disablenode: None,
+                enablenode: None, freenode: None, printnode: None,
+                scantab: None,
+            },
+        );
+        crate::ported::params::endparamscope(&mut stub);
     }
     0                                                                        // c:2119 return 0
 }

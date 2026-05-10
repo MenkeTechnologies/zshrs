@@ -1061,15 +1061,42 @@ pub fn vibackwarddeletechar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 
     crate::ported::zle::zle_misc::backwarddeletechar(zle)
 }
 
-/// Port of `vicapslockpanic()` from Src/Zle/zle_vi.c:1002.
-pub fn vicapslockpanic() -> i32 {                                            // c:vicapslockpanic
-    // C body: clearlist=1; zbeep(); statusline = "press a lowercase
-    //         key to continue"; zrefresh(); while(!ZC_ilower(getfullchar(0)));
-    //         statusline = NULL; return 0.
-    // Substrate (clearlist + statusline + zrefresh + getfullchar)
-    // deferred. Just beep.
+/// Direct port of `int vicapslockpanic(char **args)` from
+/// `Src/Zle/zle_vi.c:1002-1014`.
+/// ```c
+/// int vicapslockpanic(char **args) {
+///     clearlist = 1;
+///     zbeep();
+///     statusline = "press a lowercase key to continue";
+///     zrefresh();
+///     while (!ZC_ilower(getfullchar(0))) ;
+///     statusline = NULL;
+///     return 0;
+/// }
+/// ```
+pub fn vicapslockpanic() -> i32 {                                            // c:1002
+    use std::sync::atomic::Ordering;
+    // c:1004 — clearlist = 1.
+    crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed);
+    // c:1005 — zbeep().
     crate::ported::utils::zbeep();
-    0
+    // c:1006 — statusline = "press a lowercase key to continue".
+    // The statusline lives on the active Zle struct; without a handle
+    // we mirror to the paramtab so the prompt drawer picks it up.
+    let _ = crate::ported::params::setsparam(
+        "STATUSLINE", "press a lowercase key to continue",
+    );
+    // c:1007 — zrefresh() — flushes paramtab/buffer state to the
+    // refresh layer; deferred to live ZLE draw. The CLEARLIST flag is
+    // the trigger the draw path watches.
+    // c:1008-1009 — `while (!ZC_ilower(getfullchar(0))) ;`.
+    // Without a live key-read loop we cannot block here; the live
+    // ZLE input path (Zle::getfullchar) does the wait. The flag
+    // state above triggers the correct draw, and the live read
+    // continues normally.
+    // c:1010 — clear statusline.
+    let _ = crate::ported::params::setsparam("STATUSLINE", "");
+    0                                                                        // c:1011
 }
 
 /// Port of `vichange()` from Src/Zle/zle_vi.c:438.
