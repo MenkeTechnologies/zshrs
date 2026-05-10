@@ -1925,12 +1925,89 @@ pub fn sub_join(a: &mut crate::ported::zle::comp_h::Cline,                   // 
     max_total - min_total                                                    // c:2702
 }
 
-/// Port of `sub_match()` from Src/Zle/compmatch.c:2301.
-pub fn sub_match(_m: i32, _l: &str, _ll: i32, _w: &str, _wl: i32,            // c:2301
-                 _sfx: i32) -> i32 {
-    // C body c:2303-2442 — runs a Cmatcher's sub-pattern match against
-    //                      a substring. Substrate deferred; 0.
-    0
+/// Direct port of `static int sub_match(Cmdata md, char *str, int len,
+///                                       int sfx)` from
+/// `Src/Zle/compmatch.c:2301-2442`. Accumulates the longest common
+/// prefix (or suffix when `sfx` set) between the substring
+/// `str[..len]` and the data in `md`, advancing `md.str`/`md.len`
+/// as it consumes characters.
+///
+/// Returns the count of matched bytes — the C source's "ret" value.
+pub fn sub_match(md: &mut Cmdata, str_: &str, len: i32, sfx: i32) -> i32 {   // c:2301
+    let mut ret = 0i32;
+    let str_bytes = str_.as_bytes();
+    let mut remaining = len as usize;
+    let start_idx: usize = if sfx != 0 { (len as usize).min(str_bytes.len()) } else { 0 };
+
+    // c:2319 — outer while-len loop: refill md, find common prefix
+    // (or suffix), accumulate ret, then re-enter for next cline node.
+    while remaining > 0 {                                                    // c:2319
+        if check_cmdata(md, sfx) != 0 {                                      // c:2320
+            return ret;
+        }
+
+        let md_bytes = md.str_.as_bytes();
+        let mut l: usize = 0;
+        let md_len_usize = md.len as usize;
+        let cap = remaining.min(md_len_usize);
+
+        // c:2329-2331 — accumulate matching chars from the chosen end.
+        while l < cap {
+            let s_idx: isize = if sfx != 0 {
+                start_idx as isize - (l as isize) - 1 - (ret as isize)
+            } else {
+                (ret as isize) + (l as isize)
+            };
+            let m_len = md_bytes.len();
+            let m_idx: isize = if sfx != 0 {
+                m_len as isize - (l as isize) - 1
+            } else {
+                l as isize
+            };
+            if s_idx < 0 || m_idx < 0 { break; }
+            let s_pos = s_idx as usize;
+            let m_pos = m_idx as usize;
+            if s_pos >= str_bytes.len() || m_pos >= md_bytes.len() { break; }
+            if str_bytes[s_pos] != md_bytes[m_pos] { break; }
+            l += 1;
+        }
+
+        if l == 0 { return ret; }                                            // c:2380 no progress
+
+        // c:2335-2349 — meta-character boundary correction. Avoid
+        // ending in the middle of a `Meta x` 2-byte sequence.
+        const META_BYTE: u8 = 0x83;
+        let check_pos: isize = if sfx != 0 {
+            start_idx as isize - (l as isize) - (ret as isize)
+        } else {
+            (ret as isize) + (l as isize) - 1
+        };
+        if check_pos >= 0 && (check_pos as usize) < str_bytes.len()
+            && str_bytes[check_pos as usize] == META_BYTE && l > 0
+        {
+            l -= 1;
+        }
+
+        // c:2400 — md.len -= l; md.str = md.str + l (or md.str - l for sfx).
+        md.len -= l as i32;
+        if sfx != 0 {
+            // suffix-mode: strip from the END of md.str.
+            md.str_ = md.str_.chars().take(
+                md.str_.chars().count().saturating_sub(l),
+            ).collect();
+        } else {
+            // prefix-mode: skip first l bytes.
+            md.str_ = md.str_.chars().skip(l).collect();
+        }
+
+        ret += l as i32;                                                     // c:2418
+        remaining = remaining.saturating_sub(l);
+
+        if remaining == 0 || md.len == 0 {                                   // c:2421
+            break;
+        }
+    }
+    ret                                                                      // c:2441
 }
 
 /// Port of `undo_cmdata()` from Src/Zle/compmatch.c:2188.
