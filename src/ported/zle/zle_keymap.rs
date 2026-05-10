@@ -1528,14 +1528,31 @@ pub fn makekeynode(t: Thingy, s: String) -> KeyBinding {                     // 
     }
 }
 
-/// Port of `newkeymap()` from Src/Zle/zle_keymap.c:330.
-pub fn newkeymap(_tocopy: Option<&Keymap>, _kmname: &str) -> Arc<Keymap> {   // c:329
-    // c:331-345 — `km = zshcalloc; km->rc=0; km->multi=newkeytab; if(tocopy)
-    //              copy first[256] + scanhashtable; else first[i]=t_undefinedkey`.
-    // Simplified: alloc empty Keymap with rc=0 and empty bindings.
-    // Deep-copy from `tocopy` deferred — needs Arc<Keymap> shared
-    // mutation which isn't ported.
-    Arc::new(Keymap::default())
+/// Direct port of `Keymap newkeymap(Keymap tocopy, char *kmname)` from
+/// `Src/Zle/zle_keymap.c:330-345`.
+/// ```c
+/// km = zshcalloc(sizeof(*km));
+/// km->multi = newkeytab(7, kmname);
+/// if (tocopy) {
+///     for (i = 0; i < 256; i++) km->first[i] = refthingy(tocopy->first[i]);
+///     scanhashtable(tocopy->multi, 0, 0, 0, scancopykeys, 0);
+/// } else
+///     for (i = 0; i < 256; i++) km->first[i] = refthingy(t_undefinedkey);
+/// return km;
+/// ```
+pub fn newkeymap(tocopy: Option<&Keymap>, _kmname: &str) -> Arc<Keymap> {    // c:330
+    let mut km = Keymap::default();
+    if let Some(src) = tocopy {                                              // c:336
+        // c:337-339 — copy first[i] entries via refthingy.
+        for i in 0..256 {                                                    // c:337
+            km.first[i] = src.first[i].clone();                              // c:338
+        }
+        // c:340 — scanhashtable(tocopy->multi, ..., scancopykeys, 0).
+        km.multi = src.multi.clone();
+    }
+    // c:342-343 — else first[i] = refthingy(t_undefinedkey). Default
+    // already has None, mirroring the C "undefined" sentinel.
+    Arc::new(km)
 }
 
 /// Port of `newkeytab()` from Src/Zle/zle_keymap.c:278.
