@@ -504,3 +504,19 @@ fdtable_set
 # (c:1387/c:1459/c:1279/c:1042); Rust pulls it into one helper
 # to avoid the repetition.
 make_empty_special_pm
+
+
+# opt_state_get / opt_state_set (options.rs) — Rust mirror of C
+#  global from Src/options.c:36. C uses a flat
+# char array indexed by optno; Rust uses HashMap<String,bool>
+# because optno is FNV-hashed (no flat range).
+opt_state_get
+opt_state_set
+
+
+# opt_state_get / opt_state_set (options.rs) — Rust mirror of C
+# `opts[OPTSIZE]` global from Src/options.c:36. C uses a flat
+# char array indexed by optno; Rust uses HashMap<String,bool>
+# because optno is FNV-hashed (no flat range).
+opt_state_get
+opt_state_set

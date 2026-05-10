@@ -470,13 +470,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_SETOPT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_setopt("setopt", &args));
+        // Canonical bin_setopt per options.c:580 — `isun` discriminant
+        // flips the action polarity; setopt → 0, unsetopt → 1.
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                            argscount: 0, argsalloc: 0 };
+        let status = crate::ported::options::bin_setopt(
+            "setopt", &args, &ops, 0);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_UNSETOPT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_setopt("unsetopt", &args));
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                            argscount: 0, argsalloc: 0 };
+        let status = crate::ported::options::bin_setopt(
+            "unsetopt", &args, &ops, 1);
         Value::Status(status)
     });
 

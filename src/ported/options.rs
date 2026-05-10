@@ -1275,18 +1275,215 @@ pub fn optlookupc(c: char) -> i32 {
         .unwrap_or(0)
 }
 
-/// Set or clear an option by index, respecting emulation locks.
-/// Port of `dosetopt()` from Src/options.c:735. Negative `optno`
-/// inverts the value (matches the C source's "if (optno < 0) {
-/// optno = -optno; value = !value; }" branch at lines 739-742).
-/// Returns 0 on success, -1 on rejection.
-///
-/// In Rust we don't keep a name←index reverse map, so this entry
-/// is mostly a no-op; the live `setopt`/`unsetopt` plumbing in
-/// the executor is what callers actually use. Kept for ABI
-/// parity with C-style external callers.
-pub fn dosetopt(optno: i32, _value: i32, _force: i32) -> i32 {
-    if optno == 0 { -1 } else { 0 }
+// =====================================================================
+// !!! WARNING: RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
+// =====================================================================
+//
+// `OPTS_LIVE` is the process-wide option-state map that bin_setopt
+// reads + writes. The C source uses a flat `char opts[OPTSIZE]`
+// global indexed by optno (Src/options.c:36 + accessors `isset(o)`,
+// `opts[o] = 1` etc.). Rust uses a Mutex<HashMap<String,bool>>
+// because optno is FNV-hashed (no flat index range) and HashMap is
+// the natural Rust mirror of "name → set?" lookup.
+//
+// !!! Do NOT add a parallel options store elsewhere. Every read /
+// write of an option's set-state in the lib must route through
+// `opt_state_get` / `opt_state_set` to stay coherent with bin_setopt.
+// The ShellExecutor.options HashMap should eventually become a
+// read-through cache of this map. !!!
+// =====================================================================
+
+static OPTS_LIVE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, bool>>> =
+    std::sync::OnceLock::new();
+
+/// !!! RUST-ONLY HELPER — see WARNING block above. Read the live
+/// state of `name` from the process-wide option store.
+pub fn opt_state_get(name: &str) -> Option<bool> {
+    let m = OPTS_LIVE.get_or_init(|| std::sync::Mutex::new(
+        std::collections::HashMap::new()));
+    m.lock().ok().and_then(|g| g.get(name).copied())
+}
+
+/// !!! RUST-ONLY HELPER — see WARNING block above. Write `value`
+/// into the process-wide option store.
+pub fn opt_state_set(name: &str, value: bool) {
+    let m = OPTS_LIVE.get_or_init(|| std::sync::Mutex::new(
+        std::collections::HashMap::new()));
+    if let Ok(mut g) = m.lock() {
+        g.insert(name.to_string(), value);
+    }
+}
+
+/// Direct port of `dosetopt()` from Src/options.c:735. C body:
+/// negate value when optno < 0 (the "no" prefix marker); look up
+/// option name by optno; reject emulation-locked options; write
+/// `opts[optno] = value`. Static-link path: optno is the FNV hash
+/// produced by `optlookup`; we look up by name in a reverse pass
+/// against the canonical option set, then write OPTS_LIVE.
+pub fn dosetopt(optno: i32, mut value: i32, _force: i32) -> i32 {            // c:735
+    if optno == 0 { return -1; }
+    let mut idx = optno;
+    if idx < 0 {                                                             // c:739
+        idx = -idx;
+        value = if value != 0 { 0 } else { 1 };                              // c:741
+    }
+    // c:744 — locate the option name whose FNV hash matches idx.
+    let name = ZSH_OPTIONS_SET.iter().find(|n| optlookup(n) == idx);
+    match name {
+        Some(n) => { opt_state_set(n, value != 0); 0 }                       // c:760 opts[optno] = value
+        None => -1,                                                          // c:758
+    }
+}
+
+/// Direct port of `bin_setopt()` from Src/options.c:580.
+/// C body (c:585-680):
+///   - no args → list options via printnode (each set/clear shown by
+///     "noOPT"/"OPT" depending on default-on vs default-off + isun)
+///   - parse leading `-`/`+` flags; `-o NAME` / `+o NAME` set/clear
+///     by long name; `-m` enables glob matching; bare flag chars are
+///     short option letters
+///   - after `--`, remaining args are option names; with `-m`, treat
+///     each as a glob pattern matched against the option-name table
+pub fn bin_setopt(nam: &str, args: &[String],                                // c:580
+                  _ops: &crate::ported::zsh_h::options, isun: i32) -> i32 {
+    use crate::ported::utils::zwarnnam;
+    let mut retval = 0i32;
+    let mut match_glob = false;                                              // c:582
+    let mut idx = 0usize;
+    if args.is_empty() {                                                     // c:586
+        // c:587 — `scanhashtable(optiontab, 1, 0, OPT_ALIAS, optiontab->printnode, !isun);`
+        // List options whose state differs from compiled-in defaults
+        // (or, with no args + isun, list every option as "noOPT").
+        let mut names: Vec<String> = ZSH_OPTIONS_SET.iter()
+            .map(|s| s.to_string()).collect();
+        names.sort();
+        for n in names {
+            let on = opt_state_get(&n).unwrap_or(false);
+            let want_show = if isun != 0 { !on } else { on };                // c:587 !isun
+            if want_show {
+                println!("{}", n);
+            }
+        }
+        return 0;                                                            // c:589
+    }
+    // c:592-630 — leading `-`/`+` flag parse loop.
+    while idx < args.len()
+        && (args[idx].starts_with('-') || args[idx].starts_with('+'))
+    {
+        let arg = args[idx].clone();
+        let leading = arg.as_bytes()[0];
+        let action_set = if leading == b'-' { 1 } else { 0 };
+        let action = action_set ^ isun;                                      // c:594 (-/-=isun) flip
+        let body = &arg[1..];
+        if body.is_empty() {                                                 // c:596 args[0][1] empty
+            // c:597 — `*args = "--";` falls into doneoptions.
+            idx += 1;
+            break;
+        }
+        let chars: Vec<char> = body.chars().collect();
+        let mut k = 0usize;
+        let mut consumed_arg = false;
+        while k < chars.len() {                                              // c:599 while *++*args
+            let c = chars[k];
+            if c == '-' {                                                    // c:603 pseudo `--`
+                idx += 1;                                                    // c:604
+                consumed_arg = true;
+                break;
+            } else if c == 'o' {                                             // c:606
+                let oarg = if k + 1 < chars.len() {                          // c:607
+                    chars[k + 1..].iter().collect::<String>()
+                } else {
+                    idx += 1;                                                // c:608
+                    args.get(idx).cloned().unwrap_or_default()
+                };
+                if oarg.is_empty() {                                         // c:610
+                    zwarnnam(nam, "string expected after -o");               // c:611
+                    return 1;                                                // c:613
+                }
+                let optno = optlookup(&oarg);                                // c:615
+                if optno == 0 {                                              // c:615
+                    zwarnnam(nam, &format!("no such option: {}", oarg));     // c:616
+                    retval |= 1;
+                } else if dosetopt(optno, action, 0) != 0 {                  // c:618
+                    zwarnnam(nam,                                            // c:619
+                        &format!("can't change option: {}", oarg));
+                    retval |= 1;
+                }
+                break;                                                       // c:623 break out of inner loop
+            } else if c == 'm' {                                             // c:624
+                match_glob = true;                                           // c:625
+            } else {
+                let optno = optlookupc(c);                                   // c:627
+                if optno == 0 {                                              // c:627
+                    zwarnnam(nam, &format!("bad option: -{}", c));           // c:628
+                    retval |= 1;
+                } else if dosetopt(optno, action, 0) != 0 {                  // c:630
+                    zwarnnam(nam,                                            // c:631
+                        &format!("can't change option: -{}", c));
+                    retval |= 1;
+                }
+            }
+            k += 1;
+        }
+        if !consumed_arg { idx += 1; }
+    }
+    // c:638 — doneoptions: positional args remain.
+    if !match_glob {                                                         // c:640
+        // c:642 — bare option names.
+        while idx < args.len() {                                             // c:642
+            let oname = &args[idx];
+            let optno = optlookup(oname);                                    // c:643
+            if optno == 0 {                                                  // c:643
+                zwarnnam(nam,                                                // c:644
+                    &format!("no such option: {}", oname));
+                retval |= 1;
+            } else {
+                let v = if isun != 0 { 0 } else { 1 };                       // c:646 !isun
+                if dosetopt(optno, v, 0) != 0 {                              // c:646
+                    zwarnnam(nam,                                            // c:647
+                        &format!("can't change option: {}", oname));
+                    retval |= 1;
+                }
+            }
+            idx += 1;
+        }
+    } else {
+        // c:653 — globbing branch (-m): pat-match each remaining arg
+        // against every option name and set those that match.
+        while idx < args.len() {                                             // c:653
+            let raw = &args[idx];
+            // c:657-666 — strip `_` and lowercase, mirroring optlookup's
+            // canonicalisation.
+            let normalized: String = raw.chars()
+                .filter(|&c| c != '_')
+                .map(|c| c.to_ascii_lowercase()).collect();
+            // c:670 — patcompile(s, PAT_HEAPDUP, NULL).
+            let prog = crate::ported::pattern::patcompile(
+                &normalized, crate::ported::pattern::PatFlags::default());
+            match prog {
+                Err(_) => {                                                  // c:670
+                    zwarnnam(nam, &format!("bad pattern: {}", raw));         // c:671
+                    retval |= 1;
+                    break;
+                }
+                Ok(_) => {
+                    // c:676 — `scanmatchtable(optiontab, pprog, 0, 0,
+                    // OPT_ALIAS, setoption, !isun);` — for each option
+                    // whose name matches the pattern, dosetopt(optno, !isun, 0).
+                    let v = if isun != 0 { 0 } else { 1 };
+                    for opt_name in ZSH_OPTIONS_SET.iter() {                 // c:676
+                        if crate::ported::pattern::patmatch(&normalized, opt_name) {
+                            let optno = optlookup(opt_name);
+                            let _ = dosetopt(optno, v, 0);
+                        }
+                    }
+                }
+            }
+            idx += 1;
+        }
+    }
+    retval                                                                   // c:680
 }
 
 /// Build the value of `$-`: a string of the active single-letter
