@@ -594,3 +594,10 @@ thingytab
 # unrefkeymap_by_name). Rust uses OnceLock<Mutex<HashMap<String,
 # KeymapName>>>; this private helper hides the get_or_init.
 keymapnamtab
+
+# suffixlist (zle/zle_misc.rs) — Rust-only get-or-init accessor for
+# the global `struct suffixset *suffixlist` from Src/Zle/zle_misc.c.
+# C declares it as a top-level pointer; addsuffix prepends, fixsuffix
+# walks+frees, iremovesuffix consumes. Rust uses OnceLock<Mutex<
+# Vec<SuffixSet>>>; this private helper hides the get_or_init.
+suffixlist

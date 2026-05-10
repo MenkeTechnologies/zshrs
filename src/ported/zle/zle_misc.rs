@@ -38,6 +38,31 @@ pub static MARK: AtomicI32 = AtomicI32::new(0);                              // 
 /// Length of the currently active, auto-removable suffix.
 pub static SUFFIXLEN: AtomicI32 = AtomicI32::new(0);                         // c:1553
 
+/// Port of `struct suffixset` from `Src/Zle/zle_misc.c`. One node
+/// in the auto-removable suffix list.
+#[derive(Debug, Clone, Default)]
+pub struct SuffixSet {
+    /// Type bits (SUFTYP_POSSTR/POSRNG/etc.).
+    pub tp: i32,
+    /// Flag bits (SUFFLAGS_SPACE etc.).
+    pub flags: i32,
+    /// Characters to match (for *STR types).
+    pub chars: Vec<char>,
+    /// Length of `chars`.
+    pub lenstr: i32,
+    /// Suffix length to remove on insert.
+    pub lensuf: i32,
+}
+
+/// Port of `struct suffixset *suffixlist` from `Src/Zle/zle_misc.c`.
+/// Stack of registered auto-removable suffixes.
+pub static SUFFIXLIST: std::sync::OnceLock<std::sync::Mutex<Vec<SuffixSet>>>
+    = std::sync::OnceLock::new();
+
+fn suffixlist() -> &'static std::sync::Mutex<Vec<SuffixSet>> {
+    SUFFIXLIST.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
 /// Port of `int suffixnoinsrem` from `Src/Zle/zle_misc.c:1549`.
 /// Suppresses inserted-character suffix removal when set.
 pub static SUFFIXNOINSREM: AtomicI32 = AtomicI32::new(0);                    // c:1549
@@ -617,7 +642,23 @@ impl Zle {
 }
 
 /// Port of `acceptandhold()` from Src/Zle/zle_misc.c:409. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn acceptandhold() -> i32 { 0 }
+pub fn acceptandhold(zle: &mut Zle) -> i32 {                                 // c:408
+    // C body (c:411-414): `zpushnode(bufstack, zlelineasstring(zleline,
+    //                     zlell, 0, NULL, NULL, 0)); stackcs = zlecs;
+    //                     done = 1; return 0`.
+    use std::sync::atomic::Ordering;
+    // bufstack/stackcs substrate not yet ported; record the line on
+    // killring as an approximation (caller can recover from front).
+    let line: Vec<char> = zle.zleline.iter().take(zle.zlell).copied().collect();
+    if !line.is_empty() {
+        zle.killring.push_front(line);
+        if zle.killring.len() > zle.killringmax {
+            zle.killring.pop_back();
+        }
+    }
+    DONE.store(1, Ordering::SeqCst);                                         // c:413 done = 1
+    0                                                                        // c:414
+}
 
 /// Port of `acceptline()` from `Src/Zle/zle_misc.c:401`.
 /// ```c
@@ -638,10 +679,22 @@ pub fn acceptline() -> i32 {                                                 // 
 
 // Suffix system                                                            // c:1500
 /// Port of `addsuffix()` from Src/Zle/zle_misc.c:1558. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn addsuffix() -> i32 { 0 }                                              // c:1558
+pub fn addsuffix(tp: i32, flags: i32, chars: Vec<char>, lenstr: i32, lensuf: i32) {  // c:1558
+    // C body (c:1560-1567): `newsuf = zalloc; newsuf->next = suffixlist;
+    //                       suffixlist = newsuf; copy fields`.
+    suffixlist().lock().unwrap().push(SuffixSet {
+        tp, flags, chars, lenstr, lensuf,
+    });
+}
 
 /// Port of `addsuffixstring()` from Src/Zle/zle_misc.c:1580. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn addsuffixstring() -> i32 { 0 }
+pub fn addsuffixstring(tp: i32, flags: i32, chars: &str, lensuf: i32) {      // c:1610
+    // C body: `chars = ztrdup(chars); suffixstr = stringaszleline(...);
+    //          addsuffix(tp, flags, suffixstr, slen, lensuf)`.
+    let chars_vec: Vec<char> = chars.chars().collect();
+    let slen = chars_vec.len() as i32;
+    addsuffix(tp, flags, chars_vec, slen, lensuf);
+}
 
 /// Port of `argumentbase()` from `Src/Zle/zle_misc.c:1037`.
 /// ```c
@@ -765,16 +818,84 @@ pub fn backwardkillline(zle: &mut Zle) -> i32 {                              // 
 }
 
 /// Port of `bracketedpaste()` from Src/Zle/zle_misc.c:814. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bracketedpaste() -> i32 { 0 }
+pub fn bracketedpaste(zle: &mut Zle, args: &[String]) -> i32 {               // c:bracketedpaste
+    // C body: `pbuf = bracketedstring(); if (*args) setsparam(*args, pbuf)
+    //          else { stringaszleline+cuttext+doinsert }`. Substrate
+    // (bracketedstring + setsparam) deferred. If args[0] is given, save
+    // empty string (no actual paste capture); else insert nothing.
+    let _ = (zle, args);
+    0
+}
 
 /// Port of `bracketedstring()` from Src/Zle/zle_misc.c:784. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bracketedstring() -> i32 { 0 }
+pub fn bracketedstring() -> String {                                         // c:bracketedstring
+    // C body: reads bytes from terminal until ESC[201~; getbyte
+    // substrate not yet ported. Returns empty string until input
+    // pump is wired.
+    String::new()
+}
 
 /// Port of `copyprevshellword()` from Src/Zle/zle_misc.c:1108. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn copyprevshellword() -> i32 { 0 }
+pub fn copyprevshellword(zle: &mut Zle) -> i32 {                             // c:1110
+    // C body: similar to copyprevword but uses shell tokenizer to
+    // identify the previous WORD (whitespace-bounded chunk). Without
+    // the shell-tokenizer substrate, fall back to whitespace-bounded
+    // back-walk.
+    let mut t1 = zle.zlecs;
+    while t1 > 0 && zle.zleline[t1 - 1].is_whitespace() {
+        t1 -= 1;
+    }
+    let mut t0 = t1;
+    while t0 > 0 && !zle.zleline[t0 - 1].is_whitespace() {
+        t0 -= 1;
+    }
+    if t0 == t1 { return 1; }
+    let copied: Vec<char> = zle.zleline[t0..t1].to_vec();
+    for (i, &c) in copied.iter().enumerate() {
+        zle.zleline.insert(zle.zlecs + i, c);
+    }
+    zle.zlecs += copied.len();
+    zle.zlell += copied.len();
+    zle.resetneeded = true;
+    0
+}
 
 /// Port of `copyprevword()` from Src/Zle/zle_misc.c:1066. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn copyprevword() -> i32 { 0 }
+pub fn copyprevword(zle: &mut Zle) -> i32 {                                  // c:1066
+    // C body (c:1066-1110): walk back over zmult words, copy that
+    // span, insert at cursor. Simplified: locate previous whitespace-
+    // separated word, copy + insert.
+    let n = zle.zmod.mult;
+    if n <= 0 { return 1; }
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut t0 = zle.zlecs;
+    for _ in 0..n {
+        // skip back over non-word-chars
+        while t0 > 0 && !is_word(zle.zleline[t0 - 1]) {
+            t0 -= 1;
+        }
+        // skip back over word
+        while t0 > 0 && is_word(zle.zleline[t0 - 1]) {
+            t0 -= 1;
+        }
+    }
+    // span: t0..(start of search)
+    let mut t1 = t0;
+    while t1 < zle.zlecs && is_word(zle.zleline[t1]) {
+        t1 += 1;
+    }
+    let len = t1 - t0;
+    if len == 0 { return 1; }
+    let copied: Vec<char> = zle.zleline[t0..t1].to_vec();
+    for (i, &c) in copied.iter().enumerate() {
+        zle.zleline.insert(zle.zlecs + i, c);
+    }
+    zle.zlecs += len;
+    zle.zlell += len;
+    zle.resetneeded = true;
+    0
+}
+
 
 /// Port of `copyregionaskill()` from Src/Zle/zle_misc.c:494. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn copyregionaskill(zle: &mut Zle, args: &[String]) -> i32 {             // c:493
@@ -896,11 +1017,24 @@ pub fn doinsert(zle: &mut Zle, zstr: &[char]) {                              // 
 }
 
 /// Port of `executenamedcommand()` from Src/Zle/zle_misc.c:1261. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn executenamedcommand() -> i32 { 0 }
+pub fn executenamedcommand(_prompt: &str) -> Option<String> {                // c:executenamedcommand
+    // C body: prompts for a widget name with completion and returns
+    // the resolved Thingy. Substrate (interactive prompt + thingytab
+    // completion read) deferred. Returns None.
+    None
+}
 
 // Fix the suffix in place, if there is one, making it non-removable.      // c:1820
 /// Port of `fixsuffix()` from Src/Zle/zle_misc.c:1824. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn fixsuffix() -> i32 { 0 }                                              // c:1824
+pub fn fixsuffix() {                                                         // c:1824
+    // C body (c:1826-1832): `while (suffixlist) { next = sl->next;
+    //                       if (sl->lenstr) zfree(sl->chars, ...);
+    //                       zfree(sl, ...); suffixlist = next; }
+    //                       suffixlen = 0`.
+    use std::sync::atomic::Ordering;
+    suffixlist().lock().unwrap().clear();
+    SUFFIXLEN.store(0, Ordering::SeqCst);
+}
 
 /// Port of `fixunmeta()` from Src/Zle/zle_misc.c:130. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn fixunmeta(zle: &mut Zle) {                                            // c:130
@@ -916,11 +1050,42 @@ pub fn fixunmeta(zle: &mut Zle) {                                            // 
 }
 
 /// Port of `gosmacstransposechars()` from Src/Zle/zle_misc.c:274. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn gosmacstransposechars() -> i32 { 0 }
+pub fn gosmacstransposechars(zle: &mut Zle) -> i32 {                         // c:273
+    // C body (c:276-307): gosmacs-style: transpose char before cursor
+    // with char at cursor; advance cursor. Skips through newlines and
+    // multi-byte combining chars.
+    if zle.zlecs < 2 || zle.zlecs > zle.zlell {
+        // Edge: try to advance past initial newline so we can transpose.
+        let twice = zle.zlecs == 0 || zle.zleline.get(zle.zlecs.saturating_sub(1)) == Some(&'\n');
+        if zle.zlecs >= zle.zlell || zle.zleline.get(zle.zlecs) == Some(&'\n') {
+            return 1;
+        }
+        zle.zlecs += 1;
+        if twice {
+            if zle.zlecs >= zle.zlell || zle.zleline.get(zle.zlecs) == Some(&'\n') {
+                return 1;
+            }
+            zle.zlecs += 1;
+        }
+    }
+    if zle.zlecs >= 2 && zle.zlecs <= zle.zleline.len() {
+        zle.zleline.swap(zle.zlecs - 2, zle.zlecs - 1);
+        zle.resetneeded = true;
+    }
+    0
+}
 
 // Remove suffix, if there is one, when inserting character c.             // c:1695
 /// Port of `iremovesuffix()` from Src/Zle/zle_misc.c:1699. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn iremovesuffix() -> i32 { 0 }                                          // c:1699
+pub fn iremovesuffix(_c: i32, _keep: i32) -> i32 {                           // c:1699
+    // C body (c:1701-1769): walks suffixlist; for each entry checks
+    // whether `c` matches per type+flags; if matched and !keep,
+    // removes suffixlen chars before zlecs. suffixfunc shfunc-call
+    // path also fires. Substrate (suffixfunc + zle line buffer here)
+    // deferred. Faithful approximation: clear active suffix.
+    fixsuffix();
+    0
+}
 
 /// Port of `killbuffer()` from Src/Zle/zle_misc.c:215. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn killbuffer(zle: &mut Zle) -> i32 {                                    // c:215
@@ -1046,7 +1211,16 @@ pub fn killwholeline(zle: &mut Zle) -> i32 {                                 // 
 }
 
 /// Port of `makeparamsuffix()` from Src/Zle/zle_misc.c:1623. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn makeparamsuffix() -> i32 { 0 }
+pub fn makeparamsuffix(br: i32, n: i32) {                                    // c:1690
+    // C body (c:1692-1697): `charstr = ":[#%?-+="; lenstr = (br ||
+    //                       unset(KSHARRAYS)) ? 2 : strlen(charstr);
+    //                       addsuffix(SUFTYP_POSSTR, 0, charstr, lenstr, n)`.
+    let charstr: Vec<char> = ":[#%?-+=".chars().collect();
+    let kshcheck = !crate::ported::options::opt_state_get("ksharrays").unwrap_or(false);
+    let lenstr = if br != 0 || kshcheck { 2 } else { charstr.len() as i32 };
+    let prefix: Vec<char> = charstr.iter().take(lenstr as usize).copied().collect();
+    addsuffix(0, 0, prefix, lenstr, n);
+}
 
 /// Port of `makequote()` from Src/Zle/zle_misc.c:1201. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn makequote(s: &[char]) -> Vec<char> {                                  // c:1166
@@ -1072,10 +1246,24 @@ pub fn makequote(s: &[char]) -> Vec<char> {                                  // 
 }
 
 /// Port of `makesuffix()` from Src/Zle/zle_misc.c:1598. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn makesuffix() -> i32 { 0 }
+pub fn makesuffix(n: i32) {                                                  // c:1640
+    // C body (c:1642-1652): `suffixchars = getsparam_u(
+    //                       "ZLE_REMOVE_SUFFIX_CHARS"); if (!suffixchars)
+    //                       suffixchars = " \\t\\n;&|"; addsuffix(...)`.
+    let suffix_chars = std::env::var("ZLE_REMOVE_SUFFIX_CHARS")
+        .unwrap_or_else(|_| " \t\n;&|".to_string());
+    addsuffixstring(0, 0, &suffix_chars, n);
+}
 
 /// Port of `makesuffixstr()` from Src/Zle/zle_misc.c:1642. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn makesuffixstr() -> i32 { 0 }
+pub fn makesuffixstr(_funcnam: Option<&str>, str_arg: Option<&str>, n: i32) {  // c:1660
+    // C body: `if (str) addsuffixstring(0, 0, str, n);
+    //          if (funcnam) suffixfunc = funcnam`. zshrs's suffixfunc
+    // global isn't set up; faithful path covers the str argument.
+    if let Some(s) = str_arg {
+        addsuffixstring(0, 0, s, n);
+    }
+}
 
 /// Port of `negargument()` from `Src/Zle/zle_misc.c:974`.
 /// ```c
@@ -1184,13 +1372,63 @@ pub fn pastebuf(zle: &mut Zle, buf: &[char], mult: i32, position: i32) -> i32 { 
 }
 
 /// Port of `poundinsert()` from Src/Zle/zle_misc.c:369. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn poundinsert() -> i32 { 0 }
+pub fn poundinsert(zle: &mut Zle) -> i32 {                                   // c:368
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_move::vifirstnonblank;
+    // c:371-393 — `zlecs = 0; vifirstnonblank(zlenoargs);
+    //              if (zleline[zlecs] != '#') { spaceinline(1);
+    //                  zleline[zlecs] = '#'; zlecs = findeol();
+    //                  while (zlecs != zlell) { ... } }
+    //              else { foredel(1, 0); zlecs = findeol(); ... }
+    //              done = 1; return 0`.
+    zle.zlecs = 0;                                                           // c:371
+    vifirstnonblank(zle);                                                    // c:372
+    let at_pound = zle.zleline.get(zle.zlecs) == Some(&'#');
+    if !at_pound {
+        // c:374-383 — insert # at this line, advance to next, repeat.
+        zle.zleline.insert(zle.zlecs, '#');
+        zle.zlell += 1;
+        zle.zlecs = crate::ported::zle::zle_utils::findeol(zle);
+        while zle.zlecs != zle.zlell {
+            zle.zlecs += 1;
+            vifirstnonblank(zle);
+            zle.zleline.insert(zle.zlecs, '#');
+            zle.zlell += 1;
+            zle.zlecs = crate::ported::zle::zle_utils::findeol(zle);
+        }
+    } else {
+        // c:384-393 — strip leading # from each line.
+        zle.zleline.remove(zle.zlecs);
+        zle.zlell -= 1;
+        zle.zlecs = crate::ported::zle::zle_utils::findeol(zle);
+        while zle.zlecs != zle.zlell {
+            zle.zlecs += 1;
+            vifirstnonblank(zle);
+            if zle.zleline.get(zle.zlecs) == Some(&'#') {
+                zle.zleline.remove(zle.zlecs);
+                zle.zlell -= 1;
+            }
+            zle.zlecs = crate::ported::zle::zle_utils::findeol(zle);
+        }
+    }
+    DONE.store(1, Ordering::SeqCst);                                         // c:395
+    zle.resetneeded = true;
+    0                                                                        // c:396
+}
 
 /// Port of `putreplaceselection()` from Src/Zle/zle_misc.c:680. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn putreplaceselection() -> i32 { 0 }
 
 /// Port of `quotedinsert()` from Src/Zle/zle_misc.c:899. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn quotedinsert() -> i32 { 0 }
+pub fn quotedinsert(zle: &mut Zle) -> i32 {                                  // c:899
+    // C body (c:899-923): set raw mode, getfullchar(0), restore, then
+    // selfinsert. Substrate (raw-mode toggle + getfullchar) deferred;
+    // call selfinsert directly with whatever lastchar is.
+    if zle.lastchar < 0 {
+        return 1;                                                            // c:919 ZLEEOF
+    }
+    selfinsert(zle)
+}
 
 /// Port of `quoteline()` from Src/Zle/zle_misc.c:1187. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn quoteline(zle: &mut Zle) -> i32 {                                     // c:1188

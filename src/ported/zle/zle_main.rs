@@ -1717,7 +1717,13 @@ pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {            // 
 }
 
 /// Port of `describekeybriefly()` from Src/Zle/zle_main.c:1892. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn describekeybriefly() -> i32 { 0 }
+pub fn describekeybriefly() -> i32 {                                         // c:1891
+    // C body (c:1893-1932): prompts for a key sequence, then resolves
+    // it through the current keymap and prints the bound widget name.
+    // Substrate (interactive key prompt + keymap walk for output)
+    // deferred. Returns 1 (no resolution available).
+    1
+}
 
 /// Port of `enables_()` from Src/Zle/zle_main.c:2294. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn enables_(_m: *const crate::ported::zsh_h::module, _enables: &mut Option<Vec<i32>>) -> i32 {
@@ -1744,7 +1750,18 @@ pub fn execimmortal(name: &str, args: &[String]) -> i32 {                    // 
 }
 
 /// Port of `execzlefunc()` from Src/Zle/zle_main.c:1420. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn execzlefunc() -> i32 { 0 }
+pub fn execzlefunc(name: &str, _args: &[String]) -> i32 {                    // c:1419
+    // C body (c:1422-1601): full widget invocation pipeline. Sets
+    // bindk, walks Widget union (WIDGET_INT/WIDGET_NCOMP/user fn),
+    // dispatches to internal fn / shell fn / completion fn, manages
+    // metafy/unmetafy of the line, lastcmd flags, etc. Substrate
+    // (Widget union dispatch + shell-fn invocation) deferred.
+    // Validate that the named widget exists.
+    if crate::ported::zle::zle_thingy::rthingy_nocreate(name) {
+        return 0;
+    }
+    1
+}
 
 /// Port of `features_()` from Src/Zle/zle_main.c:2286. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn features_(_m: *const crate::ported::zsh_h::module, _features: &mut Vec<String>) -> i32 {
@@ -1797,13 +1814,38 @@ pub fn recursiveedit(zle: &mut Zle) -> i32 {                                 // 
 }
 
 /// Port of `restorekeymap()` from Src/Zle/zle_main.c:1656. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn restorekeymap() -> i32 { 0 }
+pub fn restorekeymap(oldname: &str, savemap: Option<std::sync::Arc<crate::ported::zle::zle_keymap::Keymap>>) {  // c:1655
+    // C body (c:1657-1666): `if (savemap) { linkkeymap(savemap,
+    //                       oldname, 0); unrefkeymap(savemap); }
+    //                       else if (newname) zwarnnam(...)`.
+    if let Some(km) = savemap {
+        crate::ported::zle::zle_keymap::linkkeymap(km, oldname, 0);
+    }
+}
 
 /// Port of `savekeymap()` from Src/Zle/zle_main.c:1632. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn savekeymap() -> i32 { 0 }
+pub fn savekeymap(oldname: &str, newname: &str) -> Option<std::sync::Arc<crate::ported::zle::zle_keymap::Keymap>> {  // c:1632
+    // C body (c:1634-1651): `km = openkeymap(newname); if (km) {
+    //                       *savemap = openkeymap(oldname);
+    //                       if (*savemap != km) { refkeymap(*savemap);
+    //                           linkkeymap(km, oldname, 0); } return 0; }
+    //                       else return 1`.
+    let km = crate::ported::zle::zle_keymap::openkeymap(newname)?;
+    let saved = crate::ported::zle::zle_keymap::openkeymap(oldname);
+    let same = saved.as_ref().map(|s| std::sync::Arc::ptr_eq(s, &km)).unwrap_or(false);
+    if !same {
+        crate::ported::zle::zle_keymap::linkkeymap(km, oldname, 0);
+    }
+    if same { None } else { saved }
+}
 
 /// Port of `scanfindfunc()` from Src/Zle/zle_main.c:1935. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn scanfindfunc() -> i32 { 0 }
+pub fn scanfindfunc(_seq: &str, _func: &str) {                               // c:1934
+    // C body: per-keymap callback used by `whereis` to find which
+    // key sequences are bound to a given Thingy. Substrate
+    // (KeyScanFunc + per-binding HashTable scan) deferred — the
+    // standalone fn is only meaningful when invoked via scankeymap.
+}
 
 /// Port of `setup_()` from Src/Zle/zle_main.c:2243. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn setup_(_m: *const crate::ported::zsh_h::module) -> i32 {              // c:zle_main.c setup_
