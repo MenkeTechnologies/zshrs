@@ -8458,80 +8458,84 @@ impl crate::ported::exec::ShellExecutor {
 // =====================================================================
 
 impl crate::ported::exec::ShellExecutor {
-    /// pcre_compile - compile a PCRE pattern
     /// `pcre_compile` builtin — delegates to canonical port at
-    /// `src/ported/modules/pcre.rs:244` (`bin_pcre_compile()` from
-    /// `Src/Modules/pcre.c:70`). All option parsing and pattern
-    /// compilation now lives in the canonical port; this shim only
-    /// builds the `&[&str]` view and threads `self.pcre_state`.
+    /// `src/ported/modules/pcre.rs` (`bin_pcre_compile()` from
+    /// `Src/Modules/pcre.c:70`). Builds an `options` struct from the
+    /// `-a/-i/-m/-s/-x` flags so the canonical port reads them via
+    /// `OPT_ISSET` exactly like C does.
     pub(crate) fn bin_pcre_compile(&mut self, args: &[String]) -> i32 {
-        use crate::pcre::PcreCompileOptions;
-        let mut options = PcreCompileOptions::default();
-        let mut positional: Vec<&str> = Vec::new();
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                argscount: 0, argsalloc: 0 };
+        let mut positional: Vec<String> = Vec::new();
         for arg in args {
             match arg.as_str() {
-                "-a" => options.anchored = true,
-                "-i" => options.caseless = true,
-                "-m" => options.multiline = true,
-                "-s" => options.dotall = true,
-                "-x" => options.extended = true,
-                s if !s.starts_with('-') => positional.push(s),
+                "-a" => ops.ind[b'a' as usize] = 1,
+                "-i" => ops.ind[b'i' as usize] = 1,
+                "-m" => ops.ind[b'm' as usize] = 1,
+                "-s" => ops.ind[b's' as usize] = 1,
+                "-x" => ops.ind[b'x' as usize] = 1,
+                s if !s.starts_with('-') => positional.push(s.to_string()),
                 _ => {}
             }
         }
-        let (status, output) = crate::pcre::bin_pcre_compile(&positional, &options);
-        if !output.is_empty() {
-            if status == 0 { print!("{}", output); } else { eprint!("{}", output); }
-        }
-        status
+        crate::pcre::bin_pcre_compile("pcre_compile", &positional, &ops, 0)
     }
     /// `pcre_match` builtin — delegates to canonical port at
-    /// `src/ported/modules/pcre.rs:273` (`bin_pcre_match()` from
-    /// `Src/Modules/pcre.c:328`). The shim parses `-v`/`-a` argv
-    /// flags, calls the canonical matcher, then writes the resulting
-    /// `MATCH`/`match` capture data back into the executor's
-    /// variable/array tables — that side-effect cannot live in the
-    /// canonical port because it doesn't own those tables.
+    /// `src/ported/modules/pcre.rs` (`bin_pcre_match()` from
+    /// `Src/Modules/pcre.c:328`). Builds the `options` struct from
+    /// `-v`/`-a` argv (matching C's OPT_ARG reads) and writes the
+    /// returned capture data into the executor's variable/array
+    /// tables — that side-effect cannot live in the canonical port
+    /// because it doesn't own those tables.
     pub(crate) fn bin_pcre_match(&mut self, args: &[String]) -> i32 {
-        use crate::pcre::PcreMatchOptions;
-
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                argscount: 0, argsalloc: 0 };
         let mut var_name = "MATCH".to_string();
         let mut array_name = "match".to_string();
-        let mut positional: Vec<&str> = Vec::new();
+        let mut positional: Vec<String> = Vec::new();
         let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
-                "-v" => { i += 1; if i < args.len() { var_name = args[i].clone(); } }
-                "-a" => { i += 1; if i < args.len() { array_name = args[i].clone(); } }
-                s if !s.starts_with('-') => positional.push(s),
+                "-v" => {
+                    i += 1;
+                    if i < args.len() {
+                        var_name = args[i].clone();
+                        ops.ind[b'v' as usize] = 1;
+                        ops.args.push(var_name.clone());
+                    }
+                }
+                "-a" => {
+                    i += 1;
+                    if i < args.len() {
+                        array_name = args[i].clone();
+                        ops.ind[b'a' as usize] = 1;
+                        ops.args.push(array_name.clone());
+                    }
+                }
+                s if !s.starts_with('-') => positional.push(s.to_string()),
                 _ => {}
             }
             i += 1;
         }
-
-        let options = PcreMatchOptions {
-            match_var: Some(var_name.clone()),
-            array_var: Some(array_name.clone()),
-            ..Default::default()
-        };
-
-        let (status, result) = crate::pcre::bin_pcre_match(&positional, &options);
+        let (status, full_match, captures) =
+            crate::pcre::bin_pcre_match("pcre_match", &positional, &ops, 0);
         if status == 0 {
-            if let Some(m) = result.full_match {
+            if let Some(m) = full_match {
                 self.variables.insert(var_name, m);
             }
-            let matches: Vec<String> = result.captures.into_iter().flatten().collect();
+            let matches: Vec<String> = captures.into_iter().flatten().collect();
             self.arrays.insert(array_name, matches);
         }
         status
     }
     /// pcre_study - optimize compiled PCRE (no-op in Rust regex)
     pub(crate) fn bin_pcre_study(&mut self, _args: &[String]) -> i32 {
-        let (status, msg) = crate::pcre::bin_pcre_study();
-        if status != 0 {
-            zwarnnam("pcre_study", msg.trim_start_matches("pcre_study: ").trim_end());
-        }
-        status
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                            argscount: 0, argsalloc: 0 };
+        crate::pcre::bin_pcre_study("pcre_study", &[], &ops, 0)
     }
 }
 
