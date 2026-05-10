@@ -422,63 +422,8 @@ mod tests {
 // ===========================================================
 
 // BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
-    /// compquote — shell-bslashquote the value of each named parameter.
-    /// Direct port of zsh/Src/Zle/computil.c:3679 bin_compquote.
-    /// Walks each arg as a parameter name, replaces scalar values
-    /// with comp_quote(value); for arrays, quotes each element.
-    /// `-p` flag enables param-substitution-context quoting (handled
-    /// the same way by shell_quote_value, which is conservative).
-    pub(crate) fn bin_compquote(&mut self, args: &[String]) -> i32 {
-        // computil.c:3691-3692 — early-out when there's nothing to
-        // bslashquote (no nested completion stack). zshrs has no compqstack
-        // surfaced through the VM yet; mimic the no-op by still doing
-        // the bslashquote so user code that calls compquote gets a value.
-        let mut returnval = 0;
-        for raw in args {
-            let name = raw.trim_start_matches('-');
-            if name.is_empty() {
-                continue;
-            }
-            if let Some(arr) = self.arrays.get(name).cloned() {
-                let quoted: Vec<String> = arr.iter().map(|v| quotedzputs(v)).collect();
-                self.arrays.insert(name.to_string(), quoted);
-            } else if let Some(val) = self.variables.get(name).cloned() {
-                self.variables
-                    .insert(name.to_string(), quotedzputs(&val));
-            } else {
-                zwarnnam("compquote", &format!("unknown parameter: {}", name));
-                returnval = 1;
-            }
-        }
-        returnval
-    }
-    /// comptags - manage completion tags
-    pub(crate) fn bin_comptags(&mut self, args: &[String]) -> i32 {
-        if args.is_empty() {
-            return 1;
-        }
-        match args[0].as_str() {
-            "-i" => {
-                // Initialize tags
-                0
-            }
-            "-S" => {
-                // Set tags
-                0
-            }
-            _ => 1,
-        }
-    }
-    /// comptry - try completion
-    pub(crate) fn bin_comptry(&mut self, _args: &[String]) -> i32 {
-        1 // No match
-    }
-    /// compvalues - complete values
-    pub(crate) fn bin_compvalues(&mut self, _args: &[String]) -> i32 {
-        0
-    }
-}
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
 // END moved-from-exec-rs
 
 

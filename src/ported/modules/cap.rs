@@ -329,25 +329,8 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 // internal builtin dispatcher to the canonical free fns above.
 // =====================================================================
 
-impl crate::ported::exec::ShellExecutor {
-    /// `cap` builtin entry. Bridge to `bin_cap()` above.
-    pub(crate) fn bin_cap(&self, args: &[String]) -> i32 {
-        let ops = options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
-        bin_cap("cap", args, &ops, 0)
-    }
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
 
-    /// `getcap` builtin entry. Bridge to `bin_getcap()` above.
-    pub(crate) fn bin_getcap(&self, args: &[String]) -> i32 {
-        let ops = options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
-        bin_getcap("getcap", args, &ops, 0)
-    }
-
-    /// `setcap` builtin entry. Bridge to `bin_setcap()` above.
-    pub(crate) fn bin_setcap(&self, args: &[String]) -> i32 {
-        let ops = options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
-        bin_setcap("setcap", args, &ops, 0)
-    }
-}
 
 // =====================================================================
 // Tests

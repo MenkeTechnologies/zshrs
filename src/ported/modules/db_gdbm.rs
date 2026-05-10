@@ -489,7 +489,7 @@ impl TiedGdbmParam {
 }
 
 /// Global registry of tied GDBM parameters
-static TIED_PARAMS: Lazy<Mutex<HashMap<String, Arc<TiedGdbmParam>>>> =
+pub(crate) static TIED_PARAMS: Lazy<Mutex<HashMap<String, Arc<TiedGdbmParam>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// List currently-tied GDBM parameter names — backs the
@@ -897,124 +897,8 @@ mod tests {
 // ===========================================================
 
 // BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
-    /// Tie a parameter to a GDBM database
-    /// Usage: ztie -d db/gdbm -f /path/to/db.gdbm [-r] PARAM_NAME
-    pub(crate) fn bin_ztie(&mut self, args: &[String]) -> i32 {
-        let mut db_type: Option<String> = None;
-        let mut file_path: Option<String> = None;
-        let mut readonly = false;
-        let mut param_args: Vec<String> = Vec::new();
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
 
-        let mut i = 0;
-        while i < args.len() {
-            match args[i].as_str() {
-                "-d" => {
-                    if i + 1 < args.len() {
-                        db_type = Some(args[i + 1].clone());
-                        i += 2;
-                    } else {
-                        zwarnnam("ztie", "-d requires an argument");
-                        return 1;
-                    }
-                }
-                "-f" => {
-                    if i + 1 < args.len() {
-                        file_path = Some(args[i + 1].clone());
-                        i += 2;
-                    } else {
-                        zwarnnam("ztie", "-f requires an argument");
-                        return 1;
-                    }
-                }
-                "-r" => {
-                    readonly = true;
-                    i += 1;
-                }
-                arg if arg.starts_with('-') => {
-                    zwarnnam("ztie", &format!("bad option: {}", arg));
-                    return 1;
-                }
-                _ => {
-                    param_args.push(args[i].clone());
-                    i += 1;
-                }
-            }
-        }
-
-        // Build the canonical `options` struct from the parsed flags
-        // so `bin_ztie` (the C-faithful free fn) can read via OPT_ISSET
-        // / OPT_ARG just like the C source.
-        use crate::ported::zsh_h::{options, MAX_OPS};
-        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
-        if readonly { ops.ind[b'r' as usize] = 1; }
-        if let Some(d) = db_type {
-            ops.ind[b'd' as usize] = (1 + ((ops.args.len() as u8 + 1) << 2)) | 1;
-            ops.args.push(d);
-        }
-        if let Some(f) = file_path {
-            ops.ind[b'f' as usize] = (1 + ((ops.args.len() as u8 + 1) << 2)) | 1;
-            ops.args.push(f);
-        }
-        crate::ported::modules::db_gdbm::bin_ztie("ztie", &param_args, &ops, 0)
-    }
-    /// Untie a parameter from its GDBM database
-    /// Usage: zuntie [-u] PARAM_NAME...
-    pub(crate) fn bin_zuntie(&mut self, args: &[String]) -> i32 {
-        use crate::ported::zsh_h::{options, MAX_OPS};
-
-        let mut force_unset = false;
-        let mut param_args: Vec<String> = Vec::new();
-
-        for arg in args {
-            match arg.as_str() {
-                "-u" => force_unset = true,
-                a if a.starts_with('-') => {
-                    zwarnnam("zuntie", &format!("bad option: {}", a));
-                    return 1;
-                }
-                _ => param_args.push(arg.clone()),
-            }
-        }
-
-        if param_args.is_empty() {
-            zwarnnam("zuntie", "not enough arguments");
-            return 1;
-        }
-
-        // Build canonical `&options` from -u flag, then dispatch to the
-        // C-faithful free fn.
-        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
-        if force_unset { ops.ind[b'u' as usize] = 1; }
-        crate::ported::modules::db_gdbm::bin_zuntie("zuntie", &param_args, &ops, 0)
-    }
-    /// Get the path of a tied GDBM database
-    /// Usage: zgdbmpath PARAM_NAME
-    /// Sets $REPLY to the path
-    pub(crate) fn bin_zgdbmpath(&mut self, args: &[String]) -> i32 {
-        use crate::ported::zsh_h::{options, MAX_OPS};
-
-        // Build empty `&options` (zgdbmpath takes no flags), dispatch
-        // to the C-faithful free fn. The free fn writes the path to
-        // stdout (degraded $REPLY equivalent until params globalize);
-        // bridge captures it into the executor's REPLY map.
-        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
-
-        // Capture the path before dispatching so we can ALSO populate
-        // the executor REPLY (the free fn's println is the diagnostic
-        // form for non-bridged callers).
-        if let Some(pmname) = args.first() {
-            if let Ok(p) = crate::ported::modules::db_gdbm::TIED_PARAMS.lock() {
-                if let Some(tied) = p.get(pmname) {
-                    let path = tied.db.path().to_string_lossy().to_string();
-                    self.variables.insert("REPLY".to_string(), path.clone());
-                    std::env::set_var("REPLY", &path);
-                }
-            }
-        }
-        crate::ported::modules::db_gdbm::bin_zgdbmpath("zgdbmpath", args, &ops, 0)
-    }
-}
 // END moved-from-exec-rs
 
 // =====================================================================

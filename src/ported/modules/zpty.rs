@@ -571,52 +571,8 @@ mod tests {
 // ===========================================================
 
 // BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
-    /// `zpty` builtin — delegates to canonical port at
-    /// `src/ported/modules/zpty.rs:367` (`bin_zpty()` from
-    /// `Src/Modules/zpty.c`). The named-pty table lives on
-    /// `ShellExecutor` so `zpty -w NAME ...` and `zpty -r NAME` can
-    /// reach a session started by an earlier `zpty NAME ...` call.
-    pub(crate) fn bin_zpty(&mut self, args: &[String]) -> i32 {
-        use crate::zpty::ZptyOptions;
-        let mut options = ZptyOptions::default();
-        let mut positional: Vec<&str> = Vec::new();
-        let mut iter = args.iter();
-        while let Some(arg) = iter.next() {
-            match arg.as_str() {
-                "-d" => options.delete = true,
-                "-L" => options.list = true,
-                "-w" => options.write = true,
-                "-r" => {
-                    if let Some(s) = iter.next() {
-                        options.read_var = Some(s.clone());
-                    }
-                }
-                "-e" => options.echo = true,
-                "-t" => options.test = true,
-                "-b" => options.block = true,
-                "-m" => {
-                    if let Some(s) = iter.next() {
-                        options.pattern = Some(s.clone());
-                    }
-                }
-                "-T" => {
-                    if let Some(s) = iter.next() {
-                        options.timeout = s.parse().ok();
-                    }
-                }
-                _ => positional.push(arg.as_str()),
-            }
-        }
-        let (status, output) = crate::zpty::bin_zpty(
-            &positional, &options, &mut self.pty_cmds,
-        );
-        if !output.is_empty() {
-            if status == 0 { print!("{}", output); } else { eprint!("{}", output); }
-        }
-        status
-    }
-}
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
 // END moved-from-exec-rs
 
 

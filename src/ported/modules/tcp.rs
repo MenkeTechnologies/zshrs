@@ -746,43 +746,5 @@ mod tests {
 // ShellExecutor::bin_ztcp shim — parses flags into the canonical
 // `options` struct matching the BUILTIN spec at tcp.c:710
 // ("acdflLtv") and invokes the C-faithful free-fn port.
-impl crate::ported::exec::ShellExecutor {
-    pub(crate) fn bin_ztcp(&mut self, args: &[String]) -> i32 {
-        use crate::ported::zsh_h::{options, MAX_OPS};
-        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                argscount: 0, argsalloc: 0 };
-        let mut positional: Vec<String> = Vec::new();
-        let mut i = 0;
-        while i < args.len() {
-            let a = &args[i];
-            if a == "--" { i += 1; positional.extend_from_slice(&args[i..]); break; }
-            if let Some(rest) = a.strip_prefix('-') {
-                if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
-                let chars: Vec<char> = rest.chars().collect();
-                let mut j = 0;
-                while j < chars.len() {
-                    let c = chars[j] as u8;
-                    if c == b'd' {
-                        // -d takes an arg: rest of token, or next argv.
-                        ops.ind[c as usize] = (ops.args.len() + 1) as u8;
-                        let rest_after = &rest[j + 1..];
-                        if !rest_after.is_empty() {
-                            ops.args.push(rest_after.to_string());
-                        } else {
-                            i += 1;
-                            ops.args.push(args.get(i).cloned().unwrap_or_default());
-                        }
-                        ops.argscount = ops.args.len() as i32;
-                        break;
-                    }
-                    if c.is_ascii_alphabetic() { ops.ind[c as usize] = 1; }
-                    j += 1;
-                }
-            } else {
-                positional.push(a.clone());
-            }
-            i += 1;
-        }
-        bin_ztcp("ztcp", &positional, &ops, 0)
-    }
-}
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+

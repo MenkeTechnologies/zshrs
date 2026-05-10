@@ -1193,15 +1193,6 @@ pub fn rtsigname(sig: i32) -> String {
 // ===========================================================
 
 // BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
-    /// Execute trap handlers for a signal
-    pub fn run_trap(&mut self, signal: &str) {
-        if let Some(action) = self.traps.get(signal).cloned() {
-            // Empty action = signal-ignore. Don't try to execute "".
-            if !action.is_empty() {
-                let _ = self.execute_script(&action);
-            }
-        }
-    }
-}
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
 // END moved-from-exec-rs
