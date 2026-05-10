@@ -2276,8 +2276,8 @@ impl ShellExecutor {
         crate::ported::builtin::bin_set("set", args, &ops, 0)
     }
     pub(crate) fn bin_getopts(&mut self, args: &[String]) -> i32 {
-        // No canonical bin_getopts free-fn yet — return 1 (end-of-opts).
-        let _ = args; 1
+        let ops = Self::_empty_ops();
+        crate::ported::builtin::bin_getopts("getopts", args, &ops, 0)
     }
     pub(crate) fn bin_hash(&mut self, name: &str, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
