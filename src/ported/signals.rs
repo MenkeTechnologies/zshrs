@@ -93,8 +93,11 @@ pub static trap_queue_rear: AtomicUsize = AtomicUsize::new(0);               // 
 pub static trap_queue: [AtomicI32; MAX_QUEUE_SIZE] =                         // c:92
     [ATOM_I32_ZERO; MAX_QUEUE_SIZE];
 
-/// Last signal received
-pub static LAST_SIGNAL: AtomicI32 = AtomicI32::new(0);
+/// Port of `int last_signal` from `Src/signals.c:238`. Holds the
+/// signal number of the most recent delivery; used by `wait_cmd`
+/// in jobs.c to set `$?` to `128 + last_signal` when a trapped
+/// signal interrupts wait.
+pub static last_signal: AtomicI32 = AtomicI32::new(0);                       // c:238
 
 // ---------------------------------------------------------------------------
 // Per-signal trap state. Direct ports of the C globals declared in
@@ -138,103 +141,6 @@ pub static intrap: AtomicI32 = AtomicI32::new(0);                             //
 /// while the EXIT trap body is running so `exit` and friends can
 /// distinguish "real" exit from exit-trap-driven exit.
 pub static in_exit_trap: AtomicI32 = AtomicI32::new(0);                       // c:60
-
-/// Store the main shell PID to detect forked children.
-static MAIN_PID: AtomicI32 = AtomicI32::new(0);
-
-/// Whether we received SIGCHLD.
-static SIGCHLD_RECEIVED: AtomicBool = AtomicBool::new(false);
-
-/// Whether we received SIGWINCH.
-static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
-
-/// Signal handler function
-extern "C" fn handler(sig: i32) {
-    // Preserve errno
-    #[cfg(target_os = "macos")]
-    let saved_errno = unsafe { *libc::__error() };
-    #[cfg(not(target_os = "macos"))]
-    let saved_errno = unsafe { *libc::__errno_location() };
-
-    // Forked-child guard: re-raise to default and bail. zsh
-    // C source doesn't need this because it forks before
-    // installing handlers; Rust's worker pool means we may run
-    // here in a child process.
-    if getpid().as_raw() != MAIN_PID.load(Ordering::Relaxed) {
-        unsafe {
-            libc::signal(sig, libc::SIG_DFL);
-            libc::raise(sig);
-        }
-        #[cfg(target_os = "macos")]
-        unsafe {
-            *libc::__error() = saved_errno
-        };
-        #[cfg(not(target_os = "macos"))]
-        unsafe {
-            *libc::__errno_location() = saved_errno
-        };
-        return;
-    }
-
-    LAST_SIGNAL.store(sig, Ordering::SeqCst);
-
-    // Track specific signals
-    if sig == libc::SIGCHLD {
-        SIGCHLD_RECEIVED.store(true, Ordering::SeqCst);
-    } else if sig == libc::SIGWINCH {
-        SIGWINCH_RECEIVED.store(true, Ordering::SeqCst);
-    }
-
-    // c:404-415 (signals.c) — `if (queueing_enabled) { signal_queue[++queue_rear] = sig; signal_mask_queue[queue_rear] = blockset; return; }`
-    if queueing_enabled.load(Ordering::SeqCst) > 0 {
-        let r = queue_rear.load(Ordering::SeqCst);
-        let new_rear = (r + 1) % MAX_QUEUE_SIZE;
-        if new_rear != queue_front.load(Ordering::SeqCst) {
-            signal_queue[new_rear].store(sig, Ordering::SeqCst);
-            queue_rear.store(new_rear, Ordering::SeqCst);
-        }
-        #[cfg(target_os = "macos")]
-        unsafe {
-            *libc::__error() = saved_errno
-        };
-        #[cfg(not(target_os = "macos"))]
-        unsafe {
-            *libc::__errno_location() = saved_errno
-        };
-        return;
-    }
-
-    // Dispatch trap inline (matches `dotrap` body in
-    // Src/signals.c:1245). SIGCHLD is no-op because job-control
-    // runs on its own path. The async-signal-handler path here
-    // only flips the `intrap`/`in_exit_trap` window for trapped
-    // signals — the actual Eprog/shfunc execution happens at the
-    // synchronous `dotrap()` dispatch site that callers reach
-    // after the handler returns.
-    if sig != libc::SIGCHLD {
-        let trapped = sigtrapped.lock()
-            .ok()
-            .and_then(|g| g.get(sig as usize).copied())
-            .unwrap_or(0);
-        if trapped & (ZSIG_TRAPPED | ZSIG_FUNC) != 0 {
-            intrap.store(1, Ordering::SeqCst);
-            if sig == SIGEXIT {
-                in_exit_trap.store(1, Ordering::SeqCst);
-                in_exit_trap.store(0, Ordering::SeqCst);
-            }
-            intrap.store(0, Ordering::SeqCst);
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    unsafe {
-        *libc::__error() = saved_errno
-    };
-    #[cfg(not(target_os = "macos"))]
-    unsafe {
-        *libc::__errno_location() = saved_errno
-    };
-}
 
 // Variables used by signal queueing                                       // c:74
 /// Enable signal queueing.
@@ -729,18 +635,78 @@ pub fn wait_for_processes() -> Vec<(i32, i32)> {
     results
 }
 
-/// Main signal handler routed via `signal(2)`.
-/// Port of `zhandler()` from Src/signals.c:399 — the C source's
-/// shared dispatcher that records the signal, queues if needed,
-/// and re-installs the handler for non-BSD systems.
+/// Direct port of `void zhandler(int sig)` from
+/// `Src/signals.c:399-498`. The main dispatcher installed for
+/// every trapped + critical signal. Block all signals while
+/// running, record the delivery, queue if `queueing_enabled`,
+/// otherwise dispatch the per-signal handler (SIGCHLD →
+/// wait_for_processes; SIGPIPE/SIGHUP/SIGINT/SIGWINCH/SIGALRM →
+/// handletrap with platform-specific fallback; default →
+/// handletrap).
 #[cfg(unix)]
 extern "C" fn zhandler(sig: libc::c_int) {
-    // Re-install the handler
-    unsafe {
-        libc::signal(sig, zhandler as *const () as libc::sighandler_t);
+    last_signal.store(sig, Ordering::Relaxed);                                // c:403
+
+    // c:405-407 — `sigfillset(&newmask); oldmask = signal_block(newmask);`
+    let mut newmask: libc::sigset_t = unsafe { std::mem::zeroed() };
+    unsafe { libc::sigfillset(&mut newmask); }
+    let oldmask = signal_block(&newmask);
+
+    // c:410-424 — `if (queueing_enabled) { ... return; }`
+    if queueing_enabled.load(Ordering::SeqCst) != 0 {
+        let temp_rear = (queue_rear.load(Ordering::SeqCst) + 1) % MAX_QUEUE_SIZE;
+        if temp_rear != queue_front.load(Ordering::SeqCst) {
+            queue_rear.store(temp_rear, Ordering::SeqCst);
+            signal_queue[temp_rear].store(sig, Ordering::SeqCst);
+            if let Ok(mut g) = signal_mask_queue.lock() {
+                if let Some(slot) = g.get_mut(temp_rear) { *slot = oldmask; }
+            }
+        }
+        return;
     }
-    // Record signal
-    LAST_SIGNAL.store(sig, std::sync::atomic::Ordering::Relaxed);
+
+    // c:427 — `signal_setmask(oldmask);`
+    let _ = signal_setmask(&oldmask);
+
+    // c:429-498 — per-signal dispatch.
+    match sig {
+        libc::SIGCHLD => {                                                    // c:430
+            let _ = wait_for_processes();
+        }
+        libc::SIGPIPE => {                                                    // c:434
+            if handletrap(libc::SIGPIPE) == 0 {
+                // Interactive / non-tty exit paths deferred to
+                // interp layer when zexit lands (c:436-441).
+            }
+        }
+        libc::SIGHUP => {                                                     // c:445
+            if handletrap(libc::SIGHUP) == 0 {
+                // c:447 — `stopmsg = 1; zexit(SIGHUP, ZEXIT_SIGNAL);`
+                // zexit deferred.
+            }
+        }
+        libc::SIGINT => {                                                     // c:452
+            if handletrap(libc::SIGINT) == 0 {
+                // c:453-463 — PRIVILEGED+INTERACTIVE early-exit,
+                // errflag |= ERRFLAG_INT, $? = 128+SIGINT. Deferred
+                // to interp layer (errflag, lastval).
+            }
+        }
+        libc::SIGWINCH => {                                                   // c:468
+            // c:470 — `adjustwinsize(1)` is in `Src/utils.c`;
+            // ZLE-layer wiring not yet plumbed here.
+            let _ = handletrap(libc::SIGWINCH);
+        }
+        libc::SIGALRM => {                                                    // c:475
+            if handletrap(libc::SIGALRM) == 0 {
+                // c:477-490 — interactive idle warning, errflag
+                // toggle for non-interactive case. Deferred.
+            }
+        }
+        _ => {                                                                // c:494
+            let _ = handletrap(sig);
+        }
+    }
 }
 
 /// Kill all running jobs with the given signal.
