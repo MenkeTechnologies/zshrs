@@ -899,14 +899,62 @@ pub fn cut() -> i32 { 0 }
 /// Port of `cuttext()` from Src/Zle/zle_utils.c:946. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn cuttext() -> i32 { 0 }
 
-/// Port of `findbol()` from Src/Zle/zle_utils.c:1158. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn findbol() -> i32 { 0 }
+/// Port of `findbol()` from `Src/Zle/zle_utils.c:1157`.
+/// ```c
+/// int
+/// findbol(void)
+/// {
+///     int x = zlecs;
+///     while (x > 0 && zleline[x - 1] != ZWC('\n'))
+///         x--;
+///     return x;
+/// }
+/// ```
+/// Walk backward from the cursor to the start of the current line
+/// (or the start of the buffer if there's no preceding newline).
+/// Returns the byte offset.
+pub fn findbol(zle: &crate::ported::zle::zle_main::Zle) -> usize {           // c:1157
+    let mut x = zle.zlecs;                                                   // c:1160 int x = zlecs
+    while x > 0 && zle.zleline.get(x - 1) != Some(&'\n') {                   // c:1162
+        x -= 1;                                                              // c:1163 x--
+    }
+    x                                                                        // c:1164 return x
+}
 
-/// Port of `findeol()` from Src/Zle/zle_utils.c:1169. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn findeol() -> i32 { 0 }
+/// Port of `findeol()` from `Src/Zle/zle_utils.c:1168`.
+/// ```c
+/// int
+/// findeol(void)
+/// {
+///     int x = zlecs;
+///     while (x != zlell && zleline[x] != ZWC('\n'))
+///         x++;
+///     return x;
+/// }
+/// ```
+/// Walk forward from the cursor to the next newline (or end of
+/// buffer). Returns the byte offset.
+pub fn findeol(zle: &crate::ported::zle::zle_main::Zle) -> usize {           // c:1168
+    let mut x = zle.zlecs;                                                   // c:1171 int x = zlecs
+    while x != zle.zlell && zle.zleline.get(x) != Some(&'\n') {              // c:1173
+        x += 1;                                                              // c:1174 x++
+    }
+    x                                                                        // c:1175 return x
+}
 
-/// Port of `findline()` from Src/Zle/zle_utils.c:1180. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn findline() -> i32 { 0 }
+/// Port of `findline()` from `Src/Zle/zle_utils.c:1179`.
+/// ```c
+/// void
+/// findline(int *a, int *b)
+/// {
+///     *a = findbol();
+///     *b = findeol();
+/// }
+/// ```
+/// Returns `(bol, eol)` for the current line.
+pub fn findline(zle: &crate::ported::zle::zle_main::Zle) -> (usize, usize) {  // c:1179
+    (findbol(zle), findeol(zle))                                             // c:1182-1183
+}
 
 /// Port of `foredel()` from `Src/Zle/zle_utils.c:1105`. Removes `ct`
 /// characters FORWARD from the cursor (i.e. drops `[zlecs, zlecs+ct)`
@@ -1037,3 +1085,72 @@ pub fn zlegetline() -> i32 { 0 }
 
 /// Port of `zlelineasstring()` from Src/Zle/zle_utils.c:192. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn zlelineasstring() -> i32 { 0 }
+
+#[cfg(test)]
+mod findbol_findeol_tests {
+    use super::*;
+    use crate::ported::zle::zle_main::Zle;
+
+    fn zle_with(line: &str, cs: usize) -> Zle {
+        let mut z = Zle::default();
+        z.zleline = line.chars().collect();
+        z.zlell = z.zleline.len();
+        z.zlecs = cs;
+        z
+    }
+
+    #[test]
+    fn findbol_no_newline_returns_zero() {
+        // c:1162 — walks back to start when no '\n' encountered.
+        let z = zle_with("hello world", 7);
+        assert_eq!(findbol(&z), 0);
+    }
+
+    #[test]
+    fn findbol_finds_preceding_newline() {
+        // c:1162 — `zleline[x-1] != '\n'` exits loop when prev char IS '\n'.
+        // For "abc\ndef\nghi" with cursor at 9 (the 'h' in 'ghi'):
+        // walks back to 8 (after the second '\n'), returns 8.
+        let z = zle_with("abc\ndef\nghi", 9);
+        assert_eq!(findbol(&z), 8);
+    }
+
+    #[test]
+    fn findbol_at_start_returns_zero() {
+        let z = zle_with("anything", 0);
+        assert_eq!(findbol(&z), 0);
+    }
+
+    #[test]
+    fn findeol_no_newline_returns_end() {
+        // c:1173 — walks forward to zlell when no '\n' encountered.
+        let z = zle_with("hello world", 0);
+        assert_eq!(findeol(&z), 11);
+    }
+
+    #[test]
+    fn findeol_finds_next_newline() {
+        // c:1173 — `zleline[x] != '\n'` exits when current char IS '\n'.
+        // For "abc\ndef" cursor at 0: walks 0→1→2→3 (which is '\n'), returns 3.
+        let z = zle_with("abc\ndef", 0);
+        assert_eq!(findeol(&z), 3);
+    }
+
+    #[test]
+    fn findeol_at_end_returns_zlell() {
+        let z = zle_with("hello", 5);
+        assert_eq!(findeol(&z), 5);
+    }
+
+    #[test]
+    fn findline_returns_bol_eol_pair() {
+        // c:1182-1183 — both findbol and findeol from the same cursor.
+        // "abc\ndef\nghi" cursor at 5 (the 'e' in 'def'):
+        //   findbol → 4 (after first '\n')
+        //   findeol → 7 (the second '\n')
+        let z = zle_with("abc\ndef\nghi", 5);
+        let (bol, eol) = findline(&z);
+        assert_eq!(bol, 4);
+        assert_eq!(eol, 7);
+    }
+}
