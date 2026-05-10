@@ -494,3 +494,4 @@ vared_zle_run
 fdtable_lock
 fdtable_get
 fdtable_set
+

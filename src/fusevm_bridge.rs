@@ -1747,7 +1747,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         })(idx);
         if let Some((flags, pat)) = parsed_flags.clone() {
             let pairs = with_executor(|exec| -> Option<Vec<(String, String)>> {
-                let keys = exec.magic_assoc_keys(name)?;
+                let keys = crate::exec_shims::scan_magic_assoc_keys(name)?;
                 Some(keys
                     .into_iter()
                     .map(|k| {
@@ -2996,7 +2996,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // scanfn dispatch (Src/Modules/parameter.c +
                     // system.c + terminfo.c et al.).
                     if let Some(keys) =
-                        exec.magic_assoc_keys(&name)
+                        crate::exec_shims::scan_magic_assoc_keys(&name)
                     {
                         St::A(keys)
                     } else {
@@ -3010,7 +3010,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // (v) symmetry was missing, so plugin code that
                     // looped over alias bodies got an empty list.
                     if let Some(keys) =
-                        exec.magic_assoc_keys(&name)
+                        crate::exec_shims::scan_magic_assoc_keys(&name)
                     {
                         let values: Vec<String> = keys
                             .iter()
@@ -3877,7 +3877,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 // alternating [key, value] pairs by
                                 // pairing magic_assoc_keys with
                                 // get_special_array_value lookups.
-                                if let Some(keys) = exec.magic_assoc_keys(&name) {
+                                if let Some(keys) = crate::exec_shims::scan_magic_assoc_keys(&name) {
                                     let mut out = Vec::with_capacity(keys.len() * 2);
                                     for k in keys {
                                         let v = exec
@@ -3910,7 +3910,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 // parameter.c et al.). Returns the
                                 // sorted key set the C source builds
                                 // by walking each magic table.
-                                exec.magic_assoc_keys(&name)
+                                crate::exec_shims::scan_magic_assoc_keys(&name)
                                     .unwrap_or_default()
                             }
                         });
@@ -3937,7 +3937,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 }
                                 out
                             } else if let Some(keys) =
-                                exec.magic_assoc_keys(&name)
+                                crate::exec_shims::scan_magic_assoc_keys(&name)
                             {
                                 let mut out = Vec::with_capacity(keys.len() * 2);
                                 for k in keys {
@@ -3958,7 +3958,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             if let Some(m) = exec.assoc_arrays.get(&name) {
                                 m.values().cloned().collect::<Vec<_>>()
                             } else if let Some(keys) =
-                                exec.magic_assoc_keys(&name)
+                                crate::exec_shims::scan_magic_assoc_keys(&name)
                             {
                                 keys.iter()
                                     .map(|k| {
@@ -5289,7 +5289,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // splitting for assoc-bare references.
         let magic_vals = with_executor(|exec| {
             sync_status(exec);
-            exec.magic_assoc_keys(&name).map(|keys| {
+            crate::exec_shims::scan_magic_assoc_keys(&name).map(|keys| {
                 keys.iter()
                     .map(|k| exec.get_special_array_value(&name, k).unwrap_or_default())
                     .collect::<Vec<_>>()

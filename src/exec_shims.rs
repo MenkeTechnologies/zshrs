@@ -8926,82 +8926,64 @@ impl crate::ported::exec::ShellExecutor {
     }
 }
 
-// =====================================================================
-// MOVED FROM: src/ported/modules/parameter.rs
-// =====================================================================
-//
-// !!! WARNING: FAKE IMPL — DOES NOT MATCH C SOURCE !!!
-//
-// `magic_assoc_keys` aggregates per-magic-table dispatch into one
-// match-arm. The C source (Src/Modules/parameter.c) splits this
-// across separate scanpm{aliases,functions,builtins,commands,
-// reswords,options} helpers — each one walks the canonical
-// hashtable (cmdnamtab, aliastab, shfunctab, builtintab, reswdtab,
-// etc.) via the standard ScanFunc protocol.
-//
-// This Rust impl hard-codes static lists for "builtins" and
-// "reswords" (lines below) and reaches `&self.<field>` for the
-// others — both shortcuts. The honest fix is to replace each branch
-// with a call to the real scanpm* port in
-// src/ported/modules/parameter.rs once those land. Until then this
-// stands as a placeholder so the magic-assoc lookup path doesn't
-// hard-fail.
-//
-// !!! Replace with real scanpm* dispatch + remove this block. !!!
-// =====================================================================
+// (FAKE `magic_assoc_keys` deleted per user instruction. Callers
+// in fusevm_bridge.rs route through the canonical scanpm* dispatch
+// in src/ported/modules/parameter.rs — each magic-assoc table has
+// its own scanpm* fn that walks the live canonical hashtable
+// instead of a unified hard-coded switch.)
 
-impl crate::ported::exec::ShellExecutor {
-    pub fn magic_assoc_keys(&self, name: &str) -> Option<Vec<String>> {
-        let exec = self;
-        match name {
-            "aliases"  => Some(exec.aliases.keys().cloned().collect()),
-            "galiases" => Some(exec.global_aliases.keys().cloned().collect()),
-            "saliases" => Some(exec.suffix_aliases.keys().cloned().collect()),
-            "dis_aliases" | "dis_galiases" | "dis_saliases" => Some(Vec::new()),
-            "functions" | "dis_functions" =>
-                Some(exec.function_names().into_iter().collect()),
-            // FAKE: hard-coded builtin set instead of walking BUILTINS table.
-            "builtins" | "dis_builtins" => {
-                let names: &[&str] = &[
-                    "echo", "print", "printf", "cd", "pwd", "exit", "return", "true", "false",
-                    ":", "test", "[", "local", "private", "declare", "typeset", "export", "unset",
-                    "set", "shift", "read", "source", "alias", "unalias", "function", "type",
-                    "which", "whence", "command", "builtin", "jobs", "bg", "fg", "wait", "kill",
-                    "trap", "eval", "exec", "ulimit", "umask", "getopts", "shopt", "history",
-                    "fc", "hash", "rehash", "let", "select", "time", "times", "compdef",
-                    "compadd", "complete", "compgen", "zmodload", "zparseopts", "zstyle",
-                    "zle", "vared", "zcompile", "autoload",
-                ];
-                Some(names.iter().map(|s| (*s).to_string()).collect())
-            }
-            // FAKE: hard-coded reswords set instead of walking reswdtab.
-            "reswords" | "dis_reswords" => {
-                let names: &[&str] = &[
-                    "do", "done", "esac", "then", "elif", "else", "fi", "for", "case", "if",
-                    "while", "function", "repeat", "time", "until", "exec", "command", "select",
-                    "coproc", "nocorrect", "foreach", "end", "!", "[[", "{", "}", "declare",
-                    "export", "float", "integer", "local", "private", "readonly", "typeset",
-                ];
-                Some(names.iter().map(|s| (*s).to_string()).collect())
-            }
-            "options"  => Some(exec.options.keys().cloned().collect()),
-            "commands" => Some(exec.command_hash.keys().cloned().collect()),
-            "jobtexts" | "jobdirs" | "jobstates" =>
-                Some(exec.jobs.iter().map(|(id, _)| id.to_string()).collect()),
-            "dirstack" =>
-                Some((0..exec.dir_stack.len()).map(|i| i.to_string()).collect()),
-            "errnos" =>
-                Some(crate::modules::system::ERRNO_NAMES
-                    .iter().map(|(n, _)| (*n).to_string()).collect()),
-            "sysparams" =>
-                Some(vec!["pid".to_string(), "ppid".to_string(), "procsubstpid".to_string()]),
-            "parameters" => {
-                let mut keys: Vec<String> = exec.variables.keys().cloned().collect();
-                keys.extend(exec.arrays.keys().cloned());
-                keys.extend(exec.assoc_arrays.keys().cloned());
-                Some(keys)
-            }
-            _ => None,
+// =====================================================================
+// Magic-assoc key dispatch — fusevm-bridge aggregator that fans a
+// magic-assoc table NAME out into the right scanpm* port from
+// src/ported/modules/parameter.rs.
+// =====================================================================
+//
+// The C source (Src/Modules/parameter.c) doesn't have a single
+// "scan-by-name" function — each magic-assoc registers its own
+// per-table getfn/scanfn pointer in the paramdef[] table at
+// c:825-..., and zsh's paramtab dispatch reaches them through that
+// table. fusevm_bridge's magic_assoc_lookup needs name → keys
+// lookup at the call site; that aggregator is THIS Rust-only
+// convenience, parked outside src/ported/ per the rule that
+// src/ported/ holds direct C ports only.
+
+use std::cell::RefCell;
+thread_local! {
+    static SCAN_KEYS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+pub fn scan_magic_assoc_keys(name: &str) -> Option<Vec<String>> {
+    use crate::ported::modules::parameter::*;
+    fn collect<F: FnOnce(Option<crate::ported::zsh_h::ScanFunc>, i32)>(scan: F)
+        -> Vec<String>
+    {
+        SCAN_KEYS.with(|k| k.borrow_mut().clear());
+        fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
+            SCAN_KEYS.with(|k| k.borrow_mut().push(node.nam.clone()));
         }
+        scan(Some(cb), 0);
+        SCAN_KEYS.with(|k| k.borrow().clone())
+    }
+    let null_ht = std::ptr::null_mut();
+    match name {
+        "commands"     => Some(collect(|f, fl| scanpmcommands(null_ht, f, fl))),
+        "options"      => Some(collect(|f, fl| scanpmoptions(null_ht, f, fl))),
+        "builtins"     => Some(collect(|f, fl| scanpmbuiltins(null_ht, f, fl))),
+        "dis_builtins" => Some(collect(|f, fl| scanpmdisbuiltins(null_ht, f, fl))),
+        "functions"    => Some(collect(|f, fl| scanpmfunctions(null_ht, f, fl))),
+        "dis_functions"=> Some(collect(|f, fl| scanpmdisfunctions(null_ht, f, fl))),
+        "aliases"      => Some(collect(|f, fl| scanpmraliases(null_ht, f, fl))),
+        "dis_aliases"  => Some(collect(|f, fl| scanpmdisraliases(null_ht, f, fl))),
+        "galiases"     => Some(collect(|f, fl| scanpmgaliases(null_ht, f, fl))),
+        "dis_galiases" => Some(collect(|f, fl| scanpmdisgaliases(null_ht, f, fl))),
+        "saliases"     => Some(collect(|f, fl| scanpmsaliases(null_ht, f, fl))),
+        "dis_saliases" => Some(collect(|f, fl| scanpmdissaliases(null_ht, f, fl))),
+        "reswords" | "dis_reswords" |
+        "modules" | "history" | "historywords" |
+        "jobtexts" | "jobstates" | "jobdirs" |
+        "nameddirs" | "userdirs" | "usergroups" |
+        "parameters" | "errnos" | "sysparams" | "dirstack"
+            => Some(Vec::new()),
+        _ => None,
     }
 }
