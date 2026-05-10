@@ -764,29 +764,180 @@ pub fn vigotocolumn(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {    // 
     0
 }
 
-/// Port of `vigotomark()` from Src/Zle/zle_move.c:887. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn vigotomark() -> i32 { 0 }
+/// Port of `vigotomark()` from Src/Zle/zle_move.c:887.
+pub fn vigotomark(zle: &mut crate::ported::zle::zle_main::Zle, ch: char) -> i32 { // c:887
+    // c:889-927 — read mark name; jump to (vimarkcs[idx], vimarkline[idx]).
+    let idx = match ch {
+        'a'..='z' => (ch as u8 - b'a') as usize,                             // c:894
+        '\'' | '`' => 26,                                                    // c:898 ' / ` mark
+        _ => return 1,
+    };
+    if let Some((cs, hist)) = zle.vi_marks[idx] {                            // c:903
+        zle.zlecs = cs.min(zle.zlell);
+        zle.history.cursor = hist.max(0) as usize;
+        return 0;
+    }
+    1
+}
 
-/// Port of `vigotomarkline()` from Src/Zle/zle_move.c:929. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn vigotomarkline() -> i32 { 0 }
+/// Port of `vigotomarkline()` from Src/Zle/zle_move.c:929.
+pub fn vigotomarkline(zle: &mut crate::ported::zle::zle_main::Zle, ch: char) -> i32 { // c:929
+    // c:931-958 — like vigotomark but lands at first non-blank of
+    //              the marked line.
+    let r = vigotomark(zle, ch);
+    if r == 0 {
+        // Snap to start of line + first non-blank.
+        let bol = crate::ported::zle::zle_utils::findbol(zle);
+        let mut p = bol;
+        while p < zle.zlell {
+            let c = zle.zleline[p];
+            if c != ' ' && c != '\t' {
+                break;
+            }
+            p += 1;
+        }
+        zle.zlecs = p;
+    }
+    r
+}
 
-/// Port of `vimatchbracket()` from Src/Zle/zle_move.c:594. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn vimatchbracket() -> i32 { 0 }
+/// Port of `vimatchbracket()` from Src/Zle/zle_move.c:594.
+pub fn vimatchbracket(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:594
+    let ocs = zle.zlecs;                                                     // c:596
+    if (zle.zlecs == zle.zlell || zle.zleline.get(zle.zlecs) == Some(&'\n')) // c:599
+        && zle.zlecs > 0
+    {
+        deccs(zle);                                                          // c:600
+    }
+    if zle.zlecs == zle.zlell || zle.zleline.get(zle.zlecs) == Some(&'\n') { // c:604
+        zle.zlecs = ocs;                                                     // c:605
+        return 1;                                                            // c:606
+    }
+    let me = zle.zleline[zle.zlecs];                                         // c:608
+    let (oth, dir) = match me {                                              // c:609-635
+        '{' => ('}', 1),
+        '}' => ('{', -1),
+        '(' => (')', 1),
+        ')' => ('(', -1),
+        '[' => (']', 1),
+        ']' => ('[', -1),
+        '<' => ('>', 1),
+        '>' => ('<', -1),
+        _ => {
+            zle.zlecs = ocs;
+            return 1;
+        }
+    };
+    let mut depth = 1i32;                                                    // c:639
+    loop {
+        if dir > 0 {
+            if zle.zlecs >= zle.zlell {
+                zle.zlecs = ocs;
+                return 1;
+            }
+            zle.zlecs += 1;
+        } else {
+            if zle.zlecs == 0 {
+                zle.zlecs = ocs;
+                return 1;
+            }
+            zle.zlecs -= 1;
+        }
+        let c = match zle.zleline.get(zle.zlecs) {
+            Some(&c) => c,
+            None => {
+                zle.zlecs = ocs;
+                return 1;
+            }
+        };
+        if c == me {
+            depth += 1;
+        } else if c == oth {
+            depth -= 1;
+            if depth == 0 {
+                return 0;
+            }
+        }
+    }
+}
 
-/// Port of `virepeatfind()` from Src/Zle/zle_move.c:835. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn virepeatfind() -> i32 { 0 }
+/// Port of `virepeatfind()` from Src/Zle/zle_move.c:835.
+pub fn virepeatfind(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {    // c:835
+    // C body c:837 — `return vifindchar(1, args)`. Repeats the last
+    //                vi find with the same direction.
+    vifindchar(zle, 1)
+}
 
-/// Port of `virevrepeatfind()` from Src/Zle/zle_move.c:842. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn virevrepeatfind() -> i32 { 0 }
+/// Port of `virevrepeatfind()` from Src/Zle/zle_move.c:842.
+pub fn virevrepeatfind(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 { // c:842
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_misc::{TAILADD, VFINDDIR};
+    // c:846-851 — `if (zmult < 0) { zmult = -zmult; ret = vifindchar(1);
+    //                              zmult = -zmult; return ret }`.
+    if zle.zmod.mult < 0 {
+        zle.zmod.mult = -zle.zmod.mult;
+        let ret = vifindchar(zle, 1);
+        zle.zmod.mult = -zle.zmod.mult;
+        return ret;
+    }
+    // c:852-856 — toggle tailadd + vfinddir, repeat, restore.
+    let t = TAILADD.load(Ordering::SeqCst);
+    let d = VFINDDIR.load(Ordering::SeqCst);
+    TAILADD.store(-t, Ordering::SeqCst);
+    VFINDDIR.store(-d, Ordering::SeqCst);
+    let ret = vifindchar(zle, 1);
+    TAILADD.store(t, Ordering::SeqCst);
+    VFINDDIR.store(d, Ordering::SeqCst);
+    ret
+}
 
-/// Port of `visetmark()` from Src/Zle/zle_move.c:872. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn visetmark() -> i32 { 0 }
+/// Port of `visetmark()` from Src/Zle/zle_move.c:872.
+pub fn visetmark(zle: &mut crate::ported::zle::zle_main::Zle, ch: char) -> i32 { // c:872
+    // c:876 — `ch = getfullchar(0)`. Caller passes the read char.
+    if !('a'..='z').contains(&ch) {                                          // c:877
+        return 1;
+    }
+    let idx = (ch as u8 - b'a') as usize;                                    // c:879
+    zle.vi_marks[idx] = Some((zle.zlecs, zle.history.cursor as i32));        // c:880
+    0
+}
 
-/// Port of `visuallinemode()` from Src/Zle/zle_move.c:540. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn visuallinemode() -> i32 { 0 }
+/// Port of `visuallinemode()` from Src/Zle/zle_move.c:540.
+pub fn visuallinemode(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:540
+    use crate::ported::zle::zle_main::ModifierFlags;
+    // c:542-547 — `if (virangeflag) { prefixflag = 1; flags &= ~CHAR;
+    //                                  flags |= LINE; return 0 }`.
+    match zle.region_active {                                                // c:548
+        2 => zle.region_active = 0,                                          // c:549-551
+        0 => {
+            zle.mark = zle.zlecs;                                            // c:553
+            zle.region_active = 2;                                           // c:556
+        }
+        1 => zle.region_active = 2,                                          // c:555-557
+        _ => {}
+    }
+    let _ = ModifierFlags::LINE;
+    0
+}
 
-/// Port of `visualmode()` from Src/Zle/zle_move.c:516. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn visualmode() -> i32 { 0 }
+/// Port of `visualmode()` from Src/Zle/zle_move.c:516.
+pub fn visualmode(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:516
+    use crate::ported::zle::zle_main::ModifierFlags;
+    // c:518-523 — `if (virangeflag) { prefixflag = 1; flags &= ~LINE;
+    //                                  flags |= CHAR; return 0 }`.
+    //              No virangeflag tracker yet; skip.
+    match zle.region_active {                                                // c:524
+        1 => zle.region_active = 0,                                          // c:525-527
+        0 => {
+            zle.mark = zle.zlecs;                                            // c:529 fall-through to case 2
+            zle.region_active = 1;                                           // c:532
+        }
+        2 => zle.region_active = 1,                                          // c:531-533
+        _ => {}
+    }
+    let _ = ModifierFlags::CHAR;
+    0
+}
 
 #[cfg(test)]
 mod region_tests {

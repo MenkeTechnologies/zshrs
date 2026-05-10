@@ -1267,8 +1267,15 @@ pub fn createkeymapnamtab() {                                                // 
     let _ = keymapnamtab();
 }
 
-/// Port of `default_bindings()` from Src/Zle/zle_keymap.c:1309. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn default_bindings() -> i32 { 0 }
+/// Port of `default_bindings()` from Src/Zle/zle_keymap.c:1309.
+pub fn default_bindings() {                                                  // c:1309
+    // C body c:1311-1810 — exhaustive default keymap creation: emacs/
+    //                      vicmd/viins/menuselect/listscroll keymaps,
+    //                      ~330 bindkey calls covering all default
+    //                      shortcuts. Without ZLE event loop wired
+    //                      to the keymap there's nothing to bind to;
+    //                      tracked in zle_keymap deferred work.
+}
 
 /// Port of `deletekeymap()` from Src/Zle/zle_keymap.c:364. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn deletekeymap(_km: Arc<Keymap>) {                                      // c:363
@@ -1332,11 +1339,23 @@ pub fn getkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, w: i32) -> i32 {  
     }
 }
 
-/// Port of `getkeycmd()` from Src/Zle/zle_keymap.c:1768. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn getkeycmd() -> i32 { 0 }
+/// Port of `getkeycmd()` from Src/Zle/zle_keymap.c:1768.
+pub fn getkeycmd(_zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:1768
+    // C body c:1770-1804 — calls getkeymapcmd in a loop until a
+    //                      non-prefix keymap entry is selected; sets
+    //                      bindk to the resulting Thingy. Without an
+    //                      attached input stream there's nothing to
+    //                      pull; return EOF.
+    -1
+}
 
-/// Port of `getkeymapcmd()` from Src/Zle/zle_keymap.c:1581. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn getkeymapcmd() -> i32 { 0 }
+/// Port of `getkeymapcmd()` from Src/Zle/zle_keymap.c:1581.
+pub fn getkeymapcmd(_zle: &mut crate::ported::zle::zle_main::Zle, _km: i32) -> i32 { // c:1581
+    // C body c:1583-1700 — reads bytes via getkeybuf and walks the
+    //                      keymap multi-table; returns the matched
+    //                      Thingy. Without input substrate: EOF.
+    -1
+}
 
 /// Port of `getrestchar_keybuf()` from Src/Zle/zle_keymap.c:1504. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn getrestchar_keybuf(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:1671
