@@ -363,7 +363,10 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 /// Port of `setup_()` from `Src/Modules/mapfile.c:279`.
-pub fn setup_(_m: *const module) -> i32 { 0 }                           // c:279-281
+pub fn setup_(_m: *const module) -> i32 {                                    // c:279
+    // C body c:280-281 — `return 0`. Faithful empty-body port.
+    0
+}
 
 /// Port of `features_()` from `Src/Modules/mapfile.c:286`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -379,7 +382,11 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 }
 
 /// Port of `boot_()` from `Src/Modules/mapfile.c:301`.
-pub fn boot_(_m: *const module) -> i32 { 0 }                            // c:301-303
+pub fn boot_(_m: *const module) -> i32 {                                     // c:301
+    // C body c:302-303 — `return 0`. Faithful empty-body port; the
+    //                    $mapfile assoc-param registers via pd_list.
+    0
+}
 
 /// Port of `cleanup_()` from `Src/Modules/mapfile.c:308`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
@@ -388,7 +395,10 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_()` from `Src/Modules/mapfile.c:315`.
-pub fn finish_(_m: *const module) -> i32 { 0 }                          // c:315-317
+pub fn finish_(_m: *const module) -> i32 {                                   // c:315
+    // C body c:316-317 — `return 0`. Faithful empty-body port.
+    0
+}
 
 // `featuresarray` — Src/module.c:3275.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {

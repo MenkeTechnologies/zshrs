@@ -378,7 +378,10 @@ pub fn bin_listattr(nam: &str, argv: &[String], ops: &options, _func: i32) -> i3
 // =====================================================================
 
 /// Port of `setup_()` from `Src/Modules/attr.c:236`.
-pub fn setup_(_m: *const module) -> i32 { 0 }                          // c:238
+pub fn setup_(_m: *const module) -> i32 {                                    // c:236
+    // C body c:238-239 — `return 0`. Faithful empty-body port.
+    0
+}
 
 /// Port of `features_()` from `Src/Modules/attr.c:243`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -394,7 +397,12 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 }
 
 /// Port of `boot_()` from `Src/Modules/attr.c:258`.
-pub fn boot_(_m: *const module) -> i32 { 0 }                           // c:260
+pub fn boot_(_m: *const module) -> i32 {                                     // c:258
+    // C body c:260-261 — `return 0`. Faithful empty-body port; the
+    //                    zgetattr/zsetattr/zdelattr/zlistattr builtins
+    //                    register via the bn_list feature dispatch.
+    0
+}
 
 /// Port of `cleanup_()` from `Src/Modules/attr.c:265`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
@@ -403,7 +411,11 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_()` from `Src/Modules/attr.c:272`.
-pub fn finish_(_m: *const module) -> i32 { 0 }                         // c:274
+pub fn finish_(_m: *const module) -> i32 {                                   // c:272
+    // C body c:274-275 — `return 0`. Faithful empty-body port; the
+    //                    builtins unregister via cleanup_'s setfeatureenables.
+    0
+}
 
 // =====================================================================
 // External fns + tables. `static struct features module_features` from

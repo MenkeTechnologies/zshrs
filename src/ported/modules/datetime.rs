@@ -276,7 +276,10 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 /// Port of `setup_()` from `Src/Modules/datetime.c:270`.
-pub fn setup_(_m: *const module) -> i32 { 0 }                           // c:270-273
+pub fn setup_(_m: *const module) -> i32 {                                    // c:270
+    // C body c:272-273 — `return 0`. Faithful empty-body port.
+    0
+}
 
 /// Port of `features_()` from `Src/Modules/datetime.c:277`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -292,7 +295,12 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:
 }
 
 /// Port of `boot_()` from `Src/Modules/datetime.c:292`.
-pub fn boot_(_m: *const module) -> i32 { 0 }                            // c:292-295
+pub fn boot_(_m: *const module) -> i32 {                                     // c:292
+    // C body c:294-295 — `return 0`. Faithful empty-body port; the
+    //                    strftime builtin + EPOCHREALTIME param register
+    //                    via the bn_list/pd_list feature dispatch.
+    0
+}
 
 /// Port of `cleanup_()` from `Src/Modules/datetime.c:299`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
@@ -301,7 +309,12 @@ pub fn cleanup_(m: *const module) -> i32 {                               // c:29
 }
 
 /// Port of `finish_()` from `Src/Modules/datetime.c:306`.
-pub fn finish_(_m: *const module) -> i32 { 0 }                          // c:306-309
+pub fn finish_(_m: *const module) -> i32 {                                   // c:306
+    // C body c:308-309 — `return 0`. Faithful empty-body port; the
+    //                    strftime builtin + EPOCHREALTIME unregister
+    //                    via cleanup_'s setfeatureenables(...).
+    0
+}
 
 // `featuresarray` — Src/module.c:3275.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {

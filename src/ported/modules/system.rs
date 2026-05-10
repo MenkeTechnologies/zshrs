@@ -989,7 +989,10 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 /// Port of `setup_()` from `Src/Modules/system.c:920`.
-pub fn setup_(_m: *const module) -> i32 { 0 }                           // c:920-923
+pub fn setup_(_m: *const module) -> i32 {                                    // c:920
+    // C body c:922-923 — `return 0`. Faithful empty-body port.
+    0
+}
 
 /// Port of `features_()` from `Src/Modules/system.c:927`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -1005,7 +1008,12 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 }
 
 /// Port of `boot_()` from `Src/Modules/system.c:942`.
-pub fn boot_(_m: *const module) -> i32 { 0 }                            // c:942-945
+pub fn boot_(_m: *const module) -> i32 {                                     // c:942
+    // C body c:944-945 — `return 0`. Faithful empty-body port; the
+    //                    syserror/sysread/syswrite/zsystem builtins
+    //                    register via the bn_list feature dispatch.
+    0
+}
 
 /// Port of `cleanup_()` from `Src/Modules/system.c:950`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
@@ -1014,7 +1022,11 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_()` from `Src/Modules/system.c:957`.
-pub fn finish_(_m: *const module) -> i32 { 0 }                          // c:957-960
+pub fn finish_(_m: *const module) -> i32 {                                   // c:957
+    // C body c:959-960 — `return 0`. Faithful empty-body port; the
+    //                    builtins unregister via cleanup_'s setfeatureenables.
+    0
+}
 
 // `featuresarray` — Src/module.c:3275.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {

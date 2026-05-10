@@ -428,7 +428,10 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 /// Port of `setup_()` from `Src/Modules/pcre.c:542`.
-pub fn setup_(_m: *const module) -> i32 { 0 }
+pub fn setup_(_m: *const module) -> i32 {                                    // c:542
+    // C body c:544-545 — `return 0`. Faithful empty-body port.
+    0
+}
 
 /// Port of `features_()` from `Src/Modules/pcre.c:549`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
@@ -442,7 +445,12 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 }
 
 /// Port of `boot_()` from `Src/Modules/pcre.c:564`.
-pub fn boot_(_m: *const module) -> i32 { 0 }
+pub fn boot_(_m: *const module) -> i32 {                                     // c:564
+    // C body c:566-567 — `return 0`. Faithful empty-body port; the
+    //                    pcre_compile/pcre_match/pcre_study builtins
+    //                    register via the bn_list dispatch.
+    0
+}
 
 /// Port of `cleanup_()` from `Src/Modules/pcre.c:571`.
 pub fn cleanup_(m: *const module) -> i32 {
@@ -450,7 +458,11 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_()` from `Src/Modules/pcre.c:578`.
-pub fn finish_(_m: *const module) -> i32 { 0 }
+pub fn finish_(_m: *const module) -> i32 {                                   // c:578
+    // C body c:580-581 — `return 0`. Faithful empty-body port; the
+    //                    builtins unregister via cleanup_'s setfeatureenables.
+    0
+}
 
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:pcre_compile".to_string(), "b:pcre_match".to_string(),
