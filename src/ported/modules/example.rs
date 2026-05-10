@@ -174,7 +174,7 @@ pub fn cond_i_ex(a: &[String], _id: i32) -> i32 {                            // 
 /// Port of `math_sum()` from `Src/Modules/example.c:104`.
 pub fn math_sum(_name: &str, argc: i32, argv: &[Mnumber], _id: i32) -> Mnumber { // c:104
     // c:106 — `mnumber ret;`
-    let mut ret = Mnumber::default();
+    let mut ret = Mnumber { l: 0, d: 0.0, type_: MN_INTEGER };
     // c:107 — `int f = 0;`
     let mut f: i32 = 0;
     // c:109 — `ret.u.l = 0;`
@@ -506,12 +506,12 @@ mod tests {
     /// promotes to float once a float arg appears — c:111/116/126.
     #[test]
     fn math_sum_int_then_float_promotion() {
-        let ints = [Mnumber::integer(1), Mnumber::integer(2), Mnumber::integer(3)];
+        let ints = [Mnumber { l: 1, d: 0.0, type_: MN_INTEGER }, Mnumber { l: 2, d: 0.0, type_: MN_INTEGER }, Mnumber { l: 3, d: 0.0, type_: MN_INTEGER }];
         let r = math_sum("sum", 3, &ints, 0);
         assert_eq!(r.type_, MN_INTEGER);
         assert_eq!(r.l, 6);
 
-        let mixed = [Mnumber::integer(1), Mnumber::float(2.5), Mnumber::integer(3)];
+        let mixed = [Mnumber { l: 1, d: 0.0, type_: MN_INTEGER }, Mnumber { l: 0, d: 2.5, type_: MN_FLOAT }, Mnumber { l: 3, d: 0.0, type_: MN_INTEGER }];
         let r = math_sum("sum", 3, &mixed, 0);
         assert_eq!(r.type_, MN_FLOAT);
         assert!((r.d - 6.5).abs() < 1e-9);

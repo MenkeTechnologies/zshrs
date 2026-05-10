@@ -286,7 +286,7 @@ pub fn math_string(_name: &str, arg: &str, id: i32) -> Mnumber {         // c:43
                 type_: MN_FLOAT,
             }
         }
-        _ => Mnumber::default(),                                         // zero_mnumber
+        _ => Mnumber { l: 0, d: 0.0, type_: MN_INTEGER },                                         // zero_mnumber
     }
 }
 
@@ -296,39 +296,39 @@ mod tests {
 
     #[test]
     fn test_math_func_acos() {
-        let argv = [Mnumber::float(1.0)];
+        let argv = [Mnumber { l: 0, d: 1.0, type_: MN_FLOAT }];
         let r = math_func("acos", 1, &argv, MF_ACOS);
-        assert!(r.is_float());
+        assert!((r.type_ == MN_FLOAT));
         assert!((r.d - 0.0).abs() < 1e-9);
     }
 
     #[test]
     fn test_math_func_atan_two_args() {
-        let argv = [Mnumber::float(1.0), Mnumber::float(1.0)];
+        let argv = [Mnumber { l: 0, d: 1.0, type_: MN_FLOAT }, Mnumber { l: 0, d: 1.0, type_: MN_FLOAT }];
         let r = math_func("atan", 2, &argv, MF_ATAN);
-        assert!(r.is_float());
+        assert!((r.type_ == MN_FLOAT));
         assert!((r.d - std::f64::consts::FRAC_PI_4).abs() < 1e-9);
     }
 
     #[test]
     fn test_math_func_abs_int_preserves_type() {
-        let argv = [Mnumber::integer(-7)];
+        let argv = [Mnumber { l: -7, d: 0.0, type_: MN_INTEGER }];
         let r = math_func("abs", 1, &argv, MF_ABS | tflag(TF_NOCONV | TF_NOASS));
-        assert!(r.is_integer());
+        assert!((r.type_ == MN_INTEGER));
         assert_eq!(r.l, 7);
     }
 
     #[test]
     fn test_math_func_int_truncates() {
-        let argv = [Mnumber::float(3.7)];
+        let argv = [Mnumber { l: 0, d: 3.7, type_: MN_FLOAT }];
         let r = math_func("int", 1, &argv, MF_INT | tflag(TF_NOASS));
-        assert!(r.is_integer());
+        assert!((r.type_ == MN_INTEGER));
         assert_eq!(r.l, 3);
     }
 
     #[test]
     fn test_math_func_isnan() {
-        let argv = [Mnumber::float(f64::NAN)];
+        let argv = [Mnumber { l: 0, d: f64::NAN, type_: MN_FLOAT }];
         let r = math_func("isnan", 1, &argv, MF_ISNAN | tflag(TF_NOASS));
         assert_eq!(r.l, 1);
     }
@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn test_math_string_rand48_in_range() {
         let r = math_string("rand48", "", MS_RAND48);
-        assert!(r.is_float());
+        assert!((r.type_ == MN_FLOAT));
         assert!((0.0..1.0).contains(&r.d));
     }
 }
@@ -375,14 +375,14 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 
 /// Port of `features_()` from `Src/Modules/mathfunc.c:555`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:555
     *features = featuresarray(m, module_features());                    // c:557
     0                                                                    // c:559
 }
 
 /// Port of `enables_()` from `Src/Modules/mathfunc.c:563`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:563
     handlefeatures(m, module_features(), enables)                       // c:566
 }
 
@@ -396,7 +396,7 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 
 /// Port of `cleanup_()` from `Src/Modules/mathfunc.c:577`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {
+pub fn cleanup_(m: *const module) -> i32 {                                   // c:577
     setfeatureenables(m, module_features(), None)                       // c:580
 }
 

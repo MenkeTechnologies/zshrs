@@ -45,32 +45,6 @@ use crate::parse::{Redirect, ShellCommand};
 #[allow(unused_imports)]
 use crate::extensions::zwc::ZwcFile;
 
-// ---------------------------------------------------------------------------
-// BINF_* flag bits.
-// Direct port of `Src/zsh.h:1457-1486`. Same numeric values so any
-// recorded data file or test fixture comparing flag bitmaps stays
-// portable across the C and Rust shells.
-// ---------------------------------------------------------------------------
-
-pub const BINF_PLUSOPTS: u32 = 1 << 1; // +xyz legal
-pub const BINF_PRINTOPTS: u32 = 1 << 2;
-pub const BINF_ADDED: u32 = 1 << 3; // is in the builtins hash table
-pub const BINF_MAGICEQUALS: u32 = 1 << 4; // needs auto MAGIC_EQUAL_SUBST
-pub const BINF_PREFIX: u32 = 1 << 5;
-pub const BINF_DASH: u32 = 1 << 6;
-pub const BINF_BUILTIN: u32 = 1 << 7;
-pub const BINF_COMMAND: u32 = 1 << 8;
-pub const BINF_EXEC: u32 = 1 << 9;
-pub const BINF_NOGLOB: u32 = 1 << 10;
-pub const BINF_PSPECIAL: u32 = 1 << 11;
-pub const BINF_SKIPINVALID: u32 = 1 << 12; // treat invalid option as argument
-pub const BINF_KEEPNUM: u32 = 1 << 13; // [-+]NUM can be an option
-pub const BINF_SKIPDASH: u32 = 1 << 14; // treat `-` as argument
-pub const BINF_DASHDASHVALID: u32 = 1 << 15; // honour -- even if SKIPINVALID
-pub const BINF_CLEARENV: u32 = 1 << 16; // exec into cleared env
-pub const BINF_AUTOALL: u32 = 1 << 17; // autoload every feature at once
-pub const BINF_HANDLES_OPTS: u32 = 1 << 18;
-pub const BINF_ASSIGN: u32 = 1 << 19;
 
 // ---------------------------------------------------------------------------
 // BIN_* dispatch IDs.
@@ -91,83 +65,50 @@ pub use crate::ported::hashtable_h::{
     BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION,
     BIN_UNSET, BIN_EXPORT, BIN_SETOPT, BIN_UNSETOPT,
 };
+use crate::zsh_h::{builtin, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND, BINF_DASH, BINF_DASHDASHVALID, BINF_EXEC, BINF_HANDLES_OPTS, BINF_MAGICEQUALS, BINF_NOGLOB, BINF_PLUSOPTS, BINF_PREFIX, BINF_PRINTOPTS, BINF_PSPECIAL, BINF_SKIPDASH, BINF_SKIPINVALID, hashnode, NULLBINCMD};
 
+// Local builders that construct C-shape `builtin` rows for the
+// static registration table below. They mirror the
+// `BUILTIN(...)` / `BIN_PREFIX(...)` macros in `Src/zsh.h:1450-1452`,
+// taking `u32` flag bitsets (BINF_*) and a `&str` handler-name
+// column used only for documentation/wiring lookup — handler
+// function pointers themselves are wired up later in
+// `Executor::register_builtins` (`src/ported/exec.rs`).
+#[allow(non_snake_case)]
+fn BUILTIN(
+    name: &str,
+    flags: u32,
+    _handler_name: &'static str,
+    min: i32,
+    max: i32,
+    funcid: i32,
+    optstr: Option<&str>,
+    defopts: Option<&str>,
+) -> builtin {
+    builtin {
+        node: hashnode {
+            next: None,
+            nam: name.to_string(),
+            flags: flags as i32,
+        },
+        handlerfunc: NULLBINCMD,
+        minargs: min,
+        maxargs: max,
+        funcid,
+        optstr: optstr.map(|s| s.to_string()),
+        defopts: defopts.map(|s| s.to_string()),
+    }
+}
+
+#[allow(non_snake_case)]
+fn BIN_PREFIX(name: &str, flags: u32) -> builtin {
+    BUILTIN(name, flags | BINF_PREFIX, "(prefix)", 0, 0, 0, None, None)
+}
 // ---------------------------------------------------------------------------
 // Builtin descriptor.
 // Port of `struct builtin` from `Src/zsh.h` (the one expanded by the
 // `BUILTIN` / `BIN_PREFIX` macros at line 1452 of zsh.h).
 // ---------------------------------------------------------------------------
-
-/// Static metadata for a single in-shell builtin command.
-///
-/// Mirrors the C `struct builtin` row by row — name, flag bitmap,
-/// arg bounds, dispatch funcid, and the option strings the C
-/// handler's `OPT_ISSET()` / `OPT_ARG()` macros consult.
-///
-/// `handler_name` is a free-form string identifying the canonical
-/// Rust port of the C handler (e.g. `"builtins::rlimits::bin_limit"`
-/// or `"exec::bin_print"`). The actual call dispatch
-/// today still lives in `Executor::register_builtins` in `exec.rs`;
-/// this field exists so that table walkers and the port-report
-/// generator can credit the right Rust file when reporting which
-/// `bin_*` symbols from `Src/builtin.c` are ported.
-#[derive(Debug, Clone, Copy)]
-pub struct Builtin {
-    pub name: &'static str,
-    pub flags: u32,
-    pub handler_name: &'static str,
-    pub minargs: i32,
-    /// `-1` means unbounded — C uses the same sentinel.
-    pub maxargs: i32,
-    pub funcid: i32,
-    /// Standard option string (e.g. `"Lgmrs"` for `alias`).
-    pub optstr: Option<&'static str>,
-    /// Default-set option string used by some builtins (e.g. the
-    /// `"u"` for `autoload`).
-    pub defopts: Option<&'static str>,
-}
-
-impl Builtin {
-    /// Helper for the `BIN_PREFIX(name, flags)` rows at the top of
-    /// `Src/builtin.c:42-46` — a prefix builtin has no handler of
-    /// its own, just modifies how the next word is parsed.
-    pub const fn prefix(name: &'static str, flags: u32) -> Self {
-        Self {
-            name,
-            flags: flags | BINF_PREFIX,
-            handler_name: "(prefix)",
-            minargs: 0,
-            maxargs: -1,
-            funcid: 0,
-            optstr: None,
-            defopts: None,
-        }
-    }
-
-    /// Helper for the BUILTIN(...) rows.
-    pub const fn entry(
-        name: &'static str,
-        flags: u32,
-        handler_name: &'static str,
-        minargs: i32,
-        maxargs: i32,
-        funcid: i32,
-        optstr: Option<&'static str>,
-        defopts: Option<&'static str>,
-    ) -> Self {
-        Self {
-            name,
-            flags,
-            handler_name,
-            minargs,
-            maxargs,
-            funcid,
-            optstr,
-            defopts,
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // The master registration table.
 //
@@ -178,121 +119,116 @@ impl Builtin {
 // `Executor::register_builtins` (`src/ported/exec.rs`) wires up.
 // ---------------------------------------------------------------------------
 
-pub static BUILTINS: &[Builtin] = &[
-    Builtin::prefix("-", BINF_DASH),
-    Builtin::prefix("builtin", BINF_BUILTIN),
-    Builtin::prefix("command", BINF_COMMAND),
-    Builtin::prefix("exec", BINF_EXEC),
-    Builtin::prefix("noglob", BINF_NOGLOB),
-    Builtin::entry("[", BINF_HANDLES_OPTS, "exec::bin_test", 0, -1, BIN_BRACKET, None, None),
-    Builtin::entry(".", BINF_PSPECIAL, "exec::builtin_dot", 1, -1, 0, None, None),
-    Builtin::entry(":", BINF_PSPECIAL, "exec::builtin_true", 0, -1, 0, None, None),
-    Builtin::entry("alias", BINF_MAGICEQUALS | BINF_PLUSOPTS, "exec::bin_alias", 0, -1, 0, Some("Lgmrs"), None),
-    Builtin::entry("autoload", BINF_PLUSOPTS, "exec::builtin_autoload", 0, -1, 0, Some("dmktrRTUwWXz"), Some("u")),
-    Builtin::entry("bg", 0, "exec::bin_fg", 0, -1, BIN_BG, None, None),
-    Builtin::entry("break", BINF_PSPECIAL, "exec::bin_break", 0, 1, BIN_BREAK, None, None),
-    Builtin::entry("bye", 0, "exec::bin_break", 0, 1, BIN_EXIT, None, None),
-    Builtin::entry("cd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, "exec::builtin_cd", 0, 2, BIN_CD, Some("qsPL"), None),
-    Builtin::entry("chdir", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, "exec::builtin_cd", 0, 2, BIN_CD, Some("qsPL"), None),
-    Builtin::entry("continue", BINF_PSPECIAL, "exec::bin_break", 0, 1, BIN_CONTINUE, None, None),
-    Builtin::entry("declare", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%afghi:%klmnp:%rtuxz"), None),
-    Builtin::entry("dirs", 0, "exec::bin_dirs", 0, -1, 0, Some("clpv"), None),
-    Builtin::entry("disable", 0, "exec::bin_enable", 0, -1, BIN_DISABLE, Some("afmprs"), None),
-    Builtin::entry("disown", 0, "exec::bin_fg", 0, -1, BIN_DISOWN, None, None),
-    Builtin::entry("echo", BINF_SKIPINVALID, "exec::bin_print", 0, -1, BIN_ECHO, Some("neE"), Some("-")),
-    Builtin::entry("emulate", 0, "exec::bin_emulate", 0, -1, 0, Some("lLR"), None),
-    Builtin::entry("enable", 0, "exec::bin_enable", 0, -1, BIN_ENABLE, Some("afmprs"), None),
-    Builtin::entry("eval", BINF_PSPECIAL, "exec::bin_eval", 0, -1, BIN_EVAL, None, None),
-    Builtin::entry("exit", BINF_PSPECIAL, "exec::bin_break", 0, 1, BIN_EXIT, None, None),
-    Builtin::entry("export", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, BIN_EXPORT, Some("E:%F:%HL:%R:%TUZ:%afhi:%lp:%rtu"), Some("xg")),
-    Builtin::entry("false", 0, "exec::builtin_false", 0, -1, 0, None, None),
+pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::new(|| vec![
+    BIN_PREFIX("-", BINF_DASH),
+    BIN_PREFIX("builtin", BINF_BUILTIN),
+    BIN_PREFIX("command", BINF_COMMAND),
+    BIN_PREFIX("exec", BINF_EXEC),
+    BIN_PREFIX("noglob", BINF_NOGLOB),
+    BUILTIN("[", BINF_HANDLES_OPTS, "exec::bin_test", 0, -1, BIN_BRACKET, None, None),
+    BUILTIN(".", BINF_PSPECIAL, "exec::builtin_dot", 1, -1, 0, None, None),
+    BUILTIN(":", BINF_PSPECIAL, "exec::builtin_true", 0, -1, 0, None, None),
+    BUILTIN("alias", BINF_MAGICEQUALS | BINF_PLUSOPTS, "exec::bin_alias", 0, -1, 0, Some("Lgmrs"), None),
+    BUILTIN("autoload", BINF_PLUSOPTS, "exec::builtin_autoload", 0, -1, 0, Some("dmktrRTUwWXz"), Some("u")),
+    BUILTIN("bg", 0, "exec::bin_fg", 0, -1, BIN_BG, None, None),
+    BUILTIN("break", BINF_PSPECIAL, "exec::bin_break", 0, 1, BIN_BREAK, None, None),
+    BUILTIN("bye", 0, "exec::bin_break", 0, 1, BIN_EXIT, None, None),
+    BUILTIN("cd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, "exec::builtin_cd", 0, 2, BIN_CD, Some("qsPL"), None),
+    BUILTIN("chdir", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, "exec::builtin_cd", 0, 2, BIN_CD, Some("qsPL"), None),
+    BUILTIN("continue", BINF_PSPECIAL, "exec::bin_break", 0, 1, BIN_CONTINUE, None, None),
+    BUILTIN("declare", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%afghi:%klmnp:%rtuxz"), None),
+    BUILTIN("dirs", 0, "exec::bin_dirs", 0, -1, 0, Some("clpv"), None),
+    BUILTIN("disable", 0, "exec::bin_enable", 0, -1, BIN_DISABLE, Some("afmprs"), None),
+    BUILTIN("disown", 0, "exec::bin_fg", 0, -1, BIN_DISOWN, None, None),
+    BUILTIN("echo", BINF_SKIPINVALID, "exec::bin_print", 0, -1, BIN_ECHO, Some("neE"), Some("-")),
+    BUILTIN("emulate", 0, "exec::bin_emulate", 0, -1, 0, Some("lLR"), None),
+    BUILTIN("enable", 0, "exec::bin_enable", 0, -1, BIN_ENABLE, Some("afmprs"), None),
+    BUILTIN("eval", BINF_PSPECIAL, "exec::bin_eval", 0, -1, BIN_EVAL, None, None),
+    BUILTIN("exit", BINF_PSPECIAL, "exec::bin_break", 0, 1, BIN_EXIT, None, None),
+    BUILTIN("export", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, BIN_EXPORT, Some("E:%F:%HL:%R:%TUZ:%afhi:%lp:%rtu"), Some("xg")),
+    BUILTIN("false", 0, "exec::builtin_false", 0, -1, 0, None, None),
     // C source (Src/builtin.c:69-73): the argument to -e used to be
     // optional; making it required is more consistent.
-    Builtin::entry("fc", 0, "exec::bin_fc", 0, -1, BIN_FC, Some("aAdDe:EfiIlLmnpPrRst:W"), None),
-    Builtin::entry("fg", 0, "exec::bin_fg", 0, -1, BIN_FG, None, None),
-    Builtin::entry("float", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("E:%F:%HL:%R:%Z:%ghlp:%rtux"), Some("E")),
-    Builtin::entry("functions", BINF_PLUSOPTS, "exec::bin_functions", 0, -1, 0, Some("ckmMstTuUWx:z"), None),
-    Builtin::entry("getln", 0, "exec::bin_read", 0, -1, 0, Some("ecnAlE"), Some("zr")),
-    Builtin::entry("getopts", 0, "exec::bin_getopts", 2, -1, 0, None, None),
-    Builtin::entry("hash", BINF_MAGICEQUALS, "exec::bin_hash", 0, -1, 0, Some("Ldfmrv"), None),
+    BUILTIN("fc", 0, "exec::bin_fc", 0, -1, BIN_FC, Some("aAdDe:EfiIlLmnpPrRst:W"), None),
+    BUILTIN("fg", 0, "exec::bin_fg", 0, -1, BIN_FG, None, None),
+    BUILTIN("float", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("E:%F:%HL:%R:%Z:%ghlp:%rtux"), Some("E")),
+    BUILTIN("functions", BINF_PLUSOPTS, "exec::bin_functions", 0, -1, 0, Some("ckmMstTuUWx:z"), None),
+    BUILTIN("getln", 0, "exec::bin_read", 0, -1, 0, Some("ecnAlE"), Some("zr")),
+    BUILTIN("getopts", 0, "exec::bin_getopts", 2, -1, 0, None, None),
+    BUILTIN("hash", BINF_MAGICEQUALS, "exec::bin_hash", 0, -1, 0, Some("Ldfmrv"), None),
     // Src/builtin.c — `#ifdef ZSH_HASH_DEBUG`
     //   BUILTIN("hashinfo", 0, bin_hashinfo, 0, 0, 0, NULL, NULL)
-    Builtin::entry("hashinfo", 0, "exec::bin_hashinfo", 0, 0, 0, None, None),
-    Builtin::entry("history", 0, "exec::bin_fc", 0, -1, BIN_FC, Some("adDEfiLmnpPrt:"), Some("l")),
-    Builtin::entry("integer", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("HL:%R:%Z:%ghi:%lp:%rtux"), Some("i")),
-    Builtin::entry("jobs", 0, "exec::bin_fg", 0, -1, BIN_JOBS, Some("dlpZrs"), None),
-    Builtin::entry("kill", BINF_HANDLES_OPTS, "exec::bin_kill", 0, -1, 0, None, None),
-    Builtin::entry("let", 0, "exec::bin_let", 1, -1, 0, None, None),
-    Builtin::entry("local", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%ahi:%lnp:%rtux"), None),
-    Builtin::entry("logout", 0, "exec::bin_break", 0, 1, BIN_LOGOUT, None, None),
+    BUILTIN("hashinfo", 0, "exec::bin_hashinfo", 0, 0, 0, None, None),
+    BUILTIN("history", 0, "exec::bin_fc", 0, -1, BIN_FC, Some("adDEfiLmnpPrt:"), Some("l")),
+    BUILTIN("integer", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("HL:%R:%Z:%ghi:%lp:%rtux"), Some("i")),
+    BUILTIN("jobs", 0, "exec::bin_fg", 0, -1, BIN_JOBS, Some("dlpZrs"), None),
+    BUILTIN("kill", BINF_HANDLES_OPTS, "exec::bin_kill", 0, -1, 0, None, None),
+    BUILTIN("let", 0, "exec::bin_let", 1, -1, 0, None, None),
+    BUILTIN("local", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%ahi:%lnp:%rtux"), None),
+    BUILTIN("logout", 0, "exec::bin_break", 0, 1, BIN_LOGOUT, None, None),
     // Src/builtin.c — `#if defined(ZSH_MEM) & defined(ZSH_MEM_DEBUG)`
     //   BUILTIN("mem", 0, bin_mem, 0, 0, 0, "v", NULL)
-    Builtin::entry("mem", 0, "exec::bin_mem", 0, 0, 0, Some("v"), None),
-    Builtin::entry("popd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, "exec::builtin_cd", 0, 1, BIN_POPD, Some("q"), None),
+    BUILTIN("mem", 0, "exec::bin_mem", 0, 0, 0, Some("v"), None),
+    BUILTIN("popd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, "exec::builtin_cd", 0, 1, BIN_POPD, Some("q"), None),
     // Src/builtin.c — `#if defined(ZSH_PAT_DEBUG)`
     //   BUILTIN("patdebug", 0, bin_patdebug, 1, -1, 0, "p", NULL)
-    Builtin::entry("patdebug", 0, "exec::bin_patdebug", 1, -1, 0, Some("p"), None),
-    Builtin::entry("print", BINF_PRINTOPTS, "exec::bin_print", 0, -1, BIN_PRINT, Some("abcC:Df:ilmnNoOpPrRsSu:v:x:X:z-"), None),
-    Builtin::entry("printf", BINF_SKIPINVALID | BINF_SKIPDASH, "exec::bin_print", 1, -1, BIN_PRINTF, Some("v:"), None),
-    Builtin::entry("pushd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, "exec::builtin_cd", 0, 2, BIN_PUSHD, Some("qsPL"), None),
-    Builtin::entry("pushln", 0, "exec::bin_print", 0, -1, BIN_PRINT, None, Some("-nz")),
-    Builtin::entry("pwd", 0, "exec::bin_pwd", 0, 0, 0, Some("rLP"), None),
-    Builtin::entry("r", 0, "exec::bin_fc", 0, -1, BIN_R, Some("IlLnr"), None),
-    Builtin::entry("read", 0, "exec::bin_read", 0, -1, 0, Some("cd:ek:%lnpqrst:%zu:AE"), None),
-    Builtin::entry("readonly", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, BIN_READONLY, Some("AE:%F:%HL:%R:%TUZ:%afghi:%lptux"), Some("r")),
-    Builtin::entry("rehash", 0, "exec::bin_hash", 0, 0, 0, Some("df"), Some("r")),
-    Builtin::entry("return", BINF_PSPECIAL, "exec::bin_break", 0, 1, BIN_RETURN, None, None),
-    Builtin::entry("set", BINF_PSPECIAL | BINF_HANDLES_OPTS, "exec::bin_set", 0, -1, 0, None, None),
-    Builtin::entry("setopt", 0, "exec::bin_setopt", 0, -1, BIN_SETOPT, None, None),
-    Builtin::entry("shift", BINF_PSPECIAL, "exec::bin_shift", 0, -1, 0, Some("p"), None),
-    Builtin::entry("source", BINF_PSPECIAL, "exec::builtin_dot", 1, -1, 0, None, None),
-    Builtin::entry("suspend", 0, "exec::bin_suspend", 0, 0, 0, Some("f"), None),
-    Builtin::entry("test", BINF_HANDLES_OPTS, "exec::bin_test", 0, -1, BIN_TEST, None, None),
-    Builtin::entry("ttyctl", 0, "exec::bin_ttyctl", 0, 0, 0, Some("fu"), None),
-    Builtin::entry("times", BINF_PSPECIAL, "exec::bin_times", 0, 0, 0, None, None),
-    Builtin::entry("trap", BINF_PSPECIAL | BINF_HANDLES_OPTS, "exec::bin_trap", 0, -1, 0, None, None),
-    Builtin::entry("true", 0, "exec::builtin_true", 0, -1, 0, None, None),
-    Builtin::entry("type", 0, "exec::bin_whence", 0, -1, 0, Some("ampfsSw"), Some("v")),
-    Builtin::entry("typeset", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%afghi:%klp:%rtuxmnz"), None),
-    Builtin::entry("umask", 0, "exec::bin_umask", 0, 1, 0, Some("S"), None),
-    Builtin::entry("unalias", 0, "exec::bin_unhash", 0, -1, BIN_UNALIAS, Some("ams"), None),
-    Builtin::entry("unfunction", 0, "exec::bin_unhash", 1, -1, BIN_UNFUNCTION, Some("m"), Some("f")),
-    Builtin::entry("unhash", 0, "exec::bin_unhash", 1, -1, BIN_UNHASH, Some("adfms"), None),
-    Builtin::entry("unset", BINF_PSPECIAL, "exec::bin_unset", 1, -1, BIN_UNSET, Some("fmvn"), None),
-    Builtin::entry("unsetopt", 0, "exec::bin_setopt", 0, -1, BIN_UNSETOPT, None, None),
-    Builtin::entry("wait", 0, "exec::bin_fg", 0, -1, BIN_WAIT, None, None),
-    Builtin::entry("whence", 0, "exec::bin_whence", 0, -1, 0, Some("acmpvfsSwx:"), None),
-    Builtin::entry("where", 0, "exec::bin_whence", 0, -1, 0, Some("pmsSwx:"), Some("ca")),
-    Builtin::entry("which", 0, "exec::bin_whence", 0, -1, 0, Some("ampsSwx:"), Some("c")),
-    Builtin::entry("zmodload", 0, "exec::bin_zmodload", 0, -1, 0, Some("AFRILP:abcfdilmpsue"), None),
-    Builtin::entry("zcompile", 0, "exec::bin_zcompile", 0, -1, 0, Some("tUMRcmzka"), None),
-];
-
-// ---------------------------------------------------------------------------
-// Builtin hash table — port of `createbuiltintable()` and friends from
-// `Src/builtin.c:149-211`.
-// ---------------------------------------------------------------------------
-
+    BUILTIN("patdebug", 0, "exec::bin_patdebug", 1, -1, 0, Some("p"), None),
+    BUILTIN("print", BINF_PRINTOPTS, "exec::bin_print", 0, -1, BIN_PRINT, Some("abcC:Df:ilmnNoOpPrRsSu:v:x:X:z-"), None),
+    BUILTIN("printf", BINF_SKIPINVALID | BINF_SKIPDASH, "exec::bin_print", 1, -1, BIN_PRINTF, Some("v:"), None),
+    BUILTIN("pushd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, "exec::builtin_cd", 0, 2, BIN_PUSHD, Some("qsPL"), None),
+    BUILTIN("pushln", 0, "exec::bin_print", 0, -1, BIN_PRINT, None, Some("-nz")),
+    BUILTIN("pwd", 0, "exec::bin_pwd", 0, 0, 0, Some("rLP"), None),
+    BUILTIN("r", 0, "exec::bin_fc", 0, -1, BIN_R, Some("IlLnr"), None),
+    BUILTIN("read", 0, "exec::bin_read", 0, -1, 0, Some("cd:ek:%lnpqrst:%zu:AE"), None),
+    BUILTIN("readonly", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, BIN_READONLY, Some("AE:%F:%HL:%R:%TUZ:%afghi:%lptux"), Some("r")),
+    BUILTIN("rehash", 0, "exec::bin_hash", 0, 0, 0, Some("df"), Some("r")),
+    BUILTIN("return", BINF_PSPECIAL, "exec::bin_break", 0, 1, BIN_RETURN, None, None),
+    BUILTIN("set", BINF_PSPECIAL | BINF_HANDLES_OPTS, "exec::bin_set", 0, -1, 0, None, None),
+    BUILTIN("setopt", 0, "exec::bin_setopt", 0, -1, BIN_SETOPT, None, None),
+    BUILTIN("shift", BINF_PSPECIAL, "exec::bin_shift", 0, -1, 0, Some("p"), None),
+    BUILTIN("source", BINF_PSPECIAL, "exec::builtin_dot", 1, -1, 0, None, None),
+    BUILTIN("suspend", 0, "exec::bin_suspend", 0, 0, 0, Some("f"), None),
+    BUILTIN("test", BINF_HANDLES_OPTS, "exec::bin_test", 0, -1, BIN_TEST, None, None),
+    BUILTIN("ttyctl", 0, "exec::bin_ttyctl", 0, 0, 0, Some("fu"), None),
+    BUILTIN("times", BINF_PSPECIAL, "exec::bin_times", 0, 0, 0, None, None),
+    BUILTIN("trap", BINF_PSPECIAL | BINF_HANDLES_OPTS, "exec::bin_trap", 0, -1, 0, None, None),
+    BUILTIN("true", 0, "exec::builtin_true", 0, -1, 0, None, None),
+    BUILTIN("type", 0, "exec::bin_whence", 0, -1, 0, Some("ampfsSw"), Some("v")),
+    BUILTIN("typeset", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%afghi:%klp:%rtuxmnz"), None),
+    BUILTIN("umask", 0, "exec::bin_umask", 0, 1, 0, Some("S"), None),
+    BUILTIN("unalias", 0, "exec::bin_unhash", 0, -1, BIN_UNALIAS, Some("ams"), None),
+    BUILTIN("unfunction", 0, "exec::bin_unhash", 1, -1, BIN_UNFUNCTION, Some("m"), Some("f")),
+    BUILTIN("unhash", 0, "exec::bin_unhash", 1, -1, BIN_UNHASH, Some("adfms"), None),
+    BUILTIN("unset", BINF_PSPECIAL, "exec::bin_unset", 1, -1, BIN_UNSET, Some("fmvn"), None),
+    BUILTIN("unsetopt", 0, "exec::bin_setopt", 0, -1, BIN_UNSETOPT, None, None),
+    BUILTIN("wait", 0, "exec::bin_fg", 0, -1, BIN_WAIT, None, None),
+    BUILTIN("whence", 0, "exec::bin_whence", 0, -1, 0, Some("acmpvfsSwx:"), None),
+    BUILTIN("where", 0, "exec::bin_whence", 0, -1, 0, Some("pmsSwx:"), Some("ca")),
+    BUILTIN("which", 0, "exec::bin_whence", 0, -1, 0, Some("ampsSwx:"), Some("c")),
+    BUILTIN("zmodload", 0, "exec::bin_zmodload", 0, -1, 0, Some("AFRILP:abcfdilmpsue"), None),
+    BUILTIN("zcompile", 0, "exec::bin_zcompile", 0, -1, 0, Some("tUMRcmzka"), None),
+]);
 // hash table containing builtin commands                                   // c:143
 /// Process-wide builtin lookup table. Filled lazily the first time
 /// `builtintab()` is called; mirrors the C `mod_export HashTable
 /// builtintab` exposed at `Src/builtin.c:146`.
-static BUILTINTAB: OnceLock<HashMap<&'static str, &'static Builtin>> = OnceLock::new();
+static builtintab: OnceLock<HashMap<String, &'static builtin>> = OnceLock::new();
 
 /// Construct the builtin lookup table.
 /// Port of `createbuiltintable()` from `Src/builtin.c:149`. The C
 /// version installs the hashtable function pointers (hash, addnode,
 /// printnode, etc.) and then calls `addbuiltins("zsh", builtins, ..)`.
 /// Here we just materialise the static `BUILTINS` slice into a
-/// `HashMap<&str, &Builtin>` — Rust's standard hashing replaces the
+/// `HashMap<String, &builtin>` — Rust's standard hashing replaces the
 /// C `hasher` callback and the `HashMap` itself replaces all the
 /// per-table function pointers (`addnode`/`getnode`/`removenode`/...).
 // Builtin Command Hash Table Functions                                      // c:140
-pub fn createbuiltintable() -> &'static HashMap<&'static str, &'static Builtin> { // c:150
-    BUILTINTAB.get_or_init(|| {
-        let mut m: HashMap<&'static str, &'static Builtin> = HashMap::with_capacity(BUILTINS.len());
-        for b in BUILTINS {
-            m.insert(b.name, b);
+pub fn createbuiltintable() -> &'static HashMap<String, &'static builtin> { // c:150
+    builtintab.get_or_init(|| {
+        let table: &'static Vec<builtin> = &*BUILTINS;
+        let mut m: HashMap<String, &'static builtin> = HashMap::with_capacity(table.len());
+        for b in table.iter() {
+            m.insert(b.node.nam.clone(), b);
         }
         m
     })
@@ -300,6 +236,7 @@ pub fn createbuiltintable() -> &'static HashMap<&'static str, &'static Builtin> 
 
 #[cfg(test)]
 mod tests {
+    use crate::zsh_h::BINF_PREFIX;
     use super::*;
 
     #[test]
@@ -330,7 +267,7 @@ mod tests {
     fn prefix_entries_have_prefix_flag() {
         for name in ["-", "builtin", "command", "exec", "noglob"] {
             let b = createbuiltintable().get(name).copied().unwrap();
-            assert!(b.flags & BINF_PREFIX != 0, "{name} missing BINF_PREFIX");
+            assert!(b.node.flags as u32 & BINF_PREFIX != 0, "{name} missing BINF_PREFIX");
         }
     }
 
@@ -345,65 +282,6 @@ mod tests {
         assert_eq!(createbuiltintable().get("disown").copied().unwrap().funcid, BIN_DISOWN);
     }
 }
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart lives in src/zsh/Src/builtin.c. Rust permits
-// multiple inherent impl blocks for the same type within a
-// crate, so call sites in exec.rs and elsewhere are unchanged.
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-// (impl crate::ported::exec::ShellExecutor block deleted — was lines 368..10369; per user feedback the bin_* methods were fake. Recorder hooks preserved at file bottom.)
-
-// END moved-from-exec-rs
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Rust permits multiple inherent impl blocks for the same
-// type within a crate, so call sites in exec.rs are unchanged.
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-// (impl crate::ported::exec::ShellExecutor block deleted — was lines 10380..11252; per user feedback the bin_* methods were fake. Recorder hooks preserved at file bottom.)
-
-// END moved-from-exec-rs
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Phase: autoload
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-// (impl crate::ported::exec::ShellExecutor block deleted — was lines 11262..11479; per user feedback the bin_* methods were fake. Recorder hooks preserved at file bottom.)
-
-// END moved-from-exec-rs
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Phase: builtin-print
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-// (impl crate::ported::exec::ShellExecutor block deleted — was lines 11489..12183; per user feedback the bin_* methods were fake. Recorder hooks preserved at file bottom.)
-
-// END moved-from-exec-rs
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Phase: drift
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-// (impl crate::ported::exec::ShellExecutor block deleted — was lines 12193..12334; per user feedback the bin_* methods were fake. Recorder hooks preserved at file bottom.)
-
-// END moved-from-exec-rs
-
-
 // ===========================================================
 // ksh_autoload_body moved from src/ported/exec.rs.
 // Mirrors the ksh-style autoload helper in Src/builtin.c
@@ -735,7 +613,7 @@ pub fn printdirstack() {                                                     // 
 
 /// Port of `fixdir()` from Src/builtin.c:1297 — canonicalise a
 /// path (no symlink follow), removing `.` / `..`. Shim.
-pub fn fixdir() -> String { String::new() }
+pub fn fixdir() -> String { String::new() }                                  // c:1297
 
 /// Port of `printif()` from Src/builtin.c:1411.
 /// C: `mod_export void printif(char *str, int c)` — `printf(" -%c ", c)`
@@ -2195,7 +2073,7 @@ pub fn bin_let(_name: &str, argv: &[String],                                 // 
                _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::math::{matheval, Mnumber, MN_INTEGER};
     // c:7472 — `mnumber val = zero_mnumber;`
-    let mut val: Mnumber = Mnumber::default();                               // c:7472
+    let mut val: Mnumber = Mnumber { l: 0, d: 0.0, type_: MN_INTEGER };                               // c:7472
     let mut had_error = false;
     // c:7474-7475 — `while (*argv) val = matheval(*argv++);`
     for expr in argv {                                                       // c:7474
@@ -3313,8 +3191,8 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
                         }
                         // c:4063-4066 — builtins scan.
                         for b in BUILTINS.iter() {
-                            if crate::ported::pattern::pattry(&prog, b.name) {
-                                println!("{}", b.name);
+                            if crate::ported::pattern::pattry(&prog, &b.node.nam) {
+                                println!("{}", b.node.nam);
                                 informed += 1;                               // c:4064
                             }
                         }
@@ -3416,7 +3294,7 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
                 }
             }
             // c:4160-4165 — builtin command check.
-            if BUILTINS.iter().any(|b| b.name == *arg) {                     // c:4160
+            if BUILTINS.iter().any(|b| b.node.nam == *arg) {                     // c:4160
                 println!("{}: builtin", arg);                                // c:4162
                 informed = 1;                                                // c:4163
                 if !all { continue; }                                        // c:4164
@@ -3462,7 +3340,7 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
         }
         // c:4200-4203 — `-p` BIN_COMMAND special case: builtin first.
         if func == BIN_COMMAND && OPT_ISSET(ops, b'p') {                     // c:4200
-            if BUILTINS.iter().any(|b| b.name == *arg) {                     // c:4201
+            if BUILTINS.iter().any(|b| b.node.nam == *arg) {                     // c:4201
                 println!("{}: builtin", arg);                                // c:4202
                 informed = 1;
                 continue;

@@ -5595,7 +5595,7 @@ fn arithsubst(expr: &str, prefix: &str, rest: &str, state: &mut SubstState) -> S
     // params into env vars). No ShellExecutor reach.
     let v = match crate::math::matheval(&expanded) {                         // c:4490 matheval
         Ok(n) => n,
-        Err(_) => crate::math::Mnumber::unset(),
+        Err(_) => crate::math::Mnumber { l: 0, d: 0.0, type_: crate::ported::zsh_h::MN_UNSET },
     };
 
     // C ladder lines 4492-4499: float-with-no-radix → convfloat,
@@ -5606,20 +5606,20 @@ fn arithsubst(expr: &str, prefix: &str, rest: &str, state: &mut SubstState) -> S
         .get("OUTPUT_RADIX")
         .and_then(|s| s.parse::<i32>().ok())
         .unwrap_or(0); // c:4492
-    let b: String = if v.is_float() && outputradix == 0 {
+    let b: String = if (v.type_ == crate::ported::zsh_h::MN_FLOAT) && outputradix == 0 {
         // c:4492
         // QT_FLOAT — let Display handle it; zsh's
         // convfloat_underscore is the underscore-grouped form,
         // skipped here pending OUTPUT_UNDERSCORE port.
-        format!("{}", v.to_float()) // c:4493
-    } else if v.is_float() {
+        format!("{}", (if v.type_ == crate::ported::zsh_h::MN_FLOAT { v.d } else { v.l as f64 })) // c:4493
+    } else if (v.type_ == crate::ported::zsh_h::MN_FLOAT) {
         // c:4495
         // Integer cast + convbase per radix.
-        let l = v.to_float() as i64; // c:4496
+        let l = (if v.type_ == crate::ported::zsh_h::MN_FLOAT { v.d } else { v.l as f64 }) as i64; // c:4496
         crate::ported::utils::convbase(l, outputradix as u32) // c:4497
-    } else if v.is_integer() {
+    } else if (v.type_ == crate::ported::zsh_h::MN_INTEGER) {
         // c:4498
-        crate::ported::utils::convbase(v.to_int(), outputradix as u32) // c:4498
+        crate::ported::utils::convbase((if v.type_ == crate::ported::zsh_h::MN_FLOAT { v.d as i64 } else { v.l }), outputradix as u32) // c:4498
     } else {
         "0".to_string() // c:4498
     }; // c:4499

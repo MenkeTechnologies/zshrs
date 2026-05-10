@@ -1659,33 +1659,33 @@ extern "C" {
 
 /// Port of `setup_()` from `Src/Modules/curses.c:1744`. C body:
 /// `return 0;`.
-pub fn setup_(_m: &Module) -> i32 {
+pub fn setup_(_m: &Module) -> i32 {                                          // c:1744
     0
 }
 
 /// Port of `features_()` from `Src/Modules/curses.c:1751`.
-pub fn features_(m: &Module, features: &mut Vec<String>) -> i32 {
+pub fn features_(m: &Module, features: &mut Vec<String>) -> i32 {            // c:1751
     *features = featuresarray(m, &MODULE_FEATURES);
     0
 }
 
 /// Port of `enables_()` from `Src/Modules/curses.c`.
-pub fn enables_(m: &Module, enables: &mut Option<Vec<i32>>) -> i32 {
+pub fn enables_(m: &Module, enables: &mut Option<Vec<i32>>) -> i32 {         // c:1759
     handlefeatures(m, &MODULE_FEATURES, enables)
 }
 
 /// Port of `boot_()` from `Src/Modules/curses.c`. C body: `return 0;`.
-pub fn boot_(_m: &Module) -> i32 {
+pub fn boot_(_m: &Module) -> i32 {                                           // c:1766
     0
 }
 
 /// Port of `cleanup_()` from `Src/Modules/curses.c`.
-pub fn cleanup_(m: &Module) -> i32 {
+pub fn cleanup_(m: &Module) -> i32 {                                         // c:1775
     setfeatureenables(m, &MODULE_FEATURES, None)
 }
 
 /// Port of `finish_()` from `Src/Modules/curses.c`. C body: `return 0;`.
-pub fn finish_(_m: &Module) -> i32 {
+pub fn finish_(_m: &Module) -> i32 {                                         // c:1785
     0
 }
 

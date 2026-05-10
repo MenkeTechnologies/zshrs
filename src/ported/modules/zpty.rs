@@ -613,13 +613,13 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 }
 
 /// Port of `features_()` from `Src/Modules/zpty.c:903`.
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:903
     *features = featuresarray(m, module_features());
     0
 }
 
 /// Port of `enables_()` from `Src/Modules/zpty.c:911`.
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:911
     handlefeatures(m, module_features(), enables)
 }
 
@@ -836,7 +836,7 @@ pub fn ptyhook(cmds: &mut PtyCmds) -> i32 {                              // c:87
 /// sequence. zshrs's port wires through `std::process::Command`
 /// + a libc pty-spawn helper which doesn't preserve the full C
 /// child-init contract. Returns 0 on success, 1 on failure.
-pub fn newptycmd(cmds: &mut PtyCmds, _nam: &str, pname: &str,
+pub fn newptycmd(cmds: &mut PtyCmds, _nam: &str, pname: &str,                // c:310
                  args: &[String], echo: bool, nblock: bool) -> i32 {     // c:310
     use std::os::unix::io::IntoRawFd;
     use std::process::Command;

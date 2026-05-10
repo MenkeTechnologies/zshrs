@@ -163,7 +163,7 @@ pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // 
 
 /// Port of `getrandom_buffer()` from `Src/Modules/random.c:282`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {
+pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // c:62
     use std::fs::File;
     use std::io::Read;
 
@@ -176,7 +176,7 @@ pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {
 /// Port of `get_bound_random_buffer()` from Src/Modules/random.c:104
 /// — repeatedly pulls from the kernel and rejection-samples each
 /// slot until the entire buffer is filled with values in `[0, max)`.
-pub fn get_bound_random_buffer(buffer: &mut [u32], max: u32) {
+pub fn get_bound_random_buffer(buffer: &mut [u32], max: u32) {               // c:104
     for item in buffer.iter_mut() {
         *item = bounded(max);
     }

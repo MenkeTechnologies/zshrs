@@ -186,7 +186,7 @@ pub fn accept_last(                                                          // 
 /// Test whether `word` satisfies the required prefix and suffix
 /// constraints (the `compadd -P pre -S suf` requirements).
 /// Port of `valid_match()` from Src/Zle/compresult.c.
-pub fn valid_match(word: &str, prefix: &str, suffix: &str) -> bool {
+pub fn valid_match(word: &str, prefix: &str, suffix: &str) -> bool {         // c:1210
     word.starts_with(prefix) && (suffix.is_empty() || word.ends_with(suffix))
 }
 
@@ -202,7 +202,7 @@ pub fn hasbrpsfx(s: &str) -> bool {                                          // 
 /// line.
 /// Port of the position-string formatting in
 /// Src/Zle/compresult.c (the `clprintm` group-header path).
-pub fn build_pos_string(current: usize, total: usize) -> String {
+pub fn build_pos_string(current: usize, total: usize) -> String {            // c:489
     format!("{}/{}", current + 1, total)
 }
 
@@ -224,7 +224,7 @@ pub fn cut_cline(s: &str, max_len: usize) -> String {                        // 
 /// Port of `cline_str()` from Src/Zle/compresult.c. The C source
 /// emits prefix + matched-region + suffix during list rendering;
 /// the result here is what `compprintlist` writes to the screen.
-pub fn cline_str(prefix: &str, line: &str, suffix: &str) -> String {
+pub fn cline_str(prefix: &str, line: &str, suffix: &str) -> String {         // c:165
     format!("{}{}{}", prefix, line, suffix)
 }
 
