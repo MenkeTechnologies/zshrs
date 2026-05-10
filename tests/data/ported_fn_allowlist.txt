@@ -618,3 +618,10 @@ isrch_spots
 # scan callback can mutate them while running; this private helper
 # hides the get_or_init.
 named_cmd_state
+
+# ptycmds (modules/zpty.rs) — Rust-only get-or-init accessor for
+# the file-static `Ptycmd ptycmds` linked-list head from
+# Src/Modules/zpty.c:36, referenced from boot_/cleanup_/getptycmd
+# /newptycmd/deletallptycmds/ptyhook. Rust uses OnceLock<Mutex<PtyCmds>>
+# for thread-safe access; this private helper hides the get_or_init.
+ptycmds
