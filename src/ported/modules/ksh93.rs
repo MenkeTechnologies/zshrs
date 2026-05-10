@@ -194,7 +194,7 @@ const LOCAL_NAMEREF: u32 = PM_LOCAL | PM_UNSET | PM_NAMEREF;            // c:158
 /// ```
 pub fn ksh93_wrapper(_prog: *const eprog, _w: *const funcwrap, name: *mut libc::c_char) -> i32 { // c:143
     // c:145 — `Funcstack f;`
-    let mut f: Funcstack;
+    let mut f: *const crate::ported::zsh_h::funcstack;
     // c:146 — `Param pm;`
     let mut pm: *mut param;
     // c:147 — `zlong num = funcstack->prev ? getiparam(".sh.level") : 0;`
@@ -208,7 +208,7 @@ pub fn ksh93_wrapper(_prog: *const eprog, _w: *const funcwrap, name: *mut libc::
 
     if num == 0 {                                                       // c:152
         // c:153 — for (f = funcstack; f; f = f->prev, num++);
-        f = (*funcstack.lock().unwrap()) as Funcstack;
+        f = (*funcstack.lock().unwrap()) as *const crate::ported::zsh_h::funcstack;
         while !f.is_null() {
             // f = f->prev — stub: no real chain, exit immediately.
             f = std::ptr::null_mut();
@@ -392,7 +392,11 @@ pub fn enables_(_m: *const module, _enables: &mut Option<Vec<i32>>) -> i32 { // 
 /// Port of `boot_()` from `Src/Modules/ksh93.c:258`.
 /// C body: `return addwrapper(m, wrapper);`
 pub fn boot_(m: *const module) -> i32 {
-    addwrapper(m, &WRAPPER)                                              // c:260
+    // c:260 — addwrapper(m, wrapper); zshrs's fusevm doesn't run
+    // through C's wrapper-dispatch chain, no-op until wrapper
+    // machinery gets a Rust equivalent.
+    let _ = m;
+    0
 }
 
 /// Port of `cleanup_()` from `Src/Modules/ksh93.c:265`.
@@ -411,58 +415,42 @@ pub fn boot_(m: *const module) -> i32 {
 /// ```
 pub fn cleanup_(m: *const module) -> i32 {
     // c:267 — `struct paramdef *p;`
-    deletewrapper(m, &WRAPPER);                                          // c:269
+    let mut p: usize;                                                    // c:267 (index over partab)
+    // c:269 — deletewrapper(m, wrapper); zshrs's fusevm wrapper
+    // machinery is a no-op (see boot_ note).
+
+    // c:116-131 — `static struct paramdef partab[]` inlined here
+    // because Rust statics can't hold String-typed paramdef.name.
+    use crate::ported::zsh_h::{PM_NAMEREF as PMN, PM_READONLY, PARAMDEF};
+    let partab: [crate::ported::zsh_h::paramdef; 9] = [
+        PARAMDEF(".sh.edchar",    (PM_SCALAR | PM_SPECIAL) as i32, 0, 0),                  // c:117
+        PARAMDEF(".sh.edmode",    (PM_SCALAR | PM_READONLY | PM_SPECIAL) as i32, 0, 0),    // c:119
+        PARAMDEF(".sh.file",      (PMN | PM_READONLY) as i32, 0, 0),                       // c:121
+        PARAMDEF(".sh.lineno",    (PMN | PM_READONLY) as i32, 0, 0),                       // c:122
+        PARAMDEF(".sh.match",     (PM_ARRAY | PM_READONLY) as i32, 0, 0),                  // c:123
+        PARAMDEF(".sh.name",      (PM_SCALAR | PM_READONLY | PM_SPECIAL) as i32, 0, 0),    // c:124
+        PARAMDEF(".sh.subscript", (PM_SCALAR | PM_READONLY | PM_SPECIAL) as i32, 0, 0),    // c:126
+        PARAMDEF(".sh.subshell",  (PMN | PM_READONLY) as i32, 0, 0),                       // c:128
+        PARAMDEF(".sh.version",   (PMN | PM_READONLY) as i32, 0, 0),                       // c:130
+    ];
 
     /* Clean up namerefs, otherwise deleteparamdef() is confused */     // c:271
-    // c:272-277 — walk PARTAB, clear PM_NAMEREF on live param nodes.
-    for entry in PARTAB.iter() {
-        if (entry.flags & PM_NAMEREF) != 0 {                             // c:273
+    // c:272-277 — `for (p = partab; p < partab + ARRSZ; ++p) { ... }`
+    p = 0;
+    while p < partab.len() {                                             // c:272
+        let entry = &partab[p];
+        if (entry.flags as u32 & PM_NAMEREF) != 0 {                      // c:273
             // c:274 — `HashNode hn = gethashnode2(paramtab, p->name);`
-            let hn: *mut param = gethashnode2(&paramtab, entry.name);
+            let hn: *mut param = gethashnode2(&paramtab, &entry.name);
             if !hn.is_null() {                                           // c:275
                 unsafe { (*hn).node.flags &= !(PM_NAMEREF as i32); }    // c:276
             }
         }
+        p += 1;
     }
     setfeatureenables(m, &MODULE_FEATURES_KSH93, None)                  // c:279
 }
 
-/// Stand-in for `static struct funcwrap wrapper[]` (c:230). One entry
-/// pointing at `ksh93_wrapper`. The C array carries `WRAPDEF(...)`
-/// macros — Rust port stores the fn pointer + flags inline.
-pub static WRAPPER: [WrapperEntry; 1] = [WrapperEntry {
-    flags: 0,
-    handler: ksh93_wrapper,
-}];
-
-/// Per-wrapper-entry shape mirroring `struct funcwrap` from
-/// zsh.h:1362. Fields: `flags`, the wrapper fn ptr.
-pub struct WrapperEntry {
-    pub flags: i32,
-    pub handler: fn(*const eprog, *const funcwrap, *mut libc::c_char) -> i32,
-}
-
-/// Stand-in for `static struct paramdef partab[]` (c:116). Captures
-/// the per-entry `name` + `flags` so the cleanup_ PM_NAMEREF walk has
-/// real data to traverse.
-pub static PARTAB: [PartabEntry; 9] = [
-    PartabEntry { name: ".sh.edchar",    flags: PM_SCALAR | PM_SPECIAL },                  // c:117
-    PartabEntry { name: ".sh.edmode",    flags: PM_SCALAR | PM_READONLY | PM_SPECIAL },    // c:119
-    PartabEntry { name: ".sh.file",      flags: PM_NAMEREF | PM_READONLY },                // c:121
-    PartabEntry { name: ".sh.lineno",    flags: PM_NAMEREF | PM_READONLY },                // c:122
-    PartabEntry { name: ".sh.match",     flags: PM_ARRAY | PM_READONLY },                  // c:123
-    PartabEntry { name: ".sh.name",      flags: PM_SCALAR | PM_READONLY | PM_SPECIAL },    // c:124
-    PartabEntry { name: ".sh.subscript", flags: PM_SCALAR | PM_READONLY | PM_SPECIAL },    // c:126
-    PartabEntry { name: ".sh.subshell",  flags: PM_NAMEREF | PM_READONLY },                // c:128
-    PartabEntry { name: ".sh.version",   flags: PM_NAMEREF | PM_READONLY },                // c:130
-];
-
-/// Per-paramdef-entry shape mirroring `struct paramdef` from
-/// zsh.h:2082. Fields: `name`, `flags`.
-pub struct PartabEntry {
-    pub name: &'static str,
-    pub flags: u32,
-}
 
 // `module_features` for ksh93 — empty bn/cd/mf, partab carries 9
 // entries. Stub to satisfy setfeatureenables call.
@@ -483,52 +471,6 @@ static MODULE_FEATURES_KSH93: Mutex<crate::ported::zsh_h::features> =
 const PM_SCALAR: u32 = crate::ported::zsh_h::PM_SCALAR;
 const PM_ARRAY: u32 = crate::ported::zsh_h::PM_ARRAY;
 const PM_SPECIAL: u32 = crate::ported::zsh_h::PM_SPECIAL;
-
-// Port of `addwrapper()` from Src/module.c:577.
-// C: `int addwrapper(Module m, FuncWrap w)` — append `w` to the global
-// wrappers list, set WRAPF_ADDED + w->module = m. Returns 1 if m is an
-// alias or already added; 0 on success.
-fn addwrapper(m: *const module, w: &[WrapperEntry]) -> i32 {                 // c:577
-    use crate::ported::zsh_h::MOD_ALIAS;
-    // c:587-588 — `if (m->node.flags & MOD_ALIAS) return 1;`
-    if !m.is_null() {
-        let m_ref = unsafe { &*m };
-        if (m_ref.node.flags & MOD_ALIAS) != 0 {                             // c:587
-            return 1;                                                        // c:588
-        }
-    }
-    // c:590-591 — `if (w->flags & WRAPF_ADDED) return 1;`
-    for entry in w {                                                         // c:592
-        if (entry.flags & WRAPF_ADDED) != 0 {                                // c:590
-            return 1;                                                        // c:591
-        }
-    }
-    // c:592-600 — append w to the wrappers linked list, set WRAPF_ADDED.
-    // Static-link path: zshrs's wrapper dispatch table lives in
-    // `crate::ported::module::WRAPPERS` (registered at boot_); appending
-    // here is a no-op because the wrapper is statically present.
-    0                                                                        // c:602
-}
-
-// Port of `deletewrapper()` from Src/module.c:609.
-// C: `int deletewrapper(Module m, FuncWrap w)` — unlink the wrapper from
-// the global list and clear WRAPF_ADDED. Returns 1 on error, 0 on success.
-fn deletewrapper(m: *const module, _w: &[WrapperEntry]) {                    // c:609
-    use crate::ported::zsh_h::MOD_ALIAS;
-    // c:614-615 — `if (m->node.flags & MOD_ALIAS) return 1;`
-    if !m.is_null() {
-        let m_ref = unsafe { &*m };
-        if (m_ref.node.flags & MOD_ALIAS) != 0 {                             // c:614
-            return;                                                          // c:615
-        }
-    }
-    // c:617-628 — walk wrappers list, splice out w, clear WRAPF_ADDED.
-    // Static-link path: nothing to unlink (registry is static).
-}
-
-// `WRAPF_ADDED` from Src/zsh.h:1373 — set on a FuncWrap once it's been
-// appended to the global wrappers list.
-const WRAPF_ADDED: i32 = 1;                                                  // zsh.h:1373
 
 // `paramtab` — `HashTable` global from `Src/params.c:46`. Stub: empty
 // usize-sized opaque holder; gethashnode2 against it always returns NULL.
@@ -575,11 +517,6 @@ pub static curkeymapname: Mutex<String> = Mutex::new(String::new());
 /// `varedarg` — `char *` global from `Src/Zle/zle_misc.c`, declared
 /// `extern` at c:190. Holds the parameter name being edited by `vared`.
 pub static varedarg: Mutex<String> = Mutex::new(String::new());
-
-// `Funcstack` — `typedef struct funcstack *Funcstack` from
-// `Src/zsh.h:545`. Mirrored as a raw pointer for the C-level code
-// shape; `funcstack` global lives in `Src/exec.c:340`.
-type Funcstack = *mut libc::c_void;
 
 // `funcstack` — `Funcstack` global from `Src/exec.c:340`. Stubbed as
 // a Mutex-wrapped raw-pointer holder since pointers aren't `Sync`

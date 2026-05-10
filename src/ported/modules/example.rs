@@ -317,7 +317,13 @@ pub fn boot_(m: *const module) -> i32 {
         "example".to_string(),                                          // c:227
         "array".to_string(),                                            // c:228
     ]);
-    addwrapper(m, &WRAPPER)                                             // c:230
+    // c:230 — addwrapper(m, wrapper); registers ex_wrapper into the
+    // global wrappers linked list (Src/module.c:577). zshrs's fusevm
+    // bytecode doesn't run through C's wrapper-dispatch chain, so the
+    // registration is a no-op until the wrapper machinery has a Rust
+    // equivalent.
+    let _ = m;
+    0
 }
 
 // =====================================================================
@@ -327,7 +333,8 @@ pub fn boot_(m: *const module) -> i32 {
 /// Port of `cleanup_()` from `Src/Modules/example.c:235`.
 /// C body: `deletewrapper(m, wrapper); return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {
-    deletewrapper(m, &WRAPPER);                                         // c:237
+    // c:237 — deletewrapper(m, wrapper); paired with c:230 addwrapper,
+    // no-op until the wrapper machinery has a Rust equivalent.
     setfeatureenables(m, module_features(), None)                       // c:238
 }
 
@@ -355,19 +362,6 @@ pub fn finish_(_m: *const module) -> i32 {
 
 use std::sync::OnceLock;
 use crate::ported::zsh_h::features as features_t;
-
-/// Port of `static struct funcwrap wrapper[]` from `example.c:184`.
-/// One entry: `WRAPDEF(ex_wrapper)`. Stored as a `&str` reference
-/// to the wrapper-fn name; addwrapper resolves at registration time.
-pub static WRAPPER: [WrapperEntry; 1] = [WrapperEntry {
-    flags: 0,
-    name: "ex_wrapper",
-}];
-
-pub struct WrapperEntry {
-    pub flags: i32,
-    pub name: &'static str,
-}
 
 // `module_features` — port of `static struct features module_features`
 // from example.c:188.
@@ -421,43 +415,6 @@ fn getfeatureenables(_m: *const module, f: &std::sync::Mutex<features_t>) -> Vec
 fn setfeatureenables(_m: *const module, _f: &std::sync::Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 {
     0
 }
-
-// Port of `addwrapper()` from Src/module.c:577.
-// C: `int addwrapper(Module m, FuncWrap w)` — append `w` to the global
-// wrappers list, set WRAPF_ADDED + w->module = m. Returns 1 if m is an
-// alias or already added; 0 on success.
-fn addwrapper(m: *const module, w: &[WrapperEntry]) -> i32 {                 // c:577
-    use crate::ported::zsh_h::MOD_ALIAS;
-    if !m.is_null() {
-        let m_ref = unsafe { &*m };
-        if (m_ref.node.flags & MOD_ALIAS) != 0 {                             // c:587
-            return 1;                                                        // c:588
-        }
-    }
-    for entry in w {
-        if (entry.flags & WRAPF_ADDED) != 0 {                                // c:590
-            return 1;                                                        // c:591
-        }
-    }
-    // c:592-600 — static-link path: example wrapper is statically present.
-    0                                                                        // c:602
-}
-
-// Port of `deletewrapper()` from Src/module.c:609.
-// C: `int deletewrapper(Module m, FuncWrap w)` — unlink the wrapper.
-fn deletewrapper(m: *const module, _w: &[WrapperEntry]) {                    // c:609
-    use crate::ported::zsh_h::MOD_ALIAS;
-    if !m.is_null() {
-        let m_ref = unsafe { &*m };
-        if (m_ref.node.flags & MOD_ALIAS) != 0 {                             // c:614
-            return;                                                          // c:615
-        }
-    }
-    // c:617-628 — static-link path: nothing to unlink.
-}
-
-// `WRAPF_ADDED` from Src/zsh.h:1373.
-const WRAPF_ADDED: i32 = 1;
 
 #[cfg(test)]
 mod tests {
