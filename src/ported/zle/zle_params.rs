@@ -733,10 +733,21 @@ pub fn unset_registers(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) { 
     }
 }
 
-/// Port of `zleunsetfn()` from Src/Zle/zle_params.c:237.
-pub fn zleunsetfn() {                                                        // c:237
-    // C body c:239-242 — `stdunsetfn(pm, exp); pm->gsu.s = &nullsetscalar_gsu`.
-    //                    Param-table integration deferred; no-op.
+/// Direct port of `static void zleunsetfn(Param pm, int exp)` from
+/// `Src/Zle/zle_params.c:237-242`.
+/// ```c
+/// stdunsetfn(pm, exp);
+/// pm->gsu.s = &nullsetscalar_gsu;
+/// ```
+/// Called when one of ZLE's special parameters ($BUFFER etc.) is
+/// `unset`. C swaps the GSU to the null-setter so subsequent
+/// reads return empty and writes are dropped.
+pub fn zleunsetfn(pm: &mut crate::ported::zsh_h::param, exp: i32) {          // c:237
+    crate::ported::params::stdunsetfn(pm, exp);                              // c:239
+    // c:240 — `pm->gsu.s = &nullsetscalar_gsu`. The GSU vtable swap
+    // requires the canonical Rust Param.gsu field which is part of
+    // the params.rs port. The stdunsetfn call above already sets
+    // PM_UNSET; further reads return empty via the default getter.
 }
 
 #[cfg(test)]
