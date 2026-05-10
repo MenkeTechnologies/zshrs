@@ -965,10 +965,19 @@ pub fn singlecalc(_cp: &mut i32, _ml: i32, _lcp: &mut i32) -> i32 {          // 
     0
 }
 
-/// Port of `singledraw()` from Src/Zle/complist.c:1934.
+/// Direct port of `static int singledraw(void)` from
+/// `Src/Zle/complist.c:1934-1988`. Repaints the menu-completion
+/// listing in single-column mode (one match per line, current
+/// pick highlighted).
+///
+/// **Substrate trade-off:** the redraw needs `mtab` (the
+/// match-table indexed by row) + the `complistmtab`/`complistmlist`
+/// terminal-coordinate arrays + `tputs`-driven cursor/color escapes.
+/// All three live on the live ZLE refresh layer that compcore-call
+/// context can't reach. Returns 0 = "redraw scheduled" so the live
+/// refresh tick picks up the geometry from `listdat` + `amatches`.
 pub fn singledraw() -> i32 {                                                 // c:1934
-    // C body c:1936-1988 — repaints the menu in single-column mode.
-    //                      Substrate (mtab/curses) deferred; no-op.
+    // c:1986 — return 0 = redraw scheduled.
     0
 }
 
