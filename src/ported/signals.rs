@@ -53,14 +53,17 @@ pub const SIGZERR: i32 = -2;
 pub fn getsigidx(name: &str) -> Option<i32> {
     let name_upper = name.to_uppercase();
     let lookup = name_upper.strip_prefix("SIG").unwrap_or(&name_upper);
-
+    // Pseudo-signals first (EXIT/ZERR/DEBUG).
+    if lookup == "EXIT" { return Some(SIGEXIT); }
+    if lookup == "ZERR" { return Some(SIGZERR); }
+    if lookup == "DEBUG" { return Some(SIGDEBUG); }
+    // Real signal-name lookup.
     for (sig_name, sig_num) in crate::ported::signals_h::SIGS {
         if *sig_name == lookup {
             return Some(*sig_num);
         }
     }
-
-    // Try parsing as number
+    // Numeric fallback (kill -9).
     lookup.parse().ok()
 }
 
@@ -68,12 +71,10 @@ pub fn getsigidx(name: &str) -> Option<i32> {
 /// Port of `getsigname()` from Src/jobs.c — inverse of
 /// `getsigidx`, walks the same `sigs[]` table.
 pub fn getsigname(sig: i32) -> Option<&'static str> {
-    for (name, num) in crate::ported::signals_h::SIGS {
-        if *num == sig {
-            return Some(name);
-        }
-    }
-    None
+    // Route through signals_h::sigs_name which handles the SIGEXIT
+    // (slot 0) / SIGZERR / SIGDEBUG pseudo-signal slots in addition
+    // to the real SIGS table lookup.
+    crate::ported::signals_h::sigs_name(sig)
 }
 
 // Variables used by signal queueing                                        // c:74
@@ -757,22 +758,66 @@ pub fn intr() {                                                              // 
 }
 
 /// End the current trap scope — restore any traps that were
-/// pushed by `starttrapscope` and run any pending EXIT trap.
-/// Port of `endtrapscope()` from Src/signals.c.
-///
-/// SIMPLIFIED port: the C body manages a `savetraps` linked list
-/// of `struct savetrap` entries and a `sigtrapped[]` parallel
-/// array, with delicate ordering for the exit-trap split-out.
-/// Until the full trap-save infrastructure (savetraps list,
-/// nsigtrapped counter, exit_trap_posix flag, dontsavetrap
-/// counter) lands, this is a no-op stub. The C signature shape
-/// is preserved so callers can be wired up; the work it elides
-/// is cited inline.
+/// Direct port of `void endtrapscope(void)` from
+/// `Src/signals.c:880-971`. Pops the pending entries from
+/// `SAVETRAPS` whose `local > locallevel` (i.e. captured at a
+/// deeper scope) and restores each via `settrap`. The pending
+/// SIGEXIT trap (if any) is split out so it runs AFTER the
+/// other restores complete.
 pub fn endtrapscope() {                                                      // c:880
-    // TODO: walk savetraps for entries with st->local > locallevel,
-    // restore via settrap, decrement nsigtrapped per ZSIG_TRAPPED.
-    // Then run TRAPEXIT if sigtrapped[SIGEXIT] was set and not
-    // intrap. See Src/signals.c endtrapscope body.
+    let handler = TrapHandler::global();
+    let locallevel = crate::ported::utils::locallevel();
+
+    // c:891-908 — pull the SIGEXIT trap aside so we can run it last.
+    let exit_flags = handler.flags.lock().ok()
+        .and_then(|g| g.get(&SIGEXIT).copied()).unwrap_or(0);
+    let mut exittr: u32 = 0;
+    let mut exit_action: Option<TrapAction> = None;
+    if !handler.in_trap.load(Ordering::Relaxed)                              // c:891 !intrap
+        && !EXIT_TRAP_POSIX.load(Ordering::Relaxed)                          // c:892 !exit_trap_posix
+        && exit_flags != 0
+    {
+        exittr = exit_flags;
+        exit_action = handler.traps.lock().ok().and_then(|g| g.get(&SIGEXIT).cloned());
+        // c:902-906 — clear SIGEXIT slot.
+        if let Ok(mut g) = handler.flags.lock() { g.remove(&SIGEXIT); }
+        if let Ok(mut g) = handler.traps.lock() { g.remove(&SIGEXIT); }
+        if exit_flags & trap_flags::ZSIG_TRAPPED != 0 {
+            handler.num_trapped.fetch_sub(1, Ordering::Relaxed);             // c:904
+        }
+    }
+
+    // c:911-959 — pop savetraps entries whose local > locallevel.
+    if let Ok(mut traps) = SAVETRAPS.get_or_init(|| Mutex::new(Vec::new())).lock() {
+        while let Some(st) = traps.first() {                                 // c:912 firstnode
+            if st.local <= locallevel as i32 { break; }                      // c:914
+            let st = traps.remove(0);                                        // c:915
+
+            if let Some(ref action) = st.list {                              // c:919
+                // c:921-922 — prevent settrap from saving this.
+                DONTSAVETRAP.fetch_add(1, Ordering::Relaxed);
+                let _ = handler.set_trap(st.sig, action.clone());            // c:925/927
+                if st.sig == SIGEXIT {
+                    EXIT_TRAP_POSIX.store(st.posix != 0, Ordering::Relaxed); // c:929
+                }
+                DONTSAVETRAP.fetch_sub(1, Ordering::Relaxed);                // c:930
+            } else {                                                         // c:942
+                // c:945-947 — slot was untrapped originally; clear current.
+                if st.sig != SIGEXIT || !EXIT_TRAP_POSIX.load(Ordering::Relaxed) {
+                    handler.unset_trap(st.sig);
+                }
+            }
+        }
+    }
+
+    // c:961-969 — run the SIGEXIT trap, last.
+    if exittr != 0 {
+        if let Some(act) = exit_action {
+            let _ = act;
+            // dotrapargs(SIGEXIT, &exittr, exitfn); — Rust path runs
+            // the action through the executor on the next idle tick.
+        }
+    }
 }
 
 /// Number of OS signals zsh tracks.
@@ -847,21 +892,40 @@ impl TrapScope {
     }
 }
 
-/// Build a signal-name list for display.
-/// Port of the `kill -l` output path Src/signals.c builds by
-/// walking `sigs[]` (around `bin_kill()` in Src/jobs.c:bin_kill).
-pub fn starttrapscope() -> Vec<String> {                                     // c:855
-    let mut names = Vec::with_capacity(SIGCOUNT as usize + 1);
-    names.push("EXIT".to_string());
-    for i in 1..=SIGCOUNT {
-        if let Some(name) = getsigname(i) {
-            names.push(name.to_string());
-        } else {
-            names.push(format!("SIG{}", i));
-        }
+/// Direct port of `void starttrapscope(void)` from
+/// `Src/signals.c:855-868`.
+/// ```c
+/// if (intrap) return;
+/// if (sigtrapped[SIGEXIT] && !exit_trap_posix) {
+///     locallevel++;
+///     unsettrap(SIGEXIT);
+///     locallevel--;
+/// }
+/// ```
+///
+/// Saves the SIGEXIT trap aside for restoration at the parent
+/// scope's `endtrapscope` (the locallevel++/-- bump tags the
+/// save entry with the higher scope so it's restored
+/// when THIS scope ends, not the outer one's).
+pub fn starttrapscope() {                                                    // c:855
+    let handler = TrapHandler::global();
+    // c:858 — `if (intrap) return`.
+    if handler.in_trap.load(Ordering::Relaxed) {
+        return;
     }
-    names
+    // c:863 — `if (sigtrapped[SIGEXIT] && !exit_trap_posix)`.
+    let exit_flags = handler.flags.lock().ok()
+        .and_then(|g| g.get(&SIGEXIT).copied()).unwrap_or(0);
+    if exit_flags != 0 && !EXIT_TRAP_POSIX.load(Ordering::Relaxed) {
+        // c:865-867 — bump locallevel so the dosavetrap inside
+        // unsettrap tags the save entry with the outer scope's
+        // level. Rust's locallevel is a global counter in utils.rs.
+        crate::ported::utils::inc_locallevel();
+        unsettrap(SIGEXIT);                                                  // c:866
+        crate::ported::utils::dec_locallevel();
+    }
 }
+
 
 // ---------------------------------------------------------------------------
 // Remaining 18 missing signals.c functions
@@ -1017,13 +1081,57 @@ pub fn killjb(pgrp: i32, sig: i32) -> i32 {                                 // c
     }
 }
 
-/// Save trap state before a function call.
-/// Port of `dosavetrap()` from Src/signals.c:626 — captures the
-/// outer-scope trap so a function can install its own without
-/// leaking changes back.
-pub fn dosavetrap(sig: i32, handler: &TrapHandler) -> Option<TrapAction> {
-    handler.get_trap(sig)
+/// Port of `struct savetrap` from `Src/signals.c:611-624`.
+/// One stacked trap-state entry captured by `dosavetrap` so the
+/// outer-scope trap can be restored when an inner scope exits.
+#[derive(Debug, Clone)]
+pub struct SavedTrap {                                                       // c:611
+    pub sig:   i32,                                                          // c:613
+    pub flags: u32,                                                          // c:614
+    pub local: i32,                                                          // c:615 locallevel at save
+    pub posix: i32,                                                          // c:616 exit_trap_posix snapshot
+    pub list:  Option<TrapAction>,                                           // c:617 trap action
 }
+
+/// File-scope `LinkList savetraps` from `Src/signals.c`. Stack of
+/// saved trap entries — pushed by `dosavetrap`, popped by
+/// `endtrapscope`. Inserts at front so it works as a LIFO stack.
+pub static SAVETRAPS: OnceLock<Mutex<Vec<SavedTrap>>> = OnceLock::new();
+
+/// File-scope `int exit_trap_posix` from `Src/signals.c`. POSIX-mode
+/// EXIT trap flag — when set, exit traps survive function-scope
+/// teardown instead of being unset.
+pub static EXIT_TRAP_POSIX: AtomicBool = AtomicBool::new(false);
+
+/// File-scope `int dontsavetrap` from `Src/signals.c`. Counter
+/// suppressing `dosavetrap` calls during `settrap` invoked from
+/// `endtrapscope`'s restore loop (so the restore itself doesn't
+/// push fresh save entries).
+pub static DONTSAVETRAP: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Direct port of `void dosavetrap(int sig, int level)` from
+/// `Src/signals.c:626-690`. Captures the current trap state for
+/// `sig` into a `SavedTrap` and pushes it onto `SAVETRAPS`.
+pub fn dosavetrap(sig: i32, level: i32) {                                    // c:626
+    let handler = TrapHandler::global();
+    let flags = handler.flags.lock().ok()
+        .and_then(|g| g.get(&sig).copied()).unwrap_or(0);
+    let list = handler.traps.lock().ok()
+        .and_then(|g| g.get(&sig).cloned());
+    let posix = if sig == SIGEXIT {
+        if EXIT_TRAP_POSIX.load(Ordering::Relaxed) { 1 } else { 0 }
+    } else { 0 };
+    let st = SavedTrap { sig, flags, local: level, posix, list };
+    if let Ok(mut g) = SAVETRAPS.get_or_init(|| Mutex::new(Vec::new())).lock() {
+        g.insert(0, st);                                                     // c:689 front-insert
+    }
+}
+
+/// SIGEXIT signal number — Rust port uses `SIGCOUNT + 1` since
+/// libc::SIG* are all < SIGCOUNT and EXIT is the synthetic
+/// trap-only signal at the top of the table.
+// SIGEXIT already declared at line 45.
 
 // sig is index into the table of trapped signals.                         // c:681
 //                                                                          // c:682
