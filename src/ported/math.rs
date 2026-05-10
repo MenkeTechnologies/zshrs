@@ -2,6 +2,10 @@
 //!
 //! Direct port from zsh/Src/math.c
 //!
+//! nonzero means we are not evaluating, just parsing                        // c:37
+//! the value stack                                                          // c:302
+//! operator-precedence parse the string and execute                         // c:1590
+//!
 //! Supports:
 //! - Integer and floating point arithmetic
 //! - All C operators (+, -, *, /, %, <<, >>, &, |, ^, etc.)

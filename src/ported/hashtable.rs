@@ -1819,17 +1819,19 @@ impl HashNodeFlags for Reswd {
 // first access.
 // -----------------------------------------------------------
 
+// hash table containing external commands                                  // c:587
 /// Singleton accessor for the global `cmdnamtab`.
 /// Mirrors C's `mod_export HashTable cmdnamtab` (hashtable.c:594).
-pub fn cmdnamtab_lock() -> &'static std::sync::Mutex<CmdNameTable> {
+pub fn cmdnamtab_lock() -> &'static std::sync::Mutex<CmdNameTable> {        // c:594
     static CMDNAMTAB: std::sync::OnceLock<std::sync::Mutex<CmdNameTable>> =
         std::sync::OnceLock::new();
     CMDNAMTAB.get_or_init(|| std::sync::Mutex::new(CmdNameTable::new()))
 }
 
+// hash table containing the aliases                                        // c:1174
 /// Singleton accessor for the global `aliastab`.
 /// Mirrors C's `mod_export HashTable aliastab` (hashtable.c:1186).
-pub fn aliastab_lock() -> &'static std::sync::Mutex<AliasTable> {
+pub fn aliastab_lock() -> &'static std::sync::Mutex<AliasTable> {           // c:1186
     static ALIASTAB: std::sync::OnceLock<std::sync::Mutex<AliasTable>> =
         std::sync::OnceLock::new();
     ALIASTAB.get_or_init(|| std::sync::Mutex::new(AliasTable::with_defaults()))
@@ -1843,9 +1845,10 @@ pub fn sufaliastab_lock() -> &'static std::sync::Mutex<AliasTable> {
     SUFALIASTAB.get_or_init(|| std::sync::Mutex::new(AliasTable::new()))
 }
 
+// hash table containing the reserved words                                 // c:1111
 /// Singleton accessor for the global `reswdtab`.
 /// Mirrors C's `HashTable reswdtab` (hashtable.c, file-scope).
-pub fn reswdtab_lock() -> &'static std::sync::Mutex<ReswdTable> {
+pub fn reswdtab_lock() -> &'static std::sync::Mutex<ReswdTable> {           // c:1115
     static RESWDTAB: std::sync::OnceLock<std::sync::Mutex<ReswdTable>> =
         std::sync::OnceLock::new();
     RESWDTAB.get_or_init(|| std::sync::Mutex::new(ReswdTable::new()))
@@ -1950,10 +1953,11 @@ pub fn freecmdnamnode(nam: &str) {
 // the table is global).
 // ===========================================================
 
+// hash table containing the shell functions                                // c:805
 /// Singleton accessor for the global `shfunctab`.
 /// Mirrors C's `mod_export HashTable shfunctab` (hashtable.c:808).
 /// Lazily initialised on first access.
-pub fn shfunctab_lock() -> &'static std::sync::Mutex<ShFuncTable> {
+pub fn shfunctab_lock() -> &'static std::sync::Mutex<ShFuncTable> {         // c:808
     static SHFUNCTAB: std::sync::OnceLock<std::sync::Mutex<ShFuncTable>> =
         std::sync::OnceLock::new();
     SHFUNCTAB.get_or_init(|| std::sync::Mutex::new(ShFuncTable::new()))

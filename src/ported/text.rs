@@ -2,6 +2,10 @@
 //!
 //! Direct port from zsh/Src/text.c
 //!
+//! add a character to the text buffer                                       // c:124
+//! add a string to the text buffer                                          // c:142
+//! get a representation of n in a job text buffer                           // c:311
+//!
 //! Converts parsed shell commands back to their textual representation.
 //! Used for:
 //! - Displaying function definitions (`type -f`)

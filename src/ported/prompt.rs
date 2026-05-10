@@ -153,6 +153,7 @@ pub struct TextAttrs {
     pub bg_color: Option<Color>,
 }
 
+// Defines standard ANSI colour names in index order                        // c:1883
 /// Color specification
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Color {

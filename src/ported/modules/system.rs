@@ -1,5 +1,9 @@
 //! `zsh/system` module — port of `Src/Modules/system.c`.
 //!
+//! Functions for the errnos special parameter.                              // c:828
+//! Functions for the sysparams special parameter.                           // c:842
+//! The load/unload routines required by the zsh library interface          // c:916
+//!
 //! Provides the system-call builtins: `sysread`, `syswrite`, `sysopen`,
 //! `sysseek`, `syserror`, `zsystem` (with subcommands `flock` and
 //! `supports`); the `systell` math function; the `errnos` and

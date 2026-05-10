@@ -1270,6 +1270,7 @@ fn stringsubst(
     } // c:237
 } // c:237
 
+// parameter substitution                                                   // c:1601
 /// Parameter substitution
 /// Port of paramsubst() from subst.c lines 1600-4922 (THIS IS THE BIG ONE)
 pub fn paramsubst(
@@ -5635,6 +5636,7 @@ pub mod multsub_flags {
 } // c:N/A
 
 /// Perform substitution on a single word
+// perform substitution on a single word                                    // c:510
 /// Port of singsub() from subst.c lines 513-525
 /// Single-string substitution.
 /// Port of `singsub()` from Src/subst.c:514.

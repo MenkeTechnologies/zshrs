@@ -1,5 +1,8 @@
 //! `zsh/ksh93` module — port of `Src/Modules/ksh93.c`.
 //!
+//! Implementing "namespace" requires creating a new keyword.               // c:34
+//! Dummy to treat as NULL                                                  // c:105
+//!
 //! Top-level declaration order matches C source line-by-line:
 //!   - `static struct builtin bintab[]`             c:40
 //!   - `edcharsetfn(pm, x)`                          c:46

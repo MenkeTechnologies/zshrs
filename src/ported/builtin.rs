@@ -4,6 +4,9 @@
 //! `src/ported/exec.rs` and `src/ported/builtins/*.rs` long before
 //! this file existed. This file scaffolds:
 //!
+//! Builtins in the main executable                                          // c:38
+//! Builtin Command Hash Table Functions                                     // c:140
+//!
 //!   * the `BINF_*` flag bits from `Src/zsh.h:1457-1486`,
 //!   * the `BIN_*` dispatch IDs from `Src/hashtable.h:34-66`,
 //!   * the `Builtin` descriptor and the static `BUILTINS[]` table
@@ -270,6 +273,7 @@ pub static BUILTINS: &[Builtin] = &[
 // `Src/builtin.c:149-211`.
 // ---------------------------------------------------------------------------
 
+// hash table containing builtin commands                                   // c:143
 /// Process-wide builtin lookup table. Filled lazily the first time
 /// `builtintab()` is called; mirrors the C `mod_export HashTable
 /// builtintab` exposed at `Src/builtin.c:146`.

@@ -2,6 +2,12 @@
 //!
 //! Direct port from zsh/Src/linklist.c
 //!
+//! Get an empty linked list header                                          // c:99
+//! Insert a node in a linked list after a given node                       // c:129
+//! Remove a node from a linked list                                        // c:247
+//! Free a linked list                                                      // c:283
+//! Count the number of nodes in a linked list                              // c:300
+//!
 //! Provides a doubly-linked list with operations matching zsh's LinkList API.
 
 use std::marker::PhantomData;
@@ -483,7 +489,7 @@ pub fn newlinklist() -> LinkList<String> {                                   // 
 
 /// Port of `znewlinklist()` from Src/linklist.c:116 — same as
 /// `newlinklist()` but `zalloc()`-backed in C; identical here.
-pub fn znewlinklist() -> LinkList<String> {
+pub fn znewlinklist() -> LinkList<String> {                                  // c:116
     LinkList::new()
 }
 

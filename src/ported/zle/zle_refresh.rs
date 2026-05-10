@@ -6,6 +6,7 @@ use std::io::{self, Write};
 
 use super::zle_main::Zle;
 
+// Text attributes after displaying prompts                                 // c:149
 /// Text attributes for display
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TextAttr {

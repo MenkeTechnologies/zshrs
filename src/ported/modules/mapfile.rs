@@ -1,5 +1,8 @@
 //! `zsh/mapfile` module — port of `Src/Modules/mapfile.c`.
 //!
+//! Functions for the options special parameter.                             // c:64
+//! Here we scan the current directory, calling func() for each file        // c:254
+//!
 //! Provides the `$mapfile` magic associative array that exposes the
 //! filesystem as a hash:
 //!   - `$mapfile[fname]`        → reads the file's contents

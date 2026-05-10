@@ -2,6 +2,15 @@
 //!
 //! Port from zsh/Src/params.c (6511 lines → full Rust port)
 //!
+//! Variables holding values of special parameters                          // c:56
+//! Standard methods for get/set/unset pointers in parameters               // c:154
+//! Nodes for special parameters for parameter hash table                   // c:271
+//! Copy a parameter hash table                                              // c:578
+//! Function to delete a parameter table.                                    // c:612
+//! Return 1 if the string s is a valid identifier, else return 0.         // c:1284
+//! assign various functions used for non-special parameters                // c:990
+//! Empty dummy function for special hash parameters.                       // c:1162
+//!
 //! Provides shell parameters (variables), special parameters, arrays,
 //! associative arrays, parameter attributes, namerefs, scoping,
 //! tied parameters, and all special parameter get/set functions.

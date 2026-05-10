@@ -104,14 +104,14 @@ impl InputBuffer {
 
     /// Reset the SHIN (shell input fd) buffer.
     /// Port of `shinbufreset()` from Src/input.c:159.
-    pub fn shin_buf_reset(&mut self) {
+    pub fn shin_buf_reset(&mut self) {                                       // c:159
         self.shin_buffer.clear();
         self.shin_pos = 0;
     }
 
     /// Allocate a new SHIN buffer.
     /// Port of `shinbufalloc()` from Src/input.c:171.
-    pub fn shin_buf_alloc(&mut self) {
+    pub fn shin_buf_alloc(&mut self) {                                       // c:171
         self.shin_buffer = String::with_capacity(SHIN_BUF_SIZE);
         self.shin_buf_reset();
     }
@@ -128,7 +128,7 @@ impl InputBuffer {
 
     /// Restore the previously-saved SHIN buffer state.
     /// Port of `shinbufrestore()` from Src/input.c:200.
-    pub fn shin_buf_restore(&mut self) {
+    pub fn shin_buf_restore(&mut self) {                                     // c:200
         if let Some((buffer, pos)) = self.shin_save_stack.pop() {
             self.shin_buffer = buffer;
             self.shin_pos = pos;
@@ -138,7 +138,7 @@ impl InputBuffer {
     /// Read the next character from the underlying reader,
     /// refilling the SHIN buffer as needed.
     /// Port of `shingetchar()` from Src/input.c:218.
-    pub fn shin_getchar<R: Read>(&mut self, reader: &mut BufReader<R>) -> Option<char> {
+    pub fn shin_getchar<R: Read>(&mut self, reader: &mut BufReader<R>) -> Option<char> { // c:218
         // First check if we have buffered data
         if self.shin_pos < self.shin_buffer.len() {
             let ch = self.shin_buffer.chars().nth(self.shin_pos)?;
@@ -163,7 +163,7 @@ impl InputBuffer {
     /// Read a line from shell input, encoding meta characters
     /// Read a full line from the underlying reader.
     /// Port of `shingetline()` from Src/input.c:267.
-    pub fn shin_getline<R: Read>(&mut self, reader: &mut BufReader<R>) -> Option<String> {
+    pub fn shin_getline<R: Read>(&mut self, reader: &mut BufReader<R>) -> Option<String> { // c:267
         let mut result = String::new();
 
         loop {
@@ -339,7 +339,7 @@ impl InputBuffer {
     /// Pop the stack including all continuations
     /// Pop the top input source.
     /// Port of `inpop()` from Src/input.c:785.
-    pub fn inpop(&mut self) {
+    pub fn inpop(&mut self) {                                                // c:785
         loop {
             let was_cont = self.flags & flags::INP_CONT != 0;
             self.inpop_top();
@@ -363,7 +363,7 @@ impl InputBuffer {
     /// Set the input line directly
     /// Replace the current input line.
     /// Port of `inputsetline()` from Src/input.c:510.
-    pub fn inputsetline(&mut self, s: &str, flags: u32) {
+    pub fn inputsetline(&mut self, s: &str, flags: u32) {                    // c:510
         self.buf = s.to_string();
         self.pos = 0;
 
@@ -378,7 +378,7 @@ impl InputBuffer {
     /// Flush remaining input (on error)
     /// Discard pending input after a parse error.
     /// Port of `inerrflush()` from Src/input.c:665.
-    pub fn inerrflush(&mut self) {
+    pub fn inerrflush(&mut self) {                                           // c:665
         while !self.lexstop && self.buf_ct > 0 {
             let _ = self.ingetc();
         }
@@ -388,7 +388,7 @@ impl InputBuffer {
     /// Get a slice of the unread portion of the current
     /// input.
     /// Port of `ingetptr()` from Src/input.c:817.
-    pub fn ingetptr(&self) -> &str {
+    pub fn ingetptr(&self) -> &str {                                         // c:817
         if self.pos < self.buf.len() {
             &self.buf[self.pos..]
         } else {
@@ -455,7 +455,7 @@ fn imeta(c: char) -> bool {
 /// Read a file as a string for `source`/`stuff` semantics.
 /// Port of `zstuff()` from Src/input.c:614 — the C source uses
 /// it for `Functions/Misc/run-help` and similar autoload paths.
-pub fn zstuff(path: &str) -> io::Result<String> {
+pub fn zstuff(path: &str) -> io::Result<String> {                            // c:614
     std::fs::read_to_string(path)
 }
 

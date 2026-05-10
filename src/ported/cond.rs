@@ -2,6 +2,8 @@
 //!
 //! Direct port from zsh/Src/cond.c
 //!
+//! tracingcond: updated by execcond() in exec.c                             // c:34
+//!
 //! Evaluates conditional expressions used in:
 //! - `[[ ... ]]` (zsh extended test)
 //! - `[ ... ]` and `test` (POSIX test)

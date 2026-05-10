@@ -172,6 +172,7 @@ pub mod names {
 // avoids a parallel widget→thingies table that would have to stay
 // in sync.
 
+// Hashtable of thingies. Enabled nodes are those that refer to widgets.   // c:49
 static THINGYTAB: OnceLock<Mutex<HashMap<String, Thingy>>> = OnceLock::new();
 
 /// Get-or-init access to the global thingytab.

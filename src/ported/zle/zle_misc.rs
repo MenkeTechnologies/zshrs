@@ -15,7 +15,24 @@
 //! - undefined-key, send-break
 //! - vi-put-after, vi-put-before, overwrite-mode
 
+use std::sync::atomic::AtomicI32;
+
 use super::zle_main::Zle;
+
+// =====================================================================
+// Globals — `Src/Zle/zle_main.c:79-84` (live in zle_main but consumed
+// by widgets in zle_misc).
+// =====================================================================
+
+/// Port of `int done` from `Src/Zle/zle_main.c:79`. Non-zero when
+/// the editor session should terminate (`accept-line`,
+/// `accept-and-hold`, `accept-line-and-down-history`, etc.).
+pub static DONE: AtomicI32 = AtomicI32::new(0);                              // c:79
+
+/// Port of `int mark` from `Src/Zle/zle_main.c:84`. Saved cursor
+/// position for the region (set by `set-mark-command`, consumed by
+/// `kill-region`, `copy-region-as-kill`, `regionlines`, etc.).
+pub static MARK: AtomicI32 = AtomicI32::new(0);                              // c:84
 
 /// Clipboard/paste buffer for yank operations
 #[derive(Debug, Default)]
@@ -568,11 +585,26 @@ impl Zle {
 /// Port of `acceptandhold()` from Src/Zle/zle_misc.c:409. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn acceptandhold() -> i32 { 0 }
 
-/// Port of `acceptline()` from Src/Zle/zle_misc.c:401. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn acceptline() -> i32 { 0 }
+/// Port of `acceptline()` from `Src/Zle/zle_misc.c:401`.
+/// ```c
+/// int
+/// acceptline(UNUSED(char **args))
+/// {
+///     done = 1;
+///     return 0;
+/// }
+/// ```
+/// `accept-line` widget — the simplest possible: just signal the
+/// editor session to terminate so `zleread` returns the current line.
+pub fn acceptline() -> i32 {                                                 // c:401
+    use std::sync::atomic::Ordering;
+    DONE.store(1, Ordering::SeqCst);                                         // c:403 done = 1
+    0                                                                        // c:404 return 0
+}
 
+// Suffix system                                                            // c:1500
 /// Port of `addsuffix()` from Src/Zle/zle_misc.c:1558. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn addsuffix() -> i32 { 0 }
+pub fn addsuffix() -> i32 { 0 }                                              // c:1558
 
 /// Port of `addsuffixstring()` from Src/Zle/zle_misc.c:1580. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn addsuffixstring() -> i32 { 0 }
@@ -613,8 +645,9 @@ pub fn doinsert() -> i32 { 0 }
 /// Port of `executenamedcommand()` from Src/Zle/zle_misc.c:1261. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn executenamedcommand() -> i32 { 0 }
 
+// Fix the suffix in place, if there is one, making it non-removable.      // c:1820
 /// Port of `fixsuffix()` from Src/Zle/zle_misc.c:1824. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn fixsuffix() -> i32 { 0 }
+pub fn fixsuffix() -> i32 { 0 }                                              // c:1824
 
 /// Port of `fixunmeta()` from Src/Zle/zle_misc.c:130. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn fixunmeta() -> i32 { 0 }
@@ -622,8 +655,9 @@ pub fn fixunmeta() -> i32 { 0 }
 /// Port of `gosmacstransposechars()` from Src/Zle/zle_misc.c:274. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn gosmacstransposechars() -> i32 { 0 }
 
+// Remove suffix, if there is one, when inserting character c.             // c:1695
 /// Port of `iremovesuffix()` from Src/Zle/zle_misc.c:1699. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn iremovesuffix() -> i32 { 0 }
+pub fn iremovesuffix() -> i32 { 0 }                                          // c:1699
 
 /// Port of `killbuffer()` from Src/Zle/zle_misc.c:215. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn killbuffer() -> i32 { 0 }
@@ -688,8 +722,26 @@ pub fn selfinsert() -> i32 { 0 }
 /// Port of `selfinsertunmeta()` from Src/Zle/zle_misc.c:149. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn selfinsertunmeta() -> i32 { 0 }
 
-/// Port of `sendbreak()` from Src/Zle/zle_misc.c:1144. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn sendbreak() -> i32 { 0 }
+/// Port of `sendbreak()` from `Src/Zle/zle_misc.c:1144`.
+/// ```c
+/// int
+/// sendbreak(UNUSED(char **args))
+/// {
+///     errflag |= ERRFLAG_ERROR|ERRFLAG_INT;
+///     return 1;
+/// }
+/// ```
+/// `send-break` widget — abort the current editor session by
+/// raising both `ERRFLAG_ERROR` and `ERRFLAG_INT` on the global
+/// `errflag`, so `zleread` returns -1 to its caller.
+pub fn sendbreak() -> i32 {                                                  // c:1144
+    // c:1146 — `errflag |= ERRFLAG_ERROR | ERRFLAG_INT`.
+    let cur = crate::ported::utils::errflag();
+    crate::ported::utils::set_errflag(
+        cur | crate::ported::zsh_h::ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_INT,
+    );
+    1                                                                        // c:1147 return 1
+}
 
 /// Port of `transpose_swap()` from Src/Zle/zle_misc.c:255. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn transpose_swap() -> i32 { 0 }
@@ -697,8 +749,21 @@ pub fn transpose_swap() -> i32 { 0 }
 /// Port of `transposechars()` from Src/Zle/zle_misc.c:313. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn transposechars() -> i32 { 0 }
 
-/// Port of `undefinedkey()` from Src/Zle/zle_misc.c:892. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn undefinedkey() -> i32 { 0 }
+/// Port of `undefinedkey()` from `Src/Zle/zle_misc.c:892`.
+/// ```c
+/// int
+/// undefinedkey(UNUSED(char **args))
+/// {
+///     return 1;
+/// }
+/// ```
+/// `undefined-key` widget — bound to key sequences that aren't
+/// otherwise defined; returns 1 so the dispatcher beeps.
+pub fn undefinedkey() -> i32 {                                               // c:892
+    // c:894 — `return 1`. The widget binds to keys with no other
+    // function and just signals "unhandled" by returning non-zero.
+    1
+}
 
 /// Port of `universalargument()` from Src/Zle/zle_misc.c:986. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn universalargument() -> i32 { 0 }

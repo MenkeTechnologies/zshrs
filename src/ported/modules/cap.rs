@@ -265,36 +265,36 @@ fn module_features() -> &'static Mutex<features_t> {
 // =====================================================================
 
 /// Port of `setup_()` from `Src/Modules/cap.c:139`.
-pub fn setup_(_m: *const module) -> i32 {
+pub fn setup_(_m: *const module) -> i32 {                                    // c:139
     0                                                                  // c:141
 }
 
 /// Port of `features_()` from `Src/Modules/cap.c:146`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:146
     *features = featuresarray(m, module_features());                  // c:148
     0                                                                  // c:149
 }
 
 /// Port of `enables_()` from `Src/Modules/cap.c:154`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:154
     handlefeatures(m, module_features(), enables)                     // c:156
 }
 
 /// Port of `boot_()` from `Src/Modules/cap.c:161`.
-pub fn boot_(_m: *const module) -> i32 {
+pub fn boot_(_m: *const module) -> i32 {                                     // c:161
     0                                                                  // c:163
 }
 
 /// Port of `cleanup_()` from `Src/Modules/cap.c:168`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {
+pub fn cleanup_(m: *const module) -> i32 {                                   // c:168
     setfeatureenables(m, module_features(), None)                     // c:170
 }
 
 /// Port of `finish_()` from `Src/Modules/cap.c:175`.
-pub fn finish_(_m: *const module) -> i32 {
+pub fn finish_(_m: *const module) -> i32 {                                   // c:175
     0                                                                  // c:177
 }
 

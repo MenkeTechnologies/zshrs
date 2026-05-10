@@ -179,8 +179,10 @@ pub struct Zle {
     pub zlecs: usize,
     /// Line length
     pub zlell: usize,
+    // location of mark                                                      // c:81
     /// Mark position
     pub mark: usize,
+    // insert mode/overwrite mode flag                                       // c:124
     /// Insert mode (true) or overwrite mode (false)
     pub insmode: bool,
     /// Done editing flag
@@ -195,8 +197,10 @@ pub struct Zle {
     pub lbindk: Option<Thingy>,
     /// Binding for this key
     pub bindk: Option<Thingy>,
+    // flags associated with last command                                    // c:145
     /// Flags associated with last command
     pub lastcmd: WidgetFlags,
+    // current modifier status                                               // c:169
     /// Current modifier status
     pub zmod: Modifier,
     /// Prefix command flag
@@ -219,6 +223,7 @@ pub struct Zle {
     pub undo_stack: Vec<Change>,
     /// Current change number
     pub changeno: u64,
+    // Number of characters waiting to be read by the ungetbytes mechanism   // c:185
     /// Unget buffer for bytes
     unget_buf: VecDeque<u8>,
     /// EOF character
@@ -249,8 +254,10 @@ pub struct Zle {
     pre_zle_status: i32,
     /// Needs refresh
     pub resetneeded: bool,
+    // Primary cut buffer                                                    // c:33
     /// Vi cut buffers (0-35: 0-9, a-z)
     pub vibuf: [ZleString; 36],
+    // Emacs-style kill buffer ring                                          // c:38
     /// Kill ring
     pub killring: VecDeque<ZleString>,
     /// Kill ring max size
@@ -281,6 +288,7 @@ pub struct Zle {
     /// Vi last change replay buffer (for `.` operator).
     /// Port of `vichgbuf` from zle_vi.c — bytes of the last change op.
     pub vi_chg_buf: Vec<u8>,
+    // Previous search string use in an incremental search                   // c:44
     /// Last inline search pattern, used by repeat-search.
     /// Port of `srch_str` in zle_hist.c.
     pub srch_str: Option<String>,
@@ -462,9 +470,10 @@ impl Zle {
     /// output mapping plus VQUIT/VSUSP/VDSUSP so the keymap can rebind
     /// those control chars. Our Rust port covers the daily-driver
     /// subset: ICANON+ECHO off, VMIN/VTIME, and eofchar capture from
+    // set up terminal                                                       // c:206
     /// VEOF. The flow-control + TAB3 + IXON disables and the
     /// fetchttyinfo/attachtty save state remain on the host side.
-    pub fn zsetterm(&mut self) -> io::Result<()> {
+    pub fn zsetterm(&mut self) -> io::Result<()> {                           // c:210
         // termios::FromRawFd is not used directly here — the path goes
         // through termios::Termios::from_fd which already opens the fd.
         let mut termios = termios::Termios::from_fd(self.ttyfd)?;
@@ -729,7 +738,7 @@ impl Zle {
     /// `getfullchar` + UTF-8 decode, while bound key sequences (e.g.
     /// `^X^E`) currently rely on the binding's first byte; the
     /// keymap-trie walk is a follow-up port.
-    pub fn zlecore(&mut self) {
+    pub fn zlecore(&mut self) {                                              // c:1110
         self.done = false;
 
         while !self.done {
@@ -1041,7 +1050,7 @@ impl Zle {
     /// state. Our simplified version does the equivalent for a
     /// single-line display: emit \\r + clear-to-EOL, flush stdout, then
     /// arm `resetneeded` so the next zlecore iteration redraws.
-    pub fn trashzle(&mut self) {
+    pub fn trashzle(&mut self) {                                             // c:2068
         print!("\r\x1b[K");
         let _ = io::stdout().flush();
         // Reset attributes (C source: applytextattributes(0)).

@@ -1,5 +1,10 @@
 //! Zsh utility builtins - port of Modules/zutil.c
 //!
+//! Style stuff.                                                             // c:82
+//! Hash table of styles and associated functions.                           // c:104
+//! Format stuff.                                                            // c:800
+//! Zregexparse stuff.                                                       // c:1091
+//!
 //! Provides zstyle, zformat, zparseopts builtins.
 
 use crate::ported::utils::zwarnnam;
