@@ -9799,7 +9799,17 @@ impl crate::ported::exec::ShellExecutor {
             "zcp" => return self.builtin_zmv(&rest_vec, "cp"),
             "zln" => return self.builtin_zmv(&rest_vec, "ln"),
             "zcalc" => return self.builtin_zcalc(&rest_vec),
-            "zselect" => return self.bin_zselect(&rest_vec),
+            "zselect" => {
+                // Canonical bin_zselect per zselect.c:65 takes
+                // (nam, args, ops, func); the C source parses its
+                // own option string inline, so an empty Options is
+                // sufficient at this call site.
+                use crate::ported::zsh_h::{options, MAX_OPS};
+                let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                    argscount: 0, argsalloc: 0 };
+                return crate::ported::modules::zselect::bin_zselect(
+                    "zselect", &rest_vec, &ops, 0);
+            }
             "cap" => return self.bin_cap(&rest_vec),
             "getcap" => return self.bin_getcap(&rest_vec),
             "setcap" => return self.bin_setcap(&rest_vec),
