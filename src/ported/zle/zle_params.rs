@@ -304,8 +304,16 @@ pub fn get_postdisplay() -> String {                                         // 
         .lock().unwrap().clone()
 }
 
-/// Port of `get_prebuffer()` from Src/Zle/zle_params.c:394. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_prebuffer() -> i32 { 0 }
+/// Port of `get_prebuffer()` from Src/Zle/zle_params.c:394.
+pub fn get_prebuffer(zle: &crate::ported::zle::zle_main::Zle) -> String {    // c:394
+    // C body c:396-410 — `if (!stackhist) return ztrdup("");
+    //                     dputs(...prepended buffer...)`. Returns the
+    //                     stacked-line buffer (multi-line input not
+    //                     yet committed to current zleline). Without
+    //                     stackhist tracking we return empty.
+    let _ = zle;
+    String::new()
+}
 
 /// Port of `get_predisplay()` from Src/Zle/zle_params.c:893. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn get_predisplay() -> String {                                          // c:892
@@ -488,11 +496,24 @@ pub fn get_yankstart(zle: &crate::ported::zle::zle_main::Zle) -> i64 {       // 
     zle.yank_start as i64
 }
 
-/// Port of `makezleparams()` from Src/Zle/zle_params.c:194. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn makezleparams() -> i32 { 0 }
+/// Port of `makezleparams()` from Src/Zle/zle_params.c:194.
+pub fn makezleparams(_local: i32) {                                          // c:194
+    // C body c:196-310 — registers all `$BUFFER`, `$LBUFFER`, `$RBUFFER`,
+    //                    `$CURSOR`, `$MARK`, `$NUMERIC`, `$REGION_ACTIVE`,
+    //                    etc. parameters with the param table for the
+    //                    duration of a widget call via createparam +
+    //                    a custom GSU vector. Param-table integration
+    //                    deferred; no-op.
+}
 
-/// Port of `scan_registers()` from Src/Zle/zle_params.c:784. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn scan_registers() -> i32 { 0 }
+/// Port of `scan_registers()` from Src/Zle/zle_params.c:784.
+pub fn scan_registers(_t: i32, _flags: i32) {                                // c:784
+    // C body c:786-840 — walks vibuf[0..36] enumerating non-empty
+    //                    vi register names ('a'..'z', '0'..'9') for
+    //                    `printf -v` and `(${(@k)registers})` queries.
+    //                    Without param-table hashparam node integration:
+    //                    no-op.
+}
 
 /// Port of `set_histno()` from Src/Zle/zle_params.c:503. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn set_histno(zle: &mut crate::ported::zle::zle_main::Zle, x: i64) {     // c:502
@@ -608,8 +629,18 @@ pub fn set_register(zle: &mut crate::ported::zle::zle_main::Zle, name: char, val
     0
 }
 
-/// Port of `set_registers()` from Src/Zle/zle_params.c:833. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn set_registers() -> i32 { 0 }
+/// Port of `set_registers()` from Src/Zle/zle_params.c:833.
+pub fn set_registers(zle: &mut crate::ported::zle::zle_main::Zle,            // c:833
+                     map: &std::collections::HashMap<String, String>) {
+    // C body c:835-855 — for each (name, value) in the assoc-array
+    //                    being assigned to $registers, invoke
+    //                    set_register. Names outside [a-z0-9] beep.
+    for (name, value) in map {
+        if let Some(ch) = name.chars().next() {
+            let _ = set_register(zle, ch, value);
+        }
+    }
+}
 
 /// Port of `set_yankend()` from Src/Zle/zle_params.c:570. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn set_yankend(zle: &mut crate::ported::zle::zle_main::Zle, i: i64) {    // c:569
@@ -660,11 +691,22 @@ pub fn unset_register(zle: &mut crate::ported::zle::zle_main::Zle, name: char, _
     let _ = set_register(zle, name, "");
 }
 
-/// Port of `unset_registers()` from Src/Zle/zle_params.c:857. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn unset_registers() -> i32 { 0 }
+/// Port of `unset_registers()` from Src/Zle/zle_params.c:857.
+pub fn unset_registers(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) { // c:857
+    // C body c:859-870 — `if (exp) { for (i...) { vibuf[i].buf=NULL;
+    //                              vibuf[i].len = 0; } stdunsetfn(...) }`.
+    if exp != 0 {
+        for buf in zle.vibuf.iter_mut() {
+            buf.clear();
+        }
+    }
+}
 
-/// Port of `zleunsetfn()` from Src/Zle/zle_params.c:237. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zleunsetfn() -> i32 { 0 }
+/// Port of `zleunsetfn()` from Src/Zle/zle_params.c:237.
+pub fn zleunsetfn() {                                                        // c:237
+    // C body c:239-242 — `stdunsetfn(pm, exp); pm->gsu.s = &nullsetscalar_gsu`.
+    //                    Param-table integration deferred; no-op.
+}
 
 #[cfg(test)]
 mod region_active_tests {

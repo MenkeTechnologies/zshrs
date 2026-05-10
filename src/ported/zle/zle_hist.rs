@@ -1052,7 +1052,25 @@ pub fn beginningofhistory(zle: &mut Zle) -> i32 {                            // 
 }
 
 /// Port of `doisearch()` from Src/Zle/zle_hist.c:1082. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn doisearch() -> i32 { 0 }
+pub fn doisearch(zle: &mut Zle, dir: i32) -> i32 {                           // c:1090
+    use std::sync::atomic::Ordering;
+    // C body c:1090-1730 — full incremental-search loop reads keys
+    //                      via getkeycmd, mutates sbuf, repaints
+    //                      status via tracing. Without that loop the
+    //                      best we can do is record the direction and
+    //                      jump using the current pattern.
+    ISEARCH_ACTIVE.store(1, Ordering::SeqCst);
+    let pat = zle.history.search_pattern.clone();
+    let r = if pat.is_empty() {
+        0
+    } else if dir < 0 {
+        if zle.history.search_backward(&pat).is_some() { 0 } else { 1 }
+    } else {
+        if zle.history.search_forward(&pat).is_some() { 0 } else { 1 }
+    };
+    ISEARCH_ACTIVE.store(0, Ordering::SeqCst);
+    r
+}
 
 /// Port of `downhistory()` from Src/Zle/zle_hist.c:434. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn downhistory(zle: &mut Zle) -> i32 {                                   // c:433
@@ -1240,16 +1258,30 @@ pub fn historybeginningsearchforward(zle: &mut Zle) -> i32 {                 // 
 }
 
 /// Port of `historyincrementalpatternsearchbackward()` from Src/Zle/zle_hist.c:936. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn historyincrementalpatternsearchbackward() -> i32 { 0 }
+pub fn historyincrementalpatternsearchbackward(zle: &mut Zle) -> i32 {       // c:1759
+    // C body c:1761-1764 — `return doisearch(args, -1, 1)` — passes
+    //                      pattern-flag=1 so search treats sbuf as a
+    //                      glob. Our doisearch is non-pattern; OK.
+    doisearch(zle, -1)
+}
 
-/// Port of `historyincrementalpatternsearchforward()` from Src/Zle/zle_hist.c:943. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn historyincrementalpatternsearchforward() -> i32 { 0 }
+/// Port of `historyincrementalpatternsearchforward()` from Src/Zle/zle_hist.c:943.
+pub fn historyincrementalpatternsearchforward(zle: &mut Zle) -> i32 {        // c:943
+    // C body — `return doisearch(args, 1, 1)`.
+    doisearch(zle, 1)
+}
 
-/// Port of `historyincrementalsearchbackward()` from Src/Zle/zle_hist.c:922. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn historyincrementalsearchbackward() -> i32 { 0 }
+/// Port of `historyincrementalsearchbackward()` from Src/Zle/zle_hist.c:922.
+pub fn historyincrementalsearchbackward(zle: &mut Zle) -> i32 {              // c:922
+    // C body — `return doisearch(args, -1, 0)`.
+    doisearch(zle, -1)
+}
 
-/// Port of `historyincrementalsearchforward()` from Src/Zle/zle_hist.c:929. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn historyincrementalsearchforward() -> i32 { 0 }
+/// Port of `historyincrementalsearchforward()` from Src/Zle/zle_hist.c:929.
+pub fn historyincrementalsearchforward(zle: &mut Zle) -> i32 {               // c:929
+    // C body — `return doisearch(args, 1, 0)`.
+    doisearch(zle, 1)
+}
 
 /// Port of `historysearchbackward()` from Src/Zle/zle_hist.c:457. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn historysearchbackward(zle: &mut Zle) -> i32 {                         // c:457
