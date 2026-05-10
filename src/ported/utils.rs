@@ -4267,26 +4267,8 @@ pub fn mailstat(path: &str) -> Option<MailStat> {
 // ===========================================================
 
 // BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
-    pub(crate) fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
-        if !dest.exists() {
-            std::fs::create_dir_all(dest)?;
-        }
-        for entry in std::fs::read_dir(src)? {
-            let entry = entry?;
-            let file_type = entry.file_type()?;
-            let src_path = entry.path();
-            let dest_path = dest.join(entry.file_name());
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
 
-            if file_type.is_dir() {
-                Self::copy_dir_recursive(&src_path, &dest_path)?;
-            } else {
-                std::fs::copy(&src_path, &dest_path)?;
-            }
-        }
-        Ok(())
-    }
-}
 // END moved-from-exec-rs
 
 // ===========================================================

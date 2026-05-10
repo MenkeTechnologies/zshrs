@@ -405,83 +405,8 @@ mod tests {
 // ===========================================================
 
 // BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
-    /// pcre_compile - compile a PCRE pattern
-    /// `pcre_compile` builtin — delegates to canonical port at
-    /// `src/ported/modules/pcre.rs:244` (`bin_pcre_compile()` from
-    /// `Src/Modules/pcre.c:70`). All option parsing and pattern
-    /// compilation now lives in the canonical port; this shim only
-    /// builds the `&[&str]` view and threads `self.pcre_state`.
-    pub(crate) fn bin_pcre_compile(&mut self, args: &[String]) -> i32 {
-        use crate::pcre::PcreCompileOptions;
-        let mut options = PcreCompileOptions::default();
-        let mut positional: Vec<&str> = Vec::new();
-        for arg in args {
-            match arg.as_str() {
-                "-a" => options.anchored = true,
-                "-i" => options.caseless = true,
-                "-m" => options.multiline = true,
-                "-s" => options.dotall = true,
-                "-x" => options.extended = true,
-                s if !s.starts_with('-') => positional.push(s),
-                _ => {}
-            }
-        }
-        let (status, output) = crate::pcre::bin_pcre_compile(&positional, &options);
-        if !output.is_empty() {
-            if status == 0 { print!("{}", output); } else { eprint!("{}", output); }
-        }
-        status
-    }
-    /// `pcre_match` builtin — delegates to canonical port at
-    /// `src/ported/modules/pcre.rs:273` (`bin_pcre_match()` from
-    /// `Src/Modules/pcre.c:328`). The shim parses `-v`/`-a` argv
-    /// flags, calls the canonical matcher, then writes the resulting
-    /// `MATCH`/`match` capture data back into the executor's
-    /// variable/array tables — that side-effect cannot live in the
-    /// canonical port because it doesn't own those tables.
-    pub(crate) fn bin_pcre_match(&mut self, args: &[String]) -> i32 {
-        use crate::pcre::PcreMatchOptions;
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
 
-        let mut var_name = "MATCH".to_string();
-        let mut array_name = "match".to_string();
-        let mut positional: Vec<&str> = Vec::new();
-        let mut i = 0;
-        while i < args.len() {
-            match args[i].as_str() {
-                "-v" => { i += 1; if i < args.len() { var_name = args[i].clone(); } }
-                "-a" => { i += 1; if i < args.len() { array_name = args[i].clone(); } }
-                s if !s.starts_with('-') => positional.push(s),
-                _ => {}
-            }
-            i += 1;
-        }
-
-        let options = PcreMatchOptions {
-            match_var: Some(var_name.clone()),
-            array_var: Some(array_name.clone()),
-            ..Default::default()
-        };
-
-        let (status, result) = crate::pcre::bin_pcre_match(&positional, &options);
-        if status == 0 {
-            if let Some(m) = result.full_match {
-                self.variables.insert(var_name, m);
-            }
-            let matches: Vec<String> = result.captures.into_iter().flatten().collect();
-            self.arrays.insert(array_name, matches);
-        }
-        status
-    }
-    /// pcre_study - optimize compiled PCRE (no-op in Rust regex)
-    pub(crate) fn bin_pcre_study(&mut self, _args: &[String]) -> i32 {
-        let (status, msg) = crate::pcre::bin_pcre_study();
-        if status != 0 {
-            zwarnnam("pcre_study", msg.trim_start_matches("pcre_study: ").trim_end());
-        }
-        status
-    }
-}
 // END moved-from-exec-rs
 
 // =====================================================================

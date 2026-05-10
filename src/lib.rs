@@ -125,6 +125,7 @@ pub use modules::zutil;
 #[path = "extensions/hooks.rs"] pub mod hooks_ext;
 #[path = "extensions/compinit_bg.rs"] pub mod compinit_bg;
 pub mod fusevm_bridge;
+pub mod exec_shims;
 // Plugin-Framework-Agnostic State-Modification Recorder. Entire module
 // is `#![cfg(feature = "recorder")]` so it disappears from the default
 // `zshrs` build at the rustc-expansion stage. See docs/RECORDER.md.

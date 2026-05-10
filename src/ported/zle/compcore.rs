@@ -290,21 +290,8 @@ mod tests {
 // ===========================================================
 
 // BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
-    /// zsh compadd - add completion matches
-    pub(crate) fn bin_compadd(&mut self, args: &[String]) -> i32 {
-        // Basic stub for zsh completion system
-        // In a full implementation, this would add completion candidates
-        let _ = args;
-        0
-    }
-    /// zsh compset - modify completion prefix/suffix
-    pub(crate) fn bin_compset(&mut self, args: &[String]) -> i32 {
-        // Basic stub for zsh completion system
-        let _ = args;
-        0
-    }
-}
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
 // END moved-from-exec-rs
 
 /// Port of `add_match_data()` from Src/Zle/compcore.c:2643. ZLE state is owned by the active editor instance; this entry is a name-parity shim.

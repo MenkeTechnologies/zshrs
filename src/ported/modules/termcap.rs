@@ -372,12 +372,5 @@ mod tests {
 // ShellExecutor shim
 // =====================================================
 
-impl crate::ported::exec::ShellExecutor {
-    /// `echotc` builtin shim — adapts `&[String]` argv to
-    /// `bin_echotc` over a `[bool; 256]` ops bitmask.
-    pub(crate) fn bin_echotc(&mut self, args: &[String]) -> i32 {
-        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-        let ops = [false; 256];
-        bin_echotc("echotc", &argv, &ops)
-    }
-}
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+

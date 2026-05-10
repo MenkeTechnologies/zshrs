@@ -658,24 +658,8 @@ mod tests {
 // ===========================================================
 
 // BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
-    /// `log` builtin — delegates to canonical port at
-    /// `src/ported/modules/watch.rs` (`bin_log()` from
-    /// `Src/Modules/watch.c`). The watch state lives in
-    /// `thread_local!`s in the canonical port (mirroring C's
-    /// `Src/Modules/watch.c:150-156` file-statics) so login/logout
-    /// edge detection survives across calls without a struct on
-    /// `ShellExecutor`.
-    pub(crate) fn bin_log(&mut self, _args: &[String]) -> i32 {
-        let user = std::env::var("USER").unwrap_or_default();
-        let fmt = self.variables.get("WATCHFMT").cloned();
-        let output = crate::watch::bin_log(&user, fmt.as_deref());
-        if !output.is_empty() {
-            print!("{}", output);
-        }
-        0
-    }
-}
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
 // END moved-from-exec-rs
 
 // =====================================================================

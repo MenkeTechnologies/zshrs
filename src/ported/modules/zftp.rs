@@ -1397,39 +1397,8 @@ mod tests {
 // ===========================================================
 
 // BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
-    /// zftp - FTP client builtin
-    pub(crate) fn bin_zftp(&mut self, args: &[String]) -> i32 {
-        // Dispatch through src/zftp.rs which holds the full FTP client
-        // (zftp_session with connect/login/cd/get/put/list/...). The
-        // previous impl was an inline stub that printed "would do X"
-        // without ever opening a socket. Bypass it entirely.
-        if args.is_empty() {
-            // zsh `zftp` with no args — usage banner via `zftp params`.
-            // Forward to the real impl which will return its own banner
-            // for the empty-args case.
-            let (code, msg) = crate::zftp::bin_zftp(&[], &mut self.zftp);
-            if !msg.is_empty() {
-                if code == 0 {
-                    print!("{}", msg);
-                } else {
-                    eprint!("{}", msg);
-                }
-            }
-            return code;
-        }
-        let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        let (code, msg) = crate::zftp::bin_zftp(&argv, &mut self.zftp);
-        if !msg.is_empty() {
-            if code == 0 {
-                print!("{}", msg);
-            } else {
-                eprint!("{}", msg);
-            }
-        }
-        code
-    }
-}
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
 // END moved-from-exec-rs
 
 // =====================================================================

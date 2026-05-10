@@ -7604,8 +7604,8 @@ pub(crate) mod paramsubst_inline {                          // glob.c:2276
 // ===========================================================
 
 // BEGIN moved-from-exec-rs
-impl crate::ported::exec::ShellExecutor {
-}
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
 // END moved-from-exec-rs
 
 // END moved-from-exec-rs (free fns)
