@@ -145,14 +145,36 @@ pub fn zts_alloc(ztflags: i32) -> usize {                                // c:21
     })
 }
 
-// ---------------------------------------------------------------------
-// Tcp_session handle and field accessors.
-// ---------------------------------------------------------------------
+// =====================================================================
+// !!! WARNING: RUST-ONLY HELPERS — NO DIRECT C COUNTERPART !!!
+// =====================================================================
+//
+// `sess_get` and `sess_with` DO NOT EXIST as functions in
+// `Src/Modules/tcp.c`. The C source dereferences `Tcp_session sess`
+// (a struct pointer) directly to read or write fields:
+//
+//     sess->fd = fd;
+//     if (sess->flags & ZTCP_LISTEN) ...
+//
+// Rust's borrow checker won't let us hand out a long-lived reference
+// to a slot inside the thread_local `ZTCP_SESSIONS` Vec without a
+// borrow guard, so the Rust port wraps each field touch in a
+// closure. Each call to `sess_with(idx, |s| { s.field = x })` maps
+// 1:1 to a C `sess->field = x;` — they are NOT new policy, only an
+// adapter for the storage shape (Vec<tcp_session> vs linked list).
+//
+// !!! Do NOT use these for any state that the C source doesn't
+// already touch via `Tcp_session`. They are a borrow-checker
+// adapter, not a new abstraction. !!!
+// =====================================================================
+//
 // C `Tcp_session` is `struct tcp_session *` (a pointer into the
 // `ztcp_sessions` linked list). Rust models the same: a handle that
 // indexes into the thread-local `ZTCP_SESSIONS` Vec. NULL → None.
 type TcpSessionHandle = Option<usize>;
 
+/// !!! RUST-ONLY HELPER — see WARNING block above. Equivalent to
+/// the C expression `sess->FIELD` (read).
 fn sess_get<R, F: FnOnce(&tcp_session) -> R>(idx: usize, f: F) -> R {
     ZTCP_SESSIONS.with(|s| {
         let g = s.borrow();
@@ -160,6 +182,8 @@ fn sess_get<R, F: FnOnce(&tcp_session) -> R>(idx: usize, f: F) -> R {
     })
 }
 
+/// !!! RUST-ONLY HELPER — see WARNING block above. Equivalent to
+/// the C statement `sess->FIELD = X;` (write).
 fn sess_with<F: FnOnce(&mut tcp_session)>(idx: usize, f: F) {
     ZTCP_SESSIONS.with(|s| {
         let mut g = s.borrow_mut();

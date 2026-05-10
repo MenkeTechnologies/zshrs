@@ -9668,7 +9668,53 @@ impl crate::ported::exec::ShellExecutor {
             "getln" => return self.builtin_getln(&rest_vec),
             "zpty" => return self.bin_zpty(&rest_vec),
             "ztcp" => return self.bin_ztcp(&rest_vec),
-            "zsocket" => return bin_zsocket(&rest_vec),
+            "zsocket" => {
+                // Shim — parses the BUILTIN spec "ad:ltv" from
+                // socket.c:276 into a real `options` struct, then
+                // invokes the canonical free-fn port at
+                // crate::ported::modules::socket::bin_zsocket whose
+                // signature matches C `bin_zsocket(nam, args, ops,
+                // func)` exactly.
+                use crate::ported::zsh_h::{options, MAX_OPS};
+                let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                        argscount: 0, argsalloc: 0 };
+                let mut positional: Vec<String> = Vec::new();
+                let mut i = 0;
+                while i < rest_vec.len() {
+                    let a = &rest_vec[i];
+                    if a == "--" {
+                        i += 1;
+                        positional.extend_from_slice(&rest_vec[i..]);
+                        break;
+                    }
+                    if let Some(rest) = a.strip_prefix('-') {
+                        if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
+                        let chars: Vec<char> = rest.chars().collect();
+                        let mut j = 0;
+                        while j < chars.len() {
+                            let c = chars[j] as u8;
+                            if c == b'd' {
+                                ops.ind[c as usize] = (ops.args.len() + 1) as u8;
+                                let rest_after = &rest[j + 1..];
+                                if !rest_after.is_empty() {
+                                    ops.args.push(rest_after.to_string());
+                                } else {
+                                    i += 1;
+                                    ops.args.push(rest_vec.get(i).cloned().unwrap_or_default());
+                                }
+                                ops.argscount = ops.args.len() as i32;
+                                break;
+                            }
+                            if c.is_ascii_alphabetic() { ops.ind[c as usize] = 1; }
+                            j += 1;
+                        }
+                    } else {
+                        positional.push(a.clone());
+                    }
+                    i += 1;
+                }
+                return bin_zsocket("zsocket", &positional, &ops, 0);
+            }
             "private" => {
                 // bin_private now takes the canonical C signature
                 // (name, args, ops, func, assigns) per Src/Modules/

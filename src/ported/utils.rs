@@ -2583,28 +2583,60 @@ pub fn addmodulefd(fd: i32) {
     fdtable_set(fd, crate::ported::zsh_h::FDT_MODULE);
 }
 
-// `fdtable[]` from `Src/utils.c:67` — per-fd "what is this fd used
-// for" enum (`FDT_UNUSED` / `FDT_INTERNAL` / `FDT_EXTERNAL` /
-// `FDT_MODULE` / etc.). C uses a flat `unsigned char *fdtable`
-// resized as `max_zsh_fd` grows. Rust port stores the same map.
+// =====================================================================
+// !!! WARNING: RUST-ONLY HELPERS — NO DIRECT C COUNTERPART !!!
+// =====================================================================
+//
+// These three fns (`fdtable_lock`, `fdtable_get`, `fdtable_set`) DO
+// NOT EXIST as functions in `Src/utils.c`. The C source declares
+// `fdtable` as a bare `unsigned char *` global (Src/utils.c:~63) and
+// every call site reads/writes it as a direct array index:
+//
+//     if (fdtable[fd] != FDT_UNUSED) ...
+//     fdtable[fd] = FDT_EXTERNAL;
+//
+// Rust can't hand out raw mutable indexes through a `Mutex<Vec<u8>>`
+// safely without a borrow scope, so the Rust port wraps the same
+// slot access in three `pub fn`s. Each call site to these helpers
+// corresponds 1:1 to a `fdtable[fd] = X` or `fdtable[fd] != X`
+// statement in the C source — they are NOT new policy, they only
+// adapt the storage shape from `unsigned char *` to a growable
+// `Mutex<Vec<i32>>`.
+//
+// Also adapts `growfdtable` (Src/utils.c:1965) by lazily growing the
+// Vec inside `fdtable_set` instead of a separate `growfdtable`
+// call — the C source calls `growfdtable(fd)` immediately before
+// every `fdtable[fd] = X` write anyway.
+//
+// !!! Do NOT use these for any state that the C source does not
+// already store in `fdtable[]`. Adding a new "fd kind" here is a
+// scope expansion, not a port. !!!
+// =====================================================================
+
 static FDTABLE: std::sync::OnceLock<std::sync::Mutex<Vec<i32>>> =
     std::sync::OnceLock::new();
+
+/// !!! RUST-ONLY HELPER — see WARNING block above. C source uses bare
+/// `unsigned char *fdtable` global from Src/utils.c:~63.
 fn fdtable_lock() -> &'static std::sync::Mutex<Vec<i32>> {
     FDTABLE.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
-/// Read the current `fdtable[fd]` slot. Returns `FDT_UNUSED` for any
-/// fd that has not been explicitly set (matching the C source's
-/// behaviour after `growfdtable` zero-fills the new slots).
-pub fn fdtable_get(fd: i32) -> i32 {                                     // c:utils.c:67 fdtable[]
+/// !!! RUST-ONLY HELPER — see WARNING block above. Equivalent to
+/// the C expression `fdtable[fd]` (read). Returns `FDT_UNUSED` for
+/// any fd that has not been explicitly set, matching the C source's
+/// post-`growfdtable` zero-fill behaviour at Src/utils.c:1979.
+pub fn fdtable_get(fd: i32) -> i32 {                                     // c:utils.c:fdtable[fd]
     if fd < 0 { return crate::ported::zsh_h::FDT_UNUSED; }
     let g = fdtable_lock().lock().unwrap();
     g.get(fd as usize).copied().unwrap_or(crate::ported::zsh_h::FDT_UNUSED)
 }
 
-/// Write `fdtable[fd] = kind`. Grows the table on demand to mirror
-/// `Src/utils.c::addmodulefd`'s `growfdtable` call.
-pub fn fdtable_set(fd: i32, kind: i32) {                                 // c:utils.c:67 fdtable[]
+/// !!! RUST-ONLY HELPER — see WARNING block above. Equivalent to
+/// the C statement `fdtable[fd] = kind;`. Inlines the `growfdtable`
+/// call from Src/utils.c:1965 since C always invokes it immediately
+/// before the assignment anyway.
+pub fn fdtable_set(fd: i32, kind: i32) {                                 // c:utils.c:fdtable[fd]
     if fd < 0 { return; }
     let mut g = fdtable_lock().lock().unwrap();
     if (fd as usize) >= g.len() {

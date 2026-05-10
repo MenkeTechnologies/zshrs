@@ -6,53 +6,13 @@
 //! `cleanup_`/`finish_`).
 
 /// Direct port of `bin_zsocket()` from `Src/Modules/socket.c:57`.
-/// C signature: `static int bin_zsocket(char *nam, char **args,
-///                                       Options ops, int func)`.
-/// Implements the BUILTIN spec at socket.c:276 (`"ad:ltv"`).
-///
-/// The dispatcher hands argv as `&[String]`; `nam` / `func` are
-/// fixed (`"zsocket"` / `0`) and `ops` is parsed inline from the
-/// argv prefix to match the C source's flag handling on the same
-/// `Options ops` struct other ports use.
-pub fn bin_zsocket(argv_in: &[String]) -> i32 {                          // c:57
-    use crate::ported::zsh_h::{options, MAX_OPS, OPT_ISSET, OPT_ARG, FDT_UNUSED, FDT_EXTERNAL};
-    let nam = "zsocket";
-    // c:60 flag parse against "ad:ltv".
-    let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                            argscount: 0, argsalloc: 0 };
-    let mut args: Vec<String> = Vec::with_capacity(argv_in.len());
-    let mut i = 0;
-    while i < argv_in.len() {
-        let a = &argv_in[i];
-        if a == "--" { i += 1; args.extend_from_slice(&argv_in[i..]); break; }
-        if let Some(rest) = a.strip_prefix('-') {
-            if rest.is_empty() { args.push(a.clone()); i += 1; continue; }
-            let chars: Vec<char> = rest.chars().collect();
-            let mut j = 0;
-            while j < chars.len() {
-                let c = chars[j] as u8;
-                if c == b'd' {                                            // c:71 -d takes arg
-                    ops.ind[c as usize] = (ops.args.len() + 1) as u8;
-                    let rest_after = &rest[j + 1..];
-                    if !rest_after.is_empty() {
-                        ops.args.push(rest_after.to_string());
-                    } else {
-                        i += 1;
-                        ops.args.push(argv_in.get(i).cloned().unwrap_or_default());
-                    }
-                    ops.argscount = ops.args.len() as i32;
-                    break;
-                }
-                if c.is_ascii_alphabetic() { ops.ind[c as usize] = 1; }
-                j += 1;
-            }
-        } else {
-            args.push(a.clone());
-        }
-        i += 1;
-    }
-    let _func = 0i32;
-
+/// C signature matches exactly: `static int bin_zsocket(char *nam,
+/// char **args, Options ops, UNUSED(int func))`.
+pub fn bin_zsocket(nam: &str, args: &[String],                           // c:57
+                   ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG, FDT_UNUSED, FDT_EXTERNAL};
+    let mut soun: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    let mut sfd: i32;
     let mut err: i32 = 1;                                                // c:60
     let mut verbose = 0i32;
     let mut test = 0i32;
@@ -60,11 +20,11 @@ pub fn bin_zsocket(argv_in: &[String]) -> i32 {                          // c:57
     let mut soun: libc::sockaddr_un = unsafe { std::mem::zeroed() };
     let mut sfd: i32;
 
-    if OPT_ISSET(&ops, b'v') { verbose = 1; }                            // c:64-65
-    if OPT_ISSET(&ops, b't') { test    = 1; }                            // c:67-68
+    if OPT_ISSET(ops, b'v') { verbose = 1; }                            // c:64-65
+    if OPT_ISSET(ops, b't') { test    = 1; }                            // c:67-68
 
-    if OPT_ISSET(&ops, b'd') {                                           // c:70
-        let darg = OPT_ARG(&ops, b'd').unwrap_or("");
+    if OPT_ISSET(ops, b'd') {                                           // c:70
+        let darg = OPT_ARG(ops, b'd').unwrap_or("");
         targetfd = darg.parse::<i32>().unwrap_or(0);                     // c:71 atoi
         if targetfd == 0 {                                               // c:72
             crate::ported::utils::zwarnnam(nam,
@@ -80,7 +40,7 @@ pub fn bin_zsocket(argv_in: &[String]) -> i32 {                          // c:57
         }
     }
 
-    if OPT_ISSET(&ops, b'l') {                                           // c:85
+    if OPT_ISSET(ops, b'l') {                                           // c:85
         if args.is_empty() {                                             // c:88
             crate::ported::utils::zwarnnam(nam, "-l requires an argument");
             return 1;                                                    // c:90
@@ -135,7 +95,7 @@ pub fn bin_zsocket(argv_in: &[String]) -> i32 {                          // c:57
             println!("{} listener is on fd {}", localfn, sfd);           // c:139
         }
         return 0;                                                        // c:141
-    } else if OPT_ISSET(&ops, b'a') {                                    // c:143
+    } else if OPT_ISSET(ops, b'a') {                                    // c:143
         if args.is_empty() {                                             // c:147
             crate::ported::utils::zwarnnam(nam, "-a requires an argument");
             return 1;                                                    // c:149
