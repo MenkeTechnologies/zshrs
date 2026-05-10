@@ -1762,9 +1762,8 @@ pub(crate) fn getreal(str_in: &str) -> String {
     // Routes through singsub when a VM/executor is available;
     // outside the VM (unit tests, direct calls) returns the input
     // unchanged. Direct port of the C "noerrs swallow" path.
-    let result = crate::fusevm_bridge::try_with_executor(|exec| {
-        let mut state = crate::exec_shims::subst_state_from_executor(exec);
-        crate::ported::subst::singsub(str_in, &mut state)
+    let result = crate::fusevm_bridge::try_with_executor(|_exec| {
+        crate::ported::subst::singsub(str_in)
     });
     // C: c:2141-2143 — non-empty + first char non-empty → use it.
     match result {

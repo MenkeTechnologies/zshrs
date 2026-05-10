@@ -481,8 +481,9 @@ pub struct ShellExecutor {
     /// REPLACE / STRIP to alter their match disposition. Direct
     /// port of subst.c:2169-2199 — value matches zsh.h:1981-1996
     /// (SUB_MATCH=0x0008, SUB_REST=0x0010, etc.). Reset by the
-    /// dispatch arm after consumption.
-    pub sub_flags: u32,
+    /// dispatch arm after consumption. C type: `int` (zsh's
+    /// `sub_flags` field on the global subst state; zsh.h:1981).
+    pub sub_flags: i32,
     /// Stack for `local` variable save/restore (name, old_value).
     pub local_save_stack: Vec<(String, Option<String>)>,
     /// Parallel stack for `local arr=(...)` array save/restore.
@@ -673,9 +674,11 @@ impl ShellExecutor {
     /// did `exec.singsub(s)` now do `exec.singsub(s)` and route
     /// through the C-faithful `singsub`.
     pub fn singsub(&mut self, s: &str) -> String {
-        let mut state = crate::exec_shims::subst_state_from_executor(self);
-        let r = crate::ported::subst::singsub(s, &mut state);
-        crate::exec_shims::subst_state_commit_to_executor(state, self);
+        let _ctx = crate::fusevm_bridge::ExecutorContext::enter(self);
+        let r = crate::ported::subst::singsub(s);
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            self.last_status = 1;
+        }
         r
     }
 

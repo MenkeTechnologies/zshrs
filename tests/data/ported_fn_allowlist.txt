@@ -732,6 +732,36 @@ foundparam
 set_foundparam
 
 
+# subst.rs typed wrappers around the global `errflag` AtomicI32
+# (utils.rs). C accesses the global directly as `errflag` /
+# `errflag |= ERRFLAG_ERROR`; we wrap to keep call-site idiom
+# readable. No C counterpart by design.
+errflag_set
+errflag_set_error
+
+# subst.rs paramtab read/write helpers — bridge to the canonical
+# `ShellExecutor` parameter store via `fusevm_bridge::try_with_executor`.
+# Replaced the deleted `SubstState.variables` / `state.arrays` /
+# `state.assoc_arrays` field accesses (per user "SubstState must be
+# removed" directive). C accesses paramtab directly via getsparam
+# / getaparam; these are the executor-backed Rust equivalents that
+# go through the executor (where the canonical typed paramtab lives).
+# No C counterpart — architectural Rust-only seam to keep subst.rs
+# free of `ShellExecutor` direct reaches per the
+# no-shellexecutor-in-src/ported rule.
+vars_get
+vars_contains
+vars_insert
+arrays_get
+arrays_contains
+arrays_insert
+assoc_get
+assoc_contains
+exec_assignaparam
+exec_sethparam
+exec_sync_state_from_paramtab
+exec_getsparam
+
 # Pre-existing zsh.h macro-shaped helpers (Src/zsh.h is a header,
 # not in zsh_c_fn_names.txt which only lists fns from .c files).
 IS_WRITE_FILE
