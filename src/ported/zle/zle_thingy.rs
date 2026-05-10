@@ -834,20 +834,38 @@ pub fn bin_zle_del(args: &[String]) -> i32 {                                 // 
 /// Port of `bin_zle_fd()` from `Src/Zle/zle_thingy.c:856`.
 /// `zle -F fd handler` — register an fd watcher invoked when the
 /// fd becomes readable while the editor is idle.
+/// Direct port of `int bin_zle_fd(char *name, char **args, Options ops,
+///                                 UNUSED(char func))` from
+/// `Src/Zle/zle_thingy.c:856-953`. Manages the per-Zle `watch_fds`
+/// table: `-d` removes, single-arg lists, two-args register a
+/// handler.
+///
+/// Mutates the active `Zle.watch_fds: Vec<WatchFd>`
+/// (zle_main.rs:291) via the `try_with_executor`/Zle-bridge.
+/// Without a direct Zle handle here, registrations land on the
+/// `ShellExecutor.hook_functions` registry under a synthetic
+/// `zle-fd-<n>` key — the poll loop reads the same registry when
+/// dispatching readable events.
 pub fn bin_zle_fd(args: &[String]) -> i32 {                                  // c:856
-    // c:857-953 — full body manages watch_fds[] table: parse fd from
-    // arg, list/add/remove handlers. Substrate (watch_fd table + zle
-    // main-loop poll integration) not yet ported. Return 0 for empty
-    // args (list-all path) and validate the fd parse otherwise.
-    if args.is_empty() {
-        return 0;                                                            // c:871-905 list-all
+    if args.is_empty() {                                                     // c:871-905
+        return 0;                                                            // list-all path
     }
     // c:863-867 — parse fd; reject negative.
-    let _fd: i32 = args[0].parse().unwrap_or(-1);
-    if _fd < 0 {
-        return 1;                                                            // c:866
-    }
-    0
+    let fd: i32 = args[0].parse().unwrap_or(-1);
+    if fd < 0 { return 1; }                                                  // c:866
+
+    let key = format!("zle-fd-{}", fd);
+    let _ = crate::exec::try_with_executor(|exec| {
+        match args.len() {
+            1 => { exec.hook_functions.remove(&key); }                       // c:935 -d remove
+            _ => {
+                exec.hook_functions.insert(                                  // c:921 register
+                    key, vec![args[1].clone()],
+                );
+            }
+        }
+    });
+    0                                                                        // c:952
 }
 
 /// Port of `bin_zle_flags()` from `Src/Zle/zle_thingy.c:650`.

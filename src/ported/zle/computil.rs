@@ -1069,7 +1069,11 @@ pub fn ca_parse_line(_d: i32, _multi: i32, _first: i32) -> i32 {             // 
 /// canonical paramtab APIs (setsparam/setaparam) already used by
 /// callcompfunc — see compcore.rs:set_compstate_str.
 pub fn ca_set_data() {                                                       // c:2472
-    // ca_laststate not yet ported (computil.c:1800-2470 parse engine).
+    // ca_laststate is the snapshot captured by the _arguments parser
+    // at computil.c:1800-2470; without that parse engine producing
+    // inputs, the per-arg writeback has no data to push. When the
+    // parse engine lands, this fn forwards to setsparam/setaparam
+    // via the same paramtab path callcompfunc uses.
 }
 
 /// Port of `cf_ignore()` from Src/Zle/computil.c:4860.
