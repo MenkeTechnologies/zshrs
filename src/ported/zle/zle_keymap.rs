@@ -1688,23 +1688,27 @@ pub fn scancopykeys(_kb: &KeyBinding) {                                      // 
     // copy currently allocates an empty keymap.
 }
 
-/// Port of `scankeymap()` from Src/Zle/zle_keymap.c:381.
-pub fn scankeymap(km: &Keymap, _sort: i32) -> Vec<Vec<u8>> {                 // c:381
-    // C body (c:382-401): walks km->multi via scanhashtable, calling
-    // a function ptr per node. zshrs returns the list of bound seqs
-    // (callers can iterate). Sort flag deferred (HashMap iteration
-    // order is undefined; if needed callers can sort).
+/// Direct port of `void scankeymap(Keymap km, int sort,
+///                                  KeyScanFunc func, void *magic)`
+/// from `Src/Zle/zle_keymap.c:381-426`. Enumerates every binding
+/// in `km` — single-byte `first[256]` entries first, then
+/// multi-byte `multi` entries. `sort != 0` lex-sorts the multi-byte
+/// keys before yielding. The Rust port returns a Vec<Vec<u8>> of
+/// the sequences; callers iterate.
+pub fn scankeymap(km: &Keymap, sort: i32) -> Vec<Vec<u8>> {                  // c:381
     let mut seqs: Vec<Vec<u8>> = Vec::new();
-    // c:383 — single-byte first[] entries.
+    // c:383-395 — first[i] single-byte entries.
     for (i, t) in km.first.iter().enumerate() {
         if t.is_some() {
             seqs.push(vec![i as u8]);
         }
     }
-    // c:399-401 — multi-byte bindings.
-    for k in km.multi.keys() {
-        seqs.push(k.clone());
+    // c:399-401 — multi-byte bindings via scanhashtable.
+    let mut multi_keys: Vec<Vec<u8>> = km.multi.keys().cloned().collect();
+    if sort != 0 {                                                           // c:399 sort flag
+        multi_keys.sort();
     }
+    seqs.extend(multi_keys);
     seqs
 }
 
