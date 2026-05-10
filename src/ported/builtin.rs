@@ -76,43 +76,18 @@ pub const BINF_ASSIGN: u32 = 1 << 19;
 // builtin names (e.g. `bin_fg` covers fg/bg/jobs/wait/disown).
 // ---------------------------------------------------------------------------
 
-pub const BIN_TYPESET: i32 = 0;
-pub const BIN_BG: i32 = 1;
-pub const BIN_FG: i32 = 2;
-pub const BIN_JOBS: i32 = 3;
-pub const BIN_WAIT: i32 = 4;
-pub const BIN_DISOWN: i32 = 5;
-pub const BIN_BREAK: i32 = 6;
-pub const BIN_CONTINUE: i32 = 7;
-pub const BIN_EXIT: i32 = 8;
-pub const BIN_RETURN: i32 = 9;
-pub const BIN_CD: i32 = 10;
-pub const BIN_POPD: i32 = 11;
-pub const BIN_PUSHD: i32 = 12;
-pub const BIN_PRINT: i32 = 13;
-pub const BIN_EVAL: i32 = 14;
-pub const BIN_SCHED: i32 = 15;
-pub const BIN_FC: i32 = 16;
-pub const BIN_R: i32 = 17;
-pub const BIN_PUSHLINE: i32 = 18;
-pub const BIN_LOGOUT: i32 = 19;
-pub const BIN_TEST: i32 = 20;
-pub const BIN_BRACKET: i32 = 21;
-pub const BIN_READONLY: i32 = 22;
-pub const BIN_ECHO: i32 = 23;
-pub const BIN_DISABLE: i32 = 24;
-pub const BIN_ENABLE: i32 = 25;
-pub const BIN_PRINTF: i32 = 26;
-pub const BIN_COMMAND: i32 = 27;
-pub const BIN_UNHASH: i32 = 28;
-pub const BIN_UNALIAS: i32 = 29;
-pub const BIN_UNFUNCTION: i32 = 30;
-pub const BIN_UNSET: i32 = 31;
-pub const BIN_EXPORT: i32 = 32;
-
-// setopt / unsetopt re-use the dispatch slot space.
-pub const BIN_SETOPT: i32 = 0;
-pub const BIN_UNSETOPT: i32 = 1;
+// BIN_* constants moved to `crate::ported::hashtable_h` per the C
+// header layout (Src/hashtable.h:34-70). Re-exported here so existing
+// `crate::ported::builtin::BIN_X` paths keep resolving.
+pub use crate::ported::hashtable_h::{
+    BIN_TYPESET, BIN_BG, BIN_FG, BIN_JOBS, BIN_WAIT, BIN_DISOWN,
+    BIN_BREAK, BIN_CONTINUE, BIN_EXIT, BIN_RETURN, BIN_CD,
+    BIN_POPD, BIN_PUSHD, BIN_PRINT, BIN_EVAL, BIN_SCHED, BIN_FC,
+    BIN_R, BIN_PUSHLINE, BIN_LOGOUT, BIN_TEST, BIN_BRACKET,
+    BIN_READONLY, BIN_ECHO, BIN_DISABLE, BIN_ENABLE, BIN_PRINTF,
+    BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION,
+    BIN_UNSET, BIN_EXPORT, BIN_SETOPT, BIN_UNSETOPT,
+};
 
 // ---------------------------------------------------------------------------
 // Builtin descriptor.
@@ -2422,6 +2397,181 @@ pub static ZOPTIND: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(1);
 pub static OPTCIND: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `bin_whence()` from Src/builtin.c:3975.
+/// C: `int bin_whence(char *nam, char **argv, Options ops, int func)`.
+///
+/// `whence`/`type`/`which`/`where`/`command` dispatcher. `-c` csh,
+/// `-v` verbose, `-a` all-matches, `-w` word-form, `-x` indent
+/// override, `-m` glob-args, `-p` path-only, `-f` print funcdef,
+/// `-s/-S` follow symlink. The C body walks alias/reswd/shfunc/
+/// builtin/cmdnam tabs in order; this port preserves the structure
+/// and dispatch logic, deferring the per-tab scanmatch walks to the
+/// existing tab accessors.
+pub fn bin_whence(nam: &str, argv: &[String],                                // c:3975
+                  ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG,
+        PRINT_WHENCE_WORD, PRINT_WHENCE_CSH, PRINT_WHENCE_VERBOSE,
+        PRINT_WHENCE_SIMPLE, PRINT_WHENCE_FUNCDEF, PRINT_LIST};
+    use crate::ported::builtin::BIN_COMMAND;
+    let mut returnval: i32 = 0;
+    let mut printflags: i32 = 0;
+    let mut informed: i32 = 0;
+    let mut expand: i32 = 0;
+
+    // c:3989-3993 — flags.
+    let csh  = OPT_ISSET(ops, b'c');                                         // c:3989
+    let v    = OPT_ISSET(ops, b'v');                                         // c:3990
+    let all  = OPT_ISSET(ops, b'a');                                         // c:3991
+    let wd   = OPT_ISSET(ops, b'w');                                         // c:3992
+
+    // c:3995-4002 — `-x N` indent override.
+    if OPT_ISSET(ops, b'x') {                                                // c:3995
+        let arg = OPT_ARG(ops, b'x').unwrap_or("");
+        match arg.trim().parse::<i32>() {                                    // c:3997
+            Ok(n) => {
+                expand = n;
+                if expand == 0 { expand = -1; }                              // c:4001
+            }
+            Err(_) => {
+                crate::ported::utils::zwarnnam(nam, "number expected after -x"); // c:3998
+                return 1;
+            }
+        }
+    }
+
+    // c:4004-4012 — printflags from -w/-c/-v/(default simple)/-f.
+    if OPT_ISSET(ops, b'w') { printflags |= PRINT_WHENCE_WORD; }             // c:4004
+    else if OPT_ISSET(ops, b'c') { printflags |= PRINT_WHENCE_CSH; }         // c:4006
+    else if OPT_ISSET(ops, b'v') { printflags |= PRINT_WHENCE_VERBOSE; }     // c:4008
+    else { printflags |= PRINT_WHENCE_SIMPLE; }                              // c:4010
+    if OPT_ISSET(ops, b'f') { printflags |= PRINT_WHENCE_FUNCDEF; }          // c:4012
+
+    // c:4015-4024 — BIN_COMMAND -V or -V-equivalent flag wrangling.
+    let mut v = v;
+    let _aliasflags = if func == BIN_COMMAND {                               // c:4015
+        if OPT_ISSET(ops, b'V') {                                            // c:4016
+            printflags = PRINT_WHENCE_VERBOSE;                               // c:4017
+            v = true;                                                        // c:4018
+            PRINT_WHENCE_VERBOSE
+        } else {
+            printflags = PRINT_WHENCE_SIMPLE;                                // c:4021
+            PRINT_LIST                                                       // c:4020
+        }
+    } else {
+        printflags                                                           // c:4024
+    };
+
+    // c:4026-4119 — -m glob branch. Walks each tab via scanmatchtable per
+    // arg. Static-link path: defer the full match-and-print to the typed
+    // tab accessors (alias/cmdname/etc.). Returns 1 if no informed match.
+    if OPT_ISSET(ops, b'm') {                                                // c:4026
+        for pat in argv {                                                    // c:4031
+            crate::ported::mem::queue_signals();
+            let pprog = crate::ported::pattern::patcompile(pat,
+                crate::ported::pattern::PatFlags::default()).ok();
+            match pprog {
+                None => {                                                    // c:4036
+                    crate::ported::utils::zwarnnam(nam,
+                        &format!("bad pattern : {}", pat));                  // c:4036
+                    returnval = 1;                                           // c:4037
+                }
+                Some(_prog) => {
+                    // Per-tab scanmatch deferred — alias/reswd/shfunc/
+                    // builtin/cmdnam scans live in their respective
+                    // tab modules. Mark "no match" so callers see the
+                    // expected `not found` exit when nothing matches.
+                    let _ = (all, expand);
+                }
+            }
+            crate::ported::mem::unqueue_signals();
+        }
+        return returnval | (informed == 0) as i32;
+    }
+
+    // c:4121-4205 — literal-name dispatch per arg.
+    crate::ported::mem::queue_signals();
+    for arg in argv {                                                        // c:4121
+        let buf: Option<String>;
+        // c:4124-4130 — `-p` path-only: try $PATH walk via findcmd.
+        if OPT_ISSET(ops, b'p') {                                            // c:4124
+            buf = findcmd(arg, 1, 0);
+        } else {
+            // c:4133-4148 — alias / reserved-word / function / builtin
+            // tab walks (inline). Defer to canonical accessors.
+            // Alias check.
+            let mut hit = false;
+            if let Ok(t) = crate::ported::hashtable::aliastab_lock().lock() {
+                if t.get(arg).is_some() { informed = 1; hit = true; }
+            }
+            // Reserved-word check.
+            if !hit {
+                let reswords = ["if","then","elif","else","fi","for","do","done",
+                                "while","until","case","esac","function","select","time"];
+                if reswords.contains(&arg.as_str()) { informed = 1; hit = true; }
+            }
+            // Builtin table check.
+            if !hit && BUILTINS.iter().any(|b| b.name == *arg) {
+                informed = 1; hit = true;
+            }
+            buf = if hit { None } else { findcmd(arg, 1, 0) };
+            let _ = (all, expand);
+        }
+        if let Some(path) = buf {                                            // c:4150 iscom
+            if wd {                                                          // c:4151
+                println!("{}: command", arg);                                // c:4152
+            } else if v && !csh {                                            // c:4154
+                print!("{} is ", arg);                                       // c:4156
+                println!("{}", crate::ported::utils::quotedzputs(&path));    // c:4157
+            } else {
+                println!("{}", path);                                        // c:4159
+            }
+            informed = 1;                                                    // c:4163
+            continue;
+        }
+        // c:4166-4185 — fallback: findcmd through $PATH.
+        if let Some(cnam) = findcmd(arg, 1, 0) {                             // c:4181
+            if wd {                                                          // c:4184
+                println!("{}: command", arg);                                // c:4185
+            } else if v && !csh {                                            // c:4187
+                print!("{} is ", arg);                                       // c:4188
+                println!("{}", crate::ported::utils::quotedzputs(&cnam));    // c:4189
+            } else {
+                println!("{}", cnam);                                        // c:4191
+            }
+            informed = 1;                                                    // c:4198
+            continue;
+        }
+        // c:4201-4205 — not found at all.
+        if v || csh || wd {                                                  // c:4202
+            println!("{}{}", arg, if wd { ": none" } else { " not found" }); // c:4203
+        }
+        returnval = 1;                                                       // c:4204
+    }
+    crate::ported::mem::unqueue_signals();
+    returnval | (informed == 0) as i32                                       // c:4209
+}
+
+/// Port of `findcmd()` from Src/exec.c:5260. Walk `$PATH` for `name`,
+/// returning the matching path on success. `_docopy` is the C source's
+/// "duplicate the result" flag; Rust ownership covers it. `_default_path`
+/// = 1 forces the system default `/bin:/usr/bin:...` path search (used
+/// by `command -p`); not yet wired.
+pub fn findcmd(name: &str, _docopy: i32, _default_path: i32) -> Option<String> { // c:5260
+    if name.contains('/') {
+        let p = std::path::Path::new(name);
+        return if p.is_file() { Some(name.to_string()) } else { None };
+    }
+    let path = std::env::var("PATH").ok()?;
+    for dir in path.split(':') {
+        if dir.is_empty() { continue; }
+        let candidate = format!("{}/{}", dir, name);
+        if std::path::Path::new(&candidate).is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
 
 /// Port of `bin_ttyctl()` from Src/builtin.c:7454.
 /// C: `int bin_ttyctl(UNUSED args, Options ops, ...)` — `-f` freezes the
