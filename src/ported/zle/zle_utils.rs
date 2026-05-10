@@ -1156,10 +1156,24 @@ pub fn initundo() {                                                          // 
     freeundo();
 }
 
-/// Port of `mergeundo()` from Src/Zle/zle_utils.c:1733.
-pub fn mergeundo() {                                                         // c:1733
-    // C body c:1735-1755 — collapses next-changes into curchange.
-    //                      Undo chain deferred; no-op.
+/// Direct port of `void mergeundo(void)` from
+/// `Src/Zle/zle_utils.c:1733-1745`. Walks the undo stack backward
+/// from `cur_change` chaining CH_PREV/CH_NEXT flags so the changes
+/// since `vistartchange+1` form a single undo step (atomic vi
+/// insert-mode group). Resets `vistartchange = u64::MAX` (C's -1).
+pub fn mergeundo(zle: &mut crate::ported::zle::zle_main::Zle) {              // c:1733
+    use crate::ported::zle::zle_main::ChangeFlags;
+    // c:1735-1742 — walk current->prev while changeno > vistartchange+1.
+    if zle.cur_change == 0 { return; }
+    let mut current = zle.cur_change - 1;                                    // c:1735 prev
+    while current > 0
+        && zle.undo_stack[current].changeno > zle.vistartchange + 1
+    {
+        zle.undo_stack[current].flags |= ChangeFlags::PREV;                  // c:1740
+        zle.undo_stack[current - 1].flags |= ChangeFlags::NEXT;              // c:1741
+        current -= 1;
+    }
+    zle.vistartchange = u64::MAX;                                            // c:1744 = -1
 }
 
 /// Direct port of `int redo(UNUSED(char **args))` from
@@ -1252,10 +1266,25 @@ pub fn spaceinline(zle: &mut crate::ported::zle::zle_main::Zle, ct: i32) {   // 
     zle.zlell = zle.zleline.len();
 }
 
-/// Port of `splitundo()` from Src/Zle/zle_utils.c:1721.
-pub fn splitundo() {                                                         // c:1721
-    // C body c:1723-1731 — flushes pending undo changes into a new
-    //                      change-group boundary. Undo deferred; no-op.
+/// Direct port of `int splitundo(char **args)` from
+/// `Src/Zle/zle_utils.c:1721-1731`.
+/// ```c
+/// if (vistartchange >= 0) {
+///     mergeundo();
+///     vistartchange = undo_changeno;
+/// }
+/// handleundo();
+/// return 0;
+/// ```
+pub fn splitundo(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // c:1721
+    // C uses signed `vistartchange`; Rust uses u64 with u64::MAX as
+    // the "-1 / inactive" sentinel.
+    if zle.vistartchange != u64::MAX {                                       // c:1723 >= 0
+        mergeundo(zle);                                                      // c:1725
+        zle.vistartchange = zle.undo_changeno;                               // c:1726
+    }
+    zle.handleundo();                                                        // c:1728
+    0                                                                        // c:1730
 }
 
 /// Port of `stringaszleline()` from Src/Zle/zle_utils.c:375.
@@ -1349,11 +1378,32 @@ pub fn undo(zle: &mut crate::ported::zle::zle_main::Zle, args: &[String]) -> i32
     0                                                                        // c:1631
 }
 
-/// Port of `viundochange()` from Src/Zle/zle_utils.c:1705.
-pub fn viundochange() -> i32 {                                               // c:1705
-    // C body c:1707-1719 — vi `u` widget; one-step undo. Delegates to
-    //                      undo. Undo deferred; 1.
-    1
+/// Direct port of `int viundochange(char **args)` from
+/// `Src/Zle/zle_utils.c:1705-1719`.
+/// ```c
+/// handleundo();
+/// if (curchange->next) {
+///     do { applychange(curchange); curchange = curchange->next; }
+///     while(curchange->next);
+///     setlastline();
+///     return 0;
+/// } else return undo(args);
+/// ```
+pub fn viundochange(zle: &mut crate::ported::zle::zle_main::Zle,             // c:1705
+                    args: &[String]) -> i32 {
+    zle.handleundo();                                                        // c:1707
+    if zle.cur_change < zle.undo_stack.len() {                               // c:1708 curchange->next
+        // Re-apply all forward changes (collapses an undo chain back
+        // to current state).
+        while zle.cur_change < zle.undo_stack.len() {                        // c:1710
+            let idx = zle.cur_change;
+            applychange(zle, idx as i32);                                    // c:1711
+            zle.cur_change = idx + 1;                                        // c:1712
+        }
+        0                                                                    // c:1715
+    } else {
+        undo(zle, args)                                                      // c:1717
+    }
 }
 
 /// Port of `struct zle_position` from Src/Zle/zle_utils.c:594.
