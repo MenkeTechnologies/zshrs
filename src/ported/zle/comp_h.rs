@@ -291,10 +291,14 @@ pub struct Cmgroup {                                                     // c:49
     pub expls: Vec<Cexpl>,                                               // c:60
     /// Number of compctls used.
     pub ccount: i32,                                                     // c:61
-    // c:62-65 — `LinkList` fields lexpls/lmatches/lfmatches/lallccs.
-    // The C linked-list type is project-internal scaffolding; the
-    // Rust port omits these mid-build accumulators (callers can keep
-    // local Vecs while building a group).
+    /// LinkList of explanations (mid-build accumulator before `expls`).
+    pub lexpls: Vec<Cexpl>,                                              // c:62
+    /// LinkList of matches (mid-build accumulator before `matches`).
+    pub lmatches: Vec<Cmatch>,                                           // c:63
+    /// LinkList of matches with fignore-removed entries kept.
+    pub lfmatches: Vec<Cmatch>,                                          // c:64
+    /// LinkList of compctls used (mid-build accumulator).
+    pub lallccs: Vec<String>,                                            // c:65
     /// Group number.
     pub num: i32,                                                        // c:66
     /// Number of opened braces.

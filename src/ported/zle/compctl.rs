@@ -276,8 +276,10 @@ pub struct CompCtlp {
 // =================================================================
 
 /// Global cmatcher list. Port of file-static `Cmlist cmatcher;` at
-/// Src/Zle/compctl.c:36. Type kept as `Option<String>` placeholder.
-static CMATCHER: Mutex<Option<String>> = Mutex::new(None);
+/// Src/Zle/compctl.c:36.
+pub(crate) static CMATCHER:
+    Mutex<Option<Box<crate::ported::zle::comp_h::Cmlist>>> =
+        Mutex::new(None);                                                    // c:36
 
 /// `compctltab` hash table — name → CompCtl.
 /// Port of `HashTable compctltab;` at Src/Zle/compctl.c:46.
@@ -349,24 +351,86 @@ pub(crate) fn freecompcond(_cc: CompCond) {
     // Drop handles the chain — direct equivalent of compctl.c:148-186.
 }
 
-/// Copy a cmatcher list. Stub.
-/// Port of `cpcmlist()` from Src/Zle/compctl.c:188. The C version
-/// deep-copies a Cmlist linked list. Stubbed pending Cmlist port.
-pub(crate) fn cpcmlist(_l: Option<String>) -> Option<String> {
-    None
+/// Direct port of `static Cmlist cpcmlist(Cmlist l)` from
+/// Src/Zle/compctl.c:290-306. Deep-copies a Cmlist linked list, using
+/// `cpcmatcher` for each matcher's chain. Returns the new head.
+pub(crate) fn cpcmlist(                                                      // c:290
+    mut l: Option<&crate::ported::zle::comp_h::Cmlist>,
+) -> Option<Box<crate::ported::zle::comp_h::Cmlist>> {
+    use crate::ported::zle::comp_h::Cmlist;
+    let mut head: Option<Box<Cmlist>> = None;                                // c:293 r = NULL
+    let mut tail_ref: *mut Option<Box<Cmlist>> = &mut head;
+    while let Some(src) = l {                                                // c:295 while (l)
+        let matcher_chain = crate::ported::zle::complete::cpcmatcher(        // c:298 cpcmatcher
+            Some(&*src.matcher),
+        ).expect("cpcmatcher returned None for non-null source");
+        let n = Box::new(Cmlist {                                            // c:296 zalloc
+            next: None,                                                      // c:297
+            matcher: matcher_chain,                                          // c:298
+            str_: src.str_.clone(),                                          // c:299 ztrdup
+        });
+        unsafe {
+            *tail_ref = Some(n);
+            if let Some(ref mut newnode) = *tail_ref {                       // c:301 p = &(n->next)
+                tail_ref = &mut newnode.next as *mut _;
+            }
+        }
+        l = src.next.as_deref();                                             // c:302 l = l->next
+    }
+    head                                                                     // c:304 return r
 }
 
-/// Set a global matcher. Stub.
-/// Port of `set_gmatcher()` from Src/Zle/compctl.c:225 — `compctl -M`
-/// global matcher install. Stubbed pending matcher-string parser.
-pub(crate) fn set_gmatcher(_name: &str, _argv: &[String]) -> i32 {
-    0
+/// Direct port of `static int set_gmatcher(char *name, char **argv)` from
+/// Src/Zle/compctl.c:311-333. Parses each argv entry as a cmatcher
+/// spec, builds a fresh Cmlist chain, frees the old CMATCHER and
+/// installs the new one via cpcmlist.
+pub(crate) fn set_gmatcher(name: &str, argv: &[String]) -> i32 {             // c:311
+    use crate::ported::zle::comp_h::Cmlist;
+    let mut head: Option<Box<Cmlist>> = None;                                // c:314 l = NULL
+    let mut tail_ref: *mut Option<Box<Cmlist>> = &mut head;
+    for word in argv {                                                       // c:317 while (*argv)
+        let m = match crate::ported::zle::complete::parse_cmatcher(name, word) {
+            Some(m) => m,                                                    // c:319 parse_cmatcher
+            None => return 1,                                                // c:319 == pcm_err
+        };
+        let n = Box::new(Cmlist {                                            // c:320 zhalloc
+            next: None,                                                      // c:321
+            matcher: m,                                                      // c:322
+            str_: word.clone(),                                              // c:323
+        });
+        unsafe {
+            *tail_ref = Some(n);
+            if let Some(ref mut newnode) = *tail_ref {                       // c:325
+                tail_ref = &mut newnode.next as *mut _;
+            }
+        }
+    }
+    // freecmlist(cmatcher) — Drop on the Box handles the C free path.       // c:328
+    let new_list = cpcmlist(head.as_deref());                                // c:329 cpcmlist(l)
+    if let Ok(mut guard) = CMATCHER.lock() {
+        *guard = new_list;
+    }
+    1                                                                        // c:331
 }
 
-/// Get a global matcher. Stub.
-/// Port of `get_gmatcher()` from Src/Zle/compctl.c:281.
-pub(crate) fn get_gmatcher(_name: &str, _argv: &[String]) -> i32 {
-    0
+/// Direct port of `static int get_gmatcher(char *name, char **argv)` from
+/// Src/Zle/compctl.c:336-352. Looks for a leading `-M` flag followed
+/// by matcher specs (no `-`-prefixed args), then forwards to
+/// `set_gmatcher` and translates its return into 0/1/2.
+pub(crate) fn get_gmatcher(name: &str, argv: &[String]) -> i32 {             // c:336
+    if argv.first().map(|s| s.as_str()) != Some("-M") {                      // c:338
+        return 0;                                                            // c:349
+    }
+    let rest = &argv[1..];                                                   // c:339 p = ++argv
+    for w in rest {                                                          // c:341 while (*p)
+        if w.starts_with('-') {                                              // c:342
+            return 0;                                                        // c:343
+        }
+    }
+    if set_gmatcher(name, rest) != 0 {                                       // c:345
+        return 2;                                                            // c:346
+    }
+    1                                                                        // c:348
 }
 
 /// Print a global matcher. Stub.

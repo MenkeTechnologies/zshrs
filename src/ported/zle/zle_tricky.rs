@@ -32,6 +32,12 @@ pub static USEGLOB: AtomicI32 = AtomicI32::new(0);                           // 
 /// Port of `mod_export int wouldinstab` from `Src/Zle/zle_tricky.c:101`.
 pub static WOULDINSTAB: AtomicI32 = AtomicI32::new(0);                       // c:101
 
+/// Port of `mod_export int nbrbeg` from `Src/Zle/zle_tricky.c:114`.
+/// Number of opened braces seen in the current word during completion.
+pub static NBRBEG: AtomicI32 = AtomicI32::new(0);                            // c:114
+/// Port of `mod_export int nbrend` from `Src/Zle/zle_tricky.c:114`.
+pub static NBREND: AtomicI32 = AtomicI32::new(0);                            // c:114
+
 /// Port of `mod_export int menucmp` from `Src/Zle/zle_tricky.c:106`.
 /// Non-zero while inside a menu-completion sequence.
 pub static MENUCMP: AtomicI32 = AtomicI32::new(0);                           // c:106

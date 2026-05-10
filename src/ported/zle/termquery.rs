@@ -229,14 +229,30 @@ pub fn url_encode(s: &str) -> String {
     result
 }
 
-/// Read the system clipboard via the OSC-52 read query.
-/// Port of `system_clipget()` from Src/Zle/termquery.c. The C source
-/// emits `ESC ] 52 ; c ; ? ST` and parses the terminal's
-/// base64-encoded reply; our Rust port returns None until the
-/// async terminal-response handler is wired in (the read needs to
-/// time-share with `getbyte()` via the pending-input queue).
-pub fn system_clipget() -> Option<String> {
-    None
+/// Direct port of `char *system_clipget(char clip)` from
+/// `Src/Zle/termquery.c:625-633`. Emits `ESC ] 52 ; <clip> ; ? ST` and
+/// parses the terminal's `ESC ] 52 ; <clip> ; <base64> ST` reply,
+/// returning the decoded payload or None on timeout / malformed reply.
+///
+/// `clip` is the OSC-52 clipboard selector (`c` = clipboard, `p` =
+/// primary, `s` = selection); C source embeds it at `seq[5]` of the
+/// fixed template `\033]52;.;?\033\\`.
+pub fn system_clipget(clip: char) -> Option<String> {                        // c:625
+    let mut seq = String::from("\x1b]52;.;?\x1b\\");                         // c:628 fixed template
+    // c:631 — `seq[5] = clip` overwrites the placeholder '.'.
+    unsafe { seq.as_bytes_mut()[5] = clip as u8; }                           // c:631
+    // c:632 — probe_terminal(seq, osc52, &handle_paste, &contents).
+    // Rust's probe_terminal returns the full ESC...ST reply; parse it
+    // here in lieu of the C state-machine handle_paste callback.
+    let reply = probe_terminal(&seq, 200).ok()?;                             // c:632
+    // Expected reply shape: `ESC ] 52 ; <clip> ; <base64> ESC \` (the
+    // terminator may also be a bare BEL `\x07`).
+    let prefix = format!("\x1b]52;{};", clip);
+    let rest = reply.strip_prefix(&prefix)?;
+    let payload_end = rest.find('\x1b').or_else(|| rest.find('\x07'))?;
+    let b64 = &rest[..payload_end];
+    let bytes = base64_decode(b64);
+    String::from_utf8(bytes).ok()                                            // c:633 return contents
 }
 
 /// Encode `data` as an OSC-52 clipboard-set sequence.
