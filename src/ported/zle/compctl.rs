@@ -1760,10 +1760,10 @@ pub(crate) fn findnode<T: PartialEq>(list: &[T], dat: &T) -> Option<usize> {
 // at Src/Zle/compctl.c:2300.
 thread_local! { static CDEPTH: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
 
-/// Maximum recursion depth — port of `MAX_CDEPTH 16` macro at
-/// Src/Zle/compctl.c:2302. Prevents infinite recursion between
-/// compctl-driven completion and the wrapper.
-const MAX_CDEPTH: i32 = 16;
+/// Port of `MAX_CDEPTH` from `Src/Zle/compctl.c:2302`. Maximum
+/// recursion depth — prevents infinite recursion between compctl-
+/// driven completion and the wrapper.
+pub const MAX_CDEPTH: i32 = 16;                                              // c:2302
 
 // `ccont` continuation flags. Port of file-static `unsigned long
 // ccont;` at Src/Zle/compctl.c:1714. Bitmask of CC_CCCONT/etc.

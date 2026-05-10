@@ -19,6 +19,82 @@
 use std::collections::HashMap;
 use crate::ported::utils::{quotedzputs, zwarnnam};
 
+// =====================================================================
+// CRT_* — `_describe` row-type discriminator from `computil.c:79-83`.
+// Drives the `cdescr` table-builder switch.
+// =====================================================================
+
+/// Port of `CRT_SIMPLE` from `Src/Zle/computil.c:79`. Plain match row.
+pub const CRT_SIMPLE: i32 = 0;                                               // c:79
+/// Port of `CRT_DESC` from `computil.c:80`. Match with description.
+pub const CRT_DESC:   i32 = 1;                                               // c:80
+/// Port of `CRT_SPEC` from `computil.c:81`. Special separator row.
+pub const CRT_SPEC:   i32 = 2;                                               // c:81
+/// Port of `CRT_DUMMY` from `computil.c:82`. Placeholder row.
+pub const CRT_DUMMY:  i32 = 3;                                               // c:82
+/// Port of `CRT_EXPL` from `computil.c:83`. Explanation header row.
+pub const CRT_EXPL:   i32 = 4;                                               // c:83
+
+/// Port of `CDF_SEP` from `Src/Zle/computil.c:924`. `-S` flag — `--`
+/// terminates options.
+pub const CDF_SEP: i32 = 1;                                                  // c:924
+
+// =====================================================================
+// CAO_* — Cadef option-argument attachment style — `computil.c:941-945`.
+// =====================================================================
+
+/// Port of `CAO_NEXT` from `computil.c:941`. Argument in next argv slot.
+pub const CAO_NEXT:    i32 = 1;                                              // c:941
+/// Port of `CAO_DIRECT` from `computil.c:942`. Argument directly attached
+/// to option (`-opt:value`).
+pub const CAO_DIRECT:  i32 = 2;                                              // c:942
+/// Port of `CAO_ODIRECT` from `computil.c:943`. Optional direct attach.
+pub const CAO_ODIRECT: i32 = 3;                                              // c:943
+/// Port of `CAO_EQUAL` from `computil.c:944`. Argument after `=`.
+pub const CAO_EQUAL:   i32 = 4;                                              // c:944
+/// Port of `CAO_OEQUAL` from `computil.c:945`. Optional `=` argument.
+pub const CAO_OEQUAL:  i32 = 5;                                              // c:945
+
+// =====================================================================
+// CAA_* — Cadef positional-argument kinds — `computil.c:964-968`.
+// =====================================================================
+
+/// Port of `CAA_NORMAL` from `computil.c:964`. Plain positional arg.
+pub const CAA_NORMAL: i32 = 1;                                               // c:964
+/// Port of `CAA_OPT` from `computil.c:965`. Optional positional arg.
+pub const CAA_OPT:    i32 = 2;                                               // c:965
+/// Port of `CAA_REST` from `computil.c:966`. Mandatory rest of args.
+pub const CAA_REST:   i32 = 3;                                               // c:966
+/// Port of `CAA_RARGS` from `computil.c:967`. Repeated args sequence.
+pub const CAA_RARGS:  i32 = 4;                                               // c:967
+/// Port of `CAA_RREST` from `computil.c:968`. Repeated rest of args.
+pub const CAA_RREST:  i32 = 5;                                               // c:968
+
+/// Port of `MAX_CACACHE` from `computil.c:972`. Cadef LRU cache size.
+pub const MAX_CACACHE: usize = 8;                                            // c:972
+
+// =====================================================================
+// CVV_* — Cvval value-kind — `computil.c:2949-2951`.
+// =====================================================================
+
+/// Port of `CVV_NOARG` from `computil.c:2949`. Value without argument.
+pub const CVV_NOARG: i32 = 0;                                                // c:2949
+/// Port of `CVV_ARG` from `computil.c:2950`. Value requires argument.
+pub const CVV_ARG:   i32 = 1;                                                // c:2950
+/// Port of `CVV_OPT` from `computil.c:2951`. Argument optional.
+pub const CVV_OPT:   i32 = 2;                                                // c:2951
+
+/// Port of `MAX_CVCACHE` from `computil.c:2955`. Cvdef LRU cache size.
+pub const MAX_CVCACHE: usize = 8;                                            // c:2955
+
+/// Port of `MAX_TAGS` from `computil.c:3755`. Maximum nested completion
+/// tags depth.
+pub const MAX_TAGS: usize = 256;                                             // c:3755
+
+/// Port of `PATH_MAX2` from `computil.c:4141`. `PATH_MAX * 2` — buffer
+/// budget for path-completion staging strings.
+pub const PATH_MAX2: usize = 8192;                                           // c:4141 (PATH_MAX*2, 4096*2)
+
 /// Completion description set Port of `CDSet` from Src/Zle/computil.c.
 #[derive(Debug, Clone)]
 pub struct CompDescSet {
@@ -382,6 +458,66 @@ pub fn single_index(pre: u8, opt: u8) -> i32 {                               // 
 /// Free completion argument definitions Port of `freecaargs/freecadef` from Src/Zle/computil.c. — no-op
 pub fn freecaargs(_args: Vec<CompArgDef>) {}
 pub fn freecadef(_def: CompCommandDef) {}
+
+#[cfg(test)]
+mod cao_caa_tests {
+    use super::*;
+
+    #[test]
+    fn cao_values_match_c_source() {
+        // c:941-945 — sequential 1..=5.
+        assert_eq!(CAO_NEXT, 1);
+        assert_eq!(CAO_DIRECT, 2);
+        assert_eq!(CAO_ODIRECT, 3);
+        assert_eq!(CAO_EQUAL, 4);
+        assert_eq!(CAO_OEQUAL, 5);
+    }
+
+    #[test]
+    fn caa_values_match_c_source() {
+        // c:964-968 — sequential 1..=5.
+        assert_eq!(CAA_NORMAL, 1);
+        assert_eq!(CAA_OPT,    2);
+        assert_eq!(CAA_REST,   3);
+        assert_eq!(CAA_RARGS,  4);
+        assert_eq!(CAA_RREST,  5);
+    }
+
+    #[test]
+    fn crt_values_match_c_source() {
+        // c:79-83 — sequential 0..=4.
+        assert_eq!(CRT_SIMPLE, 0);
+        assert_eq!(CRT_DESC,   1);
+        assert_eq!(CRT_SPEC,   2);
+        assert_eq!(CRT_DUMMY,  3);
+        assert_eq!(CRT_EXPL,   4);
+    }
+
+    #[test]
+    fn cvv_values_match_c_source() {
+        // c:2949-2951 — sequential 0..=2.
+        assert_eq!(CVV_NOARG, 0);
+        assert_eq!(CVV_ARG,   1);
+        assert_eq!(CVV_OPT,   2);
+    }
+
+    #[test]
+    fn cache_sizes_are_8() {
+        // c:972 + c:2955 — both LRU caches are 8 entries.
+        assert_eq!(MAX_CACACHE, 8);
+        assert_eq!(MAX_CVCACHE, 8);
+    }
+
+    #[test]
+    fn max_tags_is_256() {
+        assert_eq!(MAX_TAGS, 256);
+    }
+
+    #[test]
+    fn path_max2_is_8192() {
+        assert_eq!(PATH_MAX2, 8192);
+    }
+}
 
 #[cfg(test)]
 mod tests {

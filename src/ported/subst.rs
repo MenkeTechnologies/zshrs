@@ -106,8 +106,11 @@ pub mod tokens {
 use tokens::*;
 // c:N/A
 
-/// Linked list flags (from zsh.h LF_*)
-pub const LF_ARRAY: u32 = 1; // c:N/A
+/// Port of `LF_ARRAY` from `Src/subst.c:33`.
+/// `#define LF_ARRAY 1`. Linked-list flag the substitution-result
+/// LinkList carries when the expansion produced multiple words.
+/// Drives `prefork` / `singsub` / `aget` to return an array vs scalar.
+pub const LF_ARRAY: u32 = 1;                                                 // c:33
 
 /// Prefork flags (from zsh.h PREFORK_*)
 pub mod prefork_flags {
