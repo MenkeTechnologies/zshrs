@@ -979,7 +979,7 @@ mod tests {
     }
 }
 
-/// Port of `dovilinerange()` from Src/Zle/zle_vi.c:302. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `dovilinerange()` from Src/Zle/zle_vi.c:302.
 pub fn dovilinerange(zle: &mut crate::ported::zle::zle_main::Zle) -> (usize, usize) {  // c:302
     // C body (c:304-333): expands the current vi range to whole lines
     //                    (includes leading/trailing newlines). Returns
@@ -991,7 +991,7 @@ pub fn dovilinerange(zle: &mut crate::ported::zle::zle_main::Zle) -> (usize, usi
     (bol, end)
 }
 
-/// Port of `getvirange()` from Src/Zle/zle_vi.c:172. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `getvirange()` from Src/Zle/zle_vi.c:172.
 pub fn getvirange(zle: &mut crate::ported::zle::zle_main::Zle, _wf: i32) -> i32 {  // c:172
     // C body (c:172-300): drives the vi-range read by interpreting
     //                    a follow-up keystroke (motion command),
@@ -1002,7 +1002,7 @@ pub fn getvirange(zle: &mut crate::ported::zle::zle_main::Zle, _wf: i32) -> i32 
     zle.zlecs as i32
 }
 
-/// Port of `startvichange()` from Src/Zle/zle_vi.c:90. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `startvichange()` from Src/Zle/zle_vi.c:90.
 pub fn startvichange(zle: &mut crate::ported::zle::zle_main::Zle, im: i32) {  // c:88
     // C body (c:90-113): `if (im > -1) insmode = im; if (viinrepeat
     //                    && im != -2) { zmod = lastvichg.mod;
@@ -1014,7 +1014,7 @@ pub fn startvichange(zle: &mut crate::ported::zle::zle_main::Zle, im: i32) {  //
     }
 }
 
-/// Port of `startvitext()` from Src/Zle/zle_vi.c:118. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `startvitext()` from Src/Zle/zle_vi.c:118.
 pub fn startvitext(zle: &mut crate::ported::zle::zle_main::Zle, im: i32) {   // c:117
     // C body (c:118-124): `startvichange(im); selectkeymap("main", 1);
     //                     vistartchange = undo_changeno;
@@ -1024,7 +1024,7 @@ pub fn startvitext(zle: &mut crate::ported::zle::zle_main::Zle, im: i32) {   // 
     // vistartchange/undo_changeno/viinsbegin substrate deferred.
 }
 
-/// Port of `viaddeol()` from Src/Zle/zle_vi.c:346. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `viaddeol()` from Src/Zle/zle_vi.c:346.
 pub fn viaddeol(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // c:345
     // C body (c:347-350): `zlecs = findeol(); startvitext(1); return 0`.
     zle.zlecs = crate::ported::zle::zle_utils::findeol(zle);
@@ -1032,7 +1032,7 @@ pub fn viaddeol(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // 
     0
 }
 
-/// Port of `viaddnext()` from Src/Zle/zle_vi.c:336. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `viaddnext()` from Src/Zle/zle_vi.c:336.
 pub fn viaddnext(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // c:335
     // C body (c:337-341): `if (zlecs != findeol()) INCCS();
     //                     startvitext(1); return 0`.
@@ -1044,7 +1044,7 @@ pub fn viaddnext(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // 
     0
 }
 
-/// Port of `vibackwarddeletechar()` from Src/Zle/zle_vi.c:888. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vibackwarddeletechar()` from Src/Zle/zle_vi.c:888.
 pub fn vibackwarddeletechar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:888
     // C body (c:892-911): `startvichange(-1); if (zmult < 0) {...
     //                     deletechar(args)... } if (zlecs == bol)
@@ -1054,7 +1054,7 @@ pub fn vibackwarddeletechar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 
     crate::ported::zle::zle_misc::backwarddeletechar(zle)
 }
 
-/// Port of `vicapslockpanic()` from Src/Zle/zle_vi.c:1002. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vicapslockpanic()` from Src/Zle/zle_vi.c:1002.
 pub fn vicapslockpanic() -> i32 {                                            // c:vicapslockpanic
     // C body: clearlist=1; zbeep(); statusline = "press a lowercase
     //         key to continue"; zrefresh(); while(!ZC_ilower(getfullchar(0)));
@@ -1065,7 +1065,7 @@ pub fn vicapslockpanic() -> i32 {                                            // 
     0
 }
 
-/// Port of `vichange()` from Src/Zle/zle_vi.c:438. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vichange()` from Src/Zle/zle_vi.c:438.
 pub fn vichange(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // c:438
     // C body (c:440-453): `startvichange(1); if ((c2 = getvirange(0))
     //                     != -1) { forekill(c2-zlecs, CUT_RAW); ret = 0;
@@ -1076,7 +1076,7 @@ pub fn vichange(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // 
     0
 }
 
-/// Port of `vichangeeol()` from Src/Zle/zle_vi.c:482. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vichangeeol()` from Src/Zle/zle_vi.c:482.
 pub fn vichangeeol(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // c:481
     // C body (c:483-498): `if (region_active) { regionlines(...);
     //                     zlecs = a; region_active = 0; ... } else
@@ -1095,14 +1095,14 @@ pub fn vichangeeol(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // 
     0
 }
 
-/// Port of `vichangewholeline()` from Src/Zle/zle_vi.c:499. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vichangewholeline()` from Src/Zle/zle_vi.c:499.
 pub fn vichangewholeline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:498
     // C body (c:500-503): `vifirstnonblank(args); return vichangeeol(...)`.
     crate::ported::zle::zle_move::vifirstnonblank(zle);
     vichangeeol(zle)
 }
 
-/// Port of `vicmdmode()` from Src/Zle/zle_vi.c:677. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vicmdmode()` from Src/Zle/zle_vi.c:677.
 pub fn vicmdmode(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // c:676
     // C body (c:678-694): `if (invicmdmode() || selectkeymap("vicmd",
     //                     0)) return 1; mergeundo(); insmode = unset(
@@ -1122,7 +1122,7 @@ pub fn vicmdmode(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // 
     0
 }
 
-/// Port of `videlete()` from Src/Zle/zle_vi.c:384. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `videlete()` from Src/Zle/zle_vi.c:384.
 pub fn videlete(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // c:383
     // C body (c:385-400): `startvichange(1); if ((c2 = getvirange(0))
     //                     != -1) { forekill(c2 - zlecs, CUT_RAW); ret = 0;
@@ -1133,7 +1133,7 @@ pub fn videlete(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // 
     1                                                                        // c:386 ret = 1
 }
 
-/// Port of `videletechar()` from Src/Zle/zle_vi.c:405. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `videletechar()` from Src/Zle/zle_vi.c:405.
 pub fn videletechar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {    // c:404
     // C body (c:406-433): `startvichange(-1); n = zmult; ... if (zlecs
     //                     == zlell || zleline[zlecs] == '\\n') return 1;
@@ -1146,7 +1146,7 @@ pub fn videletechar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {    // 
     crate::ported::zle::zle_misc::deletechar(zle)
 }
 
-/// Port of `vidigitorbeginningofline()` from Src/Zle/zle_vi.c:1129. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vidigitorbeginningofline()` from Src/Zle/zle_vi.c:1129.
 pub fn vidigitorbeginningofline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:vidigitorbeginningofline
     // C body: `if (zmod.flags & MOD_TMULT) return digitargument(args);
     //          else { removesuffix(); invalidatelist();
@@ -1158,7 +1158,7 @@ pub fn vidigitorbeginningofline(zle: &mut crate::ported::zle::zle_main::Zle) -> 
     crate::ported::zle::zle_move::vibeginningofline(zle)
 }
 
-/// Port of `vidowncase()` from Src/Zle/zle_vi.c:773. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vidowncase()` from Src/Zle/zle_vi.c:773.
 pub fn vidowncase(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:773
     // C body (c:775-794): startvichange(1); if ((c2 = getvirange(0))
     //                    != -1) { lowercase all letters in [zlecs, c2);
@@ -1173,7 +1173,7 @@ pub fn vidowncase(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
     0
 }
 
-/// Port of `vigetkey()` from Src/Zle/zle_vi.c:128. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vigetkey()` from Src/Zle/zle_vi.c:128.
 pub fn vigetkey(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // c:127
     // C body (c:128-170): `mn = openkeymap("main"); ... if (getbyte(0,
     //                    NULL, 1) == EOF) return ZLEEOF; ... resolve
@@ -1187,7 +1187,7 @@ pub fn vigetkey(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // 
     }
 }
 
-/// Port of `viindent()` from Src/Zle/zle_vi.c:820. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `viindent()` from Src/Zle/zle_vi.c:820.
 pub fn viindent(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // c:820
     // C body (c:822-855): startvichange(1); insert SHIFTWIDTH spaces
     //                    at start of each line in range. Default
@@ -1205,21 +1205,21 @@ pub fn viindent(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // 
     0
 }
 
-/// Port of `viinsert()` from Src/Zle/zle_vi.c:355. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `viinsert()` from Src/Zle/zle_vi.c:355.
 pub fn viinsert(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // c:354
     // C body (c:356-358): `startvitext(1); return 0`.
     startvitext(zle, 1);
     0
 }
 
-/// Port of `viinsert_init()` from Src/Zle/zle_vi.c:368. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `viinsert_init()` from Src/Zle/zle_vi.c:368.
 pub fn viinsert_init(zle: &mut crate::ported::zle::zle_main::Zle) {          // c:367
     // C body (c:369-371): `startvitext(-2)`. Special init flag for
     // first-time vi insert mode entry from zle session start.
     startvitext(zle, -2);
 }
 
-/// Port of `viinsertbol()` from Src/Zle/zle_vi.c:375. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `viinsertbol()` from Src/Zle/zle_vi.c:375.
 pub fn viinsertbol(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // c:374
     // C body (c:376-379): `vifirstnonblank(zlenoargs); startvitext(1);
     //                     return 0`.
@@ -1228,7 +1228,7 @@ pub fn viinsertbol(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // 
     0
 }
 
-/// Port of `vijoin()` from Src/Zle/zle_vi.c:933. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vijoin()` from Src/Zle/zle_vi.c:933.
 pub fn vijoin(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {          // c:vijoin
     // C body: replace next '\\n' with ' ', skipping leading whitespace
     //         on the joined line. Repeat zmult times.
@@ -1253,7 +1253,7 @@ pub fn vijoin(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {          // 
     0
 }
 
-/// Port of `vikilleol()` from Src/Zle/zle_vi.c:1056. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vikilleol()` from Src/Zle/zle_vi.c:1056.
 pub fn vikilleol(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // c:vikilleol
     // C body: kill from cursor to eol; start vi cmd-mode change.
     startvichange(zle, 1);
@@ -1270,7 +1270,7 @@ pub fn vikilleol(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // 
     0
 }
 
-/// Port of `vikillline()` from Src/Zle/zle_vi.c:923. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vikillline()` from Src/Zle/zle_vi.c:923.
 pub fn vikillline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:vikillline
     // C body: kill from cursor back to bol.
     startvichange(zle, 1);
@@ -1288,7 +1288,7 @@ pub fn vikillline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
     0
 }
 
-/// Port of `viopenlineabove()` from Src/Zle/zle_vi.c:711. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `viopenlineabove()` from Src/Zle/zle_vi.c:711.
 pub fn viopenlineabove(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:710
     // C body (c:712-718): `zlecs = findbol(); spaceinline(1);
     //                     zleline[zlecs] = '\\n'; startvitext(1);
@@ -1301,7 +1301,7 @@ pub fn viopenlineabove(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  //
     0
 }
 
-/// Port of `viopenlinebelow()` from Src/Zle/zle_vi.c:699. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `viopenlinebelow()` from Src/Zle/zle_vi.c:699.
 pub fn viopenlinebelow(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:698
     // C body (c:700-707): `zlecs = findeol(); spaceinline(1);
     //                     zleline[zlecs++] = '\\n'; startvitext(1);
@@ -1315,7 +1315,7 @@ pub fn viopenlinebelow(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  //
     0
 }
 
-/// Port of `vioperswapcase()` from Src/Zle/zle_vi.c:723. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vioperswapcase()` from Src/Zle/zle_vi.c:723.
 pub fn vioperswapcase(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:723
     // C body (c:725-746): startvichange(1); if (getvirange(0) != -1)
     //                    swap case in range. Without getvirange, use
@@ -1339,20 +1339,20 @@ pub fn vioperswapcase(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // 
     0
 }
 
-/// Port of `vipoundinsert()` from Src/Zle/zle_vi.c:1072. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vipoundinsert()` from Src/Zle/zle_vi.c:1072.
 pub fn vipoundinsert(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {   // c:vipoundinsert
     // C body: same as poundinsert (toggle # comment) but in vi cmdmode.
     crate::ported::zle::zle_misc::poundinsert(zle)
 }
 
-/// Port of `viquotedinsert()` from Src/Zle/zle_vi.c:1099. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `viquotedinsert()` from Src/Zle/zle_vi.c:1099.
 pub fn viquotedinsert(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:viquotedinsert
     // C body: same as quotedinsert with vi insmode setup.
     startvichange(zle, -1);
     crate::ported::zle::zle_misc::quotedinsert(zle)
 }
 
-/// Port of `virepeatchange()` from Src/Zle/zle_vi.c:795. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `virepeatchange()` from Src/Zle/zle_vi.c:795.
 pub fn virepeatchange() -> i32 {                                             // c:795
     // C body: replays lastvichg.buf via ungetbytes; sets viinrepeat
     //         flag. Substrate (lastvichg + viinrepeat + ungetbytes
@@ -1361,7 +1361,7 @@ pub fn virepeatchange() -> i32 {                                             // 
     1
 }
 
-/// Port of `vireplace()` from Src/Zle/zle_vi.c:574. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vireplace()` from Src/Zle/zle_vi.c:574.
 pub fn vireplace(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // c:573
     // C body (c:575-577): `startvitext(0); return 0`. Enter overwrite-
     // style insert mode (insmode=0).
@@ -1369,7 +1369,7 @@ pub fn vireplace(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // 
     0
 }
 
-/// Port of `vireplacechars()` from Src/Zle/zle_vi.c:594. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vireplacechars()` from Src/Zle/zle_vi.c:594.
 pub fn vireplacechars(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:594
     // C body (c:596-675): read one char (vigetkey), replace next zmult
     //                    chars with it (clamped to eol). Without
@@ -1391,7 +1391,7 @@ pub fn vireplacechars(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // 
     0
 }
 
-/// Port of `visetbuffer()` from Src/Zle/zle_vi.c:1015. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `visetbuffer()` from Src/Zle/zle_vi.c:1015.
 pub fn visetbuffer(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // c:visetbuffer
     // C body: read one char as the vi buffer name (a-z or 1-9 or '"');
     //         set zmod.vibuf for the next yank/cut. Without vigetkey
@@ -1415,7 +1415,7 @@ pub fn visetbuffer(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // 
     0
 }
 
-/// Port of `visubstitute()` from Src/Zle/zle_vi.c:455. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `visubstitute()` from Src/Zle/zle_vi.c:455.
 pub fn visubstitute(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {    // c:455
     // C body (c:457-475): startvichange(1); n=zmult; if(n<0) return 1;
     //                    error if at eol; forekill(n, CUT_RAW);
@@ -1442,7 +1442,7 @@ pub fn visubstitute(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {    // 
     0
 }
 
-/// Port of `viswapcase()` from Src/Zle/zle_vi.c:977. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `viswapcase()` from Src/Zle/zle_vi.c:977.
 pub fn viswapcase(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:viswapcase
     // C body: walk zmult chars, swap case of each; advance cursor.
     startvichange(zle, -1);
@@ -1470,7 +1470,7 @@ pub fn viswapcase(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
     0
 }
 
-/// Port of `viunindent()` from Src/Zle/zle_vi.c:856. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `viunindent()` from Src/Zle/zle_vi.c:856.
 pub fn viunindent(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:856
     // C body: remove up to SHIFTWIDTH (4) leading spaces from each
     //         line in range.
@@ -1489,7 +1489,7 @@ pub fn viunindent(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
     0
 }
 
-/// Port of `viupcase()` from Src/Zle/zle_vi.c:751. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `viupcase()` from Src/Zle/zle_vi.c:751.
 pub fn viupcase(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // c:751
     // C body (c:753-771): same as vidowncase but uppercase.
     startvichange(zle, 1);
@@ -1501,7 +1501,7 @@ pub fn viupcase(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // 
     0
 }
 
-/// Port of `viyankeol()` from Src/Zle/zle_vi.c:537. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `viyankeol()` from Src/Zle/zle_vi.c:537.
 pub fn viyankeol(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // c:537
     // C body (c:539-547): `x = findeol(); startvichange(-1); if (x ==
     //                     zlecs) return 1; cut(zlecs, x-zlecs, CUT_YANK);
@@ -1519,7 +1519,7 @@ pub fn viyankeol(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // 
     0                                                                        // c:546
 }
 
-/// Port of `viyankwholeline()` from Src/Zle/zle_vi.c:550. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `viyankwholeline()` from Src/Zle/zle_vi.c:550.
 pub fn viyankwholeline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:550
     // C body (c:553-572): `bol = findbol(); startvichange(-1); n = zmult;
     //                     if (n < 1) return 1; for (i=n; i--; ) zlecs =

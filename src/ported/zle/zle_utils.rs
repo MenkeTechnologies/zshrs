@@ -1297,7 +1297,7 @@ pub fn zlecallhook(name: &str, arg: Option<&str>) {                          // 
     tracing::debug!(target: "zle", "zlecallhook({}, {:?})", name, arg);
 }
 
-/// Port of `zlecharasstring()` from Src/Zle/zle_utils.c:117. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `zlecharasstring()` from Src/Zle/zle_utils.c:117.
 pub fn zlecharasstring(c: char, buf: &mut String) -> i32 {                   // c:117
     // C body c:119-145 — converts a ZLE_CHAR_T to its display form
     //                    (UTF-8 multibyte if MULTIBYTE_SUPPORT, else
@@ -1308,7 +1308,7 @@ pub fn zlecharasstring(c: char, buf: &mut String) -> i32 {                   // 
     (buf.len() - start) as i32
 }
 
-/// Port of `zlegetline()` from Src/Zle/zle_utils.c:547. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `zlegetline()` from Src/Zle/zle_utils.c:547.
 pub fn zlegetline(zle: &crate::ported::zle::zle_main::Zle,                   // c:148
                   ll: &mut usize, cs: &mut usize) -> Vec<char> {
     // C body c:150-200 — `if (zlemetaline) { *ll=zlemetall; *cs=zlemetacs;
@@ -1320,7 +1320,7 @@ pub fn zlegetline(zle: &crate::ported::zle::zle_main::Zle,                   // 
     zle.zleline.clone()
 }
 
-/// Port of `zlelineasstring()` from Src/Zle/zle_utils.c:192. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `zlelineasstring()` from Src/Zle/zle_utils.c:192.
 pub fn zlelineasstring(line: &[char], ll: usize, _flags: i32) -> String {    // c:282
     // C body c:284-373 — encodes ZLE_CHAR_T array to a metafied
     //                    multibyte string. Vec<char> → String is
