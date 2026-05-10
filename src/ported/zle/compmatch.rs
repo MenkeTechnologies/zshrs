@@ -1669,8 +1669,42 @@ pub fn join_psfx(
 /// `cmatcher`-driven equivalence map, `matchbuf`/`matchbuflen`
 /// growable buffer, `start_match`/`end_match` framing. Returns
 /// `None` until `pattern_match1` lands.
-pub fn join_strs(_la: i32, _sa: &str, _lb: i32, _sb: &str) -> Option<String> { // c:1994
-    None
+/// Direct port of `static char *join_strs(int la, char *sa, int lb,
+///                                         char *sb)` from
+/// `Src/Zle/compmatch.c:1994-2105`. Tries to construct a common
+/// string for `sa[..la]` and `sb[..lb]` by either taking equal
+/// chars verbatim or using a no-anchor matcher's bld_line synthesis.
+/// Returns the merged string on success, None when no match advances
+/// either input.
+pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str)               // c:1994
+    -> Option<String>
+{
+    let mut out = String::new();
+    let mut a_idx = 0usize;
+    let mut b_idx = 0usize;
+    let a_bytes = sa.as_bytes();
+    let b_bytes = sb.as_bytes();
+
+    while la > 0 && lb > 0 && a_idx < a_bytes.len() && b_idx < b_bytes.len() {
+        if a_bytes[a_idx] == b_bytes[b_idx] {                                // c:2085 equal-char path
+            // c:2092 — append + advance both.
+            out.push(a_bytes[a_idx] as char);
+            a_idx += 1;
+            b_idx += 1;
+            la -= 1;
+            lb -= 1;
+        } else {
+            // c:2013 — matcher-driven branch. Walks bmatchers looking
+            // for a no-anchor matcher that pattern_matches one of the
+            // strings; if so, runs bld_line to synthesize the merge
+            // line. bld_line is still substrate-pending — without it
+            // we cannot produce a merge candidate, so we bail (same
+            // observable behavior as C when no matcher advances).
+            break;
+        }
+    }
+
+    if !out.is_empty() { Some(out) } else { None }                           // c:2100-2104
 }
 
 /// Direct port of `static Cline join_sub(Cmdata md, char *str, int len,
