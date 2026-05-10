@@ -584,3 +584,13 @@ optns_flags
 # for thread-safe lazy init; this private helper hides the get_or_init
 # boilerplate from every caller.
 thingytab
+
+# keymapnamtab (zle/zle_keymap.rs) — Rust-only get-or-init accessor
+# for the global `keymapnamtab` HashTable from Src/Zle/zle_keymap.c:128.
+# Same pattern as thingytab — C declares it as `mod_export HashTable
+# keymapnamtab` and references it directly across 8 fns
+# (createkeymapnamtab, emptykeymapnamtab, freekeymapnamnode,
+# linkkeymap, unlinkkeymap, openkeymap, refkeymap_by_name,
+# unrefkeymap_by_name). Rust uses OnceLock<Mutex<HashMap<String,
+# KeymapName>>>; this private helper hides the get_or_init.
+keymapnamtab
