@@ -510,6 +510,7 @@ pub struct dirsav {
 
 /// Port of `struct hashnode` from `Src/zsh.h:1226-1230`.
 #[allow(non_camel_case_types)]
+#[derive(Clone)]
 pub struct hashnode {
     // c:1226
     pub next: Option<HashNode>, // c:1227
@@ -892,6 +893,7 @@ pub struct paramdef {
 
 /// Port of `struct nameddir` from `Src/zsh.h:2149-2153`.
 #[allow(non_camel_case_types)]
+#[derive(Clone)]
 pub struct nameddir {
     // c:2149
     pub node: hashnode, // c:2150

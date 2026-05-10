@@ -621,8 +621,10 @@ pub fn hbegin(dohist: i32) {                                                 // 
     // isfirstln/isfirstch live on ZshLexer in zshrs_parse, not as
     // globals — caller resets them via lexer instance API.            // c:1114
 
-    crate::ported::utils::set_errflag(                                       // c:1115
-        crate::ported::utils::errflag() & !crate::ported::utils::ERRFLAG_ERROR);
+    crate::ported::utils::errflag.fetch_and(                                 // c:1115
+        !crate::ported::utils::ERRFLAG_ERROR,
+        Ordering::Relaxed,
+    );
     histdone.store(0, Ordering::SeqCst);                                     // c:1116
     let interact = opt_state_get("interactive").unwrap_or(false);
     let shinstdin = opt_state_get("shinstdin").unwrap_or(false);
@@ -789,14 +791,16 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // 
     // *hptr = '\0';                                                         // c:1513 — String is implicit
     let chline_text = chline.lock().unwrap().clone();
     if !chline_text.is_empty() {                                             // c:1515
-        let save_errflag = crate::ported::utils::errflag();                  // c:1517
-        crate::ported::utils::set_errflag(0);                                // c:1518
+        let save_errflag = crate::ported::utils::errflag                     // c:1517
+            .load(Ordering::Relaxed);
+        crate::ported::utils::errflag.store(0, Ordering::Relaxed);           // c:1518
         let args = vec!["zshaddhistory".to_string(), chline_text.clone()];   // c:1520-1521
         hookret = crate::ported::utils::callhookfunc(                        // c:1522
             "zshaddhistory", Some(&args), true);
-        let new_errflag = (crate::ported::utils::errflag()                   // c:1524-1525
+        let new_errflag = (crate::ported::utils::errflag                     // c:1524-1525
+            .load(Ordering::Relaxed)
             & !crate::ported::utils::ERRFLAG_ERROR) | save_errflag;
-        crate::ported::utils::set_errflag(new_errflag);
+        crate::ported::utils::errflag.store(new_errflag, Ordering::Relaxed);
     }
     let hf = resolve_histfile();                                             // c:1528
     if opt_state_get("sharehistory").unwrap_or(false)                        // c:1529
@@ -972,7 +976,8 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // 
     }
     hist_keep_comment.store(0, Ordering::SeqCst);                            // c:1647
     crate::ported::signals::unqueue_signals();                               // c:1648
-    if (flag & HISTFLAG_NOEXEC) != 0 || crate::ported::utils::errflag() != 0 {
+    if (flag & HISTFLAG_NOEXEC) != 0
+        || crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 {
         0                                                                    // c:1649
     } else {
         1

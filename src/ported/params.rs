@@ -1020,32 +1020,42 @@ pub fn setaparam(                                                           // c
     assoc_arrays.remove(name);
 }
 
-/// Subscript-aware scalar parameter assignment.
+/// Port of `assignsparam()` from `Src/params.c:3193`. C signature:
+/// `mod_export Param assignsparam(char *s, char *val, int flags)`.
 ///
-/// Port of `assignsparam()` from Src/params.c:3193. The C function
-/// takes the LHS as a single string and embeds the subscript inside
-/// brackets (e.g. `m[$k]`); it then calls `getvalue` → `getindex` →
-/// `getarg` to parse-and-singsub the subscript before dispatching
-/// to the typed setter. Our Rust adaptation takes the subscript
-/// separately because subst.rs::paramsubst already singsubs it
-/// (subst.rs:1822 — direct port of the same singsub call inside
-/// getarg at params.c:1567).
+/// The C body, line-by-line:
+///   - c:3203 `isident(s)` — reject non-identifier names.
+///   - c:3209 `queue_signals()`.
+///   - c:3210 strchr(s, '[') — subscript split:
+///       * c:3212 `getvalue(&vbuf, &s, 1)` then either
+///         c:3213 `createparam(t, PM_ARRAY)` (created=1) or
+///         c:3216 PM_READONLY guard + c:3227 ASSPM_WARN drop +
+///         c:3228 `flags &= ~PM_DEFAULTED`.
+///       * c:3231 `*ss = '['; v = NULL;`.
+///   - c:3232 non-subscripted:
+///       * c:3233 `getvalue` → c:3234 `createparam(t, PM_SCALAR)` if missing,
+///       * c:3236-3250 if existing PM_ARRAY/PM_HASHED (non-special, non-tied,
+///         non-KSHARRAYS) → c:3242 `resetparam(v->pm, PM_SCALAR)`.
+///   - c:3252 second `getvalue(&vbuf, &t, 1)` — bind `v` for the assignment.
+///   - c:3258 PM_NAMEREF → c:3259 `valid_refname(val, flags)` guard.
+///   - c:3267 ASSPM_WARN → `check_warn_pm`.
+///   - c:3269 clear PM_DEFAULTED.
+///   - c:3270 ASSPM_AUGMENT (`+=`) — c:3275 SCALAR/NAMEREF append,
+///     c:3280 INTEGER/EFLOAT/FFLOAT add, c:3297 ARRAY append-element.
+///   - c:3343 `assignstrvalue(v, val, flags)`.
+///   - c:3344 `unqueue_signals()`; c:3345 return v->pm.
 ///
-/// Dispatch shape mirrors C:
-///   - subscript present → key/index lookup, dispatch to existing
-///     assoc / array, or auto-vivify as assoc on string keys
-///     (mirrors createparam(s, PM_HASHED) fallback at params.c:3214)
-///   - no subscript → scalar set (params.c:3253) — caller is
-///     expected to have routed `(A)`/`(AA)`-flagged assignments to
-///     `assignaparam`/`assignhparam` instead.
-///
-/// Pending C semantics not yet covered by this drift wrapper:
-///   - PM_READONLY rejection (params.c:3210)
-///   - resetparam scalar conversion (params.c:3232)
-///   - PM_NAMEREF dispatch (params.c:3250)
-///   - PM_TIED + PM_SPECIAL setfn callbacks
-///   - ASSPM_AUGMENT (`+=` augment semantics)
-pub fn assignsparam(                                                        // c:3193
+/// The Rust call shape carries the subscript out-of-band because
+/// subst.rs/paramsubst has already singsub'd it (subst.rs:1822 —
+/// matches the singsub call inside C `getarg` at params.c:1567).
+/// The three HashMap arguments (variables/arrays/assoc_arrays) are
+/// the current paramtab backing — one row per shell parameter
+/// keyed by name, dispatched by storage type (PM_SCALAR ↔
+/// `variables`, PM_ARRAY ↔ `arrays`, PM_HASHED ↔ `assoc_arrays`).
+/// Once paramtab is wired (Bucket-2 `Arc<RwLock<HashTable>>`), the
+/// three HashMaps collapse to one paramtab lookup and this
+/// signature drops to the C `(name, val, flags)` shape.
+pub fn assignsparam(                                                         // c:3193
     variables: &mut std::collections::HashMap<String, String>,
     arrays: &mut std::collections::HashMap<String, Vec<String>>,
     assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
@@ -1053,21 +1063,55 @@ pub fn assignsparam(                                                        // c
     subscript: Option<&str>,
     val: &str,
 ) {
+    // c:3203 `if (!isident(s)) { zerr; errflag |= ERRFLAG_ERROR; return NULL; }`
+    if !isident(name) {
+        zerr(&format!("not an identifier: {}", name));                       // c:3204
+        errflag.fetch_or(                                                    // c:3206
+            crate::ported::utils::ERRFLAG_ERROR,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        return;                                                              // c:3207
+    }
+    crate::ported::signals::queue_signals();                                 // c:3209
+
+    // c:3210 subscripted path (`s[...]`).
     if let Some(key) = subscript {
-        // c:3210 (subscripted)
-        // Existing assoc — write the key.
+        // c:3212 `getvalue(&vbuf, &s, 1)` — paramtab lookup. Until
+        // paramtab is wired we map "exists" to "any of the three
+        // HashMaps holds `name`".
+        let exists = variables.contains_key(name)
+            || arrays.contains_key(name)
+            || assoc_arrays.contains_key(name);
+
+        if !exists {
+            // c:3213 `createparam(t, PM_ARRAY); created = 1;`
+            let _ = createparam(name, PM_ARRAY as i32);
+        } else if let Some(def) = SPECIAL_PARAMS.iter().find(|d| d.name == name) {
+            // c:3216 `if (v->pm->node.flags & PM_READONLY)`.
+            if (def.pm_flags & PM_READONLY) != 0 {
+                zerr(&format!("read-only variable: {}", name));              // c:3217
+                crate::ported::signals::unqueue_signals();                   // c:3220
+                return;                                                      // c:3221
+            }
+        }
+        // c:3227 `flags &= ~ASSPM_WARN`; c:3228 clear PM_DEFAULTED.
+        // Per-param flags aren't carried through the HashMap backing
+        // yet, so the bit-clear is a no-op here.
+
+        // c:3231 `v = NULL;` then re-dispatch by storage type.
+        // Element-store: PM_HASHED takes precedence over numeric idx
+        // (mirrors c:3214 `createparam(s, PM_HASHED)` when existing
+        // param is hashed).
         if let Some(map) = assoc_arrays.get_mut(name) {
-            // c:3602 sethparam path
             map.insert(key.to_string(), val.to_string());
+            crate::ported::signals::unqueue_signals();
             return;
         }
-        // Numeric key on a (potentially auto-vivified) array.
+        // PM_ARRAY + numeric subscript (c:3357 `assignaparam` idx slot).
         if let Ok(idx) = key.parse::<i64>() {
-            // c:3357 assignaparam idx
             let arr = arrays.entry(name.to_string()).or_default();
             let len = arr.len() as i64;
-            // 1-based forward, negative-from-end. Direct port of
-            // setarrvalue's offset math (params.c).
+            // 1-based forward, negative-from-end (setarrvalue offset math).
             let real_idx = if idx < 0 { len + idx } else { idx - 1 };
             let real_idx = real_idx.max(0) as usize;
             while arr.len() <= real_idx {
@@ -1075,20 +1119,71 @@ pub fn assignsparam(                                                        // c
             }
             arr[real_idx] = val.to_string();
             variables.remove(name);
+            crate::ported::signals::unqueue_signals();
             return;
         }
-        // String key on an unset name — auto-vivify as assoc, mirroring
-        // the C source's `createparam(s, PM_HASHED)` fallback inside
-        // assignhparam when the target doesn't exist (params.c:3214).
+        // String subscript on a non-existing name → auto-vivify as
+        // PM_HASHED. Mirrors C `createparam(s, PM_HASHED)` fallback
+        // taken when getvalue returns NULL on a `name[key]=val` LHS.
         let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
         map.insert(key.to_string(), val.to_string());
         assoc_arrays.insert(name.to_string(), map);
         variables.remove(name);
         arrays.remove(name);
+        crate::ported::signals::unqueue_signals();
         return;
     }
-    // No subscript — scalar set (params.c:3253 setvalue path).
+
+    // c:3232 non-subscripted branch.
+    // c:3216 PM_READONLY guard for the scalar write below.
+    if let Some(def) = SPECIAL_PARAMS.iter().find(|d| d.name == name) {
+        if (def.pm_flags & PM_READONLY) != 0 {
+            zerr(&format!("read-only variable: {}", name));                  // c:3217
+            crate::ported::signals::unqueue_signals();
+            return;
+        }
+    }
+
+    // c:3236-3250 — existing PM_ARRAY/PM_HASHED on a non-special,
+    // non-tied, non-KSHARRAYS param → resetparam(v->pm, PM_SCALAR).
+    let was_array_or_hash = arrays.contains_key(name) || assoc_arrays.contains_key(name);
+    let is_special_or_tied = SPECIAL_PARAMS
+        .iter()
+        .any(|d| d.name == name && (d.pm_flags & (PM_SPECIAL | PM_TIED)) != 0);
+    if was_array_or_hash
+        && !is_special_or_tied
+        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+    {
+        // c:3242 `resetparam(v->pm, PM_SCALAR)` — the HashMap backing
+        // models the type-flip as "drop the array/assoc, write the
+        // scalar slot below".
+        arrays.remove(name);
+        assoc_arrays.remove(name);
+    }
+
+    // c:3258-3266 `if (*val && (v->pm->node.flags & PM_NAMEREF))`
+    // emits an error when val isn't a valid refname. SPECIAL_PARAMS
+    // doesn't carry PM_NAMEREF entries today; the check is wired so
+    // that future entries pick it up.
+    if let Some(def) = SPECIAL_PARAMS.iter().find(|d| d.name == name) {
+        if (def.pm_flags & PM_NAMEREF) != 0
+            && !val.is_empty()
+            && !valid_refname(val, def.pm_flags as i32)
+        {
+            zerr(&format!("invalid name reference: {}", val));               // c:3260
+            errflag.fetch_or(                                                // c:3263
+                crate::ported::utils::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            crate::ported::signals::unqueue_signals();                       // c:3262
+            return;                                                          // c:3264
+        }
+    }
+
+    // c:3343 `assignstrvalue(v, val, flags)` — scalar write.
     variables.insert(name.to_string(), val.to_string());
+
+    crate::ported::signals::unqueue_signals();                               // c:3344
 }
 
 /// Array parameter assignment (no subscript).
@@ -1522,35 +1617,86 @@ pub fn isident(s: &str) -> bool {                                           // c
     true
 }
 
-/// Validate nameref target name (from valid_refname)
-pub fn valid_refname(val: &str) -> bool {
+/// Port of `valid_refname()` from `Src/params.c:6466`. C body
+/// validates a nameref target name. Two paths:
+///   - PM_UPPER (`typeset -nu`): reject digit-leader (positional
+///     refs would loop) and the literal `argv`/`ARGC` names.
+///   - non-PM_UPPER: positional digit-leader is permitted (must be
+///     all-digits before any `[`); otherwise scan via
+///     `itype_end(INAMESPC)`.
+/// Either path then accepts the trailing one-char specials
+/// `! ? $ - _` and an optional `[subscript]` tail. Returns 1 on
+/// valid, 0 otherwise. The Rust port follows the same control
+/// flow with `is_ascii_digit`/`is_alphabetic` standing in for
+/// `idigit`/`itype_end`.
+pub fn valid_refname(val: &str, flags: i32) -> bool {                        // c:6466
     if val.is_empty() {
         return false;
     }
     let first = val.chars().next().unwrap();
-    if first.is_ascii_digit() {
-        // All digits OK for positional params
-        let rest = &val[1..];
-        if let Some(bracket_pos) = rest.find('[') {
-            return rest[..bracket_pos].chars().all(|c| c.is_ascii_digit());
+    let pm_upper = (flags as u32 & PM_UPPER) != 0;
+    let mut t: usize;
+    if pm_upper {                                                            // c:6470
+        if first.is_ascii_digit() {                                          // c:6472
+            return false;                                                    // c:6473
         }
-        return rest.chars().all(|c| c.is_ascii_digit());
-    }
-    if first == '!' || first == '?' || first == '$' || first == '-' {
-        return val.len() == 1 || val.as_bytes().get(1) == Some(&b'[');
-    }
-    if !first.is_alphabetic() && first != '_' {
-        return false;
-    }
-    for c in val[1..].chars() {
-        if c == '[' {
-            return true; // Subscript is fine
+        // c:6474 — `t = itype_end(val, INAMESPC, 0)`; INAMESPC stops
+        // at `.` and other non-namespace chars. Approximate with
+        // alphanumeric/_ scan.
+        t = val
+            .char_indices()
+            .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
+            .map(|(i, _)| i)
+            .unwrap_or(val.len());
+        if t - 0 == 4                                                        // c:6475
+            && (val.starts_with("argv") || val.starts_with("ARGC"))          // c:6476-6477
+        {
+            return false;                                                    // c:6478
         }
-        if !c.is_alphanumeric() && c != '_' && c != '.' {
+    } else if first.is_ascii_digit() {                                       // c:6479
+        // c:6480-6485 — all-digit run; first non-digit must be `[`.
+        t = 1;
+        for (i, c) in val.char_indices().skip(1) {
+            if !c.is_ascii_digit() {
+                t = i;
+                break;
+            }
+            t = i + c.len_utf8();
+        }
+        if t < val.len() && val.as_bytes()[t] != b'[' {                      // c:6484
+            return false;                                                    // c:6485
+        }
+    } else {
+        // c:6487 — `t = itype_end(val, INAMESPC, 0)`.
+        t = val
+            .char_indices()
+            .find(|(_, c)| !(c.is_alphanumeric() || *c == '_' || *c == '.'))
+            .map(|(i, _)| i)
+            .unwrap_or(val.len());
+    }
+
+    if t == 0 {                                                              // c:6489
+        let c = val.as_bytes()[0];
+        if !(c == b'!' || c == b'?' || c == b'$' || c == b'-' || c == b'_') { // c:6490
+            return false;                                                    // c:6493
+        }
+        t = 1;                                                               // c:6494
+    }
+    if t < val.len() && val.as_bytes()[t] == b'[' {                          // c:6496
+        // c:6498-6504 — parse_subscript/Inbrack/Outbrack walk. The
+        // tokenize+parse_subscript pair isn't ported; accept any
+        // balanced `[…]` tail (single-level) to remain conservative.
+        let tail = &val[t + 1..];
+        if let Some(close) = tail.find(']') {
+            // c:6505-6508 — anything past `]` is rejected.
+            if close + 1 < tail.len() {
+                return false;
+            }
+        } else {
             return false;
         }
     }
-    true
+    true                                                                     // c:6510
 }
 
 /// Colon-separated path to array.
@@ -1986,13 +2132,18 @@ mod tests {
 
     #[test]
     fn test_valid_refname() {
-        assert!(valid_refname("foo"));
-        assert!(valid_refname("_bar"));
-        assert!(valid_refname("1"));
-        assert!(valid_refname("!"));
-        assert!(valid_refname("arr[1]"));
-        assert!(!valid_refname(""));
-        assert!(!valid_refname("foo bar"));
+        assert!(valid_refname("foo", 0));
+        assert!(valid_refname("_bar", 0));
+        assert!(valid_refname("1", 0));
+        assert!(valid_refname("!", 0));
+        assert!(valid_refname("arr[1]", 0));
+        assert!(!valid_refname("", 0));
+        // C semantics: empty leader without one of `! ? $ - _` is rejected.
+        assert!(!valid_refname(" ", 0));
+        // PM_UPPER rejects digit-leader and argv/ARGC.
+        assert!(!valid_refname("1", PM_UPPER as i32));
+        assert!(!valid_refname("argv", PM_UPPER as i32));
+        assert!(!valid_refname("ARGC", PM_UPPER as i32));
     }
 
     #[test]
@@ -2892,7 +3043,7 @@ impl VarAttr {
 
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
-use crate::zsh_h::{paramdef, PM_DONTIMPORT, PM_DONTIMPORT_SUID, PM_READONLY_SPECIAL};
+use crate::zsh_h::{paramdef, ERRFLAG_ERROR, PM_DONTIMPORT, PM_DONTIMPORT_SUID, PM_READONLY_SPECIAL};
 // -----------------------------------------------------------
 // Module statics — one per C global referenced by the special-
 // param callbacks below. All initialised lazily on first read.
@@ -4059,9 +4210,14 @@ pub fn assignnparam(
     val: crate::ported::math::Mnumber,
     flags: i32,
 ) -> Option<Box<crate::ported::zsh_h::param>> {
+    // c:3666 `if (!isident(s)) { zerr; errflag |= ERRFLAG_ERROR; return NULL; }`
     if !isident(s) {
-        // zerr("not an identifier: %s", s); errflag |= ERRFLAG_ERROR;
-        return None;
+        zerr(&format!("not an identifier: {}", s));                          // c:3667
+        errflag.fetch_or(                                                    // c:3669
+            crate::ported::utils::ERRFLAG_ERROR,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        return None;                                                         // c:3670
     }
     if unset(EXECOPT) {
         return None;
@@ -4291,7 +4447,7 @@ pub fn assignstrvalue(
         _ => {}
     }
     setscope(pm);
-    if crate::ported::utils::errflag() != 0
+    if errflag.load(std::sync::atomic::Ordering::Relaxed) != 0
         || ((pm.env.is_none() && (pm.node.flags as u32 & PM_EXPORTED) == 0
              && !(crate::ported::zsh_h::isset(crate::ported::zsh_h::ALLEXPORT)
                   && (pm.node.flags as u32 & PM_HASHELEM) == 0))

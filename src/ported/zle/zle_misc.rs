@@ -1687,9 +1687,9 @@ pub fn selfinsertunmeta(zle: &mut Zle) -> i32 {                              // 
 /// `errflag`, so `zleread` returns -1 to its caller.
 pub fn sendbreak() -> i32 {                                                  // c:1144
     // c:1146 — `errflag |= ERRFLAG_ERROR | ERRFLAG_INT`.
-    let cur = crate::ported::utils::errflag();
-    crate::ported::utils::set_errflag(
-        cur | crate::ported::zsh_h::ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_INT,
+    crate::ported::utils::errflag.fetch_or(
+        crate::ported::zsh_h::ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_INT,
+        std::sync::atomic::Ordering::Relaxed,
     );
     1                                                                        // c:1147 return 1
 }
@@ -1959,31 +1959,33 @@ mod tests {
     #[test]
     fn sendbreak_sets_errflag_and_returns_one() {
         use crate::ported::zsh_h::{ERRFLAG_ERROR, ERRFLAG_INT};
+        use std::sync::atomic::Ordering;
         // Reset errflag so the OR-set is observable.
-        crate::ported::utils::set_errflag(0);
+        crate::ported::utils::errflag.store(0, Ordering::Relaxed);
         let r = sendbreak();
         // c:1147 — return 1.
         assert_eq!(r, 1);
         // c:1146 — both ERRFLAG_ERROR | ERRFLAG_INT set.
-        let f = crate::ported::utils::errflag();
+        let f = crate::ported::utils::errflag.load(Ordering::Relaxed);
         assert!(f & ERRFLAG_ERROR != 0);
         assert!(f & ERRFLAG_INT != 0);
         // Reset for other tests.
-        crate::ported::utils::set_errflag(0);
+        crate::ported::utils::errflag.store(0, Ordering::Relaxed);
     }
 
     #[test]
     fn sendbreak_preserves_existing_errflag_bits() {
+        use std::sync::atomic::Ordering;
         // c:1146 — `errflag |= ...` (OR-equal, not assign).
-        crate::ported::utils::set_errflag(0x1000); // pretend bit 12 was set
+        crate::ported::utils::errflag.store(0x1000, Ordering::Relaxed); // pretend bit 12 was set
         sendbreak();
-        let f = crate::ported::utils::errflag();
+        let f = crate::ported::utils::errflag.load(Ordering::Relaxed);
         // Pre-existing bit preserved.
         assert!(f & 0x1000 != 0);
         // New bits also set.
         assert!(f & crate::ported::zsh_h::ERRFLAG_ERROR != 0);
         assert!(f & crate::ported::zsh_h::ERRFLAG_INT != 0);
-        crate::ported::utils::set_errflag(0);
+        crate::ported::utils::errflag.store(0, Ordering::Relaxed);
     }
 
     // ---------- negargument / overwritemode real-port tests ----------

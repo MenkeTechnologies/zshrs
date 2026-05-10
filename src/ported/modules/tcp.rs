@@ -497,7 +497,8 @@ pub fn bin_ztcp(nam: &str, args: &[String],                                  // 
                 &mut peer as *mut _ as *mut libc::sockaddr,
                 &mut len as *mut _) };
             if r >= 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR)
-                || crate::ported::utils::errflag() != 0 {
+                || crate::ported::utils::errflag
+                    .load(std::sync::atomic::Ordering::Relaxed) != 0 {
                 rfd = r;
                 break;
             }
@@ -611,7 +612,8 @@ pub fn bin_ztcp(nam: &str, args: &[String],                                  // 
             loop {                                                       // c:667
                 err = tcp_connect(sess, addr, destport);                 // c:669
                 if err == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR)
-                    || crate::ported::utils::errflag() != 0 { break; }
+                    || crate::ported::utils::errflag
+                        .load(std::sync::atomic::Ordering::Relaxed) != 0 { break; }
             }
             if err == 0 { break; }
         }
