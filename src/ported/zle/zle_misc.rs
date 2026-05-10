@@ -790,7 +790,32 @@ pub fn overwritemode(zle: &mut Zle) -> i32 {                                 // 
 }
 
 /// Port of `parsedigit()` from Src/Zle/zle_misc.c:919. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn parsedigit() -> i32 { 0 }
+pub fn parsedigit(zle: &Zle, inkey: i32) -> i32 {                            // c:1066
+    // c:1077 — `inkey &= 0x7f` (mask off Meta bit). Multibyte path
+    // skips this; we mirror by always masking since Rust char vals
+    // fit ASCII for digit chars.
+    let inkey = inkey & 0x7f;
+    let base = zle.zmod.base;
+    // c:1082-1090 — base > 10: accept lowercase a..(a+base-11) and
+    // uppercase, plus digits 0-9.
+    if base > 10 {
+        if (b'a' as i32..b'a' as i32 + base - 10).contains(&inkey) {
+            return inkey - b'a' as i32 + 10;                                 // c:1083
+        }
+        if (b'A' as i32..b'A' as i32 + base - 10).contains(&inkey) {
+            return inkey - b'A' as i32 + 10;                                 // c:1085
+        }
+        if (b'0' as i32..=b'9' as i32).contains(&inkey) {                    // c:1087 idigit
+            return inkey - b'0' as i32;
+        }
+        return -1;                                                           // c:1089
+    }
+    // c:1092-1093 — base <= 10: digit must be in '0'..'0'+base.
+    if (b'0' as i32..b'0' as i32 + base).contains(&inkey) {
+        return inkey - b'0' as i32;
+    }
+    -1                                                                       // c:1094
+}
 
 /// Port of `pastebuf()` from Src/Zle/zle_misc.c:558. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn pastebuf() -> i32 { 0 }
@@ -1032,5 +1057,65 @@ mod tests {
         let mut z = Zle::new();
         argumentbase(&mut z, &["010".to_string()]);
         assert_eq!(z.zmod.base, 8);
+    }
+
+    // ---------- parsedigit real-port tests ----------
+
+    #[test]
+    fn parsedigit_decimal_base() {
+        // c:1092 — base=10, '0'..'9' → 0..9.
+        let mut z = Zle::new();
+        z.zmod.base = 10;
+        assert_eq!(parsedigit(&z, b'0' as i32), 0);
+        assert_eq!(parsedigit(&z, b'5' as i32), 5);
+        assert_eq!(parsedigit(&z, b'9' as i32), 9);
+        // Out of range for base 10
+        assert_eq!(parsedigit(&z, b'a' as i32), -1);
+    }
+
+    #[test]
+    fn parsedigit_octal_base() {
+        // c:1092 — base=8, '0'..'7'.
+        let mut z = Zle::new();
+        z.zmod.base = 8;
+        assert_eq!(parsedigit(&z, b'7' as i32), 7);
+        // '8' rejected (out of range for octal).
+        assert_eq!(parsedigit(&z, b'8' as i32), -1);
+    }
+
+    #[test]
+    fn parsedigit_hex_lowercase() {
+        // c:1083 — base=16, 'a'..'f' → 10..15.
+        let mut z = Zle::new();
+        z.zmod.base = 16;
+        assert_eq!(parsedigit(&z, b'a' as i32), 10);
+        assert_eq!(parsedigit(&z, b'f' as i32), 15);
+        // 'g' out of range (only a..f for base 16).
+        assert_eq!(parsedigit(&z, b'g' as i32), -1);
+    }
+
+    #[test]
+    fn parsedigit_hex_uppercase() {
+        // c:1085 — base=16, 'A'..'F' → 10..15.
+        let mut z = Zle::new();
+        z.zmod.base = 16;
+        assert_eq!(parsedigit(&z, b'A' as i32), 10);
+        assert_eq!(parsedigit(&z, b'F' as i32), 15);
+    }
+
+    #[test]
+    fn parsedigit_hex_digits_still_work() {
+        // c:1087 — base > 10 still accepts '0'..'9' via idigit branch.
+        let mut z = Zle::new();
+        z.zmod.base = 16;
+        assert_eq!(parsedigit(&z, b'7' as i32), 7);
+    }
+
+    #[test]
+    fn parsedigit_strips_meta_bit() {
+        // c:1077 — `inkey &= 0x7f`. 0xb5 = '5' | 0x80 → strips to '5'.
+        let mut z = Zle::new();
+        z.zmod.base = 10;
+        assert_eq!(parsedigit(&z, 0x80 | (b'5' as i32)), 5);
     }
 }
