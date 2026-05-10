@@ -1363,6 +1363,95 @@ pub const ZR_START_ELLIPSIS_SIZE: usize = ZR_START_ELLIPSIS.len();           // 
 #[inline] pub fn tc_leftcurs(_x: i32) {                                      // c:1729
 }
 
+// =====================================================================
+// Refresh-cycle file-static int globals — `Src/Zle/zle_refresh.c:827-832`.
+// `static int cleareol, clearf, put_rpmpt, oput_rpmpt, oxtabs,
+//             numscrolls, onumscrolls;`
+// Carried as AtomicI32 so the multi-threaded shell can safely flip
+// them between widget invocations without locking.
+// =====================================================================
+
+/// Port of `static int cleareol` from `Src/Zle/zle_refresh.c:827`.
+/// Clear-to-end-of-line flag — set when the terminal lacks `cleareod`
+/// and we have to fall back to per-line clear.
+pub static CLEAREOL:    std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:827
+
+/// Port of `static int clearf` from `Src/Zle/zle_refresh.c:828`.
+/// Set when `alwayslastprompt` was used immediately before the
+/// current refresh — drives a special clear path.
+pub static CLEARF:      std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:828
+
+/// Port of `static int put_rpmpt` from `Src/Zle/zle_refresh.c:829`.
+/// Whether we should display the right-prompt this refresh.
+pub static PUT_RPMPT:   std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:829
+
+/// Port of `static int oput_rpmpt` from `Src/Zle/zle_refresh.c:830`.
+/// Whether the right-prompt was displayed last refresh.
+pub static OPUT_RPMPT:  std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:830
+
+/// Port of `static int oxtabs` from `Src/Zle/zle_refresh.c:831`.
+/// `oxtabs` flag — tabs expand to spaces if set.
+pub static OXTABS:      std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:831
+
+/// Port of `static int numscrolls` from `Src/Zle/zle_refresh.c:832`.
+/// Count of scroll operations this refresh — used by `nextline` to
+/// decide whether to abort line-loop processing.
+pub static NUMSCROLLS:  std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:832
+
+/// Port of `static int onumscrolls` from `Src/Zle/zle_refresh.c:832`.
+/// Previous refresh's `numscrolls` value — `nextline` compares to
+/// detect runaway scrolling.
+pub static ONUMSCROLLS: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:832
+
+/// Port of `struct rparams` from `Src/Zle/zle_refresh.c:815`. Workspace
+/// state threaded through `zrefresh` + `nextline` + `wpfx` — tracks the
+/// current line being painted, scroll budget, video cursor, and the
+/// in/out pointers into the video buffer.
+///
+/// C definition (c:815-824):
+/// ```c
+/// struct rparams {
+///     int canscroll;
+///     int ln;
+///     int more_status;
+///     int nvcs;
+///     int nvln;
+///     int tosln;
+///     REFRESH_STRING s;
+///     REFRESH_STRING sen;
+/// };
+/// typedef struct rparams *Rparams;
+/// ```
+///
+/// Rust port replaces `REFRESH_STRING s/sen` (raw pointers into the
+/// video buffer) with `pos`/`end` byte indices for safe access.
+#[derive(Debug, Clone, Default)]
+pub struct Rparams {                                                         // c:815
+    /// Number of lines we are allowed to scroll.
+    pub canscroll: i32,                                                      // c:816
+    /// Current line we're working on.
+    pub ln: i32,                                                             // c:817
+    /// More stuff in status line.
+    pub more_status: i32,                                                    // c:818
+    /// Video cursor column.
+    pub nvcs: i32,                                                           // c:819
+    /// Video cursor line.
+    pub nvln: i32,                                                           // c:820
+    /// Tmp in statusline stuff.
+    pub tosln: i32,                                                          // c:821
+    /// Cursor index into the video buffer (was `REFRESH_STRING s`).
+    pub pos: usize,                                                          // c:822
+    /// End-of-line index (was `REFRESH_STRING sen`).
+    pub end: usize,                                                          // c:823
+}
+
 #[cfg(test)]
 mod zr_tests {
     use super::*;
@@ -1505,5 +1594,18 @@ mod zr_tests {
         assert_eq!(tcdelcost(-1), 0);
         assert_eq!(tcinscost(5), 5);
         assert_eq!(tcdelcost(5), 5);
+    }
+
+    #[test]
+    fn rparams_default_zeros_all_fields() {
+        let r = Rparams::default();
+        assert_eq!(r.canscroll, 0);
+        assert_eq!(r.ln, 0);
+        assert_eq!(r.more_status, 0);
+        assert_eq!(r.nvcs, 0);
+        assert_eq!(r.nvln, 0);
+        assert_eq!(r.tosln, 0);
+        assert_eq!(r.pos, 0);
+        assert_eq!(r.end, 0);
     }
 }
