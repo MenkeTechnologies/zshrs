@@ -554,8 +554,10 @@ pub static KSH_LETTERS: &[(char, &str, bool)] = &[
 /// emulation flip through `installemulation()` (line 523).
 #[derive(Debug, Clone)]
 pub struct ShellOptions {
+    // the options; e.g. if opts[SHGLOB] != 0, SH_GLOB is turned on          // c:43
     /// Current option values (true = set)
     options: HashMap<String, bool>,
+    // current emulation (used to decide which set of option letters is used) // c:33
     /// Current emulation mode
     pub emulation: Emulation,
     /// Is fully emulating (vs just setting some options)

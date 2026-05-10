@@ -1,5 +1,9 @@
 //! Direct port of `Src/Zle/complete.c` — the ZLE completion engine.
 //!
+//! Copy a completion matcher list into permanent storage.                   // c:151
+//! Copy a completion matcher pattern.                                       // c:214
+//! Parse a character class for matcher control.                             // c:476
+//!
 //! This file holds the canonical Rust ports of complete.c's
 //! exported functions: state globals (`compprefix` / `compsuffix` /
 //! `compwords` / `incompfunc` / etc.), the Cmlist/Cmatcher/Cpattern

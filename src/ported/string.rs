@@ -2,6 +2,9 @@
 //!
 //! Direct port of `Src/string.c` (201 lines, 11 fns).
 //!
+//! Duplicate string on heap when length is known                            // c:44
+//! Append a string to an allocated string, reallocating to make room.      // c:182
+//!
 //! C zsh distinguishes two allocation lanes — `zalloc` (permanent
 //! storage, freed by `zsfree`) and `zhalloc` (heap-arena, bulk-
 //! freed at the end of the current dispatch). Rust's `String` always

@@ -2,6 +2,10 @@
 //!
 //! Port from zsh/Src/loop.c (802 lines)
 //!
+//! # of nested loops we are in                                              // c:33
+//! # of continue levels                                                     // c:38
+//! # of break levels                                                        // c:43
+//!
 //! In C, loop.c contains execfor, execwhile, execif, execcase, execselect,
 //! execrepeat, and exectry as separate functions operating on bytecode.
 //! In Rust, all of these are implemented as match arms in

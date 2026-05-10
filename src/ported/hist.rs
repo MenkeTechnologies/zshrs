@@ -2,6 +2,8 @@
 //!
 //! Port from zsh/Src/hist.c
 //!
+//! The history lines are kept in a hash, and also doubly-linked in a ring   // c:98
+//!
 //! Provides history expansion, history file management, and history ring.
 
 use std::collections::HashMap;
@@ -89,6 +91,7 @@ pub struct History {
     pub histsiz: i64,
     /// Save history size
     pub savehistsiz: i64,
+    // state of the history mechanism                                        // c:121
     /// History active state
     pub histactive: u32,
     /// Stop history flag
@@ -728,7 +731,7 @@ pub fn rembutext(s: &str) -> String {
 /// Quote with word breaking (from hist.c quotebreak lines 2527-2556)
 /// Backslash-bslashquote shell metachars including word breaks.
 /// Port of `quotebreak()` from Src/hist.c.
-pub fn quotebreak(s: &str) -> String {
+pub fn quotebreak(s: &str) -> String {                                       // c:2527
     let mut result = String::with_capacity(s.len() + 10);
     result.push('\'');
 

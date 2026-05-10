@@ -45,7 +45,9 @@ pub struct ShellState {
     pub username: String,
     pub mypid: i64,
     pub ppid: i64,
+    // the shell tty fd                                                      // c:62
     pub shtty: i32,
+    // what level of sourcing we are at                                      // c:57
     pub sourcelevel: i32,
     pub lineno: i64,
     pub path: Vec<String>,
@@ -704,13 +706,14 @@ mod tests {
 // gate.
 // ===========================================================
 
+// keep executing lists until EOF found                                     // c:109
 /// Top-level execlist driver — drives the read-eval loop.
 /// Port of `loop()` from Src/init.c:113. The C source's outer
 /// `for(;;)` calls `execlist(prog, 0, 0)` for each parsed unit.
 /// zshrs's interactive loop lives in `crate::repl::run_loop` and
 /// the script loop in `crate::main`; this entry exists for ABI
 /// parity. Returns the exit status of the last command.
-pub fn r#loop() -> i32 {
+pub fn r#loop() -> i32 {                                                     // c:113
     // The actual REPL is owned by the binary — return last_status
     // if a ShellExecutor exists, else 0.
     crate::fusevm_bridge::try_with_executor(|exec| exec.last_status).unwrap_or(0)

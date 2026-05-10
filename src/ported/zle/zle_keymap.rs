@@ -254,8 +254,10 @@ impl Keymap {
 /// Manager for all keymaps
 #[derive(Debug)]
 pub struct KeymapManager {
+    // the hash table of keymap names                                        // c:128
     /// Named keymaps
     pub keymaps: HashMap<String, Arc<Keymap>>,
+    // currently selected keymap, and its name                               // c:121
     /// Current keymap
     pub current: Option<Arc<Keymap>>,
     /// Current keymap name

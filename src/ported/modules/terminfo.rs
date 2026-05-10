@@ -1,5 +1,7 @@
 //! `zsh/terminfo` module — direct port of `Src/Modules/terminfo.c`.
 //!
+//! This depends on the termcap stuff in init.c                              // c:72
+//!
 //! Exposes the live terminfo database to scripts via the
 //! `${terminfo[capname]}` associative array. The C source binds
 //! ncurses' `setupterm`/`tigetstr`/`tigetnum`/`tigetflag`; this file
@@ -80,10 +82,12 @@ pub fn bin_echoti(name: &str, argv: &[String],                               // 
         _ => { println!("yes"); return 0; }                                  // c:93
     }
 
+    // get a string-type capability                                          // c:94
     // c:97 — `t = (char *)tigetstr(s);` — string capability.
     let t = unsafe { tigetstr(cs.as_ptr()) };                                // c:97
     let t_addr = t as isize;
     if t.is_null() || t_addr == -1 || unsafe { *t } == 0 {                   // c:98
+        // capability doesn't exist, or (if boolean) is off                  // c:97
         crate::ported::utils::zwarnnam(name,                                 // c:100
             &format!("no such terminfo capability: {}", s));
         return 1;                                                            // c:101

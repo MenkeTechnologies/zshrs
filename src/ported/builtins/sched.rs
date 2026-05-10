@@ -1,5 +1,10 @@
 //! Scheduled command execution — port of `Src/Builtins/sched.c`.
 //!
+//! Flags for each scheduled event                                           // c:37
+//! Use addtimedfn() to add a timed event for sched's use                   // c:57
+//! Use deltimedfn() to remove the sched timed event                        // c:75
+//! Check scheduled commands; call this function from time to time.         // c:89
+//!
 //! Top-level declaration order matches the C source, line-by-line:
 //!   - `typedef struct schedcmd *Schedcmd;`        c:35
 //!   - `enum schedflags { SCHEDFLAG_TRASH_ZLE };`  c:38

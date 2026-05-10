@@ -1,6 +1,12 @@
 //! Port of `Src/Zle/compctl.c` — the legacy `compctl` builtin and its
 //! supporting completion machinery (predates compsys).
 //!
+//! Global matcher.                                                          // c:33
+//! Default completion infos                                                 // c:38
+//! Hash table for completion info for commands                              // c:43
+//! List of pattern compctls                                                 // c:48
+//! Main entry point for the `compctl' builtin                               // c:1558
+//!
 //! 4076 lines / 47 fns. This file ports the type definitions, constants,
 //! and simpler free fns first; large fns (`makecomplist*`, `bin_compctl`,
 //! `printcompctl`) are stubbed with C source-line citations and ported

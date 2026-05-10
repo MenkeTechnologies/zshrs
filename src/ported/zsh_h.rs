@@ -1,5 +1,12 @@
 //! `zsh.h` port — comprehensive umbrella header for the Rust port.
 //!
+//! A few typical macros                                                     // c:30
+//! Definitions for linked lists                                             // c:552
+//! Definitions for syntax trees                                             // c:640
+//! Flags for input stack                                                    // c:467
+//! Context to save and restore (bit fields)                                 // c:488
+//! Abstract types for zsh                                                   // c:507
+//!
 //! Port of `Src/zsh.h` (3,375 lines). zsh.h is the umbrella header
 //! every C file `#include`s. Defines: integer types, tokenized
 //! character constants, ~50 typedef pointer aliases, ~64 structs,

@@ -2,6 +2,11 @@
 //!
 //! Port from zsh/Src/Zle/compresult.c (2,359 lines)
 //!
+//! Handle the case were we found more than one match.                       // c:740
+//! Insert all matches in the command line.                                  // c:893
+//! This handles the beginning of menu-completion.                           // c:1377
+//! List the matches.                                                        // c:2300
+//!
 //! Handles insertion of completion results into the edit buffer:
 //! unambiguous prefix insertion, menu cycling, single match auto-insert,
 //! and ambiguous match handling.

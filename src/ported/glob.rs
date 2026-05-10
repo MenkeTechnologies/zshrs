@@ -2981,6 +2981,7 @@ pub enum GlobToken {
     Range,        // .. (in braces)
 }
 
+// This function tokenizes a zsh glob pattern                               // c:706
 /// Tokenize a glob pattern (from glob.c tokenize lines 3100-3180)
 pub fn tokenize(s: &str) -> Vec<GlobToken> {
     let mut tokens = Vec::new();
@@ -3687,6 +3688,7 @@ pub fn insert(_s: &str, _checked: i32) {                                     // 
     // observable interface for filesystem-side filtering.
 }
 
+// turn a string into a Complist struct:  this has path components          // c:787
 /// Port of `parsecomplist()` from Src/glob.c:710.
 /// C: `static Complist parsecomplist(char *instr)` — parse a multi-
 ///   segment glob path (`/foo/.../bar`) into a Complist.

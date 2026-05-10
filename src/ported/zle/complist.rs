@@ -2,6 +2,12 @@
 //!
 //! Port from zsh/Src/Zle/complist.c (3,604 lines)
 //!
+//! Information about the list shown.                                        // c:34
+//! Information for in-string colours.                                       // c:133
+//! This holds all terminal strings.                                         // c:243
+//! Get the terminal color string for the given match.                       // c:878
+//! The widget function.                                                     // c:3481
+//!
 //! The full menu/listing system is in compsys/menu.rs (3,445 lines).
 //! This module provides the ZLE-side rendering that displays completion
 //! matches in columns with colors, scrolling, and selection.

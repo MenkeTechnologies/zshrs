@@ -2,6 +2,22 @@
 //!
 //! Port from zsh/Src/utils.c
 //!
+//! Output a single character, for the termcap routines.                    // c:430
+//! get a symlink-free pathname for s relative to PWD                       // c:788
+//! print a directory                                                        // c:1027
+//! add a named directory                                                    // c:1183
+//! Add a function to the list of pre-prompt functions.                     // c:1315
+//! Add a function to the list of timed functions.                          // c:1367
+//! do pre-prompt stuff                                                      // c:1526
+//! This prints the XTRACE prompt.                                          // c:1711
+//! the default tty state                                                    // c:1813
+//! window size changed                                                      // c:1824
+//! Close the given fd, and clear it from fdtable.                          // c:2123
+//! Check if a string contains a token                                       // c:2278
+//! Delete a character in a string                                           // c:2290
+//! Skip over a balanced pair of parenthesis.                                // c:2405
+//! spellcheck a word                                                        // c:3123
+//!
 //! Provides miscellaneous utilities: error handling, file operations,
 //! string utilities, and character classification.
 
@@ -25,6 +41,7 @@ pub static mut SCRIPT_FILENAME: Option<String> = None;
 // `zwarning()` (utils.c:142) reads to build the error prefix.
 // =====================================================================
 
+// name of script being sourced                                             // c:33
 /// Port of `char *scriptname` from `Src/init.c`. Set when `source`
 /// is reading a script; cleared on return. Used by `zwarning()`
 /// (utils.c:147) as the diagnostic prefix.
@@ -883,6 +900,8 @@ pub fn checkglobqual(s: &str) -> bool {
     depth == 0
 }
 
+// spellcheck a word                                                        // c:3123
+// fix s ; if hist is nonzero, fix the history list too                     // c:3124
 /// Compute edit distance between two strings (for spelling correction)
 /// Port from zsh/Src/utils.c spdist() lines 4675-4759
 /// Levenshtein-style edit distance for typo correction.
@@ -2009,6 +2028,7 @@ pub fn itype_end(s: &str, allow_digits_start: bool) -> usize {
     pos
 }
 
+// initialize the ztypes table                                              // c:4151
 /// Port of `inittyptab()` from `Src/utils.c:4155`. Initialise the
 /// `typtab[256]` lookup table that backs the `idigit`/`ialnum`/etc.
 /// predicates in `ztype.rs`.

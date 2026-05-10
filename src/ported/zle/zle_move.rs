@@ -1,6 +1,9 @@
 //! ZLE movement operations
 //!
 //! Direct port from zsh/Src/Zle/zle_move.c
+//!
+//! Move cursor right, checking for combining characters                    // c:118
+//! Move cursor left, checking for combining characters                     // c:129
 
 use super::zle_main::Zle;
 

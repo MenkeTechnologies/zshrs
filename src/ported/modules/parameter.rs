@@ -1,5 +1,15 @@
 //! Parameter interface to shell internals - port of Modules/parameter.c
 //!
+//! Functions for the parameters special parameter.                          // c:37
+//! Return a string describing the type of a parameter.                      // c:39
+//! Functions for the commands special parameter.                            // c:147
+//! Functions for the functions special parameter.                           // c:280
+//! Functions for the builtins special parameter.                            // c:771
+//! Functions for the options special parameter.                             // c:922
+//! Functions for the modules special parameter.                             // c:1036
+//! Functions for the history special parameter.                             // c:1152
+//! Table for defined parameters.                                            // c:2177
+//!
 //! Provides special parameters: $commands, $functions, $aliases, $builtins,
 //! $modules, $dirstack, $history, $historywords, $options, $nameddirs, $userdirs
 

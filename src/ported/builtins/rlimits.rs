@@ -1,5 +1,9 @@
 //! Resource limits — port of `Src/Builtins/rlimits.c`.
 //!
+//! Find resource by its option character                                    // c:235
+//! Print a value of type rlim_t                                             // c:249
+//! Without arguments, remove all limits.                                    // c:677
+//!
 //! Implements the `limit`, `ulimit`, and `unlimit` builtins.
 //!
 //! Structure mirrors the C source line-by-line:

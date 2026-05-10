@@ -1,5 +1,9 @@
 //! Pattern matching engine for zshrs
 //!
+//! Number of active parenthesized expressions allowed in backreferencing  // c:93
+//! Default size for pattern buffer                                        // c:291
+//! Called before parsing a set of file matches to initialize flags        // c:513
+//!
 //! ====================================================================
 //! !!! WARNING: STRUCTURAL DIVERGENCE FROM Src/pattern.c !!!
 //! ====================================================================
@@ -1112,6 +1116,7 @@ pub fn patmatchlen(prog: &PatProg, s: &str) -> Option<usize> {               // 
 /// Parse glob flags from (#...) syntax Port of `patgetglobflags()` from Src/pattern.c:1037
 ///
 /// Supports: (#i) case insensitive, (#l) lowercase matches upper,
+// get glob flags, return 1 for success, 0 for failure                     // c:1033
 /// (#I) restore case, (#b)/(#B) backrefs, (#m)/(#M) match refs,
 /// `(#a<n>)` approximate matching, `(#s)` start assert, `(#e)` end assert,
 /// (#u)/(#U) multibyte, (#q) glob qualifiers (ignored)

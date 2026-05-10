@@ -2,6 +2,10 @@
 //!
 //! Port from zsh/Src/Zle/compmatch.c (2,974 lines)
 //!
+//! This compares two cmatchers and returns non-zero if they are equal.     // c:80
+//! Add the given matchers to the bmatcher list.                            // c:97
+//! This returns a new Cline structure.                                     // c:140
+//!
 //! The full matching engine is in compsys/matching.rs (458 lines).
 //! This module provides the pattern matching, anchor handling, and
 //! match line construction used during completion.

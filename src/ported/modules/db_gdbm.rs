@@ -2,6 +2,9 @@
 //!
 //! Port of zsh/Src/Modules/db_gdbm.c
 //!
+//! Holds names of all tied parameters                                       // c:100
+//! This creates standard hash.                                              // c:672
+//!
 //! Provides builtins:
 //! - ztie: Tie a parameter to a GDBM database
 //! - zuntie: Untie a parameter from a GDBM database

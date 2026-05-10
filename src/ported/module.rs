@@ -2,6 +2,10 @@
 //!
 //! Port from zsh/Src/module.c (3,646 lines)
 //!
+//! Hash of modules                                                          // c:46
+//! The list of hook functions defined.                                      // c:840
+//! List of math functions.                                                  // c:1255
+//!
 //! In C, module.c provides dynamic loading of .so modules at runtime
 //! via dlopen/dlsym. In Rust, all modules are statically compiled into
 //! the binary — there's no dynamic loading. This module provides the

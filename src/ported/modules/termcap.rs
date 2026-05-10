@@ -1,5 +1,7 @@
 //! Termcap module — port of `Src/Modules/termcap.c`.
 //!
+//! This depends on the termcap stuff in init.c                              // c:150
+//!
 //! C source has 0 structs/enums (uses libtermcap globals + the
 //! `boolcodes[]`/`numcodes[]`/`strcodes[]` arrays from libtermcap
 //! itself). Rust port matches: 0 types, only static capability
@@ -162,6 +164,7 @@ pub fn bin_echotc(name: &str, argv: &[&str], _ops: &[bool; 256]) -> i32 { // c:8
     let mut area = buf.as_mut_ptr();
     let t = unsafe { tgetstr(s_c.as_ptr(), &mut area) };                  // c:109
     if t.is_null() || (t as isize) == -1 || unsafe { *t } == 0 {          // c:110
+        // capability doesn't exist, or (if boolean) is off               // c:110
         zwarnnam(name, &format!("no such capability: {}", s));            // c:113
         return 1;                                                         // c:114
     }
