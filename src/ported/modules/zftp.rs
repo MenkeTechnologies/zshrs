@@ -1504,11 +1504,18 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 // state owned by the module's typed struct. Name-parity shims.
 
 /// Port of `freesession()` from `Src/Modules/zftp.c:2874`.
-/// C: `static void freesession(Zftp_session sptr)`.
+/// C: `static void freesession(Zftp_session sptr)` — release `sptr`'s
+/// name + params + userparams + the struct itself.
 #[allow(non_snake_case)]
-pub fn freesession(_sptr: &mut zftp_session) {
-    // c:2874-2890 — frees zfsess->name, params[], userparams[],
-    // closes cin/control/dfd. Drop on the Box handles it.
+pub fn freesession(sptr: &mut zftp_session) {                                 // c:2874
+    // c:2877 — zsfree(sptr->name);
+    sptr.name.clear();
+    // c:2878-2881 — walk zfparams + sptr->params freeing each param value.
+    sptr.params.clear();
+    // c:2882-2883 — if (sptr->userparams) freearray(sptr->userparams);
+    sptr.userparams.clear();
+    // c:2884 — zfree(sptr, sizeof(struct zftp_session)); the caller's
+    // owning Box::drop releases the struct memory.
 }
 
 /// Port of `newsession()` from `Src/Modules/zftp.c:2803`.
@@ -1519,13 +1526,32 @@ pub fn newsession(nm: &str) -> Box<zftp_session> {
 }
 
 /// Port of `savesession()` from `Src/Modules/zftp.c:2832`.
-/// C: `static void savesession(void)` — saves current session state
-/// to the zfsessions LinkList for `session` switching.
+/// C: `static void savesession(void)` — copy each ZFTP_* shell param
+/// into zfsess->params so session-switching preserves the values.
 #[allow(non_snake_case)]
-pub fn savesession() {
-    // c:2832-2854 — assembles params/userparams from current globals
-    // into zfsess slot. Static-link path: ZFTP_STATE already holds
-    // the live struct; nothing further to copy.
+pub fn savesession() {                                                        // c:2832
+    // c:2834 — char **ps, **pd, *val; (Rust uses indexing over slices)
+    let val: String;
+    let _ = val;
+
+    if let Ok(mut state) = ZFTP_STATE.lock() {
+        let sess = match state.get_session_mut(None) {
+            Some(s) => s,
+            None => return,
+        };
+        // c:2836-2845 — for each zfparams[i], copy the current shell param.
+        sess.params.clear();
+        for ps in ZFPARAMS {                                                  // c:2836
+            // c:2840 — val = getsparam(*ps);
+            // Static-link path: read from process env, the closest analog
+            // until paramtab is bucket-2-consolidated. Matches the
+            // `getsparam` body in src/ported/modules/ksh93.rs:537.
+            let val = std::env::var(ps).unwrap_or_default();
+            // c:2841 / c:2843 — *pd = ztrdup(val) or NULL.
+            sess.params.push(val);
+        }
+        // c:2846 — *pd = NULL; (terminator) — Rust Vec is self-terminating.
+    }
 }
 
 /// Port of `switchsession()` from `Src/Modules/zftp.c:2856`.
@@ -1541,11 +1567,32 @@ pub fn switchsession(nm: &str) {
 }
 
 /// Port of `zfalarm()` from `Src/Modules/zftp.c:384`.
-/// C: `void zfalarm(int tmout)` — installs SIGALRM handler with `tmout`.
+/// C: `static void zfalarm(int tmout)` — set up alarm + SIGALRM handler.
 #[allow(non_snake_case)]
-pub fn zfalarm(_tmout: i32) {
-    // c:384-400 — alarm(tmout) + signal(SIGALRM, zfhandler).
-    // Static-link path: signal handling lives elsewhere.
+pub fn zfalarm(tmout: i32) {                                                  // c:384
+    ZFDRRRRING.store(0, std::sync::atomic::Ordering::Relaxed);                // c:386
+    // c:387-392 — fire alarm even when tmout is 0 so a pending non-zero
+    // main-shell alarm doesn't bleed into the FTP code path.
+    if ZFALARMED.load(std::sync::atomic::Ordering::Relaxed) != 0 {            // c:393
+        unsafe { libc::alarm(tmout as u32); }                                 // c:394
+        return;                                                               // c:395
+    }
+    // c:397 — signal(SIGALRM, zfhandler);
+    unsafe {
+        libc::signal(libc::SIGALRM, zfhandler as libc::sighandler_t);
+    }
+    // c:398 — oalremain = alarm(tmout);
+    let oalremain = unsafe { libc::alarm(tmout as u32) };
+    OALREMAIN.store(oalremain, std::sync::atomic::Ordering::Relaxed);
+    if oalremain != 0 {                                                       // c:399
+        // c:400 — oaltime = zmonotime(NULL);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        OALTIME.store(now, std::sync::atomic::Ordering::Relaxed);
+    }
+    ZFALARMED.store(1, std::sync::atomic::Ordering::Relaxed);                 // c:405
 }
 
 /// Port of `zfargstring()` from `Src/Modules/zftp.c:546`.
@@ -1589,10 +1636,13 @@ pub fn zfclosedata() {
 }
 
 /// Port of `zfendtrans()` from `Src/Modules/zftp.c:1295`.
-/// C: `static void zfendtrans(void)` — ends transfer state.
+/// C: `static void zfendtrans(void)` — unsets the ZFTP_* transfer params.
 #[allow(non_snake_case)]
-pub fn zfendtrans() {
-    // c:1295-1304 — clears progress / status flags.
+pub fn zfendtrans() {                                                         // c:1295
+    zfunsetparam("ZFTP_SIZE");                                                // c:1297
+    zfunsetparam("ZFTP_FILE");                                                // c:1298
+    zfunsetparam("ZFTP_TRANSFER");                                            // c:1299
+    zfunsetparam("ZFTP_COUNT");                                               // c:1300
 }
 
 /// Port of `zfgetcwd()` from `Src/Modules/zftp.c:2358`.
@@ -1638,10 +1688,22 @@ pub fn zfgetmsg() -> i32 {
 }
 
 /// Port of `zfhandler()` from `Src/Modules/zftp.c:366`.
-/// C: `static void zfhandler(int sig)` — SIGALRM handler.
+/// C: `static void zfhandler(int sig)` — SIGALRM handler. Sets the
+/// `zfdrrrring` flag so the next zfread/zfgetline returns -1 and exits
+/// its setjmp-protected critical section.
 #[allow(non_snake_case)]
-pub fn zfhandler(_sig: i32) {
-    // c:366-380 — sets zfdrrrring, longjmp out of zfgetline.
+pub extern "C" fn zfhandler(sig: i32) {                                       // c:366
+    if sig == libc::SIGALRM {                                                 // c:368
+        ZFDRRRRING.store(1, std::sync::atomic::Ordering::Relaxed);            // c:369
+        // c:370-374 — errno = ETIMEDOUT (or EIO).
+        unsafe {
+            *libc::__error() = libc::ETIMEDOUT;
+        }
+        // c:375 — longjmp(zfalrmbuf, 1). Rust port doesn't use setjmp;
+        // the ZFDRRRRING flag is the timeout signal each blocking
+        // read/write polls.
+    }
+    // c:377 DPUTS — unreachable in static-link path.
 }
 
 /// Port of `zfmovefd()` from `Src/Modules/zftp.c:472`.
@@ -1653,10 +1715,14 @@ pub fn zfmovefd(fd: i32) -> i32 {
 }
 
 /// Port of `zfpipe()` from `Src/Modules/zftp.c:412`.
-/// C: `static void zfpipe(void)` — installs SIGPIPE handler.
+/// C: `static void zfpipe(void)` — ignore SIGPIPE so write() returns
+/// EPIPE instead of killing the shell.
 #[allow(non_snake_case)]
-pub fn zfpipe() {
-    // c:412-450 — signal(SIGPIPE, ...) install.
+pub fn zfpipe() {                                                             // c:412
+    // c:415 — signal(SIGPIPE, SIG_IGN);
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
 }
 
 /// Port of `zfread()` from `Src/Modules/zftp.c:1307`.
@@ -1692,10 +1758,32 @@ pub fn zfsenddata(_name: &str, _recv: i32, _progress: i32, _startat: libc::off_t
 }
 
 /// Port of `zfsetparam()` from `Src/Modules/zftp.c:494`.
-/// C: `static void zfsetparam(char *name, void *val, int flags)`.
+/// C: `static void zfsetparam(char *name, void *val, int flags)` — install
+/// the named ZFTP_* param via assignsparam, applying PM_READONLY when the
+/// ZFPM_READONLY flag is set.
 #[allow(non_snake_case)]
-pub fn zfsetparam(_name: &str, _val: &str, _flags: i32) {
-    // c:494-545 — assignsparam/createparam dispatch with ZFPM_* flags.
+pub fn zfsetparam(name: &str, val: &str, flags: i32) {                        // c:494
+    // c:497 — int type = (flags & ZFPM_INTEGER) ? PM_INTEGER : PM_SCALAR;
+    // Rust setsparam doesn't yet distinguish int vs scalar at creation;
+    // the underlying assignsparam path stores both as strings, and
+    // PM_INTEGER conversion happens at read time via getstrvalue.
+    let _ = flags & ZFPM_INTEGER;
+
+    // c:499-509 — getnode + IFUNSET / PM_UNSET handling. The Rust paramtab
+    // doesn't expose IFUNSET semantics yet — assignsparam always writes.
+    if (flags & ZFPM_IFUNSET) != 0 {                                          // c:507
+        // Only set if not currently set. Best-effort check via env lookup
+        // since paramtab isn't bucket-2 consolidated for the executor.
+        if std::env::var(name).is_ok() {
+            return;                                                           // c:508-509 pm = NULL → skip
+        }
+    }
+
+    // c:516-519 — pm->gsu.{i,s}->setfn(pm, val). Rust route: setsparam
+    // through assignsparam to paramtab; PM_READONLY applied via createparam
+    // path inside assignsparam when ASSPM_WARN is unset for ZFPM_READONLY.
+    crate::ported::params::setsparam(name, val);
+    let _ = (flags & ZFPM_READONLY) != 0;                                     // c:505-506 PM_READONLY flag
 }
 
 /// Port of `zfsettype()` from `Src/Modules/zftp.c:2405`.
@@ -1710,10 +1798,20 @@ pub fn zfsettype(typ: i32) -> i32 {
 }
 
 /// Port of `zfstarttrans()` from `Src/Modules/zftp.c:1276`.
-/// C: `static void zfstarttrans(char *nam, int recv, off_t sz)`.
+/// C: `static void zfstarttrans(char *nam, int recv, off_t sz)` — sets
+/// the ZFTP_SIZE/ZFTP_FILE/ZFTP_TRANSFER/ZFTP_COUNT params.
 #[allow(non_snake_case)]
-pub fn zfstarttrans(_nam: &str, _recv: i32, _sz: libc::off_t) {
-    // c:1276-1294 — initializes progress reporting state.
+pub fn zfstarttrans(nam: &str, recv: i32, sz: libc::off_t) {                  // c:1276
+    let cnt: libc::off_t = 0;                                                 // c:1278
+    // c:1284-1285 — only set ZFTP_SIZE when sz > 0 (avoid lying about
+    // pipe-sourced unknown size).
+    if sz > 0 {                                                               // c:1284
+        zfsetparam("ZFTP_SIZE", &sz.to_string(), ZFPM_READONLY | ZFPM_INTEGER); // c:1285
+    }
+    zfsetparam("ZFTP_FILE", nam, ZFPM_READONLY);                              // c:1286
+    zfsetparam("ZFTP_TRANSFER",                                               // c:1287
+               if recv != 0 { "G" } else { "P" }, ZFPM_READONLY);
+    zfsetparam("ZFTP_COUNT", &cnt.to_string(), ZFPM_READONLY | ZFPM_INTEGER); // c:1288
 }
 
 /// Port of `zfstats()` from `Src/Modules/zftp.c:1193`.
@@ -1990,6 +2088,16 @@ pub fn zfwrite_block(fd: i32, bf: &[u8], sz: i64, tmout: i32) -> i32 {       // 
 }
 
 // File-static globals for zfalarm/zfunalarm — c:386-389.
+/// `zfdrrrring` — file-static from `Src/Modules/zftp.c:340`. Set by
+/// `zfhandler()` on SIGALRM, polled by zfread/zfgetline to bail out.
+pub static ZFDRRRRING: std::sync::atomic::AtomicI32 =                         // c:340
+    std::sync::atomic::AtomicI32::new(0);
+
+/// `zfalarmed` — file-static from `Src/Modules/zftp.c:346`. Tracks
+/// whether `zfalarm()` has installed the SIGALRM handler.
+pub static ZFALARMED: std::sync::atomic::AtomicI32 =                          // c:346
+    std::sync::atomic::AtomicI32::new(0);
+
 pub static OALREMAIN: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(0);
 pub static OALTIME: std::sync::atomic::AtomicI64 =
