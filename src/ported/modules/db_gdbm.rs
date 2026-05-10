@@ -22,6 +22,12 @@ use once_cell::sync::Lazy;
 
 const BACKTYPE: &str = "db/gdbm";
 
+/// Port of `PM_UPTODATE` from `Src/Modules/db_gdbm.c:38`.
+/// `#define PM_UPTODATE PM_DONTIMPORT_SUID` — re-uses a Param flag bit
+/// that's safe in this module's context. Set by `gdbmgetfn` after a
+/// successful database fetch so subsequent reads can short-circuit.
+pub const PM_UPTODATE: u32 = crate::ported::zsh_h::PM_DONTIMPORT_SUID;       // c:38
+
 /// GDBM open flags
 const GDBM_READER: c_int = 0;
 const GDBM_WRITER: c_int = 1;

@@ -11,6 +11,36 @@ use crate::ported::utils::zwarnnam;
 use indexmap::IndexMap;
 use regex::Regex;
 use std::collections::HashMap;
+
+// =====================================================================
+// ZOF_* — `zparseopts` flag bits, `Src/Modules/zutil.c:1531-1538`.
+// Encode the per-option spec parsed from `zparseopts -D ...`:
+// =====================================================================
+
+/// `ZOF_ARG` from `Src/Modules/zutil.c:1531`. Option takes an argument
+/// (suffix `:`).
+pub const ZOF_ARG:  i32 = 1;                                                 // c:1531
+/// `ZOF_OPT` from `Src/Modules/zutil.c:1532`. Argument is optional
+/// (suffix `::`).
+pub const ZOF_OPT:  i32 = 2;                                                 // c:1532
+/// `ZOF_MULT` from `Src/Modules/zutil.c:1533`. Multiple occurrences
+/// allowed (suffix `+`).
+pub const ZOF_MULT: i32 = 4;                                                 // c:1533
+/// `ZOF_SAME` from `Src/Modules/zutil.c:1534`. All same-name options
+/// share one slot (default for arrays without `+`).
+pub const ZOF_SAME: i32 = 8;                                                 // c:1534
+/// `ZOF_MAP` from `Src/Modules/zutil.c:1535`. Option spec includes a
+/// `=` mapping to a different array name.
+pub const ZOF_MAP:  i32 = 16;                                                // c:1535
+/// `ZOF_CYC` from `Src/Modules/zutil.c:1536`. Cyclic mapping detected
+/// during option parsing (error guard).
+pub const ZOF_CYC:  i32 = 32;                                                // c:1536
+/// `ZOF_GNUS` from `Src/Modules/zutil.c:1537`. GNU-style `--option`
+/// short variant.
+pub const ZOF_GNUS: i32 = 64;                                                // c:1537
+/// `ZOF_GNUL` from `Src/Modules/zutil.c:1538`. GNU-style `--option=value`
+/// long variant.
+pub const ZOF_GNUL: i32 = 128;                                               // c:1538
 // ZStyle is defined below (moved from exec.rs).
 
 /// Save/restore for the per-pattern-match magic vars `$match`,
@@ -640,6 +670,19 @@ mod tests {
 
         assert!(p3.weight > p2.weight);
         assert!(p2.weight > p1.weight);
+    }
+
+    #[test]
+    fn zof_flags_are_distinct_powers_of_two() {
+        // c:1531-1538 — ZOF_* are independent bits in a single u8 field.
+        let all = [ZOF_ARG, ZOF_OPT, ZOF_MULT, ZOF_SAME, ZOF_MAP, ZOF_CYC, ZOF_GNUS, ZOF_GNUL];
+        let xor: i32 = all.iter().fold(0, |acc, &x| acc | x);
+        let sum: i32 = all.iter().sum();
+        assert_eq!(xor, sum, "ZOF_* bits must be disjoint");
+        // Ensure each is a power of two.
+        for v in all {
+            assert!(v > 0 && (v & (v - 1)) == 0, "ZOF value {} is not a power of 2", v);
+        }
     }
 
     #[test]
