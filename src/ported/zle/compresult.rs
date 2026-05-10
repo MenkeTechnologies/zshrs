@@ -515,11 +515,66 @@ mod tests {
 // =====================================================================
 
 /// Port of `bld_all_str()` from `Src/Zle/compresult.c:2187`.
+/// Direct port of `static void bld_all_str(Cmatch all)` from
+/// `Src/Zle/compresult.c:2187-2240`. Walks the global `amatches`
+/// linked list, collecting every visible match string into a single
+/// space-joined display buffer terminated with "..." when overflow.
+/// The C signature takes a Cmatch and writes `all->disp`; the Rust
+/// port returns the built String so the caller assigns it.
 pub fn bld_all_str() -> String {                                             // c:2187
-    // C body c:2189-2280 — walks Cmgroup list collecting every match
-    //                     into a single quoted+space-joined string for
-    //                     `do_allmatches`. Without Cmatch list: empty.
-    String::new()
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::comp_h::{CMF_ALL, CMF_HIDE};
+
+    let groups = crate::ported::zle::compcore::amatches
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock().ok().map(|g| g.clone()).unwrap_or_default();
+
+    let cols: i32 = std::env::var("COLUMNS")
+        .ok().and_then(|v| v.parse().ok())
+        .unwrap_or(80);
+    let mut len: i32 = cols - 5;                                             // c:2192
+    let mut add: i32 = 0;
+    let mut buf = String::new();                                             // c:2196
+
+    // c:2199-2204 — skip empty groups.
+    let mut g_idx = groups.iter().position(|g| g.mcount != 0);
+    'outer: while let Some(gi) = g_idx {
+        let g = &groups[gi];
+        let mut mp = 0usize;
+        while mp < g.matches.len() {
+            let m = &g.matches[mp];
+            let visible = (m.flags & (CMF_ALL | CMF_HIDE)) == 0
+                       && m.str_.is_some();
+            if visible {                                                     // c:2213
+                let s = m.str_.as_deref().unwrap();
+                let t = s.len() as i32 + add;
+                if len >= t {                                                // c:2215
+                    if add != 0 { buf.push(' '); }                           // c:2216
+                    buf.push_str(s);                                         // c:2218
+                    len -= t;
+                    add = 1;
+                } else {                                                     // c:2221
+                    if len > add + 2 {                                       // c:2222
+                        if add != 0 { buf.push(' '); }
+                        buf.push_str(&s[..((len - 2).max(0) as usize).min(s.len())]);
+                    }
+                    buf.push_str("...");                                     // c:2227
+                    break 'outer;                                            // c:2228
+                }
+            }
+            mp += 1;
+            if mp >= g.matches.len() {                                       // c:2232
+                g_idx = (gi + 1..).find(|&i| i < groups.len()
+                                          && groups[i].mcount != 0);
+                if g_idx.is_none() { break 'outer; }
+                continue 'outer;
+            }
+        }
+        let _ = Ordering::Relaxed;
+        g_idx = (gi + 1..).find(|&i| i < groups.len()
+                                  && groups[i].mcount != 0);
+    }
+    buf                                                                      // c:2238 ztrdup(buf)
 }
 
 /// Port of `calclist()` from `Src/Zle/compresult.c:1495`.
@@ -618,11 +673,67 @@ pub fn invalidate_list() -> i32 {                                            // 
 }
 
 /// Port of `iprintm()` from `Src/Zle/compresult.c:2241`.
-pub fn iprintm() -> i32 {                                                    // c:2241
-    // C body c:2243-2282 — CLPrintFunc for the standard listing: prints
-    //                      one match cell with proper column padding +
-    //                      group separator. Substrate deferred; 0.
-    0
+/// Direct port of `static void iprintm(Cmgroup g, Cmatch *mp, int mc,
+///                                     int ml, int lastc, int width)`
+/// from `Src/Zle/compresult.c:2241-2282`. Renders one match cell to
+/// stdout (`shout` in C) with column-padding when not last in row.
+///
+/// Rust signature returns `i32` (printed width) — caller in the
+/// column-layout loop uses it for running totals; C body wrote to
+/// the global `shout` stream + tracked `len` locally.
+pub fn iprintm(
+    g: Option<&crate::ported::zle::comp_h::Cmgroup>,
+    mp: Option<&crate::ported::zle::comp_h::Cmatch>,
+    _mc: i32, _ml: i32, lastc: i32, width: i32,
+) -> i32 {                                                                    // c:2241
+    use crate::ported::zle::comp_h::{CGF_FILES, CMF_ALL, CMF_DISPLINE};
+    use std::io::Write;
+
+    let m = match mp { None => return 0, Some(m) => m };                     // c:2245
+    let mut disp_owned: String = String::new();
+    let disp_ref: Option<&str> = m.disp.as_deref();
+
+    // c:2249-2250 — if CMF_ALL with empty disp, build it via bld_all_str.
+    if (m.flags & CMF_ALL) != 0 && disp_ref.map(|s| s.is_empty()).unwrap_or(true) {
+        disp_owned = bld_all_str();                                          // c:2250
+    }
+    let disp_now: Option<&str> = if !disp_owned.is_empty() {
+        Some(disp_owned.as_str())
+    } else {
+        disp_ref
+    };
+
+    let mut len: i32;
+    let mut stdout = std::io::stdout().lock();
+
+    if let Some(d) = disp_now {                                              // c:2253
+        if (m.flags & CMF_DISPLINE) != 0 {                                   // c:2254
+            // c:2255 printfmt(d, 0, 1, 0) — print + newline.
+            let _ = writeln!(stdout, "{}", d);
+            return 0;                                                        // c:2257
+        }
+        let _ = write!(stdout, "{}", d);                                     // c:2260 niceformat
+        len = d.chars().count() as i32;
+    } else {                                                                 // c:2263
+        let s = m.str_.as_deref().unwrap_or("");
+        let _ = write!(stdout, "{}", s);                                     // c:2266
+        len = s.chars().count() as i32;
+        // c:2270-2273 — append modec for file-completion groups.
+        if let Some(grp) = g {
+            if (grp.flags & CGF_FILES) != 0 && m.modec != '\0' {
+                let _ = write!(stdout, "{}", m.modec);
+                len += 1;
+            }
+        }
+    }
+    if lastc == 0 {                                                          // c:2275
+        let mut pad = width - len;
+        while pad > 0 {                                                      // c:2278
+            let _ = stdout.write_all(b" ");
+            pad -= 1;
+        }
+    }
+    len                                                                      // c:2282
 }
 
 /// Port of `int list_matches(Hookdef dummy, void *dummy2)` from
