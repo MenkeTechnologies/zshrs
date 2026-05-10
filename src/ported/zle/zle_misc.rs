@@ -1426,8 +1426,36 @@ pub fn poundinsert(zle: &mut Zle) -> i32 {                                   // 
     0                                                                        // c:396
 }
 
-/// Port of `putreplaceselection()` from Src/Zle/zle_misc.c:680. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn putreplaceselection() -> i32 { 0 }
+/// Port of `putreplaceselection()` from Src/Zle/zle_misc.c:679.
+pub fn putreplaceselection(zle: &mut Zle) -> i32 {                           // c:679
+    use crate::ported::zle::zle_main::ModifierFlags;
+    use crate::ported::zle::zle_vi::startvichange;
+    let n = zle.zmod.mult;                                                   // c:682
+    let mut pos = 2;                                                         // c:686
+    startvichange(zle, -1);                                                  // c:688
+    if n < 0 || zle.zmod.flags.contains(ModifierFlags::NULL) {
+        return 1;                                                            // c:690
+    }
+    let prevbuf: Vec<char> = if zle.zmod.flags.contains(ModifierFlags::VIBUF) {
+        let idx = zle.zmod.vibuf as usize;
+        if idx >= zle.vibuf.len() {
+            return 1;
+        }
+        zle.vibuf[idx].clone()                                               // c:700
+    } else {
+        zle.killring.front().cloned().unwrap_or_default()                    // c:702
+    };
+    if prevbuf.is_empty() {
+        return 1;                                                            // c:702
+    }
+    zle.zmod.flags = ModifierFlags::empty();                                 // c:712
+    if zle.region_active == 2 {                                              // c:713
+        // c:714-717 — regionlines split; lines-flag check elided.
+        pos = if zle.zlell == zle.zlecs { 1 } else { 0 };
+    }
+    let _ = killregion(zle);                                                 // c:719
+    pastebuf(zle, &prevbuf, n, pos)                                          // c:721
+}
 
 /// Port of `quotedinsert()` from Src/Zle/zle_misc.c:899. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn quotedinsert(zle: &mut Zle) -> i32 {                                  // c:899
@@ -1517,8 +1545,45 @@ pub fn regionlines(zle: &mut Zle) -> (usize, usize) {                        // 
     (start, end)
 }
 
-/// Port of `scancompcmd()` from Src/Zle/zle_misc.c:1235. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn scancompcmd() -> i32 { 0 }
+/// Per-`scancompcmd` state — port of the file-static globals
+/// `namedcmdstr`, `namedcmdll`, `namedcmdambig` referenced from
+/// `Src/Zle/zle_misc.c:1240-1244`.
+pub static NAMEDCMD_STATE: std::sync::OnceLock<std::sync::Mutex<NamedCmdState>> =
+    std::sync::OnceLock::new();
+
+#[derive(Debug, Default)]
+pub struct NamedCmdState {
+    pub namedcmdstr: String,
+    pub namedcmdll: Vec<String>,
+    pub namedcmdambig: usize,
+}
+
+fn named_cmd_state() -> &'static std::sync::Mutex<NamedCmdState> {
+    NAMEDCMD_STATE.get_or_init(|| std::sync::Mutex::new(NamedCmdState::default()))
+}
+
+/// Port of `scancompcmd()` from Src/Zle/zle_misc.c:1235.
+pub fn scancompcmd(name: &str) -> i32 {                                      // c:1235
+    // C body c:1240-1245 — `if (strpfx(namedcmdstr, t->nam))
+    //                       addlinknode(namedcmdll, t->nam);
+    //                       l = pfxlen(peekfirst(namedcmdll), t->nam);
+    //                       if (l < namedcmdambig) namedcmdambig = l`.
+    let mut s = named_cmd_state().lock().unwrap();
+    if !name.starts_with(&s.namedcmdstr) {
+        return 0;
+    }
+    let first = s.namedcmdll.first().cloned();
+    s.namedcmdll.push(name.to_string());
+    if let Some(f) = first {
+        let l = f.bytes().zip(name.bytes()).take_while(|(a, b)| a == b).count();
+        if l < s.namedcmdambig {
+            s.namedcmdambig = l;
+        }
+    } else {
+        s.namedcmdambig = name.len();
+    }
+    0
+}
 
 /// Port of `selfinsert()` from Src/Zle/zle_misc.c:113. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn selfinsert(zle: &mut Zle) -> i32 {                                    // c:112
@@ -1601,8 +1666,49 @@ pub fn transpose_swap(zle: &mut Zle, start: usize, middle: usize, end: usize) { 
     let _ = len1;
 }
 
-/// Port of `transposechars()` from Src/Zle/zle_misc.c:313. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn transposechars() -> i32 { 0 }
+/// Port of `transposechars()` from Src/Zle/zle_misc.c:313.
+pub fn transposechars(zle: &mut Zle) -> i32 {                                // c:313
+    use crate::ported::zle::zle_move::{deccs, decpos, inccs, incpos};
+    let mut n = zle.zmod.mult;
+    let neg = n < 0;                                                         // c:317
+    if neg {
+        n = -n;                                                              // c:319
+    }
+    while n > 0 {                                                            // c:321
+        n -= 1;
+        let mut ct = zle.zlecs;                                              // c:322
+        if ct == 0 || zle.zleline[zle.zlecs - 1] == '\n' {                   // c:322
+            if zle.zlell == zle.zlecs || zle.zleline[zle.zlecs] == '\n' {    // c:323
+                return 1;
+            }
+            if !neg {
+                inccs(zle);                                                  // c:326
+            }
+            incpos(&mut ct);                                                 // c:327
+        }
+        if neg {
+            if zle.zlecs > 0 && zle.zleline[zle.zlecs - 1] != '\n' {         // c:330
+                deccs(zle);                                                  // c:331
+                if ct > 1 && zle.zleline[ct - 2] != '\n' {                   // c:332
+                    decpos(&mut ct);                                         // c:333
+                }
+            }
+        } else if zle.zlecs != zle.zlell && zle.zleline[zle.zlecs] != '\n' {
+            inccs(zle);                                                      // c:338
+        }
+        if ct == zle.zlell || zle.zleline[ct] == '\n' {                      // c:340
+            decpos(&mut ct);                                                 // c:341
+        }
+        if ct < 1 || zle.zleline[ct - 1] == '\n' {                           // c:343
+            return 1;
+        }
+        // c:345-358 — MULTIBYTE branch uses transpose_swap with surrounding
+        //              positions; non-multibyte branch swaps two ZLE_CHAR_T.
+        //              Rust ZleString is Vec<char> so we can swap directly.
+        zle.zleline.swap(ct - 1, ct);
+    }
+    0
+}
 
 /// Port of `undefinedkey()` from `Src/Zle/zle_misc.c:892`.
 /// ```c
@@ -1620,17 +1726,116 @@ pub fn undefinedkey() -> i32 {                                               // 
     1
 }
 
-/// Port of `universalargument()` from Src/Zle/zle_misc.c:986. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn universalargument() -> i32 { 0 }
+/// Port of `universalargument()` from Src/Zle/zle_misc.c:986.
+pub fn universalargument(zle: &mut Zle, args: &[String]) -> i32 {            // c:986
+    use crate::ported::zle::zle_main::ModifierFlags;
+    // c:988-993 — `if (*args)` short-circuit when invoked with an
+    //              explicit numeric arg.
+    if let Some(a) = args.first() {
+        if let Ok(n) = a.parse::<i32>() {
+            zle.zmod.mult = n;
+            zle.zmod.flags.insert(ModifierFlags::MULT);
+            return 0;
+        }
+    }
+    // c:1009-1023 — interactive byte-by-byte digit collection. Without
+    //               a live keystream we mirror the no-input branch
+    //               (no digits) which multiplies tmult by 4.
+    let digcnt = 0;
+    if digcnt == 0 {
+        zle.zmod.tmult = zle.zmod.tmult.saturating_mul(4);                   // c:1027
+    }
+    zle.zmod.flags.insert(ModifierFlags::TMULT);                             // c:1029
+    zle.prefixflag = true;                                                   // c:1030
+    0
+}
 
-/// Port of `viputafter()` from Src/Zle/zle_misc.c:644. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn viputafter() -> i32 { 0 }
+/// Port of `viputafter()` from Src/Zle/zle_misc.c:643.
+pub fn viputafter(zle: &mut Zle) -> i32 {                                    // c:643
+    use crate::ported::zle::zle_main::ModifierFlags;
+    use crate::ported::zle::zle_vi::startvichange;
+    let n = zle.zmod.mult;                                                   // c:646
+    startvichange(zle, -1);                                                  // c:648
+    if n < 0 {
+        return 1;                                                            // c:650
+    }
+    if zle.zmod.flags.contains(ModifierFlags::NULL) {
+        return 0;                                                            // c:652
+    }
+    // c:653-665 — OS selection branch (MOD_OSSEL = PRI|CLIP). Without
+    //              system_clipget we fall through to the cut-buffer path.
+    let buf: Vec<char> = if zle.zmod.flags.contains(ModifierFlags::VIBUF) {
+        let idx = zle.zmod.vibuf as usize;
+        if idx >= zle.vibuf.len() {
+            return 1;
+        }
+        zle.vibuf[idx].clone()                                               // c:667
+    } else {
+        zle.killring.front().cloned().unwrap_or_default()                                                   // c:669
+    };
+    if buf.is_empty() {
+        return 1;                                                            // c:671
+    }
+    pastebuf(zle, &buf, n, 1)                                                // c:675
+}
 
-/// Port of `viputbefore()` from Src/Zle/zle_misc.c:608. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn viputbefore() -> i32 { 0 }
+/// Port of `viputbefore()` from Src/Zle/zle_misc.c:607.
+pub fn viputbefore(zle: &mut Zle) -> i32 {                                   // c:607
+    use crate::ported::zle::zle_main::ModifierFlags;
+    use crate::ported::zle::zle_vi::startvichange;
+    let n = zle.zmod.mult;                                                   // c:610
+    startvichange(zle, -1);                                                  // c:612
+    if n < 0 {
+        return 1;                                                            // c:614
+    }
+    if zle.zmod.flags.contains(ModifierFlags::NULL) {
+        return 0;                                                            // c:616
+    }
+    let buf: Vec<char> = if zle.zmod.flags.contains(ModifierFlags::VIBUF) {
+        let idx = zle.zmod.vibuf as usize;
+        if idx >= zle.vibuf.len() {
+            return 1;
+        }
+        zle.vibuf[idx].clone()                                               // c:631
+    } else {
+        zle.killring.front().cloned().unwrap_or_default()                                                   // c:633
+    };
+    if buf.is_empty() {
+        return 1;                                                            // c:635
+    }
+    pastebuf(zle, &buf, n, 0)                                                // c:639
+}
 
-/// Port of `whatcursorposition()` from Src/Zle/zle_misc.c:851. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn whatcursorposition() -> i32 { 0 }
+/// Port of `whatcursorposition()` from Src/Zle/zle_misc.c:850.
+pub fn whatcursorposition(zle: &mut Zle) -> i32 {                            // c:850
+    use crate::ported::zle::zle_utils::findbol;
+    let bol = findbol(zle);                                                  // c:855
+    let mut msg = String::with_capacity(100);
+    if zle.zlecs == zle.zlell {                                              // c:858
+        msg.push_str("EOF");                                                 // c:859
+    } else {
+        msg.push_str("Char: ");                                              // c:861
+        let c = zle.zleline[zle.zlecs];                                      // c:856
+        match c {
+            ' ' => msg.push_str("SPC"),                                      // c:864
+            '\t' => msg.push_str("TAB"),                                     // c:867
+            '\n' => msg.push_str("LFD"),                                     // c:870
+            _ => msg.push(c),                                                // c:878
+        }
+        let cu = c as u32;
+        msg.push_str(&format!(" (0{:o}, {}, 0x{:x})", cu, cu, cu));          // c:881
+    }
+    let pct = if zle.zlell > 0 { 100 * zle.zlecs / zle.zlell } else { 0 };
+    msg.push_str(&format!(
+        "  point {} of {}({}%)  column {}",
+        zle.zlecs + 1,
+        zle.zlell + 1,
+        pct,
+        zle.zlecs - bol,
+    ));                                                                      // c:884
+    tracing::info!(target: "zle", "{}", msg);                                // c:887 — showmsg
+    0
+}
 
 /// Port of `yankpop()` from Src/Zle/zle_misc.c:728. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn yankpop(zle: &mut Zle) -> i32 {                                       // c:728

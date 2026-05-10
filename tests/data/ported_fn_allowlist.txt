@@ -609,3 +609,12 @@ suffixlist
 # helper hides the get_or_init from set_isrch_spot/get_isrch_spot/
 # free_isrch_spots.
 isrch_spots
+
+# named_cmd_state (zle/zle_misc.rs) — Rust-only get-or-init accessor
+# for the file-static globals `namedcmdstr`, `namedcmdll`, `namedcmdambig`
+# from Src/Zle/zle_misc.c:1240-1244 referenced by scancompcmd and
+# executenamedcommand. C declares them as top-level statics; Rust
+# bundles them in NamedCmdState behind an OnceLock<Mutex<>> so the
+# scan callback can mutate them while running; this private helper
+# hides the get_or_init.
+named_cmd_state
