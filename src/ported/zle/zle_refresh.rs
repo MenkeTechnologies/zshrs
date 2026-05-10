@@ -1133,6 +1133,32 @@ pub fn ZR_memset(                                                            // 
     }
 }
 
+/// Port of `ZR_equal(zr1, zr2)` macro from `Src/Zle/zle_refresh.c:74-82`.
+/// Multibyte path: `chr == chr && atr == atr && (combining-cluster eq)`.
+/// Non-multibyte path collapses to the same first conjunction. Rust uses
+/// the derived `PartialEq` on `REFRESH_ELEMENT`.
+#[inline]
+#[allow(non_snake_case)]
+pub fn ZR_equal(                                                             // c:74
+    a: crate::ported::zle::zle_h::REFRESH_ELEMENT,
+    b: crate::ported::zle::zle_h::REFRESH_ELEMENT,
+) -> bool {
+    a == b
+}
+
+/// Port of `ZR_memcpy(d, s, l)` macro from `Src/Zle/zle_refresh.c:92`.
+/// `#define ZR_memcpy(d, s, l)  memcpy((d), (s), (l)*sizeof(REFRESH_ELEMENT))`.
+/// Copy `l` REFRESH_ELEMENT slots from `src` to `dst`.
+#[inline]
+#[allow(non_snake_case)]
+pub fn ZR_memcpy(                                                            // c:92
+    dst: &mut [crate::ported::zle::zle_h::REFRESH_ELEMENT],
+    src: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
+    l: usize,
+) {
+    dst[..l].copy_from_slice(&src[..l]);
+}
+
 /// Port of `ZR_strcpy()` from `Src/Zle/zle_refresh.c:94`.
 /// ```c
 /// static void
@@ -1231,6 +1257,86 @@ pub fn ZR_strncmp(                                                           // 
         i += 1;                                                              // c:129-130 oldwstr++; newwstr++
     }
     0                                                                        // c:133 return 0
+}
+
+// =====================================================================
+// `DEF_MWBUF_ALLOC` + `zr_*_ellipsis` tables — `Src/Zle/zle_refresh.c:697`
+// + c:269-313. Pre-built REFRESH_ELEMENT sequences for line-truncation
+// markers.
+// =====================================================================
+
+/// Port of `DEF_MWBUF_ALLOC` from `Src/Zle/zle_refresh.c:697`.
+/// Number of words to allocate in one go for the multiword buffers.
+pub const DEF_MWBUF_ALLOC: usize = 32;                                       // c:697
+
+/// Port of `zr_end_ellipsis[]` from `Src/Zle/zle_refresh.c:269-281`.
+/// "...>" rendered when a long line overflows past the right edge.
+/// TXT_ERROR is the standard zsh-error highlight (set in zsh_h::TXT_ERROR).
+pub static ZR_END_ELLIPSIS: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[ // c:269
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: ' ', atr: 0 },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '>', atr: 0 },
+];
+
+/// Port of `ZR_END_ELLIPSIS_SIZE` macro from `zle_refresh.c:284`.
+pub const ZR_END_ELLIPSIS_SIZE: usize = ZR_END_ELLIPSIS.len();               // c:284
+
+/// Port of `zr_mid_ellipsis1[]` from `zle_refresh.c:287-294`.
+/// First half of " <.... ... >" mid-line cluster.
+pub static ZR_MID_ELLIPSIS1: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[ // c:287
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: ' ', atr: 0 },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '<', atr: 0 },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
+];
+
+/// Port of `ZR_MID_ELLIPSIS1_SIZE` macro from `zle_refresh.c:295`.
+pub const ZR_MID_ELLIPSIS1_SIZE: usize = ZR_MID_ELLIPSIS1.len();             // c:295
+
+/// Port of `zr_mid_ellipsis2[]` from `zle_refresh.c:298-301`.
+/// Trailing close of the mid-line ellipsis cluster.
+pub static ZR_MID_ELLIPSIS2: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[ // c:298
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '>', atr: crate::ported::zsh_h::TXT_ERROR },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: ' ', atr: 0 },
+];
+
+/// Port of `ZR_MID_ELLIPSIS2_SIZE` macro from `zle_refresh.c:302`.
+pub const ZR_MID_ELLIPSIS2_SIZE: usize = ZR_MID_ELLIPSIS2.len();             // c:302
+
+/// Port of `zr_start_ellipsis[]` from `zle_refresh.c:305-311`.
+/// "><..." rendered when a line begins past the left edge.
+pub static ZR_START_ELLIPSIS: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[ // c:305
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '>', atr: 0 },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
+    crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
+];
+
+/// Port of `ZR_START_ELLIPSIS_SIZE` macro from `zle_refresh.c:312`.
+pub const ZR_START_ELLIPSIS_SIZE: usize = ZR_START_ELLIPSIS.len();           // c:312
+
+/// Port of `tcinscost(X)` macro from `Src/Zle/zle_refresh.c:1724`.
+/// `#define tcinscost(X) (tccan(TCMULTINS) ? tclen[TCMULTINS] : (X)*tclen[TCINS])`.
+/// Cost (in chars) to insert `x` characters: pick the multi-insert
+/// terminal capability if available, else linear cost via single-insert.
+/// `tccan`/`tclen` are terminal-capability probes (Src/init.c globals);
+/// without them ported we approximate with the single-insert path.
+#[inline] pub fn tcinscost(x: i32) -> i32 {                                  // c:1724
+    // Without tccan/tclen substrate: estimate single-char insert cost
+    // as 1 unit per char.
+    x.max(0)
+}
+
+/// Port of `tcdelcost(X)` macro from `Src/Zle/zle_refresh.c:1725`.
+/// `#define tcdelcost(X) (tccan(TCMULTDEL) ? tclen[TCMULTDEL] : (X)*tclen[TCDEL])`.
+#[inline] pub fn tcdelcost(x: i32) -> i32 {                                  // c:1725
+    x.max(0)
 }
 
 #[cfg(test)]
@@ -1335,5 +1441,45 @@ mod zr_tests {
         // multiword mask path skips the early-NUL exit so we fall
         // through to the regular ZR_equal check.
         assert_eq!(ZR_strncmp(&a, &b, 1), 0);
+    }
+
+    #[test]
+    fn zr_equal_same_returns_true() {
+        let a = re('a', 0);
+        assert!(ZR_equal(a, a));
+        let b = re('b', 0);
+        assert!(!ZR_equal(a, b));
+    }
+
+    #[test]
+    fn zr_memcpy_copies_n_elements() {
+        let mut dst = [re('\0', 0); 5];
+        let src = [re('a', 0), re('b', 0), re('c', 0), re('d', 0), re('e', 0)];
+        ZR_memcpy(&mut dst, &src, 3);
+        assert_eq!(dst[0].chr, 'a');
+        assert_eq!(dst[1].chr, 'b');
+        assert_eq!(dst[2].chr, 'c');
+        assert_eq!(dst[3].chr, '\0');
+    }
+
+    #[test]
+    fn ellipsis_sizes_match_table_lengths() {
+        assert_eq!(ZR_END_ELLIPSIS_SIZE, 6);
+        assert_eq!(ZR_MID_ELLIPSIS1_SIZE, 6);
+        assert_eq!(ZR_MID_ELLIPSIS2_SIZE, 2);
+        assert_eq!(ZR_START_ELLIPSIS_SIZE, 5);
+    }
+
+    #[test]
+    fn def_mwbuf_alloc_is_32() {
+        assert_eq!(DEF_MWBUF_ALLOC, 32);
+    }
+
+    #[test]
+    fn tc_costs_handle_negative() {
+        assert_eq!(tcinscost(-1), 0);
+        assert_eq!(tcdelcost(-1), 0);
+        assert_eq!(tcinscost(5), 5);
+        assert_eq!(tcdelcost(5), 5);
     }
 }
