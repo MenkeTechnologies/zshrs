@@ -2,6 +2,12 @@
 //!
 //! Direct port from zsh/Src/Zle/zle_hist.c
 //!
+//! Previous aborted search string use in an incremental search              // c:52
+//! Local keymap in isearch mode                                             // c:57
+//! the last vi search                                                       // c:1807
+//! history-beginning-search-backward                                        // c:2035
+//! history-beginning-search-forward                                         // c:2082
+//!
 //! Implements all history navigation widgets:
 //! - up-line-or-history, down-line-or-history
 //! - history-search-backward, history-search-forward  
@@ -11,7 +17,25 @@
 //! - accept-line-and-down-history, accept-and-infer-next-history
 //! - insert-last-word, push-line, push-line-or-edit
 
+use std::sync::atomic::AtomicI32;
+
 use super::zle_main::{Zle, ZleString};
+
+// =====================================================================
+// Isearch globals — `Src/Zle/zle_hist.c:1078`.
+// =====================================================================
+
+/// Port of `int isearch_active` from `Src/Zle/zle_hist.c:1078`.
+/// Non-zero while the user is inside an incremental-search session.
+pub static ISEARCH_ACTIVE: AtomicI32 = AtomicI32::new(0);                    // c:1078
+
+/// Port of `int isearch_startpos` from `Src/Zle/zle_hist.c:1078`.
+/// Byte offset of the start of the current isearch match.
+pub static ISEARCH_STARTPOS: AtomicI32 = AtomicI32::new(0);                  // c:1078
+
+/// Port of `int isearch_endpos` from `Src/Zle/zle_hist.c:1078`.
+/// Byte offset of the end of the current isearch match.
+pub static ISEARCH_ENDPOS: AtomicI32 = AtomicI32::new(0);                    // c:1078
 
 /// History entry
 #[derive(Debug, Clone)]
@@ -29,6 +53,7 @@ pub struct HistEntry {
 pub struct History {
     /// History entries (newest last)
     pub entries: Vec<HistEntry>,
+    // current history line number                                          // c:39
     /// Current position in history
     pub cursor: usize,
     /// Maximum history size
@@ -37,6 +62,7 @@ pub struct History {
     pub saved_line: Option<ZleString>,
     /// Saved cursor position
     pub saved_cs: usize,
+    // Previous search string use in an incremental search                  // c:44
     /// Search pattern
     pub search_pattern: String,
     /// Last search direction (true = backward)
