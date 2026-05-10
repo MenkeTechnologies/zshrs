@@ -69,9 +69,17 @@ impl HistEntry {
 
 // != 0 means history substitution is turned off                           // c:57
 /// History active bits
-pub const HA_ACTIVE: u32 = 1; // History mechanism is active
-pub const HA_NOINC: u32 = 2; // Don't store, curhist not incremented
-pub const HA_INWORD: u32 = 4; // We're inside a word
+/// Port of `HA_ACTIVE` from `Src/hist.c:138`. History mechanism is active.
+pub const HA_ACTIVE: u32 = 1; // History mechanism is active                 // c:138
+/// Port of `HA_NOINC` from `Src/hist.c:139`. Don't store, curhist not incremented.
+pub const HA_NOINC: u32 = 2; // Don't store, curhist not incremented         // c:139
+/// Port of `HA_INWORD` from `Src/hist.c:140`. We're inside a word, don't
+/// add a new entry yet.
+pub const HA_INWORD: u32 = 4; // We're inside a word                         // c:140
+/// Port of `HA_UNGET` from `Src/hist.c:142`. Recursively ungetting:
+/// the inputstack push of a single char from `inungetc` is happening
+/// while history is active — guard against re-entrant decrement.
+pub const HA_UNGET: u32 = 8;                                                 // c:142
 
 /// History state
 /// In-memory history list.

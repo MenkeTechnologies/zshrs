@@ -22,6 +22,39 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+// =====================================================================
+// COMP_* — `compctl` operation flags from `Src/Zle/compctl.c:53-60`.
+// Encode the command-line operation requested by `compctl`'s flag
+// arguments (`-L`, `-C`, `-D`, `-T`, `-M`).
+// =====================================================================
+
+/// Port of `COMP_LIST` from `Src/Zle/compctl.c:53`. `-L` flag — list
+/// existing compctl bindings.
+pub const COMP_LIST:      i32 = 1 << 0;                                      // c:53
+/// Port of `COMP_COMMAND` from `compctl.c:54`. `-C` — operate on the
+/// command-completion table.
+pub const COMP_COMMAND:   i32 = 1 << 1;                                      // c:54
+/// Port of `COMP_DEFAULT` from `compctl.c:55`. `-D` — operate on the
+/// default-completion entry.
+pub const COMP_DEFAULT:   i32 = 1 << 2;                                      // c:55
+/// Port of `COMP_FIRST` from `compctl.c:56`. `-T` — operate on the
+/// first-completion entry.
+pub const COMP_FIRST:     i32 = 1 << 3;                                      // c:56
+/// Port of `COMP_REMOVE` from `compctl.c:57`. `+` prefix or remove op.
+pub const COMP_REMOVE:    i32 = 1 << 4;                                      // c:57
+/// Port of `COMP_LISTMATCH` from `compctl.c:58`. `-L -M` combination.
+pub const COMP_LISTMATCH: i32 = 1 << 5;                                      // c:58
+
+/// Port of `COMP_SPECIAL` from `compctl.c:60`. Mask covering all
+/// "special" entry-point flags.
+pub const COMP_SPECIAL:   i32 = COMP_COMMAND | COMP_DEFAULT | COMP_FIRST;    // c:60
+
+/// Port of `CFN_FIRST` from `compctl.c:1672`. Internal flag for
+/// `printcompctl` — skip the cc_first per-table override.
+pub const CFN_FIRST:   i32 = 1;                                              // c:1672
+/// Port of `CFN_DEFAULT` from `compctl.c:1673`. Skip cc_default.
+pub const CFN_DEFAULT: i32 = 2;                                              // c:1673
+
 // =================================================================
 // Type definitions — port of Src/Zle/compctl.h:32-115
 // =================================================================

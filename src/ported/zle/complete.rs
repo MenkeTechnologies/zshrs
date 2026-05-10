@@ -419,6 +419,12 @@ pub fn cond_psfix(a: &[String], _id: i32) -> i32 {                           // 
 // Used by bin_compset/cond_psfix/cond_range to discriminate the
 // completion-variable-mutation opcode passed to do_comp_vars.
 // =====================================================================
+/// Port of `COMPSTATENAME` from `Src/Zle/complete.c:1294`.
+/// `#define COMPSTATENAME "compstate"` — name of the magic-assoc
+/// parameter created by `callcompfunc` so user widgets can read +
+/// mutate completion state via `${compstate[...]}`.
+pub const COMPSTATENAME: &str = "compstate";                                 // c:1294
+
 pub const CVT_RANGENUM: i32 = 0;                                             // c:855
 pub const CVT_RANGEPAT: i32 = 1;                                             // c:856
 pub const CVT_PRENUM:   i32 = 2;                                             // c:857
