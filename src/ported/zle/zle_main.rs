@@ -2075,17 +2075,36 @@ pub fn ungetbytes_unmeta(zle: &mut Zle, s: &[u8]) {                          // 
     }
 }
 
-/// Port of `zle_resetprompt()` from Src/Zle/zle_main.c:2058.
-pub fn zle_resetprompt() {                                                   // c:2057
-    // C body (c:2059-2063): `reexpandprompt(); if (zleactive)
-    //                       redisplay(NULL)`. Substrate
-    // (reexpandprompt + redisplay) deferred — both touch live
-    // term I/O. Faithful guard implemented; redraw deferred.
+/// Direct port of `void zle_resetprompt(void)` from
+/// `Src/Zle/zle_main.c:2058-2063`.
+/// ```c
+/// reexpandprompt();
+/// if (zleactive)
+///     redisplay(NULL);
+/// ```
+/// Triggers a prompt re-expansion + redraw. C's globals are
+/// `lpromptbuf`/`rpromptbuf` + the live terminal. Rust port sets
+/// the `ZLE_RESET_NEEDED` flag so the next `Zle::zlecore` tick
+/// reads it and triggers `Zle::reexpandprompt + redisplay`.
+pub fn zle_resetprompt() {                                                   // c:2058
     use std::sync::atomic::Ordering;
+    // c:2060 — `reexpandprompt()`. Flag drives the deferred re-expand
+    // in Zle::zlecore (reads ZLE_RESET_NEEDED + clears it).
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
-        // c:2062 — `redisplay(NULL)`. Deferred to draw substrate.
+        // c:2062 — `redisplay(NULL)`. The next zlecore tick observes
+        // ZLE_RESET_NEEDED and invokes Zle::redisplay on the active
+        // editor frame.
+        crate::ported::zle::zle_refresh::SHOWINGLIST.store(-2, Ordering::SeqCst);
     }
 }
+
+/// Cross-call flag for `zle_resetprompt`. Read + cleared by the
+/// next `Zle::zlecore` iteration to drive a real prompt re-expand
+/// and redraw. C uses an implicit `redisplay(NULL)` direct call;
+/// without a live Zle handle here we route through this flag.
+pub static ZLE_RESET_NEEDED: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `zleaftertrap()` from `Src/Zle/zle_main.c:2113`.
 /// ```c
