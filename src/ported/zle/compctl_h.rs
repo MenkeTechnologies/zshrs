@@ -111,7 +111,7 @@ pub const CC_UNIQALL: u64 = 1 << 6;                                      // c:15
 #[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub struct Compctlp {                                                    // c:39
-    pub cc: Box<Compctl>,                                                // c:41
+    pub cc: std::sync::Arc<Compctl>,                                                // c:41
 }
 
 /// Port of `struct patcomp` from `Src/Zle/compctl.h:46-50`. Linked-
@@ -131,7 +131,7 @@ pub struct Compctlp {                                                    // c:39
 pub struct Patcomp {                                                     // c:46
     pub next: Option<Box<Patcomp>>,                                      // c:47
     pub pat: String,                                                     // c:48
-    pub cc: Box<Compctl>,                                                // c:49
+    pub cc: std::sync::Arc<Compctl>,                                                // c:49
 }
 
 /// Port of `struct compcond` from `Src/Zle/compctl.h:54-74`. The
@@ -192,14 +192,14 @@ pub enum CompcondData {                                                  // c:58
 ///
 /// C definition (c:93-115) — 22 fields. Field names + types
 /// preserved verbatim; pointer types collapse to `Option<String>` /
-/// `Option<Box<Compctl>>` etc. as appropriate.
+/// `Option<std::sync::Arc<Compctl>>` etc. as appropriate.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
 pub struct Compctl {                                                     // c:93
     /// Reference count.
     pub refc: i32,                                                       // c:94
     /// Next compctl in a `-x` chain.
-    pub next: Option<Box<Compctl>>,                                      // c:95
+    pub next: Option<std::sync::Arc<Compctl>>,                                      // c:95
     /// Mask of completion-target flags (`CC_*`).
     pub mask: u64,                                                       // c:96
     /// Secondary mask of completion-target flags (`CC_*`, mask2).
@@ -233,11 +233,11 @@ pub struct Compctl {                                                     // c:93
     /// `-J`/`-V` group name.
     pub gname: Option<String>,                                           // c:109
     /// `-x` first compctl in the chain.
-    pub ext: Option<Box<Compctl>>,                                       // c:110
+    pub ext: Option<std::sync::Arc<Compctl>>,                                       // c:110
     /// `-x` condition for this compctl.
     pub cond: Option<Box<Compcond>>,                                     // c:111
     /// `+` xor'ed compctl chain.
-    pub xor: Option<Box<Compctl>>,                                       // c:112
+    pub xor: Option<std::sync::Arc<Compctl>>,                                       // c:112
     /// `-M` matcher control — head of the Cmatcher chain compiled
     /// from this compctl's match-spec arg.
     pub matcher: Option<Box<crate::ported::zle::comp_h::Cmatcher>>,      // c:113

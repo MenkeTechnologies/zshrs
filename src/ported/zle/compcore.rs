@@ -3099,7 +3099,7 @@ mod tests {
         if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
             let mut cm = Cmatch::default();
             cm.str_ = Some("x".into());
-            g.cur = Some(cm);
+            g.cur = Some(Box::new(cm));
             g.asked = 1;
         }
         minfo_clear_cur();
