@@ -180,6 +180,13 @@ fn thingytab() -> &'static Mutex<HashMap<String, Thingy>> {
     THINGYTAB.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Look up a Thingy by name via `gethashnode2(thingytab, name)` —
+/// the C zle.h dispatch for `Th(X)` lookup. Direct port of the
+/// open-coded `gethashnode2()` call shape at `Src/Zle/zle_thingy.c:160`.
+pub fn gethashnode2(name: &str) -> Option<Thingy> {                           // c:gethashtable.c (open-coded)
+    thingytab().lock().ok()?.get(name).cloned()
+}
+
 // =====================================================================
 // hashtable management — `Src/Zle/zle_thingy.c:58-124`.
 // =====================================================================
