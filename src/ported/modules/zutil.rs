@@ -1108,36 +1108,36 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 /// Port of `setup_()` from `Src/Modules/zutil.c:2152`.
-pub fn setup_(_m: *const module) -> i32 {
+pub fn setup_(_m: *const module) -> i32 {                                    // c:2152
     0
 }
 
 /// Port of `features_()` from `Src/Modules/zutil.c:2161`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:2161
     *features = featuresarray(m, module_features());
     0
 }
 
 /// Port of `enables_()` from `Src/Modules/zutil.c:2169`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:2169
     handlefeatures(m, module_features(), enables)
 }
 
 /// Port of `boot_()` from `Src/Modules/zutil.c:2176`.
-pub fn boot_(_m: *const module) -> i32 {
+pub fn boot_(_m: *const module) -> i32 {                                     // c:2176
     0
 }
 
 /// Port of `cleanup_()` from `Src/Modules/zutil.c:2183`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {
+pub fn cleanup_(m: *const module) -> i32 {                                   // c:2183
     setfeatureenables(m, module_features(), None)
 }
 
 /// Port of `finish_()` from `Src/Modules/zutil.c:2190`.
-pub fn finish_(_m: *const module) -> i32 {
+pub fn finish_(_m: *const module) -> i32 {                                   // c:2190
     0
 }
 
@@ -1231,7 +1231,7 @@ pub struct RParseResult {
 /// C: `static void add_opt_val(Zoptdesc d, char *arg)` — append a value
 /// to the option's `vals` collection or assign to the bound array.
 #[allow(non_snake_case)]
-pub fn add_opt_val(d: &mut zoptdesc, arg: String) {
+pub fn add_opt_val(d: &mut zoptdesc, arg: String) {                          // c:1642
     // c:1642
     // c:1644-1664 — dyncat("-", d->name); push value; bind to array.
     d.vals.push(arg);
@@ -1241,7 +1241,7 @@ pub fn add_opt_val(d: &mut zoptdesc, arg: String) {
 /// C: `static Style addstyle(char *name)` — alloc a new Style node and
 /// install in zstyletab.
 #[allow(non_snake_case)]
-pub fn addstyle(name: &str) -> Option<Style> {
+pub fn addstyle(name: &str) -> Option<Style> {                               // c:403
     // c:403
     // c:405-410 — zshcalloc Style; install in zstyletab.
     let mut s = style {
@@ -1276,7 +1276,7 @@ pub fn connectstates(_out: &mut Vec<String>, _in_: &mut Vec<String>) { // c:1119
 /// C: `static char **evalstyle(Stypat p)` — execute the eval-prog and
 /// return the resulting `reply`/value array.
 #[allow(non_snake_case)]
-pub fn evalstyle(_p: &Stypat) -> Vec<String> {
+pub fn evalstyle(_p: &Stypat) -> Vec<String> {                               // c:413
     // c:413
     // c:415-441 — errflag save, execode(p->eval), getaparam("reply").
     Vec::new()
@@ -1285,7 +1285,7 @@ pub fn evalstyle(_p: &Stypat) -> Vec<String> {
 /// Port of `freematch()` from Src/Modules/zutil.c:72.
 /// C: `static void freematch(MatchData *m)` — drops the captured arrays.
 #[allow(non_snake_case)]
-pub fn freematch(m: &mut MatchData) {
+pub fn freematch(m: &mut MatchData) {                                        // c:72
     // c:72
     // c:74-81 — freearray(m->match/mbegin/mend) when non-NULL. Rust
     // path: take() drops the inner Vec, mirroring freearray + NULL set.
@@ -1313,7 +1313,7 @@ pub fn freestylepatnode(_p: Stypat) { // c:111
 /// C: `static void freestypat(Stypat p, Style s, Stypat prev)` — unlink
 /// from style.pats list, then freestylepatnode.
 #[allow(non_snake_case)]
-pub fn freestypat(_p: Stypat, _s: Option<&mut style>, _prev: Option<&mut stypat>) {
+pub fn freestypat(_p: Stypat, _s: Option<&mut style>, _prev: Option<&mut stypat>) { // c:151
     // c:151
     // c:153-180 — relink prev->next to p->next; drop p.
 }
@@ -1321,7 +1321,7 @@ pub fn freestypat(_p: Stypat, _s: Option<&mut style>, _prev: Option<&mut stypat>
 /// Port of `get_opt_arr()` from Src/Modules/zutil.c:1602.
 /// C: `static Zoptarr get_opt_arr(char *name)` — find a Zoptarr by name.
 #[allow(non_snake_case)]
-pub fn get_opt_arr(_name: &str) -> Option<Zoptarr> {
+pub fn get_opt_arr(_name: &str) -> Option<Zoptarr> {                         // c:1602
     // c:1602
     // c:1604-1612 — walk opt_arrs linked-list, name-compare.
     None
@@ -1330,7 +1330,7 @@ pub fn get_opt_arr(_name: &str) -> Option<Zoptarr> {
 /// Port of `get_opt_desc()` from Src/Modules/zutil.c:1558.
 /// C: `static Zoptdesc get_opt_desc(char *name)` — find a Zoptdesc.
 #[allow(non_snake_case)]
-pub fn get_opt_desc(_name: &str) -> Option<Zoptdesc> {
+pub fn get_opt_desc(_name: &str) -> Option<Zoptdesc> {                       // c:1558
     // c:1558
     // c:1560-1568 — walk opt_descs linked-list, name-compare.
     None
@@ -1340,7 +1340,7 @@ pub fn get_opt_desc(_name: &str) -> Option<Zoptdesc> {
 /// C: `static Zoptdesc lookup_opt(char *str)` — name-prefix match into
 /// opt_descs; returns the desc or NULL.
 #[allow(non_snake_case)]
-pub fn lookup_opt(_str: &str) -> Option<Zoptdesc> {
+pub fn lookup_opt(_str: &str) -> Option<Zoptdesc> {                          // c:1570
     // c:1570
     // c:1572-1600 — walks opt_descs comparing prefix with str.
     None
