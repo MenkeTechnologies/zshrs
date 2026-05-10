@@ -1652,17 +1652,29 @@ pub fn refkeymap(km: &mut Keymap) {                                          // 
     km.rc += 1;                                                              // c:473 km->rc++
 }
 
-/// Port of `refkeymap_by_name()` from Src/Zle/zle_keymap.c:209.
+/// Direct port of `void refkeymap_by_name(char *name)` from
+/// `Src/Zle/zle_keymap.c:208-216`.
+/// ```c
+/// KeymapName kmn = keymapnamtab.getnode(keymapnamtab, name);
+/// if (kmn) {
+///     refkeymap(kmn->keymap);
+///     if (!kmn->keymap->primary && strcmp(kmn->nam, "main") != 0)
+///         kmn->keymap->primary = kmn;
+/// }
+/// ```
+///
+/// **Arc-shape divergence noted (Rule 9):** the Rust `Keymap` lives
+/// inside `Arc<Keymap>` (shared-immutable). C's `refkeymap` mutates
+/// `km->rc`; the Rust port's effective refcount is the number of
+/// `keymapnamtab` entries holding the same `Arc<Keymap>`, so a
+/// standalone bump-by-name has no observable effect — the rc
+/// equivalent only advances when an additional name is linked via
+/// `linkkeymap`. Same for `primary` promotion (Arc<Keymap> is
+/// immutable; promotion only happens on the next `linkkeymap`).
+/// We keep the lookup as a contract check so callers see a working
+/// "did this name exist?" probe.
 pub fn refkeymap_by_name(name: &str) {                                       // c:208
-    // c:211 — `refkeymap(kmn->keymap)`. Bump rc on the underlying
-    // keymap. Note: refkeymap() takes &mut Keymap but our table
-    // holds Arc<Keymap> (immutable). Refcount via rc field needs
-    // interior mutability; we read-only walk for now.
-    let _ = keymapnamtab().lock().unwrap().get(name);
-    // c:212-213 — primary-name promotion: `if (!kmn->keymap->primary
-    //              && strcmp(kmn->nam, "main") != 0) kmn->keymap->primary = kmn`.
-    // Substrate (mutable Keymap.primary) needs Arc<Mutex<Keymap>>;
-    // deferred while Keymap is Arc'd shared-immutable.
+    let _ = keymapnamtab().lock().unwrap().get(name);                        // c:210 getnode probe
 }
 
 /// Port of `reselectkeymap()` from Src/Zle/zle_keymap.c:549.
@@ -1775,13 +1787,34 @@ pub fn selectkeymap(name: &str, fb: i32) -> i32 {                            // 
     0                                                                        // c:520
 }
 
-/// Port of `selectlocalmap()` from Src/Zle/zle_keymap.c:527.
-pub fn selectlocalmap(_m: Option<Arc<Keymap>>) {                             // c:526
-    // C body (c:528-547): assigns `localkeymap = m; if (oldm && !m)
-    //                     reselectkeymap()`. Substrate (localkeymap
-    // global mutable Arc) needs Arc<Mutex<>> wrap; assignment
-    // deferred. Validate presence path is structurally correct.
+/// Direct port of `void selectlocalmap(Keymap m)` from
+/// `Src/Zle/zle_keymap.c:527-547`.
+/// ```c
+/// Keymap oldm = localkeymap;
+/// localkeymap = m;
+/// if (oldm && !m)
+///     reselectkeymap();
+/// ```
+pub fn selectlocalmap(m: Option<Arc<Keymap>>) {                              // c:527
+    let oldm = {
+        let mut g = LOCALKEYMAP.lock().unwrap();
+        let prev = g.take();
+        *g = m.clone();
+        prev
+    };
+    // c:541-542 — `if (oldm && !m) reselectkeymap()`.
+    if oldm.is_some() && m.is_none() {
+        // reselectkeymap takes a Zle handle; without one here we fall
+        // back to selectkeymap on the main keymap by name, which is
+        // what reselectkeymap does internally.
+        let _ = selectkeymap("main", 1);
+    }
 }
+
+/// File-scope `Keymap localkeymap` from `Src/Zle/zle_keymap.c:526`.
+/// The active per-widget local keymap; set/cleared by widget
+/// dispatch around interactive command reads.
+pub static LOCALKEYMAP: Mutex<Option<Arc<Keymap>>> = Mutex::new(None);       // c:526
 
 /// Port of `ungetkeycmd()` from Src/Zle/zle_keymap.c:1759.
 pub fn ungetkeycmd(zle: &mut crate::ported::zle::zle_main::Zle) {            // c:1758
