@@ -182,6 +182,46 @@ pub const ZMAXTIMEOUT: u64 = 1 << 21;                                        // 
 /// short enough to fit on screen.
 pub const MAXFOUND: usize = 4;                                               // c:1925
 
+/// Port of `enum ztmouttp` from `Src/Zle/zle_main.c:398`. Discriminator
+/// for the active read-timeout source: none, key (do_keytmout), function
+/// (timedfns), or maxed-out (re-arm needed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum ZtmoutTp {                                                          // c:398
+    /// `ZTM_NONE` — no timeout in use.
+    None = 0,                                                                // c:401
+    /// `ZTM_KEY` — key timeout (do_keytmout flag).
+    Key  = 1,                                                                // c:406
+    /// `ZTM_FUNC` — function timeout (timedfns list).
+    Func = 2,                                                                // c:412
+    /// `ZTM_MAX` — value hit ZMAXTIMEOUT; re-arm on next iteration.
+    Max  = 3,                                                                // c:428
+}
+
+/// Port of `struct ztmout` from `Src/Zle/zle_main.c:432`. Carries the
+/// active timeout type plus expiration in 100ths of a second.
+#[derive(Debug, Clone, Copy)]
+pub struct Ztmout {                                                          // c:432
+    /// Type of timeout setting, see `ZtmoutTp` above.
+    pub tp: ZtmoutTp,                                                        // c:434
+    /// Value for timeout in 100ths of a second if type is not `None`.
+    pub exp100ths: i64,                                                      // c:438 (time_t)
+}
+
+/// Port of `struct findfunc` from `Src/Zle/zle_main.c:1927`. Closure
+/// state for the `describe-key-briefly` widget — accumulates the
+/// found-binding hits up to `MAXFOUND` and a status message.
+#[derive(Debug, Default)]
+pub struct FindFunc {                                                        // c:1927
+    /// Target Thingy we're searching for; matched against scan key.
+    /// Cell holds `None` until set; `usize` indexes into THINGYTAB.
+    pub func: Option<usize>,                                                 // c:1928
+    /// Hit counter; capped at MAXFOUND.
+    pub found: usize,                                                        // c:1929
+    /// Accumulated message: " is on KEY1 KEY2 ..." or similar.
+    pub msg: String,                                                         // c:1930
+}
+
 /// The main ZLE state
 pub struct Zle {
     // The input line assembled so far                                       // c:40
@@ -1534,6 +1574,44 @@ mod termios {
             return Err(io::Error::last_os_error());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod ztmout_findfunc_tests {
+    use super::*;
+
+    #[test]
+    fn ztmout_tp_discriminant_values() {
+        // c:401-428 — sequential 0..=3.
+        assert_eq!(ZtmoutTp::None as i32, 0);
+        assert_eq!(ZtmoutTp::Key  as i32, 1);
+        assert_eq!(ZtmoutTp::Func as i32, 2);
+        assert_eq!(ZtmoutTp::Max  as i32, 3);
+    }
+
+    #[test]
+    fn ztmout_default_carries_none_type() {
+        let t = Ztmout { tp: ZtmoutTp::None, exp100ths: 0 };
+        assert_eq!(t.tp, ZtmoutTp::None);
+    }
+
+    #[test]
+    fn findfunc_default_is_empty() {
+        // c:1927 — fresh state: no func, zero hits, no msg.
+        let f = FindFunc::default();
+        assert_eq!(f.func, None);
+        assert_eq!(f.found, 0);
+        assert!(f.msg.is_empty());
+    }
+
+    #[test]
+    fn findfunc_can_accumulate_message() {
+        let mut f = FindFunc { func: Some(42), found: 0, msg: String::new() };
+        f.found += 1;
+        f.msg.push_str(" is on KEY1");
+        assert_eq!(f.found, 1);
+        assert!(f.msg.contains("is on"));
     }
 }
 
