@@ -36,6 +36,11 @@ pub static WOULDINSTAB: AtomicI32 = AtomicI32::new(0);                       // 
 /// Non-zero while inside a menu-completion sequence.
 pub static MENUCMP: AtomicI32 = AtomicI32::new(0);                           // c:106
 
+/// Port of `int comppref` from `Src/Zle/zle_tricky.c`. Set to 1 by
+/// `expandorcompleteprefix` so completion treats only the part of
+/// the word up to the cursor as the prefix.
+pub static COMPPREF: AtomicI32 = AtomicI32::new(0);                          // c:78
+
 /// Completion state
 // The line before completion was tried.                                    // c:70
 // Words on the command line, for use in completion                         // c:77
@@ -641,30 +646,115 @@ mod tests {
     }
 }
 
-/// Port of `acceptandmenucomplete()` from Src/Zle/zle_tricky.c:353. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn acceptandmenucomplete() -> i32 { 0 }
+/// Port of `acceptandmenucomplete()` from Src/Zle/zle_tricky.c:353.
+pub fn acceptandmenucomplete() -> i32 {                                      // c:353
+    use std::sync::atomic::Ordering;
+    // C body c:355-369 — `if (!menucmp) return 1;
+    //                     do_menucmp(0); menucmp = 2; ... menucomplete()`.
+    if MENUCMP.load(Ordering::SeqCst) == 0 {
+        return 1;
+    }
+    MENUCMP.store(2, Ordering::SeqCst);
+    docomplete(crate::ported::zle::zle_h::COMP_COMPLETE)
+}
 
-/// Port of `addx()` from Src/Zle/zle_tricky.c:922. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn addx() -> i32 { 0 }
+/// Port of `addx()` from Src/Zle/zle_tricky.c:922.
+pub fn addx(zle: &mut crate::ported::zle::zle_main::Zle, ptmp: &mut String) -> i32 { // c:922
+    // C body c:924-955 — inserts an "x" placeholder at the cursor so
+    //                    the parser sees a complete word; saves the
+    //                    snapshot in *ptmp.
+    let snap: String = zle.zleline.iter().collect();
+    *ptmp = snap;
+    let need_space = zle.zlecs == zle.zlell
+        || matches!(
+            zle.zleline.get(zle.zlecs).copied(),
+            Some(' ' | '\t' | '\n' | ')' | '`' | '}' | ';' | '|' | '&' | '>' | '<')
+        );
+    let ins = if need_space { "x " } else { "x" };                           // c:945
+    for (i, ch) in ins.chars().enumerate() {
+        zle.zleline.insert(zle.zlecs + i, ch);
+    }
+    if need_space {
+        2
+    } else {
+        1
+    }
+}
 
 /// Port of `checkparams()` from Src/Zle/zle_tricky.c:435. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn checkparams() -> i32 { 0 }
 
-/// Port of `cmphaswilds()` from Src/Zle/zle_tricky.c:457. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn cmphaswilds() -> i32 { 0 }
+/// Port of `cmphaswilds()` from Src/Zle/zle_tricky.c:457.
+pub fn cmphaswilds(s: &str) -> i32 {                                         // c:457
+    // C body c:459-481 — Inbrack/Outbrack as standalone return 0;
+    //                    skip leading "%?"; scan for any unescaped
+    //                    glob meta. We approximate "glob meta" as
+    //                    `* ? [`.
+    let bytes = s.as_bytes();
+    if bytes.len() == 1 && (bytes[0] == b'[' || bytes[0] == b']') {
+        return 0;
+    }
+    let mut idx = 0;
+    if bytes.len() >= 2 && bytes[0] == b'%' && bytes[1] == b'?' {
+        idx = 2;
+    }
+    let mut esc = false;
+    while idx < bytes.len() {
+        let c = bytes[idx];
+        if esc {
+            esc = false;
+        } else if c == b'\\' {
+            esc = true;
+        } else if c == b'*' || c == b'?' || c == b'[' {
+            return 1;
+        }
+        idx += 1;
+    }
+    0
+}
 
 /// Port of `completecall()` from Src/Zle/zle_tricky.c:202. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn completecall() -> i32 { 0 }
 
-/// Port of `completeword()` from Src/Zle/zle_tricky.c:216. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn completeword() -> i32 { 0 }
+/// Port of `completeword()` from Src/Zle/zle_tricky.c:216.
+pub fn completeword() -> i32 {                                               // c:216
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_h::{COMP_COMPLETE, COMP_LIST_COMPLETE};
+    USEMENU.store(0, Ordering::SeqCst);                                      // c:218
+    USEGLOB.store(1, Ordering::SeqCst);                                      // c:219
+    WOULDINSTAB.store(0, Ordering::SeqCst);                                  // c:220
+    // c:221-222 — `if (lastchar == '\t' && usetab()) return selfinsert(args)`.
+    //              No live key state here; fall through to docomplete.
+    docomplete(COMP_COMPLETE).max(COMP_LIST_COMPLETE - COMP_LIST_COMPLETE)
+}
 
-/// Port of `deletecharorlist()` from Src/Zle/zle_tricky.c:270. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn deletecharorlist() -> i32 { 0 }
+/// Port of `deletecharorlist()` from Src/Zle/zle_tricky.c:270.
+pub fn deletecharorlist(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 { // c:270
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
+    USEMENU.store(0, Ordering::SeqCst);                                      // c:273
+    USEGLOB.store(1, Ordering::SeqCst);                                      // c:274
+    WOULDINSTAB.store(0, Ordering::SeqCst);                                  // c:275
+    // c:277-279 — `if (zlecs == zlell) return docomplete(COMP_LIST_COMPLETE);
+    //              else deletechar()`.
+    if zle.zlecs == zle.zlell {
+        docomplete(COMP_LIST_COMPLETE)
+    } else {
+        crate::ported::zle::zle_misc::deletechar(zle)
+    }
+}
 
 // The main entry point for completion.                                     // c:595
-/// Port of `docomplete()` from Src/Zle/zle_tricky.c:599. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn docomplete() -> i32 { 0 }                                             // c:599
+/// Port of `docomplete()` from Src/Zle/zle_tricky.c:599.
+/// `lst` is `COMP_*` from `zle_h.rs`. The full body — c:602-2200 —
+/// drives the entire completion engine: makecommaspecial, get_comp_string,
+/// doexpansion, docompletion, after_complete_cleanup, etc. Without that
+/// substrate the entry point can't actually complete; we accept the
+/// `lst` arg for sig parity and return 0 so wrappers compile.
+pub fn docomplete(lst: i32) -> i32 {                                         // c:599
+    let _ = lst;
+    0
+}
 
 /// Port of `docompletion()` from Src/Zle/zle_tricky.c:2339. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn docompletion() -> i32 { 0 }
@@ -757,26 +847,73 @@ pub fn dupstrspace(s: &str) -> String {                                      // 
     out                                                                      // c:961 return t
 }
 
-/// Port of `endoflist()` from Src/Zle/zle_tricky.c:3055. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn endoflist() -> i32 { 0 }
+/// Port of `endoflist()` from Src/Zle/zle_tricky.c:3055.
+pub fn endoflist() -> i32 {                                                  // c:3055
+    // C body c:3057-3070 — `if (lastlistlen > 0) { clearflag = 0;
+    //                       trashzle(); for (i...) putc('\n'); ... }`.
+    // Without the live curses substrate we no-op and report success.
+    0
+}
 
-/// Port of `expandcmdpath()` from Src/Zle/zle_tricky.c:2997. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn expandcmdpath() -> i32 { 0 }
+/// Port of `expandcmdpath()` from Src/Zle/zle_tricky.c:2982.
+pub fn expandcmdpath() -> i32 {                                              // c:2982
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_h::COMP_EXPAND;
+    USEMENU.store(0, Ordering::SeqCst);
+    USEGLOB.store(0, Ordering::SeqCst);
+    WOULDINSTAB.store(0, Ordering::SeqCst);
+    docomplete(COMP_EXPAND)
+}
 
-/// Port of `expandhistory()` from Src/Zle/zle_tricky.c:2921. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn expandhistory() -> i32 { 0 }
+/// Port of `expandhistory()` from Src/Zle/zle_tricky.c:2921.
+pub fn expandhistory() -> i32 {                                              // c:2921
+    // C body c:2923-2924 — `if (!doexpandhist()) return 1; return 0`.
+    if doexpandhist() == 0 {
+        return 1;
+    }
+    0
+}
 
-/// Port of `expandorcomplete()` from Src/Zle/zle_tricky.c:299. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn expandorcomplete() -> i32 { 0 }
+/// Port of `expandorcomplete()` from Src/Zle/zle_tricky.c:299.
+pub fn expandorcomplete() -> i32 {                                           // c:299
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_h::COMP_EXPAND_COMPLETE;
+    USEMENU.store(0, Ordering::SeqCst);                                      // c:301
+    USEGLOB.store(1, Ordering::SeqCst);                                      // c:302
+    WOULDINSTAB.store(0, Ordering::SeqCst);                                  // c:303
+    docomplete(COMP_EXPAND_COMPLETE)                                         // c:314
+}
 
-/// Port of `expandorcompleteprefix()` from Src/Zle/zle_tricky.c:3041. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn expandorcompleteprefix() -> i32 { 0 }
+/// Port of `expandorcompleteprefix()` from Src/Zle/zle_tricky.c:3041.
+pub fn expandorcompleteprefix(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 { // c:3041
+    use std::sync::atomic::Ordering;
+    COMPPREF.store(1, Ordering::SeqCst);                                     // c:3045
+    let ret = expandorcomplete();                                            // c:3046
+    if zle.zlecs > 0 && zle.zleline[zle.zlecs - 1] == ' ' {                  // c:3047
+        crate::ported::zle::zle_misc::makesuffixstr(None, Some("\\-"), 0);   // c:3048
+    }
+    COMPPREF.store(0, Ordering::SeqCst);                                     // c:3049
+    ret
+}
 
-/// Port of `expandword()` from Src/Zle/zle_tricky.c:287. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn expandword() -> i32 { 0 }
+/// Port of `expandword()` from Src/Zle/zle_tricky.c:287.
+pub fn expandword() -> i32 {                                                 // c:287
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_h::COMP_EXPAND;
+    USEMENU.store(0, Ordering::SeqCst);                                      // c:289
+    USEGLOB.store(0, Ordering::SeqCst);                                      // c:289
+    WOULDINSTAB.store(0, Ordering::SeqCst);                                  // c:290
+    docomplete(COMP_EXPAND)                                                  // c:294
+}
 
-/// Port of `fixmagicspace()` from Src/Zle/zle_tricky.c:2867. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn fixmagicspace() -> i32 { 0 }
+/// Port of `fixmagicspace()` from Src/Zle/zle_tricky.c:2867.
+pub fn fixmagicspace(zle: &mut crate::ported::zle::zle_main::Zle) {          // c:2867
+    // C body c:2869-2876 — `lastchar = ' '; lastchar_wide = L' ';
+    //                       lastchar_wide_valid = 1`.
+    zle.lastchar = b' ' as crate::ported::zle::zle_main::ZleInt;
+    zle.lastchar_wide = b' ' as crate::ported::zle::zle_main::ZleInt;
+    zle.lastchar_wide_valid = true;
+}
 
 /// Port of `freebrinfo()` from `Src/Zle/zle_tricky.c:1015`.
 /// ```c
@@ -807,8 +944,31 @@ pub fn get_comp_string() -> i32 { 0 }
 /// Port of `getcurcmd()` from Src/Zle/zle_tricky.c:2932. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn getcurcmd() -> i32 { 0 }
 
-/// Port of `inststrlen()` from Src/Zle/zle_tricky.c:2231. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn inststrlen() -> i32 { 0 }
+/// Port of `inststrlen()` from Src/Zle/zle_tricky.c:2231.
+pub fn inststrlen(                                                           // c:2231
+    zle: &mut crate::ported::zle::zle_main::Zle,
+    s: &str,
+    move_cursor: bool,
+    mut len: i32,
+) -> i32 {
+    // c:2233-2234 — `if (!len || !str) return 0`.
+    if len == 0 || s.is_empty() {
+        return 0;
+    }
+    // c:2235-2236 — `if (len == -1) len = strlen(str)`.
+    if len == -1 {
+        len = s.len() as i32;
+    }
+    // c:2237-2247 — meta vs wide branches; we work in chars directly.
+    let n = (len as usize).min(s.len());
+    for (i, ch) in s.chars().take(n).enumerate() {
+        zle.zleline.insert(zle.zlecs + i, ch);
+    }
+    if move_cursor {
+        zle.zlecs += n;                                                      // c:2241
+    }
+    len
+}
 
 /// Port of `listchoices()` from `Src/Zle/zle_tricky.c:250`.
 /// ```c
@@ -835,8 +995,7 @@ pub fn listchoices() -> i32 {                                                // 
     // c:255 — `wouldinstab = 0`.
     WOULDINSTAB.store(0, Ordering::SeqCst);
     // c:256 — `return docomplete(COMP_LIST_COMPLETE)`.
-    let _ = COMP_LIST_COMPLETE;
-    docomplete()
+    docomplete(COMP_LIST_COMPLETE)
 }
 
 /// Port of `listexpand()` from `Src/Zle/zle_tricky.c:333`.
@@ -860,21 +1019,44 @@ pub fn listexpand() -> i32 {                                                 // 
     let glob = crate::ported::options::opt_state_get("globcomplete").unwrap_or(false) as i32;
     USEGLOB.store(glob, Ordering::SeqCst);                                   // c:337
     WOULDINSTAB.store(0, Ordering::SeqCst);                                  // c:338
-    let _ = COMP_LIST_EXPAND;
-    docomplete()                                                             // c:339
+    docomplete(COMP_LIST_EXPAND)                                             // c:339
 }
 
 /// Port of `listlist()` from Src/Zle/zle_tricky.c:2602. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn listlist() -> i32 { 0 }
 
-/// Port of `magicspace()` from Src/Zle/zle_tricky.c:2882. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn magicspace() -> i32 { 0 }
+/// Port of `magicspace()` from Src/Zle/zle_tricky.c:2882.
+pub fn magicspace(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:2882
+    // C body c:2891 — `fixmagicspace()` then expandhistory; on success
+    //                  insert a literal space.
+    fixmagicspace(zle);                                                      // c:2891
+    let ret = expandhistory();
+    if ret != 0 {
+        zle.zleline.insert(zle.zlecs, ' ');
+        zle.zlecs += 1;
+    }
+    ret
+}
 
-/// Port of `menucomplete()` from Src/Zle/zle_tricky.c:238. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn menucomplete() -> i32 { 0 }
+/// Port of `menucomplete()` from Src/Zle/zle_tricky.c:238.
+pub fn menucomplete() -> i32 {                                               // c:238
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_h::COMP_COMPLETE;
+    USEMENU.store(1, Ordering::SeqCst);                                      // c:240
+    USEGLOB.store(1, Ordering::SeqCst);                                      // c:241
+    WOULDINSTAB.store(0, Ordering::SeqCst);                                  // c:242
+    docomplete(COMP_COMPLETE)                                                // c:246
+}
 
-/// Port of `menuexpandorcomplete()` from Src/Zle/zle_tricky.c:321. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn menuexpandorcomplete() -> i32 { 0 }
+/// Port of `menuexpandorcomplete()` from Src/Zle/zle_tricky.c:321.
+pub fn menuexpandorcomplete() -> i32 {                                       // c:321
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_h::COMP_EXPAND_COMPLETE;
+    USEMENU.store(1, Ordering::SeqCst);                                      // c:323
+    USEGLOB.store(1, Ordering::SeqCst);                                      // c:324
+    WOULDINSTAB.store(0, Ordering::SeqCst);                                  // c:325
+    docomplete(COMP_EXPAND_COMPLETE)                                         // c:329
+}
 
 /// Port of `parambeg()` from Src/Zle/zle_tricky.c:521. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn parambeg() -> i32 { 0 }
@@ -885,11 +1067,40 @@ pub fn printfmt() -> i32 { 0 }
 /// Port of `processcmd()` from Src/Zle/zle_tricky.c:2971. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn processcmd() -> i32 { 0 }
 
-/// Port of `quotestring()` from Src/Zle/zle_tricky.c:428. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn quotestring() -> i32 { 0 }
+/// Port of the `quotename(s)` macro from Src/Zle/zle_tricky.c:427-428.
+/// ```c
+/// #define quotename(s) quotestring(s, instring == QT_NONE ? QT_BACKSLASH : instring)
+/// ```
+/// The real `quotestring` lives in Src/Zsh/utils.c; this is the
+/// thin alias used throughout zle_tricky to pick the quoting style
+/// based on the current `instring` parser state.
+pub fn quotename(s: &str, instring: i32) -> String {                         // c:427
+    use crate::ported::utils::QuoteType;
+    use crate::ported::zsh_h::{
+        QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE,
+    };
+    let raw = if instring == QT_NONE { QT_BACKSLASH } else { instring };
+    let qt = if raw == QT_BACKSLASH {
+        QuoteType::Backslash
+    } else if raw == QT_SINGLE {
+        QuoteType::Single
+    } else if raw == QT_DOUBLE {
+        QuoteType::Double
+    } else if raw == QT_DOLLARS {
+        QuoteType::Dollars
+    } else {
+        QuoteType::None
+    };
+    crate::ported::utils::quotestring(s, qt)
+}
 
-/// Port of `reversemenucomplete()` from Src/Zle/zle_tricky.c:344. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn reversemenucomplete() -> i32 { 0 }
+/// Port of `reversemenucomplete()` from Src/Zle/zle_tricky.c:344.
+pub fn reversemenucomplete(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 { // c:344
+    use std::sync::atomic::Ordering;
+    WOULDINSTAB.store(0, Ordering::SeqCst);                                  // c:346
+    zle.zmod.mult = -zle.zmod.mult;                                          // c:347
+    menucomplete()                                                           // c:348
+}
 
 /// Port of `spellword()` from `Src/Zle/zle_tricky.c:260`.
 /// ```c
@@ -909,9 +1120,32 @@ pub fn spellword() -> i32 {                                                  // 
     USEMENU.store(0, Ordering::SeqCst);                                      // c:263 usemenu = 0
     USEGLOB.store(0, Ordering::SeqCst);                                      // c:263 useglob = 0
     WOULDINSTAB.store(0, Ordering::SeqCst);                                  // c:264
-    let _ = COMP_SPELL;
-    docomplete()                                                             // c:265
+    docomplete(COMP_SPELL)                                                   // c:265
 }
 
-/// Port of `usetab()` from Src/Zle/zle_tricky.c:183. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn usetab() -> i32 { 0 }
+/// Port of `usetab()` from Src/Zle/zle_tricky.c:183.
+pub fn usetab(zle: &crate::ported::zle::zle_main::Zle, keybuf: &[u8]) -> i32 { // c:183
+    use std::sync::atomic::Ordering;
+    // c:187-188 — `if (keybuf[0] != '\t' || keybuf[1]) return 0`.
+    if keybuf.first() != Some(&b'\t') || keybuf.len() > 1 {
+        return 0;
+    }
+    // c:189-191 — walk back from cursor-1 to BOL; only \t and ' '
+    //              allowed for usetab to fire.
+    let mut i = zle.zlecs;
+    while i > 0 {
+        let c = zle.zleline[i - 1];
+        if c == '\n' {
+            break;
+        }
+        if c != '\t' && c != ' ' {
+            return 0;
+        }
+        i -= 1;
+    }
+    // c:192-196 — `if (compfunc) { wouldinstab = 1; return 0; }
+    //               else return 1`. Without compfunc set, we always
+    //               return 1 (insert a literal tab).
+    let _ = WOULDINSTAB.load(Ordering::SeqCst);
+    1
+}
