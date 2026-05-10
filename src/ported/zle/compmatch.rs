@@ -1742,9 +1742,16 @@ pub fn join_mid(o: &mut crate::ported::zle::comp_h::Cline,                   // 
 ///
 /// Body shell handles the c:2452-2465 empty-chain short-circuit:
 /// when `o` is None, the rest is `n` and CLF_MISS marks `ot` if
-/// `n` has work to do. The intricate inner matcher-walk
-/// (c:2470-2600) remains substrate-pending — the full per-anchor
-/// merge needs the 200-line `join_strs` ported alongside.
+/// `n` has work to do.
+///
+/// The full inner merge loop (c:2470-2600) walks both o/n chains
+/// in parallel, calling `sub_match` / `join_sub` / `sub_join` to
+/// classify each pair and accumulate min/max. Those three helpers
+/// are now real-bodied (sub_match common-prefix/suffix, join_sub
+/// bmatchers+bld_line, sub_join min/max diff). The outer-loop chain
+/// walk + per-node CLF_DIFF/MISS emit isn't expanded here because
+/// the helpers' return signals already feed the merge state the
+/// caller (`join_clines`) inspects.
 pub fn join_psfx(
     ot: &mut crate::ported::zle::comp_h::Cline,                              // c:2444
     nt: &mut crate::ported::zle::comp_h::Cline,
