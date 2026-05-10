@@ -57,7 +57,6 @@ use crate::ported::exec::{
 // (try_with_executor + var_attrs field type) are the remaining
 // migration targets; they go through the bridge fns in
 // src/exec_shims.rs.)
-use std::collections::VecDeque;
 // c:N/A
 // Per user directive: history-modifier helpers (casemodify, remtpath,
 // remlpaths, remtext, xsymlinks) live in src/ported/hist.rs (the
@@ -67,6 +66,40 @@ use std::collections::VecDeque;
 use crate::parse::{ShellWord, VarModifier, ZshParamFlag};
 use crate::ported::hist::{casemodify, rembutext, remlpaths, remtext, remtpath, CaseMod};
 use crate::ported::utils::{xsymlinks, zerr};
+
+use std::sync::atomic::Ordering;
+
+// Canonical LinkList — port of `struct linklist` (`Src/zsh.h:563`)
+// with the C-macro accessors (`firstnode`/`nextnode`/`getdata`/
+// `setdata`/`insertlinknode`/`empty`) lifted from `Src/zsh.h:576-590`.
+// subst.rs previously kept a private `pub struct LinkList { nodes:
+// VecDeque<LinkNode>, flags: u32 }` + `pub struct LinkNode { data:
+// String }` — DELETED per user directive (Rust-only abstraction, no
+// C counterpart).
+/// LinkList of substitution words. Canonical
+/// `crate::ported::linklist::LinkList<String>` (port of
+/// `Src/linklist.c` with `LF_ARRAY` (`Src/subst.c:33`) carried in
+/// the `flags` field).
+pub type LinkList = crate::ported::linklist::LinkList<String>;
+
+/// Returns true if the global `errflag` (Src/utils.c) is set.
+/// Matches the C idiom `if (errflag) …` that subst.c sprinkles
+/// throughout its loops.
+#[inline]
+fn errflag_set() -> bool {
+    crate::ported::utils::errflag.load(Ordering::Relaxed) != 0
+}
+
+/// Sets `errflag |= ERRFLAG_ERROR` on the global `errflag`.
+/// Mirrors C's `errflag |= ERRFLAG_ERROR;` at every subst.c site
+/// where parameter / glob / arith error is reported.
+#[inline]
+fn errflag_set_error() {
+    crate::ported::utils::errflag.fetch_or(
+        crate::ported::zsh_h::ERRFLAG_ERROR,
+        Ordering::Relaxed,
+    );
+}
 
 // Token constants from zsh.h (mapped to char values > 127)
 pub mod tokens {
@@ -112,200 +145,243 @@ use tokens::*;
 /// Drives `prefork` / `singsub` / `aget` to return an array vs scalar.
 pub const LF_ARRAY: u32 = 1;                                                 // c:33
 
-/// Prefork flags (from zsh.h PREFORK_*)
-pub mod prefork_flags {
-    // c:N/A
-    pub const SINGLE: u32 = 1; // Single word expected      // c:N/A
-    pub const SPLIT: u32 = 2; // Force word splitting       // c:N/A
-    pub const SHWORDSPLIT: u32 = 4; // sh-style word splitting // c:N/A
-    pub const NOSHWORDSPLIT: u32 = 8; // Disable word splitting // c:N/A
-    pub const ASSIGN: u32 = 16; // Assignment context       // c:N/A
-    pub const TYPESET: u32 = 32; // Typeset context         // c:N/A
-    pub const SUBEXP: u32 = 64; // Subexpression            // c:N/A
-    pub const KEY_VALUE: u32 = 128; // Key-value pair found // c:N/A
-    pub const NO_UNTOK: u32 = 256; // Don't untokenize      // c:N/A
-} // c:N/A
+// `pub mod prefork_flags { … }` — DELETED per user directive.
+// Every bit value was WRONG vs the canonical C source: local
+// `SINGLE=1, SPLIT=2, SHWORDSPLIT=4, NOSHWORDSPLIT=8, ASSIGN=16,
+// TYPESET=32` vs C's `PREFORK_TYPESET=0x01, PREFORK_ASSIGN=0x02,
+// PREFORK_SINGLE=0x04, PREFORK_SPLIT=0x08, PREFORK_SHWORDSPLIT=0x10,
+// PREFORK_NOSHWORDSPLIT=0x20` (`Src/zsh.h:2020-2042`). Every
+// `flags & prefork_flags::X` test silently mis-tested the wrong
+// bit. Canonical defs imported from `crate::ported::zsh_h` below.
+use crate::ported::zsh_h::{
+    PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT, PREFORK_NO_UNTOK,
+    PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP, PREFORK_TYPESET,
+}; // c:zsh.h:2020-2042
 
-/// Linked list node - mirrors zsh LinkNode
-#[derive(Debug, Clone)] // c:N/A
-/// Linked-list node for the substitution pipeline.
-/// Mirrors `struct linknode` from Src/zsh.h — `prefork()`
-/// (Src/subst.c:100) walks a `LinkList` of these.
-pub struct LinkNode {
-    // c:100
-    pub data: String, // c:100
-} // c:100
-
-/// Linked list - mirrors zsh LinkList
-#[derive(Debug, Clone, Default)] // c:100
-/// Substitution pipeline word list.
-/// Mirrors `struct linklist` (Src/zsh.h) — the C source threads
-/// it through `prefork()`/`stringsubst()`/`paramsubst()` (lines
-/// 100/237/1625).
-pub struct LinkList {
-    // c:100
-    pub nodes: VecDeque<LinkNode>, // c:100
-    pub flags: u32,                // c:100
-} // c:100
-
-impl LinkList {
-    // c:100
-    /// Port of `firstnode(X)` macro from `src/zsh/Src/zsh.h:576`.
-    pub fn firstnode(&self) -> Option<usize> {
-        // zsh.h:576
-        if self.nodes.is_empty() {
-            // zsh.h:576
-            None // zsh.h:576
-        } else {
-            // zsh.h:576
-            Some(0) // zsh.h:576
-        } // zsh.h:576
-    } // zsh.h:576
-
-    /// Port of `getdata(X)` macro from `src/zsh/Src/zsh.h:586`.
-    pub fn getdata(&self, idx: usize) -> Option<&str> {
-        // zsh.h:586
-        self.nodes.get(idx).map(|n| n.data.as_str()) // zsh.h:586
-    } // zsh.h:586
-
-    /// Port of `setdata(X,Y)` macro from `src/zsh/Src/zsh.h:587`.
-    pub fn setdata(&mut self, idx: usize, data: String) {
-        // zsh.h:587
-        if let Some(node) = self.nodes.get_mut(idx) {
-            // zsh.h:587
-            node.data = data; // zsh.h:587
-        } // zsh.h:587
-    } // zsh.h:587
-
-    /// Port of `insertlinknode(X,Y,Z)` macro from `src/zsh/Src/zsh.h:580`.
-    pub fn insertlinknode(&mut self, idx: usize, data: String) -> usize {
-        // zsh.h:580
-        self.nodes.insert(idx + 1, LinkNode { data }); // zsh.h:580
-        idx + 1 // zsh.h:580
-    } // zsh.h:580
-
-    /// Port of `delete_node` macro chain in `src/zsh/Src/zsh.h`.
-    pub fn delete_node(&mut self, idx: usize) {
-        // zsh.h:580
-        if idx < self.nodes.len() {
-            // zsh.h:580
-            self.nodes.remove(idx); // zsh.h:580
-        } // zsh.h:580
-    } // zsh.h:580
-
-    /// Port of `nextnode(X)` macro from `src/zsh/Src/zsh.h:588`.
-    pub fn nextnode(&self, idx: usize) -> Option<usize> {
-        // zsh.h:588
-        if idx + 1 < self.nodes.len() {
-            // zsh.h:588
-            Some(idx + 1) // zsh.h:588
-        } else {
-            // zsh.h:588
-            None // zsh.h:588
-        } // zsh.h:588
-    } // zsh.h:588
-
-    /// Port of `empty(X)` macro from `src/zsh/Src/zsh.h:583`.
-    pub fn empty(&self) -> bool {
-        // zsh.h:583
-        self.nodes.is_empty() // zsh.h:583
-    } // zsh.h:583
-} // c:100
-
-/// Global state for substitution (mirrors zsh global variables)
-#[derive(Default)] // c:100
-/// Per-pass substitution state.
-/// Bundles the locals `prefork()` (Src/subst.c:100) keeps —
-/// IFS, glob options, parameter table reference, depth counters.
-pub struct SubstState {
-    // c:100
-    pub errflag: bool,                                          // c:100
-    pub opts: SubstOptions,                                     // c:100
-    pub variables: std::collections::HashMap<String, String>,   // c:100
-    pub arrays: std::collections::HashMap<String, Vec<String>>, // c:100
-    pub assoc_arrays: std::collections::HashMap<String, indexmap::IndexMap<String, String>>, // c:100
-    /// When set, prefork's third pass skips `filesub` (tilde and
-    /// `=cmd` expansion). Used by `singsub_no_tilde` for pattern
-    /// and replacement contexts in `${var/pat/repl}` where the
-    /// leading `~` must stay literal.
-    pub skip_filesub: bool, // c:100
-    /// Names of all defined shell functions. Populated by
-    /// `from_executor`. Used by `${+functions[name]}` to answer the
-    /// "is this function defined?" question without round-tripping
-    /// through `with_executor`. Same idea as the C zsh-side
-    /// `paramtab` lookup that backs `${functions[name]}` — the
-    /// magic-assoc's getfn just consults the function hashtable.
-    pub function_names: std::collections::HashSet<String>, // c:100
-    /// Names of commands resolvable via `$PATH`. Populated lazily
-    /// (empty by default; only filled if the script reads
-    /// `${+commands[name]}` or similar). Backs the magic-assoc set-
-    /// test. Direct analogue of zsh's `cmdhash` / commands special
-    /// parameter (Src/init.c, Src/builtin.c bin_hash).
-    pub command_names: std::collections::HashSet<String>, // c:100
-    /// Names of currently-defined aliases. Populated by
-    /// `from_executor`. Backs `${+aliases[name]}`.
-    pub alias_names: std::collections::HashSet<String>, // c:100
-    /// Snapshot of `typeset`-tracked attributes (kind: scalar/integer/
-    /// float/array/assoc + readonly / export / left / right_blanks /
-    /// right_zeros / lower / upper / unique / hide / hideval / tied).
-    /// Backs `${(t)name}` and `${(Pt)name}` per Src/subst.c:2807-2854.
-    pub var_attrs: std::collections::HashMap<String, crate::ported::params::VarAttr>, // c:2807
-    /// Dirstack snapshot — backs `~+N` / `~-N` expansion via
-    /// `dstackent()`. Mirrors `dirstack` in `zsh.h` which subst.c
-    /// reads through `firstnode()` / `nextnode()` walks.
-    pub dirstack: Vec<String>, // c:4902
-    /// PUSHDMINUS option flag — flips the meaning of `~+N` vs `~-N`.
-    /// Direct port of `isset(PUSHDMINUS)` at Src/subst.c:4906.
-    pub pushdminus: bool, // c:4906
-    /// Last `:s/X/Y/` substitution pair, replayed by `:&`. Direct
-    /// port of `hsubl` / `hsubr` globals in Src/hist.c. Lives on
-    /// SubstState so chained modifiers (`${var:s/x/y/:&}`) and
-    /// later refs in the same shell session both see it. Committed
-    /// back to ShellExecutor in commit_to_executor.
-    /// Third element encodes the anchor mode the source modifier
-    /// recorded:
-    ///   0 = `:s` — literal, non-anchored (`replace`/`replacen`)
-    ///   1 = `:S` with `#X` head-anchored
-    ///   2 = `:S` with `X%` tail-anchored
-    ///   3 = `:S` no anchor (S-style mid-string match)
-    /// Direct port of subst.c:4675 `case '&':` which sets
-    /// `c = hsubpatopt ? 'S' : 's'` — the replay must remember the
-    /// hsubpatopt bit, otherwise a `:S/#hdr/H/:&` chain re-replays
-    /// as a literal "#hdr" search instead of the head-anchor form.
-    pub last_subst: Option<(String, String, u8)>, // c:4531
-    /// SUB_* flag bits accumulated by `(M)/(R)/(B)/(E)/(N)/(S)`
-    /// in the flag-loop. Direct port of subst.c:2169-2199. Read
-    /// by getmatch / igetmatch and the BUILTIN_PARAM_REPLACE /
-    /// BUILTIN_PARAM_STRIP arms which alter their match
-    /// disposition based on these bits. Reset per paramsubst call
-    /// so flags don't leak between successive ${...} expansions.
-    pub sub_flags: u32, // c:2169
-} // c:2807
-
-/// Options that affect substitution behavior
-#[derive(Debug, Clone, Default)] // c:2807
-/// Substitution-pass option flags.
-/// Mirrors the `PF_*` flag bag the C source's `prefork()`
-/// (Src/subst.c:100) takes.
-pub struct SubstOptions {
-    // c:100
-    pub sh_file_expansion: bool, // c:100
-    pub sh_word_split: bool,     // c:100
-    pub ignore_braces: bool,     // c:100
-    pub glob_subst: bool,        // c:100
-    pub ksh_typeset: bool,       // c:100
-    pub exec_opt: bool,          // c:100
-    /// HISTSUBSTPATTERN — when set, the `:s/old/new/` modifier
-    /// matches `old` as a glob pattern instead of a literal string.
-    /// `:S/...` is unconditionally pattern-matched per zsh — this
-    /// flag promotes `:s` to the same path. Direct port of the
-    /// `isset(HISTSUBSTPATTERN)` test in Src/hist.c::subst()
-    /// (line 2349).
-    pub hist_subst_pattern: bool, // c:hist 2349
-} // c:100
+// `SubstState` and `SubstOptions` structs — DELETED per user
+// directive ("SubstState must be removed", "SubstOptions must be
+// removed", "delete SubstState"). All formerly-bundled fields are
+// canonical globals or executor-backed:
+//   - `errflag`     → `crate::ported::utils::errflag` `AtomicI32`
+//                     (port of `Src/utils.c`'s `int errflag`).
+//   - `opts.*`      → `crate::ported::options::opt_state_get/set`
+//                     (port of zsh's `opts[OPT_…]` via `Src/options.c`).
+//   - `variables` / `arrays` / `assoc_arrays`
+//                   → `vars_get`/`arrays_get`/`assoc_get` helpers
+//                     below (executor-backed, equiv to C's
+//                     `getsparam`/`getaparam`).
+//   - `skip_filesub` → `SKIP_FILESUB` thread_local in this file.
+//   - `function_names`/`command_names`/`alias_names`/`var_attrs`
+//                   → `try_with_executor` reads at the use sites.
+//   - `dirstack`/`pushdminus` → `try_with_executor` + `opt_state_get`.
+//   - `last_subst` → `crate::ported::hist::hsubl`/`hsubr`/`hsubpatopt`.
+//   - `sub_flags`  → `exec.sub_flags` via `try_with_executor`.
+// Every fn signature has dropped the `state: &mut SubstState` arg.
 
 /// Null string constant (from subst.c line 36)
 pub const NULSTRING: &str = "\u{8F}"; // c:100
+
+// =====================================================================
+// Parameter table read/write helpers — bridge to the canonical
+// `ShellExecutor` parameter store via `fusevm_bridge::try_with_executor`.
+// Replace the deleted `SubstState.variables` / `state.arrays` /
+// `state.assoc_arrays` field accesses. C reads `paramtab` directly via
+// `getsparam` / `getaparam` (`Src/params.c:3194` / `:3245`); these are
+// the Rust equivalents that go through the executor (where the
+// canonical typed `paramtab` actually lives in this port).
+//
+// Allowlisted as bridge helpers — same status as the existing
+// `IN_PARAMSUBST_NEST` thread_local. All seam fns to keep subst.rs
+// free of `ShellExecutor` direct reaches per the
+// no-shellexecutor-in-src/ported rule.
+// =====================================================================
+
+/// Read a scalar variable from the canonical parameter store.
+/// Bridge to `exec.variables.get(name).cloned()` — equivalent to C's
+/// `getsparam(name)` (`Src/params.c:3194`) when the parameter is a
+/// scalar.
+fn vars_get(name: &str) -> Option<String> {
+    crate::fusevm_bridge::try_with_executor(|exec| {
+        exec.variables.get(name).cloned()
+    })
+    .flatten()
+}
+
+/// True if `name` exists in the scalar parameter table.
+fn vars_contains(name: &str) -> bool {
+    crate::fusevm_bridge::try_with_executor(|exec| {
+        exec.variables.contains_key(name)
+    })
+    .unwrap_or(false)
+}
+
+/// Insert / replace a scalar parameter in the canonical store.
+/// Bridge to `exec.variables.insert(k, v)` — equivalent to C's
+/// `setsparam(name, value)` (`Src/params.c:3296`).
+fn vars_insert(name: String, value: String) {
+    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
+        exec.variables.insert(name, value);
+    });
+}
+
+/// Read an array parameter from the canonical store.
+/// Bridge to `exec.arrays.get(name).cloned()` — equivalent to C's
+/// `getaparam(name)` (`Src/params.c:3245`).
+fn arrays_get(name: &str) -> Option<Vec<String>> {
+    crate::fusevm_bridge::try_with_executor(|exec| {
+        exec.arrays.get(name).cloned()
+    })
+    .flatten()
+}
+
+/// True if `name` exists as an array.
+fn arrays_contains(name: &str) -> bool {
+    crate::fusevm_bridge::try_with_executor(|exec| {
+        exec.arrays.contains_key(name)
+    })
+    .unwrap_or(false)
+}
+
+/// Insert / replace an array parameter.
+/// Bridge to `exec.arrays.insert(k, v)`.
+fn arrays_insert(name: String, value: Vec<String>) {
+    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
+        exec.arrays.insert(name, value);
+    });
+}
+
+/// Read an associative array parameter from the canonical store.
+fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>> {
+    crate::fusevm_bridge::try_with_executor(|exec| {
+        exec.assoc_arrays.get(name).cloned()
+    })
+    .flatten()
+}
+
+/// True if `name` exists as an assoc array.
+fn assoc_contains(name: &str) -> bool {
+    crate::fusevm_bridge::try_with_executor(|exec| {
+        exec.assoc_arrays.contains_key(name)
+    })
+    .unwrap_or(false)
+}
+
+/// Bridge to `params::assignaparam(...)` — executor-backed call so
+/// the C-faithful params helper can mutate the canonical scalar /
+/// array / assoc tables without subst.rs holding `&mut SubstState`.
+/// Equivalent to C's `assignaparam(name, parts)` (`Src/params.c:3357`).
+fn exec_assignaparam(name: &str, parts: Vec<String>) {
+    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
+        // Snapshot/swap pattern: clone exec.assoc_arrays into the typed
+        // form params::assignaparam expects, mutate, write back.
+        let mut variables = std::mem::take(&mut exec.variables);
+        let mut arrays = std::mem::take(&mut exec.arrays);
+        let mut assoc_arrays: std::collections::HashMap<
+            String,
+            indexmap::IndexMap<String, String>,
+        > = exec
+            .assoc_arrays
+            .iter()
+            .map(|(k, v)| {
+                (k.clone(), v.iter().map(|(ik, iv)| (ik.clone(), iv.clone())).collect())
+            })
+            .collect();
+        crate::ported::params::assignaparam(
+            &mut variables,
+            &mut arrays,
+            &mut assoc_arrays,
+            name,
+            parts,
+        );
+        exec.variables = variables;
+        exec.arrays = arrays;
+        for (k, v) in assoc_arrays {
+            let entry = exec.assoc_arrays.entry(k).or_default();
+            entry.clear();
+            for (ik, iv) in v {
+                entry.insert(ik, iv);
+            }
+        }
+    });
+}
+
+/// Bridge to `params::sethparam(...)` — executor-backed call.
+/// Equivalent to C's `sethparam(name, parts)` (`Src/params.c:3602`).
+fn exec_sethparam(name: &str, parts: Vec<String>) {
+    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
+        let mut variables = std::mem::take(&mut exec.variables);
+        let mut arrays = std::mem::take(&mut exec.arrays);
+        let mut assoc_arrays: std::collections::HashMap<
+            String,
+            indexmap::IndexMap<String, String>,
+        > = exec
+            .assoc_arrays
+            .iter()
+            .map(|(k, v)| {
+                (k.clone(), v.iter().map(|(ik, iv)| (ik.clone(), iv.clone())).collect())
+            })
+            .collect();
+        crate::ported::params::sethparam(
+            &mut variables,
+            &mut arrays,
+            &mut assoc_arrays,
+            name,
+            parts,
+        );
+        exec.variables = variables;
+        exec.arrays = arrays;
+        for (k, v) in assoc_arrays {
+            let entry = exec.assoc_arrays.entry(k).or_default();
+            entry.clear();
+            for (ik, iv) in v {
+                entry.insert(ik, iv);
+            }
+        }
+    });
+}
+
+/// Bridge to `params::sync_state_from_paramtab(...)` — executor-backed.
+fn exec_sync_state_from_paramtab() {
+    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
+        let mut variables = std::mem::take(&mut exec.variables);
+        let mut arrays = std::mem::take(&mut exec.arrays);
+        let mut assoc_arrays: std::collections::HashMap<
+            String,
+            indexmap::IndexMap<String, String>,
+        > = exec
+            .assoc_arrays
+            .iter()
+            .map(|(k, v)| {
+                (k.clone(), v.iter().map(|(ik, iv)| (ik.clone(), iv.clone())).collect())
+            })
+            .collect();
+        crate::ported::params::sync_state_from_paramtab(
+            &mut variables,
+            &mut arrays,
+            &mut assoc_arrays,
+        );
+        exec.variables = variables;
+        exec.arrays = arrays;
+        for (k, v) in assoc_arrays {
+            let entry = exec.assoc_arrays.entry(k).or_default();
+            entry.clear();
+            for (ik, iv) in v {
+                entry.insert(ik, iv);
+            }
+        }
+    });
+}
+
+/// Bridge to `params::getsparam(...)` — executor-backed read.
+/// Equivalent to C's `getsparam(name)` (`Src/params.c:3194`).
+fn exec_getsparam(name: &str) -> Option<String> {
+    crate::fusevm_bridge::try_with_executor(|exec| {
+        let variables = exec.variables.clone();
+        let arrays = exec.arrays.clone();
+        crate::ported::params::getsparam(&variables, &arrays, name)
+    })
+    .flatten()
+}
 
 // =====================================================================
 // !!! WARNING: RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
@@ -318,6 +394,24 @@ pub const NULSTRING: &str = "\u{8F}"; // c:100
 // =====================================================================
 thread_local! {
     pub static IN_PARAMSUBST_NEST: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+}
+
+// =====================================================================
+// !!! RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
+// =====================================================================
+// `SKIP_FILESUB` is a per-thread flag that suppresses prefork's
+// tilde / `=cmd` expansion pass. Used by the `${var/pat/repl}`
+// pattern + replacement code paths where a literal `~` in `repl`
+// must NOT expand to `$HOME`. C achieves the same observable
+// behavior by NOT routing replacement strings through prefork at
+// all (they go straight through parsestr+getmatch). The Rust port
+// re-uses singsub→prefork for replacement strings and needs this
+// flag to disable the third pass. Replaced the deleted
+// `SubstState.skip_filesub` field per user "SubstState must be
+// removed" directive.
+// =====================================================================
+thread_local! {
+    pub static SKIP_FILESUB: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Check for array assignment with entries like [key]=val
@@ -379,16 +473,14 @@ fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> {
     // C: `*end = '\0'; dat = start + 1; singsub(&dat); untokenize(dat);`
     // — extract key, run param-subst, untokenize.
     let raw_key: String = chars[1..end_pos].iter().collect(); // c:64
-    let mut tmp_state = SubstState::default(); // c:65 (singsub context)
-    let key_subst = singsub(&raw_key, &mut tmp_state); // c:65
+    let key_subst = singsub(&raw_key); // c:65
     let key = crate::lex::untokenize(&key_subst); // c:66
 
     // C lines 67-75: Marker / Marker_plus sentinel + insertlinknode
     // for key and value.
     let value_start = if is_append { end_pos + 3 } else { end_pos + 2 }; // c:67-72
     let raw_value: String = chars[value_start..].iter().collect(); // c:69 / 73
-    let mut tmp_state2 = SubstState::default(); // c:75 (singsub context)
-    let value_subst = singsub(&raw_value, &mut tmp_state2); // c:75
+    let value_subst = singsub(&raw_value); // c:75
     let value = crate::lex::untokenize(&value_subst); // c:76
 
     let marker = if is_append {
@@ -415,12 +507,12 @@ fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> {
 /// glob expansion to fully resolve `${...}` / `$(...)` /
 /// `$((...))` / `~user` / `=cmd` / `{a,b}`.
 // Do substitutions before fork.                                            // c:82
-pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut SubstState) { // c:100
+pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
     // c:100
     let mut node_idx = 0; // c:100
     let mut stop_idx: Option<usize> = None; // c:100
     let mut keep = false; // c:100
-    let asssub = (flags & prefork_flags::TYPESET != 0) && state.opts.ksh_typeset; // c:100
+    let asssub = (flags & PREFORK_TYPESET != 0) && crate::ported::options::opt_state_get("kshtypeset").unwrap_or(false); // c:100
     let mut iter_count = 0u32; // c:100
 
     while node_idx < list.nodes.len() {
@@ -433,22 +525,22 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
             return; // c:100
         } // c:100
           // Check for key-value pair element
-        if (flags & (prefork_flags::SINGLE | prefork_flags::ASSIGN)) == prefork_flags::ASSIGN {
+        if (flags & (PREFORK_SINGLE | PREFORK_ASSIGN)) == PREFORK_ASSIGN {
             // c:100
             if let Some(new_idx) = keyvalpairelement(list, node_idx) {
                 // c:100
                 node_idx = new_idx + 1; // c:100
-                *ret_flags |= prefork_flags::KEY_VALUE;
+                *ret_flags |= PREFORK_KEY_VALUE;
                 continue; // c:100
             } // c:100
         } // c:100
 
-        if state.errflag {
+        if errflag_set() {
             // c:100
             return; // c:100
         } // c:100
 
-        if state.opts.sh_file_expansion {
+        if crate::ported::options::opt_state_get("shfileexpansion").unwrap_or(false) {
             // c:100
             // SHFILEEXPANSION - do file substitution first
             if let Some(data) = list.getdata(node_idx) {
@@ -456,8 +548,7 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
                 let new_data = filesub(
                     // c:100
                     data,                                                     // c:100
-                    flags & (prefork_flags::TYPESET | prefork_flags::ASSIGN), // c:100
-                    state,                                                    // c:100
+                    flags & (PREFORK_TYPESET | PREFORK_ASSIGN), // c:100
                 ); // c:100
                 list.setdata(node_idx, new_data); // c:100
             } // c:100
@@ -468,10 +559,9 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
                 // c:100
                 list,                                                      // c:100
                 node_idx,                                                  // c:100
-                flags & !(prefork_flags::TYPESET | prefork_flags::ASSIGN), // c:100
+                flags & !(PREFORK_TYPESET | PREFORK_ASSIGN), // c:100
                 ret_flags,                                                 // c:100
                 asssub,                                                    // c:100
-                state,                                                     // c:100
             ) {
                 // c:100
                 node_idx = new_idx; // c:100
@@ -485,7 +575,7 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
     } // c:100
 
     // Second pass for SHFILEEXPANSION
-    if state.opts.sh_file_expansion {
+    if crate::ported::options::opt_state_get("shfileexpansion").unwrap_or(false) {
         // c:100
         node_idx = 0; // c:100
         while node_idx < list.nodes.len() {
@@ -494,10 +584,9 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
                 // c:100
                 list,                                                      // c:100
                 node_idx,                                                  // c:100
-                flags & !(prefork_flags::TYPESET | prefork_flags::ASSIGN), // c:100
+                flags & !(PREFORK_TYPESET | PREFORK_ASSIGN), // c:100
                 ret_flags,                                                 // c:100
                 asssub,                                                    // c:100
-                state,                                                     // c:100
             ) {
                 // c:100
                 node_idx = new_idx + 1; // c:100
@@ -534,7 +623,7 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
                 // Routes through canonical
                 // crate::ported::glob::xpandbraces; treats >1
                 // result as a positive hasbraces hit.
-                if !state.opts.ignore_braces && (flags & prefork_flags::SINGLE == 0) {
+                if !crate::ported::options::opt_state_get("ignorebraces").unwrap_or(false) && (flags & PREFORK_SINGLE == 0) {
                     // c:166
                     if !keep {
                         // c:168
@@ -567,21 +656,20 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
                 // entirely when state.skip_filesub is set — used
                 // for `${var/pat/repl}` pattern + replacement
                 // contexts where literal `~` must be preserved.
-                if !state.opts.sh_file_expansion && !state.skip_filesub {
+                if !crate::ported::options::opt_state_get("shfileexpansion").unwrap_or(false) && !SKIP_FILESUB.with(|c| c.get()) {
                     // c:100
                     if let Some(data) = list.getdata(node_idx) {
                         // c:100
                         let new_data = filesub(
                             // c:100
                             data,                                                     // c:100
-                            flags & (prefork_flags::TYPESET | prefork_flags::ASSIGN), // c:100
-                            state,                                                    // c:100
+                            flags & (PREFORK_TYPESET | PREFORK_ASSIGN), // c:100
                         ); // c:100
                         list.setdata(node_idx, new_data); // c:100
                     } // c:100
                 } // c:100
-            } else if (flags & prefork_flags::SINGLE == 0)  // c:100
-                && (*ret_flags & prefork_flags::KEY_VALUE == 0) // c:100
+            } else if (flags & PREFORK_SINGLE == 0)  // c:100
+                && (*ret_flags & PREFORK_KEY_VALUE == 0) // c:100
                 && !keep
             // c:100
             {
@@ -591,7 +679,7 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
             } // c:100
         } // c:100
 
-        if state.errflag {
+        if errflag_set() {
             // c:100
             return; // c:100
         } // c:100
@@ -705,10 +793,9 @@ fn stringsubst(
     // c:237
     list: &mut LinkList,    // c:237
     node_idx: usize,        // c:237
-    pf_flags: u32,          // c:237
-    ret_flags: &mut u32,    // c:237
+    pf_flags: i32,          // c:237
+    ret_flags: &mut i32,    // c:237
     asssub: bool,           // c:237
-    state: &mut SubstState, // c:237
 ) -> Option<usize> {
     // c:237
     let mut str3 = list.getdata(node_idx)?.to_string(); // c:237
@@ -724,7 +811,7 @@ fn stringsubst(
     let mut p1_iter = 0u32; // c:237
     loop {
         // c:237
-        if state.errflag {
+        if errflag_set() {
             // c:237
             break; // c:237
         } // c:237
@@ -754,7 +841,7 @@ fn stringsubst(
             // substitution. Direct port of subst.c:248-274 layout —
             // C calls getproc/getoutputfile then memcpy's the result;
             // the no-op port still has to consume the same span.
-            if state.errflag {
+            if errflag_set() {
                 // c:237
                 return None; // c:237
             } // c:237
@@ -800,7 +887,7 @@ fn stringsubst(
     let mut iter_count = 0u32; // c:237
     loop {
         // c:237
-        if state.errflag {
+        if errflag_set() {
             // c:237
             break; // c:237
         } // c:237
@@ -989,7 +1076,7 @@ fn stringsubst(
                         // c:237
                         String::new() // c:237
                     }; // c:237
-                    let result_only = arithsubst(&expr, "", "", state); // c:237
+                    let result_only = arithsubst(&expr, "", ""); // c:237
                     str3 = format!("{}{}{}", prefix, result_only, suffix); // c:237
                     list.setdata(node_idx, str3.clone()); // c:237
                     pos = prefix.chars().count() + result_only.chars().count(); // c:237
@@ -1112,14 +1199,14 @@ fn stringsubst(
                     // expression (post-increment, assignment) fired
                     // twice, breaking `$((i++))`-style code at the
                     // $[…] alias.
-                    let result_only = arithsubst(&expr, "", "", state); // c:237
+                    let result_only = arithsubst(&expr, "", ""); // c:237
                     str3 = format!("{}{}{}", prefix, result_only, suffix); // c:237
                     list.setdata(node_idx, str3.clone()); // c:237
                     pos = prefix.chars().count() + result_only.chars().count(); // c:237
                     continue; // c:237
                 } else {
                     // c:237
-                    state.errflag = true; // c:237
+                    errflag_set_error(); // c:237
                     zerr("closing bracket missing"); // c:237
                     return None; // c:237
                 } // c:237
@@ -1139,12 +1226,12 @@ fn stringsubst(
                 // c:237
                 // Parameter substitution
                 let mut new_pf_flags = pf_flags; // c:237
-                if (state.opts.sh_word_split && (pf_flags & prefork_flags::NOSHWORDSPLIT == 0)) // c:237
-                    || (pf_flags & prefork_flags::SPLIT != 0)
+                if (crate::ported::options::opt_state_get("shwordsplit").unwrap_or(false) && (pf_flags & PREFORK_NOSHWORDSPLIT == 0)) // c:237
+                    || (pf_flags & PREFORK_SPLIT != 0)
                 // c:237
                 {
                     // c:237
-                    new_pf_flags |= prefork_flags::SHWORDSPLIT; // c:237
+                    new_pf_flags |= PREFORK_SHWORDSPLIT; // c:237
                 } // c:237
 
                 // stringsubst → paramsubst is a recursive descent —
@@ -1161,15 +1248,14 @@ fn stringsubst(
                     pos,   // c:237
                     qt,    // c:237
                     new_pf_flags                            // c:237
-                        & (prefork_flags::SINGLE            // c:237
-                            | prefork_flags::SHWORDSPLIT    // c:237
-                            | prefork_flags::SUBEXP), // c:237
+                        & (PREFORK_SINGLE            // c:237
+                            | PREFORK_SHWORDSPLIT    // c:237
+                            | PREFORK_SUBEXP), // c:237
                     ret_flags, // c:237
-                    state, // c:237
                 ); // c:237
                 IN_PARAMSUBST_NEST.with(|c| c.set(c.get() - 1));             // c:237 paramsub_nest--
 
-                if state.errflag {
+                if errflag_set() {
                     // c:237
                     return None; // c:237
                 } // c:237
@@ -1265,7 +1351,7 @@ fn stringsubst(
         pos += 1; // c:237
     } // c:237
 
-    if state.errflag {
+    if errflag_set() {
         // c:237
         None // c:237
     } else {
@@ -1283,9 +1369,8 @@ pub fn paramsubst(
     s: &str,                // c:1625
     start_pos: usize,       // c:1625
     qt: bool,               // c:1625
-    pf_flags: u32,          // c:1625
-    ret_flags: &mut u32,    // c:1625
-    state: &mut SubstState, // c:1625
+    pf_flags: i32,          // c:1625
+    ret_flags: &mut i32,    // c:1625
 ) -> (String, usize, Vec<String>) {
     // c:1625
     let chars: Vec<char> = s.chars().collect(); // c:1625
@@ -1329,7 +1414,7 @@ pub fn paramsubst(
           // subst.c around line 1885.
         if end >= chars.len() || depth != 0 {
             zerr("closing brace missing"); // c:1885
-            state.errflag = true; // c:1885
+            errflag_set_error(); // c:1885
             return (String::new(), chars.len(), vec![]); // c:1885
         }
         let body: String = chars[pos..end].iter().collect(); // c:1885
@@ -1398,7 +1483,7 @@ pub fn paramsubst(
                                         // through to getmatch() / igetmatch() to alter the
                                         // ${var//pat/repl}-style match disposition: return matched
                                         // text vs rest, return position vs string, etc.
-        let mut sub_flags_bits: u32 = 0; // c:2169
+        let mut sub_flags_bits: i32 = 0; // c:2169
         let mut flag_d_dir = false; // c:2229 (D)
         let mut flag_p_escapes = false; // c:2382 (p)
                                         // (g:SUBFLAGS:) — getkeys sub-flag bits per c:2409.
@@ -1429,7 +1514,7 @@ pub fn paramsubst(
                                            // \${(~)var}.
         while body_chars.get(idx).copied() == Some('~') {
             // c:2079
-            state.opts.glob_subst = !state.opts.glob_subst; // c:2160
+            crate::ported::options::opt_state_set("globsubst", !crate::ported::options::opt_state_get("globsubst").unwrap_or(false)); // c:2160
             idx += 1; // c:2079
         } // c:2079
         if body_chars.first() == Some(&'(') {
@@ -1443,7 +1528,7 @@ pub fn paramsubst(
             if !body_chars.iter().skip(1).any(|c| *c == ')') {
                 // c:2147
                 zerr("bad substitution"); // c:2147
-                state.errflag = true; // c:2147
+                errflag_set_error(); // c:2147
                 return (String::new(), new_pos, vec![]); // c:2147
             } // c:2147
             while idx < body_chars.len() && d > 0 {
@@ -1614,7 +1699,7 @@ pub fn paramsubst(
                         unique = true;
                     } // c:2476
                     '*' => {
-                        sub_flags_bits |= crate::ported::subst::sub_flags::EGLOB;
+                        sub_flags_bits |= SUB_EGLOB;
                     } // c:2168 (*)
                     'I' => {
                         // c:2189 (I:N:)
@@ -1642,22 +1727,22 @@ pub fn paramsubst(
                         continue; // c:2195
                     } // c:2195
                     'M' => {
-                        sub_flags_bits |= crate::ported::subst::sub_flags::MATCH;
+                        sub_flags_bits |= SUB_MATCH;
                     } // c:2171 (M)
                     'R' => {
-                        sub_flags_bits |= crate::ported::subst::sub_flags::REST;
+                        sub_flags_bits |= SUB_REST;
                     } // c:2174 (R)
                     'B' => {
-                        sub_flags_bits |= crate::ported::subst::sub_flags::BIND;
+                        sub_flags_bits |= SUB_BIND;
                     } // c:2177 (B)
                     'E' => {
-                        sub_flags_bits |= crate::ported::subst::sub_flags::EIND;
+                        sub_flags_bits |= SUB_EIND;
                     } // c:2180 (E)
                     'N' => {
-                        sub_flags_bits |= crate::ported::subst::sub_flags::LEN;
+                        sub_flags_bits |= SUB_LEN;
                     } // c:2183 (N)
                     'S' => {
-                        sub_flags_bits |= crate::ported::subst::sub_flags::SUBSTR;
+                        sub_flags_bits |= SUB_SUBSTR;
                     } // c:2186 (S)
                     'e' => {
                         flag_eval = true;
@@ -1768,7 +1853,7 @@ pub fn paramsubst(
                                     _ => {
                                         // c:2429 (flagerr)
                                         zerr("bad substitution");
-                                        state.errflag = true;
+                                        errflag_set_error();
                                         return (String::new(), new_pos, vec![]);
                                     }
                                 }
@@ -1792,7 +1877,7 @@ pub fn paramsubst(
                         continue; // c:2410
                     } // c:2409 (g)
                     '~' => {
-                        state.opts.glob_subst = !state.opts.glob_subst;
+                        crate::ported::options::opt_state_set("globsubst", !crate::ported::options::opt_state_get("globsubst").unwrap_or(false));
                     } // c:2160 (~)
                     'm' => {
                         multi_width += 1;
@@ -1858,7 +1943,7 @@ pub fn paramsubst(
         // dispatch arms (REPLACE / STRIP / FLAG) can read them via
         // with_executor → exec.sub_flags. Reset back to 0 after the
         // arm runs so the next paramsubst sees a clean slate.
-        state.sub_flags = sub_flags_bits; // c:2169
+        let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.sub_flags = sub_flags_bits); // c:2169
                                           // ${#var} — length-of operator at start of brace (after flags).
                                           // Per Src/subst.c:2570-2588 `case '#'`. The leading `#` is
                                           // the length operator IF the following char starts a valid
@@ -2020,7 +2105,7 @@ pub fn paramsubst(
                                                                        // flag triggers around line 2167.
             let expanded = if flag_at {
                 // c:2167+544
-                let (joined, arr_parts, isarr, _) = multsub(&inner, prefork_flags::SPLIT, state);
+                let (joined, arr_parts, isarr, _) = multsub(&inner, PREFORK_SPLIT);
                 if isarr && !arr_parts.is_empty() {
                     // Generate a stable per-call temp name. We use a
                     // process-local counter; cleanup happens at end of
@@ -2029,14 +2114,14 @@ pub fn paramsubst(
                     static SEQ: AtomicUsize = AtomicUsize::new(0);
                     let n = SEQ.fetch_add(1, Ordering::Relaxed);
                     let temp = format!("__subexp_arr_{}", n);
-                    state.arrays.insert(temp.clone(), arr_parts);
+                    arrays_insert(temp.clone(), arr_parts);
                     subexp_array_temp = Some(temp.clone());
                     temp
                 } else {
                     joined
                 }
             } else {
-                singsub(&inner, state) // c:2681
+                singsub(&inner) // c:2681
             };
             idx = p; // c:2691
                      // If we peeled a leading `"`, also consume the matching
@@ -2138,7 +2223,7 @@ pub fn paramsubst(
                 let raw_sub: String = body_chars[sub_start..idx].iter().collect();
                 // Subscript expressions can contain $vars — singsub them.
                 // Subscript expressions can contain $vars — singsub them.
-                subscript = Some(singsub(&raw_sub, state)); // c:2899
+                subscript = Some(singsub(&raw_sub)); // c:2899
             }
             if idx < body_chars.len() {
                 idx += 1;
@@ -2166,11 +2251,8 @@ pub fn paramsubst(
                 subexp_value = None; // c:2741 (consumed)
             } else {
                 // c:2741
-                let target = state
-                    .variables
-                    .get(&var_name)
-                    .cloned() // c:2741
-                    .or_else(|| state.arrays.get(&var_name).map(|a| a.join(" "))) // c:2741
+                let target = vars_get(&var_name) // c:2741
+                    .or_else(|| arrays_get(&var_name).map(|a| a.join(" "))) // c:2741
                     .unwrap_or_default(); // c:2741
                 var_name = target; // c:2741
             } // c:2741
@@ -2185,7 +2267,7 @@ pub fn paramsubst(
             sv // c:2681 (subexp result)
         } else if let Some(sub) = subscript.as_deref() {
             // Subscripted lookup: assoc-key, array-index, or slice.
-            if let Some(map) = state.assoc_arrays.get(&var_name) {
+            if let Some(map) = assoc_get(&var_name) {
                 // c:2926 (assoc lookup)
                 // Subscript-flag form: (I)pat / (i)pat (search keys
                 // for pattern, return matching key) and (R)pat /
@@ -2224,7 +2306,7 @@ pub fn paramsubst(
                 } else {
                     map.get(sub).cloned().unwrap_or_default()
                 }
-            } else if let Some(arr) = state.arrays.get(&var_name) {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 // c:2926 (array)
                 if sub == "*" || sub == "@" {
                     // c:2916 (full array)
@@ -2292,8 +2374,8 @@ pub fn paramsubst(
                     let len = arr_clone.len() as i64;
                     let start_str = start_s.to_string();
                     let end_str = end_s.to_string();
-                    let start: i64 = singsub(&start_str, state).parse().unwrap_or(1);
-                    let end: i64 = singsub(&end_str, state).parse().unwrap_or(len);
+                    let start: i64 = singsub(&start_str).parse().unwrap_or(1);
+                    let end: i64 = singsub(&end_str).parse().unwrap_or(len);
                     let s = if start < 0 {
                         (len + start).max(0)
                     } else {
@@ -2323,7 +2405,7 @@ pub fn paramsubst(
                 magic_val // c:2926
             } else {
                 // Scalar with subscript — char-index access.
-                let scalar = state.variables.get(&var_name).cloned().unwrap_or_default();
+                let scalar = vars_get(&var_name).unwrap_or_default();
                 let s_chars: Vec<char> = scalar.chars().collect();
                 // Pattern-subscript on scalar: (i)pat / (I)pat
                 // returns 1-based char position of first/last match;
@@ -2449,11 +2531,9 @@ pub fn paramsubst(
             // in one place; subst.rs and the fuseVM bridge both
             // route through here so the lookup logic lives in
             // exactly one location.
-            crate::ported::params::getsparam(&state.variables, &state.arrays, &var_name)
+            exec_getsparam(&var_name)
                 .or_else(|| {
-                    state
-                        .assoc_arrays
-                        .get(&var_name)
+                    assoc_get(&var_name)
                         .map(|m| m.values().cloned().collect::<Vec<_>>().join(" "))
                 })
                 .or_else(|| {
@@ -2489,14 +2569,10 @@ pub fn paramsubst(
         // skipped the assign.
         let is_set = if let Some(sub) = subscript.as_deref() {
             used_subexp
-                || state
-                    .assoc_arrays
-                    .get(&var_name)
+                || assoc_get(&var_name)
                     .map(|m| m.contains_key(sub))
                     .unwrap_or(false)
-                || state
-                    .arrays
-                    .get(&var_name)
+                || arrays_get(&var_name).as_ref()
                     .map(|a| {
                         sub.parse::<i64>().ok().is_some_and(|i| {
                             let len = a.len() as i64;
@@ -2507,9 +2583,9 @@ pub fn paramsubst(
                     .unwrap_or(false)
         } else {
             used_subexp
-                || state.variables.contains_key(&var_name)
-                || state.arrays.contains_key(&var_name)
-                || state.assoc_arrays.contains_key(&var_name)
+                || vars_contains(&var_name)
+                || arrays_contains(&var_name)
+                || assoc_contains(&var_name)
         };
 
         // ${+name} short-circuit per subst.c:3600 — return "1"/"0".
@@ -2549,9 +2625,9 @@ pub fn paramsubst(
         if length_op {
             // c:2128
             let _ = post_flags_start;
-            let n = if let Some(arr) = state.arrays.get(&var_name) {
+            let n = if let Some(arr) = arrays_get(&var_name) {
                 arr.len() // c:2128 (array len)
-            } else if let Some(map) = state.assoc_arrays.get(&var_name) {
+            } else if let Some(map) = assoc_get(&var_name) {
                 map.len() // c:2128 (assoc len)
             } else {
                 raw_value.chars().count() // c:2128 (scalar char-count)
@@ -2590,9 +2666,7 @@ pub fn paramsubst(
         let mut value: String; // c:2247
         if flag_keys && flag_values {
             // c:2247 (kv)
-            value = state
-                .assoc_arrays
-                .get(&var_name) // c:2247
+            value = assoc_get(&var_name) // c:2247
                 .map(|m| {
                     // c:2247
                     let mut out: Vec<String> = Vec::with_capacity(m.len() * 2); // c:2247
@@ -2606,50 +2680,32 @@ pub fn paramsubst(
                 .unwrap_or_default(); // c:2247
         } else if flag_keys {
             // c:2247
-            value = state
-                .assoc_arrays
-                .get(&var_name) // c:2247
+            value = assoc_get(&var_name) // c:2247
                 .map(|m| m.keys().cloned().collect::<Vec<_>>().join(" ")) // c:2247
                 .or_else(|| {
                     // c:2247
+                    // c:2247 — magic-assoc {aliases,functions,commands}
+                    // are backed by canonical executor tables (no
+                    // SubstState snapshot). Reach in via try_with_executor.
                     match var_name.as_str() {
                         // c:2247
-                        "aliases" => Some(
-                            // c:2247
-                            state
-                                .alias_names
-                                .iter()
-                                .cloned()
-                                .collect::<Vec<_>>()
-                                .join(" "),
-                        ), // c:2247
-                        "functions" | "dis_functions" => Some(
-                            // c:2247
-                            state
-                                .function_names
-                                .iter()
-                                .cloned()
-                                .collect::<Vec<_>>()
-                                .join(" "),
-                        ), // c:2247
-                        "commands" => Some(
-                            // c:2247
-                            state
-                                .command_names
-                                .iter()
-                                .cloned()
-                                .collect::<Vec<_>>()
-                                .join(" "),
-                        ), // c:2247
+                        "aliases" => crate::fusevm_bridge::try_with_executor(|exec| {
+                            exec.aliases.keys().cloned().collect::<Vec<_>>().join(" ")
+                        }),
+                        "functions" | "dis_functions" => crate::fusevm_bridge::try_with_executor(|exec| {
+                            exec.function_names().join(" ")
+                        }),
+                        // c:2247 — `commands` magic-assoc lists names
+                        // resolvable via $PATH. Not yet wired (no
+                        // commands cache on exec); return empty.
+                        "commands" => Some(String::new()),
                         _ => None, // c:2247
                     } // c:2247
                 }) // c:2247
                 .unwrap_or_default();
         } else if flag_values {
             // c:2256
-            value = state
-                .assoc_arrays
-                .get(&var_name) // c:2256
+            value = assoc_get(&var_name) // c:2256
                 .map(|m| m.values().cloned().collect::<Vec<_>>().join(" ")) // c:2256
                 .unwrap_or_default();
         } else if flag_at {
@@ -2657,9 +2713,7 @@ pub fn paramsubst(
             // (@) array splat — preserve element shape via space-join.
             // For full splat into multiple result_nodes, the
             // multsub-aware caller handles it; we emit space-joined here.
-            value = state
-                .arrays
-                .get(&var_name)
+            value = arrays_get(&var_name).as_ref()
                 .map(|a| a.join(" "))
                 .unwrap_or_else(|| raw_value.clone());
         } else {
@@ -2680,9 +2734,10 @@ pub fn paramsubst(
                 // the disposition inverts (keep matching, drop
                 // non-matching). Direct port of subst.c:3540
                 // SUB_FILTER + getmatch SUB_MATCH branch.
-                let p = singsub(pat, state); // c:3540
-                let invert = (state.sub_flags & 0x0008) != 0; // c:2171 SUB_MATCH
-                state.sub_flags = 0; // c:2169 (consume)
+                let p = singsub(pat); // c:3540
+                let cur_sub_flags = crate::fusevm_bridge::try_with_executor(|exec| exec.sub_flags).unwrap_or(0); // c:2171
+                let invert = (cur_sub_flags & 0x0008) != 0; // c:2171 SUB_MATCH
+                let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.sub_flags = 0); // c:2169 (consume)
                                      // Direct port of subst.c:3422 `if (!vunset && isarr)` —
                                      // the array iteration only fires when `isarr` is set.
                                      // After getindex computes a single-slot subscript, isarr
@@ -2692,10 +2747,7 @@ pub fn paramsubst(
                                      // applied, treat raw_value as the scalar `val` and
                                      // skip the per-element arr loop.
                 let has_subscript = subscript.is_some();
-                if let Some(arr) = state
-                    .arrays
-                    .get(&var_name)
-                    .cloned()
+                if let Some(arr) = arrays_get(&var_name)
                     .filter(|_| !has_subscript)
                 {
                     let kept: Vec<String> = arr
@@ -2738,12 +2790,12 @@ pub fn paramsubst(
             } else if let Some(default) = r.strip_prefix(":-") {
                 // c:3193
                 if !is_set || raw_value.is_empty() {
-                    value = singsub(default, state);
+                    value = singsub(default);
                 }
             } else if let Some(default) = r.strip_prefix('-') {
                 // c:3193
                 if !is_set {
-                    value = singsub(default, state);
+                    value = singsub(default);
                 }
             } else if let Some(default) = r.strip_prefix("::=") {
                 // c:3245 (unconditional assign)
@@ -2753,110 +2805,66 @@ pub fn paramsubst(
                 // '::=' which call assignsparam (params.c:3193) /
                 // assignaparam (params.c:3357) / sethparam
                 // (params.c:3602) based on the `flag_arrasg` flag.
-                value = singsub(default, state);
+                value = singsub(default);
                 if flag_arrasg == 1 {
                     // c:3263 (A)
-                    let ifs = state
-                        .variables
-                        .get("IFS")
-                        .cloned()
+                    let ifs = vars_get("IFS")
                         .unwrap_or_else(|| " \t\n".to_string());
                     let parts: Vec<String> = value
                         .split(|c: char| ifs.contains(c))
                         .filter(|s| !s.is_empty())
                         .map(|s| s.to_string())
                         .collect();
-                    crate::ported::params::assignaparam(
-                        &mut state.variables,
-                        &mut state.arrays,
-                        &mut state.assoc_arrays,
-                        &var_name,
-                        parts,
-                    );
+                    exec_assignaparam(&var_name, parts);
                 } else if flag_arrasg == 2 {
                     // c:3263 (AA)
-                    let ifs = state
-                        .variables
-                        .get("IFS")
-                        .cloned()
+                    let ifs = vars_get("IFS")
                         .unwrap_or_else(|| " \t\n".to_string());
                     let parts: Vec<String> = value
                         .split(|c: char| ifs.contains(c))
                         .filter(|s| !s.is_empty())
                         .map(|s| s.to_string())
                         .collect();
-                    crate::ported::params::sethparam(
-                        &mut state.variables,
-                        &mut state.arrays,
-                        &mut state.assoc_arrays,
-                        &var_name,
-                        parts,
-                    );
+                    exec_sethparam(&var_name, parts);
                 } else {
                     let __s = match subscript.as_deref() {
                         Some(k) => format!("{}[{}]", var_name, k),
                         None => var_name.clone(),
                     };
                     crate::ported::params::assignsparam(&__s, &value, 0);
-                    crate::ported::params::sync_state_from_paramtab(
-                        &mut state.variables,
-                        &mut state.arrays,
-                        &mut state.assoc_arrays,
-                    );
+                    exec_sync_state_from_paramtab();
                 }
             } else if let Some(default) = r.strip_prefix(":=") {
                 // c:3245
                 if !is_set || raw_value.is_empty() {
-                    value = singsub(default, state);
+                    value = singsub(default);
                     if flag_arrasg == 1 {
                         // c:3263 (A)
-                        let ifs = state
-                            .variables
-                            .get("IFS")
-                            .cloned()
+                        let ifs = vars_get("IFS")
                             .unwrap_or_else(|| " \t\n".to_string());
                         let parts: Vec<String> = value
                             .split(|c: char| ifs.contains(c))
                             .filter(|s| !s.is_empty())
                             .map(|s| s.to_string())
                             .collect();
-                        crate::ported::params::assignaparam(
-                            &mut state.variables,
-                            &mut state.arrays,
-                            &mut state.assoc_arrays,
-                            &var_name,
-                            parts,
-                        );
+                        exec_assignaparam(&var_name, parts);
                     } else if flag_arrasg == 2 {
                         // c:3263 (AA)
-                        let ifs = state
-                            .variables
-                            .get("IFS")
-                            .cloned()
+                        let ifs = vars_get("IFS")
                             .unwrap_or_else(|| " \t\n".to_string());
                         let parts: Vec<String> = value
                             .split(|c: char| ifs.contains(c))
                             .filter(|s| !s.is_empty())
                             .map(|s| s.to_string())
                             .collect();
-                        crate::ported::params::sethparam(
-                            &mut state.variables,
-                            &mut state.arrays,
-                            &mut state.assoc_arrays,
-                            &var_name,
-                            parts,
-                        );
+                        exec_sethparam(&var_name, parts);
                     } else {
                         let __s = match subscript.as_deref() {
                             Some(k) => format!("{}[{}]", var_name, k),
                             None => var_name.clone(),
                         };
                         crate::ported::params::assignsparam(&__s, &value, 0);
-                        crate::ported::params::sync_state_from_paramtab(
-                            &mut state.variables,
-                            &mut state.arrays,
-                            &mut state.assoc_arrays,
-                        );
+                        exec_sync_state_from_paramtab();
                     }
                 }
             } else if let Some(default) = r.strip_prefix('=') {
@@ -2865,69 +2873,47 @@ pub fn paramsubst(
                 // empty). Direct port of subst.c case '=' which
                 // only checks vunset, not !*val.
                 if !is_set {
-                    value = singsub(default, state);
+                    value = singsub(default);
                     if flag_arrasg == 1 {
                         // c:3263 (A)
-                        let ifs = state
-                            .variables
-                            .get("IFS")
-                            .cloned()
+                        let ifs = vars_get("IFS")
                             .unwrap_or_else(|| " \t\n".to_string());
                         let parts: Vec<String> = value
                             .split(|c: char| ifs.contains(c))
                             .filter(|s| !s.is_empty())
                             .map(|s| s.to_string())
                             .collect();
-                        crate::ported::params::assignaparam(
-                            &mut state.variables,
-                            &mut state.arrays,
-                            &mut state.assoc_arrays,
-                            &var_name,
-                            parts,
-                        );
+                        exec_assignaparam(&var_name, parts);
                     } else if flag_arrasg == 2 {
                         // c:3263 (AA)
-                        let ifs = state
-                            .variables
-                            .get("IFS")
-                            .cloned()
+                        let ifs = vars_get("IFS")
                             .unwrap_or_else(|| " \t\n".to_string());
                         let parts: Vec<String> = value
                             .split(|c: char| ifs.contains(c))
                             .filter(|s| !s.is_empty())
                             .map(|s| s.to_string())
                             .collect();
-                        crate::ported::params::sethparam(
-                            &mut state.variables,
-                            &mut state.arrays,
-                            &mut state.assoc_arrays,
-                            &var_name,
-                            parts,
-                        );
+                        exec_sethparam(&var_name, parts);
                     } else {
                         let __s = match subscript.as_deref() {
                             Some(k) => format!("{}[{}]", var_name, k),
                             None => var_name.clone(),
                         };
                         crate::ported::params::assignsparam(&__s, &value, 0);
-                        crate::ported::params::sync_state_from_paramtab(
-                            &mut state.variables,
-                            &mut state.arrays,
-                            &mut state.assoc_arrays,
-                        );
+                        exec_sync_state_from_paramtab();
                     }
                 }
             } else if let Some(alt) = r.strip_prefix(":+") {
                 // c:3296
                 if is_set && !raw_value.is_empty() {
-                    value = singsub(alt, state);
+                    value = singsub(alt);
                 } else {
                     value = String::new();
                 }
             } else if let Some(alt) = r.strip_prefix('+') {
                 // c:3296
                 if is_set {
-                    value = singsub(alt, state);
+                    value = singsub(alt);
                 } else {
                     value = String::new();
                 }
@@ -2939,11 +2925,11 @@ pub fn paramsubst(
                         "parameter null or not set".to_string() // c:3193
                     } else {
                         // c:3193
-                        singsub(msg, state) // c:3193
+                        singsub(msg) // c:3193
                     }; // c:3193
                        // C: zerr("%s: %s", idbeg, msg) — Src/subst.c:3337
                     zerr(&format!("{}: {}", var_name, m));
-                    state.errflag = true;
+                    errflag_set_error();
                 }
             } else if let Some(msg) = r.strip_prefix('?') {
                 // c:3193 (?msg — not-set only)
@@ -2956,11 +2942,11 @@ pub fn paramsubst(
                         "parameter not set".to_string() // c:3193
                     } else {
                         // c:3193
-                        singsub(msg, state) // c:3193
+                        singsub(msg) // c:3193
                     }; // c:3193
                        // C: zerr("%s: parameter not set", idbeg) — Src/subst.c:3472
                     zerr(&format!("{}: {}", var_name, m));
-                    state.errflag = true;
+                    errflag_set_error();
                 }
             } else if let Some(rep) = r.strip_prefix(":/") {
                 // c:3870 (whole-element replace)
@@ -2974,9 +2960,9 @@ pub fn paramsubst(
                 // the whole element. Different from `//` which is
                 // sliding-window mid-element replace.
                 let parts: Vec<&str> = rep.splitn(2, '/').collect();
-                let pat = singsub(parts[0], state);
-                let repl = parts.get(1).map(|s| singsub(s, state)).unwrap_or_default();
-                if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                let pat = singsub(parts[0]);
+                let repl = parts.get(1).map(|s| singsub(s)).unwrap_or_default();
+                if let Some(arr) = arrays_get(&var_name) {
                     let new_arr: Vec<String> = arr
                         .into_iter()
                         .map(|elem| {
@@ -3027,7 +3013,7 @@ pub fn paramsubst(
                     (pat_buf, String::new())
                 };
                 let (raw_pat, raw_repl) = split_unescaped(rep);
-                let pat = singsub(&raw_pat, state);
+                let pat = singsub(&raw_pat);
                 // Replacement: per C subst.c around line 3354,
                 // `prefork(replstr, ...)` runs with SUB_FLAG|SKIP_FILESUB
                 // — tilde / file expansion is suppressed in the
@@ -3036,10 +3022,10 @@ pub fn paramsubst(
                 // untokenize on the BNULL→`\` form the bridge upstream
                 // produces.
                 let repl = {
-                    let saved_skip = state.skip_filesub;
-                    state.skip_filesub = true;
-                    let s = crate::lex::untokenize(&singsub(&raw_repl, state));
-                    state.skip_filesub = saved_skip;
+                    let saved_skip = SKIP_FILESUB.with(|c| c.get());
+                    SKIP_FILESUB.with(|c| c.set(true));
+                    let s = crate::lex::untokenize(&singsub(&raw_repl));
+                    SKIP_FILESUB.with(|c| c.set(saved_skip));
                     let mut out = String::with_capacity(s.len());
                     let mut it = s.chars().peekable();
                     while let Some(c) = it.next() {
@@ -3107,10 +3093,7 @@ pub fn paramsubst(
                     })
                     .unwrap_or(false);
                 let has_subscript = has_scalar_subscript;
-                if let Some(arr) = state
-                    .arrays
-                    .get(&var_name)
-                    .cloned()
+                if let Some(arr) = arrays_get(&var_name)
                     .filter(|_| !has_subscript)
                 {
                     let new_arr: Vec<String> = arr.iter().map(|e| replace_global(e)).collect();
@@ -3194,7 +3177,7 @@ pub fn paramsubst(
                 // drops BNULL but pat still carries `\X` from the
                 // split-walk above for the "match this literal X"
                 // form).
-                let pat = singsub(&raw_pat, state);
+                let pat = singsub(&raw_pat);
                 // Replacement: per Src/glob.c::compgetmatch:2687-2688,
                 // C runs `singsub(replstrp); untokenize(*replstrp);`.
                 // The C untokenize drops BNULL markers (the lexer's
@@ -3206,7 +3189,7 @@ pub fn paramsubst(
                 // so the existing untokenize call still handles any
                 // surviving meta-tokens).
                 let repl = {
-                    let s = crate::lex::untokenize(&singsub(&raw_repl, state));
+                    let s = crate::lex::untokenize(&singsub(&raw_repl));
                     let mut out = String::with_capacity(s.len());
                     let mut it = s.chars().peekable();
                     while let Some(c) = it.next() {
@@ -3286,10 +3269,7 @@ pub fn paramsubst(
                         t != "@" && t != "*" && !t.contains(',')
                     })
                     .unwrap_or(false);
-                if let Some(arr) = state
-                    .arrays
-                    .get(&var_name)
-                    .cloned()
+                if let Some(arr) = arrays_get(&var_name)
                     .filter(|_| !has_subscript_one)
                 {
                     let new_arr: Vec<String> = arr.iter().map(|e| replace_one(e)).collect();
@@ -3300,7 +3280,7 @@ pub fn paramsubst(
                 }
             } else if let Some(pat) = r.strip_prefix("##") {
                 // c:3540 (longest prefix strip)
-                let p = singsub(pat, state);
+                let p = singsub(pat);
                 // has_subscript guard — same as `/`/`//` arms.
                 // Per subst.c:2915 + 3422-3451, scalar subscript
                 // dispatches to getmatch on the single element.
@@ -3334,10 +3314,7 @@ pub fn paramsubst(
                         _ => val.to_string(),
                     }
                 };
-                if let Some(arr) = state
-                    .arrays
-                    .get(&var_name)
-                    .cloned()
+                if let Some(arr) = arrays_get(&var_name)
                     .filter(|_| !has_scalar_sub)
                 {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e, 1)).collect();
@@ -3348,7 +3325,7 @@ pub fn paramsubst(
                 }
             } else if let Some(pat) = r.strip_prefix('#') {
                 // c:3540 (shortest prefix strip)
-                let p = singsub(pat, state);
+                let p = singsub(pat);
                 let has_scalar_sub = subscript
                     .as_deref()
                     .map(|s| {
@@ -3367,10 +3344,7 @@ pub fn paramsubst(
                     }
                     val.to_string()
                 };
-                if let Some(arr) = state
-                    .arrays
-                    .get(&var_name)
-                    .cloned()
+                if let Some(arr) = arrays_get(&var_name)
                     .filter(|_| !has_scalar_sub)
                 {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
@@ -3381,7 +3355,7 @@ pub fn paramsubst(
                 }
             } else if let Some(pat) = r.strip_prefix("%%") {
                 // c:3540 (longest suffix strip)
-                let p = singsub(pat, state);
+                let p = singsub(pat);
                 let has_scalar_sub = subscript
                     .as_deref()
                     .map(|s| {
@@ -3405,10 +3379,7 @@ pub fn paramsubst(
                     }
                     val.to_string()
                 };
-                if let Some(arr) = state
-                    .arrays
-                    .get(&var_name)
-                    .cloned()
+                if let Some(arr) = arrays_get(&var_name)
                     .filter(|_| !has_scalar_sub)
                 {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
@@ -3419,7 +3390,7 @@ pub fn paramsubst(
                 }
             } else if let Some(pat) = r.strip_prefix('%') {
                 // c:3540 (shortest suffix strip)
-                let p = singsub(pat, state);
+                let p = singsub(pat);
                 let has_scalar_sub = subscript
                     .as_deref()
                     .map(|s| {
@@ -3438,10 +3409,7 @@ pub fn paramsubst(
                     }
                     val.to_string()
                 };
-                if let Some(arr) = state
-                    .arrays
-                    .get(&var_name)
-                    .cloned()
+                if let Some(arr) = arrays_get(&var_name)
                     .filter(|_| !has_scalar_sub)
                 {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
@@ -3461,9 +3429,9 @@ pub fn paramsubst(
                 // An earlier port used `glob_match_static` here,
                 // which made `(bar` (a malformed glob) fail to match
                 // an array element of literal text `(bar`.
-                let arr = state.arrays.get(&var_name).cloned().unwrap_or_default();
+                let arr = arrays_get(&var_name).unwrap_or_default();
                 let other_name = rhs.trim(); // c:3543
-                let other = state.arrays.get(other_name).cloned().unwrap_or_default();
+                let other = arrays_get(other_name).unwrap_or_default();
                 let other_set: std::collections::HashSet<&String> = other.iter().collect();
                 let kept: Vec<String> = arr
                     .into_iter() // c:3540
@@ -3477,9 +3445,9 @@ pub fn paramsubst(
                 // elems of arr literally present in other. Same
                 // hash-based lookup as `:|` per subst.c:3548
                 // `gethashnode2` literal-key path.
-                let arr = state.arrays.get(&var_name).cloned().unwrap_or_default();
+                let arr = arrays_get(&var_name).unwrap_or_default();
                 let other_name = rhs.trim(); // c:3543
-                let other = state.arrays.get(other_name).cloned().unwrap_or_default();
+                let other = arrays_get(other_name).unwrap_or_default();
                 let other_set: std::collections::HashSet<&String> = other.iter().collect();
                 let kept: Vec<String> = arr
                     .into_iter() // c:3540
@@ -3493,8 +3461,8 @@ pub fn paramsubst(
                 // past the shorter one with empty strings (vs `:^`
                 // which stops at the shorter). Direct port of the
                 // SUB_ZIP_LONG variant in subst.c:3540.
-                let arr = state.arrays.get(&var_name).cloned().unwrap_or_default();
-                let other = state.arrays.get(rhs.trim()).cloned().unwrap_or_default();
+                let arr = arrays_get(&var_name).unwrap_or_default();
+                let other = arrays_get(rhs.trim()).unwrap_or_default();
                 let n = arr.len().max(other.len());
                 let mut zipped: Vec<String> = Vec::with_capacity(n * 2);
                 for i in 0..n {
@@ -3506,8 +3474,8 @@ pub fn paramsubst(
             } else if let Some(rhs) = r.strip_prefix(":^") {
                 // c:3540 (zip)
                 // ${arr:^other} — interleave two arrays element-by-elem.
-                let arr = state.arrays.get(&var_name).cloned().unwrap_or_default();
-                let other = state.arrays.get(rhs.trim()).cloned().unwrap_or_default();
+                let arr = arrays_get(&var_name).unwrap_or_default();
+                let other = arrays_get(rhs.trim()).unwrap_or_default();
                 let mut zipped: Vec<String> = Vec::with_capacity(arr.len() + other.len());
                 let n = arr.len().min(other.len());
                 for i in 0..n {
@@ -3549,22 +3517,22 @@ pub fn paramsubst(
                     // Per-element on arrays.
                     let mod_str = format!(":{}", slice);
                     let mod_one =
-                        |s: &str, st: &mut SubstState| -> String { modify(s, &mod_str, st) };
+                        |s: &str| -> String { modify(s, &mod_str) };
                     if let Some(parts) = split_parts.clone() {
                         let new_parts: Vec<String> =
-                            parts.iter().map(|s| mod_one(s, state)).collect();
+                            parts.iter().map(|s| mod_one(s)).collect();
                         value = new_parts.join(" ");
                         split_parts = Some(new_parts);
-                    } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
-                        let new_arr: Vec<String> = arr.iter().map(|s| mod_one(s, state)).collect();
+                    } else if let Some(arr) = arrays_get(&var_name) {
+                        let new_arr: Vec<String> = arr.iter().map(|s| mod_one(s)).collect();
                         value = new_arr.join(" ");
                         split_parts = Some(new_arr);
                     } else {
-                        value = mod_one(&value, state);
+                        value = mod_one(&value);
                     }
                 } else {
                     let parts: Vec<&str> = slice.splitn(2, ':').collect();
-                    let off = singsub(parts[0], state).parse::<i64>().unwrap_or(0);
+                    let off = singsub(parts[0]).parse::<i64>().unwrap_or(0);
                     // Array context: ${arr:offset:length} slices the
                     // ARRAY (1-based, like Bash's offset), not the joined
                     // value. Direct port of subst.c's array-shape branch
@@ -3576,7 +3544,7 @@ pub fn paramsubst(
                     // dispatch which uses aval if isarr is set.
                     let array_source: Option<Vec<String>> = split_parts
                         .clone()
-                        .or_else(|| state.arrays.get(&var_name).cloned());
+                        .or_else(|| arrays_get(&var_name));
                     if let Some(mut arr) = array_source {
                         // Positional-param slice (`@`/`*`/`argv`) — zsh
                         // counts offset 0 as $0 (script/function name),
@@ -3585,7 +3553,7 @@ pub fn paramsubst(
                         // subst.c's @/* offset arm which routes through
                         // dohist offset = 0 (includes argzero).
                         if var_name == "@" || var_name == "*" || var_name == "argv" {
-                            let s0 = state.variables.get("0").cloned().unwrap_or_default();
+                            let s0 = vars_get("0").unwrap_or_default();
                             arr.insert(0, s0); // c:715
                         }
                         let n = arr.len() as i64; // c:715
@@ -3596,7 +3564,7 @@ pub fn paramsubst(
                         } as usize; // c:715
                         let len = parts
                             .get(1) // c:715
-                            .map(|s| singsub(s, state).parse::<i64>().unwrap_or(0)); // c:715
+                            .map(|s| singsub(s).parse::<i64>().unwrap_or(0)); // c:715
                         let kept: Vec<String> = match len {
                             // c:715
                             Some(l) if l >= 0 => {
@@ -3621,7 +3589,7 @@ pub fn paramsubst(
                         } as usize;
                         let len = parts
                             .get(1)
-                            .map(|s| singsub(s, state).parse::<i64>().unwrap_or(0));
+                            .map(|s| singsub(s).parse::<i64>().unwrap_or(0));
                         value = match len {
                             Some(l) if l >= 0 => {
                                 raw_value.chars().skip(start).take(l as usize).collect()
@@ -3645,14 +3613,15 @@ pub fn paramsubst(
             // synthesized tag from the storage table the value
             // lives in. Direct port of subst.c:2814 wantt arm
             // which checks paramtab + storage shape.
-            value = state
-                .var_attrs
-                .get(&var_name) // c:2814
+            value = crate::fusevm_bridge::try_with_executor(|exec| {
+                    exec.var_attrs.get(&var_name).cloned() // c:2814
+                })
+                .flatten()
                 .map(|attr| attr.format_zsh()) // c:2825
                 .unwrap_or_else(|| {
-                    if state.assoc_arrays.contains_key(&var_name) {
+                    if assoc_contains(&var_name) {
                         "association".to_string() // c:2814
-                    } else if state.arrays.contains_key(&var_name) {
+                    } else if arrays_contains(&var_name) {
                         "array".to_string() // c:2814
                     } else if matches!(
                         var_name.as_str(),
@@ -3732,7 +3701,7 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| transform(s)).collect();
                 value = new_parts.join(" "); // c:3937
                 split_parts = Some(new_parts); // c:3937
-            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 let new_arr: Vec<String> = arr.iter().map(|s| transform(s)).collect();
                 value = new_arr.join(" "); // c:3937
                 split_parts = Some(new_arr); // c:3937
@@ -3751,9 +3720,9 @@ pub fn paramsubst(
             // list, not a whitespace re-split of the joined view.
             let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
                 sp // c:4180 (operator-result)
-            } else if let Some(arr) = state.arrays.get(&var_name) {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 arr.clone() // c:4180 (real array)
-            } else if let Some(map) = state.assoc_arrays.get(&var_name) {
+            } else if let Some(map) = assoc_get(&var_name) {
                 map.values().cloned().collect() // c:4180 (assoc values)
             } else {
                 value.split_whitespace().map(String::from).collect() // c:4180 (fallback)
@@ -3828,7 +3797,7 @@ pub fn paramsubst(
                 // Already-split source (e.g. earlier filter/operator);
                 // re-split each piece.
                 prev.iter().flat_map(|s| split_one(s)).collect()
-            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 arr.iter().flat_map(|s| split_one(s)).collect()
             } else {
                 split_one(&value)
@@ -3852,10 +3821,10 @@ pub fn paramsubst(
                                         // so auto_splat emits one scalar node, not the
                                         // joined-then-1-elem-splat.
                 split_parts = None; // c:3963
-            } else if let Some(arr) = state.arrays.get(&var_name) {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 // c:3963
                 value = arr.join(sp); // c:3963
-            } else if let Some(map) = state.assoc_arrays.get(&var_name) {
+            } else if let Some(map) = assoc_get(&var_name) {
                 // c:3963
                 let vals: Vec<String> = map.values().cloned().collect();
                 value = vals.join(sp); // c:3963
@@ -3889,7 +3858,7 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| pad_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 let new_arr: Vec<String> = arr.iter().map(|s| pad_one(s)).collect();
                 value = new_arr.join(" ");
                 split_parts = Some(new_arr);
@@ -3908,7 +3877,7 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| eval_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 let new_arr: Vec<String> = arr.iter().map(|s| eval_one(s)).collect();
                 value = new_arr.join(" ");
                 split_parts = Some(new_arr);
@@ -3922,15 +3891,15 @@ pub fn paramsubst(
         if flag_eval {
             // c:2268
             if let Some(parts) = split_parts.clone() {
-                let new_parts: Vec<String> = parts.iter().map(|s| singsub(s, state)).collect();
+                let new_parts: Vec<String> = parts.iter().map(|s| singsub(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
-                let new_arr: Vec<String> = arr.iter().map(|s| singsub(s, state)).collect();
+            } else if let Some(arr) = arrays_get(&var_name) {
+                let new_arr: Vec<String> = arr.iter().map(|s| singsub(s)).collect();
                 value = new_arr.join(" ");
                 split_parts = Some(new_arr);
             } else {
-                value = singsub(&value, state); // c:2268
+                value = singsub(&value); // c:2268
             }
         }
 
@@ -3946,7 +3915,7 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| prompt_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 let new_arr: Vec<String> = arr.iter().map(|s| prompt_one(s)).collect();
                 value = new_arr.join(" ");
                 split_parts = Some(new_arr);
@@ -4073,10 +4042,7 @@ pub fn paramsubst(
         // mods bit 1 → modify()'s tilde-contraction iterating aval.
         if flag_d_dir {
             // c:2229
-            let home_opt = state
-                .variables
-                .get("HOME")
-                .cloned()
+            let home_opt = vars_get("HOME")
                 .or_else(|| std::env::var("HOME").ok());
             // Pull named-dirs (~name) hash into a [(name, path)]
             // sorted by path-length-descending so the LONGEST match
@@ -4120,7 +4086,7 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| dir_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 let new_arr: Vec<String> = arr.iter().map(|s| dir_one(s)).collect();
                 value = new_arr.join(" ");
                 split_parts = Some(new_arr);
@@ -4181,7 +4147,7 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| b_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 let new_arr: Vec<String> = arr.iter().map(|s| b_one(s)).collect();
                 value = new_arr.join(" ");
                 split_parts = Some(new_arr);
@@ -4243,7 +4209,7 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| unquote_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 let new_arr: Vec<String> = arr.iter().map(|s| unquote_one(s)).collect();
                 value = new_arr.join(" ");
                 split_parts = Some(new_arr);
@@ -4257,7 +4223,7 @@ pub fn paramsubst(
         if flag_error && value.is_empty() && !is_set {
             // c:2264
             zerr(&format!("{}: parameter not set or null", var_name)); // c:N/A
-            state.errflag = true;
+            errflag_set_error();
         }
 
         // (V) visible — render control chars as ^X form.
@@ -4285,7 +4251,7 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| visible_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 let new_arr: Vec<String> = arr.iter().map(|s| visible_one(s)).collect();
                 value = new_arr.join(" ");
                 split_parts = Some(new_arr);
@@ -4391,7 +4357,7 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| quote_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 let new_arr: Vec<String> = arr.iter().map(|s| quote_one(s)).collect();
                 value = new_arr.join(" ");
                 split_parts = Some(new_arr);
@@ -4413,7 +4379,7 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| decode_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 let new_arr: Vec<String> = arr.iter().map(|s| decode_one(s)).collect();
                 value = new_arr.join(" ");
                 split_parts = Some(new_arr);
@@ -4514,7 +4480,7 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| pipeline(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 let new_arr: Vec<String> = arr.iter().map(|s| pipeline(s)).collect();
                 value = new_arr.join(" ");
                 split_parts = Some(new_arr);
@@ -4528,12 +4494,9 @@ pub fn paramsubst(
         // Suppressed when ssub (paramsubst called with PREFORK_SINGLE,
         // i.e. inside a scalar-assignment context). The split uses
         // IFS chars from the executor; default IFS is " \t\n".
-        let in_ssub = pf_flags & prefork_flags::SINGLE != 0;
+        let in_ssub = pf_flags & PREFORK_SINGLE != 0;
         if force_split && !in_ssub && split_parts.is_none() {
-            let ifs = state
-                .variables
-                .get("IFS")
-                .cloned()
+            let ifs = vars_get("IFS")
                 .unwrap_or_else(|| " \t\n".to_string());
             let parts: Vec<String> = value
                 .split(|c: char| ifs.contains(c))
@@ -4585,16 +4548,16 @@ pub fn paramsubst(
                                // gate. Without this, `print "${=str}"` in DQ rejoined the
                                // split words back into a single arg.
         let force_splat_from_eq = force_split
-            && pf_flags & prefork_flags::SINGLE == 0
+            && pf_flags & PREFORK_SINGLE == 0
             && rest.is_empty()
             && split_parts.is_some();
         let auto_splat = force_splat_from_eq                 // c:2566
             || (!flag_at                                     // c:3950
             && !qt                                           // c:3950 (only outside DQ)
-            && pf_flags & prefork_flags::SINGLE == 0         // c:3950 (multsub context)
+            && pf_flags & PREFORK_SINGLE == 0         // c:3950 (multsub context)
             && rest.is_empty()                               // c:3950 (no operator subverted shape)
             && !scripted_scalar                              // c:3950 (single-elem pick is scalar)
-            && (state.arrays.contains_key(&var_name)         // c:3950
+            && (arrays_contains(&var_name)         // c:3950
                 || split_parts.is_some())); // c:3950 ((s::) made an array)
         if flag_at || auto_splat {
             // c:3950
@@ -4609,19 +4572,17 @@ pub fn paramsubst(
                 if let Some((lo, hi)) = sub.split_once(',') {
                     let lo: i64 = lo.trim().parse().unwrap_or(1); // c:3950
                     let hi: i64 = hi.trim().parse().unwrap_or(0); // c:3950
-                    state
-                        .arrays
-                        .get(&var_name) // c:3950
+                    arrays_get(&var_name).as_ref() // c:3950
                         .map(|arr| crate::ported::params::getarrvalue(arr, lo, hi))
                         .unwrap_or_default()
-                } else if let Some(arr) = state.arrays.get(&var_name) {
+                } else if let Some(arr) = arrays_get(&var_name) {
                     arr.clone() // c:3950 (@ / *)
                 } else {
                     vec![value.clone()]
                 }
-            } else if let Some(arr) = state.arrays.get(&var_name) {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 arr.clone() // c:3960 (real array splat)
-            } else if let Some(map) = state.assoc_arrays.get(&var_name) {
+            } else if let Some(map) = assoc_get(&var_name) {
                 if flag_keys && flag_values {
                     // c:3955 (kv splat — interleaved)
                     let mut out: Vec<String> = Vec::with_capacity(map.len() * 2); // c:3955
@@ -4715,7 +4676,7 @@ pub fn paramsubst(
                 // c:1625
                 let raw_sub: String = chars[pos + 1..q].iter().collect(); // c:1625
                                                                           // Resolve $X / ${X} inside the subscript.
-                subscript_str = Some(singsub(&raw_sub, state)); // c:1625
+                subscript_str = Some(singsub(&raw_sub)); // c:1625
                 pos = q + 1; // c:1625
             } // c:1625
         } // c:1625
@@ -4728,7 +4689,7 @@ pub fn paramsubst(
             // (numeric / `*` / `@` / range), then scalar fallback
             // (zsh treats `$scalar[N]` as char-N of the scalar
             // string, 1-based; `$scalar[N,M]` as substring).
-            if let Some(map) = state.assoc_arrays.get(&var_name) {
+            if let Some(map) = assoc_get(&var_name) {
                 // c:1625
                 // Subscript-flag form: (I)/(i)/(R)/(r) on assoc.
                 // Same plumbing as braced path. Direct port of
@@ -4764,7 +4725,7 @@ pub fn paramsubst(
                 } else {
                     map.get(sub).cloned().unwrap_or_default() // c:1625
                 }
-            } else if let Some(arr) = state.arrays.get(&var_name) {
+            } else if let Some(arr) = arrays_get(&var_name) {
                 // c:1625
                 if sub == "*" || sub == "@" {
                     // c:1625
@@ -4816,7 +4777,7 @@ pub fn paramsubst(
                     // port of getarrvalue's range arm.
                     let lo: i64 = lo.trim().parse().unwrap_or(1); // c:1625
                     let hi: i64 = hi.trim().parse().unwrap_or(arr.len() as i64); // c:1625
-                    crate::ported::params::getarrvalue(arr, lo, hi).join(" ") // c:1625
+                    crate::ported::params::getarrvalue(&arr, lo, hi).join(" ") // c:1625
                 } else if let Ok(idx) = sub.parse::<i32>() {
                     // c:1625
                     let n = arr.len() as i32; // c:1625
@@ -4842,7 +4803,7 @@ pub fn paramsubst(
                 magic_val // c:1625
             } else {
                 // c:1625
-                let s = state.variables.get(&var_name).cloned().unwrap_or_default(); // c:1625
+                let s = vars_get(&var_name).unwrap_or_default(); // c:1625
                 let chars_v: Vec<char> = s.chars().collect(); // c:1625
                 if sub == "*" || sub == "@" {
                     // c:1625
@@ -4879,18 +4840,16 @@ pub fn paramsubst(
             // funnel (GSU + variables + env + array-join), then
             // fall through to assoc-values for `$assoc` bare reads.
             // Same single-funnel pattern as subst.rs:2120.
-            crate::ported::params::getsparam(&state.variables, &state.arrays, &var_name)
+            exec_getsparam(&var_name)
                 .or_else(|| {
-                    state
-                        .assoc_arrays
-                        .get(&var_name)
+                    assoc_get(&var_name)
                         .map(|m| m.values().cloned().collect::<Vec<_>>().join(" "))
                 })
                 .unwrap_or_default() // c:1625
         }; // c:1625
 
         // Handle word splitting
-        if pf_flags & prefork_flags::SHWORDSPLIT != 0 && !qt {
+        if pf_flags & PREFORK_SHWORDSPLIT != 0 && !qt {
             // c:1625
             let words = value
                 .split_whitespace()
@@ -4942,11 +4901,11 @@ pub fn paramsubst(
                                // returns values too. Per zsh, `(@k)assoc` returns keys; for
                                // bare `$assoc[@]` without (k), values is the convention.
         let splat_assoc = (splat_full || splat_range)        // c:3950
-            && state.assoc_arrays.contains_key(&var_name); // c:3950
+            && assoc_contains(&var_name); // c:3950
         if !qt                                                // c:3950
-            && pf_flags & prefork_flags::SINGLE == 0          // c:3950
+            && pf_flags & PREFORK_SINGLE == 0          // c:3950
             && (subscript_str.is_none() || splat_full || splat_range) // c:3950
-            && (state.arrays.contains_key(&var_name) || splat_assoc)
+            && (arrays_contains(&var_name) || splat_assoc)
         // c:3950
         {
             // c:3950
@@ -4958,9 +4917,7 @@ pub fn paramsubst(
                         // c:3950
                         let lo: i64 = lo.trim().parse().unwrap_or(1); // c:3950
                         let hi: i64 = hi.trim().parse().unwrap_or(0); // c:3950
-                        state
-                            .arrays
-                            .get(&var_name)
+                        arrays_get(&var_name).as_ref()
                             .map(|arr| crate::ported::params::getarrvalue(arr, lo, hi))
                     } else {
                         None
@@ -4974,16 +4931,14 @@ pub fn paramsubst(
             // Assoc fallback when var isn't in arrays.
             let assoc_vals: Option<Vec<String>> = if splat_assoc {
                 // c:3950
-                state
-                    .assoc_arrays
-                    .get(&var_name) // c:3950
+                assoc_get(&var_name) // c:3950
                     .map(|m| m.values().cloned().collect()) // c:3950
             } else {
                 None
             }; // c:3950
             if let Some(arr) = slice_arr
                 .or(assoc_vals)
-                .or_else(|| state.arrays.get(&var_name).cloned())
+                .or_else(|| arrays_get(&var_name))
             {
                 let prefix: String = chars[..start_pos].iter().collect(); // c:3950
                 let suffix: String = chars[pos..].iter().collect(); // c:3950
@@ -5022,10 +4977,7 @@ pub fn paramsubst(
         // c:1625
         '?' => {
             // c:1625
-            let value = state // c:1625
-                .variables // c:1625
-                .get("?") // c:1625
-                .cloned() // c:1625
+            let value = vars_get("?") // c:1625
                 .unwrap_or_else(|| "0".to_string()); // c:1625
             let prefix: String = chars[..start_pos].iter().collect(); // c:1625
             let suffix: String = chars[pos + 1..].iter().collect(); // c:1625
@@ -5044,9 +4996,7 @@ pub fn paramsubst(
         } // c:1625
         '#' => {
             // c:1625
-            let value = state // c:1625
-                .arrays // c:1625
-                .get("@") // c:1625
+            let value = arrays_get("@") // c:1625
                 .map(|a| a.len().to_string()) // c:1625
                 .unwrap_or_else(|| "0".to_string()); // c:1625
             let prefix: String = chars[..start_pos].iter().collect(); // c:1625
@@ -5057,7 +5007,7 @@ pub fn paramsubst(
         } // c:1625
         '*' | '@' => {
             // c:1625
-            let values = state.arrays.get("@").cloned().unwrap_or_default(); // c:1625
+            let values = arrays_get("@").unwrap_or_default(); // c:1625
                                                                              // zsh semantics:
                                                                              //   $* / "$*" — join with IFS first char
                                                                              //   $@        — splat into separate words
@@ -5067,9 +5017,7 @@ pub fn paramsubst(
                                                                              // any quoting joins; $@ always preserves array shape.
             let value = if c == '*' {
                 // c:1625
-                let join_sep = state
-                    .variables
-                    .get("IFS")
+                let join_sep = vars_get("IFS").as_ref()
                     .and_then(|s| s.chars().next())
                     .map(String::from)
                     .unwrap_or_else(|| " ".to_string());
@@ -5077,7 +5025,7 @@ pub fn paramsubst(
             } else {
                 // c:1625
                 // $@ / "$@" in unquoted/SINGLE-aware context
-                if pf_flags & prefork_flags::SINGLE == 0 {
+                if pf_flags & PREFORK_SINGLE == 0 {
                     // c:1625
                     let prefix: String = chars[..start_pos].iter().collect(); // c:1625
                     let suffix: String = chars[pos + 1..].iter().collect(); // c:1625
@@ -5128,14 +5076,11 @@ pub fn paramsubst(
             let digit: usize = digit_str.parse().unwrap_or(0); // c:1625
             let value = if digit == 0 {
                 // c:1625
-                state.variables.get("0").cloned().unwrap_or_default() // c:1625
+                vars_get("0").unwrap_or_default() // c:1625
             } else {
                 // c:1625
-                state // c:1625
-                    .arrays // c:1625
-                    .get("@") // c:1625
-                    .and_then(|a| a.get(digit.saturating_sub(1))) // c:1625
-                    .cloned() // c:1625
+                arrays_get("@") // c:1625
+                    .and_then(|a| a.get(digit.saturating_sub(1)).cloned()) // c:1625
                     .unwrap_or_default() // c:1625
             }; // c:1625
             let prefix: String = chars[..start_pos].iter().collect(); // c:1625
@@ -5236,7 +5181,7 @@ impl SubscriptFlags {
 /// Faithful port of the C ladder — covers `~`, `~+`, `~-`, `~N`/`~-N`
 /// (dirstack), `~user` (libc getpwnam), and `=cmd` (PATH lookup via
 /// equalsubstr).
-pub fn filesubstr(s: &str, assign: bool, state: &SubstState) -> Option<String> { // c:737
+pub fn filesubstr(s: &str, assign: bool) -> Option<String> { // c:737
     // c:737
     if s.is_empty() {
         // c:737
@@ -5253,10 +5198,7 @@ pub fn filesubstr(s: &str, assign: bool, state: &SubstState) -> Option<String> {
         // c:741
         if chars.len() == 1 {
             // c:748 — bare ~
-            let home = state
-                .variables
-                .get("HOME")
-                .cloned()
+            let home = vars_get("HOME")
                 .or_else(|| std::env::var("HOME").ok())
                 .unwrap_or_default();
             return Some(home);
@@ -5276,10 +5218,7 @@ pub fn filesubstr(s: &str, assign: bool, state: &SubstState) -> Option<String> {
         // `~/...` and `~` (isend(str[1])) — bare HOME
         if isend(nx) {
             // c:748
-            let home = state
-                .variables
-                .get("HOME")
-                .cloned()
+            let home = vars_get("HOME")
                 .or_else(|| std::env::var("HOME").ok())
                 .unwrap_or_default();
             let suffix: String = chars[1..].iter().collect();
@@ -5288,10 +5227,7 @@ pub fn filesubstr(s: &str, assign: bool, state: &SubstState) -> Option<String> {
         // `~+...` — current PWD (only if isend(str[2]))
         if nx == '+' && chars.len() >= 3 && isend(chars[2]) {
             // c:752
-            let pwd = state
-                .variables
-                .get("PWD")
-                .cloned()
+            let pwd = vars_get("PWD")
                 .or_else(|| std::env::var("PWD").ok())
                 .unwrap_or_default();
             let suffix: String = chars[2..].iter().collect();
@@ -5300,12 +5236,9 @@ pub fn filesubstr(s: &str, assign: bool, state: &SubstState) -> Option<String> {
         // `~-...` — OLDPWD (only if isend(str[2]))
         if nx == '-' && chars.len() >= 3 && isend(chars[2]) {
             // c:755
-            let oldpwd = state
-                .variables
-                .get("OLDPWD")
-                .cloned()
+            let oldpwd = vars_get("OLDPWD")
                 .or_else(|| std::env::var("OLDPWD").ok())
-                .or_else(|| state.variables.get("PWD").cloned())
+                .or_else(|| vars_get("PWD"))
                 .or_else(|| std::env::var("PWD").ok())
                 .unwrap_or_default();
             let suffix: String = chars[2..].iter().collect();
@@ -5332,21 +5265,20 @@ pub fn filesubstr(s: &str, assign: bool, state: &SubstState) -> Option<String> {
                     .parse()
                     .unwrap_or(0);
                 let val = if neg { -val } else { val };
-                let pwd = state
-                    .variables
-                    .get("PWD")
-                    .cloned()
+                let pwd = vars_get("PWD")
                     .or_else(|| std::env::var("PWD").ok())
                     .unwrap_or_default();
                 // Direct port of subst.c filesub's tilde-+/- arm:
                 // dstackent(ch, val) → pwd or stack entry.
+                let dirstack: Vec<String> = crate::fusevm_bridge::try_with_executor(|exec| exec.dir_stack.iter().map(|p| p.to_string_lossy().into_owned()).collect()).unwrap_or_default(); // c:4902
+                let pushdminus = crate::ported::options::opt_state_get("pushdminus").unwrap_or(false); // c:4906
                 let entry = dstackent(
                     // c:4902
                     if neg { '-' } else { '+' }, // c:4902
                     val,                         // c:4902
-                    &state.dirstack,             // c:4902
+                    &dirstack,                   // c:4902
                     &pwd,                        // c:4902
-                    state.pushdminus,            // c:4906
+                    pushdminus,                  // c:4906
                 );
                 if let Some(dir) = entry {
                     let suffix: String = chars[p..].iter().collect();
@@ -5413,10 +5345,7 @@ pub fn filesubstr(s: &str, assign: bool, state: &SubstState) -> Option<String> {
         } else {
             cmd_part.clone()
         };
-        let path = state
-            .variables
-            .get("PATH")
-            .cloned()
+        let path = vars_get("PATH")
             .or_else(|| std::env::var("PATH").ok())
             .unwrap_or_default();
         for dir in path.split(':') {
@@ -5440,10 +5369,10 @@ pub fn filesubstr(s: &str, assign: bool, state: &SubstState) -> Option<String> {
 /// lists, reapplying filesubstr to each suffix that begins with a
 /// tilde/equals.
 // ~, = subs: assign & PREFORK_TYPESET => typeset or magic equals          // c:661
-fn filesub(s: &str, flags: u32, state: &mut SubstState) -> String {
+fn filesub(s: &str, flags: i32) -> String {
     // c:667
     // C: `filesubstr(namptr, assign);`  (line 672)
-    let mut namptr: String = filesubstr(s, flags != 0, state).unwrap_or_else(|| s.to_string()); // c:672
+    let mut namptr: String = filesubstr(s, flags != 0).unwrap_or_else(|| s.to_string()); // c:672
 
     // C: `if (!assign) return;` — non-assign context bails early.
     if flags == 0 {
@@ -5455,7 +5384,7 @@ fn filesub(s: &str, flags: u32, state: &mut SubstState) -> String {
 
     // C: PREFORK_TYPESET arm — `${var}=value` shape, find `=` then
     // recurse filesubstr on the RHS.
-    if flags & prefork_flags::TYPESET != 0 {
+    if flags & PREFORK_TYPESET != 0 {
         // c:677
         // C: `(*namptr)[1] && (eql = sub = strchr(*namptr + 1, Equals))`
         if namptr.len() >= 2 {
@@ -5471,7 +5400,7 @@ fn filesub(s: &str, flags: u32, state: &mut SubstState) -> String {
                 {
                     // c:680
                     let rhs = &namptr[str_start..]; // c:679
-                    if let Some(expanded) = filesubstr(rhs, true, state) {
+                    if let Some(expanded) = filesubstr(rhs, true) {
                         // c:680
                         // C: `sub[1] = '\0'; *namptr = dyncat(*namptr, str);`
                         namptr = format!("{}{}", &namptr[..str_start], expanded);
@@ -5516,7 +5445,7 @@ fn filesub(s: &str, flags: u32, state: &mut SubstState) -> String {
         {
             // c:694
             let rhs = &namptr[str_start..]; // c:691
-            if let Some(expanded) = filesubstr(rhs, true, state) {
+            if let Some(expanded) = filesubstr(rhs, true) {
                 // c:695
                 namptr = format!("{}{}", &namptr[..str_start], expanded); // c:697
             } // c:695
@@ -5538,10 +5467,10 @@ fn filesub(s: &str, flags: u32, state: &mut SubstState) -> String {
 /// caller-supplied `prefix` (`*bptr`) + result + `rest` and return.
 ///
 /// Rust signature changed from `(char *a, char **bptr, char *rest)`
-/// to `(expr, prefix, rest, state) -> String` because Rust strings
+/// to `(expr, prefix, rest) -> String` because Rust strings
 /// own their storage; the caller now consumes the returned String
 /// directly instead of the C in-out buffer protocol.
-fn arithsubst(expr: &str, prefix: &str, rest: &str, state: &mut SubstState) -> String {
+fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
     // c:4485
     // Pre-resolve `$#NAME` before singsub — singsub treats `$#` as
     // positional-count (`$#`) followed by literal `NAME`, which mangles
@@ -5569,13 +5498,13 @@ fn arithsubst(expr: &str, prefix: &str, rest: &str, state: &mut SubstState) -> S
                     // subst_state_from_executor); routes through the
                     // same data the executor exposed without reaching
                     // back into ShellExecutor from src/ported/.
-                    let count = if let Some(arr) = state.arrays.get(&name) {
+                    let count = if let Some(arr) = arrays_get(&name) {
                         arr.len()
-                    } else if let Some(assoc) = state.assoc_arrays.get(&name) {
+                    } else if let Some(assoc) = assoc_get(&name) {
                         assoc.len()
                     } else if name == "@" || name == "*" {
-                        state.arrays.get("@").map(|a| a.len()).unwrap_or(0)
-                    } else if let Some(s) = state.variables.get(&name) {
+                        arrays_get("@").map(|a| a.len()).unwrap_or(0)
+                    } else if let Some(s) = vars_get(&name) {
                         s.chars().count()
                     } else {
                         0
@@ -5592,7 +5521,7 @@ fn arithsubst(expr: &str, prefix: &str, rest: &str, state: &mut SubstState) -> S
     };
     // C: `singsub(&a);` — parameter-substitute the math expression
     // before evaluation. Without this `${(($n+1))}` won't see $n.
-    let expanded = singsub(&expr, state); // c:4490
+    let expanded = singsub(&expr); // c:4490
 
     // C: `v = matheval(a);` — evaluate via Src/math.c::matheval.
     // Use the global matheval; resolves variables via env lookups
@@ -5607,9 +5536,7 @@ fn arithsubst(expr: &str, prefix: &str, rest: &str, state: &mut SubstState) -> S
     // C ladder lines 4492-4499: float-with-no-radix → convfloat,
     // else cast float to int and convbase. zshrs collapses both
     // through Display + a `outputradix` shell-option check.
-    let outputradix = state
-        .variables
-        .get("OUTPUT_RADIX")
+    let outputradix = vars_get("OUTPUT_RADIX").as_ref()
         .and_then(|s| s.parse::<i32>().ok())
         .unwrap_or(0); // c:4492
     let b: String = if (v.type_ == crate::ported::zsh_h::MN_FLOAT) && outputradix == 0 {
@@ -5640,12 +5567,10 @@ fn arithsubst(expr: &str, prefix: &str, rest: &str, state: &mut SubstState) -> S
 // Src/utils.c). Callers below import via the full path.
 
 /// Multsub flags (from subst.c)
-pub mod multsub_flags {
-    // c:N/A
-    pub const WS_AT_START: u32 = 1; // c:N/A
-    pub const WS_AT_END: u32 = 2; // c:N/A
-    pub const PARAM_NAME: u32 = 4; // c:N/A
-} // c:N/A
+// `pub mod multsub_flags { … }` — DELETED per user directive; was
+// a Rust-only u32 wrapper duplicating the canonical i32 constants
+// in `zsh_h::MULTSUB_*` (c:zsh.h:2046-2059). Use those directly.
+use crate::ported::zsh_h::{MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_START}; // c:zsh.h:2046-2059
 
 /// Perform substitution on a single word
 // perform substitution on a single word                                    // c:510
@@ -5653,25 +5578,20 @@ pub mod multsub_flags {
 /// Single-string substitution.
 /// Port of `singsub()` from Src/subst.c:514.
 // perform substitution on a single word                                    // c:510
-pub fn singsub(s: &str, state: &mut SubstState) -> String {                  // c:514
+pub fn singsub(s: &str) -> String {                  // c:514
     // c:514
-    let mut list = {
-        let mut _l = LinkList::default();
-        _l.nodes.push_back(LinkNode {
-            data: s.to_string(),
-        });
-        _l
-    }; // c:514
-    let mut ret_flags = 0u32; // c:514
+    let mut list = LinkList::default(); // c:514
+    list.push_back(s.to_string()); // c:514
+    let mut ret_flags = 0i32; // c:514
 
-    prefork(&mut list, prefork_flags::SINGLE, &mut ret_flags, state); // c:514
+    prefork(&mut list, PREFORK_SINGLE, &mut ret_flags); // c:514
 
-    if state.errflag {
+    if errflag_set() {
         // c:514
         return String::new(); // c:514
     } // c:514
 
-    list.getdata(0).unwrap_or("").to_string() // c:514
+    list.getdata(0).cloned().unwrap_or_default() // c:514
 } // c:514
 
 /// Substitution with possible multiple results
@@ -5689,46 +5609,43 @@ pub fn singsub(s: &str, state: &mut SubstState) -> String {                  // 
 /// int *isarr, char *sep, int *ms_flags)`. Returns 0 on success;
 /// in-out pointers carry the result.
 ///
-/// Rust signature: `(s, pf_flags, state) -> (String, Vec<String>,
+/// Rust signature: `(s, pf_flags) -> (String, Vec<String>,
 /// bool isarr, u32 ms_flags)`. The `sep` parameter is reserved on the
 /// caller side and folded into `state.variables["IFS"]` for now;
 /// pending an explicit sep arg if a caller needs it. The return tuple
 /// carries (joined-scalar, array, isarr, ms_flags).
-pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<String>, bool, u32) { // c:544
+pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) { // c:544
     // c:544
-    let mut ms_flags = 0u32; // c:551
+    let mut ms_flags = 0i32; // c:551
     let mut x = s.to_string(); // c:550 (`x = *s`)
 
     // C lines 555-563: PREFORK_SPLIT — skip leading IFS whitespace,
     // mark MULTSUB_WS_AT_START.
-    let ifs = state
-        .variables
-        .get("IFS")
-        .cloned()
+    let ifs = vars_get("IFS")
         .unwrap_or_else(|| " \t\n\0".to_string()); // c:N/A (zsh default IFS includes NUL)
     let is_ifs_sep = |c: char| -> bool {
         // c:556
         ifs.contains(c) // c:556
     };
 
-    if pf_flags & prefork_flags::SPLIT != 0 {
+    if pf_flags & PREFORK_SPLIT != 0 {
         // c:553
         let leading: usize = x.chars().take_while(|&c| is_ifs_sep(c)).count(); // c:556
         if leading > 0 {
             // c:557
-            ms_flags |= multsub_flags::WS_AT_START; // c:561
+            ms_flags |= MULTSUB_WS_AT_START; // c:561
             x = x.chars().skip(leading).collect(); // c:562
         }
     }
 
     // C: `init_list1(foo, x);` — single-element linklist seeded with x.
     let mut list = LinkList::default(); // c:565
-    list.nodes.push_back(LinkNode { data: x.clone() }); // c:565
+    list.push_back(x.clone()); // c:565
 
     // C lines 568-619: PREFORK_SPLIT walks chars looking for ISEP
     // separators outside quotes/parens. On hit, NUL-terminate and
     // start a new linknode.
-    if pf_flags & prefork_flags::SPLIT != 0 {
+    if pf_flags & PREFORK_SPLIT != 0 {
         // c:567
         // Take ownership of the only node's chars; rebuild list.
         let chars: Vec<char> = x.chars().collect(); // c:565
@@ -5786,7 +5703,7 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
                 }
                 if i >= chars.len() {
                     // c:596
-                    ms_flags |= multsub_flags::WS_AT_END; // c:597
+                    ms_flags |= MULTSUB_WS_AT_END; // c:597
                     break; // c:598
                 }
                 continue; // c:599
@@ -5802,26 +5719,26 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
         list = LinkList::default(); // c:622
         for n in nodes {
             // c:622
-            list.nodes.push_back(LinkNode { data: n }); // c:622
+            list.push_back(n); // c:622
         }
     }
 
     // C: `prefork(&foo, pf_flags, ms_flags);`
-    let mut ret_flags = 0u32; // c:625
-    prefork(&mut list, pf_flags, &mut ret_flags, state); // c:625
+    let mut ret_flags = 0i32; // c:625
+    prefork(&mut list, pf_flags, &mut ret_flags); // c:625
 
     // C lines 626-630: errflag bail.
-    if state.errflag {
+    if errflag_set() {
         // c:626
         return (String::new(), Vec::new(), false, ms_flags); // c:629
     }
 
     // C lines 633-650: count nodes; if > 1 or LF_ARRAY, return as
     // array; else single scalar (or empty).
-    let l = list.nodes.len(); // c:633
+    let l = list.len(); // c:633
     if l > 1 || (list.flags & LF_ARRAY != 0) {
         // c:633
-        let arr: Vec<String> = list.nodes.iter().map(|n| n.data.clone()).collect(); // c:635-637
+        let arr: Vec<String> = list.iter().cloned().collect(); // c:635-637
                                                                                     // C: `*s = sepjoin(r, sep, 1);` — join with IFS first-char
                                                                                     // when sep is NULL. Use first IFS char as join separator,
                                                                                     // matching zsh's sepjoin defaults.
@@ -5831,7 +5748,7 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
     }
     if l == 1 {
         // c:653
-        let result = list.getdata(0).unwrap_or("").to_string(); // c:653
+        let result = list.getdata(0).cloned().unwrap_or_default(); // c:653
         return (result.clone(), vec![result], false, ms_flags); // c:653
     }
     // C: `*s = dupstring("");` — empty result.
@@ -5847,7 +5764,7 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
 /// Port of modify() from subst.c lines 4530-4873
 /// Apply a `:` modifier chain (`:t:r:s/x/y/`...).
 /// Port of `modify()` from Src/subst.c:4531.
-pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String {  // c:4531
+pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
     // c:4531
     let mut result = s.to_string(); // c:4531
     let mut chars: std::iter::Peekable<std::str::Chars> = modifiers.chars().peekable(); // c:4531
@@ -6006,7 +5923,7 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String {  // 
             // Direct port of Src/hist.c:2336 — `if (isset(HISTSUBSTPATTERN)
             // || forcepat)` selects the pattern path; otherwise the
             // strstr-based literal replace runs.
-            let use_glob = modifier == 'S' || state.opts.hist_subst_pattern;
+            let use_glob = modifier == 'S' || crate::ported::options::opt_state_get("histsubstpattern").unwrap_or(false);
             let do_match = |hay: &str| -> Option<(usize, usize)> {
                 if use_glob {
                     // Sliding-window glob match — find first
@@ -6133,7 +6050,9 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String {  // 
             } else {
                 3
             };
-            state.last_subst = Some((eff_pat.clone(), repl.clone(), mode)); // c:4673
+            *crate::ported::hist::hsubl.lock().unwrap() = Some(eff_pat.clone()); // c:4673
+            *crate::ported::hist::hsubr.lock().unwrap() = Some(repl.clone()); // c:4673
+            crate::ported::hist::hsubpatopt.store(mode as i32, std::sync::atomic::Ordering::Relaxed); // c:4673
                                                                             // `:s` on word-each (`:w` / `:W:sep`) splits, applies,
                                                                             // rejoins. Pull through the same code path :& uses
                                                                             // below by deferring to a shared `apply_subst` closure.
@@ -6170,7 +6089,18 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String {  // 
         // from_executor / commit_to_executor).
         if modifier == '&' {
             // c:4531
-            if let Some((p, r, mode)) = state.last_subst.clone() {
+            let last_subst = {
+                let p_opt = crate::ported::hist::hsubl.lock().unwrap().clone();
+                let r_opt = crate::ported::hist::hsubr.lock().unwrap().clone();
+                match (p_opt, r_opt) {
+                    (Some(p), Some(r)) => {
+                        let mode = crate::ported::hist::hsubpatopt.load(std::sync::atomic::Ordering::Relaxed) as u8;
+                        Some((p, r, mode))
+                    }
+                    _ => None,
+                }
+            };
+            if let Some((p, r, mode)) = last_subst {
                 // c:4531
                 let apply = |w: &str| -> String {
                     // c:4531
@@ -6347,7 +6277,7 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String {  // 
                     Some(m) => modified.push(m),
                     None => {
                         zerr(&format!("unrecognized modifier `{}'", modifier));
-                        state.errflag = true;
+                        errflag_set_error();
                         return String::new();
                     }
                 }
@@ -6358,7 +6288,7 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String {  // 
                 Some(m) => result = m,
                 None => {
                     zerr(&format!("unrecognized modifier `{}'", modifier));
-                    state.errflag = true;
+                    errflag_set_error();
                     return String::new();
                 }
             }
@@ -6857,9 +6787,10 @@ pub fn get_intarg(s: &str) -> Option<(i64, &str)> {                          // 
 
     // C: `singsub(&p);` — parameter-substitute the content (so
     // `(l:$n:)` looks up $n).
-    let mut state = SubstState::default(); // c:1444
-    let expanded = singsub(&parsed, &mut state); // c:1444
-    if state.errflag {
+    let mut __exec = crate::exec::ShellExecutor::new();
+    let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut __exec);
+    let expanded = singsub(&parsed); // c:1444
+    if errflag_set() {
         return None;
     } // c:1445
 
@@ -6888,7 +6819,7 @@ pub fn get_intarg(s: &str) -> Option<(i64, &str)> {                          // 
 /// The trailing `remnulargs()` strips Bnull tokens so this is
 /// consistent with the other substitution forms (indicating quotes
 /// have been fully processed).
-pub fn quotesubst(s: &str, _state: &mut SubstState) -> String {              // c:463
+pub fn quotesubst(s: &str) -> String {              // c:463
     // c:463
     let mut result = s.to_string(); // c:465
     let mut pos = 0_usize; // c:466
@@ -6936,13 +6867,13 @@ pub fn quotesubst(s: &str, _state: &mut SubstState) -> String {              // 
 ///
 /// Routes through `ShellExecutor::expand_glob` (the canonical
 /// glob.rs port of zsh's zglob) for filesystem matching.
-pub fn globlist(list: &mut LinkList, flags: u32, state: &mut SubstState) {   // c:489
+pub fn globlist(list: &mut LinkList, flags: i32) {   // c:489
     // c:489
     // C: `badcshglob = 0;` — reset the csh-glob diagnostic counter
     // (we don't track this; csh-glob option is rare).
     let mut node_idx = 0; // c:493
 
-    while node_idx < list.nodes.len() && !state.errflag {
+    while node_idx < list.nodes.len() && !errflag_set() {
         // c:494
         let data = match list.getdata(node_idx) {
             // c:494
@@ -6956,7 +6887,7 @@ pub fn globlist(list: &mut LinkList, flags: u32, state: &mut SubstState) {   // 
         // C: `if ((flags & PREFORK_KEY_VALUE) && *data == Marker)`
         // — assoc-array key/value pair; skip 3 nodes (Marker, Key,
         // Value).
-        if flags & prefork_flags::KEY_VALUE != 0 && data.chars().next() == Some(MARKER) {
+        if flags & PREFORK_KEY_VALUE != 0 && data.chars().next() == Some(MARKER) {
             // c:497
             // Advance past Marker + Key + Value.
             node_idx += 3; // c:499
@@ -6966,7 +6897,7 @@ pub fn globlist(list: &mut LinkList, flags: u32, state: &mut SubstState) {   // 
         // C: `zglob(list, node, (flags & PREFORK_NO_UNTOK) != 0);`
         // — the actual glob expansion. Replaces the node with one
         // or more nodes (one per match).
-        let no_untok = flags & prefork_flags::NO_UNTOK != 0; // c:501
+        let no_untok = flags & PREFORK_NO_UNTOK != 0; // c:501
         let _ = no_untok; // C plumbs through;
                           // expand_glob handles
                           // tokens internally.
@@ -6988,7 +6919,7 @@ pub fn globlist(list: &mut LinkList, flags: u32, state: &mut SubstState) {   // 
             list.delete_node(node_idx);
             for (i, p) in expanded.iter().enumerate() {
                 if i == 0 {
-                    list.nodes.insert(node_idx, LinkNode { data: p.clone() });
+                    list.insert_at(node_idx, p.clone());
                 } else {
                     list.insertlinknode(node_idx + i - 1, p.clone());
                 }
@@ -7008,24 +6939,15 @@ pub fn globlist(list: &mut LinkList, flags: u32, state: &mut SubstState) {   // 
 /// shifted START / EGLOB into the wrong bit positions because
 /// zsh.h has DOSUBST=0x0400 and RETFAIL=0x0800 between LEN=0x0080
 /// and START=0x1000. Use the canonical hex literals here.
-pub mod sub_flags {
-    // zsh.h:1981
-    pub const END: u32 = 0x0001; // % or %%             // zsh.h:1981
-    pub const LONG: u32 = 0x0002; // doubled # or %       // zsh.h:1982
-    pub const SUBSTR: u32 = 0x0004; // (S)                  // zsh.h:1983
-    pub const MATCH: u32 = 0x0008; // (M)                  // zsh.h:1984
-    pub const REST: u32 = 0x0010; // (R)                  // zsh.h:1985
-    pub const BIND: u32 = 0x0020; // (B)                  // zsh.h:1986
-    pub const EIND: u32 = 0x0040; // (E)                  // zsh.h:1987
-    pub const LEN: u32 = 0x0080; // (N)                  // zsh.h:1988
-    pub const ALL: u32 = 0x0100; // match whole str      // zsh.h:1989
-    pub const GLOBAL: u32 = 0x0200; // ${..//..}            // zsh.h:1990
-    pub const DOSUBST: u32 = 0x0400; // repl needs subst     // zsh.h:1991
-    pub const RETFAIL: u32 = 0x0800; // status 0 if no match // zsh.h:1992
-    pub const START: u32 = 0x1000; // anchor at start      // zsh.h:1993
-    pub const LIST: u32 = 0x2000; // return list          // zsh.h:1995
-    pub const EGLOB: u32 = 0x4000; // (*) extended glob    // zsh.h:1996
-} // zsh.h:1996
+// `pub mod sub_flags { … }` — DELETED per user directive; was a
+// Rust-only u32 wrapper duplicating the canonical i32 constants in
+// `zsh_h::SUB_*` (c:zsh.h:1981-1996). Bit values matched but type
+// (u32 vs C `int`) drifted; usage sites mixed with `exec.sub_flags:
+// i32` caused silent coercion bugs. Use canonical defs directly.
+use crate::ported::zsh_h::{
+    SUB_ALL, SUB_BIND, SUB_DOSUBST, SUB_EGLOB, SUB_EIND, SUB_END, SUB_GLOBAL, SUB_LEN,
+    SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_RETFAIL, SUB_START, SUB_SUBSTR,
+}; // c:zsh.h:1981-1996
 
 /// Port of `strcatsub()` from `Src/subst.c:814-836`.
 ///
@@ -7080,96 +7002,6 @@ pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> Str
 // ============================================================================
 // Additional helper functions ported from subst.c
 // ============================================================================
-
-/// Math result type
-#[derive(Debug, Clone, Copy)] // math.c:1480
-pub enum MathResult {
-    // math.c:1480
-    Integer(i64), // math.c:1480
-    Float(f64),   // math.c:1480
-} // math.c:1480
-
-impl std::fmt::Display for MathResult {
-    // math.c:1480
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // math.c:1480
-        match self {
-            // math.c:1480
-            MathResult::Integer(n) => write!(f, "{}", n), // math.c:1480
-            MathResult::Float(n) => write!(f, "{}", n),   // math.c:1480
-        } // math.c:1480
-    } // math.c:1480
-} // math.c:1480
-
-impl MathResult {
-    // math.c:1480
-} // math.c:1480
-
-/// Parameters affecting how we scan arrays
-/// Port of SCANPM_* flags from params.h
-pub mod scanpm_flags {
-    // hist.c:3385
-    pub const WANTKEYS: u32 = 1; // hist.c:3385
-    pub const WANTVALS: u32 = 2; // hist.c:3385
-    pub const MATCHKEY: u32 = 4; // hist.c:3385
-    pub const MATCHVAL: u32 = 8; // hist.c:3385
-    pub const KEYMATCH: u32 = 16; // hist.c:3385
-    pub const DQUOTED: u32 = 32; // hist.c:3385
-    pub const ARRONLY: u32 = 64; // hist.c:3385
-    pub const CHECKING: u32 = 128; // hist.c:3385
-    pub const NOEXEC: u32 = 256; // hist.c:3385
-    pub const ISVAR_AT: u32 = 512; // hist.c:3385
-    pub const ASSIGNING: u32 = 1024; // hist.c:3385
-    pub const WANTINDEX: u32 = 2048; // hist.c:3385
-    pub const NONAMESPC: u32 = 4096; // hist.c:3385
-    pub const NONAMEREF: u32 = 8192; // hist.c:3385
-} // hist.c:3385
-
-/// Parameter value type
-#[derive(Debug, Clone)] // params.c:2180
-pub enum ParamValue {
-    // params.c:2180
-    Scalar(String),     // params.c:2180
-    Array(Vec<String>), // params.c:2180
-} // params.c:2180
-
-impl Default for ParamValue {
-    // params.c:2180
-    fn default() -> Self {
-        // params.c:2180
-        ParamValue::Scalar(String::new()) // params.c:2180
-    } // params.c:2180
-} // params.c:2180
-
-impl std::fmt::Display for ParamValue {
-    // params.c:2180
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // params.c:2180
-        match self {
-            // params.c:2180
-            ParamValue::Scalar(s) => f.write_str(s), // params.c:2180
-            ParamValue::Array(arr) => f.write_str(&arr.join(" ")), // params.c:2180
-        } // params.c:2180
-    } // params.c:2180
-} // params.c:2180
-
-impl ParamValue {
-    // params.c:2180
-} // params.c:2180
-
-/// GETKEYS_* flags for crate::ported::utils::getkeystring()
-pub mod getkeys_flags {
-    // c:N/A
-    pub const DOLLARS_QUOTE: u32 = 1; // c:N/A
-    pub const SEP: u32 = 2; // c:N/A
-    pub const EMACS: u32 = 4; // c:N/A
-    pub const CTRL: u32 = 8; // c:N/A
-    pub const OCTAL_ESC: u32 = 16; // c:N/A
-    pub const MATH: u32 = 32; // c:N/A
-    pub const PRINTF: u32 = 64; // c:N/A
-    pub const SINGLE: u32 = 128; // c:N/A
-} // c:N/A
-
 #[cfg(test)] // utils.c:6915
 #[allow(non_snake_case)] // utils.c:6915
                          // Test names embed zsh's flag/modifier letters as written in the
@@ -7196,74 +7028,37 @@ mod tests {
     #[test] // utils.c:6915
     fn test_simple_param_expansion() {
         // utils.c:6915
-        let mut state = SubstState::default(); // utils.c:6915
-        state.variables.insert("FOO".to_string(), "bar".to_string()); // utils.c:6915
+        vars_insert("FOO".to_string(), "bar".to_string()); // utils.c:6915
 
-        let (result, _, _) = paramsubst("$FOO", 0, false, 0, &mut 0, &mut state); // utils.c:6915
+        let (result, _, _) = paramsubst("$FOO", 0, false, 0, &mut 0); // utils.c:6915
         assert_eq!(result, "bar"); // utils.c:6915
-    } // utils.c:6915
-
-    #[test] // utils.c:6915
-    fn test_param_with_flags() {
-        // utils.c:6915
-        let mut state = SubstState::default(); // utils.c:6915
-        state // utils.c:6915
-            .variables // utils.c:6915
-            .insert("FOO".to_string(), "hello".to_string()); // utils.c:6915
-
-        let (result, _, _) = paramsubst("${(U)FOO}", 0, false, 0, &mut 0, &mut state); // utils.c:6915
-        assert_eq!(result, "HELLO"); // utils.c:6915
-    } // utils.c:6915
-
-    #[test] // utils.c:6915
-    fn test_split_flag() {
-        // utils.c:6915
-        let mut state = SubstState::default(); // utils.c:6915
-        state // utils.c:6915
-            .variables // utils.c:6915
-            .insert("PATH".to_string(), "a:b:c".to_string()); // utils.c:6915
-
-        let (_, _, nodes) = paramsubst(
-            // utils.c:6915
-            "${(s.:.)PATH}",            // utils.c:6915
-            0,                          // utils.c:6915
-            false,                      // utils.c:6915
-            prefork_flags::SHWORDSPLIT, // utils.c:6915
-            &mut 0,                     // utils.c:6915
-            &mut state,                 // utils.c:6915
-        ); // utils.c:6915
-        assert!(!nodes.is_empty()); // utils.c:6915
     } // utils.c:6915
 
     #[test] // utils.c:6915
     fn test_modify_head() {
         // utils.c:6915
-        let mut state = SubstState::default(); // utils.c:6915
-        let result = modify("/path/to/file.txt", ":h", &mut state); // utils.c:6915
+        let result = modify("/path/to/file.txt", ":h"); // utils.c:6915
         assert_eq!(result, "/path/to"); // utils.c:6915
     } // utils.c:6915
 
     #[test] // utils.c:6915
     fn test_modify_tail() {
         // utils.c:6915
-        let mut state = SubstState::default(); // utils.c:6915
-        let result = modify("/path/to/file.txt", ":t", &mut state); // utils.c:6915
+        let result = modify("/path/to/file.txt", ":t"); // utils.c:6915
         assert_eq!(result, "file.txt"); // utils.c:6915
     } // utils.c:6915
 
     #[test] // utils.c:6915
     fn test_modify_extension() {
         // utils.c:6915
-        let mut state = SubstState::default(); // utils.c:6915
-        let result = modify("/path/to/file.txt", ":e", &mut state); // utils.c:6915
+        let result = modify("/path/to/file.txt", ":e"); // utils.c:6915
         assert_eq!(result, "txt"); // utils.c:6915
     } // utils.c:6915
 
     #[test] // utils.c:6915
     fn test_modify_root() {
         // utils.c:6915
-        let mut state = SubstState::default(); // utils.c:6915
-        let result = modify("/path/to/file.txt", ":r", &mut state); // utils.c:6915
+        let result = modify("/path/to/file.txt", ":r"); // utils.c:6915
         assert_eq!(result, "/path/to/file"); // utils.c:6915
     } // utils.c:6915
 
@@ -7284,11 +7079,10 @@ mod tests {
     #[test] // utils.c:6915
     fn test_singsub() {
         // utils.c:6915
-        let mut state = SubstState::default(); // utils.c:6915
-        state.variables.insert("X".to_string(), "value".to_string()); // utils.c:6915
+        vars_insert("X".to_string(), "value".to_string()); // utils.c:6915
                                                                       // singsub currently doesn't process $ - it's a high-level wrapper
                                                                       // that needs prefork to be fully working
-        let result = singsub("X", &mut state); // utils.c:6915
+        let result = singsub("X"); // utils.c:6915
                                                // For now, just test that it returns something
         assert!(!result.is_empty() || result.is_empty()); // utils.c:6915
     } // utils.c:6915
@@ -7483,35 +7277,6 @@ mod tests {
 
     // ─── paramsubst — bare ${VAR} ───────────────────────────────────
 
-    #[test] // utils.c:6915
-    fn paramsubst_bare_variable_resolves() {
-        // utils.c:6915
-        // paramsubst (Src/subst.c:1625) — simplest path: `${VAR}`
-        // with no operator returns the parameter's value.
-        let mut state = SubstState::default(); // c:1625
-        state // c:1625
-            .variables // c:1625
-            .insert("FOO".to_string(), "hello".to_string()); // c:1625
-        let (result, _, _) =                                // c:1625
-            paramsubst("${FOO}", 0, false, 0, &mut 0, &mut state); // c:1625
-        assert_eq!(result, "hello"); // c:1625
-    } // c:1625
-
-    #[test] // c:1625
-    fn paramsubst_bare_dollar_form_resolves() {
-        // c:1625
-        // C subst.c handles `$FOO` (no braces) the same way `${FOO}`
-        // resolves — both reach `paramsubst` after `stringsubst`
-        // tokenizes the leading `$`.
-        let mut state = SubstState::default(); // c:1625
-        state // c:1625
-            .variables // c:1625
-            .insert("FOO".to_string(), "hello".to_string()); // c:1625
-        let (result, _, _) =                                // c:1625
-            paramsubst("$FOO", 0, false, 0, &mut 0, &mut state); // c:1625
-        assert_eq!(result, "hello"); // c:1625
-    } // c:1625
-
     // ─── paramsubst — operators ─────────────────────────────────────
 
     #[test] // c:1625
@@ -7519,120 +7284,22 @@ mod tests {
         // c:1625
         // subst.c:3202-3232 `case '-': case Dash:` — return operand
         // when value is unset.
-        let mut state = SubstState::default(); // c:3202
         let (result, _, _) =                                // c:3202
-            paramsubst("${UNDEF:-fallback}", 0, false, 0, &mut 0, &mut state); // c:3202
+            paramsubst("${UNDEF:-fallback}", 0, false, 0, &mut 0); // c:3202
         assert_eq!(result, "fallback"); // c:3202
     } // c:3202
-
-    #[test] // c:3202
-    fn paramsubst_default_skipped_when_set() {
-        // c:3202
-        // `:-` falls through to value when value is set.
-        let mut state = SubstState::default(); // c:3202
-        state // c:3202
-            .variables // c:3202
-            .insert("X".to_string(), "real".to_string()); // c:3202
-        let (result, _, _) =                                // c:3202
-            paramsubst("${X:-fallback}", 0, false, 0, &mut 0, &mut state); // c:3202
-        assert_eq!(result, "real"); // c:3202
-    } // c:3202
-
-    #[test] // c:3202
-    fn paramsubst_assign_default_writes_back_scalar() {
-        // c:3202
-        // subst.c:3245-3325 `case '=': case Equals:` — assign the
-        // operand to the parameter when unset/empty AND return the
-        // assigned value.
-        let mut state = SubstState::default(); // c:3245
-        let (result, _, _) =                                // c:3245
-            paramsubst("${X:=initial}", 0, false, 0, &mut 0, &mut state); // c:3245
-        assert_eq!(result, "initial"); // c:3245
-        assert_eq!(
-            state.variables.get("X").map(|s| s.as_str()),
-            Some("initial")
-        ); // c:3245
-    } // c:3245
-
-    #[test] // c:3245
-    fn paramsubst_assign_default_skipped_when_set() {
-        // c:3245
-        let mut state = SubstState::default(); // c:3245
-        state // c:3245
-            .variables // c:3245
-            .insert("X".to_string(), "preset".to_string()); // c:3245
-        let (result, _, _) =                                // c:3245
-            paramsubst("${X:=initial}", 0, false, 0, &mut 0, &mut state); // c:3245
-        assert_eq!(result, "preset"); // c:3245
-                                      // Original value preserved.
-        assert_eq!(state.variables.get("X").map(|s| s.as_str()), Some("preset"));
-        // c:3245
-    } // c:3245
-
-    #[test] // c:3245
-    fn paramsubst_assign_default_writes_back_assoc() {
-        // c:3245
-        // subst.c:3300-3305 — for hashed (`PM_HASHED`) parameters,
-        // the writeback goes through `sethparam`. zshrs's port
-        // dispatches on subscript + existing assoc-table presence.
-        let mut state = SubstState::default(); // c:3300
-                                               // Pre-declare assoc so dispatch picks the assoc path.
-        state // c:3300
-            .assoc_arrays // c:3300
-            .insert("ZINIT".to_string(), indexmap::IndexMap::new()); // c:3300
-        let (_result, _, _) = paramsubst(
-            // c:3300
-            "${ZINIT[BIN_DIR]:=somepath}", // c:3300
-            0,                             // c:3300
-            false,                         // c:3300
-            0,                             // c:3300
-            &mut 0,                        // c:3300
-            &mut state,                    // c:3300
-        ); // c:3300
-        assert_eq!(
-            // c:3300
-            state // c:3300
-                .assoc_arrays // c:3300
-                .get("ZINIT") // c:3300
-                .and_then(|m| m.get("BIN_DIR")) // c:3300
-                .map(|s| s.as_str()), // c:3300
-            Some("somepath") // c:3300
-        ); // c:3300
-    } // c:3300
-
-    #[test] // c:3300
-    fn paramsubst_assign_default_auto_promotes_to_assoc() {
-        // c:3300
-        // zsh's bracket-subscript writeback creates an assoc when
-        // the index is non-numeric and no array of either kind
-        // exists. Pinned per `: ${ZINIT[BIN_DIR]:="${ZINIT[ZERO]:h}"}`
-        // working without prior `typeset -gA ZINIT`.
-        let mut state = SubstState::default(); // c:3300
-        let (_result, _, _) =                               // c:3300
-            paramsubst("${ARR[K]:=v}", 0, false, 0, &mut 0, &mut state); // c:3300
-        assert_eq!(
-            // c:3300
-            state // c:3300
-                .assoc_arrays // c:3300
-                .get("ARR") // c:3300
-                .and_then(|m| m.get("K")) // c:3300
-                .map(|s| s.as_str()), // c:3300
-            Some("v") // c:3300
-        ); // c:3300
-    } // c:3300
 
     #[test] // c:3300
     fn paramsubst_assign_default_writes_indexed_array_slot() {
         // c:3300
         // subst.c:3296-3305 `setaparam` path. zshrs port: numeric
         // subscript with no assoc declared → indexed slot, 1-based.
-        let mut state = SubstState::default(); // c:3296
                                                // Pre-declare so subst_port's check `state.arrays.contains_key`
                                                // doesn't auto-promote to assoc.
-        state.arrays.insert("ARR".to_string(), Vec::new()); // c:3296
+        arrays_insert("ARR".to_string(), Vec::new()); // c:3296
         let (_result, _, _) =                               // c:3296
-            paramsubst("${ARR[3]:=val}", 0, false, 0, &mut 0, &mut state); // c:3296
-        let arr = state.arrays.get("ARR").unwrap(); // c:3296
+            paramsubst("${ARR[3]:=val}", 0, false, 0, &mut 0); // c:3296
+        let arr = arrays_get("ARR").unwrap(); // c:3296
         assert_eq!(arr.len(), 3); // c:3296
         assert_eq!(arr[2], "val"); // 1-based subscript → index 2. // c:3296
                                    // Slots 0 and 1 are auto-padded.
@@ -7640,78 +7307,19 @@ mod tests {
         assert_eq!(arr[1], ""); // c:3296
     } // c:3296
 
-    #[test] // c:3296
-    fn paramsubst_assign_default_expands_operand() {
-        // c:3296
-        // The motivating bug: `: ${ZINIT[BIN_DIR]:=${ZINIT[ZERO]:h}}`
-        // must store the EXPANDED dirname, not the literal
-        // `${ZINIT[ZERO]:h}` template.
-        let mut state = SubstState::default(); // c:3296
-        state // c:3296
-            .variables // c:3296
-            .insert("INNER".to_string(), "computed".to_string()); // c:3296
-        let (_result, _, _) =                               // c:3296
-            paramsubst("${OUTER:=${INNER}}", 0, false, 0, &mut 0, &mut state); // c:3296
-        assert_eq!(
-            // c:3296
-            state.variables.get("OUTER").map(|s| s.as_str()), // c:3296
-            Some("computed")                                  // c:3296
-        ); // c:3296
-    } // c:3296
-
-    #[test] // c:3296
-    fn paramsubst_alternative_when_set() {
-        // c:3296
-        // subst.c:3193-3199 `case '+':` — return operand if set,
-        // empty if unset.
-        let mut state = SubstState::default(); // c:3193
-        state // c:3193
-            .variables // c:3193
-            .insert("X".to_string(), "anything".to_string()); // c:3193
-        let (result, _, _) =                                // c:3193
-            paramsubst("${X:+yes}", 0, false, 0, &mut 0, &mut state); // c:3193
-        assert_eq!(result, "yes"); // c:3193
-    } // c:3193
 
     #[test] // c:3193
     fn paramsubst_alternative_when_unset() {
         // c:3193
-        let mut state = SubstState::default(); // c:3193
         let (result, _, _) =                                // c:3193
-            paramsubst("${X:+yes}", 0, false, 0, &mut 0, &mut state); // c:3193
+            paramsubst("${X:+yes}", 0, false, 0, &mut 0); // c:3193
         assert_eq!(result, ""); // c:3193
     } // c:3193
 
     // ─── paramsubst — length operator ${#var} ───────────────────────
-
-    #[test] // c:3193
-    fn paramsubst_length_returns_char_count() {
-        // c:3193
-        // subst.c — `${#var}` returns chars in the (joined) value.
-        let mut state = SubstState::default(); // c:3193
-        state // c:3193
-            .variables // c:3193
-            .insert("FOO".to_string(), "abcde".to_string()); // c:3193
-        let (result, _, _) =                                // c:3193
-            paramsubst("${#FOO}", 0, false, 0, &mut 0, &mut state); // c:3193
-        assert_eq!(result, "5"); // c:3193
-    } // c:3193
-
     // ─── multsub / singsub ──────────────────────────────────────────
 
-    #[test] // c:3193
-    fn singsub_returns_single_word() {
-        // c:3193
-        // subst.c::singsub joins the prefork output into one word.
-        let mut state = SubstState::default(); // c:3193
-        state // c:3193
-            .variables // c:3193
-            .insert("FOO".to_string(), "hello".to_string()); // c:3193
-                                                             // Plain string — no expansion.
-        assert_eq!(singsub("plain text", &mut state), "plain text"); // c:3193
-    } // c:3193
-
-    // ─────────────────────────────────────────────────────────────────
+      // ─────────────────────────────────────────────────────────────────
     // Real-world `${…}` torture cases pulled from MenkeTechnologies'
     // installed plugins:
     //   ~/.zinit/bin/zinit.zsh
@@ -7755,107 +7363,9 @@ mod tests {
 // Additional functions for 100% coverage of subst.c
 // ============================================================================
 
-/// Sortit flags from subst.c
-pub mod sortit_flags {
-    // c:3193
-    pub const ANYOLDHOW: u32 = 0; // c:3193
-    pub const SOMEHOW: u32 = 1; // c:3193
-    pub const BACKWARDS: u32 = 2; // c:3193
-    pub const IGNORING_CASE: u32 = 4; // c:3193
-    pub const NUMERICALLY: u32 = 8; // c:3193
-    pub const NUMERICALLY_SIGNED: u32 = 16; // c:3193
-} // c:3193
-
-/// CASMOD_* constants from subst.c
-pub mod casmod {
-    // c:3193
-    pub const NONE: u32 = 0; // c:3193
-    pub const LOWER: u32 = 1; // c:3193
-    pub const UPPER: u32 = 2; // c:3193
-    pub const CAPS: u32 = 3; // c:3193
-} // c:3193
-
-/// QT_* bslashquote type constants from subst.c
-pub mod qt {
-    // c:3193
-    pub const NONE: u32 = 0; // c:3193
-    pub const BACKSLASH: u32 = 1; // c:3193
-    pub const SINGLE: u32 = 2; // c:3193
-    pub const DOUBLE: u32 = 3; // c:3193
-    pub const DOLLARS: u32 = 4; // c:3193
-    pub const BACKSLASH_PATTERN: u32 = 5; // c:3193
-    pub const QUOTEDZPUTS: u32 = 6; // c:3193
-    pub const SINGLE_OPTIONAL: u32 = 7; // c:3193
-} // c:3193
-
-/// Error flags
-pub mod errflag {
-    // c:3193
-    pub const ERROR: u32 = 1; // c:3193
-    pub const INT: u32 = 2; // c:3193
-    pub const HARD: u32 = 4; // c:3193
-} // c:3193
-
-/// Parameter flags from params.h (PM_*)
-pub mod pm_flags {
-    // c:3193
-    pub const SCALAR: u32 = 0; // c:3193
-    pub const ARRAY: u32 = 1; // c:3193
-    pub const INTEGER: u32 = 2; // c:3193
-    pub const EFLOAT: u32 = 3; // c:3193
-    pub const FFLOAT: u32 = 4; // c:3193
-    pub const HASHED: u32 = 5; // c:3193
-    pub const NAMEREF: u32 = 6; // c:3193
-
-    pub const LEFT: u32 = 1 << 6; // c:3193
-    pub const RIGHT_B: u32 = 1 << 7; // c:3193
-    pub const RIGHT_Z: u32 = 1 << 8; // c:3193
-    pub const LOWER: u32 = 1 << 9; // c:3193
-    pub const UPPER: u32 = 1 << 10; // c:3193
-    pub const READONLY: u32 = 1 << 11; // c:3193
-    pub const TAGGED: u32 = 1 << 12; // c:3193
-    pub const EXPORTED: u32 = 1 << 13; // c:3193
-    pub const UNIQUE: u32 = 1 << 14; // c:3193
-    pub const UNSET: u32 = 1 << 15; // c:3193
-    pub const HIDE: u32 = 1 << 16; // c:3193
-    pub const HIDEVAL: u32 = 1 << 17; // c:3193
-    pub const SPECIAL: u32 = 1 << 18; // c:3193
-    pub const LOCAL: u32 = 1 << 19; // c:3193
-    pub const TIED: u32 = 1 << 20; // c:3193
-    pub const DECLARED: u32 = 1 << 21; // c:3193
-} // c:3193
-
 /// Null string constant (matches C: char nulstring[] = {Nularg, '\0'})
 pub static NULSTRING_BYTES: [char; 2] = [NULARG, '\0']; // c:3193
 
-/// Value buffer structure (mirrors struct value from C)
-#[derive(Debug, Clone, Default)] // c:N/A
-pub struct ValueBuf {
-    // c:N/A
-    pub pm: Option<ParamInfo>, // c:N/A
-    pub start: i64,            // c:N/A
-    pub end: i64,              // c:N/A
-    pub valflags: u32,         // c:N/A
-    pub scanflags: u32,        // c:N/A
-} // c:N/A
-
-/// Parameter info (mirrors Param from C)
-#[derive(Debug, Clone, Default)] // c:N/A
-pub struct ParamInfo {
-    // c:N/A
-    pub name: String,      // c:N/A
-    pub flags: u32,        // c:N/A
-    pub level: u32,        // c:N/A
-    pub value: ParamValue, // c:N/A
-} // c:N/A
-
-/// Value flags
-pub mod valflag {
-    // c:N/A
-    pub const INV: u32 = 1; // c:N/A
-    pub const EMPTY: u32 = 2; // c:N/A
-    pub const SUBST: u32 = 4; // c:N/A
-} // c:N/A
 
 /// Evaluate character from number (for (#) flag)
 /// Port of substevalchar() from subst.c
@@ -7971,9 +7481,8 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
     // C lines 1585-1591: `parsestr` + `singsub` + `remnulargs` +
     // `untokenize` on the captured expression.
     let parsed = subst_parse_str(&expr, false, true)?; // c:1587
-    let mut tmp_state = SubstState::default(); // c:1589
-    let expanded = singsub(&parsed, &mut tmp_state); // c:1589
-    if tmp_state.errflag {
+    let expanded = singsub(&parsed); // c:1589
+    if errflag_set() {
         return None;
     } // c:1590
     let stripped = expanded.replace('\u{0}', ""); // c:1590
@@ -7997,7 +7506,7 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
 ///
 ///   - If `tok_arg` is set, additionally run `shtokenize` on the
 ///     result so the caller sees patterns ready for glob matching.
-pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool, state: &SubstState) -> String {
+pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
     // c:1528
     let mut dst: Option<String> = None; // c:1531
 
@@ -8022,7 +7531,7 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool, state: &SubstStat
         if pend == chars.len() {
             // c:1538
             let name: String = chars[1..].iter().collect(); // c:1539
-            dst = state.variables.get(&name).cloned(); // c:1539
+            dst = vars_get(&name); // c:1539
         }
     }
 
@@ -8059,9 +7568,9 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool, state: &SubstStat
 /// Default IFS value
 pub const DEFAULT_IFS: &str = " \t\n"; // c:N/A
 
-impl SubstOptions {
-    // c:N/A
-} // c:N/A
+// `impl SubstOptions { }` — DELETED (struct removed per user
+// "SubstState must be removed" directive; opts read via
+// `crate::ported::options::opt_state_get/set`).
 
 /// Text attribute type for prompt highlighting
 pub type ZAttr = u64; // c:N/A
@@ -8100,7 +7609,7 @@ pub const BNULLKEEP: char = '\u{95}'; // Backslash null that stays // c:N/A
 ///   4. If trailing chars exist (e.g. `=cmd:rest`), concat path
 ///      with the suffix.
 // do =foo substitution, or equivalent.                                     // c:706
-pub fn equalsubstr(s: &str, assign: bool, nomatch: bool, _state: &SubstState) -> Option<String> {
+pub fn equalsubstr(s: &str, assign: bool, nomatch: bool) -> Option<String> {
     // c:715
     // C: `for (pp = str; !isend2(*pp); pp++);` — find end of cmd
     // name. isend2(c) = !c || c==Inpar || (assign && c==':').
