@@ -277,22 +277,35 @@ pub fn watch3ary(entry: &UtmpEntry, logged_in: bool, fmt: &str) -> String {  // 
                     }
                     'M' => result.push_str(&entry.host),
                     't' | '@' => {
-                        let time = printtime(entry.time, "%l:%M%p");
-                        result.push_str(&time);
+                        // c:319-320 — strftime(buf2, sizeof(buf2), "%l:%M%p", tm);
+                        use chrono::{Local, TimeZone};
+                        if let Some(dt) = Local.timestamp_opt(entry.time, 0).single() {
+                            result.push_str(&dt.format("%l:%M%p").to_string());
+                        }
                     }
                     'T' => {
-                        let time = printtime(entry.time, "%H:%M");
-                        result.push_str(&time);
+                        // c:323-324 — strftime(buf2, sizeof(buf2), "%H:%M", tm);
+                        use chrono::{Local, TimeZone};
+                        if let Some(dt) = Local.timestamp_opt(entry.time, 0).single() {
+                            result.push_str(&dt.format("%H:%M").to_string());
+                        }
                     }
                     'w' => {
-                        let time = printtime(entry.time, "%a %e");
-                        result.push_str(&time);
+                        // c:327-328 — strftime(buf2, sizeof(buf2), "%a %e", tm);
+                        use chrono::{Local, TimeZone};
+                        if let Some(dt) = Local.timestamp_opt(entry.time, 0).single() {
+                            result.push_str(&dt.format("%a %e").to_string());
+                        }
                     }
                     'W' => {
-                        let time = printtime(entry.time, "%m/%d/%y");
-                        result.push_str(&time);
+                        // c:331-332 — strftime(buf2, sizeof(buf2), "%m/%d/%y", tm);
+                        use chrono::{Local, TimeZone};
+                        if let Some(dt) = Local.timestamp_opt(entry.time, 0).single() {
+                            result.push_str(&dt.format("%m/%d/%y").to_string());
+                        }
                     }
                     'D' => {
+                        use chrono::{Local, TimeZone};
                         if chars.peek() == Some(&'{') {
                             chars.next();
                             let mut custom_fmt = String::new();
@@ -302,11 +315,15 @@ pub fn watch3ary(entry: &UtmpEntry, logged_in: bool, fmt: &str) -> String {  // 
                                 }
                                 custom_fmt.push(fc);
                             }
-                            let time = printtime(entry.time, &custom_fmt);
-                            result.push_str(&time);
+                            // c:335-336 — user-supplied strftime format
+                            if let Some(dt) = Local.timestamp_opt(entry.time, 0).single() {
+                                result.push_str(&dt.format(&custom_fmt).to_string());
+                            }
                         } else {
-                            let time = printtime(entry.time, "%y-%m-%d");
-                            result.push_str(&time);
+                            // c:339-340 — strftime(buf2, sizeof(buf2), "%y-%m-%d", tm);
+                            if let Some(dt) = Local.timestamp_opt(entry.time, 0).single() {
+                                result.push_str(&dt.format("%y-%m-%d").to_string());
+                            }
                         }
                     }
                     '%' => result.push('%'),
@@ -373,17 +390,9 @@ pub fn watch3ary(entry: &UtmpEntry, logged_in: bool, fmt: &str) -> String {  // 
     result
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/watch.c`.
-fn printtime(timestamp: i64, fmt: &str) -> String {
-    use chrono::{Local, TimeZone};
-
-    if let Some(dt) = Local.timestamp_opt(timestamp, 0).single() {
-        dt.format(fmt).to_string()
-    } else {
-        String::new()
-    }
-}
+// printtime helper deleted — C uses inline strftime() at each format
+// directive in watchlog2() (c:319-340), so the Rust port inlines the
+// chrono equivalent at each callsite to match.
 
 
 /// Perform watch check and return login/logout events
