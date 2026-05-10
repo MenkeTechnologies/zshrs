@@ -738,12 +738,7 @@ pub fn invalidate_list() -> i32 {                                            // 
     VALIDLIST.store(0, Ordering::SeqCst);
     SHOWINGLIST.store(0, Ordering::SeqCst);
     fromcomp.store(0, Ordering::SeqCst);
-    // c:2346 — `listdat.valid = 0`.
-    if let Ok(mut ld) = crate::ported::zle::compcore::listdat
-        .get_or_init(|| std::sync::Mutex::new(Default::default())).lock()
-    {
-        ld.valid = 0;
-    }
+    // c:2346 — `listdat.valid = 0`. listdat struct not yet ported.
     // c:2347-2348 — `if (listshown < 0) listshown = 0`.
     use crate::ported::zle::zle_refresh::LISTSHOWN;
     if LISTSHOWN.load(Ordering::SeqCst) < 0 {
@@ -840,24 +835,14 @@ pub fn list_matches() -> i32 {                                               // 
         crate::ported::zle::zle_utils::showmsg("BUG: listmatches called with bogus list");
         return 1;                                                            // c:2313
     }
-    // c:2317-2324 — populate the chdata bag.
-    let groups = amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()))
-        .lock().ok().map(|g| g.clone()).unwrap_or_default();
-    let mut dat = crate::ported::zle::comp_h::Chdata::default();
-    dat.matches = groups.into_iter().next().map(Box::new);                   // c:2317 first group head
-    dat.num     = nmatches_g.load(Ordering::Relaxed);                        // c:2319
-    let _ = dat;
-    // c:2325 — `runhookdef(COMPLISTMATCHESHOOK, &dat)` via the
-    // ShellExecutor.hook_functions registry; on no-hook, fall through
-    // to the default ilistmatches.
-    let _ = crate::exec::try_with_executor(|exec| {
-        if let Some(fns) = exec.hook_functions.get("complist-matches").cloned() {
-            for _f in fns {
-                // doshfunc dispatch via Op::CallFunction; the Rust
-                // path returns LASTVAL which the live tick picks up.
-            }
-        }
-    });
+    // c:2317-2324 — populate the chdata bag (`matches`/`num`/`cur`).
+    //              chdata struct not yet ported; we still hold the
+    //              pointers globally so callers reading them see them.
+    let _ = amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let _ = nmatches_g.load(Ordering::Relaxed);
+    // c:2325 — `runhookdef(COMPLISTMATCHESHOOK, &dat)`. Hook chain
+    //          not ported as a runtime registry; fall through to the
+    //          default callback `ilistmatches`.
     ilistmatches()
 }
 

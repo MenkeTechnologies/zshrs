@@ -296,8 +296,8 @@ impl ZshCompiler {
             // Functionally equivalent to zsh's `csp = cmdsp` save +
             // `cmdsp = csp` restore wrapping the sublist.
             let token = match op {
-                SublistOp::And => crate::prompt::CmdState::CmdAnd as u8,
-                SublistOp::Or => crate::prompt::CmdState::CmdOr as u8,
+                SublistOp::And => crate::ported::zsh_h::CS_CMDAND as u8,
+                SublistOp::Or => crate::ported::zsh_h::CS_CMDOR as u8,
             };
             self.emit_cmd_push(token);
             chain_pushes += 1;
@@ -513,7 +513,7 @@ impl ZshCompiler {
             // runs with the parent's untouched cmdstack — that's the
             // C `execcmd_exec(stage_1)` call BEFORE the cmdpush.
             if i > 0 {
-                sub.emit_cmd_push(crate::prompt::CmdState::Pipe as u8);
+                sub.emit_cmd_push(crate::ported::zsh_h::CS_PIPE as u8);
             }
             if *merge {
                 let one_const = sub.builder.add_constant(Value::str("1"));
@@ -575,7 +575,7 @@ impl ZshCompiler {
                 // {list} — brace group; no isolation.
                 // cmdstack: direct port of Src/loop.c:746
                 //   cmdpush(CS_CURSH);
-                self.emit_cmd_push(crate::prompt::CmdState::Cursh as u8);
+                self.emit_cmd_push(crate::ported::zsh_h::CS_CURSH as u8);
                 self.compile_program(prog);
                 self.emit_cmd_pop();
             }
@@ -2820,7 +2820,7 @@ impl ZshCompiler {
         let mut end_jumps = Vec::new();
 
         // First branch — the test is errexit-suppressed.
-        self.emit_cmd_push(crate::prompt::CmdState::If as u8);
+        self.emit_cmd_push(crate::ported::zsh_h::CS_IF as u8);
         self.errexit_suppress_depth += 1;
         self.compile_program(&if_node.cond);
         self.errexit_suppress_depth -= 1;
@@ -2828,7 +2828,7 @@ impl ZshCompiler {
         self.builder.emit(Op::GetStatus, 0);
         let mut skip_body = self.builder.emit(Op::JumpIfFalse(0), 0);
         // CS_IFTHEN = 6 = CmdState::Then
-        self.emit_cmd_push(crate::prompt::CmdState::Then as u8);
+        self.emit_cmd_push(crate::ported::zsh_h::CS_IFTHEN as u8);
         self.compile_program(&if_node.then);
         self.emit_cmd_pop();
         end_jumps.push(self.builder.emit(Op::Jump(0), 0));
@@ -2837,7 +2837,7 @@ impl ZshCompiler {
 
         // elif branches — same suppression for each cond.
         for (cond, body) in &if_node.elif {
-            self.emit_cmd_push(crate::prompt::CmdState::Elif as u8);
+            self.emit_cmd_push(crate::ported::zsh_h::CS_ELIF as u8);
             self.errexit_suppress_depth += 1;
             self.compile_program(cond);
             self.errexit_suppress_depth -= 1;
@@ -2845,7 +2845,7 @@ impl ZshCompiler {
             self.builder.emit(Op::GetStatus, 0);
             skip_body = self.builder.emit(Op::JumpIfFalse(0), 0);
             // CS_ELIFTHEN = 26 = CmdState::ElifThen, prints "elif-then"
-            self.emit_cmd_push(crate::prompt::CmdState::ElifThen as u8);
+            self.emit_cmd_push(crate::ported::zsh_h::CS_ELIFTHEN as u8);
             self.compile_program(body);
             self.emit_cmd_pop();
             end_jumps.push(self.builder.emit(Op::Jump(0), 0));
@@ -2857,7 +2857,7 @@ impl ZshCompiler {
         // emit a Jump-past-default so the no-match SetStatus(0)
         // doesn't clobber else_body's exit code.
         if let Some(else_) = &if_node.else_ {
-            self.emit_cmd_push(crate::prompt::CmdState::Else as u8);
+            self.emit_cmd_push(crate::ported::zsh_h::CS_ELSE as u8);
             self.compile_program(else_);
             self.emit_cmd_pop();
             end_jumps.push(self.builder.emit(Op::Jump(0), 0));
@@ -2895,9 +2895,9 @@ impl ZshCompiler {
         //   cmdpush(isuntil ? CS_UNTIL : CS_WHILE);
         // popped after the loop body.
         let cs_token = if w.until {
-            crate::prompt::CmdState::Until as u8
+            crate::ported::zsh_h::CS_UNTIL as u8
         } else {
-            crate::prompt::CmdState::While as u8
+            crate::ported::zsh_h::CS_WHILE as u8
         };
         self.emit_cmd_push(cs_token);
         let status_slot = self.next_slot;
@@ -2962,7 +2962,7 @@ impl ZshCompiler {
         // time — Src/parse.c:972/977 differentiates CS_FOR vs
         // CS_FOREACH at parse time only, but execfor always uses
         // CS_FOR.
-        self.emit_cmd_push(crate::prompt::CmdState::For as u8);
+        self.emit_cmd_push(crate::ported::zsh_h::CS_FOR as u8);
         match &f.list {
             ForList::Words(words) => {
                 self.compile_for_words(&f.var, words, &f.body);
@@ -3330,7 +3330,7 @@ impl ZshCompiler {
         use crate::parse::CaseTerm;
         // cmdstack: direct port of Src/loop.c:615 `cmdpush(CS_CASE);`
         // wrapping the whole case statement.
-        self.emit_cmd_push(crate::prompt::CmdState::Case as u8);
+        self.emit_cmd_push(crate::ported::zsh_h::CS_CASE as u8);
         // Word goes onto a slot for repeated comparison.
         self.compile_word_str(&c.word);
         let word_slot = self.next_slot;
@@ -3435,7 +3435,7 @@ impl ZshCompiler {
 
     fn compile_repeat(&mut self, r: &crate::parse::ZshRepeat) {
         // cmdstack: direct port of Src/loop.c:522 `cmdpush(CS_REPEAT);`
-        self.emit_cmd_push(crate::prompt::CmdState::Repeat as u8);
+        self.emit_cmd_push(crate::ported::zsh_h::CS_REPEAT as u8);
         let i_slot = self.next_slot;
         self.next_slot += 1;
         let count_slot = self.next_slot;
@@ -3576,7 +3576,7 @@ impl ZshCompiler {
         self.builder
             .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
         self.builder.emit(Op::Pop, 0);
-        self.emit_cmd_push(crate::prompt::CmdState::Cond as u8);
+        self.emit_cmd_push(crate::ported::zsh_h::CS_COND as u8);
         // Result on stack: bool. Status set after this returns.
         self.compile_cond_expr(c);
         self.emit_cmd_pop();
@@ -4031,7 +4031,7 @@ impl ZshCompiler {
         self.builder
             .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
         self.builder.emit(Op::Pop, 0);
-        self.emit_cmd_push(crate::prompt::CmdState::Math as u8);
+        self.emit_cmd_push(crate::ported::zsh_h::CS_MATH as u8);
         // Compound `(( expr ))` — set status based on whether expr is non-zero.
         // Subscripted-array assignment (`((a[i]=v))`) needs to bypass
         // ArithCompiler (which doesn't write back through arr[idx])
