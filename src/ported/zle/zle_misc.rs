@@ -2,11 +2,6 @@
 //!
 //! Direct port from zsh/Src/Zle/zle_misc.c
 //!
-//! insert a zle string, with repetition and suffix removal                  // c:33
-//! Set the base for a digit argument.                                       // c:1034
-//! Suffix system                                                            // c:1500
-//! Fix the suffix in place, if there is one, making it non-removable.       // c:1820
-//!
 //! Implements misc editing widgets:
 //! - self-insert, self-insert-unmeta
 //! - accept-line, accept-and-hold
@@ -626,8 +621,61 @@ pub fn addsuffix() -> i32 { 0 }                                              // 
 /// Port of `addsuffixstring()` from Src/Zle/zle_misc.c:1580. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn addsuffixstring() -> i32 { 0 }
 
-/// Port of `argumentbase()` from Src/Zle/zle_misc.c:1038. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn argumentbase() -> i32 { 0 }
+/// Port of `argumentbase()` from `Src/Zle/zle_misc.c:1037`.
+/// ```c
+/// int
+/// argumentbase(char **args)
+/// {
+///     int multbase;
+///     if (*args)
+///         multbase = (int)zstrtol(*args, NULL, 0);
+///     else
+///         multbase = zmod.mult;
+///     if (multbase < 2 || multbase > ('9' - '0' + 1) + ('z' - 'a' + 1))
+///         return 1;
+///     zmod.base = multbase;
+///     zmod.flags = 0;
+///     zmod.mult = 1;
+///     zmod.tmult = 1;
+///     zmod.vibuf = 0;
+///     prefixflag = 1;
+///     return 0;
+/// }
+/// ```
+/// `argument-base` widget — set the numeric base for digit-arg
+/// parsing. Valid range 2..36 (10 digits + 26 letters). Returns 1
+/// for out-of-range bases without changing state.
+pub fn argumentbase(zle: &mut Zle, args: &[String]) -> i32 {                 // c:1037
+    use super::zle_main::ModifierFlags;
+    // c:1042-1045 — `if (*args) multbase = zstrtol(...) else zmod.mult`.
+    let multbase = if let Some(arg) = args.first() {
+        // c:1043 — `zstrtol(*args, NULL, 0)`. Base 0 means auto
+        // (octal "0…", hex "0x…", else decimal).
+        let s = arg.as_str();
+        if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+            i32::from_str_radix(hex, 16).unwrap_or(0)
+        } else if s.starts_with('0') && s.len() > 1 {
+            i32::from_str_radix(&s[1..], 8).unwrap_or(0)
+        } else {
+            s.parse::<i32>().unwrap_or(0)
+        }
+    } else {
+        zle.zmod.mult                                                        // c:1045
+    };
+    // c:1047-1048 — range check 2..(10+26)=36.
+    if multbase < 2 || multbase > 36 {
+        return 1;
+    }
+    zle.zmod.base = multbase;                                                // c:1050
+    // c:1053-1056 — reset modifier apart from base.
+    zle.zmod.flags = ModifierFlags::empty();
+    zle.zmod.mult = 1;
+    zle.zmod.tmult = 1;
+    zle.zmod.vibuf = 0;
+    // c:1059 — still operating on prefix arg.
+    zle.prefixflag = true;
+    0                                                                        // c:1061 return 0
+}
 
 /// Port of `backwarddeletechar()` from Src/Zle/zle_misc.c:180. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn backwarddeletechar() -> i32 { 0 }
@@ -923,5 +971,66 @@ mod tests {
         assert!(!z.insmode);
         overwritemode(&mut z);
         assert!(z.insmode);
+    }
+
+    // ---------- argumentbase real-port tests ----------
+
+    #[test]
+    fn argumentbase_with_arg_sets_base() {
+        // c:1043 — parse arg, c:1050 set zmod.base.
+        let mut z = Zle::new();
+        let r = argumentbase(&mut z, &["8".to_string()]);
+        assert_eq!(r, 0);
+        assert_eq!(z.zmod.base, 8);
+        assert!(z.prefixflag);
+        // c:1053-1056 — modifier reset.
+        assert_eq!(z.zmod.mult, 1);
+        assert_eq!(z.zmod.tmult, 1);
+        assert_eq!(z.zmod.vibuf, 0);
+    }
+
+    #[test]
+    fn argumentbase_no_arg_uses_zmod_mult() {
+        // c:1045 — fallback to zmod.mult when no arg.
+        let mut z = Zle::new();
+        z.zmod.mult = 16;
+        argumentbase(&mut z, &[]);
+        assert_eq!(z.zmod.base, 16);
+    }
+
+    #[test]
+    fn argumentbase_rejects_below_two() {
+        // c:1047-1048 — base < 2 → return 1, state unchanged.
+        let mut z = Zle::new();
+        z.zmod.base = 10;
+        let r = argumentbase(&mut z, &["1".to_string()]);
+        assert_eq!(r, 1);
+        assert_eq!(z.zmod.base, 10); // unchanged
+    }
+
+    #[test]
+    fn argumentbase_rejects_above_36() {
+        // c:1047-1048 — base > 36 → return 1.
+        let mut z = Zle::new();
+        z.zmod.base = 10;
+        let r = argumentbase(&mut z, &["100".to_string()]);
+        assert_eq!(r, 1);
+        assert_eq!(z.zmod.base, 10);
+    }
+
+    #[test]
+    fn argumentbase_hex_prefix() {
+        // c:1043 — `zstrtol(s, NULL, 0)`: '0x10' → 16.
+        let mut z = Zle::new();
+        argumentbase(&mut z, &["0x10".to_string()]);
+        assert_eq!(z.zmod.base, 16);
+    }
+
+    #[test]
+    fn argumentbase_octal_prefix() {
+        // c:1043 — '010' → octal 8.
+        let mut z = Zle::new();
+        argumentbase(&mut z, &["010".to_string()]);
+        assert_eq!(z.zmod.base, 8);
     }
 }
