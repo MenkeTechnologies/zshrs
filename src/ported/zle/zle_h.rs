@@ -482,6 +482,7 @@ pub type REFRESH_CHAR = char;                                                // 
 /// From zle.h:516-520: the (possibly wide) character. If `atr`
 /// contains `TXT_MULTIWORD_MASK`, an index into the set of
 /// multiword symbols (only if MULTIBYTE_SUPPORT is present).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct REFRESH_ELEMENT {                                                 // c:515
     /// The (possibly wide) character.
     pub chr: REFRESH_CHAR,                                                   // c:521

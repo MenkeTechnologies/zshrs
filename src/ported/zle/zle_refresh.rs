@@ -1016,18 +1016,230 @@ pub fn wpfxlen() -> i32 { 0 }
 /// Port of `zle_free_highlight()` from Src/Zle/zle_refresh.c:415. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn zle_free_highlight() -> i32 { 0 }
 
-/// Port of `ZR_memset()` from Src/Zle/zle_refresh.c:86. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `ZR_memset()` from `Src/Zle/zle_refresh.c:85`.
+/// ```c
+/// static void
+/// ZR_memset(REFRESH_ELEMENT *dst, REFRESH_ELEMENT rc, int len)
+/// {
+///     while (len--)
+///         *dst++ = rc;
+/// }
+/// ```
+/// Fill `dst[0..len]` with copies of `rc`. Equivalent to
+/// `memset` for REFRESH_ELEMENT slices.
 #[allow(non_snake_case)]
-pub fn ZR_memset() -> i32 { 0 }
+pub fn ZR_memset(                                                            // c:85
+    dst: &mut [crate::ported::zle::zle_h::REFRESH_ELEMENT],
+    rc: crate::ported::zle::zle_h::REFRESH_ELEMENT,
+    len: usize,
+) {
+    let n = len.min(dst.len());
+    for slot in dst.iter_mut().take(n) {                                     // c:88-89 while (len--) *dst++ = rc
+        *slot = rc;
+    }
+}
 
-/// Port of `ZR_strcpy()` from Src/Zle/zle_refresh.c:95. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `ZR_strcpy()` from `Src/Zle/zle_refresh.c:94`.
+/// ```c
+/// static void
+/// ZR_strcpy(REFRESH_ELEMENT *dst, const REFRESH_ELEMENT *src)
+/// {
+///     while ((*dst++ = *src++).chr != ZWC('\0'))
+///         ;
+/// }
+/// ```
+/// Copy a NUL-terminated REFRESH_ELEMENT string from `src` to
+/// `dst`. The terminator is INCLUDED in the copy.
 #[allow(non_snake_case)]
-pub fn ZR_strcpy() -> i32 { 0 }
+pub fn ZR_strcpy(                                                            // c:94
+    dst: &mut [crate::ported::zle::zle_h::REFRESH_ELEMENT],
+    src: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
+) {
+    let mut i = 0;
+    loop {                                                                   // c:97 while ((*dst++ = *src++).chr != ZWC('\0'))
+        if i >= dst.len() || i >= src.len() {
+            break;
+        }
+        dst[i] = src[i];
+        if src[i].chr == '\0' {
+            break;
+        }
+        i += 1;
+    }
+}
 
-/// Port of `ZR_strlen()` from Src/Zle/zle_refresh.c:102. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `ZR_strlen()` from `Src/Zle/zle_refresh.c:101`.
+/// ```c
+/// static size_t
+/// ZR_strlen(const REFRESH_ELEMENT *wstr)
+/// {
+///     int len = 0;
+///     while (wstr++->chr != ZWC('\0'))
+///         len++;
+///     return len;
+/// }
+/// ```
+/// Length of a NUL-terminated REFRESH_ELEMENT string.
 #[allow(non_snake_case)]
-pub fn ZR_strlen() -> i32 { 0 }
+pub fn ZR_strlen(wstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT]) -> usize {  // c:101
+    let mut len = 0;                                                         // c:104 int len = 0
+    while len < wstr.len() && wstr[len].chr != '\0' {                        // c:106 while (wstr++->chr != ZWC('\0'))
+        len += 1;                                                            // c:107 len++
+    }
+    len                                                                      // c:109 return len
+}
 
-/// Port of `ZR_strncmp()` from Src/Zle/zle_refresh.c:120. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `ZR_strncmp()` from `Src/Zle/zle_refresh.c:119`.
+/// ```c
+/// static int
+/// ZR_strncmp(const REFRESH_ELEMENT *oldwstr, const REFRESH_ELEMENT *newwstr,
+///            int len)
+/// {
+///     while (len--) {
+///         if ((!(oldwstr->atr & TXT_MULTIWORD_MASK) && !oldwstr->chr) ||
+///             (!(newwstr->atr & TXT_MULTIWORD_MASK) && !newwstr->chr))
+///             return !ZR_equal(*oldwstr, *newwstr);
+///         if (!ZR_equal(*oldwstr, *newwstr))
+///             return 1;
+///         oldwstr++;
+///         newwstr++;
+///     }
+///     return 0;
+/// }
+/// ```
+/// Simplified strcmp: returns 0 if first `len` elements match
+/// (chr+atr pair-equal), 1 otherwise. Stops early at NUL in
+/// either string (treating it as the shorter-string boundary).
 #[allow(non_snake_case)]
-pub fn ZR_strncmp() -> i32 { 0 }
+pub fn ZR_strncmp(                                                           // c:119
+    oldwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
+    newwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
+    len: usize,
+) -> i32 {
+    use crate::ported::zsh_h::TXT_MULTIWORD_MASK;
+    let mut i = 0;
+    while i < len {                                                          // c:123 while (len--)
+        if i >= oldwstr.len() || i >= newwstr.len() {
+            // C reads past end via pointer; we bound it.
+            return if oldwstr.get(i) == newwstr.get(i) { 0 } else { 1 };
+        }
+        let o = oldwstr[i];
+        let n = newwstr[i];
+        // c:124-126 — `if early-NUL → return !equal`.
+        let old_is_nul = (o.atr & TXT_MULTIWORD_MASK) == 0 && o.chr == '\0';
+        let new_is_nul = (n.atr & TXT_MULTIWORD_MASK) == 0 && n.chr == '\0';
+        if old_is_nul || new_is_nul {
+            return if o == n { 0 } else { 1 };                               // c:126 !ZR_equal
+        }
+        if o != n {                                                          // c:127 if (!ZR_equal(...)) return 1
+            return 1;
+        }
+        i += 1;                                                              // c:129-130 oldwstr++; newwstr++
+    }
+    0                                                                        // c:133 return 0
+}
+
+#[cfg(test)]
+mod zr_tests {
+    use super::*;
+    use crate::ported::zle::zle_h::REFRESH_ELEMENT;
+    use crate::ported::zsh_h::{TXT_MULTIWORD_MASK, TXTBOLDFACE};
+
+    fn re(c: char, a: u64) -> REFRESH_ELEMENT {
+        REFRESH_ELEMENT { chr: c, atr: a }
+    }
+
+    #[test]
+    fn zr_memset_fills_slice() {
+        // c:88-89 — `while (len--) *dst++ = rc`.
+        let mut buf = [REFRESH_ELEMENT::default(); 4];
+        let fill = re('x', 0);
+        ZR_memset(&mut buf, fill, 3);
+        assert_eq!(buf[0], fill);
+        assert_eq!(buf[1], fill);
+        assert_eq!(buf[2], fill);
+        // 4th slot unchanged
+        assert_eq!(buf[3], REFRESH_ELEMENT::default());
+    }
+
+    #[test]
+    fn zr_memset_clamps_to_dst_len() {
+        let mut buf = [REFRESH_ELEMENT::default(); 2];
+        let fill = re('y', 0);
+        ZR_memset(&mut buf, fill, 99);  // len > dst.len()
+        assert_eq!(buf[0], fill);
+        assert_eq!(buf[1], fill);
+    }
+
+    #[test]
+    fn zr_strlen_counts_to_nul() {
+        // c:106 — `while (wstr++->chr != ZWC('\0')) len++`.
+        let s = [re('h', 0), re('i', 0), re('\0', 0)];
+        assert_eq!(ZR_strlen(&s), 2);
+    }
+
+    #[test]
+    fn zr_strlen_empty_starts_with_nul() {
+        let s = [re('\0', 0)];
+        assert_eq!(ZR_strlen(&s), 0);
+    }
+
+    #[test]
+    fn zr_strcpy_copies_through_nul() {
+        // c:97 — `while ((*dst++ = *src++).chr != ZWC('\0'))`. NUL
+        // included in copy.
+        let src = [re('a', 0), re('b', 0), re('\0', 0)];
+        let mut dst = [REFRESH_ELEMENT::default(); 5];
+        ZR_strcpy(&mut dst, &src);
+        assert_eq!(dst[0], re('a', 0));
+        assert_eq!(dst[1], re('b', 0));
+        assert_eq!(dst[2], re('\0', 0));
+    }
+
+    #[test]
+    fn zr_strncmp_equal_strings() {
+        // c:127 — pair-equal in chr+atr: returns 0.
+        let a = [re('h', 0), re('i', 0)];
+        let b = [re('h', 0), re('i', 0)];
+        assert_eq!(ZR_strncmp(&a, &b, 2), 0);
+    }
+
+    #[test]
+    fn zr_strncmp_diff_chr_returns_1() {
+        let a = [re('h', 0), re('i', 0)];
+        let b = [re('h', 0), re('o', 0)];
+        // c:127 — `if (!ZR_equal(...)) return 1`.
+        assert_eq!(ZR_strncmp(&a, &b, 2), 1);
+    }
+
+    #[test]
+    fn zr_strncmp_diff_atr_returns_1() {
+        // c:127 — atr is part of equality.
+        let a = [re('h', 0)];
+        let b = [re('h', TXTBOLDFACE)];
+        assert_eq!(ZR_strncmp(&a, &b, 1), 1);
+    }
+
+    #[test]
+    fn zr_strncmp_early_nul_old() {
+        // c:124-126 — old has NUL → return !equal.
+        let a = [re('\0', 0)];
+        let b = [re('x', 0)];
+        assert_eq!(ZR_strncmp(&a, &b, 1), 1); // not equal
+        let a = [re('\0', 0)];
+        let b = [re('\0', 0)];
+        assert_eq!(ZR_strncmp(&a, &b, 1), 0); // equal NULs
+    }
+
+    #[test]
+    fn zr_strncmp_multiword_mask_skips_nul_check() {
+        // c:124 — `(!(oldwstr->atr & TXT_MULTIWORD_MASK) && !oldwstr->chr)`.
+        // If atr has MULTIWORD set, chr=='\0' is NOT a NUL terminator.
+        let a = [re('\0', TXT_MULTIWORD_MASK)];
+        let b = [re('\0', TXT_MULTIWORD_MASK)];
+        // Both elements equal (same chr+atr) → returns 0; the
+        // multiword mask path skips the early-NUL exit so we fall
+        // through to the regular ZR_equal check.
+        assert_eq!(ZR_strncmp(&a, &b, 1), 0);
+    }
+}
