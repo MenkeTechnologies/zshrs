@@ -33,6 +33,43 @@ proposed change here would create a new file or new fn name not in
 
 ---
 
+## Structural Fidelity Rules
+
+### Rule S1 — Function signatures must be identical to C
+
+Every ported function must have the same signature as its C
+counterpart. If C `getjob(const char *s, const char *prog)` reads
+globals internally, the Rust port is `pub fn getjob(s: &str, prog:
+&str)` — NOT `pub fn getjob(s: &str, prog: &str, jobtab: &[Job],
+maxjob: usize, curjob: i32, ...)`.
+
+Do not "improve" signatures by threading state as parameters. The
+globals become Rust globals (bucket 1 or 2 per above); the function
+reads them the same way C does. This keeps call sites identical and
+avoids signature drift that compounds across the codebase.
+
+**Exception:** Bucket 3 (C passed pointers) are already explicit
+parameters in C — those stay as parameters in Rust.
+
+### Rule S2 — Order of code elements must match C
+
+Within each `.rs` file, the order of:
+- `static` / global declarations
+- `struct` / `enum` / type definitions
+- `fn` definitions
+- inline comments
+
+must match the order in the corresponding `.c` file. Reading
+`jobs.rs` top-to-bottom should feel like reading `jobs.c`
+top-to-bottom.
+
+When reordering is required to fix drift, **comments must move with
+their associated code**. A comment block explaining `curjob` must
+stay attached to the `curjob` declaration, not be orphaned when code
+moves.
+
+---
+
 ## The Three Buckets
 
 Every C state slot in zsh falls into one of three buckets. The Rust

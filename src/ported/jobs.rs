@@ -581,48 +581,64 @@ pub struct JobEntry {
 
 // ---------------------------------------------------------------------------
 // C-style globals (Bucket 2: shell-wide shared state per PORT_PLAN.md)
+// Declared in same order as jobs.c lines 57-131
 // ---------------------------------------------------------------------------
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
-/// Port of file-static `jobtab` from `Src/jobs.c:88`.
-/// Shell-wide job table shared across threads.
-fn jobtab_global() -> &'static Arc<Mutex<Vec<Job>>> {
-    static JOBTAB: OnceLock<Arc<Mutex<Vec<Job>>>> = OnceLock::new();
-    JOBTAB.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
-}
+// the process group of the shell at startup                                 // c:54
+/// Port of `origpgrp` from `Src/jobs.c:58`.
+pub static ORIGPGRP: OnceLock<Mutex<i32>> = OnceLock::new();
 
-/// Port of file-static `maxjob` from `Src/jobs.c:98`.
-fn maxjob_global() -> &'static Arc<Mutex<usize>> {
-    static MAXJOB: OnceLock<Arc<Mutex<usize>>> = OnceLock::new();
-    MAXJOB.get_or_init(|| Arc::new(Mutex::new(0)))
-}
+// the process group of the shell                                            // c:60
+/// Port of `mypgrp` from `Src/jobs.c:63`.
+pub static MYPGRP: OnceLock<Mutex<i32>> = OnceLock::new();
 
-/// Port of file-static `curjob` from `Src/jobs.c:78`.                       // c:75
-/// the current job (%+)
-fn curjob_global() -> &'static Arc<Mutex<i32>> {
-    static CURJOB: OnceLock<Arc<Mutex<i32>>> = OnceLock::new();
-    CURJOB.get_or_init(|| Arc::new(Mutex::new(-1)))
-}
+// the last process group to attach to the terminal                          // c:66
+/// Port of `last_attached_pgrp` from `Src/jobs.c:68`.
+pub static LAST_ATTACHED_PGRP: OnceLock<Mutex<i32>> = OnceLock::new();
 
-/// Port of file-static `prevjob` from `Src/jobs.c:83`.                      // c:80
-/// the previous job (%-) */
-fn prevjob_global() -> &'static Arc<Mutex<i32>> {
-    static PREVJOB: OnceLock<Arc<Mutex<i32>>> = OnceLock::new();
-    PREVJOB.get_or_init(|| Arc::new(Mutex::new(-1)))
-}
+// the job we are working on, or -1 if none                                  // c:70
+/// Port of `thisjob` from `Src/jobs.c:73`.
+pub static THISJOB: OnceLock<Mutex<i32>> = OnceLock::new();
 
-/// Port of file-static `thisjob` from `Src/jobs.c:73`.
-fn thisjob_global() -> &'static Arc<Mutex<i32>> {
-    static THISJOB: OnceLock<Arc<Mutex<i32>>> = OnceLock::new();
-    THISJOB.get_or_init(|| Arc::new(Mutex::new(-1)))
-}
+// the current job (%+)                                                      // c:75
+/// Port of `curjob` from `Src/jobs.c:78`.
+pub static CURJOB: OnceLock<Mutex<i32>> = OnceLock::new();
 
-/// Check POSIX_BUILTINS option. Port of `isset(POSIXBUILTINS)`.
-/// TODO: wire to actual options table when ported.
-fn isset_posixbuiltins() -> bool {
-    false
-}
+// the previous job (%-) */                                                  // c:80
+/// Port of `prevjob` from `Src/jobs.c:83`.
+pub static PREVJOB: OnceLock<Mutex<i32>> = OnceLock::new();
+
+// the job table                                                             // c:85
+/// Port of `jobtab` from `Src/jobs.c:88`.
+pub static JOBTAB: OnceLock<Mutex<Vec<Job>>> = OnceLock::new();
+
+// Size of the job table.                                                    // c:91
+/// Port of `jobtabsize` from `Src/jobs.c:93`.
+pub static JOBTABSIZE: OnceLock<Mutex<usize>> = OnceLock::new();
+
+// The highest numbered job in the jobtable                                  // c:96
+/// Port of `maxjob` from `Src/jobs.c:98`.
+pub static MAXJOB: OnceLock<Mutex<usize>> = OnceLock::new();
+
+// If we have entered a subshell, the original shell's job table.            // c:100
+/// Port of `oldjobtab` from `Src/jobs.c:101`.
+static OLDJOBTAB: OnceLock<Mutex<Vec<Job>>> = OnceLock::new();
+
+// The size of that.                                                         // c:103
+/// Port of `oldmaxjob` from `Src/jobs.c:104`.
+static OLDMAXJOB: OnceLock<Mutex<usize>> = OnceLock::new();
+
+// 1 if ttyctl -f has been executed                                          // c:119
+/// Port of `ttyfrozen` from `Src/jobs.c:122`.
+pub static TTYFROZEN: OnceLock<Mutex<i32>> = OnceLock::new();
+
+// pipestats array                                                           // c:131
+/// Port of `numpipestats` from `Src/jobs.c:131`.
+pub static NUMPIPESTATS: OnceLock<Mutex<usize>> = OnceLock::new();
+/// Port of `pipestats` from `Src/jobs.c:131`.
+pub static PIPESTATS: OnceLock<Mutex<[i32; MAX_PIPESTATS]>> = OnceLock::new();
 
 /// Get clock ticks per second (from jobs.c get_clktck lines 720-748)
 /// Get `_SC_CLK_TCK` for time-conversion math.
@@ -1072,20 +1088,22 @@ impl Default for JobPointers {
 ///
 /// Returns job index or -1 on error. `prog` is the program name for
 /// `zwarnnam` error messages (pass empty string to suppress warnings).
-pub fn getjob(
-    s: &str,
-    prog: &str,
-    jobtab: &[Job],
-    maxjob: usize,
-    curjob: i32,
-    prevjob: i32,
-    thisjob: i32,
-    posixbuiltins: bool,
-) -> i32 {
+pub fn getjob(s: &str, prog: &str) -> i32 {
     let mut jobnum: i32;                                                     // c:2065
-    let returnval: i32;                                                      // c:2065
-    let (myjobtab, mymaxjob_u) = selectjobtab(jobtab, maxjob);               // c:2068
-    let mymaxjob = mymaxjob_u as i32;                                        // c:2065
+    let mymaxjob: i32;                                                       // c:2065
+    let myjobtab: Vec<Job>;                                                  // c:2066
+
+    let (tab, max) = selectjobtab();                                         // c:2068
+    myjobtab = tab;
+    mymaxjob = max as i32;
+
+    let curjob = *CURJOB.get_or_init(|| Mutex::new(-1))                      // c:2076
+        .lock().expect("curjob poisoned");
+    let prevjob = *PREVJOB.get_or_init(|| Mutex::new(-1))                    // c:2087
+        .lock().expect("prevjob poisoned");
+    let thisjob = *THISJOB.get_or_init(|| Mutex::new(-1))
+        .lock().expect("thisjob poisoned");
+    let posixbuiltins = crate::ported::options::opt_state_get("posixbuiltins").unwrap_or(false);
 
     let s_bytes = s.as_bytes();
     let mut idx = 0usize;
@@ -1095,7 +1113,7 @@ pub fn getjob(
         // goto jump                                                         // c:2072
         // anything else is a job name, specified as a string that begins    // c:2135
         // the job's command                                                 // c:2136
-        if let Some(jn) = findjobnam(s, &myjobtab, mymaxjob, thisjob) {    // c:2137
+        if let Some(jn) = findjobnam(s, &myjobtab, mymaxjob, thisjob) {      // c:2137
             return jn;
         }
         // if we get here, it is because none of the above succeeded         // c:2141
@@ -1173,7 +1191,7 @@ pub fn getjob(
     // anything else is a job name, specified as a string that begins        // c:2135
     // the job's command                                                     // c:2136
     let rest = &s[idx..];
-    if let Some(jn) = findjobnam(rest, &myjobtab, mymaxjob, thisjob) {     // c:2137
+    if let Some(jn) = findjobnam(rest, &myjobtab, mymaxjob, thisjob) {       // c:2137
         return jn;                                                           // c:2138-2139
     }
     // if we get here, it is because none of the above succeeded             // c:2141
@@ -1183,7 +1201,11 @@ pub fn getjob(
     -1                                                                       // c:2145-2147
 }
 
-/// Port of `findjobnam()` from `Src/jobs.c:2031`.
+/// Port of `findjobnam()` from `Src/jobs.c:3204`.
+///
+/// C signature: `int findjobnam(const char *s)`
+///
+/// Internal helper uses passed table to avoid re-locking.
 fn findjobnam(s: &str, jobtab: &[Job], maxjob: i32, thisjob: i32) -> Option<i32> {
     let mut jobnum = maxjob;                                                 // c:2037
     while jobnum >= 0 {                                                      // c:2037
@@ -1778,16 +1800,23 @@ pub fn spawnjob(job: &mut Job, fg: bool) {
 /// C signature: `mod_export void selectjobtab(Job *jtabp, int *jmaxp)`
 ///
 /// In subshell, uses saved `oldjobtab`/`oldmaxjob`; otherwise uses
-/// the passed-in main `jobtab`/`maxjob`. Returns `(table, maxjob)`.
-pub fn selectjobtab(jobtab: &[Job], maxjob: usize) -> (Vec<Job>, usize) {
-    let guard = oldjobtab_lock().lock().expect("oldjobtab poisoned");
-    let (ref oldtab, oldmax) = *guard;
+/// the main `jobtab`/`maxjob` globals. Returns `(table, maxjob)`.
+pub fn selectjobtab() -> (Vec<Job>, usize) {
+    let oldtab = OLDJOBTAB.get_or_init(|| Mutex::new(Vec::new()))
+        .lock().expect("oldjobtab poisoned");
     if !oldtab.is_empty() {                                                  // c:2044
         // In subshell --- use saved job table to report                     // c:2046
+        let oldmax = *OLDMAXJOB.get_or_init(|| Mutex::new(0))
+            .lock().expect("oldmaxjob poisoned");
         (oldtab.clone(), oldmax)                                             // c:2047-2048
     } else {
         // Use main job table                                                // c:2052
-        (jobtab.to_vec(), maxjob)                                            // c:2053-2054
+        drop(oldtab); // release lock before acquiring jobtab
+        let jobtab = JOBTAB.get_or_init(|| Mutex::new(Vec::new()))
+            .lock().expect("jobtab poisoned");
+        let maxjob = *MAXJOB.get_or_init(|| Mutex::new(0))
+            .lock().expect("maxjob poisoned");
+        (jobtab.clone(), maxjob)                                             // c:2053-2054
     }
 }
 
@@ -1860,15 +1889,13 @@ pub fn addfilelist(job: &mut Job, name: Option<&str>, fd: i32) {
     }
 }
 
-/// Port of `pipecleanfilelist()` from `Src/jobs.c` — selectively
-/// removes proc-subst entries from the filelist while keeping
-/// real temp files for the regular cleanup path.
+/// Port of `pipecleanfilelist()` from `Src/jobs.c:1397`.
 ///
 /// `<fd:N>` sentinels (added by `addfilelist(None, fd)`) are
 /// kept in both branches — they're the input/output fds for
 /// process substitution and need closing only at job exit.
-pub fn pipecleanfilelist(job: &mut Job, proc_subst_only: bool) {
-    if proc_subst_only {
+pub fn pipecleanfilelist(job: &mut Job, proc_subst_only: bool) {            // c:1397
+    if proc_subst_only {                                                     // c:1399
         job.filelist.retain(|f| {
             !f.starts_with("/dev/fd/")
                 && !f.starts_with("/proc/")
@@ -1876,47 +1903,45 @@ pub fn pipecleanfilelist(job: &mut Job, proc_subst_only: bool) {
         });
     } else {
         for entry in &job.filelist {
-            close_or_remove_filelist_entry(entry);
+            // Inline: unlink or close based on entry encoding               // c:1408-1411
+            if let Some(rest) = entry.strip_prefix("<fd:") {
+                if let Some(num_str) = rest.strip_suffix('>') {
+                    if let Ok(fd) = num_str.parse::<i32>() {
+                        #[cfg(unix)]
+                        unsafe { libc::close(fd); }                          // c:1411
+                    }
+                }
+            } else {
+                let _ = std::fs::remove_file(entry);                         // c:1409
+            }
         }
         job.filelist.clear();
     }
 }
 
-/// Port of `deletefilelist()` from `Src/jobs.c`.
+/// Port of `deletefilelist()` from `Src/jobs.c:1422`.
 ///
 /// C body iterates the filelist linked list; for each Jobfile,
 /// dispatches `unlink(jf->u.name)` if `is_fd == 0` else
 /// `close(jf->u.fd)`. The `disowning` flag suppresses the
 /// `unlink`/`close` so files survive the disown.
-///
-/// Rust port reads the `<fd:N>` sentinel encoding established by
-/// [`addfilelist`] to differentiate fd vs name entries.
-pub fn deletefilelist(job: &mut Job, disowning: bool) {
-    if !disowning {
+pub fn deletefilelist(job: &mut Job, disowning: bool) {                      // c:1422
+    if !disowning {                                                          // c:1425
         for entry in &job.filelist {
-            close_or_remove_filelist_entry(entry);
-        }
-    }
-    job.filelist.clear();
-}
-
-/// Helper for [`deletefilelist`] / [`pipecleanfilelist`] — does
-/// the unlink-or-close dispatch based on the entry's encoding.
-/// Pure helper, no C counterpart (C does it inline).
-fn close_or_remove_filelist_entry(entry: &str) {
-    if let Some(rest) = entry.strip_prefix("<fd:") {
-        if let Some(num_str) = rest.strip_suffix('>') {
-            if let Ok(fd) = num_str.parse::<i32>() {
-                #[cfg(unix)]
-                unsafe {
-                    libc::close(fd);
+            // Inline: unlink or close based on entry encoding               // c:1427-1435
+            if let Some(rest) = entry.strip_prefix("<fd:") {
+                if let Some(num_str) = rest.strip_suffix('>') {
+                    if let Ok(fd) = num_str.parse::<i32>() {
+                        #[cfg(unix)]
+                        unsafe { libc::close(fd); }                          // c:1434
+                    }
                 }
-                let _ = fd;
-                return;
+            } else {
+                let _ = std::fs::remove_file(entry);                         // c:1432
             }
         }
     }
-    let _ = std::fs::remove_file(entry);
+    job.filelist.clear();
 }
 
 /// Print job with full detail (from jobs.c printjob)
@@ -2170,13 +2195,10 @@ pub fn cleanfilelists(jobtab: &mut [Job]) {
 ///
 /// Rust port clears the OLDJOBTAB module static.
 pub fn clearoldjobtab() {
-    *oldjobtab_lock().lock().expect("oldjobtab poisoned") = (Vec::new(), 0);
-}
-
-fn oldjobtab_lock() -> &'static std::sync::Mutex<(Vec<Job>, usize)> {
-    static OLDJOBTAB: std::sync::OnceLock<std::sync::Mutex<(Vec<Job>, usize)>> =
-        std::sync::OnceLock::new();
-    OLDJOBTAB.get_or_init(|| std::sync::Mutex::new((Vec::new(), 0)))
+    *OLDJOBTAB.get_or_init(|| Mutex::new(Vec::new()))
+        .lock().expect("oldjobtab poisoned") = Vec::new();
+    *OLDMAXJOB.get_or_init(|| Mutex::new(0))
+        .lock().expect("oldmaxjob poisoned") = 0;
 }
 
 /// Port of `addbgstatus()` from `Src/jobs.c:2325`.
@@ -2252,40 +2274,29 @@ pub fn removetrapnode(sig: i32) {
 /// }
 /// ```
 ///
+/// Port of `release_pgrp()` from `Src/jobs.c:3283`.
+///
 /// Restores the original (parent shell's) process group before
 /// the current shell exits, so terminal control returns to the
-/// invoker. Rust port: capture origpgrp on first call (lazy
-/// init), then on release call `setpgid(0, origpgrp)` and
-/// `tcsetpgrp(0, origpgrp)` if the current pgrp differs.
+/// invoker.
 #[cfg(unix)]
-pub fn release_pgrp() {
-    let orig = *origpgrp_lock().lock().expect("origpgrp poisoned");
-    let mypgrp = unsafe { libc::getpgrp() };
-    if orig != 0 && orig != mypgrp {
-        unsafe {
-            libc::tcsetpgrp(0, orig);
-            libc::setpgid(0, orig);
+pub fn release_pgrp() {                                                      // c:3283
+    let origpgrp = *ORIGPGRP.get_or_init(|| Mutex::new(0))
+        .lock().expect("origpgrp poisoned");
+    let mypgrp = *MYPGRP.get_or_init(|| Mutex::new(0))
+        .lock().expect("mypgrp poisoned");
+    if origpgrp != mypgrp {                                                  // c:3285
+        // in linux pid namespaces, origpgrp may never have been set         // c:3286
+        if origpgrp != 0 {                                                   // c:3287
+            unsafe {
+                // attachtty(origpgrp);                                      // c:3288
+                libc::tcsetpgrp(0, origpgrp);
+                libc::setpgid(0, origpgrp);                                  // c:3289
+            }
         }
+        *MYPGRP.get_or_init(|| Mutex::new(0))                                // c:3291
+            .lock().expect("mypgrp poisoned") = origpgrp;
     }
-}
-
-/// Capture the parent shell's process group at startup.
-/// Port of the `origpgrp = getpgrp(getppid())` dance from
-/// `Src/jobs.c::init_jobs` setup. Rust port: callers should
-/// invoke this from `init_jobs()`-equivalent shell startup.
-#[cfg(unix)]
-pub fn capture_origpgrp() {
-    let mut guard = origpgrp_lock().lock().expect("origpgrp poisoned");
-    if *guard == 0 {
-        *guard = unsafe { libc::tcgetpgrp(0) };
-    }
-}
-
-#[cfg(unix)]
-fn origpgrp_lock() -> &'static std::sync::Mutex<libc::pid_t> {
-    static ORIGPGRP: std::sync::OnceLock<std::sync::Mutex<libc::pid_t>> =
-        std::sync::OnceLock::new();
-    ORIGPGRP.get_or_init(|| std::sync::Mutex::new(0))
 }
 
 /// Direct port of `bin_fg()` from `Src/jobs.c:2421`.
@@ -2645,10 +2656,9 @@ pub fn bin_suspend(name: &str, _argv: &[String],                             // 
         release_pgrp();                                                      // c:3184
     }
 
-    // c:3188 — `killpg(origpgrp, SIGTSTP);` — stop ourselves.
-    let origpgrp = origpgrp_lock().lock().map(|g| *g)
-        .unwrap_or(unsafe { libc::getpgrp() });
-    //suspend ourselves with a SIGTSTP
+    // suspend ourselves with a SIGTSTP                                      // c:3187
+    let origpgrp = ORIGPGRP.get_or_init(|| Mutex::new(0))
+        .lock().map(|g| *g).unwrap_or(0);
     unsafe { libc::killpg(origpgrp, libc::SIGTSTP); }                        // c:3188
 
     if jobbing {                                                             // c:3190
