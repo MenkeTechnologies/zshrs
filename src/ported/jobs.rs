@@ -2,6 +2,17 @@
 //!
 //! Port from zsh/Src/jobs.c
 //!
+//! the process group of the shell                                           // c:60
+//! the job we are working on, or -1 if none                                 // c:70
+//! the current job (%+)                                                     // c:75
+//! the previous job (%-)                                                    // c:80
+//! the job table                                                            // c:85
+//! Size of the job table.                                                   // c:90
+//! Update status of job, possibly printing it                               // c:456
+//! wait for running job to finish                                           // c:1759
+//! clear job table when entering subshells                                  // c:1776
+//! Initialise job handling.                                                 // c:2160
+//!
 //! Provides job control, process management, and signal handling for jobs.
 
 use std::env;
@@ -1456,12 +1467,13 @@ pub fn storepipestats(job: &Job) -> (Vec<i32>, i32) {
 /// for non-job-control work like multios.
 ///
 /// Rust port: takes the JobTable by &mut (no global). The
+// clear job table when entering subshells                                  // c:1776
 /// `monitor` flag gates the oldjobtab save; the save itself is
 /// pending until JobTable's internal `Vec<Option<JobInfo>>`
 /// model is reconciled with C's `struct job *jobtab` so the
 /// snapshot can be taken. The non-snapshot core (clear in-use
 /// jobs, reset cursor) is faithful.
-pub fn clearjobtab(table: &mut JobTable, monitor: i32) {
+pub fn clearjobtab(table: &mut JobTable, monitor: i32) {                    // c:1780
     let _ = monitor; // oldjobtab snapshot pending JobInfo Clone equiv
     table.jobs.clear();
     table.current_id = None;
@@ -1736,8 +1748,9 @@ pub fn dumptime(job: &Job, format: &str) -> Option<String> {
     ))
 }
 
+// wait for running job to finish                                           // c:1759
 /// Wait for all foreground jobs to finish (from jobs.c waitjobs)
-pub fn waitjobs(jobtab: &mut [Job], thisjob: usize) {
+pub fn waitjobs(jobtab: &mut [Job], thisjob: usize) {                        // c:1763
     if thisjob < jobtab.len() {
         while !jobtab[thisjob].is_done() && !jobtab[thisjob].is_stopped() {
             #[cfg(unix)]
@@ -1769,8 +1782,9 @@ pub fn waitonejob(job: &mut Job) {
     }
 }
 
+// Get a free entry in the job table and initialize it.                    // c:1858
 /// Initialize a new job entry (from jobs.c initjob)
-pub fn initjob(jobtab: &mut Vec<Job>) -> usize {
+pub fn initjob(jobtab: &mut Vec<Job>) -> usize {                             // c:1862
     // Find an empty slot or add a new one
     for (i, job) in jobtab.iter().enumerate() {
         if (job.stat & stat::INUSE) == 0 {
@@ -1956,6 +1970,8 @@ pub fn deletefilelist(job: &mut Job, disowning: bool) {                      // 
 }
 
 /// Print job with full detail (from jobs.c printjob)
+// find length of longest signame, check to see                             // c:1178
+// if we really need to print this job                                      // c:1179
 pub fn printjob(
     job: &Job,
     job_num: usize,
@@ -2109,6 +2125,7 @@ pub fn dtime_ts(t1: &Instant, t2: &Instant) -> Duration {
 ///
 /// Clears the STOPPED flag on the job, resets each stopped process
 /// to SP_RUNNING, and recurses into the linked subjob if this is a
+// change job table entry from stopped to running                           // c:163
 /// superjob. The previous Rust port called `job.make_running()`
 /// which mutates only the single Job — missing the superjob
 /// recursion. This port walks the table to handle the recursion.

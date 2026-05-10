@@ -8,6 +8,7 @@
 
 use std::cell::RefCell;
 
+// list of zsh heaps                                                        // c:127
 /// A memory arena for temporary allocations.
 ///
 /// Port of the `heaps` linked-list arena C zsh maintains in
@@ -520,6 +521,7 @@ pub fn new_heap_id() -> u64 {                                                // 
 pub static NEXT_HEAP_ID: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
+// Use new heaps from now on. This returns the old heap-list.               // c:190
 /// Port of `new_heaps()` from Src/mem.c:194.
 /// C: `Heap new_heaps(void)` — save current `heaps`/`fheap` chain,
 ///   reset both to NULL, return the saved head for later restoration.
@@ -534,6 +536,7 @@ pub fn new_heaps() -> *mut std::ffi::c_void {                                // 
     h
 }
 
+// Re-install the old heaps again, freeing the new ones.                    // c:216
 /// Port of `old_heaps()` from Src/mem.c:220.
 /// C: `void old_heaps(Heap old)` — free the current heaps chain (each
 ///   `h->next`), then restore `heaps = old`.
@@ -546,6 +549,7 @@ pub fn old_heaps(old: *mut std::ffi::c_void) {                               // 
     unqueue_signals();                                                       // c:264
 }
 
+// Temporarily switch to other heaps (or back again).                       // c:263
 /// Port of `switch_heaps()` from Src/mem.c:267.
 /// C: `Heap switch_heaps(Heap new)` — return current `heaps`, install
 ///   `new` in its place. Used to enter a different heap-arena scope.

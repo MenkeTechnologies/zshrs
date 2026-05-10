@@ -68,10 +68,11 @@ pub struct ParamFlags {
     pub special: bool,
 }
 
+// Return a string describing the type of a parameter.                     // c:39
 /// Generate parameter type string (like "scalar-local-export")
 /// Render a parameter's type as a `typeset -p` flag string.
 /// Port of `paramtypestr()` from Src/Modules/parameter.c:43.
-pub fn paramtypestr(ptype: ParamType, flags: &ParamFlags) -> String {
+pub fn paramtypestr(ptype: ParamType, flags: &ParamFlags) -> String {       // c:43
     let mut parts = vec![ptype.name().to_string()];
 
     if flags.local {

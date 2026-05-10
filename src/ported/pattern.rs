@@ -1,7 +1,4 @@
 //! Pattern matching engine for zshrs
-//!
-//! Number of active parenthesized expressions allowed in backreferencing  // c:93
-//! Default size for pattern buffer                                        // c:291
 //! Called before parsing a set of file matches to initialize flags        // c:513
 //!
 //! ====================================================================
@@ -88,6 +85,7 @@ pub enum PatOp {
     Close = 0x90,      // End of capture group (+ group number)
 }
 
+// Number of active parenthesized expressions allowed in backreferencing   // c:93
 /// Maximum number of backreferences
 const NSUBEXP: usize = 9;
 

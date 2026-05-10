@@ -677,12 +677,13 @@ pub fn newmoduletable() -> ModuleTable {
     ModuleTable::new()
 }
 
+// This registers a builtin module.                                        // c:355
 /// Register module (from module.c register_module)
 /// Register a module by name.
 /// Port of `register_module()` from Src/module.c:359 — wraps
 /// a slot in the global `modulestab` and seeds its lifecycle
 /// callbacks.
-pub fn register_module(table: &mut ModuleTable, name: &str) -> bool {
+pub fn register_module(table: &mut ModuleTable, name: &str) -> bool {       // c:359
     if table.modules.contains_key(name) {
         return false;
     }

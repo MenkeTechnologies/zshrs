@@ -10,11 +10,13 @@ use super::zle_main::{ModifierFlags, Zle};
 // declared in `Src/Zle/zle_vi.c`:
 //
 //     int virangeflag;       // line 36
+// kludge to get cw and dw to work right                                   // c:38
 //     int wordflag;          // line 41
 //     int vilinerange;       // line 46
 //     struct vichange lastvichg, curvichg;  // line 54
 //     int vichgflag;         // line 65
 //     int viinrepeat;        // line 73
+// point where vi insert mode was last entered                             // c:75
 //     int viinsbegin;        // line 78
 //
 // These are cross-compilation-unit (referenced from textobjects.c

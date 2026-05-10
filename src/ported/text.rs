@@ -2,10 +2,6 @@
 //!
 //! Direct port from zsh/Src/text.c
 //!
-//! add a character to the text buffer                                       // c:124
-//! add a string to the text buffer                                          // c:142
-//! get a representation of n in a job text buffer                           // c:311
-//!
 //! Converts parsed shell commands back to their textual representation.
 //! Used for:
 //! - Displaying function definitions (`type -f`)
@@ -1228,6 +1224,7 @@ pub fn tdopending() {
 ///
 /// Rust port: appends to `String`, which auto-grows. The realloc-
 /// on-overflow logic from C is implicit.
+// add a character to the text buffer                                       // c:124
 pub fn taddchr(c: i32) {
     let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
     if let Some(ch) = char::from_u32(c as u32) {
@@ -1239,6 +1236,7 @@ pub fn taddchr(c: i32) {
 ///
 /// C body appends with newline-flatten semantics: when
 /// `tnewlins == 0` (job-text mode), `\n` becomes ' '.
+// add a string to the text buffer                                          // c:142
 pub fn taddstr(s: &str) {
     let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
     if b.newlins {

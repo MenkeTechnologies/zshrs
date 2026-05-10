@@ -63,6 +63,7 @@ pub fn ask() -> i32 {                                                        // 
 
 /// Direct port of `bin_sync()` from `Src/Modules/files.c:53`.
 /// C body (c:55-57): `sync(); return 0;`.
+// sync builtin                                                             // c:49
 pub fn bin_sync(_nam: &str, _args: &[String],                                // c:53
                 _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     unsafe { libc::sync(); }                                                 // c:55
@@ -76,6 +77,7 @@ pub fn bin_sync(_nam: &str, _args: &[String],                                // 
 /// Direct port of `bin_mkdir()` from `Src/Modules/files.c:63`.
 /// C body (c:65-110): default mode = 0777 & ~umask; parse -m; for
 /// each arg, strip trailing slashes; with -p walk each `/` segment.
+// mkdir builtin                                                            // c:59
 pub fn bin_mkdir(nam: &str, args: &[String],                                 // c:63
                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
@@ -167,6 +169,7 @@ pub fn domkdir(nam: &str, path: &str, mode: u32, p: i32) -> i32 {            // 
 
 /// Direct port of `bin_rmdir()` from `Src/Modules/files.c:150`.
 /// C body (c:154-164): for each arg, call rmdir(2); accumulate err.
+// rmdir builtin                                                            // c:146
 pub fn bin_rmdir(nam: &str, args: &[String],                                 // c:150
                  _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     let mut err = 0i32;
@@ -575,6 +578,7 @@ pub fn rm_dirpost(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,      // 
 /// Direct port of `bin_rm()` from `Src/Modules/files.c:616`.
 /// C body (c:621-633): build rmmagic; recursivecmd with rm_dirpost
 /// + rm_leaf; -f swallows the err code.
+// rm builtin                                                               // c:535
 pub fn bin_rm(nam: &str, args: &[String],                                    // c:616
               ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;
@@ -624,6 +628,7 @@ pub fn chmod_dochmod(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,   // 
 /// Direct port of `bin_chmod()` from `Src/Modules/files.c:655`.
 /// C body (c:659-672): parse args[0] as octal mode; recursivecmd
 /// over args[1..] applying chmod_dochmod.
+// chmod builtin                                                            // c:633
 pub fn bin_chmod(nam: &str, args: &[String],                                 // c:655
                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;
@@ -712,6 +717,7 @@ pub fn getnumeric(p: &str, errp: &mut i32) -> u64 {                          // 
 /// C body (c:729-797): parse `user[:group]` spec; for chgrp, skip the
 /// user half; getpwnam / getnumeric / getgrnam fallbacks; recursivecmd
 /// with chown_dochown or chown_dolchown for `-h`.
+// chown builtin                                                            // c:672
 pub fn bin_chown(nam: &str, args: &[String],                                 // c:725
                  ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;

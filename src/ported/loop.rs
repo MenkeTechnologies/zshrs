@@ -54,6 +54,7 @@ static BREAK_LEVEL: AtomicI32 = AtomicI32::new(0);
 // — names should be renamed to `LOOPS` / `CONTFLAG` / `BREAKS` to
 // match C 1:1 in a follow-up).
 
+// And this is used to print select lists.                                 // c:343
 /// Select-menu display.
 /// Port of `selectlist()` from Src/loop.c:347 — formats the
 /// numbered menu the C source uses for `select var in words`. Picks

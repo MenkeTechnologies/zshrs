@@ -515,9 +515,10 @@ pub fn uinsertlinknode(list: &mut LinkList<String>, _after_idx: usize, value: St
     }
 }
 
+// Insert a list in another list                                           // c:186
 /// Port of `insertlinklist()` from Src/linklist.c:190 — splice
 /// list2 into list1 after the supplied node, drop list2's header.
-pub fn insertlinklist<T: Clone>(list1: &mut LinkList<T>, _after_idx: usize, list2: &LinkList<T>) {
+pub fn insertlinklist<T: Clone>(list1: &mut LinkList<T>, _after_idx: usize, list2: &LinkList<T>) { // c:190
     for v in list2.iter() {
         list1.push_back(v.clone());
     }
@@ -530,16 +531,18 @@ pub fn getlinknode<T>(list: &mut LinkList<T>) -> Option<T> {                 // 
     list.pop_front()
 }
 
+// Pop the top node off a linked list without freeing it.                  // c:227
 /// Port of `ugetnode()` from Src/linklist.c:231 — like
 /// `getlinknode()` but doesn't free the node; equivalent in Rust.
-pub fn ugetnode<T>(list: &mut LinkList<T>) -> Option<T> {
+pub fn ugetnode<T>(list: &mut LinkList<T>) -> Option<T> {                   // c:231
     list.pop_front()
 }
 
+// Remove a node from a linked list                                        // c:247
 /// Port of `remnode()` from Src/linklist.c:251 — remove + free
 /// the supplied node. Rust callers go through `pop_front`/
 /// `pop_back` directly; this shim handles the head case.
-pub fn remnode<T>(list: &mut LinkList<T>, idx: usize) -> Option<T> {
+pub fn remnode<T>(list: &mut LinkList<T>, idx: usize) -> Option<T> {        // c:251
     if idx == 0 {
         list.pop_front()
     } else {
@@ -564,15 +567,17 @@ pub fn freelinklist<T>(list: &mut LinkList<T>) {                             // 
     list.clear();
 }
 
+// Count the number of nodes in a linked list                              // c:300
 /// Port of `countlinknodes()` from Src/linklist.c:304 — node
 /// count.
-pub fn countlinknodes<T>(list: &LinkList<T>) -> usize {
+pub fn countlinknodes<T>(list: &LinkList<T>) -> usize {                     // c:304
     list.len()
 }
 
+// Make specified node first, moving preceding nodes to end                // c:313
 /// Port of `rolllist()` from Src/linklist.c:317 — rotate so the
 /// supplied node becomes the new head.
-pub fn rolllist<T>(list: &mut LinkList<T>, n: usize) {
+pub fn rolllist<T>(list: &mut LinkList<T>, n: usize) {                      // c:317
     let len = list.len();
     if len > 0 {
         let n = n % len;
@@ -584,10 +589,11 @@ pub fn rolllist<T>(list: &mut LinkList<T>, n: usize) {
     }
 }
 
+// Create linklist of specified size. node->dats are not initialized.      // c:327
 /// Port of `newsizedlist()` from Src/linklist.c:331 — allocate
 /// with capacity hint; Rust ignores the hint since `VecDeque`
 /// grows dynamically.
-pub fn newsizedlist<T>(_size: usize) -> LinkList<T> {
+pub fn newsizedlist<T>(_size: usize) -> LinkList<T> {                       // c:331
     LinkList::new()
 }
 

@@ -1992,6 +1992,7 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
 /// unqueue_signals();
 /// return 0;
 /// ```
+// cd, chdir, pushd, popd                                                   // c:796
 pub fn bin_cd(nam: &str, argv: &[String],                                    // c:840
               ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;
@@ -2054,10 +2055,12 @@ pub fn bin_cd(nam: &str, argv: &[String],                                    // 
     0                                                                        // c:859
 }
 
+// int doprintdir = 0; set in exec.c (for autocd, cdpath, etc.)            // c:722
 // `doprintdir` from Src/exec.c — set when an autocd'd command should
 // echo the new directory before executing.
 pub static DOPRINTDIR: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
+// set if we are resolving links to their true paths                       // c:829
 // `chasinglinks` from Src/exec.c — non-zero when CHASELINKS / -P
 // resolution is active.
 pub static CHASINGLINKS: std::sync::atomic::AtomicI32 =
@@ -2067,6 +2070,7 @@ pub static CHASINGLINKS: std::sync::atomic::AtomicI32 =
 /// C: `int bin_pwd(UNUSED(char *name), UNUSED(char **argv), Options ops,
 ///     UNUSED(int func))` — `-r`/`-P` or (CHASELINKS && !`-L`) →
 ///   print resolved cwd via zgetcwd; else print the cached `pwd`.
+// pwd: display the name of the current directory                          // c:724
 pub fn bin_pwd(_name: &str, _argv: &[String],                                // c:728
                ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;
@@ -4697,6 +4701,7 @@ pub fn bin_emulate(nam: &str, argv: &[String],                               // 
 /// Port of `bin_dirs()` from Src/builtin.c:749.
 /// C: `int bin_dirs(UNUSED(char *name), char **argv, Options ops, ...)` —
 ///   list dirstack (default / -v / -p / -l) or replace it with argv.
+// dirs: list the directory stack, or replace it with a provided list      // c:745
 pub fn bin_dirs(_name: &str, argv: &[String],                                // c:749
                 ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;

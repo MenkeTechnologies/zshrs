@@ -1,5 +1,10 @@
 //! ZFTP module - port of Modules/zftp.c
 //!
+//! it's a TELNET based protocol, but don't think I like doing this         // c:56
+//! Number of connections actually open                                      // c:210
+//! zfclosing is set if zftp_close() is active                               // c:219
+//! List of active sessions                                                  // c:310
+//!
 //! Provides a builtin FTP client for zsh.
 
 use std::collections::HashMap;

@@ -1,5 +1,13 @@
 //! Login/logout watching module - port of Modules/watch.c
 //!
+//! the last time we checked the people in the WATCH variable               // c:153
+//! get the time of login/logout for WATCH                                  // c:158
+//! print a login/logout event                                              // c:238
+//! See if the watch entry matches                                          // c:431
+//! check the List for login/logouts                                        // c:455
+//! compare 2 utmp entries                                                  // c:524
+//! initialize the user List                                                // c:534
+//!
 //! Provides watch/log functionality for monitoring user logins/logouts.
 
 use std::collections::HashMap;
@@ -93,6 +101,7 @@ thread_local! {
         std::cell::RefCell::new(Vec::new())
     };
 
+    // the last time we checked the people in the WATCH variable         // c:153
     /// Port of file-static `static time_t lastwatch;` at
     /// `Src/Modules/watch.c:154`.
     static LASTWATCH: std::cell::Cell<i64> = const {

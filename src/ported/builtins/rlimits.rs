@@ -1,9 +1,5 @@
 //! Resource limits — port of `Src/Builtins/rlimits.c`.
 //!
-//! Find resource by its option character                                    // c:235
-//! Print a value of type rlim_t                                             // c:249
-//! Without arguments, remove all limits.                                    // c:677
-//!
 //! Implements the `limit`, `ulimit`, and `unlimit` builtins.
 //!
 //! Structure mirrors the C source line-by-line:
@@ -284,6 +280,7 @@ pub(crate) fn free_resinfo() {
 // Port of `find_resource()` from Src/Builtins/rlimits.c:239.
 // =====================================================================
 
+// Find resource by its option character                                    // c:235
 /// Port of `find_resource()` from `Src/Builtins/rlimits.c:239`.
 ///
 /// Find a resource by its `ulimit` option character. Returns the
@@ -310,6 +307,7 @@ pub(crate) fn find_resource(c: char) -> i32 {
 // Port of `printrlim()` from Src/Builtins/rlimits.c:253.
 // =====================================================================
 
+// Print a value of type rlim_t                                             // c:249
 /// Port of `printrlim()` from `Src/Builtins/rlimits.c:253`.
 ///
 /// Print a `rlim_t` value with the supplied unit suffix to stdout.

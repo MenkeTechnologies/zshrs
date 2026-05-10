@@ -1,5 +1,8 @@
 //! Select/poll builtin module — port of `Src/Modules/zselect.c`.
 //!
+//! Helper functions                                                         // c:33
+//! The builtin itself                                                       // c:61
+//!
 //! C source has zero `struct ...` / `enum ...` definitions. Rust
 //! port matches: zero types. Two fns: `bin_zselect` and the
 //! static helper `handle_digits`, plus the 6 module loaders.

@@ -50,10 +50,12 @@ use crate::ported::utils::{zerrnam, zwarnnam};
 // Port of `enum zc_win_flags` from `Src/Modules/curses.c:54`.
 // =====================================================================
 
+// Window is permanent (probably "stdscr")                                  // c:55
 /// Window is permanent (probably "stdscr"). C: `curses.c:56`.
-pub const ZCWF_PERMANENT: u32 = 0x0001;
+pub const ZCWF_PERMANENT: u32 = 0x0001;                                     // c:56
+// Scrolling enabled                                                        // c:57
 /// Scrolling enabled. C: `curses.c:58`.
-pub const ZCWF_SCROLL: u32 = 0x0002;
+pub const ZCWF_SCROLL: u32 = 0x0002;                                        // c:58
 
 // =====================================================================
 // Error constants — port of `curses.c:102-110`.

@@ -2,6 +2,13 @@
 //!
 //! Direct port from zsh/Src/signals.c
 //!
+//! Total count of trapped signals                                           // c:55
+//! Running an exit trap?                                                    // c:60
+//! Variables used by trap queueing                                          // c:87
+//! enable ^C interrupts                                                     // c:114
+//! disable ^C interrupts                                                    // c:124
+//! SIGHUP any jobs left running                                             // c:502
+//!
 //! Manages signal handling including:
 //! - Signal handlers for SIGINT, SIGCHLD, SIGHUP, etc.
 //! - Signal queueing during critical sections
@@ -69,6 +76,7 @@ pub fn getsigname(sig: i32) -> Option<&'static str> {
     None
 }
 
+// Variables used by signal queueing                                        // c:74
 /// Signal state for queueing.
 /// Port of the `signal_queue[]` ring-buffer + `queueing_enabled`
 /// flag from Src/signals.c (around the `queue_signals()` /
@@ -138,11 +146,13 @@ impl SignalQueue {
 }
 
 static SIGNAL_QUEUE: SignalQueue = SignalQueue::new();
+// Variables used by trap queueing                                          // c:87
 static TRAP_QUEUE: SignalQueue = SignalQueue::new();
 
 /// Last signal received
 pub static LAST_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
+// Total count of trapped signals                                           // c:55
 /// Trap handler storage.
 /// Port of the `sigtrapped[]`/`sigfuncs[]`/`siglists[]` parallel
 /// arrays Src/signals.c uses to keep per-signal state (flags +
@@ -157,6 +167,7 @@ pub struct TrapHandler {
     pub num_trapped: AtomicUsize,
     /// Currently in a trap?
     pub in_trap: AtomicBool,
+    // Running an exit trap?                                                 // c:60
     /// Running exit trap?
     pub in_exit_trap: AtomicBool,
 }
@@ -469,12 +480,13 @@ extern "C" fn handler(sig: i32) {
     };
 }
 
+// Variables used by signal queueing                                       // c:74
 /// Enable signal queueing.
 /// Port of `queue_signals()` from Src/signals.c (the macro form
 /// declared in zsh.h plus the queue toggle inside `zhandler()` line
 /// 399). Used to defer signal handlers across critical sections
 /// (memory allocation, parameter manipulation, etc.).
-pub fn queue_signals() {
+pub fn queue_signals() {                                                    // c:78
     SIGNAL_QUEUE.enable();
 }
 
@@ -731,10 +743,10 @@ pub fn install_handler(sig: i32) {
     }
 }
 
+// enable ^C interrupts                                                     // c:114
 /// Port of `intr()` from `Src/signals.c:117`.
 ///
 /// C body: `if (interact) install_handler(SIGINT);` — the
-// enable ^C interrupts                                                     // c:114
 /// interactive-shell-only SIGINT installer used by `bin_set` /
 /// trap restoration paths to re-enable ^C breaking after a
 /// scope that disabled it.
@@ -863,7 +875,6 @@ pub fn starttrapscope() -> Vec<String> {
 /// if (interact)
 ///     signal_ignore(SIGINT);
 /// ```
-///
 // disable ^C interrupts                                                    // c:124
 /// Disables SIGINT delivery in interactive mode (sets the
 /// disposition to SIG_IGN). The `if (interact)` gate matches C.
@@ -986,6 +997,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
 
 /// Kill all running jobs with the given signal.
 /// Port of `killrunjobs()` from Src/signals.c:506.
+// SIGHUP any jobs left running                                             // c:502
 #[cfg(unix)]
 pub fn killrunjobs(sig: i32) {
     // This would need access to the job table
@@ -995,6 +1007,7 @@ pub fn killrunjobs(sig: i32) {
 
 /// Kill a specific job by process group.
 /// Port of `killjb()` from Src/signals.c:529.
+// send a signal to a job (simply involves kill if monitoring is on)       // c:525
 #[cfg(unix)]
 pub fn killjb(pgrp: i32, sig: i32) -> i32 {
     if pgrp > 0 {

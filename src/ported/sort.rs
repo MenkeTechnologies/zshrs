@@ -41,12 +41,15 @@ pub mod flags {
     /// `SORTIT_IGNORING_CASE` (zsh.h:2994).
     pub const IGNORING_CASE: u32 = 1;
     /// `SORTIT_NUMERICALLY` (zsh.h:2995).
+    // Flag that sort is numeric                                            // c:39
     pub const NUMERICALLY: u32 = 2;
     /// `SORTIT_NUMERICALLY_SIGNED` (zsh.h:2996).
     pub const NUMERICALLY_SIGNED: u32 = 4;
     /// `SORTIT_BACKWARDS` (zsh.h:2997).
+    // Flag for direction of sort: 1 forwards, -1 reverse                   // c:33
     pub const BACKWARDS: u32 = 8;
     /// `SORTIT_IGNORING_BACKSLASHES` (zsh.h:3002).
+    // Flag that sort ignores backslashes                                   // c:36
     pub const IGNORING_BACKSLASHES: u32 = 16;
     /// `SORTIT_SOMEHOW` (zsh.h:3007) — currently unused; reserved.
     pub const SOMEHOW: u32 = 32;

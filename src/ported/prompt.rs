@@ -24,6 +24,7 @@
 
 use std::env;
 
+// parser states, for %_                                                    // c:60
 /// Parser states for %_ in prompts
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmdState {
@@ -143,6 +144,9 @@ impl CmdState {
     }
 }
 
+// current text attributes                                                  // c:33
+// pending changes for attributes                                           // c:38
+// mask of attributes with an unknown state                                 // c:43
 /// Text attributes for prompt formatting
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TextAttrs {
@@ -2109,6 +2113,7 @@ pub fn set_colour_attribute(color: &Color, is_fg: bool) -> String {
 /// Maximum cmdstack depth, mirroring C zsh's `CMDSTACKSZ`.
 /// Used to bound `cmdpush`/`cmdpop` so the stack can't grow
 /// unbounded under runaway recursion.
+// the command stack for use with %_ in prompts                             // c:53
 const CMDSTACKSZ: usize = 256;
 
 // Port of file-static `cmdstack` from `Src/init.c` (declared as
@@ -2122,8 +2127,9 @@ const CMDSTACKSZ: usize = 256;
 // zshrs. Each worker thread parses independently; sharing the
 // stack across threads would corrupt nesting state. `RefCell`
 // for interior mutability since the contents are owned `Vec<u8>`.
+// the command stack for use with %_ in prompts                             // c:53
 thread_local! {
-    static CMDSTACK: std::cell::RefCell<Vec<u8>> = const {
+    static CMDSTACK: std::cell::RefCell<Vec<u8>> = const {                  // c:56
         std::cell::RefCell::new(Vec::new())
     };
 }

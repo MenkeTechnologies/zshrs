@@ -2,6 +2,9 @@
 //!
 //! Port from zsh/Src/Zle/zleparameter.c (186 lines)
 //!
+//! Functions for the zlewidgets special parameter.                          // c:33
+//! Functions for the zlekeymaps special parameter.                          // c:102
+//!
 //! Provides the special $widgets associative array and $keymaps parameter
 //! that let shell scripts query ZLE's internal state.
 

@@ -37,6 +37,8 @@ pub static WOULDINSTAB: AtomicI32 = AtomicI32::new(0);                       // 
 pub static MENUCMP: AtomicI32 = AtomicI32::new(0);                           // c:106
 
 /// Completion state
+// The line before completion was tried.                                    // c:70
+// Words on the command line, for use in completion                         // c:77
 #[derive(Debug, Default, Clone)]
 pub struct CompletionState {
     /// Whether we're in menu completion mode

@@ -411,6 +411,7 @@ fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> {
 /// Port of `prefork()` from Src/subst.c:100 — runs ahead of
 /// glob expansion to fully resolve `${...}` / `$(...)` /
 /// `$((...))` / `~user` / `=cmd` / `{a,b}`.
+// Do substitutions before fork.                                            // c:82
 pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut SubstState) {
     // c:100
     let mut node_idx = 0; // c:100
@@ -1273,6 +1274,7 @@ fn stringsubst(
 // parameter substitution                                                   // c:1601
 /// Parameter substitution
 /// Port of paramsubst() from subst.c lines 1600-4922 (THIS IS THE BIG ONE)
+// parameter substitution                                                   // c:1601
 pub fn paramsubst(
     // c:1625
     s: &str,                // c:1625
@@ -5428,6 +5430,7 @@ pub fn filesubstr(s: &str, assign: bool, state: &SubstState) -> Option<String> {
 /// assign-context walks `=` (TYPESET-only) and `:`-separated path
 /// lists, reapplying filesubstr to each suffix that begins with a
 /// tilde/equals.
+// ~, = subs: assign & PREFORK_TYPESET => typeset or magic equals          // c:661
 fn filesub(s: &str, flags: u32, state: &mut SubstState) -> String {
     // c:667
     // C: `filesubstr(namptr, assign);`  (line 672)
@@ -5640,6 +5643,7 @@ pub mod multsub_flags {
 /// Port of singsub() from subst.c lines 513-525
 /// Single-string substitution.
 /// Port of `singsub()` from Src/subst.c:514.
+// perform substitution on a single word                                    // c:510
 pub fn singsub(s: &str, state: &mut SubstState) -> String {
     // c:514
     let mut list = {
@@ -8086,6 +8090,7 @@ pub const BNULLKEEP: char = '\u{95}'; // Backslash null that stays // c:N/A
 ///   3. findcmd lookup; null → return NULL (with optional zerr).
 ///   4. If trailing chars exist (e.g. `=cmd:rest`), concat path
 ///      with the suffix.
+// do =foo substitution, or equivalent.                                     // c:706
 pub fn equalsubstr(s: &str, assign: bool, nomatch: bool, _state: &SubstState) -> Option<String> {
     // c:715
     // C: `for (pp = str; !isend2(*pp); pp++);` — find end of cmd
