@@ -1240,6 +1240,14 @@ pub struct MenuInfoState {                                                    //
     pub asked: i32,
 }
 pub static MINFO: OnceLock<Mutex<MenuInfoState>> = OnceLock::new();           // zle_tricky.c minfo
+
+/// Helper to set MINFO.cur from outside compcore.rs. Mirrors C's
+/// direct write `minfo.cur = &m;`.
+pub fn set_minfo_cur(m: Cmatch) {                                             // zle_tricky.c minfo
+    if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(MenuInfoState::default())).lock() {
+        g.cur = Some(m);
+    }
+}
 fn do_ambig_menu_stub() {                                                     // compresult.c:1381
     let _ = crate::ported::zle::compresult::do_ambig_menu();
 }
