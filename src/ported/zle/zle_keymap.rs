@@ -66,7 +66,7 @@ pub fn curkeymapname() -> std::sync::MutexGuard<'static, String> {
 
 static KEYMAPNAMTAB: OnceLock<Mutex<HashMap<String, KeymapName>>> = OnceLock::new();
 
-fn keymapnamtab() -> &'static Mutex<HashMap<String, KeymapName>> {
+pub(crate) fn keymapnamtab() -> &'static Mutex<HashMap<String, KeymapName>> {
     KEYMAPNAMTAB.get_or_init(|| Mutex::new(HashMap::new()))
 }
 

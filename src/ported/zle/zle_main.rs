@@ -1797,17 +1797,38 @@ pub fn breakread(fd: i32, buf: &mut [u8], n: usize) -> isize {               // 
     r as isize
 }
 
-/// Port of `cleanup_()` from Src/Zle/zle_main.c:2312.
-pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {            // c:zle_main.c cleanup_
-    // C body: `if (zleactive) { zerrnam("can't unload..."); return 1; }
-    //          deletehookfunc("before_trap"); deletehookfunc("after_trap");
-    //          deletekeymap(...) for each ...`. Refuses to unload while
-    // ZLE session is live. Hook-registry substrate deferred.
+/// Direct port of `static int cleanup_(Module m)` from
+/// `Src/Zle/zle_main.c:2312-2326`.
+/// ```c
+/// if (zleactive) { zerrnam(...); return 1; }
+/// deletehookfunc("before_trap", zlebeforetrap);
+/// deletehookfunc("after_trap", zleaftertrap);
+/// // delete keymaps + restore old entry points
+/// return 0;
+/// ```
+pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {            // c:2312
     use std::sync::atomic::Ordering;
+    // c:2314 — refuse to unload while ZLE is active.
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
         return 1;
     }
-    0
+    // c:2318-2319 — `deletehookfunc("before_trap"); deletehookfunc("after_trap")`.
+    // Hook unregistration: remove our entries from ShellExecutor.hook_functions.
+    let _ = crate::exec::try_with_executor(|exec| {
+        if let Some(v) = exec.hook_functions.get_mut("before_trap") {
+            v.retain(|s| s != "zlebeforetrap");
+        }
+        if let Some(v) = exec.hook_functions.get_mut("after_trap") {
+            v.retain(|s| s != "zleaftertrap");
+        }
+    });
+    // c:2321-2324 — `deletekeymap(...)`. Drop is automatic on Arc<Keymap>;
+    // explicit-name unlink from keymapnamtab so the next module load starts
+    // fresh.
+    if let Ok(mut tab) = crate::ported::zle::zle_keymap::keymapnamtab().lock() {
+        tab.clear();
+    }
+    0                                                                        // c:2325
 }
 
 /// Port of `describekeybriefly()` from Src/Zle/zle_main.c:1892.
