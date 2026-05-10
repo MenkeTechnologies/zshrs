@@ -27,6 +27,53 @@ pub struct TermCapabilities {
 /// Default probe timeout (from termquery.c TIMEOUT)
 const PROBE_TIMEOUT_MS: u64 = 500;
 
+// =====================================================================
+// Pattern-tag bytes — `Src/Zle/termquery.c:36-67`. The `term_pat[]`
+// table encodes terminal-response patterns as byte streams; the high-
+// bit-set tags drive the matcher state machine.
+// =====================================================================
+
+/// Port of `TIMEOUT` from `termquery.c:36`. Sentinel "no response"
+/// value the matcher reports when a probe hits the wait deadline.
+pub const TIMEOUT: i64 = -51;                                                // c:36
+
+/// Port of `TAG` from `termquery.c:38`. High-bit marker (1<<7); any
+/// byte with this bit set is a tag, not literal pattern text.
+pub const TAG: u8 = 1 << 7;                                                  // c:38
+
+/// Port of `SEQ` from `termquery.c:39`. `TAG | (1<<6)` — distinguishes
+/// flow-control tags (T_BEGIN/T_END/T_OR) from data-capture tags.
+pub const SEQ: u8 = TAG | (1 << 6);                                          // c:39
+
+/// Port of `T_BEGIN` from `termquery.c:42`. Group-start tag.
+pub const T_BEGIN:    u8 = 0x80;                                             // c:42
+/// Port of `T_END` from `termquery.c:43`. Group-end tag.
+pub const T_END:      u8 = 0x81;                                             // c:43
+/// Port of `T_OR` from `termquery.c:44`. Alternation (within group).
+pub const T_OR:       u8 = 0x82;                                             // c:44
+/// Port of `T_REPEAT` from `termquery.c:45`. Repeat preceding block.
+pub const T_REPEAT:   u8 = 0x83;                                             // c:45
+/// Port of `T_NUM` from `termquery.c:46`. Decimal number, defaults to 0.
+pub const T_NUM:      u8 = 0x84;                                             // c:46
+/// Port of `T_HEX` from `termquery.c:47`. Hex digit kept as part of a number.
+pub const T_HEX:      u8 = 0x85;                                             // c:47
+/// Port of `T_HEXCH` from `termquery.c:48`. Hex digit thrown away.
+pub const T_HEXCH:    u8 = 0x86;                                             // c:48
+/// Port of `T_WILDCARD` from `termquery.c:49`. Match any character.
+pub const T_WILDCARD: u8 = 0x87;                                             // c:49
+/// Port of `T_RECORD` from `termquery.c:50`. Start text capture.
+pub const T_RECORD:   u8 = 0x88;                                             // c:50
+/// Port of `T_CAPTURE` from `termquery.c:51`. End text capture.
+pub const T_CAPTURE:  u8 = 0x89;                                             // c:51
+/// Port of `T_DROP` from `termquery.c:52`. Drop input + restart without
+/// matching a sequence.
+pub const T_DROP:     u8 = 0x91;                                             // c:52
+/// Port of `T_CONTINUE` from `termquery.c:53`. When matching don't go
+/// back to first state.
+pub const T_CONTINUE: u8 = 0x92;                                             // c:53
+/// Port of `T_NEXT` from `termquery.c:54`. Advance to next stored number.
+pub const T_NEXT:     u8 = 0x94;                                             // c:54
+
 /// Probe the connected terminal for advertised capabilities.
 /// Port of `query_terminal()` from Src/Zle/termquery.c. The C source
 /// sends DA1 (`ESC [ c`), DA2 (`ESC [ > c`), and OSC-based probes,
@@ -560,4 +607,34 @@ pub fn write_urlencoded(s: &str) -> String {                                 // 
         }
     }
     out
+}
+
+#[cfg(test)]
+mod term_pat_tag_tests {
+    use super::*;
+
+    #[test]
+    fn tag_high_bit_set() {
+        assert_eq!(TAG, 0x80);
+        assert_eq!(SEQ, 0xc0);
+    }
+
+    #[test]
+    fn t_constants_have_high_bit_set() {
+        for tag in [T_BEGIN, T_END, T_OR, T_REPEAT, T_NUM, T_HEX, T_HEXCH,
+                    T_WILDCARD, T_RECORD, T_CAPTURE, T_DROP, T_CONTINUE, T_NEXT] {
+            assert!(tag & TAG != 0, "tag 0x{:02x} should have high bit set", tag);
+        }
+    }
+
+    #[test]
+    fn timeout_sentinel_negative() {
+        assert_eq!(TIMEOUT, -51);
+    }
+
+    #[test]
+    fn t_repeat_in_seq_range() {
+        // c:42-48 — T_BEGIN..=T_HEXCH all in 0x80..=0x86, all have TAG bit.
+        assert!((T_BEGIN..=T_HEXCH).contains(&T_REPEAT));
+    }
 }
