@@ -670,12 +670,21 @@ impl Zle {
 
 /// Port of `acceptandhold()` from Src/Zle/zle_misc.c:409.
 pub fn acceptandhold(zle: &mut Zle) -> i32 {                                 // c:408
-    // C body (c:411-414): `zpushnode(bufstack, zlelineasstring(zleline,
-    //                     zlell, 0, NULL, NULL, 0)); stackcs = zlecs;
-    //                     done = 1; return 0`.
+    // Direct port of `int acceptandhold(char **args)` from
+    // zle_misc.c:408-415:
+    // ```c
+    // zpushnode(bufstack, zlelineasstring(zleline, zlell, 0, NULL, NULL, 0));
+    // stackcs = zlecs;
+    // done = 1;
+    // return 0;
+    // ```
     use std::sync::atomic::Ordering;
-    // bufstack/stackcs substrate not yet ported; record the line on
-    // killring as an approximation (caller can recover from front).
+    // c:411 — `zpushnode(bufstack, zlelineasstring(...))`.
+    let line_str: String = zle.zleline.iter().take(zle.zlell).collect();
+    zle.bufstack.insert(0, line_str.clone());                                // c:411 push to front
+    zle.stackcs = zle.zlecs;                                                 // c:412
+    // Keep killring snapshot for backward-compat with callers that
+    // recover via the kill-buffer surface.
     let line: Vec<char> = zle.zleline.iter().take(zle.zlell).copied().collect();
     if !line.is_empty() {
         zle.killring.push_front(line);
@@ -874,7 +883,10 @@ pub fn bracketedpaste(zle: &mut Zle, args: &[String]) -> i32 {               // 
     use super::zle_main::ModifierFlags;
     if !zle.zmod.flags.contains(ModifierFlags::VIBUF) {
         zle.zmod.mult = 1;                                                   // c:829
-        // region_active guard + killregion not ported as Zle field set.
+        // c:830-832 — `if (region_active) killregion(...)`.
+        if zle.region_active != 0 {
+            let _ = killregion(zle);
+        }
         // c:833 — `doinsert(wpaste, n)`. Inline insert at zlecs.
         for c in wpaste.iter().copied() {
             zle.zleline.insert(zle.zlecs, c);
