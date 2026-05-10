@@ -1225,7 +1225,7 @@ pub fn tdopending() {
 /// Rust port: appends to `String`, which auto-grows. The realloc-
 /// on-overflow logic from C is implicit.
 // add a character to the text buffer                                       // c:124
-pub fn taddchr(c: i32) {
+pub fn taddchr(c: i32) {                                                    // c:128
     let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
     if let Some(ch) = char::from_u32(c as u32) {
         b.buf.push(ch);
@@ -1237,7 +1237,7 @@ pub fn taddchr(c: i32) {
 /// C body appends with newline-flatten semantics: when
 /// `tnewlins == 0` (job-text mode), `\n` becomes ' '.
 // add a string to the text buffer                                          // c:142
-pub fn taddstr(s: &str) {
+pub fn taddstr(s: &str) {                                                   // c:145
     let mut b = text_buffer_lock().lock().expect("text buffer poisoned");
     if b.newlins {
         b.buf.push_str(s);
@@ -1321,7 +1321,8 @@ pub fn taddassignlist(assigns: &[(String, Option<String>, bool)]) {
 /// } else if (no_semicolon) taddstr(" ");
 /// else taddstr("; ");
 /// ```
-pub fn taddnl(no_semicolon: i32) {
+// add a newline, or something equivalent, to the text buffer              // c:223
+pub fn taddnl(no_semicolon: i32) {                                          // c:227
     let (newlins, indent, expand_tabs) = {
         let b = text_buffer_lock().lock().expect("text buffer poisoned");
         (b.newlins, b.indent, b.expand_tabs)

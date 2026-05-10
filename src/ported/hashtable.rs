@@ -1513,7 +1513,7 @@ mod tests {
 /// specific creators) typically discard since each Rust table
 /// type has its own constructor. Provided for C name parity.
 // Get a new hash table                                                     // c:96
-pub fn newhashtable(size: i32, name: &str) -> (String, i32) {
+pub fn newhashtable(size: i32, name: &str) -> (String, i32) {               // c:100
     (name.to_string(), size)
 }
 

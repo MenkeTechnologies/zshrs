@@ -1674,9 +1674,11 @@ pub fn adjustwinsize() -> (usize, usize) {
     (adjustcolumns(), adjustlines())
 }
 
+// spellcheck a word                                                       // c:3123
+// fix s ; if hist is nonzero, fix the history list too                    // c:3124
 /// Spelling correction distance (from utils.c spdist, already exists but adding spckword)
 /// Check if word is close enough to correct (from utils.c spckword)
-pub fn spckword(word: &str, candidates: &[&str], threshold: usize) -> Option<String> {
+pub fn spckword(word: &str, candidates: &[&str], threshold: usize) -> Option<String> { // c:3128
     let mut best = None;
     let mut best_dist = threshold + 1;
     for &candidate in candidates {
@@ -2128,7 +2130,7 @@ pub fn findword<'a>(s: &'a str, sep: Option<&'a str>) -> Option<(&'a str, &'a st
 
 /// Parse getkeystring escape sequences (from utils.c getkeystring)
 /// Handles \n \t \r \e \a \b \f \v \\ \' \" \xNN \uNNNN \UNNNNNNNN \0NNN
-pub fn getkeystring(s: &str) -> (String, usize) {
+pub fn getkeystring(s: &str) -> (String, usize) {                           // c:6915
     let mut result = String::new();
     let mut chars = s.chars().peekable();
     let mut consumed = 0;
@@ -2288,17 +2290,19 @@ pub fn hasspecial(s: &str) -> bool {
     s.chars().any(ispecial)
 }
 
+// give the tty to some process                                            // c:4771
 /// Attach to the controlling tty's process group (from utils.c attachtty)
 #[cfg(unix)]
-pub fn attachtty(pgrp: i32) {
+pub fn attachtty(pgrp: i32) {                                               // c:4775
     unsafe {
         libc::tcsetpgrp(0, pgrp);
     }
 }
 
+// get the process group associated with the tty                           // c:4811
 /// Get the terminal's process group (from utils.c gettygrp)
 #[cfg(unix)]
-pub fn gettygrp() -> i32 {
+pub fn gettygrp() -> i32 {                                                  // c:4815
     unsafe { libc::tcgetpgrp(0) }
 }
 
@@ -2494,7 +2498,7 @@ pub fn adduserdir(                                                          // c
 }
 
 /// Get named directory (from utils.c getnameddir)
-pub fn getnameddir(
+pub fn getnameddir(                                                         // c:1247
     name: &str,
     named_dirs: &std::collections::HashMap<String, String>,
 ) -> Option<String> {
@@ -2998,7 +3002,7 @@ pub fn imeta_byte(b: u8) -> bool {
 ///
 /// Same algorithm here, byte-indexed against the Vec rather than
 /// pointer-walked.
-pub fn unmetafy(s: &mut Vec<u8>) -> usize {
+pub fn unmetafy(s: &mut Vec<u8>) -> usize {                                 // c:4954
     // First loop: find the first `Meta` byte. Everything before it
     // stays as-is, so we don't need to copy.
     let mut p: usize = 0;
@@ -4675,15 +4679,17 @@ pub fn get_username() -> String {
 /// register and `preprompt()` walks.
 static PREPROMPT_FNS: std::sync::Mutex<Vec<fn()>> = std::sync::Mutex::new(Vec::new());
 
+// Add a function to the list of pre-prompt functions.                     // c:1315
 /// Register a callback to run before each prompt.
 /// Port of `addprepromptfn()` from Src/utils.c:1319.
-pub fn addprepromptfn(func: fn()) {
+pub fn addprepromptfn(func: fn()) {                                         // c:1319
     PREPROMPT_FNS.lock().unwrap().push(func);
 }
 
+// Remove a function from the list of pre-prompt functions.                // c:1328
 /// Remove a previously-registered pre-prompt callback.
 /// Port of `delprepromptfn()` from Src/utils.c:1332.
-pub fn delprepromptfn(func: fn()) {
+pub fn delprepromptfn(func: fn()) {                                         // c:1332
     let mut list = PREPROMPT_FNS.lock().unwrap();
     if let Some(pos) = list.iter().position(|f| *f as usize == func as usize) {
         list.remove(pos);
@@ -5030,7 +5036,7 @@ pub fn charlenconv(s: &str, len: usize) -> (usize, Option<char>) {
 /// since allocation strategy is uniform. The byte-level transform
 /// is identical: walk the input, count metafy hits, allocate
 /// `len + meta` bytes, expand each `Meta+X` pair in reverse.
-pub fn metafy(buf: &str) -> String {
+pub fn metafy(buf: &str) -> String {                                        // c:4856
     let bytes = buf.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     for &b in bytes {

@@ -1626,11 +1626,12 @@ pub fn pputc(buf: &mut String, c: char) {
     buf.push(c);
 }
 
+// Make sure there is room for `need' more characters in the buffer.       // c:987
 /// Ensure the prompt buffer has at least `need` bytes free.
 /// Port of `addbufspc()` from Src/prompt.c:991 — the C source
 /// reallocates the heap buffer; Rust's `String` does this
 /// automatically so this is a no-op.
-pub fn addbufspc(_buf: &mut String, _need: usize) {
+pub fn addbufspc(_buf: &mut String, _need: usize) {                         // c:991
     // Rust String handles allocation automatically
 }
 

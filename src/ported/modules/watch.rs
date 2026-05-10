@@ -391,7 +391,7 @@ fn printtime(timestamp: i64, fmt: &str) -> String {
 /// Port of `dowatch()` from Src/Modules/watch.c:597 — the C
 /// source diffs the cached `wtab` against a fresh utmp read and
 /// fires `watchlog()` for each new entry / departure.
-pub fn dowatch(current_user: &str) -> Vec<(UtmpEntry, bool)> {
+pub fn dowatch(current_user: &str) -> Vec<(UtmpEntry, bool)> {              // c:597
     let mut events = Vec::new();
     // Inline utmp walk — direct port of the setutxent/getutxent/endutxent
     // loop watchlog2 uses every poll (Src/Modules/watch.c:204). zsh C

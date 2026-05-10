@@ -34,7 +34,7 @@ const PROBE_TIMEOUT_MS: u64 = 500;
 /// per-capability parsers. zshrs sticks to the daily-driver subset
 /// (DA1, COLORTERM, OSC52) so script startup doesn't pay for the
 /// full 5+ probe round-trip.
-pub fn query_terminal() -> TermCapabilities {
+pub fn query_terminal() -> TermCapabilities {                               // c:234
     let mut caps = TermCapabilities::default();
 
     // Only probe if stdout is a tty

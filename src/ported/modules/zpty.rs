@@ -275,7 +275,7 @@ pub struct ZptyOptions {
 /// `zpty` builtin entry point.
 /// Port of `bin_zpty()` from Src/Modules/zpty.c:773 — same
 /// dispatch tree (delete / list / write / read / test / spawn).
-pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) -> (i32, String) {
+pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) -> (i32, String) { // c:773
     let mut output = String::new();
 
     if options.delete {

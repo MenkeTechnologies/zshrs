@@ -188,14 +188,14 @@ pub fn zsfree(_s: String) {
 /// Port of `dupstring()` from Src/string.c:33 — the heap-arena
 /// variant of `ztrdup()`. In Rust both collapse to `String::clone`
 /// since `String` always owns its allocation.
-pub fn dupstring(s: &str) -> String {
+pub fn dupstring(s: &str) -> String {                                       // c:33
     s.to_string()
 }
 
 /// Duplicate a string with explicit length.
 /// Port of `dupstring_wlen()` from Src/string.c:48 — used when the
 /// source isn't NUL-terminated (e.g. a slice of a larger buffer).
-pub fn dupstring_wlen(s: &str, len: usize) -> String {
+pub fn dupstring_wlen(s: &str, len: usize) -> String {                      // c:48
     s.chars().take(len).collect()
 }
 
@@ -285,7 +285,7 @@ pub fn sepsplit(s: &str, sep: &str, allow_empty: bool) -> Vec<String> {
 /// Port of `ztrdup()` from Src/string.c:62 — C zsh's canonical
 /// `strdup(3)` analog tied to the zsh allocator. In Rust both heap
 /// and permanent storage are the same (`String` owns its buffer).
-pub fn ztrdup(s: &str) -> String {
+pub fn ztrdup(s: &str) -> String {                                          // c:62
     s.to_string()
 }
 
@@ -293,13 +293,13 @@ pub fn ztrdup(s: &str) -> String {
 /// Port of `ztrduppfx()` from Src/string.c:172 — same role as
 /// `dupstring_wlen` (Src/string.c:48) but allocated as permanent
 /// rather than heap-arena. Rust collapses both to `String::clone`.
-pub fn ztrduppfx(s: &str, len: usize) -> String {
+pub fn ztrduppfx(s: &str, len: usize) -> String {                           // c:172
     s.chars().take(len).collect()
 }
 
 /// Concatenate two strings into a new permanent string.
 /// Port of `bicat()` from Src/string.c:145.
-pub fn bicat(s1: &str, s2: &str) -> String {
+pub fn bicat(s1: &str, s2: &str) -> String {                                // c:145
     format!("{}{}", s1, s2)
 }
 
