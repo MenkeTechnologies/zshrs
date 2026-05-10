@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 #[allow(unused_imports)]
 use crate::ported::exec::{
-    self, ShellExecutor,
+    self,
     with_executor, NumericRange,
 };
 use crate::ported::pattern::PatternFlags;

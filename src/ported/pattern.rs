@@ -11,8 +11,6 @@
 //! - Approximate matching (error tolerance)
 //! - Numeric ranges: `<n-m>`
 
-use crate::ported::exec::{ShellExecutor, with_executor};
-
 /// Pattern opcodes — port of the `P_*` constants from Src/zsh.h.
 /// The C source emits these as bytes into `patcode`; we keep them
 /// as a typed enum mostly for the `(#s)`/`(#e)` start/end-assert

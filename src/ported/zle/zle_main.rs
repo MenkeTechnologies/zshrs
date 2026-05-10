@@ -1306,32 +1306,111 @@ fn acceptline(name: &str) -> Option<Widget> {
     Some(Widget::builtin(name))
 }
 
-/// Vared builtin implementation
-/// Port of bin_vared() from zle_main.c
-pub fn bin_vared(zle: &mut Zle, varname: &str, opts: VaredOpts) -> io::Result<String> {
-    // Get variable value
+// =====================================================================
+// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
+// =====================================================================
+//
+// `vared_zle_run` packages the C body's c:1839-1860 sequence (set
+// vared globals + call `zleread(ZLCON_VARED)`) as a callable Rust
+// helper because `bin_vared` is split here: the canonical free-fn
+// port handles the flag-parse + variable-fetch path (c:1678-1735),
+// then delegates the actual edit to this helper. The C source has
+// no separate function — it inlines the zleread() call. Splitting
+// the helper out lets test callers and future executor wireups
+// reach the edit path without re-running the option parser.
+// =====================================================================
+pub fn vared_zle_run(zle: &mut Zle, varname: &str, opts: VaredOpts) -> io::Result<String> {
     let initial = std::env::var(varname).unwrap_or_default();
-
-    // Set up ZLE
     zle.zleline = initial.chars().collect();
     zle.zlell = zle.zleline.len();
     zle.zlecs = if opts.cursor_at_end { zle.zlell } else { 0 };
-
-    // Read with prompts
     let prompt = opts.prompt.as_deref().unwrap_or("");
     let rprompt = opts.rprompt.as_deref().unwrap_or("");
-
-    let result = zle.zleread(
-        prompt,
-        rprompt,
-        ZleReadFlags {
-            vared: true,
-            ..Default::default()
-        },
-        ZleContext::Vared,
-    )?;
-
+    let result = zle.zleread(prompt, rprompt,
+        ZleReadFlags { vared: true, ..Default::default() }, ZleContext::Vared)?;
     Ok(result)
+}
+
+/// Direct port of `bin_vared()` from `Src/Zle/zle_main.c:1678`.
+/// C signature: `static int bin_vared(char *name, char **args,
+/// Options ops, UNUSED(int func))`.
+/// BUILTIN spec at zle_main.c:2186 takes `"AaceghM:m:p:r:i:f:"`.
+pub fn bin_vared(name: &str, args: &[String],                                // c:1678
+                 ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG_SAFE, PM_SCALAR, PM_ARRAY, PM_HASHED};
+    use crate::ported::utils::zwarnnam;
+    let mut type_: u32 = PM_SCALAR;                                          // c:1685
+    // c:1691 — `if ((interact && unset(USEZLE)) || !strcmp(term, "emacs"))`.
+    let term = std::env::var("TERM").unwrap_or_default();
+    if term == "emacs" {                                                     // c:1691
+        zwarnnam(name, "ZLE not enabled");                                   // c:1692
+        return 1;                                                            // c:1693
+    }
+    // c:1695 — refuse recursive ZLE.
+    if crate::ported::builtins::sched::zleactive.load(                       // c:1695
+        std::sync::atomic::Ordering::Relaxed) != 0 {
+        zwarnnam(name, "ZLE cannot be used recursively (yet)");              // c:1696
+        return 1;                                                            // c:1697
+    }
+    // c:1700 — `warn_flags = OPT_ISSET(ops, 'g') ? 0 : ASSPM_WARN;` —
+    // affects setsparam path; tracked but not yet wired through.
+    let _warn_flags = if OPT_ISSET(ops, b'g') { 0 } else { 1 };              // c:1700 ASSPM_WARN
+    if OPT_ISSET(ops, b'A') {                                                // c:1701
+        if OPT_ISSET(ops, b'a') {                                            // c:1703
+            zwarnnam(name, "specify only one of -a and -A");                 // c:1705
+            return 1;                                                        // c:1706
+        }
+        type_ = PM_HASHED;                                                   // c:1708
+    } else if OPT_ISSET(ops, b'a') {                                         // c:1710
+        type_ = PM_ARRAY;                                                    // c:1711
+    }
+    let p1 = OPT_ARG_SAFE(ops, b'p').unwrap_or("");                          // c:1712
+    let p2 = OPT_ARG_SAFE(ops, b'r').unwrap_or("");                          // c:1713
+    let main_keymapname  = OPT_ARG_SAFE(ops, b'M').unwrap_or("");            // c:1714
+    let vicmd_keymapname = OPT_ARG_SAFE(ops, b'm').unwrap_or("");            // c:1715
+    let init             = OPT_ARG_SAFE(ops, b'i').unwrap_or("");            // c:1716
+    let finish           = OPT_ARG_SAFE(ops, b'f').unwrap_or("");            // c:1717
+    let _ = (main_keymapname, vicmd_keymapname, init, finish);
+    if type_ != PM_SCALAR && !OPT_ISSET(ops, b'c') {                         // c:1719
+        zwarnnam(name,                                                       // c:1720
+            &format!("-{} ignored", if type_ == PM_ARRAY { "a" } else { "A" }));
+    }
+    // c:1724 — `s = args[0];`
+    if args.is_empty() {
+        zwarnnam(name, "not enough arguments");
+        return 1;
+    }
+    let varname = &args[0];                                                  // c:1724
+    // c:1725 queue_signals.
+    crate::ported::mem::queue_signals();
+    // c:1726 — fetchvalue(&vbuf, &s, ...). For -c (create), allow
+    // missing variable; otherwise error.
+    let exists = std::env::var(varname).is_ok()
+        || std::env::var(format!("{}__zshrs_array", varname)).is_ok();
+    if !exists && !OPT_ISSET(ops, b'c') {                                    // c:1728
+        crate::ported::mem::unqueue_signals();                               // c:1729
+        zwarnnam(name, &format!("no such variable: {}", varname));           // c:1730
+        return 1;                                                            // c:1731
+    }
+    crate::ported::mem::unqueue_signals();
+    // c:1841-1860 — zleread(ZLCON_VARED) drives the actual edit. Static-
+    // link path: the live ZLE editor isn't reachable from this lib-side
+    // entrypoint. Delegate to vared_zle_run when a Zle handle is wired
+    // into the executor; until then, fall back to a stdin read so the
+    // builtin is functional in non-interactive scripts that pipe input.
+    let prompt = if !p1.is_empty() { p1.to_string() } else { String::new() };
+    let rprompt = if !p2.is_empty() { p2.to_string() } else { String::new() };
+    if !prompt.is_empty() { eprint!("{}", prompt); }
+    let current = std::env::var(varname).unwrap_or_default();
+    print!("{}", current);
+    if !rprompt.is_empty() { eprint!("{}", rprompt); }
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_ok() {                      // c:1841 zleread fallback
+        let value = input.trim_end_matches('\n').to_string();
+        crate::ported::modules::ksh93::setsparam(varname, &value);           // c:1893 setsparam
+        return 0;                                                            // c:1903
+    }
+    1
 }
 
 /// Vared options

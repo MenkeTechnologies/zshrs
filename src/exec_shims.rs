@@ -8468,97 +8468,48 @@ impl crate::ported::exec::ShellExecutor {
 
         0
     }
-    /// vared - visually edit a variable.
-    /// Port of bin_vared() from Src/Zle/zle_main.c:1678. The C source
-    /// runs zleread() with a vared context flag (ZLCON_VARED), which
-    /// drops down a full ZLE session bound to the named variable's
-    /// current value. zshrs's lib-side vared can't reach the live
-    /// editor (no host-side dispatch from this crate), so we fall back
-    /// to a stdin read_line — sufficient for non-interactive scripts
-    /// like `var=hi vared var <<<edited` but missing the line-editor
-    /// keybindings, history navigation (-h), and array editing (-a/-A)
-    /// the C source supports.
+    /// `vared` shim — parses the `"AaceghM:m:p:r:i:f:"` BUILTIN spec
+    /// from zle_main.c:2186 into a real `options` struct, then invokes
+    /// the canonical free-fn port at
+    /// crate::ported::zle::zle_main::bin_vared which matches the C
+    /// signature `bin_vared(name, args, ops, func)` exactly.
     pub(crate) fn bin_vared(&mut self, args: &[String]) -> i32 {
-        if args.is_empty() {
-            zwarnnam("vared", "not enough arguments");
-            return 1;
-        }
-
-        let mut var_name = String::new();
-        let mut prompt = String::new();
-        let mut rprompt = String::new();
-        // -h: would queue history into bufstack so up-arrow walks it
-        // (zle_main.c:1678's vared launches zleread(ZLRF_HISTORY)). Our
-        // stdin read_line doesn't support arrow keys, so the flag is
-        // accepted for compat but no editing-time history is offered.
-        let mut _history = false;
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                argscount: 0, argsalloc: 0 };
+        let mut positional: Vec<String> = Vec::new();
         let mut i = 0;
-
         while i < args.len() {
-            match args[i].as_str() {
-                "-p" => {
-                    if i + 1 >= args.len() {
-                        // zsh: `vared -p` without value -> `vared:1:
-                        // argument expected: -p` exit 1. zshrs's
-                        // `if i + 1 < args.len()` guard silently
-                        // dropped the flag without erroring, which
-                        // then triggered the catch-all `not enough
-                        // arguments` for the missing var.
-                        zwarnnam("vared", "argument expected: -p");
-                        return 1;
+            let a = &args[i];
+            if a == "--" { i += 1; positional.extend_from_slice(&args[i..]); break; }
+            if let Some(rest) = a.strip_prefix('-') {
+                if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
+                let chars: Vec<char> = rest.chars().collect();
+                let mut j = 0;
+                while j < chars.len() {
+                    let c = chars[j] as u8;
+                    // -M / -m / -p / -r / -i / -f all take an arg per the spec.
+                    if matches!(c, b'M' | b'm' | b'p' | b'r' | b'i' | b'f') {
+                        ops.ind[c as usize] = (ops.args.len() + 1) as u8;
+                        let rest_after = &rest[j + 1..];
+                        if !rest_after.is_empty() {
+                            ops.args.push(rest_after.to_string());
+                        } else {
+                            i += 1;
+                            ops.args.push(args.get(i).cloned().unwrap_or_default());
+                        }
+                        ops.argscount = ops.args.len() as i32;
+                        break;
                     }
-                    i += 1;
-                    prompt = args[i].clone();
+                    if c.is_ascii_alphabetic() { ops.ind[c as usize] = 1; }
+                    j += 1;
                 }
-                "-r" => {
-                    if i + 1 >= args.len() {
-                        zwarnnam("vared", "argument expected: -r");
-                        return 1;
-                    }
-                    i += 1;
-                    rprompt = args[i].clone();
-                }
-                "-h" => _history = true,
-                "-c" => {} // Use completion - ignored
-                "-e" => {} // Use emacs mode - ignored
-                "-M" | "-m" => {
-                    i += 1;
-                } // Main/alt keymap - skip arg
-                "-a" | "-A" => {
-                    i += 1;
-                } // Array assignment - skip arg
-                s if !s.starts_with('-') => {
-                    var_name = s.to_string();
-                }
-                _ => {}
+            } else {
+                positional.push(a.clone());
             }
             i += 1;
         }
-
-        if var_name.is_empty() {
-            zwarnnam("vared", "not enough arguments");
-            return 1;
-        }
-
-        // Get current value
-        let current = self.get_variable(&var_name);
-
-        // Simple line editing using stdin
-        if !prompt.is_empty() {
-            eprint!("{}", prompt);
-        }
-        print!("{}", current);
-        if !rprompt.is_empty() {
-            eprint!("{}", rprompt);
-        }
-
-        let mut input = String::new();
-        if std::io::stdin().read_line(&mut input).is_ok() {
-            let value = input.trim_end_matches('\n').to_string();
-            self.variables.insert(var_name, value);
-            return 0;
-        }
-        1
+        crate::ported::zle::zle_main::bin_vared("vared", &positional, &ops, 0)
     }
 }
 
