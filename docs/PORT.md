@@ -11,6 +11,76 @@ deleted on sight by the maintainer. No exceptions.
 
 ---
 
+## READ THIS FIRST — The Four Rules in One Screen
+
+If you read nothing else in this file, read this. Every violation is
+deleted on sight; the maintainer does not negotiate.
+
+**Rule A — Names must exist in upstream zsh C.** This applies to
+**every declaration** in `src/ported/`, not just functions:
+
+| Rust decl                                  | Must exist in C as                                          | Verify with                                                                                |
+|--------------------------------------------|-------------------------------------------------------------|--------------------------------------------------------------------------------------------|
+| `fn <name>`                                | `<name>(` function definition                               | `grep -xF '<name>' docs/zsh_c_functions.txt`                                               |
+| `struct <Name>` / `enum <Name>`            | `struct <name>` / `union <name>` / `enum <name>` / `typedef` | `grep -nE '(struct\|union\|enum)[[:space:]]+<name>' src/zsh/Src/**/*.{c,h}`                |
+| `static <NAME>` / `thread_local! { static <NAME> }` | `static <name>` (file-scope) or `extern <name>` in C  | `grep -nE 'static[[:space:]].*[^a-zA-Z0-9_]<name>[^a-zA-Z0-9_]' src/zsh/Src/**/*.c`         |
+| `type <Name>`                              | `typedef ... <name>`                                        | `grep -nE 'typedef[[:space:]].*[^a-zA-Z0-9_]<name>[[:space:]]*;' src/zsh/Src/**/*.{c,h}`   |
+
+If `grep` returns nothing, the name is invented. **Delete or rename.**
+
+**Rule B — Signatures must be identical to C (Rule S1).**
+
+C `paramtypestr(Param pm)` → Rust `paramtypestr(pm: &param)`. NOT
+`paramtypestr(ptype: ParamType, flags: &ParamFlags)`. No threading
+state through as extra params. No splitting one C fn into many Rust
+fns. No merging many C fns into one. No reordering params. No renaming
+params for "Rust idiom" (`nam`, not `name`; `argv`, not `args`; `ops`,
+not `opts`). The C→Rust type map is in `## EXACT TRANSLATION` below.
+
+**Rule C — Every decl lives in the file that mirrors its C
+definition file.**
+
+| C definition is in...     | Rust port goes in...                  |
+|---------------------------|---------------------------------------|
+| `Src/foo.c`               | `src/ported/foo.rs`                   |
+| `Src/Zle/foo.c`           | `src/ported/zle/foo.rs`               |
+| `Src/Modules/foo.c`       | `src/ported/modules/foo.rs`           |
+| `Src/zsh.h`               | `src/ported/zsh_h.rs`                 |
+| `Src/Zle/zle.h`           | `src/ported/zle/zle_h.rs`             |
+| `Src/Zle/comp.h`          | `src/ported/zle/comp_h.rs`            |
+| `Src/Zle/compctl.h`       | `src/ported/zle/compctl_h.rs`         |
+
+A struct declared in `Src/zsh.h` does not belong in
+`src/ported/modules/parameter.rs` just because parameter.c uses it.
+Same for fns: `Src/utils.c` fns → `src/ported/utils.rs`, never
+re-homed to "wherever they're called from."
+
+**Rule D — Bag-of-globals aggregator types are banned.**
+
+❌ C declares N file-`static`s → Rust aggregates them into one struct.
+
+If C has `static int foo; static int bar; static int baz;` (three
+separate file-statics), the Rust port has three separate
+`thread_local!` entries (bucket 1) or three separate
+`Arc<RwLock<…>>` holders (bucket 2). **No struct `BagState { foo,
+bar, baz }`** unless C declares `struct bag_state { ... }`.
+
+This is the failure mode that produced parameter.rs's 14 deleted
+`*Table` structs (`CommandsTable`, `FunctionsTable`, `AliasesTable`,
+`BuiltinsTable`, `DirStack`, `OptionsTable`, `NamedDirsTable`,
+`JobsTable`, `ModulesTable`, plus `ParamFlags`, `ParamType`,
+`FunctionDef`, `AliasDef`, `ModuleInfo`) — none of those names
+existed in `Src/Modules/parameter.c`; all 14 were invented Rust
+abstractions; all 14 were deleted in commit "port: dissolve
+bag-of-globals from modules/parameter.rs" on 2026-05-10.
+
+See PORT_PLAN.md "Anti-pattern 1" and Phase 2 dissolution checklist
+for the active list of remaining bag-of-globals targets (`SubstState`,
+`ShellState`, `CompletionState`, `BindState`, `RefreshState`,
+`CompState` in computil.rs, `JobState` in parameter.rs/jobs).
+
+---
+
 ## ABSOLUTE FREEZE on `src/ported/`
 
 **`src/ported/` is FROZEN. No new files. No new functions whose name is
@@ -62,19 +132,98 @@ file conflicts with the freeze below, the freeze wins.
   new name. Cite the C source line; if the behavior doesn't match, the
   port is wrong.
 
+### Struct / enum / typedef / static freeze
+
+Equally non-negotiable as the function freeze, and the failure mode
+that produced parameter.rs's 14 bag-of-globals `*Table` structs (all
+deleted 2026-05-10):
+
+- ❌ **You may NOT introduce any `struct`, `enum`, `type`, `union`,
+  or top-level `static` under `src/ported/` whose name does not
+  already exist as a `struct` / `enum` / `typedef` / `static` in
+  upstream zsh C source.** Verify with:
+
+  ```sh
+  # Does this struct exist anywhere in upstream zsh C?
+  grep -nE '(typedef[[:space:]]+)?(struct|union|enum)[[:space:]]+<name>[[:space:]]*[{;]' \
+    src/zsh/Src/**/*.c src/zsh/Src/**/*.h
+  ```
+
+- ❌ Invented Rust-only aggregator structs are the **bag-of-globals
+  anti-pattern** documented in PORT_PLAN.md. If C declares N
+  file-`static`s, Rust declares N `thread_local!` entries (bucket 1)
+  or N `Arc<RwLock<…>>` holders (bucket 2). **No aggregation
+  struct unless C has a matching `struct foo` to point at.**
+- ❌ Invented Rust-only "convenience" types — `OptionsTable`,
+  `JobsTable`, `CommandsTable`, `*State`, `*Builder`, `*Config`,
+  `*Context` — are deleted on sight when their C counterpart does
+  not exist in the matching `Src/<file>.c` (or in the canonical
+  header file for header-defined types).
+- ❌ Trivial wrapper `enum`s that re-encode `PM_*` / `OPT_*` /
+  `BIT_*` constants as Rust enum variants. The C source uses bit
+  constants directly — the Rust port reads the same `u32` flag bits
+  via `PM_TYPE(f)` and `(f & PM_LEFT) != 0`, NOT
+  `match ParamType::Scalar => …`.
+
+#### The legal struct/enum name set
+
+A Rust `struct` / `enum` / `type` / `static` name under `src/ported/`
+is **legal** if and only if it is one of:
+
+1. **Identical** to a name declared as `struct <name>` / `union <name>`
+   / `enum <name>` / `typedef ... <name>` / `static ... <name>` in
+   any `src/zsh/Src/**/*.c` or `src/zsh/Src/**/*.h`.
+2. **Uppercased** version of a C file-`static` (Rust SCREAMING_SNAKE
+   convention) — e.g. C `static int unary` → Rust `static UNARY` or
+   `thread_local! { static UNARY: ... }`.
+3. A standard Rust derive-required impl (`Default`, `Clone`,
+   `Debug`, etc.) on a struct that already exists in C.
+4. A `#[cfg(test)]` test fixture inside `mod tests { ... }`.
+
+Anything else — `CommandsTable`, `FunctionsTable`, `AliasesTable`,
+`OptionsTable`, `JobsTable`, `ParamFlags`, `ParamType`, `ShellState`,
+`SubstState`, `BindState`, `RefreshState`, `CompletionState`, etc. —
+**will be deleted**. The 14-struct dissolution of parameter.rs on
+2026-05-10 (commit "port: dissolve bag-of-globals from
+modules/parameter.rs") is the reference example of how this rule is
+enforced retroactively.
+
+#### Header-defined types live in the header port
+
+Structs and typedefs declared in `Src/zsh.h`, `Src/Zle/zle.h`,
+`Src/Zle/comp.h`, `Src/Zle/compctl.h`, etc. port to their canonical
+header file:
+
+| C header              | Rust port                              |
+|-----------------------|----------------------------------------|
+| `Src/zsh.h`           | `src/ported/zsh_h.rs`                  |
+| `Src/Zle/zle.h`       | `src/ported/zle/zle_h.rs`              |
+| `Src/Zle/comp.h`      | `src/ported/zle/comp_h.rs`             |
+| `Src/Zle/compctl.h`   | `src/ported/zle/compctl_h.rs`          |
+| `Src/Modules/tcp.h`   | `src/ported/modules/tcp_h.rs`          |
+
+A struct defined in `Src/zsh.h` (e.g. `struct funcstack` at
+`zsh.h:1348`) does NOT belong in `parameter.rs` just because
+`parameter.c` uses it. It belongs in `zsh_h.rs`. Cross-file
+misplacement is a violation.
+
 ### Why this freeze exists
 
 Bots have produced 114 distinct duplicate function names across
 `src/ported/`, with 148 extra copies and 1,638 self-confessed
 `// c:N/A` adhoc functions. Every drift originated as either (a) a new
-file the bot created to "have somewhere to put" a helper, or (b) a new
-function name the bot invented because no real zsh fn matched. The
-freeze closes both vectors at the source. From this point forward, the
+file the bot created to "have somewhere to put" a helper, (b) a new
+function name the bot invented because no real zsh fn matched, or (c)
+a new `*State` / `*Table` / `*Builder` struct invented to aggregate
+file-statics into "one parameter to thread through." The freeze
+closes all three vectors at the source. From this point forward, the
 only edits permitted under `src/ported/` are: (i) modifying an
 existing fn in an existing file to be a more faithful port, (ii)
 adding a fn whose name already exists in upstream C code to an
 existing Rust file that already maps to that C file's `Src/*.c`
-counterpart, (iii) deleting drift.
+counterpart, (iii) deleting drift, (iv) dissolving bag-of-globals
+`*State`/`*Table` aggregates into per-static `thread_local!` sets
+(see PORT_PLAN.md Phase 2).
 
 Genuinely new code (features zsh C does not have) goes to
 `src/extensions/`. The recorder goes to `src/recorder/`. Nothing else
@@ -709,6 +858,24 @@ Before writing any code:
   exist as a function in `src/zsh/Src/**/*.c`.** Verify with `grep` or
   `docs/zsh_c_functions.txt` before writing the signature. Trait-impl
   and `#[test]` exemptions from Rule 3 are the only carve-outs.
+- ❌ **Add any `struct`, `enum`, `type`, `union`, or top-level
+  `static` under `src/ported/` whose name does not already exist as
+  a `struct` / `enum` / `typedef` / `static` in upstream zsh C
+  source.** Verify with `grep -nE '(struct|union|enum)[[:space:]]+<name>'
+  src/zsh/Src/**/*.{c,h}` before writing the type. The bag-of-globals
+  `*State` / `*Table` / `*Builder` / `*Config` / `*Context` pattern
+  is **deleted on sight**.
+- ❌ **Place a struct in the wrong file.** Header-defined types
+  (anything declared in `Src/zsh.h`, `Src/Zle/zle.h`, etc.) port to
+  the header file (`zsh_h.rs`, `zle/zle_h.rs`, etc.), NOT to the
+  module that consumes them. `struct funcstack` is in `Src/zsh.h:1348`
+  → `src/ported/zsh_h.rs`, not `src/ported/modules/parameter.rs`.
+- ❌ **Change a function signature.** Rule S1 — Rust signature is
+  identical to C. C `paramtypestr(Param pm)` → Rust
+  `paramtypestr(pm: &param)`, NOT `paramtypestr(ptype: ParamType,
+  flags: &ParamFlags)`. No threading state as extra params. No
+  splitting one fn into many. No merging many into one. No reordering.
+  No renaming. Same name, same arity, same order.
 - ❌ Invent a function with a name not in `docs/zsh_c_functions.txt`.
 - ❌ Write "helper" / "utility" / "convenience" functions or files.
 - ❌ Add new modules like `helpers`, `common`, `prelude`, `error`,
@@ -765,13 +932,32 @@ Before writing any code:
 ## TL;DR
 
 > **`src/ported/` is FROZEN. The 89 existing files are the legal set —
-> no new files, no new directories, ever. The only `fn` names allowed
-> are ones that already exist as functions in `src/zsh/Src/**/*.c`
-> (verify with `grep` before writing). Every file is a strict 1:1 port
-> of its `Src/*.c`. Every function cites its C source. No
-> grandfathering, no helpers, no "legacy" exemptions — old files and
-> new edits alike must comply. Genuinely new features go under
-> `src/extensions/`. The recorder goes under `src/recorder/`. The only
-> non-port files sanctioned outside those two dirs are `src/exec.rs`
-> and `src/fusevm_bridge.rs`. Adhoc code anywhere else is deleted on
-> sight.**
+> no new files, no new directories, ever.**
+>
+> Inside the frozen 89, **every name must exist in upstream zsh C**:
+> - **Functions**: name appears in `src/zsh/Src/**/*.c` (verify with
+>   `grep` or `docs/zsh_c_functions.txt`).
+> - **Structs / enums / typedefs / unions / statics**: name appears
+>   as `struct <name>` / `enum <name>` / `typedef ... <name>` /
+>   `static ... <name>` in `src/zsh/Src/**/*.{c,h}`. Bag-of-globals
+>   `*Table` / `*State` / `*Builder` / `*Config` aggregates are
+>   deleted on sight.
+> - **Signatures**: identical to C (Rule S1). Same name, same arity,
+>   same param order, no threading state as extra params.
+> - **File placement**: every fn / struct lives in the Rust file that
+>   mirrors its C definition file. Header-defined types
+>   (`Src/zsh.h`, `Src/Zle/zle.h`, etc.) port to the corresponding
+>   `*_h.rs`, NOT to the module that consumes them.
+> - **Code order**: top-to-bottom order of decls/structs/fns/comments
+>   matches C (Rule S2).
+> - **Citations**: every fn carries `/// Port of <c_fn>() from
+>   Src/<file>.c:<NNNN>`; every non-trivial statement carries an
+>   inline `// c:NNN` comment.
+>
+> Every file is a strict 1:1 port of its `Src/*.c`. No grandfathering,
+> no helpers, no "legacy" exemptions — old files and new edits alike
+> must comply. Genuinely new features go under `src/extensions/`. The
+> recorder goes under `src/recorder/`. The only non-port files
+> sanctioned outside those two dirs are `src/exec.rs` and
+> `src/fusevm_bridge.rs`. Adhoc code anywhere else is deleted on
+> sight.
