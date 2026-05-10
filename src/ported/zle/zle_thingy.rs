@@ -95,65 +95,10 @@ impl Thingy {
     }
 }
 
-/// Standard thingy names used throughout ZLE
-pub mod names {
-    /// Accept and execute a line
-    pub const ACCEPT_LINE: &str = "accept-line";
-    /// Send break (abort)
-    pub const SEND_BREAK: &str = "send-break";
-    /// Insert character
-    pub const SELF_INSERT: &str = "self-insert";
-    /// Delete character or list completions
-    pub const DELETE_CHAR_OR_LIST: &str = "delete-char-or-list";
-    /// Backward delete character
-    pub const BACKWARD_DELETE_CHAR: &str = "backward-delete-char";
-    /// Move backward one character
-    pub const BACKWARD_CHAR: &str = "backward-char";
-    /// Move forward one character
-    pub const FORWARD_CHAR: &str = "forward-char";
-    /// Move to beginning of line
-    pub const BEGINNING_OF_LINE: &str = "beginning-of-line";
-    /// Move to end of line
-    pub const END_OF_LINE: &str = "end-of-line";
-    /// Move backward one word
-    pub const BACKWARD_WORD: &str = "backward-word";
-    /// Move forward one word
-    pub const FORWARD_WORD: &str = "forward-word";
-    /// Kill to end of line
-    pub const KILL_LINE: &str = "kill-line";
-    /// Kill whole line
-    pub const KILL_WHOLE_LINE: &str = "kill-whole-line";
-    /// Kill word forward
-    pub const KILL_WORD: &str = "kill-word";
-    /// Kill word backward
-    pub const BACKWARD_KILL_WORD: &str = "backward-kill-word";
-    /// Yank from kill ring
-    pub const YANK: &str = "yank";
-    /// Undo
-    pub const UNDO: &str = "undo";
-    /// Redo
-    pub const REDO: &str = "redo";
-    /// Clear screen
-    pub const CLEAR_SCREEN: &str = "clear-screen";
-    /// Expand or complete
-    pub const EXPAND_OR_COMPLETE: &str = "expand-or-complete";
-    /// History search backward
-    pub const HISTORY_INCREMENTAL_SEARCH_BACKWARD: &str = "history-incremental-search-backward";
-    /// History search forward
-    pub const HISTORY_INCREMENTAL_SEARCH_FORWARD: &str = "history-incremental-search-forward";
-    /// Up line or history
-    pub const UP_LINE_OR_HISTORY: &str = "up-line-or-history";
-    /// Down line or history
-    pub const DOWN_LINE_OR_HISTORY: &str = "down-line-or-history";
-    /// Transpose characters
-    pub const TRANSPOSE_CHARS: &str = "transpose-chars";
-    /// Delete character
-    pub const DELETE_CHAR: &str = "delete-char";
-    /// Vi command mode
-    pub const VI_CMD_MODE: &str = "vi-cmd-mode";
-    /// Vi insert mode
-    pub const VI_INSERT: &str = "vi-insert";
-}
+// `pub mod names` removed — Rust-fabricated namespace wrapping
+// thingy-name string literals. C source uses bare `"accept-line"`/
+// `"self-insert"`/etc. directly at `zle_thingy.c` registration
+// sites; no namespace, no helper consts. The mod had no callers.
 
 // =====================================================================
 // thingytab — `Src/Zle/zle_thingy.c:52`.

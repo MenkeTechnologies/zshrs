@@ -6,27 +6,10 @@
 
 use super::zle_main::Zle;
 
-/// ZLE parameter names
-pub mod names {
-    pub const BUFFER: &str = "BUFFER";
-    pub const CURSOR: &str = "CURSOR";
-    pub const LBUFFER: &str = "LBUFFER";
-    pub const RBUFFER: &str = "RBUFFER";
-    pub const PREBUFFER: &str = "PREBUFFER";
-    pub const WIDGET: &str = "WIDGET";
-    pub const LASTWIDGET: &str = "LASTWIDGET";
-    pub const KEYMAP: &str = "KEYMAP";
-    pub const KEYS: &str = "KEYS";
-    pub const NUMERIC: &str = "NUMERIC";
-    pub const HISTNO: &str = "HISTNO";
-    pub const BUFFERLINES: &str = "BUFFERLINES";
-    pub const PENDING: &str = "PENDING";
-    pub const CUTBUFFER: &str = "CUTBUFFER";
-    pub const KILLRING: &str = "killring";
-    pub const MARK: &str = "MARK";
-    pub const REGION_ACTIVE: &str = "REGION_ACTIVE";
-    pub const ZLE_STATE: &str = "ZLE_STATE";
-}
+// `pub mod names` removed — Rust-fabricated namespace wrapping
+// string literals. C source uses bare `"BUFFER"`/`"CURSOR"`/etc.
+// in the `zleparams[]` table at Src/Zle/zle_params.c:38 directly.
+// The mod had no callers.
 
 // Each accessor below corresponds to one of the special parameters
 // zsh exposes via Src/Zle/zle_params.c. The C source registers them

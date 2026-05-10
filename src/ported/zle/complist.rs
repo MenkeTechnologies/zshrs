@@ -111,12 +111,12 @@ mod tests {
     #[test]
     fn col_indices_match_c() {
         // c:167-191 — exact integer indices used by mcolors.files[i].
-        assert_eq!(col::NO, 0);
-        assert_eq!(col::DI, 2);
-        assert_eq!(col::EX, 15);
-        assert_eq!(col::LC, 16);
-        assert_eq!(col::EC, 18);
-        assert_eq!(col::SA, 24);
+        assert_eq!(COL_NO, 0);
+        assert_eq!(COL_DI, 2);
+        assert_eq!(COL_EX, 15);
+        assert_eq!(COL_LC, 16);
+        assert_eq!(COL_EC, 18);
+        assert_eq!(COL_SA, 24);
     }
 
     #[test]
@@ -130,23 +130,23 @@ mod tests {
     #[test]
     fn colnames_match_c() {
         // c:197-201 — two-letter LS_COLORS keys.
-        assert_eq!(COLNAMES[col::NO], "no");
-        assert_eq!(COLNAMES[col::DI], "di");
-        assert_eq!(COLNAMES[col::LN], "ln");
-        assert_eq!(COLNAMES[col::EX], "ex");
-        assert_eq!(COLNAMES[col::MA], "ma");
+        assert_eq!(COLNAMES[COL_NO], "no");
+        assert_eq!(COLNAMES[COL_DI], "di");
+        assert_eq!(COLNAMES[COL_LN], "ln");
+        assert_eq!(COLNAMES[COL_EX], "ex");
+        assert_eq!(COLNAMES[COL_MA], "ma");
     }
 
     #[test]
     fn defcols_match_c() {
         // c:205-209 — default ANSI codes.
-        assert_eq!(DEFCOLS[col::NO], Some("0"));
-        assert_eq!(DEFCOLS[col::DI], Some("1;31"));
-        assert_eq!(DEFCOLS[col::EX], Some("1;32"));
-        assert_eq!(DEFCOLS[col::OR], None);    // default for orphan: fallback to ln
-        assert_eq!(DEFCOLS[col::MI], None);    // default for missing: fallback to fi
-        assert_eq!(DEFCOLS[col::LC], Some("\x1b["));
-        assert_eq!(DEFCOLS[col::RC], Some("m"));
+        assert_eq!(DEFCOLS[COL_NO], Some("0"));
+        assert_eq!(DEFCOLS[COL_DI], Some("1;31"));
+        assert_eq!(DEFCOLS[COL_EX], Some("1;32"));
+        assert_eq!(DEFCOLS[COL_OR], None);    // default for orphan: fallback to ln
+        assert_eq!(DEFCOLS[COL_MI], None);    // default for missing: fallback to fi
+        assert_eq!(DEFCOLS[COL_LC], Some("\x1b["));
+        assert_eq!(DEFCOLS[COL_RC], Some("m"));
     }
 
     #[test]
@@ -322,35 +322,32 @@ pub fn features_() -> i32 {                                                  // 
 // `Src/Zle/complist.c:165-269`.
 // =====================================================================
 
-/// Port of the `COL_*` `#define` block from `Src/Zle/complist.c:167-194`.
-/// Index into `mcolors.files[]` for each file-type color slot.
-pub mod col {                                                                // c:167
-    pub const NO:  usize = 0;                                                // c:167
-    pub const FI:  usize = 1;                                                // c:168
-    pub const DI:  usize = 2;                                                // c:169
-    pub const LN:  usize = 3;                                                // c:170
-    pub const PI:  usize = 4;                                                // c:171
-    pub const SO:  usize = 5;                                                // c:172
-    pub const BD:  usize = 6;                                                // c:173
-    pub const CD:  usize = 7;                                                // c:174
-    pub const OR:  usize = 8;                                                // c:175
-    pub const MI:  usize = 9;                                                // c:176
-    pub const SU:  usize = 10;                                               // c:177
-    pub const SG:  usize = 11;                                               // c:178
-    pub const TW:  usize = 12;                                               // c:179
-    pub const OW:  usize = 13;                                               // c:180
-    pub const ST:  usize = 14;                                               // c:181
-    pub const EX:  usize = 15;                                               // c:182
-    pub const LC:  usize = 16;                                               // c:183
-    pub const RC:  usize = 17;                                               // c:184
-    pub const EC:  usize = 18;                                               // c:185
-    pub const TC:  usize = 19;                                               // c:186
-    pub const SP:  usize = 20;                                               // c:187
-    pub const MA:  usize = 21;                                               // c:188
-    pub const HI:  usize = 22;                                               // c:189
-    pub const DU:  usize = 23;                                               // c:190
-    pub const SA:  usize = 24;                                               // c:191
-}
+// `COL_*` — index into `mcolors.files[]` per `Src/Zle/complist.c:167-194`.
+pub const COL_NO:  usize = 0;                                                // c:167
+pub const COL_FI:  usize = 1;                                                // c:168
+pub const COL_DI:  usize = 2;                                                // c:169
+pub const COL_LN:  usize = 3;                                                // c:170
+pub const COL_PI:  usize = 4;                                                // c:171
+pub const COL_SO:  usize = 5;                                                // c:172
+pub const COL_BD:  usize = 6;                                                // c:173
+pub const COL_CD:  usize = 7;                                                // c:174
+pub const COL_OR:  usize = 8;                                                // c:175
+pub const COL_MI:  usize = 9;                                                // c:176
+pub const COL_SU:  usize = 10;                                               // c:177
+pub const COL_SG:  usize = 11;                                               // c:178
+pub const COL_TW:  usize = 12;                                               // c:179
+pub const COL_OW:  usize = 13;                                               // c:180
+pub const COL_ST:  usize = 14;                                               // c:181
+pub const COL_EX:  usize = 15;                                               // c:182
+pub const COL_LC:  usize = 16;                                               // c:183
+pub const COL_RC:  usize = 17;                                               // c:184
+pub const COL_EC:  usize = 18;                                               // c:185
+pub const COL_TC:  usize = 19;                                               // c:186
+pub const COL_SP:  usize = 20;                                               // c:187
+pub const COL_MA:  usize = 21;                                               // c:188
+pub const COL_HI:  usize = 22;                                               // c:189
+pub const COL_DU:  usize = 23;                                               // c:190
+pub const COL_SA:  usize = 24;                                               // c:191
 /// Port of `NUM_COLS` from `Src/Zle/complist.c:193`.
 pub const NUM_COLS: usize = 25;                                              // c:193
 
