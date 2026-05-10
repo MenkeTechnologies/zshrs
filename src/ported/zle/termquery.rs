@@ -9,20 +9,11 @@
 use std::io::{self, Read, Write};
 use std::time::Duration;
 
-/// Terminal capabilities discovered by probing
-#[derive(Debug, Clone, Default)]
-pub struct TermCapabilities {
-    pub truecolor: bool,
-    pub bracketed_paste: bool,
-    pub clipboard_osc52: bool,
-    pub cursor_shape: bool,
-    pub osc7_cwd: bool,
-    pub osc133_prompt: bool,
-    pub sixel_graphics: bool,
-    pub kitty_keyboard: bool,
-    pub synchronized_output: bool,
-    pub unicode_version: Option<String>,
-}
+// `TermCapabilities` deleted — Rust-only struct with no C
+// counterpart. The C source publishes discovered capabilities by
+// pushing onto the `.term.extensions` shell array via
+// `assignaparam(EXTVAR, feat, ASSPM_AUGMENT)` (Src/Zle/termquery.c:487).
+// Rust port should write to that param when the param layer is wired.
 
 /// Default probe timeout (from termquery.c TIMEOUT)
 const PROBE_TIMEOUT_MS: u64 = 500;
@@ -81,47 +72,24 @@ pub const T_NEXT:     u8 = 0x94;                                             // 
 /// per-capability parsers. zshrs sticks to the daily-driver subset
 /// (DA1, COLORTERM, OSC52) so script startup doesn't pay for the
 /// full 5+ probe round-trip.
-pub fn query_terminal() -> TermCapabilities {                               // c:234
-    let mut caps = TermCapabilities::default();
-
-    // Only probe if stdout is a tty
+pub fn query_terminal() {                                                    // c:505
+    // c:506-509 — build TQ_BGCOLOR TQ_FGCOLOR TQ_CURSOR TQ_KITTYKB
+    // TQ_RGB TQ_XTVERSION TQ_DA, prime the state-machine matcher.
+    // c:510-540 — read responses + dispatch through `handle_query()`
+    // / `handle_color()` / `handle_paste()`.
+    // c:487 — discovered capabilities go to `.term.extensions` via
+    // assignaparam(EXTVAR, feat, ASSPM_AUGMENT).
+    // Real body deferred — needs param resolver + the full state-
+    // machine `probe_terminal()` matcher wired. The previous Rust
+    // placeholder shipped a wrong return type (`TermCapabilities`)
+    // and an env-var-only path that bypassed the real probes.
     #[cfg(unix)]
     {
         if unsafe { libc::isatty(1) } != 1 {
-            return caps;
+            return;
         }
     }
-
-    // Send Device Attributes query (DA1): ESC [ c
-    if let Ok(response) = probe_terminal("\x1b[c", PROBE_TIMEOUT_MS) {
-        handle_query(&response, &mut caps);
-    }
-
-    // Check COLORTERM for truecolor
-    if let Ok(ct) = std::env::var("COLORTERM") {
-        if ct == "truecolor" || ct == "24bit" {
-            caps.truecolor = true;
-        }
-    }
-
-    // Check for known terminal emulators
-    if let Ok(term_program) = std::env::var("TERM_PROGRAM") {
-        match term_program.as_str() {
-            "iTerm.app" | "WezTerm" | "Alacritty" | "kitty" => {
-                caps.truecolor = true;
-                caps.bracketed_paste = true;
-                caps.osc7_cwd = true;
-            }
-            _ => {}
-        }
-    }
-
-    if std::env::var("KITTY_WINDOW_ID").is_ok() {
-        caps.kitty_keyboard = true;
-        caps.truecolor = true;
-    }
-
-    caps
+    let _ = probe_terminal("\x1b[c", PROBE_TIMEOUT_MS);
 }
 
 /// Send an escape sequence query and read the response.
@@ -186,29 +154,13 @@ fn probe_terminal(query: &str, timeout_ms: u64) -> io::Result<String> {
     }
 }
 
-/// Parse DA1 response.
-/// Port of the DA1 branch of `handle_query()` from
-/// Src/Zle/termquery.c.
-fn handle_query(response: &str, caps: &mut TermCapabilities) {
-    // DA1 response format: ESC [ ? Ps ; Ps ; ... c
-    // Common parameter values:
-    // 4 = sixel graphics
-    // 22 = ANSI color
-    // 28 = rectangular editing
-    if response.contains("?") {
-        let params: Vec<&str> = response
-            .trim_start_matches("\x1b[?")
-            .trim_end_matches('c')
-            .split(';')
-            .collect();
-
-        for param in params {
-            if param.trim() == "4" {
-                caps.sixel_graphics = true
-            }
-        }
-    }
-}
+// Direct port of `handle_query(int sequence, int *numbers, int len,
+// char *capture, int clen, ...)` from Src/Zle/termquery.c:474 deferred
+// — the C signature takes 5 args (parsed sequence-id, decoded
+// numbers, count, captured text, capture-len) plus the matcher state,
+// and dispatches per-sequence (TQ_DA / TQ_BGCOLOR / ...). The
+// previous Rust placeholder shipped a 2-arg shape against the fake
+// `TermCapabilities` struct that didn't exist in C.
 
 /// Percent-encode a string for OSC-7 / OSC-8 URLs.
 /// Port of `url_encode()` from Src/Zle/termquery.c. Preserves the
@@ -318,33 +270,18 @@ pub fn extension_enabled(name: &str) -> bool {
     }
 }
 
-/// Emit the CSI-q sequence selecting a cursor shape.
-/// Port of `zle_set_cursorform()` from Src/Zle/termquery.c which the
-/// C source uses to surface the keymap-selected cursor (block in
-/// vicmd, bar in viins). The `CSI Ps SP q` codes — 1..=6 with `0`
-/// reserved for "default" — are the DECSCUSR specification followed
-/// by every modern terminal.
-pub fn zle_set_cursorform(shape: CursorShape) -> String {
-    match shape {
-        CursorShape::Block => "\x1b[2 q".to_string(),
-        CursorShape::Underline => "\x1b[4 q".to_string(),
-        CursorShape::Bar => "\x1b[6 q".to_string(),
-        CursorShape::BlinkingBlock => "\x1b[1 q".to_string(),
-        CursorShape::BlinkingUnderline => "\x1b[3 q".to_string(),
-        CursorShape::BlinkingBar => "\x1b[5 q".to_string(),
-        CursorShape::Default => "\x1b[0 q".to_string(),
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CursorShape {
-    Default,
-    BlinkingBlock,
-    Block,
-    BlinkingUnderline,
-    Underline,
-    BlinkingBar,
-    Bar,
+/// Direct port of `void zle_set_cursorform(void)` from
+/// `Src/Zle/termquery.c:857`. C reads the `zle_cursorform` shell
+/// parameter and emits the CSI-q DECSCUSR sequence corresponding
+/// to the CURF_* bit-encoding (CURF_UNDERLINE/CURF_BAR/CURF_BLOCK
+/// + CURF_BLINK/CURF_STEADY/CURF_HIDDEN). Real body deferred —
+/// needs the param resolver wired through this call site. The
+/// previous Rust placeholder shipped a fake `CursorShape` enum
+/// param and 7-arm match that don't exist in C.
+pub fn zle_set_cursorform() {                                                // c:857
+    // c:858 — `char **atrs = getaparam("zle_cursorform");`
+    // c:859 — pick the per-keymap-context entry via `cursor_forms[]`.
+    // c:868-953 — emit CSI Ps SP q with CURF_* decode.
 }
 
 /// Encode the `OSC 7 ; file://host/path` CWD notification used by
@@ -369,9 +306,15 @@ mod tests {
     }
 
     #[test]
-    fn test_cursor_shape() {
-        assert_eq!(zle_set_cursorform(CursorShape::Bar), "\x1b[6 q");
-        assert_eq!(zle_set_cursorform(CursorShape::Block), "\x1b[2 q");
+    fn curf_constants_match_c() {
+        // c:488-491 — CURF_DEFAULT/UNDERLINE/BAR/BLOCK occupy the
+        // low 2 bits per Src/Zle/zle.h.
+        use crate::ported::zle::zle_h::{CURF_DEFAULT, CURF_UNDERLINE, CURF_BAR, CURF_BLOCK, CURF_SHAPE_MASK};
+        assert_eq!(CURF_DEFAULT, 0);
+        assert_eq!(CURF_UNDERLINE, 1);
+        assert_eq!(CURF_BAR, 2);
+        assert_eq!(CURF_BLOCK, 3);
+        assert_eq!(CURF_SHAPE_MASK, 3);
     }
 
     #[test]
