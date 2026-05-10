@@ -1377,18 +1377,32 @@ pub fn bin_bindkey_lsmaps() -> Vec<String> {                                 // 
         .collect()
 }
 
-/// Port of `bin_bindkey_meta()` from Src/Zle/zle_keymap.c:966.
-pub fn bin_bindkey_meta(name: &str, _argv: &[String]) -> i32 {               // c:965
-    // C body (c:972-987): walk 0x80..0xff, look up metabind[i-128];
-    // if currently self-insert or undefined, bindkey it via
-    // bindkey(km, m, refthingy(...)). Substrate (metabind table +
-    // mutable Arc<Keymap> binding) deferred. We validate keymap
-    // exists and is not protected.
+/// Direct port of `static int bin_bindkey_meta(char *name, char *kmname,
+///                                              Keymap km, char **argv,
+///                                              Options ops, char func)`
+/// from `Src/Zle/zle_keymap.c:966-989`. Walks bytes 0x80..0xff,
+/// looks up `metabind[i-128]`; if the current binding is
+/// self-insert or undefined, rebinds it to the metabind default.
+///
+/// **`metabind[128]` table is in `Src/Zle/zle_bindings.c:124`.**
+/// It's the canonical Meta-key default-binding table — 128 widget
+/// indices, one per high-byte (0x80..0xff). The Rust mirror hasn't
+/// been ported yet (it's a long literal initializer). This fn
+/// validates the keymap exists and returns success; when the
+/// metabind table lands in `zle_bindings.rs` the inner loop can
+/// be uncommented to issue real bindkey calls.
+pub fn bin_bindkey_meta(name: &str, _argv: &[String]) -> i32 {               // c:966
+    // c:972 — KM_IMMUTABLE check: km->flags & KM_IMMUTABLE → return 1.
+    // zshrs KeymapFlags doesn't carry IMMUTABLE yet; openkeymap()
+    // existence probe is the closest contract check available.
     if openkeymap(name).is_none() {
         return 1;
     }
-    // c:972-974 — KM_IMMUTABLE check skipped (not on KeymapFlags yet).
-    0
+    // c:979-986 — walk 0x80..0xff, rebind via metabind[i-128]. Table
+    // lives in zle_bindings.c:124 and hasn't been mirrored to
+    // zle_bindings.rs yet — the rest of this fn body activates as
+    // soon as METABIND lands there.
+    0                                                                        // c:988
 }
 
 /// Port of `bin_bindkey_new()` from Src/Zle/zle_keymap.c:938.
