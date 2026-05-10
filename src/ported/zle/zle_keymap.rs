@@ -608,8 +608,10 @@ impl KeymapManager {
         self.keymaps.get(name).cloned()
     }
 
+    // Select a keymap as the current ZLE keymap.  Can optionally fall back    // c:490
+    // on the guaranteed safe keymap if it fails.                              // c:491
     /// Set the current keymap
-    pub fn select(&mut self, name: &str) -> bool {
+    pub fn select(&mut self, name: &str) -> bool {                           // c:495
         if let Some(km) = self.keymaps.get(name) {
             self.current = Some(Arc::clone(km));
             self.current_name = name.to_string();
@@ -673,7 +675,7 @@ impl KeymapManager {
 
     /// Create a new empty keymap
     /// Port of newkeymap() from zle_keymap.c
-    pub fn new_keymap(&mut self, name: &str) -> bool {
+    pub fn new_keymap(&mut self, name: &str) -> bool {                       // c:330
         if self.keymaps.contains_key(name) {
             return false;
         }
@@ -1080,8 +1082,10 @@ pub fn scanprimaryname() -> i32 { 0 }
 /// Port of `scanremoveprefix()` from Src/Zle/zle_keymap.c:1078. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn scanremoveprefix() -> i32 { 0 }
 
+// Select a keymap as the current ZLE keymap.  Can optionally fall back    // c:490
+// on the guaranteed safe keymap if it fails.                              // c:491
 /// Port of `selectkeymap()` from Src/Zle/zle_keymap.c:495. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn selectkeymap() -> i32 { 0 }
+pub fn selectkeymap() -> i32 { 0 }                                           // c:495
 
 /// Port of `selectlocalmap()` from Src/Zle/zle_keymap.c:527. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn selectlocalmap() -> i32 { 0 }

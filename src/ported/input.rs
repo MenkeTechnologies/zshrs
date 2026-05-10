@@ -195,10 +195,11 @@ impl InputBuffer {
     }
 
     /// Get the next character from input
+    // Will call inputline() to get a new line where necessary.             // c:313
     /// Get the next char from the active input source.
     /// Port of `ingetc()` from Src/input.c:318 — drives the
     /// lexer; consumes pushback first, then top-of-stack input.
-    pub fn ingetc(&mut self) -> Option<char> {
+    pub fn ingetc(&mut self) -> Option<char> {                               // c:318
         if self.lexstop {
             return Some(' ');
         }
@@ -251,7 +252,7 @@ impl InputBuffer {
     /// Push a character back into input
     /// Push a character back onto the input stream.
     /// Port of `inungetc()` from Src/input.c:546.
-    pub fn inungetc(&mut self, c: char) {
+    pub fn inungetc(&mut self, c: char) {                                    // c:546
         if self.lexstop {
             return;
         }
@@ -275,10 +276,11 @@ impl InputBuffer {
     /// Push a string onto the input stack
     /// Push a new input source onto the stack.
     /// Port of `inpush()` from Src/input.c:675 — used for
+    // Set some new input onto a new element of the input stack             // c:671
     /// `eval`/`source`, alias expansion, and process
     /// substitution to layer a new input on top of the current
     /// one.
-    pub fn inpush(&mut self, s: &str, flags: u32, alias: Option<String>) {
+    pub fn inpush(&mut self, s: &str, flags: u32, alias: Option<String>) {   // c:675
         // Save current state
         let entry = InputStackEntry {
             buf: std::mem::take(&mut self.buf),

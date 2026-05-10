@@ -2320,7 +2320,7 @@ pub fn matheval(expr: &str) -> Result<Mnumber, String> {                     // 
 /// Evaluate and return integer
 /// Math evaluator that coerces the result to integer.
 /// Port of `mathevali()` from Src/math.c:1505.
-pub fn mathevali(expr: &str) -> Result<i64, String> {
+pub fn mathevali(expr: &str) -> Result<i64, String> {                        // c:1505
     matheval(expr).map(|n| n.to_int())
 }
 

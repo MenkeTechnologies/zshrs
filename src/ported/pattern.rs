@@ -1053,17 +1053,19 @@ impl<'a> PatMatcher<'a> {
 
 /// Compile a pattern string into a program.
 /// Port of `patcompile()` from Src/pattern.c:540 — the entry point
+// matched recursively.                                                     // c:535
 /// the C source's `glob`/`[[ x = pat ]]` paths call to turn a
 /// pattern string into a `Patprog`. The Rust AST replaces the
 /// flat-bytecode `char *patcode` buffer the C source builds.
-pub fn patcompile(pattern: &str, flags: PatFlags) -> Result<PatProg, String> {
+pub fn patcompile(pattern: &str, flags: PatFlags) -> Result<PatProg, String> { // c:540
     PatCompiler::new(pattern, flags).compile()
 }
 
+// Test prog against null-terminated, metafied string.                     // c:2218
 /// Try to match a compiled pattern against a string.
 /// Port of `pattry()` from Src/pattern.c:2223 — the C source's
 /// top-level matcher entry point. Wraps `PatMatcher::try_match()`.
-pub fn pattry(prog: &PatProg, s: &str) -> bool {
+pub fn pattry(prog: &PatProg, s: &str) -> bool {                             // c:2223
     PatMatcher::new(prog, s).try_match()
 }
 
@@ -1078,14 +1080,15 @@ pub fn patmatch(pattern: &str, text: &str) -> bool {
     }
 }
 
+// to include in reported match indices                                     // c:2231
 /// Try to match pattern against a length-limited string Port of `pattrylen()` from Src/pattern.c:2236
-pub fn pattrylen(prog: &PatProg, s: &str, len: usize) -> bool {
+pub fn pattrylen(prog: &PatProg, s: &str, len: usize) -> bool {              // c:2236
     let truncated = if len < s.len() { &s[..len] } else { s };
     pattry(prog, truncated)
 }
 
 /// Try to match with backreferences Port of `pattryrefs()` from Src/pattern.c:2294
-pub fn pattryrefs(prog: &PatProg, s: &str) -> Option<(bool, Vec<(usize, usize)>)> {
+pub fn pattryrefs(prog: &PatProg, s: &str) -> Option<(bool, Vec<(usize, usize)>)> { // c:2294
     let mut matcher = PatMatcher::new(prog, s);
     let matched = matcher.try_match();
     if matched {
@@ -1097,7 +1100,7 @@ pub fn pattryrefs(prog: &PatProg, s: &str) -> Option<(bool, Vec<(usize, usize)>)
 }
 
 /// Get the length of the successful match Port of `patmatchlen()` from Src/pattern.c:2649
-pub fn patmatchlen(prog: &PatProg, s: &str) -> Option<usize> {
+pub fn patmatchlen(prog: &PatProg, s: &str) -> Option<usize> {               // c:2649
     let mut matcher = PatMatcher::new(prog, s);
     if matcher.try_match() {
         Some(matcher.pos)
@@ -1199,7 +1202,7 @@ pub fn patgetglobflags(s: &str) -> Option<(GlobFlags, Option<PatOp>, usize)> {
 
 /// Check if character matches a character range element
 /// Port of `patmatchrange()` from Src/pattern.c:3856
-pub fn patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {
+pub fn patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {      // c:3856
     let ch = if igncase { ch.to_ascii_lowercase() } else { ch };
     for &rc in range {
         let rc = if igncase { rc.to_ascii_lowercase() } else { rc };
@@ -1211,7 +1214,7 @@ pub fn patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {
 }
 
 /// Find index of character in range Port of `patmatchindex()` from Src/pattern.c:4004
-pub fn patmatchindex(range: &[char], idx: usize) -> Option<char> {
+pub fn patmatchindex(range: &[char], idx: usize) -> Option<char> {           // c:4004
     range.get(idx).copied()
 }
 
@@ -1227,7 +1230,7 @@ pub fn haswilds(s: &str) -> bool {
 }
 
 /// Repeat match for the given pattern node Port of `patrepeat()` from Src/pattern.c:4096
-pub fn patrepeat(prog: &PatProg, s: &str, max: Option<usize>) -> usize {
+pub fn patrepeat(prog: &PatProg, s: &str, max: Option<usize>) -> usize {     // c:4096
     let mut matcher = PatMatcher::new(prog, s);
     let mut count = 0;
     loop {
@@ -1329,7 +1332,7 @@ pub fn freepatprog(_prog: PatProg) {
 }
 
 /// Enable/disable pattern commands Port of `pat_enables()` from Src/pattern.c:4171
-pub fn pat_enables(cmd: &str, patterns: &[&str], enable: bool) -> i32 {
+pub fn pat_enables(cmd: &str, patterns: &[&str], enable: bool) -> i32 {      // c:4171
     let _ = (cmd, patterns, enable);
     // Pattern enable/disable is mainly for completion system
     0
@@ -1368,7 +1371,7 @@ pub fn range_type(name: &str) -> Option<usize> {
 }
 
 /// Convert a pattern range to a string for display Port of `pattern_range_to_string()` from Src/pattern.c:1179
-pub fn pattern_range_to_string(range_type_idx: usize) -> Option<String> {
+pub fn pattern_range_to_string(range_type_idx: usize) -> Option<String> {    // c:1179
     COLON_CLASSES
         .get(range_type_idx)
         .map(|s| format!("[:{}:]", s))
@@ -1389,15 +1392,15 @@ pub fn metacharinc(s: &str, pos: usize) -> usize {
 }
 
 /// Add bytes to pattern buffer Port of `patadd()` from Src/pattern.c:412 — the C source builds the bytecode in a flat `char *patcode` buffer; Rust uses `Vec<PatNode>`.
-pub fn patadd(prog: &mut Vec<PatNode>, node: PatNode) {
+pub fn patadd(prog: &mut Vec<PatNode>, node: PatNode) {                      // c:412
     prog.push(node);
 }
 
 /// Set up pattern compiler char sets Port of `patcompcharsset()` from Src/pattern.c:464 — no-op in Rust (the C source initializes a static char-class table; Rust pattern-matches inline).
-pub fn patcompcharsset() {}
+pub fn patcompcharsset() {}                                                  // c:464
 
 /// Initialize pattern compilation Port of `patcompstart()` from Src/pattern.c:517 — no-op in Rust (the C source resets compiler globals; Rust threads state through `PatCompiler`).
-pub fn patcompstart() {}
+pub fn patcompstart() {}                                                     // c:517
 
 /// Compile a top-level pattern with alternation.
 /// Port of `patcompswitch()` from Src/pattern.c:765 — the C source's

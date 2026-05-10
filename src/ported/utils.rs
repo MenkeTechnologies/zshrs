@@ -228,7 +228,7 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
 /// errflag |= ERRFLAG_ERROR;
 /// zwarning(NULL, fmt, ap);
 /// ```
-pub fn zerr(msg: &str) {
+pub fn zerr(msg: &str) {                                                     // c:173
     let mut flag = errflag_lock().lock().unwrap();
     let noerrs = *noerrs_lock().lock().unwrap();
     if *flag != 0 || noerrs != 0 {
@@ -249,7 +249,7 @@ pub fn zerr(msg: &str) {
 /// errflag |= ERRFLAG_ERROR;
 /// zwarning(cmd, fmt, ap);
 /// ```
-pub fn zerrnam(cmd: &str, msg: &str) {
+pub fn zerrnam(cmd: &str, msg: &str) {                                       // c:194
     let mut flag = errflag_lock().lock().unwrap();
     let noerrs = *noerrs_lock().lock().unwrap();
     if *flag != 0 || noerrs != 0 {
@@ -266,7 +266,7 @@ pub fn zerrnam(cmd: &str, msg: &str) {
 /// if (errflag || noerrs) return;
 /// zwarning(NULL, fmt, ap);
 /// ```
-pub fn zwarn(msg: &str) {
+pub fn zwarn(msg: &str) {                                                    // c:214
     let flag = *errflag_lock().lock().unwrap();
     let noerrs = *noerrs_lock().lock().unwrap();
     if flag != 0 || noerrs != 0 {
@@ -281,7 +281,7 @@ pub fn zwarn(msg: &str) {
 /// if (errflag || noerrs) return;
 /// zwarning(cmd, fmt, ap);
 /// ```
-pub fn zwarnnam(cmd: &str, msg: &str) {
+pub fn zwarnnam(cmd: &str, msg: &str) {                                      // c:231
     let flag = *errflag_lock().lock().unwrap();
     let noerrs = *noerrs_lock().lock().unwrap();
     if flag != 0 || noerrs != 0 {
@@ -296,7 +296,7 @@ pub fn zwarnnam(cmd: &str, msg: &str) {
 /// SHINSTDIN unset) the line number prefix + "\n". The Rust port
 /// is invoked indirectly through `zwarning` — direct callers pass
 /// pre-formatted strings.
-pub fn zerrmsg(msg: &str, errno: Option<i32>) {
+pub fn zerrmsg(msg: &str, errno: Option<i32>) {                              // c:289
     let lineno = *lineno_lock().lock().unwrap();
     let shinstdin = *shinstdin_lock().lock().unwrap();
     let locallevel = *locallevel_lock().lock().unwrap();

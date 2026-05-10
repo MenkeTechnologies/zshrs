@@ -24,7 +24,7 @@ pub static COND_BINARY_OPS: &[&str] = &[
 
 /// Check whether a token is a binary `[[ ... ]]` operator.
 /// Port of `is_cond_binary_op()` from Src/text.c:58.
-pub fn is_cond_binary_op(s: &str) -> bool {
+pub fn is_cond_binary_op(s: &str) -> bool {                                  // c:58
     COND_BINARY_OPS.contains(&s)
 }
 
@@ -748,19 +748,21 @@ impl TextFormatter {
 /// Rust port runs the typed-AST formatter (which carries its own
 /// String) and returns its output. The file-static [`TextBuffer`]
 /// singleton is used only by callers that explicitly invoke the
+// get a permanent textual representation of n                             // c:275
 /// `taddX` helpers (which mirror C's per-byte buffer
 /// manipulation); high-level entry points like this one don't
 /// touch it so they can be invoked from parallel tests safely.
-pub fn getpermtext(cmd: &ShellCommand) -> String {
+pub fn getpermtext(cmd: &ShellCommand) -> String {                           // c:279
     TextFormatter::new(TextConfig::default()).format(cmd)
 }
 
 /// Port of `getjobtext()` from `Src/text.c:315`.
 ///
+// get a representation of n in a job text buffer                          // c:311
 /// C body uses a static `jbuf[JOBTEXTSIZE]` buffer in single-line
 /// (tnewlins = 0, tjob = 1) mode. Rust port routes through
 /// TextConfig::job_text without touching the global TextBuffer.
-pub fn getjobtext(cmd: &ShellCommand) -> String {
+pub fn getjobtext(cmd: &ShellCommand) -> String {                            // c:315
     TextFormatter::new(TextConfig::job_text()).format(cmd)
 }
 

@@ -3701,7 +3701,7 @@ pub fn shempty() {}
 /// is a no-op in our port (no global "warn on creation" tracking
 /// yet); the call shape is preserved so subst.rs can call this
 /// where C calls setsparam.
-pub fn setsparam(
+pub fn setsparam(                                                            // c:3350
     variables: &mut std::collections::HashMap<String, String>,
     arrays: &mut std::collections::HashMap<String, Vec<String>>,
     assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
@@ -3802,9 +3802,10 @@ pub fn setiparam_no_convert(
 ///    C's PM_ARRAY case in getstrvalue (params.c:2358) which
 ///    joins via `sepjoin(ss, NULL, 1)`.
 ///
+// Retrieve a scalar (string) parameter                                     // c:3072
 /// Returns `None` only if all four paths miss (parameter genuinely
 /// unset).
-pub fn getsparam(
+pub fn getsparam(                                                            // c:3076
     variables: &std::collections::HashMap<String, String>,
     arrays: &std::collections::HashMap<String, Vec<String>>,
     name: &str,

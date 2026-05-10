@@ -493,13 +493,14 @@ pub fn unqueue_signals() {
 /// Port of `queue_traps()` from Src/signals.c:1024 — defers the
 /// trap-execution side effects until `unqueue_traps()` flushes
 /// them.
-pub fn queue_traps() {
+pub fn queue_traps() {                                                       // c:1024
     TRAP_QUEUE.enable();
 }
 
+// Disable trap queuing and run the traps.                                 // c:1037
 /// Disable trap queueing and run queued traps.
 /// Port of `unqueue_traps()` from Src/signals.c:1041.
-pub fn unqueue_traps() {
+pub fn unqueue_traps() {                                                     // c:1041
     TRAP_QUEUE.disable();
     while let Some(sig) = TRAP_QUEUE.pop() {
         if let Some(action) = TrapHandler::global().get_trap(sig) {

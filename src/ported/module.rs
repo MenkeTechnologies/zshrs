@@ -324,8 +324,9 @@ impl ModuleTable {
         }
     }
 
+    // 1 for complete failure, 2 if some features couldn't be set.          // c:2196
     /// Load a module (from module.c load_module)
-    pub fn load_module(&mut self, name: &str) -> bool {
+    pub fn load_module(&mut self, name: &str) -> bool {                      // c:2201
         if self.modules.contains_key(name) {
             if let Some(m) = self.modules.get_mut(name) {
                 m.state = ModuleState::Loaded;
@@ -336,8 +337,9 @@ impl ModuleTable {
         false
     }
 
+    // Backend handler for zmodload -u                                       // c:2808
     /// Unload a module (from module.c unload_module)
-    pub fn unload_module(&mut self, name: &str) -> bool {
+    pub fn unload_module(&mut self, name: &str) -> bool {                    // c:2812
         if let Some(module) = self.modules.get_mut(name) {
             module.state = ModuleState::Unloaded;
             return true;

@@ -29,7 +29,7 @@
 ///
 /// Heap-arena duplicate. Rust takes `&str` (NULL is impossible);
 /// the heap-arena lane collapses to a regular `String`.
-pub fn dupstring(s: &str) -> String {
+pub fn dupstring(s: &str) -> String {                                        // c:33
     s.to_string()
 }
 
@@ -48,7 +48,7 @@ pub fn dupstring(s: &str) -> String {
 /// `s[..len.min(s.len())]` which panics if `len` lands on a non-
 /// UTF-8 boundary. C just `memcpy`s the bytes; this port matches
 /// that semantic via `as_bytes` slicing + `from_utf8_lossy`.
-pub fn dupstring_wlen(s: &str, len: usize) -> String {
+pub fn dupstring_wlen(s: &str, len: usize) -> String {                       // c:48
     let bytes = s.as_bytes();
     let n = len.min(bytes.len());
     String::from_utf8_lossy(&bytes[..n]).into_owned()
@@ -66,7 +66,7 @@ pub fn dupstring_wlen(s: &str, len: usize) -> String {
 ///
 /// Permanent-storage duplicate (C's strdup analog). Rust collapses
 /// to `to_string()` since there's no per-allocation lane choice.
-pub fn ztrdup(s: &str) -> String {
+pub fn ztrdup(s: &str) -> String {                                           // c:62
     s.to_string()
 }
 
@@ -82,7 +82,7 @@ pub fn ztrdup(s: &str) -> String {
 ///
 /// Wide-char duplicate. Rust `String` is UTF-8 which subsumes the
 /// wchar_t representation; the conversion is identity.
-pub fn wcs_ztrdup(s: &str) -> String {
+pub fn wcs_ztrdup(s: &str) -> String {                                       // c:77
     s.to_string()
 }
 
@@ -92,9 +92,10 @@ pub fn wcs_ztrdup(s: &str) -> String {
 /// buffer. Rust port pre-sizes the `String` to avoid reallocation
 /// and pushes the three slices in order.
 ///
+// To concatenate four or more strings, see zjoin().                       // c:93
 /// "Permanent" allocation lane in C; Rust's `String` is always
 /// owned so the lane choice is irrelevant.
-pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {
+pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {                      // c:98
     let mut result = String::with_capacity(s1.len() + s2.len() + s3.len());
     result.push_str(s1);
     result.push_str(s2);
@@ -106,7 +107,7 @@ pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {
 ///
 /// Heap-arena variant of [`tricat`] in C. Same Rust impl since
 /// the lanes collapse.
-pub fn zhtricat(s1: &str, s2: &str, s3: &str) -> String {
+pub fn zhtricat(s1: &str, s2: &str, s3: &str) -> String {                    // c:114
     tricat(s1, s2, s3)
 }
 
@@ -120,8 +121,9 @@ pub fn zhtricat(s1: &str, s2: &str, s3: &str) -> String {
 /// return ptr;
 /// ```
 ///
+// concatenate s1 and s2 in dynamically allocated buffer                    // c:127
 /// Heap-arena two-string concat.
-pub fn dyncat(s1: &str, s2: &str) -> String {
+pub fn dyncat(s1: &str, s2: &str) -> String {                                // c:131
     let mut result = String::with_capacity(s1.len() + s2.len());
     result.push_str(s1);
     result.push_str(s2);
@@ -132,7 +134,7 @@ pub fn dyncat(s1: &str, s2: &str) -> String {
 ///
 /// Same shape as [`dyncat`], but C uses the permanent-storage
 /// `zalloc` lane. Rust port: identical body.
-pub fn bicat(s1: &str, s2: &str) -> String {
+pub fn bicat(s1: &str, s2: &str) -> String {                                 // c:145
     let mut result = String::with_capacity(s1.len() + s2.len());
     result.push_str(s1);
     result.push_str(s2);
@@ -149,10 +151,11 @@ pub fn bicat(s1: &str, s2: &str) -> String {
 /// return r;
 /// ```
 ///
+// like dupstring(), but with a specified length                             // c:157
 /// Byte-counted prefix copy. The previous Rust port used
 /// `s[..len]` which panics on non-UTF-8 boundary; this port
 /// matches C's `memcpy` semantics via byte slicing.
-pub fn dupstrpfx(s: &str, len: usize) -> String {
+pub fn dupstrpfx(s: &str, len: usize) -> String {                            // c:161
     let bytes = s.as_bytes();
     let n = len.min(bytes.len());
     String::from_utf8_lossy(&bytes[..n]).into_owned()

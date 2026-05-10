@@ -177,7 +177,7 @@ pub enum SourceReturn {
 /// Port of `parseargs()` from Src/init.c:263 — extracts `-c`
 /// command, runscript path, and remaining positional args; the
 /// option flags it sets feed into `parseopts()` (line 390).
-pub fn parseargs(args: &[String]) -> (ShellOptions, Option<String>, Vec<String>) {
+pub fn parseargs(args: &[String]) -> (ShellOptions, Option<String>, Vec<String>) { // c:263
     let mut opts = ShellOptions::default();
     let mut cmd = None;
     let mut positional = Vec::new();
@@ -283,9 +283,10 @@ pub fn init_io(state: &mut ShellState) {                                     // 
 /// Set up shell values
 /// Populate environment-derived globals (PWD/UID/HOME/etc.).
 /// Port of `setupvals()` from Src/init.c:1014 — the C source
+// Initialize lots of global variables and hash tables                      // c:1010
 /// reads `getuid()`/`gethostname()`/`getpwuid()` and seeds the
 /// special parameter table. Same effect on Rust state here.
-pub fn setupvals(state: &mut ShellState) {
+pub fn setupvals(state: &mut ShellState) {                                   // c:1014
     // Set up PATH
     if let Ok(path_env) = env::var("PATH") {
         state.path = path_env.split(':').map(String::from).collect();
@@ -344,7 +345,7 @@ pub fn sourcehome(state: &mut ShellState, filename: &str) -> SourceReturn {  // 
 /// `/etc/zprofile` → `$ZDOTDIR/.zprofile` → (if interactive)
 /// `/etc/zshrc` → `$ZDOTDIR/.zshrc` → (if login) `/etc/zlogin` →
 /// `$ZDOTDIR/.zlogin`. Same precedence as the C source.
-pub fn run_init_scripts(state: &mut ShellState) {
+pub fn run_init_scripts(state: &mut ShellState) {                            // c:1445
     if state.is_posix_emulation() {
         // sh/ksh emulation
         if state.options.login {
