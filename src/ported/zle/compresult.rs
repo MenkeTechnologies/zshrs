@@ -228,39 +228,141 @@ pub fn list_lines(matches: &[String], columns: usize) -> usize {
     matches.len().div_ceil(columns)
 }
 
-/// Decide whether the listing exceeds `LISTMAX` and should be
-/// suppressed.
-/// Port of `skipnolist()` from Src/Zle/compresult.c. The C source
-/// also consults `LISTMAX` in lines (negative LISTMAX); ours
-/// honours just the "more than N matches" form.
-pub fn skipnolist(matches: &[String], list_max: usize) -> bool {
-    matches.len() > list_max && list_max > 0
+/// Port of `skipnolist()` from `Src/Zle/compresult.c:1480`.
+/// ```c
+/// mod_export Cmatch *
+/// skipnolist(Cmatch *p, int showall)
+/// {
+///     int mask = (showall ? 0 : (CMF_NOLIST | CMF_MULT)) | CMF_HIDE;
+///     while (*p && (((*p)->flags & mask) ||
+///                   ((*p)->disp &&
+///                    ((*p)->flags & (CMF_DISPLINE | CMF_HIDE)))))
+///         p++;
+///     return p;
+/// }
+/// ```
+/// Walk a `Cmatch*` array skipping over entries that won't be
+/// listed (CMF_NOLIST/CMF_MULT/CMF_HIDE) and over disp-strings
+/// that are CMF_DISPLINE/CMF_HIDE. Returns the index of the first
+/// listable entry (or `matches.len()` if none).
+///
+/// `showall` mirrors C: when non-zero, the NOLIST/MULT mask is
+/// dropped (only CMF_HIDE filters).
+pub fn skipnolist(matches: &[crate::ported::zle::comp_h::Cmatch], showall: i32) -> usize {  // c:1480
+    use crate::ported::zle::comp_h::{CMF_DISPLINE, CMF_HIDE, CMF_MULT, CMF_NOLIST};
+    // c:1483 — `mask = (showall ? 0 : (CMF_NOLIST|CMF_MULT)) | CMF_HIDE`.
+    let mask = if showall != 0 { 0 } else { CMF_NOLIST | CMF_MULT } | CMF_HIDE;
+    let mut p = 0usize;                                                          // c:1485 *p
+    while p < matches.len() {                                                    // c:1485 while (*p && ...)
+        let m = &matches[p];
+        let f = m.flags;
+        let skip_mask    = (f & mask) != 0;                                      // c:1485
+        let skip_disp    = m.disp.is_some() && (f & (CMF_DISPLINE | CMF_HIDE)) != 0; // c:1486-1487
+        if !(skip_mask || skip_disp) {
+            break;
+        }
+        p += 1;                                                                  // c:1488 p++
+    }
+    p                                                                            // c:1490 return p
 }
 
-/// Decide whether the match list fits on screen without scrolling.
-/// Port of `comp_list()` from Src/Zle/compresult.c — the C source
-/// is part of the "should we list inline or paginate?" branch in
-/// `compprintlist()`.
-pub fn comp_list(nmatches: usize, term_lines: usize) -> bool {
-    nmatches < term_lines
+/// Port of `comp_list()` from `Src/Zle/compresult.c:1467`.
+/// ```c
+/// void
+/// comp_list(char *v)
+/// {
+///     zsfree(complist);
+///     complist = v;
+///     onlyexpl = (v ? ((strstr(v, "expl") ? 1 : 0) |
+///                      (strstr(v, "messages") ? 2 : 0)) : 0);
+/// }
+/// ```
+/// Set the `complist` global and update `onlyexpl` per the
+/// substring scan. Called from `bin_compset` to honour
+/// `compstate[list]`.
+pub fn comp_list(v: Option<&str>) {                                              // c:1467
+    use std::sync::Mutex;
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::compcore::ONLYEXPL;
+
+    // c:1470-1471 — `zsfree(complist); complist = v`.
+    let complist = crate::ported::zle::complete::COMPLIST
+        .get_or_init(|| Mutex::new(String::new()));
+    {
+        let mut g = complist.lock().unwrap();
+        g.clear();
+        if let Some(s) = v {
+            g.push_str(s);
+        }
+    }
+
+    // c:1473-1474 — `onlyexpl = (v ? ((strstr(v,"expl")?1:0) |
+    //                                 (strstr(v,"messages")?2:0)) : 0)`.
+    let val = match v {
+        None => 0,
+        Some(s) => {
+            (if s.contains("expl")     { 1 } else { 0 })
+          | (if s.contains("messages") { 2 } else { 0 })
+        }
+    };
+    ONLYEXPL.store(val, Ordering::SeqCst);
 }
 
-/// Ask whether to show list (from compresult.c asklist)
-pub fn asklist(nmatches: usize) -> String {
-    format!("zsh: do you wish to see all {} possibilities? ", nmatches)
+/// Port of `comp_mod()` from `Src/Zle/compresult.c:1363`.
+/// ```c
+/// static int
+/// comp_mod(int v, int m)
+/// {
+///     if (v >= 0)
+///         v--;
+///     if (v >= 0)
+///         return v % m;
+///     else {
+///         while (v < 0)
+///             v += m;
+///         return v;
+///     }
+/// }
+/// ```
+/// Modular arithmetic helper: subtract one when `v >= 0`, then
+/// take `v % m`; for negative `v` (after the decrement), wrap by
+/// repeated addition until non-negative. Used to map menu-cycle
+/// indices to match-array offsets (where `0` means "no match" and
+/// `1..N` are the real matches, so the table is 1-indexed).
+pub fn comp_mod(mut v: i32, m: i32) -> i32 {                                     // c:1363
+    if v >= 0 {                                                                  // c:1366
+        v -= 1;                                                                  // c:1367
+    }
+    if v >= 0 {                                                                  // c:1368
+        v % m                                                                    // c:1369
+    } else {                                                                     // c:1370
+        while v < 0 {                                                            // c:1371
+            v += m;                                                              // c:1372
+        }
+        v                                                                        // c:1373
+    }
 }
 
-/// Get file status for completion coloring (from compresult.c ztat)
-pub fn ztat(path: &str) -> Option<std::fs::Metadata> {
-    std::fs::metadata(path).ok()
+/// Port of `asklist()` from `Src/Zle/compresult.c:1925`.
+/// "Do you wish to see all N possibilities?" prompt. Real port
+/// requires the full ZLE display substrate (trashzle/showinglist/
+/// listdat/zterm_lines/getzlequery/tcmultout); deferred until that
+/// lands.
+pub fn asklist() -> i32 {                                                        // c:1925
+    unimplemented!("compresult.rs::asklist — c:1925 deferred (trashzle/showinglist/listdat/zterm_lines/getzlequery + tcmultout)");
 }
 
-/// Modify completion result (from compresult.c comp_mod)
-pub fn comp_mod(result: &str, to_end: bool) -> String {
-    if to_end {
-        format!("{} ", result) // add trailing space
-    } else {
-        result.to_string()
+/// Port of `ztat()` from `Src/Zle/compresult.c:869`.
+/// `stat()` wrapper that follows symlinks unless `ls` is non-zero.
+/// Returns `Option<Metadata>` mirroring C's `0`/`-1` return where
+/// the metadata is filled into the supplied `struct stat *buf`.
+pub fn ztat(path: &str, follow_symlink: bool) -> Option<std::fs::Metadata> {     // c:869
+    if follow_symlink {                                                          // c:869 if (ls)
+        // c:869 — `lstat(nam, buf)`. Don't follow symlinks.
+        std::fs::symlink_metadata(path).ok()
+    } else {                                                                     // c:869 else
+        // c:869 — `stat(nam, buf)`. Follow symlinks.
+        std::fs::metadata(path).ok()
     }
 }
 
@@ -318,6 +420,74 @@ mod tests {
     fn test_list_lines() {
         assert_eq!(list_lines(&vec!["a".into(); 10], 3), 4);
         assert_eq!(list_lines(&vec!["a".into(); 6], 3), 2);
+    }
+
+    #[test]
+    fn comp_mod_positive() {
+        // c:1366-1369 — positive: decrement then % m.
+        assert_eq!(comp_mod(1, 5), 0);   // (1-1) % 5 = 0
+        assert_eq!(comp_mod(3, 5), 2);   // (3-1) % 5 = 2
+        assert_eq!(comp_mod(5, 5), 4);   // (5-1) % 5 = 4
+        assert_eq!(comp_mod(6, 5), 0);   // (6-1) % 5 = 0
+    }
+
+    #[test]
+    fn comp_mod_zero_branches_negative() {
+        // c:1366 — `if (v >= 0) v--;` so 0 → -1 → falls into else.
+        // c:1370-1373 — wrap by adding m until non-negative.
+        assert_eq!(comp_mod(0, 5), 4);   // 0→-1→+5=4
+        assert_eq!(comp_mod(-1, 5), 4);  // -1+5=4
+        assert_eq!(comp_mod(-5, 5), 0);  // -5+5=0
+        assert_eq!(comp_mod(-6, 5), 4);  // -6+5=-1+5=4
+    }
+
+    #[test]
+    fn comp_list_sets_onlyexpl() {
+        use std::sync::atomic::Ordering;
+        use crate::ported::zle::compcore::ONLYEXPL;
+        // c:1473 — `(strstr(v,"expl")?1:0) | (strstr(v,"messages")?2:0)`.
+        comp_list(Some("expl"));
+        assert_eq!(ONLYEXPL.load(Ordering::SeqCst), 1);
+        comp_list(Some("messages"));
+        assert_eq!(ONLYEXPL.load(Ordering::SeqCst), 2);
+        comp_list(Some("expl messages"));
+        assert_eq!(ONLYEXPL.load(Ordering::SeqCst), 3);
+        comp_list(Some("nothing"));
+        assert_eq!(ONLYEXPL.load(Ordering::SeqCst), 0);
+        comp_list(None);
+        assert_eq!(ONLYEXPL.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn skipnolist_skips_hide_and_nolist() {
+        use crate::ported::zle::comp_h::{Cmatch, CMF_HIDE, CMF_NOLIST};
+        let mut a = Cmatch::default(); a.flags = CMF_NOLIST;
+        let mut b = Cmatch::default(); b.flags = CMF_HIDE;
+        let c = Cmatch::default();      // listable
+        let v = vec![a, b, c];
+        // c:1483 — mask = NOLIST|MULT|HIDE. First two skipped, third kept.
+        assert_eq!(skipnolist(&v, 0), 2);
+    }
+
+    #[test]
+    fn skipnolist_showall_keeps_nolist() {
+        use crate::ported::zle::comp_h::{Cmatch, CMF_NOLIST};
+        let mut a = Cmatch::default(); a.flags = CMF_NOLIST;
+        let v = vec![a];
+        // c:1483 — showall=1 drops NOLIST|MULT from mask, only HIDE filters.
+        assert_eq!(skipnolist(&v, 1), 0);
+    }
+
+    #[test]
+    fn skipnolist_skips_disp_displine() {
+        use crate::ported::zle::comp_h::{Cmatch, CMF_DISPLINE};
+        let mut a = Cmatch::default();
+        a.disp = Some("display".into());
+        a.flags = CMF_DISPLINE;
+        let b = Cmatch::default();
+        let v = vec![a, b];
+        // c:1486-1487 — disp + (DISPLINE|HIDE) → skip.
+        assert_eq!(skipnolist(&v, 0), 1);
     }
 }
 

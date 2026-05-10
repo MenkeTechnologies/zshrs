@@ -23,8 +23,24 @@
 
 #![allow(non_snake_case, dead_code)]
 
+use std::sync::atomic::{AtomicI32, Ordering};
+
 use crate::ported::zsh_h::{QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_SINGLE};
 use crate::ported::zle::comp_h::Cmatch;
+
+// =====================================================================
+// Globals — `Src/Zle/compcore.c:170-185`.
+// =====================================================================
+
+/// Port of `mod_export int nmessages` from `Src/Zle/compcore.c:172`.
+/// Total count of explanation messages displayed by `compadd -x`.
+pub static NMESSAGES: AtomicI32 = AtomicI32::new(0);                         // c:172
+
+/// Port of `mod_export int onlyexpl` from `Src/Zle/compcore.c:177`.
+/// Bitmask: 1 = only `compadd -x` explanations, 2 = only messages.
+/// Set by `comp_list()` (compresult.c:1468) parsing the `complist`
+/// option string for "expl" / "messages" substrings.
+pub static ONLYEXPL: AtomicI32 = AtomicI32::new(0);                          // c:177
 
 // =====================================================================
 // rembslash — `Src/Zle/compcore.c:1322-1336`.
