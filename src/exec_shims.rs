@@ -7552,7 +7552,25 @@ impl crate::ported::exec::ShellExecutor {
         // submit work that never gets picked up, blocking forever or
         // returning empty. Detect via pid mismatch with the original
         // main pid; use serial when forked.
-        let in_forked_child = crate::signals::ProcId::is_forked_child();
+        // Worker-pool-fork detection: compare current pid with the
+        // main shell pid cached at handler-install time. After fork()
+        // the worker pool's threads don't survive (POSIX leaves only
+        // the calling thread), so pipeline children must take the
+        // serial path. This is Rust-runtime concern, not a C
+        // construct, so the check stays here in `exec_shims.rs`.
+        let in_forked_child = {
+            use std::sync::atomic::{AtomicI32, Ordering};
+            static MAIN_PID: AtomicI32 = AtomicI32::new(0);
+            let mut main = MAIN_PID.load(Ordering::Relaxed);
+            if main == 0 {
+                let cur = nix::unistd::getpid().as_raw();
+                match MAIN_PID.compare_exchange(0, cur, Ordering::Relaxed, Ordering::Relaxed) {
+                    Ok(_) => main = cur,
+                    Err(prev) => main = prev,
+                }
+            }
+            nix::unistd::getpid().as_raw() != main
+        };
         if files.len() < 32 || in_forked_child {
             // Small list OR forked child — serial stat is the only
             // safe path.

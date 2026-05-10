@@ -232,14 +232,12 @@ pub fn SIGIDX(x: i32) -> i32 {                                           // c:40
 pub const MAX_QUEUE_SIZE: usize = 128;                                   // c:76
 
 /// Port of the global `int queueing_enabled;` (Src/signals.c). The
-/// `queue_signals()` macro increments this; `unqueue_signals()`
-/// decrements and runs the queued signals when it hits 0. Atomic
-/// since signal handlers may concurrently inspect it.
-pub static QUEUEING_ENABLED: AtomicI32 = AtomicI32::new(0);
-
 // ---------------------------------------------------------------------------
 // Signal-queueing macros (c:78-127). Ported as fns since Rust has
-// no preprocessor macros; UPPERCASE names per the casing rule.
+// no preprocessor macros. The mutable state (`queueing_enabled`,
+// `queue_front`, `queue_rear`, `signal_queue[]`, `signal_mask_queue[]`)
+// lives in `signals.rs` per `Src/signals.c:77-81`; these wrappers
+// just call through.
 // ---------------------------------------------------------------------------
 
 /// Port of `#define queue_signals()` from `Src/signals.h:90/112`.
@@ -248,7 +246,7 @@ pub static QUEUEING_ENABLED: AtomicI32 = AtomicI32::new(0);
 #[inline]
 #[allow(non_snake_case)]
 pub fn queue_signals() {                                                 // c:90/112
-    QUEUEING_ENABLED.fetch_add(1, Ordering::SeqCst);
+    crate::ported::signals::queueing_enabled.fetch_add(1, Ordering::SeqCst);
 }
 
 /// Port of `#define unqueue_signals()` from `Src/signals.h:92/114`.
@@ -257,7 +255,7 @@ pub fn queue_signals() {                                                 // c:90
 #[inline]
 #[allow(non_snake_case)]
 pub fn unqueue_signals() {                                               // c:92/114
-    let prev = QUEUEING_ENABLED.fetch_sub(1, Ordering::SeqCst);
+    let prev = crate::ported::signals::queueing_enabled.fetch_sub(1, Ordering::SeqCst);
     if prev == 1 {
         run_queued_signals();
     }
@@ -270,7 +268,7 @@ pub fn unqueue_signals() {                                               // c:92
 #[inline]
 #[allow(non_snake_case)]
 pub fn dont_queue_signals() {                                            // c:98/118
-    QUEUEING_ENABLED.store(0, Ordering::SeqCst);
+    crate::ported::signals::queueing_enabled.store(0, Ordering::SeqCst);
     run_queued_signals();
 }
 
@@ -281,7 +279,7 @@ pub fn dont_queue_signals() {                                            // c:98
 #[inline]
 #[allow(non_snake_case)]
 pub fn restore_queue_signals(q: i32) {                                   // c:104/123
-    QUEUEING_ENABLED.store(q, Ordering::SeqCst);
+    crate::ported::signals::queueing_enabled.store(q, Ordering::SeqCst);
 }
 
 /// Port of `#define queue_signal_level()` from `Src/signals.h:127`.
@@ -290,12 +288,12 @@ pub fn restore_queue_signals(q: i32) {                                   // c:10
 #[inline]
 #[allow(non_snake_case)]
 pub fn queue_signal_level() -> i32 {                                     // c:127
-    QUEUEING_ENABLED.load(Ordering::SeqCst)
+    crate::ported::signals::queueing_enabled.load(Ordering::SeqCst)
 }
 
 /// Port of `#define run_queued_signals()` from `Src/signals.h:78-86`.
-/// Drain any signals that were queued during a `queue_signals` /
-/// `unqueue_signals` window.
+/// Drain queued signals by re-running the handler for each, restoring
+/// the saved mask between deliveries.
 ///
 /// C body (c:78-86):
 /// ```c
@@ -307,17 +305,25 @@ pub fn queue_signal_level() -> i32 {                                     // c:12
 ///     signal_setmask(oset);
 /// }
 /// ```
-///
-/// **Strict status: PARTIAL.** The actual queue drain requires the
-/// `signal_queue[]`/`signal_mask_queue[]`/`queue_front`/`queue_rear`
-/// state living in `signals.rs` (the .c port) plus a working
-/// `zhandler`/`signal_setmask` chain. Until those land this fn is a
-/// no-op — safe because the queueing-enabled toggle still
-/// short-circuits handler dispatch in the meantime.
 #[inline]
 #[allow(non_snake_case)]
 pub fn run_queued_signals() {                                            // c:78
-    // No-op: queue arrays not yet ported in signals.rs. See doc.
+    use crate::ported::signals::{queue_front, queue_rear, signal_queue, signal_mask_queue};
+    loop {
+        let f = queue_front.load(Ordering::SeqCst);
+        let r = queue_rear.load(Ordering::SeqCst);
+        if f == r { break; }
+        let nf = (f + 1) % MAX_QUEUE_SIZE;
+        let sig = signal_queue[nf].load(Ordering::SeqCst);
+        let mask = signal_mask_queue.lock().ok().and_then(|g| g.get(nf).copied());
+        queue_front.store(nf, Ordering::SeqCst);
+        if let Some(m) = mask {
+            let _ = crate::ported::signals::signal_setmask(&m);
+        }
+        // Re-deliver via raise() so the installed handler runs again
+        // with the original sig number.
+        unsafe { libc::raise(sig); }
+    }
 }
 
 // ---------------------------------------------------------------------------

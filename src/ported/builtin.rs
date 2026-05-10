@@ -1553,14 +1553,12 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
             // c:3438 — `int sigidx = getsigidx(s + 4);`
             let sigidx = getsigidx(&dst_name[4..]);                          // c:3438
             if sigidx != -1 {                                                // c:3439
-                // c:3440-3445 — settrap(sigidx, NULL, ZSIG_FUNC); on
-                // failure free the eprog + filename + zfree(newsh) and
-                // return 1.
-                // c:3440 — `settrap(sigidx, NULL, ZSIG_FUNC)`. Rust port:
-                //   the typed settrap maps NULL+ZSIG_FUNC → TrapAction::Function.
-                if crate::ported::signals::settrap(sigidx,
-                    crate::ported::signals::TrapAction::Function(dst_name.clone())
-                ).is_err() {                                                 // c:3440
+                // c:3440 — `if (settrap(sigidx, NULL, ZSIG_FUNC))`.
+                if crate::ported::signals::settrap(
+                    sigidx,
+                    None,
+                    crate::ported::zsh_h::ZSIG_FUNC,
+                ) != 0 {                                                     // c:3440
                     // freeeprog(newsh->funcdef) — funcdef Drop covers it.
                     // dircache_set(&newsh->filename, NULL);
                     // zfree(newsh, sizeof(*newsh));
@@ -1833,9 +1831,11 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
             add_autoload_function(new_shf_ptr, fname);                       // c:3767
             if sigidx != -1 {                                                // c:3769
                 // c:3770 — `if (settrap(sigidx, NULL, ZSIG_FUNC)) { ... }`
-                if crate::ported::signals::settrap(sigidx,
-                    crate::ported::signals::TrapAction::Function(fname.clone())
-                ).is_err() {                                                 // c:3770
+                if crate::ported::signals::settrap(
+                    sigidx,
+                    None,
+                    crate::ported::zsh_h::ZSIG_FUNC,
+                ) != 0 {                                                     // c:3770
                     // c:3771 — `shfunctab->removenode(shfunctab, *argv);`
                     if let Ok(mut t) = SHFUNCTAB.lock() {
                         t.remove(fname);
@@ -3223,7 +3223,7 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
                     }
                 }
             }
-            crate::ported::mem::run_queued_signals();                        // c:4076
+            crate::ported::signals_h::run_queued_signals();                  // c:4076
         }
         crate::ported::mem::unqueue_signals();                               // c:4078
         if !all {                                                            // c:4081

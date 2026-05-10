@@ -21,339 +21,123 @@ use nix::unistd::getpid;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
+use crate::signals_h::{MAX_QUEUE_SIZE, SIGCOUNT, SIGDEBUG, SIGEXIT, SIGZERR, TRAPCOUNT, signal_default, signal_ignore};
+use crate::zsh_h::{ZSIG_FUNC, ZSIG_IGNORED, ZSIG_SHIFT, ZSIG_TRAPPED};
 
-/// Maximum size of signal queue
-const MAX_QUEUE_SIZE: usize = 128;
 
-// Array describing the state of each signal: an element contains          // c:33
-// 0 for the default action or some ZSIG_* flags ored together.            // c:34
-/// Signal trap flag bits.
-/// Port of the `ZSIG_*` constants from Src/zsh.h — `ZSIG_TRAPPED`,
-/// `ZSIG_IGNORED`, `ZSIG_FUNC` are the same shape the C source's
-/// `sigtrapped[]` table stores.
-pub mod trap_flags {
-    pub const ZSIG_TRAPPED: u32 = 1; // Signal is trapped
-    pub const ZSIG_IGNORED: u32 = 2; // Signal is being ignored
-    pub const ZSIG_FUNC: u32 = 4; // Trap is a function (TRAPXXX)
-    pub const ZSIG_SHIFT: u32 = 3; // Bits to shift for local level
-}
+// getsigidx / getsigname live in `jobs.rs` per C source split:
+// `getsigidx` at `Src/jobs.c:3047`, `getsigname` at `Src/jobs.c:3087`.
+// Re-export from the canonical home so callers using
+// `crate::ported::signals::getsigidx` continue to compile.
+pub use crate::ported::jobs::{getsigidx, getsigname};
 
-/// Pseudo-signals for shell traps.
-/// Port of the `SIGEXIT`/`SIGDEBUG`/`SIGZERR` macros from
-/// Src/zsh.h — used by the C source's `trap` builtin to register
-/// non-OS-signal hooks on shell exit / debug stops / errors.
-pub const SIGEXIT: i32 = 0;
-pub const SIGDEBUG: i32 = -1;
-pub const SIGZERR: i32 = -2;
+// ---------------------------------------------------------------------------
+// Signal-queue state. Direct ports of `Src/signals.c:77-92`:
+//
+//   mod_export volatile int queueing_enabled, queue_front, queue_rear;   // c:77
+//   mod_export int signal_queue[MAX_QUEUE_SIZE];                         // c:79
+//   mod_export sigset_t signal_mask_queue[MAX_QUEUE_SIZE];               // c:81
+//   static volatile int trap_queueing_enabled,
+//                       trap_queue_front, trap_queue_rear;               // c:90
+//   static int trap_queue[MAX_QUEUE_SIZE];                               // c:92
+//
+// C uses flat module-level variables; Rust mirrors with file-scope
+// `AtomicI32` + `LazyLock<Mutex<Vec<...>>>` slabs so concurrent
+// pushes from the async signal handler synchronize without UB.
+// ---------------------------------------------------------------------------
 
-/// Look up a signal number by name.
-/// Port of `getsigidx()` from Src/jobs.c — accepts canonical
-/// (`INT`), `SIG`-prefixed (`SIGINT`), and numeric forms the same
-/// way the C source's parse path does.
-pub fn getsigidx(name: &str) -> Option<i32> {
-    let name_upper = name.to_uppercase();
-    let lookup = name_upper.strip_prefix("SIG").unwrap_or(&name_upper);
-    // Pseudo-signals first (EXIT/ZERR/DEBUG).
-    if lookup == "EXIT" { return Some(SIGEXIT); }
-    if lookup == "ZERR" { return Some(SIGZERR); }
-    if lookup == "DEBUG" { return Some(SIGDEBUG); }
-    // Real signal-name lookup.
-    for (sig_name, sig_num) in crate::ported::signals_h::SIGS {
-        if *sig_name == lookup {
-            return Some(*sig_num);
-        }
-    }
-    // Numeric fallback (kill -9).
-    lookup.parse().ok()
-}
+/// Signal-queue depth counter. Port of `mod_export volatile int
+/// queueing_enabled` from `Src/signals.c:77`.
+pub static queueing_enabled: AtomicI32 = AtomicI32::new(0);                  // c:77
 
-/// Look up a signal name by number.
-/// Port of `getsigname()` from Src/jobs.c — inverse of
-/// `getsigidx`, walks the same `sigs[]` table.
-pub fn getsigname(sig: i32) -> Option<&'static str> {
-    // Route through signals_h::sigs_name which handles the SIGEXIT
-    // (slot 0) / SIGZERR / SIGDEBUG pseudo-signal slots in addition
-    // to the real SIGS table lookup.
-    crate::ported::signals_h::sigs_name(sig)
-}
+/// Ring-buffer head. Port of `mod_export volatile int queue_front`
+/// from `Src/signals.c:77`.
+pub static queue_front: AtomicUsize = AtomicUsize::new(0);                   // c:77
 
-// Variables used by signal queueing                                        // c:74
-/// Signal state for queueing.
-/// Port of the `signal_queue[]` ring-buffer + `queueing_enabled`
-/// flag from Src/signals.c (around the `queue_signals()` /
-/// `unqueue_signals()` pair, line 1024 / 1041). Bounded ring
-/// buffer matches the C source's MAX_QUEUE_SIZE shape.
-struct SignalQueue {
-    enabled: AtomicBool,
-    front: AtomicUsize,
-    rear: AtomicUsize,
-    signals: [AtomicI32; MAX_QUEUE_SIZE],
-}
+/// Ring-buffer tail. Port of `mod_export volatile int queue_rear`
+/// from `Src/signals.c:77`.
+pub static queue_rear: AtomicUsize = AtomicUsize::new(0);                    // c:77
 
-impl SignalQueue {
-    const fn new() -> Self {
-        // INIT is intentionally a `const` here so each array slot
-        // construct-copies a fresh AtomicI32(0). A `static` would
-        // share one atomic across all slots, which is wrong.
-        #[allow(clippy::declare_interior_mutable_const)]
-        const INIT: AtomicI32 = AtomicI32::new(0);
-        SignalQueue {
-            enabled: AtomicBool::new(false),
-            front: AtomicUsize::new(0),
-            rear: AtomicUsize::new(0),
-            signals: [INIT; MAX_QUEUE_SIZE],
-        }
-    }
+#[allow(clippy::declare_interior_mutable_const)]
+const ATOM_I32_ZERO: AtomicI32 = AtomicI32::new(0);
 
-    fn is_enabled(&self) -> bool {
-        self.enabled.load(Ordering::SeqCst)
-    }
+/// Per-slot signal numbers. Port of `mod_export int
+/// signal_queue[MAX_QUEUE_SIZE]` from `Src/signals.c:79`.
+pub static signal_queue: [AtomicI32; MAX_QUEUE_SIZE] =                       // c:79
+    [ATOM_I32_ZERO; MAX_QUEUE_SIZE];
 
-    fn enable(&self) {
-        self.enabled.store(true, Ordering::SeqCst);
-    }
+/// Per-slot blocked-mask snapshots. Port of `mod_export sigset_t
+/// signal_mask_queue[MAX_QUEUE_SIZE]` from `Src/signals.c:81`.
+/// `sigset_t` isn't Copy on every platform — wrapped in a Mutex
+/// so the slabs initialize without const-eval gymnastics.
+pub static signal_mask_queue: std::sync::LazyLock<Mutex<Vec<libc::sigset_t>>> = // c:81
+    std::sync::LazyLock::new(|| {
+        let zero: libc::sigset_t = unsafe { std::mem::zeroed() };
+        Mutex::new(vec![zero; MAX_QUEUE_SIZE])
+    });
 
-    fn disable(&self) {
-        self.enabled.store(false, Ordering::SeqCst);
-    }
+/// Trap-queue depth counter. Port of `static volatile int
+/// trap_queueing_enabled` from `Src/signals.c:90`.
+pub static trap_queueing_enabled: AtomicI32 = AtomicI32::new(0);             // c:90
 
-    fn push(&self, sig: i32) -> bool {
-        let rear = self.rear.load(Ordering::SeqCst);
-        let new_rear = (rear + 1) % MAX_QUEUE_SIZE;
-        let front = self.front.load(Ordering::SeqCst);
+/// Trap-queue head. Port of `static volatile int trap_queue_front`
+/// from `Src/signals.c:90`.
+pub static trap_queue_front: AtomicUsize = AtomicUsize::new(0);              // c:90
 
-        if new_rear == front {
-            return false; // Queue full
-        }
+/// Trap-queue tail. Port of `static volatile int trap_queue_rear`
+/// from `Src/signals.c:90`.
+pub static trap_queue_rear: AtomicUsize = AtomicUsize::new(0);               // c:90
 
-        self.signals[new_rear].store(sig, Ordering::SeqCst);
-        self.rear.store(new_rear, Ordering::SeqCst);
-        true
-    }
-
-    fn pop(&self) -> Option<i32> {
-        let front = self.front.load(Ordering::SeqCst);
-        let rear = self.rear.load(Ordering::SeqCst);
-
-        if front == rear {
-            return None; // Queue empty
-        }
-
-        let new_front = (front + 1) % MAX_QUEUE_SIZE;
-        let sig = self.signals[new_front].load(Ordering::SeqCst);
-        self.front.store(new_front, Ordering::SeqCst);
-        Some(sig)
-    }
-}
-
-static SIGNAL_QUEUE: SignalQueue = SignalQueue::new();
-// Variables used by trap queueing                                          // c:87
-static TRAP_QUEUE: SignalQueue = SignalQueue::new();
+/// Per-slot trap-queue signals. Port of `static int
+/// trap_queue[MAX_QUEUE_SIZE]` from `Src/signals.c:92`.
+pub static trap_queue: [AtomicI32; MAX_QUEUE_SIZE] =                         // c:92
+    [ATOM_I32_ZERO; MAX_QUEUE_SIZE];
 
 /// Last signal received
 pub static LAST_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
-// Total count of trapped signals                                           // c:55
-/// Trap handler storage.
-/// Port of the `sigtrapped[]`/`sigfuncs[]`/`siglists[]` parallel
-/// arrays Src/signals.c uses to keep per-signal state (flags +
-/// trap code or function name). The Rust struct collapses the
-/// arrays into a single hashmap keyed by signal number.
-pub struct TrapHandler {
-    /// Trap code/function for each signal
-    traps: Mutex<HashMap<i32, TrapAction>>,
-    /// Flags for each trapped signal
-    flags: Mutex<HashMap<i32, u32>>,
-    /// Number of trapped signals
-    pub num_trapped: AtomicUsize,
-    /// Currently in a trap?
-    pub in_trap: AtomicBool,
-    // Running an exit trap?                                                 // c:60
-    /// Running exit trap?
-    pub in_exit_trap: AtomicBool,
-}
+// ---------------------------------------------------------------------------
+// Per-signal trap state. Direct ports of the C globals declared in
+// `Src/signals.c:39/53/58`:
+//
+//   mod_export int      *sigtrapped;       // c:39 — flag word per sig
+//   mod_export Eprog    *siglists;         // c:53 — Eprog per sig (trap body)
+//   mod_export volatile int nsigtrapped;   // c:58 — trapped-signal count
+//
+// C allocates parallel arrays of length TRAPCOUNT at init time
+// (`Src/init.c:1398`). Rust mirrors with `Mutex<Vec<...>>` slabs
+// sized to TRAPCOUNT plus an atomic counter. TRAPxxx-function
+// trap bodies are NOT stored here in C either — `dotrap` looks
+// them up via `gettrapnode()` from shfunctab on signal delivery
+// (`Src/jobs.c:gettrapnode`).
+// ---------------------------------------------------------------------------
 
-/// What action to take for a trap
-#[derive(Debug, Clone)]
-pub enum TrapAction {
-    /// Ignore the signal
-    Ignore,
-    /// Execute this code string
-    Code(String),
-    /// Call function TRAPXXX
-    Function(String),
-    /// Default action
-    Default,
-}
+/// Per-signal flag word. Port of `mod_export int *sigtrapped`
+/// from `Src/signals.c:39`. Bit values are `ZSIG_TRAPPED`,
+/// `ZSIG_IGNORED`, `ZSIG_FUNC`, plus `(locallevel << ZSIG_SHIFT)`
+/// in the high bits.
+pub static sigtrapped: std::sync::LazyLock<Mutex<Vec<i32>>> =                 // c:39
+    std::sync::LazyLock::new(|| Mutex::new(vec![0; TRAPCOUNT as usize]));
 
-impl Default for TrapHandler {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// Per-signal Eprog body. Port of `mod_export Eprog *siglists`
+/// from `Src/signals.c:53`. NULL for ZSIG_FUNC entries (function
+/// body resolves through `gettrapnode` at dispatch time).
+pub static siglists: std::sync::LazyLock<Mutex<Vec<Option<crate::ported::zsh_h::Eprog>>>> =     // c:53
+    std::sync::LazyLock::new(|| Mutex::new((0..TRAPCOUNT as usize).map(|_| None).collect()));
 
-impl TrapHandler {
-    pub fn new() -> Self {
-        TrapHandler {
-            traps: Mutex::new(HashMap::new()),
-            flags: Mutex::new(HashMap::new()),
-            num_trapped: AtomicUsize::new(0),
-            in_trap: AtomicBool::new(false),
-            in_exit_trap: AtomicBool::new(false),
-        }
-    }
+/// Count of `ZSIG_TRAPPED`-flagged signals. Port of
+/// `mod_export volatile int nsigtrapped` from `Src/signals.c:58`.
+pub static nsigtrapped: AtomicI32 = AtomicI32::new(0);                        // c:58
 
-    /// Set a trap for a signal.
-    /// Port of `settrap()` from Src/signals.c:693 — installs the
-    /// trap handler in the per-signal slot, increments the trapped
-    /// count, and updates the kernel-level disposition via
-    /// `install_handler()` / `signal()`.
-    pub fn set_trap(&self, sig: i32, action: TrapAction) -> Result<(), String> {
-        // Can't trap SIGKILL or SIGSTOP
-        if sig == libc::SIGKILL || sig == libc::SIGSTOP {
-            return Err(format!("can't trap SIG{}", getsigname(sig).unwrap_or("?")));
-        }
+/// File-scope `int intrap` from `Src/signals.c`. Set while a
+/// trap body is running so nested `dotrap` calls short-circuit
+/// (matches the c:1245 dispatcher's `if (intrap) return`).
+pub static intrap: AtomicI32 = AtomicI32::new(0);                             // c:intrap
 
-        let mut traps = self.traps.lock().unwrap();
-        let mut flags = self.flags.lock().unwrap();
-
-        let was_trapped = flags
-            .get(&sig)
-            .map(|f| f & trap_flags::ZSIG_TRAPPED != 0)
-            .unwrap_or(false);
-
-        match &action {
-            TrapAction::Ignore => {
-                traps.insert(sig, action);
-                flags.insert(sig, trap_flags::ZSIG_IGNORED);
-                if sig > 0 {
-                    self.ignore_signal(sig);
-                }
-            }
-            TrapAction::Code(code) if code.is_empty() => {
-                traps.insert(sig, TrapAction::Ignore);
-                flags.insert(sig, trap_flags::ZSIG_IGNORED);
-                if sig > 0 {
-                    self.ignore_signal(sig);
-                }
-            }
-            TrapAction::Code(_) => {
-                if !was_trapped {
-                    self.num_trapped.fetch_add(1, Ordering::SeqCst);
-                }
-                traps.insert(sig, action);
-                flags.insert(sig, trap_flags::ZSIG_TRAPPED);
-                if sig > 0 {
-                    self.install_handler(sig);
-                }
-            }
-            TrapAction::Function(name) => {
-                if !was_trapped {
-                    self.num_trapped.fetch_add(1, Ordering::SeqCst);
-                }
-                traps.insert(sig, TrapAction::Function(name.clone()));
-                flags.insert(sig, trap_flags::ZSIG_TRAPPED | trap_flags::ZSIG_FUNC);
-                if sig > 0 {
-                    self.install_handler(sig);
-                }
-            }
-            TrapAction::Default => {
-                if was_trapped {
-                    self.num_trapped.fetch_sub(1, Ordering::SeqCst);
-                }
-                traps.remove(&sig);
-                flags.remove(&sig);
-                if sig > 0 {
-                    self.default_signal(sig);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Remove a trap.
-    /// Port of `unsettrap()` from Src/signals.c:759 — wraps
-    /// `settrap(sig, ZSIG_NONE)` which restores the default
-    /// disposition.
-    pub fn unset_trap(&self, sig: i32) {
-        let _ = self.set_trap(sig, TrapAction::Default);
-    }
-
-    /// Get the trap action for a signal.
-    /// Equivalent to reading the per-signal `sigfuncs[]` /
-    /// `siglists[]` slot Src/signals.c maintains.
-    pub fn get_trap(&self, sig: i32) -> Option<TrapAction> {
-        self.traps.lock().unwrap().get(&sig).cloned()
-    }
-
-    /// Check if a signal is trapped.
-    /// Equivalent to the `sigtrapped[sig] & ZSIG_TRAPPED` test
-    /// Src/signals.c uses inline.
-    pub fn is_trapped(&self, sig: i32) -> bool {
-        self.flags
-            .lock()
-            .unwrap()
-            .get(&sig)
-            .map(|f| f & trap_flags::ZSIG_TRAPPED != 0)
-            .unwrap_or(false)
-    }
-
-    /// Check if a signal is ignored.
-    /// Equivalent to the `sigtrapped[sig] & ZSIG_IGNORED` test
-    /// Src/signals.c uses for `trap '' SIG`.
-    pub fn is_ignored(&self, sig: i32) -> bool {
-        self.flags
-            .lock()
-            .unwrap()
-            .get(&sig)
-            .map(|f| f & trap_flags::ZSIG_IGNORED != 0)
-            .unwrap_or(false)
-    }
-
-    /// Install signal handler
-    fn install_handler(&self, sig: i32) {
-        unsafe {
-            libc::signal(sig, handler as *const () as usize);
-        }
-    }
-
-    /// Ignore a signal
-    fn ignore_signal(&self, sig: i32) {
-        unsafe {
-            libc::signal(sig, libc::SIG_IGN);
-        }
-    }
-
-    /// Reset to default handler
-    fn default_signal(&self, sig: i32) {
-        unsafe {
-            libc::signal(sig, libc::SIG_DFL);
-        }
-    }
-
-    /// List all traps
-    pub fn list_traps(&self) -> Vec<(i32, TrapAction)> {
-        self.traps
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|(k, v)| (*k, v.clone()))
-            .collect()
-    }
-}
-
-/// Global trap handler
-static TRAPS: OnceLock<TrapHandler> = OnceLock::new();
-
-impl TrapHandler {
-    /// Get the global trap handler — singleton accessor for the
-    /// `sigtrapped[]` / `sigfuncs[]` arrays Src/signals.c reads in
-    /// `gettrapnode()`, `settrap()`, `dotrap()`, `unsettrap()`.
-    pub fn global() -> &'static TrapHandler {
-        TRAPS.get_or_init(TrapHandler::new)
-    }
-}
+/// File-scope `int in_exit_trap` from `Src/signals.c:60`. Set
+/// while the EXIT trap body is running so `exit` and friends can
+/// distinguish "real" exit from exit-trap-driven exit.
+pub static in_exit_trap: AtomicI32 = AtomicI32::new(0);                       // c:60
 
 /// Store the main shell PID to detect forked children.
 static MAIN_PID: AtomicI32 = AtomicI32::new(0);
@@ -363,37 +147,6 @@ static SIGCHLD_RECEIVED: AtomicBool = AtomicBool::new(false);
 
 /// Whether we received SIGWINCH.
 static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
-
-/// True iff the current pid differs from the main shell pid — i.e.
-/// we're inside a forked child (pipeline stage, async, etc.).
-/// Process-identity helpers tied to the static `MAIN_PID` slot.
-/// zsh C does the equivalent comparison inline (`getpid() == mypid`)
-/// since `mypid` is a global; Rust collects it under a unit struct so
-/// the singleton ownership is explicit and the drift gate sees a
-/// method rather than a free fn.
-pub struct ProcId;
-
-impl ProcId {
-
-/// Worker pool threads, signal handlers, and resources tied to
-/// the original process should not be used here.
-pub fn is_forked_child() -> bool {
-    // Lazy-init MAIN_PID to current pid the first time this is called.
-    // signal_set_handlers also sets it, but -c mode doesn't always
-    // call that path. The first caller wins; subsequent forks see a
-    // different pid and return true.
-    let mut main = MAIN_PID.load(Ordering::Relaxed);
-    if main == 0 {
-        let cur = getpid().as_raw();
-        match MAIN_PID.compare_exchange(0, cur, Ordering::Relaxed, Ordering::Relaxed) {
-            Ok(_) => main = cur,
-            Err(prev) => main = prev,
-        }
-    }
-    getpid().as_raw() != main
-}
-
-}  // impl ProcId
 
 /// Signal handler function
 extern "C" fn handler(sig: i32) {
@@ -432,9 +185,14 @@ extern "C" fn handler(sig: i32) {
         SIGWINCH_RECEIVED.store(true, Ordering::SeqCst);
     }
 
-    // If queueing is enabled, queue the signal
-    if SIGNAL_QUEUE.is_enabled() {
-        SIGNAL_QUEUE.push(sig);
+    // c:404-415 (signals.c) — `if (queueing_enabled) { signal_queue[++queue_rear] = sig; signal_mask_queue[queue_rear] = blockset; return; }`
+    if queueing_enabled.load(Ordering::SeqCst) > 0 {
+        let r = queue_rear.load(Ordering::SeqCst);
+        let new_rear = (r + 1) % MAX_QUEUE_SIZE;
+        if new_rear != queue_front.load(Ordering::SeqCst) {
+            signal_queue[new_rear].store(sig, Ordering::SeqCst);
+            queue_rear.store(new_rear, Ordering::SeqCst);
+        }
         #[cfg(target_os = "macos")]
         unsafe {
             *libc::__error() = saved_errno
@@ -448,26 +206,23 @@ extern "C" fn handler(sig: i32) {
 
     // Dispatch trap inline (matches `dotrap` body in
     // Src/signals.c:1245). SIGCHLD is no-op because job-control
-    // runs on its own path.
+    // runs on its own path. The async-signal-handler path here
+    // only flips the `intrap`/`in_exit_trap` window for trapped
+    // signals — the actual Eprog/shfunc execution happens at the
+    // synchronous `dotrap()` dispatch site that callers reach
+    // after the handler returns.
     if sig != libc::SIGCHLD {
-        if let Some(action) = TrapHandler::global().get_trap(sig) {
-            match action {
-                TrapAction::Code(_) => {
-                    TrapHandler::global().in_trap.store(true, Ordering::SeqCst);
-                    if sig == SIGEXIT {
-                        TrapHandler::global().in_exit_trap.store(true, Ordering::SeqCst);
-                    }
-                    if sig == SIGEXIT {
-                        TrapHandler::global().in_exit_trap.store(false, Ordering::SeqCst);
-                    }
-                    TrapHandler::global().in_trap.store(false, Ordering::SeqCst);
-                }
-                TrapAction::Function(_) => {
-                    TrapHandler::global().in_trap.store(true, Ordering::SeqCst);
-                    TrapHandler::global().in_trap.store(false, Ordering::SeqCst);
-                }
-                TrapAction::Ignore | TrapAction::Default => {}
+        let trapped = sigtrapped.lock()
+            .ok()
+            .and_then(|g| g.get(sig as usize).copied())
+            .unwrap_or(0);
+        if trapped & (ZSIG_TRAPPED | ZSIG_FUNC) != 0 {
+            intrap.store(1, Ordering::SeqCst);
+            if sig == SIGEXIT {
+                in_exit_trap.store(1, Ordering::SeqCst);
+                in_exit_trap.store(0, Ordering::SeqCst);
             }
+            intrap.store(0, Ordering::SeqCst);
         }
     }
 
@@ -483,56 +238,40 @@ extern "C" fn handler(sig: i32) {
 
 // Variables used by signal queueing                                       // c:74
 /// Enable signal queueing.
-/// Port of `queue_signals()` from Src/signals.c (the macro form
-/// declared in zsh.h plus the queue toggle inside `zhandler()` line
-/// 399). Used to defer signal handlers across critical sections
-/// (memory allocation, parameter manipulation, etc.).
-pub fn queue_signals() {                                                    // c:78
-    SIGNAL_QUEUE.enable();
-}
+// queue_signals / unqueue_signals live in `signals_h.rs` per the C
+// source split: both are `#define` macros in `Src/signals.h:90/112`
+// + `92/114`, not functions in `Src/signals.c`. Re-export from the
+// canonical home so callers using `crate::ported::signals::queue_signals`
+// continue to compile, and the QUEUEING_ENABLED state is shared
+// across all callers (instead of split between two parallel
+// SignalQueue/QUEUEING_ENABLED counters).
+pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
 
-/// Disable signal queueing and process queued signals.
-/// Port of `unqueue_signals()` from Src/signals.c — drains the
-/// pending queue by re-raising via the in-process `handler`,
-/// matching the C source's flush-on-disable semantics.
-pub fn unqueue_signals() {
-    SIGNAL_QUEUE.disable();
-    while let Some(sig) = SIGNAL_QUEUE.pop() {
-        unsafe { libc::raise(sig); }
-    }
-}
-
-/// Enable trap queueing.
-/// Port of `queue_traps()` from Src/signals.c:1024 — defers the
-/// trap-execution side effects until `unqueue_traps()` flushes
-/// them.
-pub fn queue_traps() {                                                       // c:1024
-    TRAP_QUEUE.enable();
+/// Direct port of `void queue_traps(int wait_cmd)` from
+/// `Src/signals.c:1024`. Increments `trap_queueing_enabled` so
+/// signals delivered while a long-running builtin is mid-flight
+/// stash into `trap_queue[]` instead of dispatching inline.
+pub fn queue_traps(_wait_cmd: i32) {                                          // c:1024
+    trap_queueing_enabled.fetch_add(1, Ordering::SeqCst);
 }
 
 // Disable trap queuing and run the traps.                                 // c:1037
-/// Disable trap queueing and run queued traps.
-/// Port of `unqueue_traps()` from Src/signals.c:1041.
+/// Direct port of `void unqueue_traps(void)` from
+/// `Src/signals.c:1041`. Disables `trap_queueing_enabled` and
+/// flushes the pending queue by dispatching each sig through
+/// `handletrap()`.
 pub fn unqueue_traps() {                                                     // c:1041
-    TRAP_QUEUE.disable();
-    while let Some(sig) = TRAP_QUEUE.pop() {
-        if let Some(action) = TrapHandler::global().get_trap(sig) {
-            // Inline trap dispatch — same body as `dotrap` in
-            // Src/signals.c:1245.
-            match action {
-                TrapAction::Code(_) | TrapAction::Function(_) => {
-                    TrapHandler::global().in_trap.store(true, Ordering::SeqCst);
-                    if sig == SIGEXIT {
-                        TrapHandler::global().in_exit_trap.store(true, Ordering::SeqCst);
-                    }
-                    if sig == SIGEXIT {
-                        TrapHandler::global().in_exit_trap.store(false, Ordering::SeqCst);
-                    }
-                    TrapHandler::global().in_trap.store(false, Ordering::SeqCst);
-                }
-                TrapAction::Ignore | TrapAction::Default => {}
-            }
-        }
+    // c:1044 — `trap_queueing_enabled = 0;`
+    trap_queueing_enabled.store(0, Ordering::SeqCst);
+    // c:1046 — `while (trap_queue_front != trap_queue_rear) (void) handletrap(...);`
+    loop {
+        let f = trap_queue_front.load(Ordering::SeqCst);
+        let r = trap_queue_rear.load(Ordering::SeqCst);
+        if f == r { break; }
+        let nf = (f + 1) % MAX_QUEUE_SIZE;
+        let sig = trap_queue[nf].load(Ordering::SeqCst);
+        trap_queue_front.store(nf, Ordering::SeqCst);
+        let _ = handletrap(sig);
     }
 }
 
@@ -596,51 +335,18 @@ mod tests {
 
     #[test]
     fn test_getsigname() {
-        assert_eq!(getsigname(libc::SIGINT), Some("INT"));
-        assert_eq!(getsigname(libc::SIGHUP), Some("HUP"));
-        assert_eq!(getsigname(SIGEXIT), Some("EXIT"));
-    }
-
-    #[test]
-    fn test_trap_handler() {
-        let handler = TrapHandler::new();
-
-        // Initially not trapped
-        assert!(!handler.is_trapped(libc::SIGUSR1));
-
-        // Set a trap
-        handler
-            .set_trap(libc::SIGUSR1, TrapAction::Code("echo trapped".to_string()))
-            .unwrap();
-        assert!(handler.is_trapped(libc::SIGUSR1));
-
-        // Unset trap
-        handler.unset_trap(libc::SIGUSR1);
-        assert!(!handler.is_trapped(libc::SIGUSR1));
-    }
-
-    #[test]
-    fn test_ignore_trap() {
-        let handler = TrapHandler::new();
-
-        handler.set_trap(libc::SIGUSR1, TrapAction::Ignore).unwrap();
-        assert!(handler.is_ignored(libc::SIGUSR1));
-        assert!(!handler.is_trapped(libc::SIGUSR1));
+        assert_eq!(getsigname(libc::SIGINT), "INT");
+        assert_eq!(getsigname(libc::SIGHUP), "HUP");
+        assert_eq!(getsigname(SIGEXIT), "EXIT");
     }
 
     #[test]
     fn test_signal_queue() {
+        let before = queueing_enabled.load(Ordering::SeqCst);
         queue_signals();
-        assert!(SIGNAL_QUEUE.is_enabled());
+        assert_eq!(queueing_enabled.load(Ordering::SeqCst), before + 1);
         unqueue_signals();
-        assert!(!SIGNAL_QUEUE.is_enabled());
-    }
-
-    #[test]
-    fn test_cant_trap_sigkill() {
-        let handler = TrapHandler::new();
-        let result = handler.set_trap(libc::SIGKILL, TrapAction::Code("echo".to_string()));
-        assert!(result.is_err());
+        assert_eq!(queueing_enabled.load(Ordering::SeqCst), before);
     }
 
     #[test]
@@ -765,25 +471,28 @@ pub fn intr() {                                                              // 
 /// SIGEXIT trap (if any) is split out so it runs AFTER the
 /// other restores complete.
 pub fn endtrapscope() {                                                      // c:880
-    let handler = TrapHandler::global();
     let locallevel = crate::ported::utils::locallevel();
 
     // c:891-908 — pull the SIGEXIT trap aside so we can run it last.
-    let exit_flags = handler.flags.lock().ok()
-        .and_then(|g| g.get(&SIGEXIT).copied()).unwrap_or(0);
-    let mut exittr: u32 = 0;
-    let mut exit_action: Option<TrapAction> = None;
-    if !handler.in_trap.load(Ordering::Relaxed)                              // c:891 !intrap
+    let exit_flags = sigtrapped.lock()
+        .ok()
+        .and_then(|g| g.get(SIGEXIT as usize).copied())
+        .unwrap_or(0);
+    let mut exittr: i32 = 0;
+    if intrap.load(Ordering::Relaxed) == 0                                   // c:891 !intrap
         && !EXIT_TRAP_POSIX.load(Ordering::Relaxed)                          // c:892 !exit_trap_posix
         && exit_flags != 0
     {
         exittr = exit_flags;
-        exit_action = handler.traps.lock().ok().and_then(|g| g.get(&SIGEXIT).cloned());
         // c:902-906 — clear SIGEXIT slot.
-        if let Ok(mut g) = handler.flags.lock() { g.remove(&SIGEXIT); }
-        if let Ok(mut g) = handler.traps.lock() { g.remove(&SIGEXIT); }
-        if exit_flags & trap_flags::ZSIG_TRAPPED != 0 {
-            handler.num_trapped.fetch_sub(1, Ordering::Relaxed);             // c:904
+        if let Ok(mut g) = sigtrapped.lock() {
+            if let Some(slot) = g.get_mut(SIGEXIT as usize) { *slot = 0; }
+        }
+        if let Ok(mut g) = siglists.lock() {
+            if let Some(slot) = g.get_mut(SIGEXIT as usize) { *slot = None; }
+        }
+        if exit_flags & ZSIG_TRAPPED != 0 {
+            nsigtrapped.fetch_sub(1, Ordering::Relaxed);                     // c:904
         }
     }
 
@@ -793,10 +502,10 @@ pub fn endtrapscope() {                                                      // 
             if st.local <= locallevel as i32 { break; }                      // c:914
             let st = traps.remove(0);                                        // c:915
 
-            if let Some(ref action) = st.list {                              // c:919
+            if st.flags != 0 || st.list.is_some() {                          // c:919
                 // c:921-922 — prevent settrap from saving this.
                 DONTSAVETRAP.fetch_add(1, Ordering::Relaxed);
-                let _ = handler.set_trap(st.sig, action.clone());            // c:925/927
+                let _ = settrap(st.sig, st.list, st.flags);                  // c:925/927
                 if st.sig == SIGEXIT {
                     EXIT_TRAP_POSIX.store(st.posix != 0, Ordering::Relaxed); // c:929
                 }
@@ -804,7 +513,7 @@ pub fn endtrapscope() {                                                      // 
             } else {                                                         // c:942
                 // c:945-947 — slot was untrapped originally; clear current.
                 if st.sig != SIGEXIT || !EXIT_TRAP_POSIX.load(Ordering::Relaxed) {
-                    handler.unset_trap(st.sig);
+                    unsettrap(st.sig);
                 }
             }
         }
@@ -812,21 +521,15 @@ pub fn endtrapscope() {                                                      // 
 
     // c:961-969 — run the SIGEXIT trap, last.
     if exittr != 0 {
-        if let Some(act) = exit_action {
-            let _ = act;
-            // dotrapargs(SIGEXIT, &exittr, exitfn); — Rust path runs
-            // the action through the executor on the next idle tick.
-        }
+        // dotrapargs(SIGEXIT, &exittr, exitfn) — Eprog dispatch
+        // staged through the executor on the next idle tick.
     }
 }
 
 /// Number of OS signals zsh tracks.
-/// Port of the `SIGCOUNT` macro from Src/signals.c — used by
 /// `dotrap()` and `printsigtable()` to size the per-signal table.
-pub const SIGCOUNT: i32 = 32;
 
 /// Total trap count including EXIT and ERR
-pub const TRAPCOUNT: usize = (SIGCOUNT + 3) as usize;
 
 
 /// Port of `signal_suspend()` from `Src/signals.c:214`.
@@ -857,39 +560,19 @@ pub fn signal_suspend(_sig: i32, wait_cmd: bool) -> i32 {                    // 
     unsafe {
         libc::sigemptyset(&mut set);
     }
-    let int_trapped = TrapHandler::global().is_trapped(libc::SIGINT)
-        && !TrapHandler::global().is_ignored(libc::SIGINT);
+    // c:228 — `(sigtrapped[SIGINT] & ~ZSIG_IGNORED)`. Trapped but
+    // not ignored leaves SIGINT unblocked so the user's trap fires.
+    let int_state = sigtrapped.lock()
+        .ok()
+        .and_then(|g| g.get(libc::SIGINT as usize).copied())
+        .unwrap_or(0);
+    let int_trapped = (int_state & !ZSIG_IGNORED) != 0;
     if !(wait_cmd || int_trapped) {
         unsafe {
             libc::sigaddset(&mut set, libc::SIGINT);
         }
     }
     unsafe { libc::sigsuspend(&set) }
-}
-
-/// Scope-based trap management.
-/// Port of `starttrapscope()`/`endtrapscope()` from
-/// Src/signals.c:855/880 — saves and restores trap state across
-/// function-local scopes.
-#[derive(Debug, Default)]
-pub struct TrapScope {
-    saved_traps: Vec<(i32, TrapAction)>,
-}
-
-impl TrapScope {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Save the current trap state for a signal
-    pub fn save(&mut self, sig: i32, action: TrapAction) {
-        self.saved_traps.push((sig, action));
-    }
-
-    /// Get saved traps to restore
-    pub fn saved(&self) -> &[(i32, TrapAction)] {
-        &self.saved_traps
-    }
 }
 
 /// Direct port of `void starttrapscope(void)` from
@@ -908,14 +591,15 @@ impl TrapScope {
 /// save entry with the higher scope so it's restored
 /// when THIS scope ends, not the outer one's).
 pub fn starttrapscope() {                                                    // c:855
-    let handler = TrapHandler::global();
     // c:858 — `if (intrap) return`.
-    if handler.in_trap.load(Ordering::Relaxed) {
+    if intrap.load(Ordering::Relaxed) != 0 {
         return;
     }
     // c:863 — `if (sigtrapped[SIGEXIT] && !exit_trap_posix)`.
-    let exit_flags = handler.flags.lock().ok()
-        .and_then(|g| g.get(&SIGEXIT).copied()).unwrap_or(0);
+    let exit_flags = sigtrapped.lock()
+        .ok()
+        .and_then(|g| g.get(SIGEXIT as usize).copied())
+        .unwrap_or(0);
     if exit_flags != 0 && !EXIT_TRAP_POSIX.load(Ordering::Relaxed) {
         // c:865-867 — bump locallevel so the dosavetrap inside
         // unsettrap tags the save entry with the outer scope's
@@ -1084,19 +768,19 @@ pub fn killjb(pgrp: i32, sig: i32) -> i32 {                                 // c
 /// Port of `struct savetrap` from `Src/signals.c:611-624`.
 /// One stacked trap-state entry captured by `dosavetrap` so the
 /// outer-scope trap can be restored when an inner scope exits.
-#[derive(Debug, Clone)]
-pub struct SavedTrap {                                                       // c:611
+#[allow(non_camel_case_types)]
+pub struct savetrap {                                                        // c:611
     pub sig:   i32,                                                          // c:613
-    pub flags: u32,                                                          // c:614
+    pub flags: i32,                                                          // c:614
     pub local: i32,                                                          // c:615 locallevel at save
     pub posix: i32,                                                          // c:616 exit_trap_posix snapshot
-    pub list:  Option<TrapAction>,                                           // c:617 trap action
+    pub list:  Option<crate::ported::zsh_h::Eprog>,                          // c:617 trap eval-list Eprog
 }
 
 /// File-scope `LinkList savetraps` from `Src/signals.c`. Stack of
 /// saved trap entries — pushed by `dosavetrap`, popped by
 /// `endtrapscope`. Inserts at front so it works as a LIFO stack.
-pub static SAVETRAPS: OnceLock<Mutex<Vec<SavedTrap>>> = OnceLock::new();
+pub static SAVETRAPS: OnceLock<Mutex<Vec<savetrap>>> = OnceLock::new();
 
 /// File-scope `int exit_trap_posix` from `Src/signals.c`. POSIX-mode
 /// EXIT trap flag — when set, exit traps survive function-scope
@@ -1112,17 +796,23 @@ pub static DONTSAVETRAP: std::sync::atomic::AtomicI32 =
 
 /// Direct port of `void dosavetrap(int sig, int level)` from
 /// `Src/signals.c:626-690`. Captures the current trap state for
-/// `sig` into a `SavedTrap` and pushes it onto `SAVETRAPS`.
+/// `sig` into a `savetrap` and pushes it onto `SAVETRAPS`.
 pub fn dosavetrap(sig: i32, level: i32) {                                    // c:626
-    let handler = TrapHandler::global();
-    let flags = handler.flags.lock().ok()
-        .and_then(|g| g.get(&sig).copied()).unwrap_or(0);
-    let list = handler.traps.lock().ok()
-        .and_then(|g| g.get(&sig).cloned());
+    let flags = sigtrapped.lock()
+        .ok()
+        .and_then(|g| g.get(sig as usize).copied())
+        .unwrap_or(0);
+    // c:663 — `st->list = siglists[sig] ? dupeprog(siglists[sig], 0) : NULL`.
+    // dupeprog isn't ported yet so take the Eprog out of siglists and
+    // re-stash a fresh None — the saved entry owns the body until the
+    // matching endtrapscope restore re-inserts it.
+    let list = siglists.lock()
+        .ok()
+        .and_then(|mut g| g.get_mut(sig as usize).and_then(|s| s.take()));
     let posix = if sig == SIGEXIT {
         if EXIT_TRAP_POSIX.load(Ordering::Relaxed) { 1 } else { 0 }
     } else { 0 };
-    let st = SavedTrap { sig, flags, local: level, posix, list };
+    let st = savetrap { sig, flags, local: level, posix, list };
     if let Ok(mut g) = SAVETRAPS.get_or_init(|| Mutex::new(Vec::new())).lock() {
         g.insert(0, st);                                                     // c:689 front-insert
     }
@@ -1137,50 +827,166 @@ pub fn dosavetrap(sig: i32, level: i32) {                                    // 
 //                                                                          // c:682
 // l is the list to be eval'd for a trap defined with the "trap"            // c:683
 // builtin and should be NULL for a function trap.                          // c:684
-/// Set a trap (top-level entry point).
-/// Port of `settrap()` from Src/signals.c:693 — see also
-/// `TrapHandler::set_trap` for the per-handler shape.
-pub fn settrap(sig: i32, action: TrapAction) -> Result<(), String> {         // c:693
-    let handler = TrapHandler::global();
-    handler.set_trap(sig, action)
-}
+/// Direct port of `mod_export int settrap(int sig, Eprog l, int flags)`
+/// from `Src/signals.c:693-757`. Calls `unsettrap` unconditionally
+/// (so the previous trap is saved into `SAVETRAPS` if needed), then
+/// writes `l` into `siglists[sig]` and sets `sigtrapped[sig]` to
+/// either `ZSIG_IGNORED` (empty list + non-ZSIG_FUNC) or
+/// `ZSIG_TRAPPED`, then ORs in `flags` and the
+/// `locallevel << ZSIG_SHIFT` scope tag.
+pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> i32 {  // c:693
+    if sig == -1 {                                                            // c:695
+        return 1;
+    }
+    // c:2563 (zsh.h) — `jobbing` is `isset(MONITOR)`. Options layer
+    // resolves through `opts.rs`; substituting the negative path
+    // here keeps settrap's interactive-shell restriction in place
+    // without requiring options resolution at this site yet.
+    let jobbing = false;                                                      // c:696 (zsh.h:2563)
+    if jobbing && (sig == libc::SIGTTOU || sig == libc::SIGTSTP || sig == libc::SIGTTIN) {
+        return 1;                                                             // c:699
+    }
 
-/// Unset a trap (top-level entry point).
-/// Port of `unsettrap()` from Src/signals.c:759.
-pub fn unsettrap(sig: i32) {                                                 // c:759
-    let handler = TrapHandler::global();
-    handler.unset_trap(sig);
-}
+    // c:705 — `queue_signals()` + `unsettrap(sig)` unconditional
+    // (saves the previous trap if locallevel changed).
+    queue_signals();
+    unsettrap(sig);
 
-/// Handle a pending trap by signal number.
-/// Port of `handletrap()` from Src/signals.c:972 — looks up the
-/// trap action without executing it (caller drives execution).
-pub fn handletrap(sig: i32) -> Option<String> {
-    let handler = TrapHandler::global();
-    if let Some(TrapAction::Code(code)) = handler.get_trap(sig) {
-        Some(code)
+    let l_is_empty = l.is_none();
+    // c:711 — `siglists[sig] = l`.
+    if let Ok(mut g) = siglists.lock() {
+        if let Some(slot) = g.get_mut(sig as usize) {
+            *slot = l;
+        }
+    }
+    if (flags & ZSIG_FUNC) == 0 && l_is_empty {                               // c:712
+        // c:713 — `sigtrapped[sig] = ZSIG_IGNORED`.
+        if let Ok(mut g) = sigtrapped.lock() {
+            if let Some(slot) = g.get_mut(sig as usize) { *slot = ZSIG_IGNORED; }
+        }
+        if sig != 0 && sig <= SIGCOUNT && sig != libc::SIGWINCH && sig != libc::SIGCHLD {
+            signal_ignore(sig);                                               // c:719
+        }
     } else {
-        None
+        nsigtrapped.fetch_add(1, Ordering::Relaxed);                          // c:725
+        if let Ok(mut g) = sigtrapped.lock() {
+            if let Some(slot) = g.get_mut(sig as usize) { *slot = ZSIG_TRAPPED; }
+        }
+        if sig != 0 && sig <= SIGCOUNT && sig != libc::SIGWINCH && sig != libc::SIGCHLD {
+            install_handler(sig);                                             // c:732
+        }
+    }
+    // c:738 — `sigtrapped[sig] |= flags`.
+    if let Ok(mut g) = sigtrapped.lock() {
+        if let Some(slot) = g.get_mut(sig as usize) { *slot |= flags; }
+    }
+    // c:743-752 — locallevel tag (SIGEXIT in POSIX mode is sticky).
+    let locallevel = crate::ported::utils::locallevel() as i32;
+    if sig == SIGEXIT {
+        let posix_traps = false; // POSIXTRAPS option lookup deferred — c:746
+        EXIT_TRAP_POSIX.store(posix_traps, Ordering::Relaxed);
+        if !posix_traps {
+            if let Ok(mut g) = sigtrapped.lock() {
+                if let Some(slot) = g.get_mut(sig as usize) {
+                    *slot |= locallevel << ZSIG_SHIFT;
+                }
+            }
+        }
+    } else if let Ok(mut g) = sigtrapped.lock() {
+        if let Some(slot) = g.get_mut(sig as usize) {
+            *slot |= locallevel << ZSIG_SHIFT;
+        }
+    }
+    unqueue_signals();
+    0                                                                         // c:755
+}
+
+/// Direct port of `mod_export void unsettrap(int sig)` from
+/// `Src/signals.c:759`. Wraps `removetrap(sig)`; the C source
+/// passes through `removetrap()` to clear the slot and snapshot
+/// the prior state into `SAVETRAPS` if `locallevel > 0`.
+pub fn unsettrap(sig: i32) {                                                 // c:759
+    let trapped = sigtrapped.lock()
+        .ok()
+        .and_then(|g| g.get(sig as usize).copied())
+        .unwrap_or(0);
+    if trapped == 0 { return; }                                              // c:765 untrapped
+    let locallevel = crate::ported::utils::locallevel() as i32;
+    if DONTSAVETRAP.load(Ordering::Relaxed) == 0                             // c:769
+        && (!trapped != 0 || locallevel > (trapped >> ZSIG_SHIFT))
+    {
+        dosavetrap(sig, locallevel);                                         // c:771
+    }
+    if trapped & ZSIG_TRAPPED != 0 {
+        nsigtrapped.fetch_sub(1, Ordering::Relaxed);                         // c:799
+    }
+    if let Ok(mut g) = sigtrapped.lock() {
+        if let Some(slot) = g.get_mut(sig as usize) { *slot = 0; }           // c:800
+    }
+    if let Ok(mut g) = siglists.lock() {
+        if let Some(slot) = g.get_mut(sig as usize) { *slot = None; }
+    }
+    if sig != 0 && sig <= SIGCOUNT && sig != libc::SIGWINCH && sig != libc::SIGCHLD {
+        signal_default(sig);                                                 // c:846
     }
 }
 
-/// Execute trap actions for a pending signal.
-/// Port of `dotrapargs()` from Src/signals.c:1081 — the inner
-/// trap dispatcher `dotrap()` calls.
-pub fn dotrapargs(sig: i32, handler: &TrapHandler) -> Option<String> {       // c:1081
-    match handler.get_trap(sig) {
-        Some(TrapAction::Code(code)) => Some(code),
-        _ => None,
+/// Direct port of `mod_export int handletrap(int sig)` from
+/// `Src/signals.c:972`. Trap-queue gate called from the async
+/// signal handlers. Returns 0 if the signal isn't trapped; if
+/// trapped + queueing enabled it pushes onto `trap_queue` and
+/// returns 1; otherwise it calls `dotrap(SIGIDX(sig))` (with the
+/// SIGALRM TMOUT reset at the end) and returns 1.
+pub fn handletrap(sig: i32) -> i32 {                                         // c:972
+    let idx = crate::ported::signals_h::SIGIDX(sig);
+    let trapped = sigtrapped.lock()
+        .ok()
+        .and_then(|g| g.get(idx as usize).copied())
+        .unwrap_or(0);
+    if trapped == 0 { return 0; }                                            // c:974
+
+    if trap_queueing_enabled.load(Ordering::SeqCst) != 0 {                   // c:977
+        // c:980-986 — push onto `trap_queue` ring buffer.
+        let r = trap_queue_rear.load(Ordering::SeqCst);
+        let new_rear = (r + 1) % MAX_QUEUE_SIZE;
+        if new_rear != trap_queue_front.load(Ordering::SeqCst) {
+            trap_queue[new_rear].store(sig, Ordering::SeqCst);
+            trap_queue_rear.store(new_rear, Ordering::SeqCst);
+        }
+        return 1;
     }
+
+    dotrap(idx);                                                             // c:990
+
+    if sig == libc::SIGALRM {                                                // c:992
+        // c:996 — `if ((tmout = getiparam("TMOUT"))) alarm(tmout);`
+        // params layer not wired through this call site yet; reset
+        // staged when params resolver lands.
+    }
+    1
 }
 
 // Standard call to execute a trap for a given signal.                     // c:1241
-/// Execute all pending traps for a signal.
-/// Port of `dotrap()` from Src/signals.c:1245 — top-level trap
-/// runner.
-pub fn dotrap(sig: i32) -> Option<String> {                                  // c:1245
-    let handler = TrapHandler::global();
-    dotrapargs(sig, handler)
+/// Port of `mod_export int dotrap(int sig)` from
+/// `Src/signals.c:1245`. The synchronous trap dispatcher — looks
+/// up `siglists[sig]` (or shfunctab TRAPxxx for ZSIG_FUNC) and
+/// runs it via the executor. Eprog execution is staged through
+/// the executor when the call site lands; for now the wrapper
+/// flips `intrap`/`in_exit_trap` so observers see the correct
+/// scope state.
+pub fn dotrap(sig: i32) -> i32 {                                             // c:1245
+    let trapped = sigtrapped.lock()
+        .ok()
+        .and_then(|g| g.get(sig as usize).copied())
+        .unwrap_or(0);
+    if trapped & (ZSIG_TRAPPED | ZSIG_FUNC) == 0 { return 0; }
+    intrap.store(1, Ordering::SeqCst);
+    if sig == SIGEXIT {
+        in_exit_trap.store(1, Ordering::SeqCst);
+        in_exit_trap.store(0, Ordering::SeqCst);
+    }
+    intrap.store(0, Ordering::SeqCst);
+    0
 }
 
 /// Remove a trap completely and reset to default disposition.

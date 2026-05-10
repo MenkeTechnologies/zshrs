@@ -336,11 +336,18 @@ pub fn u9_iswprint(c: char) -> bool {                                        // 
 }
 
 /// Metafy a string (encode bytes the parser would otherwise eat).
-/// Port of `pastebuf()` from Src/utils.c — escapes the high-bit
-/// range zsh's parser reserves (`Meta`+`xor 32`). Most Rust code
-/// paths don't need metafication (UTF-8 is native) but FFI to C
-/// modules sometimes does.
-pub fn pastebuf(s: &str) -> String {
+/// Direct port of `char *metafy(char *buf, int len, int heap)` from
+/// `Src/utils.c:4856`. Escapes bytes in the parser-reserved
+/// high-bit range (0..0x20 + 0x83..0x9b) by emitting a `Meta`
+/// (0x83) prefix followed by `byte ^ 32`. Most Rust code paths
+/// don't need metafication (UTF-8 is native) but FFI to C modules
+/// sometimes does.
+///
+/// The C signature takes `(buf, len, heap)` — `heap` selects the
+/// allocator. The Rust port returns an owned String (Rust
+/// allocates on the heap by default), so the third parameter
+/// collapses to nothing.
+pub fn metafy(s: &str) -> String {                                           // utils.c:4856
     let mut result = String::with_capacity(s.len() * 2);
     for c in s.chars() {
         let b = c as u32;
@@ -442,9 +449,13 @@ pub fn zpathmax(path: &str) -> i64 {
     1024
 }
 
-/// Unmetafy a string.
-/// Port of `unmetafy()` from Src/utils.c — inverse of `pastebuf`.
-pub fn unmetafy(s: &str) -> String {
+/// Direct port of `char *unmetafy(char *s, int *len)` from
+/// `Src/utils.c:4954`. Inverse of `metafy` — walks the input,
+/// strips the `Meta` (0x83) escape bytes and XORs the following
+/// byte with 32 to restore the original. The C signature also
+/// returns the unmetafied length via `*len`; the Rust port uses
+/// `String::len()` on the result.
+pub fn unmetafy(s: &str) -> String {                                         // utils.c:4954
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
 
@@ -547,7 +558,7 @@ mod tests {
     #[test]
     fn test_metafy_unmetafy() {
         let original = "hello\x00world";
-        let meta = pastebuf(original);
+        let meta = metafy(original);
         let unmeta = unmetafy(&meta);
         assert_eq!(unmeta, original);
     }

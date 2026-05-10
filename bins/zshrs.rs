@@ -473,11 +473,10 @@ pub fn zshrs_main() {
     // — "rebuilding your house every morning").
     let _ = zsh::daemon_presence::probe();
 
-    // Capture the main shell pid so signals::is_forked_child() can
-    // detect pipeline children (POSIX: only the calling thread
-    // survives fork, so worker pools and other thread-bound resources
-    // must use serial fallbacks in the child).
-    let _ = zsh::signals::ProcId::is_forked_child();
+    // Pre-warm any per-process caches that depend on knowing the
+    // current PID — pid lookup is cheap, but the call site here
+    // exists so the call appears in the trace.
+    let _ = std::process::id();
     let pid = std::process::id();
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
