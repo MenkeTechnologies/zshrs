@@ -127,6 +127,30 @@ bitflags::bitflags! {
     }
 }
 
+/// Port of `struct remprefstate` from `Src/Zle/zle_keymap.c:108`.
+/// Closure state for `scanremoveprefix` — removes every multi-char
+/// binding that starts with the given prefix from a keymap.
+///
+/// C definition (c:108-112):
+/// ```c
+/// struct remprefstate {
+///     Keymap km;
+///     char *prefix;
+///     int prefixlen;
+/// };
+/// ```
+#[derive(Debug)]
+pub struct RemPrefState {                                                    // c:108
+    /// Target keymap (Arc handle for shared ownership).
+    pub km: std::sync::Arc<Keymap>,                                          // c:109
+    /// Byte prefix to match against each multi-key binding.
+    pub prefix: Vec<u8>,                                                     // c:110
+    /// `prefix.len()` cached for the scan inner loop (kept as a field
+    /// to mirror the C struct shape; `self.prefix.len()` reads the
+    /// same value).
+    pub prefixlen: usize,                                                    // c:111
+}
+
 impl Default for Keymap {
     fn default() -> Self {
         Keymap {
