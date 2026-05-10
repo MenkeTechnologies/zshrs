@@ -2,6 +2,9 @@
 //!
 //! Port from zsh/Src/Zle/computil.c (5,180 lines)
 //!
+//! Help for `_describe'.                                                    // c:34
+//! Help for `_arguments'.                                                   // c:897
+//!
 //! The full utility library is in compsys/computil.rs (674 lines).
 //! This module provides _describe, _values, _alternative, _combination,
 //! and the compdescribe/comparguments/compvalues builtins.
@@ -282,19 +285,98 @@ pub fn parse_cadef(spec: &str) -> Option<CompOptDef> {
     })
 }
 
-/// Remove backslash-escaped colons Port of `rembslashcolon` from Src/Zle/computil.c.
-pub fn rembslashcolon(s: &str) -> String {
-    s.replace("\\:", ":")
+/// Port of `rembslashcolon()` from `Src/Zle/computil.c:1046`.
+/// ```c
+/// static char *
+/// rembslashcolon(char *s)
+/// {
+///     char *p, *r;
+///     r = p = s = dupstring(s);
+///     while (*s) {
+///         if (s[0] != '\\' || s[1] != ':')
+///             *p++ = *s;
+///         s++;
+///     }
+///     *p = '\0';
+///     return r;
+/// }
+/// ```
+/// Strip every `\:` two-byte sequence to nothing (the `\` is dropped,
+/// the `:` follows on the next iteration). Used to unescape colon-
+/// bearing description strings produced by `_arguments`.
+pub fn rembslashcolon(s: &str) -> String {                                   // c:1046
+    let bytes = s.as_bytes();                                                // c:1051 dupstring(s)
+    let mut out = Vec::<u8>::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {                                                  // c:1053 while (*s)
+        // c:1054 — `if (s[0] != '\\' || s[1] != ':') *p++ = *s`.
+        let drop = bytes[i] == b'\\'
+            && i + 1 < bytes.len()
+            && bytes[i + 1] == b':';
+        if !drop {
+            out.push(bytes[i]);                                              // c:1055 *p++ = *s
+        }
+        i += 1;                                                              // c:1056 s++
+    }
+    // c:1058 — `*p = '\0'`. Rust strings are length-tracked.
+    String::from_utf8(out).unwrap_or_default()                               // c:1060 return r
 }
 
-/// Add backslash before colons Port of `bslashcolon` from Src/Zle/computil.c.
-pub fn bslashcolon(s: &str) -> String {
-    s.replace(':', "\\:")
+/// Port of `bslashcolon()` from `Src/Zle/computil.c:1065`.
+/// ```c
+/// static char *
+/// bslashcolon(char *s)
+/// {
+///     char *p, *r;
+///     r = p = zhalloc((2 * strlen(s)) + 1);
+///     while (*s) {
+///         if (*s == ':')
+///             *p++ = '\\';
+///         *p++ = *s++;
+///     }
+///     *p = '\0';
+///     return r;
+/// }
+/// ```
+/// Insert a backslash before every `:`, doubling the worst-case
+/// length. Inverse of `rembslashcolon` for description-string
+/// emission.
+pub fn bslashcolon(s: &str) -> String {                                      // c:1065
+    let bytes = s.as_bytes();                                                // c:1070 zhalloc(2*strlen(s)+1)
+    let mut out = Vec::<u8>::with_capacity(2 * bytes.len() + 1);
+    for &b in bytes {                                                        // c:1072 while (*s)
+        if b == b':' {                                                       // c:1073
+            out.push(b'\\');                                                 // c:1074 *p++ = '\\'
+        }
+        out.push(b);                                                         // c:1075 *p++ = *s++
+    }
+    // c:1077 — `*p = '\0'`.
+    String::from_utf8(out).unwrap_or_default()                               // c:1079 return r
 }
 
-/// Single index lookup Port of `single_index` from Src/Zle/computil.c.
-pub fn single_index(arr: &[String], val: &str) -> Option<usize> {
-    arr.iter().position(|s| s == val)
+/// Port of `single_index()` from `Src/Zle/computil.c:1088`.
+/// ```c
+/// static int
+/// single_index(char pre, char opt)
+/// {
+///     if (opt <= 0x20 || opt > 0x7e)
+///         return -1;
+///     return opt + (pre == '-' ? -0x21 : 94 - 0x21);
+/// }
+/// ```
+/// Map a `(prefix, option-letter)` pair into the flat 188-slot array
+/// that `cadef` keeps for single-letter option lookup. Returns -1
+/// when `opt` is outside the printable-ASCII range.
+///
+/// `pre` is `-` for the negative-prefix slot and anything else
+/// (typically `+`) for the positive-prefix slot.
+pub fn single_index(pre: u8, opt: u8) -> i32 {                               // c:1088
+    if opt <= 0x20 || opt > 0x7e {                                           // c:1091
+        return -1;                                                           // c:1092
+    }
+    // c:1094 — `return opt + (pre == '-' ? -0x21 : 94 - 0x21)`.
+    let off: i32 = if pre == b'-' { -0x21 } else { 94 - 0x21 };
+    (opt as i32) + off
 }
 
 /// Free completion argument definitions Port of `freecaargs/freecadef` from Src/Zle/computil.c. — no-op
@@ -381,12 +463,79 @@ mod tests {
 
     #[test]
     fn test_rembslashcolon() {
+        // c:1054 — `\:` two-byte sequence drops the backslash.
         assert_eq!(rembslashcolon("a\\:b\\:c"), "a:b:c");
     }
 
     #[test]
+    fn test_rembslashcolon_lone_backslash_kept() {
+        // c:1054 — `\X` (X != ':') keeps the backslash.
+        assert_eq!(rembslashcolon("a\\nb"), "a\\nb");
+    }
+
+    #[test]
+    fn test_rembslashcolon_trailing_backslash() {
+        // c:1054 — trailing `\` with no follow-up keeps the `\`.
+        assert_eq!(rembslashcolon("a\\"), "a\\");
+    }
+
+    #[test]
+    fn test_rembslashcolon_unescaped_colon_passes_through() {
+        // c:1054 — bare `:` (no preceding `\`) is kept.
+        assert_eq!(rembslashcolon("a:b"), "a:b");
+    }
+
+    #[test]
     fn test_bslashcolon() {
+        // c:1073 — every `:` gets `\` prepended.
         assert_eq!(bslashcolon("a:b:c"), "a\\:b\\:c");
+    }
+
+    #[test]
+    fn test_bslashcolon_no_colons() {
+        // c:1072 — non-colon bytes pass through unchanged.
+        assert_eq!(bslashcolon("hello"), "hello");
+    }
+
+    #[test]
+    fn test_bslashcolon_already_escaped_doubled() {
+        // c:1073-1074 — C doesn't track previous backslash, so an
+        // already-escaped `\:` becomes `\\:` (the `\` passes
+        // through, then the `:` gets a fresh `\` prepended).
+        assert_eq!(bslashcolon("a\\:b"), "a\\\\:b");
+    }
+
+    #[test]
+    fn test_single_index_dash_prefix() {
+        // c:1094 — `pre == '-'` → offset = -0x21.
+        // For opt='a' (0x61): 0x61 + -0x21 = 0x40 = 64.
+        assert_eq!(single_index(b'-', b'a'), 64);
+        // For opt='A' (0x41): 0x41 + -0x21 = 0x20 = 32.
+        assert_eq!(single_index(b'-', b'A'), 32);
+        // For opt='!' (0x21): 0x21 + -0x21 = 0.
+        assert_eq!(single_index(b'-', b'!'), 0);
+        // For opt='~' (0x7e): 0x7e + -0x21 = 0x5d = 93.
+        assert_eq!(single_index(b'-', b'~'), 93);
+    }
+
+    #[test]
+    fn test_single_index_plus_prefix() {
+        // c:1094 — `pre == '+'` → offset = 94 - 0x21 = 61.
+        // For opt='a' (0x61): 0x61 + 61 = 158.
+        assert_eq!(single_index(b'+', b'a'), 158);
+        // For opt='!' (0x21): 0x21 + 61 = 94.
+        assert_eq!(single_index(b'+', b'!'), 94);
+        // For opt='~' (0x7e): 0x7e + 61 = 187.
+        assert_eq!(single_index(b'+', b'~'), 187);
+    }
+
+    #[test]
+    fn test_single_index_out_of_range() {
+        // c:1091-1092 — opt <= 0x20 OR opt > 0x7e returns -1.
+        assert_eq!(single_index(b'-', 0x20), -1);     // space (0x20) excluded
+        assert_eq!(single_index(b'-', 0x00), -1);     // NUL
+        assert_eq!(single_index(b'-', 0x7f), -1);     // DEL (0x7f) excluded
+        assert_eq!(single_index(b'+', 0xff), -1);     // outside ASCII
     }
 
     #[test]
