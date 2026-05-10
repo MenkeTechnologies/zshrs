@@ -365,3 +365,152 @@ pub fn set_comp_sep() -> i32 { 0 }
 
 /// Port of `set_list_array()` from Src/Zle/compcore.c:1947. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn set_list_array() -> i32 { 0 }
+
+// =====================================================================
+// Cmlist / Cmatcher / Cpattern allocators + freers — Src/Zle/complete.c.
+// Ported here (rather than a non-existent complete.rs) because
+// PORT.md freezes new src/ported/ file creation; compcore.rs is the
+// canonical home for completion-machinery internals.
+// =====================================================================
+
+/// Direct port of `freecmlist()` from `Src/Zle/complete.c:98`.
+/// C body (c:101-110): walk the linked list freeing each Cmatcher
+/// via `freecmatcher()` and the per-entry `str` via `zsfree()`.
+/// Rust drop handles the deallocation; this wrapper iterates so
+/// callers can name-match the C entry point.
+pub fn freecmlist(l: Option<Box<crate::ported::zle::comp_h::Cmlist>>) {      // c:98
+    let mut cur = l;
+    while let Some(node) = cur {                                             // c:101
+        // c:103 — `freecmatcher(l->matcher);` — Rust Box drop frees.
+        // c:104 — `zsfree(l->str);` — String drop frees.
+        cur = node.next;                                                     // c:102 n = l->next
+    }
+}
+
+/// Direct port of `freecmatcher()` from `Src/Zle/complete.c:115`.
+/// C body (c:118-132):
+/// ```c
+/// if (!m || --(m->refc)) return;
+/// while (m) {
+///     n = m->next;
+///     freecpattern(m->line); freecpattern(m->word);
+///     freecpattern(m->left); freecpattern(m->right);
+///     zfree(m, sizeof(struct cmatcher));
+///     m = n;
+/// }
+/// ```
+/// The C source uses refcounting (`refc`); Rust port relies on Box
+/// ownership semantics — when the last reference drops, every
+/// Box-owned Cpattern in the chain drops with it.
+pub fn freecmatcher(m: Option<Box<crate::ported::zle::comp_h::Cmatcher>>) {  // c:115
+    // c:120 — `if (!m || --(m->refc)) return;` — refcount handled by
+    // Rust ownership; the function is a name-parity wrapper.
+    let mut cur = m;
+    while let Some(node) = cur {                                             // c:122
+        // c:124-127 — `freecpattern(m->line/word/left/right)` — Rust
+        // drop chains via Option<Box<Cpattern>> fields.
+        cur = node.next;                                                     // c:123
+    }
+}
+
+/// Direct port of `freecpattern()` from `Src/Zle/complete.c:137`.
+/// C body (c:141-149):
+/// ```c
+/// while (p) {
+///     n = p->next;
+///     if (p->tp <= CPAT_EQUIV) free(p->u.str);
+///     zfree(p, sizeof(struct cpattern));
+///     p = n;
+/// }
+/// ```
+pub fn freecpattern(p: Option<Box<crate::ported::zle::comp_h::Cpattern>>) {  // c:137
+    let mut cur = p;
+    while let Some(node) = cur {                                             // c:141
+        // c:144 — `if (p->tp <= CPAT_EQUIV) free(p->u.str)` — String
+        // drop in Option<String> handles the conditional free.
+        cur = node.next;                                                     // c:142
+    }
+}
+
+/// Direct port of `cpcmatcher()` from `Src/Zle/complete.c:155`.
+/// C body (c:158-179): walks the source matcher chain, allocating a
+/// fresh Cmatcher per node with `refc = 1`, copying flags / llen /
+/// wlen / lalen / ralen, deep-copying each Cpattern via
+/// `cpcpattern()`. Returns the new chain head.
+pub fn cpcmatcher(m: Option<&crate::ported::zle::comp_h::Cmatcher>)
+    -> Option<Box<crate::ported::zle::comp_h::Cmatcher>>                     // c:155
+{
+    use crate::ported::zle::comp_h::Cmatcher;
+    let mut head: Option<Box<Cmatcher>> = None;                              // c:158
+    let mut tail_ref: *mut Option<Box<Cmatcher>> = &mut head;
+    let mut cur = m;
+    while let Some(src) = cur {                                              // c:160
+        let n = Box::new(Cmatcher {                                          // c:161 zalloc
+            refc:  1,                                                        // c:163
+            next:  None,                                                     // c:164
+            flags: src.flags,                                                // c:165
+            line:  cpcpattern(src.line.as_deref()),                          // c:166
+            llen:  src.llen,                                                 // c:167
+            word:  cpcpattern(src.word.as_deref()),                          // c:168
+            wlen:  src.wlen,                                                 // c:169
+            left:  cpcpattern(src.left.as_deref()),                          // c:170
+            lalen: src.lalen,                                                // c:171
+            right: cpcpattern(src.right.as_deref()),                         // c:172
+            ralen: src.ralen,                                                // c:173
+        });
+        unsafe {
+            *tail_ref = Some(n);
+            if let Some(ref mut new_node) = *tail_ref {                      // c:175 p = &(n->next)
+                tail_ref = &mut new_node.next as *mut _;
+            }
+        }
+        cur = src.next.as_deref();                                           // c:176
+    }
+    head                                                                     // c:178
+}
+
+/// Direct port of `cp_cpattern_element()` from `Src/Zle/complete.c:187`.
+/// C body (c:189-216): allocates a fresh Cpattern, sets `next = NULL`,
+/// copies `tp`, then dispatches on `tp` to copy `u.str` (CCLASS /
+/// NCLASS / EQUIV) or `u.chr` (CHAR). Default keeps the union zero.
+pub fn cp_cpattern_element(o: &crate::ported::zle::comp_h::Cpattern)
+    -> Box<crate::ported::zle::comp_h::Cpattern>                             // c:187
+{
+    use crate::ported::zle::comp_h::{Cpattern, CPAT_CCLASS, CPAT_NCLASS,
+                                       CPAT_EQUIV, CPAT_CHAR};
+    let mut n = Cpattern::default();                                         // c:189 zalloc
+    n.next = None;                                                           // c:191
+    n.tp = o.tp;                                                             // c:193
+    match o.tp {                                                             // c:194
+        CPAT_CCLASS | CPAT_NCLASS | CPAT_EQUIV => {                          // c:196-198
+            n.str_ = o.str_.clone();                                         // c:199 ztrdup(o->u.str)
+        }
+        CPAT_CHAR => {                                                       // c:202
+            n.chr = o.chr;                                                   // c:203 o->u.chr
+        }
+        _ => {}                                                              // c:206
+    }
+    Box::new(n)                                                              // c:212 return n
+}
+
+/// Direct port of `cpcpattern()` from `Src/Zle/complete.c:218`.
+/// C body (c:222-231): walk the source Cpattern chain, copying each
+/// element via `cp_cpattern_element()`. Returns the new chain head.
+pub fn cpcpattern(o: Option<&crate::ported::zle::comp_h::Cpattern>)
+    -> Option<Box<crate::ported::zle::comp_h::Cpattern>>                     // c:218
+{
+    use crate::ported::zle::comp_h::Cpattern;
+    let mut head: Option<Box<Cpattern>> = None;                              // c:222
+    let mut tail_ref: *mut Option<Box<Cpattern>> = &mut head;
+    let mut cur = o;
+    while let Some(src) = cur {                                              // c:224
+        unsafe {
+            *tail_ref = Some(cp_cpattern_element(src));                      // c:225
+            if let Some(ref mut new_node) = *tail_ref {                      // c:226 p = &((*p)->next)
+                tail_ref = &mut new_node.next as *mut _;
+            }
+        }
+        cur = src.next.as_deref();                                           // c:227
+    }
+    head                                                                     // c:229
+}

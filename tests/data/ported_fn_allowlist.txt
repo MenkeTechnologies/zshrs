@@ -537,3 +537,11 @@ default_on_options
 # named accessor walks the table to provide the same lookup.
 sigs_name
 sigs_number
+
+# getjob2 / findjobnam_c (jobs.rs) — Rust variants of the
+# C getjob() / findjobnam() entry points. The `_c` / `_2` suffixed
+# names accommodate Rust signature differences from the C entries
+# while keeping the per-call data-flow shape; left in place since
+# the canonical getjob/findjobnam already exist alongside.
+getjob2
+findjobnam_c

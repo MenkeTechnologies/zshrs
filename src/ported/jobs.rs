@@ -965,6 +965,7 @@ pub fn addproc(job: &mut Job, pid: i32, text: &str, aux: bool) {
     job.stat &= !stat::DONE;
 }
 
+// Find the super-job of a sub-job.                                         // c:256
 /// Super job tracking (from jobs.c super_job lines 393-417)
 pub fn super_job(jobtab: &[Job], job_idx: usize) -> Option<usize> {
     for (i, job) in jobtab.iter().enumerate() {
@@ -977,7 +978,9 @@ pub fn super_job(jobtab: &[Job], job_idx: usize) -> Option<usize> {
 
 /// Set current/previous job (from jobs.c setjobpwn lines 697-745)
 pub struct JobPointers {
+    // the current job (%+)                                                    // c:75
     pub cur_job: Option<usize>,
+    // the previous job (%-) */                                                // c:80
     pub prev_job: Option<usize>,
 }
 
@@ -1016,59 +1019,145 @@ impl Default for JobPointers {
 // Missing functions from jobs.c
 // ---------------------------------------------------------------------------
 
-/// Parse job specification string (from jobs.c getjob lines 2063-2165)
+// Convert a job specifier ("%%", "%1", "%foo", "%?bar?", etc.)              // c:2058
+// to a job number.                                                          // c:2059
+/// Port of `getjob()` from `Src/jobs.c:2063`.
 ///
-/// Syntax: %N (by number), %+ or %% (current), %- (previous),
-/// %str (by command prefix), %?str (by substring)
-pub fn getjob(spec: &str, table: &JobTable, ptrs: &JobPointers) -> Option<usize> {
-    if spec.is_empty() {
-        return ptrs.cur_job;
+/// C signature: `mod_export int getjob(const char *s, const char *prog)`
+///
+/// Returns job index or -1 on error. `prog` is the program name for
+/// `zwarnnam` error messages (pass empty string to suppress warnings).
+pub fn getjob(
+    s: &str,
+    prog: &str,
+    jobtab: &[Job],
+    maxjob: usize,
+    curjob: i32,
+    prevjob: i32,
+    thisjob: i32,
+    posixbuiltins: bool,
+) -> i32 {
+    let mut jobnum: i32;                                                     // c:2065
+    let returnval: i32;                                                      // c:2065
+    let mymaxjob = maxjob as i32;                                            // c:2065
+    let myjobtab = jobtab;                                                   // c:2068 selectjobtab
+
+    let s_bytes = s.as_bytes();
+    let mut idx = 0usize;
+
+    // if there is no %, treat as a name                                     // c:2070
+    if s_bytes.is_empty() || s_bytes[0] != b'%' {
+        // goto jump                                                         // c:2072
+        // anything else is a job name, specified as a string that begins    // c:2135
+        // the job's command                                                 // c:2136
+        if let Some(jn) = findjobnam(s, myjobtab, mymaxjob, thisjob) {     // c:2137
+            return jn;
+        }
+        // if we get here, it is because none of the above succeeded         // c:2141
+        if !posixbuiltins && !prog.is_empty() {                              // c:2143
+            zwarnnam(prog, &format!("job not found: {}", s));                // c:2144
+        }
+        return -1;                                                           // c:2145
     }
+    idx += 1; // skip '%'                                                    // c:2073
 
-    let spec = spec.strip_prefix('%').unwrap_or(spec);
-
-    match spec {
-        "+" | "%" | "" => ptrs.cur_job,
-        "-" => ptrs.prev_job,
-        _ => {
-            // Try as number
-            if let Ok(n) = spec.parse::<usize>() {
-                if table.get(n).is_some() {
-                    return Some(n);
-                }
-                return None;
+    // "%%", "%+" and "%" all represent the current job                      // c:2074
+    if idx >= s_bytes.len() || s_bytes[idx] == b'%' || s_bytes[idx] == b'+' { // c:2075
+        if curjob == -1 {                                                    // c:2076
+            if !prog.is_empty() && !posixbuiltins {                          // c:2077
+                zwarnnam(prog, "no current job");                            // c:2078
             }
-
-            // ?string - search by substring
-            if let Some(substr) = spec.strip_prefix('?') {
-                for (id, job) in table.iter() {
-                    if job.command.contains(substr) {
-                        return Some(id);
+            return -1;                                                       // c:2079-2080
+        }
+        return curjob;                                                       // c:2082-2083
+    }
+    // "%-" represents the previous job                                      // c:2085
+    if s_bytes[idx] == b'-' {                                                // c:2086
+        if prevjob == -1 {                                                   // c:2087
+            if !prog.is_empty() && !posixbuiltins {                          // c:2088
+                zwarnnam(prog, "no previous job");                           // c:2089
+            }
+            return -1;                                                       // c:2090-2091
+        }
+        return prevjob;                                                      // c:2093-2094
+    }
+    // a digit here means we have a job number                               // c:2096
+    if s_bytes[idx].is_ascii_digit() {                                       // c:2097
+        let rest = &s[idx..];
+        jobnum = rest.parse::<i32>().unwrap_or(0);                           // c:2098 atoi(s)
+        if jobnum > 0 && jobnum <= mymaxjob {                                // c:2099
+            let ju = jobnum as usize;
+            if ju < myjobtab.len()
+                && myjobtab[ju].stat != 0
+                && (myjobtab[ju].stat & stat::SUBJOB) == 0                   // c:2100
+                && jobnum != thisjob                                         // c:2107
+            {
+                return jobnum;                                               // c:2108-2109
+            }
+        }
+        if !prog.is_empty() && !posixbuiltins {                              // c:2111
+            zwarnnam(prog, &format!("%{}: no such job", rest));              // c:2112
+        }
+        return -1;                                                           // c:2113-2114
+    }
+    // "%?" introduces a search string                                       // c:2116
+    if s_bytes[idx] == b'?' {                                                // c:2117
+        let search = &s[idx + 1..];                                          // c:2125 s + 1
+        jobnum = mymaxjob;                                                   // c:2120
+        while jobnum >= 0 {                                                  // c:2120
+            let ju = jobnum as usize;
+            if ju < myjobtab.len()
+                && myjobtab[ju].stat != 0                                    // c:2121
+                && (myjobtab[ju].stat & stat::SUBJOB) == 0                   // c:2122
+                && jobnum != thisjob                                         // c:2123
+            {
+                for pn in &myjobtab[ju].procs {                              // c:2124
+                    if pn.text.contains(search) {                            // c:2125 strstr
+                        return jobnum;                                       // c:2126-2127
                     }
                 }
-                return None;
             }
-
-            // string - search by prefix
-            for (id, job) in table.iter() {
-                if job.command.starts_with(spec) {
-                    return Some(id);
-                }
-            }
-
-            None
+            jobnum -= 1;
         }
+        if !prog.is_empty() && !posixbuiltins {                              // c:2129
+            zwarnnam(prog, &format!("job not found: {}", s));                // c:2130
+        }
+        return -1;                                                           // c:2131-2132
     }
+    // jump:                                                                 // c:2134
+    // anything else is a job name, specified as a string that begins        // c:2135
+    // the job's command                                                     // c:2136
+    let rest = &s[idx..];
+    if let Some(jn) = findjobnam(rest, myjobtab, mymaxjob, thisjob) {      // c:2137
+        return jn;                                                           // c:2138-2139
+    }
+    // if we get here, it is because none of the above succeeded             // c:2141
+    if !posixbuiltins && !prog.is_empty() {                                  // c:2143
+        zwarnnam(prog, &format!("job not found: {}", s));                    // c:2144
+    }
+    -1                                                                       // c:2145-2147
 }
 
-/// Find job by command name (from jobs.c findjobnam)
-pub fn findjobnam(name: &str, table: &JobTable) -> Option<usize> {
-    for (id, job) in table.iter() {
-        if job.command == name {
-            return Some(id);
+/// Port of `findjobnam()` from `Src/jobs.c:2031`.
+fn findjobnam(s: &str, jobtab: &[Job], maxjob: i32, thisjob: i32) -> Option<i32> {
+    let mut jobnum = maxjob;                                                 // c:2037
+    while jobnum >= 0 {                                                      // c:2037
+        let ju = jobnum as usize;
+        if ju < jobtab.len()
+            && jobtab[ju].stat != 0                                          // c:2038
+            && (jobtab[ju].stat & stat::SUBJOB) == 0                         // c:2039
+            && jobnum != thisjob                                             // c:2040
+        {
+            // C: if (!strncmp(jobtab[jobnum].procs->text, s, strlen(s)))    // c:2041
+            if let Some(first_proc) = jobtab[ju].procs.first() {
+                if first_proc.text.starts_with(s) {
+                    return Some(jobnum);                                     // c:2042-2043
+                }
+            }
         }
+        jobnum -= 1;
     }
-    None
+    None                                                                     // c:2046-2047
 }
 
 /// Port of `isanum()` from `Src/jobs.c:2010`.
@@ -1386,6 +1475,8 @@ pub fn update_process(proc: &mut Process, status: i32) {
     proc.ti.sys_time = Duration::from_secs_f64(sys_delta);
 }
 
+// Find process and job associated with pid.                                // c:186
+// Return 1 if search was successful, else return 0.                        // c:187
 /// Find a process by PID in the job table (from jobs.c findproc)
 pub fn findproc(jobtab: &[Job], pid: i32) -> Option<(usize, usize, bool)> {
     for (ji, job) in jobtab.iter().enumerate() {
@@ -1916,6 +2007,7 @@ pub fn dtime_ts(t1: &Instant, t2: &Instant) -> Duration {
     }
 }
 
+// change job table entry from stopped to running                           // c:163
 /// Port of `makerunning()` from `Src/jobs.c:167`.
 ///
 /// C body:
