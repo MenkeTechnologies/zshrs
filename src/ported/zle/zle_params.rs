@@ -33,6 +33,7 @@ pub mod names {
 // through the `zleparams[]` table at zle_params.c:38; widget bodies
 // (and shell scripts running inside ZLE) read or assign to them
 // through the parameter system.
+// ro means parameters are readonly, used from completion              // c:190
 impl Zle {
     /// `$BUFFER` accessor — full edited line as a String.
     /// Port of `get_buffer()` from Src/Zle/zle_params.c (the
@@ -249,8 +250,18 @@ pub fn get_prepost() -> i32 { 0 }
 /// Port of `get_recursive()` from Src/Zle/zle_params.c:535. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn get_recursive() -> i32 { 0 }
 
-/// Port of `get_region_active()` from Src/Zle/zle_params.c:325. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_region_active() -> i32 { 0 }
+/// Port of `get_region_active()` from `Src/Zle/zle_params.c:324`.
+/// ```c
+/// static zlong
+/// get_region_active(UNUSED(Param pm))
+/// {
+///     return region_active;
+/// }
+/// ```
+/// `$REGION_ACTIVE` getter — returns the current region_active flag.
+pub fn get_region_active(zle: &crate::ported::zle::zle_main::Zle) -> i64 {   // c:324
+    zle.region_active as i64                                                 // c:327 return region_active
+}
 
 /// Port of `get_registers()` from Src/Zle/zle_params.c:807. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn get_registers() -> i32 { 0 }
@@ -306,8 +317,23 @@ pub fn set_predisplay() -> i32 { 0 }
 /// Port of `set_prepost()` from Src/Zle/zle_params.c:865. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn set_prepost() -> i32 { 0 }
 
-/// Port of `set_region_active()` from Src/Zle/zle_params.c:318. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn set_region_active() -> i32 { 0 }
+/// Port of `set_region_active()` from `Src/Zle/zle_params.c:317`.
+/// ```c
+/// static void
+/// set_region_active(UNUSED(Param pm), zlong x)
+/// {
+///     region_active = (int)!!x;
+/// }
+/// ```
+/// `$REGION_ACTIVE=N` setter — coerces N to 0 or 1 (any non-zero
+/// becomes 1) via the C double-bang idiom.
+pub fn set_region_active(                                                    // c:317
+    zle: &mut crate::ported::zle::zle_main::Zle,
+    x: i64,
+) {
+    // c:320 — `region_active = (int)!!x`. !!x: 0→0, anything else→1.
+    zle.region_active = if x != 0 { 1 } else { 0 };
+}
 
 /// Port of `set_register()` from Src/Zle/zle_params.c:751. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn set_register() -> i32 { 0 }
@@ -338,3 +364,54 @@ pub fn unset_registers() -> i32 { 0 }
 
 /// Port of `zleunsetfn()` from Src/Zle/zle_params.c:237. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn zleunsetfn() -> i32 { 0 }
+
+#[cfg(test)]
+mod region_active_tests {
+    use super::*;
+    use crate::ported::zle::zle_main::Zle;
+
+    #[test]
+    fn get_region_active_reads_field() {
+        // c:327 — `return region_active`.
+        let mut z = Zle::default();
+        z.region_active = 0;
+        assert_eq!(get_region_active(&z), 0);
+        z.region_active = 1;
+        assert_eq!(get_region_active(&z), 1);
+        z.region_active = 2;
+        assert_eq!(get_region_active(&z), 2);
+    }
+
+    #[test]
+    fn set_region_active_double_bang_idiom() {
+        // c:320 — `region_active = (int)!!x`. Any non-zero → 1; zero → 0.
+        let mut z = Zle::default();
+        set_region_active(&mut z, 0);
+        assert_eq!(z.region_active, 0);
+        set_region_active(&mut z, 1);
+        assert_eq!(z.region_active, 1);
+        set_region_active(&mut z, 99);
+        assert_eq!(z.region_active, 1);
+        set_region_active(&mut z, -1);
+        assert_eq!(z.region_active, 1);
+        set_region_active(&mut z, 0);
+        assert_eq!(z.region_active, 0);
+    }
+}
+
+#[cfg(test)]
+mod trap_tests {
+    use crate::ported::zle::zle_main::{zleaftertrap, zlebeforetrap};
+
+    #[test]
+    fn zlebeforetrap_returns_zero() {
+        // c:2110 — `return 0` always.
+        assert_eq!(zlebeforetrap(), 0);
+    }
+
+    #[test]
+    fn zleaftertrap_returns_zero() {
+        // c:2119 — `return 0` always.
+        assert_eq!(zleaftertrap(), 0);
+    }
+}

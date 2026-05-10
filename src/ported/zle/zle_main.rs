@@ -1766,8 +1766,55 @@ pub fn ungetbytes_unmeta(zle: &mut Zle, s: &[u8]) {                          // 
 /// Port of `zle_resetprompt()` from Src/Zle/zle_main.c:2058. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn zle_resetprompt() -> i32 { 0 }
 
-/// Port of `zleaftertrap()` from Src/Zle/zle_main.c:2114. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zleaftertrap() -> i32 { 0 }
+/// Port of `zleaftertrap()` from `Src/Zle/zle_main.c:2113`.
+/// ```c
+/// static int
+/// zleaftertrap(UNUSED(Hookdef dummy), UNUSED(void *dat))
+/// {
+///     if (zleactive)
+///         endparamscope();
+///     return 0;
+/// }
+/// ```
+/// Hook callback fired AFTER a trap handler runs — pops the
+/// param scope that `zlebeforetrap` pushed (if zle is active).
+pub fn zleaftertrap() -> i32 {                                               // c:2113
+    use std::sync::atomic::Ordering;
+    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {  // c:2116
+        // c:2117 — `endparamscope()`. The Rust port's startparamscope/
+        // endparamscope take &mut ParamTable; the singleton table
+        // hookup isn't wired yet. Logged as deferred; the zleactive
+        // check is faithful so the no-op path is correct.
+        // TODO: wire to the global ParamTable when that lands.
+    }
+    0                                                                        // c:2119 return 0
+}
 
-/// Port of `zlebeforetrap()` from Src/Zle/zle_main.c:2104. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zlebeforetrap() -> i32 { 0 }
+/// Port of `zlebeforetrap()` from `Src/Zle/zle_main.c:2103`.
+/// ```c
+/// static int
+/// zlebeforetrap(UNUSED(Hookdef dummy), UNUSED(void *dat))
+/// {
+///     if (zleactive) {
+///         startparamscope();
+///         makezleparams(1);
+///     }
+///     return 0;
+/// }
+/// ```
+/// Hook callback fired BEFORE a trap handler runs — pushes a
+/// param scope and exposes ZLE state to the trap function (when
+/// zle is active).
+pub fn zlebeforetrap() -> i32 {                                              // c:2103
+    use std::sync::atomic::Ordering;
+    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {  // c:2106
+        // c:2107-2108 — `startparamscope(); makezleparams(1)`. The
+        // ParamTable singleton + makezleparams wiring isn't ported
+        // yet. zleactive check is faithful — the no-op path is
+        // correct when zle is inactive (which is the boot-time
+        // and most-trap-fire state).
+        // TODO: call startparamscope + makezleparams once the
+        // global ParamTable exists.
+    }
+    0                                                                        // c:2110 return 0
+}
