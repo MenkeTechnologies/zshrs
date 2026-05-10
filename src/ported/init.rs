@@ -856,6 +856,15 @@ pub static COPROCOUT: std::sync::atomic::AtomicI32 =
 pub static SFCONTEXT: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);                                    // c:239
 
+/// Port of `int noerrexit` from `Src/exec.c:73`. Bitmask of
+/// NOERREXIT_EXIT / NOERREXIT_RETURN / NOERREXIT_SIGNAL — used to
+/// suppress ERREXIT and trapping of SIGZERR/SIGEXIT during evaluation
+/// of sub-commands of the command under evaluation. Updated before
+/// sub-command eval and restored after. (See execlist + execwhile in
+/// loop.c for canonical usage.)
+pub static NOERREXIT: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:73
+
 /// Set up SHIN to read from stdin or the script file.
 /// Port of `setupshin()` from Src/init.c:1340. C source `stat`s
 /// the script path, falls back to `$PATH` walk if `PATHSCRIPT` is
