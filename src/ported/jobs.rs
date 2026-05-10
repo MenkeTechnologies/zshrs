@@ -1101,28 +1101,141 @@ pub fn isanum(s: &str) -> bool {
 /// `jobs -Z` (argv overwrite) is not yet ported; the argv/envp
 /// scan from C lines 2185-2210 is omitted — that's a separate
 /// init.rs concern when `setproctitle()` lands.
-pub fn init_jobs() -> (JobTable, JobPointers) {
-    let mut table = JobTable::new();
-    table.jobs.reserve(MAXJOBS_ALLOC);
-    (table, JobPointers::new())
+/// Direct port of `init_jobs()` from `Src/jobs.c:2164`.
+/// C body (c:2168-2210): allocates the `jobtab[]` array sized to
+/// MAXJOBS_ALLOC entries via `zalloc`, zero-fills via `memset`,
+/// then (non-HAVE_SETPROCTITLE) walks argv + envp to compute the
+/// `hackspace` byte count for the `jobs -Z` rename trick.
+///
+/// ```c
+/// jobtab = (struct job *)zalloc(MAXJOBS_ALLOC*sizeof(struct job));
+/// if (!jobtab) { zerr(...); exit(1); }
+/// jobtabsize = MAXJOBS_ALLOC;
+/// memset(jobtab, 0, MAXJOBS_ALLOC*sizeof(struct job));
+/// /* -Z hackspace scan */
+/// hackzero = *argv;
+/// p = strchr(hackzero, 0);
+/// while (*++argv) { q = *argv; if (q != p+1) goto done;
+///                   p = strchr(q, 0); }
+/// for (; *envp; envp++) { ... }
+/// done: hackspace = p - hackzero;
+/// ```
+pub fn init_jobs(argv: &[String], envp: &[String]) -> (JobTable, JobPointers) { // c:2164
+    let mut table = JobTable::new();                                         // c:2173 zalloc
+    table.jobs.resize_with(MAXJOBS_ALLOC, || None);                          // c:2178 jobtabsize/memset
+    // c:2185-2210 — `-Z` hackspace scan: locate contiguous argv+envp
+    // space. Static-link path: we don't yet keep `hackzero` /
+    // `hackspace` globals (the bin_fg -Z arm uses prctl directly on
+    // Linux + pthread_setname_np on macOS, both bypassing the argv
+    // overwrite trick). The scan computes the byte-distance only;
+    // record it via env-var bridge so a future setproctitle fallback
+    // can read it.
+    if !argv.is_empty() {                                                    // c:2187 hackzero = *argv
+        let zero = argv[0].as_str();
+        let mut hackspace = zero.len();                                      // c:2208 p - hackzero
+        // Walk argv tail then envp; each element must be contiguous
+        // (the C check is `q != p+1` after the previous's NUL).
+        for entry in argv.iter().skip(1).chain(envp.iter()) {                // c:2191/2197 walks
+            // Without raw argv pointers we can't verify contiguity from
+            // Rust's String wrappers — accumulate length conservatively.
+            hackspace += 1 + entry.len();                                    // c:2207-style p+1
+        }
+        std::env::set_var("__zshrs_hackspace", hackspace.to_string());       // record for jobs -Z
+    }
+    (table, JobPointers::new())                                              // c:2210 done
 }
 
-/// Acquire process group (from jobs.c acquire_pgrp)
+/// Direct port of `acquire_pgrp()` from `Src/jobs.c:3222`.
+/// C body (c:3225-3278): block SIGTTIN/SIGTTOU/SIGTSTP, then loop
+/// while the tty's pgrp differs from ours — re-fetch our pgrp,
+/// optionally call `attachtty()` to claim the tty (with signal
+/// unblock + reblock around the call so SIGT* fires correctly), or
+/// trigger `read(0, NULL, 0)` to provoke a SIGT* if we're not yet
+/// the session leader. Bail after 100 iterations or a stable pgrp
+/// in non-interactive mode. If still not in foreground, `setpgrp(0, 0)`
+/// to claim, or disable MONITOR option as last resort.
+///
+/// ```c
+/// long ttpgrp;
+/// sigset_t blockset, oldset;
+/// if ((mypgrp = GETPGRP()) >= 0) {
+///     long lastpgrp = mypgrp;
+///     sigemptyset(&blockset);
+///     sigaddset(&blockset, SIGTTIN); /* SIGTTOU; SIGTSTP */
+///     oldset = signal_block(&blockset);
+///     int loop_count = 0;
+///     while ((ttpgrp = gettygrp()) != -1 && ttpgrp != mypgrp) {
+///         /* re-attach + read(0) probes; bail after 100 loops */
+///     }
+///     if (mypgrp != mypid) {
+///         if (setpgrp(0, 0) == 0) attachtty(mypgrp);
+///         else opts[MONITOR] = 0;
+///     }
+///     signal_setmask(&oldset);
+/// } else opts[MONITOR] = 0;
+/// ```
 #[cfg(unix)]
-pub fn acquire_pgrp() -> bool {
-    unsafe {
-        let mypgrp = libc::getpgrp();
-        let tpgrp = libc::tcgetpgrp(0);
-        if tpgrp == -1 || tpgrp == mypgrp {
-            return true;
-        }
-        // We need to be in the foreground process group
-        if libc::setpgid(0, 0) == 0 {
-            libc::tcsetpgrp(0, libc::getpgrp());
-            return true;
-        }
-        false
+pub fn acquire_pgrp() -> bool {                                              // c:3222
+    use crate::ported::signals::{signal_block, signal_setmask};
+    let mypid = unsafe { libc::getpid() };
+    let mut mypgrp = unsafe { libc::getpgrp() };                             // c:3227 GETPGRP()
+    if mypgrp < 0 {
+        crate::ported::options::opt_state_set("monitor", false);             // c:3275 opts[MONITOR]=0
+        return false;
     }
+    let mut lastpgrp = mypgrp;                                               // c:3228
+    // c:3229-3232 — sigemptyset + sigaddset(SIGTTIN/SIGTTOU/SIGTSTP).
+    let mut blockset: libc::sigset_t = unsafe { std::mem::zeroed() };
+    unsafe {
+        libc::sigemptyset(&mut blockset);
+        libc::sigaddset(&mut blockset, libc::SIGTTIN);                       // c:3230
+        libc::sigaddset(&mut blockset, libc::SIGTTOU);                       // c:3231
+        libc::sigaddset(&mut blockset, libc::SIGTSTP);                       // c:3232
+    }
+    let oldset = signal_block(&blockset);                                     // c:3233
+    let mut loop_count = 0i32;                                               // c:3234
+    let interact = crate::ported::options::opt_state_get("interactive")
+        .unwrap_or(false);
+    // c:3235 — `while ((ttpgrp = gettygrp()) != -1 && ttpgrp != mypgrp)`.
+    loop {
+        let ttpgrp = unsafe { libc::tcgetpgrp(0) };                          // c:3235 gettygrp
+        if ttpgrp == -1 || ttpgrp == mypgrp { break; }
+        mypgrp = unsafe { libc::getpgrp() };                                 // c:3236
+        if mypgrp == mypid {                                                 // c:3237
+            if !interact { break; }                                          // c:3239 attachtty no-op
+            signal_setmask(&oldset);                                          // c:3240
+            unsafe { libc::tcsetpgrp(0, mypgrp); }                           // c:3241 attachtty(mypgrp)
+            signal_block(&blockset);                                          // c:3242
+        }
+        if mypgrp == unsafe { libc::tcgetpgrp(0) } { break; }                // c:3244 gettygrp
+        signal_setmask(&oldset);                                              // c:3246
+        // c:3247 — `if (read(0, NULL, 0) != 0) {}` — probe to provoke SIGT*.
+        let mut buf: [u8; 0] = [];
+        let _ = unsafe { libc::read(0, buf.as_mut_ptr() as *mut _, 0) };     // c:3247
+        signal_block(&blockset);                                              // c:3248
+        mypgrp = unsafe { libc::getpgrp() };                                 // c:3249
+        if mypgrp == lastpgrp {                                              // c:3250
+            if !interact { break; }                                          // c:3252
+            loop_count += 1;
+            if loop_count == 100 {                                           // c:3253
+                break;                                                       // c:3261
+            }
+        }
+        lastpgrp = mypgrp;                                                   // c:3265
+    }
+    // c:3267 — `if (mypgrp != mypid) { if (setpgrp(0, 0) == 0) ...; else opts[MONITOR] = 0; }`
+    let mut acquired = mypgrp == mypid;                                      // c:3267
+    if !acquired {
+        if unsafe { libc::setpgid(0, 0) } == 0 {                             // c:3268 setpgrp
+            mypgrp = mypid;                                                  // c:3269
+            unsafe { libc::tcsetpgrp(0, mypgrp); }                           // c:3270 attachtty
+            acquired = true;
+        } else {
+            crate::ported::options::opt_state_set("monitor", false);         // c:3272 opts[MONITOR]=0
+        }
+    }
+    signal_setmask(&oldset);                                                  // c:3274
+    acquired                                                                 // c:3278
 }
 
 /// Port of `storepipestats()` from `Src/jobs.c:420`.
@@ -2370,6 +2483,7 @@ pub fn bin_suspend(name: &str, _argv: &[String],                             // 
     // global set when zsh's argv[0] starts with `-`. Static-link path:
     // probe $0 directly.
     let islogin = std::env::var("0").map(|s| s.starts_with('-')).unwrap_or(false);
+    //won't suspend a login shell, unless forced
     if islogin && !OPT_ISSET(ops, b'f') {                                    // c:3173
         zwarnnam(name, "can't suspend login shell");                         // c:3174
         return 1;                                                            // c:3175
@@ -2384,16 +2498,19 @@ pub fn bin_suspend(name: &str, _argv: &[String],                             // 
         signal_default(libc::SIGTTIN);                                       // c:3179
         signal_default(libc::SIGTSTP);                                       // c:3180
         signal_default(libc::SIGTTOU);                                       // c:3181
+        //Move ourselves back to the process group we came from
         release_pgrp();                                                      // c:3184
     }
 
     // c:3188 — `killpg(origpgrp, SIGTSTP);` — stop ourselves.
     let origpgrp = origpgrp_lock().lock().map(|g| *g)
         .unwrap_or(unsafe { libc::getpgrp() });
+    //suspend ourselves with a SIGTSTP
     unsafe { libc::killpg(origpgrp, libc::SIGTSTP); }                        // c:3188
 
     if jobbing {                                                             // c:3190
         let _ = acquire_pgrp();                                              // c:3191
+        //restore signal handling
         signal_ignore(libc::SIGTTOU);                                        // c:3193
         signal_ignore(libc::SIGTSTP);                                        // c:3194
         signal_ignore(libc::SIGTTIN);                                        // c:3195
