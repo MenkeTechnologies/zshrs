@@ -1574,15 +1574,26 @@ pub fn putreplaceselection(zle: &mut Zle) -> i32 {                           // 
     pastebuf(zle, &prevbuf, n, pos)                                          // c:721
 }
 
-/// Port of `quotedinsert()` from Src/Zle/zle_misc.c:899.
+/// Direct port of `int quotedinsert(char **args)` from
+/// `Src/Zle/zle_misc.c:899-923`.
+/// ```c
+/// // (raw-mode tweak for non-HAS_TIO systems — skipped on Linux/macOS)
+/// getfullchar(0);
+/// if (LASTFULLCHAR == ZLEEOF) return 1;
+/// return selfinsert(args);
+/// ```
+/// HAS_TIO is set everywhere zshrs builds (Linux/macOS), so the
+/// raw-mode/ioctl branch is unreachable — `getfullchar` already
+/// runs in the right mode via `zsetterm`. We invoke it explicitly
+/// for a one-shot read, then forward to `selfinsert`.
 pub fn quotedinsert(zle: &mut Zle) -> i32 {                                  // c:899
-    // C body (c:899-923): set raw mode, getfullchar(0), restore, then
-    // selfinsert. Substrate (raw-mode toggle + getfullchar) deferred;
-    // call selfinsert directly with whatever lastchar is.
-    if zle.lastchar < 0 {
-        return 1;                                                            // c:919 ZLEEOF
+    // c:911 — `getfullchar(0)`. Reads one full char, updates
+    // zle.lastchar / lastchar_wide / lastchar_wide_valid.
+    let _ = zle.getfullchar(false);
+    if zle.lastchar < 0 {                                                    // c:919 LASTFULLCHAR == ZLEEOF
+        return 1;
     }
-    selfinsert(zle)
+    selfinsert(zle)                                                          // c:922
 }
 
 /// Port of `quoteline()` from Src/Zle/zle_misc.c:1187.

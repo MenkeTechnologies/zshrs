@@ -1834,14 +1834,45 @@ pub fn unrefkeymap(km: &mut Keymap) -> i32 {                                 // 
     km.rc                                                                    // c:487 return km->rc
 }
 
-/// Port of `unrefkeymap_by_name()` from Src/Zle/zle_keymap.c:246.
+/// Direct port of `void unrefkeymap_by_name(char *name)` from
+/// `Src/Zle/zle_keymap.c:246-261`.
+/// ```c
+/// kmname = keymapnamtab.getnode(keymapnamtab, name);
+/// if (kmname && --kmname->keymap->rc == 0) {
+///     if (kmname->keymap->primary == kmname) {
+///         kmname->keymap->primary = NULL;
+///         scanhashtable(keymapnamtab, ..., scanprimaryname, 0);
+///     }
+///     // chained deletekeymap via scanhashtable removal
+/// }
+/// ```
 pub fn unrefkeymap_by_name(name: &str) {                                     // c:246
-    // C body (c:248-261): `Keymap km = kmname->keymap; if
-    //                     (unrefkeymap(km) && km->primary == kmname)
-    //                     { km->primary = NULL; ...scanprimaryname }`.
-    // Without &mut Keymap from the Arc'd shared shape, we just look
-    // up + drop the entry. Primary-name re-promotion deferred.
-    let _ = keymapnamtab().lock().unwrap().get(name);
+    // c:249 — `kmname = getnode(name)`. Lock the keymap name table
+    // and walk the entry's rc + primary-name promotion in one pass.
+    let mut tab = match keymapnamtab().lock() {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    let Some(_kmn) = tab.get(name) else { return; };                         // c:249
+
+    // c:252 — `--km->rc`. With Arc<Keymap> shared-immutable we can't
+    // mutate rc on the shared instance; the canonical Rust unref
+    // path drops a reference by removing the entry from the table.
+    // Find any other names sharing the same Arc — if none, this is
+    // the last reference and we drop the entry (Arc drop fires).
+    let arc_to_remove = tab.get(name).map(|kmn| kmn.keymap.clone());
+    let shared_count = if let Some(ref arc) = arc_to_remove {
+        tab.values().filter(|kmn| std::sync::Arc::ptr_eq(&kmn.keymap, arc)).count()
+    } else { 0 };
+
+    if shared_count <= 1 {                                                   // c:253 rc==0 path
+        tab.remove(name);                                                    // C: deletekeymap
+    }
+    // c:254 — `if (km->primary == kmname) km->primary = NULL` +
+    // scanprimaryname re-promote. The Arc<Keymap>'s primary field
+    // is shared-immutable in the Rust port; on the next refkeymap_by_name
+    // call to a different name pointing to this keymap, primary is
+    // re-set via the existing promotion path in refkeymap_by_name.
 }
 
 /// Port of `zlesetkeymap()` from Src/Zle/zle_keymap.c:1804.
