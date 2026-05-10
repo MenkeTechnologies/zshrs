@@ -30,7 +30,6 @@
 //! `wrap_private`/`printprivatenode` remain as static-link no-op
 //! stubs with C-citing doc-comments.
 
-use crate::ported::exec::ShellExecutor;
 use crate::ported::utils::zwarnnam;
 
 /// Port of `struct gsu_closure` from `Src/Modules/param_private.c:34`.

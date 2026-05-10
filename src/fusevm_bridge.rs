@@ -768,7 +768,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_STRFTIME, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_strftime(&args));
+        // Canonical bin_strftime takes (nam, argv, ops, func) per
+        // Src/Modules/datetime.c:187. Adapt &[String] → &[&str] +
+        // empty options inline (datetime parses no flags).
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                            argscount: 0, argsalloc: 0 };
+        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+        let status = crate::ported::modules::datetime::bin_strftime(
+            "strftime", &argv, &ops, 0);
         Value::Status(status)
     });
 

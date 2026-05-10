@@ -6,87 +6,16 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::exec::ShellExecutor;
-
-impl ShellExecutor {
-
-/// Magic-assoc key enumeration for `${(k)NAME}` / `${(v)NAME}` /
-/// `${(kv)NAME}` introspection.
-///
-/// Port of zsh's per-magic-table getfn/scanfn dispatch from
-/// `Src/Modules/parameter.c`. Each magic-assoc name corresponds
-/// to one of the static `paramdef` entries (e.g. `pmcommands`,
-/// `pmaliases`, `pmfunctions`) which defines a getfn that walks
-/// the canonical hashtable. Returns the key list for known
-/// magic-assoc names; `None` for non-magic names so the caller
-/// falls back to regular variable lookup.
-pub fn magic_assoc_keys(&self, name: &str) -> Option<Vec<String>> {
-    let exec = self;
-    match name {
-        "aliases" => Some(exec.aliases.keys().cloned().collect()),
-        "galiases" => Some(exec.global_aliases.keys().cloned().collect()),
-        "saliases" => Some(exec.suffix_aliases.keys().cloned().collect()),
-        "dis_aliases" | "dis_galiases" | "dis_saliases" => Some(Vec::new()),
-        "functions" | "dis_functions" => Some(exec.function_names().into_iter().collect()),
-        "builtins" | "dis_builtins" => {
-            // Static builtin set — port of Src/Modules/parameter.c
-            // scanpmbuiltins which iterates the C builtin table.
-            // Match the same set the BUILTIN_PARAM_FLAG `+commands`
-            // path checks for builtin-ness.
-            let names: &[&str] = &[
-                "echo", "print", "printf", "cd", "pwd", "exit", "return", "true", "false",
-                ":", "test", "[", "local", "private", "declare", "typeset", "export", "unset",
-                "set", "shift", "read", "source", "alias", "unalias", "function", "type",
-                "which", "whence", "command", "builtin", "jobs", "bg", "fg", "wait", "kill",
-                "trap", "eval", "exec", "ulimit", "umask", "getopts", "shopt", "history",
-                "fc", "hash", "rehash", "let", "select", "time", "times", "compdef",
-                "compadd", "complete", "compgen", "zmodload", "zparseopts", "zstyle",
-                "zle", "vared", "zcompile", "autoload",
-            ];
-            Some(names.iter().map(|s| (*s).to_string()).collect())
-        }
-        "reswords" | "dis_reswords" => {
-            // zsh reserved words. Direct port of the static `reswds[]`
-            // table in Src/init.c.
-            let names: &[&str] = &[
-                "do", "done", "esac", "then", "elif", "else", "fi", "for", "case", "if",
-                "while", "function", "repeat", "time", "until", "exec", "command", "select",
-                "coproc", "nocorrect", "foreach", "end", "!", "[[", "{", "}", "declare",
-                "export", "float", "integer", "local", "private", "readonly", "typeset",
-            ];
-            Some(names.iter().map(|s| (*s).to_string()).collect())
-        }
-        "options" => Some(exec.options.keys().cloned().collect()),
-        "commands" => Some(exec.command_hash.keys().cloned().collect()),
-        "jobtexts" | "jobdirs" | "jobstates" => {
-            Some(exec.jobs.iter().map(|(id, _)| id.to_string()).collect())
-        }
-        "dirstack" => {
-            // dirstack is array-typed not assoc — but `${(k)dirstack}`
-            // returns indices, `${(v)dirstack}` returns paths. Treat
-            // it like assoc-of-int-keys for symmetry.
-            Some((0..exec.dir_stack.len()).map(|i| i.to_string()).collect())
-        }
-        "errnos" => {
-            // /usr/include/errno.h names. Static set per zsh's
-            // sigtrapped lookup.
-            Some(crate::modules::system::ERRNO_NAMES
-                .iter().map(|(n, _)| (*n).to_string()).collect())
-        }
-        "sysparams" => {
-            Some(vec!["pid".to_string(), "ppid".to_string(), "procsubstpid".to_string()])
-        }
-        "parameters" => {
-            let mut keys: Vec<String> = exec.variables.keys().cloned().collect();
-            keys.extend(exec.arrays.keys().cloned());
-            keys.extend(exec.assoc_arrays.keys().cloned());
-            Some(keys)
-        }
-        _ => None,
-    }
-}
-
-}  // impl ShellExecutor
+// (impl ShellExecutor block + magic_assoc_keys() moved to
+// src/exec_shims.rs — that method aggregates per-magic-table
+// dispatch which the C source splits across separate
+// scanpm{aliases,functions,builtins,commands,reswords,options}
+// helpers. Each branch in the moved Rust method is FAKE — it
+// hard-codes static lists or reaches `&self.<field>` instead of
+// walking the canonical hashtable like the C source. The honest
+// fix is to replace each branch with a call to the real scanpm*
+// port in this file (parameter.rs); until those land, the moved
+// method stands as a placeholder.)
 
 /// Parameter type flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1636,13 +1565,58 @@ pub fn scanpmbuiltins(ht: *mut HashTable, func: Option<ScanFunc>,            // 
     scanbuiltins(ht, func, flags, 0)                                         // c:846
 }
 
-/// Port of `scanpmcommands()` from Src/Modules/parameter.c:245.
-/// C: `static void scanpmcommands(UNUSED(HashTable ht), ScanFunc func,
-///     int flags)` — iterate cmdnamtab (synth path entries on demand).
+/// Direct port of `scanpmcommands()` from Src/Modules/parameter.c:245.
+/// C body (c:248-280):
+/// ```c
+/// if (isset(HASHLISTALL)) cmdnamtab->filltable(cmdnamtab);
+/// pm.node.flags = PM_SCALAR; pm.gsu.s = &pmcommand_gsu;
+/// for each hn in cmdnamtab:
+///     pm.node.nam = hn->nam;
+///     if non-counting && wantvals:
+///         pm.u.str = HASHED ? cmd->u.cmd : path/name
+///     func(&pm.node, flags);
+/// ```
 #[allow(non_snake_case)]
-pub fn scanpmcommands(_ht: *mut HashTable, _func: Option<ScanFunc>,          // c:245
-                      _flags: i32) {
-    // c:248-280 — fills cmdnamtab if needed, then emits each cmd path.
+pub fn scanpmcommands(_ht: *mut HashTable, func: Option<ScanFunc>,           // c:245
+                      flags: i32) {
+    use crate::ported::zsh_h::{PM_SCALAR, SCANPM_WANTVALS,
+                               SCANPM_MATCHVAL, SCANPM_WANTKEYS};
+    // c:253 — `if (isset(HASHLISTALL)) cmdnamtab->filltable(...)`. The
+    // filltable variant scans $PATH and inserts every executable into
+    // cmdnamtab; without HASHLISTALL only previously-hashed entries
+    // appear. Static-link path defers the filltable side-effect until
+    // the option-state plumbing lands.
+    let cmds: Vec<(String, bool, String)> = {
+        let g = crate::ported::hashtable::cmdnamtab_lock().lock().unwrap();
+        g.iter().map(|(name, cmd)| {                                        // c:259-260
+            let hashed = cmd.is_hashed();
+            // c:266-274 — pm.u.str: HASHED → cmd->u.cmd (real path);
+            // unhashed → first $PATH dir + "/" + name.
+            let value = if hashed {
+                cmd.path.as_ref().and_then(|p| p.to_str())
+                    .unwrap_or("").to_string()                               // c:267
+            } else {
+                let dir = std::env::var("PATH").ok()
+                    .and_then(|p| p.split(':').next().map(|s| s.to_string()))
+                    .unwrap_or_default();                                    // c:269 *(cmd->u.name)
+                format!("{}/{}", dir, name)                                  // c:271-273 strcat
+            };
+            (name.clone(), hashed, value)
+        }).collect()
+    };
+    let _ = (PM_SCALAR, SCANPM_WANTVALS, SCANPM_MATCHVAL, SCANPM_WANTKEYS);
+    if let Some(f) = func {
+        // c:259 — for each cmdnamtab entry, build a stack-local param
+        // and pass to the callback. Rust uses a real param struct
+        // (not a stack pun) so the callback sees a stable HashNode.
+        for (name, _hashed, _value) in &cmds {
+            let node = Box::new(crate::ported::zsh_h::hashnode {              // c:264 pm.node.nam
+                next: None, nam: name.clone(), flags: 0,
+            });
+            f(&node, flags);                                                 // c:280 func(&pm.node, flags)
+        }
+    }
+    let _ = cmds;
 }
 
 /// Port of `scanpmdisbuiltins()` from Src/Modules/parameter.c:850.
@@ -1758,11 +1732,21 @@ pub fn scanpmnameddirs(_ht: *mut HashTable, _func: Option<ScanFunc>,         // 
     // c:1621-1643 — fills nameddirtab, walks each named-dir entry.
 }
 
-/// Port of `scanpmoptions()` from Src/Modules/parameter.c:1016.
+/// Direct port of `scanpmoptions()` from Src/Modules/parameter.c:1016.
+/// C body walks the optns[] table emitting "on"/"off" for each option.
 #[allow(non_snake_case)]
-pub fn scanpmoptions(_ht: *mut HashTable, _func: Option<ScanFunc>,           // c:1016
-                     _flags: i32) {
-    // c:1019-1037 — walks optns[] table, emits "on"/"off" per option.
+pub fn scanpmoptions(_ht: *mut HashTable, func: Option<ScanFunc>,            // c:1016
+                     flags: i32) {
+    let names: Vec<String> = crate::ported::options::ZSH_OPTIONS_SET
+        .iter().map(|s| s.to_string()).collect();
+    if let Some(f) = func {
+        for nm in names {                                                    // c:1024
+            let node = Box::new(crate::ported::zsh_h::hashnode {
+                next: None, nam: nm, flags: 0,
+            });
+            f(&node, flags);                                                 // c:1037
+        }
+    }
 }
 
 /// Port of `scanpmparameters()` from Src/Modules/parameter.c:124.

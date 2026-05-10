@@ -1872,32 +1872,60 @@ pub(crate) fn makecomplistcmd(os: &str, incmd: bool, flags: i32) -> i32 {
 // completion driver before invoking makecomplistcmd.
 thread_local! { static CMDSTR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) }; }
 
-/// Pattern compctl iteration — `compctl -p PAT cmd`.
-/// Port of `makecomplistpc()` from Src/Zle/compctl.c:2529.
-///
-/// Walks the patcomps list, compiles each pattern, tries it against
-/// cmdstr (and optionally against the resolved command path). On
-/// match, runs makecomplistcc for that pattern's spec.
-pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {
-    let mut ret: i32 = 0;
-    let cmdstr = CMDSTR.with(|r| r.borrow().clone());
-    let cmd = match cmdstr {
+/// Direct port of `makecomplistpc()` from Src/Zle/compctl.c:2530.
+/// C body (c:2532-2552):
+/// ```c
+/// s = ((shfunctab->getnode(shfunctab, cmdstr) ||
+///       builtintab->getnode(builtintab, cmdstr)) ? NULL :
+///      findcmd(cmdstr, 1, 0));
+/// for (pc = patcomps; pc; pc = pc->next) {
+///     if ((pat = patcompile(pc->pat, PAT_STATIC, NULL)) &&
+///         (pattry(pat, cmdstr) ||
+///          (s && pattry(pat, s)))) {
+///         makecomplistcc(pc->cc, os, incmd);
+///         ret |= 2;
+///         if (!(ccont & CC_CCCONT))
+///             return ret;
+///     }
+/// }
+/// return ret;
+/// ```
+pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {                 // c:2530
+    let mut ret: i32 = 0;                                                    // c:2535
+    let cmdstr = match CMDSTR.with(|r| r.borrow().clone()) {                 // c:2533
         Some(s) => s,
         None => return 0,
     };
+    // c:2537-2540 — `s = (shfunctab[cmdstr] || builtintab[cmdstr]) ?
+    // NULL : findcmd(cmdstr, 1, 0);` — only resolve via $PATH when
+    // cmdstr is neither a defined function nor a builtin.
+    let is_function = crate::ported::builtin::SHFUNCTAB.lock()
+        .map(|t| t.contains_key(&cmdstr)).unwrap_or(false);
+    let is_builtin = crate::ported::builtin::BUILTINS.iter()
+        .any(|b| b.name == cmdstr);
+    let s_resolved: Option<String> = if is_function || is_builtin {          // c:2537
+        None                                                                 // c:2538 NULL
+    } else {
+        crate::ported::builtin::findcmd(&cmdstr, 1, 0)                       // c:2540
+    };
 
     let pats = PATCOMPS.lock().unwrap().clone();
-    for (pat, cc) in &pats {
-        // C: c:2542 — compile pattern, try match against cmdstr
-        if crate::ported::pattern::patmatch(pat, &cmd) {
-            makecomplistcc(cc, os, incmd);
-            ret |= 2;
-            if (CCONT.with(|c| c.get()) & cc_flags2::CCCONT) == 0 {
-                return ret;
+    for (pat, cc) in &pats {                                                 // c:2542
+        // c:2543 patcompile(pc->pat) — Rust patmatch compiles inline.
+        // c:2544-2545 — pattry(pat, cmdstr) || (s && pattry(pat, s)).
+        let matches = crate::ported::pattern::patmatch(pat, &cmdstr)         // c:2544
+            || s_resolved.as_deref()
+                .map(|sr| crate::ported::pattern::patmatch(pat, sr))         // c:2545
+                .unwrap_or(false);
+        if matches {
+            makecomplistcc(cc, os, incmd);                                   // c:2546
+            ret |= 2;                                                        // c:2547
+            if (CCONT.with(|c| c.get()) & cc_flags2::CCCONT) == 0 {          // c:2548
+                return ret;                                                  // c:2549
             }
         }
     }
-    ret
+    ret                                                                      // c:2552
 }
 
 /// Per-compctl entry — track usage + dispatch the OR chain.
