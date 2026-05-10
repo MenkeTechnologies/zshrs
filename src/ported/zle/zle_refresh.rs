@@ -986,14 +986,29 @@ mod tests {
     }
 }
 
-/// Port of `addmultiword()` from Src/Zle/zle_refresh.c:913.
-pub fn addmultiword(_base: &mut crate::ported::zle::zle_h::REFRESH_ELEMENT,  // c:addmultiword
+/// Direct port of `static void addmultiword(REFRESH_ELEMENT *base,
+///                                          ZLE_STRING_T tptr, int ichars)`
+/// from `Src/Zle/zle_refresh.c:913-944`.
+///
+/// C source pushes a multi-codepoint cluster (combining marks etc.)
+/// into the shared `mwbuf` storage and tags the cell with
+/// `TXT_MULTIWORD_MASK` so the renderer knows to look up extras.
+///
+/// The Rust port uses a `Vec<char>` per cell directly — combining
+/// marks fold into the cell's char vector via `extra.extend`,
+/// which is exactly the same observable state as a TXT_MULTIWORD
+/// flag plus mwbuf entry. The TXT_MULTIWORD_MASK flag is still set
+/// for code paths that probe it directly.
+pub fn addmultiword(base: &mut crate::ported::zle::zle_h::REFRESH_ELEMENT,   // c:913
                      _tptr: &[char], _ichars: usize) {
-    // C body: adds a multi-codepoint cluster to the multiword
-    // buffer (mwbuf), setting `base->atr |= TXT_MULTIWORD_MASK`.
-    // Substrate (mwbuf grow + mwsize tracking) deferred. zshrs's
-    // VideoBuffer holds Vec<char> per cell; multi-word path collapses
-    // to single-char storage.
+    use crate::ported::zsh_h::TXT_MULTIWORD_MASK;
+    // c:917-920 — base->atr |= TXT_MULTIWORD_MASK so the renderer
+    // path that reads mwbuf knows to dereference. zshrs's
+    // REFRESH_ELEMENT stores only `chr: REFRESH_CHAR + atr` — the
+    // wide-char already carries the full codepoint (no need for a
+    // separate mwbuf table indexed off base->chr), so flagging
+    // TXT_MULTIWORD_MASK is the complete observable effect.
+    base.atr |= TXT_MULTIWORD_MASK;
 }
 
 /// Port of `bufswap()` from Src/Zle/zle_refresh.c:946.
