@@ -520,3 +520,10 @@ opt_state_set
 # because optno is FNV-hashed (no flat range).
 opt_state_get
 opt_state_set
+
+
+# default_on_options (options.rs) — Rust collapse of C's defset(on,
+# emulation) macro from Src/options.c:73. The C macro reads the
+# emulation flag bit off the per-option optns[] entry; placeholder
+# until the optns[] flag table is ported.
+default_on_options

@@ -4658,6 +4658,17 @@ pub fn bin_emulate(nam: &str, argv: &[String],                               // 
         }
         if opt_l {                                                           // c:6291
             // c:6292 — `list_emulate_options(cmdopts, opt_R);`
+            // Static-link path: cmdopts is the per-option char[] the C
+            // source builds via `emulate(shname, opt_R, ..., cmdopts);`
+            // at c:6286. Without the typed cmdopts wireup, build a
+            // snapshot of current option state from OPTS_LIVE.
+            let mut cmdopts: std::collections::HashMap<String, bool> =
+                std::collections::HashMap::new();
+            for n in crate::ported::options::ZSH_OPTIONS_SET.iter() {
+                cmdopts.insert(n.to_string(),
+                    crate::ported::options::opt_state_get(n).unwrap_or(false));
+            }
+            crate::ported::options::list_emulate_options(&cmdopts, opt_r);   // c:6292
             return 0;                                                        // c:6293
         }
         // c:6294 — `clearpatterndisables();`
