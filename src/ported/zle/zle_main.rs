@@ -2177,13 +2177,23 @@ pub fn zleaftertrap() -> i32 {                                               // 
 pub fn zlebeforetrap() -> i32 {                                              // c:2103
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {  // c:2106
-        // c:2107-2108 — `startparamscope(); makezleparams(1)`. The
-        // ParamTable singleton + makezleparams wiring isn't ported
-        // yet. zleactive check is faithful — the no-op path is
-        // correct when zle is inactive (which is the boot-time
-        // and most-trap-fire state).
-        // TODO: call startparamscope + makezleparams once the
-        // global ParamTable exists.
+        // c:2107 — `startparamscope()`. Push a param scope so trap
+        // function locals don't leak into the outer shell state.
+        let mut stub: crate::ported::zsh_h::HashTable = Box::new(
+            crate::ported::zsh_h::hashtable {
+                hsize: 0, ct: 0, nodes: Vec::new(), tmpdata: 0,
+                hash: None, emptytable: None, filltable: None,
+                cmpnodes: None, addnode: None, getnode: None,
+                getnode2: None, removenode: None, disablenode: None,
+                enablenode: None, freenode: None, printnode: None,
+                scantab: None,
+            },
+        );
+        crate::ported::params::startparamscope(&mut stub);
+        // c:2108 — `makezleparams(1)`. Snapshot the ZLE state ($BUFFER
+        // etc.) into the paramtab as readonly so trap fns observe
+        // the live editor state.
+        crate::ported::zle::zle_params::makezleparams(1);
     }
     0                                                                        // c:2110 return 0
 }
