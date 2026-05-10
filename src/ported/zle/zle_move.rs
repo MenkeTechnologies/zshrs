@@ -125,7 +125,7 @@ impl Zle {
     }
 }
 
-/// Port of `alignmultiwordleft()` from Src/Zle/zle_move.c:49. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `alignmultiwordleft()` from Src/Zle/zle_move.c:49.
 pub fn alignmultiwordleft(_pos: &mut usize, _interactive: i32) {             // c:49
     // C body (c:51-87): walks back over zero-width combining-character
     //                    cluster; pos lands on the base char. Vec<char>
@@ -133,7 +133,7 @@ pub fn alignmultiwordleft(_pos: &mut usize, _interactive: i32) {             // 
     // no-op for ASCII/BMP-only input.
 }
 
-/// Port of `alignmultiwordright()` from Src/Zle/zle_move.c:89. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `alignmultiwordright()` from Src/Zle/zle_move.c:89.
 pub fn alignmultiwordright(_pos: &mut usize, _interactive: i32) {            // c:89
     // C body (c:91-119): forward variant of alignmultiwordleft. Same
     //                    no-op-for-Vec<char> story.
@@ -176,7 +176,7 @@ pub fn backwardchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {    // 
     0                                                                        // c:478 return 0
 }
 
-/// Port of `backwardmetafiedchar()` from Src/Zle/zle_move.c:170. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `backwardmetafiedchar()` from Src/Zle/zle_move.c:170.
 pub fn backwardmetafiedchar(zle: &mut crate::ported::zle::zle_main::Zle) {   // c:170
     // C body (c:172-184): walks back one Meta-quoted byte pair (0x83
     //                    + (X^0x20)). zshrs's zleline is Vec<char> so
@@ -187,7 +187,7 @@ pub fn backwardmetafiedchar(zle: &mut crate::ported::zle::zle_main::Zle) {   // 
     }
 }
 
-/// Port of `beginningofline()` from Src/Zle/zle_move.c:298. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `beginningofline()` from Src/Zle/zle_move.c:298.
 pub fn beginningofline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:298
     // C body (c:300-326): zmult<0 → endofline delegate; else loop
     //                    zmult times: walk back to bol via prev '\\n'.
@@ -216,7 +216,7 @@ pub fn beginningofline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  //
     0
 }
 
-/// Port of `beginningoflinehist()` from Src/Zle/zle_move.c:360. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `beginningoflinehist()` from Src/Zle/zle_move.c:360.
 pub fn beginningoflinehist(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:360
     // C body (c:362-398): same as beginningofline but if we hit
     //                    bol with positive count remaining, jump up
@@ -281,7 +281,7 @@ pub fn decpos(pos: &mut usize) {                                             // 
     // c:155 — `alignmultiwordleft(pos, 1)`. No-op for Vec<char>.
 }
 
-/// Port of `endofline()` from Src/Zle/zle_move.c:331. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `endofline()` from Src/Zle/zle_move.c:331.
 pub fn endofline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // c:331
     // C body (c:333-355): mirror of beginningofline; walk forward to
     //                    next '\\n'.
@@ -311,7 +311,7 @@ pub fn endofline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // 
     0
 }
 
-/// Port of `endoflinehist()` from Src/Zle/zle_move.c:403. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `endoflinehist()` from Src/Zle/zle_move.c:403.
 pub fn endoflinehist(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {   // c:403
     // C body (c:405-436): mirror of beginningoflinehist; downhistory
     //                    when hitting eol with count remaining.
@@ -528,7 +528,7 @@ pub fn vibeginningofline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  
     0                                                                        // c:731
 }
 
-/// Port of `viendofline()` from Src/Zle/zle_move.c:708. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `viendofline()` from Src/Zle/zle_move.c:708.
 pub fn viendofline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // c:707
     // C body (c:709-723): `oldcs = zlecs; n = zmult; if (n < 1) return 1;
     //                    while (n--) { if (zlecs > zlell) { zlecs = oldcs;
@@ -552,7 +552,7 @@ pub fn viendofline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // 
     0
 }
 
-/// Port of `vifindchar()` from Src/Zle/zle_move.c:787. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vifindchar()` from Src/Zle/zle_move.c:787.
 pub fn vifindchar(zle: &mut crate::ported::zle::zle_main::Zle, repeat: i32) -> i32 {  // c:786
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_misc::{VFINDCHAR, VFINDDIR, TAILADD};
@@ -612,7 +612,7 @@ pub fn vifindchar(zle: &mut crate::ported::zle::zle_main::Zle, repeat: i32) -> i
     0
 }
 
-/// Port of `vifindnextchar()` from Src/Zle/zle_move.c:739. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vifindnextchar()` from Src/Zle/zle_move.c:739.
 pub fn vifindnextchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:738
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
@@ -629,7 +629,7 @@ pub fn vifindnextchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // 
     vifindchar(zle, 0)
 }
 
-/// Port of `vifindnextcharskip()` from Src/Zle/zle_move.c:763. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vifindnextcharskip()` from Src/Zle/zle_move.c:763.
 pub fn vifindnextcharskip(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:762
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
@@ -642,7 +642,7 @@ pub fn vifindnextcharskip(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 { 
     vifindchar(zle, 0)
 }
 
-/// Port of `vifindprevchar()` from Src/Zle/zle_move.c:751. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vifindprevchar()` from Src/Zle/zle_move.c:751.
 pub fn vifindprevchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:750
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
@@ -655,7 +655,7 @@ pub fn vifindprevchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // 
     vifindchar(zle, 0)
 }
 
-/// Port of `vifindprevcharskip()` from Src/Zle/zle_move.c:775. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vifindprevcharskip()` from Src/Zle/zle_move.c:775.
 pub fn vifindprevcharskip(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:774
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
@@ -746,7 +746,7 @@ pub fn viforwardchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {   // 
     0                                                                        // c:678
 }
 
-/// Port of `vigotocolumn()` from Src/Zle/zle_move.c:572. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vigotocolumn()` from Src/Zle/zle_move.c:572.
 pub fn vigotocolumn(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {    // c:572
     // C body (c:574-590): findline(&x, &y); n = zmult; if (n>=0) move
     //                    forward n cols from bol (n--); else from eol

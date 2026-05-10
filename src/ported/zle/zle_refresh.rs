@@ -986,7 +986,7 @@ mod tests {
     }
 }
 
-/// Port of `addmultiword()` from Src/Zle/zle_refresh.c:913. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `addmultiword()` from Src/Zle/zle_refresh.c:913.
 pub fn addmultiword(_base: &mut crate::ported::zle::zle_h::REFRESH_ELEMENT,  // c:addmultiword
                      _tptr: &[char], _ichars: usize) {
     // C body: adds a multi-codepoint cluster to the multiword
@@ -996,14 +996,14 @@ pub fn addmultiword(_base: &mut crate::ported::zle::zle_h::REFRESH_ELEMENT,  // 
     // to single-char storage.
 }
 
-/// Port of `bufswap()` from Src/Zle/zle_refresh.c:946. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `bufswap()` from Src/Zle/zle_refresh.c:946.
 pub fn bufswap(state: &mut RefreshState) {                                   // c:bufswap
     // C body: swap nbuf and obuf pointers (with mwbuf shadow when
     // MULTIBYTE_SUPPORT). Rust just swaps the Option<VideoBuffer>.
     std::mem::swap(&mut state.old_video, &mut state.new_video);
 }
 
-/// Port of `freevideo()` from Src/Zle/zle_refresh.c:700. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `freevideo()` from Src/Zle/zle_refresh.c:700.
 pub fn freevideo(state: &mut RefreshState) {                                 // c:freevideo
     // C body: walk nbuf/obuf rows; zfree each REFRESH_STRING; zfree
     // the row arrays. Rust drop cascade handles all freeing when
@@ -1013,7 +1013,7 @@ pub fn freevideo(state: &mut RefreshState) {                                 // 
     state.new_video = None;
 }
 
-/// Port of `nextline()` from Src/Zle/zle_refresh.c:842. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `nextline()` from Src/Zle/zle_refresh.c:842.
 pub fn nextline(state: &mut RefreshState, _wrapped: i32) -> i32 {            // c:842
     // C body (c:842-873): advance rpms->ln++; check space against
     // winh; allocate new buffer row if needed; return 1 when display
@@ -1027,7 +1027,7 @@ pub fn nextline(state: &mut RefreshState, _wrapped: i32) -> i32 {            // 
     0
 }
 
-/// Port of `resetvideo()` from Src/Zle/zle_refresh.c:725. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `resetvideo()` from Src/Zle/zle_refresh.c:725.
 pub fn resetvideo(state: &mut RefreshState) {                                // c:resetvideo
     // C body: `winw = zterm_columns; nbuf/obuf rows realloced for
     // (winh+1) lines; cleared via memset.` zshrs uses
@@ -1042,7 +1042,7 @@ pub fn resetvideo(state: &mut RefreshState) {                                // 
     state.need_full_redraw = true;
 }
 
-/// Port of `singmoveto()` from Src/Zle/zle_refresh.c:2687. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `singmoveto()` from Src/Zle/zle_refresh.c:2687.
 pub fn singmoveto(state: &mut RefreshState, pos: usize) {                    // c:singmoveto
     // C body: `singlemoveto()` issues termcap cursor-positioning to
     // `pos` on a single-line display. Without termcap output here
@@ -1050,7 +1050,7 @@ pub fn singmoveto(state: &mut RefreshState, pos: usize) {                    // 
     state.vcs = pos;
 }
 
-/// Port of `snextline()` from Src/Zle/zle_refresh.c:875. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `snextline()` from Src/Zle/zle_refresh.c:875.
 pub fn snextline(state: &mut RefreshState) -> i32 {                          // c:875
     // C body (c:875-919): scroll the on-screen display up one line
     // when the new line wraps past the bottom. zshrs decrements
@@ -1062,7 +1062,7 @@ pub fn snextline(state: &mut RefreshState) -> i32 {                          // 
     0
 }
 
-/// Port of `tcout_via_func()` from Src/Zle/zle_refresh.c:2291. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `tcout_via_func()` from Src/Zle/zle_refresh.c:2291.
 pub fn tcout_via_func(_cap: i32, _arg: i32) -> i32 {                         // c:tcout_via_func
     // C body: looks up `tcout` shell function; if defined, calls it
     // with cap+arg; else falls back to direct termcap output. Without

@@ -1009,7 +1009,7 @@ mod tests {
     }
 }
 
-/// Port of `acceptandinfernexthistory()` from Src/Zle/zle_hist.c:1757. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `acceptandinfernexthistory()` from Src/Zle/zle_hist.c:1757.
 pub fn acceptandinfernexthistory(zle: &mut Zle) -> i32 {                     // c:691
     // C body (c:691-715): mark line for accept then queue infer-next.
     //                    The actual infer happens after acceptline
@@ -1019,7 +1019,7 @@ pub fn acceptandinfernexthistory(zle: &mut Zle) -> i32 {                     // 
     0
 }
 
-/// Port of `acceptlineanddownhistory()` from Src/Zle/zle_hist.c:420. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `acceptlineanddownhistory()` from Src/Zle/zle_hist.c:420.
 pub fn acceptlineanddownhistory(zle: &mut Zle) -> i32 {                      // c:716
     // C body (c:716-738): mark for accept; on next prompt, fetch the
     //                    history entry one position later than the
@@ -1029,7 +1029,7 @@ pub fn acceptlineanddownhistory(zle: &mut Zle) -> i32 {                      // 
     0
 }
 
-/// Port of `beginningofbufferorhistory()` from Src/Zle/zle_hist.c:573. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `beginningofbufferorhistory()` from Src/Zle/zle_hist.c:573.
 pub fn beginningofbufferorhistory(zle: &mut Zle) -> i32 {                    // c:573
     // C body (c:576-580): `if (findbol()) zlecs = 0; else
     //                    return beginningofhistory(args)`. If not at
@@ -1043,7 +1043,7 @@ pub fn beginningofbufferorhistory(zle: &mut Zle) -> i32 {                    // 
     }
 }
 
-/// Port of `beginningofhistory()` from Src/Zle/zle_hist.c:584. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `beginningofhistory()` from Src/Zle/zle_hist.c:584.
 pub fn beginningofhistory(zle: &mut Zle) -> i32 {                            // c:583
     // C body (c:586-589): `if (!zle_goto_hist(firsthist(), 0, 0) &&
     //                    isset(HISTBEEP)) return 1; return 0`.
@@ -1051,7 +1051,7 @@ pub fn beginningofhistory(zle: &mut Zle) -> i32 {                            // 
     0
 }
 
-/// Port of `doisearch()` from Src/Zle/zle_hist.c:1082. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `doisearch()` from Src/Zle/zle_hist.c:1082.
 pub fn doisearch(zle: &mut Zle, dir: i32) -> i32 {                           // c:1090
     use std::sync::atomic::Ordering;
     // C body c:1090-1730 — full incremental-search loop reads keys
@@ -1072,7 +1072,7 @@ pub fn doisearch(zle: &mut Zle, dir: i32) -> i32 {                           // 
     r
 }
 
-/// Port of `downhistory()` from Src/Zle/zle_hist.c:434. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `downhistory()` from Src/Zle/zle_hist.c:434.
 pub fn downhistory(zle: &mut Zle) -> i32 {                                   // c:433
     // C body (c:435-440): `nodups = isset(HISTIGNOREDUPS); if
     //                    (!zle_goto_hist(histline, zmult, nodups) &&
@@ -1108,7 +1108,7 @@ pub fn downlineorsearch(zle: &mut Zle) -> i32 {                              // 
     0
 }
 
-/// Port of `endofbufferorhistory()` from Src/Zle/zle_hist.c:593. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `endofbufferorhistory()` from Src/Zle/zle_hist.c:593.
 pub fn endofbufferorhistory(zle: &mut Zle) -> i32 {                          // c:593
     // C body (c:595-600): `if (findeol() != zlell) zlecs = zlell;
     //                    else return endofhistory(args)`.
@@ -1121,7 +1121,7 @@ pub fn endofbufferorhistory(zle: &mut Zle) -> i32 {                          // 
     }
 }
 
-/// Port of `endofhistory()` from Src/Zle/zle_hist.c:604. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `endofhistory()` from Src/Zle/zle_hist.c:604.
 pub fn endofhistory(zle: &mut Zle) -> i32 {                                  // c:603
     // C body (c:606): `zle_goto_hist(curhist, 0, 0); return 0`. Reset
     //                cursor to live-buffer sentinel (just past last entry).
@@ -1228,7 +1228,7 @@ pub fn getvisrchstr(zle: &mut Zle) -> i32 {                                  // 
     1
 }
 
-/// Port of `historybeginningsearchbackward()` from Src/Zle/zle_hist.c:2039. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `historybeginningsearchbackward()` from Src/Zle/zle_hist.c:2039.
 pub fn historybeginningsearchbackward(zle: &mut Zle) -> i32 {                // c:2035
     // C body (c:2035-2063): like historysearchbackward but uses the
     //                      buffer prefix up to cursor (not the whole
@@ -1243,7 +1243,7 @@ pub fn historybeginningsearchbackward(zle: &mut Zle) -> i32 {                // 
     0
 }
 
-/// Port of `historybeginningsearchforward()` from Src/Zle/zle_hist.c:2085. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `historybeginningsearchforward()` from Src/Zle/zle_hist.c:2085.
 pub fn historybeginningsearchforward(zle: &mut Zle) -> i32 {                 // c:2082
     // C body (c:2082-2110): like historysearchforward but uses the
     //                      buffer prefix up to cursor.
@@ -1257,7 +1257,7 @@ pub fn historybeginningsearchforward(zle: &mut Zle) -> i32 {                 // 
     0
 }
 
-/// Port of `historyincrementalpatternsearchbackward()` from Src/Zle/zle_hist.c:936. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `historyincrementalpatternsearchbackward()` from Src/Zle/zle_hist.c:936.
 pub fn historyincrementalpatternsearchbackward(zle: &mut Zle) -> i32 {       // c:1759
     // C body c:1761-1764 — `return doisearch(args, -1, 1)` — passes
     //                      pattern-flag=1 so search treats sbuf as a
@@ -1283,7 +1283,7 @@ pub fn historyincrementalsearchforward(zle: &mut Zle) -> i32 {               // 
     doisearch(zle, 1)
 }
 
-/// Port of `historysearchbackward()` from Src/Zle/zle_hist.c:457. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `historysearchbackward()` from Src/Zle/zle_hist.c:457.
 pub fn historysearchbackward(zle: &mut Zle) -> i32 {                         // c:457
     // C body (c:459-514): walks history backward from current cursor
     //                    looking for an entry whose prefix matches
@@ -1298,7 +1298,7 @@ pub fn historysearchbackward(zle: &mut Zle) -> i32 {                         // 
     0
 }
 
-/// Port of `historysearchforward()` from Src/Zle/zle_hist.c:516. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `historysearchforward()` from Src/Zle/zle_hist.c:516.
 pub fn historysearchforward(zle: &mut Zle) -> i32 {                          // c:541
     // C body (c:543-595): mirror of historysearchbackward — walks
     //                    history forward looking for an entry whose
@@ -1348,7 +1348,7 @@ pub fn infernexthistory(zle: &mut Zle) -> i32 {                              // 
     infernexthist(zle)
 }
 
-/// Port of `insertlastword()` from Src/Zle/zle_hist.c:612. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `insertlastword()` from Src/Zle/zle_hist.c:612.
 pub fn insertlastword(zle: &mut Zle) -> i32 {                                // c:836
     // C body (c:836-880): take last word of previous history entry
     //                    and insert at cursor; with mult, take that
@@ -1373,7 +1373,7 @@ pub fn insertlastword(zle: &mut Zle) -> i32 {                                // 
     0
 }
 
-/// Port of `isearch_newpos()` from Src/Zle/zle_hist.c:1024. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `isearch_newpos()` from Src/Zle/zle_hist.c:1024.
 pub fn isearch_newpos(curpos: i32, dir: i32, end: &mut i32) -> i32 {         // c:1018
     // C body (c:1024-1080): scan ISEARCH_MATCHES list for a hit at-or-
     //                      after curpos when dir > 0, at-or-before when
@@ -1383,7 +1383,7 @@ pub fn isearch_newpos(curpos: i32, dir: i32, end: &mut i32) -> i32 {         // 
     -1
 }
 
-/// Port of `pushinput()` from Src/Zle/zle_hist.c:883. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `pushinput()` from Src/Zle/zle_hist.c:883.
 pub fn pushinput(zle: &mut Zle) -> i32 {                                     // c:883
     // C body (c:883-895): push current line onto buffer-stack and
     //                    clear, then bind to subsequent input read.
@@ -1398,7 +1398,7 @@ pub fn pushinput(zle: &mut Zle) -> i32 {                                     // 
     0
 }
 
-/// Port of `pushline()` from Src/Zle/zle_hist.c:832. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `pushline()` from Src/Zle/zle_hist.c:832.
 pub fn pushline(zle: &mut Zle) -> i32 {                                      // c:832
     // C body (c:832-848): save current line on bufstack, clear, and
     //                    accept-line so caller pulls it back next time.
@@ -1417,7 +1417,7 @@ pub fn pushline(zle: &mut Zle) -> i32 {                                      // 
     0
 }
 
-/// Port of `pushlineoredit()` from Src/Zle/zle_hist.c:852. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `pushlineoredit()` from Src/Zle/zle_hist.c:852.
 pub fn pushlineoredit(zle: &mut Zle) -> i32 {                                // c:852
     // C body (c:852-880): like pushline but if line is empty just
     //                    edit (no-op).
@@ -1436,7 +1436,7 @@ pub fn pushlineoredit(zle: &mut Zle) -> i32 {                                // 
     0
 }
 
-/// Port of `save_isearch_buffer()` from Src/Zle/zle_hist.c:1058. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `save_isearch_buffer()` from Src/Zle/zle_hist.c:1058.
 pub fn save_isearch_buffer(zle: &mut Zle) -> i32 {                           // c:1058
     // C body (c:1058-1077): copy current sbuf into a freshly-zalloc'd
     //                      string and stash on the isearch state for
@@ -1451,7 +1451,7 @@ pub fn save_isearch_buffer(zle: &mut Zle) -> i32 {                           // 
 // at Src/Zle/zle_hist.c:973. This duplicate shim was retired when the real
 // implementation landed.
 
-/// Port of `setlocalhistory()` from Src/Zle/zle_hist.c:794. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `setlocalhistory()` from Src/Zle/zle_hist.c:794.
 pub fn setlocalhistory(zle: &mut Zle) -> i32 {                               // c:794
     // C body (c:794-815): toggle hist_skip_flags HIST_FOREIGN bit so
     //                    foreign-shell entries are hidden during
@@ -1460,7 +1460,7 @@ pub fn setlocalhistory(zle: &mut Zle) -> i32 {                               // 
     0
 }
 
-/// Port of `uphistory()` from Src/Zle/zle_hist.c:233. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `uphistory()` from Src/Zle/zle_hist.c:233.
 pub fn uphistory(zle: &mut Zle) -> i32 {                                     // c:232
     // C body (c:234-239): same as downhistory but `-zmult`. Walk
     //                    backward through History entries.
@@ -1502,7 +1502,7 @@ pub fn vidownlineorhistory(zle: &mut Zle) -> i32 {                           // 
     zle.down_line_or_history_widget()
 }
 
-/// Port of `vifetchhistory()` from Src/Zle/zle_hist.c:1787. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vifetchhistory()` from Src/Zle/zle_hist.c:1787.
 pub fn vifetchhistory(zle: &mut Zle) -> i32 {                                // c:1787
     // C body (c:1787-1804): vi `G` — fetch history entry numbered
     //                      mult; with no count fetch most recent.
@@ -1521,7 +1521,7 @@ pub fn vifetchhistory(zle: &mut Zle) -> i32 {                                // 
     0
 }
 
-/// Port of `vihistorysearchbackward()` from Src/Zle/zle_hist.c:1964. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vihistorysearchbackward()` from Src/Zle/zle_hist.c:1964.
 pub fn vihistorysearchbackward(zle: &mut Zle) -> i32 {                       // c:1964
     // C body (c:1964-1986): vi `?` — read a search string with
     //                      getvisrchstr() then walk history backward
@@ -1540,7 +1540,7 @@ pub fn vihistorysearchbackward(zle: &mut Zle) -> i32 {                       // 
     0
 }
 
-/// Port of `vihistorysearchforward()` from Src/Zle/zle_hist.c:1940. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `vihistorysearchforward()` from Src/Zle/zle_hist.c:1940.
 pub fn vihistorysearchforward(zle: &mut Zle) -> i32 {                        // c:1940
     // C body (c:1940-1962): vi `/` — read a search string then walk
     //                      forward.
@@ -1558,7 +1558,7 @@ pub fn vihistorysearchforward(zle: &mut Zle) -> i32 {                        // 
     0
 }
 
-/// Port of `virepeatsearch()` from Src/Zle/zle_hist.c:1988. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `virepeatsearch()` from Src/Zle/zle_hist.c:1988.
 pub fn virepeatsearch(zle: &mut Zle) -> i32 {                                // c:1988
     // C body (c:1988-2008): vi `n` — repeat the last search in the
     //                      same direction as the last vi search.
@@ -1580,7 +1580,7 @@ pub fn virepeatsearch(zle: &mut Zle) -> i32 {                                // 
     0
 }
 
-/// Port of `virevrepeatsearch()` from Src/Zle/zle_hist.c:2024. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `virevrepeatsearch()` from Src/Zle/zle_hist.c:2024.
 pub fn virevrepeatsearch(zle: &mut Zle) -> i32 {                             // c:2024
     // C body (c:2024-2030): vi `N` — repeat the last search in the
     //                      reverse direction.
@@ -1609,7 +1609,7 @@ pub fn viuplineorhistory(zle: &mut Zle) -> i32 {                             // 
     zle.up_line_or_history_widget()
 }
 
-/// Port of `zgetline()` from Src/Zle/zle_hist.c:898. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `zgetline()` from Src/Zle/zle_hist.c:898.
 pub fn zgetline(zle: &mut Zle) -> i32 {                                      // c:898
     // C body (c:898-930): fetch next bufstack entry into zleline,
     //                    cursor at end. Returns 1 if stack empty.
@@ -1623,7 +1623,7 @@ pub fn zgetline(zle: &mut Zle) -> i32 {                                      // 
     0
 }
 
-/// Port of `zle_setline()` from Src/Zle/zle_hist.c:772. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `zle_setline()` from Src/Zle/zle_hist.c:772.
 pub fn zle_setline(zle: &mut Zle) -> i32 {                                   // c:772
     // C body (c:772-792): replace current line with the entry at
     //                    history.cursor. Used after history navigation.

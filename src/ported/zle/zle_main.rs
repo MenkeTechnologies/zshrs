@@ -1679,7 +1679,7 @@ mod tests {
 
 // END moved-from-exec-rs
 
-/// Port of `boot_()` from Src/Zle/zle_main.c:2301. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `boot_()` from Src/Zle/zle_main.c:2301.
 pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {               // c:zle_main.c boot_
     // C body: `addhookfunc("before_trap", zlebeforetrap);
     //          addhookfunc("after_trap", zleaftertrap);
@@ -1689,7 +1689,7 @@ pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {               // 
     0
 }
 
-/// Port of `breakread()` from Src/Zle/zle_main.c:381. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `breakread()` from Src/Zle/zle_main.c:381.
 pub fn breakread(fd: i32, buf: &mut [u8], n: usize) -> isize {               // c:381
     // C body (c:381-389): `#if defined(pyr) && defined(HAVE_SELECT)`
     // wrapper around select+read for the Pyramid (legacy) build.
@@ -1703,7 +1703,7 @@ pub fn breakread(fd: i32, buf: &mut [u8], n: usize) -> isize {               // 
     r as isize
 }
 
-/// Port of `cleanup_()` from Src/Zle/zle_main.c:2312. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `cleanup_()` from Src/Zle/zle_main.c:2312.
 pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {            // c:zle_main.c cleanup_
     // C body: `if (zleactive) { zerrnam("can't unload..."); return 1; }
     //          deletehookfunc("before_trap"); deletehookfunc("after_trap");
@@ -1716,7 +1716,7 @@ pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {            // 
     0
 }
 
-/// Port of `describekeybriefly()` from Src/Zle/zle_main.c:1892. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `describekeybriefly()` from Src/Zle/zle_main.c:1892.
 pub fn describekeybriefly() -> i32 {                                         // c:1891
     // C body (c:1893-1932): prompts for a key sequence, then resolves
     // it through the current keymap and prints the bound widget name.
@@ -1725,7 +1725,7 @@ pub fn describekeybriefly() -> i32 {                                         // 
     1
 }
 
-/// Port of `enables_()` from Src/Zle/zle_main.c:2294. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `enables_()` from Src/Zle/zle_main.c:2294.
 pub fn enables_(_m: *const crate::ported::zsh_h::module, _enables: &mut Option<Vec<i32>>) -> i32 {
     // c:zle_main.c enables_ — `return handlefeatures(m, &module_features, enables)`.
     // Module-features substrate is shared across all module loaders;
@@ -1733,7 +1733,7 @@ pub fn enables_(_m: *const crate::ported::zsh_h::module, _enables: &mut Option<V
     0
 }
 
-/// Port of `execimmortal()` from Src/Zle/zle_main.c:1404. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `execimmortal()` from Src/Zle/zle_main.c:1404.
 pub fn execimmortal(name: &str, args: &[String]) -> i32 {                    // c:1403
     // C body (c:1404-1410): `Thingy immortal = rthingy_nocreate(dyncat(".", name));
     //                       if (immortal) return execzlefunc(immortal, args, 0, 0);
@@ -1749,7 +1749,7 @@ pub fn execimmortal(name: &str, args: &[String]) -> i32 {                    // 
     1                                                                        // c:1409
 }
 
-/// Port of `execzlefunc()` from Src/Zle/zle_main.c:1420. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `execzlefunc()` from Src/Zle/zle_main.c:1420.
 pub fn execzlefunc(name: &str, _args: &[String]) -> i32 {                    // c:1419
     // C body (c:1422-1601): full widget invocation pipeline. Sets
     // bindk, walks Widget union (WIDGET_INT/WIDGET_NCOMP/user fn),
@@ -1763,21 +1763,21 @@ pub fn execzlefunc(name: &str, _args: &[String]) -> i32 {                    // 
     1
 }
 
-/// Port of `features_()` from Src/Zle/zle_main.c:2286. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `features_()` from Src/Zle/zle_main.c:2286.
 pub fn features_(_m: *const crate::ported::zsh_h::module, _features: &mut Vec<String>) -> i32 {
     // c:zle_main.c features_ — `*features = featuresarray(m, &module_features); return 0`.
     // Returns the features array; substrate deferred.
     0
 }
 
-/// Port of `finish_()` from Src/Zle/zle_main.c:2327. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `finish_()` from Src/Zle/zle_main.c:2327.
 pub fn finish_(_m: *const crate::ported::zsh_h::module) -> i32 {             // c:zle_main.c finish_
     // C body: per-module dispose hook, runs after cleanup_; releases
     // per-module-instance state. zshrs has no per-module state; no-op.
     0
 }
 
-/// Port of `getrestchar()` from Src/Zle/zle_main.c:990. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `getrestchar()` from Src/Zle/zle_main.c:990.
 pub fn getrestchar(zle: &mut Zle, inchar: i32) -> i32 {                      // c:990
     // c:1002 — `lastchar_wide_valid = 1`. Mark wide cache as valid.
     zle.lastchar_wide_valid = true;
@@ -1794,7 +1794,7 @@ pub fn getrestchar(zle: &mut Zle, inchar: i32) -> i32 {                      // 
     inchar
 }
 
-/// Port of `recursiveedit()` from Src/Zle/zle_main.c:1974. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `recursiveedit()` from Src/Zle/zle_main.c:1974.
 pub fn recursiveedit(zle: &mut Zle) -> i32 {                                 // c:1973
     // C body (c:1976-1995): `++zle_recursive; redrawhook(); zrefresh();
     //                       zlecore(); --zle_recursive;
@@ -1813,7 +1813,7 @@ pub fn recursiveedit(zle: &mut Zle) -> i32 {                                 // 
     locerror                                                                 // c:1995
 }
 
-/// Port of `restorekeymap()` from Src/Zle/zle_main.c:1656. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `restorekeymap()` from Src/Zle/zle_main.c:1656.
 pub fn restorekeymap(oldname: &str, savemap: Option<std::sync::Arc<crate::ported::zle::zle_keymap::Keymap>>) {  // c:1655
     // C body (c:1657-1666): `if (savemap) { linkkeymap(savemap,
     //                       oldname, 0); unrefkeymap(savemap); }
@@ -1823,7 +1823,7 @@ pub fn restorekeymap(oldname: &str, savemap: Option<std::sync::Arc<crate::ported
     }
 }
 
-/// Port of `savekeymap()` from Src/Zle/zle_main.c:1632. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `savekeymap()` from Src/Zle/zle_main.c:1632.
 pub fn savekeymap(oldname: &str, newname: &str) -> Option<std::sync::Arc<crate::ported::zle::zle_keymap::Keymap>> {  // c:1632
     // C body (c:1634-1651): `km = openkeymap(newname); if (km) {
     //                       *savemap = openkeymap(oldname);
@@ -1839,7 +1839,7 @@ pub fn savekeymap(oldname: &str, newname: &str) -> Option<std::sync::Arc<crate::
     if same { None } else { saved }
 }
 
-/// Port of `scanfindfunc()` from Src/Zle/zle_main.c:1935. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `scanfindfunc()` from Src/Zle/zle_main.c:1935.
 pub fn scanfindfunc(_seq: &str, _func: &str) {                               // c:1934
     // C body: per-keymap callback used by `whereis` to find which
     // key sequences are bound to a given Thingy. Substrate
@@ -1847,7 +1847,7 @@ pub fn scanfindfunc(_seq: &str, _func: &str) {                               // 
     // standalone fn is only meaningful when invoked via scankeymap.
 }
 
-/// Port of `setup_()` from Src/Zle/zle_main.c:2243. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `setup_()` from Src/Zle/zle_main.c:2243.
 pub fn setup_(_m: *const crate::ported::zsh_h::module) -> i32 {              // c:zle_main.c setup_
     // C body: `bpaste = ... bracketed-paste arrays; set up editor
     //          entry points`. Module-init substrate; returns 0.
@@ -1893,7 +1893,7 @@ pub fn ungetbytes_unmeta(zle: &mut Zle, s: &[u8]) {                          // 
     }
 }
 
-/// Port of `zle_resetprompt()` from Src/Zle/zle_main.c:2058. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `zle_resetprompt()` from Src/Zle/zle_main.c:2058.
 pub fn zle_resetprompt() {                                                   // c:2057
     // C body (c:2059-2063): `reexpandprompt(); if (zleactive)
     //                       redisplay(NULL)`. Substrate

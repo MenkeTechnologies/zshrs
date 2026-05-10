@@ -199,7 +199,7 @@ impl Zle {
     }
 }
 
-/// Port of `free_prepostdisplay()` from Src/Zle/zle_params.c:914. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `free_prepostdisplay()` from Src/Zle/zle_params.c:914.
 pub fn free_prepostdisplay() {                                               // c:914
     use crate::ported::zle::zle_misc::{POSTDISPLAY, PREDISPLAY};
     use std::sync::Mutex;
@@ -209,7 +209,7 @@ pub fn free_prepostdisplay() {                                               // 
     POSTDISPLAY.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clear();
 }
 
-/// Port of `get_context()` from Src/Zle/zle_params.c:942. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_context()` from Src/Zle/zle_params.c:942.
 pub fn get_context(zle: &crate::ported::zle::zle_main::Zle) -> &'static str {  // c:942
     use crate::ported::zle::zle_main::ZleContext;
     // c:944-958 — switch on zlecontext → "cont" / "select" / "vared" / "line".
@@ -221,44 +221,44 @@ pub fn get_context(zle: &crate::ported::zle::zle_main::Zle) -> &'static str {  /
     }
 }
 
-/// Port of `get_histno()` from Src/Zle/zle_params.c:514. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_histno()` from Src/Zle/zle_params.c:514.
 pub fn get_histno(zle: &crate::ported::zle::zle_main::Zle) -> i64 {          // c:513
     // c:516 — `return histline`. zshrs tracks the editing history
     // line via the History.cursor field (offset into entries Vec).
     zle.history.cursor as i64
 }
 
-/// Port of `get_isearchmatchactive()` from Src/Zle/zle_params.c:591. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_isearchmatchactive()` from Src/Zle/zle_params.c:591.
 pub fn get_isearchmatchactive() -> i64 {                                     // c:590
     use std::sync::atomic::Ordering;
     crate::ported::zle::zle_hist::ISEARCH_ACTIVE.load(Ordering::Relaxed) as i64  // c:593
 }
 
-/// Port of `get_isearchmatchend()` from Src/Zle/zle_params.c:584. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_isearchmatchend()` from Src/Zle/zle_params.c:584.
 pub fn get_isearchmatchend() -> i64 {                                        // c:583
     use std::sync::atomic::Ordering;
     crate::ported::zle::zle_hist::ISEARCH_ENDPOS.load(Ordering::Relaxed) as i64  // c:586
 }
 
-/// Port of `get_isearchmatchstart()` from Src/Zle/zle_params.c:577. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_isearchmatchstart()` from Src/Zle/zle_params.c:577.
 pub fn get_isearchmatchstart() -> i64 {                                      // c:576
     use std::sync::atomic::Ordering;
     crate::ported::zle::zle_hist::ISEARCH_STARTPOS.load(Ordering::Relaxed) as i64  // c:579
 }
 
-/// Port of `get_keys()` from Src/Zle/zle_params.c:463. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_keys()` from Src/Zle/zle_params.c:463.
 pub fn get_keys(zle: &crate::ported::zle::zle_main::Zle) -> Vec<u8> {        // c:462
     // c:465 — `return keybuf`. The active keymap-walk byte buffer.
     zle.keymaps.keybuf.clone()
 }
 
-/// Port of `get_keys_queued_count()` from Src/Zle/zle_params.c:470. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_keys_queued_count()` from Src/Zle/zle_params.c:470.
 pub fn get_keys_queued_count(zle: &crate::ported::zle::zle_main::Zle) -> i64 {  // c:469
     // c:472 — `return kungetct`. Bytes pending in the unget queue.
     zle.unget_buf.len() as i64
 }
 
-/// Port of `get_killring()` from Src/Zle/zle_params.c:705. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_killring()` from Src/Zle/zle_params.c:705.
 pub fn get_killring(zle: &crate::ported::zle::zle_main::Zle) -> Vec<String> {  // c:704
     // c:706-733 — return kring entries with most-recently-killed
     // first. Empty entries returned as "" so the array length always
@@ -270,7 +270,7 @@ pub fn get_killring(zle: &crate::ported::zle::zle_main::Zle) -> Vec<String> {  /
         .collect()
 }
 
-/// Port of `get_lasearch()` from Src/Zle/zle_params.c:924. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_lasearch()` from Src/Zle/zle_params.c:924.
 pub fn get_lasearch() -> String {                                            // c:923
     use crate::ported::zle::zle_misc::PREVIOUS_ABORTED_SEARCH;
     use std::sync::Mutex;
@@ -279,7 +279,7 @@ pub fn get_lasearch() -> String {                                            // 
         .lock().unwrap().clone()
 }
 
-/// Port of `get_lsearch()` from Src/Zle/zle_params.c:933. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_lsearch()` from Src/Zle/zle_params.c:933.
 pub fn get_lsearch() -> String {                                             // c:932
     use crate::ported::zle::zle_misc::PREVIOUS_SEARCH;
     use std::sync::Mutex;
@@ -288,13 +288,13 @@ pub fn get_lsearch() -> String {                                             // 
         .lock().unwrap().clone()
 }
 
-/// Port of `get_lwidget()` from Src/Zle/zle_params.c:449. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_lwidget()` from Src/Zle/zle_params.c:449.
 pub fn get_lwidget(zle: &crate::ported::zle::zle_main::Zle) -> String {      // c:448
     // c:451 — `return (lbindk ? lbindk->nam : "")`.
     zle.lbindk.as_ref().map(|t| t.name.clone()).unwrap_or_default()
 }
 
-/// Port of `get_postdisplay()` from Src/Zle/zle_params.c:907. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_postdisplay()` from Src/Zle/zle_params.c:907.
 pub fn get_postdisplay() -> String {                                         // c:906
     use crate::ported::zle::zle_misc::POSTDISPLAY;
     use std::sync::Mutex;
@@ -315,7 +315,7 @@ pub fn get_prebuffer(zle: &crate::ported::zle::zle_main::Zle) -> String {    // 
     String::new()
 }
 
-/// Port of `get_predisplay()` from Src/Zle/zle_params.c:893. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_predisplay()` from Src/Zle/zle_params.c:893.
 pub fn get_predisplay() -> String {                                          // c:892
     use crate::ported::zle::zle_misc::PREDISPLAY;
     use std::sync::Mutex;
@@ -323,7 +323,7 @@ pub fn get_predisplay() -> String {                                          // 
         .lock().unwrap().clone()
 }
 
-/// Port of `get_prepost()` from Src/Zle/zle_params.c:879. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_prepost()` from Src/Zle/zle_params.c:879.
 pub fn get_prepost(text: &str, len: usize) -> String {                       // c:878
     // c:881 — `return zlelineasstring(text, len, 0, NULL, NULL, 1)`.
     // In Rust the caller already owns a String; just truncate to len.
@@ -357,7 +357,7 @@ pub fn get_region_active(zle: &crate::ported::zle::zle_main::Zle) -> i64 {   // 
     zle.region_active as i64                                                 // c:327 return region_active
 }
 
-/// Port of `get_registers()` from Src/Zle/zle_params.c:807. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_registers()` from Src/Zle/zle_params.c:807.
 pub fn get_registers(zle: &crate::ported::zle::zle_main::Zle, name: &str) -> Option<String> {  // c:806
     // c:815-820 — name[1] non-zero → invalid; '0'..'9' → idx = name-'0'+26;
     // 'a'..'z' → idx = name-'a'.
@@ -426,13 +426,13 @@ pub fn get_suffixstart(zle: &crate::ported::zle::zle_main::Zle) -> i64 {     // 
     (zle.zlecs as i64) - (suffixlen as i64)                                  // c:600 zlecs - suffixlen
 }
 
-/// Port of `get_widget()` from Src/Zle/zle_params.c:414. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_widget()` from Src/Zle/zle_params.c:414.
 pub fn get_widget(zle: &crate::ported::zle::zle_main::Zle) -> String {       // c:413
     // c:416 — `return bindk ? bindk->nam : ""`.
     zle.bindk.as_ref().map(|t| t.name.clone()).unwrap_or_default()
 }
 
-/// Port of `get_widgetfunc()` from Src/Zle/zle_params.c:421. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_widgetfunc()` from Src/Zle/zle_params.c:421.
 pub fn get_widgetfunc(zle: &crate::ported::zle::zle_main::Zle) -> String {   // c:420
     use crate::ported::zle::widget::{WidgetFlags, WidgetFunc};
     // c:423-430 — read bindk->widget. C union dispatches:
@@ -456,7 +456,7 @@ pub fn get_widgetfunc(zle: &crate::ported::zle::zle_main::Zle) -> String {   // 
     }
 }
 
-/// Port of `get_widgetstyle()` from Src/Zle/zle_params.c:435. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_widgetstyle()` from Src/Zle/zle_params.c:435.
 pub fn get_widgetstyle(zle: &crate::ported::zle::zle_main::Zle) -> String {  // c:434
     use crate::ported::zle::widget::WidgetFlags;
     // c:437-444 — read bindk->widget. INT → ".internal"; NCOMP →
@@ -475,7 +475,7 @@ pub fn get_widgetstyle(zle: &crate::ported::zle::zle_main::Zle) -> String {  // 
     String::new()                                                            // c:444
 }
 
-/// Port of `get_yankactive()` from Src/Zle/zle_params.c:556. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_yankactive()` from Src/Zle/zle_params.c:556.
 pub fn get_yankactive(zle: &crate::ported::zle::zle_main::Zle) -> i64 {      // c:555
     // c:558 — `return !!(lastcmd & ZLE_YANK) + !!(lastcmd & ZLE_YANKAFTER)`.
     use crate::ported::zle::widget::WidgetFlags;
@@ -484,13 +484,13 @@ pub fn get_yankactive(zle: &crate::ported::zle::zle_main::Zle) -> i64 {      // 
     yank + yankafter
 }
 
-/// Port of `get_yankend()` from Src/Zle/zle_params.c:549. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_yankend()` from Src/Zle/zle_params.c:549.
 pub fn get_yankend(zle: &crate::ported::zle::zle_main::Zle) -> i64 {         // c:548
     // c:551 — `return yanke`.
     zle.yank_end as i64
 }
 
-/// Port of `get_yankstart()` from Src/Zle/zle_params.c:542. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `get_yankstart()` from Src/Zle/zle_params.c:542.
 pub fn get_yankstart(zle: &crate::ported::zle::zle_main::Zle) -> i64 {       // c:541
     // c:544 — `return yankb`.
     zle.yank_start as i64
@@ -515,7 +515,7 @@ pub fn scan_registers(_t: i32, _flags: i32) {                                // 
     //                    no-op.
 }
 
-/// Port of `set_histno()` from Src/Zle/zle_params.c:503. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `set_histno()` from Src/Zle/zle_params.c:503.
 pub fn set_histno(zle: &mut crate::ported::zle::zle_main::Zle, x: i64) {     // c:502
     // c:505-509 — `Histent he = quietgethist(x); if (!he) return;
     //              zle_setline(he)`.
@@ -528,7 +528,7 @@ pub fn set_histno(zle: &mut crate::ported::zle::zle_main::Zle, x: i64) {     // 
     }
 }
 
-/// Port of `set_killring()` from Src/Zle/zle_params.c:661. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `set_killring()` from Src/Zle/zle_params.c:661.
 pub fn set_killring(zle: &mut crate::ported::zle::zle_main::Zle, x: Option<&[String]>) {  // c:660
     // c:667-672 — `if (kring) { free each kptr->buf; zfree(kring) }`.
     // Then either rebuild from `x` or leave NULL.
@@ -540,7 +540,7 @@ pub fn set_killring(zle: &mut crate::ported::zle::zle_main::Zle, x: Option<&[Str
     }
 }
 
-/// Port of `set_numeric()` from Src/Zle/zle_params.c:477. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `set_numeric()` from Src/Zle/zle_params.c:477.
 pub fn set_numeric(zle: &mut crate::ported::zle::zle_main::Zle, x: i64) {   // c:476
     use crate::ported::zle::zle_main::ModifierFlags;
     // c:479 — `zmult = x`. zmult is zmod.mult.
@@ -550,7 +550,7 @@ pub fn set_numeric(zle: &mut crate::ported::zle::zle_main::Zle, x: i64) {   // c
     zle.zmod.flags = ModifierFlags::MULT;
 }
 
-/// Port of `set_postdisplay()` from Src/Zle/zle_params.c:900. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `set_postdisplay()` from Src/Zle/zle_params.c:900.
 pub fn set_postdisplay(x: Option<&str>) {                                    // c:899
     use crate::ported::zle::zle_misc::POSTDISPLAY;
     use std::sync::Mutex;
@@ -562,7 +562,7 @@ pub fn set_postdisplay(x: Option<&str>) {                                    // 
     }
 }
 
-/// Port of `set_predisplay()` from Src/Zle/zle_params.c:886. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `set_predisplay()` from Src/Zle/zle_params.c:886.
 pub fn set_predisplay(x: Option<&str>) {                                     // c:885
     use crate::ported::zle::zle_misc::PREDISPLAY;
     use std::sync::Mutex;
@@ -574,7 +574,7 @@ pub fn set_predisplay(x: Option<&str>) {                                     // 
     }
 }
 
-/// Port of `set_prepost()` from Src/Zle/zle_params.c:865. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `set_prepost()` from Src/Zle/zle_params.c:865.
 pub fn set_prepost(textvar: &mut String, lenvar: &mut usize, x: Option<&str>) {  // c:864
     // c:867-871 — `if (*lenvar) free(*textvar); *textvar=NULL; *lenvar=0`.
     if *lenvar != 0 {
@@ -606,7 +606,7 @@ pub fn set_region_active(                                                    // 
     zle.region_active = if x != 0 { 1 } else { 0 };
 }
 
-/// Port of `set_register()` from Src/Zle/zle_params.c:751. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `set_register()` from Src/Zle/zle_params.c:751.
 pub fn set_register(zle: &mut crate::ported::zle::zle_main::Zle, name: char, value: &str) -> i32 {  // c:750
     // c:759-763 — '0'..'9' → offset = '0' - 26;  'a'..'z' → offset = 'a'.
     // (Vi register table layout: 0..25 = a..z, 26..35 = 0..9.)
@@ -642,19 +642,19 @@ pub fn set_registers(zle: &mut crate::ported::zle::zle_main::Zle,            // 
     }
 }
 
-/// Port of `set_yankend()` from Src/Zle/zle_params.c:570. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `set_yankend()` from Src/Zle/zle_params.c:570.
 pub fn set_yankend(zle: &mut crate::ported::zle::zle_main::Zle, i: i64) {    // c:569
     // c:572 — `yanke = i`.
     zle.yank_end = i.max(0) as usize;
 }
 
-/// Port of `set_yankstart()` from Src/Zle/zle_params.c:563. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `set_yankstart()` from Src/Zle/zle_params.c:563.
 pub fn set_yankstart(zle: &mut crate::ported::zle::zle_main::Zle, i: i64) {  // c:562
     // c:565 — `yankb = i`.
     zle.yank_start = i.max(0) as usize;
 }
 
-/// Port of `unset_cutbuffer()` from Src/Zle/zle_params.c:647. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `unset_cutbuffer()` from Src/Zle/zle_params.c:647.
 pub fn unset_cutbuffer(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  // c:646
     // c:649-655 — `if (exp) { stdunsetfn; if (cutbuf.buf) { free; NULL; len=0 } }`.
     if exp != 0 {
@@ -664,7 +664,7 @@ pub fn unset_cutbuffer(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) { 
     }
 }
 
-/// Port of `unset_killring()` from Src/Zle/zle_params.c:741. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `unset_killring()` from Src/Zle/zle_params.c:741.
 pub fn unset_killring(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  // c:740
     // c:743-746 — `if (exp) { set_killring(pm, NULL); stdunsetfn(...) }`.
     if exp != 0 {
@@ -673,7 +673,7 @@ pub fn unset_killring(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  
     }
 }
 
-/// Port of `unset_numeric()` from Src/Zle/zle_params.c:492. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `unset_numeric()` from Src/Zle/zle_params.c:492.
 pub fn unset_numeric(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  // c:491
     use crate::ported::zle::zle_main::ModifierFlags;
     // c:494-498 — only acts when `exp` is non-zero (C also calls
@@ -685,7 +685,7 @@ pub fn unset_numeric(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  /
     }
 }
 
-/// Port of `unset_register()` from Src/Zle/zle_params.c:777. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
+/// Port of `unset_register()` from Src/Zle/zle_params.c:777.
 pub fn unset_register(zle: &mut crate::ported::zle::zle_main::Zle, name: char, _exp: i32) {  // c:776
     // c:778-779 — `set_register(pm, "")`. Single-line body.
     let _ = set_register(zle, name, "");
