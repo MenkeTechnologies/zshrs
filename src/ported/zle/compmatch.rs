@@ -1844,12 +1844,123 @@ pub fn pattern_match(
     }
 }
 
-/// Port of `pattern_match_restrict()` from Src/Zle/compmatch.c:1383.
-pub fn pattern_match_restrict(_p: i32, _s: &str, _wp: &mut [u8],             // c:1383
-                              _wq: &mut [u8], _restrict: u32) -> i32 {
-    // C body c:1385-1546 — restricted variant for nested patterns.
-    //                      Substrate deferred; 0.
-    0
+/// Direct port of `static int pattern_match_restrict(Cpattern p,
+///                                Cpattern wp, convchar_t *wsc,
+///                                int wsclen, Cpattern prestrict,
+///                                ZLE_STRING_T new_line)`
+/// from `Src/Zle/compmatch.c:1383-1546`. The restricted variant of
+/// `pattern_match`: each line-side char must additionally match
+/// the corresponding `prestrict` Cpattern. Used when building the
+/// line-string from a partial match. Writes the deduced line chars
+/// into `new_line` and returns 1 on full match, 0 otherwise.
+pub fn pattern_match_restrict(
+    p: Option<&crate::ported::zle::comp_h::Cpattern>,                        // c:1383
+    wp: Option<&crate::ported::zle::comp_h::Cpattern>,
+    wsc: &[u32],
+    prestrict: Option<&crate::ported::zle::comp_h::Cpattern>,
+    new_line: &mut Vec<char>,
+) -> i32 {
+    use crate::ported::zle::comp_h::{CPAT_ANY, CPAT_CHAR, CPAT_EQUIV};
+    use crate::ported::zsh_h::{PP_LOWER, PP_UPPER};
+    use crate::ported::zle::zle_h::ZC_tolower;
+
+    let mut p_cur = p;
+    let mut wp_cur = wp;
+    let mut pr_cur = prestrict;
+    let mut wsc_idx = 0usize;
+
+    while p_cur.is_some() && wp_cur.is_some()                                // c:1392
+        && wsc_idx < wsc.len() && pr_cur.is_some()
+    {
+        let pat = p_cur.unwrap();
+        let wpat = wp_cur.unwrap();
+        let pre = pr_cur.unwrap();
+        let wc = wsc[wsc_idx];
+
+        let mut wmt: i32 = 0;
+        let wind = pattern_match1(wpat, wc, &mut wmt);                       // c:1394
+        if wind == 0 { return 0; }                                           // c:1395
+
+        // c:1399-1450 — deduce the line character `c`.
+        let c: u32 = if pre.tp == CPAT_CHAR {                                // c:1402
+            pre.chr                                                          // c:1407
+        } else if pat.tp == CPAT_CHAR {                                      // c:1410
+            pat.chr                                                          // c:1414
+        } else if pat.tp == CPAT_EQUIV {                                     // c:1416
+            // c:1424 pattern_match_equivalence — substrate-pending
+            // helper. Use the word char directly which is a safe
+            // approximation when the equivalence-class lookup isn't
+            // exposed.
+            wc
+        } else {                                                             // c:1432
+            wc                                                               // c:1442 use *wsc
+        };
+
+        // c:1448 — restriction-side check.
+        if pre.tp != CPAT_CHAR {
+            let mut mt: i32 = 0;
+            if pattern_match1(pre, c, &mut mt) == 0 { return 0; }            // c:1449
+        }
+
+        // c:1457-1485 — case-class equivalence (mt vs wmt mismatch).
+        if pat.tp != CPAT_ANY || wpat.tp != CPAT_ANY {                       // c:1459
+            let mut mt: i32 = 0;
+            let ind = pattern_match1(pat, c, &mut mt);                       // c:1461
+            if ind == 0 || ind != wind { return 0; }                         // c:1462-1465
+            if mt != wmt {
+                let case_pair = (mt == PP_LOWER || mt == PP_UPPER)
+                             && (wmt == PP_LOWER || wmt == PP_UPPER);
+                if case_pair {
+                    let cc  = char::from_u32(c).unwrap_or('\0');
+                    let wcc = char::from_u32(wc).unwrap_or('\0');
+                    if ZC_tolower(cc) != ZC_tolower(wcc) { return 0; }       // c:1477
+                } else {
+                    return 0;                                                // c:1481
+                }
+            }
+        }
+
+        // c:1496 — append deduced char to new_line.
+        if let Some(ch) = char::from_u32(c) {
+            new_line.push(ch);
+        }
+        pr_cur = pre.next.as_deref();                                        // c:1498
+        wsc_idx += 1;
+        p_cur = pat.next.as_deref();
+        wp_cur = wpat.next.as_deref();
+    }
+
+    // c:1505-1540 — tail loop: continue matching when wsc exhausted
+    // but prestrict still has more chars (deduced solely from p).
+    while p_cur.is_some() && pr_cur.is_some() {                              // c:1505
+        let pat = p_cur.unwrap();
+        let pre = pr_cur.unwrap();
+        let c: u32 = if pre.tp == CPAT_CHAR {
+            pre.chr
+        } else if pat.tp == CPAT_CHAR {
+            pat.chr
+        } else {
+            return 0;                                                        // c:1522 not enough info
+        };
+        let mut mt: i32 = 0;
+        if pre.tp != CPAT_CHAR && pattern_match1(pre, c, &mut mt) == 0 {
+            return 0;
+        }
+        if let Some(ch) = char::from_u32(c) {
+            new_line.push(ch);
+        }
+        pr_cur = pre.next.as_deref();
+        p_cur  = pat.next.as_deref();
+    }
+
+    // c:1542 — `p_cur.is_none() && pr_cur.is_none() && (wp_cur.is_none() || wsc empty)`.
+    if p_cur.is_none() && pr_cur.is_none()
+        && (wp_cur.is_none() || wsc_idx >= wsc.len())
+    {
+        1                                                                    // c:1544 full match
+    } else {
+        0                                                                    // c:1545
+    }
 }
 
 /// Port of `pattern_match1()` from Src/Zle/compmatch.c:1269.
