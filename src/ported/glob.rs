@@ -24,6 +24,98 @@ use crate::ported::exec::{
 };
 use crate::ported::pattern::PatternFlags;
 
+// =====================================================================
+// GS_* — sort-specifier flag bits — `Src/glob.c:77-94`. The `glob -O`
+// + `glob -o` sort-spec parser stuffs these bits into the per-glob
+// sortspec struct so the qsort comparator picks the right key.
+// =====================================================================
+
+/// Port of `GS_NAME` from `Src/glob.c:77`. Sort by filename.
+pub const GS_NAME:  i32 = 1;                                                 // c:77
+/// Port of `GS_DEPTH` from `Src/glob.c:78`. Sort by directory depth.
+pub const GS_DEPTH: i32 = 2;                                                 // c:78
+/// Port of `GS_EXEC` from `Src/glob.c:79`. Sort via external function.
+pub const GS_EXEC:  i32 = 4;                                                 // c:79
+
+/// Port of `GS_SHIFT_BASE` from `Src/glob.c:81`. Bit position where
+/// the size/mtime/atime/ctime/links sort keys live.
+pub const GS_SHIFT_BASE: i32 = 8;                                            // c:81
+
+/// Port of `GS_SIZE` from `Src/glob.c:83`. Sort by file size.
+pub const GS_SIZE:  i32 = GS_SHIFT_BASE;                                     // c:83
+/// Port of `GS_ATIME` from `Src/glob.c:84`. Sort by access time.
+pub const GS_ATIME: i32 = GS_SHIFT_BASE << 1;                                // c:84
+/// Port of `GS_MTIME` from `Src/glob.c:85`. Sort by modification time.
+pub const GS_MTIME: i32 = GS_SHIFT_BASE << 2;                                // c:85
+/// Port of `GS_CTIME` from `Src/glob.c:86`. Sort by inode-change time.
+pub const GS_CTIME: i32 = GS_SHIFT_BASE << 3;                                // c:86
+/// Port of `GS_LINKS` from `Src/glob.c:87`. Sort by hard-link count.
+pub const GS_LINKS: i32 = GS_SHIFT_BASE << 4;                                // c:87
+
+/// Port of `GS_SHIFT` from `Src/glob.c:89`. Bit-shift offset where the
+/// reverse-direction variants of the size/atime/mtime/ctime/links
+/// sort flags live.
+pub const GS_SHIFT: i32 = 5;                                                 // c:89
+
+/// Port of `GS__SIZE`  from `Src/glob.c:90` (reverse-sort variant).
+pub const GS__SIZE:  i32 = GS_SIZE  << GS_SHIFT;                             // c:90
+/// Port of `GS__ATIME` from `Src/glob.c:91`.
+pub const GS__ATIME: i32 = GS_ATIME << GS_SHIFT;                             // c:91
+/// Port of `GS__MTIME` from `Src/glob.c:92`.
+pub const GS__MTIME: i32 = GS_MTIME << GS_SHIFT;                             // c:92
+/// Port of `GS__CTIME` from `Src/glob.c:93`.
+pub const GS__CTIME: i32 = GS_CTIME << GS_SHIFT;                             // c:93
+/// Port of `GS__LINKS` from `Src/glob.c:94`.
+pub const GS__LINKS: i32 = GS_LINKS << GS_SHIFT;                             // c:94
+
+/// Port of `GS_DESC` from `Src/glob.c:96`. Descending-order toggle.
+pub const GS_DESC: i32 = GS_SHIFT_BASE << (2 * GS_SHIFT);                    // c:96
+/// Port of `GS_NONE` from `Src/glob.c:97`. Marker for no-sort spec.
+pub const GS_NONE: i32 = GS_SHIFT_BASE << (2 * GS_SHIFT + 1);                // c:97
+
+/// Port of `GS_NORMAL` from `Src/glob.c:99`. Forward-direction sort
+/// keys (excluding NAME/DEPTH/EXEC and the reverse variants).
+pub const GS_NORMAL: i32 = GS_SIZE | GS_ATIME | GS_MTIME | GS_CTIME | GS_LINKS; // c:99
+/// Port of `GS_LINKED` from `Src/glob.c:100`. Reverse-direction
+/// (linked) sort keys.
+pub const GS_LINKED: i32 = GS_NORMAL << GS_SHIFT;                            // c:100
+
+// =====================================================================
+// TT_* — time + size unit selectors. Two parallel namespaces using
+// the same numeric values.
+// =====================================================================
+
+/// Port of `TT_DAYS` from `Src/glob.c:121`. Time qualifier in days.
+pub const TT_DAYS:    i32 = 0;                                               // c:121
+/// Port of `TT_HOURS` from `Src/glob.c:122`. Time qualifier in hours.
+pub const TT_HOURS:   i32 = 1;                                               // c:122
+/// Port of `TT_MINS` from `Src/glob.c:123`. Time qualifier in minutes.
+pub const TT_MINS:    i32 = 2;                                               // c:123
+/// Port of `TT_WEEKS` from `Src/glob.c:124`. Time qualifier in weeks.
+pub const TT_WEEKS:   i32 = 3;                                               // c:124
+/// Port of `TT_MONTHS` from `Src/glob.c:125`. Time qualifier in months.
+pub const TT_MONTHS:  i32 = 4;                                               // c:125
+/// Port of `TT_SECONDS` from `Src/glob.c:126`. Time qualifier in seconds.
+pub const TT_SECONDS: i32 = 5;                                               // c:126
+
+/// Port of `TT_BYTES` from `Src/glob.c:128`. Size qualifier in bytes.
+pub const TT_BYTES:        i32 = 0;                                          // c:128
+/// Port of `TT_POSIX_BLOCKS` from `Src/glob.c:129`. Size qualifier
+/// in POSIX 512-byte blocks (the `b` glob qualifier suffix).
+pub const TT_POSIX_BLOCKS: i32 = 1;                                          // c:129
+/// Port of `TT_KILOBYTES` from `Src/glob.c:130`.
+pub const TT_KILOBYTES:    i32 = 2;                                          // c:130
+/// Port of `TT_MEGABYTES` from `Src/glob.c:131`.
+pub const TT_MEGABYTES:    i32 = 3;                                          // c:131
+/// Port of `TT_GIGABYTES` from `Src/glob.c:132`.
+pub const TT_GIGABYTES:    i32 = 4;                                          // c:132
+/// Port of `TT_TERABYTES` from `Src/glob.c:133`.
+pub const TT_TERABYTES:    i32 = 5;                                          // c:133
+
+/// Port of `MAX_SORTS` from `Src/glob.c:164`. Maximum sort-spec keys
+/// per glob (`glob -O 'reverse(name).size'` style).
+pub const MAX_SORTS: usize = 12;                                             // c:164
+
 /// Sort specifier flags
 // Element of a glob sort                                                   // c:155
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3374,6 +3466,47 @@ pub fn qualsheval(filename: &str, expr: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod gs_tt_tests {
+    use super::*;
+
+    #[test]
+    fn gs_size_offset_matches_c() {
+        // c:83 — GS_SIZE = GS_SHIFT_BASE = 8.
+        assert_eq!(GS_SIZE, 8);
+        // c:84 — GS_ATIME = GS_SHIFT_BASE << 1 = 16.
+        assert_eq!(GS_ATIME, 16);
+        // c:87 — GS_LINKS = GS_SHIFT_BASE << 4 = 128.
+        assert_eq!(GS_LINKS, 128);
+    }
+
+    #[test]
+    fn gs_normal_covers_all_size_keys() {
+        // c:99 — GS_NORMAL = SIZE | ATIME | MTIME | CTIME | LINKS.
+        assert!(GS_NORMAL & GS_SIZE  != 0);
+        assert!(GS_NORMAL & GS_ATIME != 0);
+        assert!(GS_NORMAL & GS_MTIME != 0);
+        assert!(GS_NORMAL & GS_CTIME != 0);
+        assert!(GS_NORMAL & GS_LINKS != 0);
+    }
+
+    #[test]
+    fn tt_namespaces_share_indices() {
+        // c:121-126 vs c:128-133 — TT_DAYS == TT_BYTES == 0, etc.
+        assert_eq!(TT_DAYS,    TT_BYTES);
+        assert_eq!(TT_HOURS,   TT_POSIX_BLOCKS);
+        assert_eq!(TT_MINS,    TT_KILOBYTES);
+        assert_eq!(TT_WEEKS,   TT_MEGABYTES);
+        assert_eq!(TT_MONTHS,  TT_GIGABYTES);
+        assert_eq!(TT_SECONDS, TT_TERABYTES);
+    }
+
+    #[test]
+    fn max_sorts_is_12() {
+        assert_eq!(MAX_SORTS, 12);
+    }
 }
 
 #[cfg(test)]
