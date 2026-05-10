@@ -1112,8 +1112,205 @@ pub fn zgetline() -> i32 { 0 }
 /// Port of `zle_setline()` from Src/Zle/zle_hist.c:772. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn zle_setline() -> i32 { 0 }
 
-/// Port of `zlinecmp()` from Src/Zle/zle_hist.c:128. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zlinecmp() -> i32 { 0 }
+/// Port of `zlinecmp()` from `Src/Zle/zle_hist.c:127`.
+/// ```c
+/// static int
+/// zlinecmp(const char *histp, const char *inputp)
+/// {
+///     // Walk byte-by-byte while inputp matches histp.
+///     // If inputp ran out:
+///     //   histp also out → 0 (same), else → -1 (inputp is prefix).
+///     // Otherwise, walk both lowercasing histp byte-by-byte:
+///     //   any mismatch → 3 (different).
+///     // Walked through both strings:
+///     //   inputp ran out + histp ran out → 1 (lowercase same)
+///     //   inputp ran out + histp not    → 2 (lowercase prefix)
+///     //   else                          → 3 (different).
+/// }
+/// ```
+/// Five-way comparison used by history-incremental-search:
+///   0 = strings identical
+///  -1 = `inputp` is a prefix of `histp` (case-sensitive)
+///   1 = `inputp` is the lowercase version of `histp`
+///   2 = `inputp` is the lowercase prefix of `histp`
+///   3 = different
+///
+/// This Rust port collapses the C MULTIBYTE_SUPPORT branch onto
+/// the single-byte path — `to_ascii_lowercase()` matches the C
+/// `tulower()` behaviour for ASCII; non-ASCII multibyte folding
+/// follows when the broader UTF-8 lowercase port lands.
+pub fn zlinecmp(histp: &str, inputp: &str) -> i32 {                          // c:127
+    let h_bytes = histp.as_bytes();
+    let i_bytes = inputp.as_bytes();
 
-/// Port of `zlinefind()` from Src/Zle/zle_hist.c:204. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zlinefind() -> i32 { 0 }
+    // c:135-138 — `while (*iptr && *hptr == *iptr) { hptr++; iptr++; }`.
+    let mut hi = 0;
+    let mut ii = 0;
+    while ii < i_bytes.len() && hi < h_bytes.len() && h_bytes[hi] == i_bytes[ii] {
+        hi += 1;
+        ii += 1;
+    }
+
+    // c:140-148 — input ran out → check whether hist also out.
+    if ii >= i_bytes.len() {
+        if hi >= h_bytes.len() {
+            return 0; // c:143 — strings the same
+        } else {
+            return -1; // c:146 — inputp is a prefix
+        }
+    }
+
+    // c:156-177 — case-folding walk over both strings from the start.
+    let mut hi = 0;
+    let mut ii = 0;
+    while hi < h_bytes.len() && ii < i_bytes.len() {                         // c:156 while (*histp && *inputp)
+        // c:174 — `if (tulower(*histp++) != *inputp++) return 3`.
+        if h_bytes[hi].to_ascii_lowercase() != i_bytes[ii] {
+            return 3;
+        }
+        hi += 1;
+        ii += 1;
+    }
+
+    // c:178-184 — at end of one string, decide which.
+    if ii >= i_bytes.len() {
+        if hi >= h_bytes.len() {
+            return 1; // c:181 — same
+        } else {
+            return 2; // c:183 — prefix
+        }
+    }
+    3 // c:186 — different
+}
+
+/// Port of `zlinefind()` from `Src/Zle/zle_hist.c:203`.
+/// ```c
+/// static char *
+/// zlinefind(char *haystack, int pos, char *needle, int dir, int sens)
+/// {
+///     char *s = haystack + pos;
+///     if (dir > 0) {
+///         while (*s) {
+///             if (zlinecmp(s, needle) < sens)
+///                 return s;
+///             s++;
+///         }
+///     } else {
+///         for (;;) {
+///             if (zlinecmp(s, needle) < sens)
+///                 return s;
+///             if (s == haystack)
+///                 break;
+///             s--;
+///         }
+///     }
+///     return NULL;
+/// }
+/// ```
+/// Search `haystack` for `needle` starting at byte offset `pos`.
+/// `dir > 0` searches forward, otherwise backward. `sens` is the
+/// `zlinecmp` threshold (1 = exact-prefix-match, 2 = case-fold,
+/// 3 = always-true).
+///
+/// Returns `Some(byte_offset)` when found, `None` otherwise.
+pub fn zlinefind(haystack: &str, pos: usize, needle: &str, dir: i32, sens: i32) -> Option<usize> {  // c:203
+    let bytes = haystack.as_bytes();
+    let mut s = pos;                                                         // c:206 s = haystack + pos
+    if dir > 0 {                                                             // c:208
+        while s < bytes.len() {                                              // c:209 while (*s)
+            // c:210 — `if (zlinecmp(s, needle) < sens) return s`.
+            if zlinecmp(&haystack[s..], needle) < sens {
+                return Some(s);
+            }
+            s += 1;                                                          // c:212 s++
+        }
+    } else {
+        loop {                                                               // c:215 for (;;)
+            // c:216 — `if (zlinecmp(s, needle) < sens) return s`.
+            if zlinecmp(&haystack[s..], needle) < sens {
+                return Some(s);
+            }
+            if s == 0 {                                                      // c:218 if (s == haystack) break
+                break;
+            }
+            s -= 1;                                                          // c:220 s--
+        }
+    }
+    None                                                                     // c:224 return NULL
+}
+
+#[cfg(test)]
+mod zlinecmp_zlinefind_tests {
+    use super::*;
+
+    #[test]
+    fn zlinecmp_same() {
+        // c:140-143 — both strings end together → 0.
+        assert_eq!(zlinecmp("hello", "hello"), 0);
+    }
+
+    #[test]
+    fn zlinecmp_input_prefix() {
+        // c:146 — input runs out before hist → -1.
+        assert_eq!(zlinecmp("hello world", "hello"), -1);
+    }
+
+    #[test]
+    fn zlinecmp_lowercase_same() {
+        // c:181 — case-fold walk: HELLO vs hello → 1.
+        assert_eq!(zlinecmp("HELLO", "hello"), 1);
+    }
+
+    #[test]
+    fn zlinecmp_lowercase_prefix() {
+        // c:183 — input prefix of histp under case folding → 2.
+        assert_eq!(zlinecmp("HELLO World", "hello"), 2);
+    }
+
+    #[test]
+    fn zlinecmp_different() {
+        // c:186 — totally different → 3.
+        assert_eq!(zlinecmp("apple", "orange"), 3);
+    }
+
+    #[test]
+    fn zlinecmp_empty_input() {
+        // c:140-143 — empty input is a "prefix" → with non-empty hist → -1.
+        assert_eq!(zlinecmp("foo", ""), -1);
+        // Both empty → 0.
+        assert_eq!(zlinecmp("", ""), 0);
+    }
+
+    #[test]
+    fn zlinefind_forward_exact() {
+        // c:208-213 — forward search; sens=0 means need zlinecmp < 0,
+        // i.e. the needle must be a strict prefix at the position.
+        assert_eq!(zlinefind("hello world hello", 0, "world", 1, 0), Some(6));
+    }
+
+    #[test]
+    fn zlinefind_backward_exact() {
+        // c:215-222 — backward search from end. sens=1 accepts both
+        // 0 (exact) and -1 (prefix); sens=0 only accepts -1 (prefix).
+        // To find the second "hello" exactly at index 12 we need
+        // sens=1 — at index 12 zlinecmp("hello","hello")=0.
+        assert_eq!(
+            zlinefind("hello world hello", 16, "hello", -1, 1),
+            Some(12)
+        );
+    }
+
+    #[test]
+    fn zlinefind_not_found() {
+        // c:224 — exhausted without match → None.
+        assert_eq!(zlinefind("hello", 0, "xyz", 1, 0), None);
+    }
+
+    #[test]
+    fn zlinefind_starts_at_pos() {
+        // c:206 — search begins at `pos`, not at 0.
+        // "abcabc" with needle "a" starting at pos=1 finds the
+        // second "a" at index 3.
+        assert_eq!(zlinefind("abcabc", 1, "a", 1, 0), Some(3));
+    }
+}
