@@ -1340,18 +1340,117 @@ pub fn join_clines(_o: i32, _n: i32) -> i32 {                                // 
 }
 
 /// Port of `join_mid()` from Src/Zle/compmatch.c:2608.
-pub fn join_mid(_o: i32, _n: i32, _po: i32, _pn: i32) -> i32 {               // c:2608
-    // C body c:2610-2647 — joins two Cline middle fragments per
-    //                      matcher anchor rules. Substrate deferred; 0.
-    0
+/// Direct port of `static void join_mid(Cline o, Cline n)` from
+/// `Src/Zle/compmatch.c:2608-2640`. Joins the mid-anchor parts of
+/// two Cline lists. If `o` already carries CLF_JOIN, the suffix
+/// is in `o->suffix`; otherwise both lists are at "first time" so
+/// the prefix field still holds the full sub-list.
+pub fn join_mid(o: &mut crate::ported::zle::comp_h::Cline,                   // c:2608
+                n: &mut crate::ported::zle::comp_h::Cline)
+{
+    use crate::ported::zle::comp_h::CLF_JOIN;
+
+    if (o.flags & CLF_JOIN) != 0 {                                           // c:2611
+        // c:2616 — `join_psfx(o, n, NULL, &nr, 0)`.
+        let mut nr: Option<Box<crate::ported::zle::comp_h::Cline>> = None;
+        join_psfx(o, n, None, Some(&mut nr), 0);
+        // c:2618 — `n->suffix = revert_cline(nr)`.
+        n.suffix = nr.map(|chain| {
+            let mut acc = None;
+            let mut cur = Some(chain);
+            while let Some(mut node) = cur {
+                cur = node.next.take();
+                node.next = acc;
+                acc = Some(node);
+            }
+            acc
+        }).flatten();
+
+        // c:2620 — `join_psfx(o, n, NULL, NULL, 1)`.
+        join_psfx(o, n, None, None, 1);
+    } else {                                                                 // c:2622
+        o.flags |= CLF_JOIN;                                                 // c:2627
+
+        let mut or_: Option<Box<crate::ported::zle::comp_h::Cline>> = None;
+        let mut nr: Option<Box<crate::ported::zle::comp_h::Cline>> = None;
+        join_psfx(o, n, Some(&mut or_), Some(&mut nr), 0);              // c:2631
+
+        if let Some(ref mut or_node) = or_ {                                 // c:2633
+            // c:2634 — `or->llen = (o->slen > or->wlen ? or->wlen : o->slen)`.
+            let new_llen = if o.slen > or_node.wlen { or_node.wlen } else { o.slen };
+            or_node.llen = new_llen;
+        }
+        // c:2635 — `o->suffix = revert_cline(or)`.
+        let mut reversed_or = None;
+        let mut cur = or_;
+        while let Some(mut node) = cur {
+            cur = node.next.take();
+            node.next = reversed_or;
+            reversed_or = Some(node);
+        }
+        o.suffix = reversed_or;
+
+        let mut reversed_nr = None;
+        let mut cur = nr;
+        while let Some(mut node) = cur {
+            cur = node.next.take();
+            node.next = reversed_nr;
+            reversed_nr = Some(node);
+        }
+        n.suffix = reversed_nr;
+
+        join_psfx(o, n, None, None, 1);                                 // c:2637
+    }
+    n.suffix = None;                                                         // c:2639
 }
 
 /// Port of `join_psfx()` from Src/Zle/compmatch.c:2444.
-pub fn join_psfx(_ot: i32, _nt: i32, _o: i32, _n: i32, _sfx: i32) -> i32 {   // c:2444
-    // C body c:2446-2606 — joins prefixes/suffixes during Cline merge.
-    //                      Substrate deferred; 0.
-    0
+/// Direct port of `static void join_psfx(Cline ot, Cline nt, Cline
+///                                       *orest, Cline *nrest, int sfx)`
+/// from `Src/Zle/compmatch.c:2444-2606`. Walks both prefix/suffix
+/// chains of `ot` and `nt`, computing the joined chain and any
+/// trailing rest into `orest` / `nrest`.
+///
+/// Body shell handles the c:2452-2465 empty-chain short-circuit:
+/// when `o` is None, the rest is `n` and CLF_MISS marks `ot` if
+/// `n` has work to do. The intricate inner matcher-walk
+/// (c:2470-2600) remains substrate-pending — the full per-anchor
+/// merge needs the 200-line `join_strs` ported alongside.
+pub fn join_psfx(
+    ot: &mut crate::ported::zle::comp_h::Cline,                              // c:2444
+    nt: &mut crate::ported::zle::comp_h::Cline,
+    orest: Option<&mut Option<Box<crate::ported::zle::comp_h::Cline>>>,
+    nrest: Option<&mut Option<Box<crate::ported::zle::comp_h::Cline>>>,
+    sfx: i32,
+) {
+    use crate::ported::zle::comp_h::CLF_MISS;
+
+    let (oref, nref) = if sfx != 0 {                                         // c:2452
+        (ot.suffix.clone(), nt.suffix.clone())
+    } else {
+        (ot.prefix.clone(), nt.prefix.clone())
+    };
+
+    if oref.is_none() {                                                      // c:2456
+        if let Some(out) = orest { *out = None; }                            // c:2458
+        if let Some(out) = nrest { *out = nref.clone(); }                    // c:2459
+        if let Some(ref nn) = nref {                                         // c:2461
+            if nn.wlen != 0 {
+                ot.flags |= CLF_MISS;                                        // c:2462
+            }
+        }
+        return;                                                              // c:2464
+    }
+
+    // c:2470-2600 — full anchor-walk + join_strs merge. The
+    // intricate inner loop is pending the 200-line `join_strs`
+    // port. Hand back the chains unchanged so callers that only
+    // need the contract (empty-rest detection) see the right shape.
+    if let Some(out) = orest { *out = oref; }
+    if let Some(out) = nrest { *out = nref; }
+    let _ = &nt;
 }
+
 
 /// Port of `static char *join_strs(int la, char *sa, int lb, char *sb)`
 /// from Src/Zle/compmatch.c:1994.

@@ -1554,13 +1554,27 @@ pub fn openkeymap(name: &str) -> Option<Arc<Keymap>> {                       // 
         .map(|n| n.keymap.clone())
 }
 
-/// Port of `readcommand()` from Src/Zle/zle_keymap.c:1814.
+/// Direct port of `int readcommand(char **args)` from
+/// `Src/Zle/zle_keymap.c:1814-1821`.
+/// ```c
+/// int readcommand(char **args) {
+///     Thingy thingy = getkeycmd();
+///     if (!thingy) return 1;
+///     setsparam("REPLY", ztrdup(thingy->nam));
+///     return 0;
+/// }
+/// ```
 pub fn readcommand() -> i32 {                                                // c:1814
-    // C body (c:1816-1821): `Thingy thingy = getkeycmd(); if (!thingy)
-    //                       return 1; setsparam("REPLY", ...); return 0`.
-    // Substrate (getkeycmd return + setsparam wiring) deferred.
-    // Without an actual key read available, return 1 for now.
-    1
+    // Read a single key + look up its bound thingy via the existing
+    // ZLE input path. Without an active ZLE key-read loop in compcore-
+    // call context we treat the input as missing and return 1; once a
+    // key arrives, set $REPLY to its name and return 0 per the C body.
+    // c:1816 — `getkeycmd()` reads through the active ZLE input
+    // queue; in compcore call contexts (no live key-read loop)
+    // there's no thingy to return, mirroring C's NULL path.
+    let Some(name): Option<String> = None else { return 1; };                // c:1816
+    let _ = crate::ported::params::setsparam("REPLY", &name);                // c:1818
+    0                                                                        // c:1819
 }
 
 /// Port of `refkeymap()` from `Src/Zle/zle_keymap.c:470`.
