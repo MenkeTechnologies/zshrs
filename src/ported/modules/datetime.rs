@@ -16,7 +16,6 @@
 //! base format and adds %N extensions on top.
 
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
-use crate::ported::exec::ShellExecutor;
 use crate::ported::utils::zwarnnam;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -330,8 +329,6 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 mod tests {
     use super::*;
 
-    fn fresh_exec() -> ShellExecutor { ShellExecutor::new() }
-
     #[test]
     fn test_epoch_seconds() {
         let secs = getcurrentsecs();
@@ -396,66 +393,5 @@ mod tests {
         let ops = ops_for(&[], None);
         let r = output_strftime("strftime", &[], &ops, 0);
         assert_eq!(r, 1);
-    }
-}
-
-// ========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// ========================================================
-
-impl ShellExecutor {
-    /// `strftime` builtin shim — adapts `&[String]` argv to the
-    /// canonical `bin_strftime()` above, parsing the option spec
-    /// `"nrqs:"` (datetime.c BUILTIN registration).
-    pub(crate) fn bin_strftime(&mut self, args: &[String]) -> i32 {
-        // Build a real Options struct from the inline parse so the
-        // canonical bin_strftime port (Src/Modules/datetime.c:187) can
-        // be invoked with its C-faithful signature. Option spec from
-        // datetime.c BUILTIN registration: `"nrqs:"`.
-        use crate::ported::zsh_h::{options, MAX_OPS};
-        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                argscount: 0, argsalloc: 0 };
-        let mut positional: Vec<&str> = Vec::new();
-        let mut iter = args.iter().peekable();
-        let mut scalar_arg: Option<String> = None;
-        while let Some(arg) = iter.next() {
-            match arg.as_str() {
-                "-s" => {
-                    if let Some(name) = iter.next() {
-                        scalar_arg = Some(name.clone());
-                    }
-                }
-                "-n" => ops.ind[b'n' as usize] = 1,
-                "-r" => ops.ind[b'r' as usize] = 1,
-                "-q" => ops.ind[b'q' as usize] = 1,
-                "--" => {
-                    for rest in iter.by_ref() { positional.push(rest.as_str()); }
-                    break;
-                }
-                s if s.starts_with('-') && s.len() > 1 => {
-                    for ch in s[1..].chars() {
-                        match ch {
-                            'n' => ops.ind[b'n' as usize] = 1,
-                            'r' => ops.ind[b'r' as usize] = 1,
-                            'q' => ops.ind[b'q' as usize] = 1,
-                            _ => {
-                                zwarnnam("strftime", &format!("bad option: -{}", ch));
-                                return 1;
-                            }
-                        }
-                    }
-                }
-                _ => positional.push(arg.as_str()),
-            }
-        }
-        if let Some(s) = scalar_arg {
-            // OPT_HASARG check uses ind > 3; encode the -s arg slot at index 4.
-            ops.ind[b's' as usize] = 4;
-            ops.args.push(s);
-            ops.argscount = 1;
-            ops.argsalloc = 1;
-        }
-        bin_strftime("strftime", &positional, &ops, 0)
     }
 }

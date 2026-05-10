@@ -9831,3 +9831,83 @@ impl crate::ported::exec::ShellExecutor {
         bin_echotc("echotc", &argv, &ops)
     }
 }
+
+// =====================================================================
+// MOVED FROM: src/ported/modules/parameter.rs
+// =====================================================================
+//
+// !!! WARNING: FAKE IMPL — DOES NOT MATCH C SOURCE !!!
+//
+// `magic_assoc_keys` aggregates per-magic-table dispatch into one
+// match-arm. The C source (Src/Modules/parameter.c) splits this
+// across separate scanpm{aliases,functions,builtins,commands,
+// reswords,options} helpers — each one walks the canonical
+// hashtable (cmdnamtab, aliastab, shfunctab, builtintab, reswdtab,
+// etc.) via the standard ScanFunc protocol.
+//
+// This Rust impl hard-codes static lists for "builtins" and
+// "reswords" (lines below) and reaches `&self.<field>` for the
+// others — both shortcuts. The honest fix is to replace each branch
+// with a call to the real scanpm* port in
+// src/ported/modules/parameter.rs once those land. Until then this
+// stands as a placeholder so the magic-assoc lookup path doesn't
+// hard-fail.
+//
+// !!! Replace with real scanpm* dispatch + remove this block. !!!
+// =====================================================================
+
+impl crate::ported::exec::ShellExecutor {
+    pub fn magic_assoc_keys(&self, name: &str) -> Option<Vec<String>> {
+        let exec = self;
+        match name {
+            "aliases"  => Some(exec.aliases.keys().cloned().collect()),
+            "galiases" => Some(exec.global_aliases.keys().cloned().collect()),
+            "saliases" => Some(exec.suffix_aliases.keys().cloned().collect()),
+            "dis_aliases" | "dis_galiases" | "dis_saliases" => Some(Vec::new()),
+            "functions" | "dis_functions" =>
+                Some(exec.function_names().into_iter().collect()),
+            // FAKE: hard-coded builtin set instead of walking BUILTINS table.
+            "builtins" | "dis_builtins" => {
+                let names: &[&str] = &[
+                    "echo", "print", "printf", "cd", "pwd", "exit", "return", "true", "false",
+                    ":", "test", "[", "local", "private", "declare", "typeset", "export", "unset",
+                    "set", "shift", "read", "source", "alias", "unalias", "function", "type",
+                    "which", "whence", "command", "builtin", "jobs", "bg", "fg", "wait", "kill",
+                    "trap", "eval", "exec", "ulimit", "umask", "getopts", "shopt", "history",
+                    "fc", "hash", "rehash", "let", "select", "time", "times", "compdef",
+                    "compadd", "complete", "compgen", "zmodload", "zparseopts", "zstyle",
+                    "zle", "vared", "zcompile", "autoload",
+                ];
+                Some(names.iter().map(|s| (*s).to_string()).collect())
+            }
+            // FAKE: hard-coded reswords set instead of walking reswdtab.
+            "reswords" | "dis_reswords" => {
+                let names: &[&str] = &[
+                    "do", "done", "esac", "then", "elif", "else", "fi", "for", "case", "if",
+                    "while", "function", "repeat", "time", "until", "exec", "command", "select",
+                    "coproc", "nocorrect", "foreach", "end", "!", "[[", "{", "}", "declare",
+                    "export", "float", "integer", "local", "private", "readonly", "typeset",
+                ];
+                Some(names.iter().map(|s| (*s).to_string()).collect())
+            }
+            "options"  => Some(exec.options.keys().cloned().collect()),
+            "commands" => Some(exec.command_hash.keys().cloned().collect()),
+            "jobtexts" | "jobdirs" | "jobstates" =>
+                Some(exec.jobs.iter().map(|(id, _)| id.to_string()).collect()),
+            "dirstack" =>
+                Some((0..exec.dir_stack.len()).map(|i| i.to_string()).collect()),
+            "errnos" =>
+                Some(crate::modules::system::ERRNO_NAMES
+                    .iter().map(|(n, _)| (*n).to_string()).collect()),
+            "sysparams" =>
+                Some(vec!["pid".to_string(), "ppid".to_string(), "procsubstpid".to_string()]),
+            "parameters" => {
+                let mut keys: Vec<String> = exec.variables.keys().cloned().collect();
+                keys.extend(exec.arrays.keys().cloned());
+                keys.extend(exec.assoc_arrays.keys().cloned());
+                Some(keys)
+            }
+            _ => None,
+        }
+    }
+}
