@@ -1014,14 +1014,21 @@ pub fn startvichange(zle: &mut crate::ported::zle::zle_main::Zle, im: i32) {  //
     }
 }
 
-/// Port of `startvitext()` from Src/Zle/zle_vi.c:118.
-pub fn startvitext(zle: &mut crate::ported::zle::zle_main::Zle, im: i32) {   // c:117
-    // C body (c:118-124): `startvichange(im); selectkeymap("main", 1);
-    //                     vistartchange = undo_changeno;
-    //                     viinsbegin = zlecs`.
-    startvichange(zle, im);
-    crate::ported::zle::zle_keymap::selectkeymap("main", 1);
-    // vistartchange/undo_changeno/viinsbegin substrate deferred.
+/// Direct port of `static void startvitext(int im)` from
+/// `Src/Zle/zle_vi.c:118-124`.
+/// ```c
+/// startvitext(int im) {
+///     startvichange(im);
+///     selectkeymap("main", 1);
+///     vistartchange = undo_changeno;
+///     viinsbegin = zlecs;
+/// }
+/// ```
+pub fn startvitext(zle: &mut crate::ported::zle::zle_main::Zle, im: i32) {   // c:118
+    startvichange(zle, im);                                                  // c:120
+    crate::ported::zle::zle_keymap::selectkeymap("main", 1);                 // c:121
+    zle.vistartchange = zle.undo_changeno;                                   // c:122
+    zle.viinsbegin    = zle.zlecs;                                           // c:123
 }
 
 /// Port of `viaddeol()` from Src/Zle/zle_vi.c:346.
