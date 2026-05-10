@@ -14,7 +14,6 @@
 //!
 //! Order in this file mirrors C source order verbatim.
 
-use crate::ported::exec::ShellExecutor;
 use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 

@@ -2248,8 +2248,8 @@ impl ShellExecutor {
         crate::ported::builtin::bin_typeset("typeset", args, &mut ops, 0)
     }
     pub(crate) fn bin_read(&mut self, args: &[String]) -> i32 {
-        // No canonical bin_read free-fn yet — return 1 (no input) placeholder.
-        let _ = args; 1
+        let ops = Self::_empty_ops();
+        crate::ported::builtin::bin_read("read", args, &ops, 0)
     }
     pub(crate) fn bin_shift(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
@@ -2316,10 +2316,8 @@ impl ShellExecutor {
         crate::ported::builtin::bin_functions("functions", args, &ops, 0)
     }
     pub(crate) fn bin_print(&mut self, args: &[String]) -> i32 {
-        // No canonical bin_print free-fn yet — emit args separated by spaces
-        // matching the basic `print` semantics.
-        println!("{}", args.join(" "));
-        0
+        let ops = Self::_empty_ops();
+        crate::ported::builtin::bin_print("print", args, &ops, 0)
     }
     pub(crate) fn bin_whence(&self, args: &[String]) -> i32 {
         // No canonical bin_whence yet — return 1 (not found) placeholder.
