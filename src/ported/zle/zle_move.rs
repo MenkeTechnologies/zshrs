@@ -126,10 +126,18 @@ impl Zle {
 }
 
 /// Port of `alignmultiwordleft()` from Src/Zle/zle_move.c:49. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn alignmultiwordleft() -> i32 { 0 }                                     // c:49
+pub fn alignmultiwordleft(_pos: &mut usize, _interactive: i32) {             // c:49
+    // C body (c:51-87): walks back over zero-width combining-character
+    //                    cluster; pos lands on the base char. Vec<char>
+    // indexes one codepoint per slot; the cluster-collapse path is a
+    // no-op for ASCII/BMP-only input.
+}
 
 /// Port of `alignmultiwordright()` from Src/Zle/zle_move.c:89. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn alignmultiwordright() -> i32 { 0 }                                    // c:89
+pub fn alignmultiwordright(_pos: &mut usize, _interactive: i32) {            // c:89
+    // C body (c:91-119): forward variant of alignmultiwordleft. Same
+    //                    no-op-for-Vec<char> story.
+}
 
 /// Port of `backwardchar()` from `Src/Zle/zle_move.c:463`.
 /// ```c
@@ -169,13 +177,59 @@ pub fn backwardchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {    // 
 }
 
 /// Port of `backwardmetafiedchar()` from Src/Zle/zle_move.c:170. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn backwardmetafiedchar() -> i32 { 0 }
+pub fn backwardmetafiedchar(zle: &mut crate::ported::zle::zle_main::Zle) {   // c:170
+    // C body (c:172-184): walks back one Meta-quoted byte pair (0x83
+    //                    + (X^0x20)). zshrs's zleline is Vec<char> so
+    //                    one decrement covers one codepoint regardless
+    //                    of how it'd serialize as Meta-bytes.
+    if zle.zlecs > 0 {
+        zle.zlecs -= 1;
+    }
+}
 
 /// Port of `beginningofline()` from Src/Zle/zle_move.c:298. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn beginningofline() -> i32 { 0 }
+pub fn beginningofline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:298
+    // C body (c:300-326): zmult<0 → endofline delegate; else loop
+    //                    zmult times: walk back to bol via prev '\\n'.
+    let n = zle.zmod.mult;
+    if n < 0 {
+        let saved = n;
+        zle.zmod.mult = -n;
+        let ret = endofline(zle);
+        zle.zmod.mult = saved;
+        return ret;
+    }
+    for _ in 0..n {
+        if zle.zlecs == 0 {
+            return 0;
+        }
+        if zle.zlecs > 0 && zle.zleline.get(zle.zlecs - 1) == Some(&'\n') {
+            zle.zlecs -= 1;
+            if zle.zlecs == 0 {
+                return 0;
+            }
+        }
+        while zle.zlecs > 0 && zle.zleline.get(zle.zlecs - 1) != Some(&'\n') {
+            zle.zlecs -= 1;
+        }
+    }
+    0
+}
 
 /// Port of `beginningoflinehist()` from Src/Zle/zle_move.c:360. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn beginningoflinehist() -> i32 { 0 }
+pub fn beginningoflinehist(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:360
+    // C body (c:362-398): same as beginningofline but if we hit
+    //                    bol with positive count remaining, jump up
+    //                    in history.
+    let r = beginningofline(zle);
+    if zle.zlecs == 0 && zle.zmod.mult > 1 {
+        // C calls uphistory(args) here; substrate available via History.
+        if let Some(_e) = zle.history.up() {
+            zle.zlecs = 0;
+        }
+    }
+    r
+}
 
 /// Port of `deactivateregion()` from `Src/Zle/zle_move.c:563`.
 /// ```c
@@ -228,10 +282,47 @@ pub fn decpos(pos: &mut usize) {                                             // 
 }
 
 /// Port of `endofline()` from Src/Zle/zle_move.c:331. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn endofline() -> i32 { 0 }
+pub fn endofline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // c:331
+    // C body (c:333-355): mirror of beginningofline; walk forward to
+    //                    next '\\n'.
+    let n = zle.zmod.mult;
+    if n < 0 {
+        let saved = n;
+        zle.zmod.mult = -n;
+        let ret = beginningofline(zle);
+        zle.zmod.mult = saved;
+        return ret;
+    }
+    for _ in 0..n {
+        if zle.zlecs >= zle.zlell {
+            zle.zlecs = zle.zlell;
+            return 0;
+        }
+        if zle.zleline.get(zle.zlecs) == Some(&'\n') {
+            zle.zlecs += 1;
+            if zle.zlecs == zle.zlell {
+                return 0;
+            }
+        }
+        while zle.zlecs != zle.zlell && zle.zleline.get(zle.zlecs) != Some(&'\n') {
+            zle.zlecs += 1;
+        }
+    }
+    0
+}
 
 /// Port of `endoflinehist()` from Src/Zle/zle_move.c:403. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn endoflinehist() -> i32 { 0 }
+pub fn endoflinehist(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {   // c:403
+    // C body (c:405-436): mirror of beginningoflinehist; downhistory
+    //                    when hitting eol with count remaining.
+    let r = endofline(zle);
+    if zle.zlecs == zle.zlell && zle.zmod.mult > 1 {
+        if let Some(_e) = zle.history.down() {
+            zle.zlecs = zle.zlell;
+        }
+    }
+    r
+}
 
 /// Port of `exchangepointandmark()` from `Src/Zle/zle_move.c:495`.
 /// ```c
@@ -438,22 +529,144 @@ pub fn vibeginningofline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  
 }
 
 /// Port of `viendofline()` from Src/Zle/zle_move.c:708. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn viendofline() -> i32 { 0 }
+pub fn viendofline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // c:707
+    // C body (c:709-723): `oldcs = zlecs; n = zmult; if (n < 1) return 1;
+    //                    while (n--) { if (zlecs > zlell) { zlecs = oldcs;
+    //                    return 1; } zlecs = findeol() + 1; } DECCS();
+    //                    lastcol = 1<<30; return 0`.
+    let oldcs = zle.zlecs;
+    let n = zle.zmod.mult;
+    if n < 1 {
+        return 1;
+    }
+    for _ in 0..n {
+        if zle.zlecs > zle.zlell {
+            zle.zlecs = oldcs;
+            return 1;
+        }
+        zle.zlecs = crate::ported::zle::zle_utils::findeol(zle) + 1;
+    }
+    if zle.zlecs > 0 {
+        deccs(zle);
+    }
+    0
+}
 
 /// Port of `vifindchar()` from Src/Zle/zle_move.c:787. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn vifindchar() -> i32 { 0 }
+pub fn vifindchar(zle: &mut crate::ported::zle::zle_main::Zle, repeat: i32) -> i32 {  // c:786
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_misc::{VFINDCHAR, VFINDDIR, TAILADD};
+    let vfind = VFINDCHAR.load(Ordering::Relaxed);
+    let vdir = VFINDDIR.load(Ordering::Relaxed);
+    let tail = TAILADD.load(Ordering::Relaxed);
+    let ocs = zle.zlecs;
+    let n = zle.zmod.mult;
+    if vdir == 0 {                                                           // c:791
+        return 1;
+    }
+    if n < 0 {                                                               // c:793
+        // c:794-798 — recurse via virevrepeatfind with negated count.
+        zle.zmod.mult = -n;
+        let r = vifindchar(zle, repeat);
+        zle.zmod.mult = n;
+        return r;
+    }
+    // c:800-808 — repeat skip-over-current-match.
+    if repeat != 0 && tail != 0 {
+        if vdir > 0 {
+            if zle.zlecs + 1 < zle.zlell &&
+               (zle.zleline[zle.zlecs + 1] as i32) == vfind {
+                inccs(zle);
+            }
+        } else if zle.zlecs > 0 &&
+                  (zle.zleline[zle.zlecs - 1] as i32) == vfind {
+            deccs(zle);
+        }
+    }
+    let mut nn = n;
+    while nn > 0 {                                                           // c:810
+        loop {                                                               // c:811-818 do-while
+            if vdir > 0 {
+                inccs(zle);
+            } else {
+                if zle.zlecs == 0 { break; }
+                deccs(zle);
+            }
+            if zle.zlecs >= zle.zlell ||
+               (zle.zleline[zle.zlecs] as i32) == vfind ||
+               zle.zleline[zle.zlecs] == '\n' {
+                break;
+            }
+        }
+        if zle.zlecs >= zle.zlell || zle.zleline[zle.zlecs] == '\n' {
+            zle.zlecs = ocs;                                                 // c:820
+            return 1;
+        }
+        nn -= 1;
+    }
+    if tail > 0 {                                                            // c:824
+        inccs(zle);
+    } else if tail < 0 {
+        deccs(zle);
+    }
+    0
+}
 
 /// Port of `vifindnextchar()` from Src/Zle/zle_move.c:739. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn vifindnextchar() -> i32 { 0 }
+pub fn vifindnextchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:738
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
+    // C body (c:740-746): `if ((vfindchar = vigetkey()) != ZLEEOF) {
+    //                    vfinddir=1; tailadd=0; return vifindchar(0,args); }
+    //                    return 1`.
+    let c = crate::ported::zle::zle_vi::vigetkey(zle);
+    if c < 0 {
+        return 1;
+    }
+    VFINDCHAR.store(c, Ordering::SeqCst);
+    VFINDDIR.store(1, Ordering::SeqCst);
+    TAILADD.store(0, Ordering::SeqCst);
+    vifindchar(zle, 0)
+}
 
 /// Port of `vifindnextcharskip()` from Src/Zle/zle_move.c:763. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn vifindnextcharskip() -> i32 { 0 }
+pub fn vifindnextcharskip(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:762
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
+    // C body (c:764-770): vfinddir=1, tailadd=-1 (land just before).
+    let c = crate::ported::zle::zle_vi::vigetkey(zle);
+    if c < 0 { return 1; }
+    VFINDCHAR.store(c, Ordering::SeqCst);
+    VFINDDIR.store(1, Ordering::SeqCst);
+    TAILADD.store(-1, Ordering::SeqCst);
+    vifindchar(zle, 0)
+}
 
 /// Port of `vifindprevchar()` from Src/Zle/zle_move.c:751. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn vifindprevchar() -> i32 { 0 }
+pub fn vifindprevchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:750
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
+    // C body (c:752-758): same as vifindnextchar but vfinddir=-1.
+    let c = crate::ported::zle::zle_vi::vigetkey(zle);
+    if c < 0 { return 1; }
+    VFINDCHAR.store(c, Ordering::SeqCst);
+    VFINDDIR.store(-1, Ordering::SeqCst);
+    TAILADD.store(0, Ordering::SeqCst);
+    vifindchar(zle, 0)
+}
 
 /// Port of `vifindprevcharskip()` from Src/Zle/zle_move.c:775. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn vifindprevcharskip() -> i32 { 0 }
+pub fn vifindprevcharskip(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:774
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
+    // C body (c:776-782): vfinddir=-1, tailadd=1 (land just after).
+    let c = crate::ported::zle::zle_vi::vigetkey(zle);
+    if c < 0 { return 1; }
+    VFINDCHAR.store(c, Ordering::SeqCst);
+    VFINDDIR.store(-1, Ordering::SeqCst);
+    TAILADD.store(1, Ordering::SeqCst);
+    vifindchar(zle, 0)
+}
 
 /// Port of `vifirstnonblank()` from `Src/Zle/zle_move.c:861`.
 /// ```c
@@ -534,7 +747,22 @@ pub fn viforwardchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {   // 
 }
 
 /// Port of `vigotocolumn()` from Src/Zle/zle_move.c:572. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn vigotocolumn() -> i32 { 0 }
+pub fn vigotocolumn(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {    // c:572
+    // C body (c:574-590): findline(&x, &y); n = zmult; if (n>=0) move
+    //                    forward n cols from bol (n--); else from eol
+    //                    backward.
+    let bol = crate::ported::zle::zle_utils::findbol(zle);
+    let eol = crate::ported::zle::zle_utils::findeol(zle);
+    let n = zle.zmod.mult;
+    let target = if n >= 0 {
+        let off = if n > 0 { (n as usize) - 1 } else { 0 };
+        (bol + off).min(eol)
+    } else {
+        eol.saturating_sub((-n) as usize)
+    };
+    zle.zlecs = target.max(bol).min(eol);
+    0
+}
 
 /// Port of `vigotomark()` from Src/Zle/zle_move.c:887. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn vigotomark() -> i32 { 0 }

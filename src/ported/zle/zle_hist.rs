@@ -1016,16 +1016,43 @@ pub fn acceptandinfernexthistory() -> i32 { 0 }
 pub fn acceptlineanddownhistory() -> i32 { 0 }
 
 /// Port of `beginningofbufferorhistory()` from Src/Zle/zle_hist.c:573. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn beginningofbufferorhistory() -> i32 { 0 }
+pub fn beginningofbufferorhistory(zle: &mut Zle) -> i32 {                    // c:573
+    // C body (c:576-580): `if (findbol()) zlecs = 0; else
+    //                    return beginningofhistory(args)`. If not at
+    //                    bol of first line, jump there; else move up.
+    let bol = crate::ported::zle::zle_utils::findbol(zle);
+    if bol > 0 {
+        zle.zlecs = 0;
+        0
+    } else {
+        beginningofhistory(zle)
+    }
+}
 
 /// Port of `beginningofhistory()` from Src/Zle/zle_hist.c:584. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn beginningofhistory() -> i32 { 0 }
+pub fn beginningofhistory(zle: &mut Zle) -> i32 {                            // c:583
+    // C body (c:586-589): `if (!zle_goto_hist(firsthist(), 0, 0) &&
+    //                    isset(HISTBEEP)) return 1; return 0`.
+    zle.history.cursor = 0;
+    0
+}
 
 /// Port of `doisearch()` from Src/Zle/zle_hist.c:1082. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn doisearch() -> i32 { 0 }
 
 /// Port of `downhistory()` from Src/Zle/zle_hist.c:434. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn downhistory() -> i32 { 0 }                                            // c:434
+pub fn downhistory(zle: &mut Zle) -> i32 {                                   // c:433
+    // C body (c:435-440): `nodups = isset(HISTIGNOREDUPS); if
+    //                    (!zle_goto_hist(histline, zmult, nodups) &&
+    //                    isset(HISTBEEP)) return 1; return 0`.
+    let n = zle.zmod.mult.max(1);
+    for _ in 0..n {
+        if zle.history.down().is_none() {
+            return 1;
+        }
+    }
+    0
+}
 
 /// Port of `downlineorhistory()` from Src/Zle/zle_hist.c:370. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn downlineorhistory() -> i32 { 0 }
@@ -1034,10 +1061,25 @@ pub fn downlineorhistory() -> i32 { 0 }
 pub fn downlineorsearch() -> i32 { 0 }
 
 /// Port of `endofbufferorhistory()` from Src/Zle/zle_hist.c:593. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn endofbufferorhistory() -> i32 { 0 }
+pub fn endofbufferorhistory(zle: &mut Zle) -> i32 {                          // c:593
+    // C body (c:595-600): `if (findeol() != zlell) zlecs = zlell;
+    //                    else return endofhistory(args)`.
+    let eol = crate::ported::zle::zle_utils::findeol(zle);
+    if eol != zle.zlell {
+        zle.zlecs = zle.zlell;
+        0
+    } else {
+        endofhistory(zle)
+    }
+}
 
 /// Port of `endofhistory()` from Src/Zle/zle_hist.c:604. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn endofhistory() -> i32 { 0 }
+pub fn endofhistory(zle: &mut Zle) -> i32 {                                  // c:603
+    // C body (c:606): `zle_goto_hist(curhist, 0, 0); return 0`. Reset
+    //                cursor to live-buffer sentinel (just past last entry).
+    zle.history.cursor = zle.history.entries.len();
+    0
+}
 
 /// Port of `free_isrch_spots()` from Src/Zle/zle_hist.c:965. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn free_isrch_spots() -> i32 { 0 }
@@ -1103,7 +1145,17 @@ pub fn set_isrch_spot() -> i32 { 0 }
 pub fn setlocalhistory() -> i32 { 0 }
 
 /// Port of `uphistory()` from Src/Zle/zle_hist.c:233. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn uphistory() -> i32 { 0 }                                              // c:233
+pub fn uphistory(zle: &mut Zle) -> i32 {                                     // c:232
+    // C body (c:234-239): same as downhistory but `-zmult`. Walk
+    //                    backward through History entries.
+    let n = zle.zmod.mult.max(1);
+    for _ in 0..n {
+        if zle.history.up().is_none() {
+            return 1;
+        }
+    }
+    0
+}
 
 /// Port of `uplineorhistory()` from Src/Zle/zle_hist.c:282. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn uplineorhistory() -> i32 { 0 }
