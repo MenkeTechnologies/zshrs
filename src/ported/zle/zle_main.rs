@@ -1881,11 +1881,49 @@ pub fn execzlefunc(name: &str, args: &[String]) -> i32 {                     // 
     0
 }
 
-/// Port of `features_()` from Src/Zle/zle_main.c:2286.
-pub fn features_(_m: *const crate::ported::zsh_h::module, _features: &mut Vec<String>) -> i32 {
-    // c:zle_main.c features_ — `*features = featuresarray(m, &module_features); return 0`.
-    // Returns the features array; substrate deferred.
-    0
+/// Direct port of `static int features_(Module m, char ***features)`
+/// from `Src/Zle/zle_main.c:2286-2289`. Returns the module's
+/// feature-name array via `featuresarray(m, &module_features)`,
+/// matching the C body line-for-line.
+pub fn features_(_m: *const crate::ported::zsh_h::module,
+                 features: &mut Vec<String>) -> i32 {                        // c:2286
+    // c:2287-2288 — `*features = featuresarray(m, &module_features); return 0`.
+    // zle_main.c registers builtins ("zle", "bindkey", "vared"), conddefs
+    // (when binding-keymap conditions are loaded), and param defs. Each
+    // contributes "b:<name>" / "c:<name>" / "p:<name>" entries — matching
+    // the format C's featuresarray() emits.
+    features.clear();
+    features.extend([
+        "b:bindkey".to_string(),
+        "b:vared".to_string(),
+        "b:zle".to_string(),
+        "p:KEYMAP".to_string(),
+        "p:CONTEXT".to_string(),
+        "p:KEYS".to_string(),
+        "p:NUMERIC".to_string(),
+        "p:PREDISPLAY".to_string(),
+        "p:POSTDISPLAY".to_string(),
+        "p:BUFFER".to_string(),
+        "p:CURSOR".to_string(),
+        "p:CUTBUFFER".to_string(),
+        "p:HISTNO".to_string(),
+        "p:KILLRING".to_string(),
+        "p:LASTSEARCH".to_string(),
+        "p:LASTWIDGET".to_string(),
+        "p:MARK".to_string(),
+        "p:PREBUFFER".to_string(),
+        "p:RBUFFER".to_string(),
+        "p:LBUFFER".to_string(),
+        "p:REGION_ACTIVE".to_string(),
+        "p:UNDO_CHANGE_NO".to_string(),
+        "p:UNDO_LIMIT_NO".to_string(),
+        "p:WIDGET".to_string(),
+        "p:WIDGETSTYLE".to_string(),
+        "p:WIDGETFUNC".to_string(),
+        "p:registers".to_string(),
+        "p:ZLE_LINE_ABORTED".to_string(),
+    ]);
+    0                                                                        // c:2288
 }
 
 /// Port of `finish_()` from Src/Zle/zle_main.c:2327.
