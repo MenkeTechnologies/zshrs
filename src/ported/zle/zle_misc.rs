@@ -779,3 +779,54 @@ pub fn whatcursorposition() -> i32 { 0 }
 
 /// Port of `yankpop()` from Src/Zle/zle_misc.c:728. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn yankpop() -> i32 { 0 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn acceptline_sets_done() {
+        // c:401-404 — `done = 1; return 0`.
+        DONE.store(0, Ordering::SeqCst);
+        let r = acceptline();
+        assert_eq!(r, 0);
+        assert_eq!(DONE.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn undefinedkey_returns_one() {
+        // c:892-894 — single `return 1` body.
+        assert_eq!(undefinedkey(), 1);
+    }
+
+    #[test]
+    fn sendbreak_sets_errflag_and_returns_one() {
+        use crate::ported::zsh_h::{ERRFLAG_ERROR, ERRFLAG_INT};
+        // Reset errflag so the OR-set is observable.
+        crate::ported::utils::set_errflag(0);
+        let r = sendbreak();
+        // c:1147 — return 1.
+        assert_eq!(r, 1);
+        // c:1146 — both ERRFLAG_ERROR | ERRFLAG_INT set.
+        let f = crate::ported::utils::errflag();
+        assert!(f & ERRFLAG_ERROR != 0);
+        assert!(f & ERRFLAG_INT != 0);
+        // Reset for other tests.
+        crate::ported::utils::set_errflag(0);
+    }
+
+    #[test]
+    fn sendbreak_preserves_existing_errflag_bits() {
+        // c:1146 — `errflag |= ...` (OR-equal, not assign).
+        crate::ported::utils::set_errflag(0x1000); // pretend bit 12 was set
+        sendbreak();
+        let f = crate::ported::utils::errflag();
+        // Pre-existing bit preserved.
+        assert!(f & 0x1000 != 0);
+        // New bits also set.
+        assert!(f & crate::ported::zsh_h::ERRFLAG_ERROR != 0);
+        assert!(f & crate::ported::zsh_h::ERRFLAG_INT != 0);
+        crate::ported::utils::set_errflag(0);
+    }
+}
