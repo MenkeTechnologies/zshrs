@@ -702,7 +702,31 @@ pub fn copyregionaskill() -> i32 { 0 }
 pub fn deletechar() -> i32 { 0 }
 
 /// Port of `digitargument()` from Src/Zle/zle_misc.c:950. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn digitargument() -> i32 { 0 }
+pub fn digitargument(zle: &mut Zle) -> i32 {                                 // c:1042
+    use super::zle_main::ModifierFlags;
+    // c:1044 — `int sign = (zmult < 0) ? -1 : 1`.
+    let sign: i32 = if zle.zmod.mult < 0 { -1 } else { 1 };
+    // c:1045 — `parsedigit(lastchar)`.
+    let newdigit = parsedigit(zle, zle.lastchar);
+    if newdigit < 0 {                                                        // c:1047
+        return 1;                                                            // c:1048
+    }
+    // c:1050-1051 — `if (!(zmod.flags & MOD_TMULT)) zmod.tmult = 0`.
+    if !zle.zmod.flags.contains(ModifierFlags::TMULT) {
+        zle.zmod.tmult = 0;
+    }
+    // c:1052-1057 — MOD_NEG path: replace tmult with sign*newdigit.
+    if zle.zmod.flags.contains(ModifierFlags::NEG) {
+        zle.zmod.tmult = sign * newdigit;
+        zle.zmod.flags.remove(ModifierFlags::NEG);
+    } else {
+        // c:1058 — `zmod.tmult = zmod.tmult * zmod.base + sign*newdigit`.
+        zle.zmod.tmult = zle.zmod.tmult * zle.zmod.base + sign * newdigit;
+    }
+    zle.zmod.flags.insert(ModifierFlags::TMULT);                             // c:1059
+    zle.prefixflag = true;                                                   // c:1060
+    0                                                                        // c:1061
+}
 
 /// Port of `doinsert()` from Src/Zle/zle_misc.c:37. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn doinsert() -> i32 { 0 }
@@ -1117,5 +1141,65 @@ mod tests {
         let mut z = Zle::new();
         z.zmod.base = 10;
         assert_eq!(parsedigit(&z, 0x80 | (b'5' as i32)), 5);
+    }
+
+    // ---------- digitargument real-port tests ----------
+
+    #[test]
+    fn digitargument_first_digit_no_tmult() {
+        // c:1050-1051 — `if (!TMULT) tmult = 0`. First digit: tmult=0
+        // then tmult = 0*10 + 1*5 = 5.
+        use super::super::zle_main::ModifierFlags;
+        let mut z = Zle::new();
+        z.zmod.flags = ModifierFlags::empty();
+        z.zmod.base = 10;
+        z.zmod.mult = 1; // sign = 1
+        z.lastchar = b'5' as i32;
+        let r = digitargument(&mut z);
+        assert_eq!(r, 0);
+        assert_eq!(z.zmod.tmult, 5);
+        assert!(z.zmod.flags.contains(ModifierFlags::TMULT));
+        assert!(z.prefixflag);
+    }
+
+    #[test]
+    fn digitargument_second_digit_accumulates() {
+        // c:1058 — second digit: tmult = 5*10 + 1*7 = 57.
+        use super::super::zle_main::ModifierFlags;
+        let mut z = Zle::new();
+        z.zmod.flags = ModifierFlags::TMULT;
+        z.zmod.tmult = 5;
+        z.zmod.base = 10;
+        z.zmod.mult = 1; // sign = 1
+        z.lastchar = b'7' as i32;
+        digitargument(&mut z);
+        assert_eq!(z.zmod.tmult, 57);
+    }
+
+    #[test]
+    fn digitargument_invalid_returns_one() {
+        // c:1047-1048 — parsedigit < 0 → return 1.
+        let mut z = Zle::new();
+        z.zmod.base = 10;
+        z.lastchar = b'a' as i32; // not a decimal digit
+        assert_eq!(digitargument(&mut z), 1);
+    }
+
+    #[test]
+    fn digitargument_neg_flag_replaces_tmult() {
+        // c:1054-1056 — MOD_NEG: tmult = sign * newdigit, NEG cleared.
+        // sign = -1 (zmult<0); first digit '3' → tmult = -1*3 = -3.
+        use super::super::zle_main::ModifierFlags;
+        let mut z = Zle::new();
+        z.zmod.flags = ModifierFlags::TMULT | ModifierFlags::NEG;
+        z.zmod.tmult = -1;  // set by negargument
+        z.zmod.base = 10;
+        z.zmod.mult = -1;   // negative → sign = -1
+        z.lastchar = b'3' as i32;
+        digitargument(&mut z);
+        assert_eq!(z.zmod.tmult, -3);
+        // NEG cleared.
+        assert!(!z.zmod.flags.contains(ModifierFlags::NEG));
+        assert!(z.zmod.flags.contains(ModifierFlags::TMULT));
     }
 }
