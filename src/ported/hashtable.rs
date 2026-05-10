@@ -2072,9 +2072,13 @@ pub fn enableshfuncnode(nam: &str) {
     }
     if let Some(sig_part) = nam.strip_prefix("TRAP") {
         if let Some(sig) = crate::ported::signals::getsigidx(sig_part) {
+            // c:882 — `settrap(sigidx, NULL, ZSIG_FUNC)`. The TRAPxxx
+            // function body resolves through shfunctab at dispatch
+            // (`gettrapnode`), not via the trap arrays directly.
             let _ = crate::ported::signals::settrap(
                 sig,
-                crate::ported::signals::TrapAction::Function(nam.to_string()),
+                None,
+                crate::ported::zsh_h::ZSIG_FUNC,
             );
         }
     }
