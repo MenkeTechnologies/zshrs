@@ -1673,11 +1673,79 @@ pub fn join_strs(_la: i32, _sa: &str, _lb: i32, _sb: &str) -> Option<String> { /
     None
 }
 
-/// Port of `join_sub()` from Src/Zle/compmatch.c:2212.
-pub fn join_sub(_a: i32, _bp: i32, _bsfx: i32, _b: i32, _flags: i32) -> i32 {  // c:2212
-    // C body c:2214-2299 — splices a sub-match Cline list into the
-    //                      main Cline. Substrate deferred; 0.
-    0
+/// Direct port of `static Cline join_sub(Cmdata md, char *str, int len,
+///                                       int *mlen, int sfx, int join)`
+/// from `Src/Zle/compmatch.c:2212-2299`. Tries to match the new
+/// substring `str[..len]` against the data currently in `md` via
+/// one of the no-anchor matchers in `bmatchers`; on success
+/// returns the matched-portion Cline and updates `md`/`*mlen`.
+pub fn join_sub(md: &mut Cmdata, str_: &str, len: i32, mlen: &mut i32,       // c:2212
+                sfx: i32, join: i32) -> Option<Box<crate::ported::zle::comp_h::Cline>>
+{
+    use crate::ported::zle::comp_h::CLF_JOIN;
+
+    // c:2214 — `if (!check_cmdata(md, sfx))`. Refill md from next
+    // Cline; bail when chain exhausted.
+    if check_cmdata(md, sfx) != 0 {
+        return None;
+    }
+
+    let ow = str_;
+    let nw = md.str_.clone();
+    let ol = len;
+    let nl = md.len;
+
+    // c:2226 — walk bmatchers for a no-anchor matcher.
+    let bmatchers = crate::ported::zle::compcore::bmatchers
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock().ok().and_then(|g| g.clone());
+
+    let mut cur = bmatchers.as_deref();
+    while let Some(ms) = cur {                                               // c:2226
+        let mp = &*ms.matcher;
+        if mp.flags == 0 && mp.wlen > 0 && mp.llen > 0 {                     // c:2231
+            // c:2235-2249 — early-return: if the old string already
+            // matches the new word pattern, advance md and return a
+            // cline for the matched portion.
+            if mp.llen <= ol && mp.wlen <= nl {                              // c:2236
+                let ow_off = if sfx != 0 { ol - mp.llen } else { 0 };
+                let nw_off = if sfx != 0 { nl - mp.wlen } else { 0 };
+                let line_slice = &ow[ow_off as usize..];
+                let word_slice = &nw[nw_off as usize..];
+                if pattern_match(
+                    mp.line.as_deref(), line_slice,
+                    mp.word.as_deref(), word_slice,
+                ) != 0
+                {
+                    // c:2241-2243 — update md.str.
+                    if sfx != 0 {
+                        md.str_ = md.str_.chars().take(
+                            md.str_.chars().count().saturating_sub(mp.wlen as usize),
+                        ).collect();
+                    } else {
+                        md.str_ = md.str_.chars()
+                            .skip(mp.wlen as usize).collect();
+                    }
+                    md.len -= mp.wlen;
+                    *mlen = mp.llen;                                         // c:2247
+                    return Some(get_cline(                                   // c:2249
+                        None, 0,
+                        Some(line_slice[..mp.llen as usize].to_string()),
+                        mp.llen, None, 0, 0,
+                    ));
+                }
+            }
+            // c:2255-2294 — the bld_line-driven branch (join != 0)
+            // tries to construct a synthetic line that matches both
+            // strings. `bld_line` is still substrate-pending; the
+            // early-return path above covers the common case where
+            // both strings already line up under the matcher.
+            let _ = join;
+            let _ = CLF_JOIN;
+        }
+        cur = ms.next.as_deref();
+    }
+    None                                                                     // c:2298
 }
 
 /// Port of `pattern_match()` from Src/Zle/compmatch.c:1548.
