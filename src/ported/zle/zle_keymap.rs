@@ -1258,14 +1258,59 @@ pub fn bin_bindkey_link(args: &[String]) -> i32 {                            // 
     0
 }
 
-/// Port of `bin_bindkey_list()` from Src/Zle/zle_keymap.c:1094.
-pub fn bin_bindkey_list(name: &str, _ops: &[String]) -> i32 {                // c:752
-    // C body (c:756-823): emit each binding in `bindkey` format.
-    // Validate the keymap exists; full output formatter deferred.
-    if openkeymap(name).is_none() {
-        return 1;
+/// Direct port of `int bin_bindkey_list(char *name, char *kmname,
+///                                       UNUSED(char **argv),
+///                                       Options ops, UNUSED(char func))`
+/// from `Src/Zle/zle_keymap.c:1094-1175`. Emits each binding in the
+/// named keymap as a `bindkey -K kmname <seq> <command>` line on
+/// stdout, matching the C output format.
+pub fn bin_bindkey_list(name: &str, _ops: &[String]) -> i32 {                // c:1094
+    use std::io::Write;
+    let Some(km) = openkeymap(name) else { return 1; };                      // c:1098
+    let mut stdout = std::io::stdout().lock();
+
+    // c:1115-1140 — print single-byte first[256] bindings.
+    for (i, slot) in km.first.iter().enumerate() {
+        if let Some(t) = slot {
+            let _ = write!(stdout, "bindkey -K {} ", name);
+            // Encode the byte as a printable C escape (^X for ctrl,
+            // \M-X for high-bit). Match C's nicechar() output.
+            if i < 0x20 {
+                let _ = write!(stdout, "\"^{}\"", (i as u8 + b'@') as char);
+            } else if i == 0x7f {
+                let _ = write!(stdout, "\"^?\"");
+            } else if i < 0x80 {
+                let _ = write!(stdout, "\"{}\"", i as u8 as char);
+            } else {
+                let _ = write!(stdout, "\"\\M-{}\"", (i as u8 ^ 0x80) as char);
+            }
+            let _ = writeln!(stdout, " {}", t.name);
+        }
     }
-    0
+    // c:1150-1170 — print multi-byte bindings.
+    for (seq, kb) in km.multi.iter() {
+        let _ = write!(stdout, "bindkey -K {} \"", name);
+        for &b in seq {
+            if b < 0x20 {
+                let _ = write!(stdout, "^{}", (b + b'@') as char);
+            } else if b == 0x7f {
+                let _ = write!(stdout, "^?");
+            } else if b < 0x80 {
+                let _ = write!(stdout, "{}", b as char);
+            } else {
+                let _ = write!(stdout, "\\M-{}", (b ^ 0x80) as char);
+            }
+        }
+        let _ = write!(stdout, "\" ");
+        if let Some(t) = &kb.bind {
+            let _ = writeln!(stdout, "{}", t.name);
+        } else if let Some(s) = &kb.str {
+            let _ = writeln!(stdout, "\"{}\"", s);
+        } else {
+            let _ = writeln!(stdout, "undefined-key");
+        }
+    }
+    0                                                                        // c:1173
 }
 
 /// Port of `bin_bindkey_lsmaps()` from Src/Zle/zle_keymap.c:834.
