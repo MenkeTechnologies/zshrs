@@ -934,4 +934,9 @@ fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
     let g = f.lock().unwrap();
     vec![0; (g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract) as usize]
 }
+// File-static delegator to `Src/module.c:3349 setfeatureenables` —
+// dispatches per-feature enable bits through setbuiltins/setconddefs/
+// setmathfuncs/setparamdefs. The static-link Rust path treats every
+// feature as always-enabled, so this no-op return matches what
+// cleanup_(NULL) needs (revoke nothing).
 fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }
