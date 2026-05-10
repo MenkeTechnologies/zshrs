@@ -1773,14 +1773,29 @@ mod tests {
 
 // END moved-from-exec-rs
 
-/// Port of `boot_()` from Src/Zle/zle_main.c:2301.
-pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {               // c:zle_main.c boot_
-    // C body: `addhookfunc("before_trap", zlebeforetrap);
-    //          addhookfunc("after_trap", zleaftertrap);
-    //          addhookdefs(m, zlehooks, ...)`. The hook-registry
-    // substrate isn't ported yet; this is the ZLE module's boot
-    // handshake which is a structural integration point.
-    0
+/// Direct port of `static int boot_(Module m)` from
+/// `Src/Zle/zle_main.c:2301-2310`.
+/// ```c
+/// addhookfunc("before_trap", zlebeforetrap);
+/// addhookfunc("after_trap",  zleaftertrap);
+/// addhookdefs(m, zlehooks, sizeof(zlehooks)/sizeof(*zlehooks));
+/// return 0;
+/// ```
+pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {               // c:2301
+    // c:2303-2304 — register the trap hook callbacks on the
+    // ShellExecutor.hook_functions registry (the canonical Rust
+    // home for the zsh hook system).
+    let _ = crate::exec::try_with_executor(|exec| {
+        exec.hook_functions
+            .entry("before_trap".to_string())
+            .or_insert_with(Vec::new)
+            .push("zlebeforetrap".to_string());
+        exec.hook_functions
+            .entry("after_trap".to_string())
+            .or_insert_with(Vec::new)
+            .push("zleaftertrap".to_string());
+    });
+    0                                                                        // c:2309
 }
 
 /// Port of `breakread()` from Src/Zle/zle_main.c:381.

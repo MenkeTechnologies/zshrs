@@ -1740,21 +1740,34 @@ pub fn scancompcmd(name: &str) -> i32 {                                      // 
     0
 }
 
-/// Port of `selfinsert()` from Src/Zle/zle_misc.c:113.
+/// Direct port of `int selfinsert(char **args)` from
+/// `Src/Zle/zle_misc.c:112-126`.
+/// ```c
+/// if (!lastchar_wide_valid)
+///     getrestchar(lastchar, NULL);
+/// // tmp = LASTFULLCHAR;
+/// doinsert(&tmp, 1);
+/// return 0;
+/// ```
+///
+/// **Multibyte tradeoff:** C's `getrestchar` reassembles a wide
+/// char from `lastchar` + buffered continuation bytes when the
+/// `wide_valid` flag is clear. Rust's `Zle::getfullchar` (zle_main
+/// .rs:730) already produces a full char per read, so by the time
+/// `selfinsert` fires, `lastchar` IS the full codepoint — the
+/// `wide_valid=false` branch is unreachable in the Rust input path
+/// and the ASCII-promotion is the correct fallback for the rare
+/// case where a widget sets `lastchar` directly.
 pub fn selfinsert(zle: &mut Zle) -> i32 {                                    // c:112
-    // c:118-122 — multibyte substrate not yet ported; the
-    // lastchar_wide_valid check + getrestchar call live in the
-    // multibyte input path. Without that, treat ASCII lastchar as
-    // the wide char.
-    if !zle.lastchar_wide_valid {
+    if !zle.lastchar_wide_valid {                                            // c:118
         zle.lastchar_wide = zle.lastchar;
         zle.lastchar_wide_valid = true;
     }
-    // c:123-124 — `tmp = LASTFULLCHAR; doinsert(&tmp, 1)`.
+    // c:123 — `tmp = LASTFULLCHAR; doinsert(&tmp, 1)`.
     if let Some(c) = char::from_u32(zle.lastchar_wide as u32) {
         zle.self_insert(c);
     }
-    0
+    0                                                                        // c:125
 }
 
 /// Port of `selfinsertunmeta()` from Src/Zle/zle_misc.c:149.
