@@ -23,13 +23,15 @@
 // `do_single` / `do_allmatches`. zshrs's port routes those
 // through the executor's completion state directly.
 
+// scs is used to return the position where a automatically created suffix  // c:573
+// has to be inserted.                                                       // c:574
 /// Replace `[word_start, word_end)` in `buffer` with `replacement`,
 /// returning the new buffer plus updated cursor position.
 /// Port of `instmatch()` from Src/Zle/compresult.c. The C source
 /// uses this as the lowest-level "swap the partial word for the
 /// chosen completion" primitive used by every other inserter
 /// (`do_single`, `do_ambiguous`, `do_allmatches`).
-pub fn instmatch(
+pub fn instmatch(                                                            // c:578
     buffer: &str,
     cursor: usize,
     word_start: usize,
@@ -45,12 +47,14 @@ pub fn instmatch(
 }
 
 /// Find the longest common prefix of every match — the substring the
+// This is a utility function using the function above to allow access     // c:520
+// to the unambiguous string and cursor position via compstate.             // c:521
 /// completion engine inserts on the first Tab press when matches
 /// are ambiguous.
 /// Port of `unambig_data()` from Src/Zle/compresult.c. The C source
 /// also tracks cursor placement within the prefix; ours returns
 /// just the common-prefix string.
-pub fn unambig_data(matches: &[String]) -> String {
+pub fn unambig_data(matches: &[String]) -> String {                          // c:525
     if matches.is_empty() {
         return String::new();
     }
@@ -80,10 +84,11 @@ pub fn unambig_data(matches: &[String]) -> String {
 
 /// Insert the single chosen match, optionally appending a space.
 /// Port of `do_single()` from Src/Zle/compresult.c — fired when
+// Insert a single match in the command line.                              // c:959
 /// completion produced exactly one match. The trailing space is
 /// the `AUTO_REMOVE_SLASH`-aware insertion that distinguishes
 /// finished-completion from prefix-completion.
-pub fn do_single(
+pub fn do_single(                                                            // c:963
     buffer: &str,
     cursor: usize,
     word_start: usize,
@@ -316,26 +321,59 @@ mod tests {
     }
 }
 
-/// Port of `bld_all_str()` from Src/Zle/compresult.c:2187. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bld_all_str() -> i32 { 0 }
+// =====================================================================
+// Deferred shims — `unimplemented!()` placeholders so the C-source
+// fn names remain searchable. Bodies need the Cmgroup/Cmatch
+// linked-list machine, listing-arena state, and zle_refresh's
+// drawing primitives — substrate that isn't ported yet. Each panics
+// on call so silent fakes can't escape — per the no-shortcuts rule.
+// =====================================================================
 
-/// Port of `calclist()` from Src/Zle/compresult.c:1495. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn calclist() -> i32 { 0 }
+/// Port of `bld_all_str()` from `Src/Zle/compresult.c:2187`.
+/// Builds the inserted "all matches" string for `do_allmatches`.
+pub fn bld_all_str() -> i32 {                                                // c:2187
+    unimplemented!("compresult.rs::bld_all_str — c:2187 deferred (Cmatch list walk + brace expansion)");
+}
 
-/// Port of `do_ambig_menu()` from Src/Zle/compresult.c:1381. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn do_ambig_menu() -> i32 { 0 }
+/// Port of `calclist()` from `Src/Zle/compresult.c:1495`.
+/// Computes per-match column widths and totals for the listing.
+pub fn calclist() -> i32 {                                                   // c:1495
+    unimplemented!("compresult.rs::calclist — c:1495 deferred (mgroup walk + width accumulator)");
+}
 
-/// Port of `ilistmatches()` from Src/Zle/compresult.c:2284. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn ilistmatches() -> i32 { 0 }
+/// Port of `do_ambig_menu()` from `Src/Zle/compresult.c:1381`.
+/// Menu-completion entry for the ambiguous-matches case.
+pub fn do_ambig_menu() -> i32 {                                              // c:1381
+    unimplemented!("compresult.rs::do_ambig_menu — c:1381 deferred (menu state + amenu/lastambig globals)");
+}
 
-/// Port of `invalidate_list()` from Src/Zle/compresult.c:2334. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn invalidate_list() -> i32 { 0 }
+/// Port of `ilistmatches()` from `Src/Zle/compresult.c:2284`.
+/// Hook callback for `listmatches()`.
+pub fn ilistmatches() -> i32 {                                               // c:2284
+    unimplemented!("compresult.rs::ilistmatches — c:2284 deferred (Hookdef + Chdata plumbing + printlist call)");
+}
 
-/// Port of `iprintm()` from Src/Zle/compresult.c:2241. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn iprintm() -> i32 { 0 }
+/// Port of `invalidate_list()` from `Src/Zle/compresult.c:2334`.
+/// Hook callback for `invalidatelist()` — discards the cached list.
+pub fn invalidate_list() -> i32 {                                            // c:2334
+    unimplemented!("compresult.rs::invalidate_list — c:2334 deferred (validlist/showinglist globals + freematches dispatch)");
+}
 
-/// Port of `list_matches()` from Src/Zle/compresult.c:2304. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn list_matches() -> i32 { 0 }
+/// Port of `iprintm()` from `Src/Zle/compresult.c:2241`.
+/// `CLPrintFunc` for the standard listing — prints one match cell.
+pub fn iprintm() -> i32 {                                                    // c:2241
+    unimplemented!("compresult.rs::iprintm — c:2241 deferred (zle_refresh tputs/term primitives + Cmatch field decode)");
+}
 
-/// Port of `printlist()` from Src/Zle/compresult.c:1978. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn printlist() -> i32 { 0 }
+/// Port of `list_matches()` from `Src/Zle/compresult.c:2304`.
+/// Hook callback wrapper around `printlist`.
+pub fn list_matches() -> i32 {                                               // c:2304
+    unimplemented!("compresult.rs::list_matches — c:2304 deferred (Hookdef plumbing + iprintm dispatch)");
+}
+
+/// Port of `printlist()` from `Src/Zle/compresult.c:1978`.
+/// Renders the completion list to the terminal (the workhorse
+/// behind every listing path: ambiguous prompt, menu listing, etc.).
+pub fn printlist() -> i32 {                                                  // c:1978
+    unimplemented!("compresult.rs::printlist — c:1978 deferred (zle_refresh draw primitives + listdat global + ListPrintFunc dispatch)");
+}
