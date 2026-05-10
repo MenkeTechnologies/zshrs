@@ -2021,12 +2021,23 @@ pub fn savekeymap(oldname: &str, newname: &str) -> Option<std::sync::Arc<crate::
     if same { None } else { saved }
 }
 
-/// Port of `scanfindfunc()` from Src/Zle/zle_main.c:1935.
-pub fn scanfindfunc(_seq: &str, _func: &str) {                               // c:1934
-    // C body: per-keymap callback used by `whereis` to find which
-    // key sequences are bound to a given Thingy. Substrate
-    // (KeyScanFunc + per-binding HashTable scan) deferred — the
-    // standalone fn is only meaningful when invoked via scankeymap.
+/// Direct port of `static void scanfindfunc(char *seq, Thingy func,
+///                                          char *str, void *magic)`
+/// from `Src/Zle/zle_main.c:1934-1949`. Per-keymap scan callback for
+/// `describe-key-briefly`: when `func` matches the target in `ff`,
+/// appends " <seq>" to `ff.msg`, capped at MAXFOUND hits.
+pub fn scanfindfunc(seq: &str, func: &str, ff: &mut FindFunc) {              // c:1934
+    const MAXFOUND: usize = 3;                                               // c:1957
+    // c:1939 — `if (func != ff->func) return`. Compare by widget name.
+    let want = ff.func.map(|i| i.to_string()).unwrap_or_default();
+    if !want.is_empty() && func != want { return; }
+    // c:1942 — `if (!ff->found++) ff->msg = appstr(...," is on")`.
+    if ff.found == 0 { ff.msg.push_str(" is on"); }
+    ff.found += 1;
+    if ff.found <= MAXFOUND {                                                // c:1944
+        ff.msg.push(' ');                                                    // c:1946
+        ff.msg.push_str(seq);                                                // c:1947 bindztrdup
+    }
 }
 
 /// Port of `setup_()` from Src/Zle/zle_main.c:2243.
