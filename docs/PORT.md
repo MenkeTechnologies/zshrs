@@ -79,6 +79,72 @@ for the active list of remaining bag-of-globals targets (`SubstState`,
 `ShellState`, `CompletionState`, `BindState`, `RefreshState`,
 `CompState` in computil.rs, `JobState` in parameter.rs/jobs).
 
+**Rule E — Local variables must use the C source's exact names.**
+
+This applies to **every variable inside a function body**, not just
+function names and file-level declarations:
+
+```c
+static void setfunction(char *name, char *val, int dis)
+{
+    char *value = dupstring(val);
+    Shfunc shf;
+    Eprog prog;
+    int sn;
+    ...
+    val = metafy(val, strlen(val), META_REALLOC);
+    ...
+}
+```
+
+Rust port — same names, same order, same scope:
+
+```rust
+pub fn setfunction(name: &str, mut val: String, dis: i32) {
+    let value: String;             // c:286 char *value
+    let shf: ShFunc;               // c:287 Shfunc shf
+    // c:288 — Eprog prog (skipped: parse_string not yet ported)
+    // c:289 — int sn (used inside the TRAP branch only)
+    value = val.clone();           // c:286
+    val = metafy(&val);            // c:291 val reassigned, NOT a new `metafied`
+    ...
+}
+```
+
+❌ **Forbidden renames inside function bodies**:
+- `nam` → `name`, `argv` → `args`, `ops` → `opts` (params)
+- `val` → `metafied`, `value` → `dupval`, `s` → `string` (locals)
+- `hn` → `hn_opt` / `hn_node` (loop iterators — even when the Rust
+  type is `Option<T>`, keep the C name and pattern-match on it)
+- `i` → `idx`, `n` → `count`, `ret` → `result`
+- Combining multiple C locals into a tuple or struct
+- Reordering local declarations
+- Using a `for i in 0..N` loop when C declared `int i;` at function
+  top — `i` must be a function-scope local, not a loop-scope local
+- Dropping a local just because Rust doesn't force you to declare it
+
+**The C name is the canonical name.** If the C author chose `val` for
+a variable that holds a meta-fied string, the Rust port keeps `val`.
+"Rust idiom" is not an excuse to rename anything — same convention
+that applies to function params per Rule B.
+
+The Option<T> case: when C has `HashNode hn` iterated via
+`hn = ht->nodes[i]; hn; hn = hn->next`, the Rust port keeps `hn` as
+an `Option<HashNode>` and unwraps inside the loop body without
+renaming:
+
+```rust
+let mut hn: Option<HashNode>;                  // c:347 HashNode hn
+hn = ht_ref.nodes.get(i as usize).and_then(|n| n.clone());  // c:353
+while let Some(node) = &hn {
+    // process node.nam, node.next, ...
+    hn = node.next.clone();                    // c:353 hn = hn->next
+}
+```
+
+The inner `node` binding is the unwrap, not a rename. `hn` stays the
+function-scope name C uses.
+
 ---
 
 ## ABSOLUTE FREEZE on `src/ported/`
@@ -876,6 +942,14 @@ Before writing any code:
   flags: &ParamFlags)`. No threading state as extra params. No
   splitting one fn into many. No merging many into one. No reordering.
   No renaming. Same name, same arity, same order.
+- ❌ **Rename a local variable inside a function body.** Rule 5 / E
+  — C `int hard, limnum, lim;` → Rust `let hard; let limnum; let
+  lim;`, NOT `idx`/`count`/`result`. C `HashNode hn` iterating
+  `for (hn = ...; hn; hn = hn->next)` → Rust `let mut hn: Option<HashNode>;`,
+  NOT `hn_opt`/`hn_node`/`current`. C `val = metafy(val, ...)` → Rust
+  `val = metafy(&val);`, NOT `let metafied = metafy(&val);`. The C
+  name is the canonical name everywhere — params, locals, loop
+  iterators, temporaries.
 - ❌ Invent a function with a name not in `docs/zsh_c_functions.txt`.
 - ❌ Write "helper" / "utility" / "convenience" functions or files.
 - ❌ Add new modules like `helpers`, `common`, `prelude`, `error`,
@@ -942,6 +1016,11 @@ Before writing any code:
 >   `static ... <name>` in `src/zsh/Src/**/*.{c,h}`. Bag-of-globals
 >   `*Table` / `*State` / `*Builder` / `*Config` aggregates are
 >   deleted on sight.
+> - **Local variables inside fn bodies**: same names as C, in the
+>   same order, at the same scope. `int hard, limnum, lim;` → `let
+>   hard; let limnum; let lim;`. NEVER rename for "Rust idiom" — not
+>   for params, not for locals, not for loop iterators, not for
+>   temporaries. `val` stays `val`, `hn` stays `hn`, `i` stays `i`.
 > - **Signatures**: identical to C (Rule S1). Same name, same arity,
 >   same param order, no threading state as extra params.
 > - **File placement**: every fn / struct lives in the Rust file that
