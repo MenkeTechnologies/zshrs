@@ -513,10 +513,15 @@ pub fn parse_ordering(arg: &str, flags: &mut Option<i32>) -> i32 {           // 
 //   - createparamtable   → params.rs:4694
 //
 // The fns below dispatch through that canonical Rust paramtab via
-// setsparam/setiparam/setaparam (the actual GSU-vtable swap stays
-// substrate-pending until the per-param custom-getter machinery
-// expands; the read/write surface works today via the existing
-// scalar/array params).
+// setsparam/setiparam/setaparam. The GSU-vtable swap on each param
+// (a per-param custom-getter hook) is what wires e.g. `$BUFFER`
+// reads to the live `ZLELINE` global — that hook surface is the
+// `Param.gsu` field on params.rs's Param struct, which today binds
+// to the default scalar/array getters. Custom-getter wiring for
+// `$BUFFER`/`$CURSOR`/`$KILLRING`-style params is what
+// makezleparams (zle_params.rs:498, ported) sets up at widget-call
+// entry; the read/write surface works today via the existing
+// scalar/array params.
 
 /// Port of `addcompparams()` from `Src/Zle/complete.c:1297`.
 /// C body (c:1300-1326): walk a compparam[] table, createparam each
