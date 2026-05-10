@@ -606,6 +606,115 @@ pub struct Filecol {                                                         // 
     pub next: Option<Box<Filecol>>,                                          // c:218
 }
 
+/// Port of `struct patcol` from `Src/Zle/complist.c:225`. Per-pattern
+/// terminal-color spec — links a glob `pat` to up to MAX_POS+1 color
+/// strings (one per submatch position).
+#[derive(Default)]
+pub struct Patcol {                                                          // c:225
+    /// Group pattern (NULL → all groups).
+    pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:226
+    /// Pattern for match.
+    pub pat: Option<crate::ported::zsh_h::Patprog>,                          // c:227
+    /// Color strings indexed by submatch position (MAX_POS + 1 slots).
+    pub cols: Vec<String>,                                                   // c:228
+    /// Next entry in the patcol chain.
+    pub next: Option<Box<Patcol>>,                                           // c:229
+}
+
+/// Port of `struct extcol` from `Src/Zle/complist.c:236`. Per-extension
+/// terminal-color spec.
+#[derive(Default)]
+pub struct Extcol {                                                          // c:236
+    /// Group pattern (NULL → all groups).
+    pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:237
+    /// File extension (e.g. ".tar").
+    pub ext: String,                                                         // c:238
+    /// Terminal color string.
+    pub col: String,                                                         // c:239
+    /// Next entry in the extcol chain.
+    pub next: Option<Box<Extcol>>,                                           // c:240
+}
+
+/// Port of `LC_FOLLOW_SYMLINKS` from `Src/Zle/complist.c:251`.
+/// `ln=target:` flag — follow symlinks to determine highlighting.
+pub const LC_FOLLOW_SYMLINKS: i32 = 0x0001;                                  // c:251
+
+/// Port of `struct listcols` from `Src/Zle/complist.c:253`. Holds
+/// every terminal-color string a completion-listing run might emit.
+#[derive(Default)]
+pub struct Listcols {                                                        // c:253
+    /// Strings for file types (indexed by `col::*` constants).
+    pub files: Vec<Filecol>,                                                 // c:254 [NUM_COLS]
+    /// Strings for patterns.
+    pub pats: Option<Box<Patcol>>,                                           // c:255
+    /// Strings for extensions.
+    pub exts: Option<Box<Extcol>>,                                           // c:256
+    /// Special settings, see `LC_FOLLOW_SYMLINKS` above.
+    pub flags: i32,                                                          // c:257
+}
+
+/// Port of `struct menustack` from `Src/Zle/complist.c:2159`. Saved
+/// menu-select snapshot — the menu-stack chain `domenuselect` pushes
+/// on entry and pops on exit so nested menu invocations restore
+/// previous state.
+#[derive(Default)]
+pub struct Menustack {                                                       // c:2159
+    /// Saved zleline contents.
+    pub line: String,                                                        // c:2161
+    /// Brace-info head + tail.
+    pub brbeg: Vec<u8>,                                                      // c:2162 (Brinfo)
+    pub brend: Vec<u8>,                                                      // c:2163
+    /// Brace-info counts.
+    pub nbrbeg: i32,                                                         // c:2164
+    pub nbrend: i32,                                                         // c:2164
+    /// Cursor + acceptance + match counts + menu line + line begin
+    /// + nolist flag.
+    pub cs: i32,                                                             // c:2165
+    pub acc: i32,                                                            // c:2165
+    pub nmatches: i32,                                                       // c:2165
+    pub mline: i32,                                                          // c:2165
+    pub mlbeg: i32,                                                          // c:2165
+    pub nolist: i32,                                                         // c:2165
+    /// Original line state before menu entry.
+    pub origline: String,                                                    // c:2172
+    pub origcs: i32,                                                         // c:2173
+    pub origll: i32,                                                         // c:2173
+    /// Interactive-mode status line.
+    pub status: String,                                                      // c:2180
+    /// Mode discriminator (interactive vs search).
+    pub mode: i32,                                                           // c:2181
+}
+
+/// Port of `struct menusearch` from `Src/Zle/complist.c:2186`. Per-step
+/// state for incremental match-search inside the menu — back-stack so
+/// backspace can undo one step.
+#[derive(Default)]
+pub struct Menusearch {                                                      // c:2186
+    /// The search string accumulator.
+    pub str: String,                                                         // c:2188
+    /// Saved line + column.
+    pub line: i32,                                                           // c:2189
+    pub col: i32,                                                            // c:2190
+    /// Direction (1 = forward, 0 = backward).
+    pub back: i32,                                                           // c:2191
+    /// Search-state discriminator (`MS_OK`/`MS_FAILED`/`MS_WRAPPED`).
+    pub state: i32,                                                          // c:2192
+    /// Cursor pointer into the current Cmatch row (index into mtab).
+    pub ptr: usize,                                                          // c:2193
+}
+
+/// Port of `MS_OK` from `Src/Zle/complist.c:2196`. Search step landed
+/// on a match.
+pub const MS_OK:      i32 = 0;                                               // c:2196
+/// Port of `MS_FAILED` from `complist.c:2197`. Search step found no match.
+pub const MS_FAILED:  i32 = 1;                                               // c:2197
+/// Port of `MS_WRAPPED` from `complist.c:2198`. Search wrapped past edge.
+pub const MS_WRAPPED: i32 = 2;                                               // c:2198
+
+/// Port of `MAX_STATUS` from `Src/Zle/complist.c:2200`. Max bytes the
+/// menu-status line shows.
+pub const MAX_STATUS: usize = 128;                                           // c:2200
+
 /// Port of `filecol()` from `Src/Zle/complist.c:487-498`.
 /// ```c
 /// static Filecol
