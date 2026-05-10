@@ -571,12 +571,26 @@ pub fn handle_color(_seq: &str) -> i32 {                                     // 
     0
 }
 
-/// Port of `handle_paste()` from Src/Zle/termquery.c:595.
-pub fn handle_paste(_seq: &str, _len: usize) -> i32 {                        // c:595
-    // C body c:597-674 — parses bracketed-paste OSC sequences and
-    //                    forwards content as a single `bracketed-paste`
-    //                    event. ZLE event queue deferred; 0.
-    0
+/// Direct port of `static void handle_paste(int sequence, int *numbers,
+///                                          int len, char *capture,
+///                                          int clen, void *output)`
+/// from `Src/Zle/termquery.c:595-599`.
+///
+/// C body: `*(char**)output = base64_decode(capture, clen);` — drops
+/// a decoded payload into the caller-supplied `output` pointer.
+/// Rust port returns the decoded bytes as a String so callers can
+/// receive without unsafe pointer writes.
+pub fn handle_paste(seq: &str, len: usize) -> String {                       // c:595
+    // C ignores `sequence`, `numbers`, `len` (UNUSED markers); only
+    // `capture` + `clen` are read. `seq` here is the captured payload;
+    // `len` mirrors `clen`.
+    let capture = if len > 0 && len <= seq.len() {
+        &seq[..len]
+    } else {
+        seq
+    };
+    let bytes = base64_decode(capture);                                      // c:598
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// Port of `void mark_output(int start)` from Src/Zle/termquery.c:759.

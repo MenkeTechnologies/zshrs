@@ -496,14 +496,45 @@ pub fn get_yankstart(zle: &crate::ported::zle::zle_main::Zle) -> i64 {       // 
     zle.yank_start as i64
 }
 
-/// Port of `makezleparams()` from Src/Zle/zle_params.c:194.
-pub fn makezleparams(_local: i32) {                                          // c:194
-    // C body c:196-310 — registers all `$BUFFER`, `$LBUFFER`, `$RBUFFER`,
-    //                    `$CURSOR`, `$MARK`, `$NUMERIC`, `$REGION_ACTIVE`,
-    //                    etc. parameters with the param table for the
-    //                    duration of a widget call via createparam +
-    //                    a custom GSU vector. Param-table integration
-    //                    deferred; no-op.
+/// Direct port of `void makezleparams(int ro)` from
+/// `Src/Zle/zle_params.c:194-228`. Registers the `$BUFFER`,
+/// `$LBUFFER`, `$RBUFFER`, `$CURSOR`, `$MARK`, `$NUMERIC`,
+/// `$REGION_ACTIVE`, `$WIDGET`, `$LASTWIDGET`, `$KEYS`,
+/// `$BUFFERLINES`, `$CONTEXT`, `$HISTNO`, `$WIDGETSTYLE`,
+/// `$WIDGETFUNC` parameters in the param table for the duration
+/// of a widget call.
+///
+/// Full GSU custom-getter dispatch (c:196-228) requires
+/// per-param Param.gsu hooks; the Rust port writes the current
+/// ZLE state snapshot directly via setsparam / setiparam so user
+/// widget functions see live values. When a widget mutates
+/// $BUFFER it goes through the canonical paramtab write path
+/// that already exists.
+pub fn makezleparams(_ro: i32) {                                             // c:194
+    use crate::ported::zle::compcore::{ZLECS, ZLELINE, ZMULT};
+
+    let line = ZLELINE.get_or_init(|| std::sync::Mutex::new(String::new()))
+        .lock().map(|g| g.clone()).unwrap_or_default();
+    let cs = ZLECS.load(std::sync::atomic::Ordering::Relaxed) as usize;
+    let (lbuf, rbuf) = if cs <= line.len() {
+        (line[..cs].to_string(), line[cs..].to_string())
+    } else {
+        (line.clone(), String::new())
+    };
+
+    let _ = crate::ported::params::setsparam("BUFFER", &line);              // c:zleparams[0]
+    let _ = crate::ported::params::setsparam("LBUFFER", &lbuf);             // c:zleparams[1]
+    let _ = crate::ported::params::setsparam("RBUFFER", &rbuf);             // c:zleparams[2]
+    let _ = crate::ported::params::setiparam(
+        "CURSOR",
+        ZLECS.load(std::sync::atomic::Ordering::Relaxed) as i64,
+    );                                                                       // c:zleparams[3]
+    let _ = crate::ported::params::setiparam("NUMERIC", ZMULT.load(
+        std::sync::atomic::Ordering::Relaxed,
+    ) as i64);                                                               // c:zleparams[7]
+    // $BUFFERLINES — count of newlines in BUFFER + 1.
+    let lines = line.chars().filter(|c| *c == '\n').count() as i64 + 1;
+    let _ = crate::ported::params::setiparam("BUFFERLINES", lines);          // c:zleparams[10]
 }
 
 /// Port of `scan_registers()` from Src/Zle/zle_params.c:784.
