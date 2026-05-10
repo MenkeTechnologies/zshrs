@@ -673,9 +673,9 @@ impl ShellExecutor {
     /// did `exec.singsub(s)` now do `exec.singsub(s)` and route
     /// through the C-faithful `singsub`.
     pub fn singsub(&mut self, s: &str) -> String {
-        let mut state = crate::ported::subst::SubstState::from_executor(self);
+        let mut state = crate::exec_shims::subst_state_from_executor(self);
         let r = crate::ported::subst::singsub(s, &mut state);
-        state.commit_to_executor(self);
+        crate::exec_shims::subst_state_commit_to_executor(state, self);
         r
     }
 

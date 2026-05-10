@@ -2816,7 +2816,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let body = vm.pop().to_str();
         let full = format!("${{{}}}", body);
         let result = with_executor(|exec| {
-            let mut state = crate::ported::subst::SubstState::from_executor(exec);
+            let mut state = crate::exec_shims::subst_state_from_executor(exec);
             let mut ret_flags = 0u32;
             let (_full_str, _new_pos, nodes) = crate::ported::subst::paramsubst(
                 &full,
@@ -2826,7 +2826,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 &mut ret_flags,
                 &mut state,
             );
-            state.commit_to_executor(exec);
+            crate::exec_shims::subst_state_commit_to_executor(state, exec);
             nodes
         });
         if result.is_empty() {
@@ -7647,10 +7647,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // helper. Direct port of the prefork SUB_FLAG | SKIP_FILESUB
         // pattern. PORT.md: no helpers without C counterpart.
         let repl = with_executor(|exec| {
-            let mut state = crate::ported::subst::SubstState::from_executor(exec);
+            let mut state = crate::exec_shims::subst_state_from_executor(exec);
             state.skip_filesub = true;
             let r = crate::ported::subst::singsub(&repl_raw, &mut state);
-            state.commit_to_executor(exec);
+            crate::exec_shims::subst_state_commit_to_executor(state, exec);
             r
         });
         let repl = crate::lex::untokenize(&repl);

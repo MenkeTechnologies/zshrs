@@ -8810,3 +8810,96 @@ pub fn scan_magic_assoc_keys(name: &str) -> Option<Vec<String>> {
         _ => None,
     }
 }
+
+// =====================================================================
+// SubstState ↔ ShellExecutor bridge — RUST-ONLY PLUMBING
+// =====================================================================
+//
+// The C source (Src/subst.c) reads + writes parameter state through
+// the global `paramtab` HashTable. zshrs's ShellExecutor owns the
+// equivalent state in typed HashMaps; subst.rs operates on a typed
+// `SubstState` snapshot that subst-pipeline code can mutate without
+// holding a &mut on the executor. These two functions bridge between
+// them: snapshot in, mutations back out.
+//
+// Lives outside src/ported/ because:
+//   1) Reaches into ShellExecutor (forbidden in src/ported)
+//   2) Has no C counterpart — paramtab access in C is direct
+//
+// Migration target: replace SubstState with global paramtab accessors
+// (Mutex<HashMap>) so subst.rs reads/writes directly without a snapshot
+// layer. That's the structural rewrite still pending.
+// =====================================================================
+
+pub fn subst_state_from_executor(exec: &crate::exec::ShellExecutor)
+    -> crate::ported::subst::SubstState
+{
+    let assoc_arrays: std::collections::HashMap<
+        String,
+        indexmap::IndexMap<String, String>,
+    > = exec.assoc_arrays.iter()
+        .map(|(k, v)| (k.clone(), v.iter()
+            .map(|(ik, iv)| (ik.clone(), iv.clone())).collect()))
+        .collect();
+    let function_names: std::collections::HashSet<String> =
+        exec.function_names().into_iter().collect();
+    let alias_names: std::collections::HashSet<String> =
+        exec.aliases.keys().cloned().collect();
+    let command_names: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+
+    let mut arrays = exec.arrays.clone();
+    arrays.insert("@".to_string(), exec.positional_params.clone());
+    arrays.insert("*".to_string(), exec.positional_params.clone());
+    arrays.insert("argv".to_string(), exec.positional_params.clone());
+
+    let mut opts = crate::ported::subst::SubstOptions::default();
+    opts.hist_subst_pattern = exec.options.get("histsubstpattern")
+        .copied().unwrap_or(false);
+    crate::ported::subst::SubstState {
+        errflag: false,
+        opts,
+        variables: exec.variables.clone(),
+        arrays,
+        assoc_arrays,
+        skip_filesub: false,
+        function_names,
+        command_names,
+        alias_names,
+        var_attrs: exec.var_attrs.clone(),
+        dirstack: exec.dir_stack.iter()
+            .map(|p| p.to_string_lossy().into_owned()).collect(),
+        pushdminus: exec.options.get("PUSHDMINUS").copied().unwrap_or(false),
+        last_subst: exec.last_subst.clone(),
+        sub_flags: 0,
+    }
+}
+
+pub fn subst_state_commit_to_executor(
+    state: crate::ported::subst::SubstState,
+    exec: &mut crate::exec::ShellExecutor,
+) {
+    if state.errflag {
+        exec.last_status = 1;
+        return;
+    }
+    exec.variables = state.variables;
+    exec.arrays = state.arrays;
+    for (name, new_map) in state.assoc_arrays {
+        let entry = exec.assoc_arrays.entry(name.clone()).or_default();
+        for k in entry.keys().cloned().collect::<Vec<_>>() {
+            if let Some(v) = new_map.get(&k) {
+                entry.insert(k, v.clone());
+            }
+        }
+        for (k, v) in &new_map {
+            if !entry.contains_key(k) {
+                entry.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    if state.last_subst.is_some() {
+        exec.last_subst = state.last_subst;
+    }
+    exec.sub_flags = state.sub_flags;
+}
