@@ -303,7 +303,7 @@ pub struct SpecialParamDef {
 }
 
 /// All special parameters from params.c special_params[]
-pub const SPECIAL_PARAMS: &[SpecialParamDef] = &[
+pub const special_params: &[SpecialParamDef] = &[
     // Integer specials with custom GSU
     SpecialParamDef {
         name: "#",

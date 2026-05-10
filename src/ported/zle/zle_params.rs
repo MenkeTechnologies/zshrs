@@ -704,23 +704,13 @@ pub fn unset_killring(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  
     }
 }
 
-/// Direct port of `static void unset_numeric(Param pm, int exp)` from
-/// `Src/Zle/zle_params.c:491-499`.
-/// ```c
-/// stdunsetfn(pm, exp);
-/// if (exp) {
-///     zmod.flags &= ~(MOD_MULT|MOD_TMULT);
-///     zmod.mult = 1;
-/// }
-/// ```
-///
-/// The Rust call signature here takes `&mut Zle` instead of `Param`
-/// because the canonical Rust home for `zmod` is `Zle.zmod`. The
-/// `stdunsetfn` half of the C body fires from the Param.gsu.unsetfn
-/// vtable hook upstream — this fn just performs the zmod side.
-pub fn unset_numeric(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) { // c:491
+/// Port of `unset_numeric()` from Src/Zle/zle_params.c:492.
+pub fn unset_numeric(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  // c:491
     use crate::ported::zle::zle_main::ModifierFlags;
-    if exp != 0 {                                                            // c:494
+    // c:494-498 — only acts when `exp` is non-zero (C also calls
+    // `stdunsetfn(pm, exp)` for the param-unset bookkeeping; that
+    // path lives in the param-table substrate not yet ported).
+    if exp != 0 {
         zle.zmod.flags = ModifierFlags::empty();                             // c:496
         zle.zmod.mult = 1;                                                   // c:497
     }

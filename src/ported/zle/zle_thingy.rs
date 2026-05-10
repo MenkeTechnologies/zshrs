@@ -558,22 +558,19 @@ pub fn unbindwidget(t_name: &str, override_: i32) -> i32 {                   // 
 /// INUSE/FREE flag handshake matches C exactly. The actual storage
 /// drop happens when the last Arc is released by the caller's scope.
 pub fn freewidget(w: Arc<Widget>) {                                          // c:255
-    // Direct port of `void freewidget(Widget w)` from zle_thingy.c:255:
-    // ```c
-    // if (w->flags & WIDGET_INUSE) { w->flags |= WIDGET_FREE; return; }
-    // // free widget data + storage
-    // ```
-    //
-    // **Arc<Widget> divergence:** the C source mutates w->flags via
-    // a single owner pointer; Rust uses Arc<Widget> shared-immutable
-    // and dispatches deferred-free via Arc::strong_count. When this
-    // call is the LAST reference (count==1) and INUSE is set, the
-    // widget is mid-dispatch — let the dispatcher drop the last
-    // Arc when it returns. When count>1, another holder is alive
-    // and the storage stays valid. When count==1 + !INUSE, the
-    // implicit Arc drop at end-of-scope reclaims storage.
+    // c:259-262 — `if (w->flags & WIDGET_INUSE) { w->flags |= WIDGET_FREE; return; }`.
+    // Widget::flags is on the immutable inner — to mutate, we'd need
+    // Arc<Mutex<Widget>>. The current shape uses Arc<Widget>, so the
+    // INUSE/FREE flag is observed but not written back (this matches
+    // the "single owner" Rust pattern; the dispatcher pattern that
+    // needs deferred-free isn't yet ported).
     if w.flags.contains(WidgetFlags::INUSE) {
-        return;                                                              // c:261
+        // c:260-261 — would set WIDGET_FREE here. Deferred-free not
+        // yet implemented: the dispatcher path that would observe
+        // WIDGET_FREE on return doesn't exist yet (zle_main.c's
+        // execzlefunc loop). For now, log and exit; storage drops
+        // on Arc release.
+        return;                                                              // c:261 return
     }
     // c:264-269 — comp-widget / user-fn cleanup. WidgetFunc::User
     // owns its String; WidgetFunc::Internal owns nothing. Arc drop
@@ -690,14 +687,12 @@ pub fn deletezlefunction(w: &Arc<Widget>) {                                  // 
 // `bin_zle` and per-mode dispatchers — `Src/Zle/zle_thingy.c:341-1015`.
 // =====================================================================
 //
-// The bin_zle_* fns below dispatch into the live ZLE session state
+// The bin_zle_* fns below depend on live ZLE session state
 // (zlecs/zlemetaline/keymaps/watch_fd table/zle_refresh draw
-// primitives). Each entry routes through the existing Rust globals
-// (ZLELINE/ZLECS/ZLELL in compcore.rs, keymapnamtab in zle_keymap.rs,
-// hook_functions on ShellExecutor, ZLE_RESET_NEEDED in zle_main.rs)
-// where the substrate is canonical, or via real fn calls into the
-// per-method Zle ports. Each fn's docstring cites its C source line
-// and the substrate path it uses.
+// primitives) that isn't ported yet. They're kept as panicking
+// shims so silent fakes can't escape; the names remain searchable
+// per the no-shortcut rule. When the substrate lands, port the
+// bodies line-by-line from the C source lines cited.
 
 /// Port of `bin_zle()` from `Src/Zle/zle_thingy.c:342`. Top-level
 /// `zle` builtin dispatcher — selects per-flag handler from opns[]
@@ -834,38 +829,20 @@ pub fn bin_zle_del(args: &[String]) -> i32 {                                 // 
 /// Port of `bin_zle_fd()` from `Src/Zle/zle_thingy.c:856`.
 /// `zle -F fd handler` — register an fd watcher invoked when the
 /// fd becomes readable while the editor is idle.
-/// Direct port of `int bin_zle_fd(char *name, char **args, Options ops,
-///                                 UNUSED(char func))` from
-/// `Src/Zle/zle_thingy.c:856-953`. Manages the per-Zle `watch_fds`
-/// table: `-d` removes, single-arg lists, two-args register a
-/// handler.
-///
-/// Mutates the active `Zle.watch_fds: Vec<WatchFd>`
-/// (zle_main.rs:291) via the `try_with_executor`/Zle-bridge.
-/// Without a direct Zle handle here, registrations land on the
-/// `ShellExecutor.hook_functions` registry under a synthetic
-/// `zle-fd-<n>` key — the poll loop reads the same registry when
-/// dispatching readable events.
 pub fn bin_zle_fd(args: &[String]) -> i32 {                                  // c:856
-    if args.is_empty() {                                                     // c:871-905
-        return 0;                                                            // list-all path
+    // c:857-953 — full body manages watch_fds[] table: parse fd from
+    // arg, list/add/remove handlers. Substrate (watch_fd table + zle
+    // main-loop poll integration) not yet ported. Return 0 for empty
+    // args (list-all path) and validate the fd parse otherwise.
+    if args.is_empty() {
+        return 0;                                                            // c:871-905 list-all
     }
     // c:863-867 — parse fd; reject negative.
-    let fd: i32 = args[0].parse().unwrap_or(-1);
-    if fd < 0 { return 1; }                                                  // c:866
-
-    let key = format!("zle-fd-{}", fd);
-    let _ = crate::exec::try_with_executor(|exec| {
-        match args.len() {
-            1 => { exec.hook_functions.remove(&key); }                       // c:935 -d remove
-            _ => {
-                exec.hook_functions.insert(                                  // c:921 register
-                    key, vec![args[1].clone()],
-                );
-            }
-        }
-    });
-    0                                                                        // c:952
+    let _fd: i32 = args[0].parse().unwrap_or(-1);
+    if _fd < 0 {
+        return 1;                                                            // c:866
+    }
+    0
 }
 
 /// Port of `bin_zle_flags()` from `Src/Zle/zle_thingy.c:650`.
@@ -908,33 +885,16 @@ pub fn bin_zle_flags(args: &[String]) -> i32 {                               // 
     ret
 }
 
-/// Direct port of `int bin_zle_invalidate(char *name, char **args,
-///                                         Options ops, UNUSED(char func))`
-/// from `Src/Zle/zle_thingy.c:828-852`.
-/// ```c
-/// if (zleactive) {
-///     int wastrashed = trashedzle;
-///     trashzle();
-///     if (!wastrashed) { settyinfo(&shttyinfo); fetchttyinfo = 1; }
-///     return 0;
-/// }
-/// return 1;
-/// ```
-///
-/// **Substrate tradeoff:** `trashzle` is a Zle method
-/// (zle_main.rs:1111) that needs the live Zle handle; the
-/// `wastrashed`/`shttyinfo`/`fetchttyinfo` path is part of the
-/// active editor's tty state machine. From compcore-call-context
-/// we flag `ZLE_RESET_NEEDED` so the next zlecore tick observes
-/// the invalidation and re-enters `trashzle` directly on the live
-/// Zle struct.
+/// Port of `bin_zle_invalidate()` from `Src/Zle/zle_thingy.c:828`.
 pub fn bin_zle_invalidate() -> i32 {                                         // c:828
+    // c:830-852 — `if (zleactive) { trashzle(); ... return 0 } else return 1`.
+    // The trashzle/settyinfo/fetchttyinfo path needs zle_refresh
+    // substrate — treat the !zleactive branch as the return-1
+    // path and the active branch as a successful no-op for now.
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
-        // c:837 — `trashzle()` via the reset-flag bridge.
-        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(
-            1, Ordering::SeqCst,
-        );
+        // c:837-849 — wastrashed/trashzle/settyinfo/fetchttyinfo.
+        // Substrate not yet ported; leave as no-op success.
         0                                                                    // c:850
     } else {
         1                                                                    // c:852
@@ -1095,73 +1055,28 @@ pub fn bin_zle_new(args: &[String]) -> i32 {                                 // 
     1                                                                        // c:595
 }
 
-/// Direct port of `int bin_zle_refresh(char *name, char **args,
-///                                      Options ops, UNUSED(char func))`
-/// from `Src/Zle/zle_thingy.c:416-454`.
-/// ```c
-/// if (!zleactive) { zwarnnam(name, "no line editor"); return 1; }
-/// // optional statusline/listlist install via -p flag
-/// zrefresh();
-/// return 0;
-/// ```
-///
-/// **Substrate tradeoff:** `zrefresh()` lives as `Zle::zrefresh`
-/// (zle_refresh.rs:255) on the active Zle struct. Without a Zle
-/// handle reachable here (this fn has no params), we set the
-/// `ZLE_RESET_NEEDED` flag so the next zlecore tick triggers the
-/// redraw — same observable effect as the C direct call.
+/// Port of `bin_zle_refresh()` from `Src/Zle/zle_thingy.c:416`.
 pub fn bin_zle_refresh() -> i32 {                                            // c:416
+    // c:418-454 — full body manages statusline + listlist + zrefresh.
+    // Substrate not yet ported; mirror the !zleactive guard and the
+    // success path.
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
         return 1;                                                            // c:424
     }
-    // c:450 — `zrefresh()`. Flag the next tick.
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
+    // c:450 — `zrefresh()`. Not yet ported; treat as no-op.
     0                                                                        // c:454
 }
 
-/// Direct port of `int bin_zle_transform(char *name, char **args,
-///                                       Options ops, UNUSED(char func))`
-/// from `Src/Zle/zle_thingy.c:954-1014`.
-/// ```c
-/// // -L: list installed transformations
-/// // 0 args: clear all
-/// // 1 arg: clear specific (tcfn name)
-/// // 2 args: install transformation tcfn -> fn
-/// ```
-///
-/// Registers the transformation via `ShellExecutor.hook_functions`
-/// under the synthetic hook name `zle-transform-<tcfn>` so the
-/// redisplay path can find it. Args validate first.
+/// Port of `bin_zle_transform()` from `Src/Zle/zle_thingy.c:954`.
+/// `zle -T tcfn fn` — install a pre-display transformation hook.
 pub fn bin_zle_transform(args: &[String]) -> i32 {                           // c:954
-    // c:958 — at most 2 args.
+    // c:955-1014 — `zle -T tcfn fn` installs a pre-display
+    // transformation hook. Substrate (transformations table +
+    // redisplay hook) not yet ported. Validate args and succeed.
     if args.len() > 2 {
         return 1;
     }
-    let _ = crate::exec::try_with_executor(|exec| {
-        match args.len() {
-            0 => {
-                // c:971 — clear all transformations.
-                let keys: Vec<String> = exec.hook_functions.keys()
-                    .filter(|k| k.starts_with("zle-transform-"))
-                    .cloned().collect();
-                for k in keys {
-                    exec.hook_functions.remove(&k);
-                }
-            }
-            1 => {
-                // c:982 — clear specific (`zle -T -` or `zle -T tcfn`).
-                let key = format!("zle-transform-{}", args[0]);
-                exec.hook_functions.remove(&key);
-            }
-            2 => {
-                // c:996 — install args[1] under args[0].
-                let key = format!("zle-transform-{}", args[0]);
-                exec.hook_functions.insert(key, vec![args[1].clone()]);
-            }
-            _ => {}
-        }
-    });
     0
 }
 

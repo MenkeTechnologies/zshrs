@@ -5854,15 +5854,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Status(0)
     });
 
-    // Direct port of Src/prompt.c:1623 cmdpush. Token is a
-    // `crate::prompt::CmdState as u8` — emitted by compile_zsh
-    // around each compound command (if/while/[[…]]/((…))/$(…))
-    // and consumed by `%_` in PS4 / prompt expansion.
+    // Direct port of Src/prompt.c:1623 cmdpush. Token is a `CS_*`
+    // value (zsh.h:2775-2806) emitted by compile_zsh around each
+    // compound command (if/while/[[…]]/((…))/$(…)) and consumed by
+    // `%_` in PS4 / prompt expansion.
     vm.register_builtin(BUILTIN_CMD_PUSH, |vm, _argc| {
         let token = vm.pop().to_int() as u8;
         with_executor(|exec| {
-            if let Some(state) = crate::prompt::CmdState::from_u8(token) {
-                exec.cmd_stack.push(state);
+            // Match C's `if (token < CS_COUNT) cmdstack[cmdsp++] = token;`
+            // — bounded by `CS_COUNT` (Src/prompt.c:1624).
+            if (token as i32) < crate::ported::zsh_h::CS_COUNT {
+                exec.cmd_stack.push(token);
             }
         });
         fusevm::Value::Status(0)

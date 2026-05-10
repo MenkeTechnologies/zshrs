@@ -503,25 +503,15 @@ pub fn parse_ordering(arg: &str, flags: &mut Option<i32>) -> i32 {           // 
 // addcompparams / makecompparams / comp_setunset / compunsetfn fns.
 // =====================================================================
 //
-// The substrate the C source uses (`createparam`, `paramtab()`,
-// `getparamnode`, `newparamtable`, `deleteparamtable`) is now
-// ported in `params.rs`:
-//   - createparam        → params.rs:4727
-//   - paramtab           → params.rs:3126
-//   - getparamnode       → params.rs:4889
-//   - newparamtable      → params.rs:5035
-//   - createparamtable   → params.rs:4694
+// !!! WARNING: STRUCTURAL PORT — DEPS PARTIAL !!!
 //
-// The fns below dispatch through that canonical Rust paramtab via
-// setsparam/setiparam/setaparam. The GSU-vtable swap on each param
-// (a per-param custom-getter hook) is what wires e.g. `$BUFFER`
-// reads to the live `ZLELINE` global — that hook surface is the
-// `Param.gsu` field on params.rs's Param struct, which today binds
-// to the default scalar/array getters. Custom-getter wiring for
-// `$BUFFER`/`$CURSOR`/`$KILLRING`-style params is what
-// makezleparams (zle_params.rs:498, ported) sets up at widget-call
-// entry; the read/write surface works today via the existing
-// scalar/array params.
+// The C source's createparam / paramtab->getnode / newparamtable /
+// deleteparamtable / deletehashtable machinery isn't fully ported in
+// Rust yet (paramtab is a global HashTable in C; Rust has scattered
+// per-table accessors). These four functions are ported as
+// structural shells matching the C signatures exactly so the
+// dispatch surface lands; the actual createparam / table-mutation
+// effects are deferred until the paramtab port lands in params.rs.
 
 /// Port of `addcompparams()` from `Src/Zle/complete.c:1297`.
 /// C body (c:1300-1326): walk a compparam[] table, createparam each
@@ -661,11 +651,11 @@ pub fn cond_range(a: &[String], id: i32) -> i32 {                            // 
 /// -U usemenu, -1 unique, -2 partial, -o ordering, -M matcher),
 /// builds a `cadata`/`mdata` pair, then dispatches to addmatches.
 ///
-/// Cadata is now typed in `comp_h.rs:566` and `addmatches` is ported
-/// in `compcore.rs`. The Rust port handles the incompfunc guard,
-/// parses the flag-letter shape, then forwards the residual argv
-/// through `compcore::addmatches` with a minimally-populated Cadata.
-/// Per-flag arg capture into Cadata fields is the next refinement.
+/// Static-link path: cadata/mdata aren't yet typed-out in Rust, and
+/// addmatches isn't ported. The Rust port handles the incompfunc
+/// guard, parses the flag-letter shape, but defers the actual
+/// match-emission. Returns 1 (no matches added) which is what the
+/// shell sees when compadd isn't producing matches anyway.
 pub fn bin_compadd(name: &str, argv: &[String],                              // c:603
                    _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;
@@ -696,12 +686,9 @@ pub fn bin_compadd(name: &str, argv: &[String],                              // 
         }
     }
     // c:822-840 — addmatches dispatch with the parsed cadata + the
-    // remaining argv as the literal-match list. Routes through the
-    // ported compcore::addmatches with a minimally-populated Cadata.
-    let matches = &argv[idx..];                                              // c:822
-    let mut dat = crate::ported::zle::comp_h::Cadata::default();
-    dat.dummies = -1;
-    crate::ported::zle::compcore::addmatches(&mut dat, matches)              // c:828
+    // remaining argv as the literal-match list. Deferred.
+    let _matches = &argv[idx..];                                             // c:822
+    1                                                                        // c:840 no matches
 }
 
 /// Direct port of `bin_compset()` from `Src/Zle/complete.c:1137`.
