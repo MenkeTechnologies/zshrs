@@ -885,16 +885,33 @@ pub fn bin_zle_flags(args: &[String]) -> i32 {                               // 
     ret
 }
 
-/// Port of `bin_zle_invalidate()` from `Src/Zle/zle_thingy.c:828`.
+/// Direct port of `int bin_zle_invalidate(char *name, char **args,
+///                                         Options ops, UNUSED(char func))`
+/// from `Src/Zle/zle_thingy.c:828-852`.
+/// ```c
+/// if (zleactive) {
+///     int wastrashed = trashedzle;
+///     trashzle();
+///     if (!wastrashed) { settyinfo(&shttyinfo); fetchttyinfo = 1; }
+///     return 0;
+/// }
+/// return 1;
+/// ```
+///
+/// **Substrate tradeoff:** `trashzle` is a Zle method
+/// (zle_main.rs:1111) that needs the live Zle handle; the
+/// `wastrashed`/`shttyinfo`/`fetchttyinfo` path is part of the
+/// active editor's tty state machine. From compcore-call-context
+/// we flag `ZLE_RESET_NEEDED` so the next zlecore tick observes
+/// the invalidation and re-enters `trashzle` directly on the live
+/// Zle struct.
 pub fn bin_zle_invalidate() -> i32 {                                         // c:828
-    // c:830-852 — `if (zleactive) { trashzle(); ... return 0 } else return 1`.
-    // The trashzle/settyinfo/fetchttyinfo path needs zle_refresh
-    // substrate — treat the !zleactive branch as the return-1
-    // path and the active branch as a successful no-op for now.
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
-        // c:837-849 — wastrashed/trashzle/settyinfo/fetchttyinfo.
-        // Substrate not yet ported; leave as no-op success.
+        // c:837 — `trashzle()` via the reset-flag bridge.
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(
+            1, Ordering::SeqCst,
+        );
         0                                                                    // c:850
     } else {
         1                                                                    // c:852
