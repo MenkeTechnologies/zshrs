@@ -1216,36 +1216,150 @@ fn getreswords(dis: i32) -> Vec<String> {                                    // 
 use crate::ported::zsh_h::{HashTable, HashNode, Param, param as ParamStruct};
 use crate::ported::zsh_h::{ALIAS_GLOBAL, DISABLED};
 
-/// Port of `getalias()` from Src/Modules/parameter.c:1901.
-/// C: `static HashNode getalias(HashTable alht, UNUSED(HashTable ht),
-///     const char *name, int flags)` — synth a Param wrapping the alias
-///     value; returns NULL when not found / flags mismatch.
+/// Direct port of `getalias()` from Src/Modules/parameter.c:1900.
+/// C body (c:1906-1919):
+/// ```c
+/// pm.node.nam = name;
+/// assignaliasdefs(pm, flags);
+/// if (al = alht[name]; flags == al->node.flags)
+///     pm->u.str = al->text;
+/// else { pm->u.str = ""; flags |= PM_UNSET|PM_SPECIAL; }
+/// ```
+///
+/// `alht` selects which alias table to query: `aliastab` for
+/// raw / global aliases, `sufaliastab` for suffix aliases. Static-
+/// link path: dispatch on the ALIAS_SUFFIX bit in `flags` since the
+/// ht pointer isn't passed through.
 #[allow(non_snake_case)]
 pub fn getalias(_alht: *mut HashTable, _ht: *mut HashTable,                  // c:1900
-                _name: &str, _flags: i32) -> Option<Param> {
-    // c:1903-1920 — paramtab synth from aliastab. Static-link path
-    // doesn't yet expose aliastab; return None until aliases.rs wires it.
-    None
+                name: &str, flags: i32) -> Option<Param> {
+    use crate::ported::zsh_h::{PM_UNSET, PM_SPECIAL, ALIAS_SUFFIX};
+    let table = if (flags & ALIAS_SUFFIX) != 0 {
+        crate::ported::hashtable::sufaliastab_lock()
+    } else {
+        crate::ported::hashtable::aliastab_lock()
+    };
+    let g = table.lock().ok()?;
+    let entry = g.get(name);                                                 // c:1911 alht->getnode2
+    let (value, found) = if let Some(al) = entry {                           // c:1912
+        // c:1912 — `flags == al->node.flags` strict equality match.
+        if (al.flags as i32) == flags {                                      // c:1912
+            (al.text.clone(), true)                                          // c:1913 al->text
+        } else {
+            (String::new(), false)                                           // c:1916
+        }
+    } else {
+        (String::new(), false)                                               // c:1916
+    };
+    let mut pm = Box::new(crate::ported::zsh_h::param {                      // c:1906 hcalloc
+        node: crate::ported::zsh_h::hashnode {
+            next: None, nam: name.to_string(),                               // c:1907
+            flags: 0,
+        },
+        u_data: 0, u_arr: None,
+        u_str: Some(value),                                                  // c:1913 / c:1916
+        u_val: 0, u_dval: 0.0, u_hash: None,
+        gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+        base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+    });
+    // c:1909 — `assignaliasdefs(pm, flags);` sets PM_SCALAR + selects
+    // gsu_scalar handler based on alias flavour.
+    assignaliasdefs(&mut *pm as *mut _, flags);                              // c:1909
+    if !found {
+        pm.node.flags |= (PM_UNSET | PM_SPECIAL) as i32;                     // c:1917
+    }
+    Some(pm)                                                                 // c:1919
 }
 
-/// Port of `getbuiltin()` from Src/Modules/parameter.c:775.
-/// C: `static HashNode getbuiltin(UNUSED(HashTable ht), const char *name,
-///     int dis)` — synth a Param wrapping the builtin's module name.
+/// Direct port of `getbuiltin()` from Src/Modules/parameter.c:775.
+/// C body (c:778-796):
+/// ```c
+/// pm.node.nam = name; pm.node.flags = PM_SCALAR | PM_READONLY;
+/// pm.gsu.s = &nullsetscalar_gsu;
+/// if (bn = builtintab[name]; bn matches dis) {
+///     pm.u.str = (bn->handlerfunc || (bn->flags & BINF_PREFIX))
+///                ? "defined" : "undefined";
+/// } else {
+///     pm.u.str = ""; pm.node.flags |= (PM_UNSET|PM_SPECIAL);
+/// }
+/// ```
 #[allow(non_snake_case)]
-pub fn getbuiltin(_ht: *mut HashTable, _name: &str, _dis: i32)               // c:775
+pub fn getbuiltin(_ht: *mut HashTable, name: &str, _dis: i32)                // c:775
                   -> Option<Param> {
-    // c:778-797 — builtin lookup via builtintab.
-    None
+    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL};
+    // c:784 — builtintab[name] lookup. Static-link path: the BUILTINS
+    // table in builtin.rs is the canonical source. Disabled-flag
+    // tracking isn't yet wired; until it is, the `dis` arm collapses
+    // to "found means enabled".
+    let entry = crate::ported::builtin::BUILTINS.iter()                      // c:784
+        .find(|b| b.name == name);
+    let (value, found) = if let Some(_bn) = entry {                          // c:785
+        // c:786-789 — `defined` if handler present (always true for
+        // ported builtins) or BINF_PREFIX flag set.
+        ("defined".to_string(), true)                                        // c:790
+    } else {
+        (String::new(), false)                                               // c:793
+    };
+    let pm = Box::new(crate::ported::zsh_h::param {                          // c:780 hcalloc
+        node: crate::ported::zsh_h::hashnode {
+            next: None, nam: name.to_string(),                               // c:781
+            flags: if found { (PM_SCALAR | PM_READONLY) as i32 }             // c:782
+                   else     { (PM_SCALAR | PM_READONLY | PM_UNSET
+                               | PM_SPECIAL) as i32 },                       // c:794
+        },
+        u_data: 0, u_arr: None,
+        u_str: Some(value),                                                  // c:790 / c:793
+        u_val: 0, u_dval: 0.0, u_hash: None,
+        gsu_s: None,                                                         // c:783 nullsetscalar_gsu (gsu table not wired)
+        gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+        base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+    });
+    Some(pm)                                                                 // c:796 return &pm->node
 }
 
-/// Port of `getfunction()` from Src/Modules/parameter.c:389.
-/// C: `static HashNode getfunction(UNUSED(HashTable ht), const char *name,
-///     int dis)` — synth a Param exposing the function body source.
+/// Direct port of `getfunction()` from Src/Modules/parameter.c:389.
+/// C body (c:392-441):
+/// ```c
+/// pm.node.nam = name; pm.node.flags = PM_SCALAR;
+/// pm.gsu.s = dis ? &pmdisfunction_gsu : &pmfunction_gsu;
+/// if (shf = shfunctab[name]; shf matches dis) {
+///     if (PM_UNDEFINED) pm.u.str = "builtin autoload -X" + flags;
+///     else { build "{\n\t<body>\n\t<name> "$@"" if EF_RUN; getpermtext };
+/// } else { pm.u.str = ""; flags |= PM_UNSET|PM_SPECIAL; }
+/// ```
 #[allow(non_snake_case)]
-pub fn getfunction(_ht: *mut HashTable, _name: &str, _dis: i32)              // c:389
+pub fn getfunction(_ht: *mut HashTable, name: &str, _dis: i32)               // c:389
                    -> Option<Param> {
-    // c:392-442 — shfunctab lookup, body printed via getpermtext.
-    None
+    use crate::ported::zsh_h::{PM_SCALAR, PM_UNSET, PM_SPECIAL};
+    let g = crate::ported::hashtable::shfunctab_lock().lock().ok()?;
+    let entry = g.get(name);                                                 // c:399 shfunctab[name]
+    let (value, found) = if let Some(shf) = entry {
+        // c:401-407 — PM_UNDEFINED autoload form: `builtin autoload -X[Ut]`.
+        // Static-link path doesn't yet expose PM_UNDEFINED on ShFunc;
+        // route via body.is_none() as the autoload signal.
+        let body = shf.body.as_deref();
+        let v = match body {
+            None => "builtin autoload -X".to_string(),                       // c:402-407
+            Some(text) => format!("\t{}", text),                             // c:409-431 getpermtext
+        };
+        (v, true)
+    } else {
+        (String::new(), false)                                               // c:439
+    };
+    let pm = Box::new(crate::ported::zsh_h::param {                          // c:393
+        node: crate::ported::zsh_h::hashnode {
+            next: None, nam: name.to_string(),                               // c:394
+            flags: if found { PM_SCALAR as i32 }                             // c:395
+                   else { (PM_SCALAR | PM_UNSET | PM_SPECIAL) as i32 },     // c:440
+        },
+        u_data: 0, u_arr: None,
+        u_str: Some(value),                                                  // c:402/431/438
+        u_val: 0, u_dval: 0.0, u_hash: None,
+        gsu_s: None,                                                         // c:396 pm[dis]function_gsu
+        gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+        base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+    });
+    Some(pm)                                                                 // c:441
 }
 
 /// Port of `getfunction_source()` from Src/Modules/parameter.c:537.
@@ -1269,13 +1383,53 @@ pub fn getpmbuiltin(ht: *mut HashTable, name: &str) -> Option<Param> {       // 
     getbuiltin(ht, name, 0)                                                  // c:802
 }
 
-/// Port of `getpmcommand()` from Src/Modules/parameter.c:213.
-/// C: `static HashNode getpmcommand(UNUSED(HashTable ht), const char *name)`
-/// — looks up `cmdnamtab` then synth a Param.
+/// Direct port of `getpmcommand()` from Src/Modules/parameter.c:213.
+/// C body (c:216-241):
+/// ```c
+/// cmd = cmdnamtab->getnode(cmdnamtab, name);
+/// if (!cmd && isset(HASHLISTALL)) cmdnamtab->filltable(...); cmd = ...;
+/// pm.node.nam = name; pm.node.flags = PM_SCALAR; pm.gsu.s = &pmcommand_gsu;
+/// if (cmd) {
+///     if (cmd->node.flags & HASHED) pm->u.str = cmd->u.cmd;
+///     else                          pm->u.str = path/name;
+/// } else {
+///     pm->u.str = ""; pm->node.flags |= (PM_UNSET|PM_SPECIAL);
+/// }
+/// ```
 #[allow(non_snake_case)]
-pub fn getpmcommand(_ht: *mut HashTable, _name: &str) -> Option<Param> {     // c:213
-    // c:216-242 — cmdnamtab lookup, optionally hash via $PATH.
-    None
+pub fn getpmcommand(_ht: *mut HashTable, name: &str) -> Option<Param> {      // c:213
+    use crate::ported::zsh_h::{PM_SCALAR, PM_UNSET, PM_SPECIAL};
+    let g = crate::ported::hashtable::cmdnamtab_lock().lock().ok()?;
+    let entry = g.get(name);                                                 // c:218 cmdnamtab->getnode
+    let (value, found) = if let Some(cmd) = entry {                          // c:227
+        let v = if cmd.is_hashed() {                                         // c:229 HASHED
+            cmd.path.as_ref().and_then(|p| p.to_str())
+                .unwrap_or("").to_string()                                   // c:230
+        } else {
+            let dir = std::env::var("PATH").ok()
+                .and_then(|p| p.split(':').next().map(|s| s.to_string()))
+                .unwrap_or_default();                                        // c:232 *(cmd->u.name)
+            format!("{}/{}", dir, name)                                      // c:233-235 strcat
+        };
+        (v, true)
+    } else {
+        (String::new(), false)                                               // c:238
+    };
+    let mut pm = Box::new(crate::ported::zsh_h::param {                      // c:223 hcalloc
+        node: crate::ported::zsh_h::hashnode {
+            next: None, nam: name.to_string(),                               // c:224
+            flags: if found { PM_SCALAR as i32 }
+                   else { (PM_SCALAR | PM_UNSET | PM_SPECIAL) as i32 },     // c:226 / c:239
+        },
+        u_data: 0, u_arr: None,
+        u_str: Some(value),                                                  // c:230 / c:233 / c:238
+        u_val: 0, u_dval: 0.0, u_hash: None,
+        gsu_s: None,                                                         // c:226 pmcommand_gsu (gsu table not yet wired)
+        gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+        base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+    });
+    let _ = &mut pm;
+    Some(pm)                                                                 // c:241 return &pm->node
 }
 
 /// Port of `getpmdisbuiltin()` from Src/Modules/parameter.c:806.
