@@ -950,7 +950,10 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 /// Port of `setup_()` from `Src/Modules/parameter.c:2311`.
-pub fn setup_(_m: *const module) -> i32 { 0 }
+pub fn setup_(_m: *const module) -> i32 {                                    // c:2311
+    // C body c:2313-2314 — `return 0`. Faithful empty-body port.
+    0
+}
 
 /// Port of `features_()` from `Src/Modules/parameter.c:2318`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
@@ -964,7 +967,13 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 }
 
 /// Port of `boot_()` from `Src/Modules/parameter.c:2341`.
-pub fn boot_(_m: *const module) -> i32 { 0 }
+pub fn boot_(_m: *const module) -> i32 {                                     // c:2341
+    // C body c:2343-2344 — `return 0`. Faithful empty-body port; the
+    //                      hash-magic params (parameters, commands,
+    //                      functions, etc.) are registered via the
+    //                      partab dispatch in features_/enables_.
+    0
+}
 
 /// Port of `cleanup_()` from `Src/Modules/parameter.c:2348`.
 pub fn cleanup_(m: *const module) -> i32 {
@@ -972,7 +981,12 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_()` from `Src/Modules/parameter.c:2359`.
-pub fn finish_(_m: *const module) -> i32 { 0 }
+pub fn finish_(_m: *const module) -> i32 {                                   // c:2359
+    // C body c:2361-2362 — `return 0`. Faithful empty-body port; the
+    //                      hash-magic params get unregistered via the
+    //                      partab dispatch in cleanup_.
+    0
+}
 
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["p:parameters".to_string(), "p:commands".to_string(), "p:functions".to_string(),
