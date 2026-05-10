@@ -18,72 +18,11 @@
 //! - add_match_str/part/sub    → compsys::matching (inline)
 //! - cline_* (match line ops)  → compsys::base::CompletionLine
 
-/// Completion matcher pattern (from compmatch.c Cmatcher)
-#[derive(Debug, Clone)]
-pub struct CompMatcher {
-    pub line_pattern: String,
-    pub word_pattern: String,
-    pub flags: MatchFlags,
-}
-
-/// Match control flags
-#[derive(Debug, Clone, Copy, Default)]
-pub struct MatchFlags {
-    pub case_insensitive: bool,
-    pub partial_word: bool,
-    pub anchor_start: bool,
-    pub anchor_end: bool,
-    pub substring: bool,
-}
-
-/// A completion line segment (from compmatch.c Cline)
-#[derive(Debug, Clone)]
-pub struct CompLine {
-    pub prefix: String,
-    pub line: String,
-    pub suffix: String,
-    pub word: String,
-    pub matched: bool,
-}
-
-impl CompLine {
-    /// Construct an empty match-line segment.
-    /// Equivalent to a zero-initialised `Cline` from `getcline()`
-    /// at Src/Zle/compmatch.c — the C source uses these to chain
-    /// together the prefix/line/suffix/word segments produced
-    /// during pattern-driven matching.
-    pub fn new() -> Self {
-        CompLine {
-            prefix: String::new(),
-            line: String::new(),
-            suffix: String::new(),
-            word: String::new(),
-            matched: false,
-        }
-    }
-
-    /// Sum of the segment's three text fields' lengths.
-    /// Port of `cline_sublen()` from Src/Zle/compmatch.c — the C
-    /// source caches this on each Cline; here it's recomputed since
-    /// String already tracks length.
-    pub fn sublen(&self) -> usize {
-        self.prefix.len() + self.line.len() + self.suffix.len()
-    }
-
-    /// Recompute cached lengths after mutating the segment fields.
-    /// Port of `cline_setlens()` from Src/Zle/compmatch.c. The C
-    /// source materialises `prefix.len`/`line.len`/etc. into the
-    /// Cline; Rust's `String::len()` is O(1) so the recompute is
-    /// implicit — kept as a no-op for ABI parity with callers that
-    /// expect to invoke it.
-    pub fn setlens(&mut self) {}
-}
-
-impl Default for CompLine {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// CompMatcher / MatchFlags / CompLine deleted — Rust-invented structs
+// with no C counterpart. The legit C types `Cmatcher` (comp.h:153),
+// `Cline` (comp.h:245), and `Cpattern` (comp.h:197) are ported in
+// `comp_h.rs` and used by the real porters of `match_str` /
+// `pattern_match` / `add_match_str` etc. below.
 
 /// Port of `cpatterns_same()` from `Src/Zle/compmatch.c:42`.
 /// ```c
@@ -502,116 +441,13 @@ pub fn abort_match() {                                                       // 
 
 /// Test whether `word` matches `line` honouring the given matcher
 /// flags.
-/// Port of `match_str()` from Src/Zle/compmatch.c. The C source
-/// runs the full Cmatcher trie consuming both strings in lockstep
-/// and produces a Cline describing the match; our simplified
-/// version returns just a bool — sufficient for the substring +
-/// case-fold matchers most users wire via `-M`.
-pub fn match_str(                                                            // c:500
-    line: &str,
-    word: &str,
-    matchers: &[CompMatcher],
-    flags: &MatchFlags,
-) -> Option<Vec<CompLine>> {
-    if flags.case_insensitive {
-        if line.to_lowercase().starts_with(&word.to_lowercase()) {
-            return Some(vec![CompLine {
-                line: line.to_string(),
-                word: word.to_string(),
-                matched: true,
-                ..Default::default()
-            }]);
-        }
-    } else if line.starts_with(word) {
-        return Some(vec![CompLine {
-            line: line.to_string(),
-            word: word.to_string(),
-            matched: true,
-            ..Default::default()
-        }]);
-    }
+// Fake-signature ports of `match_str` / `match_parts` / `comp_match`
+// deleted. The real C signatures (Src/Zle/compmatch.c:500, :1092,
+// :1123) take Brinfo*/Patprog/Cline* parameters that need the
+// matcher engine fully wired through. The previous Rust placeholders
+// shipped wrong arities + fake `MatchFlags` / `CompLine` types.
+// Real ports will land alongside the matcher-engine driver.
 
-    // Try matchers — case-insensitive / substring / partial-word
-    // tests inlined per zsh's compmatch.c which dispatches the M flag
-    // mask inline in every matcher loop. No helper extracted in C.
-    for matcher in matchers {
-        let hit = if matcher.flags.case_insensitive {
-            line.to_lowercase().contains(&word.to_lowercase())
-        } else if matcher.flags.substring {
-            line.contains(word)
-        } else if matcher.flags.partial_word {
-            // Match word parts: "fb" matches "foobar" at word boundaries.
-            let mut wi = word.chars();
-            let mut wc = wi.next();
-            let mut all_consumed = false;
-            for lc in line.chars() {
-                if let Some(w) = wc {
-                    if lc.eq_ignore_ascii_case(&w) {
-                        wc = wi.next();
-                    }
-                } else {
-                    all_consumed = true;
-                    break;
-                }
-            }
-            all_consumed || wc.is_none()
-        } else {
-            false
-        };
-        if hit {
-            return Some(vec![CompLine {
-                line: line.to_string(),
-                word: word.to_string(),
-                matched: true,
-                ..Default::default()
-            }]);
-        }
-    }
-
-    None
-}
-
-/// Find every byte-range in `line` where `word`'s next character was
-/// matched.
-/// Port of `match_parts()` from Src/Zle/compmatch.c. The C source
-/// uses the resulting list to highlight matching subsequence runs
-/// in the completion menu — every `(start, end)` here is one
-/// matched character (multi-byte aware).
-pub fn match_parts(line: &str, word: &str, flags: &MatchFlags) -> Vec<(usize, usize)> { // c:1092
-    let mut parts = Vec::new();
-    let line_lower = if flags.case_insensitive {
-        line.to_lowercase()
-    } else {
-        line.to_string()
-    };
-    let word_lower = if flags.case_insensitive {
-        word.to_lowercase()
-    } else {
-        word.to_string()
-    };
-
-    let mut pos = 0;
-    for wc in word_lower.chars() {
-        if let Some(found) = line_lower[pos..].find(wc) {
-            let abs_pos = pos + found;
-            parts.push((abs_pos, abs_pos + wc.len_utf8()));
-            pos = abs_pos + wc.len_utf8();
-        }
-    }
-    parts
-}
-
-/// Top-level "does `word` match `line`" predicate.
-/// Port of `comp_match()` from Src/Zle/compmatch.c — the C source
-/// is the entry point that the completion engine calls to filter
-/// candidates. Returns `true` iff `match_str()` produces a Cline.
-pub fn comp_match(line: &str, word: &str, flags: &MatchFlags) -> bool {      // c:1123
-    match_str(line, word, &[], flags).is_some()
-}
-
-// (Wrong-sig duplicates of start_match / abort_match / cp_cline /
-// free_cline / revert_cline / cline_matched removed — replaced
-// upstream by C-faithful real ports keyed off comp_h::Cline.)
 
 /// Direct port of `mod_export convchar_t pattern_match_equivalence(
 ///                    Cpattern lp, convchar_t wind, int wmtp,
@@ -680,64 +516,16 @@ pub fn pattern_match_equivalence(
     u32::MAX                                                                 // c:1378
 }
 
-/// Parse a matcher specification string (from compmatch.c)
-/// Format: `m:{[:lower:]}={[:upper:]}` or `l:|=* r:|=*` etc.
-pub fn parse_cmatcher(spec: &str) -> Vec<CompMatcher> {
-    let mut matchers = Vec::new();
-
-    for part in spec.split_whitespace() {
-        let flags = MatchFlags {
-            case_insensitive: part.starts_with("m:"),
-            partial_word: part.starts_with("r:") || part.starts_with("l:"),
-            anchor_start: part.starts_with("l:"),
-            anchor_end: part.starts_with("r:"),
-            substring: part.starts_with("M:"),
-        };
-
-        if let Some((line_pat, word_pat)) = part.split_once('=') {
-            let line_pat = line_pat.split(':').next_back().unwrap_or("");
-            matchers.push(CompMatcher {
-                line_pattern: line_pat.to_string(),
-                word_pattern: word_pat.to_string(),
-                flags,
-            });
-        }
-    }
-
-    matchers
-}
-
-/// Update bmatchers (from compmatch.c add_bmatchers/update_bmatchers)
-pub fn update_bmatchers(matchers: &mut Vec<CompMatcher>, new: Vec<CompMatcher>) { // c:121
-    *matchers = new;
-}
+// Fake `parse_cmatcher` / `update_bmatchers` deleted.
+// `parse_cmatcher` already exists at `complete.rs:992` as a real
+// port of `Src/Zle/complete.c:242`. `update_bmatchers` is at
+// `Src/Zle/compmatch.c:121` with signature `void update_bmatchers(void)`
+// — the Rust placeholder had the wrong arity and type, will land
+// alongside the matcher-engine driver.
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_match_str_exact() {
-        let flags = MatchFlags::default();
-        assert!(match_str("foobar", "foo", &[], &flags).is_some());
-        assert!(match_str("foobar", "baz", &[], &flags).is_none());
-    }
-
-    #[test]
-    fn test_match_str_case_insensitive() {
-        let flags = MatchFlags {
-            case_insensitive: true,
-            ..Default::default()
-        };
-        assert!(match_str("FooBar", "foo", &[], &flags).is_some());
-    }
-
-    #[test]
-    fn test_match_parts() {
-        let flags = MatchFlags::default();
-        let parts = match_parts("foobar", "fbr", &flags);
-        assert_eq!(parts.len(), 3);
-    }
 
     #[test]
     fn test_pattern_match_equivalence_case_cross() {
@@ -747,22 +535,6 @@ mod tests {
         // wind=1 selects 'a' from the equivalence class, exact-char hit.
         let r = pattern_match_equivalence(&lp, 1, 0, b'A' as u32);
         assert_eq!(r, b'a' as u32);
-    }
-
-    #[test]
-    fn test_parse_cmatcher() {
-        let matchers = parse_cmatcher("m:{[:lower:]}={[:upper:]}");
-        assert_eq!(matchers.len(), 1);
-        assert!(matchers[0].flags.case_insensitive);
-    }
-
-    #[test]
-    fn test_comp_line() {
-        let mut cl = CompLine::new();
-        cl.prefix = "pre".to_string();
-        cl.line = "middle".to_string();
-        cl.suffix = "suf".to_string();
-        assert_eq!(cl.sublen(), 12);
     }
 
     // ---------- Real-port tests ------------------------------------------
