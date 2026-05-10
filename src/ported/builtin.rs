@@ -212,6 +212,9 @@ pub static BUILTINS: &[Builtin] = &[
     Builtin::entry("getln", 0, "exec::bin_read", 0, -1, 0, Some("ecnAlE"), Some("zr")),
     Builtin::entry("getopts", 0, "exec::bin_getopts", 2, -1, 0, None, None),
     Builtin::entry("hash", BINF_MAGICEQUALS, "exec::bin_hash", 0, -1, 0, Some("Ldfmrv"), None),
+    // Src/builtin.c — `#ifdef ZSH_HASH_DEBUG`
+    //   BUILTIN("hashinfo", 0, bin_hashinfo, 0, 0, 0, NULL, NULL)
+    Builtin::entry("hashinfo", 0, "exec::bin_hashinfo", 0, 0, 0, None, None),
     Builtin::entry("history", 0, "exec::bin_fc", 0, -1, BIN_FC, Some("adDEfiLmnpPrt:"), Some("l")),
     Builtin::entry("integer", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("HL:%R:%Z:%ghi:%lp:%rtux"), Some("i")),
     Builtin::entry("jobs", 0, "exec::bin_fg", 0, -1, BIN_JOBS, Some("dlpZrs"), None),
@@ -219,7 +222,13 @@ pub static BUILTINS: &[Builtin] = &[
     Builtin::entry("let", 0, "exec::bin_let", 1, -1, 0, None, None),
     Builtin::entry("local", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%ahi:%lnp:%rtux"), None),
     Builtin::entry("logout", 0, "exec::bin_break", 0, 1, BIN_LOGOUT, None, None),
+    // Src/builtin.c — `#if defined(ZSH_MEM) & defined(ZSH_MEM_DEBUG)`
+    //   BUILTIN("mem", 0, bin_mem, 0, 0, 0, "v", NULL)
+    Builtin::entry("mem", 0, "exec::bin_mem", 0, 0, 0, Some("v"), None),
     Builtin::entry("popd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, "exec::builtin_cd", 0, 1, BIN_POPD, Some("q"), None),
+    // Src/builtin.c — `#if defined(ZSH_PAT_DEBUG)`
+    //   BUILTIN("patdebug", 0, bin_patdebug, 1, -1, 0, "p", NULL)
+    Builtin::entry("patdebug", 0, "exec::bin_patdebug", 1, -1, 0, Some("p"), None),
     Builtin::entry("print", BINF_PRINTOPTS, "exec::bin_print", 0, -1, BIN_PRINT, Some("abcC:Df:ilmnNoOpPrRsSu:v:x:X:z-"), None),
     Builtin::entry("printf", BINF_SKIPINVALID | BINF_SKIPDASH, "exec::bin_print", 1, -1, BIN_PRINTF, Some("v:"), None),
     Builtin::entry("pushd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, "exec::builtin_cd", 0, 2, BIN_PUSHD, Some("qsPL"), None),
