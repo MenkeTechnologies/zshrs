@@ -1162,11 +1162,24 @@ pub fn mergeundo() {                                                         // 
     //                      Undo chain deferred; no-op.
 }
 
-/// Port of `redo()` from Src/Zle/zle_utils.c:1661.
-pub fn redo() -> i32 {                                                       // c:1661
-    // C body c:1663-1668 — applies the next Change in the undo
-    //                      chain. Undo chain deferred; 1 (nothing).
-    1
+/// Direct port of `int redo(UNUSED(char **args))` from
+/// `Src/Zle/zle_utils.c:1661-1675`. Walks the undo stack forward
+/// from `zle.cur_change` calling `applychange` on each; returns 0
+/// on success, 1 when nothing to redo.
+pub fn redo(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {            // c:1661
+    use crate::ported::zle::zle_main::ChangeFlags;
+    loop {
+        if zle.cur_change >= zle.undo_stack.len() { return 1; }              // c:1664
+        let cur_idx = zle.cur_change;
+        if applychange(zle, cur_idx as i32) == 0 { break; }                  // c:1668
+        zle.cur_change = cur_idx + 1;
+        let has_next = zle.undo_stack.get(cur_idx)
+            .map(|c| c.flags.contains(ChangeFlags::NEXT))
+            .unwrap_or(false);
+        if !has_next { break; }                                              // c:1670
+    }
+    zle.cur_change += 1;                                                     // c:1672 advance past applied
+    0                                                                        // c:1674
 }
 
 /// Port of `set_undo_limit_change()` from Src/Zle/zle_utils.c:1819.
@@ -1296,11 +1309,44 @@ pub fn unapplychange(zle: &mut crate::ported::zle::zle_main::Zle, ch: i32) -> i3
     if change.flags.contains(ChangeFlags::PREV) { 1 } else { 0 }
 }
 
-/// Port of `undo()` from Src/Zle/zle_utils.c:1601.
-pub fn undo() -> i32 {                                                       // c:1601
-    // C body c:1603-1632 — applies one undo step from the change list.
-    //                      Undo deferred; 1 (nothing to undo).
-    1
+/// Direct port of `int undo(char **args)` from
+/// `Src/Zle/zle_utils.c:1601-1632`. Walks the undo stack backward
+/// from `zle.cur_change` calling `unapplychange` on each; stops at
+/// `last_change` (parsed from `args[0]` if provided, else -1 for
+/// "single step") or at `undo_limitno`. Returns 0 on success,
+/// 1 when nothing left to undo.
+pub fn undo(zle: &mut crate::ported::zle::zle_main::Zle, args: &[String]) -> i32 { // c:1601
+    use crate::ported::zle::zle_main::ChangeFlags;
+    let last_change: i64 = if !args.is_empty() {                             // c:1605
+        args[0].parse().unwrap_or(-1)
+    } else {
+        -1
+    };
+
+    loop {
+        // c:1614 — `prev = curchange->prev`; in Rust we step the
+        // index down.
+        if zle.cur_change == 0 { return 1; }                                 // c:1615
+        let prev_idx = zle.cur_change - 1;
+        let prev_chno = zle.undo_stack[prev_idx].changeno as i64;
+        if prev_chno <= last_change { break; }                               // c:1618
+        if (prev_chno as u64) <= zle.undo_limitno && args.is_empty() {       // c:1619
+            return 1;
+        }
+        if unapplychange(zle, prev_idx as i32) == 0 {                        // c:1621
+            if last_change >= 0 {
+                unapplychange(zle, prev_idx as i32);                         // c:1623
+                zle.cur_change = prev_idx;                                   // c:1624
+            }
+        } else {
+            zle.cur_change = prev_idx;                                       // c:1627
+        }
+        let has_prev = zle.undo_stack.get(prev_idx)
+            .map(|c| c.flags.contains(ChangeFlags::PREV))
+            .unwrap_or(false);
+        if !(last_change >= 0 || has_prev) { break; }                        // c:1630
+    }
+    0                                                                        // c:1631
 }
 
 /// Port of `viundochange()` from Src/Zle/zle_utils.c:1705.
