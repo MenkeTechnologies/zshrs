@@ -356,27 +356,33 @@ set_disabled
 is_disabled
 
 # utils.rs zwarn/zerrnam family — module-static get/setters for the
-# C globals scriptname / argzero / errflag / noerrs / locallevel /
+# C globals scriptname / argzero / noerrs / locallevel /
 # lineno (declared in Src/init.c, populated by the parser/source/fn
 # entry paths). Rust port wraps each in OnceLock<Mutex<…>> with these
-# helpers; C dereferences the globals directly.
+# helpers; C dereferences the globals directly. `errflag` itself is
+# a `pub static AtomicI32` matching the C global name 1:1.
 scriptname_lock
 argzero_lock
-errflag_lock
 noerrs_lock
 locallevel_lock
 lineno_lock
 shinstdin_lock
 set_scriptname
 set_argzero
-set_errflag
 set_noerrs
 set_locallevel
 set_lineno
 set_shinstdin
 zwarning
-errflag
 argzero
+
+# hashnameddir.rs — accessor for the C global `mod_export HashTable
+# nameddirtab` (Src/hashnameddir.c:48). C dereferences the global via
+# `nameddirtab->...`; Rust wraps a `Mutex<HashMap<String,nameddir>>`
+# in `OnceLock` because `HashMap::new()` isn't const, then exposes
+# the inner mutex through this accessor. Same pattern as utils.rs
+# scriptname_lock / argzero_lock.
+nameddirtab
 
 # pcre.rs — small Rust helpers wrapping pcre_exec-style usage for the
 # zsh/pcre module port; zsh C inlines this in module entrypoints rather

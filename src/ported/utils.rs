@@ -42,7 +42,13 @@ static ARGZERO: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
 /// Port of `int errflag` from `Src/init.c`. Tracks whether an
 /// error has been raised (`ERRFLAG_ERROR = 1`) or break/return
 /// is in flight (`ERRFLAG_INT = 2`).
-static ERRFLAG: std::sync::OnceLock<std::sync::Mutex<i32>> = std::sync::OnceLock::new();
+///
+/// Direct global access: `errflag.load(Ordering::Relaxed)` reads
+/// the current value, `errflag.fetch_or(ERRFLAG_ERROR, …)` matches
+/// C's `errflag |= ERRFLAG_ERROR`, `errflag.store(0, …)` matches
+/// C's `errflag = 0`.
+#[allow(non_upper_case_globals)]
+pub static errflag: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `int noerrs` from `Src/init.c`. Counter — when `> 0`,
 /// suppresses error printing. `noerrs >= 2` also suppresses the
@@ -102,10 +108,6 @@ fn argzero_lock() -> &'static std::sync::Mutex<Option<String>> {
     ARGZERO.get_or_init(|| std::sync::Mutex::new(None))
 }
 // WARNING: NOT IN UTILS.C — see scriptname_lock above.
-fn errflag_lock() -> &'static std::sync::Mutex<i32> {
-    ERRFLAG.get_or_init(|| std::sync::Mutex::new(0))
-}
-// WARNING: NOT IN UTILS.C — see scriptname_lock above.
 fn noerrs_lock() -> &'static std::sync::Mutex<i32> {
     NOERRS.get_or_init(|| std::sync::Mutex::new(0))
 }
@@ -152,17 +154,6 @@ pub fn set_argzero(name: Option<String>) {
 /// Read `argzero`. Used by `argzerogetfn` for `$0`.
 pub fn argzero() -> Option<String> {
     argzero_lock().lock().unwrap().clone()
-}
-
-/// Read `errflag`. Used by callers that need to short-circuit on
-/// error (e.g. parser loops).
-pub fn errflag() -> i32 {
-    *errflag_lock().lock().unwrap()
-}
-
-/// Set `errflag`. Called by `zerr`/`zerrnam` to signal fatal errors.
-pub fn set_errflag(v: i32) {
-    *errflag_lock().lock().unwrap() = v;
 }
 
 /// Setter for `noerrs`. Increment to suppress error output;
@@ -270,17 +261,16 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
 /// zwarning(NULL, fmt, ap);
 /// ```
 pub fn zerr(msg: &str) {                                                     // c:173
-    let mut flag = errflag_lock().lock().unwrap();
+    use std::sync::atomic::Ordering;
     let noerrs = *noerrs_lock().lock().unwrap();
-    if *flag != 0 || noerrs != 0 {
-        if noerrs < 2 {
-            *flag |= ERRFLAG_ERROR;
+    if errflag.load(Ordering::Relaxed) != 0 || noerrs != 0 {                 // c:175
+        if noerrs < 2 {                                                      // c:176
+            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);              // c:176
         }
-        return;
+        return;                                                              // c:177
     }
-    *flag |= ERRFLAG_ERROR;
-    drop(flag);
-    zwarning(None, msg);
+    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);                      // c:179
+    zwarning(None, msg);                                                     // c:180
 }
 
 /// Port of `zerrnam()` from `Src/utils.c:194`.
@@ -291,14 +281,13 @@ pub fn zerr(msg: &str) {                                                     // 
 /// zwarning(cmd, fmt, ap);
 /// ```
 pub fn zerrnam(cmd: &str, msg: &str) {                                       // c:194
-    let mut flag = errflag_lock().lock().unwrap();
+    use std::sync::atomic::Ordering;
     let noerrs = *noerrs_lock().lock().unwrap();
-    if *flag != 0 || noerrs != 0 {
+    if errflag.load(Ordering::Relaxed) != 0 || noerrs != 0 {                 // c:196
         return;
     }
-    *flag |= ERRFLAG_ERROR;
-    drop(flag);
-    zwarning(Some(cmd), msg);
+    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);                      // c:198
+    zwarning(Some(cmd), msg);                                                // c:199
 }
 
 /// Port of `zwarn()` from `Src/utils.c:214`.
@@ -308,12 +297,12 @@ pub fn zerrnam(cmd: &str, msg: &str) {                                       // 
 /// zwarning(NULL, fmt, ap);
 /// ```
 pub fn zwarn(msg: &str) {                                                    // c:214
-    let flag = *errflag_lock().lock().unwrap();
+    use std::sync::atomic::Ordering;
     let noerrs = *noerrs_lock().lock().unwrap();
-    if flag != 0 || noerrs != 0 {
+    if errflag.load(Ordering::Relaxed) != 0 || noerrs != 0 {                 // c:216
         return;
     }
-    zwarning(None, msg);
+    zwarning(None, msg);                                                     // c:218
 }
 
 /// Port of `zwarnnam()` from `Src/utils.c:231`.
@@ -323,12 +312,12 @@ pub fn zwarn(msg: &str) {                                                    // 
 /// zwarning(cmd, fmt, ap);
 /// ```
 pub fn zwarnnam(cmd: &str, msg: &str) {                                      // c:231
-    let flag = *errflag_lock().lock().unwrap();
+    use std::sync::atomic::Ordering;
     let noerrs = *noerrs_lock().lock().unwrap();
-    if flag != 0 || noerrs != 0 {
+    if errflag.load(Ordering::Relaxed) != 0 || noerrs != 0 {                 // c:233
         return;
     }
-    zwarning(Some(cmd), msg);
+    zwarning(Some(cmd), msg);                                                // c:235
 }
 
 /// Port of `zerrmsg()` from `Src/utils.c:289`.
@@ -2652,17 +2641,14 @@ pub fn substnamedir(s: &str) -> String {                                     // 
 
 /// Port of `finddir_scan()` from Src/utils.c:1106 — ScanFunc the
 /// C source registers with `scanhashtable(nameddirtab, …)` to pick
-/// the longest-prefix entry. Implementation lives on the global
-/// `NamedDirTable` (Src/hashnameddir.c counterpart) so this is a
-/// thin shim that exposes the C symbol; callers should prefer
-/// `finddir`.
+/// the longest-prefix entry. Reads the typed `nameddir` entries
+/// from `crate::ported::hashnameddir::nameddirtab()`.
 pub fn finddir_scan(path: &str) -> Option<(String, String)> {                // c:1106
-    let table = crate::ported::hashnameddir::nameddir_table()
-        .lock().ok()?;
+    let table = crate::ported::hashnameddir::nameddirtab().lock().ok()?;
     let mut best: Option<(String, String, usize)> = None;
-    for (name, dir) in table.iter() {
-        if path.starts_with(dir.as_str()) {
-            let len = dir.len();
+    for (name, nd) in table.iter() {
+        if path.starts_with(nd.dir.as_str()) {
+            let len = nd.dir.len();
             let rest = &path[len..];
             if (rest.is_empty() || rest.starts_with('/'))
                 && best.as_ref().map_or(true, |b| len > b.2)
@@ -2720,11 +2706,10 @@ pub fn finddir(path: &str) -> Option<String> {                              // c
 /// trailing-slash trim, and PWD/OLDPWD ND_NOABBREV stamp are all
 /// preserved. Routes through `crate::ported::hashnameddir`.
 pub fn adduserdir(name: &str, dir: &str, flags: i32, always: bool) {        // c:1187
-    use crate::ported::zsh_h::ND_NOABBREV;
-    const ND_USERNAME: i32 = 1 << 1;                                         // zsh.h ND_USERNAME
+    use crate::ported::zsh_h::{hashnode, nameddir, ND_NOABBREV, ND_USERNAME};
 
     if !crate::ported::zsh_h::interact() { return; }                         // c:1193
-    if let Ok(t) = crate::ported::hashnameddir::nameddir_table().lock() {
+    if let Ok(t) = crate::ported::hashnameddir::nameddirtab().lock() {
         if (flags & ND_USERNAME) != 0 && t.contains_key(name) {              // c:1199
             return;
         }
@@ -2737,8 +2722,7 @@ pub fn adduserdir(name: &str, dir: &str, flags: i32, always: bool) {        // c
         }
     }
     if dir.is_empty() || !dir.starts_with('/') {                             // c:1211
-        let _ = crate::ported::hashnameddir::nameddir_table()
-            .lock().map(|mut t| t.remove(name));                             // c:1214
+        let _ = crate::ported::hashnameddir::removenameddirnode(name);       // c:1214
         return;
     }
     let mut trimmed = dir.trim_end_matches('/').to_string();                 // c:1224-1226
@@ -2746,12 +2730,18 @@ pub fn adduserdir(name: &str, dir: &str, flags: i32, always: bool) {        // c
         trimmed = dir.to_string();                                           // c:1227-1233
     }
     let final_flags = if name == "PWD" || name == "OLDPWD" {                 // c:1237
-        flags | ND_NOABBREV as i32
+        flags | ND_NOABBREV
     } else {
         flags
     };
-    let _ = final_flags;
-    crate::ported::hashnameddir::addnameddirnode(name, &trimmed);             // c:1239
+    // c:1239 — `nd = (Nameddir) zshcalloc(sizeof *nd); nd->node.flags = …;
+    //           nd->dir = ztrdup(t); addnode(nameddirtab, ztrdup(s), nd);`
+    let nd = nameddir {
+        node: hashnode { next: None, nam: name.to_string(), flags: final_flags },
+        dir: trimmed,
+        diff: 0,
+    };
+    crate::ported::hashnameddir::addnameddirnode(name, nd);
 }
 
 /// Port of `char *getnameddir(char *name)` from Src/utils.c:1247.
@@ -2761,9 +2751,9 @@ pub fn adduserdir(name: &str, dir: &str, flags: i32, always: bool) {        // c
 /// via `adduserdir`; finally falls back to `getpwnam(name)` for
 /// `~user`-style lookups when USE_GETPWNAM is enabled.
 pub fn getnameddir(name: &str) -> Option<String> {                           // c:1247
-    if let Ok(t) = crate::ported::hashnameddir::nameddir_table().lock() {
-        if let Some(d) = t.get(name) {                                       // c:1254
-            return Some(d.clone());
+    if let Ok(t) = crate::ported::hashnameddir::nameddirtab().lock() {
+        if let Some(nd) = t.get(name) {                                      // c:1254
+            return Some(nd.dir.clone());
         }
     }
     // c:1260 — scalar param whose value starts with '/'

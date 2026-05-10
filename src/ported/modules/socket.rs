@@ -126,7 +126,8 @@ pub fn bin_zsocket(nam: &str, args: &[String],                           // c:57
             if r >= 0 { rfd = r; break; }
             let osek = std::io::Error::last_os_error().raw_os_error();
             if osek != Some(libc::EINTR)
-                || crate::ported::utils::errflag() != 0 { rfd = r; break; }
+                || crate::ported::utils::errflag
+                    .load(std::sync::atomic::Ordering::Relaxed) != 0 { rfd = r; break; }
         }
         if rfd == -1 {                                                   // c:199
             crate::ported::utils::zwarnnam(nam,

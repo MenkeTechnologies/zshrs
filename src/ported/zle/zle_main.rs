@@ -1895,9 +1895,9 @@ pub fn recursiveedit(zle: &mut Zle) -> i32 {                                 // 
     zle.zle_recursive += 1;
     // c:1984-1986 — `redrawhook(); zrefresh(); zlecore()`. Deferred.
     zle.zle_recursive -= 1;
-    let cur_errflag = crate::ported::utils::errflag();
+    let cur_errflag = crate::ported::utils::errflag.load(Ordering::Relaxed);
     let locerror = if cur_errflag != 0 { 1 } else { 0 };
-    crate::ported::utils::set_errflag(0);
+    crate::ported::utils::errflag.store(0, Ordering::Relaxed);
     crate::ported::zle::zle_misc::DONE.store(0, Ordering::SeqCst);           // c:1993
     locerror                                                                 // c:1995
 }

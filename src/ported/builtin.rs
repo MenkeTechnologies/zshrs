@@ -3967,9 +3967,7 @@ pub fn bin_hash(name: &str, argv: &[String],                                 // 
         if OPT_ISSET(ops, b'r') {                                            // c:4255
             // Empty the table.
             if dir_mode {
-                if let Ok(mut t) = crate::ported::hashnameddir::nameddir_table().lock() {
-                    t.clear();                                               // c:4256
-                }
+                crate::ported::hashnameddir::emptynameddirtable();           // c:4256
             } else {
                 // cmdnamtab clear lives in src/ported/hashtable.rs's
                 // CMDNAMTAB accessor; deferred to typed wireup.
@@ -3992,9 +3990,9 @@ pub fn bin_hash(name: &str, argv: &[String],                                 // 
     if argv.is_empty() {                                                     // c:4268
         crate::ported::mem::queue_signals();                                 // c:4269
         if dir_mode {
-            if let Ok(t) = crate::ported::hashnameddir::nameddir_table().lock() {
-                for (n, d) in t.iter() {                                     // c:4270
-                    crate::ported::hashnameddir::printnameddirnode(n, d, printflags);
+            if let Ok(t) = crate::ported::hashnameddir::nameddirtab().lock() {
+                for (_n, nd) in t.iter() {                                   // c:4270
+                    crate::ported::hashnameddir::printnameddirnode(nd, printflags);
                 }
             }
         }
@@ -4014,10 +4012,10 @@ pub fn bin_hash(name: &str, argv: &[String],                                 // 
                 crate::ported::pattern::PatFlags::default()).ok();
             if let Some(prog) = pprog {
                 if dir_mode {
-                    if let Ok(t) = crate::ported::hashnameddir::nameddir_table().lock() {
-                        for (n, d) in t.iter() {
+                    if let Ok(t) = crate::ported::hashnameddir::nameddirtab().lock() {
+                        for (n, nd) in t.iter() {
                             if crate::ported::pattern::pattry(&prog, n) {    // c:4286
-                                crate::ported::hashnameddir::printnameddirnode(n, d, printflags);
+                                crate::ported::hashnameddir::printnameddirnode(nd, printflags);
                             }
                         }
                     }
@@ -4045,7 +4043,13 @@ pub fn bin_hash(name: &str, argv: &[String],                                 // 
                     returnval = 1;                                           // c:4308
                     continue;                                                // c:4309
                 }
-                crate::ported::hashnameddir::addnameddirnode(n, v);          // c:4314
+                use crate::ported::zsh_h::{hashnode, nameddir};
+                let nd = nameddir {
+                    node: hashnode { next: None, nam: n.to_string(), flags: 0 },
+                    dir: v.to_string(),
+                    diff: 0,
+                };
+                crate::ported::hashnameddir::addnameddirnode(n, nd);         // c:4314
             } else {
                 // c:4316 — `cn->u.cmd = ztrdup(value);` in cmdnamtab.
                 // Static-link path: store in PATH-style env.
@@ -4053,18 +4057,22 @@ pub fn bin_hash(name: &str, argv: &[String],                                 // 
             }
             if OPT_ISSET(ops, b'v') {                                        // c:4321
                 if dir_mode {
-                    crate::ported::hashnameddir::printnameddirnode(n, v, 0); // c:4322
+                    if let Ok(t) = crate::ported::hashnameddir::nameddirtab().lock() {
+                        if let Some(nd) = t.get(n) {                         // c:4322
+                            crate::ported::hashnameddir::printnameddirnode(nd, 0);
+                        }
+                    }
                 }
             }
         } else {
             // c:4323-4334 — display existing entry / look up.
             if dir_mode {
-                let found = crate::ported::hashnameddir::nameddir_table()
+                let snapshot = crate::ported::hashnameddir::nameddirtab()
                     .lock().ok().and_then(|t| t.get(n).cloned());
-                match found {
-                    Some(d) => {
+                match snapshot {
+                    Some(nd) => {
                         if OPT_ISSET(ops, b'v') {                            // c:4337
-                            crate::ported::hashnameddir::printnameddirnode(n, &d, 0);
+                            crate::ported::hashnameddir::printnameddirnode(&nd, 0);
                         }
                     }
                     None => {
@@ -4139,7 +4147,7 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
     let clear_all = |t: &Tab| match t {
         Tab::Alias => { let _ = crate::ported::hashtable::aliastab_lock().lock().map(|mut g| g.clear()); }
         Tab::SufAlias => { let _ = crate::ported::hashtable::sufaliastab_lock().lock().map(|mut g| g.clear()); }
-        Tab::NamedDir => { let _ = crate::ported::hashnameddir::nameddir_table().lock().map(|mut g| g.clear()); }
+        Tab::NamedDir => { crate::ported::hashnameddir::emptynameddirtable(); }
         Tab::Shfunc => { let _ = SHFUNCTAB.lock().map(|mut g| g.clear()); }
         Tab::CmdNam => { /* deferred to cmdnamtab.rs */ }
     };
@@ -4149,8 +4157,7 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
                 .map(|mut g| g.remove(nm).is_some()).unwrap_or(false),
             Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().lock()
                 .map(|mut g| g.remove(nm).is_some()).unwrap_or(false),
-            Tab::NamedDir => crate::ported::hashnameddir::nameddir_table().lock()
-                .map(|mut g| g.remove(nm).is_some()).unwrap_or(false),
+            Tab::NamedDir => crate::ported::hashnameddir::removenameddirnode(nm).is_some(),
             Tab::Shfunc => SHFUNCTAB.lock()
                 .map(|mut g| g.remove(nm).is_some()).unwrap_or(false),
             Tab::CmdNam => false,
@@ -4177,7 +4184,7 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
                         .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
                     Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().lock()
                         .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
-                    Tab::NamedDir => crate::ported::hashnameddir::nameddir_table().lock()
+                    Tab::NamedDir => crate::ported::hashnameddir::nameddirtab().lock()
                         .map(|t| t.keys().cloned().collect()).unwrap_or_default(),
                     Tab::Shfunc => SHFUNCTAB.lock()
                         .map(|t| t.keys().cloned().collect()).unwrap_or_default(),
