@@ -35,12 +35,16 @@ pub static DONE: AtomicI32 = AtomicI32::new(0);                              // 
 pub static MARK: AtomicI32 = AtomicI32::new(0);                              // c:84
 
 /// Clipboard/paste buffer for yank operations
+// yankb, yanke; mark the start and end of last yank in editing buffer.    // c:526
+// The original cutbuffer, either cutbuf or one of the vi buffers.         // c:528
 #[derive(Debug, Default)]
 pub struct PasteBuffer {
     pub content: Vec<char>,
 }
 
 impl Zle {
+    // insert a zle string, with repetition and suffix removal              // c:33
+
     /// Self insert - insert the typed character
     /// Port of selfinsert() from zle_misc.c
     pub fn self_insert(&mut self, c: char) {                                 // c:113
@@ -683,11 +687,46 @@ pub fn makesuffix() -> i32 { 0 }
 /// Port of `makesuffixstr()` from Src/Zle/zle_misc.c:1642. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn makesuffixstr() -> i32 { 0 }
 
-/// Port of `negargument()` from Src/Zle/zle_misc.c:974. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn negargument() -> i32 { 0 }
+/// Port of `negargument()` from `Src/Zle/zle_misc.c:974`.
+/// ```c
+/// int
+/// negargument(UNUSED(char **args))
+/// {
+///     if (zmod.flags & MOD_TMULT)
+///         return 1;
+///     zmod.tmult = -1;
+///     zmod.flags |= MOD_TMULT|MOD_NEG;
+///     prefixflag = 1;
+///     return 0;
+/// }
+/// ```
+/// `negative-argument` widget — start a negative count prefix.
+/// Refuses if a tmult is already in flight.
+pub fn negargument(zle: &mut Zle) -> i32 {                                   // c:974
+    use super::zle_main::ModifierFlags;
+    if zle.zmod.flags.contains(ModifierFlags::TMULT) {                       // c:976
+        return 1;                                                            // c:977
+    }
+    zle.zmod.tmult = -1;                                                     // c:978
+    zle.zmod.flags.insert(ModifierFlags::TMULT | ModifierFlags::NEG);        // c:979
+    zle.prefixflag = true;                                                   // c:980
+    0                                                                        // c:981 return 0
+}
 
-/// Port of `overwritemode()` from Src/Zle/zle_misc.c:843. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn overwritemode() -> i32 { 0 }
+/// Port of `overwritemode()` from `Src/Zle/zle_misc.c:842`.
+/// ```c
+/// int
+/// overwritemode(UNUSED(char **args))
+/// {
+///     insmode ^= 1;
+///     return 0;
+/// }
+/// ```
+/// `overwrite-mode` widget — toggle insert/overwrite mode.
+pub fn overwritemode(zle: &mut Zle) -> i32 {                                 // c:842
+    zle.insmode = !zle.insmode;                                              // c:845 insmode ^= 1
+    0                                                                        // c:846 return 0
+}
 
 /// Port of `parsedigit()` from Src/Zle/zle_misc.c:919. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn parsedigit() -> i32 { 0 }
@@ -828,5 +867,48 @@ mod tests {
         assert!(f & crate::ported::zsh_h::ERRFLAG_ERROR != 0);
         assert!(f & crate::ported::zsh_h::ERRFLAG_INT != 0);
         crate::ported::utils::set_errflag(0);
+    }
+
+    // ---------- negargument / overwritemode real-port tests ----------
+
+    #[test]
+    fn negargument_sets_tmult_neg_prefix() {
+        // c:976-981 — sets tmult=-1 + TMULT|NEG flags + prefixflag.
+        use super::super::zle_main::ModifierFlags;
+        let mut z = Zle::new();
+        // Ensure clean modifier state.
+        z.zmod.tmult = 1;
+        z.zmod.flags = ModifierFlags::empty();
+        z.prefixflag = false;
+        let r = negargument(&mut z);
+        assert_eq!(r, 0);
+        assert_eq!(z.zmod.tmult, -1);
+        assert!(z.zmod.flags.contains(ModifierFlags::TMULT));
+        assert!(z.zmod.flags.contains(ModifierFlags::NEG));
+        assert!(z.prefixflag);
+    }
+
+    #[test]
+    fn negargument_refuses_when_tmult_in_flight() {
+        // c:976-977 — if MOD_TMULT already set → return 1.
+        use super::super::zle_main::ModifierFlags;
+        let mut z = Zle::new();
+        z.zmod.flags.insert(ModifierFlags::TMULT);
+        z.zmod.tmult = 7; // some pre-existing value
+        let r = negargument(&mut z);
+        assert_eq!(r, 1);
+        // tmult NOT clobbered (early return).
+        assert_eq!(z.zmod.tmult, 7);
+    }
+
+    #[test]
+    fn overwritemode_toggles_insmode() {
+        // c:845 — `insmode ^= 1`.
+        let mut z = Zle::new();
+        z.insmode = true;
+        overwritemode(&mut z);
+        assert!(!z.insmode);
+        overwritemode(&mut z);
+        assert!(z.insmode);
     }
 }
