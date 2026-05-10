@@ -862,14 +862,14 @@ impl KeymapManager {
             // Single char bindings
             for (i, opt) in km.first.iter().enumerate() {
                 if let Some(t) = opt {
-                    bindings.push((vec![i as u8], t.name.clone()));
+                    bindings.push((vec![i as u8], t.nam.clone()));
                 }
             }
 
             // Multi-char bindings
             for (seq, kb) in &km.multi {
                 if let Some(ref t) = kb.bind {
-                    bindings.push((seq.clone(), t.name.clone()));
+                    bindings.push((seq.clone(), t.nam.clone()));
                 } else if let Some(ref s) = kb.str {
                     bindings.push((seq.clone(), format!("\"{}\"", s)));
                 }
@@ -939,14 +939,14 @@ mod tests {
         let km = mgr.keymaps.get("emacs").expect("emacs keymap created");
         // Ctrl-V quoted-insert (zle_bindings.c emacs '^V').
         assert_eq!(
-            km.lookup_char(0x16).map(|t| t.name.as_str()),
+            km.lookup_char(0x16).map(|t| t.nam.as_str()),
             Some("quoted-insert")
         );
         // Ctrl-_ undo (zle_bindings.c emacs '^_').
-        assert_eq!(km.lookup_char(0x1F).map(|t| t.name.as_str()), Some("undo"));
+        assert_eq!(km.lookup_char(0x1F).map(|t| t.nam.as_str()), Some("undo"));
         // \ey yank-pop (zle_bindings.c emacs '\\ey').
         assert_eq!(
-            km.lookup_seq(b"\x1by").and_then(|kb| kb.bind.as_ref()).map(|t| t.name.as_str()),
+            km.lookup_seq(b"\x1by").and_then(|kb| kb.bind.as_ref()).map(|t| t.nam.as_str()),
             Some("yank-pop")
         );
     }
@@ -957,18 +957,18 @@ mod tests {
         let km = mgr.keymaps.get("emacs").expect("emacs keymap created");
         // \e. insert-last-word.
         assert_eq!(
-            km.lookup_seq(b"\x1b.").and_then(|kb| kb.bind.as_ref()).map(|t| t.name.as_str()),
+            km.lookup_seq(b"\x1b.").and_then(|kb| kb.bind.as_ref()).map(|t| t.nam.as_str()),
             Some("insert-last-word")
         );
         assert_eq!(
-            km.lookup_seq(b"\x1bp").and_then(|kb| kb.bind.as_ref()).map(|t| t.name.as_str()),
+            km.lookup_seq(b"\x1bp").and_then(|kb| kb.bind.as_ref()).map(|t| t.nam.as_str()),
             Some("history-search-backward")
         );
         // ^X^X exchange-point-and-mark.
         assert_eq!(
             km.lookup_seq(b"\x18\x18")
                 .and_then(|kb| kb.bind.as_ref())
-                .map(|t| t.name.as_str()),
+                .map(|t| t.nam.as_str()),
             Some("exchange-point-and-mark")
         );
     }
@@ -978,27 +978,27 @@ mod tests {
         let mgr = KeymapManager::new();
         let km = mgr.keymaps.get("vicmd").expect("vicmd keymap created");
         assert_eq!(
-            km.lookup_char(b'v').map(|t| t.name.as_str()),
+            km.lookup_char(b'v').map(|t| t.nam.as_str()),
             Some("visual-mode")
         );
         assert_eq!(
-            km.lookup_char(b'V').map(|t| t.name.as_str()),
+            km.lookup_char(b'V').map(|t| t.nam.as_str()),
             Some("visual-line-mode")
         );
         assert_eq!(
-            km.lookup_char(b'm').map(|t| t.name.as_str()),
+            km.lookup_char(b'm').map(|t| t.nam.as_str()),
             Some("vi-set-mark")
         );
         assert_eq!(
-            km.lookup_char(b'>').map(|t| t.name.as_str()),
+            km.lookup_char(b'>').map(|t| t.nam.as_str()),
             Some("vi-indent")
         );
         assert_eq!(
-            km.lookup_char(b'~').map(|t| t.name.as_str()),
+            km.lookup_char(b'~').map(|t| t.nam.as_str()),
             Some("vi-swap-case")
         );
         assert_eq!(
-            km.lookup_char(b'%').map(|t| t.name.as_str()),
+            km.lookup_char(b'%').map(|t| t.nam.as_str()),
             Some("vi-match-bracket")
         );
     }
@@ -1009,17 +1009,17 @@ mod tests {
         let km = mgr.keymaps.get("viins").expect("viins keymap created");
         // ^R history-incremental-search-backward (zle_bindings.c viins '^R').
         assert_eq!(
-            km.lookup_char(0x12).map(|t| t.name.as_str()),
+            km.lookup_char(0x12).map(|t| t.nam.as_str()),
             Some("history-incremental-search-backward")
         );
         // ^V quoted-insert.
         assert_eq!(
-            km.lookup_char(0x16).map(|t| t.name.as_str()),
+            km.lookup_char(0x16).map(|t| t.nam.as_str()),
             Some("quoted-insert")
         );
         // ^A beginning-of-line.
         assert_eq!(
-            km.lookup_char(0x01).map(|t| t.name.as_str()),
+            km.lookup_char(0x01).map(|t| t.nam.as_str()),
             Some("beginning-of-line")
         );
     }
@@ -1306,7 +1306,7 @@ pub fn bin_bindkey_list(name: &str, _ops: &[String]) -> i32 {                // 
             } else {
                 let _ = write!(stdout, "\"\\M-{}\"", (i as u8 ^ 0x80) as char);
             }
-            let _ = writeln!(stdout, " {}", t.name);
+            let _ = writeln!(stdout, " {}", t.nam);
         }
     }
     // c:1150-1170 — print multi-byte bindings.
@@ -1325,7 +1325,7 @@ pub fn bin_bindkey_list(name: &str, _ops: &[String]) -> i32 {                // 
         }
         let _ = write!(stdout, "\" ");
         if let Some(t) = &kb.bind {
-            let _ = writeln!(stdout, "{}", t.name);
+            let _ = writeln!(stdout, "{}", t.nam);
         } else if let Some(s) = &kb.str {
             let _ = writeln!(stdout, "\"{}\"", s);
         } else {
@@ -1478,7 +1478,7 @@ pub fn freekeynode(_kb: KeyBinding) {                                        // 
     if let Some(t) = _kb.bind {
         // Match zle_thingy.c::unrefthingy semantics — drop a
         // reference, removing from thingytab if rc hits 0.
-        crate::ported::zle::zle_thingy::unrefthingy(&t.name);
+        crate::ported::zle::zle_thingy::unrefthingy(&t.nam);
     }
     // KeyBinding consumed; String/Option fields auto-drop.
 }
@@ -1755,7 +1755,7 @@ pub fn scanbindlist(kb: &KeyBinding) -> Option<String> {                     // 
     out.push('"');
     out.push(' ');
     if let Some(t) = &kb.bind {                                              // c:1156
-        out.push_str(&t.name);
+        out.push_str(&t.nam);
     } else if let Some(s) = &kb.str {                                        // c:1160
         out.push('"');
         out.push_str(s);

@@ -9,27 +9,18 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use super::widget::{Widget, WidgetFlags, WidgetFunc};
+use super::zle_h::TH_IMMORTAL;
+use crate::ported::zsh_h::DISABLED;
 
-/// Flags for thingies
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ThingyFlags {
-    /// Thingy is disabled
-    pub disabled: bool,
-    /// Can't refer to a different widget
-    pub immortal: bool,
-}
-
-/// A thingy - a named reference to a widget
+/// Direct port of `struct thingy` from `Src/Zle/zle.h:224`. A named
+/// reference to a widget. `ThingyFlags` deleted — C uses an `int
+/// flags` field with `TH_IMMORTAL` (1<<1) and `DISABLED` (1<<0) bits.
 #[derive(Debug, Clone)]
-pub struct Thingy {
-    /// Name of the thingy
-    pub name: String,
-    /// Flags
-    pub flags: ThingyFlags,
-    /// Reference count (for compatibility, though Arc handles this)
-    pub rc: i32,
-    /// Widget this thingy refers to
-    pub widget: Option<Arc<Widget>>,
+pub struct Thingy {                                                          // c:224
+    pub nam: String,                                                         // c:226 char *nam
+    pub flags: i32,                                                          // c:227 int flags
+    pub rc: i32,                                                             // c:228 int rc
+    pub widget: Option<Arc<Widget>>,                                         // c:229 Widget widget
 }
 
 impl Thingy {
@@ -39,8 +30,8 @@ impl Thingy {
     /// `bindwidget` (zle_thingy.c:199).
     pub fn new(name: &str) -> Self {
         Thingy {
-            name: name.to_string(),
-            flags: ThingyFlags::default(),
+            nam: name.to_string(),
+            flags: 0,
             rc: 1,
             widget: None,
         }
@@ -54,11 +45,8 @@ impl Thingy {
     pub fn builtin(name: &str) -> Self {
         let widget = Widget::builtin(name);
         Thingy {
-            name: name.to_string(),
-            flags: ThingyFlags {
-                disabled: false,
-                immortal: true,
-            },
+            nam: name.to_string(),
+            flags: TH_IMMORTAL,
             rc: 1,
             widget: Some(Arc::new(widget)),
         }
@@ -70,8 +58,8 @@ impl Thingy {
     pub fn user_defined(name: &str, func_name: &str) -> Self {
         let widget = Widget::user_defined(name, func_name);
         Thingy {
-            name: name.to_string(),
-            flags: ThingyFlags::default(),
+            nam: name.to_string(),
+            flags: 0,
             rc: 1,
             widget: Some(Arc::new(widget)),
         }
@@ -82,7 +70,7 @@ impl Thingy {
     /// Src/Zle/zle.h — used by widget bodies that special-case their
     /// own bound name (e.g. select-a-word checking which alias fired).
     pub fn is(&self, name: &str) -> bool {
-        self.name == name
+        self.nam == name
     }
 
     /// Test whether this thingy is `name` or its dot-prefixed variant.
@@ -91,7 +79,7 @@ impl Thingy {
     /// vs `args[1]` split at zle_thingy.c:584. Callers use this when
     /// they want the canonical built-in regardless of user aliasing.
     pub fn is_thingy(&self, name: &str) -> bool {
-        self.name == name || self.name == format!(".{}", name)
+        self.nam == name || self.nam == format!(".{}", name)
     }
 }
 
@@ -176,7 +164,7 @@ pub fn emptythingytab() {                                                    // 
     let names: Vec<String> = {
         let tab = thingytab().lock().unwrap();
         tab.iter()
-            .filter(|(_, t)| !t.flags.disabled)
+            .filter(|(_, t)| (t.flags & DISABLED) == 0)
             .map(|(k, _)| k.clone())
             .collect()
     };
@@ -223,7 +211,7 @@ pub fn scanemptythingies(name: &str) {                                       // 
 /// expected to fill in `nam` and `bindwidget` it.
 pub fn makethingynode() -> Thingy {                                          // c:106
     let mut t = Thingy::new("");                                             // c:110 zshcalloc
-    t.flags.disabled = true;                                                 // c:112 t->flags = DISABLED
+    t.flags |= DISABLED;                                                 // c:112 t->flags = DISABLED
     t.rc = 0;                                                                // c:110 zshcalloc zeros rc
     t                                                                        // c:113 return t
 }
@@ -313,7 +301,7 @@ pub fn rthingy(name: &str) {                                                 // 
         let mut tab = thingytab().lock().unwrap();
         if !tab.contains_key(name) {                                         // c:160-162 if(!t)
             let mut t = makethingynode();                                    // c:163 makethingynode
-            t.name = name.to_string();                                       // c:163 ztrdup(nam)
+            t.nam = name.to_string();                                       // c:163 ztrdup(nam)
             tab.insert(name.to_string(), t);                                 // c:163 addnode
         }
     }
@@ -380,8 +368,8 @@ pub fn bindwidget(w: Arc<Widget>, t_name: &str) -> i32 {                     // 
         let tab = thingytab().lock().unwrap();
         match tab.get(t_name) {
             Some(t) => (
-                t.flags.immortal,
-                t.flags.disabled,
+                (t.flags & TH_IMMORTAL) != 0,
+                (t.flags & DISABLED) != 0,
                 t.widget.as_ref().map(|w2| Arc::ptr_eq(w2, &w)).unwrap_or(false),
             ),
             None => (false, true, false),
@@ -404,7 +392,7 @@ pub fn bindwidget(w: Arc<Widget>, t_name: &str) -> i32 {                     // 
     let mut tab = thingytab().lock().unwrap();
     if let Some(t) = tab.get_mut(t_name) {
         t.widget = Some(w);                                                  // c:217 t->widget = w
-        t.flags.disabled = false;                                            // c:218 t->flags &= ~DISABLED
+        t.flags &= !DISABLED;                                            // c:218 t->flags &= ~DISABLED
     }
     0                                                                        // c:219 return 0
 }
@@ -437,7 +425,7 @@ pub fn unbindwidget(t_name: &str, override_: i32) -> i32 {                   // 
     let (disabled, immortal, w_opt) = {
         let tab = thingytab().lock().unwrap();
         match tab.get(t_name) {
-            Some(t) => (t.flags.disabled, t.flags.immortal, t.widget.clone()),
+            Some(t) => ((t.flags & DISABLED) != 0, (t.flags & TH_IMMORTAL) != 0, t.widget.clone()),
             None => return 0,
         }
     };
@@ -453,7 +441,7 @@ pub fn unbindwidget(t_name: &str, override_: i32) -> i32 {                   // 
         let peer_count = {
             let tab = thingytab().lock().unwrap();
             tab.values()
-                .filter(|t| t.name != t_name)
+                .filter(|t| t.nam != t_name)
                 .filter(|t| t.widget.as_ref().map(|w2| Arc::ptr_eq(w2, &w)).unwrap_or(false))
                 .count()
         };
@@ -469,8 +457,8 @@ pub fn unbindwidget(t_name: &str, override_: i32) -> i32 {                   // 
 
     let mut tab = thingytab().lock().unwrap();
     if let Some(t) = tab.get_mut(t_name) {
-        t.flags.immortal = false;                                            // c:247 &= ~TH_IMMORTAL
-        t.flags.disabled = true;                                             // c:248 |= DISABLED
+        t.flags &= !TH_IMMORTAL;                                            // c:247 &= ~TH_IMMORTAL
+        t.flags |= DISABLED;                                             // c:248 |= DISABLED
         t.widget = None;
     }
     drop(tab);
@@ -569,7 +557,7 @@ pub fn addzlefunction(                                                       // 
     // c:291-293 — refuse if .name is already TH_IMMORTAL.
     let blocked = {
         let tab = thingytab().lock().unwrap();
-        tab.get(&dotn).map(|t| t.flags.immortal).unwrap_or(false)
+        tab.get(&dotn).map(|t| (t.flags & TH_IMMORTAL) != 0).unwrap_or(false)
     };
     if blocked {
         return None;                                                         // c:293
@@ -587,7 +575,7 @@ pub fn addzlefunction(                                                       // 
     rthingy(&dotn);                                                          // c:298 t = rthingy(dotn)
     bindwidget(w.clone(), &dotn);                                            // c:299 bindwidget(w, t)
     if let Some(t) = thingytab().lock().unwrap().get_mut(&dotn) {
-        t.flags.immortal = true;                                             // c:300 t->flags |= TH_IMMORTAL
+        t.flags |= TH_IMMORTAL;                                             // c:300 t->flags |= TH_IMMORTAL
     }
     rthingy(name);                                                           // c:301 rthingy(name)
     bindwidget(w.clone(), name);                                             // c:301 bindwidget(w, ...)
@@ -1223,7 +1211,7 @@ mod tests {
         let tab = thingytab().lock().unwrap();
         let t = tab.get("foo").expect("rthingy must create");
         assert_eq!(t.rc, 1);
-        assert!(t.flags.disabled);
+        assert!((t.flags & DISABLED) != 0);
     }
 
     #[test]
@@ -1275,7 +1263,7 @@ mod tests {
         assert_eq!(r, 0);
         let tab = thingytab().lock().unwrap();
         let t = tab.get("hello").unwrap();
-        assert!(!t.flags.disabled);
+        assert!((t.flags & DISABLED) == 0);
         assert!(t.widget.is_some());
     }
 
@@ -1285,7 +1273,7 @@ mod tests {
         reset_tab();
 
         rthingy("imm");
-        thingytab().lock().unwrap().get_mut("imm").unwrap().flags.immortal = true;
+        thingytab().lock().unwrap().get_mut("imm").unwrap().flags |= TH_IMMORTAL;
         let w = Arc::new(Widget {
             flags: WidgetFlags::INT,
             func: WidgetFunc::Internal(|_| {}),
@@ -1325,9 +1313,9 @@ mod tests {
         assert!(tab.contains_key(".self-insert"));
         assert!(tab.contains_key("self-insert"));
         // .self-insert is immortal
-        assert!(tab.get(".self-insert").unwrap().flags.immortal);
+        assert!(tab.get(".self-insert").unwrap().flags & TH_IMMORTAL != 0);
         // canonical is not
-        assert!(!tab.get("self-insert").unwrap().flags.immortal);
+        assert!(tab.get("self-insert").unwrap().flags & TH_IMMORTAL == 0);
         // both share the same widget Arc
         let dot_w = tab.get(".self-insert").unwrap().widget.clone().unwrap();
         let plain_w = tab.get("self-insert").unwrap().widget.clone().unwrap();

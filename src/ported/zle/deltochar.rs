@@ -32,7 +32,7 @@ pub fn deltochar(zle: &mut Zle) -> i32 {                                 // c:38
     } else {
         1
     };                                                                   // c:42 zmult
-    let zap = zle.bindk.as_ref().map(|t| t.name.as_str()) == Some("zap-to-char"); // c:43
+    let zap = zle.bindk.as_ref().map(|t| t.nam.as_str()) == Some("zap-to-char"); // c:43
 
     if n > 0 {                                                           // c:45
         while n > 0 && dest != zle.zlell {                               // c:46 while (n-- && dest != zlell)

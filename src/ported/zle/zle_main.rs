@@ -1218,7 +1218,7 @@ impl Zle {
     pub fn describe_key_briefly(&mut self) {
         if let Some(c) = self.getfullchar(false) {
             if let Some(thingy) = self.keymaps.lookup_key(c) {
-                self.display_msg(&format!("{} is bound to {}", c, thingy.name));
+                self.display_msg(&format!("{} is bound to {}", c, thingy.nam));
             } else {
                 self.display_msg(&format!("{} is not bound", c));
             }
@@ -1234,7 +1234,7 @@ impl Zle {
             // Check single char bindings
             for (i, opt) in km.first.iter().enumerate() {
                 if let Some(t) = opt {
-                    if t.name == widget_name {
+                    if t.nam == widget_name {
                         bindings.push(format!("{}:{}", name, super::zle_utils::printbind(&[i as u8])));
                     }
                 }
@@ -1243,7 +1243,7 @@ impl Zle {
             // Check multi-char bindings
             for (seq, kb) in &km.multi {
                 if let Some(ref t) = kb.bind {
-                    if t.name == widget_name {
+                    if t.nam == widget_name {
                         bindings.push(format!("{}:{}", name, super::zle_utils::printbind(seq)));
                     }
                 }
@@ -1655,7 +1655,7 @@ mod tests {
         zle.keymaps.select("emacs");
         zle.ungetbytes(b"\x05"); // Ctrl-E — emacs default = end-of-line
         let t = zle.get_key_cmd().expect("should resolve Ctrl-E");
-        assert_eq!(t.name, "end-of-line");
+        assert_eq!(t.nam, "end-of-line");
     }
 
     #[test]
@@ -1671,7 +1671,7 @@ mod tests {
         // byte) by checking the keybuf actually traversed past 1 byte.
         // Concretely: the widget shouldn't be a literal self-insert for
         // ESC, since that would mean trie walk failed.
-        assert_ne!(t.name, "self-insert");
+        assert_ne!(t.nam, "self-insert");
     }
 
     #[test]
