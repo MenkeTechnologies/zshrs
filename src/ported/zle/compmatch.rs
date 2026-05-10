@@ -1064,13 +1064,140 @@ pub fn add_bmatchers(m: Option<&crate::ported::zle::comp_h::Cmatcher>) {     // 
     }
 }
 
-/// Port of `add_match_part()` from Src/Zle/compmatch.c:373.
-pub fn add_match_part(_m: i32, _l: &str, _ll: i32, _w: &str, _wl: i32,       // c:373
-                      _o: &str, _ol: i32, _osl: i32, _sfx: i32) {
-    // C body c:375-444 — appends a partial match into matchparts via
-    //                    add_match_str. Substrate (matchparts global)
-    //                    deferred; no-op.
+/// Direct port of `static void add_match_part(Cmatcher m, char *l,
+///                                            char *w, int wl,
+///                                            char *o, int ol,
+///                                            char *s, int sl,
+///                                            int osl, int sfx)`
+/// from `Src/Zle/compmatch.c:373-444`. Appends a partial match into
+/// `MATCHPARTS`, splitting the new part via `bld_parts` per the
+/// matcher's anchor rules and consuming any pending `MATCHSUBS`
+/// nodes into the new tail.
+pub fn add_match_part(
+    m: Option<&crate::ported::zle::comp_h::Cmatcher>,                        // c:373
+    l: Option<&str>, _ll: i32,
+    w: &str, wl: i32,
+    o: Option<&str>, ol: i32,
+    s: &str, sl: i32,
+    osl: i32, sfx: i32,
+) {
+    use crate::ported::zle::comp_h::{Cline, CMF_LEFT, CLF_NEW, CLF_SUF};
+
+    // c:382 — `if (l && !strncmp(l, w, wl)) l = NULL` — drop redundant anchor.
+    let l_eff: Option<String> = match l {
+        Some(lstr) if lstr.len() >= wl as usize
+                    && wl > 0
+                    && &lstr[..wl as usize] == &w[..wl as usize] => None,
+        Some(lstr) => Some(lstr.to_string()),
+        None       => None,
+    };
+
+    // c:392 — `p = bld_parts(s, sl, osl, &lp, &lprem)`.
+    let mut lp: Option<Box<Cline>> = None;
+    let mut lprem: Option<Box<Cline>> = None;
+    let mut p = bld_parts(s, sl, osl, Some(&mut lp), Some(&mut lprem));
+
+    // c:394 — `if (lprem && m && (m->flags & CLF_LEFT))`.
+    if let Some(rem) = lprem.as_mut() {
+        if m.map(|mat| (mat.flags & CMF_LEFT) != 0).unwrap_or(false) {
+            rem.flags |= CLF_SUF;                                            // c:395
+            rem.suffix = rem.prefix.take();                                  // c:396 swap
+        }
+    }
+
+    // c:402 — `if (sfx) p = revert_cline(lp = p)`.
+    if sfx != 0 {
+        if let Some(chain) = p.take() {
+            p = revert_cline(Some(chain));
+        }
+    }
+
+    // c:405-419 — merge MATCHSUBS into the head/tail.
+    let subs = MATCHSUBS.get_or_init(|| std::sync::Mutex::new(None))
+        .lock().ok().and_then(|mut g| g.take());
+    if let Some(subs_chain) = subs {                                         // c:405
+        if let Some(lp_node) = lp.as_mut() {
+            if sfx != 0 {                                                    // c:407 lp->prefix tail-append
+                let mut tail_ref: *mut Option<Box<Cline>> = &mut lp_node.prefix;
+                unsafe {
+                    while let Some(ref mut next_node) = *tail_ref {
+                        tail_ref = &mut next_node.next as *mut _;
+                    }
+                    *tail_ref = Some(subs_chain);
+                }
+            } else if let Some(ref mut p_node) = p {                         // c:415 p->prefix prepend
+                let old_prefix = p_node.prefix.take();
+                let mut new_head = subs_chain;
+                {
+                    let mut tail_ref: *mut Option<Box<Cline>> = &mut new_head.next;
+                    unsafe {
+                        while let Some(ref mut nn) = *tail_ref {
+                            tail_ref = &mut nn.next as *mut _;
+                        }
+                        *tail_ref = old_prefix;
+                    }
+                }
+                p_node.prefix = Some(new_head);
+            }
+        }
+        // c:417 — `matchsubs = matchlastsub = NULL`.
+        if let Ok(mut g) = MATCHLASTSUB
+            .get_or_init(|| std::sync::Mutex::new(None)).lock()
+        {
+            *g = None;
+        }
+    }
+
+    // c:421-435 — store args in the last part-cline.
+    if let Some(lp_node) = lp.as_mut() {
+        if lp_node.llen != 0 || lp_node.wlen != 0 {                          // c:421
+            let next = get_cline(
+                l_eff.clone(), wl, Some(w.to_string()), wl,
+                o.map(|s| s.to_string()), ol, CLF_NEW,
+            );
+            lp_node.next = Some(next);                                       // c:423
+        } else {                                                             // c:425
+            lp_node.line = l_eff.clone();                                    // c:426
+            lp_node.llen = wl;
+            lp_node.word = Some(w.to_string());                              // c:428
+            lp_node.wlen = wl;
+            lp_node.orig = o.map(|s| s.to_string());                         // c:430
+            lp_node.olen = ol;
+        }
+        if o.is_some() || ol != 0 {                                          // c:432
+            lp_node.flags &= !CLF_NEW;
+        }
+    }
+
+    // c:439-444 — append `p` to MATCHPARTS via MATCHLASTPART.
+    let last_present = MATCHLASTPART.get()
+        .and_then(|c| c.lock().ok().map(|g| g.is_some()))
+        .unwrap_or(false);
+    if last_present {                                                        // c:440
+        if let Ok(mut tail) = MATCHLASTPART
+            .get_or_init(|| std::sync::Mutex::new(None)).lock()
+        {
+            if let Some(t) = tail.as_mut() {
+                t.next = p.clone();
+            }
+        }
+    } else if let Ok(mut head) = MATCHPARTS
+        .get_or_init(|| std::sync::Mutex::new(None)).lock()
+    {
+        *head = p.clone();                                                   // c:442
+    }
+    if let Some(lp_node) = lp {
+        if let Ok(mut tail) = MATCHLASTPART
+            .get_or_init(|| std::sync::Mutex::new(None)).lock()
+        {
+            *tail = Some(lp_node);                                           // c:443
+        }
+    }
 }
+
+/// File-scope `Cline matchlastpart` from `Src/Zle/compmatch.c:292`.
+pub static MATCHLASTPART: std::sync::OnceLock<std::sync::Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>>
+    = std::sync::OnceLock::new();                                            // c:292
 
 /// Direct port of `static void add_match_str(Cmatcher m, char *l,
 ///                                          char *w, int wl, int sfx)`
