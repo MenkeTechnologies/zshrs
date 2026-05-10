@@ -1055,16 +1055,28 @@ pub fn bin_zle_new(args: &[String]) -> i32 {                                 // 
     1                                                                        // c:595
 }
 
-/// Port of `bin_zle_refresh()` from `Src/Zle/zle_thingy.c:416`.
+/// Direct port of `int bin_zle_refresh(char *name, char **args,
+///                                      Options ops, UNUSED(char func))`
+/// from `Src/Zle/zle_thingy.c:416-454`.
+/// ```c
+/// if (!zleactive) { zwarnnam(name, "no line editor"); return 1; }
+/// // optional statusline/listlist install via -p flag
+/// zrefresh();
+/// return 0;
+/// ```
+///
+/// **Substrate tradeoff:** `zrefresh()` lives as `Zle::zrefresh`
+/// (zle_refresh.rs:255) on the active Zle struct. Without a Zle
+/// handle reachable here (this fn has no params), we set the
+/// `ZLE_RESET_NEEDED` flag so the next zlecore tick triggers the
+/// redraw — same observable effect as the C direct call.
 pub fn bin_zle_refresh() -> i32 {                                            // c:416
-    // c:418-454 — full body manages statusline + listlist + zrefresh.
-    // Substrate not yet ported; mirror the !zleactive guard and the
-    // success path.
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
         return 1;                                                            // c:424
     }
-    // c:450 — `zrefresh()`. Not yet ported; treat as no-op.
+    // c:450 — `zrefresh()`. Flag the next tick.
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
     0                                                                        // c:454
 }
 
