@@ -38,6 +38,43 @@ pub static NBRBEG: AtomicI32 = AtomicI32::new(0);                            // 
 /// Port of `mod_export int nbrend` from `Src/Zle/zle_tricky.c:114`.
 pub static NBREND: AtomicI32 = AtomicI32::new(0);                            // c:114
 
+/// Port of `mod_export int origcs` from `Src/Zle/zle_tricky.c:75`.
+/// Cursor position saved at completion entry.
+pub static ORIGCS: AtomicI32 = AtomicI32::new(0);                            // c:75
+/// Port of `mod_export int origll` from `Src/Zle/zle_tricky.c:75`.
+/// Line length saved at completion entry.
+pub static ORIGLL: AtomicI32 = AtomicI32::new(0);                            // c:75
+
+/// Port of `mod_export int insubscr` from `Src/Zle/zle_tricky.c:405`.
+/// != 0 if we are inside `${name[...]}` or `${(P)name[...]}`.
+pub static INSUBSCR: AtomicI32 = AtomicI32::new(0);                          // c:405
+
+/// Port of `mod_export int instring` from `Src/Zle/zle_tricky.c:419`.
+/// QT_NONE (0), QT_SINGLE, QT_DOUBLE, QT_DOLLARS, or QT_BACKSLASH.
+pub static INSTRING: AtomicI32 = AtomicI32::new(0);                          // c:419
+/// Port of `mod_export int inbackt` from `Src/Zle/zle_tricky.c:419`.
+pub static INBACKT: AtomicI32 = AtomicI32::new(0);                           // c:419
+
+/// Port of `mod_export char *origline` from `Src/Zle/zle_tricky.c`.
+/// The metafied line saved at completion entry.
+pub static ORIGLINE: std::sync::OnceLock<std::sync::Mutex<String>> =
+    std::sync::OnceLock::new();                                              // zle_tricky.c
+
+/// Port of `mod_export char *lastprebr` from `Src/Zle/zle_tricky.c`.
+pub static LASTPREBR: std::sync::OnceLock<std::sync::Mutex<String>> =
+    std::sync::OnceLock::new();                                              // zle_tricky.c
+/// Port of `mod_export char *lastpostbr` from `Src/Zle/zle_tricky.c`.
+pub static LASTPOSTBR: std::sync::OnceLock<std::sync::Mutex<String>> =
+    std::sync::OnceLock::new();                                              // zle_tricky.c
+
+/// Port of `mod_export char *compquote` from `Src/Zle/zle_tricky.c`.
+/// `$compstate[quote]` — current quoting context character.
+pub static COMPQUOTE: std::sync::OnceLock<std::sync::Mutex<String>> =
+    std::sync::OnceLock::new();                                              // zle_tricky.c
+/// Port of `mod_export char *autoq` from `Src/Zle/zle_tricky.c`.
+pub static AUTOQ: std::sync::OnceLock<std::sync::Mutex<String>> =
+    std::sync::OnceLock::new();                                              // zle_tricky.c
+
 /// Port of `mod_export int menucmp` from `Src/Zle/zle_tricky.c:106`.
 /// Non-zero while inside a menu-completion sequence.
 pub static MENUCMP: AtomicI32 = AtomicI32::new(0);                           // c:106
