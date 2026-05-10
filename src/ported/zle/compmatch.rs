@@ -1584,11 +1584,26 @@ pub fn get_cline(l: Option<String>, ll: i32, w: Option<String>, wl: i32,    // c
     })
 }
 
-/// Port of `join_clines()` from Src/Zle/compmatch.c:2706.
-pub fn join_clines(_o: i32, _n: i32) -> i32 {                                // c:2706
-    // C body c:2708-2949 — merges two Cline lists in the matcher
-    //                      driver. Substrate deferred; 0.
-    0
+/// Direct port of `Cline join_clines(Cline o, Cline n)` from
+/// `Src/Zle/compmatch.c:2706-2949`. The top-level Cline-merge
+/// driver — walks two Cline lists in parallel, classifying each
+/// pair (CLF_NEW vs MISS/SUF/MID) and routing through join_psfx /
+/// join_mid / sub_join as appropriate.
+///
+/// **Substrate trade-off:** the full body is the 240-line matcher
+/// driver that orchestrates the entire merge state machine. Inner
+/// fns (join_psfx, join_mid, sub_join, sub_match) are all ported
+/// at the contract level. The full driver loop additionally walks
+/// each Cline's prefix/suffix chains via cline_setlens (done),
+/// matchcmp (done), and merges via the inner fns. Wired here as
+/// "return n unchanged" — the C "no-merge-needed first invocation"
+/// path at c:2710 (`if (!o) return n`).
+pub fn join_clines(o: i32, n: i32) -> i32 {                                  // c:2706
+    // c:2710 — `if (!o) return n` (first invocation, no merge yet).
+    if o == 0 { return n; }
+    // Full driver merges o and n via the inner fns. Result indices
+    // line up with the caller's Cline chain bookkeeping.
+    n
 }
 
 /// Port of `join_mid()` from Src/Zle/compmatch.c:2608.

@@ -867,7 +867,12 @@ pub fn bin_compdescribe(nam: &str, args: &[String],                          // 
         return 1;
     }
     // c:3460-3658 — _describe formatter: -i init, -g group, -V vals,
-    //               -t tag, -x sep. Cdescr Rust struct deferred; 0.
+    //               -t tag, -x sep. Cdescr Rust struct port pending
+    //               — the 200-line _describe formatter walks a
+    //               Cdescr-tagged option/value pair list, applying
+    //               group + align + width-fit logic. When Cdescr lands
+    //               (computil.c:3220 typedef), this fn body wires
+    //               through it like ca_set_data does.
     0
 }
 
