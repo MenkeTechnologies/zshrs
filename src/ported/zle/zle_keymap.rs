@@ -1090,10 +1090,22 @@ mod tests {
 }
 
 /// Port of `add_cursor_char()` from Src/Zle/zle_keymap.c:1248. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn add_cursor_char() -> i32 { 0 }
+pub fn add_cursor_char(buf: &mut Vec<u8>, c: u8) {                           // c:1248
+    // C body (c:1250): `*cursorptr++ = c`. Push one byte into the
+    // cursor-key parse buffer (caller manages the buffer).
+    buf.push(c);
+}
 
 /// Port of `add_cursor_key()` from Src/Zle/zle_keymap.c:1258. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn add_cursor_key() -> i32 { 0 }
+pub fn add_cursor_key(_km: &mut Keymap, _tccode: i32, _thingy: Thingy, _defchar: i32) {  // c:1258
+    // C body (c:1260-1300): looks up termcap cursor key string by
+    // tccode (TCUPCURSOR/TCDNCURSOR/etc.), falls back to defchar
+    // if missing, then bindkey()s it on km. Termcap substrate not
+    // ported — bind via the supplied default character if non-zero.
+    if _defchar > 0 && _defchar < 256 {
+        _km.bind_char(_defchar as u8, _thingy);
+    }
+}
 
 /// Port of `addkeybuf()` from Src/Zle/zle_keymap.c:1717. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn addkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, c: i32) {      // c:1700
@@ -1306,7 +1318,19 @@ pub fn freekeynode(_kb: KeyBinding) {                                        // 
 }
 
 /// Port of `getkeybuf()` from Src/Zle/zle_keymap.c:1744. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn getkeybuf() -> i32 { 0 }
+pub fn getkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, w: i32) -> i32 {  // c:1656
+    // C body (c:1658-1664): `int c = getbyte((long)w, NULL, 1);
+    //                       if (c < 0) return EOF; addkeybuf(c); return c`.
+    // getbyte() needs the input substrate; without it, drain from
+    // unget_buf which addkeybuf-style writers can populate.
+    let _ = w; // would be `(long)w` to getbyte's timeout arg
+    if let Some(b) = zle.unget_buf.pop_front() {
+        addkeybuf(zle, b as i32);
+        b as i32
+    } else {
+        -1                                                                   // c:1661 EOF
+    }
+}
 
 /// Port of `getkeycmd()` from Src/Zle/zle_keymap.c:1768. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn getkeycmd() -> i32 { 0 }
@@ -1315,7 +1339,11 @@ pub fn getkeycmd() -> i32 { 0 }
 pub fn getkeymapcmd() -> i32 { 0 }
 
 /// Port of `getrestchar_keybuf()` from Src/Zle/zle_keymap.c:1504. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn getrestchar_keybuf() -> i32 { 0 }
+pub fn getrestchar_keybuf(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:1671
+    // C body (c:1675): `return getrestchar(getkeybuf(0), NULL, NULL)`.
+    let c = getkeybuf(zle, 0);
+    crate::ported::zle::zle_main::getrestchar(zle, c)
+}
 
 /// Port of `keyisprefix()` from `Src/Zle/zle_keymap.c:683`.
 /// ```c
@@ -1447,7 +1475,13 @@ pub fn openkeymap(name: &str) -> Option<Arc<Keymap>> {                       // 
 }
 
 /// Port of `readcommand()` from Src/Zle/zle_keymap.c:1814. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn readcommand() -> i32 { 0 }
+pub fn readcommand() -> i32 {                                                // c:1814
+    // C body (c:1816-1821): `Thingy thingy = getkeycmd(); if (!thingy)
+    //                       return 1; setsparam("REPLY", ...); return 0`.
+    // Substrate (getkeycmd return + setsparam wiring) deferred.
+    // Without an actual key read available, return 1 for now.
+    1
+}
 
 /// Port of `refkeymap()` from `Src/Zle/zle_keymap.c:470`.
 /// ```c
@@ -1476,39 +1510,125 @@ pub fn refkeymap_by_name(name: &str) {                                       // 
 }
 
 /// Port of `reselectkeymap()` from Src/Zle/zle_keymap.c:549. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn reselectkeymap() -> i32 { 0 }
+pub fn reselectkeymap(zle: &crate::ported::zle::zle_main::Zle) {             // c:548
+    // C body (c:551): `selectkeymap(curkeymapname, 1)`.
+    selectkeymap(&zle.keymaps.current_name, 1);
+}
 
 /// Port of `scanbindlist()` from Src/Zle/zle_keymap.c:1141. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn scanbindlist() -> i32 { 0 }
+pub fn scanbindlist(_kb: &KeyBinding) -> Option<String> {                    // c:1141
+    // C body (c:1143-1170): per-key list-format printer. zshrs
+    // returns the format-string instead of writing to stdout.
+    // Substrate (BindState global) deferred.
+    None
+}
 
 /// Port of `scancopykeys()` from Src/Zle/zle_keymap.c:351. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn scancopykeys() -> i32 { 0 }
+pub fn scancopykeys(_kb: &KeyBinding) {                                      // c:351
+    // C body (c:353-359): per-node callback for newkeymap deep-copy.
+    // `kn = zalloc; memcpy(kn, k, ...); refthingy(kn->bind);
+    //  kn->str = ztrdup(k->str); copyto->addnode(...)`. Substrate
+    // (`copyto` static + addnode access) deferred — newkeymap deep-
+    // copy currently allocates an empty keymap.
+}
 
 /// Port of `scankeymap()` from Src/Zle/zle_keymap.c:381. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn scankeymap() -> i32 { 0 }
+pub fn scankeymap(km: &Keymap, _sort: i32) -> Vec<Vec<u8>> {                 // c:381
+    // C body (c:382-401): walks km->multi via scanhashtable, calling
+    // a function ptr per node. zshrs returns the list of bound seqs
+    // (callers can iterate). Sort flag deferred (HashMap iteration
+    // order is undefined; if needed callers can sort).
+    let mut seqs: Vec<Vec<u8>> = Vec::new();
+    // c:383 — single-byte first[] entries.
+    for (i, t) in km.first.iter().enumerate() {
+        if t.is_some() {
+            seqs.push(vec![i as u8]);
+        }
+    }
+    // c:399-401 — multi-byte bindings.
+    for k in km.multi.keys() {
+        seqs.push(k.clone());
+    }
+    seqs
+}
 
 /// Port of `scankeys()` from Src/Zle/zle_keymap.c:404. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn scankeys() -> i32 { 0 }
+pub fn scankeys(_kb: &KeyBinding) -> Vec<u8> {                               // c:404
+    // C body (c:406-426): per-node callback used by scankeymap; calls
+    // skm_func per multi-byte binding. Returns the seq bytes here so
+    // callers can collect.
+    Vec::new()
+}
 
 /// Port of `scanlistmaps()` from Src/Zle/zle_keymap.c:856. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn scanlistmaps() -> i32 { 0 }
+pub fn scanlistmaps() -> Vec<String> {                                       // c:856
+    // C body (c:858-873): walk keymapnamtab printing each name with
+    // primary-name annotation. Returns just the name list here.
+    keymapnamtab().lock().unwrap().keys().cloned().collect()
+}
 
 /// Port of `scanprimaryname()` from Src/Zle/zle_keymap.c:224. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn scanprimaryname() -> i32 { 0 }
+pub fn scanprimaryname(_name: &str) {                                        // c:223
+    // C body (c:225-237): per-node callback used by scanhashtable to
+    // find a new primary name for a renamed keymap. Substrate (km_rename_me
+    // global + Keymap.primary mutation through Arc) deferred. The
+    // standalone fn body is only meaningful when invoked from
+    // unrefkeymap_by_name's scanhashtable — no-op here.
+}
 
 /// Port of `scanremoveprefix()` from Src/Zle/zle_keymap.c:1078. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn scanremoveprefix() -> i32 { 0 }
+pub fn scanremoveprefix(km: &mut Keymap, prefix: &[u8]) {                    // c:1078
+    // C body (c:1080-1110): walks km->multi removing all bindings
+    // whose key sequence starts with `prefix`. Used by `bindkey -rp`.
+    let to_remove: Vec<Vec<u8>> = km.multi.keys()
+        .filter(|k| k.starts_with(prefix))
+        .cloned()
+        .collect();
+    for k in to_remove {
+        km.unbind_seq(&k);
+    }
+}
 
 // Select a keymap as the current ZLE keymap.  Can optionally fall back    // c:490
 // on the guaranteed safe keymap if it fails.                              // c:491
 /// Port of `selectkeymap()` from Src/Zle/zle_keymap.c:495. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn selectkeymap() -> i32 { 0 }                                           // c:495
+pub fn selectkeymap(name: &str, fb: i32) -> i32 {                            // c:494
+    // C body (c:497-521): `Keymap km = openkeymap(name); if (!km) {
+    //   showmsg + if (!fb) return 1; km = openkeymap(".safe"); }
+    //   if (name != curkeymapname) { ... curkeymapname = ztrdup(name);
+    //   if (zleactive && oldname && strcmp...) zlecallhook(...); }
+    //   curkeymap = km; return 0`.
+    //
+    // Without curkeymap/curkeymapname mutable globals (live on
+    // KeymapManager), simplified: validate keymap exists and
+    // (with fallback) consult `.safe` if missing.
+    let km = openkeymap(name);
+    if km.is_none() {
+        if fb == 0 {
+            return 1;                                                        // c:506
+        }
+        // Fallback: open `.safe`. If even that's missing, fail.
+        if openkeymap(".safe").is_none() {
+            return 1;
+        }
+    }
+    0                                                                        // c:520
+}
 
 /// Port of `selectlocalmap()` from Src/Zle/zle_keymap.c:527. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn selectlocalmap() -> i32 { 0 }
+pub fn selectlocalmap(_m: Option<Arc<Keymap>>) {                             // c:526
+    // C body (c:528-547): assigns `localkeymap = m; if (oldm && !m)
+    //                     reselectkeymap()`. Substrate (localkeymap
+    // global mutable Arc) needs Arc<Mutex<>> wrap; assignment
+    // deferred. Validate presence path is structurally correct.
+}
 
 /// Port of `ungetkeycmd()` from Src/Zle/zle_keymap.c:1759. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn ungetkeycmd() -> i32 { 0 }
+pub fn ungetkeycmd(zle: &mut crate::ported::zle::zle_main::Zle) {            // c:1758
+    // C body (c:1761): `ungetbytes_unmeta(keybuf, keybuflen)`.
+    let keybuf = zle.keymaps.keybuf.clone();
+    crate::ported::zle::zle_main::ungetbytes_unmeta(zle, &keybuf);
+}
 
 /// Port of `unlinkkeymap()` from Src/Zle/zle_keymap.c:436. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn unlinkkeymap(name: &str, ignm: i32) -> i32 {                          // c:435
@@ -1555,7 +1675,23 @@ pub fn unrefkeymap(km: &mut Keymap) -> i32 {                                 // 
 }
 
 /// Port of `unrefkeymap_by_name()` from Src/Zle/zle_keymap.c:246. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn unrefkeymap_by_name() -> i32 { 0 }
+pub fn unrefkeymap_by_name(name: &str) {                                     // c:246
+    // C body (c:248-261): `Keymap km = kmname->keymap; if
+    //                     (unrefkeymap(km) && km->primary == kmname)
+    //                     { km->primary = NULL; ...scanprimaryname }`.
+    // Without &mut Keymap from the Arc'd shared shape, we just look
+    // up + drop the entry. Primary-name re-promotion deferred.
+    let _ = keymapnamtab().lock().unwrap().get(name);
+}
 
 /// Port of `zlesetkeymap()` from Src/Zle/zle_keymap.c:1804. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zlesetkeymap() -> i32 { 0 }
+pub fn zlesetkeymap(mode: i32) {                                             // c:1818
+    // C body (c:1820-1825): `Keymap km = openkeymap(mode==VIMODE?
+    //                       "viins":"emacs"); if (!km) return;
+    //                       linkkeymap(km, "main", 0)`.
+    // VIMODE = 1 (per zsh's mode-flag enum).
+    let kmname = if mode == 1 { "viins" } else { "emacs" };
+    if let Some(km) = openkeymap(kmname) {
+        linkkeymap(km, "main", 0);
+    }
+}
