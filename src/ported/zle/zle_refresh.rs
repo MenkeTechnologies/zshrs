@@ -488,7 +488,7 @@ impl Zle {
 
     /// Single line refresh
     /// Port of singlerefresh() from zle_refresh.c
-    pub fn singlerefresh(&mut self) {
+    pub fn singlerefresh(&mut self) {                                        // c:2397
         self.zrefresh();
     }
 
@@ -987,34 +987,128 @@ mod tests {
 }
 
 /// Port of `addmultiword()` from Src/Zle/zle_refresh.c:913. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn addmultiword() -> i32 { 0 }
+pub fn addmultiword(_base: &mut crate::ported::zle::zle_h::REFRESH_ELEMENT,  // c:addmultiword
+                     _tptr: &[char], _ichars: usize) {
+    // C body: adds a multi-codepoint cluster to the multiword
+    // buffer (mwbuf), setting `base->atr |= TXT_MULTIWORD_MASK`.
+    // Substrate (mwbuf grow + mwsize tracking) deferred. zshrs's
+    // VideoBuffer holds Vec<char> per cell; multi-word path collapses
+    // to single-char storage.
+}
 
 /// Port of `bufswap()` from Src/Zle/zle_refresh.c:946. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn bufswap() -> i32 { 0 }
+pub fn bufswap(state: &mut RefreshState) {                                   // c:bufswap
+    // C body: swap nbuf and obuf pointers (with mwbuf shadow when
+    // MULTIBYTE_SUPPORT). Rust just swaps the Option<VideoBuffer>.
+    std::mem::swap(&mut state.old_video, &mut state.new_video);
+}
 
 /// Port of `freevideo()` from Src/Zle/zle_refresh.c:700. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn freevideo() -> i32 { 0 }
+pub fn freevideo(state: &mut RefreshState) {                                 // c:freevideo
+    // C body: walk nbuf/obuf rows; zfree each REFRESH_STRING; zfree
+    // the row arrays. Rust drop cascade handles all freeing when
+    // the VideoBuffer's Vecs go out of scope; explicitly clear them
+    // here for parity.
+    state.old_video = None;
+    state.new_video = None;
+}
 
 /// Port of `nextline()` from Src/Zle/zle_refresh.c:842. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn nextline() -> i32 { 0 }
+pub fn nextline(state: &mut RefreshState, _wrapped: i32) -> i32 {            // c:842
+    // C body (c:842-873): advance rpms->ln++; check space against
+    // winh; allocate new buffer row if needed; return 1 when display
+    // is full (caller should stop emitting). zshrs uses RefreshState
+    // for the cursor; this advances vln and signals overflow.
+    state.vln += 1;
+    if state.vln >= state.lines {
+        return 1;                                                            // out of vertical space
+    }
+    state.vcs = 0;
+    0
+}
 
 /// Port of `resetvideo()` from Src/Zle/zle_refresh.c:725. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn resetvideo() -> i32 { 0 }
+pub fn resetvideo(state: &mut RefreshState) {                                // c:resetvideo
+    // C body: `winw = zterm_columns; nbuf/obuf rows realloced for
+    // (winh+1) lines; cleared via memset.` zshrs uses
+    // VideoBuffer::clear/resize for the same effect. Pull the new
+    // term geometry from the existing helpers.
+    let cols = crate::ported::utils::adjustcolumns();
+    let rows = crate::ported::utils::adjustlines();
+    state.columns = cols;
+    state.lines = rows;
+    state.old_video = Some(VideoBuffer::new(cols, rows));
+    state.new_video = Some(VideoBuffer::new(cols, rows));
+    state.need_full_redraw = true;
+}
 
 /// Port of `singmoveto()` from Src/Zle/zle_refresh.c:2687. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn singmoveto() -> i32 { 0 }
+pub fn singmoveto(state: &mut RefreshState, pos: usize) {                    // c:singmoveto
+    // C body: `singlemoveto()` issues termcap cursor-positioning to
+    // `pos` on a single-line display. Without termcap output here
+    // we just update vcs (cursor column) on RefreshState.
+    state.vcs = pos;
+}
 
 /// Port of `snextline()` from Src/Zle/zle_refresh.c:875. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn snextline() -> i32 { 0 }
+pub fn snextline(state: &mut RefreshState) -> i32 {                          // c:875
+    // C body (c:875-919): scroll the on-screen display up one line
+    // when the new line wraps past the bottom. zshrs decrements
+    // vln so the next emit lands on the (now-cleared) bottom row.
+    if state.vln > 0 {
+        state.vln -= 1;
+    }
+    state.vcs = 0;
+    0
+}
 
 /// Port of `tcout_via_func()` from Src/Zle/zle_refresh.c:2291. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn tcout_via_func() -> i32 { 0 }
+pub fn tcout_via_func(_cap: i32, _arg: i32) -> i32 {                         // c:tcout_via_func
+    // C body: looks up `tcout` shell function; if defined, calls it
+    // with cap+arg; else falls back to direct termcap output. Without
+    // shfunc-call substrate, defer to normal termcap path (no-op
+    // here — caller chooses fallback).
+    1
+}
 
-/// Port of `wpfxlen()` from Src/Zle/zle_refresh.c:1736. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn wpfxlen() -> i32 { 0 }
+/// Port of `wpfxlen()` from `Src/Zle/zle_refresh.c:1736`.
+/// ```c
+/// static int
+/// wpfxlen(const REFRESH_ELEMENT *olds, const REFRESH_ELEMENT *news) {
+///     int i = 0;
+///     while (olds->chr && ZR_equal(*olds, *news))
+///         olds++, news++, i++;
+///     return i;
+/// }
+/// ```
+/// Common-prefix length of two REFRESH_ELEMENT strings; stops at
+/// the first NUL chr in `olds` or first cell that differs in chr+atr.
+pub fn wpfxlen(olds: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
+               news: &[crate::ported::zle::zle_h::REFRESH_ELEMENT]) -> usize {
+    let mut i = 0;
+    while i < olds.len() && i < news.len()
+        && olds[i].chr != '\0' && olds[i] == news[i]
+    {
+        i += 1;
+    }
+    i
+}
 
-/// Port of `zle_free_highlight()` from Src/Zle/zle_refresh.c:415. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn zle_free_highlight() -> i32 { 0 }
+/// Port of `zle_free_highlight()` from `Src/Zle/zle_refresh.c:415`.
+/// ```c
+/// void
+/// zle_free_highlight(void) {
+///     free_colour_buffer();
+/// }
+/// ```
+/// Drop the colour buffer used by region highlighting. C calls
+/// `free_colour_buffer()`; without that substrate this is a no-op
+/// (Rust drop cascade handles the buffer when it goes out of scope).
+pub fn zle_free_highlight() {                                                // c:415
+    // free_colour_buffer() — substrate not yet ported. The colour-
+    // buffer storage is local to zrefresh path and Rust will drop
+    // it via Vec::clear when the surrounding state is rebuilt.
+}
 
 /// Port of `ZR_memset()` from `Src/Zle/zle_refresh.c:85`.
 /// ```c
