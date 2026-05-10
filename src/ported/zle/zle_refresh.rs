@@ -1116,23 +1116,13 @@ pub fn wpfxlen(olds: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
 ///     free_colour_buffer();
 /// }
 /// ```
-/// Direct port of `void zle_free_highlight(void)` from
-/// `Src/Zle/zle_refresh.c:415-420`.
-/// ```c
-/// free_colour_buffer();
-/// ```
-///
-/// C's `free_colour_buffer` frees the per-cell colour-attribute
-/// storage used by `region_highlight`. In the Rust port that
-/// storage is a `Vec<HighlightSpan>` field on the active Zle
-/// struct, dropped automatically by Vec::clear at the same
-/// invalidate points that fire the C free. No-op here is the
-/// correct cross-language equivalent for this fn shape (the
-/// caller doesn't have a Zle handle from this entry point;
-/// the live tick clears its buffer directly via Zle methods).
+/// Drop the colour buffer used by region highlighting. C calls
+/// `free_colour_buffer()`; without that substrate this is a no-op
+/// (Rust drop cascade handles the buffer when it goes out of scope).
 pub fn zle_free_highlight() {                                                // c:415
-    // Rust ownership handles the equivalent free; explicit clear
-    // happens on the active Zle when invalidate fires.
+    // free_colour_buffer() — substrate not yet ported. The colour-
+    // buffer storage is local to zrefresh path and Rust will drop
+    // it via Vec::clear when the surrounding state is rebuilt.
 }
 
 /// Port of `ZR_memset()` from `Src/Zle/zle_refresh.c:85`.

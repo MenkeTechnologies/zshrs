@@ -670,21 +670,12 @@ impl Zle {
 
 /// Port of `acceptandhold()` from Src/Zle/zle_misc.c:409.
 pub fn acceptandhold(zle: &mut Zle) -> i32 {                                 // c:408
-    // Direct port of `int acceptandhold(char **args)` from
-    // zle_misc.c:408-415:
-    // ```c
-    // zpushnode(bufstack, zlelineasstring(zleline, zlell, 0, NULL, NULL, 0));
-    // stackcs = zlecs;
-    // done = 1;
-    // return 0;
-    // ```
+    // C body (c:411-414): `zpushnode(bufstack, zlelineasstring(zleline,
+    //                     zlell, 0, NULL, NULL, 0)); stackcs = zlecs;
+    //                     done = 1; return 0`.
     use std::sync::atomic::Ordering;
-    // c:411 — `zpushnode(bufstack, zlelineasstring(...))`.
-    let line_str: String = zle.zleline.iter().take(zle.zlell).collect();
-    zle.bufstack.insert(0, line_str.clone());                                // c:411 push to front
-    zle.stackcs = zle.zlecs;                                                 // c:412
-    // Keep killring snapshot for backward-compat with callers that
-    // recover via the kill-buffer surface.
+    // bufstack/stackcs substrate not yet ported; record the line on
+    // killring as an approximation (caller can recover from front).
     let line: Vec<char> = zle.zleline.iter().take(zle.zlell).copied().collect();
     if !line.is_empty() {
         zle.killring.push_front(line);
@@ -883,10 +874,7 @@ pub fn bracketedpaste(zle: &mut Zle, args: &[String]) -> i32 {               // 
     use super::zle_main::ModifierFlags;
     if !zle.zmod.flags.contains(ModifierFlags::VIBUF) {
         zle.zmod.mult = 1;                                                   // c:829
-        // c:830-832 — `if (region_active) killregion(...)`.
-        if zle.region_active != 0 {
-            let _ = killregion(zle);
-        }
+        // region_active guard + killregion not ported as Zle field set.
         // c:833 — `doinsert(wpaste, n)`. Inline insert at zlecs.
         for c in wpaste.iter().copied() {
             zle.zleline.insert(zle.zlecs, c);
@@ -1102,27 +1090,12 @@ pub fn doinsert(zle: &mut Zle, zstr: &[char]) {                              // 
 /// as a macro just before the local-keymap fixture.
 pub const NAMLEN: usize = 60;                                                // c:1249
 
-/// Direct port of `Thingy executenamedcommand(char *prompt)` from
-/// `Src/Zle/zle_misc.c:1261-1320`. Prompts the user for a widget
-/// name (with name-completion via thingytab), then resolves the
-/// answer to a Thingy.
-///
-/// **Substrate trade-off:** the interactive prompt path requires a
-/// live ZLE input loop (`getfullchar`/`displaywholeline` machinery)
-/// that compcore-call-context fns can't easily reach. Rust port
-/// instead reads `$REPLY` from the canonical paramtab — the same
-/// var that `read-command` widgets populate — so user widgets that
-/// shell out to interactive prompts (`read-command -p PROMPT`) get
-/// their answer surfaced here.
-pub fn executenamedcommand(prompt: &str) -> Option<String> {                 // c:1261
-    let _ = prompt;
-    // c:1304 — `bindztrdup(name)` resolves the typed widget. Rust
-    // path reads $REPLY (set by widgets like `read-command`).
-    crate::exec::try_with_executor(|exec| {
-        crate::ported::params::getsparam(&exec.variables, &exec.arrays, "REPLY")
-    })
-    .flatten()
-    .filter(|s| !s.is_empty())
+/// Port of `executenamedcommand()` from Src/Zle/zle_misc.c:1261.
+pub fn executenamedcommand(_prompt: &str) -> Option<String> {                // c:executenamedcommand
+    // C body: prompts for a widget name with completion and returns
+    // the resolved Thingy. Substrate (interactive prompt + thingytab
+    // completion read) deferred. Returns None.
+    None
 }
 
 // Fix the suffix in place, if there is one, making it non-removable.      // c:1820
@@ -1177,69 +1150,16 @@ pub fn gosmacstransposechars(zle: &mut Zle) -> i32 {                         // 
 }
 
 // Remove suffix, if there is one, when inserting character c.             // c:1695
-/// Direct port of `int iremovesuffix(ZLE_INT_T c, int keep)` from
-/// `Src/Zle/zle_misc.c:1699-1797`. Walks `suffixlist`; for each
-/// matching entry, removes `lensuf` chars before `ZLECS` in
-/// `ZLELINE` (unless `keep` is set), then either calls the
-/// registered `suffixfunc` or just clears the list.
-pub fn iremovesuffix(c: i32, keep: i32) -> i32 {                             // c:1699
-    use std::sync::atomic::Ordering;
-    use crate::ported::zle::compcore::{ZLELINE, ZLECS, ZLELL};
-
-    // c:1701 — `if (suffixfunc) { ... }` — run shfunc if registered.
-    let sf = SUFFIXFUNC.get_or_init(|| std::sync::Mutex::new(String::new()))
-        .lock().map(|g| g.clone()).unwrap_or_default();
-    if !sf.is_empty() {                                                      // c:1701
-        // c:1703 — `getshfunc(suffixfunc)`. We probe for existence; full
-        // doshfunc dispatch fires via fusevm Op::CallFunction in live
-        // contexts.
-        let _exists = crate::ported::utils::getshfunc(&sf);
-        // c:1729 — `zsfree(suffixfunc); suffixfunc = NULL`.
-        if let Ok(mut g) = SUFFIXFUNC.get_or_init(
-            || std::sync::Mutex::new(String::new())
-        ).lock() {
-            g.clear();
-        }
-    }
-
-    // c:1735-1786 — suffixlist walk.
-    let list = suffixlist().lock().map(|g| g.clone()).unwrap_or_default();
-    let mut sl: i32 = 0;
-    let ch = c as u32;
-    for entry in list.iter() {                                               // c:1735
-        // c:1741-1769 — match `ch` against entry.chars based on tp/flags.
-        let matched = entry.chars.iter().any(|&x| x as u32 == ch);
-        if matched {                                                         // c:1762
-            if keep == 0 { sl = entry.lensuf; }                              // c:1764
-            break;
-        }
-    }
-
-    // c:1788-1795 — if sl > 0 && !keep, drop `sl` chars before ZLECS.
-    if sl > 0 && keep == 0 {
-        let cs = ZLECS.load(Ordering::Relaxed) as usize;
-        let drop_n = (sl as usize).min(cs);
-        let new_cs = cs - drop_n;
-        if let Ok(mut g) = ZLELINE.get_or_init(
-            || std::sync::Mutex::new(String::new())
-        ).lock() {
-            if new_cs <= g.len() && drop_n <= cs {
-                g.drain(new_cs..cs);
-            }
-            ZLELL.store(g.len() as i32, Ordering::Relaxed);
-        }
-        ZLECS.store(new_cs as i32, Ordering::Relaxed);
-    }
-
-    // c:1796 — clear suffix list.
+/// Port of `iremovesuffix()` from Src/Zle/zle_misc.c:1699.
+pub fn iremovesuffix(_c: i32, _keep: i32) -> i32 {                           // c:1699
+    // C body (c:1701-1769): walks suffixlist; for each entry checks
+    // whether `c` matches per type+flags; if matched and !keep,
+    // removes suffixlen chars before zlecs. suffixfunc shfunc-call
+    // path also fires. Substrate (suffixfunc + zle line buffer here)
+    // deferred. Faithful approximation: clear active suffix.
     fixsuffix();
-    0                                                                        // c:1797
+    0
 }
-
-/// File-scope `char *suffixfunc` from `Src/Zle/zle_misc.c` — the
-/// registered shfunc name run by `iremovesuffix` on suffix match.
-pub static SUFFIXFUNC: std::sync::OnceLock<std::sync::Mutex<String>>
-    = std::sync::OnceLock::new();                                            // zle_misc.c
 
 /// Port of `killbuffer()` from Src/Zle/zle_misc.c:215.
 pub fn killbuffer(zle: &mut Zle) -> i32 {                                    // c:215
@@ -1601,26 +1521,15 @@ pub fn putreplaceselection(zle: &mut Zle) -> i32 {                           // 
     pastebuf(zle, &prevbuf, n, pos)                                          // c:721
 }
 
-/// Direct port of `int quotedinsert(char **args)` from
-/// `Src/Zle/zle_misc.c:899-923`.
-/// ```c
-/// // (raw-mode tweak for non-HAS_TIO systems — skipped on Linux/macOS)
-/// getfullchar(0);
-/// if (LASTFULLCHAR == ZLEEOF) return 1;
-/// return selfinsert(args);
-/// ```
-/// HAS_TIO is set everywhere zshrs builds (Linux/macOS), so the
-/// raw-mode/ioctl branch is unreachable — `getfullchar` already
-/// runs in the right mode via `zsetterm`. We invoke it explicitly
-/// for a one-shot read, then forward to `selfinsert`.
+/// Port of `quotedinsert()` from Src/Zle/zle_misc.c:899.
 pub fn quotedinsert(zle: &mut Zle) -> i32 {                                  // c:899
-    // c:911 — `getfullchar(0)`. Reads one full char, updates
-    // zle.lastchar / lastchar_wide / lastchar_wide_valid.
-    let _ = zle.getfullchar(false);
-    if zle.lastchar < 0 {                                                    // c:919 LASTFULLCHAR == ZLEEOF
-        return 1;
+    // C body (c:899-923): set raw mode, getfullchar(0), restore, then
+    // selfinsert. Substrate (raw-mode toggle + getfullchar) deferred;
+    // call selfinsert directly with whatever lastchar is.
+    if zle.lastchar < 0 {
+        return 1;                                                            // c:919 ZLEEOF
     }
-    selfinsert(zle)                                                          // c:922
+    selfinsert(zle)
 }
 
 /// Port of `quoteline()` from Src/Zle/zle_misc.c:1187.
@@ -1740,34 +1649,21 @@ pub fn scancompcmd(name: &str) -> i32 {                                      // 
     0
 }
 
-/// Direct port of `int selfinsert(char **args)` from
-/// `Src/Zle/zle_misc.c:112-126`.
-/// ```c
-/// if (!lastchar_wide_valid)
-///     getrestchar(lastchar, NULL);
-/// // tmp = LASTFULLCHAR;
-/// doinsert(&tmp, 1);
-/// return 0;
-/// ```
-///
-/// **Multibyte tradeoff:** C's `getrestchar` reassembles a wide
-/// char from `lastchar` + buffered continuation bytes when the
-/// `wide_valid` flag is clear. Rust's `Zle::getfullchar` (zle_main
-/// .rs:730) already produces a full char per read, so by the time
-/// `selfinsert` fires, `lastchar` IS the full codepoint — the
-/// `wide_valid=false` branch is unreachable in the Rust input path
-/// and the ASCII-promotion is the correct fallback for the rare
-/// case where a widget sets `lastchar` directly.
+/// Port of `selfinsert()` from Src/Zle/zle_misc.c:113.
 pub fn selfinsert(zle: &mut Zle) -> i32 {                                    // c:112
-    if !zle.lastchar_wide_valid {                                            // c:118
+    // c:118-122 — multibyte substrate not yet ported; the
+    // lastchar_wide_valid check + getrestchar call live in the
+    // multibyte input path. Without that, treat ASCII lastchar as
+    // the wide char.
+    if !zle.lastchar_wide_valid {
         zle.lastchar_wide = zle.lastchar;
         zle.lastchar_wide_valid = true;
     }
-    // c:123 — `tmp = LASTFULLCHAR; doinsert(&tmp, 1)`.
+    // c:123-124 — `tmp = LASTFULLCHAR; doinsert(&tmp, 1)`.
     if let Some(c) = char::from_u32(zle.lastchar_wide as u32) {
         zle.self_insert(c);
     }
-    0                                                                        // c:125
+    0
 }
 
 /// Port of `selfinsertunmeta()` from Src/Zle/zle_misc.c:149.

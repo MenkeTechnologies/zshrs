@@ -991,39 +991,26 @@ pub fn dovilinerange(zle: &mut crate::ported::zle::zle_main::Zle) -> (usize, usi
     (bol, end)
 }
 
-/// Direct port of `int getvirange(int wf)` from
-/// `Src/Zle/zle_vi.c:172-300`. Drives the vi-range read by
-/// interpreting a follow-up keystroke (motion command), invoking
-/// it with `virangeflag` set, and returning the resulting cursor
-/// position.
-///
-/// **Substrate trade-off:** the full driver depends on a live
-/// `getkeycmd` input loop (`virangeflag` global + `execzlefunc`
-/// dispatch). In compcore-call-context fns we don't have a live
-/// key reader — the Rust port returns the current `zle.zlecs`
-/// which is the C "no-motion fallback" (motion never consumed
-/// anything, range is empty). Live ZLE widget dispatch reads
-/// keys through the active Zle struct directly.
+/// Port of `getvirange()` from Src/Zle/zle_vi.c:172.
 pub fn getvirange(zle: &mut crate::ported::zle::zle_main::Zle, _wf: i32) -> i32 {  // c:172
-    zle.zlecs as i32                                                         // c:299
+    // C body (c:172-300): drives the vi-range read by interpreting
+    //                    a follow-up keystroke (motion command),
+    //                    invoking it with virangeflag set, and
+    //                    returning the resulting cursor position.
+    // Substrate (virangeflag + execzlefunc dispatch + motion read)
+    // deferred. Returns the current cursor as a no-motion fallback.
+    zle.zlecs as i32
 }
 
-/// Direct port of `void startvichange(int im)` from
-/// `Src/Zle/zle_vi.c:88-113`.
-/// ```c
-/// if (im > -1) insmode = im;
-/// if (viinrepeat && im != -2) { zmod = lastvichg.mod; vichgflag = 0; }
-/// else if (!vichgflag) { curvichg.buf = ...; vichgflag = 1; }
-/// ```
-///
-/// **Substrate trade-off:** the change-replay machinery (viinrepeat
-/// flag + lastvichg buffered command + curvichg accumulator) lives
-/// in the live ZLE widget dispatcher. From compcore call context
-/// we apply the primary effect (insmode set) which the change-
-/// recording branch leaves to a later widget tick.
-pub fn startvichange(zle: &mut crate::ported::zle::zle_main::Zle, im: i32) { // c:88
-    if im > -1 {                                                             // c:90
-        zle.insmode = im != 0;                                               // c:91
+/// Port of `startvichange()` from Src/Zle/zle_vi.c:90.
+pub fn startvichange(zle: &mut crate::ported::zle::zle_main::Zle, im: i32) {  // c:88
+    // C body (c:90-113): `if (im > -1) insmode = im; if (viinrepeat
+    //                    && im != -2) { zmod = lastvichg.mod;
+    //                    vichgflag = 0; } else if (!vichgflag) {
+    //                    curvichg.buf = ... }`. Substrate (viinrepeat,
+    // lastvichg, vichgflag, curvichg) deferred. Faithful: insmode set.
+    if im > -1 {
+        zle.insmode = im != 0;
     }
 }
 
@@ -1399,25 +1386,13 @@ pub fn viquotedinsert(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // 
     crate::ported::zle::zle_misc::quotedinsert(zle)
 }
 
-/// Direct port of `int virepeatchange(char **args)` from
-/// `Src/Zle/zle_vi.c:795-820`.
-/// ```c
-/// if (!lastvichg.buf || vichgflag || virangeflag) return 1;
-/// // (restore zmod from lastvichg.mod, advance vibuf if numbered)
-/// viinrepeat = 3;
-/// ungetbytes(lastvichg.buf, lastvichg.bufptr);
-/// return 0;
-/// ```
-///
-/// **Substrate trade-off:** the change-replay state machine
-/// (`lastvichg` struct holding the buffered command + count + vibuf
-/// register, plus the `viinrepeat`/`vichgflag`/`virangeflag`
-/// globals) is part of the live ZLE widget loop. Compcore call
-/// context returns 1 to signal "no change to repeat" — the live
-/// widget tick has its own copy of this fn that touches the
-/// active state.
+/// Port of `virepeatchange()` from Src/Zle/zle_vi.c:795.
 pub fn virepeatchange() -> i32 {                                             // c:795
-    1                                                                        // c:798 no change to repeat
+    // C body: replays lastvichg.buf via ungetbytes; sets viinrepeat
+    //         flag. Substrate (lastvichg + viinrepeat + ungetbytes
+    //         interaction with execzlefunc) deferred. Returns 1 to
+    //         signal "no change to repeat" until lastvichg is wired.
+    1
 }
 
 /// Port of `vireplace()` from Src/Zle/zle_vi.c:574.
