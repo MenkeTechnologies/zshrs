@@ -1014,8 +1014,20 @@ pub fn get_undo_limit_change() -> i32 { 0 }
 /// Port of `getzlequery()` from Src/Zle/zle_utils.c:1197. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn getzlequery() -> i32 { 0 }
 
-/// Port of `handlefeep()` from Src/Zle/zle_utils.c:1405. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn handlefeep() -> i32 { 0 }
+/// Port of `handlefeep()` from `Src/Zle/zle_utils.c:1404`.
+/// ```c
+/// int
+/// handlefeep(UNUSED(char **args))
+/// {
+///     zbeep();
+///     return 0;
+/// }
+/// ```
+/// `beep` widget — fires the terminal bell via `zbeep`.
+pub fn handlefeep() -> i32 {                                                 // c:1404
+    crate::ported::utils::zbeep();                                           // c:1407 zbeep()
+    0                                                                        // c:1408 return 0
+}
 
 /// Port of `handlesuffix()` from Src/Zle/zle_utils.c:1415. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn handlesuffix() -> i32 { 0 }

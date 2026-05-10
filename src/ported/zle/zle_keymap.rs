@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use super::zle_thingy::Thingy;
 
+// Can't be deleted (.safe)                                                 // c:61
 /// Flags for keymap names
 #[derive(Debug, Clone, Copy, Default)]
 pub struct KeymapNameFlags {
@@ -36,6 +37,8 @@ pub struct KeymapFlags {
     pub immutable: bool,
 }
 
+// base binding of each character                                           // c:65
+// multi-character bindings                                                 // c:66
 /// A keymap - binding of keys to thingies
 #[derive(Debug, Clone)]
 pub struct Keymap {
@@ -1006,6 +1009,65 @@ mod tests {
         assert_eq!(unrefkeymap(&mut km), 0);
         assert_eq!(km.rc, 0);
     }
+
+    // ---------- keyisprefix real-port tests ----------
+
+    fn dummy_thingy() -> Thingy {
+        Thingy::new("test")
+    }
+
+    #[test]
+    fn keyisprefix_empty_seq() {
+        // c:687-688 — empty input → always prefix → 1.
+        let km = Keymap::default();
+        assert_eq!(keyisprefix(&km, b""), 1);
+    }
+
+    #[test]
+    fn keyisprefix_single_byte_bound_returns_zero() {
+        // c:689-692 — single byte that has a first[] binding is NOT
+        // a prefix; it IS the binding.
+        let mut km = Keymap::default();
+        km.bind_char(b'a', dummy_thingy());
+        assert_eq!(keyisprefix(&km, b"a"), 0);
+    }
+
+    #[test]
+    fn keyisprefix_single_byte_unbound() {
+        // c:694-695 — fall through to multi lookup; no match → 0.
+        let km = Keymap::default();
+        assert_eq!(keyisprefix(&km, b"x"), 0);
+    }
+
+    #[test]
+    fn keyisprefix_seq_is_real_prefix() {
+        // c:694-695 — multi has prefixct > 0 → 1.
+        // bind_seq("ab", X) marks "a" as a prefix (prefixct=1).
+        let mut km = Keymap::default();
+        km.bind_seq(b"ab", dummy_thingy());
+        // "a" alone is NOT a complete binding but IS a prefix of "ab".
+        assert_eq!(keyisprefix(&km, b"a"), 1);
+    }
+
+    #[test]
+    fn keyisprefix_seq_is_complete_binding() {
+        // c:694-695 — when seq itself IS a binding (not a prefix),
+        // multi[seq] has prefixct=0 → 0.
+        let mut km = Keymap::default();
+        km.bind_seq(b"xyz", dummy_thingy());
+        // "xyz" is the bound seq (prefixct=0). Should return 0.
+        assert_eq!(keyisprefix(&km, b"xyz"), 0);
+    }
+
+    #[test]
+    fn keyisprefix_meta_pair_decoded() {
+        // c:690 — `seq[0]==Meta` (0x83) → use seq[1]^32 as single byte.
+        // Bind 'A' (0x41) in first[]. Seq [0x83, 0x61] decodes to
+        // 0x61^0x20 = 0x41 = 'A'. So this is single-byte 'A'.
+        let mut km = Keymap::default();
+        km.bind_char(b'A', dummy_thingy());
+        assert_eq!(keyisprefix(&km, &[0x83, 0x61]), 0);
+    }
 }
 
 /// Port of `add_cursor_char()` from Src/Zle/zle_keymap.c:1248. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
@@ -1071,8 +1133,53 @@ pub fn getkeymapcmd() -> i32 { 0 }
 /// Port of `getrestchar_keybuf()` from Src/Zle/zle_keymap.c:1504. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn getrestchar_keybuf() -> i32 { 0 }
 
-/// Port of `keyisprefix()` from Src/Zle/zle_keymap.c:683. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn keyisprefix() -> i32 { 0 }
+/// Port of `keyisprefix()` from `Src/Zle/zle_keymap.c:683`.
+/// ```c
+/// int
+/// keyisprefix(Keymap km, char *seq)
+/// {
+///     Key k;
+///     if(!*seq)
+///         return 1;
+///     if(ztrlen(seq) == 1) {
+///         int f = seq[0] == Meta ? (unsigned char) seq[1]^32 : (unsigned char) seq[0];
+///         if(km->first[f])
+///             return 0;
+///     }
+///     k = (Key) km->multi->getnode(km->multi, seq);
+///     return k && k->prefixct;
+/// }
+/// ```
+/// Test whether `seq` is a strict prefix of some longer binding in
+/// `km`. Returns 1 if `seq` is a prefix (incl. empty input), 0 if
+/// `seq` is itself a complete binding or no match exists.
+pub fn keyisprefix(km: &Keymap, seq: &[u8]) -> i32 {                         // c:683
+    // c:687-688 — `if(!*seq) return 1`. Empty sequence → trivially prefix.
+    if seq.is_empty() {
+        return 1;
+    }
+    // c:689-693 — single-byte path (after Meta-decode). If first[f]
+    // is bound, this byte itself IS the binding, not a prefix.
+    // ztrlen counts bytes after Meta-decoding (Meta-pair = 1 char).
+    let single = if seq.len() == 1 {
+        Some(seq[0])
+    } else if seq.len() == 2 && seq[0] == 0x83 {
+        // c:690 — `seq[0] == Meta ? seq[1]^32 : seq[0]`.
+        Some(seq[1] ^ 32)
+    } else {
+        None
+    };
+    if let Some(f) = single {
+        if km.first[f as usize].is_some() {                                  // c:691-692
+            return 0;
+        }
+    }
+    // c:694-695 — `k = km->multi->getnode(...); return k && k->prefixct`.
+    match km.multi.get(seq) {
+        Some(kb) if kb.prefixct > 0 => 1,
+        _ => 0,
+    }
+}
 
 /// Port of `linkkeymap()` from Src/Zle/zle_keymap.c:449. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn linkkeymap() -> i32 { 0 }
