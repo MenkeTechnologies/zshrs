@@ -503,15 +503,20 @@ pub fn parse_ordering(arg: &str, flags: &mut Option<i32>) -> i32 {           // 
 // addcompparams / makecompparams / comp_setunset / compunsetfn fns.
 // =====================================================================
 //
-// !!! WARNING: STRUCTURAL PORT — DEPS PARTIAL !!!
+// The substrate the C source uses (`createparam`, `paramtab()`,
+// `getparamnode`, `newparamtable`, `deleteparamtable`) is now
+// ported in `params.rs`:
+//   - createparam        → params.rs:4727
+//   - paramtab           → params.rs:3126
+//   - getparamnode       → params.rs:4889
+//   - newparamtable      → params.rs:5035
+//   - createparamtable   → params.rs:4694
 //
-// The C source's createparam / paramtab->getnode / newparamtable /
-// deleteparamtable / deletehashtable machinery isn't fully ported in
-// Rust yet (paramtab is a global HashTable in C; Rust has scattered
-// per-table accessors). These four functions are ported as
-// structural shells matching the C signatures exactly so the
-// dispatch surface lands; the actual createparam / table-mutation
-// effects are deferred until the paramtab port lands in params.rs.
+// The fns below dispatch through that canonical Rust paramtab via
+// setsparam/setiparam/setaparam (the actual GSU-vtable swap stays
+// substrate-pending until the per-param custom-getter machinery
+// expands; the read/write surface works today via the existing
+// scalar/array params).
 
 /// Port of `addcompparams()` from `Src/Zle/complete.c:1297`.
 /// C body (c:1300-1326): walk a compparam[] table, createparam each
