@@ -3142,61 +3142,227 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
         printflags                                                           // c:4024
     };
 
-    // c:4026-4119 — -m glob branch. Walks each tab via scanmatchtable per
-    // arg. Static-link path: defer the full match-and-print to the typed
-    // tab accessors (alias/cmdname/etc.). Returns 1 if no informed match.
+    // c:4026-4119 — `-m` glob branch: each arg is a pattern; walk every
+    // hashtab in turn (alias/reswd/shfunc/builtin/cmdnam) and emit a
+    // print row per matching node. C uses scanmatchtable + a per-tab
+    // print callback; the Rust port iterates each tab's accessor and
+    // emits the print directly.
     if OPT_ISSET(ops, b'm') {                                                // c:4026
+        // c:4028-4030 — `cmdnamtab->filltable(cmdnamtab);` + matchednodes
+        // setup when -a is set. Static-link path: PATH walk on demand
+        // through findcmd; matchednodes accumulator is
+        // crate::ported::builtin::MATCHEDNODES.
+        if all {                                                             // c:4029
+            if let Ok(mut m) = crate::ported::builtin::MATCHEDNODES.lock() {
+                m.clear();
+            }
+        }
+        crate::ported::mem::queue_signals();                                 // c:4032
         for pat in argv {                                                    // c:4031
-            crate::ported::mem::queue_signals();
-            let pprog = crate::ported::pattern::patcompile(pat,
+            // c:4034 — `tokenize(*argv);` (preserves Rust-side noop).
+            let pprog = crate::ported::pattern::patcompile(pat,              // c:4035
                 crate::ported::pattern::PatFlags::default()).ok();
             match pprog {
                 None => {                                                    // c:4036
                     crate::ported::utils::zwarnnam(nam,
                         &format!("bad pattern : {}", pat));                  // c:4036
                     returnval = 1;                                           // c:4037
+                    continue;
                 }
-                Some(_prog) => {
-                    // Per-tab scanmatch deferred — alias/reswd/shfunc/
-                    // builtin/cmdnam scans live in their respective
-                    // tab modules. Mark "no match" so callers see the
-                    // expected `not found` exit when nothing matches.
-                    let _ = (all, expand);
+                Some(prog) => {
+                    if !OPT_ISSET(ops, b'p') {                               // c:4042
+                        // c:4044-4047 — aliases scan.
+                        if let Ok(t) = crate::ported::hashtable::aliastab_lock().lock() {
+                            for (n, _a) in t.iter() {
+                                if crate::ported::pattern::pattry(&prog, n) {
+                                    println!("{}", n);
+                                    informed += 1;                           // c:4045
+                                }
+                            }
+                        }
+                        // c:4050-4053 — reserved words scan.
+                        let reswords = ["do","done","esac","then","elif","else","fi",
+                                        "for","case","if","while","function","repeat",
+                                        "time","until","exec","command","select","coproc",
+                                        "nocorrect","foreach","end","!","[[","{","}",
+                                        "declare","export","float","integer","local",
+                                        "private","readonly","typeset"];
+                        for w in &reswords {                                 // c:4051
+                            if crate::ported::pattern::pattry(&prog, w) {
+                                println!("{}", w);
+                                informed += 1;                               // c:4052
+                            }
+                        }
+                        // c:4056-4060 — shell functions scan
+                        // (scanmatchshfunc → shfunctab walk + printnode).
+                        let names: Vec<String> = crate::ported::builtin::SHFUNCTAB
+                            .lock().map(|t| t.keys().cloned().collect())
+                            .unwrap_or_default();
+                        for n in &names {
+                            if crate::ported::pattern::pattry(&prog, n) {
+                                println!("{}", n);
+                                informed += 1;                               // c:4058
+                            }
+                        }
+                        // c:4063-4066 — builtins scan.
+                        for b in BUILTINS.iter() {
+                            if crate::ported::pattern::pattry(&prog, b.name) {
+                                println!("{}", b.name);
+                                informed += 1;                               // c:4064
+                            }
+                        }
+                    }
+                    // c:4070-4072 — cmdnamtab scan ($PATH-cached external commands).
+                    // Static-link path: walk $PATH dirs and match basenames.
+                    if let Ok(path) = std::env::var("PATH") {
+                        for dir in path.split(':') {
+                            if dir.is_empty() { continue; }
+                            if let Ok(rd) = std::fs::read_dir(dir) {
+                                for entry in rd.flatten() {
+                                    if let Some(name) = entry.file_name().to_str() {
+                                        if crate::ported::pattern::pattry(&prog, name) {
+                                            if all {
+                                                if let Ok(mut m) =
+                                                    crate::ported::builtin::MATCHEDNODES.lock() {
+                                                    m.push(name.to_string());
+                                                }
+                                            } else {
+                                                println!("{}", name);
+                                            }
+                                            informed += 1;                   // c:4072
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            crate::ported::mem::unqueue_signals();
+            crate::ported::mem::run_queued_signals();                        // c:4076
         }
-        return returnval | (informed == 0) as i32;
+        crate::ported::mem::unqueue_signals();                               // c:4078
+        if !all {                                                            // c:4081
+            return if returnval != 0 || informed == 0 { 1 } else { 0 };      // c:4082
+        }
     }
 
     // c:4121-4205 — literal-name dispatch per arg.
     crate::ported::mem::queue_signals();
-    for arg in argv {                                                        // c:4121
-        let buf: Option<String>;
-        // c:4124-4130 — `-p` path-only: try $PATH walk via findcmd.
-        if OPT_ISSET(ops, b'p') {                                            // c:4124
-            buf = findcmd(arg, 1, 0);
-        } else {
-            // c:4133-4148 — alias / reserved-word / function / builtin
-            // tab walks (inline). Defer to canonical accessors.
-            // Alias check.
-            let mut hit = false;
+    let argv_vec: Vec<String> = if all {
+        crate::ported::builtin::MATCHEDNODES.lock()
+            .map(|m| m.clone()).unwrap_or_default()
+    } else { argv.to_vec() };
+    for arg in &argv_vec {                                                   // c:4121
+        // c:4123 — `informed = 0;` reset per iteration so the per-arg
+        // not-found path can fire correctly.
+        informed = 0;                                                        // c:4123
+        let mut buf: Option<String> = None;
+        // c:4124-4130 — `-p` path-only path.
+        if !OPT_ISSET(ops, b'p') {
+            // c:4128-4134 — alias check.
             if let Ok(t) = crate::ported::hashtable::aliastab_lock().lock() {
-                if t.get(arg).is_some() { informed = 1; hit = true; }
+                if let Some(a) = t.get(arg) {                                // c:4128
+                    if (printflags & PRINT_LIST) != 0 {
+                        println!("alias {}={}", a.name, a.text);
+                    } else {
+                        println!("{}={}", a.name, a.text);
+                    }
+                    informed = 1;                                            // c:4131
+                    if !all { continue; }                                    // c:4132
+                }
             }
-            // Reserved-word check.
-            if !hit {
-                let reswords = ["if","then","elif","else","fi","for","do","done",
-                                "while","until","case","esac","function","select","time"];
-                if reswords.contains(&arg.as_str()) { informed = 1; hit = true; }
+            // c:4136-4143 — suffix-alias check (arg has a `.SUFFIX`).
+            if let Some(idx) = arg.rfind('.') {                              // c:4137
+                if idx > 0 && idx + 1 < arg.len() {
+                    let suf = &arg[idx + 1..];
+                    if let Ok(t) = crate::ported::hashtable::sufaliastab_lock().lock() {
+                        if let Some(a) = t.get(suf) {                        // c:4140
+                            println!("{}={}", a.name, a.text);               // c:4141
+                            informed = 1;                                    // c:4142
+                            if !all { continue; }                            // c:4143
+                        }
+                    }
+                }
             }
-            // Builtin table check.
-            if !hit && BUILTINS.iter().any(|b| b.name == *arg) {
-                informed = 1; hit = true;
+            // c:4146-4151 — reserved-word check.
+            let reswords = ["do","done","esac","then","elif","else","fi",
+                            "for","case","if","while","function","repeat",
+                            "time","until","exec","command","select","coproc",
+                            "nocorrect","foreach","end","!","[[","{","}",
+                            "declare","export","float","integer","local",
+                            "private","readonly","typeset"];
+            if reswords.contains(&arg.as_str()) {                            // c:4146
+                println!("{}: reserved", arg);                               // c:4148
+                informed = 1;                                                // c:4149
+                if !all { continue; }                                        // c:4150
             }
-            buf = if hit { None } else { findcmd(arg, 1, 0) };
-            let _ = (all, expand);
+            // c:4153-4158 — shell function check.
+            if let Ok(t) = crate::ported::builtin::SHFUNCTAB.lock() {
+                if t.contains_key(arg) {                                     // c:4153
+                    if (printflags & PRINT_WHENCE_FUNCDEF) != 0 {
+                        println!("{} () {{ # body deferred }}", arg);
+                    } else {
+                        println!("{}", arg);                                 // c:4155
+                    }
+                    informed = 1;                                            // c:4156
+                    if !all { continue; }                                    // c:4157
+                }
+            }
+            // c:4160-4165 — builtin command check.
+            if BUILTINS.iter().any(|b| b.name == *arg) {                     // c:4160
+                println!("{}: builtin", arg);                                // c:4162
+                informed = 1;                                                // c:4163
+                if !all { continue; }                                        // c:4164
+            }
+            // c:4167-4173 — cmdnamtab HASHED check (commands installed
+            // via `hash NAME=PATH`). Static-link path: env-var bridge
+            // stores them under `__zshrs_hash_NAME`.
+            if let Ok(p) = std::env::var(format!("__zshrs_hash_{}", arg)) {  // c:4168
+                if (printflags & PRINT_LIST) != 0 {
+                    println!("hash {}={}", arg, p);
+                } else {
+                    println!("{}", p);
+                }
+                informed = 1;                                                // c:4170
+                if !all { continue; }                                        // c:4171
+            }
         }
+        // c:4178-4198 — `-a` all-paths search through $PATH.
+        if all && !arg.starts_with('/') {                                    // c:4178
+            if let Ok(path) = std::env::var("PATH") {
+                for dir in path.split(':') {
+                    if dir.is_empty() { continue; }
+                    let full = format!("{}/{}", dir, arg);
+                    let p = std::path::Path::new(&full);
+                    if p.is_file() {                                         // c:4185
+                        if wd {
+                            println!("{}: command", arg);
+                        } else if v && !csh {
+                            print!("{} is ", arg);
+                            println!("{}", crate::ported::utils::quotedzputs(&full));
+                        } else {
+                            println!("{}", full);
+                        }
+                        informed = 1;                                        // c:4192
+                    }
+                }
+            }
+            if !informed != 0 && (wd || v || csh) {                          // c:4196
+                println!("{}{}", arg, if wd { ": none" } else { " not found" });
+                returnval = 1;
+            }
+            continue;
+        }
+        // c:4200-4203 — `-p` BIN_COMMAND special case: builtin first.
+        if func == BIN_COMMAND && OPT_ISSET(ops, b'p') {                     // c:4200
+            if BUILTINS.iter().any(|b| b.name == *arg) {                     // c:4201
+                println!("{}: builtin", arg);                                // c:4202
+                informed = 1;
+                continue;
+            }
+        }
+        // c:4205-4218 — final $PATH fallback via findcmd.
+        buf = findcmd(arg, 1, (func == BIN_COMMAND && OPT_ISSET(ops, b'p')) as i32);
         if let Some(path) = buf {                                            // c:4150 iscom
             if wd {                                                          // c:4151
                 println!("{}: command", arg);                                // c:4152

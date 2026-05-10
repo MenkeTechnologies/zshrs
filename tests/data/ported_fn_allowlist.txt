@@ -471,3 +471,11 @@ ensure_termcap_loaded
 # (width/precision/flag chars/%b/%q/etc.); this Rust helper covers
 # the common script subset until the full port lands.
 printf_format
+
+# sess_get / sess_with (modules/tcp.rs) — Rust-only field accessors
+# for the thread_local ZTCP_SESSIONS Vec. The C source dereferences
+# `Tcp_session sess` (a struct pointer) directly; Rust needs a
+# RefCell::borrow / borrow_mut closure helper to get a safe view of
+# the same fields without leaking borrow guards across statements.
+sess_get
+sess_with
