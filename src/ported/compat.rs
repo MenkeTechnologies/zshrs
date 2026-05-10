@@ -64,23 +64,29 @@ impl std::ops::Sub for TimeSpec {
     }
 }
 
+// Provide clock time with nanoseconds                                      // c:97
 /// Get current real-time with nanosecond precision.
 /// Port of `zgettime()` from Src/compat.c:101 — the C source
 /// uses `clock_gettime(CLOCK_REALTIME)` (with fallbacks for older
 /// systems); Rust's `SystemTime::now()` does the same.
-pub fn zgettime() -> TimeSpec {
+pub fn zgettime() -> TimeSpec {                                              // c:101
     TimeSpec::now()
 }
 
 /// Monotonic time tracking
 static MONOTONIC_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
+// Likewise with CLOCK_MONOTONIC if available.                              // c:129
+// On at least some versions of macOS it appears that CLOCK_MONOTONIC is not // c:141
+// actually monotonic -- there are reports that it can go backwards.         // c:142
+// CLOCK_MONOTONIC_RAW does not have this problem. On top of that, it is faster // c:143
+// to read and it has nanosecond precision.                                  // c:144
 /// Get monotonic time for elapsed-duration measurement.
 /// Port of `zgettime_monotonic_if_available()` from
 /// Src/compat.c:133 — uses `CLOCK_MONOTONIC` so the value never
 /// goes backwards across NTP corrections. Rust's `Instant`
 /// guarantees monotonicity.
-pub fn zgettime_monotonic_if_available() -> TimeSpec {
+pub fn zgettime_monotonic_if_available() -> TimeSpec {                       // c:133
     let start = MONOTONIC_START.get_or_init(Instant::now);
     let elapsed = start.elapsed();
     TimeSpec {
@@ -89,13 +95,19 @@ pub fn zgettime_monotonic_if_available() -> TimeSpec {
     }
 }
 
+// compute the difference between two calendar times                        // c:168
 /// Compute the difference between two times in seconds.
 /// Port of `difftime()` from Src/compat.c:175 — wraps
 /// libc's `difftime(3)` for systems lacking the prototype.
-pub fn difftime(t2: i64, t1: i64) -> f64 {
+pub fn difftime(t2: i64, t1: i64) -> f64 {                                   // c:175
     (t2 - t1) as f64
 }
 
+// Neither of these should happen, but resort to OPEN_MAX rather            // c:291
+// than return 0 or -1 just in case.                                        // c:292
+//                                                                          // c:293
+// We'll limit the open maximum to ZSH_INITIAL_OPEN_MAX to                  // c:294
+// avoid probing ridiculous numbers of file descriptors.                    // c:295
 /// Get system's maximum open file descriptors. Direct port of
 /// src/zsh/Src/compat.c:300-328 zopenmax.
 ///
@@ -109,7 +121,7 @@ pub fn difftime(t2: i64, t1: i64) -> f64 {
 ///
 /// The previous Rust impl capped at 1MB which is way too high
 /// for closem() loops; matched zsh's actual cap.
-pub fn zopenmax() -> i64 {
+pub fn zopenmax() -> i64 {                                                   // c:300
     // ZSH_INITIAL_OPEN_MAX from zsh.h — 1024.
     const ZSH_INITIAL_OPEN_MAX: i64 = 1024;
     // OPEN_MAX fallback from sysconf failure — POSIX guarantees 20

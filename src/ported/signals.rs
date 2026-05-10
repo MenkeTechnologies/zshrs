@@ -18,6 +18,8 @@ use std::sync::{Mutex, OnceLock};
 /// Maximum size of signal queue
 const MAX_QUEUE_SIZE: usize = 128;
 
+// Array describing the state of each signal: an element contains          // c:33
+// 0 for the default action or some ZSIG_* flags ored together.            // c:34
 /// Signal trap flag bits.
 /// Port of the `ZSIG_*` constants from Src/zsh.h — `ZSIG_TRAPPED`,
 /// `ZSIG_IGNORED`, `ZSIG_FUNC` are the same shape the C source's
@@ -731,10 +733,11 @@ pub fn install_handler(sig: i32) {
 /// Port of `intr()` from `Src/signals.c:117`.
 ///
 /// C body: `if (interact) install_handler(SIGINT);` — the
+// enable ^C interrupts                                                     // c:114
 /// interactive-shell-only SIGINT installer used by `bin_set` /
 /// trap restoration paths to re-enable ^C breaking after a
 /// scope that disabled it.
-pub fn intr() {
+pub fn intr() {                                                              // c:118
     if is_interact() {
         install_handler(libc::SIGINT);
     }
@@ -860,10 +863,11 @@ pub fn starttrapscope() -> Vec<String> {
 ///     signal_ignore(SIGINT);
 /// ```
 ///
+// disable ^C interrupts                                                    // c:124
 /// Disables SIGINT delivery in interactive mode (sets the
 /// disposition to SIG_IGN). The `if (interact)` gate matches C.
 #[cfg(unix)]
-pub fn nointr() {
+pub fn nointr() {                                                            // c:128
     if is_interact() {
         unsafe {
             libc::signal(libc::SIGINT, libc::SIG_IGN);
@@ -879,10 +883,11 @@ pub fn nointr() {
 ///     signal_block(signal_mask(SIGINT));
 /// ```
 ///
+// temporarily block ^C interrupts                                          // c:135
 /// Blocks SIGINT temporarily — used by code paths that can't
 /// handle interruption mid-flight (e.g. after fork before exec).
 #[cfg(unix)]
-pub fn holdintr() {
+pub fn holdintr() {                                                          // c:139
     if is_interact() {
         let mask = signal_mask(libc::SIGINT);
         signal_block(&mask);
@@ -896,10 +901,11 @@ pub fn holdintr() {
 /// if (interact)
 ///     signal_unblock(signal_mask(SIGINT));
 /// ```
+// release ^C interrupts                                                    // c:145
 ///
 /// Inverse of [`holdintr`].
 #[cfg(unix)]
-pub fn noholdintr() {
+pub fn noholdintr() {                                                        // c:149
     if is_interact() {
         let mask = signal_mask(libc::SIGINT);
         signal_unblock(&mask);
@@ -1005,17 +1011,21 @@ pub fn dosavetrap(sig: i32, handler: &TrapHandler) -> Option<TrapAction> {
     handler.get_trap(sig)
 }
 
+// sig is index into the table of trapped signals.                         // c:681
+//                                                                          // c:682
+// l is the list to be eval'd for a trap defined with the "trap"            // c:683
+// builtin and should be NULL for a function trap.                          // c:684
 /// Set a trap (top-level entry point).
 /// Port of `settrap()` from Src/signals.c:693 — see also
 /// `TrapHandler::set_trap` for the per-handler shape.
-pub fn settrap(sig: i32, action: TrapAction) -> Result<(), String> {
+pub fn settrap(sig: i32, action: TrapAction) -> Result<(), String> {         // c:693
     let handler = TrapHandler::global();
     handler.set_trap(sig, action)
 }
 
 /// Unset a trap (top-level entry point).
 /// Port of `unsettrap()` from Src/signals.c:759.
-pub fn unsettrap(sig: i32) {
+pub fn unsettrap(sig: i32) {                                                 // c:759
     let handler = TrapHandler::global();
     handler.unset_trap(sig);
 }
@@ -1035,17 +1045,18 @@ pub fn handletrap(sig: i32) -> Option<String> {
 /// Execute trap actions for a pending signal.
 /// Port of `dotrapargs()` from Src/signals.c:1081 — the inner
 /// trap dispatcher `dotrap()` calls.
-pub fn dotrapargs(sig: i32, handler: &TrapHandler) -> Option<String> {
+pub fn dotrapargs(sig: i32, handler: &TrapHandler) -> Option<String> {       // c:1081
     match handler.get_trap(sig) {
         Some(TrapAction::Code(code)) => Some(code),
         _ => None,
     }
 }
 
+// Standard call to execute a trap for a given signal.                     // c:1241
 /// Execute all pending traps for a signal.
 /// Port of `dotrap()` from Src/signals.c:1245 — top-level trap
 /// runner.
-pub fn dotrap(sig: i32) -> Option<String> {
+pub fn dotrap(sig: i32) -> Option<String> {                                  // c:1245
     let handler = TrapHandler::global();
     dotrapargs(sig, handler)
 }

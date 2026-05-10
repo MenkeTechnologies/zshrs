@@ -643,12 +643,14 @@ pub static PIPESTATS: OnceLock<Mutex<[i32; MAX_PIPESTATS]>> = OnceLock::new();
 /// Get clock ticks per second (from jobs.c get_clktck lines 720-748)
 /// Get `_SC_CLK_TCK` for time-conversion math.
 /// Port of `get_clktck()` from Src/jobs.c:721.
-pub fn get_clktck() -> i64 {
+pub fn get_clktck() -> i64 {                                                 // c:721
     #[cfg(unix)]
     {
         use std::sync::OnceLock;
-        static CLKTCK: OnceLock<i64> = OnceLock::new();
-        *CLKTCK.get_or_init(|| unsafe { libc::sysconf(libc::_SC_CLK_TCK) as i64 })
+        static CLKTCK: OnceLock<i64> = OnceLock::new();                      // c:723
+        // fetch clock ticks per second from                                 // c:727
+        // sysconf only the first time                                       // c:728
+        *CLKTCK.get_or_init(|| unsafe { libc::sysconf(libc::_SC_CLK_TCK) as i64 }) // c:729
     }
     #[cfg(not(unix))]
     {
@@ -912,8 +914,12 @@ impl BgStatus {
     }
 }
 
+// Wait for a particular process.                                           // c:1618
+// wait_cmd indicates this is from the interactive wait command,            // c:1620
+// in which case the behaviour is a little different:  the command          // c:1621
+// itself can be interrupted by a trapped signal.                           // c:1622
 /// Wait for a specific PID (from jobs.c waitforpid lines 1627-1663)
-pub fn waitforpid(pid: i32) -> Option<i32> {
+pub fn waitforpid(pid: i32) -> Option<i32> {                                 // c:1627
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
@@ -1462,8 +1468,9 @@ pub fn clearjobtab(table: &mut JobTable, monitor: i32) {
     table.next_id = 1;
 }
 
+// see if jobs need printing                                                // c:1989
 /// Scan jobs and print changed status (from jobs.c scanjobs)
-pub fn scanjobs(table: &JobTable) -> Vec<String> {
+pub fn scanjobs(table: &JobTable) -> Vec<String> {                           // c:1993
     let mut output = Vec::new();
     for (id, job) in table.iter() {
         let state_str = match job.state {
@@ -1562,8 +1569,9 @@ pub fn findproc(jobtab: &[Job], pid: i32) -> Option<(usize, usize, bool)> {
     None
 }
 
+// Update status of job, possibly printing it                               // c:456
 /// Update job status after process change (from jobs.c update_job)
-pub fn update_job(job: &mut Job) -> bool {
+pub fn update_job(job: &mut Job) -> bool {                                   // c:460
     // Check if all aux procs are done
     for proc in &job.auxprocs {
         if proc.is_running() {
@@ -1640,8 +1648,9 @@ pub fn handle_sub(jobtab: &mut [Job], super_idx: usize, fg: bool) {
     }
 }
 
+// set the previous job to something reasonable                              // c:694
 /// Set the previous job (from jobs.c setprevjob)
-pub fn setprevjob(ptrs: &mut JobPointers, jobtab: &[Job], maxjob: usize) {
+pub fn setprevjob(ptrs: &mut JobPointers, jobtab: &[Job], maxjob: usize) {   // c:698
     // Find a stopped or running job that isn't the current job
     let mut best = None;
     for i in (1..=maxjob).rev() {
@@ -1662,8 +1671,9 @@ pub fn setprevjob(ptrs: &mut JobPointers, jobtab: &[Job], maxjob: usize) {
     ptrs.prev_job = best;
 }
 
+// Make sure we have a suitable current and previous job set.               // c:2019
 /// Set current job after state change (from jobs.c setcurjob)
-pub fn setcurjob(ptrs: &mut JobPointers, jobtab: &[Job], maxjob: usize) {
+pub fn setcurjob(ptrs: &mut JobPointers, jobtab: &[Job], maxjob: usize) {    // c:2023
     ptrs.cur_job = None;
     for i in (1..=maxjob).rev() {
         if i >= jobtab.len() {
@@ -2211,16 +2221,24 @@ pub fn clearoldjobtab() {
 /// `BgStatus::add` already implements the cap + LRU eviction; the
 /// fn delegates. Returning unit matches C's `void`. The `bg`
 /// argument replaces C's global `bgstatus_list`.
-pub fn addbgstatus(bg: &mut BgStatus, pid: i32, status_val: i32) {
-    bg.add(pid, status_val);
+pub fn addbgstatus(bg: &mut BgStatus, pid: i32, status_val: i32) {           // c:2325
+    // We're not always robust about memory failures, but                    // c:2347
+    // this is pretty deep in the shell basics to be failing owing           // c:2348
+    // to memory, and a failure to wait is reported loudly, so test          // c:2349
+    // and fail silently here.                                               // c:2350
+    // Add an entry for the pid                                              // c:2369
+    // Overflow.  List is in order, remove first                             // c:2370-2371
+    bg.add(pid, status_val);                                                 // c:2374-2385
 }
 
+// See if pid has a recorded exit status.                                   // c:2388
+// Note we make no guarantee that the PIDs haven't wrapped, so this         // c:2389
+// may not be the right process.                                            // c:2390
+//                                                                          // c:2391
+// This is only used by wait, which must only work on each                  // c:2392
+// pid once, so we need to remove the entry if we find it.                  // c:2393
 /// Port of `getbgstatus()` from `Src/jobs.c:2397`.
-///
-/// C body scans `bgstatus_list` for a matching pid; if found,
-/// removes the entry and returns its status. Returns -1 if no
-/// match.
-pub fn getbgstatus(bg: &mut BgStatus, pid: i32) -> Option<i32> {
+pub fn getbgstatus(bg: &mut BgStatus, pid: i32) -> Option<i32> {             // c:2397
     bg.remove(pid)
 }
 

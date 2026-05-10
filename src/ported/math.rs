@@ -2312,7 +2312,7 @@ pub(crate) fn getmathparams() -> HashMap<String, Mnumber> {
 /// Convenience function to evaluate a math expression
 /// Top-level math-expression evaluator.
 /// Port of `matheval()` from Src/math.c:1480 — wraps `mathevall()`\n/// (line 367) with the C source's standard error-message\n/// formatting.
-pub fn matheval(expr: &str) -> Result<Mnumber, String> {
+pub fn matheval(expr: &str) -> Result<Mnumber, String> {                     // c:1480
     new(expr);
     mathevall()
 }
