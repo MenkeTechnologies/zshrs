@@ -1759,10 +1759,29 @@ pub fn set_comp_sep() -> i32 {                                               // 
     1                                                                        // c:1937 ret = 1 means "no change"
 }
 
-/// Extern stub for `void lexsave(void)` — `Src/lex.c`.
-fn lexsave_stub() -> usize { 0 }                                              // lex.c
-/// Extern stub for `void lexrestore(void)` — `Src/lex.c`.
-fn lexrestore_stub(_token: usize) {}                                          // lex.c
+/// Direct port of `void lexsave(void)` from `Src/lex.c`. Delegates
+/// to `zcontext_save` which pushes the lex/parse/hist context stack
+/// frame. Returns a token (current stack depth) for symmetry with
+/// the C `int` save token used by `set_comp_sep` for invariant check.
+fn lexsave_stub() -> usize {                                                  // lex.c via context.c:80
+    crate::ported::context::zcontext_save(None, None);
+    (LEXSAVE_DEPTH.fetch_add(1, Ordering::SeqCst) + 1) as usize
+}
+
+/// Direct port of `void lexrestore(void)` from `Src/lex.c`. Pops the
+/// last `zcontext_save` frame. C body restores hist/lex/parse via
+/// `zcontext_restore_partial(ZCONTEXT_HIST|ZCONTEXT_LEX|ZCONTEXT_PARSE)`.
+fn lexrestore_stub(_token: usize) {                                           // lex.c via context.c:117
+    let parts = crate::ported::zsh_h::ZCONTEXT_HIST
+              | crate::ported::zsh_h::ZCONTEXT_LEX
+              | crate::ported::zsh_h::ZCONTEXT_PARSE;
+    crate::ported::context::zcontext_restore_partial(parts, None, None);
+    LEXSAVE_DEPTH.fetch_sub(1, Ordering::SeqCst);
+}
+
+/// Depth counter so `set_comp_sep`'s sanity assert ("lexsave/restore
+/// balanced") fires when a future port mismatches them.
+static LEXSAVE_DEPTH: AtomicI32 = AtomicI32::new(0);                         // local
 
 // =====================================================================
 // addmatches — `Src/Zle/compcore.c:2080-2637`.
