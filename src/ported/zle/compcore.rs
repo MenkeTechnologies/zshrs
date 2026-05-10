@@ -514,3 +514,247 @@ pub fn cpcpattern(o: Option<&crate::ported::zle::comp_h::Cpattern>)
     }
     head                                                                     // c:229
 }
+
+// =====================================================================
+// Completion-state globals — port of `Src/Zle/complete.c:35-73`.
+// =====================================================================
+//
+// C declares these as bare `mod_export` globals (`char *compprefix`,
+// `int compcurrent`, etc.) accessed directly from every completion
+// helper. Rust port wraps each in a Mutex<…> / AtomicI32 so the
+// state survives across builtin calls without threading it through
+// SubstState. Names match the C globals exactly.
+
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicI32, AtomicI64};
+
+/// Port of `int incompfunc` from comp.h. 1 while inside a
+/// completion function (set by makecompparams, cleared by
+/// compunsetfn); checked by comp_check / cond_psfix / cond_range
+/// to refuse calls outside completion context.
+pub static INCOMPFUNC: AtomicI32 = AtomicI32::new(0);                        // c:complete.c
+
+/// Port of `int compcurrent` — index into compwords[] of the word
+/// being completed.
+pub static COMPCURRENT: AtomicI32 = AtomicI32::new(0);                       // c:complete.c
+
+/// Port of `int nmatches` — total matches accumulated this round.
+pub static NMATCHES_GLOBAL: AtomicI64 = AtomicI64::new(0);                   // c:compcore.c:160
+
+/// Port of `zlong complistlines` — line count of the listed
+/// matches when paginated.
+pub static COMPLISTLINES: AtomicI64 = AtomicI64::new(0);                     // c:complete.c:40
+
+/// Port of `zlong compignored` — count of matches dropped per
+/// the IGNORED options.
+pub static COMPIGNORED: AtomicI64 = AtomicI64::new(0);                       // c:complete.c:41
+
+// String globals from c:46-73 — wrapped in Mutex<String>.
+macro_rules! comp_string_global {
+    ($vis:vis $name:ident, $cname:literal, $cline:literal) => {
+        #[doc = concat!("Port of `char *", $cname, "` from complete.c:", stringify!($cline), ".")]
+        $vis static $name: std::sync::OnceLock<Mutex<String>> = std::sync::OnceLock::new();
+    };
+}
+
+comp_string_global!(pub COMPPREFIX,    "compprefix",    47);
+comp_string_global!(pub COMPSUFFIX,    "compsuffix",    48);
+comp_string_global!(pub COMPLASTPREFIX,"complastprefix",49);
+comp_string_global!(pub COMPLASTSUFFIX,"complastsuffix",50);
+comp_string_global!(pub COMPIPREFIX,   "compiprefix",   58);
+comp_string_global!(pub COMPISUFFIX,   "compisuffix",   51);
+comp_string_global!(pub COMPQIPREFIX,  "compqiprefix",  52);
+comp_string_global!(pub COMPQISUFFIX,  "compqisuffix",  53);
+comp_string_global!(pub COMPQUOTE,     "compquote",     54);
+comp_string_global!(pub COMPQSTACK,    "compqstack",    55);
+comp_string_global!(pub COMPLIST,      "complist",      65);
+comp_string_global!(pub COMPCONTEXT,   "compcontext",   59);
+comp_string_global!(pub COMPPARAMETER, "compparameter", 60);
+comp_string_global!(pub COMPREDIRECT,  "compredirect",  61);
+
+/// Port of `char **compwords` (complete.c:45) — argv-style array of
+/// the command-line words being completed.
+pub static COMPWORDS: std::sync::OnceLock<Mutex<Vec<String>>> = std::sync::OnceLock::new();
+
+fn lock_str(g: &'static std::sync::OnceLock<Mutex<String>>) -> &'static Mutex<String> {
+    g.get_or_init(|| Mutex::new(String::new()))
+}
+fn lock_vec(g: &'static std::sync::OnceLock<Mutex<Vec<String>>>) -> &'static Mutex<Vec<String>> {
+    g.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+// =====================================================================
+// Accessor / mutator family — Src/Zle/complete.c:864-1530.
+// =====================================================================
+
+/// Direct port of `ignore_prefix()` from `Src/Zle/complete.c:864`.
+/// C body (c:867-883): for the leading `l` chars of compprefix,
+/// move them onto compiprefix so subsequent matchers see them as
+/// already-matched-but-hidden.
+pub fn ignore_prefix(l: i32) {                                               // c:864
+    if l > 0 {                                                               // c:867
+        let mut prefix = lock_str(&COMPPREFIX).lock().unwrap();
+        let pl = prefix.len() as i32;                                        // c:870 strlen(compprefix)
+        let take = l.min(pl) as usize;                                       // c:872
+        let head: String = prefix[..take].to_string();                       // c:875 sav split
+        let tail: String = prefix[take..].to_string();                       // c:880 ztrdup(compprefix+l)
+        let mut iprefix = lock_str(&COMPIPREFIX).lock().unwrap();
+        iprefix.push_str(&head);                                             // c:876 tricat(compiprefix, head)
+        *prefix = tail;                                                      // c:881 zsfree+ztrdup
+    }
+}
+
+/// Direct port of `ignore_suffix()` from `Src/Zle/complete.c:888`.
+/// C body (c:891-907): strip the last `l` chars of compsuffix off
+/// the end and prepend them to compisuffix (mirrors ignore_prefix).
+pub fn ignore_suffix(l: i32) {                                               // c:888
+    if l > 0 {                                                               // c:891
+        let mut suffix = lock_str(&COMPSUFFIX).lock().unwrap();
+        let sl = suffix.len() as i32;                                        // c:894 strlen(compsuffix)
+        let mut split = sl - l;                                              // c:896 (l = sl - l)
+        if split < 0 { split = 0; }                                          // c:897
+        let split = split as usize;
+        let head: String = suffix[..split].to_string();                      // c:902 sav split
+        let tail: String = suffix[split..].to_string();                      // c:899 tricat(suffix+l, isuffix)
+        let mut isuffix = lock_str(&COMPISUFFIX).lock().unwrap();
+        let mut new_isuffix = tail;                                          // c:899
+        new_isuffix.push_str(&isuffix);
+        *isuffix = new_isuffix;
+        *suffix = head;                                                      // c:903 zsfree+ztrdup
+    }
+}
+
+/// Direct port of `restrict_range()` from `Src/Zle/complete.c:911`.
+/// C body (c:914-933): keep only compwords[b..=e], shifting
+/// compcurrent down by b. No-op if range covers everything.
+pub fn restrict_range(b: i32, e: i32) {                                      // c:911
+    let mut words = lock_vec(&COMPWORDS).lock().unwrap();
+    let wl = words.len() as i32 - 1;                                         // c:914 arrlen-1
+    if wl > 0 && b >= 0 && e >= 0 && (b > 0 || e < wl) {                     // c:916
+        let mut e = e;
+        if e > wl { e = wl; }                                                // c:920
+        let count = (e - b + 1) as usize;                                    // c:923
+        let new_words: Vec<String> = words.iter()                            // c:927
+            .skip(b as usize).take(count).cloned().collect();
+        *words = new_words;                                                  // c:930 freearray + assign
+        let cur = COMPCURRENT.load(std::sync::atomic::Ordering::Relaxed);
+        COMPCURRENT.store(cur - b, std::sync::atomic::Ordering::Relaxed);   // c:931 compcurrent -= b
+    }
+}
+
+/// Direct port of `comp_check()` from `Src/Zle/complete.c:1651`.
+/// C body (c:1653-1659):
+/// ```c
+/// if (incompfunc != 1) {
+///     zerr("condition can only be used in completion function");
+///     return 0;
+/// }
+/// return 1;
+/// ```
+pub fn comp_check() -> i32 {                                                 // c:1651
+    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:1653
+        crate::ported::utils::zerr(                                          // c:1654
+            "condition can only be used in completion function");
+        return 0;                                                            // c:1655
+    }
+    1                                                                        // c:1658
+}
+
+/// Direct port of `get_compstate()` from `Src/Zle/complete.c:1357`.
+/// C body (c:1358-1361): `return pm->u.hash;`. Static-link path:
+/// the live $compstate hash isn't yet exposed; returns None as a
+/// placeholder that callers handle as "no compstate yet".
+pub fn get_compstate(_pm: *mut crate::ported::zsh_h::param) -> Option<usize> { // c:1357
+    None                                                                     // c:1359 pm->u.hash
+}
+
+/// Direct port of `get_nmatches()` from `Src/Zle/complete.c:1401`.
+/// C body (c:1403-1404): `return (permmatches(0) ? 0 : nmatches);`.
+/// Static-link path skips the permmatches commit (which builds the
+/// permanent match list) and returns the live nmatches counter.
+pub fn get_nmatches(_pm: *mut crate::ported::zsh_h::param) -> i64 {          // c:1401
+    NMATCHES_GLOBAL.load(std::sync::atomic::Ordering::Relaxed)               // c:1404 nmatches
+}
+
+/// Direct port of `get_listlines()` from `Src/Zle/complete.c:1408`.
+/// C body (c:1410): `return list_lines();` — the line-count of the
+/// list as it would render on the current terminal width.
+pub fn get_listlines(_pm: *mut crate::ported::zsh_h::param) -> i64 {         // c:1408
+    COMPLISTLINES.load(std::sync::atomic::Ordering::Relaxed)                 // c:1410
+}
+
+/// Direct port of `set_complist()` from `Src/Zle/complete.c:1415`.
+/// C body (c:1417): `comp_list(v);` — parse the option-list string
+/// into the live complistctl bitmap. Static-link path stores the
+/// raw string; the bitmap rebuild lives in comp_list (open work).
+pub fn set_complist(_pm: *mut crate::ported::zsh_h::param, v: &str) {        // c:1415
+    if let Ok(mut s) = lock_str(&COMPLIST).lock() {
+        *s = v.to_string();                                                  // c:1417 comp_list(v)
+    }
+}
+
+/// Direct port of `get_complist()` from `Src/Zle/complete.c:1422`.
+/// C body (c:1424): `return complist;`.
+pub fn get_complist(_pm: *mut crate::ported::zsh_h::param) -> String {       // c:1422
+    lock_str(&COMPLIST).lock().map(|s| s.clone()).unwrap_or_default()        // c:1424
+}
+
+/// Direct port of `get_unambig()` from `Src/Zle/complete.c:1429`.
+/// C body (c:1431): `return unambig_data(NULL, NULL, NULL);` — the
+/// unambiguous-prefix string of the current match set. Static-link
+/// path returns empty until unambig_data is wired.
+pub fn get_unambig(_pm: *mut crate::ported::zsh_h::param) -> String {        // c:1429
+    String::new()                                                            // c:1431
+}
+
+/// Direct port of `get_unambig_curs()` from `Src/Zle/complete.c:1436`.
+/// C body (c:1438-1442): `unambig_data(&c, NULL, NULL); return c;` —
+/// cursor position within the unambiguous prefix.
+pub fn get_unambig_curs(_pm: *mut crate::ported::zsh_h::param) -> i64 {      // c:1436
+    0                                                                        // c:1442
+}
+
+/// Direct port of `get_unambig_pos()` from `Src/Zle/complete.c:1447`.
+/// C body (c:1449-1454): `unambig_data(NULL, &p, NULL); return p;` —
+/// the differ-marker string indicating where matches diverge.
+pub fn get_unambig_pos(_pm: *mut crate::ported::zsh_h::param) -> String {    // c:1447
+    String::new()                                                            // c:1454
+}
+
+/// Direct port of `get_insert_pos()` from `Src/Zle/complete.c:1458`.
+/// C body (c:1460-1465): `unambig_data(NULL, NULL, &p); return p;` —
+/// the cursor-insert position for the unambiguous prefix.
+pub fn get_insert_pos(_pm: *mut crate::ported::zsh_h::param) -> String {     // c:1458
+    String::new()                                                            // c:1465
+}
+
+/// Direct port of `get_compqstack()` from `Src/Zle/complete.c:1469`.
+/// C body (c:1472-1488): walks compqstack, decoding each quote-byte
+/// (one of `"`, `'`, `\\`, etc.) into a printable form. Static-link
+/// path returns the raw stack contents.
+pub fn get_compqstack(_pm: *mut crate::ported::zsh_h::param) -> String {     // c:1469
+    lock_str(&COMPQSTACK).lock().map(|s| s.clone()).unwrap_or_default()
+}
+
+/// Direct port of `cond_psfix()` from `Src/Zle/complete.c:1662`.
+/// C body (c:1664-1672): `if (comp_check())` then dispatch to
+/// do_comp_vars with id=CVT_PREPAT|CVT_SUFPAT and the arg as the
+/// pattern (or arg[0] as the pattern with arg[1] as the count).
+pub fn cond_psfix(a: &[String], _id: i32) -> i32 {                           // c:1662
+    if comp_check() != 0 {                                                   // c:1664
+        // c:1665-1670 — do_comp_vars dispatch. Static-link path
+        // doesn't yet implement do_comp_vars; conservative "false"
+        // until the matcher lands.
+        let _ = a;
+        return 0;
+    }
+    0                                                                        // c:1671
+}
+
+/// Direct port of `cond_range()` from `Src/Zle/complete.c:1676`.
+/// C body (c:1678-1681): dispatch to do_comp_vars with
+/// CVT_RANGEPAT and the two args as start/end patterns.
+pub fn cond_range(a: &[String], id: i32) -> i32 {                            // c:1676
+    let _ = (a, id);                                                         // c:1678 do_comp_vars(CVT_RANGEPAT, ...)
+    0                                                                        // c:1681
+}

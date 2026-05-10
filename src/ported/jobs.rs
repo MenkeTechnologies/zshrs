@@ -579,6 +579,51 @@ pub struct JobEntry {
     pub is_current: bool,
 }
 
+// ---------------------------------------------------------------------------
+// C-style globals (Bucket 2: shell-wide shared state per PORT_PLAN.md)
+// ---------------------------------------------------------------------------
+
+use std::sync::{Arc, Mutex, OnceLock};
+
+/// Port of file-static `jobtab` from `Src/jobs.c:88`.
+/// Shell-wide job table shared across threads.
+fn jobtab_global() -> &'static Arc<Mutex<Vec<Job>>> {
+    static JOBTAB: OnceLock<Arc<Mutex<Vec<Job>>>> = OnceLock::new();
+    JOBTAB.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+}
+
+/// Port of file-static `maxjob` from `Src/jobs.c:98`.
+fn maxjob_global() -> &'static Arc<Mutex<usize>> {
+    static MAXJOB: OnceLock<Arc<Mutex<usize>>> = OnceLock::new();
+    MAXJOB.get_or_init(|| Arc::new(Mutex::new(0)))
+}
+
+/// Port of file-static `curjob` from `Src/jobs.c:78`.                       // c:75
+/// the current job (%+)
+fn curjob_global() -> &'static Arc<Mutex<i32>> {
+    static CURJOB: OnceLock<Arc<Mutex<i32>>> = OnceLock::new();
+    CURJOB.get_or_init(|| Arc::new(Mutex::new(-1)))
+}
+
+/// Port of file-static `prevjob` from `Src/jobs.c:83`.                      // c:80
+/// the previous job (%-) */
+fn prevjob_global() -> &'static Arc<Mutex<i32>> {
+    static PREVJOB: OnceLock<Arc<Mutex<i32>>> = OnceLock::new();
+    PREVJOB.get_or_init(|| Arc::new(Mutex::new(-1)))
+}
+
+/// Port of file-static `thisjob` from `Src/jobs.c:73`.
+fn thisjob_global() -> &'static Arc<Mutex<i32>> {
+    static THISJOB: OnceLock<Arc<Mutex<i32>>> = OnceLock::new();
+    THISJOB.get_or_init(|| Arc::new(Mutex::new(-1)))
+}
+
+/// Check POSIX_BUILTINS option. Port of `isset(POSIXBUILTINS)`.
+/// TODO: wire to actual options table when ported.
+fn isset_posixbuiltins() -> bool {
+    false
+}
+
 /// Get clock ticks per second (from jobs.c get_clktck lines 720-748)
 /// Get `_SC_CLK_TCK` for time-conversion math.
 /// Port of `get_clktck()` from Src/jobs.c:721.
@@ -1039,8 +1084,8 @@ pub fn getjob(
 ) -> i32 {
     let mut jobnum: i32;                                                     // c:2065
     let returnval: i32;                                                      // c:2065
-    let mymaxjob = maxjob as i32;                                            // c:2065
-    let myjobtab = jobtab;                                                   // c:2068 selectjobtab
+    let (myjobtab, mymaxjob_u) = selectjobtab(jobtab, maxjob);               // c:2068
+    let mymaxjob = mymaxjob_u as i32;                                        // c:2065
 
     let s_bytes = s.as_bytes();
     let mut idx = 0usize;
@@ -1050,7 +1095,7 @@ pub fn getjob(
         // goto jump                                                         // c:2072
         // anything else is a job name, specified as a string that begins    // c:2135
         // the job's command                                                 // c:2136
-        if let Some(jn) = findjobnam(s, myjobtab, mymaxjob, thisjob) {     // c:2137
+        if let Some(jn) = findjobnam(s, &myjobtab, mymaxjob, thisjob) {    // c:2137
             return jn;
         }
         // if we get here, it is because none of the above succeeded         // c:2141
@@ -1128,7 +1173,7 @@ pub fn getjob(
     // anything else is a job name, specified as a string that begins        // c:2135
     // the job's command                                                     // c:2136
     let rest = &s[idx..];
-    if let Some(jn) = findjobnam(rest, myjobtab, mymaxjob, thisjob) {      // c:2137
+    if let Some(jn) = findjobnam(rest, &myjobtab, mymaxjob, thisjob) {     // c:2137
         return jn;                                                           // c:2138-2139
     }
     // if we get here, it is because none of the above succeeded             // c:2141
@@ -1727,17 +1772,23 @@ pub fn spawnjob(job: &mut Job, fg: bool) {
     }
 }
 
-/// Select which job table to use (from jobs.c selectjobtab)
-/// Returns (table_ref, max_job_index)
-pub fn selectjobtab(jobtab: &[Job]) -> usize {
-    // Find the maximum used job index
-    let mut max = 0;
-    for (i, job) in jobtab.iter().enumerate() {
-        if (job.stat & stat::INUSE) != 0 {
-            max = i;
-        }
+// Find the job table for reporting jobs                                   // c:2038
+/// Port of `selectjobtab()` from `Src/jobs.c:2042`.
+///
+/// C signature: `mod_export void selectjobtab(Job *jtabp, int *jmaxp)`
+///
+/// In subshell, uses saved `oldjobtab`/`oldmaxjob`; otherwise uses
+/// the passed-in main `jobtab`/`maxjob`. Returns `(table, maxjob)`.
+pub fn selectjobtab(jobtab: &[Job], maxjob: usize) -> (Vec<Job>, usize) {
+    let guard = oldjobtab_lock().lock().expect("oldjobtab poisoned");
+    let (ref oldtab, oldmax) = *guard;
+    if !oldtab.is_empty() {                                                  // c:2044
+        // In subshell --- use saved job table to report                     // c:2046
+        (oldtab.clone(), oldmax)                                             // c:2047-2048
+    } else {
+        // Use main job table                                                // c:2052
+        (jobtab.to_vec(), maxjob)                                            // c:2053-2054
     }
-    max
 }
 
 /// Port of `expandjobtab()` from `Src/jobs.c:2225`.
