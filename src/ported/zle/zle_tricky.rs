@@ -681,8 +681,40 @@ pub fn addx(zle: &mut crate::ported::zle::zle_main::Zle, ptmp: &mut String) -> i
     }
 }
 
-/// Port of `checkparams()` from Src/Zle/zle_tricky.c:435. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn checkparams() -> i32 { 0 }
+/// Port of `checkparams()` from Src/Zle/zle_tricky.c:435.
+pub fn checkparams(p: &str, vars: &std::collections::HashMap<String, String>,
+                   arrays: &std::collections::HashMap<String, Vec<String>>) -> i32 { // c:435
+    use std::sync::atomic::Ordering;
+    // C body c:437-449 — walk paramtab, find param names that have
+    //                    `pfxlen(p, nam) == l`, count how many up to 2,
+    //                    track exact-match. Then:
+    //                    if n == 1 return (getsparam(p) != NULL)
+    //                    else      return !menucmp && exact && (!hascompmod || isset(RECEXACT))
+    let l = p.len();
+    let mut n = 0;
+    let mut exact = false;
+    for name in vars.keys().chain(arrays.keys()) {
+        if name.starts_with(p) && name.len() >= l {
+            n += 1;
+            if name.len() == l {
+                exact = true;
+            }
+            if n >= 2 {
+                break;
+            }
+        }
+    }
+    if n == 1 {
+        return if crate::ported::params::getsparam(vars, arrays, p).is_some() { 1 } else { 0 };
+    }
+    let menucmp = MENUCMP.load(Ordering::SeqCst) != 0;
+    let recexact = crate::ported::options::opt_state_get("recexact").unwrap_or(false);
+    if !menucmp && exact && recexact {
+        1
+    } else {
+        0
+    }
+}
 
 /// Port of `cmphaswilds()` from Src/Zle/zle_tricky.c:457.
 pub fn cmphaswilds(s: &str) -> i32 {                                         // c:457
@@ -713,8 +745,19 @@ pub fn cmphaswilds(s: &str) -> i32 {                                         // 
     0
 }
 
-/// Port of `completecall()` from Src/Zle/zle_tricky.c:202. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn completecall() -> i32 { 0 }
+/// Port of `completecall()` from Src/Zle/zle_tricky.c:202.
+pub fn completecall(args: &[String]) -> i32 {                                // c:202
+    // C body c:204-211 — `cfargs = args; cfret = 0;
+    //                     compfunc = compwidget->u.comp.func;
+    //                     if (compwidget->u.comp.fn(zlenoargs) && !cfret)
+    //                         cfret = 1;
+    //                     compfunc = NULL; return cfret`.
+    // Without compwidget bound this dispatches to docomplete with the
+    // default COMP_COMPLETE type so user-defined completion widgets
+    // still cause a completion attempt.
+    let _ = args;
+    docomplete(crate::ported::zle::zle_h::COMP_COMPLETE)
+}
 
 /// Port of `completeword()` from Src/Zle/zle_tricky.c:216.
 pub fn completeword() -> i32 {                                               // c:216
@@ -756,14 +799,40 @@ pub fn docomplete(lst: i32) -> i32 {                                         // 
     0
 }
 
-/// Port of `docompletion()` from Src/Zle/zle_tricky.c:2339. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn docompletion() -> i32 { 0 }
+/// Port of `docompletion()` from Src/Zle/zle_tricky.c:2339.
+pub fn docompletion() -> i32 {                                               // c:2339
+    // C body c:2341-2398 — main driver after get_comp_string: builds
+    //                      Cmatch list via callcompfunc/compfunc,
+    //                      sorts via matchcmp, picks insertion via
+    //                      do_single/do_listing, updates cursor.
+    //                      The Cmatch/Cmgroup pipeline isn't ported
+    //                      yet; we return 0 (no completion) so the
+    //                      driver bookkeeping stays consistent.
+    0
+}
 
-/// Port of `doexpandhist()` from Src/Zle/zle_tricky.c:2802. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn doexpandhist() -> i32 { 0 }
+/// Port of `doexpandhist()` from Src/Zle/zle_tricky.c:2802.
+pub fn doexpandhist() -> i32 {                                               // c:2802
+    // C body c:2804-2865 — pushes line onto inputstack, runs lex/expand,
+    //                      then if expanded (zlemetaline != ol)
+    //                      replace the buffer + bump cursor. Returns 1
+    //                      on actual expansion, 0 on no change. The
+    //                      lex/parse substrate isn't ported yet so we
+    //                      conservatively return 0 (no expansion).
+    0
+}
 
-/// Port of `doexpansion()` from Src/Zle/zle_tricky.c:2263. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn doexpansion() -> i32 { 0 }
+/// Port of `doexpansion()` from Src/Zle/zle_tricky.c:2263.
+pub fn doexpansion() -> i32 {                                                // c:2263
+    // C body c:2265-2336 — invoked via docomplete(COMP_EXPAND); calls
+    //                      callcompfunc when bound, else falls through
+    //                      to the in-tree expansion driver (filename
+    //                      glob, history, brace, $... ). The driver
+    //                      requires the not-yet-ported Cmatch/Cadata
+    //                      pipeline; we return 0 so caller proceeds
+    //                      to the no-expansion branch.
+    0
+}
 
 /// Port of `dupbrinfo()` from `Src/Zle/zle_tricky.c:1032`.
 /// ```c
@@ -938,11 +1007,62 @@ pub fn freebrinfo(p: Option<crate::ported::zle::zle_h::BrinfoPtr>) {         // 
     drop(p);
 }
 
-/// Port of `get_comp_string()` from Src/Zle/zle_tricky.c:1087. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_comp_string() -> i32 { 0 }
+/// Port of `get_comp_string()` from Src/Zle/zle_tricky.c:1086 — the
+/// "lasciate ogni speranza" function. C runs the lexer over `zlemetaline`
+/// up to the cursor and returns the word being completed plus a slew
+/// of side-effects (sets `wb`/`we`/`offs`/`lincmd`/`linredir`). Without
+/// the lexer substrate we extract the whitespace-delimited token under
+/// the cursor as a best-effort, which is sufficient for the simpler
+/// completion paths.
+pub fn get_comp_string(zle: &crate::ported::zle::zle_main::Zle) -> Option<String> { // c:1086
+    let snap: String = zle.zleline.iter().collect();
+    let cs = zle.zlecs.min(snap.len());
+    let bytes = snap.as_bytes();
+    let mut start = cs;
+    while start > 0 && !bytes[start - 1].is_ascii_whitespace() {
+        start -= 1;
+    }
+    let mut end = cs;
+    while end < bytes.len() && !bytes[end].is_ascii_whitespace() {
+        end += 1;
+    }
+    if start == end {
+        return None;
+    }
+    Some(snap[start..end].to_string())
+}
 
-/// Port of `getcurcmd()` from Src/Zle/zle_tricky.c:2932. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn getcurcmd() -> i32 { 0 }
+/// Port of `getcurcmd()` from Src/Zle/zle_tricky.c:2932 — Option-typed
+/// (replaces C's pointer-or-NULL return) so callers can early-out
+/// cleanly.
+pub fn getcurcmd(zle: &crate::ported::zle::zle_main::Zle) -> Option<String> { // c:2932
+    // C body c:2934-2980 — runs lexer over zlemetaline up to cursor and
+    //                      returns the command word. Without the lexer
+    //                      substrate we approximate by extracting the
+    //                      first whitespace-delimited token in the line
+    //                      that lies in command position (i.e. the start
+    //                      of a pipeline segment). This matches the
+    //                      common case of `processcmd` invoked in the
+    //                      first segment.
+    let snap: String = zle.zleline.iter().collect();
+    let cs = zle.zlecs.min(snap.len());
+    let prefix = &snap[..cs];
+    let mut last_seg_start = 0;
+    for (i, b) in prefix.bytes().enumerate() {
+        if matches!(b, b'|' | b';' | b'&') {
+            last_seg_start = i + 1;
+        }
+    }
+    let seg = prefix[last_seg_start..].trim_start();
+    let cmd: String = seg
+        .chars()
+        .take_while(|c| !c.is_ascii_whitespace())
+        .collect();
+    if cmd.is_empty() {
+        return None;
+    }
+    Some(cmd)
+}
 
 /// Port of `inststrlen()` from Src/Zle/zle_tricky.c:2231.
 pub fn inststrlen(                                                           // c:2231
@@ -1022,8 +1142,41 @@ pub fn listexpand() -> i32 {                                                 // 
     docomplete(COMP_LIST_EXPAND)                                             // c:339
 }
 
-/// Port of `listlist()` from Src/Zle/zle_tricky.c:2602. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn listlist() -> i32 { 0 }
+/// Port of `listlist()` from Src/Zle/zle_tricky.c:2602.
+/// Returns the number of terminal lines used to display `items`.
+/// `cols` is the terminal width.
+pub fn listlist(items: &[String], cols: usize) -> i32 {                      // c:2602
+    let num = items.len();                                                   // c:2604
+    if num == 0 {
+        return 0;
+    }
+    // c:2613-2614 — copy LinkList to data[].
+    let mut lens: Vec<usize> = items.iter().map(|s| s.chars().count() + 2).collect(); // c:2615
+    let longest = *lens.iter().max().unwrap_or(&1);                          // c:2620
+    if longest >= cols {
+        // single column
+        return num as i32;
+    }
+    // c:2622-2640 — pack=0 path: ncols = max columns we can fit.
+    let ncols = (cols / longest).max(1);
+    let nlines = num.div_ceil(ncols);                                        // c:2643
+    // tracing print mirrors C's listmatches output.
+    let mut row = String::new();
+    for (i, s) in items.iter().enumerate() {
+        row.push_str(s);
+        let pad = longest - lens[i];
+        row.push_str(&" ".repeat(pad));
+        if (i + 1) % ncols == 0 {
+            tracing::info!(target: "zle", "{}", row.trim_end());
+            row.clear();
+        }
+    }
+    if !row.is_empty() {
+        tracing::info!(target: "zle", "{}", row.trim_end());
+    }
+    let _ = (lens.pop(),);
+    nlines as i32
+}
 
 /// Port of `magicspace()` from Src/Zle/zle_tricky.c:2882.
 pub fn magicspace(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:2882
@@ -1058,14 +1211,123 @@ pub fn menuexpandorcomplete() -> i32 {                                       // 
     docomplete(COMP_EXPAND_COMPLETE)                                         // c:329
 }
 
-/// Port of `parambeg()` from Src/Zle/zle_tricky.c:521. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn parambeg() -> i32 { 0 }
+/// Port of `parambeg()` from Src/Zle/zle_tricky.c:521.
+/// Returns the byte offset (within `s`) of the start of the parameter
+/// expansion at offset `offs`, or `None` if no `$` precedes `offs`.
+/// C's `String`/`Qstring` are zsh's parser-internal markers for `$`
+/// before/after quote-removal — for pre-tokenization input we look
+/// for the literal `$` byte.
+pub fn parambeg(s: &str, offs: usize) -> Option<usize> {                     // c:521
+    let bytes = s.as_bytes();
+    if offs > bytes.len() || offs == 0 {
+        return None;
+    }
+    // c:526 — `for (p = s + offs; p > s && *p != String && *p != Qstring; p--)`.
+    let mut p = offs.min(bytes.len()) - 1;
+    loop {
+        if bytes[p] == b'$' {
+            // c:529-530 — `while (p > s && (p[-1] == String ...)) p--`.
+            while p > 0 && bytes[p - 1] == b'$' {
+                p -= 1;
+            }
+            // c:531-533 — paired `$$` skip-forward.
+            while p + 2 < bytes.len() && bytes[p + 1] == b'$' && bytes[p + 2] == b'$' {
+                p += 2;
+            }
+            return Some(p);
+        }
+        if p == 0 {
+            return None;
+        }
+        p -= 1;
+    }
+}
 
-/// Port of `printfmt()` from Src/Zle/zle_tricky.c:2431. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn printfmt() -> i32 { 0 }
+/// Port of `printfmt()` from Src/Zle/zle_tricky.c:2431.
+/// `n` is the match count (substituted for `%n`), `dopr` whether to
+/// actually emit, `doesc` whether to interpret `%` escapes. Returns
+/// the visual column count (matches C `cc`).
+pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {         // c:2431
+    let bytes = fmt.as_bytes();
+    let mut i = 0;
+    let mut cc = 0i32;                                                       // c:2434
+    let mut out = String::new();
+    while i < bytes.len() {
+        let c = bytes[i];
+        if doesc && c == b'%' {                                              // c:2438
+            i += 1;
+            // c:2442 — `if (idigit(*++p)) arg = zstrtol(p, &p, 10)`.
+            while i < bytes.len() && (bytes[i]).is_ascii_digit() {
+                i += 1;
+            }
+            if i >= bytes.len() {
+                break;
+            }
+            match bytes[i] {
+                b'%' => {                                                    // c:2447
+                    out.push('%');
+                    cc += 1;
+                }
+                b'n' => {                                                    // c:2455
+                    let s = n.to_string();
+                    cc += s.chars().count() as i32;
+                    out.push_str(&s);
+                }
+                b'B' | b'b' | b'S' | b's' | b'U' | b'u' | b'F' | b'f' | b'K' | b'k' => {
+                    // c:2466-2521 — text attrs (Bold/Standout/Underline/
+                    //               Foreground/Background); no-op when
+                    //               we have no curses substrate.
+                }
+                b'{' => {
+                    // c:2522 — literal `%{ ... %}`.
+                    i += 1;
+                    while i < bytes.len() && bytes[i] != b'}' {
+                        out.push(bytes[i] as char);
+                        i += 1;
+                    }
+                }
+                ch => {
+                    out.push(ch as char);
+                    cc += 1;
+                }
+            }
+            i += 1;
+        } else {
+            out.push(c as char);
+            cc += 1;
+            i += 1;
+        }
+    }
+    if dopr {
+        tracing::info!(target: "zle", "{}", out);
+    }
+    cc
+}
 
-/// Port of `processcmd()` from Src/Zle/zle_tricky.c:2971. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn processcmd() -> i32 { 0 }
+/// Port of `processcmd()` from Src/Zle/zle_tricky.c:2971.
+pub fn processcmd(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:2971
+    // C body c:2973-2989 — `s = getcurcmd(); if (!s) return 1; zmult=1;
+    //                       pushline(); zmult = m; inststr(bindk->nam);
+    //                       inststr(" "); untokenize(s); inststr(quotename(s))`.
+    let s = match getcurcmd(zle) {
+        Some(s) if !s.is_empty() => s,
+        _ => return 1,                                                       // c:2980
+    };
+    let m = zle.zmod.mult;                                                   // c:2974
+    zle.zmod.mult = 1;                                                       // c:2981
+    let _ = crate::ported::zle::zle_hist::pushline(zle);                     // c:2982
+    zle.zmod.mult = m;                                                       // c:2983
+    // c:2984 — `inststr(bindk->nam)` injects the bound widget name.
+    //           Without bindk live we use the literal "run-help " marker
+    //           commonly bound to processcmd in zsh.
+    let q = quotename(&s, 0);
+    let combined = format!("run-help {}", q);
+    for (i, ch) in combined.chars().enumerate() {
+        zle.zleline.insert(zle.zlecs + i, ch);
+    }
+    zle.zlecs += combined.chars().count();
+    0
+}
 
 /// Port of the `quotename(s)` macro from Src/Zle/zle_tricky.c:427-428.
 /// ```c
