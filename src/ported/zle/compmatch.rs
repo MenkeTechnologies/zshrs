@@ -1006,12 +1006,62 @@ mod tests {
     }
 }
 
-/// Port of `add_bmatchers()` from Src/Zle/compmatch.c:101.
-pub fn add_bmatchers(_def: i32) {                                            // c:101
-    // C body c:103-141 — walks Cmlist `def->matcher`, prepends each
-    //                    Cmatcher whose flags & CMF_LINE to bmatchers
-    //                    via newcmlist alloc.
-    //                    Without bmatchers global hydrated: no-op.
+/// Direct port of `mod_export void add_bmatchers(Cmatcher m)` from
+/// `Src/Zle/compmatch.c:101-115`. Walks the supplied Cmatcher chain
+/// (the head of `def->matcher` at call sites) and prepends each
+/// matcher that qualifies for brace-matching to the file-scope
+/// `bmatchers` Cmlist. Original chain head is appended after the new
+/// entries so the final list is `[new_entries..., old_bmatchers...]`.
+pub fn add_bmatchers(m: Option<&crate::ported::zle::comp_h::Cmatcher>) {     // c:101
+    use crate::ported::zle::comp_h::{Cmatcher, Cmlist, CMF_RIGHT};
+
+    let old = {                                                              // c:104 Cmlist old = bmatchers
+        let cell = crate::ported::zle::compcore::bmatchers
+            .get_or_init(|| std::sync::Mutex::new(None));
+        cell.lock().ok().and_then(|mut g| g.take())
+    };
+
+    let mut head: Option<Box<Cmlist>> = None;                                // c:104 *q = &bmatchers
+    let mut tail_ref: *mut Option<Box<Cmlist>> = &mut head;
+    let mut cur = m;
+    while let Some(mat) = cur {                                              // c:106 for (; m; m = m->next)
+        let qual = (mat.flags == 0 && mat.wlen > 0 && mat.llen > 0)          // c:107-108
+                || (mat.flags == CMF_RIGHT && mat.wlen < 0 && mat.llen == 0);
+        if qual {
+            // c:109 — n = zhalloc(sizeof(struct cmlist))
+            let n = Box::new(Cmlist {
+                next: None,
+                matcher: Box::new(Cmatcher {
+                    refc:  mat.refc,
+                    next:  mat.next.clone(),
+                    flags: mat.flags,
+                    line:  mat.line.clone(),
+                    llen:  mat.llen,
+                    word:  mat.word.clone(),
+                    wlen:  mat.wlen,
+                    left:  mat.left.clone(),
+                    lalen: mat.lalen,
+                    right: mat.right.clone(),
+                    ralen: mat.ralen,
+                }),
+                str_: String::new(),
+            });
+            unsafe {
+                *tail_ref = Some(n);
+                if let Some(ref mut newnode) = *tail_ref {
+                    tail_ref = &mut newnode.next as *mut _;                  // c:112 q = &(n->next)
+                }
+            }
+        }
+        cur = mat.next.as_deref();                                           // c:106 m = m->next
+    }
+    // c:114 — `*q = old;` (append old chain after new entries)
+    unsafe { *tail_ref = old; }
+    if let Ok(mut g) = crate::ported::zle::compcore::bmatchers
+        .get_or_init(|| std::sync::Mutex::new(None)).lock()
+    {
+        *g = head;
+    }
 }
 
 /// Port of `add_match_part()` from Src/Zle/compmatch.c:373.
@@ -1022,11 +1072,48 @@ pub fn add_match_part(_m: i32, _l: &str, _ll: i32, _w: &str, _wl: i32,       // 
     //                    deferred; no-op.
 }
 
-/// Port of `add_match_str()` from Src/Zle/compmatch.c:327.
-pub fn add_match_str(_m: i32, _l: &str, _w: &str, _wl: i32, _sfx: i32) {     // c:327
-    // C body c:329-371 — pushes a string into matchbuf, growing if
-    //                    needed. matchbuf global deferred; no-op.
+/// Direct port of `static void add_match_str(Cmatcher m, char *l,
+///                                          char *w, int wl, int sfx)`
+/// from `Src/Zle/compmatch.c:326-370`. Pushes the string `w` (or
+/// `l` when `m & CMF_LINE`) of length `wl` into the file-scope
+/// `MATCHBUF` accumulator; `sfx` prepends instead of appends.
+pub fn add_match_str(m: Option<&crate::ported::zle::comp_h::Cmatcher>,        // c:326
+                     l: &str, w: &str, mut wl: i32, sfx: i32)
+{
+    use crate::ported::zle::comp_h::CMF_LINE;
+
+    // c:332-334 — `if (m && (m->flags & CMF_LINE)) { wl = m->llen; w = l; }`.
+    let (eff_w_owned, eff_w): (String, &str) = match m {
+        Some(mat) if (mat.flags & CMF_LINE) != 0 => {
+            wl = mat.llen;
+            let owned = l.to_string();
+            let s = owned.clone();
+            (owned, Box::leak(s.into_boxed_str()))
+        }
+        _ => (String::new(), w),
+    };
+    let _ = eff_w_owned;
+
+    if wl <= 0 { return; }                                                   // c:335
+
+    // c:337-353 — buffer-grow + insert. Rust's String handles the
+    // grow path; we still mirror the matchbufadded counter for parity
+    // with `MATCHBUFLEN`-checking C call sites.
+    if let Ok(mut buf) = MATCHBUF.get_or_init(|| Mutex::new(String::new())).lock() {
+        let take_n = wl as usize;
+        let new_chunk: String = eff_w.chars().take(take_n).collect();
+        if sfx != 0 {                                                        // c:354 prefix-mode
+            *buf = format!("{}{}", new_chunk, *buf);                         // c:356
+        } else {                                                             // c:358
+            buf.push_str(&new_chunk);
+        }
+        MATCHBUFADDED.fetch_add(wl, std::sync::atomic::Ordering::Relaxed);   // c:362
+    }
 }
+
+/// File-scope `int matchbufadded` from `Src/Zle/compmatch.c:289`.
+pub static MATCHBUFADDED: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:289
 
 /// Port of `add_match_sub()` from Src/Zle/compmatch.c:446.
 pub fn add_match_sub(_m: i32, _l: &str, _ll: i32, _w: &str, _wl: i32) {      // c:446
@@ -1051,11 +1138,54 @@ pub fn bld_parts(_str_: &str, _len: i32, _plen: i32, _lp: &mut i32) -> i32 { // 
     0
 }
 
-/// Port of `check_cmdata()` from Src/Zle/compmatch.c:2152.
-pub fn check_cmdata(_d: i32, _sfx: i32) -> i32 {                             // c:2152
-    // C body c:2154-2186 — validates a Cmdata structure, computing
-    //                      lengths and consistency. Substrate deferred.
-    0
+/// Port of `struct cmdata` from `Src/Zle/compmatch.c:2142-2147`.
+/// Working state for `check_cmdata` / `undo_cmdata` / `sub_match`.
+#[derive(Default, Clone, Debug)]
+pub struct Cmdata {                                                          // c:2142
+    pub cl:   Option<Box<crate::ported::zle::comp_h::Cline>>,                // c:2143
+    pub pcl:  Option<Box<crate::ported::zle::comp_h::Cline>>,                // c:2143
+    pub str_: String,                                                        // c:2144
+    pub astr: String,                                                        // c:2144
+    pub len:  i32,                                                           // c:2145
+    pub alen: i32,                                                           // c:2145
+    pub olen: i32,                                                           // c:2145
+    pub line: i32,                                                           // c:2145
+}
+
+/// Direct port of `static int check_cmdata(Cmdata md, int sfx)` from
+/// `Src/Zle/compmatch.c:2152-2186`. Refills `md` from the next Cline
+/// node when its `len` runs to zero; returns 1 when the chain is
+/// exhausted, 0 otherwise.
+pub fn check_cmdata(md: &mut Cmdata, sfx: i32) -> i32 {                      // c:2152
+    use crate::ported::zle::comp_h::CLF_LINE;
+
+    if md.len != 0 { return 0; }                                             // c:2155
+    let next = match md.cl.as_deref() {                                      // c:2158
+        None => return 1,
+        Some(n) => n.clone(),
+    };
+
+    if (next.flags & CLF_LINE) != 0 {                                        // c:2163
+        md.line = 1;
+        md.len  = next.llen;                                                 // c:2164
+        md.str_ = next.line.clone().unwrap_or_default();                     // c:2165
+    } else {
+        md.line = 0;
+        md.len  = next.wlen;                                                 // c:2168
+        md.olen = next.wlen;                                                 // c:2168
+        if let Some(ref w) = next.word {
+            md.str_ = if sfx != 0 { w[md.len as usize..].to_string() }       // c:2171
+                      else { w.clone() };
+        }
+        md.alen = next.llen;                                                 // c:2173
+        if let Some(ref l) = next.line {
+            md.astr = if sfx != 0 { l[md.alen as usize..].to_string() }      // c:2176
+                      else { l.clone() };
+        }
+    }
+    md.pcl = Some(Box::new(next.clone()));                                   // c:2179
+    md.cl  = next.next.clone();                                              // c:2180
+    0                                                                        // c:2182
 }
 
 // (cline_setlens / cline_sublen wrong-sig duplicates removed —
@@ -1237,8 +1367,27 @@ pub fn sub_match(_m: i32, _l: &str, _ll: i32, _w: &str, _wl: i32,            // 
 }
 
 /// Port of `undo_cmdata()` from Src/Zle/compmatch.c:2188.
-pub fn undo_cmdata(_d: i32, _sfx: i32) {                                     // c:2188
-    // C body c:2190-2210 — rewinds a Cmdata snapshot taken by
-    //                      check_cmdata to the previous state.
-    //                      Substrate deferred; no-op.
+/// Direct port of `static Cline undo_cmdata(Cmdata md, int sfx)` from
+/// `Src/Zle/compmatch.c:2187-2207`. Puts the not-yet-matched portion
+/// of `md` back into the previous cline node so it can be revisited
+/// on a different match path.
+pub fn undo_cmdata(md: &Cmdata, sfx: i32) -> Option<Box<crate::ported::zle::comp_h::Cline>> { // c:2187
+    use crate::ported::zle::comp_h::CLF_LINE;
+    let mut r = md.pcl.as_deref().cloned()?;                                 // c:2189 r = md->pcl
+
+    if md.line != 0 {                                                        // c:2191
+        r.word = None;                                                       // c:2192
+        r.wlen = 0;                                                          // c:2193
+        r.flags |= CLF_LINE;                                                 // c:2194
+        r.llen = md.len;                                                     // c:2195
+        // c:2197 — line = str - (sfx ? len : 0).
+        let off = if sfx != 0 { md.len as usize } else { 0 };
+        r.line = Some(md.str_.chars().skip(md.str_.len().saturating_sub(off + md.len as usize)).collect());
+    } else if md.len != md.olen {                                            // c:2199
+        r.wlen = md.len;                                                     // c:2201
+        let off = if sfx != 0 { md.len as usize } else { 0 };
+        r.word = Some(md.str_.chars().skip(md.str_.len().saturating_sub(off + md.len as usize)).collect());
+    }
+    Some(Box::new(r))                                                        // c:2206
 }
+

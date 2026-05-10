@@ -2069,11 +2069,11 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {                  // 
         let osi = movefd_stub(0);                                            // c:965 movefd(0)
 
         // c:967-968 — bmatchers = mstack = NULL.
-        if let Ok(mut g) = bmatchers.get_or_init(|| Mutex::new(Vec::new())).lock() {
-            g.clear();
+        if let Ok(mut g) = bmatchers.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None;
         }
-        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(Vec::new())).lock() {
-            g.clear();
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None;
         }
         // c:970-971 — ainfo = fainfo = hcalloc(sizeof(struct aminfo)).
         if let Ok(mut g) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
@@ -2191,11 +2191,16 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {                  // 
 
 // ---- Extern stubs for makecomplist's bucket-3 dependencies ----
 
-/// File-scope holder for `LinkList bmatchers` — `Src/Zle/compcore.c:236`.
-pub static bmatchers: OnceLock<Mutex<Vec<String>>> = OnceLock::new();        // c:236
+/// File-scope holder for `Cmlist bmatchers` — `Src/Zle/compcore.c:236`.
+/// C linked-list of matchers active for brace-matching, populated by
+/// `add_bmatchers` walking the user-installed `Cmatcher` chain.
+pub static bmatchers: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cmlist>>>>
+    = OnceLock::new();                                                       // c:236
 
-/// File-scope holder for `LinkList mstack` — `Src/Zle/compcore.c:236`.
-pub static mstack: OnceLock<Mutex<Vec<String>>> = OnceLock::new();           // c:236
+/// File-scope holder for `Cmlist mstack` — `Src/Zle/compcore.c:236`.
+/// Matcher-stack — current active matcher list for compadd recursion.
+pub static mstack: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cmlist>>>>
+    = OnceLock::new();                                                       // c:236
 
 /// Extern stub for `int movefd(int fd)` — `Src/utils.c`. Returns
 /// the fd unchanged; full body would duplicate `fd` above the high
