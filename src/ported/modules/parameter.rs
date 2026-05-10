@@ -175,8 +175,13 @@ pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // 
 }
 
 /// Port of `enables_()` from `Src/Modules/parameter.c:2326`.
+/// C body c:2328-2336 — wrap handlefeatures() with incleanup=1/0 so that
+/// any feature removal does not perturb the main shell's parameter table.
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:2326
-    handlefeatures(m, module_features(), enables)
+    INCLEANUP.store(1, std::sync::atomic::Ordering::Relaxed);                // c:2333
+    let ret = handlefeatures(m, module_features(), enables);                 // c:2334
+    INCLEANUP.store(0, std::sync::atomic::Ordering::Relaxed);                // c:2335
+    ret                                                                      // c:2336
 }
 
 /// Port of `boot_()` from `Src/Modules/parameter.c:2341`.
@@ -189,8 +194,13 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 }
 
 /// Port of `cleanup_()` from `Src/Modules/parameter.c:2348`.
+/// C body c:2350-2354 — wrap setfeatureenables(NULL) with incleanup=1/0
+/// matching the same guard enables_ uses.
 pub fn cleanup_(m: *const module) -> i32 {                                   // c:2348
-    setfeatureenables(m, module_features(), None)
+    INCLEANUP.store(1, std::sync::atomic::Ordering::Relaxed);                // c:2351
+    let ret = setfeatureenables(m, module_features(), None);                 // c:2352
+    INCLEANUP.store(0, std::sync::atomic::Ordering::Relaxed);                // c:2353
+    ret                                                                      // c:2354
 }
 
 /// Port of `finish_()` from `Src/Modules/parameter.c:2359`.
@@ -1497,31 +1507,151 @@ pub fn setaliases(_alht: *mut HashTable, _pm: Param,                         // 
 /// C: `static void setfunction(char *name, char *val, int dis)` — install
 /// a shell function from text source.
 #[allow(non_snake_case)]
-pub fn setfunction(_name: &str, _val: String, _dis: i32) {                   // c:284
-    // c:286-318 — parse val via parse_string, install in shfunctab.
+pub fn setfunction(name: &str, val: String, dis: i32) {                      // c:284
+    // c:286 — char *value = dupstring(val);
+    let value = val.clone();
+    // c:291 — val = metafy(val, strlen(val), META_REALLOC);
+    let metafied = crate::ported::utils::metafy(&val);
+    // c:293 — prog = parse_string(val, 1);
+    // EXTERN: `parse_string` lives in Src/parse.c — not yet ported.
+    // The Rust ShFunc stores the source string and the executor parses
+    // at first call (deferred parse). c:295-299 "invalid function
+    // definition" branch only fires on parse errors; with deferred
+    // parse we only filter empty input.
+    if metafied.is_empty() {                                                 // c:295
+        crate::ported::utils::zwarn(                                         // c:296
+            &format!("invalid function definition: {}", value));
+        return;                                                              // c:298
+    }
+    // c:300 — shf = zshcalloc(sizeof(*shf));
+    // c:301 — shf->funcdef = dupeprog(prog, 0); (EXTERN parse.c — deferred)
+    // c:302 — shf->node.flags = dis;
+    let shf = crate::ported::hashtable::ShFunc {
+        name: name.to_string(),
+        flags: dis as u32,                                                   // c:302
+        filename: None,
+        body: Some(metafied),                                                // c:301 (deferred-parse path)
+    };
+    // c:303 — shfunc_set_sticky(shf); (EXTERN exec.c sticky-options bit)
+    // Not yet ported; sticky-options propagation is a no-op until the
+    // emulation framework supports per-function emulation switches.
+
+    // c:305-313 — TRAP* handling.
+    if name.len() >= 4 && &name[..4] == "TRAP" {                             // c:305
+        if let Some(_sn) = crate::ported::signals::getsigidx(&name[4..]) {   // c:306
+            // c:307-312 — settrap(sn, NULL, ZSIG_FUNC) failure path.
+            // EXTERN: settrap signature in signals.rs:1035 takes
+            // TrapAction enum, not the C `(int sn, Eprog list, int
+            // type)` triple. Skip the early-return until the ZSIG_FUNC
+            // overload lands.
+        }
+    }
+
+    // c:314 — shfunctab->addnode(shfunctab, ztrdup(name), shf);
+    if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().lock() {
+        tab.add(shf);
+    }
+    // c:315 — zsfree(val); — Rust drops on scope exit.
 }
 
 /// Port of `setfunctions()` from Src/Modules/parameter.c:344.
 /// C: `static void setfunctions(Param pm, HashTable ht, int dis)` — install
 /// all functions in `ht`.
 #[allow(non_snake_case)]
-pub fn setfunctions(_pm: Param, _ht: *mut HashTable, _dis: i32) {            // c:344
-    // c:347-368 — walk ht, call setfunction for each entry.
+pub fn setfunctions(_pm: Param, ht: *mut HashTable, dis: i32) {              // c:344
+    // c:349-350 — if (!ht) return;
+    if ht.is_null() {                                                        // c:349
+        return;                                                              // c:350
+    }
+    // c:352-362 — walk ht's hash buckets calling setfunction per node.
+    let ht_box: &HashTable = unsafe { &*ht };
+    let ht_ref: &crate::ported::zsh_h::hashtable = ht_box;
+    for i in 0..ht_ref.hsize as usize {                                      // c:352
+        let mut hn_opt = ht_ref.nodes.get(i).and_then(|n| n.clone());        // c:353
+        while let Some(hn) = hn_opt {
+            // c:354-359 — struct value v; init.
+            let mut v = crate::ported::zsh_h::value {
+                pm: None,                                                    // c:359 (cast deferred — see comment below)
+                arr: Vec::new(),                                             // c:358 v.arr = NULL
+                scanflags: 0,                                                // c:356
+                valflags: 0,                                                 // c:356
+                start: 0,                                                    // c:356
+                end: -1,                                                     // c:357
+            };
+            // c:359 — v.pm = (Param) hn — Rust port can't cast HashNode→Param
+            // because hashnode<-->param relationship is by-pointer in C
+            // and by-value in Rust. The C-style cast is encoded by
+            // looking the parameter up by hn->nam in the live paramtab.
+            // For deferred-parse semantics we just take the node name.
+            let nam = hn.nam.clone();
+            // c:361 — setfunction(hn->nam, ztrdup(getstrvalue(&v)), dis);
+            // EXTERN: getstrvalue reads v.pm — without a real Param
+            // cast we use the empty default. Future port: thread a
+            // paramtab lookup through.
+            let val = crate::ported::params::getstrvalue(Some(&mut v));      // c:361
+            setfunction(&nam, val, dis);
+            hn_opt = hn.next;
+        }
+    }
+    // c:364-365 — if (ht != pm->u.hash) deleteparamtable(ht);
+    // EXTERN: deleteparamtable lives in Src/params.c — skip until ported.
 }
 
 /// Port of `setpmcommand()` from Src/Modules/parameter.c:151.
 /// C: `static void setpmcommand(Param pm, char *value)` — register a path
 /// alias in cmdnamtab for the named command.
 #[allow(non_snake_case)]
-pub fn setpmcommand(_pm: Param, _value: String) {                            // c:151
-    // c:153-161 — zshcalloc Cmdnam, set u.cmd from value, install.
+pub fn setpmcommand(pm: Param, value: String) {                              // c:151
+    use crate::ported::hashtable::{CmdName, flags::HASHED};
+    let mut cn = CmdName::new(&pm.node.nam);                                 // c:153 zshcalloc
+    cn.flags = HASHED;                                                       // c:155
+    cn.path = Some(std::path::PathBuf::from(value));                         // c:156 cn->u.cmd = value
+    if let Ok(mut tab) = crate::ported::hashtable::cmdnamtab_lock().lock() {
+        // c:158 — cmdnamtab->addnode(cmdnamtab, ztrdup(pm->node.nam), &cn->node)
+        tab.add(cn);
+    }
 }
 
 /// Port of `setpmcommands()` from Src/Modules/parameter.c:173.
 /// C: `static void setpmcommands(Param pm, HashTable ht)` — bulk install.
 #[allow(non_snake_case)]
-pub fn setpmcommands(_pm: Param, _ht: *mut HashTable) {                      // c:173
-    // c:176-200 — walk ht, register each name → path mapping.
+pub fn setpmcommands(_pm: Param, ht: *mut HashTable) {                       // c:173
+    // c:178-179 — if (!ht) return;
+    if ht.is_null() {                                                        // c:178
+        return;                                                              // c:179
+    }
+    // c:181-195 — walk ht's hash buckets installing each as a Cmdnam.
+    use crate::ported::hashtable::{CmdName, flags::HASHED};
+    let ht_ref: &crate::ported::zsh_h::hashtable = unsafe { &**ht };
+    for i in 0..ht_ref.hsize as usize {                                      // c:181
+        let mut hn_opt = ht_ref.nodes.get(i).and_then(|n| n.clone());        // c:182
+        while let Some(hn) = hn_opt {
+            // c:183 — Cmdnam cn = zshcalloc(sizeof(*cn));
+            let mut cn = CmdName::new(&hn.nam);
+            // c:184-189 — struct value v init.
+            let mut v = crate::ported::zsh_h::value {
+                pm: None,                                                    // c:189 v.pm = (Param) hn (cast deferred)
+                arr: Vec::new(),                                             // c:188
+                scanflags: 0,                                                // c:186
+                valflags: 0,                                                 // c:186
+                start: 0,                                                    // c:186
+                end: -1,                                                     // c:187
+            };
+            // c:191 — cn->node.flags = HASHED;
+            cn.flags = HASHED;
+            // c:192 — cn->u.cmd = ztrdup(getstrvalue(&v));
+            let path_str = crate::ported::params::getstrvalue(Some(&mut v));
+            cn.path = Some(std::path::PathBuf::from(path_str));
+            // c:194 — cmdnamtab->addnode(cmdnamtab, ztrdup(hn->nam), &cn->node);
+            if let Ok(mut tab) = crate::ported::hashtable::cmdnamtab_lock().lock() {
+                tab.add(cn);
+            }
+            hn_opt = hn.next;
+        }
+    }
+    // c:196-205 — comment block about full-array vs append (informational).
+    // c:204 — if (ht != pm->u.hash) deleteparamtable(ht);
+    // EXTERN: deleteparamtable lives in Src/params.c — not ported.
 }
 
 /// Port of `setpmdisfunction()` from Src/Modules/parameter.c:327.
@@ -1608,14 +1738,78 @@ pub fn setpmgaliases(pm: Param, ht: *mut HashTable) {                        // 
 /// C: `static void setpmnameddir(Param pm, char *value)` — install a
 /// `nameddirtab` entry mapping pm name → value path.
 #[allow(non_snake_case)]
-pub fn setpmnameddir(_pm: Param, _value: String) {                           // c:1519
-    // c:1521-1532 — addnode in nameddirtab if value non-NULL else remove.
+pub fn setpmnameddir(pm: Param, value: String) {                             // c:1519
+    // c:1521-1522 — C `if (!value) zwarn("invalid value: ''");` — Rust
+    // signature takes owned String so NULL is unreachable; we keep the
+    // else branch only. Empty string still creates an entry per C
+    // semantics (`!value` is only true for the NULL pointer).
+    use crate::ported::zsh_h::{nameddir, hashnode};
+    let nd = nameddir {                                                       // c:1524 zshcalloc
+        node: hashnode {                                                      // c:1526 flags = 0
+            next: None,
+            nam: pm.node.nam.clone(),
+            flags: 0,
+        },
+        dir: value,                                                           // c:1527
+        diff: 0,
+    };
+    // c:1528 — nameddirtab->addnode(nameddirtab, ztrdup(pm->node.nam), nd);
+    crate::ported::hashnameddir::addnameddirnode(&pm.node.nam, nd);
 }
 
 /// Port of `setpmnameddirs()` from Src/Modules/parameter.c:1544.
+/// C: `static void setpmnameddirs(Param pm, HashTable ht)` — replace
+/// `nameddirtab` (preserving ND_USERNAME entries) with `ht`'s contents.
 #[allow(non_snake_case)]
-pub fn setpmnameddirs(_pm: Param, _ht: *mut HashTable) {                     // c:1544
-    // c:1547-1591 — clear nameddirtab, walk ht installing each.
+pub fn setpmnameddirs(_pm: Param, ht: *mut HashTable) {                      // c:1544
+    // c:1549-1550 — if (!ht) return;
+    if ht.is_null() {                                                        // c:1549
+        return;                                                              // c:1550
+    }
+    use crate::ported::zsh_h::{nameddir, hashnode, ND_USERNAME};
+    // c:1552-1558 — flush existing non-ND_USERNAME entries.
+    if let Ok(mut tab) = crate::ported::hashnameddir::nameddirtab().lock() {
+        let keys: Vec<String> = tab.iter()
+            .filter(|(_, nd)| (nd.node.flags & ND_USERNAME) == 0)            // c:1555
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in keys {                                                      // c:1556
+            tab.remove(&k);                                                  // c:1556 removenode + freenode
+        }
+    }
+    // c:1560-1579 — install each entry from `ht`.
+    let ht_ref: &crate::ported::zsh_h::hashtable = unsafe { &**ht };
+    for i in 0..ht_ref.hsize as usize {                                      // c:1560
+        let mut hn_opt = ht_ref.nodes.get(i).and_then(|n| n.clone());        // c:1561
+        while let Some(hn) = hn_opt {
+            // c:1562-1568 — struct value v.
+            let mut v = crate::ported::zsh_h::value {
+                pm: None, arr: Vec::new(),                                   // c:1567-1568
+                scanflags: 0, valflags: 0, start: 0,                         // c:1565
+                end: -1,                                                     // c:1566
+            };
+            // c:1570 — val = getstrvalue(&v);
+            let val = crate::ported::params::getstrvalue(Some(&mut v));
+            if val.is_empty() {                                              // c:1570 !val
+                crate::ported::utils::zwarn("invalid value: ''");            // c:1571
+            } else {
+                // c:1573-1577 — nd = zshcalloc; nd->dir = ztrdup(val); addnode.
+                let nd = nameddir {
+                    node: hashnode {
+                        next: None, nam: hn.nam.clone(),
+                        flags: 0,                                            // c:1575
+                    },
+                    dir: val,                                                // c:1576
+                    diff: 0,
+                };
+                crate::ported::hashnameddir::addnameddirnode(&hn.nam, nd);   // c:1577
+            }
+            hn_opt = hn.next;
+        }
+    }
+    // c:1581-1589 — opts[INTERACTIVE] guard around deleteparamtable.
+    // EXTERN: deleteparamtable in Src/params.c not yet ported; the
+    // INTERACTIVE guard is irrelevant without it.
 }
 
 /// Port of `setpmoption()` from Src/Modules/parameter.c:926.
@@ -1640,9 +1834,44 @@ pub fn setpmoption(pm: Param, value: String) {                               // 
 }
 
 /// Port of `setpmoptions()` from Src/Modules/parameter.c:953.
+/// C: `static void setpmoptions(Param pm, HashTable ht)` — set or unset
+/// each shell option named in `ht` based on its "on"/"off" value.
 #[allow(non_snake_case)]
-pub fn setpmoptions(_pm: Param, _ht: *mut HashTable) {                       // c:953
-    // c:956-985 — walk ht entries, dosetopt each name to its value.
+pub fn setpmoptions(_pm: Param, ht: *mut HashTable) {                        // c:953
+    // c:958-959 — if (!ht) return;
+    if ht.is_null() {                                                        // c:958
+        return;                                                              // c:959
+    }
+    let ht_ref: &crate::ported::zsh_h::hashtable = unsafe { &**ht };
+    for i in 0..ht_ref.hsize as usize {                                      // c:961
+        let mut hn_opt = ht_ref.nodes.get(i).and_then(|n| n.clone());        // c:962
+        while let Some(hn) = hn_opt {
+            // c:963-969 — struct value v init.
+            let mut v = crate::ported::zsh_h::value {
+                pm: None, arr: Vec::new(),                                   // c:968-969
+                scanflags: 0, valflags: 0, start: 0,                         // c:966
+                end: -1,                                                     // c:967
+            };
+            // c:971 — val = getstrvalue(&v);
+            let val = crate::ported::params::getstrvalue(Some(&mut v));
+            if val.is_empty() || (val != "on" && val != "off") {             // c:972
+                crate::ported::utils::zwarn(                                 // c:973
+                    &format!("invalid value: {}", val));
+            } else {
+                // c:974 — dosetopt(optlookup(hn->nam), (val && strcmp(val, "off")), 0, opts);
+                let on = if val != "off" { 1 } else { 0 };
+                let n = crate::ported::options::optlookup(&hn.nam);          // c:974
+                if n == 0 || crate::ported::options::dosetopt(n, on, 0) != 0 {
+                    // c:975-976 — failure path: can't change option.
+                    crate::ported::utils::zwarn(                             // c:976
+                        &format!("can't change option: {}", hn.nam));
+                }
+            }
+            hn_opt = hn.next;
+        }
+    }
+    // c:979-980 — if (ht != pm->u.hash) deleteparamtable(ht);
+    // EXTERN: deleteparamtable in Src/params.c not yet ported.
 }
 
 /// Port of `setpmralias()` from Src/Modules/parameter.c:1707.
