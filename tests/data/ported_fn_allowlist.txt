@@ -573,3 +573,14 @@ opt_name
 # field from the `optns[]` static table. Neither are C functions.
 defset
 optns_flags
+
+# thingytab (zle/zle_thingy.rs) — Rust-only get-or-init accessor
+# for the global `thingytab` HashTable from Src/Zle/zle_thingy.c:52.
+# C declares the table as a top-level `mod_export HashTable thingytab`
+# and references it directly across 11 functions (createthingytab,
+# emptythingytab, refthingy, unrefthingy, rthingy, rthingy_nocreate,
+# bindwidget, unbindwidget, addzlefunction, deletezlefunction,
+# scanemptythingies). Rust uses OnceLock<Mutex<HashMap<String,Thingy>>>
+# for thread-safe lazy init; this private helper hides the get_or_init
+# boilerplate from every caller.
+thingytab
