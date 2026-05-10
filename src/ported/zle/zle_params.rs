@@ -233,7 +233,10 @@ pub fn get_lasearch() -> i32 { 0 }
 pub fn get_lsearch() -> i32 { 0 }
 
 /// Port of `get_lwidget()` from Src/Zle/zle_params.c:449. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_lwidget() -> i32 { 0 }
+pub fn get_lwidget(zle: &crate::ported::zle::zle_main::Zle) -> String {      // c:448
+    // c:451 — `return (lbindk ? lbindk->nam : "")`.
+    zle.lbindk.as_ref().map(|t| t.name.clone()).unwrap_or_default()
+}
 
 /// Port of `get_postdisplay()` from Src/Zle/zle_params.c:907. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn get_postdisplay() -> i32 { 0 }
@@ -247,8 +250,19 @@ pub fn get_predisplay() -> i32 { 0 }
 /// Port of `get_prepost()` from Src/Zle/zle_params.c:879. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn get_prepost() -> i32 { 0 }
 
-/// Port of `get_recursive()` from Src/Zle/zle_params.c:535. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_recursive() -> i32 { 0 }
+/// Port of `get_recursive()` from `Src/Zle/zle_params.c:534`.
+/// ```c
+/// static zlong
+/// get_recursive(UNUSED(Param pm))
+/// {
+///     return zle_recursive;
+/// }
+/// ```
+/// `$ZLE_RECURSIVE` getter — current ZLE recursion depth (>0 when
+/// inside a `recursive-edit` widget call).
+pub fn get_recursive(zle: &crate::ported::zle::zle_main::Zle) -> i64 {       // c:534
+    zle.zle_recursive as i64                                                 // c:537 return zle_recursive
+}
 
 /// Port of `get_region_active()` from `Src/Zle/zle_params.c:324`.
 /// ```c
@@ -312,7 +326,10 @@ pub fn get_suffixstart(zle: &crate::ported::zle::zle_main::Zle) -> i64 {     // 
 }
 
 /// Port of `get_widget()` from Src/Zle/zle_params.c:414. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_widget() -> i32 { 0 }
+pub fn get_widget(zle: &crate::ported::zle::zle_main::Zle) -> String {       // c:413
+    // c:416 — `return bindk ? bindk->nam : ""`.
+    zle.bindk.as_ref().map(|t| t.name.clone()).unwrap_or_default()
+}
 
 /// Port of `get_widgetfunc()` from Src/Zle/zle_params.c:421. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn get_widgetfunc() -> i32 { 0 }
@@ -545,5 +562,51 @@ mod suffix_tests {
         assert_eq!(get_suffixstart(&z), 15);
         SUFFIXLEN.store(0, Ordering::SeqCst);
         assert_eq!(get_suffixstart(&z), 20);
+    }
+}
+
+#[cfg(test)]
+mod widget_tests {
+    use super::*;
+    use crate::ported::zle::zle_main::Zle;
+    use crate::ported::zle::zle_thingy::Thingy;
+
+    #[test]
+    fn get_widget_reads_bindk_nam() {
+        // c:416 — `return bindk ? bindk->nam : ""`.
+        let mut z = Zle::default();
+        z.bindk = Some(Thingy::new("self-insert"));
+        assert_eq!(get_widget(&z), "self-insert");
+    }
+
+    #[test]
+    fn get_widget_empty_when_no_bindk() {
+        // c:416 — `bindk` NULL → empty string.
+        let z = Zle::default();
+        assert_eq!(get_widget(&z), "");
+    }
+
+    #[test]
+    fn get_lwidget_reads_lbindk_nam() {
+        // c:451 — `return (lbindk ? lbindk->nam : "")`.
+        let mut z = Zle::default();
+        z.lbindk = Some(Thingy::new("forward-char"));
+        assert_eq!(get_lwidget(&z), "forward-char");
+    }
+
+    #[test]
+    fn get_lwidget_empty_when_no_lbindk() {
+        let z = Zle::default();
+        assert_eq!(get_lwidget(&z), "");
+    }
+
+    #[test]
+    fn get_recursive_reads_zle_recursive_field() {
+        // c:537 — `return zle_recursive`.
+        let mut z = Zle::default();
+        z.zle_recursive = 0;
+        assert_eq!(get_recursive(&z), 0);
+        z.zle_recursive = 5;
+        assert_eq!(get_recursive(&z), 5);
     }
 }
