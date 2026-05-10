@@ -760,11 +760,57 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_SYNC, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_sync(&args));
+        // Canonical bin_sync per files.c:53 — `sync(); return 0;`.
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                            argscount: 0, argsalloc: 0 };
+        let status = crate::ported::modules::files::bin_sync(
+            "sync", &args, &ops, 0);
         Value::Status(status)
     });
 
-    reg_overridable!(vm, BUILTIN_MKDIR, "mkdir", bin_mkdir);
+    vm.register_builtin(BUILTIN_MKDIR, |vm, argc| {
+        let args = pop_args(vm, argc);
+        // Canonical bin_mkdir per files.c:63 — parses -m/-p inline
+        // via the BUILTIN spec "pm:".
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                argscount: 0, argsalloc: 0 };
+        let mut positional: Vec<String> = Vec::new();
+        let mut i = 0;
+        while i < args.len() {
+            let a = &args[i];
+            if a == "--" { i += 1; positional.extend_from_slice(&args[i..]); break; }
+            if let Some(rest) = a.strip_prefix('-') {
+                if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
+                let chars: Vec<char> = rest.chars().collect();
+                let mut j = 0;
+                while j < chars.len() {
+                    let c = chars[j] as u8;
+                    if c == b'm' {
+                        ops.ind[c as usize] = (ops.args.len() + 1) as u8;
+                        let rest_after = &rest[j + 1..];
+                        if !rest_after.is_empty() {
+                            ops.args.push(rest_after.to_string());
+                        } else {
+                            i += 1;
+                            ops.args.push(args.get(i).cloned().unwrap_or_default());
+                        }
+                        ops.argscount = ops.args.len() as i32;
+                        break;
+                    }
+                    if c.is_ascii_alphabetic() { ops.ind[c as usize] = 1; }
+                    j += 1;
+                }
+            } else {
+                positional.push(a.clone());
+            }
+            i += 1;
+        }
+        let status = crate::ported::modules::files::bin_mkdir(
+            "mkdir", &positional, &ops, 0);
+        Value::Status(status)
+    });
 
     vm.register_builtin(BUILTIN_STRFTIME, |vm, argc| {
         let args = pop_args(vm, argc);
@@ -9752,7 +9798,32 @@ impl crate::ported::exec::ShellExecutor {
             "env" => return self.builtin_env(&rest_vec),
             "printenv" => return self.builtin_printenv(&rest_vec),
             "tty" => return self.builtin_tty(&rest_vec),
-            "chgrp" => return self.bin_chown("chgrp", &rest_vec),
+            "chgrp" => {
+                // Canonical bin_chown per files.c:725 with func=BIN_CHGRP
+                // per the bintab entry at c:805. BUILTIN spec "hRs".
+                use crate::ported::zsh_h::{options, MAX_OPS};
+                let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                        argscount: 0, argsalloc: 0 };
+                let mut positional: Vec<String> = Vec::new();
+                let mut i = 0;
+                while i < rest_vec.len() {
+                    let a = &rest_vec[i];
+                    if a == "--" { i += 1; positional.extend_from_slice(&rest_vec[i..]); break; }
+                    if let Some(rest) = a.strip_prefix('-') {
+                        if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
+                        for c in rest.chars() {
+                            let cb = c as u8;
+                            if cb.is_ascii_alphabetic() { ops.ind[cb as usize] = 1; }
+                        }
+                    } else {
+                        positional.push(a.clone());
+                    }
+                    i += 1;
+                }
+                return crate::ported::modules::files::bin_chown(
+                    "chgrp", &positional, &ops,
+                    crate::ported::modules::files::BIN_CHGRP);
+            }
             "nproc" => return self.builtin_nproc(&rest_vec),
             "expr" => return self.builtin_expr(&rest_vec),
             "sha256sum" => return self.builtin_sha256sum(&rest_vec),
@@ -9778,7 +9849,7 @@ impl crate::ported::exec::ShellExecutor {
             "logname" => return self.builtin_logname(&rest_vec),
             "tput" => return self.builtin_tput(&rest_vec),
             "users" => return self.builtin_users(&rest_vec),
-            "sync" => return self.bin_sync(&rest_vec),
+            // "sync" => return self.bin_sync(&rest_vec),
             "zbuild" => return self.builtin_zbuild(&rest_vec),
             // `zf_*` aliases from `zsh/files` (Src/Modules/files.c
             // BUILTIN table at line 816-824). The C source binds
@@ -9789,15 +9860,15 @@ impl crate::ported::exec::ShellExecutor {
             // the bare name. Each arm here routes to the matching
             // `builtin_*` method already defined further down in
             // this file.
-            "zf_chmod" => return self.bin_chmod(&rest_vec),
-            "zf_chown" => return self.bin_chown("zf_chown", &rest_vec),
-            "zf_chgrp" => return self.bin_chown("zf_chgrp", &rest_vec),
-            "zf_ln" => return self.bin_ln("zf_ln", &rest_vec),
-            "zf_mkdir" => return self.bin_mkdir(&rest_vec),
-            "zf_mv" => return self.bin_ln("zf_mv", &rest_vec),
-            "zf_rm" => return self.bin_rm(&rest_vec),
-            "zf_rmdir" => return self.bin_rmdir(&rest_vec),
-            "zf_sync" => return self.bin_sync(&rest_vec),
+            // "zf_chmod" => return self.bin_chmod(&rest_vec),
+            // "zf_chown" => return self.bin_chown("zf_chown", &rest_vec),
+            // "zf_chgrp" => return self.bin_chown("zf_chgrp", &rest_vec),
+            // "zf_ln" => return self.bin_ln("zf_ln", &rest_vec),
+            // "zf_mkdir" => return self.bin_mkdir(&rest_vec),
+            // "zf_mv" => return self.bin_ln("zf_mv", &rest_vec),
+            // "zf_rm" => return self.bin_rm(&rest_vec),
+            // "zf_rmdir" => return self.bin_rmdir(&rest_vec),
+            // "zf_sync" => return self.bin_sync(&rest_vec),
             // `zstat` — port of zsh/stat module (Src/Modules/stat.c
             // BUILTIN("zstat", …)). Returns file metadata as
             // `field value` pairs / an assoc / a plus-separated
