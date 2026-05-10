@@ -131,8 +131,42 @@ pub fn alignmultiwordleft() -> i32 { 0 }                                     // 
 /// Port of `alignmultiwordright()` from Src/Zle/zle_move.c:89. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn alignmultiwordright() -> i32 { 0 }                                    // c:89
 
-/// Port of `backwardchar()` from Src/Zle/zle_move.c:464. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn backwardchar() -> i32 { 0 }                                           // c:464
+/// Port of `backwardchar()` from `Src/Zle/zle_move.c:463`.
+/// ```c
+/// int
+/// backwardchar(char **args)
+/// {
+///     int n = zmult;
+///     if (n < 0) {
+///         int ret;
+///         zmult = -n;
+///         ret = forwardchar(args);
+///         zmult = n;
+///         return ret;
+///     }
+///     while (zlecs > 0 && n--)
+///         DECCS();
+///     return 0;
+/// }
+/// ```
+/// `backward-char` widget — move cursor left by `zmult` positions.
+/// Negative count delegates to `forwardchar` with negated count.
+pub fn backwardchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {    // c:463
+    let mut n = zle.zmod.mult;                                               // c:466 int n = zmult
+    if n < 0 {                                                               // c:468
+        // c:469-473 — recurse via forwardchar with negated count.
+        let saved = n;
+        zle.zmod.mult = -n;
+        let ret = forwardchar(zle);
+        zle.zmod.mult = saved;
+        return ret;
+    }
+    while zle.zlecs > 0 && n > 0 {                                           // c:476 while (zlecs > 0 && n--)
+        deccs(zle);                                                          // c:477 DECCS()
+        n -= 1;
+    }
+    0                                                                        // c:478 return 0
+}
 
 /// Port of `backwardmetafiedchar()` from Src/Zle/zle_move.c:170. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn backwardmetafiedchar() -> i32 { 0 }
@@ -159,11 +193,39 @@ pub fn deactivateregion(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  /
     0                                                                        // c:567 return 0
 }
 
-/// Port of `deccs()` from Src/Zle/zle_move.c:133. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn deccs() -> i32 { 0 }
+/// Port of `deccs()` from `Src/Zle/zle_move.c:132`.
+/// ```c
+/// mod_export void
+/// deccs(void)
+/// {
+///     zlecs--;
+///     alignmultiwordleft(&zlecs, 1);
+/// }
+/// ```
+/// Decrement the cursor, skipping combining-char clusters.
+/// In zshrs `zleline` is `Vec<char>` (one codepoint per slot), so
+/// the C alignmultiwordleft path is a no-op — just `zlecs--`.
+pub fn deccs(zle: &mut crate::ported::zle::zle_main::Zle) {                  // c:132
+    zle.zlecs -= 1;                                                          // c:135
+    // c:136 — `alignmultiwordleft(&zlecs, 1)`. Vec<char> indexes
+    // one codepoint per slot, so no realignment needed.
+}
 
-/// Port of `decpos()` from Src/Zle/zle_move.c:152. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn decpos() -> i32 { 0 }
+/// Port of `decpos()` from `Src/Zle/zle_move.c:151`.
+/// ```c
+/// mod_export void
+/// decpos(int *pos)
+/// {
+///     (*pos)--;
+///     alignmultiwordleft(pos, 1);
+/// }
+/// ```
+/// Decrement an arbitrary cursor position; same multibyte note as
+/// `deccs`.
+pub fn decpos(pos: &mut usize) {                                             // c:151
+    *pos -= 1;                                                               // c:154
+    // c:155 — `alignmultiwordleft(pos, 1)`. No-op for Vec<char>.
+}
 
 /// Port of `endofline()` from Src/Zle/zle_move.c:331. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn endofline() -> i32 { 0 }
@@ -211,14 +273,75 @@ pub fn exchangepointandmark(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 
     0                                                                        // c:511 return 0
 }
 
-/// Port of `forwardchar()` from Src/Zle/zle_move.c:441. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn forwardchar() -> i32 { 0 }
+/// Port of `forwardchar()` from `Src/Zle/zle_move.c:440`.
+/// ```c
+/// int
+/// forwardchar(char **args)
+/// {
+///     int n = zmult;
+///     if (n < 0) {
+///         int ret;
+///         zmult = -n;
+///         ret = backwardchar(args);
+///         zmult = n;
+///         return ret;
+///     }
+///     while (zlecs < zlell && n--)
+///         INCCS();
+///     return 0;
+/// }
+/// ```
+/// `forward-char` widget — move cursor right by `zmult` positions.
+/// Negative count delegates to `backwardchar` with negated count.
+pub fn forwardchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // c:440
+    let mut n = zle.zmod.mult;                                               // c:443 int n = zmult
+    if n < 0 {                                                               // c:445
+        // c:446-450 — recurse via backwardchar with negated count.
+        let saved = n;
+        zle.zmod.mult = -n;
+        let ret = backwardchar(zle);
+        zle.zmod.mult = saved;
+        return ret;
+    }
+    while zle.zlecs < zle.zlell && n > 0 {                                   // c:457 while (zlecs < zlell && n--)
+        inccs(zle);                                                          // c:458 INCCS()
+        n -= 1;
+    }
+    0                                                                        // c:459 return 0
+}
 
-/// Port of `inccs()` from Src/Zle/zle_move.c:122. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn inccs() -> i32 { 0 }
+/// Port of `inccs()` from `Src/Zle/zle_move.c:121`.
+/// ```c
+/// mod_export void
+/// inccs(void)
+/// {
+///     zlecs++;
+///     alignmultiwordright(&zlecs, 1);
+/// }
+/// ```
+/// Increment the cursor, skipping combining-char clusters.
+/// In zshrs `zleline` is `Vec<char>` (one codepoint per slot), so
+/// the C alignmultiwordright path is a no-op — just `zlecs++`.
+pub fn inccs(zle: &mut crate::ported::zle::zle_main::Zle) {                  // c:121
+    zle.zlecs += 1;                                                          // c:124
+    // c:125 — `alignmultiwordright(&zlecs, 1)`. No-op for Vec<char>.
+}
 
-/// Port of `incpos()` from Src/Zle/zle_move.c:143. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn incpos() -> i32 { 0 }
+/// Port of `incpos()` from `Src/Zle/zle_move.c:142`.
+/// ```c
+/// mod_export void
+/// incpos(int *pos)
+/// {
+///     (*pos)++;
+///     alignmultiwordright(pos, 1);
+/// }
+/// ```
+/// Increment an arbitrary cursor position; same multibyte note as
+/// `inccs`.
+pub fn incpos(pos: &mut usize) {                                             // c:142
+    *pos += 1;                                                               // c:145
+    // c:146 — `alignmultiwordright(pos, 1)`. No-op for Vec<char>.
+}
 
 /// Port of `setmarkcommand()` from `Src/Zle/zle_move.c:482`.
 /// ```c
@@ -391,5 +514,125 @@ mod region_tests {
         exchangepointandmark(&mut z);
         // After swap zlecs would be 99, clamped to 2.
         assert_eq!(z.zlecs, 2);
+    }
+
+    // ---------- Cursor movement (forwardchar / backwardchar / inccs / deccs) ----
+
+    #[test]
+    fn inccs_increments_zlecs() {
+        // c:121-126 — `zlecs++; alignmultiwordright(...)`. Vec<char>
+        // makes alignment a no-op.
+        let mut z = Zle::default();
+        z.zleline = "abc".chars().collect();
+        z.zlell = 3;
+        z.zlecs = 0;
+        inccs(&mut z);
+        assert_eq!(z.zlecs, 1);
+        inccs(&mut z);
+        assert_eq!(z.zlecs, 2);
+    }
+
+    #[test]
+    fn deccs_decrements_zlecs() {
+        // c:132-137 — `zlecs--; alignmultiwordleft(...)`.
+        let mut z = Zle::default();
+        z.zleline = "abc".chars().collect();
+        z.zlell = 3;
+        z.zlecs = 2;
+        deccs(&mut z);
+        assert_eq!(z.zlecs, 1);
+        deccs(&mut z);
+        assert_eq!(z.zlecs, 0);
+    }
+
+    #[test]
+    fn incpos_decpos_round_trip() {
+        // c:142-156 — pos++ / pos-- with no-op alignment.
+        let mut p = 5;
+        incpos(&mut p);
+        assert_eq!(p, 6);
+        incpos(&mut p);
+        assert_eq!(p, 7);
+        decpos(&mut p);
+        assert_eq!(p, 6);
+    }
+
+    #[test]
+    fn forwardchar_moves_zmult_positions() {
+        // c:457-458 — `while (zlecs < zlell && n--) INCCS();`.
+        let mut z = Zle::default();
+        z.zleline = "hello world".chars().collect();
+        z.zlell = 11;
+        z.zlecs = 0;
+        z.zmod.mult = 3;
+        let r = forwardchar(&mut z);
+        assert_eq!(r, 0);
+        assert_eq!(z.zlecs, 3);
+    }
+
+    #[test]
+    fn forwardchar_stops_at_zlell() {
+        // c:457 — `while (zlecs < zlell && ...)`. Walking past end
+        // is bounded.
+        let mut z = Zle::default();
+        z.zleline = "ab".chars().collect();
+        z.zlell = 2;
+        z.zlecs = 0;
+        z.zmod.mult = 99;
+        forwardchar(&mut z);
+        assert_eq!(z.zlecs, 2);
+    }
+
+    #[test]
+    fn backwardchar_moves_zmult_positions() {
+        // c:476-477 — `while (zlecs > 0 && n--) DECCS();`.
+        let mut z = Zle::default();
+        z.zleline = "hello world".chars().collect();
+        z.zlell = 11;
+        z.zlecs = 8;
+        z.zmod.mult = 3;
+        let r = backwardchar(&mut z);
+        assert_eq!(r, 0);
+        assert_eq!(z.zlecs, 5);
+    }
+
+    #[test]
+    fn backwardchar_stops_at_zero() {
+        // c:476 — `while (zlecs > 0 && ...)`. Doesn't underflow.
+        let mut z = Zle::default();
+        z.zleline = "ab".chars().collect();
+        z.zlell = 2;
+        z.zlecs = 1;
+        z.zmod.mult = 99;
+        backwardchar(&mut z);
+        assert_eq!(z.zlecs, 0);
+    }
+
+    #[test]
+    fn forwardchar_negative_count_delegates_to_backward() {
+        // c:445-450 — `if (n < 0) { zmult = -n; ret = backwardchar(args); ... }`.
+        let mut z = Zle::default();
+        z.zleline = "hello".chars().collect();
+        z.zlell = 5;
+        z.zlecs = 4;
+        z.zmod.mult = -2;
+        forwardchar(&mut z);
+        // -2 → backwardchar(2) → cursor goes 4→2
+        assert_eq!(z.zlecs, 2);
+        // c:447,449 — zmult restored to original after recursion.
+        assert_eq!(z.zmod.mult, -2);
+    }
+
+    #[test]
+    fn backwardchar_negative_count_delegates_to_forward() {
+        let mut z = Zle::default();
+        z.zleline = "hello".chars().collect();
+        z.zlell = 5;
+        z.zlecs = 1;
+        z.zmod.mult = -2;
+        backwardchar(&mut z);
+        // -2 → forwardchar(2) → cursor goes 1→3
+        assert_eq!(z.zlecs, 3);
+        assert_eq!(z.zmod.mult, -2);
     }
 }
