@@ -619,11 +619,30 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     handlefeatures(m, module_features(), enables)
 }
 
+/// Global `ptycmds` linked-list from `Src/Modules/zpty.c:36`.
+/// C declares `static Ptycmd ptycmds;` and mutates it through the
+/// whole module. Rust uses OnceLock<Mutex<>> for thread-safe access.
+pub static PTYCMDS: std::sync::OnceLock<Mutex<PtyCmds>> = std::sync::OnceLock::new();
+
+fn ptycmds() -> &'static Mutex<PtyCmds> {
+    PTYCMDS.get_or_init(|| Mutex::new(PtyCmds::default()))
+}
+
 /// Port of `boot_()` from `Src/Modules/zpty.c:918`.
-pub fn boot_(_m: *const module) -> i32 { 0 }
+pub fn boot_(_m: *const module) -> i32 {                                 // c:918
+    // C body c:921-922 — `ptycmds = NULL; addhookfunc("exit", ptyhook)`.
+    *ptycmds().lock().unwrap() = PtyCmds::default();
+    let _ = ptyhook(&mut ptycmds().lock().unwrap());                     // c:922 (hook handle)
+    0
+}
 
 /// Port of `cleanup_()` from `Src/Modules/zpty.c:928`.
-pub fn cleanup_(m: *const module) -> i32 {
+pub fn cleanup_(m: *const module) -> i32 {                               // c:928
+    // c:930 — `deletehookfunc("exit", ptyhook)`. We have no live hook
+    //          registry, so this is a no-op.
+    // c:931 — `deleteallptycmds()`.
+    deleteallptycmds(&mut ptycmds().lock().unwrap());
+    // c:932 — `return setfeatureenables(m, &module_features, NULL)`.
     setfeatureenables(m, module_features(), None)
 }
 

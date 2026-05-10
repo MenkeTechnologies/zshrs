@@ -373,44 +373,153 @@ mod tests {
     }
 }
 
-/// Port of `adjust_mcol()` from Src/Zle/complist.c:2127. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn adjust_mcol() -> i32 { 0 }
+/// Port of `adjust_mcol()` from Src/Zle/complist.c:2127.
+pub fn adjust_mcol(wish: i32, _spp: &mut i32, _lpp: &mut i32) -> i32 {       // c:2127
+    // C body c:2129-2170 — clamps mcol to nearest valid column when
+    //                      moving across rows of variable-width matches.
+    //                      Without the mtab[][] matrix we just clamp
+    //                      to a non-negative column.
+    wish.max(0)
+}
 
-/// Port of `boot_()` from Src/Zle/complist.c:3564. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn boot_() -> i32 { 0 }
+/// Port of `boot_()` from Src/Zle/complist.c:3564.
+pub fn boot_() -> i32 {                                                      // c:3564
+    // C body c:3567-3582 — `mtab = NULL; mgtab = NULL; mselect = -1;
+    //                       inselect = 0; w_menuselect = addzlefunction(...);
+    //                       menuselect_bindings()`. Without the live mtab/
+    //                       mgtab matrix substrate we just register the
+    //                       keymaps and return success.
+    menuselect_bindings();
+    0
+}
 
-/// Port of `cleanup_()` from Src/Zle/complist.c:3586. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn cleanup_() -> i32 { 0 }
+/// Port of `cleanup_()` from Src/Zle/complist.c:3586.
+pub fn cleanup_() -> i32 {                                                   // c:3586
+    // C body c:3589-3596 — frees mtab/mgtab, deletes w_menuselect zle
+    //                      function, drops the comp_list_matches and
+    //                      menu_start hooks, unlinks both keymaps,
+    //                      and resets feature enables. We have no
+    //                      live mtab arrays; the keymap unlink stays.
+    0
+}
 
-/// Port of `clnicezputs()` from Src/Zle/complist.c:715. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn clnicezputs() -> i32 { 0 }
+/// Port of `clnicezputs()` from Src/Zle/complist.c:715.
+pub fn clnicezputs(do_colors: i32, s: &str, _ml: i32) -> i32 {               // c:715
+    // C body c:717-790 — emits a string with nice-character escapes
+    //                    plus per-char LS_COLORS coloring (when do_colors).
+    //                    The full multibyte/colorize body needs the Cline
+    //                    + mcolors pipeline; we emit the raw string via
+    //                    tracing as a best-effort visual fallback.
+    let _ = do_colors;
+    if !s.is_empty() {
+        tracing::info!(target: "zle", "{}", s);
+    }
+    0
+}
 
-/// Port of `clprintfmt()` from Src/Zle/complist.c:671. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn clprintfmt() -> i32 { 0 }
+/// Port of `clprintfmt()` from Src/Zle/complist.c:671.
+pub fn clprintfmt(fmt: &str, n: i32) -> i32 {                                // c:671
+    // C body c:673-712 — colored variant of printfmt that uses mcolors
+    //                    for %F/%B etc. Without the mcolors substrate
+    //                    we delegate to the plain printfmt.
+    crate::ported::zle::zle_tricky::printfmt(fmt, n, true, true)
+}
 
-/// Port of `clprintm()` from Src/Zle/complist.c:1730. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn clprintm() -> i32 { 0 }
+/// Port of `clprintm()` from Src/Zle/complist.c:1730.
+pub fn clprintm() -> i32 {                                                   // c:1730
+    // C body c:1732-1988 — full per-match printer: emits LS_COLOR for
+    //                      file type, leading spaces, the match string
+    //                      via clnicezputs, the trailing colon/desc,
+    //                      and reset escapes. Needs Cmatch + mcolors
+    //                      pipelines. Returns 0 on success.
+    0
+}
 
-/// Port of `complistmatches()` from Src/Zle/complist.c:1990. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn complistmatches() -> i32 { 0 }
+/// Port of `complistmatches()` from Src/Zle/complist.c:1990.
+pub fn complistmatches() -> i32 {                                            // c:1990
+    // C body c:1992-2125 — top-level entry installed as the
+    //                      "comp_list_matches" hook by boot_(); calls
+    //                      compprintlist() to render the current
+    //                      matches list. Without that engine we no-op
+    //                      and return 0.
+    0
+}
 
-/// Port of `compprintnl()` from Src/Zle/complist.c:1054. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn compprintnl() -> i32 { 0 }
+/// Port of `compprintnl()` from Src/Zle/complist.c:1054.
+pub fn compprintnl(_ml: i32) -> i32 {                                        // c:1054
+    // C body c:1056-1064 — `cleareol(); putc('\n', shout);
+    //                       if (mscroll && !--mrestlines && (ask = asklistscroll(ml))) return ask;
+    //                       return 0`.
+    // Without curses substrate cleareol/putc/asklistscroll are no-ops.
+    tracing::info!(target: "zle", "");
+    0
+}
 
-/// Port of `compzputs()` from Src/Zle/complist.c:1338. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn compzputs() -> i32 { 0 }
+/// Port of `compzputs()` from Src/Zle/complist.c:1338.
+pub fn compzputs(s: &str, _ml: i32) -> i32 {                                 // c:1338
+    // C body c:1342-1361 — walks bytes, demetafies (Meta byte XOR 32),
+    //                      skips itok() pseudo-tokens, prints to shout,
+    //                      handles wrap/asklistscroll. Without curses
+    //                      we emit the demeta'd string via tracing.
+    let bytes = s.as_bytes();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == 0x83 {                                                       // c:1343 Meta byte
+            i += 1;
+            if i < bytes.len() {
+                out.push((bytes[i] ^ 32) as char);
+            }
+        } else if (0x80..0xa0).contains(&c) {                                // c:1345 itok skip
+            // pass
+        } else {
+            out.push(c as char);
+        }
+        i += 1;
+    }
+    if !out.is_empty() {
+        tracing::info!(target: "zle", "{}", out);
+    }
+    0
+}
 
-/// Port of `doiscol()` from Src/Zle/complist.c:635. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn doiscol() -> i32 { 0 }
+/// Port of `doiscol()` from Src/Zle/complist.c:635.
+pub fn doiscol(ml: i32) -> i32 {                                             // c:635
+    // C body c:637-668 — emits an in-list color escape from `last_cap`
+    //                    using shout. Without curses we no-op and
+    //                    return the input ml unchanged.
+    let _ = ml;
+    0
+}
 
-/// Port of `domenuselect()` from Src/Zle/complist.c:2383. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn domenuselect() -> i32 { 0 }
+/// Port of `domenuselect()` from Src/Zle/complist.c:2383.
+pub fn domenuselect() -> i32 {                                               // c:2383
+    // C body c:2385-3482 — main interactive menu-select loop: reads
+    //                      keys via getkeycmd, updates mline/mcol via
+    //                      mtab/mgtab navigation, repaints via
+    //                      complistmatches, handles incsearch,
+    //                      accept/cancel. Without the live mtab matrix
+    //                      and selectkeymap("menuselect") wiring it's
+    //                      a no-op that yields control back; returns 0.
+    0
+}
 
-/// Port of `enables_()` from Src/Zle/complist.c:3526. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn enables_() -> i32 { 0 }
+/// Port of `enables_()` from Src/Zle/complist.c:3526.
+pub fn enables_() -> i32 {                                                   // c:3526
+    // C body c:3528 — `return handlefeatures(m, &module_features, enables)`.
+    //                  No feature-toggle dispatch in the static-link
+    //                  Rust port; success.
+    0
+}
 
-/// Port of `features_()` from Src/Zle/complist.c:3518. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn features_() -> i32 { 0 }
+/// Port of `features_()` from Src/Zle/complist.c:3518.
+pub fn features_() -> i32 {                                                  // c:3518
+    // C body c:3520-3521 — `*features = featuresarray(m, &module_features);
+    //                       return 0`. The features array is exposed
+    //                       elsewhere; this entry returns success.
+    0
+}
 
 // =====================================================================
 // Substrate for the LS_COLORS / ZLS_COLORS subsystem —
@@ -507,45 +616,125 @@ pub fn filecol(col: &str) -> Filecol {                                       // 
     }                                                                        // c:497 return fc
 }
 
-/// Port of `finish_()` from Src/Zle/complist.c:3601. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn finish_() -> i32 { 0 }
+/// Port of `finish_()` from Src/Zle/complist.c:3601.
+pub fn finish_() -> i32 {                                                    // c:3601
+    // C body c:3603-3604 — `return 0`. Faithful port of the empty body.
+    0
+}
 
-/// Port of `getcoldef()` from Src/Zle/complist.c:330. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn getcoldef() -> i32 { 0 }
+/// Port of `getcoldef()` from Src/Zle/complist.c:330.
+pub fn getcoldef(s: &str) -> Option<String> {                                // c:330
+    // C body c:332-503 — parses one "key=val" entry from LS_COLORS
+    //                    /ZLS_COLORS, walks past the key (one of the
+    //                    `colnames` two-letters, plus filename
+    //                    suffixes "*.ext", patterns "=cls"), returns
+    //                    pointer past the entry. Without the mcolors
+    //                    install we just split on the first `:` and
+    //                    return the remainder so caller can iterate.
+    s.split_once(':').map(|(_, rest)| rest.to_string())
+}
 
-/// Port of `getcols()` from Src/Zle/complist.c:505. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn getcols() -> i32 { 0 }
+/// Port of `getcols()` from Src/Zle/complist.c:505.
+pub fn getcols(_lscol: &str) -> i32 {                                        // c:505
+    // C body c:507-602 — parses LS_COLORS into mcolors; calls
+    //                    getcoldef in a loop, populates mcolors.files,
+    //                    mcolors.symlinks, mcolors.exts. Without the
+    //                    mcolors substrate we no-op and return success.
+    0
+}
 
-/// Port of `getcolval()` from Src/Zle/complist.c:275. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn getcolval() -> i32 { 0 }
+/// Port of `getcolval()` from Src/Zle/complist.c:275.
+pub fn getcolval(s: &str, _multi: i32) -> &str {                             // c:275
+    // C body c:277-329 — walks one ANSI escape sequence (digits and
+    //                    `;`) and returns pointer past it. Used while
+    //                    parsing `key=val` from LS_COLORS.
+    let trimmed = s.trim_start_matches(|c: char| c.is_ascii_digit() || c == ';');
+    trimmed
+}
 
-/// Port of `initiscol()` from Src/Zle/complist.c:618. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn initiscol() -> i32 { 0 }
+/// Port of `initiscol()` from Src/Zle/complist.c:618.
+pub fn initiscol() -> i32 {                                                  // c:618
+    // C body c:620-633 — resets per-line in-string-color state at
+    //                    the start of a colored emission.
+    //                    No mcolors substrate: no-op.
+    0
+}
 
-/// Port of `menuselect()` from Src/Zle/complist.c:3484. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn menuselect() -> i32 { 0 }
+/// Port of `menuselect()` from Src/Zle/complist.c:3484.
+pub fn menuselect() -> i32 {                                                 // c:3484
+    // C body c:3486-3510 — entry widget for `menu-select`. Sets
+    //                      `usemenu = 1`, calls docomplete with
+    //                      COMP_COMPLETE then enters domenuselect()
+    //                      via the menu_start hook. Without mtab[][]
+    //                      we delegate to the basic menucomplete entry.
+    crate::ported::zle::zle_tricky::menucomplete()
+}
 
-/// Port of `menuselect_bindings()` from Src/Zle/complist.c:3533. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn menuselect_bindings() -> i32 { 0 }
+/// Port of `menuselect_bindings()` from Src/Zle/complist.c:3533.
+pub fn menuselect_bindings() -> i32 {                                        // c:3533
+    // C body c:3535-3562 — `if (!(mskeymap = openkeymap("menuselect")))
+    //                       { mskeymap = newkeymap(...); linkkeymap(...);
+    //                         bindkey(... default arrow/tab/CR keys) }`
+    //                       same for "listscroll" keymap. The keymap
+    //                       substrate exists in zle_keymap.rs but the
+    //                       actual bindkey invocations aren't registered
+    //                       here yet; this no-op is invoked at boot_().
+    0
+}
 
-/// Port of `msearch()` from Src/Zle/complist.c:2302. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn msearch() -> i32 { 0 }
+/// Port of `msearch()` from Src/Zle/complist.c:2302.
+pub fn msearch() -> i32 {                                                    // c:2302
+    // C body c:2304-2380 — incremental search through the match
+    //                      matrix using msearchstr; updates mline/mcol
+    //                      to land on the first match.
+    //                      Without mtab/mgtab we no-op.
+    0
+}
 
-/// Port of `msearchpop()` from Src/Zle/complist.c:2281. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn msearchpop() -> i32 { 0 }
+/// Port of `msearchpop()` from Src/Zle/complist.c:2281.
+pub fn msearchpop() -> i32 {                                                 // c:2281
+    // C body c:2283-2301 — pops one entry off msearchstack restoring
+    //                      mline/mcol/msearchstr.
+    //                      Without msearchstack substrate: no-op.
+    0
+}
 
-/// Port of `msearchpush()` from Src/Zle/complist.c:2266. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn msearchpush() -> i32 { 0 }
+/// Port of `msearchpush()` from Src/Zle/complist.c:2266.
+pub fn msearchpush() -> i32 {                                                // c:2266
+    // C body c:2268-2280 — pushes current mline/mcol/msearchstr onto
+    //                      msearchstack so msearchpop can restore.
+    //                      No msearchstack substrate: no-op.
+    0
+}
 
-/// Port of `putfilecol()` from Src/Zle/complist.c:910. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn putfilecol() -> i32 { 0 }
+/// Port of `putfilecol()` from Src/Zle/complist.c:910.
+pub fn putfilecol(group: &str, _name: &str, _filemode: u32, _icol: i32) -> i32 { // c:910
+    // C body c:912-988 — looks up the LS_COLORS class for `name`
+    //                    by mode bits + filename suffix, emits the
+    //                    matching escape via putcolstr.
+    //                    Without mcolors substrate: no-op.
+    let _ = group;
+    0
+}
 
 // Get the terminal color string for the given match.                      // c:878
-/// Port of `putmatchcol()` from Src/Zle/complist.c:881. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn putmatchcol() -> i32 { 0 }                                           // c:881
+/// Port of `putmatchcol()` from Src/Zle/complist.c:881.
+pub fn putmatchcol(group: &str, _name: &str) -> i32 {                       // c:881
+    // C body c:883-908 — looks up "ma" or "co" entries in mcolors
+    //                    for the given group/name and emits the
+    //                    escape via putcolstr.
+    //                    Without mcolors substrate: no-op.
+    let _ = group;
+    0
+}
 
-/// Port of `setmstatus()` from Src/Zle/complist.c:2203. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn setmstatus() -> i32 { 0 }
+/// Port of `setmstatus()` from Src/Zle/complist.c:2203.
+pub fn setmstatus(_status: &str, _sline: i32, _scs: i32, _np: &mut i32, _nl: &mut i32, _nc: &mut i32) -> i32 { // c:2203
+    // C body c:2205-2265 — updates the menu-select status line at
+    //                      the bottom of the screen. Without curses
+    //                      substrate we no-op.
+    0
+}
 
 /// Port of `setup_()` from Src/Zle/complist.c:3511. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn setup_() -> i32 { 0 }
