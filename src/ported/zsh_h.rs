@@ -1633,6 +1633,7 @@ pub const HOOK_SUFFIX_LEN: usize = 11;                                   // c:13
 pub const MAX_OPS: usize = 128;                                          // c:1396
 
 #[allow(non_camel_case_types)]
+#[derive(Clone)]
 pub struct options {                                                     // c:1416
     pub ind: [u8; MAX_OPS],
     pub args: Vec<String>,
