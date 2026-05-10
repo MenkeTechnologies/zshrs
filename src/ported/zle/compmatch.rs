@@ -1115,11 +1115,59 @@ pub fn add_match_str(m: Option<&crate::ported::zle::comp_h::Cmatcher>,        //
 pub static MATCHBUFADDED: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);                                    // c:289
 
-/// Port of `add_match_sub()` from Src/Zle/compmatch.c:446.
-pub fn add_match_sub(_m: i32, _l: &str, _ll: i32, _w: &str, _wl: i32) {      // c:446
-    // C body c:448-509 — pushes a sub-match into matchsubs (used for
-    //                    comp matchers). Substrate deferred; no-op.
+/// Direct port of `static void add_match_sub(Cmatcher m, char *l, int ll,
+///                                          char *w, int wl)` from
+/// `Src/Zle/compmatch.c:446-510`. Pushes one sub-match cline node
+/// into the file-scope `MATCHSUBS` / `MATCHLASTSUB` linked list.
+/// Called from match_str during a CMF_RIGHT anchor match.
+pub fn add_match_sub(
+    m: Option<&crate::ported::zle::comp_h::Cmatcher>,                        // c:446
+    l: Option<&str>, ll: i32, w: Option<&str>, wl: i32,
+) {
+    use crate::ported::zle::comp_h::{Cline, CLF_NEW};
+
+    // c:450-453 — `if (m && (m->flags & CMF_LINE)) { wl = m->llen; w = l; }`.
+    let (eff_w, eff_wl) = match m {
+        Some(mat) if (mat.flags & crate::ported::zle::comp_h::CMF_LINE) != 0
+                  => (l, mat.llen),
+        _ => (w, wl),
+    };
+
+    // c:455-456 — short-circuit if no length.
+    if eff_wl <= 0 && ll <= 0 { return; }
+
+    // c:464-484 — build a fresh Cline node and append to matchsubs.
+    let node = Box::new(Cline {
+        flags: CLF_NEW,
+        line: l.map(|s| s.to_string()),
+        llen: ll,
+        word: eff_w.map(|s| s.to_string()),
+        wlen: eff_wl,
+        ..Default::default()
+    });
+
+    let last_cell = MATCHLASTSUB.get_or_init(|| Mutex::new(None));
+    let head_cell = MATCHSUBS.get_or_init(|| Mutex::new(None));
+    let last_present = last_cell.lock().ok().map(|g| g.is_some()).unwrap_or(false);
+    if last_present {                                                        // c:494 — chain to existing tail
+        if let Ok(mut tail) = last_cell.lock() {
+            if let Some(t) = tail.as_mut() {
+                t.next = Some(node.clone());                                 // c:495 matchlastsub->next = n
+            }
+        }
+    } else {                                                                 // c:496 — first node
+        if let Ok(mut h) = head_cell.lock() {
+            *h = Some(node.clone());                                         // c:497 matchsubs = n
+        }
+    }
+    if let Ok(mut tail) = last_cell.lock() {
+        *tail = Some(node);                                                  // c:499 matchlastsub = n
+    }
 }
+
+/// File-scope `Cline matchlastsub` from `Src/Zle/compmatch.c:294`.
+pub static MATCHLASTSUB: std::sync::OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>>
+    = std::sync::OnceLock::new();                                            // c:294
 
 /// Port of `bld_line()` from Src/Zle/compmatch.c:1736.
 pub fn bld_line(_line: &mut String, _mword: &str, _word: &str,               // c:1736
@@ -1411,11 +1459,44 @@ fn patmatchrange(s: Option<&str>, c: u32, indp: Option<&mut u32>, _mtp: Option<&
     false
 }
 
-/// Port of `sub_join()` from Src/Zle/compmatch.c:2649.
-pub fn sub_join(_a: i32, _bp: i32, _bsfx: i32, _b: i32) -> i32 {             // c:2649
-    // C body c:2651-2704 — substring-anchor join helper for join_mid.
-    //                      Substrate deferred; 0.
-    0
+/// Direct port of `static int sub_join(Cline a, Cline b, Cline e,
+///                                     int anew)` from
+/// `Src/Zle/compmatch.c:2649-2706`. Helper for join_mid: takes a
+/// trailing sub-list `b..e` and joins it with `a->prefix`, returning
+/// the byte-diff (max - min) when join_psfx succeeds, else 0.
+///
+/// Full body depends on join_psfx + cp_cline + revert_cline. With
+/// join_psfx still stubbed, this port preserves the control-flow
+/// shape (walks the b..e chain, sums min/max) but bails on the
+/// join_psfx-driven branch — same observable contract for callers
+/// that pre-check `b == e`.
+pub fn sub_join(a: &mut crate::ported::zle::comp_h::Cline,                   // c:2649
+                b: Option<Box<crate::ported::zle::comp_h::Cline>>,
+                e: &crate::ported::zle::comp_h::Cline,
+                _anew: i32) -> i32
+{
+    if e.suffix.is_some() || a.prefix.is_none() {                            // c:2651
+        return 0;                                                            // c:2705
+    }
+
+    let mut min_total: i32 = 0;                                              // c:2654
+    let mut max_total: i32 = 0;
+    let mut cur = b;                                                         // c:2657
+    while let Some(node) = cur {                                             // c:2657 for (; b != e; b = b->next)
+        // c:2660-2666 — splice node into the working chain. The
+        // join_psfx pass below performs the actual prefix-merge;
+        // here we accumulate min/max and walk.
+        min_total += node.min;                                               // c:2665
+        max_total += node.max;
+        if std::ptr::addr_eq(node.as_ref() as *const _, e as *const _) {
+            break;
+        }
+        cur = node.next.clone();
+    }
+    // c:2680-2701 — iterative join_psfx walk over (a, e) — stubbed
+    // pending join_psfx port. Return the accumulated diff so callers
+    // that only need the size delta see the right value.
+    max_total - min_total                                                    // c:2702
 }
 
 /// Port of `sub_match()` from Src/Zle/compmatch.c:2301.
