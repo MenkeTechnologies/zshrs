@@ -2793,13 +2793,15 @@ pub fn paramsubst(
                         parts,
                     );
                 } else {
-                    crate::ported::params::assignsparam(
+                    let __s = match subscript.as_deref() {
+                        Some(k) => format!("{}[{}]", var_name, k),
+                        None => var_name.clone(),
+                    };
+                    crate::ported::params::assignsparam(&__s, &value, 0);
+                    crate::ported::params::sync_state_from_paramtab(
                         &mut state.variables,
                         &mut state.arrays,
                         &mut state.assoc_arrays,
-                        &var_name,
-                        subscript.as_deref(),
-                        &value,
                     );
                 }
             } else if let Some(default) = r.strip_prefix(":=") {
@@ -2845,13 +2847,15 @@ pub fn paramsubst(
                             parts,
                         );
                     } else {
-                        crate::ported::params::assignsparam(
+                        let __s = match subscript.as_deref() {
+                            Some(k) => format!("{}[{}]", var_name, k),
+                            None => var_name.clone(),
+                        };
+                        crate::ported::params::assignsparam(&__s, &value, 0);
+                        crate::ported::params::sync_state_from_paramtab(
                             &mut state.variables,
                             &mut state.arrays,
                             &mut state.assoc_arrays,
-                            &var_name,
-                            subscript.as_deref(),
-                            &value,
                         );
                     }
                 }
@@ -2901,13 +2905,15 @@ pub fn paramsubst(
                             parts,
                         );
                     } else {
-                        crate::ported::params::assignsparam(
+                        let __s = match subscript.as_deref() {
+                            Some(k) => format!("{}[{}]", var_name, k),
+                            None => var_name.clone(),
+                        };
+                        crate::ported::params::assignsparam(&__s, &value, 0);
+                        crate::ported::params::sync_state_from_paramtab(
                             &mut state.variables,
                             &mut state.arrays,
                             &mut state.assoc_arrays,
-                            &var_name,
-                            subscript.as_deref(),
-                            &value,
                         );
                     }
                 }

@@ -384,6 +384,32 @@ argzero
 # scriptname_lock / argzero_lock.
 nameddirtab
 
+# params.rs — accessors for the C globals `mod_export HashTable
+# paramtab, realparamtab` (Src/params.c:515). C dereferences each
+# via `paramtab->...`; Rust wraps `Mutex<HashMap<String, Param>>`
+# in `OnceLock` and exposes the inner mutex via these accessors.
+# Same pattern as nameddirtab / scriptname_lock.
+#
+# paramtab_hashed_storage — parallel storage for PM_HASHED param
+# values. `param.u_hash` is typed `Option<HashTable>` per
+# Src/zsh.h:1841 but the full HashTable runtime backing isn't
+# wired yet; assoc-array values land here keyed on param name
+# until that lands. C has no analog because C's u_hash holds
+# the live HashTable.
+paramtab
+realparamtab
+paramtab_hashed_storage
+
+# params.rs sync_state_from_paramtab — port-transition shim that
+# mirrors the global paramtab plus the parallel hashed-storage
+# table into the three HashMaps `SubstState` carries during
+# `prefork()` (Src/subst.c:100). C has no SubstState equivalent
+# because the parameter table is the single source of truth; the
+# helper exists only while subst.rs still reads from
+# `state.variables`/`state.arrays`/`state.assoc_arrays`. Goes
+# away once subst.rs reads through `paramtab().lock()` directly.
+sync_state_from_paramtab
+
 # pcre.rs — small Rust helpers wrapping pcre_exec-style usage for the
 # zsh/pcre module port; zsh C inlines this in module entrypoints rather
 # than naming these as separate C functions.

@@ -534,6 +534,7 @@ pub type PrintTableStats = fn(table: &hashtable);
 
 /// Port of `struct hashtable` from `Src/zsh.h:1200-1222`.
 #[allow(non_camel_case_types)]
+#[derive(Clone)]
 pub struct hashtable {
     // c:1200
     pub hsize: i32,                         // c:1202
@@ -796,6 +797,7 @@ pub type GsuArray = Box<gsu_array>; // c:1793
 pub type GsuHash = Box<gsu_hash>; // c:1794
 
 #[allow(non_camel_case_types)]
+#[derive(Clone)]
 pub struct gsu_scalar {
     // c:1796
     pub getfn: fn(pm: &param) -> String,        // c:1797
@@ -803,6 +805,7 @@ pub struct gsu_scalar {
     pub unsetfn: fn(pm: &mut param, exp: i32),  // c:1799
 }
 #[allow(non_camel_case_types)]
+#[derive(Clone)]
 pub struct gsu_integer {
     // c:1802
     pub getfn: fn(pm: &param) -> i64,
@@ -810,6 +813,7 @@ pub struct gsu_integer {
     pub unsetfn: fn(pm: &mut param, exp: i32),
 }
 #[allow(non_camel_case_types)]
+#[derive(Clone)]
 pub struct gsu_float {
     // c:1808
     pub getfn: fn(pm: &param) -> f64,
@@ -817,6 +821,7 @@ pub struct gsu_float {
     pub unsetfn: fn(pm: &mut param, exp: i32),
 }
 #[allow(non_camel_case_types)]
+#[derive(Clone)]
 pub struct gsu_array {
     // c:1814
     pub getfn: fn(pm: &param) -> Vec<String>,
@@ -824,6 +829,7 @@ pub struct gsu_array {
     pub unsetfn: fn(pm: &mut param, exp: i32),
 }
 #[allow(non_camel_case_types)]
+#[derive(Clone)]
 pub struct gsu_hash {
     // c:1820
     pub getfn: fn(pm: &param) -> Option<&HashTable>,
@@ -836,6 +842,7 @@ pub struct gsu_hash {
 /// fields; the dispatcher looks at `node.flags & PM_TYPE` and reads
 /// the matching field.
 #[allow(non_camel_case_types)]
+#[derive(Clone)]
 pub struct param {
     // c:1829
     pub node: hashnode, // c:1830
