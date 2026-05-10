@@ -29,6 +29,105 @@ extern "C" {
     fn tigetstr(capname: *const libc::c_char) -> *const libc::c_char;
     fn tigetnum(capname: *const libc::c_char) -> libc::c_int;
     fn tigetflag(capname: *const libc::c_char) -> libc::c_int;
+    fn putp(s: *const libc::c_char) -> libc::c_int;
+    fn tparm(s: *const libc::c_char, p1: libc::c_long, p2: libc::c_long,
+             p3: libc::c_long, p4: libc::c_long, p5: libc::c_long,
+             p6: libc::c_long, p7: libc::c_long, p8: libc::c_long,
+             p9: libc::c_long) -> *const libc::c_char;
+}
+
+/// Direct port of `bin_echoti()` from `Src/Modules/terminfo.c:64`.
+/// C body (c:67-127): probe `tigetnum` → `tigetflag` → `tigetstr`
+/// in turn; numeric/boolean caps print and return; string caps go
+/// through `tparm` (with up to 9 long args) then `putp`.
+pub fn bin_echoti(name: &str, argv: &[String],                               // c:64
+                  _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
+    use std::sync::atomic::Ordering;
+    const TERM_BAD: i32 = 1 << 1;
+
+    if argv.is_empty() {
+        crate::ported::utils::zwarnnam(name, "missing capability name");
+        return 1;
+    }
+    let s = &argv[0];                                                        // c:73 s = *argv++
+    let argv_rest = &argv[1..];
+
+    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 {                 // c:75
+        return 1;                                                            // c:76
+    }
+    let interactive = crate::ported::options::optlookup("interactive") > 0;  // c:77
+    if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 && interactive {
+        return 1;                                                            // c:78
+    }
+
+    let cs = match std::ffi::CString::new(s.as_str()) {
+        Ok(c) => c,
+        Err(_) => return 1,
+    };
+
+    // c:81 — `if (((num = tigetnum(s)) != -1) && (num != -2)) { ... }`.
+    let num = unsafe { tigetnum(cs.as_ptr()) };                              // c:81
+    if num != -1 && num != -2 {                                              // c:81
+        println!("{}", num);                                                 // c:82
+        return 0;                                                            // c:83
+    }
+
+    // c:86 — `switch (tigetflag(s)) { -1 break; 0 puts("no"); default puts("yes"); }`.
+    match unsafe { tigetflag(cs.as_ptr()) } {                                // c:86
+        -1 => {}                                                             // c:88
+        0 => { println!("no"); return 0; }                                   // c:90
+        _ => { println!("yes"); return 0; }                                  // c:93
+    }
+
+    // c:97 — `t = (char *)tigetstr(s);` — string capability.
+    let t = unsafe { tigetstr(cs.as_ptr()) };                                // c:97
+    let t_addr = t as isize;
+    if t.is_null() || t_addr == -1 || unsafe { *t } == 0 {                   // c:98
+        crate::ported::utils::zwarnnam(name,                                 // c:100
+            &format!("no such terminfo capability: {}", s));
+        return 1;                                                            // c:101
+    }
+
+    // c:104 — `if (arrlen_gt(argv, 9)) { zwarnnam(name, "too many arguments"); return 1; }`.
+    if argv_rest.len() > 9 {                                                 // c:104
+        crate::ported::utils::zwarnnam(name, "too many arguments");          // c:105
+        return 1;                                                            // c:106
+    }
+
+    // c:110 — `for (u = strcap; *u && !strarg; u++) strarg = !strcmp(s, *u);`
+    // String-arg capabilities: pfkey/pfloc/pfx/pln/pfxl take a string
+    // for argv[1+]; everything else takes integers.
+    let strcap = ["pfkey", "pfloc", "pfx", "pln", "pfxl"];
+    let strarg = strcap.iter().any(|c| s.as_str() == *c);
+
+    // c:113 — `for (arg=0; argv[arg]; arg++) pars[arg] = ...`
+    let mut pars: [libc::c_long; 9] = [0; 9];                                // c:69
+    let mut keep_alive: Vec<std::ffi::CString> = Vec::new();                 // hold strarg pointers
+    for (i, a) in argv_rest.iter().enumerate().take(9) {
+        if strarg && i > 0 {                                                 // c:115
+            let cs = std::ffi::CString::new(a.as_str()).unwrap_or_default();
+            pars[i] = cs.as_ptr() as libc::c_long;                           // c:116
+            keep_alive.push(cs);
+        } else {
+            pars[i] = a.parse::<libc::c_long>().unwrap_or(0);                // c:118 atoi
+        }
+    }
+
+    // c:122 — `if (!arg) putp(t); else putp(tparm(t, pars[0..8]));`
+    if argv_rest.is_empty() {                                                // c:122
+        unsafe { putp(t); }                                                  // c:123
+    } else {
+        let formatted = unsafe {                                             // c:125
+            tparm(t, pars[0], pars[1], pars[2], pars[3], pars[4],
+                       pars[5], pars[6], pars[7], pars[8])
+        };
+        if !formatted.is_null() {
+            unsafe { putp(formatted); }
+        }
+    }
+    drop(keep_alive);
+    0                                                                        // c:128
 }
 
 /// Initialize the terminfo database for the current `$TERM`. Must

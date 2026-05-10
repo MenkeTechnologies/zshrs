@@ -1553,7 +1553,6 @@ pub fn SPECIALPMDEF(name: &str, flags: i32, gsufn: usize,
         getnfn: getfn, scantfn: scanfn, pm: None,
     }
 }
-
 /// Port of `WRAPDEF(func)` from `Src/zsh.h:1371`.
 #[inline] #[allow(non_snake_case)]
 pub fn WRAPDEF(func: WrapFunc) -> funcwrap {
