@@ -892,8 +892,41 @@ pub fn sendbreak() -> i32 {                                                  // 
     1                                                                        // c:1147 return 1
 }
 
-/// Port of `transpose_swap()` from Src/Zle/zle_misc.c:255. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn transpose_swap() -> i32 { 0 }
+/// Port of `transpose_swap()` from `Src/Zle/zle_misc.c:254`.
+/// ```c
+/// static void
+/// transpose_swap(int start, int middle, int end)
+/// {
+///     int len1, len2;
+///     ZLE_STRING_T first;
+///     len1 = middle - start;
+///     len2 = end - middle;
+///     first = (ZLE_STRING_T)zalloc(len1 * ZLE_CHAR_SIZE);
+///     ZS_memcpy(first, zleline + start, len1);
+///     /* Move may be overlapping... */
+///     ZS_memmove(zleline + start, zleline + middle, len2);
+///     ZS_memcpy(zleline + start + len2, first, len1);
+///     zfree(first, len1 * ZLE_CHAR_SIZE);
+/// }
+/// ```
+/// Swap two adjacent slices in the line buffer:
+/// `zleline[start..middle]` and `zleline[middle..end]`. After the
+/// swap, `zleline[start..start+(end-middle)]` holds the second
+/// chunk and `zleline[start+(end-middle)..end]` holds the first.
+pub fn transpose_swap(zle: &mut Zle, start: usize, middle: usize, end: usize) {  // c:254
+    let len1 = middle - start;                                               // c:260
+    let len2 = end - middle;                                                 // c:261
+    // c:263-264 — copy first slice into temp buffer.
+    let first: Vec<char> = zle.zleline[start..middle].to_vec();
+    // c:266 — `ZS_memmove(zleline + start, zleline + middle, len2)`.
+    // Vec doesn't overlap when copy_within is used.
+    zle.zleline.copy_within(middle..end, start);
+    // c:267 — `ZS_memcpy(zleline + start + len2, first, len1)`.
+    for (i, &ch) in first.iter().enumerate() {
+        zle.zleline[start + len2 + i] = ch;
+    }
+    let _ = len1;
+}
 
 /// Port of `transposechars()` from Src/Zle/zle_misc.c:313. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn transposechars() -> i32 { 0 }
@@ -1201,5 +1234,55 @@ mod tests {
         // NEG cleared.
         assert!(!z.zmod.flags.contains(ModifierFlags::NEG));
         assert!(z.zmod.flags.contains(ModifierFlags::TMULT));
+    }
+
+    // ---------- transpose_swap real-port tests ----------
+
+    #[test]
+    fn transpose_swap_equal_halves() {
+        // c:254 — swap two equal-length adjacent slices.
+        let mut z = Zle::new();
+        z.zleline = "abcdef".chars().collect();
+        z.zlell = 6;
+        // Swap [0..2]="ab" with [2..4]="cd" → "cdabef".
+        transpose_swap(&mut z, 0, 2, 4);
+        let s: String = z.zleline.iter().collect();
+        assert_eq!(s, "cdabef");
+    }
+
+    #[test]
+    fn transpose_swap_unequal_halves() {
+        // First chunk len 1, second len 3.
+        let mut z = Zle::new();
+        z.zleline = "abcdef".chars().collect();
+        z.zlell = 6;
+        // Swap [0..1]="a" with [1..4]="bcd" → "bcdaef".
+        transpose_swap(&mut z, 0, 1, 4);
+        let s: String = z.zleline.iter().collect();
+        assert_eq!(s, "bcdaef");
+    }
+
+    #[test]
+    fn transpose_swap_first_longer() {
+        // First chunk len 3, second len 1.
+        let mut z = Zle::new();
+        z.zleline = "abcdef".chars().collect();
+        z.zlell = 6;
+        // Swap [0..3]="abc" with [3..4]="d" → "dabcef".
+        transpose_swap(&mut z, 0, 3, 4);
+        let s: String = z.zleline.iter().collect();
+        assert_eq!(s, "dabcef");
+    }
+
+    #[test]
+    fn transpose_swap_mid_buffer() {
+        // Swap not at the start.
+        let mut z = Zle::new();
+        z.zleline = "0123456789".chars().collect();
+        z.zlell = 10;
+        // Swap [3..5]="34" with [5..7]="56" → "0125634789".
+        transpose_swap(&mut z, 3, 5, 7);
+        let s: String = z.zleline.iter().collect();
+        assert_eq!(s, "0125634789");
     }
 }
