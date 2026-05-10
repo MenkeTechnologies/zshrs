@@ -455,8 +455,31 @@ pub fn vifindprevchar() -> i32 { 0 }
 /// Port of `vifindprevcharskip()` from Src/Zle/zle_move.c:775. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn vifindprevcharskip() -> i32 { 0 }
 
-/// Port of `vifirstnonblank()` from Src/Zle/zle_move.c:862. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn vifirstnonblank() -> i32 { 0 }
+/// Port of `vifirstnonblank()` from `Src/Zle/zle_move.c:861`.
+/// ```c
+/// int
+/// vifirstnonblank(UNUSED(char **args))
+/// {
+///     zlecs = findbol();
+///     while (zlecs != zlell && ZC_iblank(zleline[zlecs]))
+///         INCCS();
+///     return 0;
+/// }
+/// ```
+/// `vi-first-non-blank` widget — jump to bol then skip leading
+/// whitespace. ZC_iblank is `iblank` (space/tab) for ASCII.
+pub fn vifirstnonblank(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:861
+    zle.zlecs = crate::ported::zle::zle_utils::findbol(zle);                 // c:864
+    while zle.zlecs != zle.zlell {                                           // c:865
+        let ch = zle.zleline[zle.zlecs];
+        // c:865 — `ZC_iblank` = isblank() = space or tab.
+        if ch != ' ' && ch != '\t' {
+            break;
+        }
+        inccs(zle);                                                          // c:866
+    }
+    0                                                                        // c:867
+}
 
 /// Port of `viforwardchar()` from `Src/Zle/zle_move.c:659`.
 /// ```c
@@ -817,5 +840,66 @@ mod region_tests {
         z.zmod.mult = 99;
         viforwardchar(&mut z);
         assert_eq!(z.zlecs, 2);
+    }
+
+    // ---------- vifirstnonblank tests ----------
+
+    #[test]
+    fn vifirstnonblank_skips_leading_spaces() {
+        // c:864-866 — bol then skip space/tab.
+        let mut z = Zle::default();
+        z.zleline = "   hello".chars().collect();
+        z.zlell = 8;
+        z.zlecs = 5; // somewhere mid-word
+        let r = vifirstnonblank(&mut z);
+        assert_eq!(r, 0);
+        assert_eq!(z.zlecs, 3); // first non-blank
+    }
+
+    #[test]
+    fn vifirstnonblank_skips_tabs() {
+        // c:865 — ZC_iblank includes tab.
+        let mut z = Zle::default();
+        z.zleline = "\t\t\tfoo".chars().collect();
+        z.zlell = 6;
+        z.zlecs = 0;
+        vifirstnonblank(&mut z);
+        assert_eq!(z.zlecs, 3);
+    }
+
+    #[test]
+    fn vifirstnonblank_no_blanks() {
+        // No leading blanks → cursor lands at bol.
+        let mut z = Zle::default();
+        z.zleline = "hello".chars().collect();
+        z.zlell = 5;
+        z.zlecs = 3;
+        vifirstnonblank(&mut z);
+        assert_eq!(z.zlecs, 0);
+    }
+
+    #[test]
+    fn vifirstnonblank_all_blanks() {
+        // c:865 — `while zlecs != zlell` exits cleanly when only blanks.
+        let mut z = Zle::default();
+        z.zleline = "   ".chars().collect();
+        z.zlell = 3;
+        z.zlecs = 0;
+        vifirstnonblank(&mut z);
+        // walks to zlell (no non-blank found).
+        assert_eq!(z.zlecs, 3);
+    }
+
+    #[test]
+    fn vifirstnonblank_respects_findbol() {
+        // c:864 — `zlecs = findbol()`. With multiline buffer, jump
+        // to start of CURRENT line, then skip blanks.
+        let mut z = Zle::default();
+        z.zleline = "abc\n   def".chars().collect();
+        z.zlell = 10;
+        z.zlecs = 8; // 'e' in 'def'
+        vifirstnonblank(&mut z);
+        // findbol → 4 (after first '\n'); skip 3 spaces → 7 ('d')
+        assert_eq!(z.zlecs, 7);
     }
 }
