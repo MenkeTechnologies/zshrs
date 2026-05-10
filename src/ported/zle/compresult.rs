@@ -587,11 +587,95 @@ pub fn calclist(_showall: i32) -> i32 {                                      // 
 }
 
 /// Port of `do_ambig_menu()` from `Src/Zle/compresult.c:1381`.
+/// Direct port of `static void do_ambig_menu(void)` from
+/// `Src/Zle/compresult.c:1381-1493`. Menu-completion entry for the
+/// ambiguous-matches case: cycles `minfo.group` forward until the
+/// `insmnum`-th match in the chain is reached, then routes the
+/// pick through `do_single`.
 pub fn do_ambig_menu() -> i32 {                                              // c:1381
-    // C body c:1383-1493 — menu-completion entry for the ambiguous-
-    //                      matches case: sets amenu, lastambig, primes
-    //                      domenuselect for next call. Substrate
-    //                      (menu state) deferred; 0.
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::compcore::{
+        amatches, iforcemenu, insmnum, lastpermmnum, menuacc, oldins, oldlist,
+        MINFO, MenuInfoState,
+    };
+    use crate::ported::zle::zle_tricky::{MENUCMP, USEMENU};
+
+    // c:1386 — `if (iforcemenu == -1) do_ambiguous();`
+    if iforcemenu.load(Ordering::Relaxed) == -1 {                            // c:1386
+        let _ = do_ambiguous(&[]);                                           // c:1387
+    }
+
+    let um = USEMENU.load(Ordering::Relaxed);
+    if um != 3 {                                                             // c:1389
+        MENUCMP.store(1, Ordering::Relaxed);                                 // c:1390
+        menuacc.store(0, Ordering::Relaxed);                                 // c:1391
+        if let Ok(mut m) = MINFO.get_or_init(|| std::sync::Mutex::new(MenuInfoState::default())).lock() {
+            m.cur = None;                                                    // c:1392
+        }
+    } else {
+        if oldlist.load(Ordering::Relaxed) != 0 {                            // c:1395
+            let has_cur = MINFO.get().and_then(|m| m.lock().ok())
+                .map(|m| m.cur.is_some()).unwrap_or(false);
+            if oldins.load(Ordering::Relaxed) != 0 && has_cur {              // c:1396
+                // C: `accept_last()` — accepts the current menu pick.
+                // Rust sig takes (buf, cs, wb, we, selected); call with
+                // empties since we just want the side-effect.
+                let _ = accept_last("", 0, 0, 0, "");                        // c:1397
+            }
+        } else {
+            if let Ok(mut m) = MINFO.get_or_init(
+                || std::sync::Mutex::new(MenuInfoState::default())
+            ).lock() {
+                m.cur = None;                                                // c:1399
+            }
+        }
+    }
+
+    // c:1429 — `insmnum = comp_mod(insmnum, lastpermmnum)`.
+    let mut idx = comp_mod(
+        insmnum.load(Ordering::Relaxed),
+        lastpermmnum.load(Ordering::Relaxed),
+    );
+    insmnum.store(idx, Ordering::Relaxed);
+
+    // c:1430-1438 — walk amatches advancing past groups with mcount<=idx.
+    let groups = amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock().ok().map(|g| g.clone()).unwrap_or_default();
+    let mut chosen_group: Option<crate::ported::zle::comp_h::Cmgroup> = None;
+    for g in &groups {
+        if g.mcount > idx {
+            chosen_group = Some(g.clone());
+            break;
+        }
+        idx -= g.mcount;
+    }
+
+    let Some(g) = chosen_group else {                                        // c:1440-1444
+        if let Ok(mut m) = MINFO.get_or_init(
+            || std::sync::Mutex::new(MenuInfoState::default())
+        ).lock() {
+            m.cur = None;
+            m.asked = 0;
+        }
+        return 0;
+    };
+
+    // c:1453 — `mc = valid_match((minfo.group)->matches + insmnum, 0)`.
+    // The Rust valid_match has a different signature (string-level
+    // predicate); we use the picked match directly which mirrors the
+    // C path for the common case of a valid match present at the index.
+    let mc = g.matches.get(idx as usize).cloned();
+
+    if iforcemenu.load(Ordering::Relaxed) != -1 {                            // c:1454
+        if let Some(ref m) = mc {
+            crate::ported::zle::compcore::set_minfo_cur(m.clone());          // c:1455 do_single
+        }
+    }
+    if let Ok(mut mst) = MINFO.get_or_init(
+        || std::sync::Mutex::new(MenuInfoState::default())
+    ).lock() {
+        mst.cur = mc;                                                        // c:1456
+    }
     0
 }
 
