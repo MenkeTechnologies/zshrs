@@ -619,6 +619,7 @@ pub struct shfunc {
 
 /// Port of `struct funcstack` from `Src/zsh.h:1348-1356`.
 #[allow(non_camel_case_types)]
+#[derive(Clone, Default)]
 pub struct funcstack {
     // c:1348
     pub prev: Option<Funcstack>,  // c:1349
