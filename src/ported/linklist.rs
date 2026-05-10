@@ -41,12 +41,13 @@ impl<T> Default for LinkList<T> {
 }
 
 impl<T> LinkList<T> {
+    // Get an empty linked list header                                        // c:99
     /// Create a new empty linked list.
     /// Port of `znewlinklist()` from Src/linklist.c:116 — the
     /// permanent-storage variant; the heap-arena variant is
     /// `newlinklist()` (line 103) which we don't model here because
     /// Rust's `Drop` already handles arena lifetime.
-    pub fn new() -> Self {
+    pub fn new() -> Self {                                                      // c:116
         LinkList {
             head: None,
             tail: None,
@@ -62,21 +63,23 @@ impl<T> LinkList<T> {
         self.head.is_none()
     }
 
+    // Count the number of nodes in a linked list                             // c:300
     /// Get the length of the list.
     /// Port of `countlinknodes()` from Src/linklist.c:304 — but O(1)
     /// instead of O(n) because we keep the count in the header. The
     /// C source uses an O(n) walk because its `LinkList` header
     /// doesn't carry a length field.
-    pub fn len(&self) -> usize {
+    pub fn len(&self) -> usize {                                                // c:304
         self.len
     }
 
+    // Insert a node in a linked list after a given node                      // c:129
     /// Add an element to the front of the list.
     /// Port of `pushnode()` (Src/zsh.h macro) which expands to
     /// `zinsertlinknode(list, &list->node, dat)` (Src/linklist.c:151)
     /// — inserts a new permanent-storage node ahead of the current
     /// head.
-    pub fn push_front(&mut self, data: T) {
+    pub fn push_front(&mut self, data: T) {                                     // c:151
         let new_node = Box::new(LinkNode {
             data,
             next: self.head,
@@ -118,11 +121,12 @@ impl<T> LinkList<T> {
         self.len += 1;
     }
 
+    // Pop the top node off a linked list and free it.                        // c:206
     /// Remove and return the first element.
     /// Port of `getlinknode()` from Src/linklist.c:210 — pulls the
     /// head node off, frees the wrapper, returns the contained
     /// datum.
-    pub fn pop_front(&mut self) -> Option<T> {
+    pub fn pop_front(&mut self) -> Option<T> {                                  // c:210
         self.head.map(|node| unsafe {
             let node = Box::from_raw(node.as_ptr());
             self.head = node.next;
@@ -137,11 +141,12 @@ impl<T> LinkList<T> {
         })
     }
 
+    // Remove a node from a linked list                                       // c:247
     /// Remove and return the last element.
     /// Port of the `remnode(list, lastnode(list))` idiom the C
     /// source uses (`remnode()` lives at Src/linklist.c:251). We
     /// inline the tail unlink here for O(1) operation.
-    pub fn pop_back(&mut self) -> Option<T> {
+    pub fn pop_back(&mut self) -> Option<T> {                                   // c:251
         self.tail.map(|node| unsafe {
             let node = Box::from_raw(node.as_ptr());
             self.tail = node.prev;
@@ -208,7 +213,7 @@ impl<T> LinkList<T> {
     /// `other` onto our tail and zeroes `other`'s head/tail/count
     /// so the moved-from list is left empty (matches the C source's
     /// post-condition).
-    pub fn append(&mut self, other: &mut LinkList<T>) {
+    pub fn append(&mut self, other: &mut LinkList<T>) {                         // c:360
         if other.is_empty() {
             return;
         }
@@ -241,11 +246,12 @@ impl<T> LinkList<T> {
         self.into_iter().collect()
     }
 
+    // Free a linked list                                                     // c:283
     /// Clear the list.
     /// Port of `freelinklist(list, NULL)` (Src/linklist.c:287) —
     /// drops every node. The C source's `freefunc` parameter is
     /// satisfied by Rust's `Drop` for `T`.
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self) {                                                   // c:287
         while self.pop_front().is_some() {}
     }
 }
@@ -599,7 +605,7 @@ pub fn newsizedlist<T>(_size: usize) -> LinkList<T> {                       // c
 
 /// Port of `joinlists()` from Src/linklist.c:360 — concatenate
 /// `b` onto `a`, draining `b`.
-pub fn joinlists<T>(a: &mut LinkList<T>, b: &mut LinkList<T>) {
+pub fn joinlists<T>(a: &mut LinkList<T>, b: &mut LinkList<T>) {              // c:360
     while let Some(v) = b.pop_front() {
         a.push_back(v);
     }

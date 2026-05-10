@@ -22,7 +22,7 @@ use super::zle_thingy::Thingy;
 /// key spec into the raw byte sequence the keymap trie indexes by.
 /// The C version mutates a buffer in place + writes length via out
 /// pointer; this Rust port returns a fresh `Vec<u8>`.
-pub fn getkeystring(s: &str) -> Vec<u8> {
+pub fn getkeystring(s: &str) -> Vec<u8> {                                    // c:utils.c:6915
     let mut result = Vec::new();
     let mut chars = s.chars().peekable();
 
@@ -122,7 +122,7 @@ pub fn getkeystring(s: &str) -> Vec<u8> {
 /// `bindkey -L` and the `where-is` widget to show key bindings in the
 /// same `^X` / `\\eX` form `getkeystring` accepts. C signature writes
 /// to a `FILE*` stream; this Rust port returns the formatted `String`.
-pub fn printbind(seq: &[u8]) -> String {
+pub fn printbind(seq: &[u8]) -> String {                                     // c:zle_utils.c:1283
     let mut result = String::new();
     let mut i = 0;
 
@@ -160,7 +160,7 @@ pub fn printbind(seq: &[u8]) -> String {
 /// Src/Zle/zle_keymap.c). Returns true if the keymap exists and the binding
 /// is installed. Uses `Arc::make_mut` to copy-on-write the wrapped Keymap so
 /// the mutation respects the existing Arc-shared layout.
-pub fn bindkey(km: &mut KeymapManager, keymap: &str, seq: &str, widget: &str) -> bool {
+pub fn bindkey(km: &mut KeymapManager, keymap: &str, seq: &str, widget: &str) -> bool { // c:zle_keymap.c:566
     let seq_bytes = getkeystring(seq);
     let map = match km.keymaps.get_mut(keymap) {
         Some(m) => m,
@@ -175,7 +175,7 @@ pub fn bindkey(km: &mut KeymapManager, keymap: &str, seq: &str, widget: &str) ->
 /// Port of `bindkey -L` listing from Src/Zle/zle_keymap.c (the
 /// listing branch of `bin_bindkey`). Both 1-byte fast-path entries
 /// (`first[]`) and multi-byte trie entries (`multi`) are included.
-pub fn bindlistout(km: &KeymapManager, keymap: &str) -> Vec<(String, String)> {
+pub fn bindlistout(km: &KeymapManager, keymap: &str) -> Vec<(String, String)> { // c:zle_keymap.c:1094
     let mut bindings = Vec::new();
 
     if let Some(map) = km.keymaps.get(keymap) {

@@ -135,7 +135,7 @@ pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // 
 /// `ret = getrandom(bufptr, (len - val), 0);`
 /// with the C EINTR-retry loop at c:80-85.
 #[cfg(target_os = "linux")]
-pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {
+pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // c:62
     let mut filled = 0;
 
     while filled < buf.len() {
@@ -187,7 +187,7 @@ pub fn get_bound_random_buffer(buffer: &mut [u32], max: u32) {
 /// C source's math-function entry point exposed to `${(( ... ))}`.
 /// All three arguments are optional; behaviour matches the C
 /// source's bound-checks (`lower < 0`, `upper < lower`, etc.).
-pub fn math_zrand_int(upper: Option<i64>, lower: Option<i64>, inclusive: bool) -> Result<i64, String> {
+pub fn math_zrand_int(upper: Option<i64>, lower: Option<i64>, inclusive: bool) -> Result<i64, String> { // c:161
     let lower = lower.unwrap_or(0);
     let upper = upper.unwrap_or(u32::MAX as i64);
 
@@ -227,7 +227,7 @@ pub fn math_zrand_int(upper: Option<i64>, lower: Option<i64>, inclusive: bool) -
 /// Port of `math_zrand_float()` from Src/Modules/random.c:204 —
 /// the C source's math-function entry point that returns a
 /// uniform double in `[0, 1)`.
-pub fn math_zrand_float() -> f64 {
+pub fn math_zrand_float() -> f64 {                                           // c:204
     random_real()
 }
 

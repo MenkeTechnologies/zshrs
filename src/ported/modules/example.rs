@@ -66,7 +66,7 @@ pub static arrparam: Mutex<Option<Vec<String>>> = Mutex::new(None);  // c:37
 /// static int
 /// bin_example(char *nam, char **args, Options ops, UNUSED(int func))
 /// ```
-pub fn bin_example(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 {
+pub fn bin_example(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 { // c:42
     let mut stdout = std::io::stdout().lock();
     // c:44 — `unsigned char c;`
     let mut c: u8;
@@ -141,7 +141,7 @@ pub fn bin_example(nam: &str, args: &[String], ops: &options, _func: i32) -> i32
 // =====================================================================
 
 /// Port of `cond_p_len()` from `Src/Modules/example.c:80`.
-pub fn cond_p_len(a: &[String], _id: i32) -> i32 {
+pub fn cond_p_len(a: &[String], _id: i32) -> i32 {                           // c:80
     // c:82 — `char *s1 = cond_str(a, 0, 0);`
     let s1: String = cond_str(a, 0, false);                            // c:82
     if a.len() > 1 {                                                   // c:84 if (a[1])
@@ -159,7 +159,7 @@ pub fn cond_p_len(a: &[String], _id: i32) -> i32 {
 // =====================================================================
 
 /// Port of `cond_i_ex()` from `Src/Modules/example.c:95`.
-pub fn cond_i_ex(a: &[String], _id: i32) -> i32 {
+pub fn cond_i_ex(a: &[String], _id: i32) -> i32 {                            // c:95
     // c:97 — `char *s1 = cond_str(a, 0, 0), *s2 = cond_str(a, 1, 0);`
     let s1: String = cond_str(a, 0, false);                            // c:97
     let s2: String = cond_str(a, 1, false);                            // c:97
@@ -172,7 +172,7 @@ pub fn cond_i_ex(a: &[String], _id: i32) -> i32 {
 // =====================================================================
 
 /// Port of `math_sum()` from `Src/Modules/example.c:104`.
-pub fn math_sum(_name: &str, argc: i32, argv: &[Mnumber], _id: i32) -> Mnumber {
+pub fn math_sum(_name: &str, argc: i32, argv: &[Mnumber], _id: i32) -> Mnumber { // c:104
     // c:106 — `mnumber ret;`
     let mut ret = Mnumber::default();
     // c:107 — `int f = 0;`
@@ -212,7 +212,7 @@ pub fn math_sum(_name: &str, argc: i32, argv: &[Mnumber], _id: i32) -> Mnumber {
 // =====================================================================
 
 /// Port of `math_length()` from `Src/Modules/example.c:133`.
-pub fn math_length(_name: &str, arg: &str, _id: i32) -> Mnumber {
+pub fn math_length(_name: &str, arg: &str, _id: i32) -> Mnumber {            // c:133
     // c:135 — `mnumber ret;`
     // c:137 — `ret.type = MN_INTEGER;`
     // c:138 — `ret.u.l = strlen(arg);`
@@ -233,7 +233,7 @@ pub fn math_length(_name: &str, arg: &str, _id: i32) -> Mnumber {
 /// zsh.h:774 / 522. Pointer-shape preserved as `*const eprog` /
 /// `*const funcwrap` since the C body never derefs `prog`/`w` beyond
 /// passing them to `runshfunc`.
-pub fn ex_wrapper(prog: *const crate::ported::zsh_h::eprog,
+pub fn ex_wrapper(prog: *const crate::ported::zsh_h::eprog,                  // c:145
                   w: *const crate::ported::zsh_h::funcwrap,
                   name: &str) -> i32 {
     // c:147 — `if (strncmp(name, "example", 7)) return 1;`

@@ -625,13 +625,13 @@ thread_local! {
 /// Reset the SHIN pushback buffer.
 /// Port of `shinbufreset()` from Src/input.c:159 —
 /// `shinbufendptr = shinbufptr = shinbuffer`.
-pub fn shinbufreset() {
+pub fn shinbufreset() {                                                      // c:159
     INPUT.with(|b| b.borrow_mut().shin_buf_reset());
 }
 
 /// Allocate a fresh SHIN buffer.
 /// Port of `shinbufalloc()` from Src/input.c:171.
-pub fn shinbufalloc() {
+pub fn shinbufalloc() {                                                      // c:171
     INPUT.with(|b| b.borrow_mut().shin_buf_alloc());
 }
 
@@ -639,13 +639,13 @@ pub fn shinbufalloc() {
 /// Port of `shinbufsave()` from Src/input.c:181 — push the
 /// existing buffer onto a save-stack and start a fresh one for
 /// nested `eval`/`source` contexts.
-pub fn shinbufsave() {
+pub fn shinbufsave() {                                                       // c:181
     INPUT.with(|b| b.borrow_mut().shin_buf_save());
 }
 
 /// Pop the top of the SHIN save stack back into the live buffer.
 /// Port of `shinbufrestore()` from Src/input.c:200.
-pub fn shinbufrestore() {
+pub fn shinbufrestore() {                                                    // c:200
     INPUT.with(|b| b.borrow_mut().shin_buf_restore());
 }
 
@@ -669,7 +669,7 @@ pub fn shingetchar() -> i32 {                                               // c
 /// Port of `shingetline()` from Src/input.c:267 — calls
 /// `shingetchar` in a loop, metafies high bytes, returns NULL
 /// (`""`) on EOF.
-pub fn shingetline() -> String {
+pub fn shingetline() -> String {                                             // c:267
     use std::io::BufReader;
     let stdin = std::io::stdin();
     let mut reader = BufReader::new(stdin.lock());
@@ -693,7 +693,7 @@ pub fn inputline() -> String {                                              // c
 /// Stuff a whole file into the input queue.
 /// Port of `stuff()` from Src/input.c:647 — read the file, echo
 /// it to stderr, push onto the input stack.
-pub fn stuff(filename: &str) -> i32 {
+pub fn stuff(filename: &str) -> i32 {                                        // c:647
     use std::io::Write;
     let buf = match std::fs::read_to_string(filename) {
         Ok(b) => b,
@@ -710,12 +710,12 @@ pub fn stuff(filename: &str) -> i32 {
 // Remove the top element of the stack                                       // c:732
 /// Pop the topmost input-stack frame.
 /// Port of `inpoptop()` from Src/input.c:736.
-pub fn inpoptop() {
+pub fn inpoptop() {                                                          // c:736
     INPUT.with(|b| b.borrow_mut().inpop());
 }
 
 /// Pop all input frames added by alias expansion.
 /// Port of `inpopalias()` from Src/input.c:804.
-pub fn inpopalias() {
+pub fn inpopalias() {                                                        // c:804
     INPUT.with(|b| b.borrow_mut().inpop_alias());
 }

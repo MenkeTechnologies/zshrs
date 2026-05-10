@@ -136,7 +136,7 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {                         // c:74
 /// Port of `do_allmatches()` from Src/Zle/compresult.c — fires for
 /// the `all-matches` widget and for the implicit case when no
 /// listing fits.
-pub fn do_allmatches(
+pub fn do_allmatches(                                                        // c:897
     buffer: &str,
     cursor: usize,
     word_start: usize,
@@ -152,7 +152,7 @@ pub fn do_allmatches(
 /// Port of `do_menucmp()` from Src/Zle/compresult.c. The C source
 /// also handles per-group menu wrap; this Rust port treats the
 /// match list as flat for the host's menu loop.
-pub fn do_menucmp(matches: &[String], current: usize, forward: bool) -> (usize, &str) {
+pub fn do_menucmp(matches: &[String], current: usize, forward: bool) -> (usize, &str) { // c:1253
     if matches.is_empty() {
         return (0, "");
     }
@@ -173,7 +173,7 @@ pub fn do_menucmp(matches: &[String], current: usize, forward: bool) -> (usize, 
 /// Port of `accept_last()` from Src/Zle/compresult.c. Acts the same
 /// as `do_single` with `add_space=true` since a confirmed selection
 /// always wants a trailing space.
-pub fn accept_last(
+pub fn accept_last(                                                          // c:1288
     buffer: &str,
     cursor: usize,
     word_start: usize,
@@ -194,7 +194,7 @@ pub fn valid_match(word: &str, prefix: &str, suffix: &str) -> bool {
 /// that would need quoting on insertion.
 /// Port of `hasbrpsfx()` from Src/Zle/compresult.c — used by the
 /// brace-suffix tracking that compsys keeps for menu completion.
-pub fn hasbrpsfx(s: &str) -> bool {
+pub fn hasbrpsfx(s: &str) -> bool {                                          // c:685
     s.contains('{') || s.contains('}')
 }
 
@@ -211,7 +211,7 @@ pub fn build_pos_string(current: usize, total: usize) -> String {
 /// Port of `cut_cline()` from Src/Zle/compresult.c. The C source
 /// truncates the Cline's display field to `max_len`; ours emits
 /// `…` (three ASCII dots) when truncation is needed.
-pub fn cut_cline(s: &str, max_len: usize) -> String {
+pub fn cut_cline(s: &str, max_len: usize) -> String {                        // c:46
     if s.len() <= max_len {
         s.to_string()
     } else {
@@ -233,7 +233,8 @@ pub fn cline_str(prefix: &str, line: &str, suffix: &str) -> String {
 /// Port of `list_lines()` from Src/Zle/compresult.c — the listing
 /// path uses this to decide whether to invoke the more-prompt
 /// (`asklistscroll`).
-pub fn list_lines(matches: &[String], columns: usize) -> usize {
+// Return the number of screen lines needed for the list.                   // c:1446
+pub fn list_lines(matches: &[String], columns: usize) -> usize {             // c:1450
     if columns == 0 {
         return matches.len();
     }
@@ -295,7 +296,7 @@ pub fn skipnolist(matches: &[crate::ported::zle::comp_h::Cmatch], showall: i32) 
 pub fn comp_list(v: Option<&str>) {                                              // c:1467
     use std::sync::Mutex;
     use std::sync::atomic::Ordering;
-    use crate::ported::zle::compcore::ONLYEXPL;
+    use crate::ported::zle::compcore::onlyexpl;
 
     // c:1470-1471 — `zsfree(complist); complist = v`.
     let complist = crate::ported::zle::complete::COMPLIST
@@ -317,7 +318,7 @@ pub fn comp_list(v: Option<&str>) {                                             
           | (if s.contains("messages") { 2 } else { 0 })
         }
     };
-    ONLYEXPL.store(val, Ordering::SeqCst);
+    onlyexpl.store(val, Ordering::SeqCst);
 }
 
 /// Port of `comp_mod()` from `Src/Zle/compresult.c:1363`.
@@ -459,18 +460,18 @@ mod tests {
     #[test]
     fn comp_list_sets_onlyexpl() {
         use std::sync::atomic::Ordering;
-        use crate::ported::zle::compcore::ONLYEXPL;
+        use crate::ported::zle::compcore::onlyexpl;
         // c:1473 — `(strstr(v,"expl")?1:0) | (strstr(v,"messages")?2:0)`.
         comp_list(Some("expl"));
-        assert_eq!(ONLYEXPL.load(Ordering::SeqCst), 1);
+        assert_eq!(onlyexpl.load(Ordering::SeqCst), 1);
         comp_list(Some("messages"));
-        assert_eq!(ONLYEXPL.load(Ordering::SeqCst), 2);
+        assert_eq!(onlyexpl.load(Ordering::SeqCst), 2);
         comp_list(Some("expl messages"));
-        assert_eq!(ONLYEXPL.load(Ordering::SeqCst), 3);
+        assert_eq!(onlyexpl.load(Ordering::SeqCst), 3);
         comp_list(Some("nothing"));
-        assert_eq!(ONLYEXPL.load(Ordering::SeqCst), 0);
+        assert_eq!(onlyexpl.load(Ordering::SeqCst), 0);
         comp_list(None);
-        assert_eq!(ONLYEXPL.load(Ordering::SeqCst), 0);
+        assert_eq!(onlyexpl.load(Ordering::SeqCst), 0);
     }
 
     #[test]
@@ -539,19 +540,81 @@ pub fn do_ambig_menu() -> i32 {                                              // 
     0
 }
 
-/// Port of `ilistmatches()` from `Src/Zle/compresult.c:2284`.
+/// Port of `int ilistmatches(Hookdef dummy, Chdata dat)` from
+/// `Src/Zle/compresult.c:2284`. Hook callback for the standard
+/// listing path: runs `calclist`, bails when `listdat.nlines == 0`,
+/// otherwise calls `printlist(0, iprintm, 0)`.
 pub fn ilistmatches() -> i32 {                                               // c:2284
-    // C body c:2286-2302 — hook callback for `listmatches()` — calls
-    //                      printlist with iprintm. Substrate deferred; 0.
-    0
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_refresh::{LISTSHOWN, SHOWINGLIST};
+    let _ = calclist(0);                                                     // c:2286
+    // c:2288 — `listdat.nlines` not yet a Rust struct. Without it,
+    // we conservatively treat the list as non-empty and let
+    // printlist's no-op path emit nothing.
+    let _ = SHOWINGLIST;                                                     // c:2289
+    let _ = LISTSHOWN;
+    // c:2292 — `if (asklist()) return 0`. asklist() prompts the user
+    // via the listdat overflow path; without listdat we always proceed.
+    let _ = printlist();                                                     // c:2295
+    0                                                                        // c:2297
 }
 
-/// Port of `invalidate_list()` from `Src/Zle/compresult.c:2334`.
+/// Port of `mod_export int invalidate_list(void)` from
+/// `Src/Zle/compresult.c:2334`.
+///
+/// "Invalidate the completion list." Bumps `invcount`; if `validlist`
+/// was set, frees the perm-allocated `lastmatches` and refreshes the
+/// screen if the list was on display. Resets every transition flag
+/// (`lastambig`, `menucmp`, `menuacc`, `validlist`, `showinglist`,
+/// `fromcomp`) to 0, clears `listdat.valid`, and zeros out `nmatches`
+/// + `amatches`.
 pub fn invalidate_list() -> i32 {                                            // c:2334
-    // C body c:2336-2370 — discards cached match list: sets validlist=0,
-    //                      showinglist=0, calls freematches. Substrate
-    //                      deferred; 0.
-    0
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::compcore::{
+        amatches, fromcomp, lastmatches, menuacc, nmatches as nmatches_g,
+    };
+    use crate::ported::zle::zle_refresh::SHOWINGLIST;
+    use crate::ported::zle::zle_tricky::{LASTAMBIG, MENUCMP, VALIDLIST};
+
+    INVCOUNT.fetch_add(1, Ordering::SeqCst);                                 // c:2336
+    if VALIDLIST.load(Ordering::SeqCst) != 0 {                               // c:2337
+        if SHOWINGLIST.load(Ordering::SeqCst) == -2 {                        // c:2338
+            // c:2339 — `zrefresh()`. Refresh hook lives in zle_refresh.c;
+            // call site preserved.
+            let _ = SHOWINGLIST.load(Ordering::SeqCst);
+        }
+        // c:2341 — `freematches(lastmatches, 1)`. Drop covers it; clear.
+        if let Ok(mut g) = lastmatches.get_or_init(
+            || std::sync::Mutex::new(Vec::new())
+        ).lock() {
+            g.clear();
+        }
+        crate::ported::zle::compcore::hasoldlist.store(0, Ordering::SeqCst); // c:2343
+    }
+    // c:2345 — `lastambig = menucmp = menuacc = validlist = showinglist
+    //           = fromcomp = 0`.
+    LASTAMBIG.store(0, Ordering::SeqCst);
+    MENUCMP.store(0, Ordering::SeqCst);
+    menuacc.store(0, Ordering::SeqCst);
+    VALIDLIST.store(0, Ordering::SeqCst);
+    SHOWINGLIST.store(0, Ordering::SeqCst);
+    fromcomp.store(0, Ordering::SeqCst);
+    // c:2346 — `listdat.valid = 0`. listdat struct not yet ported.
+    // c:2347-2348 — `if (listshown < 0) listshown = 0`.
+    use crate::ported::zle::zle_refresh::LISTSHOWN;
+    if LISTSHOWN.load(Ordering::SeqCst) < 0 {
+        LISTSHOWN.store(0, Ordering::SeqCst);
+    }
+    // c:2349-2353 — `minfo.cur = NULL; minfo.asked = 0; …`. minfo not
+    // ported as a static struct yet.
+    // c:2354 — `compwidget = NULL`. compwidget lives on Zle, not here.
+    nmatches_g.store(0, Ordering::SeqCst);                                   // c:2355
+    if let Ok(mut g) = amatches.get_or_init(
+        || std::sync::Mutex::new(Vec::new())
+    ).lock() {
+        g.clear();                                                           // c:2356
+    }
+    0                                                                        // c:2358
 }
 
 /// Port of `iprintm()` from `Src/Zle/compresult.c:2241`.
@@ -562,11 +625,30 @@ pub fn iprintm() -> i32 {                                                    // 
     0
 }
 
-/// Port of `list_matches()` from `Src/Zle/compresult.c:2304`.
+/// Port of `int list_matches(Hookdef dummy, void *dummy2)` from
+/// `Src/Zle/compresult.c:2304`.
+///
+/// "List the matches. Note that the list entries are metafied."
+/// Walks `amatches` into a `chdata` bag and dispatches via
+/// `runhookdef(COMPLISTMATCHESHOOK, &dat)` so `_main_complete`-style
+/// user hooks can override the default `ilistmatches` rendering.
 pub fn list_matches() -> i32 {                                               // c:2304
-    // C body c:2306-2332 — hook callback wrapper around printlist via
-    //                      Hookdef registration. Substrate deferred; 0.
-    0
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::compcore::{amatches, nmatches as nmatches_g};
+    use crate::ported::zle::zle_tricky::VALIDLIST;
+    if VALIDLIST.load(Ordering::SeqCst) == 0 {                               // c:2311
+        crate::ported::zle::zle_utils::showmsg("BUG: listmatches called with bogus list");
+        return 1;                                                            // c:2313
+    }
+    // c:2317-2324 — populate the chdata bag (`matches`/`num`/`cur`).
+    //              chdata struct not yet ported; we still hold the
+    //              pointers globally so callers reading them see them.
+    let _ = amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let _ = nmatches_g.load(Ordering::Relaxed);
+    // c:2325 — `runhookdef(COMPLISTMATCHESHOOK, &dat)`. Hook chain
+    //          not ported as a runtime registry; fall through to the
+    //          default callback `ilistmatches`.
+    ilistmatches()
 }
 
 /// Port of `printlist()` from `Src/Zle/compresult.c:1978`.

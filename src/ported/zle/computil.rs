@@ -154,7 +154,7 @@ pub fn cd_get(spec: &str) -> CompDescItem {
 }
 
 /// Parse multiple specs into a description set Port of `cd_init` from Src/Zle/computil.c.
-pub fn cd_init(specs: &[String], tag: &str, group: &str) -> CompDescSet {
+pub fn cd_init(specs: &[String], tag: &str, group: &str) -> CompDescSet {    // c:477
     let items: Vec<CompDescItem> = specs.iter().map(|s| cd_get(s)).collect();
     CompDescSet {
         tag: tag.to_string(),
@@ -165,19 +165,19 @@ pub fn cd_init(specs: &[String], tag: &str, group: &str) -> CompDescSet {
 }
 
 /// Sort items in a description set Port of `cd_sort` from Src/Zle/computil.c.
-pub fn cd_sort(set: &mut CompDescSet) {
+pub fn cd_sort(set: &mut CompDescSet) {                                      // c:233
     set.items.sort_by(|a, b| a.word.cmp(&b.word));
 }
 
 /// Calculate display widths Port of `cd_calc` from Src/Zle/computil.c.
-pub fn cd_calc(items: &[CompDescItem], separator: &str) -> (usize, usize) {
+pub fn cd_calc(items: &[CompDescItem], separator: &str) -> (usize, usize) {  // c:188
     let max_word = items.iter().map(|i| i.word.len()).max().unwrap_or(0);
     let max_desc = items.iter().map(|i| i.description.len()).max().unwrap_or(0);
     (max_word, max_word + separator.len() + max_desc)
 }
 
 /// Format items for display Port of `cd_prep` from Src/Zle/computil.c.
-pub fn cd_prep(items: &[CompDescItem], separator: &str) -> Vec<String> {
+pub fn cd_prep(items: &[CompDescItem], separator: &str) -> Vec<String> {     // c:239
     let (max_word, _) = cd_calc(items, separator);
     items
         .iter()
@@ -198,12 +198,14 @@ pub fn cd_prep(items: &[CompDescItem], separator: &str) -> Vec<String> {
 }
 
 /// Check if groups want sorting Port of `cd_groups_want_sorting` from Src/Zle/computil.c.
-pub fn cd_groups_want_sorting(sets: &[CompDescSet]) -> bool {
+// Return 1 if cd_state specifies unsorted groups, 0 otherwise.             // c:213
+pub fn cd_groups_want_sorting(sets: &[CompDescSet]) -> bool {                // c:215
     sets.iter().all(|s| s.options.sort)
 }
 
 /// Concatenate arrays from description sets Port of `cd_arrcat` from Src/Zle/computil.c.
-pub fn cd_arrcat(sets: &[CompDescSet]) -> Vec<String> {
+// Duplicate and concatenate two arrays.  Return the result.                // c:441
+pub fn cd_arrcat(sets: &[CompDescSet]) -> Vec<String> {                      // c:444
     sets.iter()
         .flat_map(|s| s.items.iter().map(|i| i.word.clone()))
         .collect()
@@ -218,7 +220,8 @@ pub fn cd_arrdup(set: &CompDescSet) -> CompDescSet {
 pub fn freecdsets(_sets: Vec<CompDescSet>) {}
 
 /// Group items by description Port of `cd_group` from Src/Zle/computil.c.
-pub fn cd_group(items: &[CompDescItem]) -> HashMap<String, Vec<CompDescItem>> {
+// Find matches with same descriptions and group them.                      // c:124
+pub fn cd_group(items: &[CompDescItem]) -> HashMap<String, Vec<CompDescItem>> { // c:127
     let mut groups: HashMap<String, Vec<CompDescItem>> = HashMap::new();
     for item in items {
         let key = if item.description.is_empty() {
@@ -232,7 +235,7 @@ pub fn cd_group(items: &[CompDescItem]) -> HashMap<String, Vec<CompDescItem>> {
 }
 
 /// Compare arrays for equality Port of `arrcmp` from Src/Zle/computil.c.
-pub fn arrcmp(a: &[String], b: &[String]) -> bool {
+pub fn arrcmp(a: &[String], b: &[String]) -> bool {                          // c:978
     a == b
 }
 

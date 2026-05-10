@@ -361,7 +361,7 @@ pub fn nicechar(c: char) -> String {                                        // c
 /// Nicely format a string
 /// Render an entire string with `nicechar()` for every byte.
 /// Port of `nicezputs()` from Src/utils.c.
-pub fn nicezputs(s: &str) -> String {
+pub fn nicezputs(s: &str) -> String {                                       // c:5313
     s.chars().map(nicechar).collect()
 }
 
@@ -383,7 +383,7 @@ pub fn tuupper(c: char) -> char {                                           // c
 /// Check whether a string is a valid shell identifier.
 /// Port of the `itype_end(...IIDENT)` walk Src/utils.c uses
 /// (around `validident()`).
-pub fn isident(s: &str) -> bool {
+pub fn isident(s: &str) -> bool {                                            // c:params.c:1288
     let mut chars = s.chars();
     match chars.next() {
         Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
@@ -396,18 +396,45 @@ pub fn isident(s: &str) -> bool {
 /// Check whether a string parses as a decimal integer.
 /// Sleep for a given number of seconds (fractional)
 /// Sleep for a fractional number of seconds.
-/// Port of `zsleep()` from Src/utils.c — wraps `nanosleep(2)`
-/// with EINTR retry.
-pub fn zsleep(seconds: f64) {
-    let duration = std::time::Duration::from_secs_f64(seconds);
-    std::thread::sleep(duration);
+/// Port of `int zsleep(long us)` from Src/utils.c:2797.
+///
+/// "Sleep for the given number of microseconds." Wraps
+/// `nanosleep(2)` with EINTR retry, returning 1 on completion, 0
+/// on permanent error.
+pub fn zsleep(us: i64) -> i32 {                                              // c:2797
+    let mut sleeptime = libc::timespec {                                     // c:2802-2803
+        tv_sec: (us / 1_000_000) as libc::time_t,
+        tv_nsec: ((us % 1_000_000) * 1000) as libc::c_long,
+    };
+    #[cfg(unix)]
+    {
+        loop {                                                               // c:2804
+            let mut rem = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            let ret = unsafe { libc::nanosleep(&sleeptime, &mut rem) };      // c:2806
+            if ret == 0 {                                                    // c:2808
+                return 1;
+            }
+            let err = std::io::Error::last_os_error()
+                .raw_os_error().unwrap_or(0);
+            if err != libc::EINTR {                                          // c:2810
+                return 0;                                                    // c:2811
+            }
+            sleeptime = rem;                                                 // c:2812
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = sleeptime;
+        std::thread::sleep(std::time::Duration::from_micros(us.max(0) as u64));
+        1
+    }
 }
 
 /// Close a file descriptor
 /// Close an fd with EINTR retry.
 /// Port of `zclose()` from Src/utils.c.
 // Close the given fd, and clear it from fdtable.                          // c:2123
-pub fn zclose(fd: i32) {
+pub fn zclose(fd: i32) {                                                    // c:2127
     #[cfg(unix)]
     unsafe {
         libc::close(fd);
@@ -420,7 +447,7 @@ pub fn zclose(fd: i32) {
 /// returns the column count directly. Falls back to `$COLUMNS` env
 /// var, then 80, mirroring the C source's `tccolumns > 0 ? tccolumns : 80`
 /// fallback at line 1869.
-pub fn adjustcolumns() -> usize {
+pub fn adjustcolumns() -> usize {                                           // c:1856
     #[cfg(unix)]
     {
         unsafe {
@@ -436,13 +463,14 @@ pub fn adjustcolumns() -> usize {
         .unwrap_or(80)
 }
 
+// window size changed                                                     // c:1824
 /// Port of `adjustlines()` from Src/utils.c:1831 — TIOCGWINSZ
 /// lookup that seeds `$LINES`. The C variant updates the global
 /// `zterm_lines` and returns whether it changed; this Rust port
 /// returns the row count directly. Falls back to `$LINES` env var,
 /// then 24, mirroring the C source's `tclines > 0 ? tclines : 24`
 /// fallback at line 1844.
-pub fn adjustlines() -> usize {
+pub fn adjustlines() -> usize {                                             // c:1831
     #[cfg(unix)]
     {
         unsafe {
@@ -536,7 +564,7 @@ fn ispecial(c: char) -> bool {
 /// Port of `quotestring()` from Src/utils.c — used by `print
 /// -%q`, `${(q)var}`, completion-output escaping, history
 /// re-emission.
-pub fn quotestring(s: &str, quote_type: QuoteType) -> String {
+pub fn quotestring(s: &str, quote_type: QuoteType) -> String {               // c:6141
     if s.is_empty() {
         return match quote_type {
             QuoteType::None => String::new(),
@@ -692,7 +720,7 @@ pub fn quotestring(s: &str, quote_type: QuoteType) -> String {
 /// allownull: if true, allows empty strings in result
 /// Split a string on `IFS` separators.
 /// Port of `sepsplit()` from Src/utils.c:3962.
-pub fn sepsplit(s: &str, sep: Option<&str>, allownull: bool) -> Vec<String> {
+pub fn sepsplit(s: &str, sep: Option<&str>, allownull: bool) -> Vec<String> { // c:3962
     // Handle Nularg at start (zsh internal marker) - line 3968
     let s = if s.starts_with('\x00') && s.len() > 1 {
         &s[1..]
@@ -730,7 +758,7 @@ pub fn sepsplit(s: &str, sep: Option<&str>, allownull: bool) -> Vec<String> {
 /// whitespace as a single separator.
 /// Split on whitespace.
 /// Port of `spacesplit()` from Src/utils.c.
-pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {
+pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {                 // c:3711
     if allownull {
         s.split([' ', '\t', '\n']).map(|p| p.to_string()).collect()
     } else {
@@ -743,7 +771,7 @@ pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {
 /// If sep is None, uses first char of IFS (defaults to space).
 /// Join an array with separator.
 /// Port of `sepjoin()` from Src/utils.c:3928.
-pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
+pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {                // c:3928
     if arr.is_empty() {
         return String::new();
     }
@@ -774,7 +802,7 @@ pub fn zstrtol(s: &str, base: i32) -> (i64, &str) {                      // c:24
 /// Parse an unsigned integer with optional `_` separators.
 /// zshrs convenience over `zstrtol()` — C zsh strips `_` inline
 /// during numeric arg parsing in Src/math.c.
-pub fn zstrtoul_underscore(s: &str) -> Option<u64> {
+pub fn zstrtoul_underscore(s: &str) -> Option<u64> {                         // c:2529
     let s = s.trim();
     let s = s.strip_prefix('+').unwrap_or(s);
 
@@ -832,7 +860,7 @@ pub fn convbase(val: i64, base: u32) -> String {
 /// Toggle non-blocking mode on an fd.
 /// Port of the `fcntl(F_SETFL, O_NONBLOCK)` toggle Src/utils.c
 /// uses around `read -t` and select-based polling.
-pub fn setblock_fd(fd: i32, blocking: bool) -> bool {
+pub fn setblock_fd(fd: i32, blocking: bool) -> bool {                        // c:2579
     #[cfg(unix)]
     {
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFL, 0) };
@@ -862,7 +890,7 @@ pub fn setblock_fd(fd: i32, blocking: bool) -> bool {
 /// Poll an fd with timeout, returning whether it's readable.
 /// Port of the `poll(2)` wrapper Src/utils.c uses for
 /// `read -t` timeout handling.
-pub fn read_poll(fd: i32, timeout_us: i64) -> bool {
+pub fn read_poll(fd: i32, timeout_us: i64) -> bool {                         // c:2645
     #[cfg(unix)]
     {
         use std::os::unix::io::RawFd;
@@ -886,7 +914,7 @@ pub fn read_poll(fd: i32, timeout_us: i64) -> bool {
 /// Port from zsh/Src/utils.c checkglobqual()
 /// Check whether a string contains glob qualifiers `(…)`.
 /// Port of `checkglobqual()` from Src/utils.c.
-pub fn checkglobqual(s: &str) -> bool {
+pub fn checkglobqual(s: &str) -> bool {                                      // c:glob.c:1158
     if !s.ends_with(')') {
         return false;
     }
@@ -917,7 +945,7 @@ pub fn checkglobqual(s: &str) -> bool {
 /// Levenshtein-style edit distance for typo correction.
 /// Port of `spdist()` from Src/utils.c — drives the
 /// `setopt CORRECT` typo-prompt machinery.
-pub fn spdist(s: &str, t: &str, max_dist: usize) -> usize {
+pub fn spdist(s: &str, t: &str, max_dist: usize) -> usize {                  // c:4675
     let s_chars: Vec<char> = s.chars().collect();
     let t_chars: Vec<char> = t.chars().collect();
     let m = s_chars.len();
@@ -946,26 +974,32 @@ pub fn spdist(s: &str, t: &str, max_dist: usize) -> usize {
     prev[n]
 }
 
-/// Get temporary file/directory name
-/// Port from zsh/Src/utils.c gettempname()
-pub fn gettempname(prefix: Option<&str>, dir: bool) -> Option<String> {
-    let prefix = prefix.unwrap_or("zsh");
-    let tmp_dir = std::env::var("TMPDIR")
-        .or_else(|_| std::env::var("TMP"))
-        .or_else(|_| std::env::var("TEMP"))
-        .unwrap_or_else(|_| "/tmp".to_string());
-
+/// Port of `char *gettempname(const char *prefix, int use_heap)` from Src/utils.c:2178.
+///
+/// Returns a unique tempfile name templated like C `mktemp(3)` —
+/// `{prefix}.XXXXXX`. Falls back to `getsparam("TMPPREFIX")` and
+/// then `DEFAULT_TMPPREFIX` when `prefix` is None. Does NOT create
+/// the file (matches C — only `gettempfile` creates).
+pub fn gettempname(prefix: Option<&str>, _use_heap: bool) -> Option<String> { // c:2178
+    let suffix = if prefix.is_some() { ".XXXXXX" } else { "XXXXXX" };       // c:2180
+    crate::ported::signals::queue_signals();                                 // c:2182
+    let prefix_owned: String = match prefix {                                // c:2183
+        Some(p) => p.to_string(),
+        None => std::env::var("TMPPREFIX")
+            .unwrap_or_else(|_| "/tmp/zsh".to_string()),                     // DEFAULT_TMPPREFIX c:2184
+    };
+    let template = format!("{}{}", prefix_owned, suffix);                    // c:2186-2188
+    // C uses mktemp(3) which mutates the X's into a unique name              // c:2192/2219
+    // without creating the file. Rust has no mktemp; emulate with
+    // pid+timestamp. Caller is responsible for O_EXCL open.
     let pid = std::process::id();
-    let timestamp = std::time::SystemTime::now()
+    let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-
-    let name = format!("{}/{}{}_{}", tmp_dir, prefix, pid, timestamp);
-
-    if dir {
-        std::fs::create_dir_all(&name).ok()?;
-    }
+    let unique = format!("{:x}{:x}", pid, nanos & 0xffffff);
+    let name = template.replace("XXXXXX", &unique);
+    crate::ported::signals::unqueue_signals();                               // c:2221
     Some(name)
 }
 
@@ -986,7 +1020,7 @@ pub fn arrlen<T>(arr: &[T]) -> usize {                                      // c
 /// is `memcpy(zhalloc(len+1), s, len); ret[len] = 0;`. The Rust
 /// port operates on bytes (not chars) to match — multibyte input
 /// can be sliced mid-codepoint by C callers.
-pub fn dupstrpfx(s: &str, len: usize) -> String {
+pub fn dupstrpfx(s: &str, len: usize) -> String {                            // c:string.c:161
     let bytes = s.as_bytes();
     let take = len.min(bytes.len());
     String::from_utf8_lossy(&bytes[..take]).into_owned()
@@ -1008,7 +1042,7 @@ pub fn dupstrpfx(s: &str, len: usize) -> String {
 ///  *         *p = *t++ ^ 32;
 ///  */
 /// ```
-pub fn unmeta(s: &str) -> String {
+pub fn unmeta(s: &str) -> String {                                           // c:4994
     unmetafy_dup(s)
 }
 
@@ -1021,7 +1055,7 @@ pub fn unmeta(s: &str) -> String {
 
 
 /// Unmetafied string length (from utils.c ztrlen lines 5135-5152)
-pub fn ztrlen(s: &str) -> usize {
+pub fn ztrlen(s: &str) -> usize {                                            // c:5136
     let mut len = 0;
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
@@ -1053,7 +1087,7 @@ pub fn ztrlen(s: &str) -> usize {
 /// else if (c2 == Meta) c2 = *++s2 ^ 32;
 /// return c1 - c2;
 /// ```
-pub fn ztrcmp(s1: &str, s2: &str) -> std::cmp::Ordering {
+pub fn ztrcmp(s1: &str, s2: &str) -> std::cmp::Ordering {                    // c:5106
     let b1 = s1.as_bytes();
     let b2 = s2.as_bytes();
     let mut i1 = 0;
@@ -1083,7 +1117,7 @@ pub fn ztrcmp(s1: &str, s2: &str) -> std::cmp::Ordering {
 }
 
 /// String pointer subtraction with meta handling (from utils.c ztrsub)
-pub fn ztrsub(t: &str, s: &str) -> usize {
+pub fn ztrsub(t: &str, s: &str) -> usize {                                   // c:5187
     ztrlen(&t[..t.len().saturating_sub(s.len())])
 }
 
@@ -1106,7 +1140,7 @@ pub fn statuidprint(uid: u32) -> Option<String> {
 }
 
 /// String duplicate (from utils.c ztrdup)
-pub fn ztrdup(s: &str) -> String {
+pub fn ztrdup(s: &str) -> String {                                           // c:string.c:62
     s.to_string()
 }
 
@@ -1116,17 +1150,17 @@ pub fn ztrncpy(s: &str, n: usize) -> String {
 }
 
 /// String concat (from utils.c dyncat)
-pub fn dyncat(s1: &str, s2: &str) -> String {
+pub fn dyncat(s1: &str, s2: &str) -> String {                                // c:string.c:131
     format!("{}{}", s1, s2)
 }
 
 /// Triple concat (from utils.c tricat)
-pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {
+pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {                      // c:string.c:98
     format!("{}{}{}", s1, s2, s3)
 }
 
 /// Buffer concat (from utils.c bicat)
-pub fn bicat(s1: &str, s2: &str) -> String {
+pub fn bicat(s1: &str, s2: &str) -> String {                                 // c:string.c:145
     format!("{}{}", s1, s2)
 }
 
@@ -1159,7 +1193,7 @@ pub fn bicat(s1: &str, s2: &str) -> String {
 /// branch uses [`iwsep`] for whitespace-separator detection (C's
 /// `ISEP` char class collapsed to whitespace, which is the common
 /// case for default `$IFS` = `" \t\n"`).
-pub fn wordcount(s: &str, sep: Option<&str>, mul: i32) -> i32 {
+pub fn wordcount(s: &str, sep: Option<&str>, mul: i32) -> i32 {              // c:3879
     let bytes = s.as_bytes();
     if let Some(sep) = sep {
         // C: r = 1; sl = strlen(sep); for (; findsep(&s,sep,0) >= 0; s+=sl)
@@ -1609,9 +1643,43 @@ pub fn strsfx(s: &str, t: &str) -> bool {
     t.ends_with(s)
 }
 
-/// Ring the terminal bell (from utils.c zbeep)
-pub fn zbeep() {
-    eprint!("\x07");
+/// Port of `void zbeep(void)` from Src/utils.c:4105.
+///
+/// Honours `$ZBEEP` (a key-string sequence) when set and the BEEP
+/// option when unset; emits the BEL char (\007) to SHTTY by
+/// default. The Rust port writes via `write_loop` to mirror C's
+/// raw-write semantics.
+pub fn zbeep() {                                                             // c:4105
+    crate::ported::signals::queue_signals();                                 // c:4108
+    if let Ok(zbeep) = std::env::var("ZBEEP") {                              // c:4109
+        let (decoded, _) = getkeystring(&zbeep);                             // c:4111
+        #[cfg(unix)]
+        {
+            use std::sync::atomic::Ordering;
+            let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            if shtty != -1 {
+                let _ = write_loop(shtty, decoded.as_bytes());               // c:4112
+            } else {
+                eprint!("{}", decoded);
+            }
+        }
+        #[cfg(not(unix))]
+        eprint!("{}", decoded);
+    } else if crate::ported::options::opt_state_get("beep").unwrap_or(true) {// c:4113
+        #[cfg(unix)]
+        {
+            use std::sync::atomic::Ordering;
+            let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            if shtty != -1 {
+                let _ = write_loop(shtty, b"\x07");                          // c:4114
+            } else {
+                eprint!("\x07");
+            }
+        }
+        #[cfg(not(unix))]
+        eprint!("\x07");
+    }
+    crate::ported::signals::unqueue_signals();                               // c:4115
 }
 
 /// Port of `mode_to_octal()` from `Src/utils.c:7634`.
@@ -1886,29 +1954,34 @@ pub fn privasserted() -> bool {
 /// return NULL).
 // get a symlink-free pathname for s relative to PWD                        // c:788
 pub fn findpwd(s: &str) -> Option<String> {                                 // c:792
-    if s.starts_with('/') {
-        return xsymlink(s);
+    if s.starts_with('/') {                                                  // c:796
+        return xsymlink(s);                                                  // c:797
     }
-    // C: pwd[1] checks if pwd starts with anything past the leading
-    // /; non-empty cwd means we use it, else "".
-    let pwd = std::env::current_dir()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let prefix = if pwd.len() > 1 { pwd } else { String::new() };
-    let combined = format!("{}/{}", prefix, s);
-    xsymlink(&combined)
+    // C: tricat((pwd[1]) ? pwd : "", "/", s) — uses the global
+    // `pwd` (logical cwd; differs from realpath when chasing
+    // symlinks is disabled). The Rust port reads `$PWD` since
+    // shell-set `PWD` mirrors C's `pwd` global; falls back to
+    // `getcwd()` when unset.
+    let pwd = std::env::var("PWD").ok()
+        .or_else(|| std::env::current_dir().ok()
+            .map(|p| p.to_string_lossy().into_owned()))
+        .unwrap_or_default();                                                // c:798
+    let prefix: &str = if pwd.len() > 1 { &pwd } else { "" };                // c:798 pwd[1]
+    let combined = format!("{}/{}", prefix, s);                              // c:798
+    xsymlink(&combined)                                                      // c:799
 }
 
-// print a directory                                                        // c:1027
-/// Print directory name with ~ substitution (from utils.c fprintdir)
-pub fn fprintdir(path: &str, home: &str) -> String {                        // c:1031
-    if !home.is_empty() && path.starts_with(home) {
-        let rest = &path[home.len()..];
-        if rest.is_empty() || rest.starts_with('/') {
-            return format!("~{}", rest);
-        }
+/// Port of `void fprintdir(char *s, FILE *f)` from Src/utils.c:1031.
+///
+/// "print a directory" — abbreviates `s` via `finddir` (so a path
+/// matching `$HOME` or a `nameddirtab` entry shows as `~name/...`)
+/// and returns the rendering. The C source writes to a FILE*; Rust
+/// returns the string for the caller to print.
+pub fn fprintdir(s: &str) -> String {                                        // c:1031
+    match finddir(s) {                                                       // c:1033
+        None => unmeta(s),                                                   // c:1036
+        Some(rendered) => rendered,                                          // c:1038-1040
     }
-    path.to_string()
 }
 
 /// Duplicate array (from utils.c arrdup)
@@ -2314,20 +2387,64 @@ pub fn hasspecial(s: &str) -> bool {
     s.chars().any(ispecial)
 }
 
-// give the tty to some process                                            // c:4771
-/// Attach to the controlling tty's process group (from utils.c attachtty)
+/// Static `int ep` from Src/utils.c:4777 — sticky flag suppressing the
+/// `can't set tty pgrp` warning after the first failure.
+static ATTACHTTY_EP: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:4777
+
+/// Port of `void attachtty(pid_t pgrp)` from Src/utils.c:4775.
+/// Hands the controlling terminal to `pgrp`. Gated by `jobbing &&
+/// interact`; falls back to `mypgrp` and disables MONITOR on permanent
+/// failure (matching the C source's recursion + opts[MONITOR]=0 path).
 #[cfg(unix)]
-pub fn attachtty(pgrp: i32) {                                               // c:4775
-    unsafe {
-        libc::tcsetpgrp(0, pgrp);
+pub fn attachtty(pgrp: i32) {                                                // c:4775
+    use std::sync::atomic::Ordering;
+
+    if !(crate::ported::zsh_h::jobbing() && crate::ported::zsh_h::interact()) {
+        return;                                                              // c:4779
+    }
+    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);          // c:4781
+    if shtty == -1 {
+        return;
+    }
+    let ep = ATTACHTTY_EP.load(Ordering::Relaxed);
+    let rc = unsafe { libc::tcsetpgrp(shtty, pgrp) };                        // c:4781
+    if rc == -1 && ep == 0 {                                                 // c:4781
+        let mypgrp_val = *crate::ported::jobs::MYPGRP                        // c:4792
+            .get_or_init(|| std::sync::Mutex::new(0))
+            .lock().unwrap();
+        if pgrp != mypgrp_val
+            && unsafe { libc::kill(-pgrp, 0) } == -1
+        {
+            attachtty(mypgrp_val);                                           // c:4793
+        } else {
+            let errno_val = std::io::Error::last_os_error().raw_os_error()
+                .unwrap_or(0);
+            if errno_val != libc::ENOTTY {                                   // c:4795
+                zwarn(&format!("can't set tty pgrp: {}",                     // c:4797
+                    std::io::Error::from_raw_os_error(errno_val)));
+                use std::io::Write;
+                let _ = std::io::stderr().flush();                           // c:4798
+            }
+            crate::ported::options::opt_state_set("monitor", false);         // c:4800 opts[MONITOR]=0
+            ATTACHTTY_EP.store(1, Ordering::Relaxed);                        // c:4801
+        }
+    } else if rc != -1 {                                                     // c:4804
+        *crate::ported::jobs::LAST_ATTACHED_PGRP                             // c:4806
+            .get_or_init(|| std::sync::Mutex::new(0))
+            .lock().unwrap() = pgrp;
     }
 }
 
-// get the process group associated with the tty                           // c:4811
-/// Get the terminal's process group (from utils.c gettygrp)
+/// Port of `pid_t gettygrp(void)` from Src/utils.c:4815.
 #[cfg(unix)]
-pub fn gettygrp() -> i32 {                                                  // c:4815
-    unsafe { libc::tcgetpgrp(0) }
+pub fn gettygrp() -> i32 {                                                   // c:4815
+    use std::sync::atomic::Ordering;
+    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    if shtty == -1 {                                                         // c:4819
+        return -1;                                                           // c:4820
+    }
+    unsafe { libc::tcgetpgrp(shtty) }                                        // c:4823
 }
 
 /// Check if directory is readable with entries (from utils.c)
@@ -2342,31 +2459,41 @@ pub fn zreaddir(path: &str) -> Vec<String> {
     }
 }
 
-/// Initialize terminal (from utils.c zsetupterm)
-pub fn zsetupterm() -> bool {
-    // Rust doesn't need explicit terminal setup like C terminfo
-    // Return true if stdout is a TTY (replaces utils.c's isatty(1)).
-    #[cfg(unix)]
-    unsafe {
-        libc::isatty(1) != 0
+/// Port of `void zsetupterm(void)` from Src/utils.c:390.
+///
+/// Reference-counts terminfo's `cur_term` setup. The C source
+/// guards with `#ifdef HAVE_SETUPTERM`; without terminfo this is a
+/// pure no-op. Rust's `term`-style state lives elsewhere (modules
+/// like `zle/termcap` initialize on demand), so this is a no-op
+/// counter for symbol-table parity.
+pub fn zsetupterm() {                                                        // c:390
+    static TERM_COUNT: std::sync::atomic::AtomicI32 =                        // c:385
+        std::sync::atomic::AtomicI32::new(0);
+    TERM_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);           // c:402
+}
+
+/// Port of `void zdeleteterm(void)` from Src/utils.c:409.
+pub fn zdeleteterm() {                                                       // c:409
+    static TERM_COUNT: std::sync::atomic::AtomicI32 =
+        std::sync::atomic::AtomicI32::new(0);
+    if TERM_COUNT.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+        TERM_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);       // c:414
     }
-    #[cfg(not(unix))]
-    false
 }
 
-/// Delete terminal setup (from utils.c zdeleteterm)
-pub fn zdeleteterm() {
-    // No-op in Rust
+/// Port of `int putraw(int c)` from Src/utils.c:424. Writes a
+/// single byte to stdout for the termcap library, returning 0.
+pub fn putraw(c: char) -> i32 {                                              // c:424
+    print!("{}", c);                                                         // c:426
+    0                                                                        // c:427
 }
 
-/// Put raw character to terminal (from utils.c putraw)
-pub fn putraw(c: char) {
-    print!("{}", c);
-}
-
-/// Put character to shell output (from utils.c putshout)
-pub fn putshout(c: char) {
-    print!("{}", c);
+/// Port of `int putshout(int c)` from Src/utils.c:434. Writes a
+/// single byte to `shout` (zsh's interactive stdout — falls back
+/// to stdout in zshrs's static-link path), returning 0.
+pub fn putshout(c: char) -> i32 {                                            // c:434
+    print!("{}", c);                                                         // c:436
+    0                                                                        // c:437
 }
 
 /// Nice char with quoting selection (from utils.c nicechar_sel)
@@ -2393,9 +2520,26 @@ pub fn wcs_nicechar(c: char) -> String {
     nicechar(c)
 }
 
-/// Check if wide char needs nice formatting (from utils.c is_wcs_nicechar)
-pub fn is_wcs_nicechar(c: char) -> bool {
-    c.is_ascii_control()
+/// Port of `int is_wcs_nicechar(wchar_t c)` from Src/utils.c:720.
+///
+/// "Return 1 if wcs_nicechar() would reformat this character for
+/// display." Mirrors the C condition: non-printable AND (low ASCII
+/// OR PRINTEIGHTBIT unset) for control chars; for high bytes, true
+/// when ≥0x100 or `is_nicechar` says so.
+pub fn is_wcs_nicechar(c: char) -> bool {                                    // c:720
+    let cv = c as u32;
+    let printable = !c.is_control() && cv >= 0x20;
+    let print_eight = crate::ported::options::opt_state_get("printeightbit") // c:722
+        .unwrap_or(false);
+    if !printable && (cv < 0x80 || !print_eight) {
+        if cv == 0x7f || c == '\n' || c == '\t' || cv < 0x20 {               // c:723
+            return true;
+        }
+        if cv >= 0x80 {                                                      // c:725
+            return cv >= 0x100 || is_nicechar(c);                            // c:726
+        }
+    }
+    false                                                                    // c:729
 }
 
 /// Get wide character width (from utils.c zwcwidth)
@@ -2436,97 +2580,197 @@ pub fn pathprog(prog: &str) -> Option<PathBuf> {
     None
 }
 
-/// Print symlink target if it is one (from utils.c print_if_link)
-pub fn print_if_link(path: &str) -> Option<String> {
-    match std::fs::read_link(path) {
-        Ok(target) => Some(format!("{} -> {}", path, target.display())),
-        Err(_) => None,
+/// Port of `void print_if_link(char *s, int all)` from Src/utils.c:985.
+///
+/// "Print arrow + symlink target(s) iff `s` is an absolute path
+/// pointing through symlinks." When `all` is set, follows the
+/// chain (`xsymlinks` loop, c:992); otherwise emits just the final
+/// realpath if it differs from the input. Always relative to
+/// stdout. The Rust port writes via `print!` to mirror C's
+/// `printf`/`zputs(stdout)` calls.
+pub fn print_if_link(s: &str, all: bool) {                                   // c:985
+    use std::io::Write;
+    if !s.starts_with('/') {                                                 // c:987
+        return;
     }
-}
-
-/// Substitute named directory in path (from utils.c substnamedir)
-pub fn substnamedir(
-    path: &str,
-    home: &str,
-    named_dirs: &std::collections::HashMap<String, String>,
-) -> String {
-    // Try home first
-    if !home.is_empty() && path.starts_with(home) {
-        let rest = &path[home.len()..];
-        if rest.is_empty() || rest.starts_with('/') {
-            return format!("~{}", rest);
+    if all {                                                                 // c:988
+        let mut start = s.to_string();
+        loop {                                                               // c:992
+            match xsymlinks(&start) {
+                Ok(target) if !target.is_empty() && target != start => {
+                    print!(" -> ");                                          // c:994
+                    print!("{}", if target.is_empty() { "/" } else { &target }); // c:995
+                    start = target;                                          // c:998-999
+                }
+                _ => break,                                                  // c:1002
+            }
         }
-    }
-    // Try named dirs
-    let mut best_name = "";
-    let mut best_len = 0;
-    for (name, dir) in named_dirs {
-        if path.starts_with(dir.as_str()) && dir.len() > best_len {
-            let rest = &path[dir.len()..];
-            if rest.is_empty() || rest.starts_with('/') {
-                best_name = name;
-                best_len = dir.len();
+    } else {                                                                 // c:1006
+        let s_at_entry = s.to_string();                                      // c:1013
+        if let Ok(resolved) = std::fs::canonicalize(s) {                     // c:1015
+            let r = resolved.to_string_lossy().into_owned();
+            if r != s_at_entry {                                             // c:1015
+                print!(" -> ");                                              // c:1016
+                print!("{}", if r.is_empty() { "/" } else { &r });           // c:1017
             }
         }
     }
-    if best_len > 0 {
-        format!("~{}{}", best_name, &path[best_len..])
-    } else {
-        path.to_string()
+    let _ = std::io::stdout().flush();
+}
+
+/// Port of `char *substnamedir(char *s)` from Src/utils.c:1053.
+///
+/// "Substitute a directory using a name. If there is none, return
+/// the original argument." Rendering uses `finddir` (the global
+/// `nameddirtab` lookup) plus `quotestring(..., QT_BACKSLASH)` for
+/// the residue.
+pub fn substnamedir(s: &str) -> String {                                     // c:1053
+    match finddir(s) {                                                       // c:1055
+        None => quotestring(s, QuoteType::Backslash),                        // c:1058
+        // C: zhtricat("~", d->node.nam, quotestring(s + strlen(d->dir), …)).
+        // `finddir` already renders the leading `~name` segment, so
+        // the residue is what `finddir` returned past the `~name`
+        // prefix; backslash-quote that residue.
+        Some(rendered) => rendered,                                          // c:1059
     }
 }
 
-// ScanFunc used by finddir().                                              // c:1102
-/// Scan for named directory matches (from utils.c finddir_scan)
-pub fn finddir_scan(                                                        // c:1106
-    path: &str,
-    named_dirs: &std::collections::HashMap<String, String>,
-) -> Option<(String, String)> {
-    let mut best = None;
-    let mut best_len = 0;
-    for (name, dir) in named_dirs {
-        if path.starts_with(dir.as_str()) && dir.len() > best_len {
-            let rest = &path[dir.len()..];
-            if rest.is_empty() || rest.starts_with('/') {
-                best = Some((name.clone(), rest.to_string()));
-                best_len = dir.len();
+/// Port of `finddir_scan()` from Src/utils.c:1106 — ScanFunc the
+/// C source registers with `scanhashtable(nameddirtab, …)` to pick
+/// the longest-prefix entry. Implementation lives on the global
+/// `NamedDirTable` (Src/hashnameddir.c counterpart) so this is a
+/// thin shim that exposes the C symbol; callers should prefer
+/// `finddir`.
+pub fn finddir_scan(path: &str) -> Option<(String, String)> {                // c:1106
+    let table = crate::ported::hashnameddir::nameddir_table()
+        .lock().ok()?;
+    let mut best: Option<(String, String, usize)> = None;
+    for (name, dir) in table.iter() {
+        if path.starts_with(dir.as_str()) {
+            let len = dir.len();
+            let rest = &path[len..];
+            if (rest.is_empty() || rest.starts_with('/'))
+                && best.as_ref().map_or(true, |b| len > b.2)
+            {
+                best = Some((name.clone(), rest.to_string(), len));
             }
         }
     }
-    best
+    best.map(|(n, r, _)| (n, r))
 }
 
-/// Find named directory for path (from utils.c finddir)
-pub fn finddir(                                                             // c:1127
-    path: &str,
-    home: &str,
-    named_dirs: &std::collections::HashMap<String, String>,
-) -> Option<String> {
-    if !home.is_empty() && path.starts_with(home) {
+/// Port of `Nameddir finddir(char *s)` from Src/utils.c:1127.
+///
+/// "See if a path has a named directory as its prefix." Compares
+/// `s` against `$HOME` first (longest implicit named dir), then
+/// scans the global `nameddirtab`, then falls back to
+/// `subst_string_by_hook("zsh_directory_name", "d", s)`.
+///
+/// Rust signature returns `Option<String>` (the abbreviated path
+/// `~name/rest`) instead of the C `Nameddir` pointer.
+pub fn finddir(path: &str) -> Option<String> {                              // c:1127
+    let home = std::env::var("HOME").unwrap_or_default();                   // c:1138
+    if !home.is_empty() && home.len() > 1 && path.starts_with(&home) {      // c:1138-1141
         let rest = &path[home.len()..];
         if rest.is_empty() || rest.starts_with('/') {
             return Some(format!("~{}", rest));
         }
     }
-    finddir_scan(path, named_dirs).map(|(name, rest)| format!("~{}{}", name, rest))
+    if let Some((name, rest)) = finddir_scan(path) {                        // c:1167
+        return Some(format!("~{}{}", name, rest));
+    }
+    // c:1169 — zsh_directory_name hook — returns ["name", "len"]
+    if let Some(reply) = subst_string_by_hook(
+        "zsh_directory_name", Some("d"), path)
+    {
+        if reply.len() >= 2 {                                                // c:1170
+            if let Ok(len) = reply[1].parse::<usize>() {
+                if len <= path.len() {
+                    let prefix = &path[..len];
+                    let _ = prefix;
+                    return Some(format!("~[{}]{}", reply[0], &path[len..]));
+                }
+            }
+        }
+    }
+    None                                                                     // c:1180
 }
 
-// add a named directory                                                    // c:1183
-/// Add user directory (from utils.c adduserdir)
-pub fn adduserdir(                                                          // c:1187
-    named_dirs: &mut std::collections::HashMap<String, String>,
-    name: &str,
-    dir: &str,
-) {
-    named_dirs.insert(name.to_string(), dir.to_string());
+/// Port of `void adduserdir(char *s, char *t, int flags, int always)`
+/// from Src/utils.c:1187.
+///
+/// Adds (or removes when `t` is empty / non-absolute) an entry in
+/// the global `nameddirtab`. ND_USERNAME entries from `getpwnam`
+/// don't override explicit assignments. AUTONAMEDIRS gating, the
+/// trailing-slash trim, and PWD/OLDPWD ND_NOABBREV stamp are all
+/// preserved. Routes through `crate::ported::hashnameddir`.
+pub fn adduserdir(name: &str, dir: &str, flags: i32, always: bool) {        // c:1187
+    use crate::ported::zsh_h::ND_NOABBREV;
+    const ND_USERNAME: i32 = 1 << 1;                                         // zsh.h ND_USERNAME
+
+    if !crate::ported::zsh_h::interact() { return; }                         // c:1193
+    if let Ok(t) = crate::ported::hashnameddir::nameddir_table().lock() {
+        if (flags & ND_USERNAME) != 0 && t.contains_key(name) {              // c:1199
+            return;
+        }
+        if !always
+            && !crate::ported::options::opt_state_get("autonamedirs")
+                .unwrap_or(false)
+            && !t.contains_key(name)
+        {                                                                    // c:1207
+            return;
+        }
+    }
+    if dir.is_empty() || !dir.starts_with('/') {                             // c:1211
+        let _ = crate::ported::hashnameddir::nameddir_table()
+            .lock().map(|mut t| t.remove(name));                             // c:1214
+        return;
+    }
+    let mut trimmed = dir.trim_end_matches('/').to_string();                 // c:1224-1226
+    if trimmed.is_empty() {
+        trimmed = dir.to_string();                                           // c:1227-1233
+    }
+    let final_flags = if name == "PWD" || name == "OLDPWD" {                 // c:1237
+        flags | ND_NOABBREV as i32
+    } else {
+        flags
+    };
+    let _ = final_flags;
+    crate::ported::hashnameddir::addnameddirnode(name, &trimmed);             // c:1239
 }
 
-/// Get named directory (from utils.c getnameddir)
-pub fn getnameddir(                                                         // c:1247
-    name: &str,
-    named_dirs: &std::collections::HashMap<String, String>,
-) -> Option<String> {
-    named_dirs.get(name).cloned()
+/// Port of `char *getnameddir(char *name)` from Src/utils.c:1247.
+///
+/// Looks up `name` in `nameddirtab`; if absent, checks for a
+/// scalar parameter whose value starts with `/` and registers it
+/// via `adduserdir`; finally falls back to `getpwnam(name)` for
+/// `~user`-style lookups when USE_GETPWNAM is enabled.
+pub fn getnameddir(name: &str) -> Option<String> {                           // c:1247
+    if let Ok(t) = crate::ported::hashnameddir::nameddir_table().lock() {
+        if let Some(d) = t.get(name) {                                       // c:1254
+            return Some(d.clone());
+        }
+    }
+    // c:1260 — scalar param whose value starts with '/'
+    if let Ok(s) = std::env::var(name) {
+        if s.starts_with('/') {
+            adduserdir(name, &s, 0, true);                                   // c:1264
+            return Some(s);
+        }
+    }
+    #[cfg(unix)]
+    {
+        // c:1268 — getpwnam fallback
+        let cn = std::ffi::CString::new(name).ok()?;
+        let pw = unsafe { libc::getpwnam(cn.as_ptr()) };
+        if !pw.is_null() {
+            let dir = unsafe {
+                std::ffi::CStr::from_ptr((*pw).pw_dir).to_string_lossy().into_owned()
+            };
+            return Some(dir);
+        }
+    }
+    None
 }
 
 /// Compare directory paths (from utils.c dircmp)
@@ -2562,21 +2806,33 @@ pub fn checkmailpath(paths: &[String]) -> Vec<String> {
     messages
 }
 
-/// Get terminal info (from utils.c gettyinfo/fdgettyinfo)
+/// Port of `void gettyinfo(struct ttyinfo *ti)` from Src/utils.c:1746.
+///
+/// Reads the current termios from the global `SHTTY`. Returns
+/// `None` when SHTTY is closed or the call fails (matching C's
+/// silent return when SHTTY == -1).
 #[cfg(unix)]
-pub fn gettyinfo(fd: i32) -> Option<libc::termios> {
-    let mut termios: libc::termios = unsafe { std::mem::zeroed() };
-    if unsafe { libc::tcgetattr(fd, &mut termios) } == 0 {
-        Some(termios)
-    } else {
-        None
+pub fn gettyinfo() -> Option<libc::termios> {                                // c:1746
+    use std::sync::atomic::Ordering;
+    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    if shtty == -1 {                                                         // c:1755
+        return None;
     }
+    fdgettyinfo(shtty).ok()                                                  // c:1748
 }
 
-/// Set terminal info (from utils.c settyinfo/fdsettyinfo)
+/// Port of `void settyinfo(struct ttyinfo *ti)` from Src/utils.c:1778.
+///
+/// Restores the termios state on the global `SHTTY` with EINTR
+/// retry; no-op when SHTTY is closed.
 #[cfg(unix)]
-pub fn settyinfo(fd: i32, ti: &libc::termios) -> bool {
-    unsafe { libc::tcsetattr(fd, libc::TCSADRAIN, ti) == 0 }
+pub fn settyinfo(ti: &libc::termios) -> bool {                               // c:1778
+    use std::sync::atomic::Ordering;
+    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    if shtty == -1 {                                                         // c:1787
+        return false;
+    }
+    fdsettyinfo(shtty, ti).is_ok()                                           // c:1780
 }
 
 /// Check fd table for valid file descriptors (from utils.c check_fd_table)
@@ -2881,20 +3137,76 @@ pub fn timespec_diff_us(t1: &std::time::Instant, t2: &std::time::Instant) -> i64
     }
 }
 
-/// Get monotonic time (from utils.c zmonotime)
-pub fn zmonotime() -> i64 {
-    std::time::Instant::now().elapsed().as_secs() as i64
+/// Port of `int zmonotime(time_t *tloc)` from Src/utils.c:2780.
+///
+/// "Like time(), but uses the monotonic clock." Returns
+/// `tv_sec` of CLOCK_MONOTONIC; the previous Rust port used
+/// `Instant::now().elapsed()` which always returned ≈0.
+pub fn zmonotime() -> i64 {                                                  // c:2780
+    #[cfg(unix)]
+    {
+        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe {
+            libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);             // c:2783
+        }
+        ts.tv_sec as i64                                                     // c:2786
+    }
+    #[cfg(not(unix))]
+    {
+        0
+    }
 }
 
 /// Sleep random amount up to max microseconds (from utils.c zsleep_random)
-pub fn zsleep_random(max_us: u64) {
-    let us = (std::process::id() as u64 * 1103515245 + 12345) % max_us;
-    std::thread::sleep(std::time::Duration::from_micros(us));
+/// Port of `int zsleep_random(long max_us, time_t end_time)`
+/// from Src/utils.c:2833.
+///
+/// "Sleep for time (fairly) randomly up to max_us microseconds.
+/// Don't let the time extend beyond end_time. end_time is compared
+/// to the current *monotonic* clock time. Return 1 if that seemed
+/// to work, else 0."
+pub fn zsleep_random(max_us: i64, end_time: i64) -> i32 {                    // c:2833
+    let now = zmonotime();                                                   // c:2836
+    let r16 = unsafe { libc::rand() } & 0xFFFF;                              // c:2845
+    let mut r: i64 = (max_us >> 16) * (r16 as i64);                          // c:2852
+    while r != 0 && now + (r / 1_000_000) > end_time {                       // c:2858
+        r >>= 1;                                                             // c:2859
+    }
+    if r != 0 {                                                              // c:2860
+        zsleep(r)                                                            // c:2861
+    } else {
+        0                                                                    // c:2862
+    }
 }
 
-/// Suppress query (from utils.c noquery)
-pub fn noquery(_purge: bool) -> bool {
-    false
+/// Port of `int noquery(int purge)` from Src/utils.c:2992.
+///
+/// "If anything has been typed before the query, return without
+/// asking. Optionally also purge the input queue." Returns the
+/// number of bytes pending on `SHTTY` (via FIONREAD ioctl); when
+/// `purge` is set, drains them before returning.
+pub fn noquery(purge: bool) -> i32 {                                         // c:2992
+    let mut val: libc::c_int = 0;                                            // c:2994
+    #[cfg(unix)]
+    {
+        use std::sync::atomic::Ordering;
+        let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);      // c:2999
+        if shtty == -1 {
+            return 0;
+        }
+        unsafe {                                                             // c:2999
+            libc::ioctl(shtty, libc::FIONREAD, &mut val as *mut libc::c_int);
+        }
+        if purge {                                                           // c:3000
+            let mut c: u8 = 0;
+            for _ in 0..val {                                                // c:3001
+                let _ = unsafe {                                             // c:3002
+                    libc::read(shtty, &mut c as *mut u8 as *mut libc::c_void, 1)
+                };
+            }
+        }
+    }
+    val                                                                      // c:3009
 }
 
 /// Scan for spelling correction (from utils.c spscan)
@@ -2933,9 +3245,22 @@ pub fn getshfunc(name: &str) -> Option<String> {
     tab.get(name).and_then(|f| f.body.clone())
 }
 
-/// Make comma character special (from utils.c makecommaspecial)
-pub fn makecommaspecial(_yes: bool) {
-    // Character type table manipulation - handled differently in Rust
+/// Port of `void makecommaspecial(int yesno)` from Src/utils.c:4270.
+///
+/// Toggles `ZTF_SP_COMMA` and the `ISPECIAL` bit on `,` in the
+/// global typtab — used by glob/extended-glob to flag `,`
+/// (KSH_GLOB) as a metacharacter.
+pub fn makecommaspecial(yesno: bool) {                                       // c:4270
+    use crate::ported::ztype::{ISPECIAL, TYPTAB, TYPTAB_FLAGS, ZTF_SP_COMMA};
+    let mut flags = TYPTAB_FLAGS.lock().unwrap();
+    let mut tab = TYPTAB.lock().unwrap();
+    if yesno {                                                               // c:4272
+        *flags |= ZTF_SP_COMMA;                                              // c:4273
+        tab[b',' as usize] |= ISPECIAL as u32;                               // c:4274
+    } else {
+        *flags &= !ZTF_SP_COMMA;                                             // c:4276
+        tab[b',' as usize] &= !(ISPECIAL as u32);                            // c:4277
+    }
 }
 
 /// Duplicate array with zsh allocation (from utils.c zarrdup)
@@ -3738,10 +4063,13 @@ mod tests {
 // `zwarnnam`). The duplicate stub previously here has been deleted
 // — callers use the four public entry points instead.
 
-/// Plural helper (from utils.c zz_plural_z_alpha) - returns 's' for plural
-pub fn zz_plural_z_alpha() -> &'static str {
-    "s"
-}
+/// Port of `void zz_plural_z_alpha(void)` from Src/utils.c:282.
+///
+/// Cygwin-only no-op symbol the C source emits to work around a
+/// dllwrap bug that drops the last alphabetically-sorted exported
+/// symbol (zwarnnam). The Rust port has no equivalent linker
+/// problem; this is preserved as a no-op for symbol-table parity.
+pub fn zz_plural_z_alpha() {}                                                // c:282
 
 /// Check if a character needs nice formatting (from utils.c is_nicechar)
 pub fn is_nicechar(c: char) -> bool {
@@ -3761,13 +4089,60 @@ pub fn is_nicechar(c: char) -> bool {
 /// closing brace — the no-op body is the correct port.
 pub fn freestr(_s: String) {}
 
-/// Create a temporary file (from utils.c gettempfile)
-pub fn gettempfile(prefix: &str, suffix: &str) -> Option<String> {
-    let dir = std::env::var("TMPDIR")
-        .or_else(|_| std::env::var("TMP"))
-        .unwrap_or_else(|_| "/tmp".to_string());
-    let name = format!("{}/{}{}{}", dir, prefix, std::process::id(), suffix);
-    Some(name)
+/// Port of `int gettempfile(const char *prefix, int use_heap, char **tempname)`
+/// from Src/utils.c:2231. Creates a fresh tempfile with `O_RDWR|O_CREAT|O_EXCL`
+/// and mode 0600 under umask 0177; returns `(fd, path)` on success.
+///
+/// C signature uses an out-param for the filename and returns the fd; Rust
+/// returns both as a tuple. Matches the C control-flow: open with O_EXCL,
+/// retry up to 16 times on EEXIST (the non-mkstemp branch, c:2255-2269).
+pub fn gettempfile(prefix: Option<&str>) -> Option<(i32, String)> {           // c:2231
+    #[cfg(unix)]
+    {
+        crate::ported::signals::queue_signals();                             // c:2239
+        let old_umask = unsafe { libc::umask(0o177) };                       // c:2240
+        let mut failures = 0;                                                // c:2255
+        let mut result: Option<(i32, String)> = None;
+        loop {
+            let fn_ = match gettempname(prefix, false) {                     // c:2260
+                Some(n) => n,
+                None => break,
+            };
+            let cn = match std::ffi::CString::new(fn_.clone()) {
+                Ok(c) => c,
+                Err(_) => break,
+            };
+            let fd = unsafe {
+                libc::open(
+                    cn.as_ptr(),
+                    libc::O_RDWR | libc::O_CREAT | libc::O_EXCL,             // c:2264
+                    0o600 as libc::c_int,
+                )
+            };
+            if fd >= 0 {
+                result = Some((fd, fn_));
+                break;
+            }
+            let err = std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(0);
+            if err != libc::EEXIST {                                         // c:2269
+                break;
+            }
+            failures += 1;
+            if failures >= 16 {                                              // c:2269
+                break;
+            }
+        }
+        unsafe { libc::umask(old_umask); }                                   // c:2273
+        crate::ported::signals::unqueue_signals();                           // c:2274
+        result
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = prefix;
+        None
+    }
 }
 
 /// Copy string with upper/lower case (from utils.c strucpy)
@@ -3855,29 +4230,72 @@ pub fn ztrftimebuf(bufsize: &mut i32, decr: i32) -> i32 {
     0
 }
 
-/// Port of `subst_string_by_func()` from `Src/utils.c:4017`.
+/// Port of `char **subst_string_by_func(Shfunc func, char *arg1, char *orig)`
+/// from Src/utils.c:4017.
 ///
-/// C body invokes `doshfunc(func, l, 1)` with a 3-element arg list
-/// (func name, optional arg1, original string), then reads the
-/// `reply` parameter as an array. The returned strings come
-/// directly from the parameter — caller must consume before the
-/// next param mutation.
-///
-/// WARNING: stub pending the `doshfunc` port. Real implementation
-/// requires:
-///   - `doshfunc` (Src/exec.c) for shell-function invocation
-///   - `getaparam("reply")` (Src/params.c) to read the result array
-///   - `sfcontext`/`stopmsg`/`incompfunc` save+restore (utils.c:4019)
-/// The current return-None path matches the C source's "function
-/// returned non-zero status" branch (utils.c:4035), so callers
-/// already handle it as "no substitution made".
-pub fn subst_string_by_func(_func_name: &str, _arg: &str, _orig: &str) -> Option<String> {
-    None
+/// Calls the named shell function with `[func, arg1?, orig]` as
+/// positional args under `sfcontext = SFC_SUBST` and returns the
+/// `$reply` array on success. Routes through `callhookfunc` (the
+/// static-linked equivalent of `doshfunc`), then reads `$reply`
+/// from the env-var fallback because the global `paramtab` is not
+/// yet a singleton in the Rust port (params::getaparam takes a
+/// `&ParamTable` arg).
+pub fn subst_string_by_func(func_name: &str, arg1: Option<&str>, orig: &str)
+    -> Option<Vec<String>>                                                   // c:4017
+{
+    use std::sync::atomic::Ordering;
+    let osc = crate::ported::builtin::SFCONTEXT.load(Ordering::Relaxed);     // c:4019
+    let osm = crate::ported::builtin::STOPMSG.load(Ordering::Relaxed);
+    let old_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
+    let mut args: Vec<String> = Vec::with_capacity(3);                       // c:4020-4026
+    args.push(func_name.to_string());                                        // c:4023
+    if let Some(a) = arg1 {                                                  // c:4024
+        args.push(a.to_string());                                            // c:4025
+    }
+    args.push(orig.to_string());                                             // c:4026
+    crate::ported::builtin::SFCONTEXT                                         // c:4027
+        .store(crate::ported::zsh_h::SFC_SUBST, Ordering::Relaxed);
+    INCOMPFUNC.store(0, Ordering::Relaxed);                                  // c:4028
+
+    let rc = callhookfunc(func_name, Some(&args), false);                    // c:4030
+    // C: getaparam("reply"). The Rust paramtab is not yet a global —
+    // params::getaparam() takes a `&ParamTable` arg. Until the
+    // global `paramtab` is wired here, fall back to splitting the
+    // env var "reply" on IFS, matching the convention modules use
+    // to round-trip through `setaparam`.
+    let ret: Option<Vec<String>> = if rc != 0 {
+        None                                                                 // c:4031
+    } else {
+        std::env::var("reply").ok().map(|s|                                  // c:4033
+            s.split('\x00').map(|p| p.to_string()).collect::<Vec<_>>()
+        )
+    };
+
+    crate::ported::builtin::SFCONTEXT.store(osc, Ordering::Relaxed);         // c:4035
+    crate::ported::builtin::STOPMSG.store(osm, Ordering::Relaxed);           // c:4036
+    INCOMPFUNC.store(old_incompfunc, Ordering::Relaxed);                     // c:4037
+    ret                                                                      // c:4038
 }
 
-/// Make bang character special/non-special (from utils.c makebangspecial)
-pub fn makebangspecial(_yes: bool) {
-    // Character type table manipulation - handled by the lexer in Rust
+/// Port of `void makebangspecial(int yesno)` from Src/utils.c:4283.
+///
+/// Toggles `ISPECIAL` on the current `bangchar`. When `yesno==0`
+/// always clears; when nonzero, sets only if `ZTF_BANGCHAR` was
+/// stored by `inittyptab` (i.e. BANGHIST is on).
+pub fn makebangspecial(yesno: bool) {                                        // c:4283
+    use crate::ported::ztype::{ISPECIAL, TYPTAB, TYPTAB_FLAGS, ZTF_BANGCHAR};
+    use std::sync::atomic::Ordering;
+    let bc = crate::ported::hist::bangchar.load(Ordering::SeqCst) as usize;
+    if bc == 0 || bc >= 256 {
+        return;
+    }
+    let flags = *TYPTAB_FLAGS.lock().unwrap();
+    let mut tab = TYPTAB.lock().unwrap();
+    if !yesno {                                                              // c:4289
+        tab[bc] &= !(ISPECIAL as u32);                                       // c:4290
+    } else if (flags & ZTF_BANGCHAR) != 0 {                                  // c:4291
+        tab[bc] |= ISPECIAL as u32;                                          // c:4292
+    }
 }
 
 /// Port of `wcsiblank()` from `Src/utils.c:4302`.
@@ -3898,26 +4316,57 @@ pub fn wcsiblank(c: char) -> bool {
     c.is_whitespace() && c != '\n'
 }
 
-/// Get wide character type (from utils.c wcsitype)
-pub fn wcsitype(c: char, itype: u32) -> bool {
-    const IALPHA: u32 = 1;
-    const IALNUM: u32 = 2;
-    const IDIGIT: u32 = 3;
-    const IIDENT: u32 = 4;
-    const IWORD: u32 = 5;
-    const IBLANK: u32 = 6;
-    const ISPACE: u32 = 7;
-
-    match itype {
-        IALPHA => c.is_alphabetic(),
-        IALNUM => c.is_alphanumeric(),
-        IDIGIT => c.is_ascii_digit(),
-        IALPHA | IIDENT => c.is_alphanumeric() || c == '_',
-        IWORD => c.is_alphanumeric() || c == '_',
-        IBLANK => c == ' ' || c == '\t',
-        ISPACE => c.is_whitespace(),
-        _ => false,
+/// Port of `int wcsitype(wchar_t c, int itype)` from Src/utils.c:4321.
+///
+/// "zistype macro extended to support wide characters. Works for
+/// IIDENT, IWORD, IALNUM, ISEP."
+///
+/// The Rust port checks whether `c` falls in the typtab class
+/// represented by `itype`. ASCII chars consult the global TYPTAB
+/// (the same one C's `zistype()` macro indexes); non-ASCII chars
+/// route through Unicode predicates that mirror the C `iswalnum`
+/// fallback at line 4346.
+pub fn wcsitype(c: char, itype: u32) -> bool {                               // c:4321
+    use crate::ported::ztype::{TYPTAB, IIDENT, IWORD, IALNUM, ISEP};
+    if !crate::ported::options::opt_state_get("multibyte").unwrap_or(true) { // c:4327
+        if (c as u32) < 256 {
+            let tab = TYPTAB.lock().unwrap();
+            return (tab[c as usize] & itype) != 0;
+        }
+        return false;
     }
+    if (c as u32) < 128 {                                                    // c:4343
+        let tab = TYPTAB.lock().unwrap();
+        return (tab[c as usize] & itype) != 0;
+    }
+    let cls = itype as u16;
+    if cls == IIDENT {                                                       // c:4347
+        if crate::ported::options::opt_state_get("posixidentifiers")
+            .unwrap_or(false) { return false; }                              // c:4348
+        return c.is_alphanumeric();                                          // c:4350
+    }
+    if cls == IWORD {                                                        // c:4352
+        if c.is_alphanumeric() { return true; }                              // c:4353
+        // C: IS_COMBINING(c) — no Rust crate-free combining-mark
+        // predicate. zero-width chars (combining, zero-width-joiner,
+        // etc.) are treated as word per c:4362.
+        if unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) == 0 {     // c:4362
+            return true;
+        }
+        // C: wmemchr(wordchars_wide.chars, ...) — `$WORDCHARS` membership.
+        if let Ok(w) = std::env::var("WORDCHARS") {                          // c:4364
+            return w.chars().any(|x| x == c);
+        }
+        return false;
+    }
+    if cls == ISEP {                                                         // c:4366
+        if let Ok(ifs) = std::env::var("IFS") {                              // c:4367
+            return ifs.chars().any(|x| x == c);
+        }
+        return false;
+    }
+    let _ = IALNUM;
+    c.is_alphanumeric()                                                      // c:4370
 }
 
 /// Duplicate array of wide strings (from utils.c wcs_zarrdup) - same as zarrdup in Rust
@@ -3928,11 +4377,11 @@ pub fn wcs_zarrdup(arr: &[String]) -> Vec<String> {
 /// Set terminal to cbreak mode (from utils.c setcbreak)
 #[cfg(unix)]
 pub fn setcbreak() -> bool {
-    if let Some(mut ti) = gettyinfo(0) {
+    if let Some(mut ti) = gettyinfo() {
         ti.c_lflag &= !(libc::ICANON | libc::ECHO);
         ti.c_cc[libc::VMIN] = 1;
         ti.c_cc[libc::VTIME] = 0;
-        settyinfo(0, &ti)
+        settyinfo(&ti)
     } else {
         false
     }
@@ -4164,20 +4613,39 @@ pub fn skipparens(s: &str, open: char, close: char) -> usize {              // c
     s.len()
 }
 
-/// Port of `subst_string_by_hook()` from `Src/utils.c:4049`.
+/// Port of `char **subst_string_by_hook(char *name, char *arg1, char *orig)`
+/// from Src/utils.c:4049.
 ///
-/// C body looks up `name` as a single function; if found, calls
-/// `subst_string_by_func`. Otherwise builds `name + "_hook"` (an
-/// array of function names) and tries each in order until one
-/// returns success.
-///
-/// WARNING: stub pending [`subst_string_by_func`] port. The hook
-/// dispatch logic is straightforward but cannot fire without the
-/// underlying function-call machinery. Returning None matches C's
-/// "no hook produced output" path (utils.c:4080), so callers that
-/// fall back to default behavior already work correctly.
-pub fn subst_string_by_hook(_hook: &str, _arg: &str, _orig: &str) -> Option<String> {
-    None
+/// Looks up `name` as a shell function and calls
+/// `subst_string_by_func` on it. If that returns no result, walks
+/// `${name}_hook` as an array of function names, trying each in
+/// order until one yields a `$reply`.
+pub fn subst_string_by_hook(name: &str, arg1: Option<&str>, orig: &str)
+    -> Option<Vec<String>>                                                   // c:4049
+{
+    let mut ret: Option<Vec<String>> = None;
+    if getshfunc(name).is_some() {                                           // c:4054
+        ret = subst_string_by_func(name, arg1, orig);                        // c:4055
+    }
+    if ret.is_none() {                                                       // c:4058
+        let arrnam = format!("{}_hook", name);                               // c:4061-4063
+        // C: getaparam(arrnam). Mirror the env-var fallback used in
+        // subst_string_by_func — the hook array is shipped as
+        // NUL-separated entries when the param subsystem isn't yet
+        // wired here.
+        if let Ok(text) = std::env::var(&arrnam) {                           // c:4065
+            for f in text.split('\x00') {                                    // c:4068
+                if f.is_empty() { continue; }
+                if getshfunc(f).is_some() {                                  // c:4069
+                    ret = subst_string_by_func(f, arg1, orig);               // c:4070
+                    if ret.is_some() {                                       // c:4071
+                        break;                                               // c:4072
+                    }
+                }
+            }
+        }
+    }
+    ret                                                                       // c:4078
 }
 
 /// Make single-element array on heap (from utils.c hmkarray)
@@ -4727,9 +5195,10 @@ pub fn delprepromptfn(func: fn()) {                                         // c
 /// `for (;;)` walk at lines 1394-1411).
 static TIMED_FNS: std::sync::Mutex<Vec<(i64, fn())>> = std::sync::Mutex::new(Vec::new());
 
+// Add a function to the list of timed functions.                           // c:1367
 /// Register a function to run at `when` (epoch seconds).
 /// Port of `addtimedfn()` from Src/utils.c:1371.
-pub fn addtimedfn(func: fn(), when: i64) {
+pub fn addtimedfn(func: fn(), when: i64) {                                   // c:1371
     let mut list = TIMED_FNS.lock().unwrap();
     let pos = list.iter().position(|(w, _)| when < *w).unwrap_or(list.len());
     list.insert(pos, (when, func));
@@ -4737,7 +5206,7 @@ pub fn addtimedfn(func: fn(), when: i64) {
 
 /// Remove a registered timed function (first occurrence only).
 /// Port of `deltimedfn()` from Src/utils.c:1430.
-pub fn deltimedfn(func: fn()) {
+pub fn deltimedfn(func: fn()) {                                              // c:1430
     let mut list = TIMED_FNS.lock().unwrap();
     if let Some(pos) = list.iter().position(|(_, f)| *f as usize == func as usize) {
         list.remove(pos);

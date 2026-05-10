@@ -547,7 +547,7 @@ pub fn unqueue_traps() {                                                     // 
 /// Blocks every signal in `set`, returning the previous mask
 /// (matches C's `sigset_t signal_block(sigset_t set)`).
 #[cfg(unix)]
-pub fn signal_block(set: &libc::sigset_t) -> libc::sigset_t {
+pub fn signal_block(set: &libc::sigset_t) -> libc::sigset_t {                // c:175
     let mut oset: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {
         libc::sigprocmask(libc::SIG_BLOCK, set, &mut oset);
@@ -559,7 +559,7 @@ pub fn signal_block(set: &libc::sigset_t) -> libc::sigset_t {
 ///
 /// C body: `sigprocmask(SIG_UNBLOCK, &set, &oset); return oset;`
 #[cfg(unix)]
-pub fn signal_unblock(set: &libc::sigset_t) -> libc::sigset_t {
+pub fn signal_unblock(set: &libc::sigset_t) -> libc::sigset_t {              // c:189
     let mut oset: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {
         libc::sigprocmask(libc::SIG_UNBLOCK, set, &mut oset);
@@ -725,7 +725,7 @@ pub fn is_interact() -> bool {
 /// signal handlers interrupt blocked reads (so ^C breaks out of
 /// `read` etc.).
 #[cfg(unix)]
-pub fn install_handler(sig: i32) {
+pub fn install_handler(sig: i32) {                                           // c:100
     unsafe {
         let mut act: libc::sigaction = std::mem::zeroed();
         act.sa_sigaction = zhandler as *const () as usize;
@@ -768,7 +768,7 @@ pub fn intr() {                                                              // 
 /// counter) lands, this is a no-op stub. The C signature shape
 /// is preserved so callers can be wired up; the work it elides
 /// is cited inline.
-pub fn endtrapscope() {
+pub fn endtrapscope() {                                                      // c:880
     // TODO: walk savetraps for entries with st->local > locallevel,
     // restore via settrap, decrement nsigtrapped per ZSIG_TRAPPED.
     // Then run TRAPEXIT if sigtrapped[SIGEXIT] was set and not
@@ -807,7 +807,7 @@ pub const TRAPCOUNT: usize = (SIGCOUNT + 3) as usize;
 /// completely wrong (that's job-control suspend, not "wait for
 /// signal delivery"). Now real port via `sigsuspend(2)`.
 #[cfg(unix)]
-pub fn signal_suspend(_sig: i32, wait_cmd: bool) -> i32 {
+pub fn signal_suspend(_sig: i32, wait_cmd: bool) -> i32 {                    // c:214
     let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {
         libc::sigemptyset(&mut set);
@@ -850,7 +850,7 @@ impl TrapScope {
 /// Build a signal-name list for display.
 /// Port of the `kill -l` output path Src/signals.c builds by
 /// walking `sigs[]` (around `bin_kill()` in Src/jobs.c:bin_kill).
-pub fn starttrapscope() -> Vec<String> {
+pub fn starttrapscope() -> Vec<String> {                                     // c:855
     let mut names = Vec::with_capacity(SIGCOUNT as usize + 1);
     names.push("EXIT".to_string());
     for i in 1..=SIGCOUNT {

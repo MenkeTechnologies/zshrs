@@ -19,7 +19,7 @@
 
 use std::sync::atomic::Ordering;
 
-use crate::ported::init::TCCOLOURS;
+use crate::ported::init::tccolours;
 use crate::ported::zsh_h::{color_rgb, hookdef, module};
 
 // =====================================================================
@@ -249,11 +249,11 @@ pub fn getnearestcolor(_dummy: *const hookdef, col: *const color_rgb) -> i32 { /
         blue = (*col).blue as i32;
     }
     // C `tccolours` is an int global from `Src/init.c:94`; Rust port
-    // mirrors it as the existing `init::TCCOLOURS` AtomicI32.
-    if TCCOLOURS.load(Ordering::Relaxed) == 256 {                     // c:152
+    // mirrors it as the existing `init::tccolours` AtomicI32.
+    if tccolours.load(Ordering::Relaxed) == 256 {                     // c:152
         return mapRGBto256(red, green, blue) + 1;                     // c:153
     }
-    if TCCOLOURS.load(Ordering::Relaxed) == 88 {                      // c:154
+    if tccolours.load(Ordering::Relaxed) == 88 {                      // c:154
         return mapRGBto88(red, green, blue) + 1;                      // c:155
     }
     -1                                                                 // c:156
@@ -449,20 +449,20 @@ mod tests {
     /// per c:152-156: 256→`mapRGBto256+1`, 88→`mapRGBto88+1`, otherwise -1.
     #[test]
     fn getnearestcolor_dispatches_on_tccolours() {
-        let saved = TCCOLOURS.load(Ordering::SeqCst);
+        let saved = tccolours.load(Ordering::SeqCst);
         let col = color_rgb { red: 0xff, green: 0xff, blue: 0xff };
 
-        TCCOLOURS.store(256, Ordering::SeqCst);
+        tccolours.store(256, Ordering::SeqCst);
         let r256 = getnearestcolor(std::ptr::null(), &col);
         assert_eq!(r256, mapRGBto256(0xff, 0xff, 0xff) + 1);
 
-        TCCOLOURS.store(88, Ordering::SeqCst);
+        tccolours.store(88, Ordering::SeqCst);
         let r88 = getnearestcolor(std::ptr::null(), &col);
         assert_eq!(r88, mapRGBto88(0xff, 0xff, 0xff) + 1);
 
-        TCCOLOURS.store(16, Ordering::SeqCst);
+        tccolours.store(16, Ordering::SeqCst);
         assert_eq!(getnearestcolor(std::ptr::null(), &col), -1);
 
-        TCCOLOURS.store(saved, Ordering::SeqCst);
+        tccolours.store(saved, Ordering::SeqCst);
     }
 }

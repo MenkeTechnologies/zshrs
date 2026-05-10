@@ -16,7 +16,7 @@ use std::collections::HashMap;
 /// `zle -N` widgets, and "completion:fnname" for `zle -C` ones —
 /// matched here verbatim so shell scripts that grep `$widgets`
 /// keep working.
-pub fn widgetstr(name: &str, is_user: bool, is_completion: bool) -> String {
+pub fn widgetstr(name: &str, is_user: bool, is_completion: bool) -> String { // c:37
     if is_completion {
         format!("completion:{}", name)
     } else if is_user {
@@ -26,13 +26,14 @@ pub fn widgetstr(name: &str, is_user: bool, is_completion: bool) -> String {
     }
 }
 
+// Functions for the zlewidgets special parameter.                          // c:33
 /// Build the `$widgets` associative array — the snapshot consulted by
 /// shell-side `${(k)widgets}` enumeration.
 /// Port of `getpmwidgets()` from Src/Zle/zleparameter.c. The C source
 /// walks `thingytab` (zle_thingy.c:60 `createthingytab`); we union
 /// the static built-in slice with the user + completion widget maps
 /// and emit the same per-entry type label widgetstr() produces.
-pub fn getpmwidgets(
+pub fn getpmwidgets(                                                         // c:59
     builtin_widgets: &[&str],
     user_widgets: &HashMap<String, String>,
     completion_widgets: &HashMap<String, String>,
@@ -60,7 +61,7 @@ pub fn getpmwidgets(
 /// source walks the same thingytab the getpmwidgets path uses but
 /// invokes the parameter-scan callback on each entry instead of
 /// allocating the full hash.
-pub fn scanpmwidgets<F>(
+pub fn scanpmwidgets<F>(                                                     // c:81
     builtin_widgets: &[&str],
     user_widgets: &HashMap<String, String>,
     completion_widgets: &HashMap<String, String>,
@@ -79,12 +80,13 @@ pub fn scanpmwidgets<F>(
     }
 }
 
+// Functions for the zlekeymaps special parameter.                          // c:102
 /// Build the `$keymaps` array — list of every named keymap.
 /// Port of `keymapsgetfn()` from Src/Zle/zleparameter.c. The C
 /// source walks `keymapnamtab` (zle_keymap.c:153
 /// `createkeymapnamtab`); we surface the host-supplied slice
 /// directly since our keymap registry already exposes a Vec view.
-pub fn keymapsgetfn(keymaps: &[&str]) -> Vec<String> {
+pub fn keymapsgetfn(keymaps: &[&str]) -> Vec<String> {                       // c:105
     keymaps.iter().map(|s| s.to_string()).collect()
 }
 

@@ -15,6 +15,47 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+/// Port of `struct pardef` from `Src/Modules/parameter.c:2179`. The
+/// per-magic-assoc parameter spec table — one entry per
+/// `${parameters}`/`${commands}`/`${functions}`/etc. exposed by the
+/// `zsh/parameter` module.
+///
+/// C definition (c:2179-2187):
+/// ```c
+/// struct pardef {
+///     char *name;
+///     int flags;
+///     GetNodeFunc getnfn;
+///     ScanTabFunc scantfn;
+///     GsuHash hash_gsu;
+///     GsuArray array_gsu;
+///     Param pm;
+/// };
+/// ```
+///
+/// Rust port keeps the same shape; the GSU function-table fields are
+/// type-erased via `usize` because the GsuHash/GsuArray callback
+/// vectors are pre-defined zsh-framework types not yet ported.
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy)]
+pub struct pardef {                                                          // c:2179
+    /// Parameter name (e.g. "commands", "functions", "options").
+    pub name: &'static str,                                                  // c:2180
+    /// Flags (PM_* bits — typically PM_HASHED|PM_SPECIAL|PM_HIDE).
+    pub flags: i32,                                                          // c:2181
+    /// `GetNodeFunc` getnfn — type-erased: 0 when not yet wired.
+    pub getnfn: usize,                                                       // c:2182
+    /// `ScanTabFunc` scantfn — type-erased: 0 when not yet wired.
+    pub scantfn: usize,                                                      // c:2183
+    /// `GsuHash` hash_gsu — type-erased.
+    pub hash_gsu: usize,                                                     // c:2184
+    /// `GsuArray` array_gsu — type-erased.
+    pub array_gsu: usize,                                                    // c:2185
+    /// `Param pm` — type-erased pointer; populated by createparam.
+    pub pm: usize,                                                           // c:2186
+}
+
 /// Parameter type flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Parameter type tag.
@@ -1562,11 +1603,8 @@ pub fn getpmgalias(ht: *mut HashTable, name: &str) -> Option<Param> {        // 
 pub fn getpmhistory(_ht: *mut HashTable, name: &str) -> Option<Param> {      // c:1156
     use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL};
     let num: i64 = name.parse().ok()?;                                       // c:1159 quietgetn
-    let value = crate::ported::hist::HISTORY
-        .get_or_init(|| std::sync::Mutex::new(
-            crate::ported::hist::History::new()))
-        .lock().ok()
-        .and_then(|h| h.entries.get(&num).map(|e| e.text.clone()));          // c:1184
+    let value = crate::ported::hist::quietgethist(num)                       // c:1184
+        .map(|e| e.node.nam.clone());
     let (val, found) = match value {
         Some(v) => (v, true),
         None => (String::new(), false),                                      // c:1204

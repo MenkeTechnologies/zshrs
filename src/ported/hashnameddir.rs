@@ -42,7 +42,7 @@ impl Default for NamedDirTable {
 
 impl NamedDirTable {
     // Create new hash table for named directories                           // c:55
-    pub fn new() -> Self {
+    pub fn new() -> Self {                                                      // c:59
         NamedDirTable {
             table: HashMap::with_capacity(201),
             all_users_added: false,
@@ -55,7 +55,7 @@ impl NamedDirTable {
     /// Port of `emptynameddirtable()` from Src/hashnameddir.c:84.
     /// Drops every entry and clears the `finddir()` cache the same
     /// way the C source's `finddir(NULL)` call does.
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self) {                                                   // c:84
         self.table.clear();
         self.all_users_added = false;
         self.finddir_cache = None;
@@ -66,7 +66,7 @@ impl NamedDirTable {
     /// `addnode` slot wired into the hash table. Computes
     /// `nd->diff = strlen(dir) - strlen(name)` and invalidates the
     /// finddir cache, matching the C source's `finddir(NULL)` call.
-    pub fn add(&mut self, name: &str, dir: &str, flags: u32) {
+    pub fn add(&mut self, name: &str, dir: &str, flags: u32) {                  // c:121
         let diff = dir.len() as i32 - name.len() as i32;
         self.finddir_cache = None;
 
@@ -106,7 +106,7 @@ impl NamedDirTable {
     /// Port of `removenameddirnode()` from Src/hashnameddir.c:135 —
     /// the `removenode` slot wired into the hash table. Invalidates
     /// the finddir cache via the same `finddir(NULL)` mechanism.
-    pub fn remove(&mut self, name: &str) -> Option<NamedDir> {
+    pub fn remove(&mut self, name: &str) -> Option<NamedDir> {                  // c:135
         let result = self.table.remove(name);
         if result.is_some() {
             self.finddir_cache = None;
@@ -136,7 +136,7 @@ impl NamedDirTable {
     /// `all_users_added` guard mirrors the C source's static
     /// `allusersadded` flag.
     #[cfg(unix)]
-    pub fn fill_from_passwd(&mut self) {
+    pub fn fill_from_passwd(&mut self) {                                        // c:96
         if self.all_users_added {
             return;
         }
@@ -216,13 +216,14 @@ impl NamedDirTable {
         self.table.iter()
     }
 
+    // Print a named directory                                                // c:157
     /// Print a named directory entry.
     /// Port of `printnameddirnode()` from Src/hashnameddir.c:161.
     /// `list_format=true` mirrors the `PRINT_LIST` flag the C source
     /// honours when called via `hash -d -L`; the leading `--` guard
     /// for entries that begin with `-` matches the same defensive
     /// quoting the C source emits via `quotedzputs()`.
-    pub fn print_entry(&self, name: &str, list_format: bool) -> Option<String> {
+    pub fn print_entry(&self, name: &str, list_format: bool) -> Option<String> { // c:161
         let nd = self.get(name)?;
         // Inline `quotedzputs()` per c:hashnameddir.c:161 — the C
         // source calls quotedzputs(name) and quotedzputs(dir) which

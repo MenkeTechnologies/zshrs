@@ -465,7 +465,7 @@ fn lookup_resinfo(lim: i32) -> Option<resinfo_T> {
 /// `lim == -1` means show all; `lim >= RLIM_NLIMITS` falls back to a
 /// direct `getrlimit(2)` for resources the table doesn't know.
 #[cfg(unix)]
-pub(crate) fn showlimits(nam: &str, hard: bool, lim: i32) -> i32 {
+pub(crate) fn showlimits(nam: &str, hard: bool, lim: i32) -> i32 {          // c:346
     ensure_limits_initialized();
     if (lim as usize) >= nlimits() && lim != -1 {
         let mut vals = rlimit {
@@ -513,7 +513,7 @@ pub(crate) fn showlimits(_nam: &str, _hard: bool, _lim: i32) -> i32 {
 /// `-X: descr` heading column. `lim >= RLIM_NLIMITS` falls back to
 /// a direct `getrlimit(2)`.
 #[cfg(unix)]
-pub(crate) fn printulimit(nam: &str, lim: i32, hard: bool, head: bool) -> i32 {
+pub(crate) fn printulimit(nam: &str, lim: i32, hard: bool, head: bool) -> i32 { // c:386
     ensure_limits_initialized();
     let limit: rlim_t = if (lim as usize) >= nlimits() {
         let mut vals = rlimit {
@@ -576,7 +576,7 @@ pub(crate) fn printulimit(_nam: &str, _lim: i32, _hard: bool, _head: bool) -> i3
 /// `set` corresponds to `OPT_ISSET(ops, 's')` — when false, the
 /// limits-array is updated but `setrlimit(2)` is not called.
 #[cfg(unix)]
-pub(crate) fn do_limit(
+pub(crate) fn do_limit(                                                     // c:431
     nam: &str,
     lim: i32,
     val: rlim_t,
@@ -758,7 +758,7 @@ fn setlimits(_nam: &str) -> i32 {
 /// `zsh.h:1396`); `char **argv` becomes `&[String]`; `UNUSED(int func)`
 /// keeps the parameter for callsite compatibility.
 #[cfg(unix)]
-pub(crate) fn bin_limit(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 {
+pub(crate) fn bin_limit(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 { // c:519
     // c:521-524 — locals
     let hard: bool;
     let mut limnum: i32;
@@ -908,7 +908,7 @@ pub(crate) fn bin_limit(_nam: &str, _argv: &[String], _ops: &options, _func: i32
 
 /// Port of `do_unlimit()` from `Src/Builtins/rlimits.c:622`.
 #[cfg(unix)]
-pub(crate) fn do_unlimit(
+pub(crate) fn do_unlimit(                                                   // c:622
     nam: &str,
     lim: i32,
     hard: bool,
@@ -995,7 +995,7 @@ pub(crate) fn do_unlimit(
 /// bin_unlimit(char *nam, char **argv, Options ops, UNUSED(int func))
 /// ```
 #[cfg(unix)]
-pub(crate) fn bin_unlimit(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 {
+pub(crate) fn bin_unlimit(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 { // c:670
     // c:672-674 — locals
     let hard: bool;
     let mut limnum: i32;

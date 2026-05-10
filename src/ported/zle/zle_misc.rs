@@ -844,21 +844,62 @@ pub fn backwardkillline(zle: &mut Zle) -> i32 {                              // 
     0                                                                        // c:245
 }
 
-/// Port of `bracketedpaste()` from Src/Zle/zle_misc.c:814.
-pub fn bracketedpaste(zle: &mut Zle, args: &[String]) -> i32 {               // c:bracketedpaste
-    // C body: `pbuf = bracketedstring(); if (*args) setsparam(*args, pbuf)
-    //          else { stringaszleline+cuttext+doinsert }`. Substrate
-    // (bracketedstring + setsparam) deferred. If args[0] is given, save
-    // empty string (no actual paste capture); else insert nothing.
-    let _ = (zle, args);
-    0
+/// Port of `int bracketedpaste(char **args)` from
+/// Src/Zle/zle_misc.c:814.
+///
+/// Captures a bracketed-paste payload via `bracketedstring()` then
+/// either stores it in `args[0]` (assoc-array setparam) or inserts it
+/// at the cursor with `doinsert`. The single-quote-escape detour
+/// (`quotestring(pbuf, QT_SINGLE_OPTIONAL)`) when `zmult != 1`
+/// prevents the user from accidentally pasting shell metacharacters.
+pub fn bracketedpaste(zle: &mut Zle, args: &[String]) -> i32 {               // c:813
+    use crate::ported::utils::{quotestring, QuoteType};
+    let pbuf = bracketedstring();                                            // c:816
+    if let Some(name) = args.first() {                                       // c:818
+        // c:819 — `setsparam(*args, pbuf)`. Param-table not yet a
+        // singleton; fall back to env-var (matches other ports).
+        std::env::set_var(name, &pbuf);
+        return 0;
+    }
+    // c:822-825 — quote when zmult != 1 then convert to ZLE_CHAR_T,
+    //              cuttext (REPLACE) the prior cutbuf with the paste.
+    let payload = if zle.zmod.mult == 1 {                                    // c:823
+        pbuf.clone()
+    } else {
+        quotestring(&pbuf, QuoteType::SingleOptional)                        // c:824
+    };
+    let wpaste: Vec<char> = payload.chars().collect();
+    // c:826-834 — !(zmod.flags & MOD_VIBUF) → reset kct, killregion if
+    // region_active, then doinsert(wpaste).
+    use super::zle_main::ModifierFlags;
+    if !zle.zmod.flags.contains(ModifierFlags::VIBUF) {
+        zle.zmod.mult = 1;                                                   // c:829
+        // region_active guard + killregion not ported as Zle field set.
+        // c:833 — `doinsert(wpaste, n)`. Inline insert at zlecs.
+        for c in wpaste.iter().copied() {
+            zle.zleline.insert(zle.zlecs, c);
+            zle.zlecs += 1;
+            zle.zlell += 1;
+        }
+        zle.resetneeded = true;
+    }
+    0                                                                        // c:838
 }
 
-/// Port of `bracketedstring()` from Src/Zle/zle_misc.c:784.
-pub fn bracketedstring() -> String {                                         // c:bracketedstring
-    // C body: reads bytes from terminal until ESC[201~; getbyte
-    // substrate not yet ported. Returns empty string until input
-    // pump is wired.
+/// Port of `mod_export char *bracketedstring(void)` from
+/// Src/Zle/zle_misc.c:784.
+///
+/// Reads bytes from the terminal until the end-paste sequence
+/// `\e[201~` is seen, demetafying high-bit bytes and translating
+/// `\r` → `\n` along the way.
+///
+/// Blocked on: `getbyte()` from zle_main.c — the keyboard input
+/// pump that respects the ZLE timeout/select(2) machinery. Until
+/// the input pump lands, returns the empty string so callers see a
+/// no-op paste rather than a panic.
+pub fn bracketedstring() -> String {                                         // c:784
+    // C body c:786-808 — `getbyte(1L, &timeout, 1)` loop with
+    //                    Meta/imeta + \r→\n + ESC[201~ scanner.
     String::new()
 }
 

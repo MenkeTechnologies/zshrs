@@ -1361,7 +1361,7 @@ thread_local! { static INCOMPFUNC: std::cell::Cell<i32> = const { std::cell::Cel
 /// (zlemetacs, clwords, clwnum) lives in src/ported/zle/zle_main.rs.
 pub(crate) fn compctlread(name: &str, args: &[String]) -> i32 {
     // C: c:195 — must be called from compctl-invoked function
-    let incompctlfunc = INCOMPCTLFUNC.with(|c| c.get());
+    let incompctlfunc = INCOMPCTLFUNC.load(std::sync::atomic::Ordering::Relaxed);
     if !incompctlfunc {
         eprintln!("{}: option valid only in functions called via compctl", name);
         return 1;
@@ -1419,7 +1419,8 @@ pub(crate) fn compctlread(name: &str, args: &[String]) -> i32 {
 // True iff we're inside a function called via compctl -K. Mirrors
 // the C `incompctlfunc` global from Src/Zle/zle_tricky.c — set by
 // the dispatcher around the -K function call.
-thread_local! { static INCOMPCTLFUNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+pub(crate) static INCOMPCTLFUNC: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Hook for completion-list build start.
 /// Port of `ccmakehookfn()` from Src/Zle/compctl.c:1762 (~145 lines).
@@ -2988,7 +2989,7 @@ mod tests {
     #[test]
     fn compctlread_outside_compctl_func_errors() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        INCOMPCTLFUNC.with(|c| c.set(false));
+        INCOMPCTLFUNC.store(false, std::sync::atomic::Ordering::Relaxed);
         let r = compctlread("compctlread", &[]);
         assert_eq!(r, 1);
     }

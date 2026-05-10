@@ -277,6 +277,7 @@ pub const WIDGET_INUSE:  i32 = 1 << 12;  /* widget is in use */                 
 pub const WIDGET_FREE:   i32 = 1 << 13;  /* request to free when no longer in use */       // c:219
 pub const ZLE_NOLAST:    i32 = 1 << 14;  /* widget should not alter lbindk */              // c:220
 
+
 // =====================================================================
 // Thingy — `Src/Zle/zle.h:224-235`.
 // =====================================================================

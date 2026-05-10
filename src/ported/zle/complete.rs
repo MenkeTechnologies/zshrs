@@ -98,12 +98,13 @@ pub fn freecpattern(p: Option<Box<crate::ported::zle::comp_h::Cpattern>>) {  // 
     }
 }
 
+// Copy a completion matcher list into permanent storage.                   // c:151
 /// Direct port of `cpcmatcher()` from `Src/Zle/complete.c:155`.
 /// C body (c:158-179): walks the source matcher chain, allocating a
 /// fresh Cmatcher per node with `refc = 1`, copying flags / llen /
 /// wlen / lalen / ralen, deep-copying each Cpattern via
 /// `cpcpattern()`. Returns the new chain head.
-pub fn cpcmatcher(m: Option<&crate::ported::zle::comp_h::Cmatcher>)
+pub fn cpcmatcher(m: Option<&crate::ported::zle::comp_h::Cmatcher>)          // c:155
     -> Option<Box<crate::ported::zle::comp_h::Cmatcher>>                     // c:155
 {
     use crate::ported::zle::comp_h::Cmatcher;
@@ -135,12 +136,13 @@ pub fn cpcmatcher(m: Option<&crate::ported::zle::comp_h::Cmatcher>)
     head                                                                     // c:178
 }
 
+// Copy a completion matcher pattern.                                        // c:214
 /// Direct port of `cp_cpattern_element()` from `Src/Zle/complete.c:187`.
 /// C body (c:189-216): allocates a fresh Cpattern, sets `next = NULL`,
 /// copies `tp`, then dispatches on `tp` to copy `u.str` (CCLASS /
 /// NCLASS / EQUIV) or `u.chr` (CHAR). Default keeps the union zero.
-pub fn cp_cpattern_element(o: &crate::ported::zle::comp_h::Cpattern)
-    -> Box<crate::ported::zle::comp_h::Cpattern>                             // c:187
+pub fn cp_cpattern_element(o: &crate::ported::zle::comp_h::Cpattern)         // c:187
+    -> Box<crate::ported::zle::comp_h::Cpattern>
 {
     use crate::ported::zle::comp_h::{Cpattern, CPAT_CCLASS, CPAT_NCLASS,
                                        CPAT_EQUIV, CPAT_CHAR};

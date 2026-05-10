@@ -633,3 +633,30 @@ named_cmd_state
 # /newptycmd/deletallptycmds/ptyhook. Rust uses OnceLock<Mutex<PtyCmds>>
 # for thread-safe access; this private helper hides the get_or_init.
 ptycmds
+
+# hist.rs — Rust-only helpers for the C `histent` ring + per-entry
+# inspection. C source uses raw pointer arithmetic on the
+# `hist_ring` doubly-linked list and reads `histent` fields
+# directly; Rust port wraps the ring as `Mutex<Vec<histent>>` and
+# needs lookup helpers since `Vec::get` doesn't preserve the C
+# `up`/`down` chain semantics.
+#   make_histent — bag-of-fields constructor for the histent C
+#     struct (Src/zsh.h `struct histent`); inlined at every C
+#     call site as `zshcalloc(sizeof(struct histent))` + field-by-
+#     field assignment (hist.c:1614/2098/etc.).
+#   resolve_histfile — Reads `$HISTFILE` (C: getsparam("HISTFILE"))
+#     since paramtab isn't a global yet in the Rust port.
+#   ring_get / ring_position / ring_at / ring_len / ring_oldest /
+#     ring_latest — `Vec::get` /index helpers replacing C's pointer
+#     walks `for (he = hist_ring; he; he = he->down)` (hist.c:235+).
+#   clone_histent — owned-clone of the struct since the C source
+#     dups via `zalloc + memcpy` for the freehistent path.
+make_histent
+resolve_histfile
+ring_get
+clone_histent
+ring_position
+ring_at
+ring_len
+ring_oldest
+ring_latest

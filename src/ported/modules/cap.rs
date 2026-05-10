@@ -50,7 +50,7 @@ mod ffi {
 /// install via `cap_set_proc`; without args, print the current
 /// process's capability set.
 #[cfg(all(target_os = "linux", feature = "libcap"))]
-pub(crate) fn bin_cap(nam: &str, argv: &[String], _ops: &options, _func: i32) -> i32 {
+pub(crate) fn bin_cap(nam: &str, argv: &[String], _ops: &options, _func: i32) -> i32 { // c:36
     use std::ffi::{CStr, CString};
 
     let mut ret = 0;

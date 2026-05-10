@@ -1,200 +1,138 @@
-//! Context save and restore for zshrs
+//! context.c - context save and restore
 //!
-//! Direct port from zsh/Src/context.c
+//! Port of Src/context.c
 //!
-//! This module provides a stack of saved contexts for history, lexer, and parser state.
+//! This short file provides a home for the stack of saved contexts.
+//! The actions for saving and restoring are encapsulated within
+//! individual modules.
 
-use std::cell::RefCell;
+use crate::ported::zsh_h::hist_stack;
+use crate::ported::zsh_h::{ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE};
+use std::sync::Mutex;
+use zshrs_parse::lex::{LexStack, ZshLexer};
+use zshrs_parse::parse::{ParseStack, ZshParser};
 
-/// Bit flags identifying which slices of context to save/restore.
-/// Port of the `ZCONTEXT_*` macros from Src/zsh.h —
-/// `zcontext_save_partial()` / `zcontext_restore_partial()` in
-/// Src/context.c:52/89 take this bit set to control which
-/// subsystem state they snapshot.
-pub const ZCONTEXT_HIST: u32 = 1;
-pub const ZCONTEXT_LEX: u32 = 2;
-pub const ZCONTEXT_PARSE: u32 = 4;
-
-/// History state slice pushed onto the context stack.
-/// Port of the history-state fields `zcontext_save_partial()` from
-/// Src/context.c:52 captures (curhist / histsiz / savehistsiz).
-#[derive(Clone, Default)]
-pub struct HistStack {
-    pub curhist: usize,
-    pub histsiz: usize,
-    pub savehistsiz: usize,
+/// Port of `struct context_stack` from Src/context.c:38-44.
+#[allow(non_camel_case_types)]
+pub struct context_stack {                                                   // c:38
+    pub next: Option<Box<context_stack>>,                                    // c:39
+    pub hist_stack: hist_stack,                                              // c:41
+    pub lex_stack: LexStack,                                                 // c:42
+    pub parse_stack: ParseStack,                                             // c:43
 }
 
-/// Lexer state slice pushed onto the context stack.
-/// Port of the lexer-state fields `zcontext_save_partial()` from
-/// Src/context.c:52 captures (`tok`, `tokstr`, etc.) — same bit
-/// `ZCONTEXT_LEX` controls them.
-#[derive(Clone, Default)]
-pub struct LexStack {
-    pub tok: i32,
-    pub tokstr: Option<String>,
-    pub zsession: Option<String>,
-}
+/// Port of `static struct context_stack *cstack` from Src/context.c:46.
+static cstack: Mutex<Option<Box<context_stack>>> = Mutex::new(None);         // c:46
 
-/// Parser state slice pushed onto the context stack.
-/// Port of the parser-state fields `zcontext_save_partial()` from
-/// Src/context.c:52 captures (`ecused`, `ecnpats`) under
-/// `ZCONTEXT_PARSE`.
-#[derive(Clone, Default)]
-pub struct ParseStack {
-    pub ecused: usize,
-    pub ecnpats: usize,
-}
+/// Port of `void zcontext_save_partial(int parts)` from Src/context.c:52.
+///
+/// Save some or all of current context. The C source reads from
+/// hist.c / lex.c / parse.c file-statics; the Rust port takes the
+/// owning `ZshLexer` and `ZshParser` because zshrs_parse doesn't
+/// expose those subsystems as globals.
+pub fn zcontext_save_partial(                                                // c:52
+    parts: i32,
+    lexer: Option<&mut ZshLexer<'_>>,
+    parser: Option<&mut ZshParser<'_>>,
+) {
+    crate::ported::signals::queue_signals();                                 // c:56
 
-/// A single saved context entry.
-/// Port of the per-entry shape on the C source's `zcontext_stack`
-/// linked list — bundles all three subsystem slices so a single
-/// push/pop captures everything `zcontext_save()` (Src/context.c:80)
-/// snapshotted.
-#[derive(Clone, Default)]
-pub struct ContextStack {
-    pub hist_stack: HistStack,
-    pub lex_stack: LexStack,
-    pub parse_stack: ParseStack,
-}
-
-/// Context stack manager.
-/// Port of the global `zcontext_stack` linked list Src/context.c
-/// keeps — a stack rather than a list since we never traverse it,
-/// only push/pop.
-pub struct ContextManager {
-    stack: Vec<ContextStack>,
-}
-
-impl Default for ContextManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ContextManager {
-    pub fn new() -> Self {
-        ContextManager { stack: Vec::new() }
-    }
-
-    /// Check if context stack is empty (at top level)
-    pub fn is_empty(&self) -> bool {
-        self.stack.is_empty()
-    }
-
-    // save some or all of current context                                   // c:48
-    /// Save some or all of the current context.
-    /// Port of `zcontext_save_partial()` from Src/context.c:52 —
-    /// the C source allocates a fresh `zcontext_stack` node, fills
-    /// the slices selected by `parts`, and pushes onto the stack.
-    pub fn save_partial(                                                    // c:52
-        &mut self,
-        parts: u32,
-        hist: &HistStack,
-        lex: &LexStack,
-        parse: &ParseStack,
-    ) {
-        let mut ctx = ContextStack::default();
-
-        if (parts & ZCONTEXT_HIST) != 0 {
-            ctx.hist_stack = hist.clone();
-        }
-        if (parts & ZCONTEXT_LEX) != 0 {
-            ctx.lex_stack = lex.clone();
-        }
-        if (parts & ZCONTEXT_PARSE) != 0 {
-            ctx.parse_stack = parse.clone();
-        }
-
-        self.stack.push(ctx);
-    }
-
-    // save context in full                                                  // c:76
-    /// Save the full context.
-    /// Port of `zcontext_save()` from Src/context.c:80 — wrapper
-    /// over `save_partial(ZCONTEXT_HIST | ZCONTEXT_LEX |
-    /// ZCONTEXT_PARSE, ...)`.
-    pub fn save(&mut self, hist: &HistStack, lex: &LexStack, parse: &ParseStack) { // c:80
-        self.save_partial(
-            ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE,
-            hist,
-            lex,
-            parse,
-        );
-    }
-
-    // restore context or part thereof                                       // c:85
-    /// Restore some or all of the saved context.
-    /// Port of `zcontext_restore_partial()` from Src/context.c:89
-    /// — pops the top stack node and copies back the slices
-    /// selected by `parts`.
-    pub fn restore_partial(&mut self, parts: u32) -> Option<ContextStack> { // c:89
-        let ctx = self.stack.pop()?;
-
-        let mut result = ContextStack::default();
-        if (parts & ZCONTEXT_HIST) != 0 {
-            result.hist_stack = ctx.hist_stack;
-        }
-        if (parts & ZCONTEXT_LEX) != 0 {
-            result.lex_stack = ctx.lex_stack;
-        }
-        if (parts & ZCONTEXT_PARSE) != 0 {
-            result.parse_stack = ctx.parse_stack;
-        }
-
-        Some(result)
-    }
-
-    // restore full context                                                  // c:113
-    /// Restore the full context.
-    /// Port of `zcontext_restore()` from Src/context.c:117 —
-    /// wrapper over `restore_partial(ZCONTEXT_HIST | ZCONTEXT_LEX
-    /// | ZCONTEXT_PARSE)`.
-    pub fn restore(&mut self) -> Option<ContextStack> {                     // c:117
-        self.restore_partial(ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE)
-    }
-
-    /// Get current stack depth
-    pub fn depth(&self) -> usize {
-        self.stack.len()
-    }
-}
-
-thread_local! {
-    static CONTEXT_STACK: RefCell<ContextManager> = RefCell::new(ContextManager::new());
-}
-
-// save context in full                                                     // c:76
-/// Save the context in full (global entry point).
-/// Port of `zcontext_save()` from Src/context.c:80 — the global
-/// function the C source's eval/exec/parse paths call.
-pub fn zcontext_save(hist: &HistStack, lex: &LexStack, parse: &ParseStack) { // c:80
-    CONTEXT_STACK.with(|cs| {
-        cs.borrow_mut().save(hist, lex, parse);
+    let mut cs = Box::new(context_stack {                                    // c:58
+        next: None,
+        hist_stack: hist_stack {
+            histactive: 0, histdone: 0, stophist: 0, hlinesz: 0, defev: 0,
+            hline: None, hptr: None, chwords: Vec::new(),
+            chwordlen: 0, chwordpos: 0, csp: 0, hist_keep_comment: 0,
+        },
+        lex_stack: LexStack::default(),
+        parse_stack: ParseStack::default(),
     });
+
+    let mut head = cstack.lock().unwrap();
+
+    let toplevel: i32 = if head.is_none() { 1 } else { 0 };                  // !cstack
+    if (parts & ZCONTEXT_HIST) != 0 {                                        // c:60
+        crate::ported::hist::hist_context_save(&mut cs.hist_stack, toplevel); // c:61
+    }
+    if (parts & ZCONTEXT_LEX) != 0 {                                         // c:63
+        if let Some(lex) = lexer {                                           // c:64
+            lex.lex_context_save(&mut cs.lex_stack);
+        }
+    }
+    if (parts & ZCONTEXT_PARSE) != 0 {                                       // c:66
+        if let Some(p) = parser {                                            // c:67
+            p.parse_context_save(&mut cs.parse_stack);
+        }
+    }
+
+    cs.next = head.take();                                                   // c:70
+    *head = Some(cs);                                                        // c:71
+
+    crate::ported::signals::unqueue_signals();                               // c:73
 }
 
-// save some or all of current context                                      // c:48
-/// Save partial context (global entry point).
-/// Port of `zcontext_save_partial()` from Src/context.c:52.
-pub fn zcontext_save_partial(parts: u32, hist: &HistStack, lex: &LexStack, parse: &ParseStack) { // c:52
-    CONTEXT_STACK.with(|cs| {
-        cs.borrow_mut().save_partial(parts, hist, lex, parse);
-    });
+/// Port of `void zcontext_save(void)` from Src/context.c:80.
+///
+/// Save context in full.
+pub fn zcontext_save(                                                        // c:80
+    lexer: Option<&mut ZshLexer<'_>>,
+    parser: Option<&mut ZshParser<'_>>,
+) {
+    zcontext_save_partial(                                                   // c:82
+        ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE,
+        lexer,
+        parser,
+    );
 }
 
-// restore full context                                                     // c:113
-/// Restore the full context (global entry point).
-/// Port of `zcontext_restore()` from Src/context.c:117.
-pub fn zcontext_restore() -> Option<ContextStack> {                          // c:117
-    CONTEXT_STACK.with(|cs| cs.borrow_mut().restore())
+/// Port of `void zcontext_restore_partial(int parts)` from Src/context.c:89.
+pub fn zcontext_restore_partial(                                             // c:89
+    parts: i32,
+    lexer: Option<&mut ZshLexer<'_>>,
+    parser: Option<&mut ZshParser<'_>>,
+) {
+    let mut head = cstack.lock().unwrap();
+    let mut cs = match head.take() {                                         // c:91
+        Some(cs) => cs,
+        None => {
+            // DPUTS(!cstack, "BUG: zcontext_restore() without zcontext_save()"); // c:93
+            return;
+        }
+    };
+
+    crate::ported::signals::queue_signals();                                 // c:95
+    *head = cs.next.take();                                                  // c:96 cstack = cstack->next
+    let toplevel: i32 = if head.is_none() { 1 } else { 0 };                  // !cstack
+
+    if (parts & ZCONTEXT_HIST) != 0 {                                        // c:98
+        crate::ported::hist::hist_context_restore(&cs.hist_stack, toplevel); // c:99
+    }
+    if (parts & ZCONTEXT_LEX) != 0 {                                         // c:101
+        if let Some(lex) = lexer {                                           // c:102
+            lex.lex_context_restore(&mut cs.lex_stack);
+        }
+    }
+    if (parts & ZCONTEXT_PARSE) != 0 {                                       // c:104
+        if let Some(p) = parser {                                            // c:105
+            p.parse_context_restore(&cs.parse_stack);
+        }
+    }
+
+    drop(cs);                                                                // c:108 free(cs)
+
+    crate::ported::signals::unqueue_signals();                               // c:110
 }
 
-// restore context or part thereof                                          // c:85
-/// Restore partial context (global entry point).
-/// Port of `zcontext_restore_partial()` from Src/context.c:89.
-pub fn zcontext_restore_partial(parts: u32) -> Option<ContextStack> {        // c:89
-    CONTEXT_STACK.with(|cs| cs.borrow_mut().restore_partial(parts))
+/// Port of `void zcontext_restore(void)` from Src/context.c:117.
+pub fn zcontext_restore(                                                     // c:117
+    lexer: Option<&mut ZshLexer<'_>>,
+    parser: Option<&mut ZshParser<'_>>,
+) {
+    zcontext_restore_partial(                                                // c:119
+        ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE,
+        lexer,
+        parser,
+    );
 }
 
 #[cfg(test)]
@@ -202,80 +140,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_context_save_restore() {
-        let mut mgr = ContextManager::new();
-
-        let hist = HistStack {
-            curhist: 100,
-            histsiz: 1000,
-            savehistsiz: 500,
-        };
-        let lex = LexStack {
-            tok: 42,
-            tokstr: Some("test".to_string()),
-            zsession: None,
-        };
-        let parse = ParseStack {
-            ecused: 10,
-            ecnpats: 5,
-        };
-
-        mgr.save(&hist, &lex, &parse);
-        assert_eq!(mgr.depth(), 1);
-
-        let restored = mgr.restore().unwrap();
-        assert_eq!(restored.hist_stack.curhist, 100);
-        assert_eq!(restored.lex_stack.tok, 42);
-        assert_eq!(restored.parse_stack.ecused, 10);
-        assert_eq!(mgr.depth(), 0);
+    fn save_restore_balances_stack() {
+        let mut lexer = ZshLexer::new("");
+        let mut parser = ZshParser::new("");
+        zcontext_save(Some(&mut lexer), Some(&mut parser));
+        assert!(cstack.lock().unwrap().is_some());
+        zcontext_restore(Some(&mut lexer), Some(&mut parser));
+        assert!(cstack.lock().unwrap().is_none());
     }
 
     #[test]
-    fn test_context_partial_save() {
-        let mut mgr = ContextManager::new();
-
-        let hist = HistStack {
-            curhist: 50,
-            histsiz: 500,
-            savehistsiz: 250,
-        };
-        let lex = LexStack::default();
-        let parse = ParseStack::default();
-
-        mgr.save_partial(ZCONTEXT_HIST, &hist, &lex, &parse);
-
-        let restored = mgr.restore_partial(ZCONTEXT_HIST).unwrap();
-        assert_eq!(restored.hist_stack.curhist, 50);
+    fn nested_saves_pop_lifo() {
+        let mut lexer = ZshLexer::new("");
+        let mut parser = ZshParser::new("");
+        zcontext_save(Some(&mut lexer), Some(&mut parser));
+        zcontext_save(Some(&mut lexer), Some(&mut parser));
+        zcontext_restore(Some(&mut lexer), Some(&mut parser));
+        assert!(cstack.lock().unwrap().is_some());
+        zcontext_restore(Some(&mut lexer), Some(&mut parser));
+        assert!(cstack.lock().unwrap().is_none());
     }
 
     #[test]
-    fn test_nested_contexts() {
-        let mut mgr = ContextManager::new();
+    fn restore_without_save_is_noop() {
+        let mut lexer = ZshLexer::new("");
+        let mut parser = ZshParser::new("");
+        zcontext_restore(Some(&mut lexer), Some(&mut parser));
+        assert!(cstack.lock().unwrap().is_none());
+    }
 
-        let hist1 = HistStack {
-            curhist: 1,
-            histsiz: 100,
-            savehistsiz: 50,
-        };
-        let hist2 = HistStack {
-            curhist: 2,
-            histsiz: 200,
-            savehistsiz: 100,
-        };
-        let lex = LexStack::default();
-        let parse = ParseStack::default();
-
-        mgr.save(&hist1, &lex, &parse);
-        mgr.save(&hist2, &lex, &parse);
-
-        assert_eq!(mgr.depth(), 2);
-
-        let restored2 = mgr.restore().unwrap();
-        assert_eq!(restored2.hist_stack.curhist, 2);
-
-        let restored1 = mgr.restore().unwrap();
-        assert_eq!(restored1.hist_stack.curhist, 1);
-
-        assert!(mgr.is_empty());
+    #[test]
+    fn lex_save_restore_roundtrips_state() {
+        let mut lexer = ZshLexer::new("echo hello");
+        let mut parser = ZshParser::new("echo hello");
+        // Mutate lexer state.
+        lexer.dbparens = true;
+        lexer.toklineno = 42;
+        zcontext_save(Some(&mut lexer), Some(&mut parser));
+        // Lexer should be reset to defaults after save.
+        assert!(!lexer.dbparens);
+        assert_eq!(lexer.toklineno, 0);
+        zcontext_restore(Some(&mut lexer), Some(&mut parser));
+        assert!(lexer.dbparens);
+        assert_eq!(lexer.toklineno, 42);
     }
 }

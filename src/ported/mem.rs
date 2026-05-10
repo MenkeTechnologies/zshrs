@@ -144,11 +144,12 @@ pub fn zalloc<T: Default>() -> Box<T> {                                      // 
     Box::default()
 }
 
+// allocate memory from the current memory pool and clear it               // c:942
 /// Allocate zeroed memory.
 /// Port of `zshcalloc()` from Src/mem.c:977 — the C source pairs
 /// `zalloc()` with `memset(0)`; Rust's `Box::default()` handles
 /// both.
-pub fn zshcalloc<T: Default>() -> Box<T> {
+pub fn zshcalloc<T: Default>() -> Box<T> {                                  // c:977
     Box::default()
 }
 
@@ -156,7 +157,7 @@ pub fn zshcalloc<T: Default>() -> Box<T> {
 /// Port of `zrealloc()` from Src/mem.c:994 — Vec::resize fills the
 /// gap with `T::default()`, mirroring the C source's "old contents
 /// preserved, new bytes uninitialized" semantics.
-pub fn zrealloc<T>(v: &mut Vec<T>, new_size: usize)
+pub fn zrealloc<T>(v: &mut Vec<T>, new_size: usize)                          // c:994
 where
     T: Default + Clone,
 {
@@ -180,7 +181,7 @@ pub fn zfree<T>(_ptr: Box<T>) {                                              // 
 /// Port of `zsfree()` from Src/mem.c:1641 — the C source's
 /// `free(NULL)`-tolerant string-specific deallocator. In Rust the
 /// Drop impl on `String` handles the actual free.
-pub fn zsfree(_s: String) {
+pub fn zsfree(_s: String) {                                                  // c:1641
     // Drop happens automatically
 }
 
@@ -205,14 +206,14 @@ pub fn dupstring_wlen(s: &str, len: usize) -> String {                      // c
 /// has different freeing rules). Rust's borrow-checker subsumes
 /// this distinction; the function is kept for call-site parity but
 /// always returns true.
-pub fn zheapptr<T>(_ptr: &T) -> bool {
+pub fn zheapptr<T>(_ptr: &T) -> bool {                                       // c:561
     true
 }
 
 /// Reallocate heap memory.
 /// Port of `hrealloc()` from Src/mem.c:687 — heap-arena
 /// counterpart of `zrealloc()` (Src/mem.c:994).
-pub fn hrealloc(old: Vec<u8>, new_size: usize) -> Vec<u8> {
+pub fn hrealloc(old: Vec<u8>, new_size: usize) -> Vec<u8> {                 // c:687
     let mut v = old;
     v.resize(new_size, 0);
     v
@@ -220,7 +221,7 @@ pub fn hrealloc(old: Vec<u8>, new_size: usize) -> Vec<u8> {
 
 /// Duplicate an array of strings.
 /// Port of `zarrdup()` from Src/utils.c:4532.
-pub fn zarrdup(arr: &[String]) -> Vec<String> {
+pub fn zarrdup(arr: &[String]) -> Vec<String> {                             // c:4532
     arr.to_vec()
 }
 
@@ -235,26 +236,26 @@ pub fn arrdup_max(arr: &[String], max: usize) -> Vec<String> {
 /// Port of `arrlen()` from Src/utils.c:2357 — the C source's
 /// canonical NULL-terminated `char**` length walker. Rust slices
 /// already know their length, so this collapses to `arr.len()`.
-pub fn arrlen<T>(arr: &[T]) -> usize {
+pub fn arrlen<T>(arr: &[T]) -> usize {                                      // c:2357
     arr.len()
 }
 
 /// Check if array length is less than n.
 /// Port of `arrlen_lt()` from Src/utils.c:2400 — short-circuit
 /// version that stops walking once the bound is exceeded.
-pub fn arrlen_lt<T>(arr: &[T], n: usize) -> bool {
+pub fn arrlen_lt<T>(arr: &[T], n: usize) -> bool {                          // c:2400
     arr.len() < n
 }
 
 /// Check if array length is less than or equal to n.
 /// Port of `arrlen_le()` from Src/utils.c:2391.
-pub fn arrlen_le<T>(arr: &[T], n: usize) -> bool {
+pub fn arrlen_le<T>(arr: &[T], n: usize) -> bool {                          // c:2391
     arr.len() <= n
 }
 
 /// Check if array length is greater than n.
 /// Port of `arrlen_gt()` from Src/utils.c:2382.
-pub fn arrlen_gt<T>(arr: &[T], n: usize) -> bool {
+pub fn arrlen_gt<T>(arr: &[T], n: usize) -> bool {                          // c:2382
     arr.len() > n
 }
 
@@ -262,7 +263,7 @@ pub fn arrlen_gt<T>(arr: &[T], n: usize) -> bool {
 /// Port of `sepjoin()` from Src/utils.c:3928 — C source's `IFS`-
 /// driven array→string join. Default separator is space, matching
 /// the C source's `sep ? sep : " "` fallback.
-pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
+pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {               // c:3928
     arr.join(sep.unwrap_or(" "))
 }
 
@@ -270,7 +271,7 @@ pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
 /// Port of `sepsplit()` from Src/utils.c:3962 — the C source's
 /// `IFS`-driven splitter. `allow_empty` mirrors the `allownull`
 /// argument the C function takes.
-pub fn sepsplit(s: &str, sep: &str, allow_empty: bool) -> Vec<String> {
+pub fn sepsplit(s: &str, sep: &str, allow_empty: bool) -> Vec<String> {     // c:3962
     if allow_empty {
         s.split(sep).map(|s| s.to_string()).collect()
     } else {
@@ -303,17 +304,20 @@ pub fn bicat(s1: &str, s2: &str) -> String {                                // c
     format!("{}{}", s1, s2)
 }
 
+// This version always uses permanently-allocated space.                   // c:100
 /// Concatenate three strings into a new permanent string.
 /// Port of `tricat()` from Src/string.c:98 — used heavily by the
 /// completion machinery for "prefix + match + suffix" assembly.
-pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {
+pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {                     // c:98
     format!("{}{}{}", s1, s2, s3)
 }
 
+// concatenate s1 and s2 in dynamically allocated buffer                  // c:127
+// This version always uses space from the current heap.                   // c:133
 /// Concatenate two strings into a new heap-arena string.
 /// Port of `dyncat()` from Src/string.c:131 — heap-arena variant
 /// of `bicat()`.
-pub fn dyncat(s1: &str, s2: &str) -> String {
+pub fn dyncat(s1: &str, s2: &str) -> String {                               // c:131
     format!("{}{}", s1, s2)
 }
 
@@ -321,14 +325,15 @@ pub fn dyncat(s1: &str, s2: &str) -> String {
 /// Port of `strend()` from Src/string.c:196 — C source returns the
 /// pointer to the NUL terminator's predecessor; Rust returns the
 /// char.
-pub fn strend(s: &str) -> Option<char> {
+pub fn strend(s: &str) -> Option<char> {                                    // c:196
     s.chars().last()
 }
 
+// Append a string to an allocated string, reallocating to make room.     // c:182
 /// Append a string in-place.
 /// Port of `appstr()` from Src/string.c:186 — the C source uses
 /// `strcat(3)` with realloc; Rust's `String::push_str` does both.
-pub fn appstr(base: &mut String, append: &str) {
+pub fn appstr(base: &mut String, append: &str) {                            // c:186
     base.push_str(append);
 }
 
@@ -620,7 +625,7 @@ pub fn memory_validate(heap_id: u64) -> i32 {                                // 
 
 /// Port of `hcalloc()` from Src/mem.c:946 — heap-arena `calloc`
 /// (zero-fill `zhalloc`). Shim.
-pub fn hcalloc(_size: usize) -> usize { 0 }
+pub fn hcalloc(_size: usize) -> usize { 0 }                                  // c:946
 
 /// Port of `malloc()` from Src/mem.c:1189 — wrapped `malloc`
 /// for the legacy arena system. Shim.

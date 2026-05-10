@@ -145,7 +145,7 @@ pub struct ZshLexer<'a> {
     /// Parsing typeset arguments
     pub intypeset: bool,
     /// Inside (( ... )) arithmetic
-    dbparens: bool,
+    pub dbparens: bool,
     /// Disable alias expansion
     pub noaliases: bool,
     /// Disable spelling correction

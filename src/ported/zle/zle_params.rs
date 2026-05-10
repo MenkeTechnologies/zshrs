@@ -38,7 +38,7 @@ impl Zle {
     /// `$BUFFER` accessor — full edited line as a String.
     /// Port of `get_buffer()` from Src/Zle/zle_params.c (the
     /// `BUFFER` getfn entry in `zleparams[]`).
-    pub fn get_buffer(&self) -> String {
+    pub fn get_buffer(&self) -> String {                                    // c:258
         self.zleline.iter().collect()
     }
 
@@ -46,7 +46,7 @@ impl Zle {
     /// Port of `set_buffer()` from Src/Zle/zle_params.c (the
     /// `BUFFER` setfn entry); zsh clamps the cursor to the new
     /// length, mirrored here.
-    pub fn set_buffer(&mut self, s: &str) {
+    pub fn set_buffer(&mut self, s: &str) {                                 // c:245
         self.zleline = s.chars().collect();
         self.zlell = self.zleline.len();
         self.zlecs = self.zlecs.min(self.zlell);
@@ -55,27 +55,27 @@ impl Zle {
 
     /// `$CURSOR` accessor — current cursor position (0-indexed).
     /// Port of `get_cursor()` from Src/Zle/zle_params.c.
-    pub fn get_cursor(&self) -> usize {
+    pub fn get_cursor(&self) -> usize {                                     // c:281
         self.zlecs
     }
 
     /// `$CURSOR=pos` setter — clamped to buffer length.
     /// Port of `set_cursor()` from Src/Zle/zle_params.c.
-    pub fn set_cursor(&mut self, pos: usize) {
+    pub fn set_cursor(&mut self, pos: usize) {                              // c:267
         self.zlecs = pos.min(self.zlell);
         self.resetneeded = true;
     }
 
     /// `$LBUFFER` accessor — text before the cursor.
     /// Port of `get_lbuffer()` from Src/Zle/zle_params.c.
-    pub fn get_lbuffer(&self) -> String {
+    pub fn get_lbuffer(&self) -> String {                                   // c:355
         self.zleline[..self.zlecs].iter().collect()
     }
 
     /// `$LBUFFER=s` setter — replace text before the cursor; cursor
     /// lands at the new lbuffer's end.
     /// Port of `set_lbuffer()` from Src/Zle/zle_params.c.
-    pub fn set_lbuffer(&mut self, s: &str) {
+    pub fn set_lbuffer(&mut self, s: &str) {                                // c:332
         let rbuf: String = self.zleline[self.zlecs..].iter().collect();
         self.zleline = s.chars().chain(rbuf.chars()).collect();
         self.zlell = self.zleline.len();
@@ -85,13 +85,13 @@ impl Zle {
 
     /// `$RBUFFER` accessor — text after the cursor.
     /// Port of `get_rbuffer()` from Src/Zle/zle_params.c.
-    pub fn get_rbuffer(&self) -> String {
+    pub fn get_rbuffer(&self) -> String {                                   // c:384
         self.zleline[self.zlecs..].iter().collect()
     }
 
     /// `$RBUFFER=s` setter — replace text after the cursor.
     /// Port of `set_rbuffer()` from Src/Zle/zle_params.c.
-    pub fn set_rbuffer(&mut self, s: &str) {
+    pub fn set_rbuffer(&mut self, s: &str) {                                // c:364
         let lbuf: String = self.zleline[..self.zlecs].iter().collect();
         self.zleline = lbuf.chars().chain(s.chars()).collect();
         self.zlell = self.zleline.len();
@@ -101,7 +101,7 @@ impl Zle {
     /// `$CUTBUFFER` accessor — most-recent kill-ring entry.
     /// Port of `get_cutbuffer()` from Src/Zle/zle_params.c which
     /// reads `cutbuf` (the unnamed kill register).
-    pub fn get_cutbuffer(&self) -> String {
+    pub fn get_cutbuffer(&self) -> String {                                 // c:619
         self.killring
             .front()
             .map(|v| v.iter().collect())
@@ -110,7 +110,7 @@ impl Zle {
 
     /// `$CUTBUFFER=s` setter — overwrite the front of the kill ring.
     /// Port of `set_cutbuffer()` from Src/Zle/zle_params.c.
-    pub fn set_cutbuffer(&mut self, s: &str) {
+    pub fn set_cutbuffer(&mut self, s: &str) {                              // c:629
         let chars: Vec<char> = s.chars().collect();
         if self.killring.is_empty() {
             self.killring.push_front(chars);
@@ -121,32 +121,32 @@ impl Zle {
 
     /// `$MARK` accessor — current mark position.
     /// Port of `get_mark()` from Src/Zle/zle_params.c.
-    pub fn get_mark(&self) -> usize {
+    pub fn get_mark(&self) -> usize {                                       // c:311
         self.mark
     }
 
     /// `$MARK=pos` setter — clamp to buffer length.
     /// Port of `set_mark()` from Src/Zle/zle_params.c.
-    pub fn set_mark(&mut self, pos: usize) {
+    pub fn set_mark(&mut self, pos: usize) {                                // c:299
         self.mark = pos.min(self.zlell);
     }
 
     /// `$BUFFERLINES` accessor — number of newline-separated lines.
     /// Port of `get_bufferlines()` from Src/Zle/zle_params.c.
-    pub fn get_bufferlines(&self) -> usize {
+    pub fn get_bufferlines(&self) -> usize {                                // c:521
         self.zleline.iter().filter(|&&c| c == '\n').count() + 1
     }
 
     /// `$PENDING` accessor — bytes waiting in the input queue.
     /// Port of `get_pending()` from Src/Zle/zle_params.c which
     /// returns `kungetct` (the unget-buffer fill).
-    pub fn get_pending(&self) -> usize {
+    pub fn get_pending(&self) -> usize {                                    // c:528
         0 // unget_buf is private; future expansion can expose its len
     }
 
     /// `$KEYMAP` accessor — currently-active keymap name.
     /// Port of `get_keymap()` from Src/Zle/zle_params.c.
-    pub fn get_keymap(&self) -> &str {
+    pub fn get_keymap(&self) -> &str {                                      // c:456
         &self.keymaps.current_name
     }
 
@@ -154,7 +154,7 @@ impl Zle {
     /// Port of `get_numeric()` from Src/Zle/zle_params.c which
     /// returns `zmod.mult` only when `MOD_MULT` is set, otherwise
     /// the parameter is unset.
-    pub fn get_numeric(&self) -> Option<i32> {
+    pub fn get_numeric(&self) -> Option<i32> {                              // c:485
         if self.zmod.flags.contains(super::zle_main::ModifierFlags::MULT) {
             Some(self.zmod.mult)
         } else {

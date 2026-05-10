@@ -287,7 +287,8 @@ static BUILTINTAB: OnceLock<HashMap<&'static str, &'static Builtin>> = OnceLock:
 /// `HashMap<&str, &Builtin>` — Rust's standard hashing replaces the
 /// C `hasher` callback and the `HashMap` itself replaces all the
 /// per-table function pointers (`addnode`/`getnode`/`removenode`/...).
-pub fn createbuiltintable() -> &'static HashMap<&'static str, &'static Builtin> {
+// Builtin Command Hash Table Functions                                      // c:140
+pub fn createbuiltintable() -> &'static HashMap<&'static str, &'static Builtin> { // c:150
     BUILTINTAB.get_or_init(|| {
         let mut m: HashMap<&'static str, &'static Builtin> = HashMap::with_capacity(BUILTINS.len());
         for b in BUILTINS {
@@ -1359,6 +1360,10 @@ pub fn checkjobs() {                                                         // 
 // `stopmsg` global from Src/jobs.c — non-zero when checkjobs() printed.
 pub static STOPMSG: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
+// `sfcontext` global from Src/exec.c:239 — current shell-function
+// dispatch context (SFC_NONE / SFC_BUILTIN / SFC_FUNC / SFC_SUBST...).
+pub static SFCONTEXT: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:exec.c:239
 // `maxjob` / `thisjob` globals from Src/jobs.c:62/63.
 pub static MAXJOB:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 pub static THISJOB: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
@@ -2658,8 +2663,7 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
     let mut asgf: Vec<(String, String)> = Vec::new();
 
     use crate::ported::zsh_h::{HFILE_APPEND, HFILE_SKIPOLD, HFILE_USE_OPTIONS};
-    let hist_lock = || crate::ported::hist::HISTORY.get_or_init(
-        || std::sync::Mutex::new(crate::ported::hist::History::new()));
+    use std::sync::atomic::Ordering;
 
     // c:1441-1481 — `-p` push history stack.
     if OPT_ISSET(ops, b'p') {                                                // c:1441
@@ -2670,13 +2674,8 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
         let level: i32 = if OPT_ISSET(ops, b'a') {
             LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed)
         } else { -1 };
-        // Source the defaults from the live history singleton; the C
-        // source reads `histsiz` / `savehistsiz` globals at c:1469-1470.
-        {
-            let g = hist_lock().lock().unwrap();
-            hs = g.histsiz;                                                  // c:1442 DEFAULT_HISTSIZE/histsiz
-            shs = g.savehistsiz;
-        }
+        hs = crate::ported::hist::histsiz.load(Ordering::Relaxed);           // c:1442
+        shs = crate::ported::hist::savehistsiz.load(Ordering::Relaxed);
         if !argv.is_empty() {                                                // c:1445
             hf = argv.remove(0);                                             // c:1446
             if !argv.is_empty() {                                            // c:1447
@@ -2710,20 +2709,15 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
             }
         }
         // c:1473 — pushhiststack(hf, hs, shs, level); failure → return 1.
-        {
-            let mut g = hist_lock().lock().unwrap();
-            crate::ported::hist::pushhiststack(
-                &mut g, Some(&hf), hs, shs, level);                          // c:1473
-        }
+        crate::ported::hist::pushhiststack(Some(&hf), hs, shs, level);       // c:1473
         if !hf.is_empty() {                                                  // c:1475
             // c:1476-1480 — stat then readhistfile(hf, 1, HFILE_USE_OPTIONS).
             let exists = std::fs::metadata(&hf).is_ok();
             let enoent = std::io::Error::last_os_error().raw_os_error()
                 == Some(libc::ENOENT);
             if exists || !enoent {                                           // c:1477
-                let mut g = hist_lock().lock().unwrap();
                 crate::ported::hist::readhistfile(                           // c:1478
-                    &mut g, Some(&hf), true, HFILE_USE_OPTIONS as i32);
+                    Some(&hf), 1, HFILE_USE_OPTIONS as i32);
             }
         }
         return 0;                                                            // c:1483
@@ -2736,11 +2730,8 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
             return 1;                                                        // c:1488
         }
         // c:1490 — `return !saveandpophiststack(-1, HFILE_USE_OPTIONS);`.
-        // The C wrapper returns 1 on success, 0 on failure; the `!` flips
-        // it to a shell exit code. Rust port treats successful pop as 0.
-        let mut g = hist_lock().lock().unwrap();
-        crate::ported::hist::saveandpophiststack(&mut g, HFILE_USE_OPTIONS as i32);
-        return 0;                                                            // c:1490
+        crate::ported::hist::saveandpophiststack(HFILE_USE_OPTIONS as i32);  // c:1490
+        return 0;
     }
 
     // c:1494-1500 — `-m` pattern filter (compile first arg).
@@ -2764,20 +2755,16 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
     if OPT_ISSET(ops, b'R') {                                                // c:1503
         let path = argv.first().cloned();
         let flags = if OPT_ISSET(ops, b'I') { HFILE_SKIPOLD as i32 } else { 0 };
-        let mut g = hist_lock().lock().unwrap();
         crate::ported::hist::readhistfile(                                   // c:1505
-            &mut g, path.as_deref(), true, flags);
-        drop(g);
+            path.as_deref(), 1, flags);
         crate::ported::mem::unqueue_signals();                               // c:1506
         return 0;                                                            // c:1507
     }
     if OPT_ISSET(ops, b'W') {                                                // c:1509
         let path = argv.first().cloned();
         let flags = if OPT_ISSET(ops, b'I') { HFILE_SKIPOLD as i32 } else { 0 };
-        let g = hist_lock().lock().unwrap();
         crate::ported::hist::savehistfile(                                   // c:1511
-            &g, path.as_deref(), flags);
-        drop(g);
+            path.as_deref(), flags);
         crate::ported::mem::unqueue_signals();                               // c:1512
         return 0;                                                            // c:1513
     }
@@ -2785,10 +2772,8 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
         let path = argv.first().cloned();
         let mut flags = HFILE_APPEND as i32;
         if OPT_ISSET(ops, b'I') { flags |= HFILE_SKIPOLD as i32; }           // c:1518
-        let g = hist_lock().lock().unwrap();
         crate::ported::hist::savehistfile(                                   // c:1517
-            &g, path.as_deref(), flags);
-        drop(g);
+            path.as_deref(), flags);
         crate::ported::mem::unqueue_signals();                               // c:1519
         return 0;                                                            // c:1520
     }
@@ -2866,7 +2851,7 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
         // c:1611-1668 — edit history range to a temp file, fcedit it,
         // then stuff() the result back as the next command.
         retval = 1;                                                          // c:1620
-        let fil_opt = crate::ported::utils::gettempfile("zshfc", "");        // c:1621 gettempfile
+        let fil_opt = crate::ported::utils::gettempfile(Some("zshfc"));      // c:1621 gettempfile
         match fil_opt {
             None => {                                                        // c:1623
                 crate::ported::mem::unqueue_signals();                       // c:1624
@@ -2874,7 +2859,8 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
                     &format!("can't open temp file: {}",
                         std::io::Error::last_os_error()));
             }
-            Some(fil) => {
+            Some((fd, fil)) => {
+                unsafe { libc::close(fd); }                                  // c:1622 (file is reopened below)
                 // c:1632 — `if (last >= curhist) { last = curhist - 1; ... }`
                 if last >= curhist {                                         // c:1632
                     last = curhist - 1;                                      // c:1633

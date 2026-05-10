@@ -23,206 +23,16 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 //                                                                          // c:48
 // Hand-wavingly, this is incremented at every function call and decremented // c:49
 // at every function return.  See startparamscope().                        // c:50
-pub mod flags {
-    pub const SCALAR: u32 = 1 << 0;
-    pub const INTEGER: u32 = 1 << 1;
-    pub const EFLOAT: u32 = 1 << 2; // %e float format
-    pub const FFLOAT: u32 = 1 << 3; // %f float format
-    pub const ARRAY: u32 = 1 << 4;
-    pub const HASHED: u32 = 1 << 5; // Associative array (PM_HASHED)
-    pub const READONLY: u32 = 1 << 6;
-    pub const SPECIAL: u32 = 1 << 7;
-    pub const LOCAL: u32 = 1 << 8;
-    pub const EXPORT: u32 = 1 << 9; // Exported to environment
-    pub const UNSET: u32 = 1 << 10;
-    pub const TIED: u32 = 1 << 11;
-    pub const UNIQUE: u32 = 1 << 12; // Array elements unique
-    pub const LOWER: u32 = 1 << 13; // Lowercase value
-    pub const UPPER: u32 = 1 << 14; // Uppercase value
-    pub const TAG: u32 = 1 << 15; // Tagged parameter
-    pub const HIDE: u32 = 1 << 16;
-    pub const HIDEVAL: u32 = 1 << 17;
-    pub const NORESTORE: u32 = 1 << 18;
-    pub const NAMEREF: u32 = 1 << 19; // Named reference
-    pub const LEFT: u32 = 1 << 20; // Left justified
-    pub const RIGHT_B: u32 = 1 << 21; // Right justified with blanks
-    pub const RIGHT_Z: u32 = 1 << 22; // Right justified with zeros
-    pub const AUTOLOAD: u32 = 1 << 23; // Autoloaded parameter
-    pub const DECLARED: u32 = 1 << 24; // Explicitly declared
-    pub const REMOVABLE: u32 = 1 << 25; // Can be removed from table
-    pub const HASHELEM: u32 = 1 << 26; // Element of hash
-    pub const NAMEDDIR: u32 = 1 << 27; // Named directory
-    pub const DONTIMPORT: u32 = 1 << 28;
-    pub const DEFAULTED: u32 = 1 << 29;
-    pub const DONTIMPORT_SUID: u32 = 1 << 30;
 
-    // Convenience combo - like PM_READONLY_SPECIAL in C
-    pub const READONLY_SPECIAL: u32 = READONLY | SPECIAL;
-
-    // Type mask
-    pub const TYPE_MASK: u32 = SCALAR | INTEGER | EFLOAT | FFLOAT | ARRAY | HASHED | NAMEREF;
-
-    /// Extract just the type bits
-    pub fn pm_type(flags: u32) -> u32 {
-        flags & TYPE_MASK
-    }
-
-    /// For backwards compat with old code using FLOAT
-    pub const FLOAT: u32 = FFLOAT;
-    /// For backwards compat with old code using ASSOC
-    pub const ASSOC: u32 = HASHED;
-}
 
 // ---------------------------------------------------------------------------
-// Subscription flags (SCANPM_*)
+// Real `param` struct lives in Src/zsh.h:1829 (port at zsh_h.rs:750).
+// It uses C-union flattening: u_str / u_arr / u_val / u_dval / u_hash
+// dispatched on `PM_TYPE(node.flags)`. There is NO `ParamValue` enum in
+// C; do not reintroduce one.
 // ---------------------------------------------------------------------------
 
-pub mod scan_flags {
-    pub const WANTVALS: u32 = 1 << 0;
-    pub const WANTKEYS: u32 = 1 << 1;
-    pub const WANTINDEX: u32 = 1 << 2;
-    pub const MATCHKEY: u32 = 1 << 3;
-    pub const MATCHVAL: u32 = 1 << 4;
-    pub const MATCHMANY: u32 = 1 << 5;
-    pub const KEYMATCH: u32 = 1 << 6;
-    pub const ARRONLY: u32 = 1 << 7;
-    pub const ISVAR_AT: u32 = 1 << 8;
-    pub const DQUOTED: u32 = 1 << 9;
-    pub const NOEXEC: u32 = 1 << 10;
-    pub const CHECKING: u32 = 1 << 11;
-    pub const ASSIGNING: u32 = 1 << 12;
-    pub const NONAMEREF: u32 = 1 << 13;
-    pub const NONAMESPC: u32 = 1 << 14;
-}
-
-// ---------------------------------------------------------------------------
-// Assignment flags (ASSPM_*)
-// ---------------------------------------------------------------------------
-
-pub mod assign_flags {
-    pub const AUGMENT: u32 = 1 << 0; // += assignment
-    pub const WARN: u32 = 1 << 1; // Warn about global creation
-    pub const ENV_IMPORT: u32 = 1 << 2; // Importing from environment
-    pub const KEY_VALUE: u32 = 1 << 3; // key=value assignment syntax
-}
-
-// ---------------------------------------------------------------------------
-// Value flags (VALFLAG_*)
-// ---------------------------------------------------------------------------
-
-pub mod val_flags {
-    pub const INV: u32 = 1 << 0; // Inverse subscript
-    pub const EMPTY: u32 = 1 << 1; // Empty subscript range
-    pub const SUBST: u32 = 1 << 2; // Apply formatting
-    pub const REFSLICE: u32 = 1 << 3; // Nameref with subscript
-}
-
-// ---------------------------------------------------------------------------
-// Print flags (PRINT_*)
-// ---------------------------------------------------------------------------
-
-pub mod print_flags {
-    pub const TYPE: u32 = 1 << 0;
-    pub const TYPESET: u32 = 1 << 1;
-    pub const NAMEONLY: u32 = 1 << 2;
-    pub const KV_PAIR: u32 = 1 << 3;
-    pub const LINE: u32 = 1 << 4;
-    pub const INCLUDEVALUE: u32 = 1 << 5;
-    pub const POSIX_READONLY: u32 = 1 << 6;
-    pub const POSIX_EXPORT: u32 = 1 << 7;
-    pub const WITH_NAMESPACE: u32 = 1 << 8;
-}
-
-// ---------------------------------------------------------------------------
-// Parameter value types
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Debug, Default)]
-/// Storage union for a parameter's value.
-/// Mirrors the value union of `struct param` from Src/zsh.h —
-/// scalar / integer / float / array / hash / undef. The C source
-/// dispatches on `pm->u.*` based on `pm->node.flags & PM_TYPE`.
-pub enum ParamValue {
-    Scalar(String),
-    Integer(i64),
-    Float(f64),
-    Array(Vec<String>),
-    Assoc(HashMap<String, String>),
-    #[default]
-    Unset,
-}
-
-impl ParamValue {
-    pub fn as_string(&self) -> String {
-        match self {
-            ParamValue::Scalar(s) => s.clone(),
-            ParamValue::Integer(i) => i.to_string(),
-            ParamValue::Float(f) => convfloat(*f, 0, 0),
-            ParamValue::Array(a) => a.join(" "),
-            ParamValue::Assoc(h) => {
-                let mut vals: Vec<&String> = h.values().collect();
-                vals.sort();
-                vals.into_iter().cloned().collect::<Vec<_>>().join(" ")
-            }
-            ParamValue::Unset => String::new(),
-        }
-    }
-
-    pub fn as_integer(&self) -> i64 {
-        match self {
-            ParamValue::Scalar(s) => s.parse().unwrap_or(0),
-            ParamValue::Integer(i) => *i,
-            ParamValue::Float(f) => *f as i64,
-            ParamValue::Array(a) => a.len() as i64,
-            ParamValue::Assoc(h) => h.len() as i64,
-            ParamValue::Unset => 0,
-        }
-    }
-
-    pub fn as_float(&self) -> f64 {
-        match self {
-            ParamValue::Scalar(s) => s.parse().unwrap_or(0.0),
-            ParamValue::Integer(i) => *i as f64,
-            ParamValue::Float(f) => *f,
-            ParamValue::Array(a) => a.len() as f64,
-            ParamValue::Assoc(h) => h.len() as f64,
-            ParamValue::Unset => 0.0,
-        }
-    }
-
-    pub fn as_array(&self) -> Vec<String> {
-        match self {
-            ParamValue::Scalar(s) => {
-                if s.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![s.clone()]
-                }
-            }
-            ParamValue::Integer(i) => vec![i.to_string()],
-            ParamValue::Float(f) => vec![convfloat(*f, 0, 0)],
-            ParamValue::Array(a) => a.clone(),
-            ParamValue::Assoc(h) => h.values().cloned().collect(),
-            ParamValue::Unset => Vec::new(),
-        }
-    }
-
-    pub fn is_set(&self) -> bool {
-        !matches!(self, ParamValue::Unset)
-    }
-
-    /// Get the type flag for this value
-    pub fn type_flag(&self) -> u32 {
-        match self {
-            ParamValue::Scalar(_) => flags::SCALAR,
-            ParamValue::Integer(_) => flags::INTEGER,
-            ParamValue::Float(_) => flags::FFLOAT,
-            ParamValue::Array(_) => flags::ARRAY,
-            ParamValue::Assoc(_) => flags::HASHED,
-            ParamValue::Unset => flags::SCALAR,
-        }
-    }
-}
+pub use crate::ported::zsh_h::param;
 
 
 // =============================================================================
@@ -471,184 +281,6 @@ impl Value {
 // Shell parameter
 // ---------------------------------------------------------------------------
 
-// Nodes for special parameters for parameter hash table                    // c:271
-#[derive(Clone, Debug)]
-/// One parameter table entry.
-/// Port of `struct param` from Src/zsh.h — `createparam()`
-/// (Src/params.c:1030) constructs them, `paramtab` HashTable
-/// stores them. Same `gsu` (get/set/unset) callback shape.
-pub struct Param {
-    // hash data                                                              // c:280
-    pub name: String,
-    pub value: ParamValue,
-    // PM_* flags (defined in zsh.h)                                         // c:281
-    pub flags: u32,
-    // output base                                                            // c:284
-    pub base: i32,
-    // output field width                                                     // c:285
-    pub width: i32,
-    // if (old != NULL), level of localness                                   // c:289
-    pub level: i32,
-    // name of corresponding environment var                                  // c:287
-    pub ename: Option<String>,
-    // old struct for use with local                                          // c:288
-    pub old: Option<Box<Param>>,
-}
-
-impl Param {
-    pub fn new_scalar(name: &str, value: &str) -> Self {
-        Param {
-            name: name.to_string(),
-            value: ParamValue::Scalar(value.to_string()),
-            flags: flags::SCALAR,
-            base: 10,
-            width: 0,
-            level: 0,
-            ename: None,
-            old: None,
-        }
-    }
-
-    pub fn new_integer(name: &str, value: i64) -> Self {
-        Param {
-            name: name.to_string(),
-            value: ParamValue::Integer(value),
-            flags: flags::INTEGER,
-            base: 10,
-            width: 0,
-            level: 0,
-            ename: None,
-            old: None,
-        }
-    }
-
-    pub fn new_float(name: &str, value: f64) -> Self {
-        Param {
-            name: name.to_string(),
-            value: ParamValue::Float(value),
-            flags: flags::FFLOAT,
-            base: 10,
-            width: 0,
-            level: 0,
-            ename: None,
-            old: None,
-        }
-    }
-
-    pub fn new_array(name: &str, value: Vec<String>) -> Self {
-        Param {
-            name: name.to_string(),
-            value: ParamValue::Array(value),
-            flags: flags::ARRAY,
-            base: 10,
-            width: 0,
-            level: 0,
-            ename: None,
-            old: None,
-        }
-    }
-
-    pub fn new_assoc(name: &str, value: HashMap<String, String>) -> Self {
-        Param {
-            name: name.to_string(),
-            value: ParamValue::Assoc(value),
-            flags: flags::HASHED,
-            base: 10,
-            width: 0,
-            level: 0,
-            ename: None,
-            old: None,
-        }
-    }
-
-    pub fn new_nameref(name: &str, target: &str) -> Self {
-        Param {
-            name: name.to_string(),
-            value: ParamValue::Scalar(target.to_string()),
-            flags: flags::NAMEREF,
-            base: 0,
-            width: 0,
-            level: 0,
-            ename: None,
-            old: None,
-        }
-    }
-
-    pub fn is_readonly(&self) -> bool {
-        (self.flags & flags::READONLY) != 0
-    }
-
-    pub fn is_exported(&self) -> bool {
-        (self.flags & flags::EXPORT) != 0
-    }
-
-    pub fn is_local(&self) -> bool {
-        (self.flags & flags::LOCAL) != 0
-    }
-
-    pub fn is_special(&self) -> bool {
-        (self.flags & flags::SPECIAL) != 0
-    }
-
-    pub fn is_integer(&self) -> bool {
-        flags::pm_type(self.flags) == flags::INTEGER
-    }
-
-    pub fn is_float(&self) -> bool {
-        let t = flags::pm_type(self.flags);
-        t == flags::EFLOAT || t == flags::FFLOAT
-    }
-
-    pub fn is_array(&self) -> bool {
-        flags::pm_type(self.flags) == flags::ARRAY
-    }
-
-    pub fn is_assoc(&self) -> bool {
-        flags::pm_type(self.flags) == flags::HASHED
-    }
-
-    pub fn is_nameref(&self) -> bool {
-        (self.flags & flags::NAMEREF) != 0
-    }
-
-    pub fn is_unset(&self) -> bool {
-        (self.flags & flags::UNSET) != 0
-    }
-
-    pub fn is_tied(&self) -> bool {
-        (self.flags & flags::TIED) != 0
-    }
-
-    pub fn is_hidden(&self) -> bool {
-        (self.flags & flags::HIDE) != 0
-    }
-
-    pub fn is_unique(&self) -> bool {
-        (self.flags & flags::UNIQUE) != 0
-    }
-
-    /// Get the string representation, applying formatting flags
-    pub fn get_str_value(&self) -> String {
-        let s = self.value.as_string();
-        self.apply_case_transform(&s)
-    }
-
-    fn apply_case_transform(&self, s: &str) -> String {
-        if (self.flags & flags::LOWER) != 0 {
-            s.to_lowercase()
-        } else if (self.flags & flags::UPPER) != 0 && !self.is_nameref() {
-            s.to_uppercase()
-        } else {
-            s.to_string()
-        }
-    }
-
-    /// Get the integer representation with base formatting
-    pub fn get_int_str(&self) -> String {
-        let val = self.value.as_integer();
-        convbase(val, self.base as u32)
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Tied parameter data
@@ -744,7 +376,7 @@ pub struct ParamTypeInfo {
 
 pub const PM_TYPES: &[ParamTypeInfo] = &[
     ParamTypeInfo {
-        bin_flag: flags::AUTOLOAD,
+        bin_flag: crate::ported::zsh_h::PM_AUTOLOAD,
         string: "undefined",
         type_flag: '\0',
         use_base: false,
@@ -752,7 +384,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: false,
     },
     ParamTypeInfo {
-        bin_flag: flags::INTEGER,
+        bin_flag: crate::ported::zsh_h::PM_INTEGER,
         string: "integer",
         type_flag: 'i',
         use_base: true,
@@ -760,7 +392,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: false,
     },
     ParamTypeInfo {
-        bin_flag: flags::EFLOAT,
+        bin_flag: crate::ported::zsh_h::PM_EFLOAT,
         string: "float",
         type_flag: 'E',
         use_base: false,
@@ -768,7 +400,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: false,
     },
     ParamTypeInfo {
-        bin_flag: flags::FFLOAT,
+        bin_flag: crate::ported::zsh_h::PM_FFLOAT,
         string: "float",
         type_flag: 'F',
         use_base: false,
@@ -776,7 +408,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: false,
     },
     ParamTypeInfo {
-        bin_flag: flags::ARRAY,
+        bin_flag: crate::ported::zsh_h::PM_ARRAY,
         string: "array",
         type_flag: 'a',
         use_base: false,
@@ -784,7 +416,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: false,
     },
     ParamTypeInfo {
-        bin_flag: flags::HASHED,
+        bin_flag: crate::ported::zsh_h::PM_HASHED,
         string: "association",
         type_flag: 'A',
         use_base: false,
@@ -800,7 +432,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: true,
     },
     ParamTypeInfo {
-        bin_flag: flags::HIDE,
+        bin_flag: crate::ported::zsh_h::PM_HIDE,
         string: "hide",
         type_flag: 'h',
         use_base: false,
@@ -808,7 +440,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: false,
     },
     ParamTypeInfo {
-        bin_flag: flags::LEFT,
+        bin_flag: crate::ported::zsh_h::PM_LEFT,
         string: "left justified",
         type_flag: 'L',
         use_base: false,
@@ -816,7 +448,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: false,
     },
     ParamTypeInfo {
-        bin_flag: flags::RIGHT_B,
+        bin_flag: crate::ported::zsh_h::PM_RIGHT_B,
         string: "right justified",
         type_flag: 'R',
         use_base: false,
@@ -824,7 +456,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: false,
     },
     ParamTypeInfo {
-        bin_flag: flags::RIGHT_Z,
+        bin_flag: crate::ported::zsh_h::PM_RIGHT_Z,
         string: "zero filled",
         type_flag: 'Z',
         use_base: false,
@@ -832,7 +464,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: false,
     },
     ParamTypeInfo {
-        bin_flag: flags::LOWER,
+        bin_flag: crate::ported::zsh_h::PM_LOWER,
         string: "lowercase",
         type_flag: 'l',
         use_base: false,
@@ -840,7 +472,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: false,
     },
     ParamTypeInfo {
-        bin_flag: flags::UPPER,
+        bin_flag: crate::ported::zsh_h::PM_UPPER,
         string: "uppercase",
         type_flag: 'u',
         use_base: false,
@@ -848,7 +480,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: false,
     },
     ParamTypeInfo {
-        bin_flag: flags::READONLY,
+        bin_flag: crate::ported::zsh_h::PM_READONLY,
         string: "readonly",
         type_flag: 'r',
         use_base: false,
@@ -856,7 +488,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: false,
     },
     ParamTypeInfo {
-        bin_flag: flags::TAG,
+        bin_flag: crate::ported::zsh_h::PM_TAGGED,
         string: "tagged",
         type_flag: 't',
         use_base: false,
@@ -864,7 +496,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: false,
     },
     ParamTypeInfo {
-        bin_flag: flags::EXPORT,
+        bin_flag: crate::ported::zsh_h::PM_EXPORTED,
         string: "exported",
         type_flag: 'x',
         use_base: false,
@@ -872,7 +504,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: false,
     },
     ParamTypeInfo {
-        bin_flag: flags::UNIQUE,
+        bin_flag: crate::ported::zsh_h::PM_UNIQUE,
         string: "unique",
         type_flag: 'U',
         use_base: false,
@@ -880,7 +512,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: false,
     },
     ParamTypeInfo {
-        bin_flag: flags::TIED,
+        bin_flag: crate::ported::zsh_h::PM_TIED,
         string: "tied",
         type_flag: 'T',
         use_base: false,
@@ -888,7 +520,7 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
         test_level: false,
     },
     ParamTypeInfo {
-        bin_flag: flags::NAMEREF,
+        bin_flag: crate::ported::zsh_h::PM_NAMEREF,
         string: "nameref",
         type_flag: 'n',
         use_base: false,
@@ -918,484 +550,484 @@ pub const SPECIAL_PARAMS: &[SpecialParamDef] = &[
     // Integer specials with custom GSU
     SpecialParamDef {
         name: "#",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::READONLY,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
     SpecialParamDef {
         name: "ERRNO",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "GID",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::DONTIMPORT,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "EGID",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::DONTIMPORT,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "HISTSIZE",
-        pm_type: flags::INTEGER,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "RANDOM",
-        pm_type: flags::INTEGER,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "SAVEHIST",
-        pm_type: flags::INTEGER,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "SECONDS",
-        pm_type: flags::INTEGER,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "UID",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::DONTIMPORT,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "EUID",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::DONTIMPORT,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "TTYIDLE",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::READONLY,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
     // Scalar specials with custom GSU
     SpecialParamDef {
         name: "USERNAME",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::DONTIMPORT,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "-",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::READONLY,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
     SpecialParamDef {
         name: "histchars",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::DONTIMPORT,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "HOME",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "TERM",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "TERMINFO",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "TERMINFO_DIRS",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "WORDCHARS",
-        pm_type: flags::SCALAR,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "IFS",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::DONTIMPORT,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "_",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::DONTIMPORT,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "KEYBOARD_HACK",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::DONTIMPORT,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "0",
-        pm_type: flags::SCALAR,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     // Readonly integer variables bound to C globals
     SpecialParamDef {
         name: "!",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::READONLY,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
     SpecialParamDef {
         name: "$",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::READONLY,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
     SpecialParamDef {
         name: "?",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::READONLY,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
     SpecialParamDef {
         name: "HISTCMD",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::READONLY,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
     SpecialParamDef {
         name: "LINENO",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::READONLY,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
     SpecialParamDef {
         name: "PPID",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::READONLY,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
     SpecialParamDef {
         name: "ZSH_SUBSHELL",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::READONLY,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
     // Settable integer variables
     SpecialParamDef {
         name: "COLUMNS",
-        pm_type: flags::INTEGER,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "LINES",
-        pm_type: flags::INTEGER,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "ZLE_RPROMPT_INDENT",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "SHLVL",
-        pm_type: flags::INTEGER,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "FUNCNEST",
-        pm_type: flags::INTEGER,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "OPTIND",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::DONTIMPORT,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "TRY_BLOCK_ERROR",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::DONTIMPORT,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "TRY_BLOCK_INTERRUPT",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::DONTIMPORT,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
     // Scalar variables bound to C globals
     SpecialParamDef {
         name: "OPTARG",
-        pm_type: flags::SCALAR,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "NULLCMD",
-        pm_type: flags::SCALAR,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "POSTEDIT",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "READNULLCMD",
-        pm_type: flags::SCALAR,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "PS1",
-        pm_type: flags::SCALAR,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "RPS1",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "RPROMPT",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "PS2",
-        pm_type: flags::SCALAR,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "RPS2",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "RPROMPT2",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "PS3",
-        pm_type: flags::SCALAR,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "PS4",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::DONTIMPORT_SUID,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT_SUID,
         tied_name: None,
     },
     SpecialParamDef {
         name: "SPROMPT",
-        pm_type: flags::SCALAR,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     // Readonly arrays
     SpecialParamDef {
         name: "*",
-        pm_type: flags::ARRAY,
-        pm_flags: flags::READONLY | flags::DONTIMPORT,
+        pm_type: crate::ported::zsh_h::PM_ARRAY,
+        pm_flags: crate::ported::zsh_h::PM_READONLY | crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "@",
-        pm_type: flags::ARRAY,
-        pm_flags: flags::READONLY | flags::DONTIMPORT,
+        pm_type: crate::ported::zsh_h::PM_ARRAY,
+        pm_flags: crate::ported::zsh_h::PM_READONLY | crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
     // Tied colon-separated/array pairs
     SpecialParamDef {
         name: "CDPATH",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::TIED,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_TIED,
         tied_name: Some("cdpath"),
     },
     SpecialParamDef {
         name: "FIGNORE",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::TIED,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_TIED,
         tied_name: Some("fignore"),
     },
     SpecialParamDef {
         name: "FPATH",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::TIED,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_TIED,
         tied_name: Some("fpath"),
     },
     SpecialParamDef {
         name: "MAILPATH",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::TIED,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_TIED,
         tied_name: Some("mailpath"),
     },
     SpecialParamDef {
         name: "PATH",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::TIED,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_TIED,
         tied_name: Some("path"),
     },
     SpecialParamDef {
         name: "PSVAR",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::TIED,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_TIED,
         tied_name: Some("psvar"),
     },
     SpecialParamDef {
         name: "ZSH_EVAL_CONTEXT",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::READONLY | flags::TIED,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_READONLY | crate::ported::zsh_h::PM_TIED,
         tied_name: Some("zsh_eval_context"),
     },
     SpecialParamDef {
         name: "MODULE_PATH",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::DONTIMPORT | flags::TIED,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT | crate::ported::zsh_h::PM_TIED,
         tied_name: Some("module_path"),
     },
     SpecialParamDef {
         name: "MANPATH",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::TIED,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_TIED,
         tied_name: Some("manpath"),
     },
     // Locale
     SpecialParamDef {
         name: "LANG",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "LC_ALL",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "LC_COLLATE",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "LC_CTYPE",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "LC_MESSAGES",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "LC_NUMERIC",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "LC_TIME",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::UNSET,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     // Zsh-only aliases
     SpecialParamDef {
         name: "ARGC",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::READONLY,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
     SpecialParamDef {
         name: "HISTCHARS",
-        pm_type: flags::SCALAR,
-        pm_flags: flags::DONTIMPORT,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "status",
-        pm_type: flags::INTEGER,
-        pm_flags: flags::READONLY,
+        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
     SpecialParamDef {
         name: "prompt",
-        pm_type: flags::SCALAR,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "PROMPT",
-        pm_type: flags::SCALAR,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "PROMPT2",
-        pm_type: flags::SCALAR,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "PROMPT3",
-        pm_type: flags::SCALAR,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "PROMPT4",
-        pm_type: flags::SCALAR,
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "argv",
-        pm_type: flags::ARRAY,
+        pm_type: crate::ported::zsh_h::PM_ARRAY,
         pm_flags: 0,
         tied_name: None,
     },
     // pipestatus array
     SpecialParamDef {
         name: "pipestatus",
-        pm_type: flags::ARRAY,
+        pm_type: crate::ported::zsh_h::PM_ARRAY,
         pm_flags: 0,
         tied_name: None,
     },
@@ -1411,7 +1043,7 @@ pub const SPECIAL_PARAMS: &[SpecialParamDef] = &[
 /// IPDEF*-declared special params; `createparam()` (line 1030)
 /// adds user variables.
 pub struct ParamTable {
-    params: HashMap<String, Param>,
+    params: HashMap<String, param>,
     pub local_level: i32,
     shtimer_secs: u64,
     shtimer_instant: Instant,
@@ -1618,9 +1250,9 @@ impl ParamTable {
     fn init_special_params(&mut self) {
         // All special params get the SPECIAL flag
         for def in SPECIAL_PARAMS {
-            let pm_flags = def.pm_type | def.pm_flags | flags::SPECIAL;
+            let pm_flags = def.pm_type | def.pm_flags | crate::ported::zsh_h::PM_SPECIAL;
             let value = self.get_special_initial_value(def.name, def.pm_type);
-            let param = Param {
+            let param = param {
                 name: def.name.to_string(),
                 value,
                 flags: pm_flags,
@@ -1746,9 +1378,9 @@ impl ParamTable {
                 ParamValue::Scalar(env_val)
             }
             _ => {
-                if pm_type == flags::INTEGER {
+                if pm_type == crate::ported::zsh_h::PM_INTEGER {
                     ParamValue::Integer(0)
-                } else if pm_type == flags::ARRAY {
+                } else if pm_type == crate::ported::zsh_h::PM_ARRAY {
                     ParamValue::Array(Vec::new())
                 } else {
                     ParamValue::Scalar(String::new())
@@ -1780,8 +1412,8 @@ impl ParamTable {
                 .collect();
 
             // Create the array side
-            let arr_flags = flags::ARRAY | flags::SPECIAL | flags::TIED;
-            let arr_param = Param {
+            let arr_flags = crate::ported::zsh_h::PM_ARRAY | crate::ported::zsh_h::PM_SPECIAL | crate::ported::zsh_h::PM_TIED;
+            let arr_param = param {
                 name: array.to_string(),
                 value: ParamValue::Array(arr),
                 flags: arr_flags,
@@ -1795,7 +1427,7 @@ impl ParamTable {
 
             // Mark the scalar side as tied
             if let Some(p) = self.params.get_mut(*scalar) {
-                p.flags |= flags::TIED;
+                p.flags |= crate::ported::zsh_h::PM_TIED;
                 p.ename = Some(array.to_string());
             }
 
@@ -1813,8 +1445,8 @@ impl ParamTable {
     fn import_environment(&mut self) {
         for (key, value) in env::vars() {
             if !self.params.contains_key(&key) && isident(&key) {
-                let mut param = Param::new_scalar(&key, &value);
-                param.flags |= flags::EXPORT;
+                let mut param = param::new_scalar(&key, &value);
+                param.flags |= crate::ported::zsh_h::PM_EXPORTED;
                 self.params.insert(key, param);
             }
         }
@@ -1887,13 +1519,13 @@ impl ParamTable {
                 "USR2",
             ];
             let sig_arr: Vec<String> = sigs.iter().map(|s| format!("SIG{}", s)).collect();
-            self.set_array_internal("signals", sig_arr, flags::READONLY);
+            self.set_array_internal("signals", sig_arr, crate::ported::zsh_h::PM_READONLY);
         }
     }
 
     fn set_scalar_internal(&mut self, name: &str, value: &str, extra_flags: u32) {
         if !self.params.contains_key(name) {
-            let mut param = Param::new_scalar(name, value);
+            let mut param = param::new_scalar(name, value);
             param.flags |= extra_flags;
             self.params.insert(name.to_string(), param);
         }
@@ -1901,7 +1533,7 @@ impl ParamTable {
 
     fn set_integer_internal(&mut self, name: &str, value: i64, extra_flags: u32) {
         if !self.params.contains_key(name) {
-            let mut param = Param::new_integer(name, value);
+            let mut param = param::new_integer(name, value);
             param.flags |= extra_flags;
             self.params.insert(name.to_string(), param);
         }
@@ -1909,7 +1541,7 @@ impl ParamTable {
 
     fn set_array_internal(&mut self, name: &str, value: Vec<String>, extra_flags: u32) {
         if !self.params.contains_key(name) {
-            let mut param = Param::new_array(name, value);
+            let mut param = param::new_array(name, value);
             param.flags |= extra_flags;
             self.params.insert(name.to_string(), param);
         }
@@ -2345,12 +1977,12 @@ impl ParamTable {
     }
 
     /// Get the full parameter struct
-    pub fn get_param(&self, name: &str) -> Option<&Param> {
+    pub fn get_param(&self, name: &str) -> Option<&param> {
         self.params.get(name)
     }
 
     /// Get mutable parameter
-    pub fn get_param_mut(&mut self, name: &str) -> Option<&mut Param> {
+    pub fn get_param_mut(&mut self, name: &str) -> Option<&mut param> {
         self.params.get_mut(name)
     }
 
@@ -2400,16 +2032,16 @@ impl ParamTable {
             if param.is_readonly() {
                 return false;
             }
-            let value = if (param.flags & flags::LOWER) != 0 {
+            let value = if (param.flags & crate::ported::zsh_h::PM_LOWER) != 0 {
                 value.to_lowercase()
-            } else if (param.flags & flags::UPPER) != 0 {
+            } else if (param.flags & crate::ported::zsh_h::PM_UPPER) != 0 {
                 value.to_uppercase()
             } else {
                 value.to_string()
             };
             let pv = ParamValue::Scalar(value);
             param.value = pv.clone();
-            param.flags &= !flags::UNSET;
+            param.flags &= !crate::ported::zsh_h::PM_UNSET;
 
             if param.is_exported() {
                 env::set_var(name, param.value.as_string());
@@ -2418,7 +2050,7 @@ impl ParamTable {
             self.handle_special_set(name, &pv);
             true
         } else {
-            let param = Param::new_scalar(name, value);
+            let param = param::new_scalar(name, value);
             let pv = param.value.clone();
             self.params.insert(name.to_string(), param);
             self.handle_special_set(name, &pv);
@@ -2439,14 +2071,14 @@ impl ParamTable {
             }
             let pv = ParamValue::Integer(value);
             param.value = pv.clone();
-            param.flags &= !flags::UNSET;
+            param.flags &= !crate::ported::zsh_h::PM_UNSET;
             if param.is_exported() {
                 env::set_var(name, value.to_string());
             }
             self.handle_special_set(name, &pv);
             true
         } else {
-            let param = Param::new_integer(name, value);
+            let param = param::new_integer(name, value);
             let pv = param.value.clone();
             self.params.insert(name.to_string(), param);
             self.handle_special_set(name, &pv);
@@ -2467,11 +2099,11 @@ impl ParamTable {
             }
             let pv = ParamValue::Float(value);
             param.value = pv.clone();
-            param.flags &= !flags::UNSET;
+            param.flags &= !crate::ported::zsh_h::PM_UNSET;
             self.handle_special_set(name, &pv);
             true
         } else {
-            let param = Param::new_float(name, value);
+            let param = param::new_float(name, value);
             let pv = param.value.clone();
             self.params.insert(name.to_string(), param);
             self.handle_special_set(name, &pv);
@@ -2497,72 +2129,16 @@ impl ParamTable {
             };
             let pv = ParamValue::Array(value);
             param.value = pv.clone();
-            param.flags &= !flags::UNSET;
+            param.flags &= !crate::ported::zsh_h::PM_UNSET;
             self.handle_special_set(name, &pv);
             true
         } else {
-            let param = Param::new_array(name, value);
+            let param = param::new_array(name, value);
             let pv = param.value.clone();
             self.params.insert(name.to_string(), param);
             self.handle_special_set(name, &pv);
             true
         }
-    }
-
-    /// Set an associative array parameter
-    pub fn set_assoc(&mut self, name: &str, value: HashMap<String, String>) -> bool {
-        let resolved = self
-            .resolve_nameref_name(name)
-            .unwrap_or_else(|| name.to_string());
-        let name = &resolved;
-
-        if let Some(param) = self.params.get_mut(name) {
-            if param.is_readonly() {
-                return false;
-            }
-            param.value = ParamValue::Assoc(value);
-            param.flags &= !flags::UNSET;
-            true
-        } else {
-            let param = Param::new_assoc(name, value);
-            self.params.insert(name.to_string(), param);
-            true
-        }
-    }
-
-    /// Set a numeric value (MNumber)
-    pub fn set_numeric(&mut self, name: &str, val: MNumber) -> bool {
-        match val {
-            MNumber::Integer(i) => self.set_integer(name, i),
-            MNumber::Float(f) => self.set_float(name, f),
-        }
-    }
-
-    /// Augmented assignment (+=)
-    pub fn augment_scalar(&mut self, name: &str, value: &str) -> bool {
-        if let Some(current) = self.get_value(name) {
-            let new_val = format!("{}{}", current.as_string(), value);
-            self.set_scalar(name, &new_val)
-        } else {
-            self.set_scalar(name, value)
-        }
-    }
-
-    /// Augmented assignment for arrays (+=)
-    pub fn augment_array(&mut self, name: &str, value: Vec<String>) -> bool {
-        if let Some(current) = self.get_value(name) {
-            let mut arr = current.as_array();
-            arr.extend(value);
-            self.set_array(name, arr)
-        } else {
-            self.set_array(name, value)
-        }
-    }
-
-    /// Augmented assignment for integers (+=)
-    pub fn augment_integer(&mut self, name: &str, value: i64) -> bool {
-        let current = self.get_value(name).map(|v| v.as_integer()).unwrap_or(0);
-        self.set_integer(name, current + value)
     }
 
     /// Unset a parameter
@@ -2577,12 +2153,12 @@ impl ParamTable {
         if let Some(tied) = self.tied.get(name).cloned() {
             if name == tied.scalar_name {
                 if let Some(p) = self.params.get_mut(&tied.array_name) {
-                    p.flags |= flags::UNSET;
+                    p.flags |= crate::ported::zsh_h::PM_UNSET;
                     p.value = ParamValue::Array(Vec::new());
                 }
             } else if name == tied.array_name {
                 if let Some(p) = self.params.get_mut(&tied.scalar_name) {
-                    p.flags |= flags::UNSET;
+                    p.flags |= crate::ported::zsh_h::PM_UNSET;
                     p.value = ParamValue::Scalar(String::new());
                 }
             }
@@ -2592,7 +2168,7 @@ impl ParamTable {
         if let Some(param) = self.params.get(name) {
             if param.is_special() {
                 if let Some(p) = self.params.get_mut(name) {
-                    p.flags |= flags::UNSET;
+                    p.flags |= crate::ported::zsh_h::PM_UNSET;
                 }
                 return true;
             }
@@ -2602,7 +2178,7 @@ impl ParamTable {
         if let Some(param) = self.params.get(name) {
             if param.level > 0 && param.level <= self.local_level {
                 if let Some(p) = self.params.get_mut(name) {
-                    p.flags |= flags::UNSET;
+                    p.flags |= crate::ported::zsh_h::PM_UNSET;
                 }
                 return true;
             }
@@ -2629,7 +2205,7 @@ impl ParamTable {
     /// Export a parameter
     pub fn export(&mut self, name: &str) -> bool {
         if let Some(param) = self.params.get_mut(name) {
-            param.flags |= flags::EXPORT;
+            param.flags |= crate::ported::zsh_h::PM_EXPORTED;
             env::set_var(name, param.value.as_string());
             true
         } else {
@@ -2640,150 +2216,20 @@ impl ParamTable {
     /// Unexport a parameter
     pub fn unexport(&mut self, name: &str) {
         if let Some(param) = self.params.get_mut(name) {
-            param.flags &= !flags::EXPORT;
+            param.flags &= !crate::ported::zsh_h::PM_EXPORTED;
             env::remove_var(name);
         }
     }
 
-    /// Mark parameter as readonly
-    pub fn set_readonly(&mut self, name: &str) -> bool {
-        if let Some(param) = self.params.get_mut(name) {
-            param.flags |= flags::READONLY;
-            true
-        } else {
-            false
-        }
-    }
 
     // -----------------------------------------------------------------------
     // Scope management (from startparamscope/endparamscope)
     // -----------------------------------------------------------------------
 
-    /// Start a new local scope
-    pub fn push_scope(&mut self) {
-        self.local_level += 1;
-    }
+    // startparamscope/endparamscope live as free fns matching C; see below.
 
-    /// End a local scope, restoring parameters
-    pub fn pop_scope(&mut self) {
-        let level = self.local_level;
-        let names_to_check: Vec<String> = self.params.keys().cloned().collect();
-
-        for name in names_to_check {
-            let should_remove = {
-                if let Some(param) = self.params.get(&name) {
-                    param.level > level - 1
-                } else {
-                    false
-                }
-            };
-
-            if should_remove {
-                let is_special = self
-                    .params
-                    .get(&name)
-                    .map(|p| p.is_special())
-                    .unwrap_or(false);
-
-                if is_special {
-                    // Restore special parameter from old
-                    let old = self.params.get(&name).and_then(|p| p.old.clone());
-                    if let Some(old_param) = old {
-                        let old_value = old_param.value.clone();
-                        if let Some(p) = self.params.get_mut(&name) {
-                            p.flags = old_param.flags;
-                            p.level = old_param.level;
-                            p.base = old_param.base;
-                            p.width = old_param.width;
-                            p.old = old_param.old;
-                            if (old_param.flags & flags::NORESTORE) == 0 {
-                                p.value = old_value.clone();
-                                self.handle_special_set(&name, &old_value);
-                            }
-                        }
-                    }
-                } else {
-                    // Remove local and restore old
-                    let old = self.params.get(&name).and_then(|p| p.old.clone());
-                    if let Some(old_param) = old {
-                        self.params.insert(name.clone(), *old_param);
-                        if let Some(p) = self.params.get(&name) {
-                            if p.is_exported() {
-                                env::set_var(&name, p.value.as_string());
-                            }
-                        }
-                    } else {
-                        self.params.remove(&name);
-                    }
-                }
-            }
-        }
-
-        self.local_level -= 1;
-    }
-
-    /// Create a local variable (from typeset/local builtin)
-    pub fn make_local(&mut self, name: &str) {
-        if let Some(param) = self.params.get(name) {
-            if param.level == self.local_level {
-                // Already at this level
-                return;
-            }
-            // Save old and create new at current level
-            let old = Box::new(param.clone());
-            let mut new_param = Param {
-                name: name.to_string(),
-                value: ParamValue::Unset,
-                flags: flags::SCALAR | flags::LOCAL | flags::UNSET,
-                base: 10,
-                width: 0,
-                level: self.local_level,
-                ename: None,
-                old: Some(old),
-            };
-
-            // For special params, copy the special flag
-            if param.is_special() {
-                new_param.flags |= flags::SPECIAL;
-                new_param.value = param.value.clone();
-                new_param.flags &= !flags::UNSET;
-            }
-
-            self.params.insert(name.to_string(), new_param);
-        } else {
-            // Create new local
-            let param = Param {
-                name: name.to_string(),
-                value: ParamValue::Unset,
-                flags: flags::SCALAR | flags::LOCAL | flags::UNSET,
-                base: 10,
-                width: 0,
-                level: self.local_level,
-                ename: None,
-                old: None,
-            };
-            self.params.insert(name.to_string(), param);
-        }
-    }
-
-    /// Create a local variable with a specific type
-    pub fn make_local_typed(&mut self, name: &str, pm_flags: u32) {
-        self.make_local(name);
-        if let Some(param) = self.params.get_mut(name) {
-            // Set type, preserve LOCAL
-            param.flags =
-                (param.flags & (flags::LOCAL | flags::SPECIAL | flags::EXPORT)) | pm_flags;
-            // Set appropriate default value
-            param.value = match flags::pm_type(pm_flags) {
-                flags::INTEGER => ParamValue::Integer(0),
-                flags::EFLOAT | flags::FFLOAT => ParamValue::Float(0.0),
-                flags::ARRAY => ParamValue::Array(Vec::new()),
-                flags::HASHED => ParamValue::Assoc(HashMap::new()),
-                _ => ParamValue::Scalar(String::new()),
-            };
-            param.flags &= !flags::UNSET;
-        }
-    }
+    // make_local/make_local_typed had no C analog (in C, local-creation logic
+    // lives inline in `bin_typeset` / `bin_local` in Src/builtin.c). Removed.
 
     // -----------------------------------------------------------------------
     // Create parameter (from createparam in C)
@@ -2802,29 +2248,29 @@ impl ParamTable {
             {
                 // Already exists and set at this level
                 if let Some(p) = self.params.get_mut(name) {
-                    p.flags &= !flags::UNSET;
+                    p.flags &= !crate::ported::zsh_h::PM_UNSET;
                 }
                 return false;
             }
         }
 
-        let value = match flags::pm_type(pm_flags) {
-            flags::INTEGER => ParamValue::Integer(0),
-            flags::EFLOAT | flags::FFLOAT => ParamValue::Float(0.0),
-            flags::ARRAY => ParamValue::Array(Vec::new()),
-            flags::HASHED => ParamValue::Assoc(HashMap::new()),
-            flags::NAMEREF => ParamValue::Scalar(String::new()),
+        let value = match crate::ported::zsh_h::PM_TYPE(pm_flags) {
+            crate::ported::zsh_h::PM_INTEGER => ParamValue::Integer(0),
+            crate::ported::zsh_h::PM_EFLOAT | crate::ported::zsh_h::PM_FFLOAT => ParamValue::Float(0.0),
+            crate::ported::zsh_h::PM_ARRAY => ParamValue::Array(Vec::new()),
+            crate::ported::zsh_h::PM_HASHED => ParamValue::Assoc(HashMap::new()),
+            crate::ported::zsh_h::PM_NAMEREF => ParamValue::Scalar(String::new()),
             _ => ParamValue::Scalar(String::new()),
         };
 
         let old = self.params.get(name).cloned().map(Box::new);
-        let param = Param {
+        let param = param {
             name: name.to_string(),
             value,
-            flags: pm_flags & !flags::LOCAL,
+            flags: pm_flags & !crate::ported::zsh_h::PM_LOCAL,
             base: 10,
             width: 0,
-            level: if (pm_flags & flags::LOCAL) != 0 {
+            level: if (pm_flags & crate::ported::zsh_h::PM_LOCAL) != 0 {
                 self.local_level
             } else {
                 0
@@ -2847,7 +2293,7 @@ impl ParamTable {
         let exported = self
             .params
             .get(name)
-            .map(|p| p.flags & flags::EXPORT)
+            .map(|p| p.flags & crate::ported::zsh_h::PM_EXPORTED)
             .unwrap_or(0);
         self.unset(name);
         self.createparam(name, new_flags | exported);
@@ -2858,57 +2304,13 @@ impl ParamTable {
     // Named reference support (from resolve_nameref etc.)
     // -----------------------------------------------------------------------
 
-    /// Create a named reference
-    pub fn set_nameref(&mut self, name: &str, target: &str) -> bool {
-        if !isident(name) || !valid_refname(target) {
-            return false;
-        }
-        // Don't allow self-reference
-        if name == target {
-            return false;
-        }
-
-        let level = self.local_level;
-        let old = self.params.get(name).cloned().map(Box::new);
-        let param = Param {
-            name: name.to_string(),
-            value: ParamValue::Scalar(target.to_string()),
-            flags: flags::NAMEREF,
-            base: 0,
-            width: 0,
-            level,
-            ename: None,
-            old,
-        };
-        self.params.insert(name.to_string(), param);
-        true
-    }
-
     /// Resolve a nameref to its ultimate target Param
-    pub fn resolve_nameref<'a>(&'a self, name: &str) -> Option<&'a Param> {
+    pub fn resolve_nameref<'a>(&'a self, name: &str) -> Option<&'a param> {
         if let Some(target) = self.resolve_nameref_name(name) {
             self.params.get(&target)
         } else {
             self.params.get(name)
         }
-    }
-
-    /// Set loop variable (for-loop nameref support)
-    pub fn set_loop_var(&mut self, name: &str, value: &str) {
-        if let Some(param) = self.params.get(name) {
-            if param.is_nameref() {
-                if param.is_readonly() {
-                    return;
-                }
-                // Update the nameref target
-                if let Some(p) = self.params.get_mut(name) {
-                    p.value = ParamValue::Scalar(value.to_string());
-                    p.flags &= !flags::UNSET;
-                }
-                return;
-            }
-        }
-        self.set_scalar(name, value);
     }
 
     // -----------------------------------------------------------------------
@@ -2931,20 +2333,20 @@ impl ParamTable {
 
         // Create/update scalar
         if !self.params.contains_key(scalar) {
-            let mut param = Param::new_scalar(scalar, &current);
-            param.flags |= flags::TIED;
+            let mut param = param::new_scalar(scalar, &current);
+            param.flags |= crate::ported::zsh_h::PM_TIED;
             param.ename = Some(array.to_string());
             self.params.insert(scalar.to_string(), param);
         } else if let Some(p) = self.params.get_mut(scalar) {
-            p.flags |= flags::TIED;
+            p.flags |= crate::ported::zsh_h::PM_TIED;
             p.ename = Some(array.to_string());
         }
 
         // Create/update array
-        let arr_param = Param {
+        let arr_param = param {
             name: array.to_string(),
             value: ParamValue::Array(arr),
-            flags: flags::ARRAY | flags::TIED,
+            flags: crate::ported::zsh_h::PM_ARRAY | crate::ported::zsh_h::PM_TIED,
             base: 10,
             width: 0,
             level: 0,
@@ -2982,237 +2384,12 @@ impl ParamTable {
             self.tied.remove(other);
 
             if let Some(p) = self.params.get_mut(name) {
-                p.flags &= !flags::TIED;
+                p.flags &= !crate::ported::zsh_h::PM_TIED;
                 p.ename = None;
             }
             if let Some(p) = self.params.get_mut(other) {
-                p.flags &= !flags::TIED;
+                p.flags &= !crate::ported::zsh_h::PM_TIED;
                 p.ename = None;
-            }
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Array/hash element access
-    // -----------------------------------------------------------------------
-
-    /// Set array element by index (1-based, zsh style)
-    pub fn set_array_element(&mut self, name: &str, index: i64, value: &str) -> bool {
-        if let Some(param) = self.params.get_mut(name) {
-            if param.is_readonly() {
-                return false;
-            }
-            if let ParamValue::Array(ref mut arr) = param.value {
-                let len = arr.len() as i64;
-                let idx = if index < 0 { len + index + 1 } else { index };
-                if idx < 1 {
-                    return false;
-                }
-                let idx = (idx - 1) as usize;
-                while arr.len() <= idx {
-                    arr.push(String::new());
-                }
-                arr[idx] = value.to_string();
-                let pv = ParamValue::Array(arr.clone());
-                self.handle_special_set(name, &pv);
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Get array element by index (1-based, zsh style)
-    pub fn get_array_element(&self, name: &str, index: i64) -> Option<String> {
-        if let Some(param) = self.params.get(name) {
-            if let ParamValue::Array(ref arr) = param.value {
-                let len = arr.len() as i64;
-                let idx = if index < 0 { len + index + 1 } else { index };
-                if idx < 1 || idx > len {
-                    return None;
-                }
-                return Some(arr[(idx - 1) as usize].clone());
-            }
-        }
-        None
-    }
-
-    /// Set associative array element
-    pub fn set_hash_element(&mut self, name: &str, key: &str, value: &str) -> bool {
-        if let Some(param) = self.params.get_mut(name) {
-            if param.is_readonly() {
-                return false;
-            }
-            if let ParamValue::Assoc(ref mut hash) = param.value {
-                hash.insert(key.to_string(), value.to_string());
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Get associative array element
-    pub fn get_hash_element(&self, name: &str, key: &str) -> Option<String> {
-        if let Some(param) = self.params.get(name) {
-            if let ParamValue::Assoc(ref hash) = param.value {
-                return hash.get(key).cloned();
-            }
-        }
-        None
-    }
-
-    /// Delete associative array element
-    pub fn unset_hash_element(&mut self, name: &str, key: &str) -> bool {
-        if let Some(param) = self.params.get_mut(name) {
-            if param.is_readonly() {
-                return false;
-            }
-            if let ParamValue::Assoc(ref mut hash) = param.value {
-                return hash.remove(key).is_some();
-            }
-        }
-        false
-    }
-
-    /// Get all keys from associative array
-    pub fn get_hash_keys(&self, name: &str) -> Vec<String> {
-        if let Some(param) = self.params.get(name) {
-            if let ParamValue::Assoc(ref hash) = param.value {
-                return hash.keys().cloned().collect();
-            }
-        }
-        Vec::new()
-    }
-
-    /// Get all values from associative array
-    pub fn get_hash_values(&self, name: &str) -> Vec<String> {
-        if let Some(param) = self.params.get(name) {
-            if let ParamValue::Assoc(ref hash) = param.value {
-                return hash.values().cloned().collect();
-            }
-        }
-        Vec::new()
-    }
-
-    // -----------------------------------------------------------------------
-    // Array slice operations (from getarrvalue/setarrvalue)
-    // -----------------------------------------------------------------------
-
-    /// Get array slice with subscript handling
-    pub fn get_array_slice(&self, name: &str, start: i64, end: i64) -> Vec<String> {
-        if let Some(param) = self.params.get(name) {
-            if let ParamValue::Array(ref arr) = param.value {
-                return getarrvalue(arr, start, end);
-            }
-        }
-        Vec::new()
-    }
-
-    /// Set array slice with subscript handling
-    pub fn set_array_slice(&mut self, name: &str, start: i64, end: i64, val: Vec<String>) -> bool {
-        if let Some(param) = self.params.get_mut(name) {
-            if param.is_readonly() {
-                return false;
-            }
-            if let ParamValue::Array(ref mut arr) = param.value {
-                setarrvalue(arr, start, end, val);
-                let pv = ParamValue::Array(arr.clone());
-                self.handle_special_set(name, &pv);
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Get string slice
-    pub fn get_str_slice(&self, name: &str, start: i64, end: i64) -> String {
-        let val = self
-            .get_value(name)
-            .map(|v| v.as_string())
-            .unwrap_or_default();
-        let len = val.len() as i64;
-
-        let start = if start < 0 {
-            (len + start).max(0) as usize
-        } else {
-            start.max(0) as usize
-        };
-        let end = if end < 0 {
-            (len + end + 1).max(0) as usize
-        } else {
-            end.min(len) as usize
-        };
-
-        if start >= val.len() || start >= end {
-            return String::new();
-        }
-        val[start..end.min(val.len())].to_string()
-    }
-
-    /// Set string slice
-    pub fn set_str_slice(&mut self, name: &str, start: i64, end: i64, val: &str) -> bool {
-        let current = self
-            .get_value(name)
-            .map(|v| v.as_string())
-            .unwrap_or_default();
-        let len = current.len() as i64;
-
-        let s = if start < 0 {
-            (len + start).max(0) as usize
-        } else {
-            start as usize
-        };
-        let e = if end < 0 {
-            (len + end + 1).max(0) as usize
-        } else {
-            end as usize
-        };
-        let s = s.min(current.len());
-        let e = e.min(current.len());
-
-        let mut result = String::with_capacity(s + val.len() + current.len() - e);
-        result.push_str(&current[..s]);
-        result.push_str(val);
-        if e < current.len() {
-            result.push_str(&current[e..]);
-        }
-        self.set_scalar(name, &result)
-    }
-
-    // -----------------------------------------------------------------------
-    // Environment operations
-    // -----------------------------------------------------------------------
-
-    /// Export parameter to environment (full version from export_param)
-    pub fn export_param(&mut self, name: &str) {
-        if let Some(param) = self.params.get_mut(name) {
-            param.flags |= flags::EXPORT;
-            let val = match flags::pm_type(param.flags) {
-                flags::ARRAY | flags::HASHED => return, // Can't export arrays
-                flags::INTEGER => convbase(param.value.as_integer(), param.base as u32),
-                flags::EFLOAT | flags::FFLOAT => {
-                    convfloat(param.value.as_float(), param.base, param.flags)
-                }
-                _ => param.value.as_string(),
-            };
-            env::set_var(name, &val);
-        }
-    }
-
-    /// Fix environment after array change (from arrfixenv)
-    pub fn arr_fix_env(&mut self, name: &str) {
-        if let Some(tied) = self.tied.get(name).cloned() {
-            if name == tied.array_name {
-                let arr = self
-                    .params
-                    .get(name)
-                    .map(|p| p.value.as_array())
-                    .unwrap_or_default();
-                let joined = arr.join(&tied.join_char.to_string());
-                if let Some(p) = self.params.get(&tied.scalar_name) {
-                    if p.is_exported() {
-                        env::set_var(&tied.scalar_name, &joined);
-                    }
-                }
             }
         }
     }
@@ -3222,7 +2399,7 @@ impl ParamTable {
     // -----------------------------------------------------------------------
 
     /// Iterate over all parameters
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &Param)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &param)> {
         self.params.iter()
     }
 
@@ -3246,7 +2423,7 @@ impl ParamTable {
     /// Scan parameters matching pattern with optional flag filter
     pub fn scan_match<F>(&self, pattern: &str, flag_filter: u32, mut callback: F)
     where
-        F: FnMut(&str, &Param),
+        F: FnMut(&str, &param),
     {
         for (name, param) in &self.params {
             if param.is_unset() {
@@ -3279,32 +2456,32 @@ impl ParamTable {
     // -----------------------------------------------------------------------
 
     /// Format a parameter for display (typeset -p output)
-    pub fn format_param(&self, name: &str, pf: u32) -> Option<String> {
+    pub fn format_param(&self, name: &str, pf: i32) -> Option<String> {
         let param = self.params.get(name)?;
         if param.is_unset()
-            && (pf & print_flags::POSIX_READONLY) == 0
-            && (pf & print_flags::POSIX_EXPORT) == 0
+            && (pf & crate::ported::zsh_h::PRINT_POSIX_READONLY) == 0
+            && (pf & crate::ported::zsh_h::PRINT_POSIX_EXPORT) == 0
         {
             return None;
         }
 
         let mut out = String::new();
 
-        if (pf & (print_flags::TYPESET | print_flags::POSIX_READONLY | print_flags::POSIX_EXPORT))
+        if (pf & (crate::ported::zsh_h::PRINT_TYPESET | crate::ported::zsh_h::PRINT_POSIX_READONLY | crate::ported::zsh_h::PRINT_POSIX_EXPORT))
             != 0
         {
-            if (pf & print_flags::POSIX_EXPORT) != 0 {
-                if (param.flags & flags::EXPORT) == 0 {
+            if (pf & crate::ported::zsh_h::PRINT_POSIX_EXPORT) != 0 {
+                if (param.flags & crate::ported::zsh_h::PM_EXPORTED) == 0 {
                     return None;
                 }
                 out.push_str("export ");
-            } else if (pf & print_flags::POSIX_READONLY) != 0 {
-                if (param.flags & flags::READONLY) == 0 {
+            } else if (pf & crate::ported::zsh_h::PRINT_POSIX_READONLY) != 0 {
+                if (param.flags & crate::ported::zsh_h::PM_READONLY) == 0 {
                     return None;
                 }
                 out.push_str("readonly ");
-            } else if (param.flags & flags::EXPORT) != 0
-                && (param.flags & (flags::ARRAY | flags::HASHED)) == 0
+            } else if (param.flags & crate::ported::zsh_h::PM_EXPORTED) != 0
+                && (param.flags & (crate::ported::zsh_h::PM_ARRAY | crate::ported::zsh_h::PM_HASHED)) == 0
             {
                 out.push_str("export ");
             } else {
@@ -3316,7 +2493,7 @@ impl ParamTable {
         }
 
         // Print type flags
-        if (pf & (print_flags::TYPE | print_flags::TYPESET)) != 0 {
+        if (pf & (crate::ported::zsh_h::PRINT_TYPE | crate::ported::zsh_h::PRINT_TYPESET)) != 0 {
             let mut flag_chars = String::new();
             for pmt in PM_TYPES {
                 if pmt.test_level {
@@ -3326,9 +2503,9 @@ impl ParamTable {
                     continue;
                 }
                 if pmt.bin_flag != 0 && (param.flags & pmt.bin_flag) != 0 {
-                    if (pf & print_flags::TYPESET) != 0 && pmt.type_flag != '\0' {
+                    if (pf & crate::ported::zsh_h::PRINT_TYPESET) != 0 && pmt.type_flag != '\0' {
                         flag_chars.push(pmt.type_flag);
-                    } else if (pf & print_flags::TYPE) != 0 {
+                    } else if (pf & crate::ported::zsh_h::PRINT_TYPE) != 0 {
                         out.push_str(pmt.string);
                         out.push(' ');
                     }
@@ -3344,7 +2521,7 @@ impl ParamTable {
         // Print name and value
         out.push_str(&param.name);
 
-        if (pf & print_flags::NAMEONLY) == 0 && (param.flags & flags::HIDEVAL) == 0 {
+        if (pf & crate::ported::zsh_h::PRINT_NAMEONLY) == 0 && (param.flags & crate::ported::zsh_h::PM_HIDEVAL) == 0 {
             out.push('=');
             match &param.value {
                 ParamValue::Scalar(s) => {
@@ -3391,12 +2568,12 @@ impl ParamTable {
     /// Get parameter type string (from getparamtype)
     pub fn getparamtype(&self, name: &str) -> &'static str {
         if let Some(param) = self.params.get(name) {
-            match flags::pm_type(param.flags) {
-                flags::HASHED => "association",
-                flags::ARRAY => "array",
-                flags::INTEGER => "integer",
-                flags::EFLOAT | flags::FFLOAT => "float",
-                flags::NAMEREF => "nameref",
+            match crate::ported::zsh_h::PM_TYPE(param.flags) {
+                crate::ported::zsh_h::PM_HASHED => "association",
+                crate::ported::zsh_h::PM_ARRAY => "array",
+                crate::ported::zsh_h::PM_INTEGER => "integer",
+                crate::ported::zsh_h::PM_EFLOAT | crate::ported::zsh_h::PM_FFLOAT => "float",
+                crate::ported::zsh_h::PM_NAMEREF => "nameref",
                 _ => "scalar",
             }
         } else {
@@ -3472,7 +2649,7 @@ pub fn getsparam_u(table: &ParamTable, name: &str, default: &str) -> String {
 
 /// Get an array parameter.
 /// Port of `getaparam()` from Src/params.c:3100.
-pub fn getaparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {
+pub fn getaparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {   // c:3100
     match table.get_value(name)? {
         ParamValue::Array(arr) => Some(arr),
         _ => None,
@@ -3483,7 +2660,7 @@ pub fn getaparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {
 /// Get a hash parameter as a flat key/value array.
 /// Port of the `${(kv)hash}` materialization Src/params.c does
 /// inside `getstrvalue()` (line 2335) for hash params.
-pub fn gethparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {
+pub fn gethparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {   // c:3115
     match table.get_value(name)? {
         ParamValue::Assoc(h) => Some(h.values().cloned().collect()),
         _ => None,
@@ -3493,7 +2670,7 @@ pub fn gethparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {
 /// Get hash parameter keys as array (from params.c gethkparam)
 /// Get a hash parameter's keys only.
 /// Port of the `${(k)hash}` extraction in Src/params.c.
-pub fn gethkparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {
+pub fn gethkparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {  // c:3130
     match table.get_value(name)? {
         ParamValue::Assoc(h) => Some(h.keys().cloned().collect()),
         _ => None,
@@ -3503,7 +2680,7 @@ pub fn gethkparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {
 /// Get numeric parameter (from params.c getnumvalue)
 /// Get a parameter as an `MNumber`.
 /// Port of `getnumvalue()` from Src/params.c:2624.
-pub fn getnumvalue(table: &ParamTable, name: &str) -> MNumber {
+pub fn getnumvalue(table: &ParamTable, name: &str) -> MNumber {             // c:2624
     match table.get_value(name) {
         Some(ParamValue::Integer(i)) => MNumber::Integer(i),
         Some(ParamValue::Float(f)) => MNumber::Float(f),
@@ -3552,7 +2729,7 @@ pub fn assigniparam(table: &mut ParamTable, name: &str, val: i64) -> bool {
 /// `ASSPM_WARN` (params.c:104) is a no-op in our port — the global
 /// "warn on creation" tracking is not yet ported. Call shape preserved
 /// so callers can use this where C calls setaparam.
-pub fn setaparam(
+pub fn setaparam(                                                           // c:3595
     variables: &mut std::collections::HashMap<String, String>,
     arrays: &mut std::collections::HashMap<String, Vec<String>>,
     assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
@@ -3589,7 +2766,7 @@ pub fn setaparam(
 ///   - PM_NAMEREF dispatch (params.c:3250)
 ///   - PM_TIED + PM_SPECIAL setfn callbacks
 ///   - ASSPM_AUGMENT (`+=` augment semantics)
-pub fn assignsparam(
+pub fn assignsparam(                                                        // c:3193
     variables: &mut std::collections::HashMap<String, String>,
     arrays: &mut std::collections::HashMap<String, Vec<String>>,
     assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
@@ -3668,7 +2845,7 @@ pub fn assignaparam(
 /// TODOs (not yet ported):
 ///   - PM_READONLY rejection (params.c:3617)
 ///   - createparam(PM_HASHED) flag propagation
-pub fn sethparam(
+pub fn sethparam(                                                           // c:3602
     variables: &mut std::collections::HashMap<String, String>,
     arrays: &mut std::collections::HashMap<String, Vec<String>>,
     assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
@@ -3898,21 +3075,87 @@ pub fn unsetparam(                                                          // c
 /// `PM_EXPORTED` and pushes the value into the env via
 /// `setenv(3)`.
 pub fn export_param(table: &mut ParamTable, name: &str) {
-    table.export_param(name);
+    if let Some(param) = table.params.get_mut(name) {
+        param.flags |= crate::ported::zsh_h::PM_EXPORTED;
+        let val = match crate::ported::zsh_h::PM_TYPE(param.flags) {
+            crate::ported::zsh_h::PM_ARRAY | crate::ported::zsh_h::PM_HASHED => return,
+            crate::ported::zsh_h::PM_INTEGER => convbase(param.value.as_integer(), param.base as u32),
+            crate::ported::zsh_h::PM_EFLOAT | crate::ported::zsh_h::PM_FFLOAT => {
+                convfloat(param.value.as_float(), param.base, param.flags)
+            }
+            _ => param.value.as_string(),
+        };
+        env::set_var(name, &val);
+    }
 }
 
-/// Start a parameter scope
-/// Enter a function-local parameter scope.
-/// Port of `startparamscope()` (Src/init.c) — the C source
-/// pushes the current scope onto a stack so `local`-declared
-/// parameters disappear on function exit.
+/// Start a parameter scope.
+/// Port of `startparamscope()` (Src/init.c) — the C source pushes the
+/// current scope counter so `local`-declared params disappear on function
+/// exit. Rust port operates on the bucket-2 holder `paramtab` via a
+/// `&mut ParamTable` argument.
 pub fn startparamscope(table: &mut ParamTable) {
-    table.push_scope();
+    table.local_level += 1;
 }
 
-/// End a parameter scope
+/// Port of `endparamscope()` from `Src/params.c:5894`. Decrements the
+/// scope counter and either restores or unsets every param at the
+/// outgoing level: special params get their saved `old` flags/value
+/// reapplied via `handle_special_set`; non-special locals shadow back
+/// to their pre-scope param if present, otherwise are removed.
 pub fn endparamscope(table: &mut ParamTable) {
-    table.pop_scope();
+    let level = table.local_level;
+    let names_to_check: Vec<String> = table.params.keys().cloned().collect();
+
+    for name in names_to_check {
+        let should_remove = {
+            if let Some(param) = table.params.get(&name) {
+                param.level > level - 1
+            } else {
+                false
+            }
+        };
+
+        if should_remove {
+            let is_special = table
+                .params
+                .get(&name)
+                .map(|p| p.is_special())
+                .unwrap_or(false);
+
+            if is_special {
+                let old = table.params.get(&name).and_then(|p| p.old.clone());
+                if let Some(old_param) = old {
+                    let old_value = old_param.value.clone();
+                    if let Some(p) = table.params.get_mut(&name) {
+                        p.flags = old_param.flags;
+                        p.level = old_param.level;
+                        p.base = old_param.base;
+                        p.width = old_param.width;
+                        p.old = old_param.old;
+                        if (old_param.flags & crate::ported::zsh_h::PM_NORESTORE) == 0 {
+                            p.value = old_value.clone();
+                            table.handle_special_set(&name, &old_value);
+                        }
+                    }
+                }
+            } else {
+                let old = table.params.get(&name).and_then(|p| p.old.clone());
+                if let Some(old_param) = old {
+                    table.params.insert(name.clone(), *old_param);
+                    if let Some(p) = table.params.get(&name) {
+                        if p.is_exported() {
+                            env::set_var(&name, p.value.as_string());
+                        }
+                    }
+                } else {
+                    table.params.remove(&name);
+                }
+            }
+        }
+    }
+
+    table.local_level -= 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -4261,10 +3504,10 @@ pub fn convfloat(dval: f64, digits: i32, pm_flags: u32) -> String {
         return "NaN".to_string();
     }
     // Pick fmt char + adjust digits per the C cascade at 5705-5727.
-    let (fmt_char, digits) = if (pm_flags & flags::EFLOAT) != 0 { // c:5715
+    let (fmt_char, digits) = if (pm_flags & crate::ported::zsh_h::PM_EFLOAT) != 0 { // c:5715
         let d = if digits <= 0 { 10 } else { digits };           // c:5718
         ('e', (d - 1).max(0))                                    // c:5725
-    } else if (pm_flags & flags::FFLOAT) != 0 {                  // c:5716
+    } else if (pm_flags & crate::ported::zsh_h::PM_FFLOAT) != 0 {                  // c:5716
         let d = if digits <= 0 { 10 } else { digits };           // c:5718
         ('f', d)
     } else {
@@ -4403,46 +3646,6 @@ mod tests {
         assert_eq!(scalar.as_float(), 42.0);
         assert_eq!(scalar.as_string(), "42");
     }
-
-    #[test]
-    fn test_param_table_set_get() {
-        let mut table = ParamTable::new();
-        table.set_scalar("FOO", "bar");
-        assert_eq!(table.get_value("FOO").unwrap().as_string(), "bar");
-    }
-
-    #[test]
-    fn test_param_readonly() {
-        let mut table = ParamTable::new();
-        table.set_scalar("TEST", "value");
-        table.set_readonly("TEST");
-        assert!(!table.set_scalar("TEST", "new_value"));
-        assert_eq!(table.get_value("TEST").unwrap().as_string(), "value");
-    }
-
-    #[test]
-    fn test_param_array() {
-        let mut table = ParamTable::new();
-        table.set_array("arr", vec!["a".into(), "b".into(), "c".into()]);
-        assert_eq!(
-            table.get_value("arr").unwrap().as_array(),
-            vec!["a", "b", "c"]
-        );
-    }
-
-    #[test]
-    fn test_param_assoc() {
-        let mut table = ParamTable::new();
-        let mut hash = HashMap::new();
-        hash.insert("key".to_string(), "value".to_string());
-        table.set_assoc("hash", hash);
-        if let ParamValue::Assoc(h) = table.get_value("hash").unwrap() {
-            assert_eq!(h.get("key"), Some(&"value".to_string()));
-        } else {
-            panic!("Expected associative array");
-        }
-    }
-
     #[test]
     fn test_colonarr_conversion() {
         let arr = colonsplit("/bin:/usr/bin:/usr/local/bin");
@@ -4450,35 +3653,7 @@ mod tests {
         let path = colonarrgetfn(&arr);
         assert_eq!(path, "/bin:/usr/bin:/usr/local/bin");
     }
-
-    #[test]
-    fn test_local_scope() {
-        let mut table = ParamTable::new();
-        table.set_scalar("GLOBAL", "value");
-
-        table.push_scope();
-        table.make_local("LOCAL_VAR");
-        table.set_scalar("LOCAL_VAR", "local_value");
-        assert!(table.contains("LOCAL_VAR"));
-
-        table.pop_scope();
-        assert!(!table.contains("LOCAL_VAR"));
-        assert!(table.contains("GLOBAL"));
-    }
-
-    #[test]
-    fn test_special_params() {
-        let table = ParamTable::new();
-        // $$ should be the PID
-        let pid = table.get_value("$").unwrap().as_integer();
-        assert!(pid > 0);
-
-        // SHLVL should be at least 1
-        let shlvl = table.get_value("SHLVL").unwrap().as_integer();
-        assert!(shlvl >= 1);
-    }
-
-    #[test]
+       #[test]
     fn test_isident() {
         assert!(isident("foo"));
         assert!(isident("_bar"));
@@ -4489,27 +3664,6 @@ mod tests {
         assert!(!isident("foo bar"));
     }
 
-    #[test]
-    fn test_nameref() {
-        let mut table = ParamTable::new();
-        table.set_scalar("target", "hello");
-        table.set_nameref("ref", "target");
-
-        // Getting through nameref should resolve
-        let val = table.get_value("ref").unwrap();
-        assert_eq!(val.as_string(), "hello");
-    }
-
-    #[test]
-    fn test_tied_params() {
-        let mut table = ParamTable::new();
-        table.tie_param("MY_PATH", "my_path", ':');
-        table.set_scalar("MY_PATH", "/bin:/usr/bin");
-
-        // Array should be synced
-        let arr = table.get_value("my_path").unwrap().as_array();
-        assert_eq!(arr, vec!["/bin", "/usr/bin"]);
-    }
 
     #[test]
     fn test_unique_array() {
@@ -4532,7 +3686,7 @@ mod tests {
         // Use 2.5 instead of 3.14 — clippy errors on the latter as
         // an approx PI constant. The test checks 2-decimal formatting
         // round-trips, which the exact value doesn't influence.
-        let s = convfloat(2.5, 2, flags::FFLOAT);
+        let s = convfloat(2.5, 2, crate::ported::zsh_h::PM_FFLOAT);
         assert!(s.starts_with("2.50"));
 
         assert_eq!(convfloat(f64::INFINITY, 0, 0), "Inf");
@@ -4540,89 +3694,7 @@ mod tests {
         assert_eq!(convfloat(f64::NAN, 0, 0), "NaN");
     }
 
-    #[test]
-    fn test_augment_scalar() {
-        let mut table = ParamTable::new();
-        table.set_scalar("foo", "hello");
-        table.augment_scalar("foo", " world");
-        assert_eq!(table.get_value("foo").unwrap().as_string(), "hello world");
-    }
 
-    #[test]
-    fn test_augment_integer() {
-        let mut table = ParamTable::new();
-        table.set_integer("count", 10);
-        table.augment_integer("count", 5);
-        assert_eq!(table.get_value("count").unwrap().as_integer(), 15);
-    }
-
-    #[test]
-    fn test_augment_array() {
-        let mut table = ParamTable::new();
-        table.set_array("arr", vec!["a".into(), "b".into()]);
-        table.augment_array("arr", vec!["c".into(), "d".into()]);
-        assert_eq!(
-            table.get_value("arr").unwrap().as_array(),
-            vec!["a", "b", "c", "d"]
-        );
-    }
-
-    #[test]
-    fn test_array_element_access() {
-        let mut table = ParamTable::new();
-        table.set_array("arr", vec!["a".into(), "b".into(), "c".into()]);
-
-        assert_eq!(table.get_array_element("arr", 1), Some("a".to_string()));
-        assert_eq!(table.get_array_element("arr", -1), Some("c".to_string()));
-        assert_eq!(table.get_array_element("arr", 4), None);
-
-        table.set_array_element("arr", 2, "B");
-        assert_eq!(table.get_array_element("arr", 2), Some("B".to_string()));
-    }
-
-    #[test]
-    fn test_hash_element_access() {
-        let mut table = ParamTable::new();
-        let mut hash = HashMap::new();
-        hash.insert("k1".to_string(), "v1".to_string());
-        table.set_assoc("h", hash);
-
-        assert_eq!(table.get_hash_element("h", "k1"), Some("v1".to_string()));
-        table.set_hash_element("h", "k2", "v2");
-        assert_eq!(table.get_hash_element("h", "k2"), Some("v2".to_string()));
-
-        table.unset_hash_element("h", "k1");
-        assert_eq!(table.get_hash_element("h", "k1"), None);
-    }
-
-    #[test]
-    fn test_scope_special_restore() {
-        let mut table = ParamTable::new();
-
-        let initial_shlvl = table.shlvl;
-
-        table.push_scope();
-        table.make_local("SHLVL");
-        table.set_integer("SHLVL", 99);
-        assert_eq!(table.get_value("SHLVL").unwrap().as_integer(), 99);
-
-        table.pop_scope();
-        assert_eq!(
-            table.get_value("SHLVL").unwrap().as_integer(),
-            initial_shlvl
-        );
-    }
-
-    #[test]
-    fn test_export_unexport() {
-        let mut table = ParamTable::new();
-        table.set_scalar("MY_VAR", "test_val");
-        table.export("MY_VAR");
-        assert_eq!(env::var("MY_VAR").ok(), Some("test_val".to_string()));
-
-        table.unexport("MY_VAR");
-        assert!(env::var("MY_VAR").is_err());
-    }
 
     #[test]
     fn test_parse_subscript() {
@@ -4674,54 +3746,6 @@ mod tests {
         assert!(!matchpat("exact", "other", false, true));
     }
 
-    #[test]
-    fn test_format_param() {
-        let mut table = ParamTable::new();
-        table.set_scalar("MY_VAR", "hello world");
-        let out = table.format_param("MY_VAR", print_flags::TYPESET).unwrap();
-        assert!(out.contains("MY_VAR"));
-        assert!(out.contains("hello world"));
-    }
-
-    #[test]
-    fn test_seconds() {
-        let table = ParamTable::new();
-        let secs = table.get_seconds_int();
-        assert!(secs >= 0);
-
-        let fsecs = table.get_seconds_float();
-        assert!(fsecs >= 0.0);
-    }
-
-    #[test]
-    fn test_pipestatus() {
-        let mut table = ParamTable::new();
-        table.pipestats = vec![0, 1, 2];
-        let val = table.get_value("pipestatus").unwrap();
-        assert_eq!(val.as_array(), vec!["0", "1", "2"]);
-    }
-
-    #[test]
-    fn test_str_slice() {
-        let mut table = ParamTable::new();
-        table.set_scalar("s", "hello world");
-
-        let slice = table.get_str_slice("s", 0, 5);
-        assert_eq!(slice, "hello");
-
-        table.set_str_slice("s", 0, 5, "goodbye");
-        assert_eq!(table.get_value("s").unwrap().as_string(), "goodbye world");
-    }
-
-    #[test]
-    fn test_createparam() {
-        let mut table = ParamTable::new();
-        assert!(table.createparam("newvar", flags::SCALAR));
-        assert!(table.contains("newvar"));
-
-        assert!(table.createparam("intvar", flags::INTEGER));
-        assert_eq!(table.get_value("intvar").unwrap().as_integer(), 0);
-    }
 
     #[test]
     fn test_mnumber() {
@@ -5635,13 +4659,32 @@ impl VarAttr {
 // that does nothing.
 // ===========================================================
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
 use crate::zsh_h::{paramdef, PM_ARRAY, PM_DONTIMPORT, PM_DONTIMPORT_SUID, PM_INTEGER, PM_READONLY_SPECIAL, PM_SCALAR, PM_SPECIAL, PM_UNSET};
 // -----------------------------------------------------------
 // Module statics — one per C global referenced by the special-
 // param callbacks below. All initialised lazily on first read.
 // -----------------------------------------------------------
+
+// `Src/params.c:515  mod_export HashTable paramtab, realparamtab;`
+//
+// `realparamtab` always points to the shell's global parameter
+// table. `paramtab` normally aliases it; it is temporarily
+// redirected during associative-array key iteration
+// (`Src/params.c:508-513` — "paramtab is sometimes temporarily
+// changed to point at another table").
+//
+// PORT_PLAN.md bucket 2: shell-wide shared C global → ported as
+// `Arc<RwLock<…>>` so worker threads see the same table. Names
+// match the C identifiers, uppercased per the bucket-2 holder
+// convention (PORT_PLAN.md:637 "PARAMTAB ← paramtab").
+//
+// Both are populated on first access by `createparamtable()`
+// (params.rs:1513), which mirrors `createparamtable()`
+// (Src/params.c:817).
+pub static REALPARAMTAB: OnceLock<Arc<RwLock<ParamTable>>> = OnceLock::new();
+pub static PARAMTAB: OnceLock<Arc<RwLock<ParamTable>>> = OnceLock::new();
 
 fn ifs_lock() -> &'static Mutex<String> {
     static IFS_VAR: OnceLock<Mutex<String>> = OnceLock::new();

@@ -185,7 +185,7 @@ impl Keymap {
     /// Equivalent to `newkeytab()` from Src/Zle/zle_keymap.c:278 — the
     /// C source allocates a Keymap with the first[] array zeroed out
     /// and an empty multi-byte hashtab.
-    pub fn new() -> Self {
+    pub fn new() -> Self {                                                   // c:278
         Self::default()
     }
 
@@ -193,7 +193,7 @@ impl Keymap {
     /// Direct port of the single-byte path in `bindkey()` at
     /// Src/Zle/zle_keymap.c:566; the C source writes into `km->first[c]`
     /// when `seq` has length 1.
-    pub fn bind_char(&mut self, c: u8, thingy: Thingy) {
+    pub fn bind_char(&mut self, c: u8, thingy: Thingy) {                     // c:566
         self.first[c as usize] = Some(thingy);
     }
 
@@ -209,7 +209,7 @@ impl Keymap {
     /// len > 1 path: marks every proper prefix of `seq` as a prefix
     /// node (prefixct increment) so getkeymapcmd's trie walk knows to
     /// keep reading bytes when it sees a partial match.
-    pub fn bind_seq(&mut self, seq: &[u8], thingy: Thingy) {
+    pub fn bind_seq(&mut self, seq: &[u8], thingy: Thingy) {                 // c:566
         if seq.len() == 1 {
             self.bind_char(seq[0], thingy);
         } else {
@@ -713,7 +713,7 @@ impl KeymapManager {
     }
 
     /// Link a new name to an existing keymap
-    pub fn link(&mut self, oldname: &str, newname: &str) -> bool {
+    pub fn link(&mut self, oldname: &str, newname: &str) -> bool {           // c:449
         if let Some(km) = self.keymaps.get(oldname) {
             self.keymaps.insert(newname.to_string(), Arc::clone(km));
             true
@@ -723,7 +723,7 @@ impl KeymapManager {
     }
 
     /// Delete a keymap name
-    pub fn delete(&mut self, name: &str) -> bool {
+    pub fn delete(&mut self, name: &str) -> bool {                           // c:364
         // Don't allow deleting immortal keymaps
         if name == "main" || name == "emacs" || name == "viins" || name == "vicmd" {
             return false;
