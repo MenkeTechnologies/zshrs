@@ -200,10 +200,26 @@ impl Zle {
 }
 
 /// Port of `free_prepostdisplay()` from Src/Zle/zle_params.c:914. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn free_prepostdisplay() -> i32 { 0 }
+pub fn free_prepostdisplay() {                                               // c:914
+    use crate::ported::zle::zle_misc::{POSTDISPLAY, PREDISPLAY};
+    use std::sync::Mutex;
+    // c:916-917 — `if (predisplaylen) set_prepost(&predisplay, &predisplaylen, NULL)`.
+    PREDISPLAY.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clear();
+    // c:918-919 — same for postdisplay.
+    POSTDISPLAY.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clear();
+}
 
 /// Port of `get_context()` from Src/Zle/zle_params.c:942. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_context() -> i32 { 0 }
+pub fn get_context(zle: &crate::ported::zle::zle_main::Zle) -> &'static str {  // c:942
+    use crate::ported::zle::zle_main::ZleContext;
+    // c:944-958 — switch on zlecontext → "cont" / "select" / "vared" / "line".
+    match zle.zlecontext {
+        ZleContext::Cont   => "cont",                                        // c:945-946
+        ZleContext::Select => "select",                                      // c:949-950
+        ZleContext::Vared  => "vared",                                       // c:953-954
+        ZleContext::Line   => "line",                                        // c:957-958 default
+    }
+}
 
 /// Port of `get_histno()` from Src/Zle/zle_params.c:514. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn get_histno(zle: &crate::ported::zle::zle_main::Zle) -> i64 {          // c:513
@@ -243,13 +259,34 @@ pub fn get_keys_queued_count(zle: &crate::ported::zle::zle_main::Zle) -> i64 {  
 }
 
 /// Port of `get_killring()` from Src/Zle/zle_params.c:705. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_killring() -> i32 { 0 }
+pub fn get_killring(zle: &crate::ported::zle::zle_main::Zle) -> Vec<String> {  // c:704
+    // c:706-733 — return kring entries with most-recently-killed
+    // first. Empty entries returned as "" so the array length always
+    // equals kringsize. zshrs holds the kill ring as
+    // VecDeque<ZleString> where push_front puts newest at index 0,
+    // so we iterate forward.
+    zle.killring.iter()
+        .map(|entry| entry.iter().collect::<String>())
+        .collect()
+}
 
 /// Port of `get_lasearch()` from Src/Zle/zle_params.c:924. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_lasearch() -> i32 { 0 }
+pub fn get_lasearch() -> String {                                            // c:923
+    use crate::ported::zle::zle_misc::PREVIOUS_ABORTED_SEARCH;
+    use std::sync::Mutex;
+    // c:926-928 — `previous_aborted_search ? : ""`.
+    PREVIOUS_ABORTED_SEARCH.get_or_init(|| Mutex::new(String::new()))
+        .lock().unwrap().clone()
+}
 
 /// Port of `get_lsearch()` from Src/Zle/zle_params.c:933. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_lsearch() -> i32 { 0 }
+pub fn get_lsearch() -> String {                                             // c:932
+    use crate::ported::zle::zle_misc::PREVIOUS_SEARCH;
+    use std::sync::Mutex;
+    // c:935-937 — `previous_search ? : ""`.
+    PREVIOUS_SEARCH.get_or_init(|| Mutex::new(String::new()))
+        .lock().unwrap().clone()
+}
 
 /// Port of `get_lwidget()` from Src/Zle/zle_params.c:449. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn get_lwidget(zle: &crate::ported::zle::zle_main::Zle) -> String {      // c:448
@@ -258,16 +295,32 @@ pub fn get_lwidget(zle: &crate::ported::zle::zle_main::Zle) -> String {      // 
 }
 
 /// Port of `get_postdisplay()` from Src/Zle/zle_params.c:907. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_postdisplay() -> i32 { 0 }
+pub fn get_postdisplay() -> String {                                         // c:906
+    use crate::ported::zle::zle_misc::POSTDISPLAY;
+    use std::sync::Mutex;
+    // c:909 — `return get_prepost(postdisplay, postdisplaylen)` →
+    // zlelineasstring(...). Return the raw String.
+    POSTDISPLAY.get_or_init(|| Mutex::new(String::new()))
+        .lock().unwrap().clone()
+}
 
 /// Port of `get_prebuffer()` from Src/Zle/zle_params.c:394. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn get_prebuffer() -> i32 { 0 }
 
 /// Port of `get_predisplay()` from Src/Zle/zle_params.c:893. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_predisplay() -> i32 { 0 }
+pub fn get_predisplay() -> String {                                          // c:892
+    use crate::ported::zle::zle_misc::PREDISPLAY;
+    use std::sync::Mutex;
+    PREDISPLAY.get_or_init(|| Mutex::new(String::new()))
+        .lock().unwrap().clone()
+}
 
 /// Port of `get_prepost()` from Src/Zle/zle_params.c:879. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_prepost() -> i32 { 0 }
+pub fn get_prepost(text: &str, len: usize) -> String {                       // c:878
+    // c:881 — `return zlelineasstring(text, len, 0, NULL, NULL, 1)`.
+    // In Rust the caller already owns a String; just truncate to len.
+    text.chars().take(len).collect()
+}
 
 /// Port of `get_recursive()` from `Src/Zle/zle_params.c:534`.
 /// ```c
@@ -297,7 +350,28 @@ pub fn get_region_active(zle: &crate::ported::zle::zle_main::Zle) -> i64 {   // 
 }
 
 /// Port of `get_registers()` from Src/Zle/zle_params.c:807. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_registers() -> i32 { 0 }
+pub fn get_registers(zle: &crate::ported::zle::zle_main::Zle, name: &str) -> Option<String> {  // c:806
+    // c:815-820 — name[1] non-zero → invalid; '0'..'9' → idx = name-'0'+26;
+    // 'a'..'z' → idx = name-'a'.
+    let bytes = name.as_bytes();
+    if bytes.len() != 1 {
+        return None;
+    }
+    let c = bytes[0];
+    let idx: i32 = if c.is_ascii_digit() {
+        (c - b'0') as i32 + 26
+    } else if c.is_ascii_lowercase() {
+        (c - b'a') as i32
+    } else {
+        return None;                                                         // c:822-824 (vbuf==-1)
+    };
+    // c:798 — `pm->u.str = zlelineasstring(vibuf[i].buf, ...)`.
+    if (idx as usize) < zle.vibuf.len() {
+        Some(zle.vibuf[idx as usize].iter().collect::<String>())
+    } else {
+        None
+    }
+}
 
 /// Port of `get_suffixactive()` from `Src/Zle/zle_params.c:611`.
 /// ```c
@@ -351,10 +425,47 @@ pub fn get_widget(zle: &crate::ported::zle::zle_main::Zle) -> String {       // 
 }
 
 /// Port of `get_widgetfunc()` from Src/Zle/zle_params.c:421. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_widgetfunc() -> i32 { 0 }
+pub fn get_widgetfunc(zle: &crate::ported::zle::zle_main::Zle) -> String {   // c:420
+    use crate::ported::zle::widget::{WidgetFlags, WidgetFunc};
+    // c:423-430 — read bindk->widget. C union dispatches:
+    //   WIDGET_INT  → ".internal"  (c:426-427)
+    //   WIDGET_NCOMP → comp.func   (c:428-429)
+    //   else → fnnam               (c:430)
+    let Some(t) = zle.bindk.as_ref() else {
+        return String::new();
+    };
+    let Some(w) = t.widget.as_ref() else {
+        return String::new();
+    };
+    if w.flags.contains(WidgetFlags::INT) {
+        return ".internal".to_string();
+    }
+    // No NCOMP comp.func/wid in current Widget shape (would be in
+    // WidgetFunc::Comp variant); collapse to the User-fn case.
+    match &w.func {
+        WidgetFunc::User(name) => name.clone(),
+        WidgetFunc::Internal(_) => ".internal".to_string(),
+    }
+}
 
 /// Port of `get_widgetstyle()` from Src/Zle/zle_params.c:435. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_widgetstyle() -> i32 { 0 }
+pub fn get_widgetstyle(zle: &crate::ported::zle::zle_main::Zle) -> String {  // c:434
+    use crate::ported::zle::widget::WidgetFlags;
+    // c:437-444 — read bindk->widget. INT → ".internal"; NCOMP →
+    // comp.wid (the underlying widget name); else "".
+    let Some(t) = zle.bindk.as_ref() else {
+        return String::new();
+    };
+    let Some(w) = t.widget.as_ref() else {
+        return String::new();
+    };
+    if w.flags.contains(WidgetFlags::INT) {
+        return ".internal".to_string();
+    }
+    // No NCOMP comp.wid in current shape — would be t.name for
+    // a -C-bound completion widget. Fall through to "".
+    String::new()                                                            // c:444
+}
 
 /// Port of `get_yankactive()` from Src/Zle/zle_params.c:556. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn get_yankactive(zle: &crate::ported::zle::zle_main::Zle) -> i64 {      // c:555
@@ -384,10 +495,29 @@ pub fn makezleparams() -> i32 { 0 }
 pub fn scan_registers() -> i32 { 0 }
 
 /// Port of `set_histno()` from Src/Zle/zle_params.c:503. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn set_histno() -> i32 { 0 }
+pub fn set_histno(zle: &mut crate::ported::zle::zle_main::Zle, x: i64) {     // c:502
+    // c:505-509 — `Histent he = quietgethist(x); if (!he) return;
+    //              zle_setline(he)`.
+    // zshrs uses History.cursor as the active history index. Clamp
+    // to entries.len() when x is out of range (matches the
+    // quietgethist NULL-result early-return).
+    let idx = x.max(0) as usize;
+    if idx <= zle.history.entries.len() {
+        zle.history.cursor = idx;
+    }
+}
 
 /// Port of `set_killring()` from Src/Zle/zle_params.c:661. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn set_killring() -> i32 { 0 }
+pub fn set_killring(zle: &mut crate::ported::zle::zle_main::Zle, x: Option<&[String]>) {  // c:660
+    // c:667-672 — `if (kring) { free each kptr->buf; zfree(kring) }`.
+    // Then either rebuild from `x` or leave NULL.
+    zle.killring.clear();
+    if let Some(arr) = x {
+        for entry in arr {
+            zle.killring.push_back(entry.chars().collect());
+        }
+    }
+}
 
 /// Port of `set_numeric()` from Src/Zle/zle_params.c:477. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn set_numeric(zle: &mut crate::ported::zle::zle_main::Zle, x: i64) {   // c:476
@@ -400,13 +530,42 @@ pub fn set_numeric(zle: &mut crate::ported::zle::zle_main::Zle, x: i64) {   // c
 }
 
 /// Port of `set_postdisplay()` from Src/Zle/zle_params.c:900. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn set_postdisplay() -> i32 { 0 }
+pub fn set_postdisplay(x: Option<&str>) {                                    // c:899
+    use crate::ported::zle::zle_misc::POSTDISPLAY;
+    use std::sync::Mutex;
+    let g = POSTDISPLAY.get_or_init(|| Mutex::new(String::new()));
+    let mut buf = g.lock().unwrap();
+    buf.clear();
+    if let Some(s) = x {
+        buf.push_str(s);
+    }
+}
 
 /// Port of `set_predisplay()` from Src/Zle/zle_params.c:886. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn set_predisplay() -> i32 { 0 }
+pub fn set_predisplay(x: Option<&str>) {                                     // c:885
+    use crate::ported::zle::zle_misc::PREDISPLAY;
+    use std::sync::Mutex;
+    let g = PREDISPLAY.get_or_init(|| Mutex::new(String::new()));
+    let mut buf = g.lock().unwrap();
+    buf.clear();
+    if let Some(s) = x {
+        buf.push_str(s);
+    }
+}
 
 /// Port of `set_prepost()` from Src/Zle/zle_params.c:865. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn set_prepost() -> i32 { 0 }
+pub fn set_prepost(textvar: &mut String, lenvar: &mut usize, x: Option<&str>) {  // c:864
+    // c:867-871 — `if (*lenvar) free(*textvar); *textvar=NULL; *lenvar=0`.
+    if *lenvar != 0 {
+        textvar.clear();
+        *lenvar = 0;
+    }
+    // c:872-874 — if x: `*textvar = stringaszleline(x, 0, lenvar, ...)`.
+    if let Some(s) = x {
+        textvar.push_str(s);
+        *lenvar = s.chars().count();
+    }
+}
 
 /// Port of `set_region_active()` from `Src/Zle/zle_params.c:317`.
 /// ```c
@@ -427,7 +586,27 @@ pub fn set_region_active(                                                    // 
 }
 
 /// Port of `set_register()` from Src/Zle/zle_params.c:751. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn set_register() -> i32 { 0 }
+pub fn set_register(zle: &mut crate::ported::zle::zle_main::Zle, name: char, value: &str) -> i32 {  // c:750
+    // c:759-763 — '0'..'9' → offset = '0' - 26;  'a'..'z' → offset = 'a'.
+    // (Vi register table layout: 0..25 = a..z, 26..35 = 0..9.)
+    let idx: i32 = if ('0'..='9').contains(&name) {
+        // c:760 — `offset = '0' - 26` → idx = name - '0' + 26.
+        name as i32 - b'0' as i32 + 26
+    } else if ('a'..='z').contains(&name) {
+        // c:761-762 — `offset = 'a'` → idx = name - 'a'.
+        name as i32 - b'a' as i32
+    } else {
+        // c:765 — invalid register; C reports zerr and returns.
+        return 1;
+    };
+    // c:769-772 — `vbuf = &vibuf[name-offset]; if (*value)
+    //              vbuf->buf = stringaszleline(value, 0, &n, ...);
+    //              vbuf->len = n`.
+    if (idx as usize) < zle.vibuf.len() {
+        zle.vibuf[idx as usize] = value.chars().collect();
+    }
+    0
+}
 
 /// Port of `set_registers()` from Src/Zle/zle_params.c:833. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn set_registers() -> i32 { 0 }
@@ -445,10 +624,23 @@ pub fn set_yankstart(zle: &mut crate::ported::zle::zle_main::Zle, i: i64) {  // 
 }
 
 /// Port of `unset_cutbuffer()` from Src/Zle/zle_params.c:647. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn unset_cutbuffer() -> i32 { 0 }
+pub fn unset_cutbuffer(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  // c:646
+    // c:649-655 — `if (exp) { stdunsetfn; if (cutbuf.buf) { free; NULL; len=0 } }`.
+    if exp != 0 {
+        // zshrs uses VecDeque for the kill ring; the "primary" cut
+        // buffer is the front entry. Clearing means popping it.
+        zle.killring.pop_front();
+    }
+}
 
 /// Port of `unset_killring()` from Src/Zle/zle_params.c:741. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn unset_killring() -> i32 { 0 }
+pub fn unset_killring(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  // c:740
+    // c:743-746 — `if (exp) { set_killring(pm, NULL); stdunsetfn(...) }`.
+    if exp != 0 {
+        set_killring(zle, None);
+        // stdunsetfn handles param-table bookkeeping — substrate.
+    }
+}
 
 /// Port of `unset_numeric()` from Src/Zle/zle_params.c:492. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn unset_numeric(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  // c:491
@@ -463,7 +655,10 @@ pub fn unset_numeric(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  /
 }
 
 /// Port of `unset_register()` from Src/Zle/zle_params.c:777. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn unset_register() -> i32 { 0 }
+pub fn unset_register(zle: &mut crate::ported::zle::zle_main::Zle, name: char, _exp: i32) {  // c:776
+    // c:778-779 — `set_register(pm, "")`. Single-line body.
+    let _ = set_register(zle, name, "");
+}
 
 /// Port of `unset_registers()` from Src/Zle/zle_params.c:857. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn unset_registers() -> i32 { 0 }
@@ -773,5 +968,197 @@ mod keybuf_tests {
             prefixct: 0,
         };
         freekeynode(kb);
+    }
+}
+
+#[cfg(test)]
+mod display_tests {
+    use super::*;
+    use crate::ported::zle::zle_main::{Zle, ZleContext};
+
+    #[test]
+    fn get_set_predisplay_round_trip() {
+        // c:885,892 — round-trip set→get.
+        set_predisplay(Some("[hint] "));
+        assert_eq!(get_predisplay(), "[hint] ");
+        set_predisplay(None);
+        assert_eq!(get_predisplay(), "");
+    }
+
+    #[test]
+    fn get_set_postdisplay_round_trip() {
+        set_postdisplay(Some("trailer"));
+        assert_eq!(get_postdisplay(), "trailer");
+        set_postdisplay(None);
+        assert_eq!(get_postdisplay(), "");
+    }
+
+    #[test]
+    fn free_prepostdisplay_clears_both() {
+        set_predisplay(Some("a"));
+        set_postdisplay(Some("b"));
+        free_prepostdisplay();
+        assert_eq!(get_predisplay(), "");
+        assert_eq!(get_postdisplay(), "");
+    }
+
+    #[test]
+    fn get_context_branches() {
+        let mut z = Zle::default();
+        z.zlecontext = ZleContext::Line;   assert_eq!(get_context(&z), "line");
+        z.zlecontext = ZleContext::Cont;   assert_eq!(get_context(&z), "cont");
+        z.zlecontext = ZleContext::Select; assert_eq!(get_context(&z), "select");
+        z.zlecontext = ZleContext::Vared;  assert_eq!(get_context(&z), "vared");
+    }
+
+    #[test]
+    fn get_lasearch_lsearch_default_empty() {
+        // Globals default to empty Mutex<String>.
+        // (Other tests may have set them, so we explicitly reset.)
+        use crate::ported::zle::zle_misc::{PREVIOUS_ABORTED_SEARCH, PREVIOUS_SEARCH};
+        use std::sync::Mutex;
+        PREVIOUS_ABORTED_SEARCH.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clear();
+        PREVIOUS_SEARCH.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clear();
+        assert_eq!(get_lasearch(), "");
+        assert_eq!(get_lsearch(), "");
+    }
+
+    #[test]
+    fn get_prepost_truncates_to_len() {
+        // c:881 — zlelineasstring(text, len, ...).
+        assert_eq!(get_prepost("abcdef", 3), "abc");
+        assert_eq!(get_prepost("xyz", 99), "xyz"); // len > content
+    }
+
+    #[test]
+    fn set_prepost_writes_and_clears() {
+        let mut text = String::new();
+        let mut len = 0;
+        set_prepost(&mut text, &mut len, Some("hello"));
+        assert_eq!(text, "hello");
+        assert_eq!(len, 5);
+        set_prepost(&mut text, &mut len, None);
+        assert_eq!(text, "");
+        assert_eq!(len, 0);
+    }
+}
+
+#[cfg(test)]
+mod widget_killring_tests {
+    use super::*;
+    use crate::ported::zle::widget::{Widget, WidgetFlags, WidgetFunc};
+    use crate::ported::zle::zle_main::Zle;
+    use crate::ported::zle::zle_thingy::Thingy;
+    use std::sync::Arc;
+
+    fn thingy_with_user_widget(name: &str, fname: &str) -> Thingy {
+        let mut t = Thingy::new(name);
+        t.widget = Some(Arc::new(Widget {
+            flags: WidgetFlags::empty(),
+            func: WidgetFunc::User(fname.to_string()),
+        }));
+        t
+    }
+
+    #[test]
+    fn get_widgetfunc_user_widget_returns_func_name() {
+        let mut z = Zle::default();
+        z.bindk = Some(thingy_with_user_widget("self-insert", "my-fn"));
+        assert_eq!(get_widgetfunc(&z), "my-fn");
+    }
+
+    #[test]
+    fn get_widgetfunc_internal_returns_dot_internal() {
+        let mut z = Zle::default();
+        let mut t = Thingy::new("forward-char");
+        t.widget = Some(Arc::new(Widget {
+            flags: WidgetFlags::INT,
+            func: WidgetFunc::Internal(|_| {}),
+        }));
+        z.bindk = Some(t);
+        assert_eq!(get_widgetfunc(&z), ".internal");
+    }
+
+    #[test]
+    fn get_widgetstyle_internal_dot_internal() {
+        let mut z = Zle::default();
+        let mut t = Thingy::new("self-insert");
+        t.widget = Some(Arc::new(Widget {
+            flags: WidgetFlags::INT,
+            func: WidgetFunc::Internal(|_| {}),
+        }));
+        z.bindk = Some(t);
+        assert_eq!(get_widgetstyle(&z), ".internal");
+    }
+
+    #[test]
+    fn set_get_register_round_trip() {
+        let mut z = Zle::default();
+        // Register 'a' (idx 0).
+        set_register(&mut z, 'a', "hello");
+        let s: String = z.vibuf[0].iter().collect();
+        assert_eq!(s, "hello");
+        // get_registers reads back the same.
+        assert_eq!(get_registers(&z, "a"), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn set_register_digit_uses_offset_26() {
+        let mut z = Zle::default();
+        // Register '0' → idx 26.
+        set_register(&mut z, '0', "zero");
+        let s: String = z.vibuf[26].iter().collect();
+        assert_eq!(s, "zero");
+        assert_eq!(get_registers(&z, "0"), Some("zero".to_string()));
+    }
+
+    #[test]
+    fn set_register_invalid_returns_one() {
+        let mut z = Zle::default();
+        assert_eq!(set_register(&mut z, '!', "x"), 1);
+    }
+
+    #[test]
+    fn unset_register_clears_buffer() {
+        let mut z = Zle::default();
+        set_register(&mut z, 'a', "hi");
+        unset_register(&mut z, 'a', 1);
+        assert_eq!(get_registers(&z, "a"), Some(String::new()));
+    }
+
+    #[test]
+    fn set_get_killring_round_trip() {
+        let mut z = Zle::default();
+        let entries = vec!["first".to_string(), "second".to_string()];
+        set_killring(&mut z, Some(&entries));
+        let got = get_killring(&z);
+        assert_eq!(got, vec!["first".to_string(), "second".to_string()]);
+    }
+
+    #[test]
+    fn unset_killring_clears_when_exp_nonzero() {
+        let mut z = Zle::default();
+        let entries = vec!["x".to_string()];
+        set_killring(&mut z, Some(&entries));
+        unset_killring(&mut z, 1);
+        assert!(get_killring(&z).is_empty());
+    }
+
+    #[test]
+    fn set_histno_clamps_to_entries_len() {
+        let mut z = Zle::default();
+        z.history.entries.push(crate::ported::zle::zle_hist::HistEntry {
+            line: "ls".to_string(), num: 1, time: None,
+        });
+        z.history.entries.push(crate::ported::zle::zle_hist::HistEntry {
+            line: "cd".to_string(), num: 2, time: None,
+        });
+        set_histno(&mut z, 1);
+        assert_eq!(z.history.cursor, 1);
+        // Beyond-end clamp: x > entries.len() → no change (early
+        // return mirrors C's `quietgethist returns NULL → return`).
+        z.history.cursor = 7;
+        set_histno(&mut z, 99);
+        assert_eq!(z.history.cursor, 7);
     }
 }
