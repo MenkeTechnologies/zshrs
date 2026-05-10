@@ -2032,6 +2032,55 @@ fn origpgrp_lock() -> &'static std::sync::Mutex<libc::pid_t> {
     ORIGPGRP.get_or_init(|| std::sync::Mutex::new(0))
 }
 
+/// Direct port of `bin_suspend()` from `Src/jobs.c:3170`.
+/// C body (c:3173-3197):
+/// ```c
+/// if (islogin && !OPT_ISSET(ops,'f')) { error; return 1; }
+/// if (jobbing) { signal_default(SIGTTIN/TSTP/TTOU); release_pgrp(); }
+/// killpg(origpgrp, SIGTSTP);
+/// if (jobbing) { acquire_pgrp(); signal_ignore(SIGTTOU/TSTP/TTIN); }
+/// return 0;
+/// ```
+pub fn bin_suspend(name: &str, _argv: &[String],                             // c:3170
+                   ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::OPT_ISSET;
+    use crate::ported::utils::zwarnnam;
+    use crate::ported::signals_h::{signal_default, signal_ignore};
+
+    // c:3173 — `if (islogin && !OPT_ISSET(ops,'f'))`. islogin is a C
+    // global set when zsh's argv[0] starts with `-`. Static-link path:
+    // probe $0 directly.
+    let islogin = std::env::var("0").map(|s| s.starts_with('-')).unwrap_or(false);
+    if islogin && !OPT_ISSET(ops, b'f') {                                    // c:3173
+        zwarnnam(name, "can't suspend login shell");                         // c:3174
+        return 1;                                                            // c:3175
+    }
+    // c:3177 — `if (jobbing)`. jobbing is the job-control-enabled flag;
+    // approximate via the MONITOR option.
+    let jobbing = crate::ported::options::opt_state_get("monitor")
+        .unwrap_or(false);
+
+    if jobbing {                                                             // c:3177
+        signal_default(libc::SIGTTIN);                                       // c:3179
+        signal_default(libc::SIGTSTP);                                       // c:3180
+        signal_default(libc::SIGTTOU);                                       // c:3181
+        release_pgrp();                                                      // c:3184
+    }
+
+    // c:3188 — `killpg(origpgrp, SIGTSTP);` — stop ourselves.
+    let origpgrp = origpgrp_lock().lock().map(|g| *g)
+        .unwrap_or(unsafe { libc::getpgrp() });
+    unsafe { libc::killpg(origpgrp, libc::SIGTSTP); }                        // c:3188
+
+    if jobbing {                                                             // c:3190
+        let _ = acquire_pgrp();                                              // c:3191
+        signal_ignore(libc::SIGTTOU);                                        // c:3193
+        signal_ignore(libc::SIGTSTP);                                        // c:3194
+        signal_ignore(libc::SIGTTIN);                                        // c:3195
+    }
+    0                                                                        // c:3197
+}
+
 /// Signal number from name (from jobs.c getsigidx)
 pub fn getsigidx(name: &str) -> Option<i32> {
     let name = name.strip_prefix("SIG").unwrap_or(name);

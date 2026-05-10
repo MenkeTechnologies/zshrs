@@ -1113,6 +1113,94 @@ pub fn autoloadscan(name: &str, optstr: &str, flags: u32, printflags: i32) { // 
     println!();                                                          // c:2426
 }
 
+/// Direct port of `bin_zmodload()` from `Src/module.c:2440`.
+/// Top-level dispatcher for the `zmodload` builtin. Validates flag
+/// combinations then routes to one of the per-mode helpers:
+///   -F        → bin_zmodload_features (c:3003)
+///   -e        → bin_zmodload_exist    (c:2623)
+///   -d        → bin_zmodload_dep      (c:2649)
+///   -a/-b/-c/-p/-f → bin_zmodload_auto (c:2726)
+///   default   → bin_zmodload_load     (c:2971)
+///   -A/-R     → bin_zmodload_alias    (c:2515)
+pub fn bin_zmodload(table: &mut ModuleTable, nam: &str, args: &[String],     // c:2440
+                    ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::OPT_ISSET;
+    use crate::ported::utils::zwarnnam;
+
+    let ops_bcpf = OPT_ISSET(ops, b'b') || OPT_ISSET(ops, b'c')              // c:2443
+                || OPT_ISSET(ops, b'p') || OPT_ISSET(ops, b'f');
+    let ops_au   = OPT_ISSET(ops, b'a') || OPT_ISSET(ops, b'u');             // c:2445
+    let mut ret: i32;                                                        // c:2446
+
+    if ops_bcpf && !ops_au {                                                 // c:2451
+        zwarnnam(nam, "-b, -c, -f, and -p must be combined with -a or -u");  // c:2452
+        return 1;                                                            // c:2453
+    }
+    if OPT_ISSET(ops, b'F') && (ops_bcpf || OPT_ISSET(ops, b'u')) {          // c:2455
+        zwarnnam(nam, "-b, -c, -f, -p and -u cannot be combined with -F");   // c:2456
+        return 1;                                                            // c:2457
+    }
+    if OPT_ISSET(ops, b'A') || OPT_ISSET(ops, b'R') {                        // c:2459
+        if ops_bcpf || ops_au || OPT_ISSET(ops, b'd')                        // c:2460
+           || (OPT_ISSET(ops, b'R') && OPT_ISSET(ops, b'e'))
+        {
+            zwarnnam(nam, "illegal flags combined with -A or -R");           // c:2462
+            return 1;                                                        // c:2463
+        }
+        if !OPT_ISSET(ops, b'e') {                                           // c:2465
+            return bin_zmodload_alias(table, nam, args, ops);                // c:2466
+        }
+    }
+    if OPT_ISSET(ops, b'd') && OPT_ISSET(ops, b'a') {                        // c:2468
+        zwarnnam(nam, "-d cannot be combined with -a");                      // c:2469
+        return 1;                                                            // c:2470
+    }
+    if OPT_ISSET(ops, b'u') && args.is_empty() {                             // c:2472
+        zwarnnam(nam, "what do you want to unload?");                        // c:2473
+        return 1;                                                            // c:2474
+    }
+    if OPT_ISSET(ops, b'e') && (OPT_ISSET(ops, b'I') || OPT_ISSET(ops, b'L') // c:2476
+        || (OPT_ISSET(ops, b'a') && !OPT_ISSET(ops, b'F'))
+        || OPT_ISSET(ops, b'd') || OPT_ISSET(ops, b'i')
+        || OPT_ISSET(ops, b'u'))
+    {
+        zwarnnam(nam, "-e cannot be combined with other options");           // c:2480
+        return 1;                                                            // c:2482
+    }
+    // c:2484 — `for (fp = fonly; *fp; fp++)` — `l` and `P` only with `-F`.
+    for fp in [b'l', b'P'] {                                                 // c:2484
+        if OPT_ISSET(ops, fp) && !OPT_ISSET(ops, b'F') {                     // c:2485
+            zwarnnam(nam, &format!("-{} is only allowed with -F", fp as char)); // c:2486
+            return 1;                                                        // c:2487
+        }
+    }
+    crate::ported::mem::queue_signals();                                     // c:2490
+    if OPT_ISSET(ops, b'F') {                                                // c:2491
+        ret = bin_zmodload_features(table, nam, args, ops);                  // c:2492
+    } else if OPT_ISSET(ops, b'e') {                                         // c:2493
+        ret = bin_zmodload_exist(table, nam, args, ops);                     // c:2494
+    } else if OPT_ISSET(ops, b'd') {                                         // c:2495
+        ret = bin_zmodload_dep(table, nam, args, ops);                       // c:2496
+    } else {
+        let autoopts = (OPT_ISSET(ops, b'b') as i32)                         // c:2497
+                     + (OPT_ISSET(ops, b'c') as i32)
+                     + (OPT_ISSET(ops, b'p') as i32)
+                     + (OPT_ISSET(ops, b'f') as i32);
+        if autoopts != 0 || OPT_ISSET(ops, b'a') {                           // c:2497-2499
+            if autoopts > 1 {                                                // c:2502
+                zwarnnam(nam, "use only one of -b, -c, or -p");              // c:2503
+                ret = 1;                                                     // c:2504
+            } else {
+                ret = bin_zmodload_auto(table, nam, args, ops);              // c:2506
+            }
+        } else {
+            ret = bin_zmodload_load(table, nam, args, ops);                  // c:2508
+        }
+    }
+    crate::ported::mem::unqueue_signals();                                   // c:2510
+    ret                                                                      // c:2512
+}
+
 /// Port of `bin_zmodload_alias()` from `Src/module.c:2515`.
 ///
 /// `zmodload -A [-L|-R] [name=alias ...]`. Three modes:
