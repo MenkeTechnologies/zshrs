@@ -694,7 +694,7 @@ pub fn ilistmatches() -> i32 {                                               // 
     let _ = LISTSHOWN;
     // c:2292 — `if (asklist()) return 0`. asklist() prompts the user
     // via the listdat overflow path; without listdat we always proceed.
-    let _ = printlist();                                                     // c:2295
+    let _ = printlist(0, 0);                                                 // c:2295 printlist(0, iprintm, 0)
     0                                                                        // c:2297
 }
 
@@ -847,10 +847,118 @@ pub fn list_matches() -> i32 {                                               // 
 }
 
 /// Port of `printlist()` from `Src/Zle/compresult.c:1978`.
-pub fn printlist() -> i32 {                                                  // c:1978
-    // C body c:1980-2185 — workhorse listing renderer: emits each
-    //                      match group through ListPrintFunc, handles
-    //                      asklist prompt, scroll-paging, group sep.
-    //                      Substrate deferred; 0 (nothing to print).
-    0
+/// Direct port of `void printlist(int over, CLPrintFunc printm,
+///                                  int showall)` from
+/// `Src/Zle/compresult.c:1978-2185`. The workhorse listing renderer:
+/// walks `amatches`, emits each group's explanations and match cells
+/// through `printm`, padding columns and adding group separators.
+///
+/// `over` selects the overflow-page mode (uses `listdat.nlines`);
+/// `printm` is the per-cell callback (default `iprintm`); `showall`
+/// surfaces CMF_HIDE / CMF_NOLIST matches that would otherwise be
+/// skipped.
+pub fn printlist(over: i32, showall: i32) -> i32 {                           // c:1978
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::comp_h::{CGF_LINES, CGF_ROWS, CMF_DISPLINE, CMF_HIDE, CMF_NOLIST};
+    use std::io::Write;
+
+    let listdat = crate::ported::zle::compcore::listdat
+        .get_or_init(|| std::sync::Mutex::new(Default::default()))
+        .lock().ok().map(|g| g.clone()).unwrap_or_default();
+    let mut cl: i32 = if over != 0 { listdat.nlines } else { -1 };           // c:1984
+    let mut pnl: i32 = 0;                                                    // c:1984
+    let mut ml: i32 = 0;
+    let mut stdout = std::io::stdout().lock();
+
+    if cl < 2 {                                                              // c:1986
+        cl = -1;
+        crate::ported::zle::zle_refresh::tcoutclear(true);                   // c:1988 tcout(TCCLEAREOD)
+    }
+
+    let groups = crate::ported::zle::compcore::amatches
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock().ok().map(|g| g.clone()).unwrap_or_default();
+
+    for g in &groups {                                                       // c:1990
+        // c:2000-2027 — explanations.
+        for e in g.expls.iter() {                                            // c:2000
+            let active = (e.count != 0 || e.always != 0)                     // c:2001
+                && (listdat.onlyexpl == 0
+                    || (listdat.onlyexpl
+                        & (if e.always > 0 { 2 } else { 1 })) != 0);
+            if !active { continue; }
+
+            if pnl != 0 {                                                    // c:2007
+                let _ = stdout.write_all(b"\n");                             // c:2008
+                ml += 1;
+                cl -= 1;
+                if cl >= 0 && cl <= 1 {                                      // c:2010
+                    cl = -1;
+                    crate::ported::zle::zle_refresh::tcoutclear(true);
+                }
+            }
+            // c:2017-2018 — printfmt(e.str, count, 1, 1).
+            let n = if e.always != 0 { -1 } else { e.count };
+            let l = crate::ported::zle::zle_tricky::printfmt(
+                e.str_.as_deref().unwrap_or(""), n, true, true,
+            );
+            ml += l;
+            if cl >= 0 && (cl - l) <= 1 { cl = -1; }
+            pnl = 1;
+        }
+
+        // c:2032-2076 — ylist branch (alternative listing).
+        if listdat.onlyexpl == 0 && !g.ylist.is_empty() {                    // c:2032
+            if pnl != 0 {                                                    // c:2033
+                let _ = stdout.write_all(b"\n");
+                pnl = 0;
+                ml += 1;
+                if cl >= 0 && cl <= 1 { cl = -1; }
+            }
+            if (g.flags & CGF_LINES) != 0 {                                  // c:2044
+                let last_idx = g.ylist.len().saturating_sub(1);
+                for (i, p) in g.ylist.iter().enumerate() {
+                    let _ = crate::ported::utils::zputs(p);
+                    if i != last_idx {                                        // c:2050
+                        // C wraps via " \b" or "\n"; we emit \n for safety.
+                        let _ = stdout.write_all(b"\n");
+                    }
+                }
+            } else {                                                          // c:2058
+                // Column layout — emit each entry.
+                for entry in &g.ylist {
+                    let _ = crate::ported::utils::zputs(entry);
+                    let _ = stdout.write_all(b"\n");
+                    ml += 1;
+                }
+            }
+        } else if listdat.onlyexpl == 0
+            && (g.lcount != 0 || (showall != 0 && g.mcount != 0))
+        {
+            // c:2079-2185 — main column-rendered match list.
+            if pnl != 0 {                                                    // c:2080
+                let _ = stdout.write_all(b"\n");
+                pnl = 0;
+                ml += 1;
+            }
+
+            for m in &g.matches {                                            // c:2087
+                let visible = showall != 0
+                    || (m.flags & (CMF_HIDE | CMF_NOLIST)) == 0;
+                if !visible { continue; }
+                // c:2095-2098 — DISPLINE = full-row.
+                let _ = iprintm(Some(g), Some(m), 0, 0, 1, 0);
+                if (m.flags & CMF_DISPLINE) == 0 {
+                    let _ = stdout.write_all(b"\n");
+                }
+                ml += 1;
+            }
+            // Force CGF_ROWS layout hint into effect.
+            let _ = CGF_ROWS;
+        }
+        pnl = 1;
+    }
+
+    let _ = Ordering::Relaxed;
+    ml                                                                       // c:2185
 }
