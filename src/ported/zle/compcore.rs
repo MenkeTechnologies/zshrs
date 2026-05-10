@@ -1079,37 +1079,80 @@ fn char_from_qt(qt: i32) -> char {                                            //
     (qt as u8) as char
 }
 
-fn showinglist_stub() -> i32 {
-    crate::ported::zle::zle_tricky::SHOWAGAIN.load(Ordering::Relaxed)         // zle_main.c
+fn showinglist_stub() -> i32 {                                                // zle_refresh.c:165
+    crate::ported::zle::zle_refresh::SHOWINGLIST.load(Ordering::Relaxed)
 }
-fn showinglist_set(v: i32) {
-    crate::ported::zle::zle_tricky::SHOWAGAIN.store(v, Ordering::Relaxed);
+fn showinglist_set(v: i32) {                                                  // zle_refresh.c:165
+    crate::ported::zle::zle_refresh::SHOWINGLIST.store(v, Ordering::Relaxed);
 }
-fn clearlist_set(_v: i32) {}                                                  // zle_main.c
-fn listshown_stub() -> i32 { 0 }                                              // zle_main.c
-fn instring_stub() -> i32 { 0 }                                               // lex.c
-fn foredel_stub(_n: i32) {}                                                   // zle_misc.c
-fn inststr_stub(_s: &str) {}                                                  // zle_misc.c
-fn origline_stub() -> String { String::new() }                                // zle_main.c
-fn origcs_stub() -> i32 { 0 }                                                 // zle_main.c
-fn unmetafy_line_stub() {}                                                    // zle_main.c
-fn metafy_line_stub() {}                                                      // zle_main.c
-fn selfinsert_stub() -> i32 { 0 }                                             // zle_misc.c
+fn clearlist_set(v: i32) {                                                    // zle_refresh.c:188
+    crate::ported::zle::zle_refresh::CLEARLIST.store(v, Ordering::Relaxed);
+}
+fn listshown_stub() -> i32 {                                                  // zle_refresh.c:171
+    crate::ported::zle::zle_refresh::LISTSHOWN.load(Ordering::Relaxed)
+}
+fn instring_stub() -> i32 {                                                   // zle_tricky.c:419
+    crate::ported::zle::zle_tricky::INSTRING.load(Ordering::Relaxed)
+}
+/// Stub for `foredel(int n, int flags)` — `Src/Zle/zle_utils.c:1105`.
+/// Real port needs a `&mut Zle` handle which we don't thread here;
+/// invoking the deletion path requires the active editor context.
+fn foredel_stub(_n: i32) {}                                                   // zle_utils.c:1105
+/// Stub for `inststr(char *s)` — `Src/Zle/zle_tricky.c:278`. Same
+/// `&mut Zle` requirement as `foredel`.
+fn inststr_stub(_s: &str) {}                                                  // zle_tricky.c:278
+fn origline_stub() -> String {                                                // zle_tricky.c
+    crate::ported::zle::zle_tricky::ORIGLINE
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock().map(|g| g.clone()).unwrap_or_default()
+}
+fn origcs_stub() -> i32 {                                                     // zle_tricky.c:75
+    crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::Relaxed)
+}
+fn unmetafy_line_stub() {                                                     // zle_tricky.c:995
+    // Real port reads zlemetaline + populates zleline. We don't have
+    // the full ZLE buffer here, so this is intentionally a no-op
+    // until the buffer flows through compcore.
+}
+fn metafy_line_stub() {                                                       // zle_tricky.c:978
+    // Same — no-op until ZLE buffer threads through.
+}
+fn selfinsert_stub() -> i32 { 0 }                                             // zle_misc.c:112 (needs &mut Zle)
 fn minfo_clear_cur() {}                                                       // zle_tricky.c minfo
 fn minfo_asked_zero() {}                                                      // zle_tricky.c minfo
-fn do_ambig_menu_stub() {}                                                    // compresult.c
-fn do_ambiguous_stub() -> i32 { 0 }                                           // compresult.c
-fn do_single_stub(_m: Cmatch) {}                                              // compresult.c
-fn do_allmatches_stub(_v: i32) {}                                             // compresult.c
-fn invalidatelist_stub() {}                                                   // compresult.c
+fn do_ambig_menu_stub() {                                                     // compresult.c:1381
+    let _ = crate::ported::zle::compresult::do_ambig_menu();
+}
+fn do_ambiguous_stub() -> i32 {                                               // compresult.c:744
+    crate::ported::zle::compresult::do_ambiguous(&[])
+}
+fn do_single_stub(_m: Cmatch) {}                                              // compresult.c:963 (Cmatch signature mismatch — real do_single takes different params)
+fn do_allmatches_stub(_v: i32) {                                              // compresult.c:897
+    // Real signature takes &[String]; we don't have one here.
+}
+fn invalidatelist_stub() {                                                    // zle_h.c:402
+    crate::ported::zle::zle_h::invalidatelist();
+}
 fn opt_isset_stub(name: &str) -> i32 {                                        // options.c
     if crate::ported::options::opt_state_get(name).unwrap_or(false) { 1 } else { 0 }
 }
 fn env_iparam(name: &str) -> i32 {                                            // params.c
     std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(0)
 }
-fn lastprebr_set(_s: &str) {}                                                 // zle_tricky.c lastprebr
-fn lastpostbr_set(_s: &str) {}                                                // zle_tricky.c lastpostbr
+fn lastprebr_set(s: &str) {                                                   // zle_tricky.c lastprebr
+    if let Ok(mut g) = crate::ported::zle::zle_tricky::LASTPREBR
+        .get_or_init(|| Mutex::new(String::new())).lock()
+    {
+        *g = s.to_string();
+    }
+}
+fn lastpostbr_set(s: &str) {                                                  // zle_tricky.c lastpostbr
+    if let Ok(mut g) = crate::ported::zle::zle_tricky::LASTPOSTBR
+        .get_or_init(|| Mutex::new(String::new())).lock()
+    {
+        *g = s.to_string();
+    }
+}
 
 
 // =====================================================================
@@ -1159,10 +1202,21 @@ pub const IN_MATH_LW:    i32 = 3;                                            // 
 pub const IN_PAR_LW:     i32 = 4;                                            // lex.h
 pub const IN_ENV_LW:     i32 = 5;                                            // lex.h
 
-fn lastval_stub() -> i32 { 0 }                                                // init.c
-fn incompfunc_stub() -> i32 { 0 }                                             // zle_tricky.c
-fn sfcontext_stub() -> i32 { 0 }                                              // exec.c
-fn shfunc_call_stub(_name: &str) -> i32 { 0 }                                 // exec.c
+fn lastval_stub() -> i32 {                                                    // init.c via builtin.c
+    crate::ported::builtin::LASTVAL.load(Ordering::Relaxed)
+}
+fn incompfunc_stub() -> i32 {                                                 // utils.c:46
+    crate::ported::utils::INCOMPFUNC.load(Ordering::Relaxed)
+}
+fn sfcontext_stub() -> i32 {                                                  // exec.c:239 via builtin.c
+    crate::ported::builtin::SFCONTEXT.load(Ordering::Relaxed)
+}
+/// Stub for `doshfunc(name, ...)` — `Src/exec.c`. Looks up the shell
+/// function and dispatches via the VM. We probe `getshfunc(name)` for
+/// existence; full call requires the executor + arg array.
+fn shfunc_call_stub(name: &str) -> i32 {                                      // exec.c
+    if crate::ported::utils::getshfunc(name).is_some() { 0 } else { 1 }
+}
 fn set_compstate_str(key: &str, val: &str) {                                  // params.c
     std::env::set_var(format!("ZSHRS_COMPSTATE_{}", key.to_uppercase()), val);
 }
@@ -1666,11 +1720,24 @@ pub fn addmatches(dat: &mut crate::ported::zle::comp_h::Cadata,              // 
 // ---- Extern stubs for addmatches's bucket-3 dependencies ----
 
 fn compquote_first() -> Option<char> {                                        // zle_tricky.c compquote
-    std::env::var("compquote").ok().and_then(|v| v.chars().next())
+    crate::ported::zle::zle_tricky::COMPQUOTE
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock().ok()
+        .and_then(|g| g.chars().next())
 }
-fn instring_set(_v: i32) {}                                                   // lex.c
-fn inbackt_set(_v: i32) {}                                                    // lex.c
-fn autoq_set(_v: &str) {}                                                     // zle_tricky.c
+fn instring_set(v: i32) {                                                     // zle_tricky.c:419
+    crate::ported::zle::zle_tricky::INSTRING.store(v, Ordering::Relaxed);
+}
+fn inbackt_set(v: i32) {                                                      // zle_tricky.c:419
+    crate::ported::zle::zle_tricky::INBACKT.store(v, Ordering::Relaxed);
+}
+fn autoq_set(s: &str) {                                                       // zle_tricky.c autoq
+    if let Ok(mut g) = crate::ported::zle::zle_tricky::AUTOQ
+        .get_or_init(|| Mutex::new(String::new())).lock()
+    {
+        *g = s.to_string();
+    }
+}
 
 // =====================================================================
 // add_match_data — `Src/Zle/compcore.c:2643-3067`.
@@ -1769,7 +1836,10 @@ pub fn add_match_data(                                                       // 
 
 // ---- Extern stubs for add_match_data's Cline operations ----
 
-fn cline_matched_stub(_line: Option<&str>) {}                                 // compmatch.c
+/// Real call to `cline_matched()` — `Src/Zle/compmatch.c:253`. The
+/// real signature takes `&mut Option<Box<Cline>>`; until we thread
+/// the full Cline chain through `add_match_data`, this is a no-op.
+fn cline_matched_stub(_line: Option<&str>) {}                                 // compmatch.c:253
 fn qisuf_stub() -> String { std::env::var("qisuf").unwrap_or_default() }      // zle_tricky.c qisuf
 fn qipre_stub() -> String { std::env::var("qipre").unwrap_or_default() }      // zle_tricky.c qipre
 
