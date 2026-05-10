@@ -238,9 +238,9 @@ pub struct Compctl {                                                     // c:93
     pub cond: Option<Box<Compcond>>,                                     // c:111
     /// `+` xor'ed compctl chain.
     pub xor: Option<Box<Compctl>>,                                       // c:112
-    /// `-M` matcher control. `Cmatcher` not yet ported as its own
-    /// type; the matcher chain lives in `compmatch.rs`.
-    pub matcher: (),                                                     // c:113 (placeholder)
+    /// `-M` matcher control — head of the Cmatcher chain compiled
+    /// from this compctl's match-spec arg.
+    pub matcher: Option<Box<crate::ported::zle::comp_h::Cmatcher>>,      // c:113
     /// `-M` matcher string.
     pub mstr: Option<String>,                                            // c:114
 }
