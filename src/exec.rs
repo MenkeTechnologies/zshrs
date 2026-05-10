@@ -2420,7 +2420,32 @@ impl ShellExecutor {
     // bin_zstyle/bin_zparseopts/bin_zformat/bin_zregexparse free-fn
     // ports (Src/Modules/zutil.c) will land in zutil.rs at module
     // level; until then these stubs unblock callers.
-    pub(crate) fn bin_zstyle(&mut self, _args: &[String]) -> i32 { 0 }
+    pub(crate) fn bin_zstyle(&mut self, args: &[String]) -> i32 {
+        // Canonical bin_zstyle per zutil.c:487 — BUILTIN spec at
+        // zutil.c:2143 ("LRMl:b:s:a:t:T:m:e:Dd"). Inline parse the
+        // single-letter flags into ops; -d/-e/-l/-L/-R/-M/-D have no
+        // arg; -l/-b/-s/-a/-t/-T/-m/-e take a context-name arg.
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                argscount: 0, argsalloc: 0 };
+        let mut positional: Vec<String> = Vec::new();
+        let mut i = 0;
+        while i < args.len() {
+            let a = &args[i];
+            if a == "--" { i += 1; positional.extend_from_slice(&args[i..]); break; }
+            if let Some(rest) = a.strip_prefix('-') {
+                if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
+                for c in rest.chars() {
+                    let cb = c as u8;
+                    if cb.is_ascii_alphabetic() { ops.ind[cb as usize] = 1; }
+                }
+            } else {
+                positional.push(a.clone());
+            }
+            i += 1;
+        }
+        crate::ported::modules::zutil::bin_zstyle("zstyle", &positional, &ops, 0)
+    }
     pub(crate) fn bin_zparseopts(&mut self, _args: &[String]) -> i32 { 0 }
     pub(crate) fn bin_zformat(&mut self, args: &[String]) -> i32 {
         // bin_zformat takes no flag options (BUILTIN spec at
@@ -2429,5 +2454,29 @@ impl ShellExecutor {
         let ops = Self::_empty_ops();
         crate::ported::modules::zutil::bin_zformat("zformat", args, &ops, 0)
     }
-    pub(crate) fn bin_zregexparse(&mut self, _args: &[String]) -> i32 { 0 }
+    pub(crate) fn bin_zregexparse(&mut self, args: &[String]) -> i32 {
+        // Canonical bin_zregexparse per zutil.c:1486 — BUILTIN spec
+        // at zutil.c:2147 takes "-c" only.
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                argscount: 0, argsalloc: 0 };
+        let mut positional: Vec<String> = Vec::new();
+        let mut i = 0;
+        while i < args.len() {
+            let a = &args[i];
+            if a == "--" { i += 1; positional.extend_from_slice(&args[i..]); break; }
+            if let Some(rest) = a.strip_prefix('-') {
+                if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
+                for c in rest.chars() {
+                    let cb = c as u8;
+                    if cb.is_ascii_alphabetic() { ops.ind[cb as usize] = 1; }
+                }
+            } else {
+                positional.push(a.clone());
+            }
+            i += 1;
+        }
+        crate::ported::modules::zutil::bin_zregexparse(
+            "zregexparse", &positional, &ops, 0)
+    }
 }

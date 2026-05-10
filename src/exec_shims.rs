@@ -5281,39 +5281,15 @@ impl crate::ported::exec::ShellExecutor {
         status
     }
     pub(crate) fn bin_suspend(&self, args: &[String]) -> i32 {
-        let mut force = false;
+        // Canonical bin_suspend per jobs.c:3170. BUILTIN spec at
+        // jobs.c:bintab takes "-f" only.
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                argscount: 0, argsalloc: 0 };
         for arg in args {
-            if arg == "-f" {
-                force = true;
-            }
+            if arg == "-f" { ops.ind[b'f' as usize] = 1; }
         }
-
-        #[cfg(unix)]
-        {
-            use nix::sys::signal::{kill, Signal};
-            use nix::unistd::getppid;
-
-            // Check if we're a login shell (parent is init/PID 1)
-            let ppid = getppid();
-            if !force && ppid == nix::unistd::Pid::from_raw(1) {
-                zwarnnam("suspend", "cannot suspend a login shell");
-                return 1;
-            }
-
-            // Send SIGTSTP to ourselves
-            let pid = nix::unistd::getpid();
-            if let Err(e) = kill(pid, Signal::SIGTSTP) {
-                zwarnnam("suspend", &format!("{}", e));
-                return 1;
-            }
-            0
-        }
-
-        #[cfg(not(unix))]
-        {
-            zwarnnam("suspend", "not supported on this platform");
-            1
-        }
+        crate::ported::jobs::bin_suspend("suspend", args, &ops, 0)
     }
 }
 

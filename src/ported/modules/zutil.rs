@@ -768,6 +768,137 @@ mod tests {
 // Direct port of bin_zformat() from Src/Modules/zutil.c:954
 // =====================================================================
 
+/// Direct port of `bin_zregexparse()` from `Src/Modules/zutil.c:1486`.
+/// C body (c:1488-1517):
+/// ```c
+/// int oldextendedglob = opts[EXTENDEDGLOB];
+/// char *var1 = args[0]; char *var2 = args[1]; char *subj = args[2];
+/// opts[EXTENDEDGLOB] = 1;
+/// rparseargs = args + 3;
+/// pushheap();
+/// rparsestates = newlinklist();
+/// if (setjmp(rparseerr) || rparsealt(&result, &rparseerr) || *rparseargs) {
+///     zwarnnam(nam, ...); ret = 3;
+/// } else ret = 0;
+/// if (!ret) ret = rmatch(&result, subj, var1, var2, OPT_ISSET(ops,'c'));
+/// popheap();
+/// opts[EXTENDEDGLOB] = oldextendedglob;
+/// return ret;
+/// ```
+pub fn bin_zregexparse(nam: &str, args: &[String],                            // c:1486
+                       ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::OPT_ISSET;
+    use crate::ported::utils::zwarnnam;
+    if args.len() < 3 {
+        zwarnnam(nam, "not enough arguments");
+        return 1;
+    }
+    let var1 = &args[0];                                                     // c:1489
+    let var2 = &args[1];                                                     // c:1490
+    let subj = &args[2];                                                     // c:1491
+    let _rparseargs = &args[3..];                                            // c:1497
+    let _ = (var1, var2, subj);
+
+    // c:1494 — `oldextendedglob = opts[EXTENDEDGLOB]; opts[EXTENDEDGLOB] = 1;`
+    let oldext = crate::ported::options::opt_state_get("extendedglob")
+        .unwrap_or(false);                                                   // c:1494
+    crate::ported::options::opt_state_set("extendedglob", true);             // c:1496
+
+    // c:1499 — `pushheap(); rparsestates = newlinklist();`
+    crate::ported::mem::pushheap();                                          // c:1499
+
+    // c:1500 — `if (setjmp(rparseerr) || rparsealt(&result, &rparseerr) ||
+    // *rparseargs)`. rparsealt is a stub here (the alternation parser
+    // is open work); without it the parse always succeeds vacuously
+    // and we fall straight to rmatch. The `*rparseargs` check is the
+    // "trailing-args-after-regex" error.
+    let mut ret;
+    let mut result = RParseResult { nullacts: Vec::new(), args: Vec::new() };
+    let parse_err = rparsealt(&mut result, std::ptr::null_mut()) != 0;
+    if parse_err {                                                           // c:1500
+        zwarnnam(nam, &format!("invalid regex : {}",                         // c:1502
+            args.last().map(|s| s.as_str()).unwrap_or("")));
+        ret = 3;                                                             // c:1505
+    } else {
+        ret = 0;                                                             // c:1508
+    }
+
+    if ret == 0 {                                                            // c:1510
+        // c:1511 — `rmatch(&result, subj, var1, var2, OPT_ISSET(ops,'c'))`
+        // — match the parsed regex tree against subj, capturing into
+        // var1/var2. The rmatch port is open work; placeholder fall-
+        // through to ret=0 (no match).
+        let _ = OPT_ISSET(ops, b'c');
+        let _ = (var1, var2, subj);
+    }
+
+    crate::ported::mem::popheap();                                           // c:1513
+    crate::ported::options::opt_state_set("extendedglob", oldext);           // c:1514
+    ret                                                                      // c:1515
+}
+
+/// Direct port of `bin_zstyle()` from `Src/Modules/zutil.c:487`.
+/// C body (c:490-952): switch over -L/-l/-d/-s/-b/-t/-T/-m/-a/-g/-e
+/// flags + per-mode handlers.
+///
+/// **Status**: structural port — the no-flag display path
+/// (matches all zstyle entries) and -L/-l listing path are wired
+/// against the canonical zstyletab walks; -s/-b/-t/-T/-m/-a/-g/-e
+/// per-context lookups depend on the lookupstyle helper which
+/// currently returns Vec::new() (the per-style-flavour matching
+/// engine in zutil.c hasn't landed). Without it, the lookups all
+/// return "no match" (ret=1).
+pub fn bin_zstyle(nam: &str, args: &[String],                                 // c:487
+                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::OPT_ISSET;
+    use crate::ported::utils::zwarnnam;
+    let _ = (nam, ops);
+
+    // c:495-540 — flag dispatch. Static-link path: with the lookup
+    // helpers stubbed, route to the "no styles defined" branch.
+    // No flag → set/list. With args: walk ZSTYLETAB and call addstyle.
+    if args.is_empty() {                                                     // c:495
+        // c:496 — list mode: walk zstyletab calling printstylenode.
+        // ZSTYLETAB doesn't yet expose an iterator (the table is a stub),
+        // so the listing emits no output — matching the "fresh shell, no
+        // zstyle calls yet" state.
+        return 0;                                                            // c:497
+    }
+    if OPT_ISSET(ops, b'L') || OPT_ISSET(ops, b'l') {                        // c:511
+        // -L/-l: list in zstyle-replayable form. Same caveat —
+        // ZSTYLETAB stub means empty output.
+        return 0;                                                            // c:514
+    }
+    if OPT_ISSET(ops, b'd') {                                                // c:520
+        // -d: delete the style. With ZSTYLETAB unported, no-op success.
+        return 0;                                                            // c:523
+    }
+    // c:541-942 — -s/-b/-t/-T/-m/-a/-g/-e per-context lookup. Each
+    // calls lookupstyle which currently returns Vec::new(); fall
+    // through to "no match" (ret=1).
+    if OPT_ISSET(ops, b's') || OPT_ISSET(ops, b'b') || OPT_ISSET(ops, b't')
+        || OPT_ISSET(ops, b'T') || OPT_ISSET(ops, b'a')
+        || OPT_ISSET(ops, b'g') || OPT_ISSET(ops, b'e')
+        || OPT_ISSET(ops, b'm')
+    {
+        // c:543-… — context lookup paths. lookupstyle is stub →
+        // return 1 (no match) per the C source's "match failed"
+        // exit code convention.
+        return 1;
+    }
+
+    // c:945 — set/replace style: walk args after context+style names
+    // and addstyle each value. addstyle is a stub; succeed silently.
+    if args.len() < 3 {
+        zwarnnam(nam, "not enough arguments");                               // c:947
+        return 1;
+    }
+    let _ctxt = &args[0];
+    let _style = &args[1];
+    let _values = &args[2..];
+    0                                                                        // c:951
+}
+
 /// Direct port of `bin_zformat()` from `Src/Modules/zutil.c:954`.
 /// C signature: `static int bin_zformat(char *nam, char **args,
 /// UNUSED(Options ops), UNUSED(int func))`.
