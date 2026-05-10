@@ -521,6 +521,13 @@ pub fn new_heap_id() -> u64 {                                                // 
 pub static NEXT_HEAP_ID: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
+/// Port of `mod_export Heapid last_heap_id` from `Src/mem.c:153`.
+/// Tracks the most recently created heap arena id — used by
+/// `memory_validate` (ZSH_MEM_DEBUG path) to recognize cross-arena
+/// pointer use. Without ZSH_MEM_DEBUG this is set but never read.
+pub static LAST_HEAP_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);                                    // c:153
+
 // Use new heaps from now on. This returns the old heap-list.               // c:190
 /// Port of `new_heaps()` from Src/mem.c:194.
 /// C: `Heap new_heaps(void)` — save current `heaps`/`fheap` chain,
