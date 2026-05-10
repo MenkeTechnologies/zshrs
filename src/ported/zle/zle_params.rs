@@ -209,13 +209,22 @@ pub fn get_context() -> i32 { 0 }
 pub fn get_histno() -> i32 { 0 }
 
 /// Port of `get_isearchmatchactive()` from Src/Zle/zle_params.c:591. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_isearchmatchactive() -> i32 { 0 }
+pub fn get_isearchmatchactive() -> i64 {                                     // c:590
+    use std::sync::atomic::Ordering;
+    crate::ported::zle::zle_hist::ISEARCH_ACTIVE.load(Ordering::Relaxed) as i64  // c:593
+}
 
 /// Port of `get_isearchmatchend()` from Src/Zle/zle_params.c:584. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_isearchmatchend() -> i32 { 0 }
+pub fn get_isearchmatchend() -> i64 {                                        // c:583
+    use std::sync::atomic::Ordering;
+    crate::ported::zle::zle_hist::ISEARCH_ENDPOS.load(Ordering::Relaxed) as i64  // c:586
+}
 
 /// Port of `get_isearchmatchstart()` from Src/Zle/zle_params.c:577. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
-pub fn get_isearchmatchstart() -> i32 { 0 }
+pub fn get_isearchmatchstart() -> i64 {                                      // c:576
+    use std::sync::atomic::Ordering;
+    crate::ported::zle::zle_hist::ISEARCH_STARTPOS.load(Ordering::Relaxed) as i64  // c:579
+}
 
 /// Port of `get_keys()` from Src/Zle/zle_params.c:463. ZLE state is owned by the active editor instance; this entry is a name-parity shim.
 pub fn get_keys() -> i32 { 0 }
@@ -608,5 +617,38 @@ mod widget_tests {
         assert_eq!(get_recursive(&z), 0);
         z.zle_recursive = 5;
         assert_eq!(get_recursive(&z), 5);
+    }
+}
+
+#[cfg(test)]
+mod isearch_tests {
+    use super::*;
+    use crate::ported::zle::zle_hist::{ISEARCH_ACTIVE, ISEARCH_ENDPOS, ISEARCH_STARTPOS};
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn get_isearchmatchactive_reads_global() {
+        // c:593 — `return isearch_active`.
+        ISEARCH_ACTIVE.store(0, Ordering::SeqCst);
+        assert_eq!(get_isearchmatchactive(), 0);
+        ISEARCH_ACTIVE.store(1, Ordering::SeqCst);
+        assert_eq!(get_isearchmatchactive(), 1);
+        ISEARCH_ACTIVE.store(0, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn get_isearchmatchstart_reads_global() {
+        // c:579 — `return isearch_startpos`.
+        ISEARCH_STARTPOS.store(7, Ordering::SeqCst);
+        assert_eq!(get_isearchmatchstart(), 7);
+        ISEARCH_STARTPOS.store(0, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn get_isearchmatchend_reads_global() {
+        // c:586 — `return isearch_endpos`.
+        ISEARCH_ENDPOS.store(13, Ordering::SeqCst);
+        assert_eq!(get_isearchmatchend(), 13);
+        ISEARCH_ENDPOS.store(0, Ordering::SeqCst);
     }
 }
