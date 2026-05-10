@@ -30,19 +30,19 @@ pub const DEFAULT_WATCHFMT_NOHOST: &str = "%n has %a %l.";
 #[cfg(unix)]
 pub type WATCH_STRUCT_UTMP = libc::utmpx;
 
-/// Rust-side projection of `WATCH_STRUCT_UTMP` (= `libc::utmpx`)
-/// for the watch.c port — the C source reads this struct directly
-/// via `getutent()`/`getutxent()` and indexes the `ut_user`/`ut_line`/
-/// `ut_host`/`ut_tv`/`ut_pid`/`ut_type` fields. Rust port projects
-/// each access to a friendlier-typed field for safe handling.
-///
-/// **Type-mapping back to libc::utmpx**:
-/// - `user` ↔ `ut_user` (UT_NAMESIZE bytes, NUL-padded)
-/// - `line` ↔ `ut_line` (UT_LINESIZE bytes, NUL-padded)
-/// - `host` ↔ `ut_host` (UT_HOSTSIZE bytes, NUL-padded)
-/// - `time` ↔ `ut_tv.tv_sec` (or `ut_xtime` per the c:108-113 alias)
-/// - `pid`  ↔ `ut_pid`
-/// - `session_type` ↔ `ut_type` (USER_PROCESS / DEAD_PROCESS / etc.)
+// WARNING: NOT IN WATCH.C — Rust-only safe-projection adapter for
+// libc::utmpx. The C source reads `WATCH_STRUCT_UTMP *u` directly
+// (Src/Modules/watch.c:138-150) via `getutent()`/`getutxent()` and
+// indexes `u->ut_user[0]`, `u->ut_line`, `u->ut_host`, `u->ut_tv.tv_sec`,
+// `u->ut_pid`, `u->ut_type`. The Rust port can't access libc::utmpx
+// fields uniformly across platforms — Linux uses `ut_user`/`ut_xtime`,
+// macOS uses `ut_user`/`ut_tv.tv_sec`, FreeBSD has different padding —
+// so UtmpEntry projects the cross-platform field set used by
+// watchlog()/dowatch() into a platform-agnostic Rust shape. Remove
+// once libc::utmpx field access is unified via a per-target accessor.
+//
+// Field correspondence: user↔ut_user, line↔ut_line, host↔ut_host,
+// time↔ut_tv.tv_sec, pid↔ut_pid, session_type↔ut_type.
 #[derive(Debug, Clone)]
 pub struct UtmpEntry {
     pub user: String,
@@ -53,12 +53,13 @@ pub struct UtmpEntry {
     pub session_type: SessionType,
 }
 
-/// `ut_type` constants from `<utmp.h>` / `<utmpx.h>`.
-/// Port of the standard `USER_PROCESS` / `DEAD_PROCESS` / `LOGIN_PROCESS`
-/// / `INIT_PROCESS` / `BOOT_TIME` int values the C source's
-/// `watchlog()` (Src/Modules/watch.c:458) compares against `ut_type`.
-/// Rust port mirrors as an enum for exhaustive-match ergonomics; the
-/// numeric values match the libc constants on Linux/macOS.
+// WARNING: NOT IN WATCH.C — Rust-only enum wrapping the integer
+// `ut_type` constants from <utmp.h>/<utmpx.h>. C compares ut_type
+// directly against the int constants USER_PROCESS / DEAD_PROCESS /
+// LOGIN_PROCESS / INIT_PROCESS / BOOT_TIME at Src/Modules/watch.c:458.
+// Rust port wraps them in an enum for exhaustive-match safety; each
+// variant maps 1:1 to a libc::* constant. Remove once UtmpEntry is
+// dissolved and ut_type comparisons inline against libc::USER_PROCESS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionType {
     UserProcess,    // libc::USER_PROCESS
