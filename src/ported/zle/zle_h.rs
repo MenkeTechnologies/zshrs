@@ -47,6 +47,154 @@ pub const ZLE_CHAR_SIZE: usize = 4;                                          // 
 pub const ZLEEOF: i32 = -1;                                                  // c:37 WEOF
 
 // =====================================================================
+// `ZS_*` wide-string macros — `Src/Zle/zle.h:40-51`.
+// C #defines route to wmemcpy/wcslen/etc. on MULTIBYTE_SUPPORT builds
+// and to the memcpy/strlen counterparts otherwise. Rust uses `char` /
+// `[char]` directly so each macro maps to a slice operation.
+// =====================================================================
+
+/// Port of `ZS_memcpy` from zle.h:40 (`#define ZS_memcpy wmemcpy`).
+/// Copies `n` chars from `src` into `dst`.
+#[inline] pub fn ZS_memcpy(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T], n: usize) { // c:40
+    dst[..n].copy_from_slice(&src[..n]);
+}
+
+/// Port of `ZS_memmove` from zle.h:41 (`#define ZS_memmove wmemmove`).
+/// Same as ZS_memcpy but tolerates overlapping ranges (vec move
+/// semantics handle overlap).
+#[inline] pub fn ZS_memmove(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T], n: usize) { // c:41
+    let v: Vec<ZLE_CHAR_T> = src[..n].to_vec();
+    dst[..n].copy_from_slice(&v);
+}
+
+/// Port of `ZS_memset` from zle.h:42 (`#define ZS_memset wmemset`).
+/// Fills `dst[..n]` with `c`.
+#[inline] pub fn ZS_memset(dst: &mut [ZLE_CHAR_T], c: ZLE_CHAR_T, n: usize) { // c:42
+    for slot in dst.iter_mut().take(n) {
+        *slot = c;
+    }
+}
+
+/// Port of `ZS_memcmp` from zle.h:43 (`#define ZS_memcmp wmemcmp`).
+/// Returns Ordering of the first `n` chars.
+#[inline] pub fn ZS_memcmp(a: &[ZLE_CHAR_T], b: &[ZLE_CHAR_T], n: usize) -> std::cmp::Ordering { // c:43
+    a[..n].cmp(&b[..n])
+}
+
+/// Port of `ZS_strlen` from zle.h:44 (`#define ZS_strlen wcslen`).
+/// Returns the length to the first NUL char (or full slice length
+/// if no NUL found).
+#[inline] pub fn ZS_strlen(s: &[ZLE_CHAR_T]) -> usize {                      // c:44
+    s.iter().position(|&c| c == '\0').unwrap_or(s.len())
+}
+
+/// Port of `ZS_strcpy` from zle.h:45 (`#define ZS_strcpy wcscpy`).
+/// Copies `src` (up to first NUL or end) into `dst`, NUL-terminates
+/// when there's room.
+#[inline] pub fn ZS_strcpy(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T]) {     // c:45
+    let n = ZS_strlen(src);
+    let limit = dst.len().min(n);
+    dst[..limit].copy_from_slice(&src[..limit]);
+    if limit < dst.len() {
+        dst[limit] = '\0';
+    }
+}
+
+/// Port of `ZS_strncpy` from zle.h:46 (`#define ZS_strncpy wcsncpy`).
+/// Copies up to `n` chars; pads remainder with NUL if `src` is shorter.
+#[inline] pub fn ZS_strncpy(dst: &mut [ZLE_CHAR_T], src: &[ZLE_CHAR_T], n: usize) { // c:46
+    let s_len = ZS_strlen(src).min(n);
+    let limit = dst.len().min(n);
+    let copy = s_len.min(limit);
+    dst[..copy].copy_from_slice(&src[..copy]);
+    for slot in dst.iter_mut().take(limit).skip(copy) {
+        *slot = '\0';
+    }
+}
+
+/// Port of `ZS_strncmp` from zle.h:47 (`#define ZS_strncmp wcsncmp`).
+/// Returns Ordering of up to `n` chars (stops at NUL).
+#[inline] pub fn ZS_strncmp(a: &[ZLE_CHAR_T], b: &[ZLE_CHAR_T], n: usize) -> std::cmp::Ordering { // c:47
+    let a_n = ZS_strlen(a).min(n);
+    let b_n = ZS_strlen(b).min(n);
+    let limit = a_n.min(b_n);
+    let cmp = a[..limit].cmp(&b[..limit]);
+    if cmp != std::cmp::Ordering::Equal {
+        return cmp;
+    }
+    a_n.cmp(&b_n)
+}
+
+/// Port of `ZS_strchr` from zle.h:50 (`#define ZS_strchr wcschr`).
+/// Returns the index of the first occurrence of `c` in `s`, or `None`.
+#[inline] pub fn ZS_strchr(s: &[ZLE_CHAR_T], c: ZLE_CHAR_T) -> Option<usize> { // c:50
+    s.iter().position(|&x| x == c)
+}
+
+/// Port of `ZS_memchr` from zle.h:51 (`#define ZS_memchr wmemchr`).
+/// Returns the index of the first occurrence of `c` in `s[..n]`.
+#[inline] pub fn ZS_memchr(s: &[ZLE_CHAR_T], c: ZLE_CHAR_T, n: usize) -> Option<usize> { // c:51
+    s[..n.min(s.len())].iter().position(|&x| x == c)
+}
+
+/// Port of `ZS_width` from zle.h:49 (`#define ZS_width wcslen`).
+/// Returns the display width of a string (collapses to char count
+/// for the non-multibyte path; in zshrs we treat each char as 1 col).
+#[inline] pub fn ZS_width(s: &[ZLE_CHAR_T]) -> usize {                       // c:49
+    ZS_strlen(s)
+}
+
+// =====================================================================
+// `ZC_*` wide-character classification macros — `Src/Zle/zle.h:60-73`.
+// C #defines route to `iswalpha`/`iswalnum`/etc. on MULTIBYTE_SUPPORT
+// builds and to the `<ctype.h>` counterparts otherwise. Rust's
+// `char::is_*` methods cover both paths uniformly.
+// =====================================================================
+
+/// Port of `ZC_ialpha` from zle.h:60.
+#[inline] pub fn ZC_ialpha(c: ZLE_CHAR_T) -> bool { c.is_alphabetic() }      // c:60
+/// Port of `ZC_ialnum` from zle.h:61.
+#[inline] pub fn ZC_ialnum(c: ZLE_CHAR_T) -> bool { c.is_alphanumeric() }    // c:61
+/// Port of `ZC_iblank` from zle.h:62 (`wcsiblank`). True for blank
+/// chars excluding newline (matches zsh's `iblank` predicate).
+#[inline] pub fn ZC_iblank(c: ZLE_CHAR_T) -> bool { c == ' ' || c == '\t' }  // c:62
+/// Port of `ZC_icntrl` from zle.h:63.
+#[inline] pub fn ZC_icntrl(c: ZLE_CHAR_T) -> bool { c.is_control() }         // c:63
+/// Port of `ZC_idigit` from zle.h:64.
+#[inline] pub fn ZC_idigit(c: ZLE_CHAR_T) -> bool { c.is_ascii_digit() }     // c:64
+/// Port of `ZC_iident` from zle.h:65 (`wcsitype(c, IIDENT)`). Identifier
+/// char per zsh's IIDENT class: alphanumeric or `_`.
+#[inline] pub fn ZC_iident(c: ZLE_CHAR_T) -> bool { c.is_alphanumeric() || c == '_' } // c:65
+/// Port of `ZC_ilower` from zle.h:66.
+#[inline] pub fn ZC_ilower(c: ZLE_CHAR_T) -> bool { c.is_lowercase() }       // c:66
+/// Port of `ZC_inblank` from zle.h:67 (`iswspace`). True for any
+/// whitespace char (incl. newline).
+#[inline] pub fn ZC_inblank(c: ZLE_CHAR_T) -> bool { c.is_whitespace() }     // c:67
+/// Port of `ZC_iupper` from zle.h:68.
+#[inline] pub fn ZC_iupper(c: ZLE_CHAR_T) -> bool { c.is_uppercase() }       // c:68
+/// Port of `ZC_iword` from zle.h:69 (`wcsitype(c, IWORD)`). Word
+/// char per zsh's IWORD class: alphanumeric or `_`.
+#[inline] pub fn ZC_iword(c: ZLE_CHAR_T) -> bool { c.is_alphanumeric() || c == '_' } // c:69
+/// Port of `ZC_ipunct` from zle.h:70.
+#[inline] pub fn ZC_ipunct(c: ZLE_CHAR_T) -> bool { c.is_ascii_punctuation() } // c:70
+
+/// Port of `ZC_tolower` from zle.h:72.
+#[inline] pub fn ZC_tolower(c: ZLE_CHAR_T) -> ZLE_CHAR_T {                   // c:72
+    c.to_lowercase().next().unwrap_or(c)
+}
+/// Port of `ZC_toupper` from zle.h:73.
+#[inline] pub fn ZC_toupper(c: ZLE_CHAR_T) -> ZLE_CHAR_T {                   // c:73
+    c.to_uppercase().next().unwrap_or(c)
+}
+
+// =====================================================================
+// `LASTFULLCHAR` — `Src/Zle/zle.h:75-76`. Macro alias resolving to
+// `lastchar_wide` (the most-recent fully-decoded codepoint). Lives
+// as a field on `Zle` (`lastchar_wide: ZleInt`); the macro name is
+// kept here as an alias for searchability.
+// =====================================================================
+
+// =====================================================================
 // Widget — `Src/Zle/zle.h:184-220`.
 // =====================================================================
 
@@ -573,4 +721,94 @@ pub struct watch_fd {                                                        // 
     pub fd: i32,                                                             // c:576
     /// 1 if func is called as a widget.
     pub widget: i32,                                                         // c:578
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zs_strlen_stops_at_nul() {
+        assert_eq!(ZS_strlen(&['a', 'b', 'c']), 3);
+        assert_eq!(ZS_strlen(&['a', '\0', 'c']), 1);
+        assert_eq!(ZS_strlen(&[]), 0);
+    }
+
+    #[test]
+    fn zs_memcpy_first_n_chars() {
+        let mut dst = ['x'; 5];
+        let src = ['a', 'b', 'c', 'd', 'e'];
+        ZS_memcpy(&mut dst, &src, 3);
+        assert_eq!(dst, ['a', 'b', 'c', 'x', 'x']);
+    }
+
+    #[test]
+    fn zs_memmove_handles_self_copy() {
+        let mut buf = ['a', 'b', 'c', 'd', 'e'];
+        let src: Vec<char> = buf[1..4].to_vec();
+        ZS_memmove(&mut buf, &src, 3);
+        assert_eq!(buf, ['b', 'c', 'd', 'd', 'e']);
+    }
+
+    #[test]
+    fn zs_memset_fills_n() {
+        let mut dst = ['x'; 5];
+        ZS_memset(&mut dst, 'z', 3);
+        assert_eq!(dst, ['z', 'z', 'z', 'x', 'x']);
+    }
+
+    #[test]
+    fn zs_memcmp_ordering() {
+        assert_eq!(ZS_memcmp(&['a', 'b'], &['a', 'b'], 2), std::cmp::Ordering::Equal);
+        assert_eq!(ZS_memcmp(&['a', 'b'], &['a', 'c'], 2), std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn zs_strncmp_terminates_at_nul() {
+        assert_eq!(ZS_strncmp(&['a', 'b'], &['a', 'b'], 2), std::cmp::Ordering::Equal);
+        assert_eq!(ZS_strncmp(&['a', 'b'], &['a', 'c'], 2), std::cmp::Ordering::Less);
+        assert_eq!(ZS_strncmp(&['a', '\0'], &['a'], 5), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn zs_strchr_returns_first_index() {
+        assert_eq!(ZS_strchr(&['a', 'b', 'c'], 'b'), Some(1));
+        assert_eq!(ZS_strchr(&['a', 'b', 'c'], 'z'), None);
+    }
+
+    #[test]
+    fn zc_iblank_excludes_newline() {
+        assert!(ZC_iblank(' '));
+        assert!(ZC_iblank('\t'));
+        assert!(!ZC_iblank('\n'));
+    }
+
+    #[test]
+    fn zc_inblank_includes_newline() {
+        assert!(ZC_inblank('\n'));
+        assert!(ZC_inblank(' '));
+        assert!(!ZC_inblank('a'));
+    }
+
+    #[test]
+    fn zc_iword_includes_underscore() {
+        assert!(ZC_iword('a'));
+        assert!(ZC_iword('1'));
+        assert!(ZC_iword('_'));
+        assert!(!ZC_iword('-'));
+    }
+
+    #[test]
+    fn zc_iident_matches_iword() {
+        for c in ['a', 'A', '0', '_'] {
+            assert_eq!(ZC_iident(c), ZC_iword(c));
+        }
+    }
+
+    #[test]
+    fn zc_tolower_toupper_round_trip() {
+        assert_eq!(ZC_tolower('A'), 'a');
+        assert_eq!(ZC_toupper('a'), 'A');
+        assert_eq!(ZC_tolower('1'), '1');
+    }
 }
