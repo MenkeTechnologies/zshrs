@@ -7,6 +7,17 @@ use regex::Regex;
 use crate::ported::utils::zwarnnam;
 use std::collections::HashMap;
 
+/// Port of `CPCRE_PLAIN` from `Src/Modules/pcre.c:34`. Default
+/// pattern-flavour id passed to `cond_pcre_match` (the `-pcre-match`
+/// infix dispatcher) — selects plain (non-anchored) PCRE matching.
+pub const CPCRE_PLAIN: i32 = 0;                                              // c:34
+
+/// Port of `PCRE2_CODE_UNIT_WIDTH` from `Src/Modules/pcre.c:38`.
+/// `#define PCRE2_CODE_UNIT_WIDTH 8`. Selects the 8-bit pcre2 API
+/// over 16-bit / 32-bit. Rust uses the `regex` crate (UTF-8 by
+/// default), so this is a search anchor for the C source.
+pub const PCRE2_CODE_UNIT_WIDTH: i32 = 8;                                    // c:38
+
 // Per-evaluator PCRE compile state — bucket-1 dissolution per
 // PORT_PLAN.md Phase 2. C source has ONE file-static at
 // Src/Modules/pcre.c:41:

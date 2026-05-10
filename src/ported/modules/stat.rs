@@ -25,6 +25,10 @@ use std::os::unix::fs::MetadataExt;
 // Anonymous integer constants for the per-element index passed
 // to `statprint(..., iwhich, ...)`.
 // ============================================================
+/// Port of `HNAMEKEY` from `Src/Modules/stat.c:43`. Hash key the
+/// `zstat -H` mode uses to store the file name in the result assoc.
+pub const HNAMEKEY: &str = "name";                                       // c:43
+
 pub const ST_DEV:      i32 = 0;                                          // c:33
 pub const ST_INO:      i32 = 1;
 pub const ST_MODE:     i32 = 2;

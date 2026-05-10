@@ -206,6 +206,15 @@ pub const ZFCP_NOPE: i32 = 2;
 // detect type/mode/connection changes in the parent shell.
 // =====================================================================
 
+/// `ZF_BUFSIZE` from `Src/Modules/zftp.c:1458`. Default I/O block
+/// size for the zftp byte-stream pump.
+pub const ZF_BUFSIZE: usize = 32_768;                                        // c:1458
+
+/// `ZF_ASCSIZE` from `Src/Modules/zftp.c:1459`.
+/// `#define ZF_ASCSIZE (ZF_BUFSIZE/2)`. Smaller buffer for ASCII
+/// mode (line-by-line CRLF translation can grow output up to 2x).
+pub const ZF_ASCSIZE: usize = ZF_BUFSIZE / 2;                                // c:1459
+
 /// `ZFST_ASCI` — type for next transfer is ASCII.
 pub const ZFST_ASCI: i32 = 0x0000;
 /// `ZFST_IMAG` — type for next transfer is image (binary).
