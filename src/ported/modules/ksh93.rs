@@ -621,6 +621,16 @@ pub fn setiparam(name: &str, value: i64) {                                   // 
     std::env::set_var(name, value.to_string());                              // c:3777
 }
 
+// Port of `setaparam()` from Src/params.c:3372.
+// C: `mod_export Param setaparam(char *s, char **aval)` — assigns
+// array `aval` to param `s` (creates if absent). Static-link path:
+// joins with zsh's standard inter-array separator (FS) `\x01` and
+// stores in env so the rest of the runtime sees a single canonical
+// representation.
+pub fn setaparam(name: &str, value: &[String]) {                             // c:3372
+    std::env::set_var(name, value.join("\u{1}"));
+}
+
 // `setloopvar` lives in `Src/params.c:3408`. Stub.
 fn setloopvar(_name: &str, _value: &str) {}
 

@@ -2422,6 +2422,12 @@ impl ShellExecutor {
     // level; until then these stubs unblock callers.
     pub(crate) fn bin_zstyle(&mut self, _args: &[String]) -> i32 { 0 }
     pub(crate) fn bin_zparseopts(&mut self, _args: &[String]) -> i32 { 0 }
-    pub(crate) fn bin_zformat(&mut self, _args: &[String]) -> i32 { 0 }
+    pub(crate) fn bin_zformat(&mut self, args: &[String]) -> i32 {
+        // bin_zformat takes no flag options (BUILTIN spec at
+        // zutil.c:2138 has none); pass empty `options` and dispatch
+        // to the canonical free-fn port.
+        let ops = Self::_empty_ops();
+        crate::ported::modules::zutil::bin_zformat("zformat", args, &ops, 0)
+    }
     pub(crate) fn bin_zregexparse(&mut self, _args: &[String]) -> i32 { 0 }
 }

@@ -764,19 +764,132 @@ mod tests {
 // type within a crate, so call sites in exec.rs are unchanged.
 // ===========================================================
 
-// BEGIN moved-from-exec-rs
-// (orphaned bin_z* method deleted — was lines 768..1046; stub now in src/exec.rs)
+// =====================================================================
+// Direct port of bin_zformat() from Src/Modules/zutil.c:954
+// =====================================================================
 
-/// zparseopts - parse options from positional parameters
-// (orphaned bin_z* method deleted — was lines 1048..1324; stub now in src/exec.rs)
+/// Direct port of `bin_zformat()` from `Src/Modules/zutil.c:954`.
+/// C signature: `static int bin_zformat(char *nam, char **args,
+/// UNUSED(Options ops), UNUSED(int func))`.
+/// BUILTIN spec at zutil.c:2138 takes just two-or-more args (no
+/// option flags); the first arg is `-f`/`-F`/`-a` (a single letter
+/// after the dash) selecting the substitution mode.
+pub fn bin_zformat(nam: &str, args: &[String],                                // c:954
+                   _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    let mut presence = 0i32;                                                  // c:958
+    if args.is_empty() {                                                      // c:960
+        crate::ported::utils::zwarnnam(nam,
+            &format!("invalid argument: {}", ""));
+        return 1;
+    }
+    let opt_arg = &args[0];
+    let bytes = opt_arg.as_bytes();
+    if bytes.is_empty() || bytes[0] != b'-' || bytes.len() != 2 {             // c:960-963
+        crate::ported::utils::zwarnnam(nam,
+            &format!("invalid argument: {}", opt_arg));
+        return 1;                                                             // c:962
+    }
+    let opt = bytes[1];                                                       // c:961
+    let args = &args[1..];                                                    // c:965 args++
 
-/// zformat - format strings
-// (orphaned bin_z* method deleted — was lines 1326..1471; stub now in src/exec.rs)
-
-/// zregexparse - parse with regex
-// (orphaned bin_z* method deleted — was lines 1473..1532; stub now in src/exec.rs)
-
-// END moved-from-exec-rs
+    match opt {                                                               // c:967
+        b'F' | b'f' => {                                                      // c:968 / c:971
+            if opt == b'F' { presence = 1; }                                  // c:969 fall-through
+            // c:973-994 — -f / -F branch.
+            if args.len() < 2 {                                               // c:973 args[0]/args[1]
+                crate::ported::utils::zwarnnam(nam,
+                    "missing arguments to -f/-F");
+                return 1;
+            }
+            let mut specs: HashMap<char, String> = HashMap::new();            // c:973
+            specs.insert('%', "%".to_string());                               // c:976
+            specs.insert(')', ")".to_string());                               // c:977
+            for ap in &args[2..] {                                            // c:980
+                let ab = ap.as_bytes();
+                if ab.is_empty() || ab[0] == b'-' || ab[0] == b'.'            // c:981
+                    || ab[0].is_ascii_digit()
+                    || ab.len() < 2 || ab[1] != b':' {
+                    crate::ported::utils::zwarnnam(nam,
+                        &format!("invalid argument: {}", ap));                // c:984
+                    return 1;                                                 // c:985
+                }
+                specs.insert(ab[0] as char, ap[2..].to_string());             // c:987
+            }
+            let out = zformat_substring(&args[1], &specs, presence != 0);     // c:990
+            crate::ported::modules::ksh93::setsparam(&args[0], &out);         // c:993 setsparam
+            return 0;                                                         // c:994
+        }
+        b'a' => {                                                             // c:996
+            // c:998-1083 — -a column-format branch.
+            if args.len() < 2 {                                               // c:998
+                crate::ported::utils::zwarnnam(nam,
+                    "missing arguments to -a");
+                return 1;
+            }
+            let mut pre = 0usize;                                             // c:1000
+            let mut suf = 0usize;                                             // c:1000
+            // First pass: compute max prefix/suffix widths.
+            for ap in &args[2..] {                                            // c:1005
+                let mut nbc = 0usize;                                         // c:1006
+                let bytes = ap.as_bytes();
+                let mut cp_idx = 0usize;
+                while cp_idx < bytes.len() && bytes[cp_idx] != b':' {         // c:1007
+                    if bytes[cp_idx] == b'\\' && cp_idx + 1 < bytes.len() {   // c:1008
+                        cp_idx += 1;
+                        nbc += 1;
+                    }
+                    cp_idx += 1;
+                }
+                if cp_idx < bytes.len() && bytes[cp_idx] == b':'              // c:1010
+                    && cp_idx + 1 < bytes.len() {
+                    let d = cp_idx.saturating_sub(nbc);                       // c:1015
+                    if d > pre { pre = d; }                                   // c:1016
+                    // multi-byte width branch (c:1017-1029) collapses to
+                    // ASCII byte count for the common case in Rust.
+                    let s = bytes.len() - cp_idx - 1;                         // c:1030
+                    if s > suf { suf = s; }                                   // c:1031
+                }
+            }
+            // Second pass: build formatted columns + setaparam.
+            let middle = &args[1];                                            // c:1037
+            let sl = middle.len();                                            // c:1037
+            let mut ret: Vec<String> = Vec::new();                            // c:1043
+            for ap in &args[2..] {                                            // c:1051
+                let bytes = ap.as_bytes();
+                let mut copy: Vec<u8> = Vec::with_capacity(bytes.len());      // c:1052
+                let mut k = 0usize;
+                let mut sep_at: Option<usize> = None;
+                while k < bytes.len() {                                       // c:1053
+                    if bytes[k] == b':' { sep_at = Some(copy.len()); break; }
+                    if bytes[k] == b'\\' && k + 1 < bytes.len() {             // c:1054
+                        k += 1;
+                    }
+                    copy.push(bytes[k]);                                      // c:1055
+                    k += 1;
+                }
+                if let Some(left_len) = sep_at {                              // c:1058
+                    let after = std::str::from_utf8(&bytes[(k + 1)..]).unwrap_or("");
+                    let mut buf = String::with_capacity(pre + sl + after.len());
+                    let prefix = std::str::from_utf8(&copy[..left_len]).unwrap_or("");
+                    buf.push_str(prefix);                                     // c:1062
+                    for _ in prefix.chars().count()..pre { buf.push(' '); }   // c:1075-1076
+                    buf.push_str(middle);                                     // c:1078
+                    buf.push_str(after);                                      // c:1080
+                    ret.push(buf);                                            // c:1081 ztrdup
+                } else {
+                    ret.push(String::from_utf8_lossy(&copy).into_owned());    // c:1082
+                }
+            }
+            crate::ported::modules::ksh93::setaparam(&args[0], &ret);         // c:1083
+            let _ = sl;
+            return 0;                                                         // c:1084
+        }
+        _ => {}
+    }
+    crate::ported::utils::zwarnnam(nam,                                       // c:1085
+        &format!("invalid option: -{}", opt as char));
+    1                                                                         // c:1086
+}
 
 // ─── moved from src/ported/exec.rs (drift extraction) ───
 
