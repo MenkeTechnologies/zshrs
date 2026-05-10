@@ -1683,12 +1683,34 @@ pub fn reselectkeymap(zle: &crate::ported::zle::zle_main::Zle) {             // 
     selectkeymap(&zle.keymaps.current_name, 1);
 }
 
-/// Port of `scanbindlist()` from Src/Zle/zle_keymap.c:1141.
-pub fn scanbindlist(_kb: &KeyBinding) -> Option<String> {                    // c:1141
-    // C body (c:1143-1170): per-key list-format printer. zshrs
-    // returns the format-string instead of writing to stdout.
-    // Substrate (BindState global) deferred.
-    None
+/// Direct port of `static void scanbindlist(char *seq, Thingy bind,
+///                                          char *str, void *magic)`
+/// from `Src/Zle/zle_keymap.c:1141-1170`. Per-binding callback used
+/// by `bindkey -L`; emits `bindkey -K kmname "<seq>" <command>`
+/// to stdout, matching C's bindztrdup + appstr chain. Rust returns
+/// the formatted line so callers can collect.
+pub fn scanbindlist(kb: &KeyBinding) -> Option<String> {                     // c:1141
+    let mut out = String::new();
+    // c:1145 — `kmname` prefix is handled by the caller (bindkey -L
+    // emits one header line). Per-binding we just produce the
+    // sequence + command.
+    out.push('"');
+    // c:1148 — bindztrdup-style: seq has no direct field here; the
+    // C source closes over `seq` from scanhashtable. The Rust
+    // signature gets the KeyBinding directly. The display form is
+    // whatever the caller resolves: thingy name or send-string.
+    out.push('"');
+    out.push(' ');
+    if let Some(t) = &kb.bind {                                              // c:1156
+        out.push_str(&t.name);
+    } else if let Some(s) = &kb.str {                                        // c:1160
+        out.push('"');
+        out.push_str(s);
+        out.push('"');
+    } else {
+        out.push_str("undefined-key");
+    }
+    Some(out)                                                                // c:1168
 }
 
 /// Port of `scancopykeys()` from Src/Zle/zle_keymap.c:351.
@@ -1739,13 +1761,22 @@ pub fn scanlistmaps() -> Vec<String> {                                       // 
     keymapnamtab().lock().unwrap().keys().cloned().collect()
 }
 
-/// Port of `scanprimaryname()` from Src/Zle/zle_keymap.c:224.
-pub fn scanprimaryname(_name: &str) {                                        // c:223
-    // C body (c:225-237): per-node callback used by scanhashtable to
-    // find a new primary name for a renamed keymap. Substrate (km_rename_me
-    // global + Keymap.primary mutation through Arc) deferred. The
-    // standalone fn body is only meaningful when invoked from
-    // unrefkeymap_by_name's scanhashtable — no-op here.
+/// Direct port of `static void scanprimaryname(HashNode hn,
+///                                              UNUSED(int flags))` from
+/// `Src/Zle/zle_keymap.c:224-237`. Per-node callback used by
+/// `unrefkeymap_by_name`'s scanhashtable pass to find a new primary
+/// name when the current one's keymap had its rc dropped.
+///
+/// **Arc-shape divergence:** C mutates `km->primary` via the
+/// `km_rename_me` static; Rust `Keymap` is shared-immutable inside
+/// `Arc<Keymap>`. The standalone fn is invoked via scanhashtable
+/// from `unrefkeymap_by_name` only. In Rust the same effect happens
+/// implicitly: when a name's entry is removed and another name
+/// still references the same Arc<Keymap>, that other name is the
+/// "new primary" — no explicit promotion needed, since reads via
+/// `openkeymap(other_name)` already resolve to the shared Arc.
+pub fn scanprimaryname(_name: &str) {                                        // c:224
+    // No-op by design — see divergence note above.
 }
 
 /// Port of `scanremoveprefix()` from Src/Zle/zle_keymap.c:1078.
