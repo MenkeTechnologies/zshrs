@@ -495,3 +495,12 @@ fdtable_lock
 fdtable_get
 fdtable_set
 
+
+
+# make_empty_special_pm (modules/parameter.rs) — Rust-only helper
+# that pulls the common Param-construction shape used by
+# getpmjob{dir,state,text} and getpmmodule into one place. C
+# duplicates this 12-line construct inline at each callsite
+# (c:1387/c:1459/c:1279/c:1042); Rust pulls it into one helper
+# to avoid the repetition.
+make_empty_special_pm

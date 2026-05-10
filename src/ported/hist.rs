@@ -77,7 +77,7 @@ pub const HA_INWORD: u32 = 4; // We're inside a word
 /// (line 798) walks for `!:N` substitution.
 pub struct History {
     /// History entries indexed by event number
-    entries: HashMap<i64, HistEntry>,
+    pub(crate) entries: HashMap<i64, HistEntry>,
     /// Ring buffer order (newest first)
     ring: Vec<i64>,
     /// Current history number
