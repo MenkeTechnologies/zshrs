@@ -2252,6 +2252,177 @@ pub fn bin_eval(_name: &str, argv: &[String],                                // 
     eval(argv)                                                               // c:6396
 }
 
+/// Port of `bin_getopts()` from Src/builtin.c:5672.
+/// C: `int bin_getopts(UNUSED(char *name), char **argv, UNUSED(Options ops),
+///                     UNUSED(int func))`.
+///
+/// POSIX getopts. Maintains state in $OPTIND (zoptind) and an internal
+/// per-arg cursor (optcind). Reads from the script's positional params
+/// when no extra args supplied, otherwise from the trailing argv.
+pub fn bin_getopts(_name: &str, argv: &[String],                             // c:5672
+                   _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use std::sync::atomic::Ordering;
+    if argv.len() < 2 { return 1; }
+    // c:5675 — `char *optstr = unmetafy(*argv++, &lenoptstr); char *var = *argv++;`
+    let optstr_full = argv[0].clone();
+    let var = argv[1].clone();
+    // c:5676 — `char **args = (*argv) ? argv : pparams;`
+    let argv_rest: Vec<String> = argv[2..].to_vec();
+    let args: Vec<String> = if !argv_rest.is_empty() {
+        argv_rest
+    } else {
+        PPARAMS.lock().map(|p| p.clone()).unwrap_or_default()
+    };
+
+    // c:5681-5685 — `if (zoptind < 1) { zoptind = 1; optcind = 0; }`
+    let mut zoptind = ZOPTIND.load(Ordering::Relaxed);
+    if zoptind < 1 {                                                         // c:5681
+        zoptind = 1;
+        OPTCIND.store(0, Ordering::Relaxed);
+    }
+    let mut optcind = OPTCIND.load(Ordering::Relaxed);
+
+    // c:5686-5688 — `if (arrlen_lt(args, zoptind)) return 1;`
+    if (args.len() as i32) < zoptind {                                       // c:5686
+        ZOPTIND.store(zoptind, Ordering::Relaxed);
+        return 1;
+    }
+
+    // c:5691-5693 — `quiet = *optstr == ':'; optstr += quiet; lenoptstr -= quiet;`
+    let (quiet, optstr) = if optstr_full.starts_with(':') {                  // c:5691
+        (true, &optstr_full[1..])
+    } else {
+        (false, optstr_full.as_str())
+    };
+
+    // c:5696 — `str = unmetafy(dupstring(args[zoptind - 1]), &lenstr);`
+    let mut str_buf = args[(zoptind - 1) as usize].clone();
+    let mut lenstr = str_buf.len() as i32;
+    if lenstr == 0 { return 1; }                                             // c:5697
+
+    // c:5699-5703 — bump to next arg if optcind exhausted current.
+    if optcind >= lenstr {                                                   // c:5699
+        optcind = 0;
+        zoptind += 1;
+        if zoptind as usize > args.len() {                                   // c:5701
+            ZOPTIND.store(zoptind, Ordering::Relaxed);
+            OPTCIND.store(optcind, Ordering::Relaxed);
+            return 1;
+        }
+        str_buf = args[(zoptind - 1) as usize].clone();
+        lenstr = str_buf.len() as i32;
+    }
+
+    // c:5705-5712 — first option char checks: not `-`/`+` → done; `--` → done.
+    if optcind == 0 {                                                        // c:5705
+        if lenstr < 2 || (!str_buf.starts_with('-') && !str_buf.starts_with('+')) {
+            ZOPTIND.store(zoptind, Ordering::Relaxed);
+            OPTCIND.store(optcind, Ordering::Relaxed);
+            return 1;
+        }
+        if lenstr == 2 && &str_buf[..2] == "--" {                            // c:5708
+            zoptind += 1;
+            ZOPTIND.store(zoptind, Ordering::Relaxed);
+            OPTCIND.store(0, Ordering::Relaxed);
+            return 1;
+        }
+        optcind += 1;
+    }
+    // c:5715 — `opch = str[optcind++];`
+    let opch = str_buf.as_bytes()[optcind as usize];
+    optcind += 1;
+
+    // c:5716-5721 — `lenoptbuf = (str[0] == '+') ? 2 : 1; optbuf[lenoptbuf-1] = opch;`
+    let plus = str_buf.starts_with('+');
+    let optbuf: String = if plus {
+        format!("+{}", opch as char)
+    } else {
+        format!("{}", opch as char)
+    };
+
+    // c:5724-5740 — illegal option: `?` reply, OPTIND fixed under POSIXBUILTINS.
+    let posix = crate::ported::options::optlookup("posixbuiltins") > 0;
+    let found = optstr.bytes().position(|b| b == opch);
+    if opch == b':' || found.is_none() {                                     // c:5724
+        if posix {                                                           // c:5728
+            optcind = 0;
+            zoptind += 1;
+        }
+        // c:5731 — `setsparam(var, ztrdup(p));` where p = "?"
+        crate::ported::modules::ksh93::setsparam(&var, "?");
+        if quiet {                                                           // c:5733
+            crate::ported::modules::ksh93::setsparam("OPTARG", &optbuf);     // c:5734
+        } else {
+            let prefix = if plus { "+" } else { "-" };
+            crate::ported::utils::zwarn(&format!(
+                "bad option: {}{}", prefix, opch as char));                  // c:5736
+            crate::ported::modules::ksh93::setsparam("OPTARG", "");
+        }
+        ZOPTIND.store(zoptind, Ordering::Relaxed);
+        OPTCIND.store(optcind, Ordering::Relaxed);
+        // Sync OPTIND env var so callers can read.
+        crate::ported::modules::ksh93::setiparam("OPTIND", zoptind as i64);
+        return 0;
+    }
+
+    // c:5744 — `if (p[1] == ':')` — required argument.
+    let p = found.unwrap();
+    let optstr_bytes = optstr.as_bytes();
+    if p + 1 < optstr_bytes.len() && optstr_bytes[p + 1] == b':' {           // c:5744
+        if optcind == lenstr {                                               // c:5745
+            // c:5746 — argument in next arg.
+            if zoptind as usize >= args.len() {                              // c:5747
+                if posix {
+                    optcind = 0;
+                    zoptind += 1;
+                }
+                if quiet {                                                   // c:5754
+                    crate::ported::modules::ksh93::setsparam(&var, ":");
+                    crate::ported::modules::ksh93::setsparam("OPTARG", &optbuf);
+                } else {
+                    crate::ported::modules::ksh93::setsparam(&var, "?");
+                    crate::ported::modules::ksh93::setsparam("OPTARG", "");
+                    let prefix = if plus { "+" } else { "-" };
+                    crate::ported::utils::zwarn(&format!(
+                        "argument expected after {}{} option",
+                        prefix, opch as char));                              // c:5760
+                }
+                ZOPTIND.store(zoptind, Ordering::Relaxed);
+                OPTCIND.store(optcind, Ordering::Relaxed);
+                crate::ported::modules::ksh93::setiparam("OPTIND", zoptind as i64);
+                return 0;
+            }
+            let p_arg = args[zoptind as usize].clone();
+            zoptind += 1;
+            crate::ported::modules::ksh93::setsparam("OPTARG", &p_arg);      // c:5765
+            optcind = 0;
+        } else {
+            // c:5774 — `p = metafy(str+optcind, lenstr-optcind, META_DUP);`
+            let p_arg = str_buf[(optcind as usize)..].to_string();
+            crate::ported::modules::ksh93::setsparam("OPTARG", &p_arg);
+            optcind = 0;
+            zoptind += 1;
+        }
+    } else {
+        // c:5784 — `zsfree(zoptarg); zoptarg = ztrdup("");`
+        crate::ported::modules::ksh93::setsparam("OPTARG", "");
+    }
+
+    // c:5788 — `setsparam(var, metafy(optbuf, lenoptbuf, META_DUP));`
+    crate::ported::modules::ksh93::setsparam(&var, &optbuf);
+    ZOPTIND.store(zoptind, Ordering::Relaxed);
+    OPTCIND.store(optcind, Ordering::Relaxed);
+    crate::ported::modules::ksh93::setiparam("OPTIND", zoptind as i64);
+    0                                                                        // c:5790
+}
+
+// `zoptind` (Src/builtin.c:5667) and `optcind` (c:5670) — the two
+// pieces of getopts state. zoptind backs the user-visible $OPTIND.
+pub static ZOPTIND: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(1);
+pub static OPTCIND: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
 /// Port of `bin_ttyctl()` from Src/builtin.c:7454.
 /// C: `int bin_ttyctl(UNUSED args, Options ops, ...)` — `-f` freezes the
 ///   tty, `-u` unfreezes; otherwise emit "tty is [not ]frozen".
