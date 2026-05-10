@@ -1377,11 +1377,65 @@ pub fn join_sub(_a: i32, _bp: i32, _bsfx: i32, _b: i32, _flags: i32) -> i32 {  /
 }
 
 /// Port of `pattern_match()` from Src/Zle/compmatch.c:1548.
-pub fn pattern_match(_p: i32, _s: &str, _wp: &mut [u8], _wq: &mut [u8]) -> i32 { // c:1548
-    // C body c:1550-1636 — top-level pattern-vs-string match driver
-    //                      that calls pattern_match1 + pattern_match_restrict.
-    //                      Pattern (Patprog) substrate deferred; 0.
-    0
+/// Direct port of `mod_export int pattern_match(Cpattern p, char *s,
+///                                             Cpattern wp, char *ws)`
+/// from `Src/Zle/compmatch.c:1547-1614`. Walks two parallel pattern +
+/// string pairs (line `p`/`s` vs word `wp`/`ws`) verifying that each
+/// position matches and that paired pattern-class indices line up.
+pub fn pattern_match(
+    p: Option<&crate::ported::zle::comp_h::Cpattern>,                        // c:1548
+    s: &str,
+    wp: Option<&crate::ported::zle::comp_h::Cpattern>,
+    ws: &str,
+) -> i32 {
+    use crate::ported::zle::comp_h::CPAT_ANY;
+    use crate::ported::zsh_h::{PP_LOWER, PP_UPPER};
+    use crate::ported::zle::zle_h::ZC_tolower;
+
+    let (mut p_cur, mut wp_cur) = (p, wp);                                   // c:1551 walking p / wp
+    let mut s_bytes = s.chars().peekable();
+    let mut ws_bytes = ws.chars().peekable();
+
+    while p_cur.is_some() && wp_cur.is_some()                                // c:1553
+        && s_bytes.peek().is_some() && ws_bytes.peek().is_some()
+    {
+        let pat   = p_cur.unwrap();
+        let wpat  = wp_cur.unwrap();
+        let wc    = ws_bytes.next().unwrap() as u32;                         // c:1555
+        let mut wmt: i32 = 0;
+        let wind = pattern_match1(wpat, wc, &mut wmt);                       // c:1556
+        if wind == 0 { return 0; }                                           // c:1557
+
+        let c     = s_bytes.next().unwrap() as u32;                          // c:1561
+        if pat.tp != CPAT_ANY || wpat.tp != CPAT_ANY {                       // c:1567
+            let mut mt: i32 = 0;
+            let ind = pattern_match1(pat, c, &mut mt);                       // c:1569
+            if ind == 0    { return 0; }                                     // c:1570
+            if ind != wind { return 0; }                                     // c:1572
+            if mt != wmt {                                                   // c:1574
+                let case_pair = (mt == PP_LOWER || mt == PP_UPPER)
+                             && (wmt == PP_LOWER || wmt == PP_UPPER);
+                if case_pair {
+                    let cc = char::from_u32(c).unwrap_or('\0');
+                    let wcc = char::from_u32(wc).unwrap_or('\0');
+                    if ZC_tolower(cc) != ZC_tolower(wcc) {                   // c:1584
+                        return 0;
+                    }
+                } else {
+                    return 0;                                                // c:1588
+                }
+            }
+        }
+        p_cur  = pat.next.as_deref();                                        // c:1599
+        wp_cur = wpat.next.as_deref();
+    }
+    if p_cur.is_none() && wp_cur.is_none()
+        && s_bytes.peek().is_none() && ws_bytes.peek().is_none()
+    {
+        1                                                                    // c:1612 match
+    } else {
+        0                                                                    // c:1613 partial
+    }
 }
 
 /// Port of `pattern_match_restrict()` from Src/Zle/compmatch.c:1383.
