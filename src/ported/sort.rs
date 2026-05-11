@@ -13,8 +13,8 @@
 //! Faithfulness notes:
 //! - Flag values match C's `SORTIT_*` enum exactly (1, 2, 4, 8, 16,
 //!   32) so callers using the C bit values get the same semantics.
-//!   The legacy Rust names (`NUMERIC` / `REVERSE` / etc.) are kept
-//!   as aliases.
+//!   `crate::zsh_h::SORTIT_*` (`i32` in the header port; cast with
+//!   `as u32` where this module takes `sort_flags: u32`).
 //! - `SortElt` carries `len: Option<usize>` matching C's `len = -1`
 //!   sentinel for "use strlen — no embedded NULs"; `Some(n)` means
 //!   "first n bytes only, may contain embedded NULs".
@@ -33,38 +33,10 @@
 
 use std::cmp::Ordering;
 
-/// Sort flags. Values match the `SORTIT_*` enum at
-/// `Src/zsh.h:2993` byte-for-byte.
-pub mod flags {
-    /// `SORTIT_ANYOLDHOW` — no flags set; default ASCII byte sort.
-    pub const ANYOLDHOW: u32 = 0;
-    /// `SORTIT_IGNORING_CASE` (zsh.h:2994).
-    pub const IGNORING_CASE: u32 = 1;
-    /// `SORTIT_NUMERICALLY` (zsh.h:2995).
-    // Flag that sort is numeric                                            // c:39
-    pub const NUMERICALLY: u32 = 2;
-    /// `SORTIT_NUMERICALLY_SIGNED` (zsh.h:2996).
-    pub const NUMERICALLY_SIGNED: u32 = 4;
-    /// `SORTIT_BACKWARDS` (zsh.h:2997).
-    // Flag for direction of sort: 1 forwards, -1 reverse                   // c:33
-    pub const BACKWARDS: u32 = 8;
-    /// `SORTIT_IGNORING_BACKSLASHES` (zsh.h:3002).
-    // Flag that sort ignores backslashes                                   // c:36
-    pub const IGNORING_BACKSLASHES: u32 = 16;
-    /// `SORTIT_SOMEHOW` (zsh.h:3007) — currently unused; reserved.
-    pub const SOMEHOW: u32 = 32;
-
-    // Legacy aliases. The original Rust port used these names with
-    // bit-shifted values that didn't match C; the constants above
-    // are the canonical SORTIT_* values. Keep the old names as
-    // aliases pointing at the canonical values so existing callers
-    // still work.
-    pub const NUMERIC: u32 = NUMERICALLY;
-    pub const REVERSE: u32 = BACKWARDS;
-    pub const CASE_INSENSITIVE: u32 = IGNORING_CASE;
-    pub const NO_BACKSLASH: u32 = IGNORING_BACKSLASHES;
-    pub const NUMERIC_SIGNED: u32 = NUMERICALLY_SIGNED;
-}
+use crate::zsh_h::{
+    SORTIT_ANYOLDHOW, SORTIT_BACKWARDS, SORTIT_IGNORING_BACKSLASHES, SORTIT_IGNORING_CASE,
+    SORTIT_NUMERICALLY, SORTIT_NUMERICALLY_SIGNED, SORTIT_SOMEHOW,
+};
 
 /// Sort element. Direct port of `struct sortelt` from `Src/zsh.h`,
 /// referenced by `Src/sort.c::eltpcmp` (line 44) and `strmetasort`
@@ -122,11 +94,11 @@ impl SortElt {
     /// the work for every pair.
     pub fn with_transforms(mut self, sort_flags: u32) -> Self {
         let mut t = self.cmp.clone();
-        if sort_flags & flags::IGNORING_BACKSLASHES != 0 {
-            t = t.chars().filter(|&c| c != '\\').collect();
+        if sort_flags & (SORTIT_IGNORING_CASE as u32) != 0 {
+            t = t.to_lowercase(); // c:329-374 before backslash strip
         }
-        if sort_flags & flags::IGNORING_CASE != 0 {
-            t = t.to_lowercase();
+        if sort_flags & (SORTIT_IGNORING_BACKSLASHES as u32) != 0 {
+            t = t.chars().filter(|&c| c != '\\').collect(); // c:375-385
         }
         self.cmp = t;
         self
@@ -135,37 +107,30 @@ impl SortElt {
 
 /// Port of `zstrcmp()` from `Src/sort.c:191`.
 ///
-/// C body builds two `sortelt` stack structs, sets the file-static
-/// `sortdir`/`sortnobslash`/`sortnumeric` from the flags, calls
-/// `eltpcmp`, then restores. Rust port skips the global state and
-/// passes the flags directly through.
-///
-/// Honors:
-/// - `SORTIT_BACKWARDS` — flipped result.
-/// - `SORTIT_NUMERICALLY` / `SORTIT_NUMERICALLY_SIGNED` — natural-
-// at a higher level.                                                       // c:186
-///   order numeric comparison.
-/// - `SORTIT_IGNORING_CASE` — case-fold both sides before compare.
-/// - `SORTIT_IGNORING_BACKSLASHES` — strip literal `\` from compare
-///   form.
+/// C fixes `sortdir = 1`, sets only `sortnobslash` and `sortnumeric`
+/// from `sortflags` (`sort.c:207-210`), then calls `eltpcmp`. It does
+/// **not** consult `SORTIT_BACKWARDS` or `SORTIT_IGNORING_CASE` — those
+/// apply in `strmetasort` via `sortdir` and the pre-transform loop.
 pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {              // c:191
-    let reverse = (sort_flags & flags::BACKWARDS) != 0;
-    let numeric = (sort_flags & flags::NUMERICALLY) != 0;
-    let numeric_signed = (sort_flags & flags::NUMERICALLY_SIGNED) != 0;
-    let no_backslash = (sort_flags & flags::IGNORING_BACKSLASHES) != 0;
-    let case_insensitive = (sort_flags & flags::IGNORING_CASE) != 0;
+    let sortnumeric = if sort_flags & (SORTIT_NUMERICALLY_SIGNED as u32) != 0 {
+        -1 // c:209-210
+    } else if sort_flags & (SORTIT_NUMERICALLY as u32) != 0 {
+        1
+    } else {
+        0
+    };
+    let numeric = sortnumeric != 0;
+    let numeric_signed = sortnumeric < 0;
+    let no_backslash = (sort_flags & (SORTIT_IGNORING_BACKSLASHES as u32)) != 0;
 
-    // Build the comparison forms — C does this inline at sort.c:120
-    // (sortnobslash) and via the case-fold loop in strmetasort.
+    // Approximation of `sortnobslash` scanning (`sort.c:120-131`): C
+    // drops `\\` pairwise while comparing; stripping all backslashes
+    // matches zsh for typical glob names.
     let mut a_str = a.to_string();
     let mut b_str = b.to_string();
     if no_backslash {
         a_str = a_str.chars().filter(|&c| c != '\\').collect();
         b_str = b_str.chars().filter(|&c| c != '\\').collect();
-    }
-    if case_insensitive {
-        a_str = a_str.to_lowercase();
-        b_str = b_str.to_lowercase();
     }
 
     // Numeric comparison — direct port of the `if (sortnumeric)`
@@ -265,16 +230,40 @@ pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {              // 
         }
     };
 
-    let mut result = if numeric {
+    if numeric {
         cmp_numeric(&a_str, &b_str, numeric_signed)
     } else {
-        a_str.cmp(&b_str)
-    };
-
-    if reverse {
-        result = result.reverse();
+        let c = {
+            #[cfg(unix)]
+            {
+                use libc;
+                use std::ffi::CString;
+                let cstr_head = |s: &str| -> CString {
+                    let b = s.as_bytes();
+                    let n = b.iter().position(|&x| x == 0).unwrap_or(b.len());
+                    CString::new(&b[..n]).unwrap_or_else(|_| CString::new(vec![0u8]).expect("nul"))
+                };
+                let ca = cstr_head(&a_str);
+                let cb = cstr_head(&b_str);
+                unsafe { libc::strcoll(ca.as_ptr(), cb.as_ptr()) }
+            }
+            #[cfg(not(unix))]
+            {
+                match a_str.cmp(&b_str) {
+                    Ordering::Less => -1i32,
+                    Ordering::Equal => 0,
+                    Ordering::Greater => 1,
+                }
+            }
+        };
+        if c < 0 {
+            Ordering::Less
+        } else if c > 0 {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
     }
-    result
 }
 
 /// Port of `eltpcmp()` from `Src/sort.c:44`.
@@ -289,9 +278,13 @@ pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {              // 
 /// (matching C's `len != -1` branch at sort.c:52-118). Equal-but-
 /// shorter strings sort below their longer continuations.
 pub fn eltpcmp(a: &SortElt, b: &SortElt, sort_flags: u32) -> Ordering {      // c:44
-    let reverse = (sort_flags & flags::BACKWARDS) != 0;
+    let reverse = (sort_flags & (SORTIT_BACKWARDS as u32)) != 0;
     let result = match (a.len, b.len) {
-        (None, None) => zstrcmp(&a.cmp, &b.cmp, sort_flags & !flags::BACKWARDS),
+        (None, None) => zstrcmp(
+            &a.cmp,
+            &b.cmp,
+            sort_flags & !(SORTIT_BACKWARDS as u32),
+        ),
         _ => {
             // Embedded-null path: compare first min(a.len, b.len)
             // bytes; equal-prefix-but-different-length means the
@@ -379,19 +372,13 @@ mod tests {
     #[test]
     fn test_flag_values_match_c_sortit() {
         // Sanity-check that the flag constants match Src/zsh.h:2993.
-        assert_eq!(flags::ANYOLDHOW, 0);
-        assert_eq!(flags::IGNORING_CASE, 1);
-        assert_eq!(flags::NUMERICALLY, 2);
-        assert_eq!(flags::NUMERICALLY_SIGNED, 4);
-        assert_eq!(flags::BACKWARDS, 8);
-        assert_eq!(flags::IGNORING_BACKSLASHES, 16);
-        assert_eq!(flags::SOMEHOW, 32);
-        // Legacy aliases.
-        assert_eq!(flags::NUMERIC, flags::NUMERICALLY);
-        assert_eq!(flags::REVERSE, flags::BACKWARDS);
-        assert_eq!(flags::CASE_INSENSITIVE, flags::IGNORING_CASE);
-        assert_eq!(flags::NO_BACKSLASH, flags::IGNORING_BACKSLASHES);
-        assert_eq!(flags::NUMERIC_SIGNED, flags::NUMERICALLY_SIGNED);
+        assert_eq!(SORTIT_ANYOLDHOW, 0);
+        assert_eq!(SORTIT_IGNORING_CASE, 1);
+        assert_eq!(SORTIT_NUMERICALLY, 2);
+        assert_eq!(SORTIT_NUMERICALLY_SIGNED, 4);
+        assert_eq!(SORTIT_BACKWARDS, 8);
+        assert_eq!(SORTIT_IGNORING_BACKSLASHES, 16);
+        assert_eq!(SORTIT_SOMEHOW, 32);
     }
 
     #[test]
@@ -402,39 +389,36 @@ mod tests {
     }
 
     #[test]
-    fn test_zstrcmp_reverse() {
-        assert_eq!(zstrcmp("abc", "def", flags::BACKWARDS), Ordering::Greater);
-        assert_eq!(zstrcmp("def", "abc", flags::BACKWARDS), Ordering::Less);
+    fn test_zstrcmp_ignores_backwards_per_c() {
+        assert_eq!(
+            zstrcmp("abc", "def", SORTIT_BACKWARDS as u32),
+            zstrcmp("abc", "def", 0)
+        );
     }
 
     #[test]
-    fn test_zstrcmp_case_insensitive() {
-        assert_eq!(
-            zstrcmp("ABC", "abc", flags::IGNORING_CASE),
-            Ordering::Equal
-        );
-        assert_eq!(
-            zstrcmp("ABC", "def", flags::IGNORING_CASE),
-            Ordering::Less
-        );
+    fn test_zstrcmp_ignores_case_flag_per_c() {
+        let with = zstrcmp("ABC", "abc", SORTIT_IGNORING_CASE as u32);
+        let without = zstrcmp("ABC", "abc", 0);
+        assert_eq!(with, without);
     }
 
     #[test]
     fn test_zstrcmp_numeric() {
         assert_eq!(
-            zstrcmp("file2", "file10", flags::NUMERICALLY),
+            zstrcmp("file2", "file10", SORTIT_NUMERICALLY as u32),
             Ordering::Less
         );
         assert_eq!(
-            zstrcmp("file10", "file2", flags::NUMERICALLY),
+            zstrcmp("file10", "file2", SORTIT_NUMERICALLY as u32),
             Ordering::Greater
         );
-        assert_eq!(zstrcmp("100", "20", flags::NUMERICALLY), Ordering::Greater);
+        assert_eq!(zstrcmp("100", "20", SORTIT_NUMERICALLY as u32), Ordering::Greater);
     }
 
     #[test]
     fn test_zstrcmp_numeric_signed() {
-        let f = flags::NUMERICALLY | flags::NUMERICALLY_SIGNED;
+        let f = (SORTIT_NUMERICALLY | SORTIT_NUMERICALLY_SIGNED) as u32;
         assert_eq!(zstrcmp("-5", "3", f), Ordering::Less);
         assert_eq!(zstrcmp("-10", "-2", f), Ordering::Less);
         assert_eq!(zstrcmp("5", "-3", f), Ordering::Greater);
@@ -448,7 +432,7 @@ mod tests {
             "file1".to_string(),
             "file20".to_string(),
         ];
-        strmetasort(&mut arr, flags::NUMERICALLY | flags::NUMERICALLY_SIGNED, None);
+        strmetasort(&mut arr, (SORTIT_NUMERICALLY | SORTIT_NUMERICALLY_SIGNED) as u32, None);
         assert_eq!(arr, vec!["file1", "file2", "file10", "file20"]);
     }
 
@@ -466,7 +450,7 @@ mod tests {
     #[test]
     fn test_reverse_sort() {
         let mut arr = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-        strmetasort(&mut arr, flags::BACKWARDS, None);
+        strmetasort(&mut arr, SORTIT_BACKWARDS as u32, None);
         assert_eq!(arr, vec!["c", "b", "a"]);
     }
 
@@ -477,28 +461,28 @@ mod tests {
             "apple".to_string(),
             "Cherry".to_string(),
         ];
-        strmetasort(&mut arr, flags::IGNORING_CASE, None);
+        strmetasort(&mut arr, SORTIT_IGNORING_CASE as u32, None);
         assert_eq!(arr, vec!["apple", "Banana", "Cherry"]);
     }
 
     #[test]
     fn test_no_backslash() {
         assert_eq!(
-            zstrcmp("a\\bc", "abc", flags::IGNORING_BACKSLASHES),
+            zstrcmp("a\\bc", "abc", SORTIT_IGNORING_BACKSLASHES as u32),
             Ordering::Equal
         );
     }
 
     #[test]
     fn test_with_transforms_lowercases_cmp() {
-        let e = SortElt::new("ABC").with_transforms(flags::IGNORING_CASE);
+        let e = SortElt::new("ABC").with_transforms(SORTIT_IGNORING_CASE as u32);
         assert_eq!(e.orig, "ABC");
         assert_eq!(e.cmp, "abc");
     }
 
     #[test]
     fn test_with_transforms_strips_backslashes() {
-        let e = SortElt::new("a\\b\\c").with_transforms(flags::IGNORING_BACKSLASHES);
+        let e = SortElt::new("a\\b\\c").with_transforms(SORTIT_IGNORING_BACKSLASHES as u32);
         assert_eq!(e.orig, "a\\b\\c");
         assert_eq!(e.cmp, "abc");
     }
@@ -506,7 +490,7 @@ mod tests {
     #[test]
     fn test_with_transforms_combines_flags() {
         let e = SortElt::new("A\\BC")
-            .with_transforms(flags::IGNORING_CASE | flags::IGNORING_BACKSLASHES);
+            .with_transforms((SORTIT_IGNORING_CASE | SORTIT_IGNORING_BACKSLASHES) as u32);
         assert_eq!(e.cmp, "abc");
     }
 
@@ -542,7 +526,7 @@ mod tests {
         assert!(empty.is_empty());
 
         let mut single = vec!["only".to_string()];
-        strmetasort(&mut single, flags::BACKWARDS, None);
+        strmetasort(&mut single, SORTIT_BACKWARDS as u32, None);
         assert_eq!(single, vec!["only"]);
     }
 }
