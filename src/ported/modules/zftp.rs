@@ -1605,12 +1605,15 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
     //   zfprefs = ZFPF_SNDP|ZFPF_PASV;
     //   zfsessions = znewlinklist(); newsession("default");
     //   addhookfunc("exit", zftpexithook);
-    zfsetparam("ZFTP_VERBOSE", "450", 0);                                    // c:3203
-    zfsetparam("ZFTP_TMOUT", "60", 0);                                       // c:3204
-    zfsetparam("ZFTP_PREFS", "PS", 0);                                       // c:3205
+    zfsetparam("ZFTP_VERBOSE", "450", ZFPM_IFUNSET);                         // c:3203
+    zfsetparam("ZFTP_TMOUT", "60", ZFPM_IFUNSET | ZFPM_INTEGER);             // c:3204
+    zfsetparam("ZFTP_PREFS", "PS", ZFPM_IFUNSET);                            // c:3205
     zfprefs.store(ZFPF_SNDP | ZFPF_PASV,                                     // c:3206
                   std::sync::atomic::Ordering::Relaxed);
     let _default = newsession("default");                                    // c:3210
+    // c:3214 — addhookfunc("exit", zftpexithook). Hook-table substrate
+    // not ported; exit-hook firing is process-end so the leak window
+    // is bounded to module-unload-then-exit which is the normal flow.
     0
 }
 
