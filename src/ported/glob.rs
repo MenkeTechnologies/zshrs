@@ -117,96 +117,34 @@ pub const TT_TERABYTES:    i32 = 5;                                          // 
 pub const MAX_SORTS: usize = 12;                                             // c:164
 
 /// Sort specifier flags
-// Element of a glob sort                                                   // c:155
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Glob qualifier sort modes.
-/// Mirrors the `GS_*` sort-type constants from Src/glob.c —
-/// `gmatchcmp()` (line 936) dispatches on these for the `o`/`O`
-/// glob qualifier.
-pub enum GlobSort {
-    Name,
-    Depth,
-    Size,
-    Atime,
-    Mtime,
-    Ctime,
-    Links,
-    None,
-    Exec(usize), // index into exec sort strings
-}
+// `GlobSort` / `SortOrder` / `SortSpec` deleted — C uses bit-flag
+// `int tp` in `struct globsort { int tp; char *exec; }` (Src/glob.c:155):
+//   tp & ~GS_DESC selects the sort key (GS_NAME/GS_DEPTH/GS_EXEC/…),
+//   tp & GS_DESC reverses direction (`O` vs `o` qualifier),
+//   tp << GS_SHIFT carries the follow-link variants.
+// All those bits already exist as i32 constants at glob.rs:33+
+// (GS_NAME / GS_DEPTH / GS_SIZE / … / GS_DESC / GS_NONE / GS__SIZE /
+// …). The enum + Ascending/Descending + struct triple-wrapper was a
+// Rust-only convenience with no C counterpart; callers now operate
+// on the raw i32 the same way `gmatchcmp()` at glob.c:936 does.
 
-/// Sort order
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Ascending vs descending for glob sort.
-/// Port of the `o` vs `O` qualifier choice in Src/glob.c.
-pub enum SortOrder {
-    Ascending,
-    Descending,
-}
-
-/// A single sort specification
-#[derive(Debug, Clone)]
-/// One sort key for the `o`/`O` glob qualifier.
-/// Mirrors the per-key shape `gmatchcmp()` (Src/glob.c:936)
-/// uses when chaining multiple sort criteria.
-pub struct SortSpec {
-    pub sort_type: GlobSort,
-    pub order: SortOrder,
-    pub follow_links: bool,
-}
-
-/// Time units for qualifiers
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Time unit for `m`/`a`/`c` glob qualifier.
-/// Mirrors the units `qualtime()` (Src/glob.c:827) accepts —
-/// `s` seconds, `M` minutes, `h` hours, `d` days, `w` weeks, `m`
-/// months.
-pub enum TimeUnit {
-    Seconds,
-    Minutes,
-    Hours,
-    Days,
-    Weeks,
-    Months,
-}
-
-/// Size units for qualifiers
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Size unit for `L` glob qualifier.
-/// Mirrors `qualsize()` (Src/glob.c around line 1054) accepted
-/// units — `b` bytes / `k` KB / `m` MB / `p` 512-byte blocks.
-pub enum SizeUnit {
-    Bytes,
-    PosixBlocks,
-    Kilobytes,
-    Megabytes,
-    Gigabytes,
-    Terabytes,
-}
-
-/// Range comparison
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Comparison op for numeric glob qualifiers.
-/// Mirrors the `<`, `>`, `=` operators `qgetnum()`
-/// (Src/glob.c:827) parses for `L+1k`, `m-1`, etc.
-pub enum RangeOp {
-    Less,
-    Equal,
-    Greater,
-}
-
-impl RangeOp {
-    /// Apply the relational operator to (value, target). Direct port
-    /// of the inline `<`/`>`/`=` dispatch in zsh's qualifier handlers
-    /// (Src/glob.c, near line 827 qgetnum).
-    pub fn matches(&self, value: u64, target: u64) -> bool {
-        match self {
-            RangeOp::Less => value < target,
-            RangeOp::Equal => value == target,
-            RangeOp::Greater => value > target,
-        }
-    }
-}
+// `TimeUnit` / `SizeUnit` / `RangeOp` enums deleted — Rust-only
+// wrappers around constants/chars that exist as raw values in C:
+//   `TimeUnit::Seconds` → TT_SECONDS i32 (glob.c:126 → glob.rs:99)
+//   `TimeUnit::Minutes` → TT_MINS (c:123)
+//   `TimeUnit::Hours`   → TT_HOURS (c:122)
+//   `TimeUnit::Days`    → TT_DAYS (c:121)
+//   `TimeUnit::Weeks`   → TT_WEEKS (c:124)
+//   `TimeUnit::Months`  → TT_MONTHS (c:125)
+//   `SizeUnit::Bytes`   → TT_BYTES (c:128)
+//   `SizeUnit::PosixBlocks` → TT_POSIX_BLOCKS (c:129)
+//   `SizeUnit::Kilobytes`   → TT_KILOBYTES (c:130)
+//   `SizeUnit::Megabytes`   → TT_MEGABYTES (c:131)
+//   `SizeUnit::Gigabytes`   → TT_GIGABYTES (c:132)
+//   `SizeUnit::Terabytes`   → TT_TERABYTES (c:133)
+//   `RangeOp::Less`/`Equal`/`Greater` → raw chars `<` `=` `>`
+//      (zsh's qgetnum at glob.c:827 returns the raw operator char
+//      and the qualifier handlers switch on it inline).
 
 /// A glob qualifier function
 // Next qualifier, must match                                              // c:139
@@ -249,30 +187,33 @@ pub enum Qualifier {
     OwnedByUid(u32),
     OwnedByGid(u32),
 
-    /// Numeric qualifiers with range
+    /// Numeric qualifiers with range. `unit` is a `TT_*` i32
+    /// (glob.rs:99-113 / glob.c:121-133); `op` is the raw range
+    /// operator char (`<`, `=`, `>`) — mirrors C's qgetnum which
+    /// returns the operator char and the handler switches inline.
     Size {
         value: u64,
-        unit: SizeUnit,
-        op: RangeOp,
+        unit: i32,
+        op: char,
     },
     Links {
         value: u64,
-        op: RangeOp,
+        op: char,
     },
     Atime {
         value: i64,
-        unit: TimeUnit,
-        op: RangeOp,
+        unit: i32,
+        op: char,
     },
     Mtime {
         value: i64,
-        unit: TimeUnit,
-        op: RangeOp,
+        unit: i32,
+        op: char,
     },
     Ctime {
         value: i64,
-        unit: TimeUnit,
-        op: RangeOp,
+        unit: i32,
+        op: char,
     },
 
     /// Mode specification
@@ -375,86 +316,62 @@ impl GlobMatch {
         })
     }
 
-    pub fn compare(&self, other: &Self, specs: &[SortSpec], numeric_sort: bool) -> Ordering {
-        for spec in specs {
-            let cmp = match spec.sort_type {
-                GlobSort::Name => {
-                    use crate::ported::sort::zstrcmp;
-                    if numeric_sort {
-                        zstrcmp(
-                            &self.name,
-                            &other.name,
-                            crate::zsh_h::SORTIT_NUMERICALLY as u32,
-                        )
-                    } else {
-                        gmatchcmp(&self.name, &other.name)
-                    }
+    /// Port of `gmatchcmp(Gmatch a, Gmatch b)` from Src/glob.c:936
+    /// — the qsort comparator the `o`/`O` glob qualifier drives.
+    /// `specs` is the equivalent of the C `gf_sortlist` array, each
+    /// entry a packed i32 (the C `struct globsort.tp` field):
+    ///   bits 0..=4   — primary key (GS_NAME / GS_DEPTH / GS_EXEC /
+    ///                  GS_SIZE / GS_ATIME / GS_MTIME / GS_CTIME /
+    ///                  GS_LINKS, plus GS_NONE marker)
+    ///   bits << GS_SHIFT — same keys, follow-link variant
+    ///                      (GS__SIZE / GS__ATIME / …)
+    ///   GS_DESC bit — reverse direction (`O` qualifier instead of `o`)
+    pub fn compare(&self, other: &Self, specs: &[i32], numeric_sort: bool) -> Ordering {
+        for &tp in specs {                                                   // c:943 for(i = gf_nsorts, ...)
+            let key = tp & !GS_DESC;                                         // c:944 s->tp & ~GS_DESC
+            let follow = (key & GS_LINKED) != 0;                             // follow-link variant
+            let key_unshifted = if follow { key >> GS_SHIFT } else { key };
+            let cmp = if key_unshifted == GS_NAME {                          // c:945
+                use crate::ported::sort::zstrcmp;
+                if numeric_sort {
+                    zstrcmp(&self.name, &other.name,
+                            crate::zsh_h::SORTIT_NUMERICALLY as u32)
+                } else {
+                    gmatchcmp(&self.name, &other.name)
                 }
-                GlobSort::Depth => {
-                    let self_depth = self.path.components().count();
-                    let other_depth = other.path.components().count();
-                    self_depth.cmp(&other_depth)
-                }
-                GlobSort::Size => {
-                    if spec.follow_links {
-                        self.target_size.cmp(&other.target_size)
-                    } else {
-                        self.size.cmp(&other.size)
-                    }
-                }
-                GlobSort::Atime => {
-                    if spec.follow_links {
-                        other.target_atime.cmp(&self.target_atime)
-                    } else {
-                        other.atime.cmp(&self.atime)
-                    }
-                }
-                GlobSort::Mtime => {
-                    if spec.follow_links {
-                        other.target_mtime.cmp(&self.target_mtime)
-                    } else {
-                        other.mtime.cmp(&self.mtime)
-                    }
-                }
-                GlobSort::Ctime => {
-                    if spec.follow_links {
-                        other.target_ctime.cmp(&self.target_ctime)
-                    } else {
-                        other.ctime.cmp(&self.ctime)
-                    }
-                }
-                GlobSort::Links => {
-                    if spec.follow_links {
-                        other.target_links.cmp(&self.target_links)
-                    } else {
-                        other.links.cmp(&self.links)
-                    }
-                }
-                GlobSort::None => Ordering::Equal,
-                GlobSort::Exec(idx) => {
-                    let a = self.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
-                    let b = other
-                        .sort_strings
-                        .get(idx)
-                        .map(|s| s.as_str())
-                        .unwrap_or("");
-                    if numeric_sort {
-                        crate::ported::sort::zstrcmp(
-                            a,
-                            b,
-                            crate::zsh_h::SORTIT_NUMERICALLY as u32,
-                        )
-                    } else {
-                        a.cmp(b)
-                    }
-                }
+            } else if key_unshifted == GS_DEPTH {                            // c:949
+                self.path.components().count().cmp(&other.path.components().count())
+            } else if key_unshifted == GS_SIZE {                             // c:985
+                if follow { self.target_size.cmp(&other.target_size) }
+                else { self.size.cmp(&other.size) }
+            } else if key_unshifted == GS_ATIME {                            // c:988
+                if follow { other.target_atime.cmp(&self.target_atime) }
+                else { other.atime.cmp(&self.atime) }
+            } else if key_unshifted == GS_MTIME {                            // c:995
+                if follow { other.target_mtime.cmp(&self.target_mtime) }
+                else { other.mtime.cmp(&self.mtime) }
+            } else if key_unshifted == GS_CTIME {
+                if follow { other.target_ctime.cmp(&self.target_ctime) }
+                else { other.ctime.cmp(&self.ctime) }
+            } else if key_unshifted == GS_LINKS {
+                if follow { other.target_links.cmp(&self.target_links) }
+                else { other.links.cmp(&self.links) }
+            } else if key_unshifted == GS_EXEC {                             // c:974
+                // sort-key string index packed in the upper bits.
+                let idx = ((key as u32) >> 16) as usize;
+                let a = self.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
+                let b = other.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
+                if numeric_sort {
+                    crate::ported::sort::zstrcmp(a, b,
+                        crate::zsh_h::SORTIT_NUMERICALLY as u32)
+                } else { a.cmp(b) }
+            } else if (key & GS_NONE) != 0 {
+                Ordering::Equal
+            } else {
+                Ordering::Equal
             };
-
             if cmp != Ordering::Equal {
-                return match spec.order {
-                    SortOrder::Ascending => cmp,
-                    SortOrder::Descending => cmp.reverse(),
-                };
+                return if (tp & GS_DESC) != 0 { cmp.reverse() } else { cmp };
             }
         }
         Ordering::Equal
@@ -542,7 +459,12 @@ pub struct QualifierSet {                                                   // c
     pub alternatives: Vec<Vec<Qualifier>>,
     pub negated: bool,
     pub follow_links: bool,
-    pub sorts: Vec<SortSpec>,
+    /// Packed sort-spec flags, one per `o`/`O` qualifier in the pattern.
+    /// Each entry is the C `struct globsort.tp` field — `GS_NAME` /
+    /// `GS_DEPTH` / `GS_EXEC` / `GS_SIZE` / `GS_ATIME` / `GS_MTIME` /
+    /// `GS_CTIME` / `GS_LINKS` (or their `<< GS_SHIFT` follow-link
+    /// variants), OR'd with `GS_DESC` for reverse direction.
+    pub sorts: Vec<i32>,                                                     // c:155 struct globsort.tp[]
     pub first: Option<i32>,
     pub last: Option<i32>,
     pub colon_mods: Option<String>,
@@ -849,54 +771,30 @@ impl GlobData {
                         op,
                     });
                 }
-                // Sort
+                // Sort qualifier — `o<key>` ascending / `O<key>`
+                // descending. Mirrors the parser arm in zsh's glob.c
+                // that builds `struct globsort` entries (tp = GS_* OR
+                // GS_DESC, optionally shifted by GS_SHIFT for the
+                // follow-links variant).
                 'o' | 'O' => {
                     let desc = c == 'O';
                     if let Some(&sc) = chars.peek() {
-                        let sort_type = match sc {
-                            'n' => {
-                                chars.next();
-                                GlobSort::Name
-                            }
-                            'L' => {
-                                chars.next();
-                                GlobSort::Size
-                            }
-                            'l' => {
-                                chars.next();
-                                GlobSort::Links
-                            }
-                            'a' => {
-                                chars.next();
-                                GlobSort::Atime
-                            }
-                            'm' => {
-                                chars.next();
-                                GlobSort::Mtime
-                            }
-                            'c' => {
-                                chars.next();
-                                GlobSort::Ctime
-                            }
-                            'd' => {
-                                chars.next();
-                                GlobSort::Depth
-                            }
-                            'N' => {
-                                chars.next();
-                                GlobSort::None
-                            }
-                            _ => GlobSort::Name,
+                        let key: i32 = match sc {
+                            'n' => { chars.next(); GS_NAME }
+                            'L' => { chars.next(); GS_SIZE }
+                            'l' => { chars.next(); GS_LINKS }
+                            'a' => { chars.next(); GS_ATIME }
+                            'm' => { chars.next(); GS_MTIME }
+                            'c' => { chars.next(); GS_CTIME }
+                            'd' => { chars.next(); GS_DEPTH }
+                            'N' => { chars.next(); GS_NONE }
+                            _   => GS_NAME,
                         };
-                        qs.sorts.push(SortSpec {
-                            sort_type,
-                            order: if desc {
-                                SortOrder::Descending
-                            } else {
-                                SortOrder::Ascending
-                            },
-                            follow_links: follow,
-                        });
+                        let shifted = if follow && (key & GS_NORMAL) != 0 {
+                            key << GS_SHIFT
+                        } else { key };
+                        let tp = shifted | (if desc { GS_DESC } else { 0 });
+                        qs.sorts.push(tp);
                     }
                 }
                 // Flags
@@ -953,29 +851,14 @@ impl GlobData {
     fn parse_size_spec(
         &self,
         chars: &mut std::iter::Peekable<std::str::Chars>,
-    ) -> (SizeUnit, RangeOp, u64) {
-        let unit = match chars.peek() {
-            Some('p') | Some('P') => {
-                chars.next();
-                SizeUnit::PosixBlocks
-            }
-            Some('k') | Some('K') => {
-                chars.next();
-                SizeUnit::Kilobytes
-            }
-            Some('m') | Some('M') => {
-                chars.next();
-                SizeUnit::Megabytes
-            }
-            Some('g') | Some('G') => {
-                chars.next();
-                SizeUnit::Gigabytes
-            }
-            Some('t') | Some('T') => {
-                chars.next();
-                SizeUnit::Terabytes
-            }
-            _ => SizeUnit::Bytes,
+    ) -> (i32, char, u64) {
+        let unit: i32 = match chars.peek() {
+            Some('p') | Some('P') => { chars.next(); TT_POSIX_BLOCKS }
+            Some('k') | Some('K') => { chars.next(); TT_KILOBYTES }
+            Some('m') | Some('M') => { chars.next(); TT_MEGABYTES }
+            Some('g') | Some('G') => { chars.next(); TT_GIGABYTES }
+            Some('t') | Some('T') => { chars.next(); TT_TERABYTES }
+            _ => TT_BYTES,
         };
         let (op, val) = self.parse_range_spec(chars);
         (unit, op, val)
@@ -984,58 +867,31 @@ impl GlobData {
     fn schedgetfn(
         &self,
         chars: &mut std::iter::Peekable<std::str::Chars>,
-    ) -> (TimeUnit, RangeOp, u64) {
-        let unit = match chars.peek() {
-            Some('s') => {
-                chars.next();
-                TimeUnit::Seconds
-            }
-            Some('m') => {
-                chars.next();
-                TimeUnit::Minutes
-            }
-            Some('h') => {
-                chars.next();
-                TimeUnit::Hours
-            }
-            Some('d') => {
-                chars.next();
-                TimeUnit::Days
-            }
-            Some('w') => {
-                chars.next();
-                TimeUnit::Weeks
-            }
-            Some('M') => {
-                chars.next();
-                TimeUnit::Months
-            }
-            _ => TimeUnit::Days,
+    ) -> (i32, char, u64) {
+        let unit: i32 = match chars.peek() {
+            Some('s') => { chars.next(); TT_SECONDS }
+            Some('m') => { chars.next(); TT_MINS }
+            Some('h') => { chars.next(); TT_HOURS }
+            Some('d') => { chars.next(); TT_DAYS }
+            Some('w') => { chars.next(); TT_WEEKS }
+            Some('M') => { chars.next(); TT_MONTHS }
+            _ => TT_DAYS,
         };
         let (op, val) = self.parse_range_spec(chars);
         (unit, op, val)
     }
 
-    fn parse_range_spec(&self, chars: &mut std::iter::Peekable<std::str::Chars>) -> (RangeOp, u64) {
-        let op = match chars.peek() {
-            Some('+') => {
-                chars.next();
-                RangeOp::Greater
-            }
-            Some('-') => {
-                chars.next();
-                RangeOp::Less
-            }
-            _ => RangeOp::Equal,
+    fn parse_range_spec(&self, chars: &mut std::iter::Peekable<std::str::Chars>) -> (char, u64) {
+        // C's qgetnum at glob.c:827 returns the operator char inline.
+        // `+N` = greater, `-N` = less, bare digits = equal.
+        let op: char = match chars.peek() {
+            Some('+') => { chars.next(); '>' }
+            Some('-') => { chars.next(); '<' }
+            _ => '=',
         };
         let mut num = String::new();
         while let Some(&c) = chars.peek() {
-            if c.is_ascii_digit() {
-                num.push(c);
-                chars.next();
-            } else {
-                break;
-            }
+            if c.is_ascii_digit() { num.push(c); chars.next(); } else { break; }
         }
         let val = num.parse().unwrap_or(0);
         (op, val)
@@ -1366,71 +1222,92 @@ impl GlobData {
             Qualifier::OwnedByUid(uid) => meta.uid() == *uid,
             Qualifier::OwnedByGid(gid) => meta.gid() == *gid,
             Qualifier::Size { value, unit, op } => {
+                // Inline cmp + scale — mirrors glob.c qualsize at c:1054.
+                let cmp = |a: u64, b: u64| match *op {
+                    '<' => a <  b,
+                    '>' => a >  b,
+                    _   => a == b,
+                };
                 let size = meta.size();
-                let scaled = match unit {
-                    SizeUnit::Bytes => size,
-                    SizeUnit::PosixBlocks => size.div_ceil(512),
-                    SizeUnit::Kilobytes => size.div_ceil(1024),
-                    SizeUnit::Megabytes => size.div_ceil(1048576),
-                    SizeUnit::Gigabytes => size.div_ceil(1073741824),
-                    SizeUnit::Terabytes => size.div_ceil(1099511627776),
+                let scaled = match *unit {
+                    u if u == TT_BYTES        => size,
+                    u if u == TT_POSIX_BLOCKS => size.div_ceil(512),
+                    u if u == TT_KILOBYTES    => size.div_ceil(1024),
+                    u if u == TT_MEGABYTES    => size.div_ceil(1048576),
+                    u if u == TT_GIGABYTES    => size.div_ceil(1073741824),
+                    u if u == TT_TERABYTES    => size.div_ceil(1099511627776),
+                    _ => size,
                 };
-                op.matches(scaled, *value)
+                cmp(scaled, *value)
             }
-            Qualifier::Links { value, op } => op.matches(meta.nlink(), *value),
-            Qualifier::Atime { value, unit, op } => {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64;
-                let diff = now - meta.atime();
-                // Inline time-unit scaling — Src/glob.c qualifier
-                // handlers (a/m/c with M/h/d/w suffix) divide inline.
-                let scaled = match unit {
-                    TimeUnit::Seconds => diff,
-                    TimeUnit::Minutes => diff / 60,
-                    TimeUnit::Hours => diff / 3600,
-                    TimeUnit::Days => diff / 86400,
-                    TimeUnit::Weeks => diff / 604800,
-                    TimeUnit::Months => diff / 2592000,
+            Qualifier::Links { value, op } => {
+                let cmp = |a: u64, b: u64| match *op {
+                    '<' => a <  b,
+                    '>' => a >  b,
+                    _   => a == b,
                 };
-                op.matches(scaled as u64, *value as u64)
+                cmp(meta.nlink(), *value)
+            }
+            Qualifier::Atime { value, unit, op } => {
+                // Inline time-unit scaling — Src/glob.c:872 qualtime.
+                let cmp = |a: i64, b: i64| match *op {
+                    '<' => a <  b,
+                    '>' => a >  b,
+                    _   => a == b,
+                };
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap()
+                          .as_secs() as i64;
+                let diff = now - meta.atime();
+                let scaled = match *unit {
+                    u if u == TT_SECONDS => diff,
+                    u if u == TT_MINS    => diff / 60,
+                    u if u == TT_HOURS   => diff / 3600,
+                    u if u == TT_DAYS    => diff / 86400,
+                    u if u == TT_WEEKS   => diff / 604800,
+                    u if u == TT_MONTHS  => diff / 2592000,
+                    _ => diff,
+                };
+                cmp(scaled, *value)
             }
             Qualifier::Mtime { value, unit, op } => {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64;
-                let diff = now - meta.mtime();
-                // Inline time-unit scaling — Src/glob.c qualifier
-                // handlers (a/m/c with M/h/d/w suffix) divide inline.
-                let scaled = match unit {
-                    TimeUnit::Seconds => diff,
-                    TimeUnit::Minutes => diff / 60,
-                    TimeUnit::Hours => diff / 3600,
-                    TimeUnit::Days => diff / 86400,
-                    TimeUnit::Weeks => diff / 604800,
-                    TimeUnit::Months => diff / 2592000,
+                let cmp = |a: i64, b: i64| match *op {
+                    '<' => a <  b,
+                    '>' => a >  b,
+                    _   => a == b,
                 };
-                op.matches(scaled as u64, *value as u64)
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap()
+                          .as_secs() as i64;
+                let diff = now - meta.mtime();
+                let scaled = match *unit {
+                    u if u == TT_SECONDS => diff,
+                    u if u == TT_MINS    => diff / 60,
+                    u if u == TT_HOURS   => diff / 3600,
+                    u if u == TT_DAYS    => diff / 86400,
+                    u if u == TT_WEEKS   => diff / 604800,
+                    u if u == TT_MONTHS  => diff / 2592000,
+                    _ => diff,
+                };
+                cmp(scaled, *value)
             }
             Qualifier::Ctime { value, unit, op } => {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64;
-                let diff = now - meta.ctime();
-                // Inline time-unit scaling — Src/glob.c qualifier
-                // handlers (a/m/c with M/h/d/w suffix) divide inline.
-                let scaled = match unit {
-                    TimeUnit::Seconds => diff,
-                    TimeUnit::Minutes => diff / 60,
-                    TimeUnit::Hours => diff / 3600,
-                    TimeUnit::Days => diff / 86400,
-                    TimeUnit::Weeks => diff / 604800,
-                    TimeUnit::Months => diff / 2592000,
+                let cmp = |a: i64, b: i64| match *op {
+                    '<' => a <  b,
+                    '>' => a >  b,
+                    _   => a == b,
                 };
-                op.matches(scaled as u64, *value as u64)
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap()
+                          .as_secs() as i64;
+                let diff = now - meta.ctime();
+                let scaled = match *unit {
+                    u if u == TT_SECONDS => diff,
+                    u if u == TT_MINS    => diff / 60,
+                    u if u == TT_HOURS   => diff / 3600,
+                    u if u == TT_DAYS    => diff / 86400,
+                    u if u == TT_WEEKS   => diff / 604800,
+                    u if u == TT_MONTHS  => diff / 2592000,
+                    _ => diff,
+                };
+                cmp(scaled, *value)
             }
             Qualifier::Mode { yes, no } => {
                 let m = mode & 0o7777;
@@ -1459,19 +1336,16 @@ impl GlobData {
     }
 
     fn sort_matches(&mut self) {
-        let specs = self
+        // Default sort is GS_NAME ascending (c:204 gf_sortlist
+        // initial setup). Per-qualifier `o<key>` / `O<key>` overrides.
+        let specs: Vec<i32> = self
             .qualifiers
             .as_ref()
             .map(|q| q.sorts.clone())
-            .unwrap_or_else(|| {
-                vec![SortSpec {
-                    sort_type: GlobSort::Name,
-                    order: SortOrder::Ascending,
-                    follow_links: false,
-                }]
-            });
+            .unwrap_or_else(|| vec![GS_NAME]);
 
-        if specs.iter().any(|s| s.sort_type == GlobSort::None) {
+        // GS_NONE marker — caller wants no sort at all.
+        if specs.iter().any(|&tp| (tp & GS_NONE) != 0) {
             return;
         }
 
@@ -2670,57 +2544,10 @@ pub fn qualsize(s: &str, units: char) -> Option<(i64, &str)> {
     Some((num, rest))
 }
 
-/// Sort glob matches by type (from glob.c gmatchcmp lines 3595-3680)
-/// Sort a glob result array per the `o` qualifier.
-/// Port of the `gmatchcmp()`-driven sort step in `zglob()`
-/// (Src/glob.c:1214).
-pub fn sort_matches_by_type(matches: &mut [String], sort_type: GlobSort, reverse: bool) {
-    match sort_type {
-        GlobSort::Name => {
-            matches.sort();
-        }
-        GlobSort::Size => {
-            matches.sort_by(|a, b| {
-                let size_a = std::fs::metadata(a).map(|m| m.len()).unwrap_or(0);
-                let size_b = std::fs::metadata(b).map(|m| m.len()).unwrap_or(0);
-                size_a.cmp(&size_b)
-            });
-        }
-        GlobSort::Mtime => {
-            matches.sort_by(|a, b| {
-                let time_a = std::fs::metadata(a).and_then(|m| m.modified()).ok();
-                let time_b = std::fs::metadata(b).and_then(|m| m.modified()).ok();
-                time_a.cmp(&time_b)
-            });
-        }
-        GlobSort::Atime => {
-            matches.sort_by(|a, b| {
-                let time_a = std::fs::metadata(a).and_then(|m| m.accessed()).ok();
-                let time_b = std::fs::metadata(b).and_then(|m| m.accessed()).ok();
-                time_a.cmp(&time_b)
-            });
-        }
-        GlobSort::Depth => {
-            matches.sort_by(|a, b| {
-                let depth_a = a.matches('/').count();
-                let depth_b = b.matches('/').count();
-                depth_a.cmp(&depth_b)
-            });
-        }
-        GlobSort::Links => {
-            matches.sort_by(|a, b| {
-                let links_a = std::fs::metadata(a).map(|m| m.nlink()).unwrap_or(0);
-                let links_b = std::fs::metadata(b).map(|m| m.nlink()).unwrap_or(0);
-                links_a.cmp(&links_b)
-            });
-        }
-        _ => {}
-    }
-
-    if reverse {
-        matches.reverse();
-    }
-}
+// `sort_matches_by_type` deleted — dead code (no callers anywhere
+// in the tree). The sort path lives in `GlobMatch::compare` which
+// dispatches off the canonical `GS_*` tp bits exactly like C's
+// `gmatchcmp()` at glob.c:936.
 
 /// File qualifier test functions (from glob.c qual* functions)
 pub mod qualifiers {
