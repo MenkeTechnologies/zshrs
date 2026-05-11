@@ -3929,12 +3929,39 @@ pub fn zftp_rmsession(_name: &str, args: &[&str], _flags: i32) -> i32 {         
     0                                                                           // c:2995
 }
 
-/// Port of `zftp_cleanup()` from `Src/Modules/zftp.c:3128`. Closes
-/// the active session and clears the global ZFTP state.
-pub fn zftp_cleanup() -> i32 {
-    if let Ok(mut state) = ZFTP_STATE.lock() {
-        *state = Zftp::new();
+/// Port of `zftp_cleanup()` from `Src/Modules/zftp.c:3128`. Walks
+/// every session sending QUIT (via zfclose) on the current one and
+/// closing the control fd on others, then clears the session table.
+pub fn zftp_cleanup() -> i32 {                                              // c:3128
+    // c:3134 — Zftp_session cursess = zfsess; (snapshot current).
+    let cursess = ZFTP_STATE.lock().ok()
+        .and_then(|s| s.current_name().map(|n| n.to_string()));
+    let session_names: Vec<String> = ZFTP_STATE.lock().ok()
+        .map(|s| s.session_names().iter().map(|n| n.to_string()).collect())
+        .unwrap_or_default();
+    // c:3135-3142 — walk every session: zfclosedata + zfclose(leaveparams).
+    for nm in session_names {                                               // c:3136
+        // c:3137 — zfsess = (Zftp_session)nptr->dat; (switch to session).
+        if let Ok(mut s) = ZFTP_STATE.lock() {
+            let _ = s.set_current(&nm);
+        }
+        zfclosedata();                                                      // c:3140
+        // c:3144 — zfclose(zfsess != cursess): non-current sessions keep
+        // their params; current session goes through full unset.
+        let leaveparams = if Some(&nm) != cursess.as_ref() { 1 } else { 0 };
+        zfclose(leaveparams);                                               // c:3144
     }
+    // c:3146-3151 — clear lastmsg, ZFTP_SESSION, freelinklist sessions.
+    if let Ok(mut m) = lastmsg.lock() {
+        m.clear();                                                          // c:3147
+    }
+    zfunsetparam("ZFTP_SESSION");                                           // c:3149
+    if let Ok(mut state) = ZFTP_STATE.lock() {
+        *state = Zftp::new();                                               // c:3150 freelinklist
+    }
+    // c:3152 — zfree(zfstatusp): per-session status array. zfstatusp
+    // substrate isn't ported (per-session bits live on zftp_session
+    // directly), so nothing to free.
     0
 }
 
