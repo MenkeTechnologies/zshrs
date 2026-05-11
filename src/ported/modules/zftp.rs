@@ -582,7 +582,7 @@ impl zftp_session {
             return Err(io::Error::other(resp.1));
         }
 
-        let (ip, port) = zfopendata(&resp.1)?;
+        let (ip, port) = parse_pasv_response(&resp.1)?;
         let addr = format!("{}:{}", ip, port);
 
         TcpStream::connect_timeout(
@@ -722,8 +722,11 @@ impl zftp_session {
     }
 }
 
-/// Port of `zfopendata()` from `Src/Modules/zftp.c:859`.
-fn zfopendata(msg: &str) -> io::Result<(String, u16)> {
+/// Helper: parse a `227 Entering Passive Mode (h1,h2,h3,h4,p1,p2)`
+/// FTP reply into (ip, port). Direct extraction of the sscanf path
+/// inside C zfopendata (Src/Modules/zftp.c:925-941). Allowlisted as
+/// a Rust-only architectural helper since C does the parse inline.
+fn parse_pasv_response(msg: &str) -> io::Result<(String, u16)> {                // c:925 inline
     let start = msg
         .find('(')
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid PASV response"))?;
@@ -747,6 +750,118 @@ fn zfopendata(msg: &str) -> io::Result<(String, u16)> {
     let port = (nums[4] << 8) + nums[5];
 
     Ok((ip, port))
+}
+
+/// Port of `zfopendata()` from `Src/Modules/zftp.c:859`.
+/// C: `static int zfopendata(char *name, union tcp_sockaddr *zdsockp,
+/// int *is_passivep)` — set up a data connection (PASV-preferred,
+/// PORT-mode fallback). Returns 0 success, 1 failure. Stores the
+/// resulting fd in `zfsess->dfd` and sets `*is_passivep`.
+///
+/// Rust port: `is_passive` is returned via the tuple instead of a
+/// `*int` out-param (Rust doesn't expose `union tcp_sockaddr` so the
+/// `zdsockp` slot is gone). PORT-mode falls back to `TcpListener` for
+/// the local bind+listen+accept; PASV path uses `TcpStream::connect`
+/// and stores the connected stream's fd as `sess.dfd`. The non-PASV
+/// branch requires the caller to accept(2) before reading.
+#[allow(non_snake_case)]
+pub fn zfopendata(name: &str) -> (i32, bool) {                                  // c:859
+    use std::sync::atomic::Ordering;
+    // c:862-865 — zfprefs ZFPF_SNDP|ZFPF_PASV preference. Rust port
+    // defaults to PASV; the PORT-mode path is reachable when the
+    // server rejects PASV (500-504) per the C fallback at c:884.
+    let try_pasv: bool = true;                                                  // c:866
+
+    if try_pasv {
+        // c:879 — psv_cmd = "PASV\r\n"; (EPSV unsupported in Rust port).
+        if zfsendcmd("PASV\r\n") == 6 {                                         // c:881
+            return (1, false);                                                  // c:882
+        }
+        let code = lastcode.load(Ordering::Relaxed);
+        if (500..=504).contains(&code) {                                        // c:884 PASV unsupported
+            zfclosedata();                                                      // c:888
+            // c:889 — fall through to PORT mode.
+        } else {
+            // c:899 — parse the PASV reply.
+            let last = lastmsg.lock().ok().map(|m| m.clone()).unwrap_or_default();
+            let (ip, port) = match parse_pasv_response(&last) {                 // c:925
+                Ok(t) => t,
+                Err(_) => {
+                    crate::ported::utils::zwarnnam(
+                        name, &format!("bad response to PASV: {}", last));
+                    zfclosedata();
+                    return (1, false);                                          // c:946
+                }
+            };
+            // c:954 — connect from data socket to remote (ip:port).
+            let addr = format!("{}:{}", ip, port);
+            let stream = match std::net::TcpStream::connect(&addr) {            // c:958
+                Ok(s) => s,
+                Err(_) => {
+                    crate::ported::utils::zwarnnam(name, "can't open data socket");
+                    zfclosedata();
+                    return (1, false);
+                }
+            };
+            use std::os::unix::io::AsRawFd;
+            let dfd_raw = stream.as_raw_fd();
+            // Keep the stream alive past this fn so the fd stays open;
+            // the session owns the fd via `dfd`.
+            std::mem::forget(stream);
+            if let Ok(mut state) = ZFTP_STATE.lock() {
+                if let Some(sess) = state.get_session_mut(None) {
+                    sess.dfd = dfd_raw;                                         // c:961 dfd stored
+                }
+            }
+            return (0, true);                                                   // c:1041 SUCCESS PASV
+        }
+    }
+
+    // c:967-1037 — PORT-mode (active FTP): bind+listen locally, send
+    // PORT a,b,c,d,p1,p2, return so caller can accept().
+    let listener = match std::net::TcpListener::bind("0.0.0.0:0") {             // c:967 bind
+        Ok(l) => l,
+        Err(_) => {
+            crate::ported::utils::zwarnnam(name, "can't bind data socket");
+            return (1, false);                                                  // c:870
+        }
+    };
+    let local = match listener.local_addr() {
+        Ok(a) => a,
+        Err(_) => {
+            crate::ported::utils::zwarnnam(name, "getsockname failed");
+            return (1, false);
+        }
+    };
+    // c:986 — listen with backlog 1; std::net::TcpListener::bind already listens.
+    let ipv4 = match local.ip() {
+        std::net::IpAddr::V4(v) => v.octets(),
+        std::net::IpAddr::V6(_) => {
+            crate::ported::utils::zwarnnam(name, "PORT mode requires IPv4");
+            return (1, false);
+        }
+    };
+    let port = local.port();
+    // c:1003-1017 — PORT cmd format: "PORT h1,h2,h3,h4,p1,p2\r\n".
+    let port_cmd = format!(
+        "PORT {},{},{},{},{},{}\r\n",
+        ipv4[0], ipv4[1], ipv4[2], ipv4[3],
+        port >> 8, port & 0xff,
+    );
+    if zfsendcmd(&port_cmd) > 2 {                                               // c:1018
+        crate::ported::utils::zwarnnam(name, "PORT command failed");
+        return (1, false);                                                      // c:1019
+    }
+    // c:1029 — store listening fd as dfd; caller does accept().
+    use std::os::unix::io::AsRawFd;
+    let lfd = listener.as_raw_fd();
+    std::mem::forget(listener);
+    if let Ok(mut state) = ZFTP_STATE.lock() {
+        if let Some(sess) = state.get_session_mut(None) {
+            sess.dfd = lfd;                                                     // c:1029
+        }
+    }
+    (0, false)                                                                  // c:1037 SUCCESS PORT
 }
 
 /// FTP sessions manager.
@@ -1314,7 +1429,7 @@ mod tests {
     #[test]
     fn test_parse_pasv_response() {
         let msg = "227 Entering Passive Mode (192,168,1,1,4,1)";
-        let (ip, port) = zfopendata(msg).unwrap();
+        let (ip, port) = parse_pasv_response(msg).unwrap();
         assert_eq!(ip, "192.168.1.1");
         assert_eq!(port, 1025);
     }
@@ -1322,7 +1437,7 @@ mod tests {
     #[test]
     fn test_parse_pasv_response_invalid() {
         let msg = "invalid";
-        assert!(zfopendata(msg).is_err());
+        assert!(parse_pasv_response(msg).is_err());
     }
 
     #[test]
@@ -1631,46 +1746,20 @@ pub fn zfgetcwd() -> i32 {
 
 /// Port of `zfgetdata()` from `Src/Modules/zftp.c:1065`.
 /// C: `static int zfgetdata(char *name, char *rest, char *cmd, int getsize)` —
-/// open the data connection (PASV path), optionally send REST, then
-/// send the transfer command. Returns 0 on success, 1 on failure.
+/// open the data connection (PASV or PORT mode via zfopendata),
+/// optionally send REST, send the transfer command, and (PORT mode)
+/// accept(2) on the listening socket. Returns 0 success, 1 failure.
 #[allow(non_snake_case)]
 pub fn zfgetdata(name: &str, rest: &str, cmd: &str, getsize: i32) -> i32 {    // c:1065
     // c:1067-1069 — locals at fn top.
-    // C: ZSOCKLEN_T len; int newfd, is_passive; union tcp_sockaddr zdsock;
-    // PASV-only path: len + newfd are unused (no accept(2) for PORT mode).
     let is_passive: bool;                                                     // c:1068
 
-    // c:1071-1072 — zfopendata(name, &zdsock, &is_passive). The C zfopendata
-    // is a 200-line bind+listen+PORT setup; Rust port-equivalent uses the
-    // existing PASV-only helper. Send PASV, parse the (h1,h2,h3,h4,p1,p2)
-    // response into (ip, port), then connect TcpStream.
-    if zfsendcmd("PASV\r\n") > 2 {                                            // c:881 zfsendcmd(psv_cmd)
-        return 1;                                                             // c:882
+    // c:1071-1072 — zfopendata: full PASV/PORT setup; sets sess.dfd.
+    let (rc, ip) = zfopendata(name);                                          // c:1071
+    if rc != 0 {                                                              // c:1071
+        return 1;                                                             // c:1072
     }
-    is_passive = true;
-
-    // Parse the (h1,h2,h3,h4,p1,p2) tuple from lastmsg.
-    let last = lastmsg.lock().ok().map(|m| m.clone()).unwrap_or_default();
-    let (ip, port) = match zfopendata(&last) {
-        Ok(t) => t,
-        Err(_) => {
-            crate::ported::utils::zwarnnam(name, "bad PASV response");
-            return 1;
-        }
-    };
-
-    // Connect to the data port. Replaces C's socket()+connect() pair
-    // at c:865-869 + the post-PASV connect.
-    let addr = format!("{}:{}", ip, port);
-    let data_stream = match std::net::TcpStream::connect(&addr) {
-        Ok(s) => s,
-        Err(_) => {
-            crate::ported::utils::zwarnnam(name, "can't open data socket");
-            return 1;
-        }
-    };
-    use std::os::unix::io::AsRawFd;
-    let dfd_raw = data_stream.as_raw_fd();
+    is_passive = ip;
 
     // c:1084-1087 — REST command for resume.
     if !rest.is_empty() && zfsendcmd(rest) > 3 {
@@ -1706,19 +1795,41 @@ pub fn zfgetdata(name: &str, rest: &str, cmd: &str, getsize: i32) -> i32 {    //
         }
     }
 
-    // c:1118-1143 — PORT-mode accept handling. Rust port is PASV-only;
-    // when passive the dfd we have is already the data fd.
-    let _ = is_passive;
-    // Store the connected dfd. zfmovefd would dup past stdio fds; for now
-    // just keep the raw fd we got from std::net.
+    // c:1118-1143 — PORT-mode accept handling. PASV: dfd is already
+    // the data fd, just zfmovefd it. PORT: accept() on the listening
+    // fd to obtain the real data fd, then close the listener.
+    let dfd_raw: i32;
+    if !is_passive {                                                          // c:1118
+        // c:1124-1128 — accept the connection from the server.
+        let mut sa: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+        let mut sl: libc::socklen_t = std::mem::size_of::<libc::sockaddr_storage>() as _;
+        let listen_fd = ZFTP_STATE.lock().ok()
+            .and_then(|s| s.get_session(None).map(|x| x.dfd))
+            .unwrap_or(-1);
+        let newfd = unsafe {
+            libc::accept(listen_fd, &mut sa as *mut _ as *mut _, &mut sl)
+        };
+        if newfd < 0 {                                                        // c:1129
+            crate::ported::utils::zwarnnam(name,
+                &format!("unable to accept data: {}", std::io::Error::last_os_error()));
+            zfclosedata();                                                    // c:1131
+            return 1;
+        }
+        // c:1133 — close the original listening fd, install the accepted one.
+        unsafe { libc::close(listen_fd); }
+        dfd_raw = zfmovefd(newfd);
+    } else {                                                                  // c:1136
+        // c:1139-1142 — zfmovefd(zfsess->dfd) for PASV.
+        let cur_dfd = ZFTP_STATE.lock().ok()
+            .and_then(|s| s.get_session(None).map(|x| x.dfd))
+            .unwrap_or(-1);
+        dfd_raw = zfmovefd(cur_dfd);
+    }
     if let Ok(mut state) = ZFTP_STATE.lock() {
         if let Some(sess) = state.get_session_mut(None) {
-            sess.dfd = zfmovefd(dfd_raw);                                     // c:1142
+            sess.dfd = dfd_raw;                                               // c:1142
         }
     }
-    // Keep TcpStream alive past this fn so the fd doesn't close.
-    // The fd is owned by the session now; transfer code reads via dfd.
-    std::mem::forget(data_stream);
 
     // c:1156-1163 — SO_LINGER 120s.
     let li = libc::linger { l_onoff: 1, l_linger: 120 };

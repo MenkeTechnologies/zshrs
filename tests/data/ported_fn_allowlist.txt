@@ -749,3 +749,8 @@ exec_getsparam
 # not in zsh_c_fn_names.txt which only lists fns from .c files).
 IS_WRITE_FILE
 WC_SELECT_SKIP
+
+# C zfopendata inlines the PASV-response sscanf parse (Src/Modules/
+# zftp.c:925-941); zshrs extracts it as a private helper used by
+# both zfopendata and the higher-level zftp_session::connect() path.
+parse_pasv_response
