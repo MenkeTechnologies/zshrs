@@ -453,7 +453,7 @@ fn getreswords(dis: i32) -> Vec<String> {                                    // 
     };
     let mut ret: Vec<String> = Vec::with_capacity(g.iter().count() + 1);     // c:866
     for (name, node) in g.iter() {                                           // c:868-871
-        let disabled = (node.flags & crate::ported::zsh_h::DISABLED as u32) != 0;
+        let disabled = (node.node.flags & crate::ported::zsh_h::DISABLED as i32) != 0;
         let pass = if dis != 0 { disabled } else { !disabled };              // c:870
         if pass {
             ret.push(name.clone());                                          // c:871 dupstring
