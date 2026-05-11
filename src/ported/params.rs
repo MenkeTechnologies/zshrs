@@ -4058,18 +4058,43 @@ pub fn zputenv(str: &str) -> i32 {                                           // 
     }
 }
 
-/// Port of `findenv()` from `Src/params.c:5391`. C body finds the
-/// `name=...` entry index in `environ`. Rust port returns the
-/// value via `env::var` since indices into Rust's env are not
-/// stable.
-pub fn findenv(name: &str) -> Option<String> {
-    env::var(name).ok()
+/// Direct port of `int findenv(char *name, int *pos)` from
+/// `Src/params.c:5391-5407`. Walks `environ` looking for an
+/// entry whose name component (bytes up to `=`) matches `name`.
+/// Returns Some(index) on a match; the C source writes the
+/// index into `*pos` and returns 1.
+///
+/// Rust signature differs (no out-param; returns Option<usize>)
+/// — the C int-with-out-param idiom maps to Option<index> here.
+/// Walks std::env::vars_os() which preserves the same ordering
+/// as the underlying libc environ array.
+pub fn findenv(name: &str) -> Option<usize> {                                // c:5391
+    // c:5396 — `eq = strchr(name, '=')`. Strip any trailing `=value`.
+    let nlen = name.find('=').unwrap_or(name.len());                         // c:5397
+    let bare = &name[..nlen];
+
+    // c:5398-5404 — walk environ until match. Use std::env::vars()
+    // which preserves the same ordering as the underlying libc
+    // environ.
+    for (i, (k, _)) in std::env::vars_os().enumerate() {
+        if let Some(s) = k.to_str() {
+            if s == bare {
+                return Some(i);                                              // c:5401-5403
+            }
+        }
+    }
+    None                                                                     // c:5406
 }
 
-/// Port of `delenvvalue()` from `Src/params.c:5542`. C body:
-/// frees a single env entry; Rust drops via env::remove_var.
-pub fn delenvvalue(name: &str) {
-    env::remove_var(name);
+/// Direct port of `void delenvvalue(char *x)` from
+/// `Src/params.c:5542-5554`. Removes `x` from environ by walking
+/// to its pointer and shifting subsequent entries down one slot.
+///
+/// C body operates on the environ array directly. The Rust port
+/// uses `env::remove_var(name)` since Rust's env is mediated by
+/// libc::unsetenv internally — same shift semantics.
+pub fn delenvvalue(name: &str) {                                             // c:5542
+    env::remove_var(name);                                                   // c:5552 equivalent
 }
 
 /// Direct port of `void addenv(Param pm, char *value)` from
@@ -4517,15 +4542,70 @@ pub fn hashsetfn(pm: &mut crate::ported::zsh_h::param, x: crate::ported::zsh_h::
     pm.u_hash = Some(x);
 }
 
-/// Port of `arrhashsetfn()` from `Src/params.c:4113`. C body
-/// pairs `(val[i], val[i+1])` into hash entries by allocating a
-/// PM_SCALAR child param per pair. Rust port allocates a fresh
-/// `Box<hashtable>` and stuffs the entries directly into the
-/// pm.u_hash slot via the shape required by hashgetfn.
-pub fn arrhashsetfn(pm: &mut crate::ported::zsh_h::param, val: Vec<String>, _flags: i32) {
-    let ht = newparamtable(0, "");
-    pm.u_hash = ht;
-    let _ = val;
+/// Direct port of `static void arrhashsetfn(Param pm, char **val,
+/// int flags)` from `Src/params.c:4113-4170`. Set callback for
+/// assoc arrays: takes a flat `[k1, v1, k2, v2, ...]` value list
+/// and turns it into a hash.
+///
+/// C body:
+///   1. Count non-Marker entries; if odd, error c:4128-4131.
+///   2. Under ASSPM_AUGMENT, fetch existing hash via getfn
+///      (c:4134-4137); otherwise allocate fresh via
+///      newparamtable(17, name).
+///   3. Walk pairs: each value (k, v) becomes a PM_SCALAR|PM_UNSET
+///      child param `createparam(k)`, then `assignstrvalue(v->pm,
+///      val, eltflags)` (c:4140-4166).
+///   4. `pm->gsu.h->setfn(pm, ht)` to install (c:4168).
+///
+/// The Rust port partially mirrors: counts pairs, rejects odd
+/// counts via zerr, installs a fresh hashtable. The per-pair
+/// createparam+assignstrvalue cycle requires assoc storage
+/// shape we don't yet have wired through `u_hash`; this stays as
+/// a structural port and emits diagnostic on the odd-count path.
+pub fn arrhashsetfn(                                                         // c:4113
+    pm: &mut crate::ported::zsh_h::param,
+    val: Vec<String>,
+    _flags: i32,
+) {
+    use crate::ported::zsh_h::MARKER;
+
+    // c:4124-4127 — count non-Marker entries.
+    let alen: usize = val
+        .iter()
+        .filter(|s| !s.starts_with(MARKER as char))
+        .count();
+
+    // c:4129-4131 — odd count → error.
+    if alen % 2 != 0 {
+        crate::ported::utils::zerr(
+            "bad set of key/value pairs for associative array",
+        );
+        return;
+    }
+
+    // c:4132-4138 — install or augment. Skip the createparam
+    // sub-hash walk pending assoc-storage wiring; install an
+    // empty hashtable so hashgetfn doesn't return stale data.
+    pm.u_hash = Some(Box::new(crate::ported::zsh_h::hashtable {
+        hsize: 0,
+        ct: 0,
+        nodes: Vec::new(),
+        tmpdata: 0,
+        hash: None,
+        emptytable: None,
+        filltable: None,
+        cmpnodes: None,
+        addnode: None,
+        getnode: None,
+        getnode2: None,
+        removenode: None,
+        disablenode: None,
+        enablenode: None,
+        freenode: None,
+        printnode: None,
+        scantab: None,
+    }));
+    // c:4170 — free(val). Rust drops automatically.
 }
 
 // -----------------------------------------------------------
@@ -4604,11 +4684,63 @@ pub fn tiedarrgetfn(pm: &crate::ported::zsh_h::param) -> Vec<String> {
     pm.u_arr.clone().unwrap_or_default()
 }
 
-/// Port of `tiedarrsetfn()` from `Src/params.c:4357`. C body
-/// joins the array with `pm->u.data->joinchar` and stores.
-pub fn tiedarrsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) {
-    let arr = x.map(|s| colonsplit(&s)).unwrap_or_default();
-    pm.u_arr = Some(arr);
+/// Direct port of `void tiedarrsetfn(Param pm, char *x)` from
+/// `Src/params.c:4357-4389`. Setter for a colon-array-tied
+/// scalar (PATH/CDPATH/MAILPATH/etc.).
+///
+/// C body:
+///   1. Free the existing tied array (`*dptr->arrptr`) at c:4363.
+///   2. If no array but an `ename` exists, clear PM_DEFAULTED on
+///      the tied array param (c:4365-4368).
+///   3. If `x` is non-null: build a 1-or-2-byte separator from
+///      `dptr->joinchar` (Meta-quoting if needed, c:4371-4380),
+///      `sepsplit(x, sepbuf, 0, 0)` into the array (c:4381), and
+///      uniqarray() if PM_UNIQUE (c:4382-4383). Free `x` (c:4384).
+///   4. Else: `*dptr->arrptr = NULL` (c:4385-4386).
+///   5. If `pm->ename` is set, call `arrfixenv(pm->name, arrptr)`
+///      to sync env (c:4387-4388).
+///
+/// The Rust port treats `u_arr` as the tied array storage and
+/// uses `':'` as the joinchar default (matches PATH/CDPATH/FPATH
+/// /MAILPATH/PSVAR/MODULE_PATH which all use colon separators —
+/// the joinchar field on the C-side tieddata wasn't ported to the
+/// Rust Param struct yet).
+pub fn tiedarrsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) { // c:4357
+    use crate::ported::zsh_h::{PM_DEFAULTED, PM_UNIQUE};
+
+    // c:4361-4368 — free old / clear PM_DEFAULTED on tied counterpart.
+    if pm.u_arr.is_none() {
+        if let Some(ename) = pm.ename.clone() {                              // c:4365
+            let mut tab = paramtab().lock().unwrap();
+            if let Some(altpm) = tab.get_mut(&ename) {                       // c:4366
+                altpm.node.flags &= !(PM_DEFAULTED as i32);                  // c:4367
+            }
+        }
+    }
+
+    if let Some(s) = x {                                                     // c:4369
+        // c:4370-4380 — single-byte separator (joinchar=':' for all
+        // currently-tied params; Meta-quoting only kicks in for
+        // exotic joinchars not present today).
+        let arr: Vec<String> = s.split(':').map(|t| t.to_string()).collect();
+        // c:4382-4383 — uniqarray if PM_UNIQUE.
+        let arr = if pm.node.flags & PM_UNIQUE as i32 != 0 {                 // c:4382
+            uniqarray(arr)                                                   // c:4383
+        } else {
+            arr
+        };
+        pm.u_arr = Some(arr);
+        // c:4384 — zsfree(x). Rust drop.
+    } else {                                                                 // c:4385
+        pm.u_arr = None;                                                     // c:4386
+    }
+
+    // c:4387-4388 — `if (pm->ename) arrfixenv(pm->name, *dptr->arrptr)`.
+    if pm.ename.is_some() {
+        let nam = pm.node.nam.clone();
+        let arr_ref = pm.u_arr.as_deref();
+        arrfixenv(&nam, arr_ref);
+    }
 }
 
 /// Port of `tiedarrunsetfn()` from `Src/params.c:4393`. C body
