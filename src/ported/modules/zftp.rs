@@ -822,15 +822,21 @@ impl Zftp {
     }
 }
 
-/// `zftp` builtin entry point.
-/// Port of `bin_zftp()` from Src/Modules/zftp.c:3002 — the C
-/// source uses a subcommand dispatch table (`zftp_open`,
-/// `zftp_login`, `zftp_dir`, `zftp_cd`, `zftp_type`, `zftp_mode`,
-/// `zftp_local`, `zftp_getput`, `zftp_delete`, `zftp_mkdir`,
-/// `zftp_rename`, `zftp_quote`, `zftp_close`, `zftp_session`,
-/// `zftp_rmsession`, `zftp_params`, `zftp_test`). The Rust port
-/// maps each subcommand string onto a method on `Zftp`.
-pub fn bin_zftp(args: &[&str], zftp: &mut Zftp) -> (i32, String) {
+/// `zftp` builtin entry point — C-faithful signature matching
+/// `static int bin_zftp(char *name, char **args, Options ops, int func)`
+/// from Src/Modules/zftp.c:3002. Acquires ZFTP_STATE, dispatches by
+/// subcommand string, emits any captured output to stdout/stderr
+/// based on status, returns the bare i32 status C's execbuiltin path
+/// consumes.
+#[allow(non_snake_case)]
+pub fn bin_zftp(_nam: &str, args: &[String],                                 // c:3002
+                _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let mut zftp_guard = ZFTP_STATE.lock()
+        .unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
+    let zftp = &mut *zftp_guard;
+    let args = &argv[..];
+    let (status, output): (i32, String) = (|| {
     if args.is_empty() {
         return (1, "zftp: subcommand required\n".to_string());
     }
@@ -1235,6 +1241,12 @@ pub fn bin_zftp(args: &[&str], zftp: &mut Zftp) -> (i32, String) {
 
         _ => (1, format!("zftp: unknown subcommand {}\n", args[0])),
     }
+    })();
+    drop(zftp_guard);
+    if !output.is_empty() {
+        if status == 0 { print!("{}", output); } else { eprint!("{}", output); }
+    }
+    status
 }
 
 #[cfg(test)]
@@ -1343,23 +1355,25 @@ mod tests {
     #[test]
     fn test_builtin_zftp_no_args() {
         let mut zftp = Zftp::new();
-        let (status, _) = bin_zftp(&[], &mut zftp);
+        let status = bin_zftp("zftp", &[].iter().map(|s: &&str| s.to_string()).collect::<Vec<_>>(), &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
         assert_eq!(status, 1);
     }
 
     /// Port of `zftp_open()` from `Src/Modules/zftp.c:1690`.
     #[test]
     fn test_builtin_zftp_session() {
-        let mut zftp = Zftp::new();
-        let (status, _) = bin_zftp(&["session", "test"], &mut zftp);
+        // Reset global state for test isolation.
+        zftp_cleanup();
+        let status = bin_zftp("zftp", &["session", "test"].iter().map(|s: &&str| s.to_string()).collect::<Vec<_>>(), &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
         assert_eq!(status, 0);
-        assert!(zftp.sessions.contains_key("test"));
+        assert!(ZFTP_STATE.lock().unwrap().sessions.contains_key("test"));
+        zftp_cleanup();
     }
 
     #[test]
     fn test_builtin_zftp_test_not_connected() {
         let mut zftp = Zftp::new();
-        let (status, _) = bin_zftp(&["test"], &mut zftp);
+        let status = bin_zftp("zftp", &["test"].iter().map(|s: &&str| s.to_string()).collect::<Vec<_>>(), &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
         assert_eq!(status, 1);
     }
 }
@@ -2727,128 +2741,142 @@ pub fn zfstats(fnam: &str, remote: i32,                                       //
 /// Port of `zftp_open()` from `Src/Modules/zftp.c:1690`.
 /// C: `int zftp_open(char *name, char **args, int flags)`.
 pub fn zftp_open(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&std::iter::once("open").chain(args.iter().copied()).collect::<Vec<_>>(), &mut *state);
+    let mut full: Vec<String> = vec!["open".to_string()];
+    full.extend(args.iter().map(|s| s.to_string()));
+    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_login()` from `Src/Modules/zftp.c:2118`.
 pub fn zftp_login(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&std::iter::once("login").chain(args.iter().copied()).collect::<Vec<_>>(), &mut *state);
+    let mut full: Vec<String> = vec!["login".to_string()];
+    full.extend(args.iter().map(|s| s.to_string()));
+    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_params()` from `Src/Modules/zftp.c:2064`.
 pub fn zftp_params(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&std::iter::once("params").chain(args.iter().copied()).collect::<Vec<_>>(), &mut *state);
+    let mut full: Vec<String> = vec!["params".to_string()];
+    full.extend(args.iter().map(|s| s.to_string()));
+    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_test()` from `Src/Modules/zftp.c:2251`.
 pub fn zftp_test(_name: &str, _args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&["test"], &mut *state);
+    let rc = bin_zftp("zftp", &["test".to_string()], &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_dir()` from `Src/Modules/zftp.c:2305`.
 pub fn zftp_dir(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&std::iter::once("dir").chain(args.iter().copied()).collect::<Vec<_>>(), &mut *state);
+    let mut full: Vec<String> = vec!["dir".to_string()];
+    full.extend(args.iter().map(|s| s.to_string()));
+    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_cd()` from `Src/Modules/zftp.c:2332`.
 pub fn zftp_cd(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&std::iter::once("cd").chain(args.iter().copied()).collect::<Vec<_>>(), &mut *state);
+    let mut full: Vec<String> = vec!["cd".to_string()];
+    full.extend(args.iter().map(|s| s.to_string()));
+    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_type()` from `Src/Modules/zftp.c:2426`.
 pub fn zftp_type(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&std::iter::once("type").chain(args.iter().copied()).collect::<Vec<_>>(), &mut *state);
+    let mut full: Vec<String> = vec!["type".to_string()];
+    full.extend(args.iter().map(|s| s.to_string()));
+    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_mode()` from `Src/Modules/zftp.c:2464`.
 pub fn zftp_mode(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&std::iter::once("mode").chain(args.iter().copied()).collect::<Vec<_>>(), &mut *state);
+    let mut full: Vec<String> = vec!["mode".to_string()];
+    full.extend(args.iter().map(|s| s.to_string()));
+    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_local()` from `Src/Modules/zftp.c:2491`.
 pub fn zftp_local(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&std::iter::once("local").chain(args.iter().copied()).collect::<Vec<_>>(), &mut *state);
+    let mut full: Vec<String> = vec!["local".to_string()];
+    full.extend(args.iter().map(|s| s.to_string()));
+    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_getput()` from `Src/Modules/zftp.c:2544`.
 pub fn zftp_getput(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&std::iter::once("get").chain(args.iter().copied()).collect::<Vec<_>>(), &mut *state);
+    let mut full: Vec<String> = vec!["get".to_string()];
+    full.extend(args.iter().map(|s| s.to_string()));
+    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_delete()` from `Src/Modules/zftp.c:2635`.
 pub fn zftp_delete(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&std::iter::once("delete").chain(args.iter().copied()).collect::<Vec<_>>(), &mut *state);
+    let mut full: Vec<String> = vec!["delete".to_string()];
+    full.extend(args.iter().map(|s| s.to_string()));
+    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_mkdir()` from `Src/Modules/zftp.c:2652`.
 pub fn zftp_mkdir(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&std::iter::once("mkdir").chain(args.iter().copied()).collect::<Vec<_>>(), &mut *state);
+    let mut full: Vec<String> = vec!["mkdir".to_string()];
+    full.extend(args.iter().map(|s| s.to_string()));
+    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_rename()` from `Src/Modules/zftp.c:2666`.
 pub fn zftp_rename(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&std::iter::once("rename").chain(args.iter().copied()).collect::<Vec<_>>(), &mut *state);
+    let mut full: Vec<String> = vec!["rename".to_string()];
+    full.extend(args.iter().map(|s| s.to_string()));
+    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_quote()` from `Src/Modules/zftp.c:2690`.
 pub fn zftp_quote(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&std::iter::once("quote").chain(args.iter().copied()).collect::<Vec<_>>(), &mut *state);
+    let mut full: Vec<String> = vec!["quote".to_string()];
+    full.extend(args.iter().map(|s| s.to_string()));
+    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_close()` from `Src/Modules/zftp.c:2782`.
 pub fn zftp_close(_name: &str, _args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&["close"], &mut *state);
+    let rc = bin_zftp("zftp", &["close".to_string()], &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_session()` from `Src/Modules/zftp.c:2889`.
 pub fn zftp_session(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&std::iter::once("session").chain(args.iter().copied()).collect::<Vec<_>>(), &mut *state);
+    let mut full: Vec<String> = vec!["session".to_string()];
+    full.extend(args.iter().map(|s| s.to_string()));
+    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_rmsession()` from `Src/Modules/zftp.c:2915`.
 pub fn zftp_rmsession(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    let (rc, _) = bin_zftp(&std::iter::once("rmsession").chain(args.iter().copied()).collect::<Vec<_>>(), &mut *state);
+    let mut full: Vec<String> = vec!["rmsession".to_string()];
+    full.extend(args.iter().map(|s| s.to_string()));
+    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
     rc
 }
 
 /// Port of `zftp_cleanup()` from `Src/Modules/zftp.c:3128`. Closes
 /// the active session and clears the global ZFTP state.
 pub fn zftp_cleanup() -> i32 {
-    let mut state = ZFTP_STATE.lock().unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
-    *state = Zftp::new();
+    if let Ok(mut state) = ZFTP_STATE.lock() {
+        *state = Zftp::new();
+    }
     0
 }
 
