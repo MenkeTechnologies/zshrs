@@ -1262,18 +1262,21 @@ pub(crate) fn compctlread(name: &str, args: &[String]) -> i32 {
             reply = Some(a);
         }
     }
-    // C: c:202-218 — `-ln` returns cursor word index. ZLE state
-    // (zlemetacs) lookup deferred — return 1+ a placeholder index
-    // so the typical compctl flow at least progresses without
-    // erroring. Real impl needs ZLE integration.
+    // C: c:202-218 — `-ln` returns cursor word index. C reads the
+    // live ZLE cursor offset from `zlemetacs` and emits `1 + that`.
     if opt_l && opt_n {
-        let idx = 1; // placeholder for 1+zlemetacs
+        let idx = 1 + crate::ported::zle::compcore::ZLEMETACS               // c:202
+            .load(std::sync::atomic::Ordering::Relaxed);
         if opt_e || opt_e_upper {
             println!("{}", idx);
         }
         if !opt_e {
-            if let Some(_r) = reply {
-                // setsparam(reply, idx_str) — defer to ZLE wiring
+            if let Some(r) = reply {                                         // c:215
+                // c:216-217 — `setsparam(reply, idx_str)`.
+                let idx_str = idx.to_string();
+                let _ = crate::ported::params::assignsparam(
+                    &r, &idx_str, 0,
+                );
             }
         }
         return 0;

@@ -254,10 +254,12 @@ pub fn selectword(zle: &mut Zle) -> i32 {                                // c:41
     // insert or emacs mode the region also doesn't, but for vi visual
     // mode it is included.
     //
-    // virangeflag is a deferred bucket-2 file-global (zle_vi.c:36),
-    // not yet wired on Zle — see TODO.md. Treat as false so we always
-    // enter the !virangeflag arm.
-    let virangeflag = false;
+    // c:196 — `virangeflag` file-global (zle_vi.c:36). When non-zero
+    // a vi range operation is pending, in which case the region
+    // adjustment below is suppressed because the operator already
+    // handled it.
+    let virangeflag = crate::ported::zle::zle_vi::VIRANGEFLAG
+        .load(std::sync::atomic::Ordering::Relaxed) != 0;
     if !virangeflag {                                                    // c:196
         if !zle.in_vi_cmd_mode() {                                       // c:197
             zle.region_active = 1;                                       // c:198

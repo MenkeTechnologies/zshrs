@@ -10,21 +10,39 @@ use super::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
 // Note: dead `ViState` / `ViChange` / `ViPendingOp` aggregates
 // removed per PORT_PLAN Phase 2. They had zero references across the
 // codebase. The actual zsh-side state lives in C file-scope globals
-// declared in `Src/Zle/zle_vi.c`:
-//
-//     int virangeflag;       // line 36
-// kludge to get cw and dw to work right                                   // c:38
-//     int wordflag;          // line 41
-//     int vilinerange;       // line 46
-//     struct vichange lastvichg, curvichg;  // line 54
-//     int vichgflag;         // line 65
-//     int viinrepeat;        // line 73
-// point where vi insert mode was last entered                             // c:75
-//     int viinsbegin;        // line 78
-//
-// These are cross-compilation-unit (referenced from textobjects.c
-// and zle_move.c), so they belong to PORT_PLAN Phase 3 bucket-2
-// (Arc<RwLock>), not the Phase 2 bucket-1 (thread_local!) wave.
+// declared in `Src/Zle/zle_vi.c`; the AtomicI32 wires below are the
+// faithful ports.
+
+/// Port of `int virangeflag;` from `Src/Zle/zle_vi.c:36`. Set during
+/// vi range-pending operations to suppress the cursor-included
+/// region adjustment (see `textobjects.rs:261` and `zle_vi.c:196`).
+pub static VIRANGEFLAG: std::sync::atomic::AtomicI32 =                       // c:36
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int wordflag;` from `Src/Zle/zle_vi.c:41`. Kludge flag
+/// used by `cw`/`dw` so they stop at word boundaries.
+pub static WORDFLAG: std::sync::atomic::AtomicI32 =                          // c:41
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int vilinerange;` from `Src/Zle/zle_vi.c:46`. Set when
+/// the pending range is whole-line (e.g. `dd`, `yy`).
+pub static VILINERANGE: std::sync::atomic::AtomicI32 =                       // c:46
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int vichgflag;` from `Src/Zle/zle_vi.c:65`. Set while a
+/// vi change-tracker (`.`) is recording.
+pub static VICHGFLAG: std::sync::atomic::AtomicI32 =                         // c:65
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int viinrepeat;` from `Src/Zle/zle_vi.c:73`. Set during
+/// `.` replay so the recorder doesn't re-record.
+pub static VIINREPEAT: std::sync::atomic::AtomicI32 =                        // c:73
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int viinsbegin;` from `Src/Zle/zle_vi.c:78`. Buffer
+/// position where vi insert mode was last entered.
+pub static VIINSBEGIN: std::sync::atomic::AtomicI32 =                        // c:78
+    std::sync::atomic::AtomicI32::new(0);
 
 impl Zle {
     /// Read the active numeric multiplier.

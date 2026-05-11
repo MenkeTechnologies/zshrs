@@ -675,32 +675,101 @@ extern "C" fn zhandler(sig: libc::c_int) {
         }
         libc::SIGPIPE => {                                                    // c:434
             if handletrap(libc::SIGPIPE) == 0 {
-                // Interactive / non-tty exit paths deferred to
-                // interp layer when zexit lands (c:436-441).
+                // c:436-441 — non-interactive exits immediately; an
+                // interactive non-tty also exits via zexit.
+                let interact =
+                    crate::ported::options::optlookup("interactive") > 0;
+                if !interact {
+                    unsafe { libc::_exit(libc::SIGPIPE); }                   // c:437
+                } else {
+                    // SHTTY isn't a single global in zshrs; treat
+                    // !isatty(stdin) as "no controlling tty" which
+                    // matches the common path.
+                    let on_tty = unsafe { libc::isatty(0) } != 0;
+                    if !on_tty {
+                        crate::ported::builtin::STOPMSG                     // c:439
+                            .store(1, std::sync::atomic::Ordering::Relaxed);
+                        crate::ported::builtin::zexit(
+                            libc::SIGPIPE,
+                            crate::ported::zsh_h::ZEXIT_SIGNAL,
+                        );                                                  // c:440
+                    }
+                }
             }
         }
         libc::SIGHUP => {                                                     // c:445
             if handletrap(libc::SIGHUP) == 0 {
                 // c:447 — `stopmsg = 1; zexit(SIGHUP, ZEXIT_SIGNAL);`
-                // zexit deferred.
+                crate::ported::builtin::STOPMSG
+                    .store(1, std::sync::atomic::Ordering::Relaxed);
+                crate::ported::builtin::zexit(
+                    libc::SIGHUP,
+                    crate::ported::zsh_h::ZEXIT_SIGNAL,
+                );                                                          // c:448
             }
         }
         libc::SIGINT => {                                                     // c:452
             if handletrap(libc::SIGINT) == 0 {
-                // c:453-463 — PRIVILEGED+INTERACTIVE early-exit,
-                // errflag |= ERRFLAG_INT, $? = 128+SIGINT. Deferred
-                // to interp layer (errflag, lastval).
+                // c:454-456 — PRIVILEGED+INTERACTIVE during a signal-
+                // noerrexit window: immediate exit.
+                let privileged =
+                    crate::ported::options::optlookup("privileged") > 0;
+                let interactive =
+                    crate::ported::options::optlookup("interactive") > 0;
+                if privileged && interactive {
+                    crate::ported::builtin::zexit(
+                        libc::SIGINT,
+                        crate::ported::zsh_h::ZEXIT_SIGNAL,
+                    );
+                }
+                // c:457 — `errflag |= ERRFLAG_INT;`
+                let cur = crate::ported::utils::errflag
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                crate::ported::utils::errflag.store(
+                    cur | crate::ported::zsh_h::ERRFLAG_INT,
+                    std::sync::atomic::Ordering::Relaxed,
+                );                                                          // c:457
+                // c:458-462 — list_pipe/chline/simple_pline branch
+                // (loops break, inerrflush, check_cursh_sig) lives
+                // in the executor; not yet plumbed.
+                // c:463 — `lastval = 128 + SIGINT;`
+                crate::ported::builtin::LASTVAL.store(
+                    128 + libc::SIGINT,
+                    std::sync::atomic::Ordering::Relaxed,
+                );                                                          // c:463
             }
         }
         libc::SIGWINCH => {                                                   // c:468
-            // c:470 — `adjustwinsize(1)` is in `Src/utils.c`;
-            // ZLE-layer wiring not yet plumbed here.
-            let _ = handletrap(libc::SIGWINCH);
+            // c:469 — `adjustwinsize(1)` (Src/utils.c) — re-reads
+            // TIOCGWINSZ and updates LINES/COLUMNS params.
+            let _ = crate::ported::utils::adjustwinsize();                   // c:469
+            let _ = handletrap(libc::SIGWINCH);                              // c:470
         }
         libc::SIGALRM => {                                                    // c:475
             if handletrap(libc::SIGALRM) == 0 {
-                // c:477-490 — interactive idle warning, errflag
-                // toggle for non-interactive case. Deferred.
+                // c:476-489 — idle vs TMOUT — re-alarm if still idle,
+                // else zexit. Skip the "still idle" re-arm here (no
+                // ttyidlegetfn port) and proceed to the timeout exit.
+                let tmout = crate::exec::try_with_executor(|exec| {
+                    crate::ported::params::getiparam(
+                        &exec.variables, &exec.arrays, "TMOUT",
+                    )
+                }).unwrap_or(0);                                              // c:477
+                if tmout == 0 {
+                    // No timeout configured — bail out silently.
+                } else {
+                    // c:486 — `errflag = noerrs = 0;`
+                    crate::ported::utils::errflag
+                        .store(0, std::sync::atomic::Ordering::Relaxed);
+                    // c:487 — `zwarn("timeout");`
+                    crate::ported::utils::zwarn("timeout");                  // c:487
+                    crate::ported::builtin::STOPMSG
+                        .store(1, std::sync::atomic::Ordering::Relaxed);    // c:488
+                    crate::ported::builtin::zexit(
+                        libc::SIGALRM,
+                        crate::ported::zsh_h::ZEXIT_SIGNAL,
+                    );                                                       // c:489
+                }
             }
         }
         _ => {                                                                // c:494
@@ -849,7 +918,10 @@ pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> 
     // c:743-752 — locallevel tag (SIGEXIT in POSIX mode is sticky).
     let locallevel = crate::ported::utils::locallevel() as i32;
     if sig == SIGEXIT {
-        let posix_traps = false; // POSIXTRAPS option lookup deferred — c:746
+        // c:746 — `if (isset(POSIXTRAPS)) ...`. In POSIX mode SIGEXIT
+        // is sticky and not tagged with the local-level shift.
+        let posix_traps =
+            crate::ported::options::optlookup("posixtraps") > 0;             // c:746
         EXIT_TRAP_POSIX.store(posix_traps, Ordering::Relaxed);
         if !posix_traps {
             if let Ok(mut g) = sigtrapped.lock() {

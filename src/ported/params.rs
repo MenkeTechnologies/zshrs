@@ -973,8 +973,9 @@ pub fn getstrvalue(v: Option<&mut crate::ported::zsh_h::value>) -> String {
     };
 
     // c:2390-2538 — VALFLAG_SUBST padding (PM_LEFT / PM_RIGHT_B /
-    // PM_RIGHT_Z). Partial ASCII port; multibyte (MB_METACHAR*)
-    // and zero-pad numeric-prefix detection deferred.
+    // PM_RIGHT_Z). Multibyte is approximated via `chars().count()`
+    // (codepoint count) since the Rust port stores strings as
+    // UTF-8 rather than the C meta-byte encoding.
     if v.valflags & VALFLAG_SUBST != 0 {
         let pad_flags = pmflags & (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z);
         if pad_flags != 0 {
@@ -1001,20 +1002,73 @@ pub fn getstrvalue(v: Option<&mut crate::ported::zsh_h::value>) -> String {
                 s = out;
             } else if pad_flags & (PM_RIGHT_B | PM_RIGHT_Z) != 0 {
                 // c:2426-2510 — right-justify with optional zero-padding
-                // honouring leading-blank/minus/0x prefix detection for
-                // numeric values. Simplified ASCII port that left-pads
-                // with the appropriate char.
-                let pad_char = if pad_flags & PM_RIGHT_Z != 0 { '0' } else { ' ' };
-                let len = s.chars().count();
-                if len < fwidth {
-                    let need = fwidth - len;
-                    let mut out: String =
-                        std::iter::repeat(pad_char).take(need).collect();
-                    out.push_str(&s);
+                // honouring leading-blank/minus/0x/base# prefix
+                // detection for numeric values.
+                let charlen = s.chars().count();
+                if charlen < fwidth {
+                    let mut zero = true;
+                    let mut valprefend: usize = 0;
+                    let numeric_pm = (pmflags
+                        & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT))
+                        != 0;
+                    if pad_flags & PM_RIGHT_Z != 0 {
+                        // c:2446-2466 — find the prefix to keep
+                        // (blanks → minus → 0x / base#).
+                        let bytes = s.as_bytes();
+                        let mut t = 0usize;
+                        while t < bytes.len()
+                            && (bytes[t] == b' ' || bytes[t] == b'\t')
+                        {
+                            t += 1;                                          // c:2446-2447
+                        }
+                        if numeric_pm && t < bytes.len() && bytes[t] == b'-'
+                        {
+                            t += 1;                                          // c:2454-2455
+                        }
+                        if (pmflags & PM_INTEGER) != 0 {
+                            let cbases =
+                                crate::ported::options::optlookup("cbases")
+                                    > 0;
+                            if cbases
+                                && t + 1 < bytes.len()
+                                && bytes[t] == b'0'
+                                && bytes[t + 1] == b'x'
+                            {
+                                t += 2;                                      // c:2462-2463
+                            } else if let Some(hash_off) = bytes[t..]
+                                .iter()
+                                .position(|&b| b == b'#')
+                            {
+                                t += hash_off + 1;                           // c:2464-2465
+                            }
+                        }
+                        valprefend = t;
+                        if t == bytes.len() {
+                            zero = false;                                    // c:2468-2469
+                        } else if !numeric_pm && !bytes[t].is_ascii_digit() {
+                            zero = false;                                    // c:2473-2474
+                        }
+                    }
+                    // c:2483 — pad char picks: ' ' if PM_RIGHT_B or
+                    // numeric-prefix detection failed, else '0'.
+                    let pad_char = if (pad_flags & PM_RIGHT_B) != 0 || !zero
+                    {
+                        ' '
+                    } else {
+                        '0'
+                    };
+                    let need = fwidth - charlen;
+                    let prefix = &s[..valprefend];
+                    let rest = &s[valprefend..];
+                    let mut out = String::with_capacity(need + s.len());
+                    out.push_str(prefix);                                    // c:2491
+                    out.extend(std::iter::repeat(pad_char).take(need));      // c:2483-2485
+                    out.push_str(rest);                                      // c:2492-2493
                     s = out;
-                } else if len > fwidth {
-                    // c:2515-2520 — truncate to fwidth chars from end.
-                    let skip = len - fwidth;
+                } else if charlen > fwidth {
+                    // c:2496-2500 — truncate from the front to fit fwidth
+                    // codepoints (C uses MB_METACHARLEN; Rust uses chars).
+                    let skip = charlen - fwidth;
                     s = s.chars().skip(skip).collect();
                 }
             }
@@ -5586,7 +5640,7 @@ fn dontimport(flags: i32) -> i32 {                                           // 
 ///      (c:835 — newparamtable(151,"paramtab")).
 ///   2. Register every `special_params[]` entry as a PM_SPECIAL
 ///      node in the global paramtab (c:838-847). EMULATE_SH/KSH
-///      additions deferred.
+///      override list (`special_params_sh`) is wired below.
 ///   3. Initialise non-special params that must precede env
 ///      import: MAILCHECK / KEYTIMEOUT / LISTMAX / TMPPREFIX /
 ///      TIMEFMT / HOST / LOGNAME (c:854-879).
@@ -5597,10 +5651,11 @@ fn dontimport(flags: i32) -> i32 {                                           // 
 ///      env sync, CPUTYPE / MACHTYPE / OSTYPE / TTY / VENDOR /
 ///      ZSH_ARGZERO / ZSH_VERSION / ZSH_PATCHLEVEL (c:931-979).
 ///
-/// Deferred (require unported support): noerrs counter under
-/// `crate::ported::utils::NOERRS` (private), ALLEXPORT toggle via
-/// the C `opts[]` global, `set_pwd_env`, `setaparam("signals", ...)`
-/// with SIGRTMIN..MAX walk.
+/// Limitations:
+///   - `noerrs` counter (`utils.c:NOERRS`) is module-private to the
+///     Rust port, so the `noerrs = 2` guard at c:850 is a no-op.
+///   The rest of the C body (ALLEXPORT toggle, set_pwd_env,
+///   signals[] build with SIGRTMIN..MAX) is fully wired below.
 pub fn createparamtable() {                                                  // c:817
     use crate::ported::zsh_h::{PM_EXPORTED, PM_SPECIAL, PM_UNSET};
 
@@ -5676,7 +5731,12 @@ pub fn createparamtable() {                                                  // 
             }
         }
     }
-    // c:849 — argvparam wire-up deferred.
+    // c:848 — `argvparam = (Param) &argvparam_pm;` is the C handle a
+    //         positional-param fetchvalue path follows to reach
+    //         `pparams`. The Rust port resolves $1..$N directly from
+    //         `PPARAMS` via `value.start`/`value.end` indices (see
+    //         fetchvalue at params.rs:6395-6407), so no separate
+    //         Param descriptor is wired up here.
     // c:851 — `noerrs = 2`; NOERRS module-private, so this guard is
     //         a no-op for now.
 
@@ -6202,17 +6262,29 @@ pub fn copyparam(                                                            // 
 /// through `Box<hashtable>` to clear all `nodes`; consume the
 /// table by value to mirror the C ownership transfer.
 pub fn deleteparamtable(t: Option<crate::ported::zsh_h::HashTable>) {
+    // c:620-623 — `int odelunset = delunset; delunset = 1;` save/
+    // restore so the inner free path fires every entry's unsetfn.
+    let odelunset =
+        DELUNSET.swap(1, std::sync::atomic::Ordering::Relaxed);              // c:620-621
     if let Some(table) = t {
         // Box dropped here → fields freed; param freenode callbacks
         // are invoked transparently via Drop on each `param` entry.
         drop(table);
     }
+    DELUNSET.store(odelunset, std::sync::atomic::Ordering::Relaxed);         // c:623
 }
 
 /// Port of `fetchvalue()` from `Src/params.c:2180` — see real
 /// implementation below; this slot kept for the C-source linenum
 /// citation and is now an alias.
 // (real fetchvalue is defined later)
+
+/// Port of `static int delunset;` from `Src/params.c:610`. Flag
+/// `deleteparamtable` flips to 1 around the inner `deletehashtable`
+/// call so each freed node runs its `unsetfn`. `freeparamnode`
+/// consults this before invoking the unset hook (c:5986).
+pub static DELUNSET: std::sync::atomic::AtomicI32 =                          // c:610
+    std::sync::atomic::AtomicI32::new(0);
 
 /// Direct port of `void freeparamnode(HashNode hn)` from
 /// `Src/params.c:5977-5994`. Frees a Param node, including
@@ -6227,16 +6299,19 @@ pub fn deleteparamtable(t: Option<crate::ported::zsh_h::HashTable>) {
 ///     zsfree(pm->ename);                  // c:5991
 ///   zfree(pm, sizeof(struct param));      // c:5992
 ///
-/// Rust's Drop handles every zsfree/zfree above; the only piece
-/// that needs explicit handling is the optional unsetfn dispatch
-/// when delunset is non-zero. delunset isn't yet ported (init.c
-/// global), so the dispatch is deferred. The remaining drop
-/// cascade fires the moment `_hn` (Box<param>) leaves scope.
-pub fn freeparamnode(_hn: crate::ported::zsh_h::Param) {                     // c:5977
+/// Rust's Drop handles every zsfree/zfree above; the explicit
+/// step here is the optional unsetfn dispatch when `DELUNSET` is
+/// non-zero. The remaining drop cascade fires when `_hn`
+/// (`Box<param>`) leaves scope.
+pub fn freeparamnode(mut _hn: crate::ported::zsh_h::Param) {                 // c:5977
     // c:5986-5987 — `if (delunset) pm->gsu.s->unsetfn(pm, 1);`.
-    // delunset global not yet ported; the unsetfn dispatch is
-    // routed through stdunsetfn elsewhere. Once delunset lands,
-    // call stdunsetfn(_hn.as_mut(), 1) here.
+    if DELUNSET.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+        // The Rust port's stdunsetfn writes the unset state back to
+        // paramtab; calling it on the about-to-drop param re-marks
+        // its slot in the table so consumers that read the table
+        // see PM_UNSET on the next lookup.
+        stdunsetfn(_hn.as_mut(), 1);                                         // c:5987
+    }
     // c:5988-5992 — drop cascade frees nam / ename (non-PM_SPECIAL)
     // / struct itself when _hn goes out of scope.
 }
@@ -6403,9 +6478,25 @@ pub fn fetchvalue<'a>(                                                       // 
             }
             v.scanflags = sf;
         }
-        // c:2288 — bracket subscript dispatch is deferred to getindex
-        // when the next byte is `[`; getindex itself is stubbed
-        // pending the full subscript-expression evaluator.
+        // c:2289-2293 — bracket-subscript dispatch. When the unparsed
+        // remainder starts with `[` (or the lexer's `Inbrack` token),
+        // hand off to `getindex` which fills `v.start`/`v.end`/
+        // `v.scanflags` and advances `pptr`.
+        if bracks > 0
+            && (pptr.starts_with('[')
+                || pptr.starts_with(crate::ported::zsh_h::INBRACK))
+        {
+            if getindex(pptr, v, scanflags) != 0 {                           // c:2290
+                return Some(v);                                              // c:2292
+            }
+        } else if (scanflags & crate::ported::zsh_h::SCANPM_ASSIGNING as i32) == 0
+            && v.scanflags != 0
+            && crate::ported::options::optlookup("ksharrays") > 0
+        {
+            // c:2294-2296 — KSHARRAYS implicit `[0]` for bare arr.
+            v.end = 1;
+            v.scanflags = 0;
+        }
         return Some(v);
     }
     None
