@@ -349,90 +349,19 @@ impl Keymap {
 /// container shape — pending a cascade-rewrite that switches all
 /// 74 `.keymaps.X` callers to read from the file-scope statics
 /// directly (matching C's inline access).
-#[derive(Debug)]
-pub struct KeymapManager {
-    // the hash table of keymap names                                        // c:128
-    /// Named keymaps
-    pub keymaps: HashMap<String, Arc<Keymap>>,
-    // currently selected keymap, and its name                               // c:121
-    /// Current keymap
-    pub current: Option<Arc<Keymap>>,
-    /// Current keymap name
-    pub current_name: String,
-    /// Local keymap (temporary override)
-    pub local: Option<Arc<Keymap>>,
-    /// Key sequence buffer
-    pub keybuf: Vec<u8>,
-    /// Last named command executed
-    pub lastnamed: Option<Thingy>,
-}
-
-impl Default for KeymapManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+#[derive(Debug, Default)]
+pub struct KeymapManager;
 
 impl KeymapManager {
-    /// Construct a freshly-populated keymap manager with the canonical
-    /// emacs / viins / vicmd / isearch / command keymaps installed and
-    /// `main` aliased to emacs.
-    /// Mirrors zsh's keymap-table init sequence in
-    /// Src/Zle/zle_keymap.c:153 (`createkeymapnamtab`) plus the
-    /// per-keymap `default_bindings()` calls fired at module boot —
-    /// see `setup_*_keymap` for the per-keymap binding tables.
+    /// Trigger default-keymap population in `keymapnamtab` (matches
+    /// the C startup that fires `createkeymapnamtab()` +
+    /// `default_bindings()` at module init). Returns a unit handle so
+    /// existing `KeymapManager::new()` call sites compile while the
+    /// state lives entirely in the file-scope statics.
     pub fn new() -> Self {
-        let mut mgr = KeymapManager {
-            keymaps: HashMap::new(),
-            current: None,
-            current_name: "main".to_string(),
-            local: None,
-            keybuf: Vec::with_capacity(20),
-            lastnamed: None,
-        };
-
-        // Create default keymaps
-        mgr.create_default_keymaps();
-
-        mgr
-    }
-
-    /// Create the default keymaps (emacs, viins, vicmd, etc.)
-    fn create_default_keymaps(&mut self) {
-        // Create emacs keymap
-        let mut emacs = Keymap::new();
-        emacs.primary = Some("emacs".to_string());
-        self.setup_emacs_keymap(&mut emacs);
-        self.keymaps.insert("emacs".to_string(), Arc::new(emacs));
-
-        // Create viins keymap
-        let mut viins = Keymap::new();
-        viins.primary = Some("viins".to_string());
-        self.setup_viins_keymap(&mut viins);
-        self.keymaps.insert("viins".to_string(), Arc::new(viins));
-
-        // Create vicmd keymap
-        let mut vicmd = Keymap::new();
-        vicmd.primary = Some("vicmd".to_string());
-        self.setup_vicmd_keymap(&mut vicmd);
-        self.keymaps.insert("vicmd".to_string(), Arc::new(vicmd));
-
-        // Create isearch keymap
-        let isearch = Keymap::new();
-        self.keymaps
-            .insert("isearch".to_string(), Arc::new(isearch));
-
-        // Create command keymap
-        let command = Keymap::new();
-        self.keymaps
-            .insert("command".to_string(), Arc::new(command));
-
-        // "main" is initially aliased to emacs
-        let emacs = self.keymaps.get("emacs").cloned();
-        if let Some(emacs) = emacs {
-            self.keymaps.insert("main".to_string(), Arc::clone(&emacs));
-            self.current = Some(emacs);
-        }
+        createkeymapnamtab();
+        default_bindings();
+        KeymapManager
     }
 
     /// Set up emacs keymap bindings
@@ -702,118 +631,110 @@ impl KeymapManager {
         km.bind_char(b'|', Thingy::builtin("vi-goto-column"));
     }
 
-    /// Get a keymap by name
+    /// Get a keymap by name.
+    /// Method body now reads `keymapnamtab` directly via `openkeymap()` —
+    /// no per-Manager state.
     pub fn get(&self, name: &str) -> Option<Arc<Keymap>> {
-        self.keymaps.get(name).cloned()
+        openkeymap(name)
     }
 
     // Select a keymap as the current ZLE keymap.  Can optionally fall back    // c:490
     // on the guaranteed safe keymap if it fails.                              // c:491
-    /// Set the current keymap
+    /// Method shim — delegates to free `selectkeymap()` so call sites
+    /// that hold a `KeymapManager` handle still work.
     pub fn select(&mut self, name: &str) -> bool {                           // c:495
-        if let Some(km) = self.keymaps.get(name) {
-            self.current = Some(Arc::clone(km));
-            self.current_name = name.to_string();
-            true
-        } else {
-            false
-        }
+        selectkeymap(name, 0) == 0
     }
 
-    /// Link a new name to an existing keymap
+    /// Link a new name to an existing keymap. Routes through the
+    /// `linkkeymap()` free fn that mutates `keymapnamtab`.
     pub fn link(&mut self, oldname: &str, newname: &str) -> bool {           // c:449
-        if let Some(km) = self.keymaps.get(oldname) {
-            self.keymaps.insert(newname.to_string(), Arc::clone(km));
+        if let Some(km) = openkeymap(oldname) {
+            linkkeymap(km, newname, 0);
             true
         } else {
             false
         }
     }
 
-    /// Delete a keymap name
+    /// Delete a keymap name.
     pub fn delete(&mut self, name: &str) -> bool {                           // c:364
-        // Don't allow deleting immortal keymaps
         if name == "main" || name == "emacs" || name == "viins" || name == "vicmd" {
             return false;
         }
-        self.keymaps.remove(name).is_some()
+        keymapnamtab().lock().unwrap().remove(name).is_some()
     }
 
-    /// Look up a key in the current keymap
+    /// Look up a single byte's binding in the current/local keymap.
     pub fn lookup_key(&self, c: char) -> Option<Thingy> {
-        let km = self.local.as_ref().or(self.current.as_ref())?;
-
-        // For now, just look up single byte
-        if c as u32 <= 255 {
-            km.first[c as usize].clone()
-        } else {
-            None
+        if c as u32 > 255 {
+            return None;
         }
+        let km = LOCALKEYMAP.lock().unwrap().clone()
+            .or_else(|| curkeymap.lock().unwrap().clone())?;
+        km.first[c as usize].clone()
     }
 
-    /// Look up a key sequence in the current keymap
-    pub fn lookup_seq(&self, seq: &[u8]) -> Option<&KeyBinding> {
-        let km = self.local.as_ref().or(self.current.as_ref())?;
-        km.lookup_seq(seq)
+    /// Look up a key sequence in the current/local keymap. Returns owned
+    /// `KeyBinding` so the lock can drop after the lookup.
+    pub fn lookup_seq(&self, seq: &[u8]) -> Option<KeyBinding> {
+        let km = LOCALKEYMAP.lock().unwrap().clone()
+            .or_else(|| curkeymap.lock().unwrap().clone())?;
+        km.lookup_seq(seq).cloned()
     }
 
-    /// Check if a sequence is a prefix in the current keymap
+    /// Check if a sequence is a prefix in the current/local keymap.
     pub fn is_prefix(&self, seq: &[u8]) -> bool {
-        if let Some(km) = self.local.as_ref().or(self.current.as_ref()) {
-            km.is_prefix(seq)
-        } else {
-            false
-        }
+        let km = LOCALKEYMAP.lock().unwrap().clone()
+            .or_else(|| curkeymap.lock().unwrap().clone());
+        km.map(|k| k.is_prefix(seq)).unwrap_or(false)
     }
 
-    /// List all keymap names
-    /// Port of bin_bindkey_lsmaps() from zle_keymap.c
-    pub fn list_names(&self) -> Vec<&String> {
-        self.keymaps.keys().collect()
+    /// List all keymap names.
+    pub fn list_names(&self) -> Vec<String> {
+        keymapnamtab().lock().unwrap().keys().cloned().collect()
     }
 
-    /// Create a new empty keymap
-    /// Port of newkeymap() from zle_keymap.c
+    /// Create a new empty keymap.
     pub fn new_keymap(&mut self, name: &str) -> bool {                       // c:330
-        if self.keymaps.contains_key(name) {
-            return false;
+        {
+            let tab = keymapnamtab().lock().unwrap();
+            if tab.contains_key(name) {
+                return false;
+            }
         }
-
         let mut km = Keymap::new();
         km.primary = Some(name.to_string());
-        self.keymaps.insert(name.to_string(), Arc::new(km));
+        linkkeymap(Arc::new(km), name, 0);
         true
     }
 
-    /// Copy a keymap to a new name
-    /// Port of copyto from bin_bindkey_new
+    /// Copy a keymap to a new name.
     pub fn copy_keymap(&mut self, src: &str, dst: &str) -> bool {
-        if let Some(src_km) = self.keymaps.get(src) {
-            let new_km = (**src_km).clone();
-            self.keymaps.insert(dst.to_string(), Arc::new(new_km));
+        if let Some(src_km) = openkeymap(src) {
+            let new_km = (*src_km).clone();
+            linkkeymap(Arc::new(new_km), dst, 0);
             true
         } else {
             false
         }
     }
 
-    /// Set a local keymap (temporary override)
-    /// Port of selectlocalmap() from zle_keymap.c
+    /// Set a local keymap (temporary override).
     pub fn select_local_map(&mut self, name: Option<&str>) {
-        self.local = name.and_then(|n| self.keymaps.get(n).cloned());
+        selectlocalmap(name.and_then(openkeymap));
     }
 
-    /// Re-select keymap after a widget completes
-    /// Port of reselectkeymap() from zle_keymap.c
+    /// Re-select keymap after a widget completes — clears the local
+    /// override so subsequent reads fall back to `curkeymap`.
     pub fn reselect_keymap(&mut self) {
-        self.local = None;
+        *LOCALKEYMAP.lock().unwrap() = None;
     }
 
-    /// Read a key command from the current keymap
-    /// Port of readcommand() from zle_keymap.c
+    /// Read a key command from the current keymap.
     pub fn read_command(&self, keys: &[u8]) -> Option<Thingy> {
-        let km = self.local.as_ref().or(self.current.as_ref())?;
-
+        let km = LOCALKEYMAP.lock().unwrap().clone()
+            .or_else(|| curkeymap.lock().unwrap().clone())?;
         if keys.len() == 1 {
             km.first[keys[0] as usize].clone()
         } else {
@@ -821,55 +742,55 @@ impl KeymapManager {
         }
     }
 
-    /// Get the key sequence from buffer
-    /// Port of getkeybuf() from zle_keymap.c
-    pub fn get_keybuf(&self) -> &[u8] {
-        &self.keybuf
+    /// Snapshot of the keyboard read buffer.
+    pub fn get_keybuf(&self) -> Vec<u8> {
+        keybuf.lock().unwrap().clone()
     }
 
-    /// Add to key buffer
-    /// Port of addkeybuf() from zle_keymap.c
+    /// Append a byte to the keyboard read buffer.
     pub fn add_keybuf(&mut self, c: u8) {
-        self.keybuf.push(c);
+        keybuf.lock().unwrap().push(c);
     }
 
-    /// Clear key buffer
+    /// Clear the keyboard read buffer.
     pub fn clear_keybuf(&mut self) {
-        self.keybuf.clear();
+        keybuf.lock().unwrap().clear();
     }
 
-    /// Check if current keymap is emacs
+    /// Is the current keymap emacs (or its "main" alias)?
     pub fn is_emacs(&self) -> bool {
-        self.current_name == "emacs" || self.current_name == "main"
+        let n = curkeymapname();
+        *n == "emacs" || *n == "main"
     }
 
-    /// Check if current keymap is vi insert
+    /// Is the current keymap viins?
     pub fn is_vi_insert(&self) -> bool {
-        self.current_name == "viins"
+        *curkeymapname() == "viins"
     }
 
-    /// Check if current keymap is vi command
+    /// Is the current keymap vicmd?
     pub fn is_vi_cmd(&self) -> bool {
-        self.current_name == "vicmd"
+        *curkeymapname() == "vicmd"
     }
 
-    /// Get keymap command for a key
-    /// Port of getkeymapcmd() from zle_keymap.c
+    /// Get keymap command for a byte (single-byte lookup on a passed-in
+    /// Keymap — does not touch the active selection).
     pub fn get_keymap_cmd(&self, km: &Keymap, key: u8) -> Option<Thingy> {
         km.first[key as usize].clone()
     }
 
-    /// Check if key is prefix in keymap
-    /// Port of keyisprefix() from zle_keymap.c
+    /// Is the byte the start of a multi-byte binding in the passed-in
+    /// keymap?
     pub fn key_is_prefix(&self, km: &Keymap, key: u8) -> bool {
         km.multi.keys().any(|k| k.len() > 1 && k[0] == key)
     }
 
-    /// Bind key in current keymap
-    /// Port of keybind() from zle_keymap.c  
+    /// Bind a key sequence in the currently-selected keymap.
     pub fn keybind(&mut self, seq: &[u8], thingy: Thingy) -> bool {
-        if let Some(km) = self.keymaps.get_mut(&self.current_name) {
-            if let Some(km_mut) = Arc::get_mut(km) {
+        let name = curkeymapname().clone();
+        let mut tab = keymapnamtab().lock().unwrap();
+        if let Some(node) = tab.get_mut(&name) {
+            if let Some(km_mut) = Arc::get_mut(&mut node.keymap) {
                 if seq.len() == 1 {
                     km_mut.bind_char(seq[0], thingy);
                 } else {
@@ -881,10 +802,12 @@ impl KeymapManager {
         false
     }
 
-    /// Unbind key in current keymap
+    /// Unbind a key sequence in the currently-selected keymap.
     pub fn keyunbind(&mut self, seq: &[u8]) -> bool {
-        if let Some(km) = self.keymaps.get_mut(&self.current_name) {
-            if let Some(km_mut) = Arc::get_mut(km) {
+        let name = curkeymapname().clone();
+        let mut tab = keymapnamtab().lock().unwrap();
+        if let Some(node) = tab.get_mut(&name) {
+            if let Some(km_mut) = Arc::get_mut(&mut node.keymap) {
                 km_mut.unbind_seq(seq);
                 return true;
             }
@@ -892,20 +815,15 @@ impl KeymapManager {
         false
     }
 
-    /// Get bindings for listing
-    /// Port of scankeymap() / scanbindlist() from zle_keymap.c
+    /// Get bindings for listing.
     pub fn scan_keymap(&self, name: &str) -> Vec<(Vec<u8>, String)> {
         let mut bindings = Vec::new();
-
-        if let Some(km) = self.keymaps.get(name) {
-            // Single char bindings
+        if let Some(km) = openkeymap(name) {
             for (i, opt) in km.first.iter().enumerate() {
                 if let Some(t) = opt {
                     bindings.push((vec![i as u8], t.nam.clone()));
                 }
             }
-
-            // Multi-char bindings
             for (seq, kb) in &km.multi {
                 if let Some(ref t) = kb.bind {
                     bindings.push((seq.clone(), t.nam.clone()));
@@ -914,35 +832,32 @@ impl KeymapManager {
                 }
             }
         }
-
         bindings.sort_by(|a, b| a.0.cmp(&b.0));
         bindings
     }
 
-    /// Set keymap via ZLE (zle -K)
-    /// Port of zlesetkeymap() from zle_keymap.c
+    /// Set keymap via ZLE (zle -K).
     pub fn zle_set_keymap(&mut self, name: &str) -> bool {
         self.select(name)
     }
 
-    /// Reference keymap by name
-    /// Port of refkeymap_by_name() from zle_keymap.c
+    /// Reference keymap by name.
     pub fn ref_keymap_by_name(&self, name: &str) -> Option<Arc<Keymap>> {
-        self.keymaps.get(name).cloned()
+        openkeymap(name)
     }
 
-    /// Initialize keymaps
-    /// Port of init_keymaps() from zle_keymap.c
+    /// Initialize keymaps — fires the C-side `createkeymapnamtab()` +
+    /// `default_bindings()` sequence.
     pub fn init_keymaps(&mut self) {
-        self.create_default_keymaps();
+        createkeymapnamtab();
+        default_bindings();
     }
 
-    /// Cleanup keymaps
-    /// Port of cleanup_keymaps() from zle_keymap.c
+    /// Cleanup keymaps.
     pub fn cleanup_keymaps(&mut self) {
-        self.keymaps.clear();
-        self.current = None;
-        self.local = None;
+        keymapnamtab().lock().unwrap().clear();
+        *curkeymap.lock().unwrap() = None;
+        *LOCALKEYMAP.lock().unwrap() = None;
     }
 }
 
@@ -966,7 +881,8 @@ mod tests {
     #[test]
     fn emacs_default_has_quoted_insert_undo_yank_pop() {
         let mgr = KeymapManager::new();
-        let km = mgr.keymaps.get("emacs").expect("emacs keymap created");
+        let _ = &mgr;
+        let km = openkeymap("emacs").expect("emacs keymap created");
         // Ctrl-V quoted-insert (zle_bindings.c emacs '^V').
         assert_eq!(
             km.lookup_char(0x16).map(|t| t.nam.as_str()),
@@ -984,7 +900,8 @@ mod tests {
     #[test]
     fn emacs_default_has_history_search_and_insert_last_word() {
         let mgr = KeymapManager::new();
-        let km = mgr.keymaps.get("emacs").expect("emacs keymap created");
+        let _ = &mgr;
+        let km = openkeymap("emacs").expect("emacs keymap created");
         // \e. insert-last-word.
         assert_eq!(
             km.lookup_seq(b"\x1b.").and_then(|kb| kb.bind.as_ref()).map(|t| t.nam.as_str()),
@@ -1006,7 +923,8 @@ mod tests {
     #[test]
     fn vicmd_default_has_visual_marks_indent() {
         let mgr = KeymapManager::new();
-        let km = mgr.keymaps.get("vicmd").expect("vicmd keymap created");
+        let _ = &mgr;
+        let km = openkeymap("vicmd").expect("vicmd keymap created");
         assert_eq!(
             km.lookup_char(b'v').map(|t| t.nam.as_str()),
             Some("visual-mode")
@@ -1036,7 +954,8 @@ mod tests {
     #[test]
     fn viins_default_has_history_search_and_quoted_insert() {
         let mgr = KeymapManager::new();
-        let km = mgr.keymaps.get("viins").expect("viins keymap created");
+        let _ = &mgr;
+        let km = openkeymap("viins").expect("viins keymap created");
         // ^R history-incremental-search-backward (zle_bindings.c viins '^R').
         assert_eq!(
             km.lookup_char(0x12).map(|t| t.nam.as_str()),
@@ -1186,11 +1105,13 @@ pub fn addkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, c: i32) {      // 
     // safe single-byte values. zsh's imeta() returns true when
     // byte needs Meta-quoting in the key buffer.
     let is_meta = c >= 0x83 && c != 0x83 && c != 0x84;
+    let _ = zle;
+    let mut buf = keybuf.lock().unwrap();
     if is_meta {
-        zle.keymaps.keybuf.push(0x83);                                       // Meta
-        zle.keymaps.keybuf.push((c ^ 32) as u8);
+        buf.push(0x83);                                                      // Meta
+        buf.push((c ^ 32) as u8);
     } else {
-        zle.keymaps.keybuf.push(c as u8);
+        buf.push(c as u8);
     }
     // C terminates with '\0'; Rust Vec doesn't need that.
 }
@@ -1450,20 +1371,30 @@ pub fn createkeymapnamtab() {                                                // 
 /// keymap names exist and resolve via `openkeymap()`. Without that,
 /// any later `bindkey -K emacs ...` user call fails.
 pub fn default_bindings() {                                                  // c:1309
-    // c:1325-1810 — alloc + link each named keymap.
-    for name in ["emacs", "vicmd", "viins", "menuselect", "listscroll", "main", ".safe"] {
-        let km = newkeymap(None, name);
-        // c:1812 — `linkkeymap(km, "<name>", imm)` where imm=1 only
-        // for `.safe`; the Rust port keeps the `.safe` immutable
-        // flag via KeymapFlags later when that machinery lands.
+    // c:1325-1810 — alloc + link each named keymap; apply the per-key
+    // bindkey defaults for emacs / viins / vicmd inline (mirroring
+    // the C body which has all the bindkey calls inside this fn).
+    let mgr = KeymapManager;
+    for name in ["emacs", "vicmd", "viins", "menuselect", "listscroll", ".safe"] {
+        let mut km = Keymap::default();
+        km.primary = Some(name.to_string());
+        match name {
+            "emacs" => mgr.setup_emacs_keymap(&mut km),
+            "viins" => mgr.setup_viins_keymap(&mut km),
+            "vicmd" => mgr.setup_vicmd_keymap(&mut km),
+            _ => {}
+        }
         let imm = if name == ".safe" { 1 } else { 0 };
-        linkkeymap(km, name, imm);
+        linkkeymap(Arc::new(km), name, imm);
     }
     // c:1816-1818 — `linkkeymap(emacs_km, "main", 0)` — promote emacs
     // as the active "main" keymap by default.
     if let Some(emacs) = openkeymap("emacs") {
         linkkeymap(emacs, "main", 0);
     }
+    // Seed curkeymap/curkeymapname so the first key read has a target.
+    *curkeymap.lock().unwrap() = openkeymap("main");                         // c:519
+    *curkeymapname() = "main".to_string();                                   // c:513
 }
 
 /// Port of `deletekeymap()` from Src/Zle/zle_keymap.c:364.
@@ -1763,7 +1694,9 @@ pub fn refkeymap_by_name(name: &str) {                                       // 
 /// Port of `reselectkeymap()` from Src/Zle/zle_keymap.c:549.
 pub fn reselectkeymap(zle: &crate::ported::zle::zle_main::Zle) {             // c:548
     // C body (c:551): `selectkeymap(curkeymapname, 1)`.
-    selectkeymap(&zle.keymaps.current_name, 1);
+    let _ = zle;
+    let name = curkeymapname().clone();
+    selectkeymap(&name, 1);
 }
 
 /// Direct port of `static void scanbindlist(char *seq, Thingy bind,
@@ -1891,22 +1824,25 @@ pub fn selectkeymap(name: &str, fb: i32) -> i32 {                            // 
     //   if (name != curkeymapname) { ... curkeymapname = ztrdup(name);
     //   if (zleactive && oldname && strcmp...) zlecallhook(...); }
     //   curkeymap = km; return 0`.
-    //
-    // Without curkeymap/curkeymapname mutable globals (live on
-    // KeymapManager), simplified: validate keymap exists and
-    // (with fallback) consult `.safe` if missing.
-    let km = openkeymap(name);
-    if km.is_none() {
+    let mut km = openkeymap(name);                                           // c:497
+    let mut resolved = name.to_string();
+    if km.is_none() {                                                        // c:498
         if fb == 0 {
             return 1;                                                        // c:506
         }
-        // Fallback: open `.safe`. If even that's missing, fail.
-        if openkeymap(".safe").is_none() {
+        km = openkeymap(".safe");                                            // c:508
+        if km.is_none() {
             return 1;
         }
+        resolved = ".safe".to_string();
     }
+    // c:513 — `curkeymapname = ztrdup(name)`.
+    *curkeymapname() = resolved;
+    // c:518 — `curkeymap = km`.
+    *curkeymap.lock().unwrap() = km;
     0                                                                        // c:520
 }
+
 
 /// Direct port of `void selectlocalmap(Keymap m)` from
 /// `Src/Zle/zle_keymap.c:527-547`.
@@ -1940,7 +1876,7 @@ pub static LOCALKEYMAP: Mutex<Option<Arc<Keymap>>> = Mutex::new(None);       // 
 /// Port of `ungetkeycmd()` from Src/Zle/zle_keymap.c:1759.
 pub fn ungetkeycmd(zle: &mut crate::ported::zle::zle_main::Zle) {            // c:1758
     // C body (c:1761): `ungetbytes_unmeta(keybuf, keybuflen)`.
-    let buf = zle.keymaps.keybuf.clone();
+    let buf = keybuf.lock().unwrap().clone();
     crate::ported::zle::zle_main::ungetbytes_unmeta(zle, &buf);
 }
 

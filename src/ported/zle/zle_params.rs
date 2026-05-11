@@ -129,8 +129,8 @@ impl Zle {
 
     /// `$KEYMAP` accessor — currently-active keymap name.
     /// Port of `get_keymap()` from Src/Zle/zle_params.c.
-    pub fn get_keymap(&self) -> &str {                                      // c:456
-        &self.keymaps.current_name
+    pub fn get_keymap(&self) -> String {                                    // c:456
+        crate::ported::zle::zle_keymap::curkeymapname().clone()
     }
 
     /// `$NUMERIC` accessor — numeric prefix when set.
@@ -176,7 +176,7 @@ impl Zle {
 
         // Add keymap info
         state.push(':');
-        state.push_str(&self.keymaps.current_name);
+        state.push_str(&crate::ported::zle::zle_keymap::curkeymapname());
 
         state
     }
@@ -232,7 +232,8 @@ pub fn get_isearchmatchstart() -> i64 {                                      // 
 /// Port of `get_keys()` from Src/Zle/zle_params.c:463.
 pub fn get_keys(zle: &crate::ported::zle::zle_main::Zle) -> Vec<u8> {        // c:462
     // c:465 — `return keybuf`. The active keymap-walk byte buffer.
-    zle.keymaps.keybuf.clone()
+    let _ = zle;
+    crate::ported::zle::zle_keymap::keybuf.lock().unwrap().clone()
 }
 
 /// Port of `get_keys_queued_count()` from Src/Zle/zle_params.c:470.
@@ -968,8 +969,8 @@ mod batch_getters_tests {
 
     #[test]
     fn get_keys_returns_keybuf_clone() {
-        let mut z = Zle::default();
-        z.keymaps.keybuf = vec![0x1b, b'a'];
+        let z = Zle::default();
+        *crate::ported::zle::zle_keymap::keybuf.lock().unwrap() = vec![0x1b, b'a'];
         assert_eq!(get_keys(&z), vec![0x1b, b'a']);
     }
 
@@ -1024,16 +1025,18 @@ mod keybuf_tests {
     #[test]
     fn addkeybuf_plain_byte() {
         let mut z = Zle::default();
+        crate::ported::zle::zle_keymap::keybuf.lock().unwrap().clear();
         addkeybuf(&mut z, b'a' as i32);
-        assert_eq!(z.keymaps.keybuf, vec![b'a']);
+        assert_eq!(*crate::ported::zle::zle_keymap::keybuf.lock().unwrap(), vec![b'a']);
     }
 
     #[test]
     fn addkeybuf_meta_quoted() {
         let mut z = Zle::default();
         // 0xa0 needs Meta-quoting → 0x83 then (0xa0 ^ 0x20) = 0x80
+        crate::ported::zle::zle_keymap::keybuf.lock().unwrap().clear();
         addkeybuf(&mut z, 0xa0);
-        assert_eq!(z.keymaps.keybuf, vec![0x83, 0x80]);
+        assert_eq!(*crate::ported::zle::zle_keymap::keybuf.lock().unwrap(), vec![0x83, 0x80]);
     }
 
     #[test]

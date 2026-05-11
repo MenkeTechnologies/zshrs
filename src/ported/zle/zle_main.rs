@@ -810,7 +810,7 @@ impl Zle {
     /// Port of `invicmdmode()` from Src/Zle/zle_main.c (the C macro just
     /// compares the active keymap pointer against `vicmd`).
     pub fn in_vi_cmd_mode(&self) -> bool {
-        self.keymaps.current_name == "vicmd"
+        *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd"
     }
 
     /// Read a multi-byte key sequence from input and resolve it against
@@ -830,8 +830,11 @@ impl Zle {
     /// `t_executenamedcmd` redirection at zle_keymap.c:1787 — both are
     /// host-driven concerns that the bin can layer on top.
     pub fn get_key_cmd(&mut self) -> Option<super::zle_thingy::Thingy> {
-        let km_arc = self.keymaps.local.as_ref().or(self.keymaps.current.as_ref())?;
-        let km = km_arc.clone();
+        let km = {
+            let local = crate::ported::zle::zle_keymap::LOCALKEYMAP.lock().unwrap().clone();
+            let cur = crate::ported::zle::zle_keymap::curkeymap.lock().unwrap().clone();
+            local.or(cur)?
+        };
         let mut buf: Vec<u8> = Vec::with_capacity(8);
         let mut last_match: Option<super::zle_thingy::Thingy> = None;
         let mut last_match_len = 0usize;
@@ -1159,8 +1162,9 @@ impl Zle {
     /// Port of whereis() from zle_main.c
     pub fn whereis(&self, widget_name: &str) -> Vec<String> {
         let mut bindings = Vec::new();
-
-        for (name, km) in &self.keymaps.keymaps {
+        let tab = crate::ported::zle::zle_keymap::keymapnamtab().lock().unwrap();
+        for (name, node) in tab.iter() {
+            let km = &node.keymap;
             // Check single char bindings
             for (i, opt) in km.first.iter().enumerate() {
                 if let Some(t) = opt {
@@ -1565,10 +1569,10 @@ mod tests {
 
     #[test]
     fn in_vi_cmd_mode_reflects_active_keymap_name() {
-        let mut zle = Zle::new();
-        zle.keymaps.current_name = "emacs".to_string();
+        let zle = Zle::new();
+        *crate::ported::zle::zle_keymap::curkeymapname() = "emacs".to_string();
         assert!(!zle.in_vi_cmd_mode());
-        zle.keymaps.current_name = "vicmd".to_string();
+        *crate::ported::zle::zle_keymap::curkeymapname() = "vicmd".to_string();
         assert!(zle.in_vi_cmd_mode());
     }
 
