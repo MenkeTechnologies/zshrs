@@ -946,8 +946,8 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
         // c:344 — error path.
         ZLEMETACS.store(0, Ordering::Relaxed);                               // c:344
         foredel_stub(ZLEMETALL.load(Ordering::Relaxed));                     // c:345
-        inststr_stub(&origline_stub());                                      // c:346
-        ZLEMETACS.store(origcs_stub(), Ordering::Relaxed);                   // c:347
+        inststr_stub(&crate::ported::zle::zle_tricky::ORIGLINE.get_or_init(|| Mutex::new(String::new())).lock().map(|g| g.clone()).unwrap_or_default());                                      // c:346
+        ZLEMETACS.store(crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::Relaxed), Ordering::Relaxed);                   // c:347
         crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed);                                                    // c:348
         ret = 1;
         minfo_clear_cur();                                                   // c:350
@@ -982,8 +982,8 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
     {                                                                        // c:374
         ZLEMETACS.store(0, Ordering::Relaxed);                               // c:375
         foredel_stub(ZLEMETALL.load(Ordering::Relaxed));                     // c:376
-        inststr_stub(&origline_stub());                                      // c:377
-        ZLEMETACS.store(origcs_stub(), Ordering::Relaxed);                   // c:378
+        inststr_stub(&crate::ported::zle::zle_tricky::ORIGLINE.get_or_init(|| Mutex::new(String::new())).lock().map(|g| g.clone()).unwrap_or_default());                                      // c:377
+        ZLEMETACS.store(crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::Relaxed), Ordering::Relaxed);                   // c:378
         crate::ported::zle::zle_refresh::SHOWINGLIST.store(-2, Ordering::Relaxed);                                                 // c:379
     } else if useline.load(Ordering::Relaxed) == 2 && nm > 1 {               // c:380
         do_allmatches_stub(1);                                               // c:381
@@ -1034,8 +1034,8 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
         if forcelist.load(Ordering::Relaxed) != 0 { crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed); }      // c:428
         ZLEMETACS.store(0, Ordering::Relaxed);                               // c:429
         foredel_stub(ZLEMETALL.load(Ordering::Relaxed));                     // c:430
-        inststr_stub(&origline_stub());                                      // c:431
-        ZLEMETACS.store(origcs_stub(), Ordering::Relaxed);                   // c:432
+        inststr_stub(&crate::ported::zle::zle_tricky::ORIGLINE.get_or_init(|| Mutex::new(String::new())).lock().map(|g| g.clone()).unwrap_or_default());                                      // c:431
+        ZLEMETACS.store(crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::Relaxed), Ordering::Relaxed);                   // c:432
     }
 
     // c:436 — explanation strings.
@@ -1136,14 +1136,11 @@ fn inststr_stub(s: &str) {                                                    //
         ZLEMETACS.store(cs as i32 + s.len() as i32, Ordering::Relaxed);
     }
 }
-fn origline_stub() -> String {                                                // zle_tricky.c
-    crate::ported::zle::zle_tricky::ORIGLINE
-        .get_or_init(|| Mutex::new(String::new()))
-        .lock().map(|g| g.clone()).unwrap_or_default()
-}
-fn origcs_stub() -> i32 {                                                     // zle_tricky.c:75
-    crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::Relaxed)
-}
+// `origline_stub` / `origcs_stub` deleted — Rust-only 1-line
+// accessors for the `ORIGLINE` / `ORIGCS` globals (ports of C
+// `origline` / `origcs` at zle_tricky.c:75 etc.). C reads these
+// globals inline; callers in compcore.rs now do the lock/load
+// directly.
 /// Direct port of `void unmetafy_line(void)` from `zle_tricky.c:995`.
 /// Reads `ZLEMETALINE`, runs `unmetafy_line(...)` from zle_tricky.rs,
 /// stores result into `ZLELINE` + updates `ZLECS`/`ZLELL`.
