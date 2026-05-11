@@ -408,19 +408,19 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 }
 
 /// Port of `features_()` from `Src/Modules/ksh93.c:243`.
-/// C body c:245-247 — `*features = featuresarray(m, &module_features);
-///                     return 0`. Static-link path: ksh93 module
-/// has no features beyond the autoloaded wrapper, so we report empty.
+/// C body c:245-247 — `*features = featuresarray(m, &module_features); return 0`.
 pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {     // c:243
-    features.clear();
-    0
+    *features = crate::ported::module::featuresarray(                       // c:245
+        &module_handle(),
+        &MODULE_FEATURES,
+    );
+    0                                                                        // c:247
 }
 
 /// Port of `enables_()` from `Src/Modules/ksh93.c:251`.
 /// C body c:253-254 — `return handlefeatures(m, &module_features, enables)`.
-/// Static-link path: no per-feature toggle, return success.
-pub fn enables_(_m: *const module, _enables: &mut Option<Vec<i32>>) -> i32 { // c:251
-    0
+pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:251
+    crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables) // c:253
 }
 
 /// Port of `boot_()` from `Src/Modules/ksh93.c:258`.
@@ -482,24 +482,47 @@ pub fn cleanup_(m: *const module) -> i32 {
         }
         p += 1;
     }
-    setfeatureenables(m, &MODULE_FEATURES_KSH93, None)                  // c:279
+    crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None) // c:279
 }
 
 
-// `module_features` for ksh93 — empty bn/cd/mf, partab carries 9
-// entries. Stub to satisfy setfeatureenables call.
-static MODULE_FEATURES_KSH93: Mutex<crate::ported::zsh_h::features> =
-    Mutex::new(crate::ported::zsh_h::features {
-        bn_list: None,                                                   // c:134 bintab[1] (nameref)
-        bn_size: 1,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,                                                    // c:137 partab[9]
-        pd_size: 9,
+// `bintab` — port of `static struct builtin bintab[]` (ksh93.c).
+static BINTAB: &[crate::ported::module::Builtin] = &[
+    crate::ported::module::Builtin {
+        name: "nameref",
+        flags: crate::ported::zsh_h::BINF_ASSIGN,
+        minargs: 0, maxargs: -1, funcid: 0,
+        optstr: Some("gpru"), defopts: Some("n"),
+    },
+];
+
+// `partab` — port of `static struct paramdef partab[]` (ksh93.c).
+static PARTAB: &[crate::ported::module::Paramdef] = &[
+    crate::ported::module::Paramdef { name: ".sh.edchar",    registered: false },
+    crate::ported::module::Paramdef { name: ".sh.edmode",    registered: false },
+    crate::ported::module::Paramdef { name: ".sh.file",      registered: false },
+    crate::ported::module::Paramdef { name: ".sh.lineno",    registered: false },
+    crate::ported::module::Paramdef { name: ".sh.match",     registered: false },
+    crate::ported::module::Paramdef { name: ".sh.name",      registered: false },
+    crate::ported::module::Paramdef { name: ".sh.subscript", registered: false },
+    crate::ported::module::Paramdef { name: ".sh.subshell",  registered: false },
+    crate::ported::module::Paramdef { name: ".sh.version",   registered: false },
+];
+
+// `module_features` — port of `static struct features module_features`
+// from ksh93.c.
+static MODULE_FEATURES: crate::ported::module::Features =
+    crate::ported::module::Features {
+        bn_list: BINTAB,
+        cd_list: &[],
+        mf_list: &[],
+        pd_list: PARTAB,
         n_abstract: 0,
-    });
+    };
+
+fn module_handle() -> crate::ported::module::Module {
+    crate::ported::module::Module::new("zsh/ksh93")
+}
 
 // PM_SCALAR / PM_ARRAY / PM_SPECIAL — referenced by PARTAB above.
 const PM_SCALAR: u32 = crate::ported::zsh_h::PM_SCALAR;
@@ -517,9 +540,6 @@ static paramtab: AtomicI32 = AtomicI32::new(0);
 fn gethashnode2(_ht: &AtomicI32, _name: &str) -> *mut param {
     std::ptr::null_mut()
 }
-
-// `setfeatureenables` lives in `Src/module.c:3445`. Stub.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&Vec<i32>>) -> i32 { 0 }
 
 /// Port of `finish_()` from `Src/Modules/ksh93.c:284`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:284

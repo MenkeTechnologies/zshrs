@@ -241,23 +241,27 @@ pub(crate) fn bin_setcap(nam: &str, _argv: &[String], _ops: &options, _func: i32
 // static struct features module_features                            c:129
 // =====================================================================
 
-use std::sync::{Mutex, OnceLock};
-use crate::ported::zsh_h::features as features_t;
+use crate::ported::module::{Builtin, Features, Module as RsModule};
 
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+// `bintab` — port of `static struct builtin bintab[]` (cap.c:123).
+static BINTAB: &[Builtin] = &[                                               // c:123
+    Builtin { name: "cap",    flags: 0, minargs: 0, maxargs:  1, funcid: 0, optstr: None, defopts: None },
+    Builtin { name: "getcap", flags: 0, minargs: 1, maxargs: -1, funcid: 0, optstr: None, defopts: None },
+    Builtin { name: "setcap", flags: 0, minargs: 2, maxargs: -1, funcid: 0, optstr: None, defopts: None },
+];
 
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,                                                // c:130 bintab[3]
-        bn_size: 3,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
+// `module_features` — port of `static struct features module_features`
+// from cap.c:129. Uses canonical slice-based `module::Features`.
+static MODULE_FEATURES: Features = Features {                                // c:129
+    bn_list: BINTAB,
+    cd_list: &[],
+    mf_list: &[],
+    pd_list: &[],
+    n_abstract: 0,
+};
+
+fn module_handle() -> RsModule {
+    RsModule::new("cap")
 }
 
 // =====================================================================
@@ -271,15 +275,18 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 
 /// Port of `features_()` from `Src/Modules/cap.c:146`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:146
-    *features = featuresarray(m, module_features());                  // c:148
+pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {     // c:146
+    *features = crate::ported::module::featuresarray(                 // c:148
+        &module_handle(),
+        &MODULE_FEATURES,
+    );
     0                                                                  // c:149
 }
 
 /// Port of `enables_()` from `Src/Modules/cap.c:154`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:154
-    handlefeatures(m, module_features(), enables)                     // c:156
+pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:154
+    crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables) // c:156
 }
 
 /// Port of `boot_()` from `Src/Modules/cap.c:161`.
@@ -289,39 +296,13 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 
 /// Port of `cleanup_()` from `Src/Modules/cap.c:168`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {                                   // c:168
-    setfeatureenables(m, module_features(), None)                     // c:170
+pub fn cleanup_(_m: *const module) -> i32 {                                  // c:168
+    crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None) // c:170
 }
 
 /// Port of `finish_()` from `Src/Modules/cap.c:175`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:175
     0                                                                  // c:177
-}
-
-// `featuresarray` — Src/module.c:3275.
-fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["b:cap".to_string(), "b:getcap".to_string(), "b:setcap".to_string()]
-}
-
-// `handlefeatures` — Src/module.c:3370.
-fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
-    if enables.is_none() {
-        *enables = Some(getfeatureenables(m, f));
-    } else if let Some(e) = enables.as_ref() {
-        return setfeatureenables(m, f, Some(e));
-    }
-    0
-}
-
-fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
-    let g = f.lock().unwrap();
-    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
-    vec![0; total as usize]
-}
-
-// `setfeatureenables` — Src/module.c:3445.
-fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 {
-    0
 }
 
 // =====================================================================

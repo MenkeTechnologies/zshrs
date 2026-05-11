@@ -377,65 +377,67 @@ impl Default for CmdNameTable {
     }
 }
 
-/// Shell function entry.
-///
-/// **NOT C-FAITHFUL — field shape differs from canonical
-/// `crate::ported::zsh_h::shfunc` (zsh.h:1316-1325).** Canonical
-/// embeds `node: hashnode` and carries `funcdef: Option<Eprog>`
-/// + `redir: Option<Eprog>` + `sticky: Option<Emulation_options>`
-/// pointing at the compiled wordcode; this Rust port stores raw
-/// source text on `body: Option<String>` and re-parses at first
-/// call. When fusevm bytecode caching lands, this struct should
-/// switch to carry the compiled `Eprog` directly (matching C's
-/// `shf->funcdef`).
-#[derive(Debug, Clone)]
-pub struct ShFunc {
-    pub name: String,
-    pub flags: u32,
-    pub filename: Option<String>,
-    pub body: Option<String>,
+// `ShFunc` struct + impl deleted — Rust-only duplicate of canonical
+// `crate::ported::zsh_h::shfunc` (zsh.h:1316-1325). Canonical:
+//
+//     struct shfunc {
+//         struct hashnode node;
+//         char *filename;
+//         zlong lineno;
+//         Eprog funcdef;
+//         Eprog redir;
+//         Emulation_options sticky;
+//     };
+//
+// Canonical was extended with a Rust-only `body: Option<String>`
+// field (deferred-compile source text) so callers using the old
+// `ShFunc.body` access continue working. Type alias surfaces
+// canonical as `ShFunc`; helpers below build instances with the
+// hashnode literal pre-populated.
+pub use crate::ported::zsh_h::shfunc as ShFunc;                              // c:1316
+
+/// Build a `shfunc` for the lazy-compile path with body source text.
+/// Mirrors C's `shfunctab->addnode(shfunctab, ztrdup(name), shf)`
+/// after callers populate `shf->funcdef = parse_subst_string(body)`.
+pub fn shfunc_with_body(name: &str, body: &str) -> ShFunc {                  // c:824 idiom
+    ShFunc {
+        node: crate::ported::zsh_h::hashnode {
+            next: None,
+            nam: name.to_string(),
+            flags: 0,
+        },
+        filename: None,
+        lineno: 0,
+        funcdef: None,
+        redir: None,
+        sticky: None,
+        body: Some(body.to_string()),
+    }
 }
 
-impl ShFunc {
-    pub fn new(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            flags: 0,
-            filename: None,
-            body: None,
-        }
-    }
-
-    pub fn autoload(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            flags: flags::PM_UNDEFINED,
-            filename: None,
-            body: None,
-        }
-    }
-
-    pub fn with_body(name: &str, body: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            flags: 0,
-            filename: None,
-            body: Some(body.to_string()),
-        }
-    }
-
-    pub fn is_disabled(&self) -> bool {
-        self.flags & flags::DISABLED != 0
-    }
-
-    pub fn is_autoload(&self) -> bool {
-        self.flags & flags::PM_UNDEFINED != 0
-    }
-
-    pub fn is_traced(&self) -> bool {
-        self.flags & (flags::PM_TAGGED | flags::PM_TAGGED_LOCAL) != 0
+/// Build an autoload-marker `shfunc`. Mirrors C's
+/// `createshfunc(name); shf->node.flags = PM_UNDEFINED;` at
+/// hashtable.c:829.
+pub fn shfunc_autoload(name: &str) -> ShFunc {                               // c:829 idiom
+    ShFunc {
+        node: crate::ported::zsh_h::hashnode {
+            next: None,
+            nam: name.to_string(),
+            flags: flags::PM_UNDEFINED as i32,
+        },
+        filename: None,
+        lineno: 0,
+        funcdef: None,
+        redir: None,
+        sticky: None,
+        body: None,
     }
 }
+
+// `impl ShFunc` deleted — methods replaced with inline flag checks
+// (`(shf.node.flags & FLAG as i32) != 0`) at callers, mirroring
+// C's idiom. Constructors `shfunc_with_body` / `shfunc_autoload`
+// above replace `ShFunc::with_body` / `::autoload` / `::new`.
 
 /// Shell function hash table
 // hash table containing the shell functions                                // c:805
@@ -458,11 +460,13 @@ impl ShFuncTable {
     }
 
     pub fn add(&mut self, func: ShFunc) -> Option<ShFunc> {
-        self.table.insert(func.name.clone(), func)
+        self.table.insert(func.node.nam.clone(), func)
     }
 
     pub fn get(&self, name: &str) -> Option<&ShFunc> {
-        self.table.get(name).filter(|f| !f.is_disabled())
+        self.table
+            .get(name)
+            .filter(|f| (f.node.flags & flags::DISABLED as i32) == 0)
     }
 
     pub fn get_including_disabled(&self, name: &str) -> Option<&ShFunc> {
@@ -470,7 +474,9 @@ impl ShFuncTable {
     }
 
     pub fn get_mut(&mut self, name: &str) -> Option<&mut ShFunc> {
-        self.table.get_mut(name).filter(|f| !f.is_disabled())
+        self.table
+            .get_mut(name)
+            .filter(|f| (f.node.flags & flags::DISABLED as i32) == 0)
     }
 
     pub fn remove(&mut self, name: &str) -> Option<ShFunc> {
@@ -479,7 +485,7 @@ impl ShFuncTable {
 
     pub fn disable(&mut self, name: &str) -> bool {
         if let Some(func) = self.table.get_mut(name) {
-            func.flags |= flags::DISABLED;
+            func.node.flags |= flags::DISABLED as i32;
             true
         } else {
             false
@@ -488,7 +494,7 @@ impl ShFuncTable {
 
     pub fn enable(&mut self, name: &str) -> bool {
         if let Some(func) = self.table.get_mut(name) {
-            func.flags &= !flags::DISABLED;
+            func.node.flags &= !(flags::DISABLED as i32);
             true
         } else {
             false
@@ -889,7 +895,7 @@ pub fn printcmdnamnode(cmd: &CmdName, _path: &[String], print_flags: u32) -> Str
 /// declaration / source-text combination `functions -t`/`-T`/
 /// `+/-`/etc. variants produce.
 pub fn printshfuncnode(func: &ShFunc, print_flags: u32) -> String {
-    let name = &func.name;
+    let name = &func.node.nam;
 
     if print_flags & print_flags::NAMEONLY != 0
         || (print_flags & print_flags::WHENCE_SIMPLE != 0
@@ -905,7 +911,7 @@ pub fn printshfuncnode(func: &ShFunc, print_flags: u32) -> String {
             return format!("{}: function\n", name);
         }
 
-        let kind = if func.is_autoload() {
+        let kind = if (func.node.flags & flags::PM_UNDEFINED as i32) != 0 {
             "is an autoload shell function"
         } else {
             "is a shell function"
@@ -921,19 +927,19 @@ pub fn printshfuncnode(func: &ShFunc, print_flags: u32) -> String {
 
     let mut result = format!("{} () {{\n", name);
 
-    if func.is_autoload() {
+    if (func.node.flags & flags::PM_UNDEFINED as i32) != 0 {
         result.push_str("\t# undefined\n");
-        if func.is_traced() {
+        if (func.node.flags & flags::PM_TAGGED as i32) != 0 {
             result.push_str("\t# traced\n");
         }
         result.push_str("\tbuiltin autoload -X");
         if let Some(ref filename) = func.filename {
-            if func.flags & flags::PM_LOADDIR != 0 {
+            if (func.node.flags & flags::PM_LOADDIR as i32) != 0 {
                 result.push_str(&format!(" {}", filename));
             }
         }
     } else if let Some(ref body) = func.body {
-        if func.is_traced() {
+        if (func.node.flags & flags::PM_TAGGED as i32) != 0 {
             result.push_str("\t# traced\n");
         }
         for line in body.lines() {
@@ -1085,12 +1091,16 @@ mod tests {
     #[test]
     fn test_shfunc_table() {
         let mut table = ShFuncTable::new();
-        table.add(ShFunc::with_body("myfunc", "echo hello"));
-        table.add(ShFunc::autoload("lazy"));
+        table.add(shfunc_with_body("myfunc", "echo hello"));
+        table.add(shfunc_autoload("lazy"));
 
         assert!(table.get("myfunc").is_some());
-        assert!(!table.get("myfunc").unwrap().is_autoload());
-        assert!(table.get("lazy").unwrap().is_autoload());
+        assert!(
+            (table.get("myfunc").unwrap().node.flags & flags::PM_UNDEFINED as i32) == 0
+        );
+        assert!(
+            (table.get("lazy").unwrap().node.flags & flags::PM_UNDEFINED as i32) != 0
+        );
 
         table.disable("myfunc");
         assert!(table.get("myfunc").is_none());
@@ -1205,7 +1215,7 @@ mod tests {
         fresh_shfunctab();
         {
             let mut tab = shfunctab_lock().lock().unwrap();
-            tab.add(ShFunc::with_body("greet", "echo hello"));
+            tab.add(shfunc_with_body("greet", "echo hello"));
         }
         {
             let tab = shfunctab_lock().lock().unwrap();
@@ -1226,7 +1236,7 @@ mod tests {
         fresh_shfunctab();
         {
             let mut tab = shfunctab_lock().lock().unwrap();
-            tab.add(ShFunc::with_body("f", "true"));
+            tab.add(shfunc_with_body("f", "true"));
         }
         disableshfuncnode("f");
         // get() filters disabled; get_including_disabled doesn't.
@@ -1259,9 +1269,9 @@ mod tests {
         fresh_shfunctab();
         {
             let mut tab = shfunctab_lock().lock().unwrap();
-            tab.add(ShFunc::with_body("foo", "echo a"));
-            tab.add(ShFunc::with_body("foobar", "echo b"));
-            tab.add(ShFunc::with_body("baz", "echo c"));
+            tab.add(shfunc_with_body("foo", "echo a"));
+            tab.add(shfunc_with_body("foobar", "echo b"));
+            tab.add(shfunc_with_body("baz", "echo c"));
         }
         let mut matched: Vec<String> = Vec::new();
         let count = scanmatchshfunc(Some("foo*"), |name, _| matched.push(name.to_string()));
@@ -1280,7 +1290,7 @@ mod tests {
         fresh_shfunctab();
         {
             let mut tab = shfunctab_lock().lock().unwrap();
-            let mut f = ShFunc::with_body("f", "true");
+            let mut f = shfunc_with_body("f", "true");
             f.filename = Some("/tmp/zshrs-fns/f".to_string());
             tab.add(f);
         }
@@ -1706,13 +1716,13 @@ impl HashNodeFlags for Alias {
 
 impl HashNodeFlags for ShFunc {
     fn flags(&self) -> u32 {
-        self.flags
+        self.node.flags as u32
     }
     fn set_disabled(&mut self, disabled: bool) {
         if disabled {
-            self.flags |= flags::DISABLED;
+            self.node.flags |= flags::DISABLED as i32;
         } else {
-            self.flags &= !flags::DISABLED;
+            self.node.flags &= !(flags::DISABLED as i32);
         }
     }
 }

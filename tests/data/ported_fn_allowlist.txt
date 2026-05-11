@@ -862,3 +862,22 @@ chain_branches_to
 # call sites readable; same two-arm dispatch as C.
 cmdnam_hashed
 cmdnam_unhashed
+
+# Rust-only per-module helper bridging the canonical
+# `module::featuresarray` / `handlefeatures` / `setfeatureenables`
+# API (which takes `&Module`) to the per-module entry-point hooks
+# (which receive `*const zsh_h::module` raw pointers from the
+# module loader). Synthesizes an equivalent `module::Module` named
+# after the static-link module. Same name + body in every
+# clone/example/datetime/etc. file — pure dispatch glue, no logic.
+module_handle
+
+# Rust-only ShFunc constructor helpers — no single C function.
+# C uses `createshfunc(name); shf->funcdef = parse_subst_string(body);`
+# or `createshfunc(name); shf->node.flags = PM_UNDEFINED;` inline at
+# the call site (hashtable.c:824, :829). Rust provides body/autoload
+# builders to keep the call sites readable; same two-arm dispatch
+# as C, plus the Rust-only `body: Option<String>` extension for the
+# deferred-compile path documented on `struct shfunc` in zsh_h.rs.
+shfunc_with_body
+shfunc_autoload

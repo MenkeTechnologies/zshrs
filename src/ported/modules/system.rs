@@ -974,18 +974,42 @@ pub fn scanpmsysparams() -> Vec<(String, String)> {                      // c:88
 // static struct features module_features                            c:910 (system.c)
 // =====================================================================
 
-use std::sync::{Mutex, OnceLock};
-use crate::ported::zsh_h::{features as features_t, module};
+use crate::ported::zsh_h::module;
+use crate::ported::module::{Builtin, Features, MathFunc, Module as RsModule, Paramdef};
 
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None, bn_size: 4,                                       // bintab[4]: zsystem flock, syserror, sysopen, sysread, syswrite, sysseek
-        cd_list: None, cd_size: 0,
-        mf_list: None, mf_size: 0,
-        pd_list: None, pd_size: 1,                                       // partab[1]: errnos
-        n_abstract: 0,
-    }))
+// `bintab` — port of `static struct builtin bintab[]` (system.c).
+static BINTAB: &[Builtin] = &[
+    Builtin { name: "syserror", flags: 0, minargs: 0, maxargs:  1, funcid: 0, optstr: Some("e:p:"),       defopts: None },
+    Builtin { name: "sysread",  flags: 0, minargs: 0, maxargs:  1, funcid: 0, optstr: Some("c:i:o:s:t:"), defopts: None },
+    Builtin { name: "syswrite", flags: 0, minargs: 1, maxargs:  1, funcid: 0, optstr: Some("c:o:"),       defopts: None },
+    Builtin { name: "sysopen",  flags: 0, minargs: 1, maxargs:  1, funcid: 0, optstr: Some("rwau:o:m:"),  defopts: None },
+    Builtin { name: "sysseek",  flags: 0, minargs: 1, maxargs:  1, funcid: 0, optstr: Some("u:w:"),       defopts: None },
+    Builtin { name: "zsystem",  flags: 0, minargs: 1, maxargs: -1, funcid: 0, optstr: None,               defopts: None },
+];
+
+// `mftab` — port of `static struct mathfunc mftab[]` (system.c).
+static MFTAB: &[MathFunc] = &[
+    MathFunc { name: "systell", module: "system", flags: 0 },
+];
+
+// `partab` — port of `static struct paramdef partab[]` (system.c).
+static PARTAB: &[Paramdef] = &[
+    Paramdef { name: "errnos",    registered: false },
+    Paramdef { name: "sysparams", registered: false },
+];
+
+// `module_features` — port of `static struct features module_features`
+// from system.c:910.
+static MODULE_FEATURES: Features = Features {                                // c:910
+    bn_list: BINTAB,
+    cd_list: &[],
+    mf_list: MFTAB,
+    pd_list: PARTAB,
+    n_abstract: 0,
+};
+
+fn module_handle() -> RsModule {
+    RsModule::new("zsh/system")
 }
 
 /// Port of `setup_()` from `Src/Modules/system.c:920`.
@@ -996,15 +1020,18 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 
 /// Port of `features_()` from `Src/Modules/system.c:927`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
-    *features = featuresarray(m, module_features());                    // c:929
+pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = crate::ported::module::featuresarray(                   // c:929
+        &module_handle(),
+        &MODULE_FEATURES,
+    );
     0                                                                    // c:930
 }
 
 /// Port of `enables_()` from `Src/Modules/system.c:935`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
-    handlefeatures(m, module_features(), enables)                       // c:937
+pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables) // c:937
 }
 
 /// Port of `boot_()` from `Src/Modules/system.c:942`.
@@ -1017,8 +1044,8 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 
 /// Port of `cleanup_()` from `Src/Modules/system.c:950`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {
-    setfeatureenables(m, module_features(), None)                       // c:952
+pub fn cleanup_(_m: *const module) -> i32 {
+    crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None) // c:952
 }
 
 /// Port of `finish_()` from `Src/Modules/system.c:957`.
@@ -1027,34 +1054,6 @@ pub fn finish_(_m: *const module) -> i32 {                                   // 
     //                    builtins unregister via cleanup_'s setfeatureenables.
     0
 }
-
-// `featuresarray` — Src/module.c:3275.
-fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["b:syserror".to_string(), "b:sysread".to_string(),
-         "b:syswrite".to_string(), "b:zsystem".to_string(),
-         "p:errnos".to_string()]
-}
-
-// `handlefeatures` — Src/module.c:3370.
-fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
-    if enables.is_none() {
-        *enables = Some(getfeatureenables(m, f));
-    } else if let Some(e) = enables.as_ref() {
-        return setfeatureenables(m, f, Some(e));
-    }
-    0
-}
-fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
-    let g = f.lock().unwrap();
-    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
-    vec![0; total as usize]
-}
-// File-static delegator to `Src/module.c:3349 setfeatureenables` —
-// dispatches per-feature enable bits through setbuiltins/setconddefs/
-// setmathfuncs/setparamdefs. The static-link Rust path treats every
-// feature as always-enabled, so this no-op return matches what
-// cleanup_(NULL) needs (revoke nothing).
-fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }
 
 // ---------------------------------------------------------------------------
 // `sys_errnames[]` table — port of `Src/Modules/errnames.c:9` (which

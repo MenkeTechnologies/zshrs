@@ -492,18 +492,27 @@ pub fn bin_stat(nam: &str, args: &[String],                                  // 
 // static struct features module_features                            c:642
 // =====================================================================
 
-use std::sync::{Mutex, OnceLock};
-use crate::ported::zsh_h::{features as features_t, module};
+use crate::ported::zsh_h::module;
+use crate::ported::module::{Builtin, Features, Module as RsModule};
 
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None, bn_size: 1,                                       // c:643 bintab[1] (zstat)
-        cd_list: None, cd_size: 0,
-        mf_list: None, mf_size: 0,
-        pd_list: None, pd_size: 0,
-        n_abstract: 0,
-    }))
+// `bintab` — port of `static struct builtin bintab[]` (stat.c:638).
+static BINTAB: &[Builtin] = &[                                               // c:638
+    Builtin { name: "stat",  flags: 0, minargs: 0, maxargs: -1, funcid: 0, optstr: None, defopts: None },
+    Builtin { name: "zstat", flags: 0, minargs: 0, maxargs: -1, funcid: 0, optstr: None, defopts: None },
+];
+
+// `module_features` — port of `static struct features module_features`
+// from stat.c:642.
+static MODULE_FEATURES: Features = Features {                                // c:642
+    bn_list: BINTAB,
+    cd_list: &[],
+    mf_list: &[],
+    pd_list: &[],
+    n_abstract: 0,
+};
+
+fn module_handle() -> RsModule {
+    RsModule::new("stat")
 }
 
 /// Port of `setup_()` from `Src/Modules/stat.c:651`.
@@ -514,15 +523,18 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 
 /// Port of `features_()` from `Src/Modules/stat.c:658`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:658
-    *features = featuresarray(m, module_features());                    // c:660
+pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {     // c:658
+    *features = crate::ported::module::featuresarray(                    // c:660
+        &module_handle(),
+        &MODULE_FEATURES,
+    );
     0                                                                    // c:662
 }
 
 /// Port of `enables_()` from `Src/Modules/stat.c:666`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:666
-    handlefeatures(m, module_features(), enables)                       // c:669
+pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:666
+    crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables) // c:669
 }
 
 /// Port of `boot_()` from `Src/Modules/stat.c:673`.
@@ -534,8 +546,8 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 
 /// Port of `cleanup_()` from `Src/Modules/stat.c:680`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {                                   // c:680
-    setfeatureenables(m, module_features(), None)                       // c:683
+pub fn cleanup_(_m: *const module) -> i32 {                                  // c:680
+    crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None) // c:683
 }
 
 /// Port of `finish_()` from `Src/Modules/stat.c:687`.
@@ -544,32 +556,6 @@ pub fn finish_(_m: *const module) -> i32 {                                   // 
     //                    zstat builtin unregisters via cleanup_'s setfeatureenables.
     0
 }
-
-// `featuresarray` — Src/module.c:3275.
-fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["b:zstat".to_string()]
-}
-
-// `handlefeatures` — Src/module.c:3370.
-fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
-    if enables.is_none() {
-        *enables = Some(getfeatureenables(m, f));
-    } else if let Some(e) = enables.as_ref() {
-        return setfeatureenables(m, f, Some(e));
-    }
-    0
-}
-fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
-    let g = f.lock().unwrap();
-    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
-    vec![0; total as usize]
-}
-// File-static delegator to `Src/module.c:3349 setfeatureenables` —
-// dispatches per-feature enable bits through setbuiltins/setconddefs/
-// setmathfuncs/setparamdefs. The static-link Rust path treats every
-// feature as always-enabled, so this no-op return matches what
-// cleanup_(NULL) needs (revoke nothing).
-fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }
 
 #[cfg(test)]
 mod tests {
