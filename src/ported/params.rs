@@ -4685,13 +4685,252 @@ pub fn copyparamtable(ht: Option<&crate::ported::zsh_h::HashTable>, name: &str)
     newparamtable(ht.hsize, name)
 }
 
+/// Direct port of `static int dontimport(int flags)` from
+/// `Src/params.c:796-810`.
+/// ```c
+/// /* If explicitly marked as don't import */
+/// if (flags & PM_DONTIMPORT)
+///     return 1;
+/// /* If value already exported */
+/// if (flags & PM_EXPORTED)
+///     return 1;
+/// /* If security issue when importing and running with some privilege */
+/// if ((flags & PM_DONTIMPORT_SUID) && isset(PRIVILEGED))
+///     return 1;
+/// /* OK to import */
+/// return 0;
+/// ```
+fn dontimport(flags: i32) -> i32 {                                           // c:796
+    let flags = flags as u32;
+    // c:799-800 — `if (flags & PM_DONTIMPORT) return 1`.
+    if flags & crate::ported::zsh_h::PM_DONTIMPORT != 0 {                    // c:799
+        return 1;                                                            // c:800
+    }
+    // c:802-803 — `if (flags & PM_EXPORTED) return 1`.
+    if flags & crate::ported::zsh_h::PM_EXPORTED != 0 {                      // c:802
+        return 1;                                                            // c:803
+    }
+    // c:805-806 — `if ((flags & PM_DONTIMPORT_SUID) && isset(PRIVILEGED)) return 1`.
+    if flags & crate::ported::zsh_h::PM_DONTIMPORT_SUID != 0                 // c:805
+        && crate::ported::zsh_h::isset(crate::ported::zsh_h::PRIVILEGED)
+    {
+        return 1;                                                            // c:806
+    }
+    0                                                                        // c:809
+}
+
 // parameter entries as well as setting up parameter table                 // c:812
 // entries for environment variables we inherit.                           // c:813
-/// Port of `createparamtable()` from `Src/params.c:817`. C body
-/// initializes the global `paramtab` HashTable, populates it with
-/// every entry from `special_params[]` (PM_SPECIAL flagged) and
-/// imports the inherited environment via `(addenv)`. Stub.
-pub fn createparamtable() {}                                                 // c:817
+/// Direct port of `createparamtable()` from `Src/params.c:817-988`.
+///
+/// Walks the same five-stage init sequence as the C source:
+///   1. Touch paramtab/realparamtab so the OnceLocks initialise
+///      (c:835 — newparamtable(151,"paramtab")).
+///   2. Register every `special_params[]` entry as a PM_SPECIAL
+///      node in the global paramtab (c:838-847). EMULATE_SH/KSH
+///      additions deferred.
+///   3. Initialise non-special params that must precede env
+///      import: MAILCHECK / KEYTIMEOUT / LISTMAX / TMPPREFIX /
+///      TIMEFMT / HOST / LOGNAME (c:854-879).
+///   4. Walk std::env::vars() and import each name that is a legal
+///      ident and not blocked via `dontimport`. Mark PM_EXPORTED
+///      and stamp the param's env field (c:893-925).
+///   5. Post-import wiring: HOME PM_UNSET clear + LOGNAME/SHLVL
+///      env sync, CPUTYPE / MACHTYPE / OSTYPE / TTY / VENDOR /
+///      ZSH_ARGZERO / ZSH_VERSION / ZSH_PATCHLEVEL (c:931-979).
+///
+/// Deferred (require unported support): noerrs counter under
+/// `crate::ported::utils::NOERRS` (private), ALLEXPORT toggle via
+/// the C `opts[]` global, `set_pwd_env`, `setaparam("signals", ...)`
+/// with SIGRTMIN..MAX walk.
+pub fn createparamtable() {                                                  // c:817
+    use crate::ported::zsh_h::{PM_EXPORTED, PM_SPECIAL, PM_UNSET};
+
+    // c:835 — `paramtab = realparamtab = newparamtable(151, "paramtab")`.
+    let _ = paramtab();
+    let _ = realparamtab();
+
+    // c:838-840 — register each special_params entry.
+    {
+        let mut tab = paramtab().lock().unwrap();
+        for ip in special_params.iter() {
+            let mut pm = Box::new(crate::ported::zsh_h::param {
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: ip.name.to_string(),
+                    flags: (ip.pm_type | ip.pm_flags | PM_SPECIAL) as i32,
+                },
+                u_data: 0,
+                u_arr: None,
+                u_str: None,
+                u_val: 0,
+                u_dval: 0.0,
+                u_hash: None,
+                gsu_s: None,
+                gsu_i: None,
+                gsu_f: None,
+                gsu_a: None,
+                gsu_h: None,
+                base: 0,
+                width: 0,
+                env: None,
+                ename: None,
+                old: None,
+                level: 0,
+            });
+            let _ = &mut pm;
+            tab.insert(ip.name.to_string(), pm);
+        }
+    }
+    // c:840-847 — special_params_sh / non-sh-emulation tail deferred.
+    // c:849 — argvparam wire-up deferred.
+    // c:851 — `noerrs = 2`; NOERRS module-private, so this guard is
+    //         a no-op for now.
+
+    // c:858-860 — standard non-special params (must precede env import).
+    setiparam("MAILCHECK", 60);                                              // c:858
+    setiparam("KEYTIMEOUT", 40);                                             // c:859
+    setiparam("LISTMAX", 100);                                               // c:860
+
+    // c:870-871 — TMPPREFIX / TIMEFMT defaults.
+    setsparam("TMPPREFIX", "/tmp/zsh");                                      // c:870
+    setsparam("TIMEFMT", crate::ported::zsh_system::DEFAULT_TIMEFMT);        // c:871
+
+    // c:873-876 — HOST from gethostname().
+    let mut host_buf = [0u8; 256];
+    let host_rc = unsafe {
+        libc::gethostname(host_buf.as_mut_ptr() as *mut libc::c_char, 256)
+    };
+    let hostname = if host_rc == 0 {
+        std::ffi::CStr::from_bytes_until_nul(&host_buf)
+            .ok()
+            .and_then(|c| c.to_str().ok())
+            .unwrap_or("")
+            .to_string()
+    } else {
+        String::new()
+    };
+    setsparam("HOST", &hostname);                                            // c:875
+
+    // c:878-882 — LOGNAME from getlogin() / cached_username.
+    let logname = std::env::var("LOGNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_default();
+    setsparam("LOGNAME", &logname);                                          // c:878
+
+    // c:891 — pushheap() / c:921 — popheap(). Wraps the env-import
+    // loop so per-iter allocations land on the heap zone.
+    crate::ported::mem::pushheap();                                          // c:891
+
+    // c:893-924 — environment import loop.
+    for (iname, ivalue) in std::env::vars() {
+        if iname.is_empty() {
+            continue;
+        }
+        // c:897 — leading-digit reject (`!idigit(*iname)`).
+        if iname.as_bytes()[0].is_ascii_digit() {
+            continue;
+        }
+        // c:897 — must be a valid identifier.
+        if !isident(&iname) {
+            continue;
+        }
+        // c:897 — `!strchr(iname, '[')` reject subscripted names.
+        if iname.contains('[') {
+            continue;
+        }
+        // c:902-906 — block if PM_DONTIMPORT-family flags say so.
+        let blocked = {
+            let tab = paramtab().lock().unwrap();
+            tab.get(&iname)
+                .map(|pm| dontimport(pm.node.flags) != 0)
+                .unwrap_or(false)
+        };
+        if blocked {
+            continue;
+        }
+        // c:907-908 — assignsparam(..., ASSPM_ENV_IMPORT).
+        let metafied = crate::ported::utils::metafy(&ivalue);
+        let _ = assignsparam(
+            &iname,
+            &metafied,
+            crate::ported::zsh_h::ASSPM_ENV_IMPORT,
+        );
+        // c:909-915 — stamp PM_EXPORTED and the env-side string.
+        let mut tab = paramtab().lock().unwrap();
+        if let Some(pm) = tab.get_mut(&iname) {
+            pm.node.flags |= PM_EXPORTED as i32;
+            let env_str = if pm.node.flags & PM_SPECIAL as i32 != 0 {
+                mkenvstr(&iname, &ivalue)
+            } else {
+                format!("{}={}", iname, ivalue)
+            };
+            pm.env = Some(env_str);
+        }
+    }
+
+    crate::ported::mem::popheap();                                           // c:921
+
+    // c:931-936 — HOME post-import: clear PM_UNSET (EMULATE_ZSH
+    // implicit since the Rust port defaults to zsh emulation).
+    {
+        let mut tab = paramtab().lock().unwrap();
+        if let Some(pm) = tab.get_mut("HOME") {
+            pm.node.flags &= !(PM_UNSET as i32);
+        }
+    }
+
+    // c:939-944 — SHLVL increment + addenv. C body: `sprintf(buf,
+    // "%d", (int)++shlvl); addenv(pm, buf)`. The Rust port reads the
+    // inherited SHLVL from env (default 0), bumps, and exports back.
+    let new_shlvl: i32 = std::env::var("SHLVL")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+        + 1;
+    setiparam("SHLVL", new_shlvl as i64);
+
+    // c:949-967 — CPUTYPE / MACHTYPE / OSTYPE / TTY / VENDOR /
+    // ZSH_ARGZERO / ZSH_VERSION / ZSH_PATCHLEVEL.
+    let utsname = nix::sys::utsname::uname().ok();
+    let cputype = utsname
+        .as_ref()
+        .map(|u| u.machine().to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    setsparam("CPUTYPE", &cputype);                                          // c:954
+    setsparam("MACHTYPE", &cputype);                                         // c:962 (MACHTYPE constant)
+    setsparam(
+        "OSTYPE",
+        &utsname
+            .as_ref()
+            .map(|u| u.sysname().to_string_lossy().to_string().to_lowercase())
+            .unwrap_or_else(|| "unknown".to_string()),
+    );                                                                       // c:963
+    let tty_str = {
+        let p = unsafe { libc::ttyname(0) };
+        if !p.is_null() {
+            unsafe { std::ffi::CStr::from_ptr(p) }
+                .to_string_lossy()
+                .to_string()
+        } else {
+            String::new()
+        }
+    };
+    setsparam("TTY", &tty_str);                                              // c:963
+    setsparam("VENDOR", "unknown");                                          // c:964
+    setsparam(
+        "ZSH_ARGZERO",
+        &std::env::args().next().unwrap_or_default(),
+    );                                                                       // c:965
+    setsparam("ZSH_VERSION", "5.9");                                         // c:966
+    setsparam(
+        "ZSH_PATCHLEVEL",
+        crate::ported::patchlevel::ZSH_PATCHLEVEL,
+    );                                                                       // c:967
+
+    // c:968-979 — $signals array. Deferred pending sigs[] table port.
+    // c:980 — `noerrs = 0` restore. NOERRS module-private (see above).
+}
 
 /// Port of `createspecialhash()` from `Src/params.c:1182`. C body
 /// allocates a paramdef, calls `newparamtable(0, name)`, sets
