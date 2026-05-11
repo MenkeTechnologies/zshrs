@@ -7284,22 +7284,50 @@ pub fn scanendscope(pm: &mut crate::ported::zsh_h::param, locallevel: i32, _flag
     }
 }
 
+// Port of `static unsigned numparamvals;` (params.c:626) and the
+// related per-scan statics at params.c:637-640. Per PORT.md Rule D
+// these are file-scope statics, NOT aggregated into a state struct.
+//
+//   c:626  static unsigned numparamvals;
+//   c:637  static Patprog scanprog;
+//   c:638  static char *scanstr;
+//   c:639  static char **paramvals;
+//   c:640  static Param foundparam;   <-- exposed earlier as FOUNDPARAM
+pub static NUMPARAMVALS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);                                    // c:626
+pub static SCANPROG: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+    std::sync::OnceLock::new();                                              // c:637
+pub static SCANSTR: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+    std::sync::OnceLock::new();                                              // c:638
+pub static PARAMVALS: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> =
+    std::sync::OnceLock::new();                                              // c:639
+
+fn scanprog_lock() -> &'static std::sync::Mutex<Option<String>> {
+    SCANPROG.get_or_init(|| std::sync::Mutex::new(None))
+}
+fn scanstr_lock() -> &'static std::sync::Mutex<Option<String>> {
+    SCANSTR.get_or_init(|| std::sync::Mutex::new(None))
+}
+fn paramvals_lock() -> &'static std::sync::Mutex<Vec<String>> {
+    PARAMVALS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
 /// Port of `scanparamvals()` from `Src/params.c:644`. Real C body
 /// is the per-node callback for `paramvalarr`: applies SCANPM_MATCHKEY
 /// (pattry on name) / SCANPM_MATCHVAL (pattry on value) / SCANPM_KEYMATCH
 /// (compile pm.nam as pattern, match against scanstr) / SCANPM_WANTKEYS
 /// / SCANPM_WANTVALS / SCANPM_MATCHMANY filters, populating the
 /// `paramvals[]` slice with the param's name and/or `getstrvalue`
-/// result, and stashing `foundparam = pm`. The `scanprog`/`scanstr`/
-/// `paramvals`/`numparamvals`/`foundparam` C statics are surfaced
-/// here as caller-supplied state to keep the port pure.
-pub fn scanparamvals(
+/// result, and stashing `foundparam = pm`. State lives in the C
+/// file-scope statics ported above as `NUMPARAMVALS` / `SCANPROG` /
+/// `SCANSTR` / `PARAMVALS` / `FOUNDPARAM`.
+pub fn scanparamvals(                                                        // c:644
     pm: &mut crate::ported::zsh_h::param,
     flags: i32,
-    state: &mut ScanParamValsState,
 ) {
+    use std::sync::atomic::Ordering;
     let f = flags as u32;
-    if state.numparamvals != 0
+    if NUMPARAMVALS.load(Ordering::Relaxed) != 0
         && (f & SCANPM_MATCHMANY) == 0
         && (f & (SCANPM_MATCHVAL | SCANPM_MATCHKEY | SCANPM_KEYMATCH)) != 0
     {
@@ -7307,22 +7335,24 @@ pub fn scanparamvals(
     }
     if (f & SCANPM_KEYMATCH) != 0 {
         // patcompile(pm.node.nam) + pattry(prog, scanstr)
-        if let Some(scanstr) = state.scanstr.as_deref() {
-            if !pattry(&pm.node.nam, scanstr) { return; }
+        let scanstr = scanstr_lock().lock().unwrap().clone();
+        if let Some(s) = scanstr {
+            if !pattry(&pm.node.nam, &s) { return; }
         } else {
             return;
         }
     } else if (f & SCANPM_MATCHKEY) != 0 {
-        if let Some(prog) = state.scanprog.as_deref() {
-            if !pattry(prog, &pm.node.nam) { return; }
+        let prog = scanprog_lock().lock().unwrap().clone();
+        if let Some(p) = prog {
+            if !pattry(&p, &pm.node.nam) { return; }
         } else {
             return;
         }
     }
-    state.foundparam = Some(pm.node.nam.clone());
+    set_foundparam(Some(pm.node.nam.clone()));
     if (f & SCANPM_WANTKEYS) != 0 {
-        state.paramvals.push(pm.node.nam.clone());
-        state.numparamvals += 1;
+        paramvals_lock().lock().unwrap().push(pm.node.nam.clone());
+        NUMPARAMVALS.fetch_add(1, Ordering::Relaxed);
         if (f & (SCANPM_WANTVALS | SCANPM_MATCHVAL)) == 0 {
             return;
         }
@@ -7343,31 +7373,22 @@ pub fn scanparamvals(
     let s = strgetfn(pm);
     let _ = vbuf;
     if (f & SCANPM_MATCHVAL) != 0 {
-        let matched = state.scanprog.as_deref().map(|p| pattry(p, &s)).unwrap_or(false);
+        let prog = scanprog_lock().lock().unwrap().clone();
+        let matched = prog.map(|p| pattry(&p, &s)).unwrap_or(false);
         if matched {
-            state.paramvals.push(s);
-            state.numparamvals += if (f & SCANPM_WANTVALS) != 0 { 1 } else if (f & SCANPM_WANTKEYS) == 0 { 1 } else { 0 };
+            paramvals_lock().lock().unwrap().push(s);
+            let inc = if (f & SCANPM_WANTVALS) != 0 { 1 } else if (f & SCANPM_WANTKEYS) == 0 { 1 } else { 0 };
+            NUMPARAMVALS.fetch_add(inc, Ordering::Relaxed);
         } else if (f & SCANPM_WANTKEYS) != 0 {
             // Discard previously-pushed key.
-            state.paramvals.pop();
-            state.numparamvals -= 1;
+            paramvals_lock().lock().unwrap().pop();
+            NUMPARAMVALS.fetch_sub(1, Ordering::Relaxed);
         }
     } else {
-        state.paramvals.push(s);
-        state.numparamvals += 1;
+        paramvals_lock().lock().unwrap().push(s);
+        NUMPARAMVALS.fetch_add(1, Ordering::Relaxed);
     }
-    state.foundparam = None;
-}
-
-/// Caller-supplied state for `scanparamvals`. C uses file-scope statics
-/// (`scanprog`, `scanstr`, `paramvals`, `numparamvals`, `foundparam`).
-#[derive(Default)]
-pub struct ScanParamValsState {
-    pub scanprog: Option<String>,
-    pub scanstr:  Option<String>,
-    pub paramvals: Vec<String>,
-    pub numparamvals: u32,
-    pub foundparam: Option<String>,
+    set_foundparam(None);
 }
 
 /// Minimal `pattry()` shim — exact-match fallback until the pattern

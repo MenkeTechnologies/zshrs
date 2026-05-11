@@ -192,23 +192,6 @@ pub fn ptywritestr(fd: RawFd, data: &str) -> io::Result<usize> {            // c
     }
 }
 
-/// `zpty` builtin option flags.
-/// Port of the `Options ops` flag bag `bin_zpty()` from
-/// Src/Modules/zpty.c:773 reads — `-d`/`-L`/`-w`/`-r`/`-t`/`-b`
-/// `-e`/`-T`/`-m` map onto these fields.
-#[derive(Debug, Default)]
-pub struct ZptyOptions {
-    pub delete: bool,
-    pub list: bool,
-    pub write: bool,
-    pub read_var: Option<String>,
-    pub test: bool,
-    pub block: bool,
-    pub echo: bool,
-    pub timeout: Option<i32>,
-    pub pattern: Option<String>,
-}
-
 /// `zpty` builtin entry point — C-faithful signature matching
 /// `static int bin_zpty(char *nam, char **args, Options ops, int func)`
 /// from Src/Modules/zpty.c:773. Reads `-d/-L/-w/-r/-t/-b/-e/-T/-m`
@@ -218,27 +201,17 @@ pub struct ZptyOptions {
 pub fn bin_zpty(_nam: &str, args: &[String],                                 // c:773
                 ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
-    let options = ZptyOptions {
-        delete:   OPT_ISSET(ops, b'd'),
-        list:     OPT_ISSET(ops, b'L'),
-        write:    OPT_ISSET(ops, b'w'),
-        read_var: if OPT_ISSET(ops, b'r') { OPT_ARG(ops, b'r').map(String::from) } else { None },
-        test:     OPT_ISSET(ops, b't'),
-        block:    OPT_ISSET(ops, b'b'),
-        echo:     OPT_ISSET(ops, b'e'),
-        timeout:  OPT_ARG(ops, b'T').and_then(|s| s.parse().ok()),
-        pattern:  OPT_ARG(ops, b'm').map(String::from),
-    };
+    // Per C: branches dispatch on OPT_ISSET(ops, 'X') directly. No
+    // aggregator struct — Rule D forbids `*Options` bags.
     let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let args = &argv[..];
-    let options = &options;
     let mut cmds_guard = ptycmds().lock()
         .unwrap_or_else(|e| { e.into_inner() });
     let cmds: &mut HashMap<String, PtyCmd> = &mut *cmds_guard;
     let (status, output): (i32, String) = (|| {
     let mut output = String::new();
 
-    if options.delete {
+    if OPT_ISSET(ops, b'd') {
         if args.is_empty() {
             let names: Vec<String> = cmds.keys().cloned().collect();
             for name in names {
@@ -262,7 +235,7 @@ pub fn bin_zpty(_nam: &str, args: &[String],                                 // 
         return (0, output);
     }
 
-    if options.list {
+    if OPT_ISSET(ops, b'L') {
         for (name, cmd) in cmds.iter() {
             let status = if cmd.finished {
                 "(finished)"
@@ -274,7 +247,7 @@ pub fn bin_zpty(_nam: &str, args: &[String],                                 // 
         return (0, output);
     }
 
-    if options.write {
+    if OPT_ISSET(ops, b'w') {
         if args.len() < 2 {
             return (1, "zpty: -w requires a pty name and data\n".to_string());
         }
@@ -290,14 +263,14 @@ pub fn bin_zpty(_nam: &str, args: &[String],                                 // 
         } else {
             (1, format!("zpty: no such pty command: {}\n", name))
         }
-    } else if options.read_var.is_some() {
+    } else if OPT_ISSET(ops, b'r') {
         if args.is_empty() {
             return (1, "zpty: -r requires a pty name\n".to_string());
         }
 
         let name = args[0];
-        let pattern = options.pattern.as_deref();
-        let timeout = options.timeout;
+        let pattern = OPT_ARG(ops, b'm');
+        let timeout: Option<i32> = OPT_ARG(ops, b'T').and_then(|s| s.parse().ok());
 
         if let Some(cmd) = cmds.get(name) {
             match ptyread(cmd.master_fd, pattern, timeout) {
@@ -310,7 +283,7 @@ pub fn bin_zpty(_nam: &str, args: &[String],                                 // 
         } else {
             (1, format!("zpty: no such pty command: {}\n", name))
         }
-    } else if options.test {
+    } else if OPT_ISSET(ops, b't') {
         if args.is_empty() {
             return (1, "zpty: -t requires a pty name\n".to_string());
         }
@@ -376,7 +349,7 @@ pub fn bin_zpty(_nam: &str, args: &[String],                                 // 
                             }
                         }
 
-                        if !options.echo {
+                        if !OPT_ISSET(ops, b'e') {
                             // Inline of the deleted disable_echo helper
                             // (Src/Modules/zpty.c:124 ptysettyinfo).
                             unsafe {
@@ -407,12 +380,14 @@ pub fn bin_zpty(_nam: &str, args: &[String],                                 // 
                     pid => {
                         unsafe { libc::close(slave); }
 
-                        if !options.block {
+                        if !OPT_ISSET(ops, b'b') {
                             let _ = ptynonblock(master);
                         }
 
                         let pty_cmd =
-                            PtyCmd::new(name, cmd_args, master, pid, options.echo, !options.block);
+                            PtyCmd::new(name, cmd_args, master, pid,
+                                        OPT_ISSET(ops, b'e'),
+                                        !OPT_ISSET(ops, b'b'));
                         cmds.insert(pty_cmd.name.clone(), pty_cmd);
 
                         (0, output)

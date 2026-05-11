@@ -819,51 +819,18 @@ pub fn bin_chown(nam: &str, args: &[String],                                 // 
 }
 
 // =====================================================================
-// bintab[] — `Src/Modules/files.c:803`.
+// `LN_OPTS` — `Src/Modules/files.c:799`.
 // =====================================================================
-//
-// The C source lists 18 BUILTIN entries (9 normal + 9 zf_* aliases)
-// for chgrp/chmod/chown/ln/mkdir/mv/rm/rmdir/sync. The Rust port
-// records the same entries here so dispatchers can look up name →
-// (handler, func id, opt-spec) without re-encoding the table.
-
-/// Entry shape mirroring C `BUILTIN(name, flags, handler, min, max,
-/// func, opts, defaults)` from `Src/builtin.h`.
-pub struct FilesBuiltin {
-    pub name:   &'static str,
-    pub min:    i32,
-    pub max:    i32,
-    pub func:   i32,
-    pub opts:   &'static str,
-}
 
 /// `LN_OPTS` — `Src/Modules/files.c:799` (`"dfhins"` when HAVE_LSTAT,
 /// `"dfi"` otherwise). zshrs targets POSIX hosts where lstat is
 /// always present, so the long form is canonical.
 pub const LN_OPTS: &str = "dfhins";                                          // c:799
 
-/// Port of `bintab[]` from `Src/Modules/files.c:803`.
-pub static BINTAB: [FilesBuiltin; 18] = [                                    // c:803
-    FilesBuiltin { name: "chgrp", min: 2, max: -1, func: BIN_CHGRP, opts: "hRs"    },
-    FilesBuiltin { name: "chmod", min: 2, max: -1, func: 0,         opts: "Rs"     },
-    FilesBuiltin { name: "chown", min: 2, max: -1, func: BIN_CHOWN, opts: "hRs"    },
-    FilesBuiltin { name: "ln",    min: 1, max: -1, func: BIN_LN,    opts: LN_OPTS  },
-    FilesBuiltin { name: "mkdir", min: 1, max: -1, func: 0,         opts: "pm:"    },
-    FilesBuiltin { name: "mv",    min: 2, max: -1, func: BIN_MV,    opts: "fi"     },
-    FilesBuiltin { name: "rm",    min: 1, max: -1, func: 0,         opts: "dfiRrs" },
-    FilesBuiltin { name: "rmdir", min: 1, max: -1, func: 0,         opts: ""       },
-    FilesBuiltin { name: "sync",  min: 0, max:  0, func: 0,         opts: ""       },
-    // c:822-830 — "safe" zsh-only zf_* aliases.
-    FilesBuiltin { name: "zf_chgrp", min: 2, max: -1, func: BIN_CHGRP, opts: "hRs"    },
-    FilesBuiltin { name: "zf_chmod", min: 2, max: -1, func: 0,         opts: "Rs"     },
-    FilesBuiltin { name: "zf_chown", min: 2, max: -1, func: BIN_CHOWN, opts: "hRs"    },
-    FilesBuiltin { name: "zf_ln",    min: 1, max: -1, func: BIN_LN,    opts: LN_OPTS  },
-    FilesBuiltin { name: "zf_mkdir", min: 1, max: -1, func: 0,         opts: "pm:"    },
-    FilesBuiltin { name: "zf_mv",    min: 2, max: -1, func: BIN_MV,    opts: "fi"     },
-    FilesBuiltin { name: "zf_rm",    min: 1, max: -1, func: 0,         opts: "dfiRrs" },
-    FilesBuiltin { name: "zf_rmdir", min: 1, max: -1, func: 0,         opts: ""       },
-    FilesBuiltin { name: "zf_sync",  min: 0, max:  0, func: 0,         opts: ""       },
-];
+// bintab[] (`static struct builtin bintab[]` at files.c:803) lives in
+// the `MODULE_BINTAB` slice below in canonical `module::Builtin` shape;
+// the dispatcher in src/extensions/ reads it through the singleton
+// rather than a private aggregate type.
 
 // =====================================================================
 // module entries — `Src/Modules/files.c:828-876`.
