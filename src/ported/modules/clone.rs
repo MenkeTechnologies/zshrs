@@ -267,15 +267,31 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 // Src/params.c, Src/string.c).
 // =====================================================================
 
-// `clearjobtab` lives in `Src/jobs.c:1900`. Stub: no-op.
-fn clearjobtab(_monitor: i32) {}
+// `clearjobtab` lives in `Src/jobs.c:1780`. Clears the global JOBTAB
+// so the cloned child starts with no inherited jobs (mirrors C's
+// `clearjobtab(0)` in clone.c c:78).
+fn clearjobtab(_monitor: i32) {                                              // c:1780
+    if let Some(tab) = crate::ported::jobs::JOBTAB.get() {
+        if let Ok(mut jobs) = tab.lock() {
+            jobs.clear();
+        }
+    }
+}
 
 // `closem` lives in `Src/utils.c:1310`. `FDT_UNUSED` from zsh.h:1115.
 const FDT_UNUSED: i32 = 0;
 fn closem(_typ: i32, _all: i32) {}
 
-// `init_io` lives in `Src/init.c:1142`. Stub: no-op.
-fn init_io(_cmd: *mut libc::c_char) {}
+// `init_io` lives in `Src/init.c:577`. Wires through the canonical
+// port at init.rs:295.
+fn init_io(cmd: *mut libc::c_char) {                                         // c:577
+    let s: Option<String> = if cmd.is_null() {
+        None
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(cmd).to_str().ok().map(|s| s.to_string()) }
+    };
+    crate::ported::init::init_io(s.as_deref());
+}
 
 // `setsparam` lives in `Src/params.c:3380`. Stub for the static-link
 // path — TTY/$! assignment in the cloned child can't yet feed the
