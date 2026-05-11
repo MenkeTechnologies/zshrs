@@ -1483,7 +1483,7 @@ pub fn visetbuffer(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // 
     };
     zle.zmod.vibuf = idx;
     zle.zmod.flags |= MOD_VIBUF;
-    zle.prefixflag = true;
+    crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 

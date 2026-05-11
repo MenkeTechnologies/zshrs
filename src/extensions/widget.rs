@@ -2016,7 +2016,7 @@ fn widget_digit_argument(zle: &mut Zle) {
         zle.zmod.tmult = zle.zmod.tmult * base + sign * new_digit;
     }
     zle.zmod.flags |= crate::ported::zle::zle_h::MOD_TMULT;
-    zle.prefixflag = true;
+    crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_undefined(zle: &mut Zle) {
@@ -2662,7 +2662,7 @@ fn widget_universal_argument(zle: &mut Zle) {
         zle.zmod.tmult = zle.zmod.tmult.saturating_mul(4);
     }
     zle.zmod.flags |= crate::ported::zle::zle_h::MOD_TMULT;
-    zle.prefixflag = true;
+    crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_neg_argument(zle: &mut Zle) {
@@ -2678,7 +2678,7 @@ fn widget_neg_argument(zle: &mut Zle) {
     zle.zmod.tmult = -1;
     zle.zmod.flags |= crate::ported::zle::zle_h::MOD_TMULT;
     zle.zmod.flags |= crate::ported::zle::zle_h::MOD_NEG;
-    zle.prefixflag = true;
+    crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_recursive_edit(zle: &mut Zle) {
@@ -2900,7 +2900,7 @@ fn widget_argument_base(zle: &mut Zle) {
     zle.zmod.mult = 1;
     zle.zmod.tmult = 1;
     zle.zmod.vibuf = 0;
-    zle.prefixflag = true;
+    crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_infer_next_history(zle: &mut Zle) {
@@ -3008,7 +3008,7 @@ fn widget_vi_set_buffer(zle: &mut Zle) {
         } else if c.is_ascii_uppercase() {
             zle.zmod.vibuf = (c as i32) - ('A' as i32) + 26;
         }
-        zle.prefixflag = true;
+        crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

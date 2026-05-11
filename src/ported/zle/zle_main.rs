@@ -198,8 +198,8 @@ pub struct Zle {
     // current modifier status                                               // c:169
     /// Current modifier status
     pub zmod: modifier,
-    /// Prefix command flag
-    pub prefixflag: bool,
+    // `prefixflag` moved to file-scope PREFIXFLAG atomic below
+    // (matches int prefixflag from zle_main.c).
     /// Recursive edit depth
     pub zle_recursive: i32,
     /// Read flags
@@ -377,7 +377,6 @@ impl Zle {
             bindk: None,
             lastcmd: WidgetFlags::empty(),
             zmod: modifier::default(),
-            prefixflag: false,
             zle_recursive: 0,
             // C default: input.c:418 — `int flags = ZLRF_HISTORY|ZLRF_NOSETTY;`
             zlereadflags: crate::ported::zsh_h::ZLRF_HISTORY | crate::ported::zsh_h::ZLRF_NOSETTY,
@@ -998,8 +997,8 @@ impl Zle {
     /// non-prefix widget, so reset the modifier to its default state via
     /// `initmodifier`.
     pub fn handleprefixes(&mut self) {
-        if self.prefixflag {
-            self.prefixflag = false;
+        if (crate::ported::zle::zle_main::PREFIXFLAG.load(std::sync::atomic::Ordering::SeqCst) != 0) {
+            crate::ported::zle::zle_main::PREFIXFLAG.store(0, std::sync::atomic::Ordering::SeqCst);
             if self.zmod.flags & MOD_TMULT != 0 {
                 self.zmod.flags &= !MOD_TMULT;
                 self.zmod.flags |= MOD_MULT;
@@ -1477,12 +1476,12 @@ mod tests {
         let mut zle = Zle::new();
         zle.zmod.flags |= MOD_TMULT;
         zle.zmod.tmult = 7;
-        zle.prefixflag = true;
+        crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
         zle.handleprefixes();
         assert!(zle.zmod.flags & MOD_MULT != 0);
         assert!(!zle.zmod.flags & MOD_TMULT != 0);
         assert_eq!(zle.zmod.mult, 7);
-        assert!(!zle.prefixflag);
+        assert!(crate::ported::zle::zle_main::PREFIXFLAG.load(std::sync::atomic::Ordering::SeqCst) == 0);
     }
 
     #[test]
@@ -1490,7 +1489,7 @@ mod tests {
         let mut zle = Zle::new();
         zle.zmod.flags |= MOD_MULT;
         zle.zmod.mult = 9;
-        zle.prefixflag = false;
+        crate::ported::zle::zle_main::PREFIXFLAG.store(0, std::sync::atomic::Ordering::SeqCst);
         zle.handleprefixes();
         // initmodifier resets to defaults: mult=1, no flags.
         assert_eq!(zle.zmod.mult, 1);
@@ -2017,6 +2016,13 @@ pub static EOFCHAR: std::sync::atomic::AtomicI32 =
 /// user sent EOF on an empty line — drives the outer `zleread()`
 /// loop to break and return an EOF sentinel.
 pub static EOFSENT: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int prefixflag` from `Src/Zle/zle_main.c`. Sticky flag
+/// set by a prefix command (universal-argument, digit-argument,
+/// vi-set-buffer, etc.) so the next widget consumes the argument
+/// rather than starting a fresh count.
+pub static PREFIXFLAG: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `zleaftertrap()` from `Src/Zle/zle_main.c:2113`.
