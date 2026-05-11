@@ -126,7 +126,8 @@ pub struct KeyBinding {                                                      // 
 /// };
 /// ```
 #[derive(Debug)]
-pub struct RemPrefState {                                                    // c:108
+#[allow(non_camel_case_types)]
+pub struct remprefstate {                                                    // c:108
     /// Target keymap (Arc handle for shared ownership).
     pub km: std::sync::Arc<Keymap>,                                          // c:109
     /// Byte prefix to match against each multi-key binding.

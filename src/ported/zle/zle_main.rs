@@ -45,15 +45,11 @@ pub const ZLEEOF: ZleInt = -1;
 // `zlereadflags` is now `i32` matching C's `int zlereadflags`
 // (Src/Zle/zle_main.c:90).
 
-/// Context for zleread()
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ZleContext {
-    #[default]
-    Line,
-    Cont,
-    Select,
-    Vared,
-}
+// `ZleContext` deleted — Rust-named enum duplicating the legit C
+// enum at Src/zsh.h:3211-3216 (`ZLCON_LINE_START` / `ZLCON_LINE_CONT`
+// / `ZLCON_SELECT` / `ZLCON_VARED`), already ported in zsh_h.rs:3162-3165.
+// `Zle.zlecontext` is now `i32` matching C's `int zlecontext`
+// (zle_main.c:163).
 
 /// Modifier state for commands.
 /// Layout mirrors `struct modifier` in Src/Zle/zle.h. The Default impl
@@ -113,22 +109,9 @@ pub struct change {                                                          // 
 // ported at zle_h.rs:781 (Src/Zle/zle.h:572). The Rust port uses
 // `super::zle_h::watch_fd` directly.
 
-/// Timeout type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TimeoutType {
-    None,
-    Key,
-    Func,
-    Max,
-}
-
-/// Timeout state
-#[derive(Debug, Clone)]
-pub struct Timeout {
-    pub tp: TimeoutType,
-    /// Value in 100ths of a second
-    pub exp100ths: u64,
-}
+// `TimeoutType` / `Timeout` deleted — Rust-named duplicates of the
+// legit `ztmouttp` enum + `ztmout` struct already ported at
+// `zle_main.c:398/432`. See definitions below.
 
 /// Maximum timeout value (about 24 days in 100ths of a second)
 /// Port of `ZMAXTIMEOUT` macro from `Src/Zle/zle_main.c:429`.
@@ -149,25 +132,21 @@ pub const MAXFOUND: usize = 4;                                               // 
 /// (timedfns), or maxed-out (re-arm needed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
-pub enum ZtmoutTp {                                                          // c:398
-    /// `ZTM_NONE` — no timeout in use.
-    None = 0,                                                                // c:401
-    /// `ZTM_KEY` — key timeout (do_keytmout flag).
-    Key  = 1,                                                                // c:406
-    /// `ZTM_FUNC` — function timeout (timedfns list).
-    Func = 2,                                                                // c:412
-    /// `ZTM_MAX` — value hit ZMAXTIMEOUT; re-arm on next iteration.
-    Max  = 3,                                                                // c:428
+#[allow(non_camel_case_types)]
+pub enum ztmouttp {                                                          // c:398
+    ZTM_NONE = 0,                                                            // c:401
+    ZTM_KEY  = 1,                                                            // c:406
+    ZTM_FUNC = 2,                                                            // c:412
+    ZTM_MAX  = 3,                                                            // c:428
 }
 
 /// Port of `struct ztmout` from `Src/Zle/zle_main.c:432`. Carries the
 /// active timeout type plus expiration in 100ths of a second.
 #[derive(Debug, Clone, Copy)]
-pub struct Ztmout {                                                          // c:432
-    /// Type of timeout setting, see `ZtmoutTp` above.
-    pub tp: ZtmoutTp,                                                        // c:434
-    /// Value for timeout in 100ths of a second if type is not `None`.
-    pub exp100ths: i64,                                                      // c:438 (time_t)
+#[allow(non_camel_case_types)]
+pub struct ztmout {                                                          // c:432
+    pub tp: ztmouttp,                                                        // c:434 enum ztmouttp tp
+    pub exp100ths: i64,                                                      // c:438 time_t exp100ths
 }
 
 /// Port of `struct findfunc` from `Src/Zle/zle_main.c:1927`. Closure
@@ -225,7 +204,7 @@ pub struct Zle {
     /// Read flags
     pub zlereadflags: i32,
     /// Context
-    pub zlecontext: ZleContext,
+    pub zlecontext: i32,
     /// Status line
     pub statusline: Option<String>,
     /// History position for buffer stack
@@ -426,7 +405,7 @@ impl Zle {
             zle_recursive: 0,
             // C default: input.c:418 — `int flags = ZLRF_HISTORY|ZLRF_NOSETTY;`
             zlereadflags: crate::ported::zsh_h::ZLRF_HISTORY | crate::ported::zsh_h::ZLRF_NOSETTY,
-            zlecontext: ZleContext::default(),
+            zlecontext: crate::ported::zsh_h::ZLCON_LINE_START,
             statusline: None,
             stackhist: 0,
             stackcs: 0,
@@ -534,21 +513,25 @@ impl Zle {
         }
     }
 
-    /// Calculate timeout for input
-    fn calc_timeout(&self, do_keytmout: bool) -> Timeout {
+    /// Direct port of `static void calc_timeout(struct ztmout *tmoutp,
+    /// long do_keytmout, int full)` from `Src/Zle/zle_main.c:454`.
+    /// Picks the next read timeout based on do_keytmout + the
+    /// timedfns list. Truncated to the keymap timeout subset until
+    /// timedfns wiring lands.
+    fn calc_timeout(&self, do_keytmout: bool) -> ztmout {                    // c:454
         if do_keytmout && self.keytimeout > 0 {
             let exp = if self.keytimeout > ZMAXTIMEOUT * 100 {
                 ZMAXTIMEOUT * 100
             } else {
                 self.keytimeout
             };
-            Timeout {
-                tp: TimeoutType::Key,
-                exp100ths: exp,
+            ztmout {
+                tp: ztmouttp::ZTM_KEY,
+                exp100ths: exp as i64,
             }
         } else {
-            Timeout {
-                tp: TimeoutType::None,
+            ztmout {
+                tp: ztmouttp::ZTM_NONE,
                 exp100ths: 0,
             }
         }
@@ -569,8 +552,8 @@ impl Zle {
 
         let timeout = self.calc_timeout(do_keytmout);
 
-        let timeout_duration = if timeout.tp != TimeoutType::None {
-            Some(Duration::from_millis(timeout.exp100ths * 10))
+        let timeout_duration = if timeout.tp != ztmouttp::ZTM_NONE {
+            Some(Duration::from_millis((timeout.exp100ths * 10) as u64))
         } else {
             None
         };
@@ -990,7 +973,7 @@ impl Zle {
         lprompt: &str,
         rprompt: &str,
         flags: i32,
-        context: ZleContext,
+        context: i32,
     ) -> io::Result<String> {
         // Stash the unexpanded templates so reexpandprompt() can re-run
         // expansion later. C zsh saves these in the global raw_lp/raw_rp
@@ -1358,7 +1341,7 @@ pub fn vared_zle_run(zle: &mut Zle, varname: &str, opts: VaredOpts) -> io::Resul
     let prompt = opts.prompt.as_deref().unwrap_or("");
     let rprompt = opts.rprompt.as_deref().unwrap_or("");
     // C zle_main.c:1837 vared path passes 0 for flags + ZLCON_VARED context.
-    let result = zle.zleread(prompt, rprompt, 0, ZleContext::Vared)?;
+    let result = zle.zleread(prompt, rprompt, 0, crate::ported::zsh_h::ZLCON_VARED)?;
     Ok(result)
 }
 
@@ -1550,18 +1533,18 @@ mod ztmout_findfunc_tests {
     use super::*;
 
     #[test]
-    fn ztmout_tp_discriminant_values() {
+    fn ztmouttp_discriminant_values() {
         // c:401-428 — sequential 0..=3.
-        assert_eq!(ZtmoutTp::None as i32, 0);
-        assert_eq!(ZtmoutTp::Key  as i32, 1);
-        assert_eq!(ZtmoutTp::Func as i32, 2);
-        assert_eq!(ZtmoutTp::Max  as i32, 3);
+        assert_eq!(ztmouttp::ZTM_NONE as i32, 0);
+        assert_eq!(ztmouttp::ZTM_KEY  as i32, 1);
+        assert_eq!(ztmouttp::ZTM_FUNC as i32, 2);
+        assert_eq!(ztmouttp::ZTM_MAX  as i32, 3);
     }
 
     #[test]
     fn ztmout_default_carries_none_type() {
-        let t = Ztmout { tp: ZtmoutTp::None, exp100ths: 0 };
-        assert_eq!(t.tp, ZtmoutTp::None);
+        let t = ztmout { tp: ztmouttp::ZTM_NONE, exp100ths: 0 };
+        assert_eq!(t.tp, ztmouttp::ZTM_NONE);
     }
 
     #[test]
