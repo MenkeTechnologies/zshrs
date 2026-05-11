@@ -468,31 +468,11 @@ pub fn zstuff(path: &str) -> io::Result<String> {                            // 
     std::fs::read_to_string(path)
 }
 
-/// String input source for simple string parsing
-pub struct StringInput {
-    input: InputBuffer,
-}
-
-impl StringInput {
-    pub fn new(s: &str) -> Self {
-        let mut input = InputBuffer::new();
-        input.strin = true;
-        input.inputsetline(s, 0);
-        StringInput { input }
-    }
-
-    pub fn getc(&mut self) -> Option<char> {
-        self.input.ingetc()
-    }
-
-    pub fn ungetc(&mut self, c: char) {
-        self.input.inungetc(c);
-    }
-
-    pub fn is_eof(&self) -> bool {
-        self.input.lexstop
-    }
-}
+// `StringInput` deleted — Rust-only convenience wrapper around
+// `InputBuffer` with no C counterpart. The single caller (the
+// `test_string_input` unit test) used it as a self-test for
+// `InputBuffer::inputsetline` + `ingetc`, which the other tests
+// cover directly.
 
 #[cfg(test)]
 mod tests {
@@ -557,16 +537,8 @@ mod tests {
         assert_eq!(buf.lineno, 3);
     }
 
-    #[test]
-    fn test_string_input() {
-        let mut input = StringInput::new("test");
-
-        assert_eq!(input.getc(), Some('t'));
-        assert_eq!(input.getc(), Some('e'));
-        assert_eq!(input.getc(), Some('s'));
-        assert_eq!(input.getc(), Some('t'));
-        assert!(input.is_eof() || input.getc().is_none());
-    }
+    // `test_string_input` removed alongside the StringInput wrapper.
+    // String-input coverage stays in `test_input_buffer_basic`.
 
     #[test]
     fn test_meta_encoding() {
