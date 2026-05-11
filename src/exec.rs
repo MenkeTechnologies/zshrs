@@ -5357,9 +5357,20 @@ impl crate::ported::exec::ShellExecutor {
                     } else {
                         ("", body.as_str())
                     };
-                    let digits = match raw_digits.find('#') {
-                        Some(idx) => &raw_digits[idx + 1..],
-                        None => raw_digits,
+                    // `convbase` prefixes `0x` for base 16 and `0` for
+                    // base 8 (mirroring C's default-output style).
+                    // Strip whichever prefix is present so we can
+                    // re-add the correct one (or none, for `[##N]`).
+                    let digits = if let Some(rest) = raw_digits.strip_prefix("0x") {
+                        rest
+                    } else if base == 8 && raw_digits.starts_with('0')
+                        && raw_digits.len() > 1
+                    {
+                        &raw_digits[1..]
+                    } else if let Some(idx) = raw_digits.find('#') {
+                        &raw_digits[idx + 1..]
+                    } else {
+                        raw_digits
                     };
                     let prefix = if no_prefix {
                         ""
