@@ -877,14 +877,70 @@ pub fn eval_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,     // 
     if r == 0 { 1 } else { 0 }
 }
 
-/// Port of `loadautofn()` from Src/exec.c:5050. Walks `$fpath` for the
-/// matching file, parses it, installs the body on `shf`. Returns 0 on
-/// success, non-zero on error.
-fn loadautofn(_shf: *mut crate::ported::zsh_h::shfunc,                       // c:5050 (Src/exec.c)
-              _ks: i32, _test_only: i32, _ignore_loaddir: i32) -> i32 {
-    // c:5054-5160 — getfpfunc + parse_string + execode-prep wireup. Lives
-    // in src/ported/exec.rs's autoload path (typed Shfunc resolver
-    // deferred); fall through with 0 = success so callers continue.
+/// Direct port of `Shfunc loadautofn(Shfunc shf, int ks, int test_only,
+/// int ignore_loaddir)` from `Src/exec.c:5050`. Walks `$fpath` for a
+/// file named `shf->node.nam`, reads it, installs the text body on
+/// the corresponding `shfunctab` entry, and clears `PM_UNDEFINED`.
+///
+/// C body (abridged):
+///   1. `name = shf->node.nam`
+///   2. `getfpfunc(name, &dir_path, NULL, 0)` → resolved file path
+///   3. If !test_only && file found: parse → store eprog on
+///      `shf->funcdef`; clear PM_UNDEFINED; set `shf->filename`.
+///   4. Returns shf on success, NULL on failure.
+///
+/// Rust port: returns 0 = success, 1 = failure (matches the
+/// existing call-site convention in `bin_functions -c`). Stores
+/// raw file text on `ShFunc.body` (the Rust-side ShFunc in
+/// `hashtable.rs:362`); the parser pass that converts text →
+/// Eprog runs lazily at first call site.
+fn loadautofn(shf: *mut crate::ported::zsh_h::shfunc,                        // c:5050 (Src/exec.c)
+              _ks: i32, test_only: i32, _ignore_loaddir: i32) -> i32 {
+    use crate::ported::zsh_h::PM_UNDEFINED;
+    if shf.is_null() {
+        return 1;
+    }
+    // c:5054 — `name = shf->node.nam`.
+    let name = unsafe { (*shf).node.nam.clone() };
+    // c:5070 — `path = getfpfunc(name, &dir_path, NULL, 0)`.
+    let mut dir_path: Option<String> = None;
+    let path = match getfpfunc(&name, &mut dir_path, None, 0) {
+        Some(p) => p,
+        None => return 1,                                                    // c:5074 not found
+    };
+    if test_only != 0 {                                                      // c:5096
+        return 0;                                                            // test passes — file exists
+    }
+    // c:5100-5140 — read the file. C uses zopen + read + parse_string +
+    // execsave; Rust port stores raw text on the ShFunc and defers
+    // parse-to-Eprog until the first call.
+    let body = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => return 1,
+    };
+    // c:5142 — `shf->filename = ztrdup(dir_path)`.
+    unsafe {
+        (*shf).filename = dir_path.clone().or(Some(path.clone()));
+    }
+    // c:5148 — `shf->node.flags &= ~PM_UNDEFINED`.
+    unsafe {
+        (*shf).node.flags &= !(PM_UNDEFINED as i32);
+    }
+    // Sync the body string into the Rust-side ShFunc table so the
+    // lazy-parse path can find it later.
+    if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().lock() {
+        if let Some(existing) = tab.get_mut(&name) {
+            existing.body = Some(body);
+            existing.filename = dir_path;
+        } else {
+            tab.add(crate::ported::hashtable::ShFunc {
+                name: name.clone(),
+                flags: 0,
+                filename: dir_path,
+                body: Some(body),
+            });
+        }
+    }
     0
 }
 
@@ -1537,8 +1593,25 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
             return 1;
         }
         // c:3414-3421 — autoload-trampoline expansion if PM_UNDEFINED.
-        // Static-link path: deferred until loadautofn/freeeprog land in
-        // src/ported/funcs.rs; treat as already loaded.
+        // C body: `if (shf->flags & PM_UNDEFINED) { freeeprog;
+        // funcdef=dummy; shf = loadautofn(shf,1,0,0); if (!shf) return 1; }`.
+        // Rust port routes through the local loadautofn helper at
+        // builtin.rs:883 which walks $fpath via getfpfunc, reads the
+        // file, stores the body text on the Rust-side ShFunc, and
+        // clears PM_UNDEFINED.
+        if (unsafe { (*src_ptr).node.flags } as u32 & PM_UNDEFINED) != 0 {
+            // c:3415-3418 — `freeeprog(shf->funcdef); shf->funcdef =
+            // &dummy_eprog;` clear out any stale autoload stub before
+            // re-loading. Rust port: drop the Option<Eprog>.
+            unsafe {
+                (*src_ptr).funcdef = None;
+            }
+            // c:3419 — `loadautofn(shf, 1, 0, 0)`.
+            if loadautofn(src_ptr, 1, 0, 0) != 0 {
+                // c:3420-3421 — autoload failed.
+                return 1;
+            }
+        }
         // c:3422-3430 — `newsh = zalloc + memcpy + filename rebuild`.
         let src_ref = unsafe { &*src_ptr };
         let new_filename = if (src_ref.node.flags as u32 & PM_UNDEFINED) == 0
@@ -1702,7 +1775,17 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
             if let Some(prog) = pprog {
                 // c:3680-3683 — scan-and-print matching shfuncs.
                 if (on | off) == 0 && !OPT_ISSET(ops, b'X') {                // c:3682
-                    // scanmatchshfunc(...) — deferred to funcs.rs walk.
+                    // c:3682-3683 — `scanmatchshfunc(pprog, 1, 0,
+                    //   DISABLED, shfunctab->printnode, pflags, expand)`.
+                    // Walk shfunctab via the hashtable.rs port and emit
+                    // each matching name (the full `printnode` callback
+                    // includes the body when PRINT_LIST/PRINT_NAMEONLY
+                    // bits are set in pflags; static-link path emits
+                    // just the name here, matching `whence` output).
+                    crate::ported::hashtable::scanmatchshfunc(
+                        Some(pat),
+                        |nm, _entry| println!("{}", nm),
+                    );
                 } else {
                     // c:3686-3699 — walk shfunctab, apply (on, off) and
                     // re-eval autoload for each matching shf.
