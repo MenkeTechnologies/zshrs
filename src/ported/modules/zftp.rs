@@ -786,10 +786,15 @@ fn parse_pasv_response(msg: &str) -> io::Result<(String, u16)> {                
 #[allow(non_snake_case)]
 pub fn zfopendata(name: &str) -> (i32, bool) {                                  // c:859
     use std::sync::atomic::Ordering;
-    // c:862-865 — zfprefs ZFPF_SNDP|ZFPF_PASV preference. Rust port
-    // defaults to PASV; the PORT-mode path is reachable when the
-    // server rejects PASV (500-504) per the C fallback at c:884.
-    let try_pasv: bool = true;                                                  // c:866
+    // c:862-865 — error if neither SNDP nor PASV preference is set.
+    let prefs = zfprefs.load(Ordering::Relaxed);                                // c:862
+    if (prefs & (ZFPF_SNDP | ZFPF_PASV)) == 0 {                                 // c:863
+        crate::ported::utils::zwarnnam(name,
+            "Must set preference S or P to transfer data");                     // c:864
+        return (1, false);                                                      // c:865
+    }
+    // c:871 — try PASV when the bit is set and ZFST_NOPS isn't.
+    let try_pasv: bool = (prefs & ZFPF_PASV) != 0;                              // c:871
 
     if try_pasv {
         // c:879 — psv_cmd = "PASV\r\n"; (EPSV unsupported in Rust port).
