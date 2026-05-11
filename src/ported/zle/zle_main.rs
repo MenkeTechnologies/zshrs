@@ -236,8 +236,6 @@ pub struct Zle {
     baud: u32,
     /// Watch file descriptors
     pub watch_fds: Vec<super::zle_h::watch_fd>,
-    /// Keymap manager
-    pub keymaps: KeymapManager,
     /// Completion widget
     pub compwidget: Option<Widget>,
     /// In completion function flag
@@ -383,6 +381,12 @@ impl Zle {
     /// collapses those globals into a single Zle instance so
     /// callers can hold multiple independent line-edit sessions.
     pub fn new() -> Self {
+        // Seed the global keymap table on first Zle construction.
+        // The C source fires `createkeymapnamtab()` + `default_bindings()`
+        // once at module init (zle.c:init_zle); a Zle session needs
+        // those keymaps in place before key dispatch.
+        crate::ported::zle::zle_keymap::createkeymapnamtab();
+        crate::ported::zle::zle_keymap::default_bindings();
         Zle {
             zleline: Vec::new(),
             zlecs: 0,
@@ -414,7 +418,6 @@ impl Zle {
             keytimeout: 40, // 0.4 seconds default
             baud: 38400,
             watch_fds: Vec::new(),
-            keymaps: KeymapManager::new(),
             compwidget: None,
             incompctlfunc: false,
             hascompmod: false,
@@ -1150,7 +1153,19 @@ impl Zle {
     /// Port of describekeybriefly() from zle_main.c
     pub fn describe_key_briefly(&mut self) {
         if let Some(c) = self.getfullchar(false) {
-            if let Some(thingy) = self.keymaps.lookup_key(c) {
+            let thingy = if c as u32 > 255 {
+                None
+            } else {
+                let km = crate::ported::zle::zle_keymap::LOCALKEYMAP
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .or_else(|| {
+                        crate::ported::zle::zle_keymap::curkeymap.lock().unwrap().clone()
+                    });
+                km.and_then(|k| k.first[c as usize].clone())
+            };
+            if let Some(thingy) = thingy {
                 self.display_msg(&format!("{} is bound to {}", c, thingy.nam));
             } else {
                 self.display_msg(&format!("{} is not bound", c));
@@ -1270,17 +1285,18 @@ impl Zle {
 
     /// Vi command mode flag
     pub fn is_vicmd(&self) -> bool {
-        self.keymaps.is_vi_cmd()
+        *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd"
     }
 
     /// Vi insert mode flag
     pub fn is_viins(&self) -> bool {
-        self.keymaps.is_vi_insert()
+        *crate::ported::zle::zle_keymap::curkeymapname() == "viins"
     }
 
     /// Emacs mode flag
     pub fn is_emacs(&self) -> bool {
-        self.keymaps.is_emacs()
+        let n = crate::ported::zle::zle_keymap::curkeymapname();
+        *n == "emacs" || *n == "main"
     }
 
     /// Check if last command was yank
@@ -1517,7 +1533,7 @@ mod tests {
     #[test]
     fn get_key_cmd_resolves_single_byte_binding() {
         let mut zle = Zle::new();
-        zle.keymaps.select("emacs");
+        crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
         zle.ungetbytes(b"\x05"); // Ctrl-E — emacs default = end-of-line
         let t = zle.get_key_cmd().expect("should resolve Ctrl-E");
         assert_eq!(t.nam, "end-of-line");
@@ -1526,7 +1542,7 @@ mod tests {
     #[test]
     fn get_key_cmd_resolves_multi_byte_sequence() {
         let mut zle = Zle::new();
-        zle.keymaps.select("emacs");
+        crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
         // ESC-d is bind to kill-word in zle_bindings.c emacs table.
         // Push the bytes and resolve — multi-byte traversal kicks in.
         zle.ungetbytes(b"\x1bd");
@@ -1542,7 +1558,7 @@ mod tests {
     #[test]
     fn get_key_cmd_returns_none_on_eof() {
         let mut zle = Zle::new();
-        zle.keymaps.select("emacs");
+        crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
         // No bytes fed, no terminal attached — getbyte should return None.
         let result = zle.get_key_cmd();
         // In test context with no real tty, getbyte may block; but our

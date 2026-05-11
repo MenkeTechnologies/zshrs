@@ -334,35 +334,22 @@ impl Keymap {
     }
 }
 
-/// Rust-only container collecting 6 C globals from
-/// `Src/Zle/zle_keymap.c` into one struct:
-///   - `keymaps`      ↔ `keymapnamtab`  (c:131)
-///   - `current`      ↔ `curkeymap`     (c:124)
-///   - `current_name` ↔ `curkeymapname` (c:126)
-///   - `local`        ↔ `localkeymap`   (c:124)
-///   - `keybuf`       ↔ `keybuf`        (c:136)
-///   - `lastnamed`    ↔ `lastnamed`     (c:145)
+/// Zero-sized namespace for the three default-binding tables
+/// (emacs / viins / vicmd) that `default_bindings()` populates at
+/// startup. The state these used to wrap (keymaps / current /
+/// current_name / local / keybuf / lastnamed) now lives in the
+/// six file-scope statics declared above (KEYMAPNAMTAB / curkeymap
+/// / CURKEYMAPNAME / LOCALKEYMAP / keybuf / lastnamed) — matching
+/// the C globals at `Src/Zle/zle_keymap.c:124-145`.
 ///
-/// Each field has a file-scope static equivalent declared above
-/// (KEYMAPNAMTAB / curkeymap / CURKEYMAPNAME / LOCALKEYMAP /
-/// keybuf / lastnamed). This struct exists for the per-`Zle`
-/// container shape — pending a cascade-rewrite that switches all
-/// 74 `.keymaps.X` callers to read from the file-scope statics
-/// directly (matching C's inline access).
+/// The setup_*_keymap methods stay as methods (drift-gate
+/// exempts impl-block fns) because zsh's C `default_bindings()`
+/// has the equivalent 330+ bindkey calls inline in one function;
+/// the Rust port keeps them factored by keymap for readability.
 #[derive(Debug, Default)]
 pub struct KeymapManager;
 
 impl KeymapManager {
-    /// Trigger default-keymap population in `keymapnamtab` (matches
-    /// the C startup that fires `createkeymapnamtab()` +
-    /// `default_bindings()` at module init). Returns a unit handle so
-    /// existing `KeymapManager::new()` call sites compile while the
-    /// state lives entirely in the file-scope statics.
-    pub fn new() -> Self {
-        createkeymapnamtab();
-        default_bindings();
-        KeymapManager
-    }
 
     /// Set up emacs keymap bindings
     fn setup_emacs_keymap(&self, km: &mut Keymap) {
@@ -880,8 +867,10 @@ mod tests {
 
     #[test]
     fn emacs_default_has_quoted_insert_undo_yank_pop() {
-        let mgr = KeymapManager::new();
-        let _ = &mgr;
+        let _ = KeymapManager;
+        createkeymapnamtab();
+        default_bindings();
+        
         let km = openkeymap("emacs").expect("emacs keymap created");
         // Ctrl-V quoted-insert (zle_bindings.c emacs '^V').
         assert_eq!(
@@ -899,8 +888,10 @@ mod tests {
 
     #[test]
     fn emacs_default_has_history_search_and_insert_last_word() {
-        let mgr = KeymapManager::new();
-        let _ = &mgr;
+        let _ = KeymapManager;
+        createkeymapnamtab();
+        default_bindings();
+        
         let km = openkeymap("emacs").expect("emacs keymap created");
         // \e. insert-last-word.
         assert_eq!(
@@ -922,8 +913,10 @@ mod tests {
 
     #[test]
     fn vicmd_default_has_visual_marks_indent() {
-        let mgr = KeymapManager::new();
-        let _ = &mgr;
+        let _ = KeymapManager;
+        createkeymapnamtab();
+        default_bindings();
+        
         let km = openkeymap("vicmd").expect("vicmd keymap created");
         assert_eq!(
             km.lookup_char(b'v').map(|t| t.nam.as_str()),
@@ -953,8 +946,10 @@ mod tests {
 
     #[test]
     fn viins_default_has_history_search_and_quoted_insert() {
-        let mgr = KeymapManager::new();
-        let _ = &mgr;
+        let _ = KeymapManager;
+        createkeymapnamtab();
+        default_bindings();
+        
         let km = openkeymap("viins").expect("viins keymap created");
         // ^R history-incremental-search-backward (zle_bindings.c viins '^R').
         assert_eq!(
