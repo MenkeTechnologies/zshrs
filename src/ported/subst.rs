@@ -6866,9 +6866,11 @@ pub fn globlist(list: &mut LinkList, flags: i32) {   // c:489
         let _ = no_untok; // C plumbs through;
                           // expand_glob handles
                           // tokens internally.
-        let expanded: Vec<String> =
-            crate::fusevm_bridge::try_with_executor(|exec| exec.expand_glob(&data))
-                .unwrap_or_else(|| vec![data.clone()]);
+        // c:501 — canonical glob expansion (mirrors zglob driver
+        // at glob.c:1214 with alternation + extendedglob pre-passes
+        // inlined). Reads canonical option state directly, no
+        // executor needed.
+        let expanded: Vec<String> = crate::ported::glob::glob_path(&data);
 
         if expanded.is_empty() {
             // c:N/A (NOMATCH path)

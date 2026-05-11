@@ -3906,11 +3906,158 @@ pub fn checkglobqual(str: &str, sl: i32, _nobareglob: i32,                   // 
 /// C: `void zglob(LinkList list, LinkNode np, int nountok)` — top-level
 ///   glob expansion: parse qualifiers, walk the filesystem, replace
 ///   the placeholder node in `list` with the matches.
-pub fn zglob(_list: &mut Vec<String>, _np: usize, _nountok: i32) {           // c:1214
-    // c:1218-1700+ — full glob driver: qualifier parsing (all qualX fns
-    // above), multi-segment walk, sort, brace/exclusion. Static-link path:
-    // basic glob expansion lives in src/ported/exec.rs; the qual* family
-    // is reachable from the dispatcher when wired.
+///
+/// Rust port: read the placeholder pattern from `list[np]`, run the
+/// canonical `glob_path` expansion, and overwrite the placeholder
+/// with the expanded entries (one node per match) so the caller's
+/// downstream prefork pass sees one LinkNode per file. Mirrors the
+/// `insert_glob_match` walk at glob.c:1125.
+pub fn zglob(list: &mut Vec<String>, np: usize, _nountok: i32) {             // c:1214
+    if np >= list.len() { return; }
+    let pattern = list[np].clone();
+    let matches = glob_path(&pattern);
+    if matches.is_empty() {
+        // c:1700 NOMATCH path — leave the placeholder in place so
+        // downstream NOMATCH option handling (zerr/zexit) fires.
+        return;
+    }
+    // Replace np with first match, splice the rest after.
+    let mut it = matches.into_iter();
+    list[np] = it.next().unwrap();
+    let mut insert_at = np + 1;
+    for m in it {
+        list.insert(insert_at, m);
+        insert_at += 1;
+    }
+}
+
+/// Canonical entry point for filesystem glob expansion. Mirrors C's
+/// `zglob` driver at Src/glob.c:1214 with the alternation +
+/// extendedglob pre-passes inlined (zsh's `(a|b|c)` group-level
+/// alternation and `pat1~pat2` exclusion).
+///
+/// Reads `nullglob` / `nomatch` / `extendedglob` / `dotglob` /
+/// `globdots` / `caseglob` / `nocaseglob` / `globstarshort` /
+/// `bareglobqual` / `braceccl` / `markdirs` / `numericglobsort` /
+/// `globdots` from the canonical option store (`opt_state_get`) so
+/// behavior tracks `setopt …` toggles without needing an executor.
+pub fn glob_path(pattern: &str) -> Vec<String> {                             // c:1214
+    use crate::ported::options::opt_state_get;
+    let opt = |n: &str, default: bool| opt_state_get(n).unwrap_or(default);
+    // Build canonical GlobOptions from option state.
+    let options = GlobOptions {
+        null_glob:       opt("nullglob", false),
+        mark_dirs:       opt("markdirs", false),
+        no_glob_dots:    !(opt("dotglob", false) || opt("globdots", false)),
+        list_types:      opt("listtypes", false),
+        numeric_sort:    opt("numericglobsort", false),
+        follow_links:    opt("globlinks", false),
+        extended_glob:   opt("extendedglob", false),
+        // C `caseglob` defaults ON; `nocaseglob` is its inverse.
+        case_glob:       opt("caseglob", true) && !opt("nocaseglob", false),
+        glob_star_short: opt("globstarshort", false),
+        bare_glob_qual:  opt("bareglobqual", true),
+        brace_ccl:       opt("braceccl", false),
+    };
+
+    // c:1230 — `(a|b|c)` top-level alternation pre-pass.
+    if let Some(alternatives) = expand_glob_alternation(pattern) {
+        let mut out: Vec<String> = Vec::new();
+        for alt in alternatives {
+            let has_meta = alt.chars().any(|c| matches!(c, '*' | '?' | '[' | '('));
+            if has_meta {
+                out.extend(glob_path(&alt));
+            } else if std::path::Path::new(&alt).exists() {
+                out.push(alt);
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        out.retain(|p| seen.insert(p.clone()));
+        out.sort();
+        if !out.is_empty() {
+            return out;
+        }
+        // c:1700 fall through to NOMATCH semantics below.
+    }
+
+    // c:155 (P_EXCLUDE) — extendedglob `^pat` negation + `pat1~pat2`
+    // exclusion. Only applies when extendedglob option is on.
+    if options.extended_glob {
+        let last_seg_start = pattern.rfind('/').map(|i| i + 1).unwrap_or(0);
+        let last_seg = &pattern[last_seg_start..];
+        if last_seg.starts_with('^') && last_seg.len() > 1 {
+            let prefix = &pattern[..last_seg_start];
+            let neg = &last_seg[1..];
+            let dir = if prefix.is_empty() {
+                ".".to_string()
+            } else {
+                prefix.trim_end_matches('/').to_string()
+            };
+            let mut out = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with('.') && options.no_glob_dots {
+                        continue;
+                    }
+                    if !matchpat(neg, &name, true, options.case_glob) {
+                        let path = if prefix.is_empty() {
+                            name
+                        } else {
+                            format!("{}{}", prefix, name)
+                        };
+                        out.push(path);
+                    }
+                }
+            }
+            out.sort();
+            if !out.is_empty() { return out; }
+            if options.null_glob { return Vec::new(); }
+            return vec![pattern.to_string()];
+        }
+        // c:155 — top-level `~` exclusion.
+        let chars: Vec<char> = pattern.chars().collect();
+        let mut depth_b = 0i32;
+        let mut depth_p = 0i32;
+        let mut split_at: Option<usize> = None;
+        for (i, &c) in chars.iter().enumerate() {
+            match c {
+                '[' => depth_b += 1,
+                ']' => depth_b -= 1,
+                '(' => depth_p += 1,
+                ')' => depth_p -= 1,
+                '~' if depth_b == 0 && depth_p == 0 && i > 0 => {
+                    split_at = Some(i);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if let Some(pos) = split_at {
+            let lhs: String = chars[..pos].iter().collect();
+            let rhs: String = chars[pos + 1..].iter().collect();
+            let lhs_matches = glob_path(&lhs);
+            let filtered: Vec<String> = lhs_matches
+                .into_iter()
+                .filter(|p| {
+                    let basename = p.rsplit('/').next().unwrap_or(p);
+                    !matchpat(&rhs, basename, true, options.case_glob)
+                        && !matchpat(&rhs, p, true, options.case_glob)
+                })
+                .collect();
+            if !filtered.is_empty() { return filtered; }
+            if options.null_glob { return Vec::new(); }
+            return vec![pattern.to_string()];
+        }
+    }
+
+    // Main walk via the canonical glob driver.
+    let mut state = GlobData::new(options.clone());
+    let matches = state.glob(pattern);
+    if matches.is_empty() && !options.null_glob {
+        return vec![pattern.to_string()];
+    }
+    matches
 }
 
 /// Port of `freerepldata()` from Src/glob.c:2766.
