@@ -219,10 +219,8 @@ pub struct Zle {
     // Number of characters waiting to be read by the ungetbytes mechanism   // c:185
     /// Unget buffer for bytes
     pub unget_buf: VecDeque<u8>,
-    /// EOF character
-    eofchar: u8,
-    /// EOF sent flag
-    eofsent: bool,
+    // `eofchar` / `eofsent` moved to file-scope EOFCHAR / EOFSENT
+    // atomics below (matches int eofchar / int eofsent in zle_main.c).
     /// Key timeout in 100ths of a second
     pub keytimeout: u64,
     /// Watch file descriptors
@@ -390,8 +388,6 @@ impl Zle {
             undo_stack: Vec::new(),
             changeno: 0,
             unget_buf: VecDeque::new(),
-            eofchar: 4, // Ctrl-D
-            eofsent: false,
             keytimeout: 40, // 0.4 seconds default
             watch_fds: Vec::new(),
             compwidget: None,
@@ -451,7 +447,7 @@ impl Zle {
         // against eofchar for the empty-line EOF branch (zle_main.c:1139).
         let veof = termios.c_cc[termios::VEOF];
         if veof != 0 {
-            self.eofchar = veof;
+            EOFCHAR.store((veof) as i32, std::sync::atomic::Ordering::SeqCst);
         }
 
         // Disable canonical line input + echo so we receive raw keys.
@@ -727,7 +723,7 @@ impl Zle {
             let thingy = match self.get_key_cmd() {
                 Some(t) => t,
                 None => {
-                    self.eofsent = true;
+                    EOFSENT.store(1, std::sync::atomic::Ordering::SeqCst);
                     crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
                     continue;
                 }
@@ -736,10 +732,10 @@ impl Zle {
             // EOF on empty line: matches C's eofchar branch
             // (zle_main.c:1139-1150 — guarded by ZLRF_IGNOREEOF too).
             if self.zlell == 0
-                && crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) == self.eofchar as ZleInt
+                && crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) == EOFCHAR.load(std::sync::atomic::Ordering::SeqCst)
                 && (self.zlereadflags & crate::ported::zsh_h::ZLRF_HISTORY) != 0
             {
-                self.eofsent = true;
+                EOFSENT.store(1, std::sync::atomic::Ordering::SeqCst);
                 crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
                 continue;
             }
@@ -1070,7 +1066,7 @@ impl Zle {
     pub fn recursive_edit(&mut self) -> i32 {
         self.zle_recursive += 1;
         let old_done = crate::ported::zle::zle_misc::DONE.load(std::sync::atomic::Ordering::SeqCst) != 0;
-        let old_eofsent = self.eofsent;
+        let old_eofsent = EOFSENT.load(std::sync::atomic::Ordering::SeqCst);
 
         // Mirror zle_main.c:1984-1986 — refresh before entering the
         // sub-loop so the user sees current state on enter.
@@ -1078,17 +1074,17 @@ impl Zle {
         self.zrefresh();
 
         crate::ported::zle::zle_misc::DONE.store(0, std::sync::atomic::Ordering::SeqCst);
-        self.eofsent = false;
+        EOFSENT.store(0, std::sync::atomic::Ordering::SeqCst);
         self.zlecore();
 
         // C source resets errflag/done/eofsent on exit (zle_main.c:1993)
         // so the outer loop continues. We don't have an errflag global,
         // so the local-error signal collapses to "did the inner exit
         // via abort_line?" — approximated by checking eofsent.
-        let locerror = if self.eofsent { 1 } else { 0 };
+        let locerror = EOFSENT.load(std::sync::atomic::Ordering::SeqCst);
 
         crate::ported::zle::zle_misc::DONE.store(if old_done { 1 } else { 0 }, std::sync::atomic::Ordering::SeqCst);
-        self.eofsent = old_eofsent;
+        EOFSENT.store(old_eofsent, std::sync::atomic::Ordering::SeqCst);
         self.zle_recursive -= 1;
 
         locerror
@@ -2009,6 +2005,18 @@ pub static LASTCHAR_WIDE: std::sync::atomic::AtomicI32 =
 /// Set when `LASTCHAR_WIDE` holds a freshly-assembled wide-char
 /// from `getfullchar()`; cleared by callers that consumed it.
 pub static LASTCHAR_WIDE_VALID: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int eofchar` from `Src/Zle/zle_main.c`. The termios
+/// VEOF byte (typically Ctrl-D); compared against `LASTCHAR` to
+/// detect end-of-file on an empty line.
+pub static EOFCHAR: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(4);
+
+/// Port of `int eofsent` from `Src/Zle/zle_main.c`. Set when the
+/// user sent EOF on an empty line — drives the outer `zleread()`
+/// loop to break and return an EOF sentinel.
+pub static EOFSENT: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `zleaftertrap()` from `Src/Zle/zle_main.c:2113`.
