@@ -760,6 +760,48 @@ exec_getsparam
 sub_flags_get
 sub_flags_set
 
+# glob.rs scaffold fns pulled out of `impl GlobData` to top-level
+# per user directive. ALL Rust-only — pending a C-faithful rewrite
+# of scanner() (glob.c:500) that uses lchdir-based descent +
+# `insert()` (glob.c:346) inline qualifier eval + `parsepat`
+# (glob.c:791) emitting a `struct complist`. Once that lands, these
+# helpers are deleted (the AST + recursive-walk shape goes away
+# in favor of C's wordcode-driven walk).
+globdata_glob
+parse_qualifiers
+parse_qualifier_string
+parse_uid_gid
+parse_size_spec
+parse_range_spec
+parse_subscript
+parse_pattern
+scan_pattern
+scan_recursive
+check_qualifiers
+check_qualifier_list
+check_single_qualifier
+sort_matches
+apply_selection
+# glob_path — canonical entry for filesystem glob expansion (mirrors
+# zglob driver at glob.c:1214 with alternation + extendedglob
+# pre-passes inlined). subst.rs `stringsubst` glob site routes
+# through this. Will fold into a real `zglob` port when scanner()
+# rewrite completes.
+glob_path
+# find_top_level_tilde — extendedglob `pat1~pat2` exclusion helper
+# used by glob_path. C inlines the top-level-tilde scan in scanner()
+# (glob.c:580+) when extendedglob is on.
+find_top_level_tilde
+# apply_modespec — mode-spec apply helper (qgetmodespec returns a
+# ModeSpec at glob.c:844, this fn applies it). Rust-only because C
+# inlines the bit manipulation at every callsite.
+apply_modespec
+# expand_glob_alternation — top-level `(a|b|c)` brace-style alternation
+# pre-expansion that runs before the path-component scanner. C handles
+# this via BRANCH opcodes in pattern.c's compiled Patprog; Rust port
+# pre-expands at glob.rs level until the per-component Patprog port lands.
+expand_glob_alternation
+
 # Pre-existing zsh.h macro-shaped helpers (Src/zsh.h is a header,
 # not in zsh_c_fn_names.txt which only lists fns from .c files).
 IS_WRITE_FILE

@@ -408,9 +408,10 @@ pub type Alias = Box<alias>; // c:510
 pub type Asgment = Box<asgment>; // c:511
 pub type Builtin = Box<builtin>; // c:512
 pub type Cmdnam = Box<cmdnam>; // c:513
-#[allow(non_camel_case_types)]
-pub struct complist; // not in zsh.h
-pub type Complist = Box<complist>; // c:514
+// `struct complist` body lives in `crate::ported::glob` (mirrors
+// C: declared in zsh.h via typedef alias, body defined in glob.c).
+// The `Complist` alias here resolves to that struct.
+pub type Complist = Box<crate::ported::glob::complist>;                      // c:514
 pub type Conddef = Box<conddef>; // c:515
 pub type Dirsav = Box<dirsav>; // c:516
 pub type Emulation_options = Box<emulation_options>; // c:517
