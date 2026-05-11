@@ -26,7 +26,7 @@
 use crate::ported::exec::ShellExecutor;
 use crate::ported::math::{Mnumber, MN_INTEGER, MN_FLOAT};
 use crate::ported::params::{setiparam, setsparam, setiparam_no_convert};
-use crate::ported::utils::{isident, metafy, unmetafy_dup, zwarnnam, zclose, movefd};
+use crate::ported::utils::{isident, metafy, unmeta, zwarnnam, zclose, movefd};
 
 const SYSREAD_BUFSIZE: usize = 8192;                                     // c:41
 
@@ -249,7 +249,7 @@ pub fn bin_syswrite(nam: &str, args: &[String],                              // 
     };
 
     // c:262 — `unmetafy(*args, &len);`
-    let unmeta = unmetafy_dup(&data);
+    let unmeta = self::unmeta(&data);
     let bytes = unmeta.as_bytes();
     let mut totcount: usize = 0;                                         // c:261
     let mut len = bytes.len();
@@ -761,7 +761,7 @@ pub fn bin_zsystem_flock(nam: &str, args: &[String],                         // 
         libc::O_RDWR | libc::O_NOCTTY
     };
     // c:688 — open(unmeta(args[0]), flags).
-    let path_unmeta = unmetafy_dup(path);
+    let path_unmeta = self::unmeta(path);
     let path_c = match std::ffi::CString::new(path_unmeta) {
         Ok(s) => s,
         Err(_) => return 1,

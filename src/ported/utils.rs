@@ -1033,21 +1033,28 @@ pub fn dupstrpfx(s: &str, len: usize) -> String {                            // 
 /// Port of `unmeta()` from `Src/utils.c:4994`.
 ///
 /// Convert a zsh internal (metafied) string to a system-call-safe
-/// form (e.g. for passing to `open(2)`). C uses a static buffer
-/// when allocation is needed; Rust port allocates fresh via the
-/// `unmetafy` in-place port (`unmetafy_dup` wrapper).
+/// form (e.g. for passing to `open(2)`).
 ///
+/// C body shape (c:4994-5010):
 /// ```c
-/// /* C body shape:
-///  * meta = 0; for (t = file_name; *t; t++) if (*t == Meta) meta = 1;
-///  * if (!meta) return (char *) file_name;        // no copy
-///  * for (t = file_name, p = fn; *t; p++)
-///  *     if ((*p = *t++) == Meta && *t)
-///  *         *p = *t++ ^ 32;
-///  */
+/// meta = 0;
+/// for (t = file_name; *t; t++)
+///     if (*t == Meta) { meta = 1; break; }
+/// if (!meta) return (char *) file_name;        // no-copy fast path
+/// for (t = file_name, p = fn; *t; p++)
+///     if ((*p = *t++) == Meta && *t)
+///         *p = *t++ ^ 32;
 /// ```
 pub fn unmeta(s: &str) -> String {                                           // c:4994
-    unmetafy_dup(s)
+    let bytes = s.as_bytes();
+    // c:4995-4996 — Meta-byte scan; no-copy fast path.
+    if !bytes.iter().any(|&b| b == Meta) {
+        return s.to_string();
+    }
+    let mut buf = bytes.to_vec();
+    let len = unmetafy(&mut buf);                                            // c:4999-5001
+    buf.truncate(len);
+    String::from_utf8_lossy(&buf).into_owned()
 }
 
 // pastebuf() DELETED — was a misplaced fn. The real `pastebuf()`
@@ -3383,17 +3390,6 @@ pub fn unmetafy(s: &mut Vec<u8>) -> usize {                                 // c
     t
 }
 
-/// Convenience wrapper: takes a `&str`, returns the un-metafied
-/// `String`. Internally clones the bytes, calls `unmetafy` on the
-/// owned buffer, and converts back. Callers that already have a
-/// `&mut Vec<u8>` should call `unmetafy` directly to avoid the
-/// round-trip allocation.
-pub fn unmetafy_dup(s: &str) -> String {
-    let mut bytes = s.as_bytes().to_vec();
-    unmetafy(&mut bytes);
-    String::from_utf8_lossy(&bytes).into_owned()
-}
-
 /// Count meta characters in string (from utils.c metalen)
 pub fn metalen(s: &str, len: usize) -> usize {
     let bytes = s.as_bytes();
@@ -3683,17 +3679,6 @@ mod tests {
     }
 
     #[test]
-    fn test_unmetafy_dup_with_no_meta_bytes() {
-        // String round-trip works for ASCII (no Meta bytes).
-        // Note: the Meta byte (0x83) isn't valid UTF-8 alone, so
-        // the &str → String API is only useful for already-ASCII
-        // input or for callers who route through `metafy` first.
-        // The byte-level path (unmetafy(&mut Vec<u8>)) is what
-        // clone.rs / paths-from-argv use.
-        assert_eq!(unmetafy_dup("plain"), "plain");
-    }
-
-    #[test]
     fn test_unmetafy_returns_self_value() {
         // C returns `s` (the buffer) for chaining; Rust returns
         // the new length. Verify length matches a call that
@@ -3869,8 +3854,8 @@ mod tests {
 
     #[test]
     fn test_unmeta_routes_through_unmetafy() {
-        // unmeta is a thin wrapper for unmetafy_dup. Verify it
-        // works on plain strings.
+        // unmeta wraps the in-place unmetafy via a byte-vector
+        // copy; the no-Meta fast path returns the source as-is.
         assert_eq!(unmeta("plain"), "plain");
     }
 
@@ -5351,7 +5336,7 @@ pub fn fdsettyinfo(_fd: i32, _tio: &()) -> std::io::Result<()> {
 /// chars iterator which already produces valid scalar values, so
 /// invalid-byte fallback collapses to the control-char branch.
 pub fn mb_niceformat(s: &str) -> String {
-    let unmeta = crate::ported::compat::unmetafy(s);
+    let unmeta = self::unmeta(s);
     let mut out = String::with_capacity(unmeta.len());
     for c in unmeta.chars() {
         out.push_str(&nicechar(c));
