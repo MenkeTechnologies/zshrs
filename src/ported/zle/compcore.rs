@@ -1786,14 +1786,14 @@ fn compfunc_active() -> bool {
 ///
 /// Body shell ports the top-level state save/restore from c:1458-
 /// 1490, with the inner lex-save/replay/restore block stubbed as
-/// `lexsave_stub`/`lexrestore_stub` until `lex.c` substrate lands.
+/// `lexsave`/`lexrestore` until `lex.c` substrate lands.
 pub fn set_comp_sep() -> i32 {                                               // c:1458
     let (_s, _lip, _lp) = comp_str(false);                                   // c:1469
     let owe = WE.load(Ordering::Relaxed);                                    // c:1473 owb, owe
     let owb = WB.load(Ordering::Relaxed);
     let _ooffs = OFFS.load(Ordering::Relaxed);
     // c:1483 — lexsave().
-    let lex_saved = lexsave_stub();                                          // c:1483
+    let lex_saved = lexsave();                                          // c:1483
 
     // c:1490-1893 — the big driver: replay lexer over `s`, finding
     // IFS-separated tokens, narrowing s to the cursor-containing
@@ -1802,7 +1802,7 @@ pub fn set_comp_sep() -> i32 {                                               // 
     // `compset -q` work correctly inside nested completion calls.
 
     // c:1934 — lexrestore().
-    lexrestore_stub(lex_saved);                                              // c:1934
+    lexrestore(lex_saved);                                              // c:1934
 
     // c:1936 — restore wb/we/offs to pre-call state. Without the
     // mid-body work, this is a no-op (we never changed them).
@@ -1816,7 +1816,7 @@ pub fn set_comp_sep() -> i32 {                                               // 
 /// to `zcontext_save` which pushes the lex/parse/hist context stack
 /// frame. Returns a token (current stack depth) for symmetry with
 /// the C `int` save token used by `set_comp_sep` for invariant check.
-fn lexsave_stub() -> usize {                                                  // lex.c via context.c:80
+fn lexsave() -> usize {                                                  // lex.c via context.c:80
     crate::ported::context::zcontext_save(None, None);
     (LEXSAVE_DEPTH.fetch_add(1, Ordering::SeqCst) + 1) as usize
 }
@@ -1824,7 +1824,7 @@ fn lexsave_stub() -> usize {                                                  //
 /// Direct port of `void lexrestore(void)` from `Src/lex.c`. Pops the
 /// last `zcontext_save` frame. C body restores hist/lex/parse via
 /// `zcontext_restore_partial(ZCONTEXT_HIST|ZCONTEXT_LEX|ZCONTEXT_PARSE)`.
-fn lexrestore_stub(_token: usize) {                                           // lex.c via context.c:117
+fn lexrestore(_token: usize) {                                           // lex.c via context.c:117
     let parts = crate::ported::zsh_h::ZCONTEXT_HIST
               | crate::ported::zsh_h::ZCONTEXT_LEX
               | crate::ported::zsh_h::ZCONTEXT_PARSE;
@@ -2006,21 +2006,21 @@ pub fn add_match_data(                                                       // 
     // c:2657 — pick the active aminfo by `alt` (alternative path = fignore).
     let _ai_ref = if alt != 0 { &fainfo } else { &ainfo };                   // c:2657
     // c:2666-2671 — cline_matched(line); pline; sline (Cline ops stubbed).
-    cline_matched_stub(_line);
-    if _pline.is_some() { cline_matched_stub(_pline); }
-    if _sline.is_some() { cline_matched_stub(_sline); }
+    cline_matched_compcore(_line);
+    if _pline.is_some() { cline_matched_compcore(_pline); }
+    if _sline.is_some() { cline_matched_compcore(_sline); }
 
     // c:2675-2697 — accumulator lengths.
     let psl = psuf.len();
     let isl = isuf_.len();
-    let qisuf_v = qisuf_stub();                                              // c:2680
+    let qisuf_v = qisuf_get();                                              // c:2680
     let qisl = qisuf_v.len();
     let _salen = (if _sline.is_none() { psl } else { 0 }) + isl + qisl;       // c:2675-2683
 
     let ipl = ipre_.len();
     let _ppl = ppre.len();
     let _pl  = pre.len();
-    let qipl_v = qipre_stub();                                               // c:2686
+    let qipl_v = qipre_get();                                               // c:2686
     let _qipl = qipl_v.len();
 
     let _stl  = str_.len();
@@ -2072,7 +2072,7 @@ pub fn add_match_data(                                                       // 
 /// marking each node CLF_MATCHED. With only a string slice here we
 /// build a one-node Cline shim and route the call through it so the
 /// CLF_MATCHED state-machine update fires the same way as in C.
-fn cline_matched_stub(line: Option<&str>) {                                   // compmatch.c:253
+fn cline_matched_compcore(line: Option<&str>) {                                   // compmatch.c:253
     let Some(s) = line else { return; };
     if s.is_empty() { return; }
     let mut head = Some(Box::new(crate::ported::zle::comp_h::Cline {
@@ -2084,14 +2084,14 @@ fn cline_matched_stub(line: Option<&str>) {                                   //
 }
 /// Real read of `char *qisuf` via the paramtab. Mirrors C's direct
 /// global read at `Src/Zle/zle_tricky.c qisuf`.
-fn qisuf_stub() -> String {                                                   // zle_tricky.c qisuf
+fn qisuf_get() -> String {                                                   // zle_tricky.c qisuf
     crate::exec::try_with_executor(|exec| {
         crate::ported::params::getsparam(&exec.variables, &exec.arrays, "qisuf")
     })
     .flatten()
     .unwrap_or_default()
 }
-fn qipre_stub() -> String {                                                   // zle_tricky.c qipre
+fn qipre_get() -> String {                                                   // zle_tricky.c qipre
     crate::exec::try_with_executor(|exec| {
         crate::ported::params::getsparam(&exec.variables, &exec.arrays, "qipre")
     })
@@ -2133,7 +2133,7 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {                  // 
         let os = s_owned.clone();                                            // c:964
         let onm = nmatches.load(Ordering::Relaxed);                          // c:965
         let odm = diffmatches.load(Ordering::Relaxed);                       // c:965
-        let osi = movefd_stub(0);                                            // c:965 movefd(0)
+        let osi = movefd(0);                                            // c:965 movefd(0)
 
         // c:967-968 — bmatchers = mstack = NULL.
         if let Ok(mut g) = bmatchers.get_or_init(|| Mutex::new(None)).lock() {
@@ -2179,7 +2179,7 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {                  // 
         endcmgroup(None);                                                    // c:992
 
         // c:995 — runhookdef(COMPCTLCLEANUPHOOK, NULL).
-        runhookdef_stub("COMPCTLCLEANUPHOOK");                               // c:995
+        runhookdef_compcore("COMPCTLCLEANUPHOOK");                               // c:995
 
         if oldlist.load(Ordering::Relaxed) != 0 {                            // c:997
             nmatches.store(onm, Ordering::Relaxed);                          // c:998
@@ -2200,7 +2200,7 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {                  // 
                 g.clear();                                                    // c:1009-1010
             }
             hasperm.store(0, Ordering::Relaxed);                             // c:1011
-            redup_stub(osi);                                                 // c:1012
+            redup(osi);                                                 // c:1012
             return 0;                                                        // c:1013
         }
         if !lastmatches.get_or_init(|| Mutex::new(Vec::new()))
@@ -2235,13 +2235,13 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {                  // 
 
         let any_nm = nmatches.load(Ordering::Relaxed) != 0
                   || nmessages.load(Ordering::Relaxed) != 0;
-        let errset = errflag_stub();
+        let errset = errflag_get();
         if any_nm && !errset {                                               // c:1030
             crate::ported::zle::zle_tricky::VALIDLIST.store(1, Ordering::Relaxed); // c:1031
-            redup_stub(osi);                                                 // c:1032
+            redup(osi);                                                 // c:1032
             return 0;                                                        // c:1033
         }
-        redup_stub(osi);                                                     // c:1035
+        redup(osi);                                                     // c:1035
         return 1;                                                            // c:1036
     } else {                                                                 // c:1038
         // c:1040-1047 — compctl dispatch via COMPCTLMAKEHOOK.
@@ -2250,8 +2250,8 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {                  // 
             incmd,                                                           // c:1043
             lst,                                                             // c:1044
         };
-        runhookdef_compctlmake_stub(&mut dat);                               // c:1045
-        runhookdef_stub("COMPCTLCLEANUPHOOK");                               // c:1048
+        runhookdef_compctlmake(&mut dat);                               // c:1045
+        runhookdef_compcore("COMPCTLCLEANUPHOOK");                               // c:1048
         return dat.lst;                                                      // c:1050
     }
 }
@@ -2272,14 +2272,14 @@ pub static mstack: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cmlist>
 /// Extern stub for `int movefd(int fd)` — `Src/utils.c`. Returns
 /// the fd unchanged; full body would duplicate `fd` above the high
 /// reserved range so it survives builtin redirections.
-fn movefd_stub(fd: i32) -> i32 { fd }                                        // utils.c
+fn movefd(fd: i32) -> i32 { fd }                                        // utils.c
 
 /// Extern stub for `void redup(int new, int old)` — `Src/utils.c`.
 /// Restores `old` from `new` via dup2; no-op until utils.c port lands.
-fn redup_stub(_new: i32) {}                                                  // utils.c
+fn redup(_new: i32) {}                                                  // utils.c
 
 /// Extern stub for `errflag` lookup — global from `Src/init.c`.
-fn errflag_stub() -> bool {
+fn errflag_get() -> bool {
     crate::ported::utils::errflag.load(Ordering::Relaxed) != 0               // init.c
 }
 
@@ -2289,7 +2289,7 @@ fn errflag_stub() -> bool {
 /// `try_with_executor` (canonical Rust home for the zsh hook
 /// registry) and falls back to the local `HOOK_FNS` mirror when
 /// invoked outside VM context (e.g. unit tests).
-fn runhookdef_stub(hook: &str) {                                              // init.c:990
+fn runhookdef_compcore(hook: &str) {                                              // init.c:990
     let fns: Vec<String> = crate::exec::try_with_executor(|exec| {
         exec.hook_functions.get(hook).cloned().unwrap_or_default()
     })
@@ -2306,7 +2306,7 @@ fn runhookdef_stub(hook: &str) {                                              //
 /// `Src/Zle/compctl.c`. The compctl module registers this hook so
 /// `Src/Zle/compcore.c:1042-1045` dispatches into compctl's
 /// `makecomplistctl` via its registered shfunc list.
-fn runhookdef_compctlmake_stub(                                               // init.c:990 (COMPCTLMAKEHOOK)
+fn runhookdef_compctlmake(                                               // init.c:990 (COMPCTLMAKEHOOK)
     dat: &mut crate::ported::zle::comp_h::Ccmakedat,
 ) {
     // c:compctl.c:2305 makecomplistctl is the hook entrypoint.
@@ -3083,9 +3083,9 @@ mod tests {
         // verify by running through the stub on a non-empty string
         // without panicking and trusting compmatch's body for the
         // actual flag set.
-        cline_matched_stub(Some("foo"));
-        cline_matched_stub(None);
-        cline_matched_stub(Some(""));
+        cline_matched_compcore(Some("foo"));
+        cline_matched_compcore(None);
+        cline_matched_compcore(Some(""));
     }
 
     #[test]
