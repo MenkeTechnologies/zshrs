@@ -158,21 +158,13 @@ pub struct ModuleTable {
     autoload_mathfuncs: HashMap<String, String>,
     /// Hook functions
     hooks: HashMap<String, Vec<String>>,
-    /// Wrappers (functions wrapping builtins)
-    wrappers: Vec<Wrapper>,
 }
 
-/// Wrapper entry (from module.c addwrapper/deletewrapper)
-#[derive(Debug, Clone)]
-/// Function-wrapper hook.
-/// Port of `struct funcwrap` from Src/zsh.h — `addwrapper()`
-/// (Src/module.c:577) registers a module's pre/post hooks for
-/// shell function dispatch (`zsh/zprof` uses this).
-pub struct Wrapper {
-    pub name: String,
-    pub flags: u32,
-    pub module: String,
-}
+// `pub struct Wrapper` deleted — Rust-only PascalCase mirror of
+// C's `struct funcwrap` (zsh.h:1362, ported as
+// `crate::ported::zsh_h::funcwrap` at zsh_h.rs:639). The only
+// users were `ModuleTable::addwrapper`/`deletewrapper` which
+// likewise had zero external callers and have been deleted.
 
 // =====================================================================
 // Builtin / Conddef / MathFunc / Paramdef descriptors and the
@@ -597,22 +589,12 @@ impl ModuleTable {
         self.autoload_params.remove(name);
     }
 
-    // ------- Wrapper management (from module.c addwrapper/deletewrapper) -------
-
-    /// Add wrapper (from module.c addwrapper)
-    pub fn addwrapper(&mut self, name: &str, flags: u32, module: &str) {
-        self.wrappers.push(Wrapper {
-            name: name.to_string(),
-            flags,
-            module: module.to_string(),
-        });
-    }
-
-    /// Remove wrapper (from module.c deletewrapper)
-    pub fn deletewrapper(&mut self, module: &str, name: &str) {
-        self.wrappers
-            .retain(|w| w.module != module || w.name != name);
-    }
+    // `addwrapper` / `deletewrapper` deleted — Rust-only stubs that
+    // pushed/popped `Wrapper` records into the inert `wrappers: Vec<…>`
+    // field with zero external callers. C's `addwrapper(FuncWrap)` /
+    // `deletewrapper(FuncWrap)` (module.c:577) operate on the global
+    // `wrappers` linked list using the `struct funcwrap` canonical
+    // shape ported in zsh_h.rs:639; ports of those will live there.
 
     // ------- Feature enable/disable (from module.c features_/enables_) -------
 
@@ -813,15 +795,9 @@ mod tests {
         assert!(!table.module_linked("zsh/nonexistent"));
     }
 
-    #[test]
-    fn test_wrappers() {
-        let mut table = ModuleTable::new();
-        table.addwrapper("cd", 0, "zsh/mymod");
-        assert_eq!(table.wrappers.len(), 1);
-
-        table.deletewrapper("zsh/mymod", "cd");
-        assert!(table.wrappers.is_empty());
-    }
+    // `test_wrappers` deleted — exercised the deleted
+    // `ModuleTable::addwrapper`/`deletewrapper`+`wrappers` field.
+    // The canonical `struct funcwrap` lives in zsh_h.rs:639.
 
     #[test]
     fn test_printmodulenode() {
