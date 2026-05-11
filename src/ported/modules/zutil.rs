@@ -2102,19 +2102,27 @@ pub fn prependactions(acts: &mut Vec<String>, branches: &mut Vec<String>) {   //
 #[allow(non_snake_case)]
 pub fn printstylenode(hn: HashNode, printflags: i32) {                        // c:184
     use std::io::Write;
-    // c:186 — Style s = (Style)hn; Rust port: HashNode and Style are
-    // separate Boxes, so the cast collapses to using hn.nam for the
-    // style name and emitting just that (without per-pattern values).
+    // c:186 — Style s = (Style)hn; HashNode/Style differ in Rust;
+    // walk the canonical zstyletab by style name instead.
     let nam: String = hn.nam.clone();
-    // c:187-188 — Stypat p; char **v;
-    // c:190-193 — ZSLIST_BASIC: print name + newline.
     let mut stdout = std::io::stdout().lock();
     if printflags == 1 {                                                      // c:190 ZSLIST_BASIC
         let _ = writeln!(stdout, "{}", nam);                                  // c:191-192
+        return;
     }
-    // c:195-211 — walk style.pats printing each. The Rust HashNode→
-    // Style cast can't yield the s->pats list directly (different Box
-    // pointees); pattern printing is deferred until the cast is wired.
+    // c:195-211 — `zstyle -L` form: emit one line per (pat, vals) tuple.
+    if let Ok(t) = zstyletab.lock() {
+        for (pat, style, vals) in t.list(None) {                              // c:196-208
+            if style != nam { continue; }
+            let _ = write!(stdout, "zstyle ");
+            let _ = write!(stdout, "{} ", pat);                               // c:201
+            let _ = write!(stdout, "{}", style);                              // c:201
+            for v in &vals {
+                let _ = write!(stdout, " {}", v);                             // c:206-209
+            }
+            let _ = writeln!(stdout);                                         // c:210
+        }
+    }
 }
 
 /// Port of `restorematch()` from Src/Modules/zutil.c:55.
