@@ -36,16 +36,14 @@ pub type ZleInt = i32;
 /// EOF marker
 pub const ZLEEOF: ZleInt = -1;
 
-/// Flags for zleread()
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ZleReadFlags {
-    /// Don't add to history
-    pub no_history: bool,
-    /// Completion context
-    pub completion: bool,
-    /// We're in a vared context
-    pub vared: bool,
-}
+// `ZleReadFlags` deleted — Rust-only struct wrapping what C carries
+// as bare `int flags` with `ZLRF_HISTORY` / `ZLRF_NOSETTY` /
+// `ZLRF_IGNOREEOF` bits (Src/zsh.h:3203-3205). The fake fields
+// (no_history / completion / vared) had no C counterpart; C uses
+// `!(zlereadflags & ZLRF_HISTORY)` inline for the no-history test
+// and a separate `zlecontext == ZLCON_VARED` check for vared mode.
+// `zlereadflags` is now `i32` matching C's `int zlereadflags`
+// (Src/Zle/zle_main.c:90).
 
 /// Context for zleread()
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -144,12 +142,9 @@ bitflags::bitflags! {
     }
 }
 
-/// Watch file descriptor entry
-#[derive(Debug, Clone)]
-pub struct WatchFd {
-    pub fd: RawFd,
-    pub func: String,
-}
+// `WatchFd` deleted — duplicate of `struct watch_fd` already legit-
+// ported at zle_h.rs:781 (Src/Zle/zle.h:572). The Rust port uses
+// `super::zle_h::watch_fd` directly.
 
 /// Timeout type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,7 +256,7 @@ pub struct Zle {
     /// Recursive edit depth
     pub zle_recursive: i32,
     /// Read flags
-    pub zlereadflags: ZleReadFlags,
+    pub zlereadflags: i32,
     /// Context
     pub zlecontext: ZleContext,
     /// Status line
@@ -288,7 +283,7 @@ pub struct Zle {
     /// Terminal baud rate
     baud: u32,
     /// Watch file descriptors
-    pub watch_fds: Vec<WatchFd>,
+    pub watch_fds: Vec<super::zle_h::watch_fd>,
     /// Keymap manager
     pub keymaps: KeymapManager,
     /// Completion widget
@@ -462,7 +457,8 @@ impl Zle {
             zmod: Modifier::default(),
             prefixflag: false,
             zle_recursive: 0,
-            zlereadflags: ZleReadFlags::default(),
+            // C default: input.c:418 — `int flags = ZLRF_HISTORY|ZLRF_NOSETTY;`
+            zlereadflags: crate::ported::zsh_h::ZLRF_HISTORY | crate::ported::zsh_h::ZLRF_NOSETTY,
             zlecontext: ZleContext::default(),
             statusline: None,
             stackhist: 0,
@@ -822,7 +818,7 @@ impl Zle {
             // (zle_main.c:1139-1150 — guarded by ZLRF_IGNOREEOF too).
             if self.zlell == 0
                 && self.lastchar == self.eofchar as ZleInt
-                && !self.zlereadflags.no_history
+                && (self.zlereadflags & crate::ported::zsh_h::ZLRF_HISTORY) != 0
             {
                 self.eofsent = true;
                 self.done = true;
@@ -1026,7 +1022,7 @@ impl Zle {
         &mut self,
         lprompt: &str,
         rprompt: &str,
-        flags: ZleReadFlags,
+        flags: i32,
         context: ZleContext,
     ) -> io::Result<String> {
         // Stash the unexpanded templates so reexpandprompt() can re-run
@@ -1394,8 +1390,8 @@ pub fn vared_zle_run(zle: &mut Zle, varname: &str, opts: VaredOpts) -> io::Resul
     zle.zlecs = if opts.cursor_at_end { zle.zlell } else { 0 };
     let prompt = opts.prompt.as_deref().unwrap_or("");
     let rprompt = opts.rprompt.as_deref().unwrap_or("");
-    let result = zle.zleread(prompt, rprompt,
-        ZleReadFlags { vared: true, ..Default::default() }, ZleContext::Vared)?;
+    // C zle_main.c:1837 vared path passes 0 for flags + ZLCON_VARED context.
+    let result = zle.zleread(prompt, rprompt, 0, ZleContext::Vared)?;
     Ok(result)
 }
 
