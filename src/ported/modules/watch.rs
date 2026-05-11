@@ -511,7 +511,14 @@ pub fn bin_log(current_user: &str, fmt: Option<&str>) -> String {            // 
     let fmt_str = fmt
         .map(|s| s.to_string())
         .unwrap_or_else(|| {
-            std::env::var("WATCHFMT").unwrap_or_else(|_| DEFAULT_WATCHFMT.to_string())
+            // c:683 — `getsparam("WATCHFMT")`. Prefer the executor's
+            // canonical scalar store over std::env so user-set values
+            // bound via setsparam (not exported as env vars) are seen.
+            crate::exec::try_with_executor(|exec| {
+                exec.variables.get("WATCHFMT").cloned()
+            }).flatten()
+                .or_else(|| std::env::var("WATCHFMT").ok())
+                .unwrap_or_else(|| DEFAULT_WATCHFMT.to_string())
         });
     WTAB.with(|t| t.borrow_mut().clear());
     LASTUTMPCHECK.with(|t| t.set(0));
