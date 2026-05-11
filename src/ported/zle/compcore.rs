@@ -888,13 +888,13 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
         if wouldinstab_v != 0 { -1 } else if lst != COMP_LIST_COMPLETE { 1 } else { 0 },
         Ordering::Relaxed,
     );
-    useexact.store(opt_isset_stub("RECEXACT"), Ordering::Relaxed);           // c:311
+    useexact.store(opt_isset("RECEXACT"), Ordering::Relaxed);           // c:311
     set_compstate_str("exact_string", "");                                   // c:312
     let useline_v = useline.load(Ordering::Relaxed);
     uselist.store(                                                           // c:314
         if useline_v != 0 {
-            if opt_isset_stub("AUTOLIST") != 0 && opt_isset_stub("BASHAUTOLIST") == 0 {
-                if opt_isset_stub("LISTAMBIGUOUS") != 0 { 3 } else { 2 }
+            if opt_isset("AUTOLIST") != 0 && opt_isset("BASHAUTOLIST") == 0 {
+                if opt_isset("LISTAMBIGUOUS") != 0 { 3 } else { 2 }
             } else { 0 }
         } else { 1 },
         Ordering::Relaxed,
@@ -912,25 +912,25 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
 
     set_compstate_str(                                                       // c:326
         "last_prompt",
-        if opt_isset_stub("ALWAYSLASTPROMPT") != 0 { "yes" } else { "" },
+        if opt_isset("ALWAYSLASTPROMPT") != 0 { "yes" } else { "" },
     );
     dolastprompt.store(1, Ordering::Relaxed);                                // c:327
 
     // c:329-330 — complist string.
-    let cl_str = if opt_isset_stub("LISTROWSFIRST") != 0 {
-        if opt_isset_stub("LISTPACKED") != 0 { "packed rows" } else { "rows" }
-    } else if opt_isset_stub("LISTPACKED") != 0 { "packed" } else { "" };
+    let cl_str = if opt_isset("LISTROWSFIRST") != 0 {
+        if opt_isset("LISTPACKED") != 0 { "packed rows" } else { "rows" }
+    } else if opt_isset("LISTPACKED") != 0 { "packed" } else { "" };
     if let Ok(mut g) = crate::ported::zle::complete::COMPLIST
         .get_or_init(|| Mutex::new(String::new())).lock()
     {
         *g = cl_str.into();                                                  // c:329
     }
-    startauto.store(opt_isset_stub("AUTOMENU"), Ordering::Relaxed);          // c:331
+    startauto.store(opt_isset("AUTOMENU"), Ordering::Relaxed);          // c:331
 
     let zlc = ZLEMETACS.load(Ordering::Relaxed);
     let we_v = WE.load(Ordering::Relaxed);
     movetoend.store(                                                         // c:332
-        if zlc == we_v || opt_isset_stub("ALWAYSTOEND") != 0 { 2 } else { 1 },
+        if zlc == we_v || opt_isset("ALWAYSTOEND") != 0 { 2 } else { 1 },
         Ordering::Relaxed,
     );
     crate::ported::zle::zle_refresh::SHOWINGLIST.store(0, Ordering::Relaxed);                                                      // c:333
@@ -945,16 +945,16 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
     if makecomplist(s, incmd, lst) != 0 {                                    // c:342
         // c:344 — error path.
         ZLEMETACS.store(0, Ordering::Relaxed);                               // c:344
-        foredel_stub(ZLEMETALL.load(Ordering::Relaxed));                     // c:345
-        inststr_stub(&crate::ported::zle::zle_tricky::ORIGLINE.get_or_init(|| Mutex::new(String::new())).lock().map(|g| g.clone()).unwrap_or_default());                                      // c:346
+        foredel(ZLEMETALL.load(Ordering::Relaxed));                     // c:345
+        inststr(&crate::ported::zle::zle_tricky::ORIGLINE.get_or_init(|| Mutex::new(String::new())).lock().map(|g| g.clone()).unwrap_or_default());                                      // c:346
         ZLEMETACS.store(crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::Relaxed), Ordering::Relaxed);                   // c:347
         crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed);                                                    // c:348
         ret = 1;
         minfo_clear_cur();                                                   // c:350
         if useline.load(Ordering::Relaxed) < 0 {                             // c:351
-            unmetafy_line_stub();
-            ret = selfinsert_stub();                                         // c:353
-            metafy_line_stub();
+            unmetafy_line();
+            ret = selfinsert();                                         // c:353
+            metafy_line();
         }
         return goto_compend(ret);                                            // c:356 goto compend
     }
@@ -974,15 +974,15 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
         if nm != 0 { { let _ = crate::ported::zle::compresult::do_ambig_menu(); }; }                                 // c:367
         ret = if nm == 0 { 1 } else { 0 };                                   // c:369
     } else if useline.load(Ordering::Relaxed) < 0 {                          // c:370
-        unmetafy_line_stub();
-        ret = selfinsert_stub();                                             // c:372
-        metafy_line_stub();
+        unmetafy_line();
+        ret = selfinsert();                                             // c:372
+        metafy_line();
     } else if useline.load(Ordering::Relaxed) == 0
            && uselist.load(Ordering::Relaxed) != 0
     {                                                                        // c:374
         ZLEMETACS.store(0, Ordering::Relaxed);                               // c:375
-        foredel_stub(ZLEMETALL.load(Ordering::Relaxed));                     // c:376
-        inststr_stub(&crate::ported::zle::zle_tricky::ORIGLINE.get_or_init(|| Mutex::new(String::new())).lock().map(|g| g.clone()).unwrap_or_default());                                      // c:377
+        foredel(ZLEMETALL.load(Ordering::Relaxed));                     // c:376
+        inststr(&crate::ported::zle::zle_tricky::ORIGLINE.get_or_init(|| Mutex::new(String::new())).lock().map(|g| g.clone()).unwrap_or_default());                                      // c:377
         ZLEMETACS.store(crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::Relaxed), Ordering::Relaxed);                   // c:378
         crate::ported::zle::zle_refresh::SHOWINGLIST.store(-2, Ordering::Relaxed);                                                 // c:379
     } else if useline.load(Ordering::Relaxed) == 2 && nm > 1 {               // c:380
@@ -1061,13 +1061,13 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
     } else {                                                                 // c:425
         crate::ported::zle::zle_h::invalidatelist();                                               // c:426
         crate::ported::zle::zle_tricky::LASTAMBIG.store(                     // c:427
-            opt_isset_stub("BASHAUTOLIST"),
+            opt_isset("BASHAUTOLIST"),
             Ordering::Relaxed,
         );
         if forcelist.load(Ordering::Relaxed) != 0 { crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed); }      // c:428
         ZLEMETACS.store(0, Ordering::Relaxed);                               // c:429
-        foredel_stub(ZLEMETALL.load(Ordering::Relaxed));                     // c:430
-        inststr_stub(&crate::ported::zle::zle_tricky::ORIGLINE.get_or_init(|| Mutex::new(String::new())).lock().map(|g| g.clone()).unwrap_or_default());                                      // c:431
+        foredel(ZLEMETALL.load(Ordering::Relaxed));                     // c:430
+        inststr(&crate::ported::zle::zle_tricky::ORIGLINE.get_or_init(|| Mutex::new(String::new())).lock().map(|g| g.clone()).unwrap_or_default());                                      // c:431
         ZLEMETACS.store(crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::Relaxed), Ordering::Relaxed);                   // c:432
     }
 
@@ -1141,7 +1141,7 @@ fn char_from_qt(qt: i32) -> char {                                            //
 /// `ZLEMETALINE` global rather than a `&mut Zle` handle since
 /// compcore's call site (compcore.c:344-355 error-recovery) drives
 /// the global ZLE buffer directly.
-fn foredel_stub(ct: i32) {                                                    // zle_utils.c:1105
+fn foredel(ct: i32) {                                                    // zle_utils.c:1105
     if ct <= 0 { return; }
     let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
     if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
@@ -1159,7 +1159,7 @@ fn foredel_stub(ct: i32) {                                                    //
 
 /// Direct port of `inststr(char *s)` from `Src/Zle/zle_tricky.c:278`.
 /// Inserts `s` at `ZLEMETACS` in the global metafied line.
-fn inststr_stub(s: &str) {                                                    // zle_tricky.c:278
+fn inststr(s: &str) {                                                    // zle_tricky.c:278
     if s.is_empty() { return; }
     let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
     if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
@@ -1182,7 +1182,7 @@ fn inststr_stub(s: &str) {                                                    //
 /// Direct port of `void unmetafy_line(void)` from `zle_tricky.c:995`.
 /// Reads `ZLEMETALINE`, runs `unmetafy_line(...)` from zle_tricky.rs,
 /// stores result into `ZLELINE` + updates `ZLECS`/`ZLELL`.
-fn unmetafy_line_stub() {                                                     // zle_tricky.c:995
+fn unmetafy_line() {                                                     // zle_tricky.c:995
     let meta = ZLEMETALINE.get_or_init(|| Mutex::new(String::new()))
         .lock().map(|g| g.clone()).unwrap_or_default();
     let unmeta = crate::ported::zle::zle_tricky::unmetafy_line(&meta);
@@ -1198,7 +1198,7 @@ fn unmetafy_line_stub() {                                                     //
 /// Direct port of `void metafy_line(void)` from `zle_tricky.c:978`.
 /// Reads `ZLELINE`, runs `metafy_line(...)` from zle_tricky.rs, stores
 /// result into `ZLEMETALINE` + updates `ZLEMETACS`/`ZLEMETALL`.
-fn metafy_line_stub() {                                                       // zle_tricky.c:978
+fn metafy_line() {                                                       // zle_tricky.c:978
     let raw = ZLELINE.get_or_init(|| Mutex::new(String::new()))
         .lock().map(|g| g.clone()).unwrap_or_default();
     let meta = crate::ported::zle::zle_tricky::metafy_line(&raw);
@@ -1216,7 +1216,7 @@ fn metafy_line_stub() {                                                       //
 /// handle we operate on the global `ZLELINE` + a thread-local
 /// lastchar holder. Equivalent C body: insert one char at zlecs,
 /// advance zlecs, bump zlell.
-fn selfinsert_stub() -> i32 {                                                 // zle_misc.c:112
+fn selfinsert() -> i32 {                                                 // zle_misc.c:112
     let ch = LASTCHAR.load(Ordering::Relaxed);                               // c:114
     if ch < 0 { return 1; }                                                  // c:116 EOF
     let cs = ZLECS.load(Ordering::Relaxed) as usize;
@@ -1272,7 +1272,7 @@ pub static MINFO: OnceLock<Mutex<crate::ported::zle::comp_h::Menuinfo>> = OnceLo
 // invalidatelist_stub deleted — Rust-only glue wrappers, all
 // inlined at their (single) call sites in do_completion / dupmatch.
 // The real C names live as `pub fn` in compresult.rs / zle_h.rs.
-fn opt_isset_stub(name: &str) -> i32 {                                        // options.c
+fn opt_isset(name: &str) -> i32 {                                        // options.c
     if crate::ported::options::opt_state_get(name).unwrap_or(false) { 1 } else { 0 }
 }
 /// Real call into `getiparam(name)` — the canonical paramtab read.
@@ -1367,7 +1367,7 @@ pub fn callcompfunc(s: &str, fn_name: &str) {                                // 
     crate::ported::utils::INCOMPFUNC.store(1, Ordering::Relaxed);            // c:838
 
     // c:638 — doshfunc(fn).
-    let _ = shfunc_call_stub(fn_name);                                       // c:638
+    let _ = shfunc_call(fn_name);                                       // c:638
 
     // c:909-912 — unwind: read `$compstate[insert]` etc. back into
     // the compcore globals so do_completion sees the user fn's
@@ -1418,7 +1418,7 @@ pub const IN_ENV_LW:     i32 = 5;                                            // 
 /// in the global shfunctab (`getshfunc`) and dispatches via the VM's
 /// `functions_compiled` map. Returns the function's exit status
 /// (LASTVAL after the call), matching C's `doshfunc` return value.
-fn shfunc_call_stub(name: &str) -> i32 {                                      // exec.c
+fn shfunc_call(name: &str) -> i32 {                                      // exec.c
     if crate::ported::utils::getshfunc(name).is_none() {                     // c:exec.c:5800
         return 1;                                                            // missing fn → status 1
     }
@@ -2301,7 +2301,7 @@ fn runhookdef_stub(hook: &str) {                                              //
             .lock().ok().and_then(|g| g.get(hook).cloned()).unwrap_or_default()
     });
     for f in fns {
-        let _ = shfunc_call_stub(&f);
+        let _ = shfunc_call(&f);
     }
 }
 
@@ -3004,7 +3004,7 @@ mod tests {
         }
         ZLEMETACS.store(2, Ordering::Relaxed);
         ZLEMETALL.store(6, Ordering::Relaxed);
-        foredel_stub(3);
+        foredel(3);
         let line = ZLEMETALINE.get().unwrap().lock().unwrap().clone();
         assert_eq!(line, "abf");
         assert_eq!(ZLEMETALL.load(Ordering::Relaxed), 3);
@@ -3019,7 +3019,7 @@ mod tests {
         }
         ZLEMETACS.store(5, Ordering::Relaxed);
         ZLEMETALL.store(5, Ordering::Relaxed);
-        inststr_stub(" world");
+        inststr(" world");
         let line = ZLEMETALINE.get().unwrap().lock().unwrap().clone();
         assert_eq!(line, "hello world");
         assert_eq!(ZLEMETACS.load(Ordering::Relaxed), 11);
@@ -3034,14 +3034,14 @@ mod tests {
         }
         ZLECS.store(3, Ordering::Relaxed);
         ZLELL.store(11, Ordering::Relaxed);
-        metafy_line_stub();
+        metafy_line();
         // For ASCII input the meta form equals the raw form.
         assert_eq!(
             ZLEMETALINE.get().unwrap().lock().unwrap().clone(),
             "plain ascii"
         );
         assert_eq!(ZLEMETACS.load(Ordering::Relaxed), 3);
-        unmetafy_line_stub();
+        unmetafy_line();
         assert_eq!(
             ZLELINE.get().unwrap().lock().unwrap().clone(),
             "plain ascii"
@@ -3058,7 +3058,7 @@ mod tests {
         ZLECS.store(2, Ordering::Relaxed);
         ZLELL.store(2, Ordering::Relaxed);
         LASTCHAR.store(b'c' as i32, Ordering::Relaxed);
-        let rv = selfinsert_stub();
+        let rv = selfinsert();
         assert_eq!(rv, 0);
         assert_eq!(ZLELINE.get().unwrap().lock().unwrap().clone(), "abc");
         assert_eq!(ZLECS.load(Ordering::Relaxed), 3);
