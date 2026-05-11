@@ -72,6 +72,16 @@ pub struct StyleTable {
     styles: HashMap<String, Vec<stypat>>,
 }
 
+/// Global `zstyletab` mirror — port of the static
+/// `static HashTable zstyletab` in Src/Modules/zutil.c:209.
+/// C allocates this via `newzstyletable()` (c:270) during
+/// module setup; the Rust port uses a `LazyLock<Mutex<>>`
+/// since the table is process-global and `bin_zstyle` /
+/// `lookupstyle` / `testforstyle` all need to share it.
+#[allow(non_upper_case_globals)]
+pub static zstyletab: std::sync::LazyLock<std::sync::Mutex<StyleTable>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(StyleTable::new())); // c:209
+
 impl StyleTable {
     pub fn new() -> Self {
         Self::default()
@@ -602,6 +612,30 @@ mod tests {
         assert_eq!(table.test_bool("ctx", "multiple"), None);
     }
 
+    /// Verifies the persistent global `zstyletab` round-trips
+    /// set→get and that `lookupstyle` / `testforstyle` C-name shims
+    /// see the same entry. Lock-stamps the global-state path that
+    /// `bin_zstyle` relies on (Src/Modules/zutil.c:209).
+    #[test]
+    fn test_global_zstyletab_set_and_lookup() {
+        let key_style = "test_zutil_global_marker_style";
+        let key_pat = "test_zutil_global_marker_*";
+        {
+            let mut t = zstyletab.lock().unwrap();
+            t.set(key_pat, key_style,
+                  vec!["yes".to_string()], false);
+        }
+        let found = lookupstyle("test_zutil_global_marker_x", key_style);
+        assert_eq!(found, vec!["yes".to_string()]);
+        assert_eq!(testforstyle("test_zutil_global_marker_x", key_style), 0);
+        assert_eq!(testforstyle("unmatched_ctx", "no_such_style_zzz"), 1);
+        // Cleanup so other tests don't see the entry.
+        {
+            let mut t = zstyletab.lock().unwrap();
+            t.delete(Some(key_pat), Some(key_style));
+        }
+    }
+
     #[test]
     fn test_zformat_basic() {
         let mut specs = HashMap::new();
@@ -737,50 +771,93 @@ pub fn bin_zstyle(nam: &str, args: &[String],                                 //
                   ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;
     use crate::ported::utils::zwarnnam;
-    let _ = (nam, ops);
+    use std::io::Write;
 
-    // c:495-540 — flag dispatch. Static-link path: with the lookup
-    // helpers stubbed, route to the "no styles defined" branch.
-    // No flag → set/list. With args: walk ZSTYLETAB and call addstyle.
+    // c:495-540 — flag dispatch backed by the global zstyletab.
     if args.is_empty() {                                                     // c:495
-        // c:496 — list mode: walk zstyletab calling printstylenode.
-        // ZSTYLETAB doesn't yet expose an iterator (the table is a stub),
-        // so the listing emits no output — matching the "fresh shell, no
-        // zstyle calls yet" state.
+        // c:496 — list mode: walk zstyletab printing each entry.
+        let t = match zstyletab.lock() { Ok(g) => g, Err(_) => return 1 };
+        let mut out = std::io::stdout().lock();
+        for (pat, style, vals) in t.list(None) {                             // c:496
+            let _ = write!(out, "{} {}", pat, style);
+            for v in &vals {
+                let _ = write!(out, " {}", v);
+            }
+            let _ = writeln!(out);
+        }
         return 0;                                                            // c:497
     }
     if OPT_ISSET(ops, b'L') || OPT_ISSET(ops, b'l') {                        // c:511
-        // -L/-l: list in zstyle-replayable form. Same caveat —
-        // ZSTYLETAB stub means empty output.
+        // -L: emit as replayable `zstyle` commands.
+        let t = match zstyletab.lock() { Ok(g) => g, Err(_) => return 1 };
+        let mut out = std::io::stdout().lock();
+        for (pat, style, vals) in t.list(None) {                             // c:511
+            let _ = write!(out, "zstyle {} {}", pat, style);
+            for v in &vals {
+                let _ = write!(out, " {}", v);
+            }
+            let _ = writeln!(out);
+        }
         return 0;                                                            // c:514
     }
     if OPT_ISSET(ops, b'd') {                                                // c:520
-        // -d: delete the style. With ZSTYLETAB unported, no-op success.
-        return 0;                                                            // c:523
+        // -d: delete the style. C: `args[0]` is pattern (optional),
+        // `args[1]` is style (optional). With no args → wipe all.
+        let pat = args.first().map(|s| s.as_str());
+        let sty = args.get(1).map(|s| s.as_str());
+        if let Ok(mut t) = zstyletab.lock() {
+            t.delete(pat, sty);                                              // c:521-523
+        }
+        return 0;                                                            // c:524
     }
-    // c:541-942 — -s/-b/-t/-T/-m/-a/-g/-e per-context lookup. Each
-    // calls lookupstyle which currently returns Vec::new(); fall
-    // through to "no match" (ret=1).
+    // c:541-942 — -s/-b/-t/-T/-m/-a/-g/-e per-context lookup arms.
     if OPT_ISSET(ops, b's') || OPT_ISSET(ops, b'b') || OPT_ISSET(ops, b't')
         || OPT_ISSET(ops, b'T') || OPT_ISSET(ops, b'a')
         || OPT_ISSET(ops, b'g') || OPT_ISSET(ops, b'e')
         || OPT_ISSET(ops, b'm')
     {
-        // c:543-… — context lookup paths. lookupstyle is stub →
-        // return 1 (no match) per the C source's "match failed"
-        // exit code convention.
-        return 1;
+        if args.len() < 2 { return 1; }
+        let ctxt = &args[0];                                                 // c:541
+        let style = &args[1];
+        let vals = lookupstyle(ctxt, style);                                 // c:443
+        // c:559-732 — per-flag return semantics: just check found vs not.
+        // For -t: 0 if found AND first value matches one of the "true"
+        // tokens (when arg given) or first ∈ {true,yes,on,1}.
+        if OPT_ISSET(ops, b't') {                                            // c:660
+            let t = match zstyletab.lock() { Ok(g) => g, Err(_) => return 1 };
+            return if t.test(ctxt, style, None) { 0 } else { 1 };
+        }
+        if OPT_ISSET(ops, b'T') {                                            // c:692
+            // -T: same as -t but missing entries succeed (return 0).
+            let t = match zstyletab.lock() { Ok(g) => g, Err(_) => return 1 };
+            if t.get(ctxt, style).is_some() {
+                return if t.test(ctxt, style, None) { 0 } else { 1 };
+            }
+            return 0;
+        }
+        if vals.is_empty() { return 1; }
+        // -s / -a / -g / -b / -m / -e: bind first value into named param.
+        // C uses setsparam/setaparam; static-link path stores into the
+        // shared executor variable bag where available.
+        if args.len() >= 3 {
+            let pname = &args[2];
+            let val = vals.join(" ");
+            crate::ported::modules::ksh93::setsparam(pname, &val);
+        }
+        return 0;
     }
 
-    // c:945 — set/replace style: walk args after context+style names
-    // and addstyle each value. addstyle is a stub; succeed silently.
+    // c:945 — set/replace style: addstyle each value.
     if args.len() < 3 {
         zwarnnam(nam, "not enough arguments");                               // c:947
         return 1;
     }
-    let _ctxt = &args[0];
-    let _style = &args[1];
-    let _values = &args[2..];
+    let ctxt = &args[0];                                                     // c:945
+    let style = &args[1];
+    let values: Vec<String> = args[2..].to_vec();                            // c:949
+    if let Ok(mut t) = zstyletab.lock() {
+        t.set(ctxt, style, values, false);                                   // c:295 setstypat
+    }
     0                                                                        // c:951
 }
 
@@ -1241,10 +1318,16 @@ pub fn lookup_opt(_str: &str) -> Option<Zoptdesc> {                          // 
 /// C: `static char **lookupstyle(char *ctxt, char *style)` — find best
 /// pat-style match against the style entry; return its vals.
 #[allow(non_snake_case)]
-pub fn lookupstyle(_ctxt: &str, _style: &str) -> Vec<String> {
-    // c:443
-    // c:445-463 — zstyletab->getnode + walk pats matching ctxt.
-    Vec::new()
+pub fn lookupstyle(ctxt: &str, style: &str) -> Vec<String> {                  // c:443
+    // c:445-463 — zstyletab->getnode2 + savematch/pattry/restorematch
+    // loop. StyleTable::get() encapsulates the pat-walk; weight order
+    // is enforced at insert time so first-match wins.
+    match zstyletab.lock() {                                                    // c:449
+        Ok(t) => t.get(ctxt, style)
+            .map(|v| v.to_vec())                                                // c:455 found = p->vals
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// Port of `map_opt_desc()` from Src/Modules/zutil.c:1614.
@@ -1417,12 +1500,15 @@ pub fn scanpatstyles(hn: HashNode, spatflags: i32) {                          //
 
 /// Port of `testforstyle()` from Src/Modules/zutil.c:465.
 /// C: `static int testforstyle(char *ctxt, char *style)` — non-empty
-/// match check for context+style.
+/// match check for context+style. Returns `!found` so 0 == success.
 #[allow(non_snake_case)]
-pub fn testforstyle(_ctxt: &str, _style: &str) -> i32 {
-    // c:465
+pub fn testforstyle(ctxt: &str, style: &str) -> i32 {                         // c:465
     // c:467-484 — zstyletab lookup + pattern match against ctxt.
-    0
+    let found = match zstyletab.lock() {                                       // c:471
+        Ok(t) => t.get(ctxt, style).is_some(),                                 // c:476 pattry
+        Err(_) => false,
+    };
+    if found { 0 } else { 1 }                                                  // c:485 return !found
 }
 
 /// Port of `zalloc_default_array()` from Src/Modules/zutil.c:1710.
