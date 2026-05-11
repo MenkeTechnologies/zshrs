@@ -4724,7 +4724,19 @@ pub fn bin_dot(name: &str, argv: &[String],                                  // 
 
     let arg0 = argv[0].clone();                                              // c:6076
     let _enam = arg0.clone();                                                // c:6076
-    // c:6077-6080 — argzero rewrite under FUNCTIONARGZERO. Deferred.
+    // c:6077-6080 — `if (isset(FUNCTIONARGZERO)) { old0 = argzero;
+    //                                              argzero = ztrdup(arg0); }`.
+    // Save the prior argzero so it can be restored at the end of
+    // bin_dot; under FUNCTIONARGZERO, the sourced file becomes the
+    // active $0 for the duration of the source.
+    let saved_argzero: Option<Option<String>> =
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::FUNCTIONARGZERO) {
+            let prev = crate::ported::utils::argzero();
+            crate::ported::utils::set_argzero(Some(arg0.clone()));
+            Some(prev)
+        } else {
+            None
+        };
     let mut diddot = 0i32;                                                   // c:6064
     let mut dotdot = 0i32;                                                   // c:6064
 
@@ -4773,6 +4785,12 @@ pub fn bin_dot(name: &str, argv: &[String],                                  // 
         let mut pp = PPARAMS.lock().unwrap_or_else(|e| { PPARAMS.clear_poison(); e.into_inner() });
         *pp = saved;                                                         // c:6128
     }
+    // c:6149 — `if (isset(FUNCTIONARGZERO)) { zsfree(argzero); argzero = old0; }`.
+    // Restore the prior argzero (paired with the FUNCTIONARGZERO
+    // save at the top of bin_dot).
+    if let Some(prev) = saved_argzero.clone() {
+        crate::ported::utils::set_argzero(prev);
+    }
 
     // c:6130-6137 — error path.
     let path = match found_path {
@@ -4793,13 +4811,18 @@ pub fn bin_dot(name: &str, argv: &[String],                                  // 
     // Execute the script: read + parse + eval. Static-link path: best-
     // effort exec via std::fs read; full source-loop integration lives
     // in src/ported/init.rs.
-    match std::fs::read_to_string(&path) {                                   // c:6140
+    let result = match std::fs::read_to_string(&path) {                      // c:6140
         Ok(_src) => {
             let _ = path;
             0
         }
         Err(_) => 1,
+    };
+    // c:6149 again — restore argzero on the success path as well.
+    if let Some(prev) = saved_argzero {
+        crate::ported::utils::set_argzero(prev);
     }
+    result
 }
 
 /// Port of `bin_set()` from Src/builtin.c:601.
