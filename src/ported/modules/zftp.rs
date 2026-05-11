@@ -3624,7 +3624,14 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {              
         if progress != 0 && crate::ported::utils::getshfunc("zftp_progress").is_some() {
             let mut sz: libc::off_t = -1;                                       // c:2567
             let mut _mdtm: Option<String> = None;
-            if recv || (flags & ZFTP_REST) == 0 {                               // c:2578-2585
+            // c:2576-2585 — DUMB-gated SIZE probe. C also consults
+            // ZFST_NOSZ/ZFST_TRSZ status bits to avoid re-probing when
+            // the server already proved it doesn't send the size; that
+            // cache isn't ported per-session, so the gate collapses
+            // to !DUMB ON RECV (matches behavior on first transfer).
+            let dumb = (zfprefs.load(std::sync::atomic::Ordering::Relaxed)
+                        & ZFPF_DUMB) != 0;                                      // c:2576
+            if !dumb && (recv || (flags & ZFTP_REST) == 0) {                    // c:2576-2578
                 let _ = zfstats(arg, if recv { 1 } else { 0 },                  // c:2580
                                 &mut sz, &mut _mdtm, 0);
                 if recv && sz == -1 {                                           // c:2582
