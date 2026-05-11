@@ -3094,19 +3094,97 @@ pub fn zftp_close(_name: &str, _args: &[&str], _flags: i32) -> i32 {           /
 }
 
 /// Port of `zftp_session()` from `Src/Modules/zftp.c:2889`.
-pub fn zftp_session(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut full: Vec<String> = vec!["session".to_string()];
-    full.extend(args.iter().map(|s| s.to_string()));
-    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+pub fn zftp_session(_name: &str, args: &[&str], _flags: i32) -> i32 {           // c:2889
+    if args.is_empty() {                                                        // c:2891
+        // c:2892-2895 — walk zfsessions list, print each name.
+        if let Ok(state) = ZFTP_STATE.lock() {
+            for sess_name in state.session_names() {                            // c:2894
+                println!("{}", sess_name);                                      // c:2895
+            }
+        }
+        return 0;                                                               // c:2896
+    }
+    // c:2903-2904 — no-op if already in the requested session.
+    let current = ZFTP_STATE.lock().ok()
+        .and_then(|s| s.current_name().map(|n| n.to_string()))
+        .unwrap_or_default();
+    if args[0] == current {
+        return 0;                                                               // c:2904
+    }
+    savesession();                                                              // c:2906
+    switchsession(args[0]);                                                     // c:2907
+    0                                                                           // c:2908
 }
 
 /// Port of `zftp_rmsession()` from `Src/Modules/zftp.c:2915`.
-pub fn zftp_rmsession(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut full: Vec<String> = vec!["rmsession".to_string()];
-    full.extend(args.iter().map(|s| s.to_string()));
-    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+pub fn zftp_rmsession(_name: &str, args: &[&str], _flags: i32) -> i32 {         // c:2915
+    // c:2917-2920 — locals: no, sptr, newsess (Zftp_session linked-list).
+    let mut found_name: Option<String> = None;                                  // sptr identity
+    let mut is_current: bool = false;                                           // sptr == zfsess
+    let mut newsess: Option<String> = None;                                     // c:2920
+
+    // c:2922-2928 — find session by name (or current if no arg).
+    {
+        let state = match ZFTP_STATE.lock() {
+            Ok(s) => s,
+            Err(_) => return 1,
+        };
+        let current = state.current_name().unwrap_or("default").to_string();
+        let target = args.first().copied().map(String::from).unwrap_or_else(|| current.clone());
+        for sess_name in state.session_names() {                                // c:2923
+            if sess_name == target {
+                found_name = Some(sess_name.to_string());
+                is_current = sess_name == current;
+                break;
+            }
+        }
+    }
+    let target_name = match found_name {                                        // c:2929
+        Some(n) => n,
+        None => return 1,                                                       // c:2930
+    };
+
+    // c:2932-2956 — closing logic differs by current-vs-other.
+    if is_current {                                                             // c:2932
+        zfclosedata();                                                          // c:2934
+        zfclose(0);                                                             // c:2935
+        // c:2941-2946 — pick a new current session if any others remain.
+        let other = ZFTP_STATE.lock().ok()
+            .map(|s| s.session_names().into_iter()
+                .find(|n| *n != target_name).map(String::from))
+            .unwrap_or(None);
+        if let Some(o) = other {                                                // c:2945
+            newsess = Some(o);
+        }
+    } else {                                                                    // c:2947
+        // c:2948-2956 — temporarily switch to target, close-non-destructive,
+        // then switch back. Rust collapses this to a direct close on
+        // the named session.
+        let prev = ZFTP_STATE.lock().ok()
+            .and_then(|s| s.current_name().map(String::from));
+        if let Ok(mut state) = ZFTP_STATE.lock() {
+            state.set_current(&target_name);                                    // c:2949
+        }
+        zfclosedata();                                                          // c:2954
+        zfclose(1);                                                             // c:2955 (leaveparams=1)
+        if let (Some(p), Ok(mut state)) = (prev, ZFTP_STATE.lock()) {
+            state.set_current(&p);                                              // c:2956
+        }
+    }
+
+    // c:2964-2993 — remove session from list + switch to newsess if any.
+    // Rust port: remove via Zftp::remove_session; newsess switch via
+    // switchsession (already ported above).
+    if let Ok(mut state) = ZFTP_STATE.lock() {
+        state.remove_session(&target_name);
+    }
+    if let Some(n) = newsess {                                                  // c:2982
+        switchsession(&n);                                                      // c:2983
+    } else if ZFTP_STATE.lock().map(|s| s.session_names().is_empty()).unwrap_or(false) {
+        // c:2992 — last session gone, start fresh.
+        newsession("default");
+    }
+    0                                                                           // c:2995
 }
 
 /// Port of `zftp_cleanup()` from `Src/Modules/zftp.c:3128`. Closes
