@@ -1589,7 +1589,10 @@ pub fn setfunctions(_pm: Param, ht: *mut HashTable, dis: i32) {              // 
         i += 1;                                                              // c:352 i++
     }
     // c:364-365 — if (ht != pm->u.hash) deleteparamtable(ht);
-    // EXTERN: deleteparamtable lives in Src/params.c — skip until ported.
+    if !ht.is_null() {                                                       // c:364
+        let owned: HashTable = unsafe { std::ptr::read(ht) };                // move Box out
+        crate::ported::params::deleteparamtable(Some(owned));                // c:365
+    }
 }
 
 /// Port of `setpmcommand()` from Src/Modules/parameter.c:151.
@@ -1651,7 +1654,10 @@ pub fn setpmcommands(_pm: Param, ht: *mut HashTable) {                       // 
     }
     // c:196-205 — comment block about full-array vs append (informational).
     // c:204 — if (ht != pm->u.hash) deleteparamtable(ht);
-    // EXTERN: deleteparamtable lives in Src/params.c — not ported.
+    if !ht.is_null() {                                                       // c:203
+        let owned: HashTable = unsafe { std::ptr::read(ht) };                // move Box out
+        crate::ported::params::deleteparamtable(Some(owned));                // c:204
+    }
 }
 
 /// Port of `setpmdisfunction()` from Src/Modules/parameter.c:327.
@@ -1825,9 +1831,17 @@ pub fn setpmnameddirs(_pm: Param, ht: *mut HashTable) {                      // 
         }
         i += 1;                                                              // c:1560 i++
     }
-    // c:1581-1589 — opts[INTERACTIVE] guard around deleteparamtable.
-    // EXTERN: deleteparamtable in Src/params.c not yet ported; the
-    // INTERACTIVE guard is irrelevant without it.
+    // c:1581-1589 — opts[INTERACTIVE] guard around deleteparamtable
+    // (avoid removing sub-pms eagerly when an interactive shell is
+    // watching).
+    let saved_interactive = crate::ported::zsh_h::isset(                     // c:1584
+        crate::ported::zsh_h::INTERACTIVE);
+    crate::ported::options::opt_state_set("INTERACTIVE", false);             // c:1585
+    if !ht.is_null() {                                                       // c:1587
+        let owned: HashTable = unsafe { std::ptr::read(ht) };                // move Box out
+        crate::ported::params::deleteparamtable(Some(owned));                // c:1588
+    }
+    crate::ported::options::opt_state_set("INTERACTIVE", saved_interactive); // c:1589
 }
 
 /// Port of `setpmoption()` from Src/Modules/parameter.c:926.
@@ -1897,7 +1911,10 @@ pub fn setpmoptions(_pm: Param, ht: *mut HashTable) {                        // 
         i += 1;                                                              // c:961 i++
     }
     // c:979-980 — if (ht != pm->u.hash) deleteparamtable(ht);
-    // EXTERN: deleteparamtable in Src/params.c not yet ported.
+    if !ht.is_null() {                                                       // c:979
+        let owned: HashTable = unsafe { std::ptr::read(ht) };                // move Box out
+        crate::ported::params::deleteparamtable(Some(owned));                // c:980
+    }
 }
 
 /// Port of `setpmralias()` from Src/Modules/parameter.c:1707.
