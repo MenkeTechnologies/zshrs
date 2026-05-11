@@ -157,15 +157,127 @@ pub fn freecdsets() {                                                        // 
     // Real body deferred — needs Cdset chain port.
 }
 
-// `CompArgDef` / `CompOptDef` / `CompCommandDef` deleted — Rust-
-// invented structs with wrong field layouts vs C `struct caarg`
-// (c:949), `struct caopt` (c:928), `struct cadef` (c:905).
-// `parse_caarg(spec: &str)` and `parse_cadef(spec: &str)` deleted —
-// fake signatures: real C `parse_caarg` at c:1100 takes
-// `(int mult, int type, int num, int opt, char *oname, char **def, ...)`
-// — totally different. Real C uses `alloc_cadef(args, single, match,
-// nonarg, flags)` at c:1147 and `set_cadef_opts(Cadef def)` at c:1180,
-// not `parse_cadef`. Real ports land alongside the cadef chain port.
+// =====================================================================
+// `_arguments`-cache types — direct ports of the C structs at
+// Src/Zle/computil.c:899-968. CAO_* / CAA_* / CDF_SEP /
+// MAX_CACACHE constants already declared above (file scope).
+// =====================================================================
+
+/// Port of `typedef struct cadef *Cadef` from `Src/Zle/computil.c:899`.
+pub type Cadef = Box<cadef>;                                                 // c:899
+/// Port of `typedef struct caopt *Caopt` from `Src/Zle/computil.c:900`.
+pub type Caopt = Box<caopt>;                                                 // c:900
+/// Port of `typedef struct caarg *Caarg` from `Src/Zle/computil.c:901`.
+pub type Caarg = Box<caarg>;                                                 // c:901
+
+/// Direct port of `struct caarg` from `Src/Zle/computil.c:949-962`.
+/// Description for one `_arguments` argument spec.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct caarg {                                                           // c:949
+    pub next:   Option<Box<caarg>>,                                          // c:950 Caarg next
+    pub descr:  Option<String>,                                              // c:951 char *descr
+    pub xor:    Option<Vec<String>>,                                         // c:952 char **xor
+    pub action: Option<String>,                                              // c:953 char *action
+    pub r#type: i32,                                                         // c:954 int type (CAA_*)
+    pub end:    Option<String>,                                              // c:955 char *end
+    pub opt:    Option<String>,                                              // c:956 char *opt
+    pub num:    i32,                                                         // c:957 int num
+    pub min:    i32,                                                         // c:958 int min
+    pub direct: i32,                                                         // c:959 int direct
+    pub active: i32,                                                         // c:960 int active
+    pub gsname: Option<String>,                                              // c:961 char *gsname
+}
+
+/// Direct port of `struct caopt` from `Src/Zle/computil.c:928-939`.
+/// Description for one `_arguments` option spec.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct caopt {                                                           // c:928
+    pub next:   Option<Box<caopt>>,                                          // c:929 Caopt next
+    pub name:   Option<String>,                                              // c:930 char *name
+    pub descr:  Option<String>,                                              // c:931 char *descr
+    pub xor:    Option<Vec<String>>,                                         // c:932 char **xor
+    pub r#type: i32,                                                         // c:933 int type (CAO_*)
+    pub args:   Option<Box<caarg>>,                                          // c:934 Caarg args
+    pub active: i32,                                                         // c:935 int active
+    pub num:    i32,                                                         // c:936 int num
+    pub gsname: Option<String>,                                              // c:937 char *gsname
+    pub not:    i32,                                                         // c:938 int not
+}
+
+/// Direct port of `struct cadef` from `Src/Zle/computil.c:905-922`.
+/// Cache entry for a set of `_arguments` definitions.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct cadef {                                                           // c:905
+    pub next:       Option<Box<cadef>>,                                      // c:906 Cadef next
+    pub snext:      Option<Box<cadef>>,                                      // c:907 Cadef snext
+    pub opts:       Option<Box<caopt>>,                                      // c:908 Caopt opts
+    pub nopts:      i32,                                                     // c:909
+    pub ndopts:     i32,                                                     // c:909
+    pub nodopts:    i32,                                                     // c:909
+    pub args:       Option<Box<caarg>>,                                      // c:910 Caarg args
+    pub rest:       Option<Box<caarg>>,                                      // c:911 Caarg rest
+    pub defs:       Option<Vec<String>>,                                     // c:912 char **defs
+    pub ndefs:      i32,                                                     // c:913
+    pub lastt:      i64,                                                     // c:914 time_t lastt
+    pub single:     Option<Vec<Option<Box<caopt>>>>,                         // c:915 Caopt *single (188-slot)
+    pub r#match:    Option<String>,                                          // c:916 char *match
+    pub argsactive: i32,                                                     // c:917
+    pub set:        Option<String>,                                          // c:919 char *set
+    pub flags:      i32,                                                     // c:920 int flags (CDF_*)
+    pub nonarg:     Option<String>,                                          // c:921 char *nonarg
+}
+
+/// Direct port of `static void freecaargs(Caarg a)` from
+/// `Src/Zle/computil.c:996-1010`. Walks the `next` chain and frees
+/// each entry. In Rust this is `Box` ownership — dropping the head
+/// recursively drops the chain, but we mirror the C body for ABI
+/// parity with callers that want explicit teardown.
+pub fn freecaargs(mut a: Option<Box<caarg>>) {                               // c:996
+    while let Some(mut node) = a {                                           // c:1000 for (; a; ...)
+        a = node.next.take();                                                // c:1001 n = a->next
+        // c:1002-1007 — zsfree on descr/xor/action/end/opt is implicit
+        //               via Drop on the String / Vec<String> fields.
+        node.descr = None;                                                   // c:1002
+        node.xor = None;                                                     // c:1003-1004
+        node.action = None;                                                  // c:1005
+        node.end = None;                                                     // c:1006
+        node.opt = None;                                                     // c:1007
+        drop(node);                                                          // c:1008 zfree(a, sizeof(*a))
+    }
+}
+
+/// Direct port of `static void freecadef(Cadef d)` from
+/// `Src/Zle/computil.c:1013-1040`. Walks the `snext` chain freeing
+/// each cadef plus its opts/args/rest sub-chains.
+pub fn freecadef(mut d: Option<Box<cadef>>) {                                // c:1013
+    while let Some(mut node) = d {                                           // c:1018 while (d)
+        d = node.snext.take();                                               // c:1019 s = d->snext
+        // c:1020-1023 — zsfree match/set, freearray(defs).
+        node.r#match = None;
+        node.set = None;
+        node.defs = None;
+
+        // c:1025-1033 — for each opt: zsfree name/descr, freearray xor,
+        // freecaargs(opt->args), zfree opt.
+        let mut p = node.opts.take();
+        while let Some(mut popt) = p {
+            p = popt.next.take();
+            popt.name = None;
+            popt.descr = None;
+            popt.xor = None;
+            freecaargs(popt.args.take());                                    // c:1031
+            drop(popt);                                                      // c:1032
+        }
+        freecaargs(node.args.take());                                        // c:1034
+        freecaargs(node.rest.take());                                        // c:1035
+        node.nonarg = None;                                                  // c:1036
+        node.single = None;                                                  // c:1037-1038
+        drop(node);                                                          // c:1039 zfree(d, sizeof(*d))
+    }
+}
 
 /// Port of `rembslashcolon()` from `Src/Zle/computil.c:1046`.
 /// ```c
@@ -261,17 +373,8 @@ pub fn single_index(pre: u8, opt: u8) -> i32 {                               // 
     (opt as i32) + off
 }
 
-/// Direct port of `static void freecaargs(Caarg arg)` from
-/// `Src/Zle/computil.c:996`. Frees a `struct caarg` chain.
-pub fn freecaargs() {                                                        // c:996
-    // Real body deferred — needs Caarg chain port.
-}
-
-/// Direct port of `static void freecadef(Cadef d)` from
-/// `Src/Zle/computil.c:1013`. Frees a `struct cadef`.
-pub fn freecadef() {                                                         // c:1013
-    // Real body deferred — needs Cadef port.
-}
+// `freecaargs(Caarg)` + `freecadef(Cadef)` ported above with the
+// caarg/caopt/cadef struct ports (c:996 / c:1013).
 
 #[cfg(test)]
 mod cao_caa_tests {
@@ -428,6 +531,78 @@ mod tests {
     // test_cd_group removed — used the deleted CompDescItem; the
     // function `cd_group` itself wasn't a real C export and was
     // also removed alongside the fake structs.
+
+    #[test]
+    fn caarg_default_zero_initialized() {
+        // c:949-962 — fresh caarg: every field zero / None.
+        let a = caarg::default();
+        assert!(a.next.is_none());
+        assert!(a.descr.is_none());
+        assert!(a.action.is_none());
+        assert_eq!(a.r#type, 0);
+        assert_eq!(a.num, 0);
+        assert_eq!(a.active, 0);
+    }
+
+    #[test]
+    fn caopt_default_zero_initialized() {
+        // c:928-939 — fresh caopt: zero / None across all fields.
+        let o = caopt::default();
+        assert!(o.next.is_none());
+        assert!(o.name.is_none());
+        assert!(o.args.is_none());
+        assert_eq!(o.r#type, 0);
+        assert_eq!(o.num, 0);
+        assert_eq!(o.not, 0);
+    }
+
+    #[test]
+    fn cadef_default_zero_initialized() {
+        // c:905-922 — fresh cadef: zero / None across all fields.
+        let d = cadef::default();
+        assert!(d.next.is_none());
+        assert!(d.opts.is_none());
+        assert!(d.args.is_none());
+        assert_eq!(d.nopts, 0);
+        assert_eq!(d.flags, 0);
+    }
+
+    #[test]
+    fn freecaargs_walks_chain() {
+        // c:996-1010 — freecaargs walks `next` chain freeing each
+        // entry. After call, the chain owner observes no remaining
+        // refs (Drop handles deallocation).
+        let mut head = caarg { descr: Some("a".into()), ..Default::default() };
+        let mid     = caarg { descr: Some("b".into()), ..Default::default() };
+        let tail    = caarg { descr: Some("c".into()), ..Default::default() };
+        let mut mid_box = Box::new(mid);
+        mid_box.next = Some(Box::new(tail));
+        head.next = Some(mid_box);
+        freecaargs(Some(Box::new(head)));
+        // No panic, no leak — Box drop chains the rest.
+    }
+
+    #[test]
+    fn cao_caa_constants_match_c() {
+        // c:941-945 and c:964-968 — sequential 1..=5.
+        assert_eq!(CAO_NEXT,    1);
+        assert_eq!(CAO_DIRECT,  2);
+        assert_eq!(CAO_ODIRECT, 3);
+        assert_eq!(CAO_EQUAL,   4);
+        assert_eq!(CAO_OEQUAL,  5);
+        assert_eq!(CAA_NORMAL,  1);
+        assert_eq!(CAA_OPT,     2);
+        assert_eq!(CAA_REST,    3);
+        assert_eq!(CAA_RARGS,   4);
+        assert_eq!(CAA_RREST,   5);
+    }
+
+    #[test]
+    fn cdf_max_cacache_constants_match_c() {
+        // c:924 — CDF_SEP = 1; c:972 — MAX_CACACHE = 8.
+        assert_eq!(CDF_SEP, 1);
+        assert_eq!(MAX_CACACHE, 8);
+    }
 }
 
 // ===========================================================
