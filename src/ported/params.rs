@@ -14,6 +14,9 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use crate::ported::zsh_h::{
+    gsu_array, gsu_float, gsu_hash, gsu_integer, gsu_scalar
+};
 
 #[allow(unused_imports)]
 use crate::ported::zsh_h::{
@@ -301,6 +304,14 @@ pub struct SpecialParamDef {
     pub pm_flags: u32, // PM_READONLY_SPECIAL, PM_DONTIMPORT, etc.
     pub tied_name: Option<&'static str>,
 }
+
+/// Index of the first entry in `special_params` that lives in the
+/// zsh-only section (after the `{{NULL,NULL,0}, BR(NULL), ...}`
+/// sentinel at `Src/params.c:392`). Entries before this index are
+/// always loaded; entries at and after this index are only loaded
+/// under non-sh/non-ksh emulation. Mirrors the C two-section table
+/// terminated by an inner NULL sentinel.
+pub const SPECIAL_PARAMS_ZSH_START: usize = 54;                              // c:392
 
 /// All special parameters from params.c special_params[]
 pub const special_params: &[SpecialParamDef] = &[
@@ -628,6 +639,14 @@ pub const special_params: &[SpecialParamDef] = &[
         pm_flags: crate::ported::zsh_h::PM_READONLY | crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
+    // ===================================================================
+    // c:388-392 — `/* This empty row indicates the end of parameters
+    // available in all emulations. */` NULL sentinel terminates the
+    // "always loaded" section. Entries below this line are only added
+    // under zsh emulation (else-branch of EMULATION(EMULATE_SH|EMULATE_KSH)
+    // at createparamtable c:840-846).
+    // SPECIAL_PARAMS_ZSH_START tracks this section boundary.
+    // ===================================================================
     // Tied colon-separated/array pairs
     SpecialParamDef {
         name: "CDPATH",
@@ -786,6 +805,66 @@ pub const special_params: &[SpecialParamDef] = &[
         name: "pipestatus",
         pm_type: crate::ported::zsh_h::PM_ARRAY,
         pm_flags: 0,
+        tied_name: None,
+    },
+];
+
+/// Port of `static initparam special_params_sh[]` from
+/// `Src/params.c:447-460`. "Alternative versions of colon-separated
+/// path parameters for sh emulation. These don't link to the array
+/// versions." Loaded by `createparamtable` (c:840-844) when
+/// `EMULATION(EMULATE_SH|EMULATE_KSH)` is non-zero, instead of the
+/// zsh-only section of `special_params`. All entries are scalars
+/// (`IPDEF8` macro adds `PM_SCALAR|PM_SPECIAL`); the C-side
+/// `tied_name` is NULL so these aren't tied to lowercase array
+/// counterparts.
+pub const special_params_sh: &[SpecialParamDef] = &[
+    SpecialParamDef {                                                        // c:448
+        name: "CDPATH",
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: 0,
+        tied_name: None,
+    },
+    SpecialParamDef {                                                        // c:449
+        name: "FIGNORE",
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: 0,
+        tied_name: None,
+    },
+    SpecialParamDef {                                                        // c:450
+        name: "FPATH",
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: 0,
+        tied_name: None,
+    },
+    SpecialParamDef {                                                        // c:451
+        name: "MAILPATH",
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: 0,
+        tied_name: None,
+    },
+    SpecialParamDef {                                                        // c:452
+        name: "PATH",
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: 0,
+        tied_name: None,
+    },
+    SpecialParamDef {                                                        // c:453
+        name: "PSVAR",
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: 0,
+        tied_name: None,
+    },
+    SpecialParamDef {                                                        // c:454
+        name: "ZSH_EVAL_CONTEXT",
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_READONLY,
+        tied_name: None,
+    },
+    SpecialParamDef {                                                        // c:457 (security comment)
+        name: "MODULE_PATH",
+        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
 ];
@@ -4530,10 +4609,6 @@ pub fn assignstrvalue(
 /// param's PM_TYPE so subsequent assignment dispatches go
 /// through `pm->gsu.X->setfn`.
 pub fn assigngetset(pm: &mut crate::ported::zsh_h::param) {
-    use crate::ported::zsh_h::{
-        gsu_array, gsu_float, gsu_hash, gsu_integer, gsu_scalar, PM_ARRAY, PM_EFLOAT, PM_FFLOAT,
-        PM_HASHED, PM_INTEGER, PM_NAMEREF, PM_SCALAR, PM_TYPE,
-    };
     match PM_TYPE(pm.node.flags as u32) {
         x if x == PM_SCALAR || x == PM_NAMEREF => {
             pm.gsu_s = Some(Box::new(gsu_scalar {
@@ -4750,39 +4825,74 @@ pub fn createparamtable() {                                                  // 
     let _ = paramtab();
     let _ = realparamtab();
 
-    // c:838-840 — register each special_params entry.
+    // Helper closure (single definition; mirrors the C
+    // `paramtab->addnode(paramtab, ztrdup(name), ip)` site).
+    let add_special = |ip: &SpecialParamDef,
+                       tab: &mut std::collections::HashMap<
+        String,
+        crate::ported::zsh_h::Param,
+    >| {
+        let pm = Box::new(crate::ported::zsh_h::param {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: ip.name.to_string(),
+                flags: (ip.pm_type | ip.pm_flags | PM_SPECIAL) as i32,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: None,
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
+        });
+        tab.insert(ip.name.to_string(), pm);
+    };
+
+    // c:838-840 — `for (ip = special_params; ip->node.nam; ip++)
+    //              paramtab->addnode(...)`. Section 1: always loaded.
     {
         let mut tab = paramtab().lock().unwrap();
-        for ip in special_params.iter() {
-            let mut pm = Box::new(crate::ported::zsh_h::param {
-                node: crate::ported::zsh_h::hashnode {
-                    next: None,
-                    nam: ip.name.to_string(),
-                    flags: (ip.pm_type | ip.pm_flags | PM_SPECIAL) as i32,
-                },
-                u_data: 0,
-                u_arr: None,
-                u_str: None,
-                u_val: 0,
-                u_dval: 0.0,
-                u_hash: None,
-                gsu_s: None,
-                gsu_i: None,
-                gsu_f: None,
-                gsu_a: None,
-                gsu_h: None,
-                base: 0,
-                width: 0,
-                env: None,
-                ename: None,
-                old: None,
-                level: 0,
-            });
-            let _ = &mut pm;
-            tab.insert(ip.name.to_string(), pm);
+        for ip in special_params[..SPECIAL_PARAMS_ZSH_START].iter() {
+            add_special(ip, &mut tab);
         }
     }
-    // c:840-847 — special_params_sh / non-sh-emulation tail deferred.
+
+    // c:840-847 — emulation branch. Under EMULATE_SH/EMULATE_KSH,
+    // load special_params_sh (scalar versions). Otherwise load
+    // special_params zsh-only section (the continuation past the
+    // inner NULL sentinel).
+    let emul = crate::ported::modules::ksh93::emulation
+        .load(std::sync::atomic::Ordering::SeqCst);
+    let is_sh_ksh = crate::ported::zsh_h::EMULATION(
+        emul,
+        crate::ported::zsh_h::EMULATE_SH | crate::ported::zsh_h::EMULATE_KSH,
+    );
+    {
+        let mut tab = paramtab().lock().unwrap();
+        if is_sh_ksh {
+            // c:841-843 — sh/ksh: scalar replacements.
+            for ip in special_params_sh.iter() {
+                add_special(ip, &mut tab);
+            }
+        } else {
+            // c:845-847 — zsh: continuation tail (array-tied + lowercase
+            // aliases + pipestatus).
+            for ip in special_params[SPECIAL_PARAMS_ZSH_START..].iter() {
+                add_special(ip, &mut tab);
+            }
+        }
+    }
     // c:849 — argvparam wire-up deferred.
     // c:851 — `noerrs = 2`; NOERRS module-private, so this guard is
     //         a no-op for now.
@@ -4792,11 +4902,21 @@ pub fn createparamtable() {                                                  // 
     setiparam("KEYTIMEOUT", 40);                                             // c:859
     setiparam("LISTMAX", 100);                                               // c:860
 
-    // c:870-871 — TMPPREFIX / TIMEFMT defaults.
-    setsparam("TMPPREFIX", "/tmp/zsh");                                      // c:870
-    setsparam("TIMEFMT", crate::ported::zsh_system::DEFAULT_TIMEFMT);        // c:871
+    // c:870-871 — TMPPREFIX / TIMEFMT defaults. C wraps each string
+    // through ztrdup_metafy() to escape Meta bytes before storing in
+    // the param table; the Rust port mirrors this.
+    setsparam(
+        "TMPPREFIX",
+        &crate::ported::utils::ztrdup_metafy("/tmp/zsh"),
+    );                                                                       // c:870
+    setsparam(
+        "TIMEFMT",
+        &crate::ported::utils::ztrdup_metafy(
+            crate::ported::zsh_system::DEFAULT_TIMEFMT,
+        ),
+    );                                                                       // c:871
 
-    // c:873-876 — HOST from gethostname().
+    // c:873-876 — HOST from gethostname() (ztrdup_metafy wrap c:875).
     let mut host_buf = [0u8; 256];
     let host_rc = unsafe {
         libc::gethostname(host_buf.as_mut_ptr() as *mut libc::c_char, 256)
@@ -4810,13 +4930,14 @@ pub fn createparamtable() {                                                  // 
     } else {
         String::new()
     };
-    setsparam("HOST", &hostname);                                            // c:875
+    setsparam("HOST", &crate::ported::utils::ztrdup_metafy(&hostname));      // c:875
 
-    // c:878-882 — LOGNAME from getlogin() / cached_username.
+    // c:878-882 — LOGNAME from getlogin() / cached_username
+    // (ztrdup_metafy wrap c:879).
     let logname = std::env::var("LOGNAME")
         .or_else(|_| std::env::var("USER"))
         .unwrap_or_default();
-    setsparam("LOGNAME", &logname);                                          // c:878
+    setsparam("LOGNAME", &crate::ported::utils::ztrdup_metafy(&logname));    // c:878
 
     // c:891 — pushheap() / c:921 — popheap(). Wraps the env-import
     // loop so per-iter allocations land on the heap zone.
@@ -4891,21 +5012,20 @@ pub fn createparamtable() {                                                  // 
     setiparam("SHLVL", new_shlvl as i64);
 
     // c:949-967 — CPUTYPE / MACHTYPE / OSTYPE / TTY / VENDOR /
-    // ZSH_ARGZERO / ZSH_VERSION / ZSH_PATCHLEVEL.
+    // ZSH_ARGZERO / ZSH_VERSION / ZSH_PATCHLEVEL. C body wraps each
+    // through ztrdup_metafy() — Rust mirrors that.
     let utsname = nix::sys::utsname::uname().ok();
     let cputype = utsname
         .as_ref()
         .map(|u| u.machine().to_string_lossy().to_string())
         .unwrap_or_else(|| "unknown".to_string());
-    setsparam("CPUTYPE", &cputype);                                          // c:954
-    setsparam("MACHTYPE", &cputype);                                         // c:962 (MACHTYPE constant)
-    setsparam(
-        "OSTYPE",
-        &utsname
-            .as_ref()
-            .map(|u| u.sysname().to_string_lossy().to_string().to_lowercase())
-            .unwrap_or_else(|| "unknown".to_string()),
-    );                                                                       // c:963
+    setsparam("CPUTYPE", &crate::ported::utils::ztrdup_metafy(&cputype));    // c:954
+    setsparam("MACHTYPE", &crate::ported::utils::ztrdup_metafy(&cputype));   // c:962
+    let ostype = utsname
+        .as_ref()
+        .map(|u| u.sysname().to_string_lossy().to_string().to_lowercase())
+        .unwrap_or_else(|| "unknown".to_string());
+    setsparam("OSTYPE", &crate::ported::utils::ztrdup_metafy(&ostype));      // c:963
     let tty_str = {
         let p = unsafe { libc::ttyname(0) };
         if !p.is_null() {
@@ -4916,19 +5036,82 @@ pub fn createparamtable() {                                                  // 
             String::new()
         }
     };
-    setsparam("TTY", &tty_str);                                              // c:963
-    setsparam("VENDOR", "unknown");                                          // c:964
+    setsparam("TTY", &crate::ported::utils::ztrdup_metafy(&tty_str));        // c:963
+    setsparam(
+        "VENDOR",
+        &crate::ported::utils::ztrdup_metafy("unknown"),
+    );                                                                       // c:964
+    let argv0 = std::env::args().next().unwrap_or_default();
     setsparam(
         "ZSH_ARGZERO",
-        &std::env::args().next().unwrap_or_default(),
-    );                                                                       // c:965
-    setsparam("ZSH_VERSION", "5.9");                                         // c:966
+        &crate::ported::utils::ztrdup(&argv0),
+    );                                                                       // c:965 (ztrdup, not _metafy: posixzero)
+    setsparam(
+        "ZSH_VERSION",
+        &crate::ported::utils::ztrdup_metafy("5.9"),
+    );                                                                       // c:966
     setsparam(
         "ZSH_PATCHLEVEL",
-        crate::ported::patchlevel::ZSH_PATCHLEVEL,
+        &crate::ported::utils::ztrdup_metafy(
+            crate::ported::patchlevel::ZSH_PATCHLEVEL,
+        ),
     );                                                                       // c:967
 
-    // c:968-979 — $signals array. Deferred pending sigs[] table port.
+    // c:968-979 — `setaparam("signals", sigptr = zalloc((TRAPCOUNT
+    // + 1) * sizeof(char *))); t = sigs; while (t - sigs <= SIGCOUNT)
+    // *sigptr++ = ztrdup_metafy(*t++); { for (sig = SIGRTMIN; sig <=
+    // SIGRTMAX; sig++) *sigptr++ = ztrdup_metafy(rtsigname(sig, 0));
+    // } while ((*sigptr++ = ztrdup_metafy(*t++))) ;`. Builds the
+    // $signals array: indices 0..=SIGCOUNT walked from the static
+    // sigs[] name table, then SIGRTMIN..SIGRTMAX names, then the
+    // trailing tail (DEBUG / ERR / EXIT / ZERR sentinels).
+    let mut signals_arr: Vec<String> = Vec::new();
+    for &(name, _num) in
+        crate::ported::signals_h::SIGS.iter()
+    {
+        signals_arr.push(crate::ported::utils::ztrdup_metafy(name));
+    }
+    // RT-signal range (Linux-only; macOS SIGS table already includes
+    // the realtime names and rtsigname returns "" out of range).
+    #[cfg(target_os = "linux")]
+    {
+        for sig in libc::SIGRTMIN()..=libc::SIGRTMAX() {
+            let nm = crate::ported::signals::rtsigname(sig);
+            if !nm.is_empty() {
+                signals_arr.push(crate::ported::utils::ztrdup_metafy(&nm));
+            }
+        }
+    }
+    {
+        let mut tab = paramtab().lock().unwrap();
+        let pm = Box::new(crate::ported::zsh_h::param {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: "signals".to_string(),
+                flags: (crate::ported::zsh_h::PM_ARRAY
+                    | crate::ported::zsh_h::PM_SPECIAL) as i32,
+            },
+            u_data: 0,
+            u_arr: Some(signals_arr),
+            u_str: None,
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
+        });
+        tab.insert("signals".to_string(), pm);
+    }
+
     // c:980 — `noerrs = 0` restore. NOERRS module-private (see above).
 }
 
