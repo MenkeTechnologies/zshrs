@@ -269,12 +269,8 @@ pub struct Zle {
     /// to be re-fed at the next zleread. Port of `bufstack` in zle_hist.c
     /// (a linked list there; a Vec used as a LIFO works the same here).
     pub bufstack: Vec<String>,
-    /// Vi find-char state for repeat-find / rev-repeat-find.
-    /// Port of `vfindchar` (zle_move.c:734), `vfinddir` and `tailadd` (zle_move.c:735).
-    /// `vi_last_find_tail` is the C `tailadd`: 0=on, -1=skip-back-after, +1=skip-forward-after.
-    pub vi_last_find_char: Option<char>,
-    pub vi_last_find_dir: i32,
-    pub vi_last_find_tail: i32,
+    // Vi find-char state moved to file-scope statics in zle_misc.rs
+    // matching C: VFINDCHAR (c:734), VFINDDIR (c:735), TAILADD (c:735).
     /// Vi last change replay buffer (for `.` operator).
     /// Port of `vichgbuf` from zle_vi.c — bytes of the last change op.
     pub vi_chg_buf: Vec<u8>,
@@ -423,9 +419,6 @@ impl Zle {
             history: super::zle_hist::History::new(2000),
             lastcol: -1,
             bufstack: Vec::new(),
-            vi_last_find_char: None,
-            vi_last_find_dir: 0,
-            vi_last_find_tail: 0,
             vi_chg_buf: Vec::new(),
             srch_str: None,
             last_line: Vec::new(),
