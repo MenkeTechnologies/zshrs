@@ -3286,7 +3286,13 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
             if let Ok(t) = crate::ported::builtin::SHFUNCTAB.lock() {
                 if t.contains_key(arg) {                                     // c:4153
                     if (printflags & PRINT_WHENCE_FUNCDEF) != 0 {
-                        println!("{} () {{ # body deferred }}", arg);
+                        // c:4154 — full `whichfn(pm, printflags)` walk:
+                        // emit `name () { body }` per the
+                        // PRINT_WHENCE_FUNCDEF format. Pull the body from
+                        // the actual shfunctab entry via getshfunc.
+                        let body = crate::ported::utils::getshfunc(arg)
+                            .unwrap_or_else(|| String::from("# body undefined"));
+                        println!("{} () {{\n{}\n}}", arg, body);
                     } else {
                         println!("{}", arg);                                 // c:4155
                     }
@@ -4158,7 +4164,7 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
         Tab::SufAlias => { let _ = crate::ported::hashtable::sufaliastab_lock().lock().map(|mut g| g.clear()); }
         Tab::NamedDir => { crate::ported::hashnameddir::emptynameddirtable(); }
         Tab::Shfunc => { let _ = SHFUNCTAB.lock().map(|mut g| g.clear()); }
-        Tab::CmdNam => { /* deferred to cmdnamtab.rs */ }
+        Tab::CmdNam => { crate::ported::hashtable::emptycmdnamtable(); }     // c:4389
     };
     let remove_one = |t: &Tab, nm: &str| -> bool {
         match t {
@@ -4169,7 +4175,11 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
             Tab::NamedDir => crate::ported::hashnameddir::removenameddirnode(nm).is_some(),
             Tab::Shfunc => SHFUNCTAB.lock()
                 .map(|mut g| g.remove(nm).is_some()).unwrap_or(false),
-            Tab::CmdNam => false,
+            // c:4405 — `cmdnamtab->removenode(cmdnamtab, asg->name)`.
+            Tab::CmdNam => {
+                crate::ported::hashtable::freecmdnamnode(nm);
+                true
+            }
         }
     };
 
