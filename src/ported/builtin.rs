@@ -371,7 +371,7 @@ pub fn init_builtins() {                                                     // 
     // c:214 — `if (!EMULATION(EMULATE_ZSH))`. Read the live emulation
     // bitmap from the canonical global, not the per-call ShellOptions
     // snapshot (which lags behind `emulate -L` switches).
-    let emul = crate::ported::modules::ksh93::emulation
+    let emul = crate::ported::options::emulation
         .load(std::sync::atomic::Ordering::Relaxed);
     if !crate::ported::zsh_h::EMULATION(emul, EMULATE_ZSH) {                 // c:214
         // c:215-217 — `hn = reswdtab->getnode2(reswdtab,"repeat");
@@ -3228,10 +3228,8 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
     // c:2748-2772 — `-p` print-mode: PRINT_POSIX_EXPORT / READONLY /
     // TYPESET, plus optional -p N for line-style.
     if OPT_ISSET(&ops, b'p') {                                               // c:2748
-        let emul_bits = match crate::ported::options::ShellOptions::new().emulation {
-            crate::ported::options::Emulation::Ksh => EMULATE_KSH,
-            _ => crate::ported::zsh_h::EMULATE_ZSH,
-        };
+        let emul_bits = crate::ported::options::emulation
+            .load(std::sync::atomic::Ordering::Relaxed);
         if posix && !EMULATION(emul_bits, EMULATE_KSH) {                     // c:2750
             printflags |= match func {
                 BIN_EXPORT   => PRINT_POSIX_EXPORT,                          // c:2752
@@ -4858,7 +4856,7 @@ pub fn bin_emulate(nam: &str, argv: &[String],                               // 
             return 1;                                                        // c:6252
         }
         // c:6255-6271 — `switch(SHELL_EMULATION())` → name dispatch.
-        let bits = crate::ported::modules::ksh93::emulation
+        let bits = crate::ported::options::emulation
             .load(std::sync::atomic::Ordering::Relaxed) as i32;
         let shname = if (bits & EMULATE_CSH) != 0 { "csh" }                  // c:6255
                      else if (bits & EMULATE_KSH) != 0 { "ksh" }             // c:6259
@@ -4883,7 +4881,7 @@ pub fn bin_emulate(nam: &str, argv: &[String],                               // 
             _     => crate::ported::zsh_h::EMULATE_ZSH,
         };
         // c:6286 — `emulate(shname, opt_R, &emulation, cmdopts)`.
-        crate::ported::modules::ksh93::emulation
+        crate::ported::options::emulation
             .store(bits, std::sync::atomic::Ordering::Relaxed);
 
         // Build the cmdopts view that c:6286-6292 manipulates.
@@ -5189,12 +5187,8 @@ pub fn bin_set(nam: &str, args: &[String],                                   // 
     let mut arrayname: Option<String> = None;                                // c:604
 
     // c:608-614 — sh-compat: bare `set -` → +xv.
-    let emul_bits = match crate::ported::options::ShellOptions::new().emulation {
-        crate::ported::options::Emulation::Zsh => EMULATE_ZSH,
-        crate::ported::options::Emulation::Ksh => crate::ported::zsh_h::EMULATE_KSH,
-        crate::ported::options::Emulation::Sh  => crate::ported::zsh_h::EMULATE_SH,
-        crate::ported::options::Emulation::Csh => crate::ported::zsh_h::EMULATE_CSH,
-    };
+    let emul_bits = crate::ported::options::emulation
+        .load(std::sync::atomic::Ordering::Relaxed);
     if !EMULATION(emul_bits, EMULATE_ZSH)                                    // c:608
         && !argv.is_empty() && argv[0] == "-"
     {

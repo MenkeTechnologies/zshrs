@@ -5737,7 +5737,7 @@ pub fn createparamtable() {                                                  // 
     // load special_params_sh (scalar versions). Otherwise load
     // special_params zsh-only section (the continuation past the
     // inner NULL sentinel).
-    let emul = crate::ported::modules::ksh93::emulation
+    let emul = crate::ported::options::emulation
         .load(std::sync::atomic::Ordering::SeqCst);
     let is_sh_ksh = crate::ported::zsh_h::EMULATION(
         emul,
