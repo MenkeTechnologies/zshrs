@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <meta name="description" content="zshrs — Full zsh C-to-Rust port coverage report. 94 C files, 147,656 C lines, 347,212 Rust lines, 4,642 #[test] hooks. Strict-port src/ported/ (98) + non-port src/extensions/ (31) split enforced by tests/port_purity.rs.">
+  <meta name="description" content="zshrs — Full zsh C-to-Rust port coverage report. 94 C files, 147,656 C lines, 368,476 Rust lines, 4,842 #[test] hooks. Strict-port src/ported/ + non-port src/extensions/ split enforced by tests/port_purity.rs. Updated 2026-05-11.">
   <title>zshrs — Port Coverage Report</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1219,17 +1219,53 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
       <!-- SECTION 8: ENGINEERING OVERVIEW         -->
       <!-- ═══════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">%</span>ENGINEERING OVERVIEW</h2>
-      <p class="tutorial-subtitle">Workspace-wide cargo workspace metrics (four packages: <code>zsh</code>, <code>compsys</code>, <code>zshrs-daemon</code>, <code>zshrs-parse</code>). Counts below are from <code>wc</code> / <code>rg</code> on 2026-05-09; per-subsystem module tables follow unchanged.</p>
+      <p class="tutorial-subtitle">Workspace-wide cargo workspace metrics (four packages: <code>zsh</code>, <code>compsys</code>, <code>zshrs-daemon</code>, <code>zshrs-parse</code>). Counts below are from <code>wc</code> / <code>rg</code> on 2026-05-11; per-subsystem module tables follow unchanged.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));">
-        <div class="stat-card"><div class="stat-val">347,212</div><div class="stat-label">Total Rust Lines</div></div>
-        <div class="stat-card"><div class="stat-val accent">401</div><div class="stat-label"><code>.rs</code> Files</div></div>
-        <div class="stat-card"><div class="stat-val green">4,642</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
-        <div class="stat-card"><div class="stat-val">3,404</div><div class="stat-label"><code>pub fn</code> (src trees)</div></div>
-        <div class="stat-card"><div class="stat-val">736</div><div class="stat-label"><code>pub struct</code></div></div>
-        <div class="stat-card"><div class="stat-val">212</div><div class="stat-label"><code>pub enum</code></div></div>
-        <div class="stat-card"><div class="stat-val accent">1,603</div><div class="stat-label">Git Commits</div></div>
+        <div class="stat-card"><div class="stat-val">368,476</div><div class="stat-label">Total Rust Lines</div></div>
+        <div class="stat-card"><div class="stat-val accent">411</div><div class="stat-label"><code>.rs</code> Files</div></div>
+        <div class="stat-card"><div class="stat-val green">4,842</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
+        <div class="stat-card"><div class="stat-val">3,400</div><div class="stat-label"><code>pub fn</code> (src trees)</div></div>
+        <div class="stat-card"><div class="stat-val">681</div><div class="stat-label"><code>pub struct</code></div></div>
+        <div class="stat-card"><div class="stat-val">169</div><div class="stat-label"><code>pub enum</code></div></div>
+        <div class="stat-card"><div class="stat-val accent">2,066</div><div class="stat-label">Git Commits</div></div>
       </div>
+
+      <hr class="section-rule">
+
+      <!-- ═══════════ MAY 2026 — RECENT PORT WORK ═══════════ -->
+      <h2 class="tutorial-title"><span class="step-hash">&Delta;</span>MAY 2026 &mdash; RECENT PORT WORK</h2>
+      <p class="tutorial-subtitle">Two themes closed out across May 2026: (1) every <code>// Deferred</code> / <code>// FAKE</code> / <code>// stub</code> marker in <code>builtin.rs</code> turned into a real C-faithful body, and (2) the <code>try_with_executor</code> dispatch path — a Rust-only abstraction that bypassed paramtab — was eliminated from 27 of 40 call sites in <code>src/ported/</code> in favour of direct C-equivalent reads/writes (paramtab, HOOKTAB, JOBTAB, LASTVAL, curhist).</p>
+
+      <table class="file-table">
+        <thead><tr><th>Area</th><th>What landed</th><th>C source</th><th>Rust location</th></tr></thead>
+        <tbody>
+          <tr><td style="color:var(--cyan);">builtin.rs</td><td><code>loadautofn</code> &mdash; real <code>$fpath</code> walk + file read + <code>PM_UNDEFINED</code> clear (was return-0 stub)</td><td class="num"><code>exec.c:5050</code></td><td><code>ported/builtin.rs:883</code></td></tr>
+          <tr><td style="color:var(--cyan);">builtin.rs</td><td><code>bin_functions -c</code> autoload-trampoline now invokes <code>loadautofn</code></td><td class="num"><code>builtin.c:3414</code></td><td><code>ported/builtin.rs:1593</code></td></tr>
+          <tr><td style="color:var(--cyan);">builtin.rs</td><td><code>scanmatchshfunc</code> wired (replaces stale &ldquo;funcs.rs&rdquo; comment that referenced a non-existent file)</td><td class="num"><code>builtin.c:3682</code></td><td><code>ported/hashtable.rs</code></td></tr>
+          <tr><td style="color:var(--cyan);">builtin.rs</td><td><code>bin_functions -M / +M / -m+M</code> &mdash; full add/list/remove/match paths into the new <code>MATHFUNCS</code> global</td><td class="num"><code>builtin.c:3478&ndash;3611</code></td><td><code>ported/module.rs:31</code></td></tr>
+          <tr><td style="color:var(--cyan);">builtin.rs</td><td><code>bin_return</code> POSIX-trap promotion to <code>TRAP_STATE_FORCE_RETURN</code></td><td class="num"><code>builtin.c:5845&ndash;5854</code></td><td><code>exec.rs::TRAP_STATE/TRAP_RETURN</code></td></tr>
+          <tr><td style="color:var(--cyan);">builtin.rs</td><td><code>bin_enable</code> toggles for Builtin / Shfunc / Reswd via real disable/enable; new <code>BUILTINS_DISABLED</code> set</td><td class="num"><code>builtin.c:541&ndash;547</code></td><td><code>ported/builtin.rs</code></td></tr>
+          <tr><td style="color:var(--cyan);">builtin.rs</td><td><code>init_builtins</code> &mdash; real <code>reswdtab.disable(&quot;repeat&quot;)</code> when not EMULATE_ZSH</td><td class="num"><code>builtin.c:212</code></td><td><code>ported/builtin.rs:361</code></td></tr>
+          <tr><td style="color:var(--cyan);">signals.rs</td><td>SIGPIPE / SIGHUP / SIGINT / SIGWINCH / SIGALRM real bodies (zexit, errflag, stopmsg, adjustwinsize, TMOUT)</td><td class="num"><code>signals.c:429&ndash;498</code></td><td><code>ported/signals.rs:670</code></td></tr>
+          <tr><td style="color:var(--cyan);">signals.rs</td><td>POSIXTRAPS option lookup for SIGEXIT sticky-tag bypass</td><td class="num"><code>signals.c:746</code></td><td><code>ported/signals.rs</code></td></tr>
+          <tr><td style="color:var(--cyan);">jobs.rs</td><td><code>kill %jobspec</code> dispatch: real <code>getjob</code> + <code>killjb</code> + SIGCONT-after-stop loop</td><td class="num"><code>jobs.c:2989&ndash;3010</code></td><td><code>ported/jobs.rs:2635</code></td></tr>
+          <tr><td style="color:var(--cyan);">params.rs</td><td><code>getsparam</code>/<code>getiparam</code>/<code>getnparam</code> rewritten to C-faithful single-arg paramtab read (was a drift wrapper around HashMap)</td><td class="num"><code>params.c:3076</code></td><td><code>ported/params.rs:1726</code></td></tr>
+          <tr><td style="color:var(--cyan);">params.rs</td><td>numeric-prefix detection (blanks / minus / 0x / base#) for <code>PM_RIGHT_Z</code> padding</td><td class="num"><code>params.c:2446&ndash;2466</code></td><td><code>ported/params.rs:975</code></td></tr>
+          <tr><td style="color:var(--cyan);">params.rs</td><td><code>fetchvalue</code> real bracket-subscript dispatch into <code>getindex</code> + KSHARRAYS implicit [0]</td><td class="num"><code>params.c:2289&ndash;2296</code></td><td><code>ported/params.rs</code></td></tr>
+          <tr><td style="color:var(--cyan);">params.rs</td><td>new <code>DELUNSET</code> atomic file-global; <code>deleteparamtable</code> save/restore; <code>freeparamnode</code> unsetfn dispatch</td><td class="num"><code>params.c:610 / 5986</code></td><td><code>ported/params.rs</code></td></tr>
+          <tr><td style="color:var(--cyan);">module.rs</td><td>new <code>HOOKTAB</code> global (mirror of <code>Hookdef hooktab</code>) + <code>addhookfunc</code>/<code>deletehookfunc</code> wrappers</td><td class="num"><code>module.c:843</code></td><td><code>ported/module.rs</code></td></tr>
+          <tr><td style="color:var(--cyan);">module.rs</td><td>new <code>MATHFUNCS</code> global &mdash; user math fn chain for <code>functions -M</code></td><td class="num"><code>module.c:1258</code></td><td><code>ported/module.rs:31</code></td></tr>
+          <tr><td style="color:var(--cyan);">zle/zle_main.rs</td><td>new <code>WATCH_FDS</code> global &mdash; <code>bin_zle -F</code> registration store</td><td class="num"><code>zle_main.c:204</code></td><td><code>ported/zle/zle_main.rs</code></td></tr>
+          <tr><td style="color:var(--cyan);">zle/zle_refresh.rs</td><td>new <code>TCOUT_FUNC_NAME</code> global &mdash; <code>bin_zle -T tc</code> redisplay transform</td><td class="num"><code>zle_refresh.c:246</code></td><td><code>ported/zle/zle_refresh.rs</code></td></tr>
+          <tr><td style="color:var(--cyan);">zle/zle_vi.rs</td><td>VIRANGEFLAG / WORDFLAG / VILINERANGE / VICHGFLAG / VIINREPEAT / VIINSBEGIN atomic file-globals (replaces ViState aggregate)</td><td class="num"><code>zle_vi.c:36&ndash;78</code></td><td><code>ported/zle/zle_vi.rs</code></td></tr>
+          <tr><td style="color:var(--cyan);">prompt.rs</td><td><code>sync_from_executor</code> &rarr; <code>sync_from_globals</code>: reads paramtab / LASTVAL / curhist / JOBTAB / scriptname directly</td><td class="num"><code>prompt.c:56</code></td><td><code>ported/prompt.rs</code></td></tr>
+          <tr><td style="color:var(--cyan);">utils.rs</td><td><code>printprompt4</code> reads <code>isset(XTRACE)</code> + <code>getsparam(&quot;PS4&quot;)</code> + opt_state save/restore</td><td class="num"><code>utils.c:1720&ndash;1730</code></td><td><code>ported/utils.rs:5025</code></td></tr>
+          <tr><td style="color:var(--cyan);">utils.rs</td><td><code>callhookfunc</code> walks shfunctab + paramtab <code>&lt;name&gt;_functions</code> array</td><td class="num"><code>utils.c:1494&ndash;1514</code></td><td><code>ported/utils.rs</code></td></tr>
+        </tbody>
+      </table>
+
+      <p class="tutorial-subtitle"><strong>try_with_executor migration.</strong> Down from 40 to 13 call sites in <code>src/ported/</code>. The remaining 13 all live in <code>subst.rs</code> (parameter substitution + magic-assoc fallbacks) and either route through <code>crate::exec::getoutput</code> (the new free-fn wrapper for command substitution at <code>exec.c:4712</code>) or are documentation comments referencing the historical removal. Eliminating the last 13 is in flight.</p>
 
       <hr class="section-rule">
 
@@ -1563,12 +1599,12 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
       <!-- SECTION: GRAND TOTAL — WORKSPACE CRATES       -->
       <!-- ═════════════════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">&#x2261;</span>GRAND TOTAL &mdash; FULL WORKSPACE</h2>
-      <p class="tutorial-subtitle">Four Rust packages in one Cargo workspace (<code>zsh</code>, <code>compsys</code>, <code>zshrs-daemon</code>, <code>zshrs-parse</code>). Combined: 347,212 Rust lines (all <code>.rs</code> including tests + <code>build.rs</code>, excluding <code>target/</code>), 3,404 <code>pub fn</code> hooks in non-test trees, 736 <code>pub struct</code>, 212 <code>pub enum</code>, 4,642 <code>#[test]</code> lines — counts from <code>rg</code>/<code>wc</code> on 2026-05-09.</p>
+      <p class="tutorial-subtitle">Four Rust packages in one Cargo workspace (<code>zsh</code>, <code>compsys</code>, <code>zshrs-daemon</code>, <code>zshrs-parse</code>). Combined: 368,476 Rust lines (all <code>.rs</code> including tests + <code>build.rs</code>, excluding <code>target/</code>), 3,400 <code>pub fn</code> hooks in non-test trees, 681 <code>pub struct</code>, 169 <code>pub enum</code>, 4,842 <code>#[test]</code> lines — counts from <code>rg</code>/<code>wc</code> on 2026-05-11.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
-        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">347,212</div><div class="stat-label">Total Rust Lines</div></div>
-        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">3,404</div><div class="stat-label">Public Functions</div></div>
-        <div class="stat-card"><div class="stat-val green">4,642</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">368,476</div><div class="stat-label">Total Rust Lines</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">3,400</div><div class="stat-label">Public Functions</div></div>
+        <div class="stat-card"><div class="stat-val green">4,842</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
         <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">4</div><div class="stat-label">Workspace Crates</div></div>
       </div>
 
@@ -1602,7 +1638,7 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
     </main>
 
     <footer style="text-align:center;padding:2rem;font-size:10px;color:var(--text-muted);font-family:'Orbitron',sans-serif;letter-spacing:2px;">
-      ZSHRS PORT-COVERAGE REPORT &middot; NON-PORT INFRASTRUCTURE LAYER &middot; UPDATED 2026-05-09 &middot; MENKETECHNOLOGIES
+      ZSHRS PORT-COVERAGE REPORT &middot; NON-PORT INFRASTRUCTURE LAYER &middot; UPDATED 2026-05-11 &middot; MENKETECHNOLOGIES
     </footer>
   </div>
 
