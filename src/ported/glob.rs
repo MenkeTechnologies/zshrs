@@ -1031,15 +1031,15 @@ fn scan_pattern(state: &mut GlobData, base: &str, pattern: &str, rest: &[Pattern
     for entry in dir.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
 
-        // Skip hidden files unless pattern starts with .
-        let no_glob_dots = !crate::ported::options::opt_state_get("dotglob").unwrap_or(false)
-            && !crate::ported::options::opt_state_get("globdots").unwrap_or(false);
+        // Skip hidden files unless pattern starts with `.`. The bash
+        // alias `dotglob` resolves to `globdots` in zsh (options.rs
+        // OPTION_ALIASES); we read only the canonical name.
+        let no_glob_dots = !isset(GLOBDOTS);
         if no_glob_dots && name.starts_with('.') && !pattern.starts_with('.') {
             continue;
         }
-        let extended_glob = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
-        let case_glob = crate::ported::options::opt_state_get("caseglob").unwrap_or(true)
-            && !crate::ported::options::opt_state_get("nocaseglob").unwrap_or(false);
+        let extended_glob = isset(EXTENDEDGLOB);
+        let case_glob = isset(CASEGLOB);
         if matchpat(pattern, &name, extended_glob, case_glob) {
             let path = entry.path();
 
@@ -1157,10 +1157,9 @@ fn scan_recursive(                                                           // 
         for entry in dir.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
 
-            // Skip hidden files
-            let no_glob_dots = !crate::ported::options::opt_state_get("dotglob").unwrap_or(false)
-                && !crate::ported::options::opt_state_get("globdots").unwrap_or(false);
-            if no_glob_dots && name.starts_with('.') {
+            // Skip hidden files (bash `dotglob` aliases to zsh
+            // `globdots` per options.rs OPTION_ALIASES).
+            if !isset(GLOBDOTS) && name.starts_with('.') {
                 continue;
             }
 

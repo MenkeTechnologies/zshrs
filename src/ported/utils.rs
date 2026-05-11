@@ -5026,34 +5026,42 @@ pub(crate) fn quotedzputs(s: &str) -> String {
 /// with the per-line/per-arg fprintf — same shape mirrored at the two
 /// zshrs call sites in fusevm_bridge.rs (BUILTIN_XTRACE_LINE / ARGS).
 pub(crate) fn printprompt4() {
-    // c:utils.c:1720 — `if (!isset(XTRACE)) return;`
-    let on = crate::ported::options::opt_state_get("xtrace").unwrap_or(false);
-    if !on {
+    use crate::ported::zsh_h::{isset, XTRACE, EMULATE_KSH, EMULATE_SH, EMULATION};
+    // c:utils.c:1720 — `if (!isset(XTRACE)) return;`. C tests
+    // `xtrerr` first then conditionally; the read-the-option early-
+    // return path is equivalent for our purposes since we don't ship
+    // the `xtrerr` separate-stream support.
+    if !isset(XTRACE) {
         return;
     }
-    // c:utils.c:1724 — `s = getsparam("PS4")` (params.c:381 aliases
-    // PS4/PROMPT4 to the same underlying entry; we follow the same
-    // lookup order). Falls back to the emulation-aware default.
-    let posix = crate::ported::options::opt_state_get("kshemulation")
-        .unwrap_or(false)
-        || crate::ported::options::opt_state_get("shemulation")
-            .unwrap_or(false);
+    // c:utils.c:1722-1724 — `if (prompt4) { ... s = dupstring(prompt4);`
+    // C `prompt4` is a global initialized in init.c:1192 from the
+    // emulation bits; PS4/PROMPT4 paramtab entries alias it via
+    // IPDEF7R/IPDEF7 (params.c:381, 421). Read from paramtab to
+    // honour user-set values, fall back to the same emulation
+    // default C uses at init.c:1192.
+    let emul = crate::ported::modules::ksh93::emulation
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let posix = EMULATION(emul, EMULATE_KSH | EMULATE_SH);                   // c:init.c:1192
     let prefix_template = crate::ported::params::getsparam("PS4")
         .or_else(|| crate::ported::params::getsparam("PROMPT4"))
         .unwrap_or_else(|| {
             if posix {
-                "+ ".to_string()
+                "+ ".to_string()                                             // c:init.c:1192
             } else {
-                "+%N:%i> ".to_string()
+                "+%N:%i> ".to_string()                                       // c:init.c:1193
             }
         });
-    // c:utils.c:1726-1730 — `t = isset(XTRACE); opts[XTRACE] = 0;
-    //                        promptexpand(...); opts[XTRACE] = t;`
-    let saved = crate::ported::options::opt_state_get("xtrace")
-        .unwrap_or(false);
-    crate::ported::options::opt_state_set("xtrace", false);
+    // c:utils.c:1723,1726,1730 — `t = opts[XTRACE]; opts[XTRACE] = 0;
+    //                              promptexpand(...);  opts[XTRACE] = t;`
+    let saved = isset(XTRACE);
+    crate::ported::options::opt_state_set(
+        &crate::ported::zsh_h::opt_name(XTRACE), false,
+    );
     let prefix = crate::prompt::expand_prompt(&prefix_template);
-    crate::ported::options::opt_state_set("xtrace", saved);
+    crate::ported::options::opt_state_set(
+        &crate::ported::zsh_h::opt_name(XTRACE), saved,
+    );
     eprint!("{}", prefix);
 }
 

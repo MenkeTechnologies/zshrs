@@ -25,10 +25,12 @@ pub enum Emulation {
 }
 
 /// Emulation flags for option defaults
-const OPT_CSH: u8 = 1;                                                       // c:55
-const OPT_KSH: u8 = 2;                                                       // c:56
-const OPT_SH: u8 = 4;                                                        // c:57
-const OPT_ZSH: u8 = 8;                                                       // c:58
+// `#define OPT_X EMULATE_X` (options.c:55-58) — the option-default
+// bits ARE the emulation bits. Direct mirror of the C macros.
+const OPT_CSH: u8 = crate::ported::zsh_h::EMULATE_CSH as u8;                 // c:55
+const OPT_KSH: u8 = crate::ported::zsh_h::EMULATE_KSH as u8;                 // c:56
+const OPT_SH:  u8 = crate::ported::zsh_h::EMULATE_SH  as u8;                 // c:57
+const OPT_ZSH: u8 = crate::ported::zsh_h::EMULATE_ZSH as u8;                 // c:58
 const OPT_ALL: u8 = OPT_CSH | OPT_KSH | OPT_SH | OPT_ZSH;                    // c:60
 const OPT_BOURNE: u8 = OPT_KSH | OPT_SH;                                     // c:61
 const OPT_BSHELL: u8 = OPT_KSH | OPT_SH | OPT_ZSH;                           // c:62
@@ -37,420 +39,17 @@ const OPT_NONZSH: u8 = OPT_ALL & !OPT_ZSH;                                   // 
 
 /// Option flags
 // option is relevant to emulation                                          // c:66
-const OPT_EMULATE: u16 = 0x100;                                              // c:67
+const OPT_EMULATE: u16 = crate::ported::zsh_h::EMULATE_UNUSED as u16;        // c:67
 // option should never be set by emulate()                                  // c:68
-const OPT_SPECIAL: u16 = 0x200;                                              // c:69
+const OPT_SPECIAL: u16 = (crate::ported::zsh_h::EMULATE_UNUSED << 1) as u16; // c:69
 // option is an alias to an other option                                    // c:70
-const OPT_ALIAS: u16 = 0x400;                                                // c:71
+const OPT_ALIAS: u16 = (crate::ported::zsh_h::EMULATE_UNUSED << 2) as u16;   // c:71
 
 /// Every recognised shell option.
 /// Port of the `OPT_*` enum from Src/zsh.h — the C source uses
 /// integer constants threaded through `optlookup()`
 /// (Src/options.c:684), `dosetopt()` (line 735), and the option
 /// table built by `createoptiontable()` (line 471).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u16)]
-pub enum ShellOption {
-    // A
-    Aliases = 1,
-    AliasFuncDef,
-    AllExport,
-    AlwaysLastPrompt,
-    AlwaysToEnd,
-    AppendCreate,
-    AppendHistory,
-    AutoCd,
-    AutoContinue,
-    AutoList,
-    AutoMenu,
-    AutoNamedDirs,
-    AutoParamKeys,
-    AutoParamSlash,
-    AutoPushd,
-    AutoRemoveSlash,
-    AutoResume,
-    // B
-    BadPattern,
-    BangHist,
-    BareGlobQual,
-    BashAutoList,
-    BashRematch,
-    Beep,
-    BgNice,
-    BraceCcl,
-    BsdEcho,
-    // C
-    CaseGlob,
-    CaseMatch,
-    CasePaths,
-    CBases,
-    CPrecedences,
-    CdAbleVars,
-    CdSilent,
-    ChaseDots,
-    ChaseLinks,
-    CheckJobs,
-    CheckRunningJobs,
-    Clobber,
-    ClobberEmpty,
-    CombiningChars,
-    CompleteAliases,
-    CompleteInWord,
-    ContinueOnError,
-    Correct,
-    CorrectAll,
-    CshJunkieHistory,
-    CshJunkieLoops,
-    CshJunkieQuotes,
-    CshNullCmd,
-    CshNullGlob,
-    // D
-    DebugBeforeCmd,
-    // E
-    Emacs,
-    Equals,
-    ErrExit,
-    ErrReturn,
-    Exec,
-    ExtendedGlob,
-    ExtendedHistory,
-    EvalLineno,
-    // F
-    FlowControl,
-    ForceFloat,
-    FunctionArgZero,
-    // G
-    Glob,
-    GlobalExport,
-    GlobalRcs,
-    GlobAssign,
-    GlobComplete,
-    GlobDots,
-    GlobStarShort,
-    GlobSubst,
-    // H
-    HashCmds,
-    HashDirs,
-    HashExecutablesOnly,
-    HashListAll,
-    HistAllowClobber,
-    HistBeep,
-    HistExpireDupsFirst,
-    HistFcntlLock,
-    HistFindNoDups,
-    HistIgnoreAllDups,
-    HistIgnoreDups,
-    HistIgnoreSpace,
-    HistLexWords,
-    HistNoFunctions,
-    HistNoStore,
-    HistSubstPattern,
-    HistReduceBlanks,
-    HistSaveByCopy,
-    HistSaveNoDups,
-    HistVerify,
-    Hup,
-    // I
-    IgnoreBraces,
-    IgnoreCloseBraces,
-    IgnoreEof,
-    IncAppendHistory,
-    IncAppendHistoryTime,
-    Interactive,
-    InteractiveComments,
-    // K
-    KshArrays,
-    KshAutoload,
-    KshGlob,
-    KshOptionPrint,
-    KshTypeset,
-    KshZeroSubscript,
-    // L
-    ListAmbiguous,
-    ListBeep,
-    ListPacked,
-    ListRowsFirst,
-    ListTypes,
-    LocalOptions,
-    LocalLoops,
-    LocalPatterns,
-    LocalTraps,
-    Login,
-    LongListJobs,
-    // M
-    MagicEqualSubst,
-    MailWarning,
-    MarkDirs,
-    MenuComplete,
-    Monitor,
-    MultiByte,
-    MultiFuncDef,
-    MultiOs,
-    // N
-    NoMatch,
-    Notify,
-    NullGlob,
-    NumericGlobSort,
-    // O
-    OctalZeroes,
-    OverStrike,
-    // P
-    PathDirs,
-    PathScript,
-    PipeFail,
-    PosixAliases,
-    PosixArgZero,
-    PosixBuiltins,
-    PosixCd,
-    PosixIdentifiers,
-    PosixJobs,
-    PosixStrings,
-    PosixTraps,
-    PrintEightBit,
-    PrintExitValue,
-    Privileged,
-    PromptBang,
-    PromptCr,
-    PromptPercent,
-    PromptSp,
-    PromptSubst,
-    PushdIgnoreDups,
-    PushdMinus,
-    PushdSilent,
-    PushdToHome,
-    // R
-    RcExpandParam,
-    RcQuotes,
-    Rcs,
-    RecExact,
-    RematchPcre,
-    RmStarSilent,
-    RmStarWait,
-    // S
-    ShareHistory,
-    ShFileExpansion,
-    ShGlob,
-    ShInstdin,
-    ShNullCmd,
-    ShOptionLetters,
-    ShortLoops,
-    ShortRepeat,
-    ShWordSplit,
-    SingleCommand,
-    SingleLineZle,
-    SourceTrace,
-    SunKeyboardHack,
-    // T
-    TransientRprompt,
-    TrapsAsync,
-    TypesetSilent,
-    TypesetToUnset,
-    // U
-    Unset,
-    // V
-    Verbose,
-    Vi,
-    // W
-    WarnCreateGlobal,
-    WarnNestedVar,
-    // X
-    Xtrace,
-    // Z
-    Zle,
-    Dvorak,
-}
-
-impl ShellOption {
-    /// Get the canonical name of this option
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Aliases => "aliases",
-            Self::AliasFuncDef => "aliasfuncdef",
-            Self::AllExport => "allexport",
-            Self::AlwaysLastPrompt => "alwayslastprompt",
-            Self::AlwaysToEnd => "alwaystoend",
-            Self::AppendCreate => "appendcreate",
-            Self::AppendHistory => "appendhistory",
-            Self::AutoCd => "autocd",
-            Self::AutoContinue => "autocontinue",
-            Self::AutoList => "autolist",
-            Self::AutoMenu => "automenu",
-            Self::AutoNamedDirs => "autonamedirs",
-            Self::AutoParamKeys => "autoparamkeys",
-            Self::AutoParamSlash => "autoparamslash",
-            Self::AutoPushd => "autopushd",
-            Self::AutoRemoveSlash => "autoremoveslash",
-            Self::AutoResume => "autoresume",
-            Self::BadPattern => "badpattern",
-            Self::BangHist => "banghist",
-            Self::BareGlobQual => "bareglobqual",
-            Self::BashAutoList => "bashautolist",
-            Self::BashRematch => "bashrematch",
-            Self::Beep => "beep",
-            Self::BgNice => "bgnice",
-            Self::BraceCcl => "braceccl",
-            Self::BsdEcho => "bsdecho",
-            Self::CaseGlob => "caseglob",
-            Self::CaseMatch => "casematch",
-            Self::CasePaths => "casepaths",
-            Self::CBases => "cbases",
-            Self::CPrecedences => "cprecedences",
-            Self::CdAbleVars => "cdablevars",
-            Self::CdSilent => "cdsilent",
-            Self::ChaseDots => "chasedots",
-            Self::ChaseLinks => "chaselinks",
-            Self::CheckJobs => "checkjobs",
-            Self::CheckRunningJobs => "checkrunningjobs",
-            Self::Clobber => "clobber",
-            Self::ClobberEmpty => "clobberempty",
-            Self::CombiningChars => "combiningchars",
-            Self::CompleteAliases => "completealiases",
-            Self::CompleteInWord => "completeinword",
-            Self::ContinueOnError => "continueonerror",
-            Self::Correct => "correct",
-            Self::CorrectAll => "correctall",
-            Self::CshJunkieHistory => "cshjunkiehistory",
-            Self::CshJunkieLoops => "cshjunkieloops",
-            Self::CshJunkieQuotes => "cshjunkiequotes",
-            Self::CshNullCmd => "cshnullcmd",
-            Self::CshNullGlob => "cshnullglob",
-            Self::DebugBeforeCmd => "debugbeforecmd",
-            Self::Emacs => "emacs",
-            Self::Equals => "equals",
-            Self::ErrExit => "errexit",
-            Self::ErrReturn => "errreturn",
-            Self::Exec => "exec",
-            Self::ExtendedGlob => "extendedglob",
-            Self::ExtendedHistory => "extendedhistory",
-            Self::EvalLineno => "evallineno",
-            Self::FlowControl => "flowcontrol",
-            Self::ForceFloat => "forcefloat",
-            Self::FunctionArgZero => "functionargzero",
-            Self::Glob => "glob",
-            Self::GlobalExport => "globalexport",
-            Self::GlobalRcs => "globalrcs",
-            Self::GlobAssign => "globassign",
-            Self::GlobComplete => "globcomplete",
-            Self::GlobDots => "globdots",
-            Self::GlobStarShort => "globstarshort",
-            Self::GlobSubst => "globsubst",
-            Self::HashCmds => "hashcmds",
-            Self::HashDirs => "hashdirs",
-            Self::HashExecutablesOnly => "hashexecutablesonly",
-            Self::HashListAll => "hashlistall",
-            Self::HistAllowClobber => "histallowclobber",
-            Self::HistBeep => "histbeep",
-            Self::HistExpireDupsFirst => "histexpiredupsfirst",
-            Self::HistFcntlLock => "histfcntllock",
-            Self::HistFindNoDups => "histfindnodups",
-            Self::HistIgnoreAllDups => "histignorealldups",
-            Self::HistIgnoreDups => "histignoredups",
-            Self::HistIgnoreSpace => "histignorespace",
-            Self::HistLexWords => "histlexwords",
-            Self::HistNoFunctions => "histnofunctions",
-            Self::HistNoStore => "histnostore",
-            Self::HistSubstPattern => "histsubstpattern",
-            Self::HistReduceBlanks => "histreduceblanks",
-            Self::HistSaveByCopy => "histsavebycopy",
-            Self::HistSaveNoDups => "histsavenodups",
-            Self::HistVerify => "histverify",
-            Self::Hup => "hup",
-            Self::IgnoreBraces => "ignorebraces",
-            Self::IgnoreCloseBraces => "ignoreclosebraces",
-            Self::IgnoreEof => "ignoreeof",
-            Self::IncAppendHistory => "incappendhistory",
-            Self::IncAppendHistoryTime => "incappendhistorytime",
-            Self::Interactive => "interactive",
-            Self::InteractiveComments => "interactivecomments",
-            Self::KshArrays => "ksharrays",
-            Self::KshAutoload => "kshautoload",
-            Self::KshGlob => "kshglob",
-            Self::KshOptionPrint => "kshoptionprint",
-            Self::KshTypeset => "kshtypeset",
-            Self::KshZeroSubscript => "kshzerosubscript",
-            Self::ListAmbiguous => "listambiguous",
-            Self::ListBeep => "listbeep",
-            Self::ListPacked => "listpacked",
-            Self::ListRowsFirst => "listrowsfirst",
-            Self::ListTypes => "listtypes",
-            Self::LocalOptions => "localoptions",
-            Self::LocalLoops => "localloops",
-            Self::LocalPatterns => "localpatterns",
-            Self::LocalTraps => "localtraps",
-            Self::Login => "login",
-            Self::LongListJobs => "longlistjobs",
-            Self::MagicEqualSubst => "magicequalsubst",
-            Self::MailWarning => "mailwarning",
-            Self::MarkDirs => "markdirs",
-            Self::MenuComplete => "menucomplete",
-            Self::Monitor => "monitor",
-            Self::MultiByte => "multibyte",
-            Self::MultiFuncDef => "multifuncdef",
-            Self::MultiOs => "multios",
-            Self::NoMatch => "nomatch",
-            Self::Notify => "notify",
-            Self::NullGlob => "nullglob",
-            Self::NumericGlobSort => "numericglobsort",
-            Self::OctalZeroes => "octalzeroes",
-            Self::OverStrike => "overstrike",
-            Self::PathDirs => "pathdirs",
-            Self::PathScript => "pathscript",
-            Self::PipeFail => "pipefail",
-            Self::PosixAliases => "posixaliases",
-            Self::PosixArgZero => "posixargzero",
-            Self::PosixBuiltins => "posixbuiltins",
-            Self::PosixCd => "posixcd",
-            Self::PosixIdentifiers => "posixidentifiers",
-            Self::PosixJobs => "posixjobs",
-            Self::PosixStrings => "posixstrings",
-            Self::PosixTraps => "posixtraps",
-            Self::PrintEightBit => "printeightbit",
-            Self::PrintExitValue => "printexitvalue",
-            Self::Privileged => "privileged",
-            Self::PromptBang => "promptbang",
-            Self::PromptCr => "promptcr",
-            Self::PromptPercent => "promptpercent",
-            Self::PromptSp => "promptsp",
-            Self::PromptSubst => "promptsubst",
-            Self::PushdIgnoreDups => "pushdignoredups",
-            Self::PushdMinus => "pushdminus",
-            Self::PushdSilent => "pushdsilent",
-            Self::PushdToHome => "pushdtohome",
-            Self::RcExpandParam => "rcexpandparam",
-            Self::RcQuotes => "rcquotes",
-            Self::Rcs => "rcs",
-            Self::RecExact => "recexact",
-            Self::RematchPcre => "rematchpcre",
-            Self::RmStarSilent => "rmstarsilent",
-            Self::RmStarWait => "rmstarwait",
-            Self::ShareHistory => "sharehistory",
-            Self::ShFileExpansion => "shfileexpansion",
-            Self::ShGlob => "shglob",
-            Self::ShInstdin => "shinstdin",
-            Self::ShNullCmd => "shnullcmd",
-            Self::ShOptionLetters => "shoptionletters",
-            Self::ShortLoops => "shortloops",
-            Self::ShortRepeat => "shortrepeat",
-            Self::ShWordSplit => "shwordsplit",
-            Self::SingleCommand => "singlecommand",
-            Self::SingleLineZle => "singlelinezle",
-            Self::SourceTrace => "sourcetrace",
-            Self::SunKeyboardHack => "sunkeyboardhack",
-            Self::TransientRprompt => "transientrprompt",
-            Self::TrapsAsync => "trapsasync",
-            Self::TypesetSilent => "typesetsilent",
-            Self::TypesetToUnset => "typesettounset",
-            Self::Unset => "unset",
-            Self::Verbose => "verbose",
-            Self::Vi => "vi",
-            Self::WarnCreateGlobal => "warncreateglobal",
-            Self::WarnNestedVar => "warnnestedvar",
-            Self::Xtrace => "xtrace",
-            Self::Zle => "zle",
-            Self::Dvorak => "dvorak",
-        }
-    }
-}
 
 /// Option aliases for bash/ksh compatibility
 pub static OPTION_ALIASES: &[(&str, &str, bool)] = &[
@@ -582,60 +181,16 @@ impl ShellOptions {
         opts
     }
 
-    /// Set zsh default options
+    /// Set zsh-emulation default options. Direct port of the
+    /// `defset(on, EMULATE_ZSH)` walk: each option in `ZSH_OPTIONS_SET`
+    /// whose `optns_flags` carries the `EMULATE_ZSH` bit is set true.
+    /// Replaces the hardcoded name list with a real flag-table walk.
     pub fn set_zsh_defaults(&mut self) {
-        // Options that default to ON in zsh
-        let default_on = [
-            "aliases",
-            "alwayslastprompt",
-            "appendhistory",
-            "autolist",
-            "automenu",
-            "autoparamkeys",
-            "autoparamslash",
-            "autoremoveslash",
-            "bareglobqual",
-            "beep",
-            "bgnice",
-            "caseglob",
-            "casematch",
-            "checkjobs",
-            "checkrunningjobs",
-            "clobber",
-            "debugbeforecmd",
-            "equals",
-            "evallineno",
-            "exec",
-            "flowcontrol",
-            "functionargzero",
-            "glob",
-            "globalexport",
-            "globalrcs",
-            "hashcmds",
-            "hashdirs",
-            "hashlistall",
-            "histbeep",
-            "histsavebycopy",
-            "hup",
-            "interactive",
-            "listambiguous",
-            "listbeep",
-            "listtypes",
-            "multifuncdef",
-            "multios",
-            "nomatch",
-            "notify",
-            "promptcr",
-            "promptpercent",
-            "promptsp",
-            "rcs",
-            "shortloops",
-            "unset",
-            "zle",
-        ];
-
-        for opt in default_on {
-            self.options.insert(opt.to_string(), true);
+        let zsh_emu = crate::ported::zsh_h::EMULATE_ZSH;
+        for name in ZSH_OPTIONS_SET.iter() {
+            if defset(name, zsh_emu) {
+                self.options.insert((*name).to_string(), true);
+            }
         }
     }
 
@@ -753,27 +308,39 @@ impl ShellOptions {
         self.install_emulation_defaults();
     }
 
-    /// Install default options for current emulation
+    /// Install default options for the current `self.emulation`.
+    /// Mirrors the C body of `emulate()` at `Src/options.c:531-572`
+    /// which calls `installemulation(*new_emulation, new_opts)` to
+    /// populate `new_opts[]`, then applies it onto the live `opts[]`
+    /// skipping OPT_SPECIAL entries (exec.c:5933-5938).
     fn install_emulation_defaults(&mut self) {
-        // This would set all the emulation-specific defaults
-        // For now, just set some key differences
-        match self.emulation {
-            Emulation::Sh | Emulation::Ksh => {
-                self.options.insert("shwordsplit".to_string(), true);
-                self.options.insert("globsubst".to_string(), true);
-                self.options.insert("ksharrays".to_string(), true);
-                self.options.insert("posixbuiltins".to_string(), true);
-                self.options.insert("promptpercent".to_string(), false);
-                self.options.insert("banghist".to_string(), false);
+        // c:531-549 — translate emulation enum → bit pattern.
+        let mut emu = match self.emulation {
+            Emulation::Zsh => crate::ported::zsh_h::EMULATE_ZSH,
+            Emulation::Ksh => crate::ported::zsh_h::EMULATE_KSH,
+            Emulation::Sh  => crate::ported::zsh_h::EMULATE_SH,
+            Emulation::Csh => crate::ported::zsh_h::EMULATE_CSH,
+        };
+        if self.fully_emulating {
+            emu |= crate::ported::zsh_h::EMULATE_FULLY;                      // c:551
+        }
+        // c:552 — `installemulation(*new_emulation, new_opts);`
+        let mut new_opts: std::collections::HashMap<String, bool> =
+            std::collections::HashMap::new();
+        installemulation(emu, &mut new_opts);
+        // exec.c:5933-5938 — `for (i=0;i<OPT_SIZE;i++) if (!(optns[i].
+        // node.flags & OPT_SPECIAL)) opts[i] = new_opts[i];`
+        for (k, v) in &new_opts {
+            if (optns_flags(k) & OPT_SPECIAL) == 0 {
+                self.options.insert(k.clone(), *v);
+                opt_state_set(k, *v);
             }
-            Emulation::Csh => {
-                self.options.insert("cshjunkiehistory".to_string(), true);
-                self.options.insert("cshjunkieloops".to_string(), true);
-                self.options.insert("cshnullcmd".to_string(), true);
-            }
-            Emulation::Zsh => {
-                self.set_zsh_defaults();
-            }
+        }
+        // Keep canonical zsh-mode defaults aligned with the zsh
+        // baseline; for non-zsh emulations the setemulate walk above
+        // sets every emulation-relevant option per defset(name, emu).
+        if matches!(self.emulation, Emulation::Zsh) {
+            self.set_zsh_defaults();
         }
     }
 
@@ -1235,22 +802,12 @@ pub fn printoptionnode(name: &str, set: bool) {                              // 
 }
 
 // =====================================================================
-// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
-// =====================================================================
-//
-// `default_on_options` collapses the C `defset(on, emulation)` macro
-// (Src/options.c:73, `(!!((X)->node.flags & my_emulation))`) into
-// one accessor. The C macro reads the emulation flag bit off the
-// `optns[]` entry for the option; printoptionnode/printoptionnodestate
-// use it to decide whether to emit "OPT" or "noOPT" in `setopt`'s
-// no-arg listing. The Rust port doesn't yet carry per-option
-// emulation flags (porting the optns[] table with each entry's
-// OPT_EMULATE / OPT_BOURNE / OPT_ZSH bits is open work), so this
-// returns the empty set as a placeholder — every option prints as
-// "default OFF" until the optns[] flag table lands.
-//
-// !!! Do NOT use this for any decision that needs the real default
-// state. Replace with the optns[] flag-table walk once that ports. !!!
+// `default_on_options` mirrors the `defset(on, emulation)` macro
+// (Src/options.c:73, `(!!((X)->node.flags & my_emulation))`) — the
+// `optns[]` flag-table walk now lives in `optns_flags(name)` below,
+// so `default_on_options` returns the real set of zsh-emulation
+// defaults. C source uses the inline macro at every callsite;
+// the Rust port factors it through one collect-and-return helper.
 // =====================================================================
 
 // #define defset(X, my_emulation) (!!((X)->node.flags & my_emulation))  // c:73
@@ -1466,48 +1023,94 @@ fn default_on_options() -> std::collections::HashSet<&'static str> {
     set
 }
 
-/// Direct port of `setemulate()` from Src/options.c:507.
-/// C body (c:510-521):
+/// Port of `static int setemulate_emulation;` from `Src/options.c:496`.
+/// The target emulation bitmap, written by `installemulation` and
+/// read by the `setemulate` per-option callback (c:518).
+static SETEMULATE_EMULATION: std::sync::atomic::AtomicI32 =                  // c:496
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `static char *setemulate_opts;` from `Src/options.c:501`.
+/// The precomputed `new_opts[]` array `setemulate` writes into. C
+/// stores it as a flat `char[]` indexed by `optno`; the Rust port
+/// keeps it as a HashMap<String, bool> since the runtime is FNV-
+/// hashed instead of densely indexed.
+static SETEMULATE_OPTS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, bool>>,
+> = std::sync::OnceLock::new();                                              // c:501
+
+fn setemulate_opts_lock()
+    -> &'static std::sync::Mutex<std::collections::HashMap<String, bool>>
+{
+    SETEMULATE_OPTS
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Direct port of `static void setemulate(HashNode hn, int fully)`
+/// from `Src/options.c:506-519`. C body:
 /// ```c
 /// Optname on = (Optname) hn;
-/// if (!(on->node.flags & OPT_SPECIAL))
-///     new_opts[on->optno] =
-///         defset(on, setemulate_emulation) ||
-///         (fully && (on->node.flags & OPT_EMULATE));
+/// if (!(on->node.flags & OPT_ALIAS) &&
+///     ((fully && !(on->node.flags & OPT_SPECIAL)) ||
+///      (on->node.flags & OPT_EMULATE)))
+///     setemulate_opts[on->optno] = defset(on, setemulate_emulation);
 /// ```
-/// Called via scanhashtable per option to reset every non-SPECIAL
-/// option to its new-emulation default. Static-link path: walks
-/// ZSH_OPTIONS_SET and writes opt_state_set per option using
-/// ShellOptions::set_zsh_defaults() as the source of defaults.
-pub fn setemulate(_name: &str, _fully: i32) {                                // c:507
-    let mut opts = ShellOptions::new();
-    opts.set_zsh_defaults();
-    for (k, v) in opts.list().into_iter() {                                  // c:511 scanhashtable
-        opt_state_set(&k, v);                                                // c:514 new_opts[optno] = ...
+/// Per-option callback invoked by `scanhashtable(optiontab, ...,
+/// setemulate, ...)` to populate the `new_opts[]` table with each
+/// option's default-for-target-emulation state.
+pub fn setemulate(name: &str, fully: i32) {                                  // c:507
+    let flags = optns_flags(name);                                           // c:509
+    // c:515-517 — emulation-relevant filter.
+    let is_alias = (flags & OPT_ALIAS) != 0;
+    let is_special = (flags & OPT_SPECIAL) != 0;
+    let is_emulate = (flags & OPT_EMULATE) != 0;
+    if is_alias {
+        return;
+    }
+    if !((fully != 0 && !is_special) || is_emulate) {                        // c:516-517
+        return;
+    }
+    // c:518 — `setemulate_opts[on->optno] = defset(on, setemulate_emulation);`
+    let target = SETEMULATE_EMULATION.load(std::sync::atomic::Ordering::Relaxed);
+    let on_by_default = defset(name, target);
+    if let Ok(mut tab) = setemulate_opts_lock().lock() {
+        tab.insert(name.to_string(), on_by_default);
     }
 }
 
-/// Direct port of `installemulation()` from Src/options.c:523.
-/// C body (c:526-531):
+/// Direct port of `void installemulation(int new_emulation, char
+/// *new_opts)` from `Src/options.c:521-529`:
 /// ```c
-/// emulation = new_emulation;
-/// for (i = 0; i < OPT_SIZE; i++)
-///     if (!(optns[i-FIRST_OPT].node.flags & OPT_SPECIAL))
-///         opts[i] = new_opts[i];
+/// setemulate_emulation = new_emulation;
+/// setemulate_opts = new_opts;
+/// scanhashtable(optiontab, 0, 0, 0, setemulate,
+///               !!(new_emulation & EMULATE_FULLY));
 /// ```
-/// Bulk-applies a precomputed `new_opts[OPT_SIZE]` array onto the
-/// live `opts[]` array, skipping OPT_SPECIAL entries.
+/// Populates `new_opts[]` with each option's default-for-target-
+/// emulation state by walking `optiontab` via the `setemulate`
+/// per-option callback. Does NOT mutate the live `opts[]` — that
+/// happens in the caller (`emulate()` and `bin_emulate -L`).
 pub fn installemulation(new_emulation: i32,
-                        new_opts: &std::collections::HashMap<String, bool>) { // c:523
-    crate::ported::modules::ksh93::emulation                                 // c:526 emulation = ...
-        .store(new_emulation, std::sync::atomic::Ordering::Relaxed);
-    for (k, v) in new_opts {                                                 // c:527-530
-        // c:528-529 — `if (!(optns[i].node.flags & OPT_SPECIAL))`. The
-        // SPECIAL options (interactive, loginshell, monitor, privileged,
-        // restricted, shinstdin, singlecommand, zle) preserve their
-        // current value across an emulation switch.
-        if (optns_flags(k) & OPT_SPECIAL) == 0 {
-            opt_state_set(k, *v);                                            // c:530 opts[i] = ...
+                        new_opts: &mut std::collections::HashMap<String, bool>) { // c:521
+    use crate::ported::zsh_h::EMULATE_FULLY;
+    // c:525 — `setemulate_emulation = new_emulation;`
+    SETEMULATE_EMULATION
+        .store(new_emulation, std::sync::atomic::Ordering::Relaxed);         // c:525
+    // c:526 — `setemulate_opts = new_opts;`. We can't alias the
+    // caller's HashMap directly, so the per-option callback writes
+    // into our module-static and we splice it back into `new_opts`.
+    if let Ok(mut tab) = setemulate_opts_lock().lock() {
+        tab.clear();
+    }
+    // c:527-528 — scanhashtable(optiontab, ..., setemulate, fully).
+    let fully = if (new_emulation & EMULATE_FULLY) != 0 { 1 } else { 0 };    // c:528
+    for name in ZSH_OPTIONS_SET.iter() {
+        setemulate(name, fully);                                             // c:527
+    }
+    // Splice setemulate_opts → new_opts so the C semantic of
+    // "new_opts is now populated" holds for the caller.
+    if let Ok(tab) = setemulate_opts_lock().lock() {
+        for (k, v) in tab.iter() {
+            new_opts.insert(k.clone(), *v);
         }
     }
 }

@@ -363,6 +363,14 @@ scriptname_lock
 argzero_lock
 noerrs_lock
 locallevel_lock
+
+# options.rs setemulate_opts_lock — Rust-only `get_or_init` helper for
+# the C `static char *setemulate_opts;` file-static (options.c:501)
+# that the per-option `setemulate` callback writes to and
+# `installemulation` then splices into the caller's `new_opts`. C
+# dereferences the global directly; Rust port wraps the
+# OnceLock<Mutex<HashMap>>. Same pattern as utils.rs scriptname_lock.
+setemulate_opts_lock
 lineno_lock
 shinstdin_lock
 set_scriptname

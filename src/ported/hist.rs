@@ -9,7 +9,14 @@ use std::sync::Mutex;
 
 use crate::ported::zsh_h::histent;
 pub use crate::ported::zsh_h::CaseMod;
-
+use crate::zsh_h::{
+    isset,
+    BANGHIST, HFILE_FAST, HFILE_USE_OPTIONS,
+    HISTIGNOREALLDUPS, HISTIGNOREDUPS, HISTIGNORESPACE,
+    HISTNOFUNCTIONS, HISTNOSTORE, HISTREDUCEBLANKS,
+    INCAPPENDHISTORY, INCAPPENDHISTORYTIME, INTERACTIVE,
+    SHAREHISTORY, SHINSTDIN,
+};
 // =========================================================================
 // File-scope globals from hist.c
 // =========================================================================
@@ -616,8 +623,6 @@ pub fn checkcurline(line: &str) -> i32 {
 
 /// Port of `void hbegin(int dohist)` from Src/hist.c:1110.
 pub fn hbegin(dohist: i32) {                                                 // c:1110
-    use crate::ported::options::opt_state_get;
-
     // isfirstln/isfirstch live on ZshLexer in zshrs_parse, not as
     // globals — caller resets them via lexer instance API.            // c:1114
 
@@ -626,8 +631,9 @@ pub fn hbegin(dohist: i32) {                                                 // 
         Ordering::Relaxed,
     );
     histdone.store(0, Ordering::SeqCst);                                     // c:1116
-    let interact = opt_state_get("interactive").unwrap_or(false);
-    let shinstdin = opt_state_get("shinstdin").unwrap_or(false);
+    // c:1117 — `isset(INTERACTIVE)` / `isset(SHINSTDIN)`.
+    let interact = isset(INTERACTIVE);
+    let shinstdin = isset(SHINSTDIN);
     if dohist == 0 {                                                         // c:1117
         stophist.store(2, Ordering::SeqCst);                                 // c:1118
     } else if dohist != 2 {                                                  // c:1119
@@ -657,7 +663,7 @@ pub fn hbegin(dohist: i32) {                                                 // 
         chwordlen.store(64, Ordering::SeqCst);
         drop(w);
         // hgetc/hungetc/hwaddc/hwbegin/hwabort/hwend/addtoline c:1149-1155 — see c:1139.
-        if !opt_state_get("banghist").unwrap_or(true) {                      // c:1156
+        if !isset(BANGHIST) {                                                // c:1156
             stophist.store(4, Ordering::SeqCst);                             // c:1157
         }
     }
@@ -687,25 +693,24 @@ pub fn hbegin(dohist: i32) {                                                 // 
         histactive.store(HA_ACTIVE | HA_NOINC, Ordering::SeqCst);            // c:1169
     }
 
-    if opt_state_get("incappendhistorytime").unwrap_or(false)                // c:1189
-        && !opt_state_get("sharehistory").unwrap_or(false)
-        && !opt_state_get("incappendhistory").unwrap_or(false)
+    if isset(INCAPPENDHISTORYTIME) // c:1189
+        && !isset(SHAREHISTORY)
+        && !isset(INCAPPENDHISTORY)
         && (histactive.load(Ordering::SeqCst) & HA_NOINC) == 0
         && strin.load(Ordering::SeqCst) == 0
         && histsave_stack_pos.load(Ordering::SeqCst) == 0
     {
         let hf = resolve_histfile();                                         // c:1192
         savehistfile(hf.as_deref(), 0                                        // c:1193
-            | crate::ported::zsh_h::HFILE_USE_OPTIONS as i32
-            | crate::ported::zsh_h::HFILE_FAST as i32);
+            | HFILE_USE_OPTIONS as i32
+            | HFILE_FAST as i32);
     }
 }
 
 /// Port of `static int should_ignore_line(Eprog prog)` from Src/hist.c:1425.
 fn should_ignore_line(prog: Option<&[u8]>) -> i32 {                          // c:1425
-    use crate::ported::options::opt_state_get;
     let line = chline.lock().unwrap().clone();
-    if opt_state_get("histignorespace").unwrap_or(false) {                   // c:1427
+    if isset(HISTIGNORESPACE) {                                              // c:1427
         if line.starts_with(' ') /* aliasspaceflag — alias state TBD */ {    // c:1428
             return 1;                                                        // c:1429
         }
@@ -713,12 +718,12 @@ fn should_ignore_line(prog: Option<&[u8]>) -> i32 {                          // 
     if prog.is_none() {                                                      // c:1432
         return 0;                                                            // c:1433
     }
-    if opt_state_get("histnofunctions").unwrap_or(false) {                   // c:1435
+    if isset(HISTNOFUNCTIONS) {                                              // c:1435
         // Inspecting an Eprog requires the wordcode VM port — leave the
         // funcdef detection to the executor; conservatively return 0.    // c:1436-1440
         return 0;
     }
-    if opt_state_get("histnostore").unwrap_or(false) {                       // c:1443
+    if isset(HISTNOSTORE) {                                                  // c:1443
         // getjobtext(prog, NULL) — text reconstruction also needs the
         // wordcode VM. Apply the simpler text-based filters on chline
         // for the cases the C code carves out.
@@ -752,9 +757,6 @@ fn should_ignore_line(prog: Option<&[u8]>) -> i32 {                          // 
 
 /// Port of `int hend(Eprog prog)` from Src/hist.c:1474.
 pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // c:1474
-    use crate::ported::options::opt_state_get;
-    use crate::ported::zsh_h::{HFILE_FAST, HFILE_USE_OPTIONS};
-
     let stack_pos = histsave_stack_pos.load(Ordering::SeqCst);               // c:1476
     let mut save: i32 = 1;                                                   // c:1484
     let mut hookret: i32 = 0;
@@ -777,8 +779,7 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // 
         crate::ported::signals::unqueue_signals();                           // c:1500
         return 1;                                                            // c:1501
     }
-    let cur_ignore_all = if opt_state_get("histignorealldups")               // c:1503
-        .unwrap_or(false) { 1 } else { 0 };
+    let cur_ignore_all = if isset(HISTIGNOREALLDUPS) { 1 } else { 0 };       // c:1503
     let prev_ignore_all = hist_ignore_all_dups.load(Ordering::SeqCst);
     if prev_ignore_all != cur_ignore_all                                     // c:1503
         && {
@@ -803,7 +804,7 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // 
         crate::ported::utils::errflag.store(new_errflag, Ordering::Relaxed);
     }
     let hf = resolve_histfile();                                             // c:1528
-    if opt_state_get("sharehistory").unwrap_or(false)                        // c:1529
+    if isset(SHAREHISTORY)                                                   // c:1529
         && lockhistfile(hf.as_deref(), 0) == 0
     {
         readhistfile(hf.as_deref(), 0,                                       // c:1530
@@ -889,7 +890,7 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // 
             } else {
                 drop(words);
             }
-            if opt_state_get("histreduceblanks").unwrap_or(false) {          // c:1593
+            if isset(HISTREDUCEBLANKS) {                                     // c:1593
                 text = histreduceblanks(&text);                              // c:1594
             }
         }
@@ -898,8 +899,7 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // 
             else { 0 };
         let mut he_idx: Option<usize> = None;
         let mut overwrite_old: u32 = 0;
-        if (opt_state_get("histignoredups").unwrap_or(false)
-            || opt_state_get("histignorealldups").unwrap_or(false))
+        if (isset(HISTIGNOREDUPS) || isset(HISTIGNOREALLDUPS))                // c:1602
             && save > 0
         {
             let ring = hist_ring.lock().unwrap();
@@ -956,12 +956,12 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // 
     hptr.store(0, Ordering::SeqCst);                                         // c:1630
     histactive.store(0, Ordering::SeqCst);                                   // c:1632
 
-    let share = opt_state_get("sharehistory").unwrap_or(false);
+    let share = isset(SHAREHISTORY);
     let do_inc = if share {
         histfileIsLocked() != 0                                              // c:1636
     } else {
-        opt_state_get("incappendhistory").unwrap_or(false)                   // c:1637
-            || (opt_state_get("incappendhistorytime").unwrap_or(false)       // c:1637
+        isset(INCAPPENDHISTORY)                                              // c:1637
+            || (isset(INCAPPENDHISTORYTIME)                                  // c:1637
                 && histsave_stack_pos.load(Ordering::SeqCst) != 0)           // c:1638
     };
     if do_inc {
