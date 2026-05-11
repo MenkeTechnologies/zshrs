@@ -18,6 +18,7 @@
 #![allow(unused_imports)]
 #![allow(unused_assignments)]
 #![allow(unreachable_patterns)]
+#![allow(clippy::all)]
 
 pub mod lex;
 pub mod parse;

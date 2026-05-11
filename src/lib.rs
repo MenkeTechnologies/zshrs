@@ -15,9 +15,27 @@
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 #![allow(unused_assignments)]
+#![allow(unused_mut)]
+#![allow(unused_parens)]
+#![allow(unused_doc_comments)]
 #![allow(unreachable_patterns)]
 #![allow(deprecated)]
 #![allow(unexpected_cfgs)]
+// Allow zsh-canonical identifier names (lowercase statics/constants/types
+// like `ca_parsed`, `convchar_t`, `P_ISBRANCH`) so the ports stay
+// faithful to the C source per PORT.md.
+#![allow(non_snake_case)]
+#![allow(non_camel_case_types)]
+#![allow(non_upper_case_globals)]
+// Function-pointer-to-integer casts appear in ported dispatch tables.
+#![allow(function_casts_as_integer)]
+// Clippy: the C → Rust ports preserve idioms from the zsh source
+// (raw pointer derefs, dead-loop `do { ... } while (0)` shapes, bitmasks
+// that look redundant but match the C, etc.). Silence the whole group so
+// port fidelity wins over Rust-idiom rewrites. New non-ported code
+// should still aim for clippy-clean, but at file/function scope, not
+// crate-wide.
+#![allow(clippy::all)]
 
 pub mod exec_jobs;
 pub mod extensions;

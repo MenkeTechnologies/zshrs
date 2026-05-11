@@ -361,7 +361,7 @@ pub fn rthingy_nocreate(name: &str) -> bool {                                // 
 /// ```
 /// Bind `w` to thingy `t_name`. Caller's Thingy reference is
 /// consumed when TH_IMMORTAL blocks the bind. Samew chains are
-/// implicit in Rust — the Arc<Widget> identity links peers.
+/// implicit in Rust — the `Arc<Widget>` identity links peers.
 /// Returns 0 on success, -1 on TH_IMMORTAL block.
 pub fn bindwidget(w: Arc<Widget>, t_name: &str) -> i32 {                     // c:197
     let (immortal, disabled, same) = {
@@ -487,7 +487,7 @@ pub fn unbindwidget(t_name: &str, override_: i32) -> i32 {                   // 
 /// the widget's own dispatch), defer the free by setting WIDGET_FREE
 /// — the dispatcher checks this flag after returning.
 ///
-/// In Rust the Arc<Widget> auto-drops; this fn exists so the
+/// In Rust the `Arc<Widget>` auto-drops; this fn exists so the
 /// INUSE/FREE flag handshake matches C exactly. The actual storage
 /// drop happens when the last Arc is released by the caller's scope.
 pub fn freewidget(w: Arc<Widget>) {                                          // c:255

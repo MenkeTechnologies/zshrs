@@ -307,7 +307,7 @@ pub fn getpmmapfile(name: &str) -> Option<String> {                      // c:21
 /// magic-assoc scan callback for `${(k)mapfile}` / `${(kv)mapfile}`.
 /// Walks the cwd and yields one entry per file. C source quotes:
 /// "Hmmm, it's rather wasteful always to read the contents.  In
-/// fact, it's grotesequely [sic] wasteful, since that would mean
+/// fact, it's grotesequely \[sic\] wasteful, since that would mean
 /// we always read the entire contents of every single file in the
 /// directory into memory.  Hence just leave it empty." → values are
 /// always `""` (c:263).

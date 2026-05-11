@@ -5,14 +5,14 @@
 //! to avoid Rust-only type wrappers.
 //!
 //! Functions (matching C 1:1):
-//!   - statmodeprint  [c:47]
-//!   - statuidprint   [c:132]
-//!   - statgidprint   [c:161]
-//!   - stattimeprint  [c:191]
-//!   - statulprint    [c:211]
-//!   - statlinkprint  [c:219]
-//!   - statprint      [c:234]
-//!   - bin_stat       [c:368]
+//!   - statmodeprint  `[c:47]`
+//!   - statuidprint   `[c:132]`
+//!   - statgidprint   `[c:161]`
+//!   - stattimeprint  `[c:191]`
+//!   - statulprint    `[c:211]`
+//!   - statlinkprint  `[c:219]`
+//!   - statprint      `[c:234]`
+//!   - bin_stat       `[c:368]`
 //!   - 6 module loaders
 
 use crate::ported::exec::ShellExecutor;

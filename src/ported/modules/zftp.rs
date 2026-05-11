@@ -3483,7 +3483,7 @@ pub fn zftp_dir(name: &str, args: &[&str], flags: i32) -> i32 {                 
 }
 
 /// Port of `zftp_cd()` from `Src/Modules/zftp.c:2332`.
-/// C: send CDUP\r\n or CWD <dir>\r\n based on flags + arg shape.
+/// C: send `CDUP\r\n` or `CWD <dir>\r\n` based on flags + arg shape.
 /// Then call zfgetcwd to update the cached pwd.
 pub fn zftp_cd(_name: &str, args: &[&str], flags: i32) -> i32 {                 // c:2332
     let ret: i32;                                                               // c:2335 int ret
@@ -3505,7 +3505,7 @@ pub fn zftp_cd(_name: &str, args: &[&str], flags: i32) -> i32 {                 
 /// Port of `zftp_type()` from `Src/Modules/zftp.c:2426`.
 /// C: set the transfer-type byte (A=ASCII, I=binary). When ZFTP_TASC/
 /// ZFTP_TBIN flags are set (ascii/binary subcommands route here),
-/// pick the type from the flag; otherwise read from args[0]. With no
+/// pick the type from the flag; otherwise read from `args[0]`. With no
 /// args, print the current type.
 pub fn zftp_type(name: &str, args: &[&str], flags: i32) -> i32 {                // c:2426
     use std::io::Write;

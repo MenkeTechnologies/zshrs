@@ -1678,7 +1678,7 @@ pub fn refkeymap(km: &mut Keymap) {                                          // 
 /// `keymapnamtab` entries holding the same `Arc<Keymap>`, so a
 /// standalone bump-by-name has no observable effect — the rc
 /// equivalent only advances when an additional name is linked via
-/// `linkkeymap`. Same for `primary` promotion (Arc<Keymap> is
+/// `linkkeymap`. Same for `primary` promotion (`Arc<Keymap>` is
 /// immutable; promotion only happens on the next `linkkeymap`).
 /// We keep the lookup as a contract check so callers see a working
 /// "did this name exist?" probe.
@@ -1745,7 +1745,7 @@ pub fn scancopykeys(_kb: &KeyBinding) {                                      // 
 /// from `Src/Zle/zle_keymap.c:381-426`. Enumerates every binding
 /// in `km` — single-byte `first[256]` entries first, then
 /// multi-byte `multi` entries. `sort != 0` lex-sorts the multi-byte
-/// keys before yielding. The Rust port returns a Vec<Vec<u8>> of
+/// keys before yielding. The Rust port returns a `Vec<Vec<u8>>` of
 /// the sequences; callers iterate.
 pub fn scankeymap(km: &Keymap, sort: i32) -> Vec<Vec<u8>> {                  // c:381
     let mut seqs: Vec<Vec<u8>> = Vec::new();
@@ -1790,7 +1790,7 @@ pub fn scanlistmaps() -> Vec<String> {                                       // 
 /// `Arc<Keymap>`. The standalone fn is invoked via scanhashtable
 /// from `unrefkeymap_by_name` only. In Rust the same effect happens
 /// implicitly: when a name's entry is removed and another name
-/// still references the same Arc<Keymap>, that other name is the
+/// still references the same `Arc<Keymap>`, that other name is the
 /// "new primary" — no explicit promotion needed, since reads via
 /// `openkeymap(other_name)` already resolve to the shared Arc.
 pub fn scanprimaryname(_name: &str) {                                        // c:224

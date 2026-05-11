@@ -1143,7 +1143,7 @@ pub static MATCHLASTSUB: std::sync::OnceLock<Mutex<Option<Box<crate::ported::zle
 /// the line char, then runs `pattern_match_restrict` against the
 /// bmatchers chain. The 250-line orchestration depends on the
 /// metafied-byte conversion path (`MB_METACHARLENCONV`) which
-/// doesn't translate to Rust's wide-char Vec<char> as a line-for-
+/// doesn't translate to Rust's wide-char `Vec<char>` as a line-for-
 /// line port.
 ///
 /// The Rust port handles the common case (lpat all CPAT_CHAR) by

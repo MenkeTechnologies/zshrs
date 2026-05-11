@@ -4429,8 +4429,8 @@ pub fn zputenv(str: &str) -> i32 {                                           // 
 /// Returns Some(index) on a match; the C source writes the
 /// index into `*pos` and returns 1.
 ///
-/// Rust signature differs (no out-param; returns Option<usize>)
-/// — the C int-with-out-param idiom maps to Option<index> here.
+/// Rust signature differs (no out-param; returns `Option<usize>`)
+/// — the C int-with-out-param idiom maps to `Option<index>` here.
 /// Walks std::env::vars_os() which preserves the same ordering
 /// as the underlying libc environ array.
 pub fn findenv(name: &str) -> Option<usize> {                                // c:5391

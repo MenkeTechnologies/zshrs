@@ -578,7 +578,7 @@ pub struct Cadata {                                                      // c:31
     pub pre: Option<String>,                                             // c:321
     /// Suffix to insert (-S).
     pub suf: Option<String>,                                             // c:322
-    /// Name of the group (-[JV]).
+    /// Name of the group (`-[JV]`).
     pub group: Option<String>,                                           // c:323
     /// Remove suffix on chars... (-r).
     pub rems: Option<String>,                                            // c:324
@@ -586,9 +586,9 @@ pub struct Cadata {                                                      // c:31
     pub remf: Option<String>,                                            // c:325
     /// Ignored suffixes (-F).
     pub ign: Option<String>,                                             // c:326
-    /// CMF_* flags (-[fqn]).
+    /// CMF_* flags (`-[fqn]`).
     pub flags: i32,                                                      // c:327
-    /// CAF_* flags (-[QUa]).
+    /// CAF_* flags (`-[QUa]`).
     pub aflags: i32,                                                     // c:328
     /// Match spec (parsed from -M).
     pub match_: Option<Box<Cmatcher>>,                                   // c:329 (Rust keyword)
