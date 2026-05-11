@@ -1622,11 +1622,69 @@ pub fn zfgetdata(_name: &str, _rest: &str, _cmd: &str, _getsize: i32) -> i32 {
 }
 
 /// Port of `zfgetinfo()` from `Src/Modules/zftp.c:1999`.
-/// C: `static char * zfgetinfo(char *prompt, int noecho)` — reads from tty.
+/// C: `static char * zfgetinfo(char *prompt, int noecho)` — prompt
+/// the tty (echoing or with ECHO masked off for passwords) and read
+/// one line of input.
 #[allow(non_snake_case)]
-pub fn zfgetinfo(_prompt: &str, _noecho: i32) -> Option<String> {
-    // c:1999-2060 — termios setup + read line from tty.
-    None
+pub fn zfgetinfo(prompt: &str, noecho: i32) -> Option<String> {              // c:1999
+    use std::io::{BufRead, Write};
+    // c:2001-2006 — locals.
+    let mut resettty: i32 = 0;                                                // c:2001
+    let mut instr = String::new();                                            // c:2005 char instr[256]
+    let len: usize = 0;                                                       // c:2006 (unused in Rust path)
+    let _ = len;
+
+    let saved_termios: Option<libc::termios>;
+
+    // c:2013 — if (isatty(0)) prompt + tty setup.
+    if unsafe { libc::isatty(0) } != 0 {                                      // c:2013
+        if noecho != 0 {                                                      // c:2014
+            // c:2024-2032 — copy current termios, clear ECHO, install.
+            let mut ti: libc::termios = unsafe { std::mem::zeroed() };
+            if unsafe { libc::tcgetattr(0, &mut ti) } == 0 {
+                saved_termios = Some(ti);
+                ti.c_lflag &= !libc::ECHO;                                    // c:2028
+                unsafe { libc::tcsetattr(0, libc::TCSANOW, &ti); }            // c:2032
+                resettty = 1;                                                 // c:2033
+            } else {
+                saved_termios = None;
+            }
+        } else {
+            saved_termios = None;
+        }
+        // c:2035-2037 — fflush(stdin) + write prompt to stderr.
+        eprint!("{}", prompt);                                                // c:2036
+        let _ = std::io::stderr().flush();                                    // c:2037
+    } else {
+        saved_termios = None;
+    }
+
+    // c:2040-2043 — fgets(instr, 256, stdin); strip trailing \n.
+    let stdin = std::io::stdin();
+    let mut handle = stdin.lock();
+    match handle.read_line(&mut instr) {                                      // c:2040
+        Ok(0) => instr.clear(),                                               // c:2041 NULL → empty
+        Ok(_) => {                                                            // c:2042-2043 strip \n
+            if instr.ends_with('\n') {
+                instr.pop();
+            }
+        }
+        Err(_) => instr.clear(),
+    }
+
+    // c:2045 — strret = dupstring(instr); (just keep instr as the result)
+    let strret = instr.clone();
+
+    // c:2047-2052 — restore termios if we modified it.
+    if resettty != 0 {                                                        // c:2047
+        println!();                                                           // c:2049 '\n' didn't echo
+        let _ = std::io::stdout().flush();                                    // c:2050
+        if let Some(ti) = saved_termios {                                     // c:2051
+            unsafe { libc::tcsetattr(0, libc::TCSANOW, &ti); }
+        }
+    }
+
+    Some(strret)                                                              // c:2054
 }
 
 /// Port of `zfgetline()` from `Src/Modules/zftp.c:571`.
@@ -2022,12 +2080,94 @@ pub fn zfread(fd: i32, bf: &mut [u8], sz: libc::off_t, tmout: i32) -> i32 {   //
     ret as i32                                                                // c:1325
 }
 
+/// Port of `static int zfread_eof` file-static from
+/// `Src/Modules/zftp.c:1353`. Set by zfread_block when the ZFHD_EOFB
+/// flag arrives; cleared at the top of every fresh transfer.
+pub static zfread_eof: std::sync::atomic::AtomicI32 =                         // c:1353
+    std::sync::atomic::AtomicI32::new(0);
+
 /// Port of `zfread_block()` from `Src/Modules/zftp.c:1359`.
-/// C: `static int zfread_block(int fd, char *bf, off_t sz, int tmout)`.
+/// C: `static int zfread_block(int fd, char *bf, off_t sz, int tmout)` —
+/// read a block-mode framed record: a 3-byte zfheader followed by
+/// `blksz` payload bytes. Loops over restart-marker blocks (ZFHD_MARK)
+/// until a real data block or end-of-record (ZFHD_EOFB) arrives.
 #[allow(non_snake_case)]
-pub fn zfread_block(_fd: i32, _bf: &mut [u8], _sz: libc::off_t, _tmout: i32) -> i32 {
-    // c:1359-1450 — block-mode reader honoring zfheader flags.
-    0
+pub fn zfread_block(fd: i32, bf: &mut [u8], sz: libc::off_t, tmout: i32) -> i32 { // c:1359
+    use std::sync::atomic::Ordering;
+    // c:1361-1364 — locals at fn top.
+    let mut n: i32;                                                           // c:1361 int n
+    let mut hdr = zfheader { flags: 0, bytes: [0u8; 2] };                     // c:1362
+    let mut blksz: libc::off_t = 0;                                           // c:1363 off_t blksz
+    let mut cnt: libc::off_t;                                                 // c:1363 off_t cnt
+    let mut bfptr: usize;                                                     // c:1364 char *bfptr (offset into bf)
+
+    // c:1365-1403 — outer do-while loop: keep reading until we get a
+    // non-marker block (or hit EOF).
+    loop {                                                                    // c:1365 do {
+        // c:1367-1369 — read header bytes, retry on EINTR.
+        let mut hdr_buf = [0u8; 3];
+        loop {                                                                // c:1367 do
+            n = zfread(fd, &mut hdr_buf, 3, tmout);                           // c:1368
+            if !(n < 0 && std::io::Error::last_os_error().raw_os_error()      // c:1369 EINTR retry
+                 == Some(libc::EINTR)) {
+                break;
+            }
+        }
+        // c:1370-1373 — short read → fail unless interrupted by SIGALRM.
+        if n != 3 && ZFDRRRRING.load(Ordering::Relaxed) == 0 {
+            crate::ported::utils::zwarnnam("zftp", "failure reading FTP block header");
+            return n;                                                         // c:1372
+        }
+        hdr.flags = hdr_buf[0] as i8;
+        hdr.bytes[0] = hdr_buf[1];
+        hdr.bytes[1] = hdr_buf[2];
+        // c:1375-1376 — ZFHD_EOFB sets the file-static eof flag.
+        if (hdr.flags as i32 & ZFHD_EOFB) != 0 {
+            zfread_eof.store(1, Ordering::Relaxed);                           // c:1376
+        }
+        // c:1377 — network byte order: blksz = (b[0] << 8) | b[1].
+        blksz = ((hdr.bytes[0] as libc::off_t) << 8) | (hdr.bytes[1] as libc::off_t);
+        // c:1378-1385 — caller's buffer too small.
+        if blksz > sz {
+            crate::ported::utils::zwarnnam("zftp", "block too large to handle");
+            unsafe { *libc::__error() = libc::EIO; }                          // c:1383
+            return -1;                                                        // c:1384
+        }
+        // c:1386-1397 — drain the payload.
+        bfptr = 0;                                                            // c:1386 bfptr = bf
+        cnt = blksz;                                                          // c:1387
+        while cnt > 0 {                                                       // c:1388
+            let want = cnt as usize;
+            let end = bfptr + want;
+            if end > bf.len() { return -1; }
+            n = zfread(fd, &mut bf[bfptr..end], cnt, tmout);                  // c:1389
+            if n > 0 {                                                        // c:1390
+                bfptr += n as usize;                                          // c:1391
+                cnt -= n as libc::off_t;                                      // c:1392
+            } else if n < 0 && (
+                crate::ported::utils::errflag.load(Ordering::Relaxed) != 0
+                || ZFDRRRRING.load(Ordering::Relaxed) != 0
+                || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR)
+            ) {                                                               // c:1393
+                return n;                                                     // c:1394
+            } else {
+                break;                                                        // c:1396
+            }
+        }
+        // c:1398-1402 — short data block.
+        if cnt != 0 {
+            crate::ported::utils::zwarnnam("zftp", "short data block");
+            unsafe { *libc::__error() = libc::EIO; }                          // c:1400
+            return -1;                                                        // c:1401
+        }
+        // c:1403 — } while ((hdr.flags & ZFHD_MARK) && !zfread_eof);
+        if !((hdr.flags as i32 & ZFHD_MARK) != 0
+             && zfread_eof.load(Ordering::Relaxed) == 0) {
+            break;
+        }
+    }
+    // c:1404 — return (hdr.flags & ZFHD_MARK) ? 0 : blksz;
+    if (hdr.flags as i32 & ZFHD_MARK) != 0 { 0 } else { blksz as i32 }
 }
 
 /// Port of `zfsendcmd()` from `Src/Modules/zftp.c:825`.
