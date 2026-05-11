@@ -348,18 +348,32 @@ mod tests {
 // static struct features module_features                            c:255 (random.c)
 // =====================================================================
 
-use std::sync::{Mutex, OnceLock};
-use crate::ported::zsh_h::{features as features_t, module};
+use crate::ported::zsh_h::module;
+use crate::ported::module::{Features, MathFunc, Module as RsModule, Paramdef};
 
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None, bn_size: 0,
-        cd_list: None, cd_size: 0,
-        mf_list: None, mf_size: 1,                                       // mftab[1]: rand48
-        pd_list: None, pd_size: 2,                                       // partab[2]: SRANDOM_FILE, ERAND48_SEED
-        n_abstract: 0,
-    }))
+// `mftab` — port of `static struct mathfunc mftab[]` (random.c).
+static MFTAB: &[MathFunc] = &[
+    MathFunc { name: "zrand_float", module: "random", flags: 0 },
+    MathFunc { name: "zrand_int",   module: "random", flags: 0 },
+];
+
+// `patab` — port of `static struct paramdef patab[]` (random.c).
+static PATAB: &[Paramdef] = &[
+    Paramdef { name: "SRANDOM", registered: false },
+];
+
+// `module_features` — port of `static struct features module_features`
+// from random.c:255.
+static MODULE_FEATURES: Features = Features {                                // c:255
+    bn_list: &[],
+    cd_list: &[],
+    mf_list: MFTAB,
+    pd_list: PATAB,
+    n_abstract: 0,
+};
+
+fn module_handle() -> RsModule {
+    RsModule::new("zsh/random")
 }
 
 /// `RANDFD` — port of the file-static `int randfd` in
@@ -389,14 +403,17 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 }
 
 /// Port of `features_()` from `Src/Modules/random.c:267`.
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:267
-    *features = featuresarray(m, module_features());
+pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {     // c:267
+    *features = crate::ported::module::featuresarray(
+        &module_handle(),
+        &MODULE_FEATURES,
+    );
     0
 }
 
 /// Port of `enables_()` from `Src/Modules/random.c:275`.
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:275
-    handlefeatures(m, module_features(), enables)
+pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:275
+    crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables)
 }
 
 /// Port of `boot_()` from `Src/Modules/random.c:282`.
@@ -419,8 +436,8 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 }
 
 /// Port of `cleanup_()` from `Src/Modules/random.c:312`.
-pub fn cleanup_(m: *const module) -> i32 {                                   // c:312
-    setfeatureenables(m, module_features(), None)
+pub fn cleanup_(_m: *const module) -> i32 {                                  // c:312
+    crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None)
 }
 
 /// Port of `finish_()` from `Src/Modules/random.c:319`.
@@ -433,22 +450,3 @@ pub fn finish_(_m: *const module) -> i32 {                                   // 
     }
     0
 }
-
-fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["f:rand48".to_string(), "p:SRANDOM_FILE".to_string(), "p:ERAND48_SEED".to_string()]
-}
-fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
-    if enables.is_none() { *enables = Some(getfeatureenables(m, f)); }
-    else if let Some(e) = enables.as_ref() { return setfeatureenables(m, f, Some(e)); }
-    0
-}
-fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
-    let g = f.lock().unwrap();
-    vec![0; (g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract) as usize]
-}
-// File-static delegator to `Src/module.c:3349 setfeatureenables` —
-// dispatches per-feature enable bits through setbuiltins/setconddefs/
-// setmathfuncs/setparamdefs. The static-link Rust path treats every
-// feature as always-enabled, so this no-op return matches what
-// cleanup_(NULL) needs (revoke nothing).
-fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }

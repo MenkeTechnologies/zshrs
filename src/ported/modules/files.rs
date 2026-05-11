@@ -869,17 +869,46 @@ pub static BINTAB: [FilesBuiltin; 18] = [                                    // 
 // module entries — `Src/Modules/files.c:828-876`.
 // =====================================================================
 
-use crate::ported::zsh_h::{features as features_t, module};
+use crate::ported::zsh_h::module;
+use crate::ported::module::{Builtin, Features, Module as RsModule};
 
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None, bn_size: BINTAB.len() as i32,                         // c:828
-        cd_list: None, cd_size: 0,
-        mf_list: None, mf_size: 0,
-        pd_list: None, pd_size: 0,
-        n_abstract: 0,
-    }))
+// `module_bintab` — port of `static struct builtin bintab[]` (files.c:803)
+// in the canonical `module::Builtin` shape (the local `FilesBuiltin`
+// table above is kept for the internal dispatcher in
+// `src/extensions/` which needs the `funcid` int).
+static MODULE_BINTAB: &[Builtin] = &[                                        // c:803
+    Builtin { name: "chgrp",    flags: 0, minargs: 2, maxargs: -1, funcid: BIN_CHGRP, optstr: Some("hRs"),    defopts: None },
+    Builtin { name: "chmod",    flags: 0, minargs: 2, maxargs: -1, funcid: 0,         optstr: Some("Rs"),     defopts: None },
+    Builtin { name: "chown",    flags: 0, minargs: 2, maxargs: -1, funcid: BIN_CHOWN, optstr: Some("hRs"),    defopts: None },
+    Builtin { name: "ln",       flags: 0, minargs: 1, maxargs: -1, funcid: BIN_LN,    optstr: Some("dfhins"), defopts: None },
+    Builtin { name: "mkdir",    flags: 0, minargs: 1, maxargs: -1, funcid: 0,         optstr: Some("pm:"),    defopts: None },
+    Builtin { name: "mv",       flags: 0, minargs: 2, maxargs: -1, funcid: BIN_MV,    optstr: Some("fi"),     defopts: None },
+    Builtin { name: "rm",       flags: 0, minargs: 1, maxargs: -1, funcid: 0,         optstr: Some("dfiRrs"), defopts: None },
+    Builtin { name: "rmdir",    flags: 0, minargs: 1, maxargs: -1, funcid: 0,         optstr: None,           defopts: None },
+    Builtin { name: "sync",     flags: 0, minargs: 0, maxargs:  0, funcid: 0,         optstr: None,           defopts: None },
+    Builtin { name: "zf_chgrp", flags: 0, minargs: 2, maxargs: -1, funcid: BIN_CHGRP, optstr: Some("hRs"),    defopts: None },
+    Builtin { name: "zf_chmod", flags: 0, minargs: 2, maxargs: -1, funcid: 0,         optstr: Some("Rs"),     defopts: None },
+    Builtin { name: "zf_chown", flags: 0, minargs: 2, maxargs: -1, funcid: BIN_CHOWN, optstr: Some("hRs"),    defopts: None },
+    Builtin { name: "zf_ln",    flags: 0, minargs: 1, maxargs: -1, funcid: BIN_LN,    optstr: Some("dfhins"), defopts: None },
+    Builtin { name: "zf_mkdir", flags: 0, minargs: 1, maxargs: -1, funcid: 0,         optstr: Some("pm:"),    defopts: None },
+    Builtin { name: "zf_mv",    flags: 0, minargs: 2, maxargs: -1, funcid: BIN_MV,    optstr: Some("fi"),     defopts: None },
+    Builtin { name: "zf_rm",    flags: 0, minargs: 1, maxargs: -1, funcid: 0,         optstr: Some("dfiRrs"), defopts: None },
+    Builtin { name: "zf_rmdir", flags: 0, minargs: 1, maxargs: -1, funcid: 0,         optstr: None,           defopts: None },
+    Builtin { name: "zf_sync",  flags: 0, minargs: 0, maxargs:  0, funcid: 0,         optstr: None,           defopts: None },
+];
+
+// `module_features` — port of `static struct features module_features`
+// from files.c:828.
+static MODULE_FEATURES: Features = Features {                                // c:828
+    bn_list: MODULE_BINTAB,
+    cd_list: &[],
+    mf_list: &[],
+    pd_list: &[],
+    n_abstract: 0,
+};
+
+fn module_handle() -> RsModule {
+    RsModule::new("zsh/files")
 }
 
 /// Port of `setup_()` from `Src/Modules/files.c:838`.
@@ -889,14 +918,17 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 }
 
 /// Port of `features_()` from `Src/Modules/files.c:845`.
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:845
-    *features = featuresarray(m, module_features());
+pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {     // c:845
+    *features = crate::ported::module::featuresarray(
+        &module_handle(),
+        &MODULE_FEATURES,
+    );
     0
 }
 
 /// Port of `enables_()` from `Src/Modules/files.c:853`.
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:853
-    handlefeatures(m, module_features(), enables)
+pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:853
+    crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables)
 }
 
 /// Port of `boot_()` from `Src/Modules/files.c:860`.
@@ -908,8 +940,8 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 }
 
 /// Port of `cleanup_()` from `Src/Modules/files.c:867`.
-pub fn cleanup_(m: *const module) -> i32 {                                   // c:867
-    setfeatureenables(m, module_features(), None)
+pub fn cleanup_(_m: *const module) -> i32 {                                  // c:867
+    crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None)
 }
 
 /// Port of `finish_()` from `Src/Modules/files.c:874`.
@@ -918,25 +950,3 @@ pub fn finish_(_m: *const module) -> i32 {                                   // 
     //                    builtins unregister via cleanup_'s setfeatureenables.
     0
 }
-
-fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    BINTAB.iter().map(|b| format!("b:{}", b.name)).collect()
-}
-fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
-    if enables.is_none() {
-        *enables = Some(getfeatureenables(m, f));
-    } else if let Some(e) = enables.as_ref() {
-        return setfeatureenables(m, f, Some(e));
-    }
-    0
-}
-fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
-    let g = f.lock().unwrap();
-    vec![0; (g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract) as usize]
-}
-// File-static delegator to `Src/module.c:3349 setfeatureenables` —
-// dispatches per-feature enable bits through setbuiltins/setconddefs/
-// setmathfuncs/setparamdefs. The static-link Rust path treats every
-// feature as always-enabled, so this no-op return matches what
-// cleanup_(NULL) needs (revoke nothing).
-fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }

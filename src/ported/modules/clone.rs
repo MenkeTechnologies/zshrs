@@ -176,25 +176,39 @@ pub fn bin_clone(nam: &str, _args: &[String], _ops: &options, _func: i32) -> i32
 // static struct features module_features                             c:113
 // =====================================================================
 
-use std::sync::OnceLock;
-use crate::ported::zsh_h::features as features_t;
+use crate::ported::module::{Builtin, Features, Module as RsModule};
+
+// `bintab` — port of `static struct builtin bintab[]` (clone.c:109):
+// `BUILTIN("clone", 0, bin_clone, 1, 1, 0, NULL, NULL)`.
+static BINTAB: &[Builtin] = &[                                               // c:109
+    Builtin {
+        name: "clone",
+        flags: 0,
+        minargs: 1,
+        maxargs: 1,
+        funcid: 0,
+        optstr: None,
+        defopts: None,
+    },
+];
 
 // `module_features` — port of `static struct features module_features`
-// from clone.c:113.
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+// from clone.c:113. Uses canonical slice-based `module::Features`,
+// fed into `module::featuresarray`/`handlefeatures` from module.c.
+static MODULE_FEATURES: Features = Features {                                // c:113
+    bn_list: BINTAB,
+    cd_list: &[],
+    mf_list: &[],
+    pd_list: &[],
+    n_abstract: 0,
+};
 
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,                                                   // c:114 bintab
-        bn_size: 1,                                                       // sizeof(bintab)/sizeof(*bintab)
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
+// `Module` instance synthesized for the canonical featuresarray/
+// handlefeatures API (which takes `&Module` to read `m->node.nam`).
+// The C hooks receive a raw `Module m` pointer; the Rust port
+// produces an equivalent `module::Module` on demand.
+fn module_handle() -> RsModule {
+    RsModule::new("clone")
 }
 
 // =====================================================================
@@ -208,15 +222,18 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 
 /// Port of `features_()` from `Src/Modules/clone.c:130`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:130
-    *features = featuresarray(m, module_features());                     // c:132
+pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {     // c:130
+    *features = crate::ported::module::featuresarray(                    // c:132
+        &module_handle(),
+        &MODULE_FEATURES,
+    );
     0                                                                    // c:133
 }
 
 /// Port of `enables_()` from `Src/Modules/clone.c:138`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:138
-    handlefeatures(m, module_features(), enables)                        // c:140
+pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:138
+    crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables) // c:140
 }
 
 /// Port of `boot_()` from `Src/Modules/clone.c:145`.
@@ -226,39 +243,13 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 
 /// Port of `cleanup_()` from `Src/Modules/clone.c:152`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {                                   // c:152
-    setfeatureenables(m, module_features(), None)                        // c:154
+pub fn cleanup_(_m: *const module) -> i32 {                                  // c:152
+    crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None) // c:154
 }
 
 /// Port of `finish_()` from `Src/Modules/clone.c:159`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:159
     0                                                                    // c:161
-}
-
-// `featuresarray` lives in `Src/module.c:3275`.
-fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["b:clone".to_string()]
-}
-
-// `handlefeatures` lives in `Src/module.c:3370`.
-fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
-    if enables.is_none() {
-        *enables = Some(getfeatureenables(m, f));
-    } else if let Some(e) = enables.as_ref() {
-        return setfeatureenables(m, f, Some(e));
-    }
-    0
-}
-
-fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
-    let g = f.lock().unwrap();
-    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
-    vec![0; total as usize]
-}
-
-// `setfeatureenables` lives in `Src/module.c:3445`.
-fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 {
-    0
 }
 
 // =====================================================================

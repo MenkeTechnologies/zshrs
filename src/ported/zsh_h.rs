@@ -607,6 +607,7 @@ pub struct cmdnam {
 
 /// Port of `struct shfunc` from `Src/zsh.h:1316-1325`.
 #[allow(non_camel_case_types)]
+#[derive(Debug, Clone)]
 pub struct shfunc {
     // c:1316
     pub node: hashnode,                    // c:1317
@@ -615,6 +616,15 @@ pub struct shfunc {
     pub funcdef: Option<Eprog>,            // c:1322
     pub redir: Option<Eprog>,              // c:1323
     pub sticky: Option<Emulation_options>, // c:1324
+    /// **RUST-ONLY EXTENSION (no C counterpart).** Raw source text
+    /// for deferred-compile path: zshrs stores the function body
+    /// as-typed and parses on first invocation, vs C eagerly
+    /// compiling into `funcdef: Eprog` at definition time. When
+    /// the fusevm bytecode cache lands, this field gets retired in
+    /// favor of populating `funcdef` directly (matching C). Until
+    /// then, both fields can be set: `funcdef` for compiled
+    /// callers, `body` for the lazy-compile path.
+    pub body: Option<String>,
 }
 
 /// Port of `struct funcstack` from `Src/zsh.h:1348-1356`.
@@ -945,6 +955,7 @@ pub struct histent {
 
 /// Port of `struct emulation_options` from `Src/zsh.h:2570-2585`.
 #[allow(non_camel_case_types)]
+#[derive(Debug, Clone)]
 pub struct emulation_options {
     // c:2570
     pub emulation: i32,          // c:2572
@@ -1135,6 +1146,7 @@ pub struct job {
 
 /// Port of `struct funcdump` from `Src/zsh.h:776-786`.
 #[allow(non_camel_case_types)]
+#[derive(Debug, Clone)]
 pub struct funcdump {
     // c:776
     pub next: Option<FuncDump>,   // c:777
@@ -1150,7 +1162,7 @@ pub struct funcdump {
 
 /// Port of `struct eprog` from `Src/zsh.h:805-815`.
 #[allow(non_camel_case_types)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct eprog {
     // c:805
     pub flags: i32,             // c:806 EF_*

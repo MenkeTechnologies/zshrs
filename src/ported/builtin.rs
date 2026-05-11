@@ -953,9 +953,16 @@ fn loadautofn(shf: *mut crate::ported::zsh_h::shfunc,                        // 
             existing.filename = dir_path;
         } else {
             tab.add(crate::ported::hashtable::ShFunc {
-                name: name.clone(),
-                flags: 0,
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: name.clone(),
+                    flags: 0,
+                },
                 filename: dir_path,
+                lineno: 0,
+                funcdef: None,
+                redir: None,
+                sticky: None,
                 body: Some(body),
             });
         }
@@ -2076,6 +2083,7 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
                 funcdef: None,
                 redir: None,
                 sticky: None,
+                body: None,
             });
             let new_shf_ptr = Box::into_raw(new_shf);
             let _ = mkautofn(new_shf_ptr);                                   // c:3765

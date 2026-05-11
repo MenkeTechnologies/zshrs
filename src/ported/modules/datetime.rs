@@ -263,18 +263,33 @@ fn is_ident(s: &str) -> bool {
 // static struct features module_features                            c:262
 // =====================================================================
 
-use std::sync::{Mutex, OnceLock};
-use crate::ported::zsh_h::{features as features_t, module};
+use crate::ported::zsh_h::module;
+use crate::ported::module::{Builtin, Features, Module as RsModule, Paramdef};
 
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None, bn_size: 2,                                       // c:263 bintab[2] (strftime, EPOCHREALTIME)
-        cd_list: None, cd_size: 0,
-        mf_list: None, mf_size: 0,
-        pd_list: None, pd_size: 1,
-        n_abstract: 0,
-    }))
+// `bintab` — port of `static struct builtin bintab[]` (datetime.c:255).
+static BINTAB: &[Builtin] = &[                                               // c:255
+    Builtin { name: "strftime", flags: 0, minargs: 1, maxargs: 3, funcid: 0, optstr: Some("nqrs:"), defopts: None },
+];
+
+// `patab` — port of `static struct paramdef patab[]` (datetime.c).
+static PATAB: &[Paramdef] = &[
+    Paramdef { name: "EPOCHSECONDS",  registered: false },
+    Paramdef { name: "EPOCHREALTIME", registered: false },
+    Paramdef { name: "epochtime",     registered: false },
+];
+
+// `module_features` — port of `static struct features module_features`
+// from datetime.c:262.
+static MODULE_FEATURES: Features = Features {                                // c:262
+    bn_list: BINTAB,
+    cd_list: &[],
+    mf_list: &[],
+    pd_list: PATAB,
+    n_abstract: 0,
+};
+
+fn module_handle() -> RsModule {
+    RsModule::new("datetime")
 }
 
 /// Port of `setup_()` from `Src/Modules/datetime.c:270`.
@@ -285,15 +300,18 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 
 /// Port of `features_()` from `Src/Modules/datetime.c:277`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {  // c:277
-    *features = featuresarray(m, module_features());                    // c:280
+pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {  // c:277
+    *features = crate::ported::module::featuresarray(                    // c:280
+        &module_handle(),
+        &MODULE_FEATURES,
+    );
     0                                                                    // c:281
 }
 
 /// Port of `enables_()` from `Src/Modules/datetime.c:285`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:285
-    handlefeatures(m, module_features(), enables)                       // c:288
+pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:285
+    crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables) // c:288
 }
 
 /// Port of `boot_()` from `Src/Modules/datetime.c:292`.
@@ -306,8 +324,8 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 
 /// Port of `cleanup_()` from `Src/Modules/datetime.c:299`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {                               // c:299
-    setfeatureenables(m, module_features(), None)                       // c:302
+pub fn cleanup_(_m: *const module) -> i32 {                              // c:299
+    crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None) // c:302
 }
 
 /// Port of `finish_()` from `Src/Modules/datetime.c:306`.
@@ -317,33 +335,6 @@ pub fn finish_(_m: *const module) -> i32 {                                   // 
     //                    via cleanup_'s setfeatureenables(...).
     0
 }
-
-// `featuresarray` — Src/module.c:3275.
-fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["b:strftime".to_string(), "b:zselect".to_string(),
-         "p:EPOCHREALTIME".to_string()]
-}
-
-// `handlefeatures` — Src/module.c:3370.
-fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
-    if enables.is_none() {
-        *enables = Some(getfeatureenables(m, f));
-    } else if let Some(e) = enables.as_ref() {
-        return setfeatureenables(m, f, Some(e));
-    }
-    0
-}
-fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
-    let g = f.lock().unwrap();
-    let total = g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract;
-    vec![0; total as usize]
-}
-// File-static delegator to `Src/module.c:3349 setfeatureenables` —
-// dispatches per-feature enable bits through setbuiltins/setconddefs/
-// setmathfuncs/setparamdefs. The static-link Rust path treats every
-// feature as always-enabled, so this no-op return matches what
-// cleanup_(NULL) needs (revoke nothing).
-fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }
 
 #[cfg(test)]
 mod tests {

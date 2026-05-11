@@ -271,28 +271,28 @@ fn splice_magic_assoc(name: &str) -> Option<String> {
         "functions" => crate::ported::hashtable::shfunctab_lock().lock().ok()
             .map(|t| join(
                 t.iter()
-                    .filter(|(_, f)| !f.is_disabled())
+                    .filter(|(_, f)| (f.node.flags & crate::ported::hashtable::flags::DISABLED as i32) == 0)
                     .map(|(_, f)| f.body.clone().unwrap_or_default())
                     .collect()
             )),
         "dis_functions" => crate::ported::hashtable::shfunctab_lock().lock().ok()
             .map(|t| join(
                 t.iter()
-                    .filter(|(_, f)| f.is_disabled())
+                    .filter(|(_, f)| (f.node.flags & crate::ported::hashtable::flags::DISABLED as i32) != 0)
                     .map(|(_, f)| f.body.clone().unwrap_or_default())
                     .collect()
             )),
         "functions_source" => crate::ported::hashtable::shfunctab_lock().lock().ok()
             .map(|t| join(
                 t.iter()
-                    .filter(|(_, f)| !f.is_disabled())
+                    .filter(|(_, f)| (f.node.flags & crate::ported::hashtable::flags::DISABLED as i32) == 0)
                     .map(|(_, f)| f.filename.clone().unwrap_or_default())
                     .collect()
             )),
         "dis_functions_source" => crate::ported::hashtable::shfunctab_lock().lock().ok()
             .map(|t| join(
                 t.iter()
-                    .filter(|(_, f)| f.is_disabled())
+                    .filter(|(_, f)| (f.node.flags & crate::ported::hashtable::flags::DISABLED as i32) != 0)
                     .map(|(_, f)| f.filename.clone().unwrap_or_default())
                     .collect()
             )),

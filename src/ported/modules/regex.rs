@@ -219,18 +219,26 @@ mod tests {
 // static struct features module_features                            c:217 (regex.c)
 // =====================================================================
 
-use std::sync::{Mutex, OnceLock};
-use crate::ported::zsh_h::{features as features_t, module};
+use crate::ported::zsh_h::module;
+use crate::ported::module::{Conddef, Features, Module as RsModule};
 
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None, bn_size: 0,
-        cd_list: None, cd_size: 1,                                       // cotab[1]: regex-match
-        mf_list: None, mf_size: 0,
-        pd_list: None, pd_size: 0,
-        n_abstract: 0,
-    }))
+// `cotab` — port of `static struct conddef cotab[]` (regex.c).
+static COTAB: &[Conddef] = &[
+    Conddef { name: "regex-match", flags: crate::ported::module::CONDF_INFIX },
+];
+
+// `module_features` — port of `static struct features module_features`
+// from regex.c:217.
+static MODULE_FEATURES: Features = Features {                                // c:217
+    bn_list: &[],
+    cd_list: COTAB,
+    mf_list: &[],
+    pd_list: &[],
+    n_abstract: 0,
+};
+
+fn module_handle() -> RsModule {
+    RsModule::new("zsh/regex")
 }
 
 /// Port of `setup_()` from `Src/Modules/regex.c:229`.
@@ -240,14 +248,17 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 }
 
 /// Port of `features_()` from `Src/Modules/regex.c:236`.
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
-    *features = featuresarray(m, module_features());
+pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = crate::ported::module::featuresarray(
+        &module_handle(),
+        &MODULE_FEATURES,
+    );
     0
 }
 
 /// Port of `enables_()` from `Src/Modules/regex.c:244`.
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
-    handlefeatures(m, module_features(), enables)
+pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables)
 }
 
 /// Port of `boot_()` from `Src/Modules/regex.c:251`.
@@ -258,8 +269,8 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 }
 
 /// Port of `cleanup_()` from `Src/Modules/regex.c:258`.
-pub fn cleanup_(m: *const module) -> i32 {
-    setfeatureenables(m, module_features(), None)
+pub fn cleanup_(_m: *const module) -> i32 {
+    crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None)
 }
 
 /// Port of `finish_()` from `Src/Modules/regex.c:265`.
@@ -267,22 +278,3 @@ pub fn finish_(_m: *const module) -> i32 {                                   // 
     // C body c:267-268 — `return 0`. Faithful empty-body port.
     0
 }
-
-fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["C:regex-match".to_string()]
-}
-fn handlefeatures(m: *const module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
-    if enables.is_none() { *enables = Some(getfeatureenables(m, f)); }
-    else if let Some(e) = enables.as_ref() { return setfeatureenables(m, f, Some(e)); }
-    0
-}
-fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
-    let g = f.lock().unwrap();
-    vec![0; (g.bn_size + g.cd_size + g.mf_size + g.pd_size + g.n_abstract) as usize]
-}
-// File-static delegator to `Src/module.c:3349 setfeatureenables` —
-// dispatches per-feature enable bits through setbuiltins/setconddefs/
-// setmathfuncs/setparamdefs. The static-link Rust path treats every
-// feature as always-enabled, so this no-op return matches what
-// cleanup_(NULL) needs (revoke nothing).
-fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 { 0 }
