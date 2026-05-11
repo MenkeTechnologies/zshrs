@@ -1,8 +1,8 @@
 //! `buf` holds metafied bytes (`Src/prompt.c` `char *buf`); callers that need
 //! Unicode text run `unmetafy` (see [`buf_vars::expanded_utf8`]).
 //!
-//! [`prompt_tls`] holds values C reads as file-scope globals. Call
-//! [`prompt_tls::sync_from_globals`] before expansion to refresh from
+//! `prompt_tls` holds values C reads as file-scope globals. Call
+//! `prompt_tls::sync_from_globals` before expansion to refresh from
 //! the canonical C globals (paramtab, LASTVAL, curhist, JOBTAB, ...).
 
 use std::cell::RefCell;

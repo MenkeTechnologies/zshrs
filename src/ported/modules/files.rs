@@ -626,8 +626,8 @@ pub fn chmod_dochmod(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,   // 
 }
 
 /// Direct port of `bin_chmod()` from `Src/Modules/files.c:655`.
-/// C body (c:659-672): parse args[0] as octal mode; recursivecmd
-/// over args[1..] applying chmod_dochmod.
+/// C body (c:659-672): parse `args[0]` as octal mode; recursivecmd
+/// over `args[1..]` applying chmod_dochmod.
 // chmod builtin                                                            // c:633
 pub fn bin_chmod(nam: &str, args: &[String],                                 // c:655
                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {

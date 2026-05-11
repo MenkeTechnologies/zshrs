@@ -2,12 +2,12 @@
 //!
 //! C source has 0 structs/enums. Rust port matches: 0 types.
 //! Functions:
-//!   - `getcurrentsecs`     [c:206]
-//!   - `getcurrentrealtime` [c:212]
-//!   - `getcurrenttime`     [c:220]
-//!   - `reverse_strftime`   [c:42]
-//!   - `output_strftime`    [c:99]   (the actual builtin entry)
-//!   - `bin_strftime`       [c:187]  (TZ-scope wrapper around output_strftime)
+//!   - `getcurrentsecs`     `[c:206]`
+//!   - `getcurrentrealtime` `[c:212]`
+//!   - `getcurrenttime`     `[c:220]`
+//!   - `reverse_strftime`   `[c:42]`
+//!   - `output_strftime`    `[c:99]`   (the actual builtin entry)
+//!   - `bin_strftime`       `[c:187]`  (TZ-scope wrapper around output_strftime)
 //!   - 6 module loaders
 //!
 //! C uses libc `localtime(3)` + zsh's custom `ztrftime()` (which

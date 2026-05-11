@@ -1107,7 +1107,7 @@ pub fn listusermathfunc(p: &crate::ported::zsh_h::mathfunc) {                // 
 ///         dircache_set(&shf->filename, dir), set PM_LOADDIR|PM_ABSPATH_USED,
 ///         shfunctab->addnode(nam, shf).
 ///     (b) otherwise → walk funcstack to find calling function; if it has
-///         PM_LOADDIR|PM_ABSPATH_USED, build "<calling-dir>/funcname" and
+///         PM_LOADDIR|PM_ABSPATH_USED, build `"<calling-dir>/funcname"` and
 ///         access(R_OK); on success copy the dir into shf and set
 ///         PM_LOADDIR|PM_ABSPATH_USED. Then shfunctab->addnode(funcname, shf).
 pub fn add_autoload_function(shf: *mut crate::ported::zsh_h::shfunc,         // c:3278
@@ -3674,7 +3674,7 @@ pub fn findcmd(name: &str, _docopy: i32, _default_path: i32) -> Option<String> {
 
 /// Port of `bin_ttyctl()` from Src/builtin.c:7454.
 /// C: `int bin_ttyctl(UNUSED args, Options ops, ...)` — `-f` freezes the
-///   tty, `-u` unfreezes; otherwise emit "tty is [not ]frozen".
+///   tty, `-u` unfreezes; otherwise emit `"tty is [not ]frozen"`.
 pub fn bin_ttyctl(_name: &str, _argv: &[String],                             // c:7454
                   ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;

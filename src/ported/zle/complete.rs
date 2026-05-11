@@ -409,7 +409,7 @@ pub fn get_compqstack(_pm: *mut crate::ported::zsh_h::param) -> String {     // 
 /// Direct port of `cond_psfix()` from `Src/Zle/complete.c:1662`.
 /// C body (c:1664-1672): `if (comp_check())` then dispatch to
 /// do_comp_vars with id=CVT_PREPAT|CVT_SUFPAT and the arg as the
-/// pattern (or arg[0] as the pattern with arg[1] as the count).
+/// pattern (or `arg[0]` as the pattern with `arg[1]` as the count).
 pub fn cond_psfix(a: &[String], _id: i32) -> i32 {                           // c:1662
     if comp_check() != 0 {                                                   // c:1664
         // c:1665-1670 — do_comp_vars dispatch. Static-link path
@@ -702,7 +702,7 @@ pub fn bin_compadd(name: &str, argv: &[String],                              // 
 
 /// Direct port of `bin_compset()` from `Src/Zle/complete.c:1137`.
 /// Top-level `compset` builtin entry. The C body is 72 lines and
-/// dispatches on argv[0][1] (`-n`/`-N`/`-p`/`-P`/`-s`/`-S`/`-q`)
+/// dispatches on `argv[0][1]` (`-n`/`-N`/`-p`/`-P`/`-s`/`-S`/`-q`)
 /// to one of the CVT_* operations or to set_comp_sep for `-q`.
 pub fn bin_compset(name: &str, argv: &[String],                              // c:1137
                    _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {

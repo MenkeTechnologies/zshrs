@@ -1879,7 +1879,7 @@ pub fn savekeymap(oldname: &str, newname: &str) -> Option<std::sync::Arc<crate::
 ///                                          char *str, void *magic)`
 /// from `Src/Zle/zle_main.c:1934-1949`. Per-keymap scan callback for
 /// `describe-key-briefly`: when `func` matches the target in `ff`,
-/// appends " <seq>" to `ff.msg`, capped at MAXFOUND hits.
+/// appends `" <seq>"` to `ff.msg`, capped at MAXFOUND hits.
 pub fn scanfindfunc(seq: &str, func: &str, ff: &mut findfunc) {              // c:1934
     const MAXFOUND: usize = 3;                                               // c:1957
     // c:1939 — `if (func != ff->func) return`. Compare by widget name.

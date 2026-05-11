@@ -29,7 +29,7 @@ use crate::zsh_h::{
 pub static histtab: Mutex<Vec<usize>> = Mutex::new(Vec::new());              // c:101
 
 /// Port of `mod_export Histent hist_ring` from Src/hist.c:103.
-/// Doubly-linked ring of history entries; modelled here as a Vec<histent>
+/// Doubly-linked ring of history entries; modelled here as a `Vec<histent>`
 /// since each histent already has up/down pointers in the C struct.
 pub static hist_ring: Mutex<Vec<histent>> = Mutex::new(Vec::new());          // c:103
 

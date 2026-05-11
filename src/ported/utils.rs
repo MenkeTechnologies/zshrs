@@ -2416,7 +2416,7 @@ static ATTACHTTY_EP: std::sync::atomic::AtomicI32 =
 /// Port of `void attachtty(pid_t pgrp)` from Src/utils.c:4775.
 /// Hands the controlling terminal to `pgrp`. Gated by `jobbing &&
 /// interact`; falls back to `mypgrp` and disables MONITOR on permanent
-/// failure (matching the C source's recursion + opts[MONITOR]=0 path).
+/// failure (matching the C source's recursion + `opts[MONITOR]=0` path).
 #[cfg(unix)]
 pub fn attachtty(pgrp: i32) {                                                // c:4775
     use std::sync::atomic::Ordering;

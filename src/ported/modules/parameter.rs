@@ -332,7 +332,7 @@ pub fn disreswordsgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> { 
 
 /// Port of `funcfiletracegetfn()` from Src/Modules/parameter.c:711.
 /// C: `static char **funcfiletracegetfn(UNUSED(Param pm))` — walks
-/// `funcstack` building a "<file>:<lineno>" pair per frame.
+/// `funcstack` building a `"<file>:<lineno>"` pair per frame.
 #[allow(non_snake_case)]
 pub fn funcfiletracegetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> { // c:711
     // c:715-740 — walk funcstack, build colonpair "<filename>:<flineno>".
@@ -345,7 +345,7 @@ pub fn funcfiletracegetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> 
 
 /// Port of `funcsourcetracegetfn()` from Src/Modules/parameter.c:679.
 /// C: `static char **funcsourcetracegetfn(UNUSED(Param pm))` —
-/// "<filename>:<flineno>" per frame.
+/// `"<filename>:<flineno>"` per frame.
 #[allow(non_snake_case)]
 pub fn funcsourcetracegetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> { // c:679
     // c:683-708 — walk funcstack, build colonpair "<source-filename>:<flineno>".
@@ -367,7 +367,7 @@ pub fn funcstackgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> { //
 
 /// Port of `functracegetfn()` from Src/Modules/parameter.c:648.
 /// C: `static char **functracegetfn(UNUSED(Param pm))` —
-/// "<caller>:<lineno>" per frame.
+/// `"<caller>:<lineno>"` per frame.
 #[allow(non_snake_case)]
 pub fn functracegetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> { // c:648
     // c:652-675 — walk funcstack, build colonpair "<caller>:<lineno>".
@@ -814,7 +814,7 @@ pub fn getpmmodule(_ht: *mut HashTable, name: &str) -> Option<Param> {       // 
 }
 
 /// Direct port of `getpmnameddir()` from Src/Modules/parameter.c:1597.
-/// C body (c:1600-1620): nameddirtab[name] → emit nd.dir; otherwise
+/// C body (c:1600-1620): `nameddirtab[name]` → emit nd.dir; otherwise
 /// fall back to getpwnam (same passwd path getpmuserdir uses).
 #[allow(non_snake_case)]
 pub fn getpmnameddir(_ht: *mut HashTable, name: &str) -> Option<Param> {     // c:1597
@@ -915,7 +915,7 @@ pub fn getpmoption(_ht: *mut HashTable, name: &str) -> Option<Param> {       // 
 }
 
 /// Direct port of `getpmparameter()` from Src/Modules/parameter.c:99.
-/// C body (c:102-210): paramtab[name] lookup; emit a scalar Param
+/// C body (c:102-210): `paramtab[name]` lookup; emit a scalar Param
 /// whose value is the type-letter encoding (`scalar`, `array`,
 /// `association`, `integer`, `float`, plus `-readonly`/`-export`/
 /// etc. modifiers per PM_* flags).
