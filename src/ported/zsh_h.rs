@@ -1168,8 +1168,9 @@ pub struct eprog {
 pub struct estate {
     // c:824
     pub prog: Eprog,          // c:825
-    pub pc: Wordcode,         // c:826
-    pub strs: Option<String>, // c:827
+    pub pc: usize,            // c:826 Wordcode pc — index into prog.prog (C is wordcode *)
+    pub strs: Option<String>, // c:827 copy of prog.strs at estate creation
+    pub strs_offset: usize,   // c:827 byte offset into strs — mirrors C `strs` pointer movement
 }
 
 /// Port of `struct eccstr` from `Src/zsh.h:836-858`.

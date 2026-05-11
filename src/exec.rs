@@ -48,7 +48,7 @@ pub(crate) use crate::ported::pattern::PatternFlags;
 #[allow(unused_imports)]
 // drift imports removed: apply_subst_modifier, slice_scalar, strip_match_op
 #[allow(unused_imports)]
-pub(crate) use crate::ported::text::FuncBodyFmt;
+pub(crate) use crate::func_body_fmt::FuncBodyFmt;
 #[allow(unused_imports)]
 pub(crate) use crate::ported::utils::base64_decode;
 #[allow(unused_imports)]
