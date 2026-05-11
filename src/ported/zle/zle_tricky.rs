@@ -131,15 +131,10 @@ pub struct CompletionState {
     pub last_menu: bool,
 }
 
-/// Brace info for parameter expansion
-#[derive(Debug, Clone)]
-pub struct BraceInfo {
-    pub str_val: String,
-    pub pos: usize,
-    pub cur_pos: usize,
-    pub qpos: usize,
-    pub curlen: usize,
-}
+// `BraceInfo` deleted — Rust-invented `{ str_val, pos, cur_pos,
+// qpos, curlen }` struct that wasn't referenced anywhere (dead
+// code). C uses the legit `struct brinfo` at zle.h:368 (ported in
+// zle_h.rs:528) for brace-expansion bookkeeping during completion.
 
 impl Zle {
     /// Complete word - trigger completion
