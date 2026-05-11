@@ -5309,7 +5309,7 @@ impl crate::ported::exec::ShellExecutor {
             let p_chars: Vec<char> = pattern.chars().collect();
             let m = s_chars.len();
             let k = p_chars.len();
-            if m.abs_diff(k) > n {
+            if m.abs_diff(k) as u32 > n {
                 return false;
             }
             let mut prev: Vec<usize> = (0..=k).collect();
@@ -5322,7 +5322,7 @@ impl crate::ported::exec::ShellExecutor {
                 }
                 std::mem::swap(&mut prev, &mut curr);
             }
-            return prev[k] <= n;
+            return prev[k] as u32 <= n;
         }
 
         // Build the regex. For (#l) we need to inflate lowercase chars

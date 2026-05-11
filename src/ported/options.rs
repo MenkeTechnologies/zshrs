@@ -1776,8 +1776,9 @@ pub fn bin_setopt(nam: &str, args: &[String],                                // 
             let prog = crate::ported::pattern::patcompile(
                 &normalized,
                 crate::ported::zsh_h::PAT_HEAPDUP,
+                None,
             );
-            if prog.is_err() {                                               // c:670
+            if prog.is_none() {                                              // c:670
                 zwarnnam(nam, &format!("bad pattern: {}", raw));             // c:671
                 retval |= 1;
                 break;                                                       // c:673

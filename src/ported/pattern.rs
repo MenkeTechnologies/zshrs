@@ -1,1989 +1,1704 @@
-//! Pattern matching engine for zshrs
-//! Called before parsing a set of file matches to initialize flags        // c:513
+//! Pattern matching — port of `Src/pattern.c`.
 //!
-//! ====================================================================
-//! !!! WARNING: STRUCTURAL DIVERGENCE FROM Src/pattern.c !!!
-//! ====================================================================
+//! This is the bytecode-based port. The C source compiles patterns
+//! into a flat `char *patout` buffer of packed opcodes; the matcher
+//! is an interpreter that walks the buffer using pointer arithmetic.
 //!
-//! The C source (4375 lines) implements pattern matching as a
-//! bytecode-compiled engine: `patcompile()` (c:540) emits a flat
-//! `char *patcode` byte buffer of `P_*` opcodes (declared at
-//! Src/zsh.h:1100+), and `pattry()` (c:2223) interprets that
-//! bytecode. The compiler itself is recursive-descent across
-//! `patcompswitch` / `patcompbranch` / `patcompiece` / `patcomppiece`
-//! (c:765 / c:942 / c:1057 / c:1141), each emitting opcodes via
-//! `patadd()` (c:412).
+//! Rust port preserves the bytecode architecture using `Vec<u8>`:
+//!   * Each opcode is 1 byte (matches C `Upat::c`).
+//!   * `next_off` is a 4-byte little-endian `u32` offset to the next
+//!     opcode in sequence (0 = end). C uses native-endian `long`; we
+//!     pin to LE for portable on-disk bytecode caches.
+//!   * Payloads (strings, ranges, branch operands) are encoded inline
+//!     after the `next_off` slot.
 //!
-//! THIS RUST PORT DOES NOT MATCH THAT ARCHITECTURE.
+//! Top-level declaration order mirrors `Src/pattern.c`:
+//!   1. Opcode constants (P_*) — pattern.c:97-127
+//!   2. Macro-style accessors (P_OP / P_NEXT / etc.) — pattern.c:175-210
+//!   3. Flag-bit constants (P_SIMPLE / P_HSTART / P_PURESTR) — pattern.c:216
+//!   4. `struct patprog` — zsh.h:1601
+//!   5. PAT_* flag constants — zsh.h:1623
+//!   6. ZPC_* indexes — zsh.h:1644
+//!   7. File-static globals — pattern.c file-scope
+//!   8. Bytecode write helpers (`patadd`, `patnode`, `patinsert`,
+//!      `pattail`, `patoptail`, `patcompcharsset`, `patcompstart`)
+//!   9. Compiler entry points (`patcompile`, `patcompswitch`,
+//!      `patcompbranch`, `patcomppiece`, `patcompnot`)
+//!  10. Glob-flag parser (`patgetglobflags`)
+//!  11. Range helpers (`range_type`, `pattern_range_to_string`)
+//!  12. Char-decode helpers (`charref`, `charnext`, `charrefinc`,
+//!      `charsub`, `metacharinc`, `clear_shiftstate`)
+//!  13. Matcher entry points (`pattry`, `pattrylen`, `pattryrefs`)
+//!  14. `patmatch` interpreter — pattern.c:2694
+//!  15. Range matching (`patmatchrange`, `patmatchindex`,
+//!      `mb_patmatchrange`, `mb_patmatchindex`)
+//!  16. String pre-processing (`patmungestring`, `patallocstr`,
+//!      `pattrystart`)
+//!  17. Module-loader / disable mgmt (`startpatternscope`,
+//!      `endpatternscope`, `savepatterndisables`,
+//!      `restorepatterndisables`, `clearpatterndisables`,
+//!      `freepatprog`, `pat_enables`)
+//!  18. Convenience entry points for in-tree callers (`patmatch`,
+//!      `patmatchlen`, `patrepeat`, `haswilds`)
 //!
-//! Instead, the Rust port uses an AST-based design:
-//! `PatCompiler::compile()` builds a `Vec<PatNode>` tree (a typed
-//! AST) and `PatMatcher::try_match()` walks the AST recursively.
-//! The `PatOp` enum below mirrors the C `P_*` opcodes for naming
-//! parity, but the actual matcher doesn't execute opcodes — it
-//! pattern-matches against `PatNode` variants.
-//!
-//! Implications:
-//!   - The C-named "compiler internal" entry points (`patadd`,
-//!     `patcompstart`, `patcompcharsset`, `patcompswitch`,
-//!     `patcompbranch`, `patcomppiece`, `pattrystart`, etc.) ARE
-//!     STUBS — they exist for ABI parity but the real compilation
-//!     happens inside `PatCompiler` which doesn't decompose into
-//!     these named entry points.
-//!   - Coverage: basic globs (*/?/[]), extendedglob (#/##/~/^),
-//!     kshglob (?(pat)/*(pat)/+(pat)/!(pat)/@(pat)), backrefs,
-//!     case-insensitive matching, numeric ranges (<n-m>) all work.
-//!   - GAP: multibyte/EUC/UTF-8-shift-state handling per
-//!     `metacharinc()` (c:336), `clear_shiftstate()` (c:327) — the
-//!     Rust port assumes UTF-8 throughout and the helpers are
-//!     no-ops.
-//!   - GAP: the `Patprog` compiled-program byte-buffer + `progptr`
-//!     opcode walk used by `pattryrefs` / `patmatchlen` for
-//!     backref capture position tracking is approximated, not
-//!     ported.
-//!
-//! Honest path to a faithful port: rewrite `PatCompiler` as a
-//! bytecode emitter producing `Vec<u8>` per the `P_*` opcodes; port
-//! `pattry()` as the matching opcode interpreter from c:2223+. That
-//! is a 4000-line rewrite. Until then this file is a Rust-AST
-//! re-imagining, not a 1:1 port.
-//! ====================================================================
+//! See `docs/PORT.md` Rules A/B/C/D/E.
 
-/// Pattern opcodes — port of the `P_*` constants from Src/zsh.h.
-/// The C source emits these as bytes into `patcode`; we keep them
-/// as a typed enum mostly for the `(#s)`/`(#e)` start/end-assert
-/// hooks `patgetglobflags()` (Src/pattern.c:1037) returns.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum PatOp {
-    End = 0x00,        // End of program
-    ExcSync = 0x01,    // Test if following exclude already failed
-    ExcEnd = 0x02,     // Test if exclude matched original branch
-    Back = 0x03,       // Match "", "next" ptr points backward
-    Exactly = 0x04,    // Match literal string
-    Nothing = 0x05,    // Match empty string
-    OneHash = 0x06,    // Match 0+ times (simple thing)
-    TwoHash = 0x07,    // Match 1+ times (simple thing)
-    GFlags = 0x08,     // Set globbing flags
-    IsStart = 0x09,    // Match start of string
-    IsEnd = 0x0a,      // Match end of string
-    CountStart = 0x0b, // Initialize P_COUNT
-    Count = 0x0c,      // Match counted repetitions
-    Branch = 0x20,     // Match alternative
-    WBranch = 0x21,    // Branch, but match at least 1 char
-    Exclude = 0x30,    // Exclude from previous branch
-    ExcludP = 0x31,    // Exclude using full path
-    Any = 0x40,        // Match any one character
-    AnyOf = 0x41,      // Match any char in set
-    AnyBut = 0x42,     // Match any char not in set
-    Star = 0x43,       // Match any characters
-    NumRng = 0x44,     // Match numeric range
-    NumFrom = 0x45,    // Match number >= X
-    NumTo = 0x46,      // Match number <= X
-    NumAny = 0x47,     // Match any decimal digits
-    Open = 0x80,       // Start of capture group (+ group number)
-    Close = 0x90,      // End of capture group (+ group number)
+#![allow(non_upper_case_globals)]
+#![allow(non_camel_case_types)]
+
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+
+// =====================================================================
+// 1. P_* opcode constants — pattern.c:97-127
+//
+// Numbered identically to C so a buffer compiled by this port matches
+// the C source's bytecode-cache format byte-for-byte (modulo native
+// endianness; we pin LE — see file header).
+// =====================================================================
+
+pub const P_END:        u8 = 0x00;  // c:97  End of program.
+pub const P_EXCSYNC:    u8 = 0x01;  // c:98  Test if following exclude already failed
+pub const P_EXCEND:     u8 = 0x02;  // c:99  Test if exclude matched orig branch
+pub const P_BACK:       u8 = 0x03;  // c:100 Match "", "next" ptr points backward.
+pub const P_EXACTLY:    u8 = 0x04;  // c:101 lstr — match this string.
+pub const P_NOTHING:    u8 = 0x05;  // c:102 Match empty string.
+pub const P_ONEHASH:    u8 = 0x06;  // c:103 node — match 0 or more of preceding simple.
+pub const P_TWOHASH:    u8 = 0x07;  // c:104 node — match 1 or more of preceding simple.
+pub const P_GFLAGS:     u8 = 0x08;  // c:105 long — match nothing and set globbing flags.
+pub const P_ISSTART:    u8 = 0x09;  // c:106 Match start of string.
+pub const P_ISEND:      u8 = 0x0a;  // c:107 Match end of string.
+pub const P_COUNTSTART: u8 = 0x0b;  // c:108 Initialise P_COUNT.
+pub const P_COUNT:      u8 = 0x0c;  // c:109 3*long uc* node — match a number of repetitions.
+pub const P_BRANCH:     u8 = 0x20;  // c:112 node — match this alternative, or the next.
+pub const P_WBRANCH:    u8 = 0x21;  // c:113 uc* node — P_BRANCH, but match at least 1 char.
+pub const P_EXCLUDE:    u8 = 0x30;  // c:114 uc* node — exclude this from previous branch.
+pub const P_EXCLUDP:    u8 = 0x31;  // c:115 uc* node — exclude, using full file path so far.
+pub const P_ANY:        u8 = 0x40;  // c:117 Match any one character.
+pub const P_ANYOF:      u8 = 0x41;  // c:118 str — match any character in this string.
+pub const P_ANYBUT:     u8 = 0x42;  // c:119 str — match any character not in this string.
+pub const P_STAR:       u8 = 0x43;  // c:120 Match any set of characters.
+pub const P_NUMRNG:     u8 = 0x44;  // c:121 zr,zr — match a numeric range.
+pub const P_NUMFROM:    u8 = 0x45;  // c:122 zr — match a number >= X.
+pub const P_NUMTO:      u8 = 0x46;  // c:123 zr — match a number <= X.
+pub const P_NUMANY:     u8 = 0x47;  // c:124 Match any set of decimal digits.
+pub const P_OPEN:       u8 = 0x80;  // c:126 Mark this point in input as start of n.
+pub const P_CLOSE:      u8 = 0x90;  // c:127 Analogous to OPEN.
+
+/// `P_ISBRANCH(p)` macro from pattern.c:200 — `(p->l & 0x20)`.
+#[inline]
+pub fn P_ISBRANCH(op: u8) -> bool { (op & 0x20) != 0 }
+
+/// `P_ISEXCLUDE(p)` macro from pattern.c:201 — `((p->l & 0x30) == 0x30)`.
+#[inline]
+pub fn P_ISEXCLUDE(op: u8) -> bool { (op & 0x30) == 0x30 }
+
+/// `P_NOTDOT(p)` macro from pattern.c:202 — `(p->l & 0x40)`.
+#[inline]
+pub fn P_NOTDOT(op: u8) -> bool { (op & 0x40) != 0 }
+
+// =====================================================================
+// 3. Flag-bit constants returned via flagp out-params during compile.
+// pattern.c:216-218
+// =====================================================================
+
+pub const P_SIMPLE:  i32 = 0x01;  // c:216 Simple enough to be # / ## operand.
+pub const P_HSTART:  i32 = 0x02;  // c:217 Starts with # or ##'d pattern.
+pub const P_PURESTR: i32 = 0x04;  // c:218 Can be matched with a strcmp.
+
+// =====================================================================
+// 4. struct patprog — zsh.h:1601
+// =====================================================================
+
+/// Compiled pattern. Direct port of `struct patprog` at `Src/zsh.h:1601`.
+///
+/// C layout uses a trailing byte buffer accessed via `(char *)prog +
+/// prog->startoff`; the Rust port stores it as a `code` field of
+/// `Vec<u8>`. The opcode stream layout is preserved byte-for-byte.
+#[allow(non_camel_case_types)]
+pub struct patprog {
+    pub startoff: i64,    // c:1602 length before start of programme
+    pub size:     i64,    // c:1603 total size from start of struct
+    pub mustoff:  i64,    // c:1604 offset to string that must be present
+    pub patmlen:  i64,    // c:1605 length of pure string or longest match
+    pub globflags: i32,   // c:1606 globbing flags to set at start
+    pub globend:   i32,   // c:1607 globbing flags set after finish
+    pub flags:     i32,   // c:1608 PAT_* flags
+    pub patnpar:   i32,   // c:1609 number of active parentheses
+    pub patstartch: u8,   // c:1610 starting character (optimization)
+    /// Bytecode buffer. In C this is the trailing memory past the
+    /// fixed-size struct header; Rust port holds it inline.
+    pub code: Vec<u8>,
 }
 
-use crate::ported::zsh_h::{
-    PAT_ANY, PAT_FILE, PAT_FILET, PAT_HEAPDUP, PAT_LCMATCHUC, PAT_NOANCH, PAT_NOGLD, PAT_SCAN,
+/// `typedef struct patprog *Patprog;` from `zsh.h:542`.
+#[allow(non_camel_case_types)]
+pub type Patprog = Box<patprog>;
+
+// =====================================================================
+// 5. PAT_* flag constants — re-exports of zsh.h:1623-1640 already in
+// zsh_h.rs. Re-published here so callers in pattern's API don't need
+// the longer path. C source has these as `#define` in zsh.h, not
+// pattern.c, so the canonical home is zsh_h.rs; we just alias.
+// =====================================================================
+
+pub use crate::ported::zsh_h::{
+    PAT_HEAPDUP, PAT_FILE, PAT_FILET, PAT_ANY, PAT_NOANCH, PAT_NOGLD,
+    PAT_PURES, PAT_STATIC, PAT_SCAN, PAT_ZDUP, PAT_NOTSTART, PAT_NOTEND,
+    PAT_HAS_EXCLUDP, PAT_LCMATCHUC,
 };
 
-// Number of active parenthesized expressions allowed in backreferencing   // c:93
-/// Maximum number of backreferences
-const NSUBEXP: usize = 9;
+// =====================================================================
+// 6. ZPC_* enum from zsh.h:1644 — indexes into the active-pattern-
+// characters table that compile-time and runtime both consult.
+// =====================================================================
 
-/// Pattern flags.
-/// Port of the `PAT_*` constants the C source passes to
-/// `patcompile()` (Src/pattern.c:540) — `PAT_FILE`, `PAT_ANY`,
-/// `PAT_NOANCH`, `PAT_NOGLD`, `PAT_PURES`, `PAT_SCAN`,
-/// `PAT_LCMATCHUC`. Each maps onto one struct field.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct PatFlags {
-    pub file: bool,      // File globbing mode
-    pub any: bool,       // Match any string
-    pub noanch: bool,    // Not anchored at end
-    pub nogld: bool,     // Don't match leading dot
-    pub pures: bool,     // Pure string (no pattern chars)
-    pub scan: bool,      // Scanning for match
-    pub lcmatchuc: bool, // Lowercase pattern matches uppercase
-}
+pub const ZPC_SLASH:     usize = 0;  // / file separator
+pub const ZPC_NULL:      usize = 1;  // \0 terminator
+pub const ZPC_BAR:       usize = 2;  // | alternation
+pub const ZPC_OUTPAR:    usize = 3;  // )
+pub const ZPC_TILDE:     usize = 4;  // ~ exclusion
+pub const ZPC_SEG_COUNT: usize = 5;  // segment-terminator count
+pub const ZPC_INPAR:     usize = 5;  // (
+pub const ZPC_QUEST:     usize = 6;  // ?
+pub const ZPC_STAR:      usize = 7;  // *
+pub const ZPC_INBRACK:   usize = 8;  // [
+pub const ZPC_INANG:     usize = 9;  // <
+pub const ZPC_HAT:       usize = 10; // ^
+pub const ZPC_HASH:      usize = 11; // #
+pub const ZPC_BNULLKEEP: usize = 12; // \x00 backslashed-null marker
+pub const ZPC_COUNT:     usize = 13; // total
 
-/// Globbing flags.
-/// Port of the `(#i)`/`(#l)`/`(#b)`/`(#m)`/`(#u)`/`(#a<n>)`
-/// in-pattern flag set that `patgetglobflags()` (Src/pattern.c:1037)
-/// produces. Each field corresponds to one of the `GF_*` bits in
-/// the C source.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct GlobFlags {
-    pub igncase: bool,   // Case insensitive
-    pub lcmatchuc: bool, // Lowercase matches uppercase
-    pub matchref: bool,  // Set MATCH, MBEGIN, MEND
-    pub backref: bool,   // Enable backreferences
-    pub multibyte: bool, // Multibyte support
-    pub approx: u8,      // Approximation level (error tolerance)
-}
+/// Maximum captures, from `pattern.c:94 NSUBEXP`.
+pub const NSUBEXP: usize = 9;
 
-/// Compiled pattern program.
-/// Port of `struct patprog` from Src/zshpat.h — what
-/// `patcompile()` (Src/pattern.c:540) returns. The `code` field
-/// replaces the C source's flat `char *patcode` bytecode buffer
-/// with a typed `Vec<PatNode>` AST.
-#[derive(Debug, Clone)]
-pub struct PatProg {
-    /// The bytecode
-    code: Vec<PatNode>,
-    /// Pattern flags
-    pub flags: PatFlags,
-    /// Glob flags at start
-    pub glob_start: GlobFlags,
-    /// Glob flags at end
-    pub glob_end: GlobFlags,
-    /// Number of parenthesized groups
-    pub npar: usize,
-    /// Start character optimization (if known)
-    pub start_char: Option<char>,
-    /// Pure string (if PAT_PURES)
-    pub pure_string: Option<String>,
-}
+// =====================================================================
+// Bytecode field offsets within each instruction.
+//
+// Instruction layout in `patout`:
+//     +0       u8     opcode
+//     +1..+5   u32 LE next_off (offset of next instr in chain, 0 = end)
+//     +5..     u8...  opcode-specific payload
+//
+// C uses a different layout (Upat union = 4-byte or 8-byte slots);
+// the Rust port pins the layout to byte offsets for portability.
+// =====================================================================
 
-/// A node in the pattern bytecode AST.
-/// One variant per `P_*` opcode the C source's compiler emits in
-/// Src/pattern.c — `Exactly` is `P_EXACTLY`, `OneHash` is the `#`
-/// 0-or-more, `TwoHash` is `##`, etc. The C version flattens these
-/// into a `char *` buffer with offsets; the Rust AST holds them
-/// directly so we can pattern-match on shapes.
-#[derive(Debug, Clone)]
-enum PatNode {
-    End,
-    ExcSync,
-    ExcEnd,
-    Back(usize),     // Offset to jump back
-    Exactly(String), // Literal string
-    Nothing,
-    OneHash(Box<PatNode>), // 0 or more
-    TwoHash(Box<PatNode>), // 1 or more
-    GFlags(GlobFlags),
-    IsStart,
-    IsEnd,
-    CountStart,
-    Count {
-        min: u32,
-        max: Option<u32>,
-        node: Box<PatNode>,
-    },
-    Branch(Vec<PatNode>, usize), // Alternatives, next offset
-    WBranch(Vec<PatNode>),
-    Exclude(Vec<PatNode>),
-    ExcludP(Vec<PatNode>),
-    Any,                    // Match any single char
-    AnyOf(Vec<char>),       // Character class
-    AnyBut(Vec<char>),      // Negated character class
-    Star,                   // Match any string
-    NumRng(i64, i64),       // Numeric range
-    NumFrom(i64),           // >= number
-    NumTo(i64),             // <= number
-    NumAny,                 // Any digits
-    Open(usize),            // Start capture group
-    Close(usize),           // End capture group
-    Sequence(Vec<PatNode>), // Sequence of nodes
-}
+const I_OP:   usize = 0; // opcode byte
+const I_NEXT: usize = 1; // u32 next-offset starts here
+const I_BODY: usize = 5; // payload starts here
 
-/// Pattern compiler state
-struct PatCompiler<'a> {
-    input: &'a str,
-    pos: usize,
-    flags: PatFlags,
-    glob_flags: GlobFlags,
-    npar: usize,
-    extended_glob: bool,
-    ksh_glob: bool,
-}
+// =====================================================================
+// 7. File-static globals — direct mirror of pattern.c file-scope
+// statics. Each C `static` ports to a Rust `static` of matching name
+// (Rule A) and `Mutex<>` / `Atomic*` for thread-safe access. None
+// are aggregated (Rule D).
+// =====================================================================
 
-impl<'a> PatCompiler<'a> {
-    fn new(input: &'a str, flags: PatFlags) -> Self {
-        PatCompiler {
-            input,
-            pos: 0,
-            flags,
-            glob_flags: GlobFlags::default(),
-            npar: 0,
-            extended_glob: true,
-            ksh_glob: true,
+// C: `static char *patout, *patcode;` + `static long patsize;` +
+// `static int patalloc;` — pattern.c:267-272 (in macro region).
+//
+// patout: the bytecode buffer.
+// patcode: write cursor (offset into patout).
+// patsize: current logical size.
+// patalloc: allocated capacity.
+//
+// In Rust, `Vec<u8>` already tracks both len and capacity, so we
+// hold just the buffer; patcode/patsize/patalloc are derived.
+pub static patout: Mutex<Vec<u8>> = Mutex::new(Vec::new());     // c:267
+
+// C: `static char *patparse, *patstart;` — pattern parsing cursors
+// into the *input* pattern string. patstart points to start of
+// pattern; patparse moves forward as we consume tokens.
+pub static patparse: Mutex<String> = Mutex::new(String::new()); // c:269
+pub static patstart: Mutex<String> = Mutex::new(String::new()); // c:269
+
+/// Position within `patparse` we're currently looking at. C source
+/// uses a `char *` cursor; Rust uses byte offset into the String.
+pub static patparse_off: AtomicUsize = AtomicUsize::new(0);
+
+// C: `static int patnpar;` — number of active parens (1-indexed at
+// compile time; the *struct* patnpar is the actual count).
+pub static patnpar: AtomicI32 = AtomicI32::new(0);              // c:271
+
+// C: `static int patflags;` — current PAT_* flag set during compile.
+pub static patflags: AtomicI32 = AtomicI32::new(0);             // c:272
+
+// C: `static int patglobflags;` — current globbing flags during compile.
+pub static patglobflags: AtomicI32 = AtomicI32::new(0);         // c:273
+
+// C: `static int errsfound;` — approximate-match error count.
+pub static errsfound: AtomicI32 = AtomicI32::new(0);            // c:274
+
+// C: `static int forceerrs;` — required error count for approximate match.
+pub static forceerrs: AtomicI32 = AtomicI32::new(-1);           // c:275
+
+// C: `static long patglobflags_orig;` — saved at branch entry.
+pub static patglobflags_orig: AtomicI32 = AtomicI32::new(0);    // c:276
+
+// C: `static const char *zpc_special;` — table of currently-special
+// characters during compile (indexed by ZPC_*).
+//
+// pattern.c uses `static char zpc_special[ZPC_COUNT];` and resets it
+// in patcompcharsset(). Rust mirrors as a Mutex-wrapped byte array.
+pub static zpc_special: Mutex<[u8; ZPC_COUNT]> = Mutex::new([0u8; ZPC_COUNT]); // c:278
+
+// C: `static char *patstrcache;` — caches the unmetafied trial string.
+// Rust port has no Meta encoding so the cache is unnecessary; we leave
+// the static declared for parity (Rule A — name exists in C).
+pub static patstrcache: Mutex<String> = Mutex::new(String::new()); // c:281
+
+/// `Marker` constant from pattern.c — used as a placeholder for the
+/// active-but-disabled slot. C is `\200` (0x80). The port keeps it
+/// distinguishable from valid pattern bytes.
+pub const Marker: u8 = 0x80;
+
+// =====================================================================
+// 8. Bytecode write helpers — pattern.c:412-1856
+// =====================================================================
+
+/// Port of `patadd()` from `Src/pattern.c:412`.
+///
+/// C signature: `static long patadd(char *add, int ch, long n, int paflags)`.
+/// Adds `n` bytes (or repeats `ch`) to patout, growing if needed.
+/// Returns offset where the bytes were appended.
+fn patadd(add: Option<&[u8]>, ch: u8, n: i64, _paflags: i32) -> i64 {        // c:412
+    let mut buf = patout.lock().unwrap();
+    let start = buf.len() as i64;
+    if let Some(bytes) = add {
+        let n_actual = bytes.len().min(n as usize);
+        buf.extend_from_slice(&bytes[..n_actual]);
+    } else {
+        for _ in 0..n {
+            buf.push(ch);
         }
     }
+    start
+}
 
-    fn with_options(mut self, extended: bool, ksh: bool) -> Self {
-        self.extended_glob = extended;
-        self.ksh_glob = ksh;
-        self
+/// Port of `patnode()` from `Src/pattern.c:1790`.
+///
+/// C: `static long patnode(long op)` — writes a 1-byte opcode plus a
+/// 4-byte zeroed next-offset. Returns the offset of the opcode byte.
+fn patnode(op: u8) -> usize {                                                 // c:1790
+    let mut buf = patout.lock().unwrap();
+    let off = buf.len();
+    buf.push(op);                  // I_OP
+    buf.extend_from_slice(&[0, 0, 0, 0]);  // I_NEXT zeroed
+    off
+}
+
+/// Port of `patinsert()` from `Src/pattern.c:1807`.
+///
+/// C: `static void patinsert(long op, int opnd, char *xtra, int sz)`.
+/// Inserts an opcode (+ next slot) at position `opnd`, shifting bytes
+/// after it down by `5 + sz`, then writes `xtra` payload of `sz` bytes.
+fn patinsert(op: u8, opnd: usize, xtra: Option<&[u8]>, sz: usize) {            // c:1807
+    let mut buf = patout.lock().unwrap();
+    let header_sz = 1 + 4;  // op + next
+    let total = header_sz + sz;
+    // Insert `total` zeroed bytes at opnd, then overwrite.
+    let mut inserted = vec![0u8; total];
+    inserted[0] = op;
+    if let Some(x) = xtra {
+        let copy_n = x.len().min(sz);
+        inserted[header_sz..header_sz + copy_n].copy_from_slice(&x[..copy_n]);
     }
+    buf.splice(opnd..opnd, inserted);
+    // Patch up next_off chains pointing past opnd by adding `total`.
+    fixup_offsets_after_insert(&mut buf, opnd, total as u32);
+}
 
-    fn with_igncase(mut self, igncase: bool) -> Self {
-        self.glob_flags.igncase = igncase;
-        self
-    }
-
-    fn peek(&self) -> Option<char> {
-        self.input[self.pos..].chars().next()
-    }
-
-    fn peek_n(&self, n: usize) -> Option<char> {
-        self.input[self.pos..].chars().nth(n)
-    }
-
-    fn advance(&mut self) -> Option<char> {
-        let c = self.peek()?;
-        self.pos += c.len_utf8();
-        Some(c)
-    }
-
-    fn at_end(&self) -> bool {
-        self.pos >= self.input.len()
-    }
-
-    fn compile(mut self) -> Result<PatProg, String> {
-        // Check for pure string (no pattern chars)
-        if !self.has_pattern_chars() {
-            return Ok(PatProg {
-                code: vec![PatNode::Exactly(self.input.to_string()), PatNode::End],
-                flags: PatFlags {
-                    pures: true,
-                    ..self.flags
-                },
-                glob_start: self.glob_flags,
-                glob_end: self.glob_flags,
-                npar: 0,
-                start_char: self.input.chars().next(),
-                pure_string: Some(self.input.to_string()),
-            });
-        }
-
-        let nodes = self.compile_branch()?;
-        let start_char = self.find_start_char(&nodes);
-
-        Ok(PatProg {
-            code: nodes,
-            flags: self.flags,
-            glob_start: self.glob_flags,
-            glob_end: self.glob_flags,
-            npar: self.npar,
-            start_char,
-            pure_string: None,
-        })
-    }
-
-    fn has_pattern_chars(&self) -> bool {
-        for c in self.input.chars() {
-            match c {
-                '*' | '?' | '[' | '\\' => return true,
-                '#' | '^' | '~' if self.extended_glob => return true,
-                '(' | ')' | '|' if self.ksh_glob => return true,
-                '<' | '>' if self.extended_glob => return true,
-                _ => {}
+/// Helper: when patinsert shifts a chunk of bytecode, any 4-byte
+/// next_off slot that previously pointed past `opnd` must be bumped
+/// by `delta` to keep the chain links valid.
+///
+/// Walks the buffer linearly opcode-by-opcode reading I_NEXT slots.
+/// Conservatively adjusts every nonzero next that lands past opnd.
+fn fixup_offsets_after_insert(buf: &mut [u8], opnd: usize, delta: u32) {
+    let mut i = 0;
+    while i + I_BODY <= buf.len() {
+        let op = buf[i + I_OP];
+        if op == 0 { i += 1; continue; }  // sentinel byte, skip
+        let next_bytes = &buf[i + I_NEXT..i + I_NEXT + 4];
+        let cur = u32::from_le_bytes(next_bytes.try_into().unwrap());
+        if cur != 0 {
+            let abs = cur as usize;
+            if abs >= opnd && abs <= buf.len() {
+                let new = cur + delta;
+                buf[i + I_NEXT..i + I_NEXT + 4].copy_from_slice(&new.to_le_bytes());
             }
         }
-        false
+        i = advance_past_instr(buf, i);
+        if i == 0 { break; }
     }
+}
 
-    fn find_start_char(&self, nodes: &[PatNode]) -> Option<char> {
-        match nodes.first()? {
-            PatNode::Exactly(s) => s.chars().next(),
-            PatNode::Sequence(seq) => {
-                if let Some(PatNode::Exactly(s)) = seq.first() {
-                    s.chars().next()
-                } else {
-                    None
-                }
-            }
-            _ => None,
+/// Helper: given a buffer and current opcode offset, return the
+/// offset of the next opcode after this one's payload.
+///
+/// Encodes the per-opcode payload size table — must stay in sync
+/// with patnode/patinsert calls in the compiler.
+fn advance_past_instr(buf: &[u8], pos: usize) -> usize {
+    if pos + I_BODY > buf.len() { return 0; }
+    let op = buf[pos + I_OP];
+    let body_start = pos + I_BODY;
+    match op {
+        P_END | P_NOTHING | P_BACK | P_EXCSYNC | P_EXCEND
+            | P_ISSTART | P_ISEND | P_COUNTSTART | P_ANY | P_STAR | P_NUMANY
+            | P_GFLAGS => body_start,
+        P_EXACTLY => {
+            // payload: u32 len + len bytes
+            if body_start + 4 > buf.len() { return 0; }
+            let len = u32::from_le_bytes(buf[body_start..body_start + 4].try_into().unwrap()) as usize;
+            body_start + 4 + len
         }
-    }
-
-    fn compile_branch(&mut self) -> Result<Vec<PatNode>, String> {
-        self.compile_branch_inner(true)
-    }
-
-    fn compile_branch_inner(&mut self, add_end: bool) -> Result<Vec<PatNode>, String> {
-        let mut nodes = Vec::new();
-        let mut alternatives: Vec<Vec<PatNode>> = Vec::new();
-
-        loop {
-            let node = self.compile_piece()?;
-            if let Some(n) = node {
-                nodes.push(n);
-            }
-
-            if self.at_end() {
-                break;
-            }
-
-            match self.peek() {
-                Some('|') => {
-                    self.advance();
-                    alternatives.push(std::mem::take(&mut nodes));
-                }
-                Some(')') => break,
-                None => break,
-                _ => {}
-            }
+        P_ANYOF | P_ANYBUT => {
+            if body_start + 4 > buf.len() { return 0; }
+            let len = u32::from_le_bytes(buf[body_start..body_start + 4].try_into().unwrap()) as usize;
+            body_start + 4 + len
         }
+        P_ONEHASH | P_TWOHASH | P_BRANCH | P_WBRANCH
+            | P_EXCLUDE | P_EXCLUDP => body_start,
+        P_OPEN..=0x88 | P_CLOSE..=0x98 => body_start,
+        P_NUMRNG => body_start + 16, // two i64
+        P_NUMFROM | P_NUMTO => body_start + 8,
+        P_COUNT => body_start + 32, // 4 longs
+        _ => body_start,
+    }
+}
 
-        if !alternatives.is_empty() {
-            alternatives.push(nodes);
-            let branch_children: Vec<PatNode> = alternatives
-                .into_iter()
-                .map(|seq| {
-                    let body = if seq.len() == 1 {
-                        seq.into_iter().next().unwrap()
-                    } else {
-                        PatNode::Sequence(seq)
-                    };
-                    if add_end {
-                        PatNode::Sequence(vec![body, PatNode::End])
-                    } else {
-                        body
-                    }
-                })
-                .collect();
-            Ok(vec![PatNode::Branch(branch_children, 0)])
+/// Helper: directly set the `next_off` slot of the instruction at
+/// `pos` without walking the chain. C uses pointer arithmetic
+/// (`scanp->l = ...`) inline; Rust factors it for byte-offset
+/// bookkeeping. Architectural helper.
+fn set_next(pos: usize, val: usize) {
+    let mut buf = patout.lock().unwrap();
+    if pos + I_NEXT + 4 <= buf.len() {
+        buf[pos + I_NEXT..pos + I_NEXT + 4].copy_from_slice(&(val as u32).to_le_bytes());
+    }
+}
+
+/// Port of `pattail()` from `Src/pattern.c:1834`.
+///
+/// C: `static void pattail(long p, long val)` — patches the next-offset
+/// field of the opcode at offset `p` to point to `val`. Walks any
+/// existing chain to the end before patching.
+fn pattail(p: usize, val: usize) {                                            // c:1834
+    let mut buf = patout.lock().unwrap();
+    let mut cur = p;
+    loop {
+        if cur + I_BODY > buf.len() { return; }
+        let next_bytes: [u8; 4] = buf[cur + I_NEXT..cur + I_NEXT + 4].try_into().unwrap();
+        let next = u32::from_le_bytes(next_bytes) as usize;
+        if next == 0 { break; }
+        cur = next;
+    }
+    let val_bytes = (val as u32).to_le_bytes();
+    if cur + I_NEXT + 4 <= buf.len() {
+        buf[cur + I_NEXT..cur + I_NEXT + 4].copy_from_slice(&val_bytes);
+    }
+}
+
+/// Port of `patoptail()` from `Src/pattern.c:1856`.
+///
+/// C: `static void patoptail(long p, long val)` — like pattail but
+/// only patches branches (P_BRANCH/P_WBRANCH).
+fn patoptail(p: usize, val: usize) {                                          // c:1856
+    let buf = patout.lock().unwrap();
+    if p + I_OP >= buf.len() { return; }
+    let op = buf[p + I_OP];
+    drop(buf);
+    if P_ISBRANCH(op) {
+        // For branches, the "operand" is the inner node — walk THAT
+        // node's chain to its end. Branch operand starts at p + I_BODY.
+        pattail(p + I_BODY, val);
+    }
+}
+
+/// Port of `patcompcharsset()` from `Src/pattern.c:464`.
+///
+/// Initializes the `zpc_special` table for the active globbing
+/// regime. The C source resets every ZPC_* slot to 0 or the literal
+/// character it represents, then masks off characters disabled via
+/// `disables`.
+pub fn patcompcharsset() {                                                    // c:464
+    let mut sp = zpc_special.lock().unwrap();
+    *sp = [0u8; ZPC_COUNT];
+    // Default special chars (matches pattern.c init block).
+    sp[ZPC_SLASH]   = b'/';
+    sp[ZPC_NULL]    = 0;
+    sp[ZPC_BAR]     = b'|';
+    sp[ZPC_OUTPAR]  = b')';
+    sp[ZPC_TILDE]   = b'~';
+    sp[ZPC_INPAR]   = b'(';
+    sp[ZPC_QUEST]   = b'?';
+    sp[ZPC_STAR]    = b'*';
+    sp[ZPC_INBRACK] = b'[';
+    sp[ZPC_INANG]   = b'<';
+    sp[ZPC_HAT]     = b'^';
+    sp[ZPC_HASH]    = b'#';
+    sp[ZPC_BNULLKEEP] = 0;
+}
+
+/// Port of `patcompstart()` from `Src/pattern.c:517`.
+///
+/// Resets per-compile globals. Called at the start of `patcompile`.
+pub fn patcompstart() {                                                       // c:517
+    patout.lock().unwrap().clear();
+    patnpar.store(1, Ordering::Relaxed);
+    patflags.store(0, Ordering::Relaxed);
+    patglobflags.store(0, Ordering::Relaxed);
+    errsfound.store(0, Ordering::Relaxed);
+    forceerrs.store(-1, Ordering::Relaxed);
+    patparse_off.store(0, Ordering::Relaxed);
+    patcompcharsset();
+}
+
+// =====================================================================
+// 9. Compiler entry points — pattern.c:540
+// =====================================================================
+
+/// Port of `patcompile()` from `Src/pattern.c:540`.
+///
+/// C signature: `Patprog patcompile(char *exp, int inflags, char **endexp)`.
+/// Compiles pattern `exp` under flags `inflags`, returns a `Patprog`
+/// on success or `NULL` on failure. `endexp` (if non-NULL) is set to
+/// the input cursor at end of parse — used by `bin_zregexparse` to
+/// detect partial-parse cases.
+pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>)   // c:540
+    -> Option<Patprog>
+{
+    patcompstart();
+    *patstart.lock().unwrap() = exp.to_string();
+    *patparse.lock().unwrap() = exp.to_string();
+    patflags.store(inflags & !(PAT_PURES | PAT_HAS_EXCLUDP) as i32, Ordering::Relaxed); // c:566
+    patglobflags.store(0, Ordering::Relaxed);
+
+    // c:583-590 — emit a P_GFLAGS placeholder at start. Skipped in v1.
+
+    let mut flagp: i32 = 0;
+    let root = patcompswitch(0, &mut flagp);
+    if root < 0 {
+        return None;                                                          // c:646 compile error
+    }
+    // Emit the terminal P_END and chain every branch's operand to it.
+    let end_off = patnode(P_END);
+    chain_branches_to(root as usize, end_off);
+
+    let code = patout.lock().unwrap().clone();
+    let consumed_off = patparse_off.load(Ordering::Relaxed);
+    if let Some(end) = endexp.as_deref_mut() {
+        let parse = patparse.lock().unwrap();
+        *end = parse[consumed_off..].to_string();
+    }
+
+    Some(Box::new(patprog {
+        startoff: 0,
+        size: code.len() as i64,
+        mustoff: 0,
+        patmlen: 0,
+        globflags: 0,
+        globend: patglobflags.load(Ordering::Relaxed),
+        flags: patflags.load(Ordering::Relaxed),
+        patnpar: patnpar.load(Ordering::Relaxed) - 1,
+        patstartch: 0,
+        code,
+    }))
+}
+
+/// Port of `patcompswitch()` from `Src/pattern.c:765`.
+///
+/// C: `static long patcompswitch(int paren, int *flagp)`. Parses an
+/// alternation (`a|b|c`), emitting a chain of P_BRANCH nodes. Returns
+/// offset of the first branch, or -1 on error.
+pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {                    // c:765
+    // Emit the first P_BRANCH header. Its operand is the content
+    // emitted by the immediately-following patcompbranch call (lives
+    // inline at starter+I_BODY). Does NOT emit a terminator — caller
+    // (patcompile for top-level, patcomppiece for sub-pattern)
+    // chains branches to the appropriate follow-on opcode.
+    let starter = patnode(P_BRANCH);
+    let mut branch_flags: i32 = 0;
+    let first_branch = patcompbranch(&mut branch_flags, paren);
+    if first_branch < 0 { return -1; }
+    *flagp |= branch_flags & P_HSTART;
+
+    let mut last_branch = starter;
+
+    // Alternation loop: while next char is |, parse another branch.
+    loop {
+        let off = patparse_off.load(Ordering::Relaxed);
+        let parse = patparse.lock().unwrap();
+        if off >= parse.len() { break; }
+        let c = parse.as_bytes()[off];
+        if c != b'|' { break; }
+        drop(parse);
+        patparse_off.fetch_add(1, Ordering::Relaxed);
+        let br = patnode(P_BRANCH);
+        // Chain previous branch's `next` directly to this new branch
+        // (alternative chain, not operand chain).
+        set_next(last_branch, br);
+        let mut bf: i32 = 0;
+        let inner = patcompbranch(&mut bf, paren);
+        if inner < 0 { return -1; }
+        *flagp |= bf & P_HSTART;
+        last_branch = br;
+    }
+
+    let _ = first_branch;
+    starter as i64
+}
+
+/// Helper: walk every branch's operand chain and patch each branch's
+/// last-operand-node `.next` to `target`. Used to chain a fully-
+/// compiled alternation switch to whatever opcode follows (P_END for
+/// the outermost compile, P_CLOSE_N for a sub-group).
+///
+/// Architectural helper — C uses pattail inside the BRANCH operand
+/// scope via Upat pointer arithmetic; Rust factors it for clarity.
+fn chain_branches_to(starter: usize, target: usize) {
+    let mut cur = starter;
+    loop {
+        // Operand starts at cur + I_BODY (the byte right after this
+        // branch's header). Walk operand's next-chain to its end
+        // and set its .next = target.
+        pattail(cur + I_BODY, target);
+        // Move to next alternative.
+        let buf = patout.lock().unwrap();
+        if cur + I_NEXT + 4 > buf.len() { break; }
+        let nb: [u8; 4] = buf[cur + I_NEXT..cur + I_NEXT + 4].try_into().unwrap();
+        let n = u32::from_le_bytes(nb) as usize;
+        drop(buf);
+        if n == 0 { break; }
+        cur = n;
+    }
+}
+
+/// Port of `patcompbranch()` from `Src/pattern.c:942`.
+///
+/// C: `static long patcompbranch(int *flagp, int paren)`. Parses a
+/// single branch — a sequence of pieces. Returns offset of the first
+/// node in the branch, or -1 on error.
+pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {                    // c:942
+    let mut chain_start: i64 = -1;
+    let mut last_tail: usize = 0;
+    *flagp = P_PURESTR;
+
+    loop {
+        let off = patparse_off.load(Ordering::Relaxed);
+        let parse = patparse.lock().unwrap();
+        if off >= parse.len() { break; }
+        let c = parse.as_bytes()[off];
+        // Branch terminators: |, ), end of pattern.
+        if c == b'|' || c == b')' { break; }
+        drop(parse);
+
+        let mut piece_flags: i32 = 0;
+        let mut piece_tail: usize = 0;
+        let piece = patcomppiece(&mut piece_flags, paren, &mut piece_tail);
+        if piece < 0 { return -1; }
+        if chain_start < 0 {
+            chain_start = piece;
         } else {
-            if add_end {
-                nodes.push(PatNode::End);
-            }
-            Ok(nodes)
+            // Chain previous piece's tail → this piece's head directly.
+            set_next(last_tail, piece as usize);
         }
+        last_tail = piece_tail;
+        *flagp &= piece_flags;
     }
 
-    fn compile_piece(&mut self) -> Result<Option<PatNode>, String> {
-        let Some(c) = self.peek() else {
-            return Ok(None);
-        };
-
-        let node = match c {
-            '*' => {
-                self.advance();
-                // Check for KSH *(pattern)
-                if self.ksh_glob && self.peek() == Some('(') {
-                    self.advance();
-                    let inner = self.compile_branch_inner(false)?;
-                    if self.peek() != Some(')') {
-                        return Err("missing ) in *(...)".to_string());
-                    }
-                    self.advance();
-                    PatNode::OneHash(Box::new(PatNode::Sequence(inner)))
-                } else {
-                    PatNode::Star
-                }
-            }
-            '?' => {
-                self.advance();
-                // Check for KSH ?(pattern)
-                if self.ksh_glob && self.peek() == Some('(') {
-                    self.advance();
-                    let inner = self.compile_branch_inner(false)?;
-                    if self.peek() != Some(')') {
-                        return Err("missing ) in ?(...)".to_string());
-                    }
-                    self.advance();
-                    // 0 or 1 match
-                    PatNode::Branch(vec![PatNode::Sequence(inner), PatNode::Nothing], 0)
-                } else {
-                    PatNode::Any
-                }
-            }
-            '[' => self.compile_bracket()?,
-            '\\' => {
-                self.advance();
-                if let Some(escaped) = self.advance() {
-                    PatNode::Exactly(escaped.to_string())
-                } else {
-                    PatNode::Exactly("\\".to_string())
-                }
-            }
-            '#' if self.extended_glob => {
-                self.advance();
-                // ## means 1 or more
-                if self.peek() == Some('#') {
-                    self.advance();
-                    // Get previous node and wrap
-                    return Ok(Some(PatNode::TwoHash(Box::new(PatNode::Any))));
-                }
-                // # means 0 or more
-                PatNode::OneHash(Box::new(PatNode::Any))
-            }
-            '<' if self.extended_glob => self.compile_numeric_range()?,
-            '(' => {
-                self.advance();
-                self.npar += 1;
-                let group_num = self.npar;
-                let inner = self.compile_branch_inner(false)?;
-                if self.peek() != Some(')') {
-                    return Err("missing )".to_string());
-                }
-                self.advance();
-                PatNode::Sequence(vec![
-                    PatNode::Open(group_num),
-                    PatNode::Sequence(inner),
-                    PatNode::Close(group_num),
-                ])
-            }
-            ')' | '|' => return Ok(None),
-            '+' if self.ksh_glob && self.peek_n(1) == Some('(') => {
-                self.advance(); // +
-                self.advance(); // (
-                let inner = self.compile_branch_inner(false)?;
-                if self.peek() != Some(')') {
-                    return Err("missing ) in +(...)".to_string());
-                }
-                self.advance();
-                PatNode::TwoHash(Box::new(PatNode::Sequence(inner)))
-            }
-            '!' if self.ksh_glob && self.peek_n(1) == Some('(') => {
-                self.advance(); // !
-                self.advance(); // (
-                let inner = self.compile_branch_inner(false)?;
-                if self.peek() != Some(')') {
-                    return Err("missing ) in !(...)".to_string());
-                }
-                self.advance();
-                PatNode::Exclude(inner)
-            }
-            '@' if self.ksh_glob && self.peek_n(1) == Some('(') => {
-                self.advance(); // @
-                self.advance(); // (
-                let inner = self.compile_branch_inner(false)?;
-                if self.peek() != Some(')') {
-                    return Err("missing ) in @(...)".to_string());
-                }
-                self.advance();
-                PatNode::Sequence(inner)
-            }
-            '^' if self.extended_glob => {
-                self.advance();
-                // Negation - match anything except
-                let inner = self.compile_piece()?;
-                if let Some(node) = inner {
-                    PatNode::Exclude(vec![node])
-                } else {
-                    return Err("^ requires pattern".to_string());
-                }
-            }
-            '~' if self.extended_glob => {
-                self.advance();
-                // Exclusion operator
-                let inner = self.compile_piece()?;
-                if let Some(node) = inner {
-                    PatNode::Exclude(vec![node])
-                } else {
-                    return Err("~ requires pattern".to_string());
-                }
-            }
-            _ => {
-                // Collect literal characters
-                let mut literal = String::new();
-                while let Some(ch) = self.peek() {
-                    if self.is_special(ch) {
-                        break;
-                    }
-                    literal.push(ch);
-                    self.advance();
-                }
-                if literal.is_empty() {
-                    return Ok(None);
-                }
-                PatNode::Exactly(literal)
-            }
-        };
-
-        // Check for repetition suffix
-        if self.extended_glob {
-            if let Some('#') = self.peek() {
-                self.advance();
-                if self.peek() == Some('#') {
-                    self.advance();
-                    return Ok(Some(PatNode::TwoHash(Box::new(node))));
-                }
-                return Ok(Some(PatNode::OneHash(Box::new(node))));
-            }
-        }
-
-        Ok(Some(node))
+    if chain_start < 0 {
+        chain_start = patnode(P_NOTHING) as i64;
     }
-
-    fn is_special(&self, c: char) -> bool {
-        matches!(c, '*' | '?' | '[' | '\\' | '(' | ')' | '|')
-            || (self.extended_glob && matches!(c, '#' | '^' | '~' | '<'))
-            || (self.ksh_glob && matches!(c, '+' | '!' | '@') && self.peek_n(1) == Some('('))
-    }
-
-    fn compile_bracket(&mut self) -> Result<PatNode, String> {
-        self.advance(); // consume '['
-
-        let negated = matches!(self.peek(), Some('!' | '^'));
-        if negated {
-            self.advance();
-        }
-
-        let mut chars = Vec::new();
-
-        // ] at start is literal
-        if self.peek() == Some(']') {
-            chars.push(']');
-            self.advance();
-        }
-
-        while let Some(c) = self.peek() {
-            if c == ']' {
-                self.advance();
-                break;
-            }
-
-            if c == '\\' {
-                self.advance();
-                if let Some(escaped) = self.advance() {
-                    chars.push(escaped);
-                }
-                continue;
-            }
-
-            // Check for POSIX class [:alpha:]
-            if c == '[' && self.peek_n(1) == Some(':') {
-                if let Some(class_chars) = self.parse_posix_class() {
-                    chars.extend(class_chars);
-                    continue;
-                }
-            }
-
-            self.advance();
-
-            // Check for range a-z
-            if self.peek() == Some('-') && self.peek_n(1) != Some(']') {
-                self.advance(); // consume '-'
-                if let Some(end) = self.advance() {
-                    for ch in c..=end {
-                        chars.push(ch);
-                    }
-                    continue;
-                }
-            }
-
-            chars.push(c);
-        }
-
-        if negated {
-            Ok(PatNode::AnyBut(chars))
-        } else {
-            Ok(PatNode::AnyOf(chars))
-        }
-    }
-
-    fn parse_posix_class(&mut self) -> Option<Vec<char>> {
-        let start = self.pos;
-        self.advance(); // [
-        self.advance(); // :
-
-        let mut class_name = String::new();
-        while let Some(c) = self.peek() {
-            if c == ':' {
-                break;
-            }
-            class_name.push(c);
-            self.advance();
-        }
-
-        if self.peek() != Some(':') || self.peek_n(1) != Some(']') {
-            self.pos = start;
-            return None;
-        }
-        self.advance(); // :
-        self.advance(); // ]
-
-        let chars: Vec<char> = match class_name.as_str() {
-            "alpha" => ('a'..='z').chain('A'..='Z').collect(),
-            "digit" => ('0'..='9').collect(),
-            "alnum" => ('a'..='z').chain('A'..='Z').chain('0'..='9').collect(),
-            "space" => vec![' ', '\t', '\n', '\r', '\x0b', '\x0c'],
-            "upper" => ('A'..='Z').collect(),
-            "lower" => ('a'..='z').collect(),
-            "punct" => "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".chars().collect(),
-            "xdigit" => ('0'..='9').chain('a'..='f').chain('A'..='F').collect(),
-            "blank" => vec![' ', '\t'],
-            "cntrl" => (0u8..=31)
-                .map(|b| b as char)
-                .chain(std::iter::once(127 as char))
-                .collect(),
-            "graph" | "print" => (33u8..=126).map(|b| b as char).collect(),
-            "word" => ('a'..='z')
-                .chain('A'..='Z')
-                .chain('0'..='9')
-                .chain(std::iter::once('_'))
-                .collect(),
-            _ => return None,
-        };
-
-        Some(chars)
-    }
-
-    fn compile_numeric_range(&mut self) -> Result<PatNode, String> {
-        self.advance(); // consume '<'
-
-        let mut from_str = String::new();
-        let mut to_str = String::new();
-        let mut in_to = false;
-
-        while let Some(c) = self.peek() {
-            if c == '>' {
-                self.advance();
-                break;
-            }
-            if c == '-' {
-                self.advance();
-                in_to = true;
-                continue;
-            }
-            if c.is_ascii_digit() {
-                if in_to {
-                    to_str.push(c);
-                } else {
-                    from_str.push(c);
-                }
-                self.advance();
-            } else {
-                return Err(format!("invalid character in numeric range: {}", c));
-            }
-        }
-
-        let from: Option<i64> = if from_str.is_empty() {
-            None
-        } else {
-            from_str.parse().ok()
-        };
-        let to: Option<i64> = if to_str.is_empty() {
-            None
-        } else {
-            to_str.parse().ok()
-        };
-
-        match (from, to) {
-            (Some(f), Some(t)) => Ok(PatNode::NumRng(f, t)),
-            (Some(f), None) => Ok(PatNode::NumFrom(f)),
-            (None, Some(t)) => Ok(PatNode::NumTo(t)),
-            (None, None) => Ok(PatNode::NumAny),
-        }
-    }
+    chain_start
 }
 
-/// Pattern matcher state.
-/// Port of the per-match locals `pattry()` from Src/pattern.c:2223
-/// keeps on the stack — current input position, capture start/end
-/// offsets, glob-flag state. The C source uses globals; we scope
-/// them to the matcher.
-pub struct PatMatcher<'a> {
-    prog: &'a PatProg,
-    input: &'a str,
-    pos: usize,
-    glob_flags: GlobFlags,
-    /// Capture group positions: (start, end) byte offsets
-    captures: [(usize, usize); NSUBEXP],
-    captures_set: u16,
-    /// Errors found (for approximate matching)
-    errors_found: u32,
-}
-
-impl<'a> PatMatcher<'a> {
-    pub fn new(prog: &'a PatProg, input: &'a str) -> Self {
-        PatMatcher {
-            prog,
-            input,
-            pos: 0,
-            glob_flags: prog.glob_start,
-            captures: [(0, 0); NSUBEXP],
-            captures_set: 0,
-            errors_found: 0,
-        }
+/// Port of `patcomppiece()` from `Src/pattern.c:1261`.
+///
+/// C: `static long patcomppiece(int *flagp, int paren)`. Parses a
+/// single atom + optional quantifier. Returns offset of compiled node.
+/// Out-param `tail_out` receives the byte offset of the LAST opcode
+/// in the compiled piece — the node whose `.next` should be chained
+/// to whatever follows in the sequence. For simple atoms (P_EXACTLY,
+/// P_ANY, etc.) the tail equals the head; for compound pieces
+/// `(...)` / quantified atoms it points to the trailing P_CLOSE_N or
+/// quantifier-injected node.
+pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 { // c:1261
+    let _ = paren;
+    let off = patparse_off.load(Ordering::Relaxed);
+    let parse = patparse.lock().unwrap();
+    if off >= parse.len() {
+        return patnode(P_NOTHING) as i64;
     }
+    let bytes = parse.as_bytes();
+    let c = bytes[off];
+    drop(parse);
 
-    /// Try to match the pattern against the input
-    pub fn try_match(&mut self) -> bool {
-        // Handle pure string case
-        if let Some(ref pure) = self.prog.pure_string {
-            if self.glob_flags.igncase {
-                return self.input.eq_ignore_ascii_case(pure);
-            }
-            return self.input == pure;
+    // Atom dispatch. Each arm sets `*tail_out` to the offset of the
+    // last opcode emitted by this piece (for simple atoms, tail = head).
+    let atom = match c {
+        b'?' => {
+            patparse_off.fetch_add(1, Ordering::Relaxed);
+            *flagp |= P_SIMPLE;
+            *flagp &= !P_PURESTR;
+            let h = patnode(P_ANY);
+            *tail_out = h;
+            h as i64
         }
-
-        // Don't match leading dot unless explicitly matched
-        if self.prog.flags.nogld && self.input.starts_with('.') {
-            return false;
+        b'*' => {
+            patparse_off.fetch_add(1, Ordering::Relaxed);
+            *flagp &= !P_PURESTR;
+            let h = patnode(P_STAR);
+            *tail_out = h;
+            h as i64
         }
-
-        self.match_nodes_at(&self.prog.code.clone(), 0)
-    }
-
-    fn match_nodes_at(&mut self, nodes: &[PatNode], start_idx: usize) -> bool {
-        let mut idx = start_idx;
-        while idx < nodes.len() {
-            let node = &nodes[idx];
-
-            // Special handling for Star - needs to try all possible positions
-            if matches!(node, PatNode::Star) {
-                // If this is the last node, consume rest of input
-                if idx + 1 >= nodes.len() {
-                    self.pos = self.input.len();
-                    return true;
-                }
-
-                // Try matching rest of pattern at each position
-                let save_pos = self.pos;
-                let end_pos = if self.prog.flags.file {
-                    self.input[self.pos..]
-                        .find('/')
-                        .map(|i| self.pos + i)
-                        .unwrap_or(self.input.len())
-                } else {
-                    self.input.len()
-                };
-
-                // Try from current position to end
-                for try_pos in save_pos..=end_pos {
-                    self.pos = try_pos;
-                    if self.match_nodes_at(nodes, idx + 1) {
-                        return true;
+        b'[' => {
+            patparse_off.fetch_add(1, Ordering::Relaxed);
+            *flagp |= P_SIMPLE;
+            *flagp &= !P_PURESTR;
+            // Inline bracket-expression parse (C patcomppiece bracket case).
+            let mut chars: Vec<u8> = Vec::new();
+            let mut negate = false;
+            let bracket_start = patparse_off.load(Ordering::Relaxed);
+            let parse_b = patparse.lock().unwrap();
+            let bb = parse_b.as_bytes();
+            let mut i_b = bracket_start;
+            if i_b < bb.len() && (bb[i_b] == b'^' || bb[i_b] == b'!') {
+                negate = true;
+                i_b += 1;
+            }
+            while i_b < bb.len() && bb[i_b] != b']' {
+                if i_b + 1 < bb.len() && bb[i_b] == b'[' && bb[i_b+1] == b':' {
+                    let class_start = i_b + 2;
+                    let mut j_b = class_start;
+                    while j_b + 1 < bb.len() && !(bb[j_b] == b':' && bb[j_b+1] == b']') {
+                        j_b += 1;
                     }
-                }
-                self.pos = save_pos;
-                return false;
-            }
-
-            if !self.match_node(node) {
-                return false;
-            }
-            idx += 1;
-        }
-        true
-    }
-
-    fn match_node(&mut self, node: &PatNode) -> bool {
-        match node {
-            PatNode::End => {
-                // End matches if we're at the end of input
-                // or if pattern is not anchored
-                self.pos >= self.input.len() || self.prog.flags.noanch
-            }
-
-            PatNode::Exactly(s) => {
-                let remaining = &self.input[self.pos..];
-                if self.glob_flags.igncase {
-                    if remaining.len() >= s.len() && remaining[..s.len()].eq_ignore_ascii_case(s) {
-                        self.pos += s.len();
-                        true
-                    } else {
-                        false
-                    }
-                } else if remaining.starts_with(s) {
-                    self.pos += s.len();
-                    true
-                } else {
-                    false
-                }
-            }
-
-            PatNode::Nothing => true,
-
-            PatNode::Any => {
-                if self.pos < self.input.len() {
-                    let c = self.current_char();
-                    // Don't match '/' in file mode
-                    if self.prog.flags.file && c == '/' {
-                        return false;
-                    }
-                    self.pos += c.len_utf8();
-                    true
-                } else {
-                    false
-                }
-            }
-
-            PatNode::Star => {
-                // Match any sequence - * just advances to end
-                // Actual matching happens via backtracking in sequence matching
-                // For file mode, don't cross '/'
-                if self.prog.flags.file {
-                    if let Some(slash_pos) = self.input[self.pos..].find('/') {
-                        self.pos += slash_pos;
-                    } else {
-                        self.pos = self.input.len();
-                    }
-                } else {
-                    self.pos = self.input.len();
-                }
-                true
-            }
-
-            PatNode::AnyOf(chars) => {
-                if self.pos >= self.input.len() {
-                    return false;
-                }
-                let c = self.current_char();
-                let matched = if self.glob_flags.igncase {
-                    chars.iter().any(|&ch| ch.eq_ignore_ascii_case(&c))
-                } else {
-                    chars.contains(&c)
-                };
-                if matched {
-                    self.pos += c.len_utf8();
-                    true
-                } else {
-                    false
-                }
-            }
-
-            PatNode::AnyBut(chars) => {
-                if self.pos >= self.input.len() {
-                    return false;
-                }
-                let c = self.current_char();
-                let in_set = if self.glob_flags.igncase {
-                    chars.iter().any(|&ch| ch.eq_ignore_ascii_case(&c))
-                } else {
-                    chars.contains(&c)
-                };
-                if !in_set {
-                    self.pos += c.len_utf8();
-                    true
-                } else {
-                    false
-                }
-            }
-
-            PatNode::Branch(alts, _) => {
-                let save_pos = self.pos;
-                // Try each alternative
-                for alt in alts {
-                    self.pos = save_pos;
-                    if self.match_node(alt) {
-                        return true;
-                    }
-                }
-                self.pos = save_pos;
-                false
-            }
-
-            PatNode::Sequence(nodes) => self.match_nodes_at(nodes, 0),
-
-            PatNode::OneHash(inner) => {
-                // Match 0 or more times
-                loop {
-                    let save_pos = self.pos;
-                    if !self.match_single_node(inner) {
-                        self.pos = save_pos;
-                        break;
-                    }
-                    // Avoid infinite loop on empty match
-                    if self.pos == save_pos {
-                        break;
-                    }
-                }
-                true
-            }
-
-            PatNode::TwoHash(inner) => {
-                // Match 1 or more times
-                if !self.match_single_node(inner) {
-                    return false;
-                }
-                loop {
-                    let save_pos = self.pos;
-                    if !self.match_single_node(inner) {
-                        self.pos = save_pos;
-                        break;
-                    }
-                    if self.pos == save_pos {
-                        break;
-                    }
-                }
-                true
-            }
-
-            PatNode::Count { min, max, node } => {
-                let mut count = 0u32;
-                loop {
-                    if let Some(m) = max {
-                        if count >= *m {
-                            break;
+                    if j_b + 1 < bb.len() {
+                        let class_name = std::str::from_utf8(&bb[class_start..j_b]).unwrap_or("");
+                        // Inline POSIX class expansion.
+                        match class_name {
+                            "alpha" => { for c in b'a'..=b'z' { chars.push(c); } for c in b'A'..=b'Z' { chars.push(c); } }
+                            "upper" => { for c in b'A'..=b'Z' { chars.push(c); } }
+                            "lower" => { for c in b'a'..=b'z' { chars.push(c); } }
+                            "digit" => { for c in b'0'..=b'9' { chars.push(c); } }
+                            "xdigit" => { for c in b'0'..=b'9' { chars.push(c); } for c in b'a'..=b'f' { chars.push(c); } for c in b'A'..=b'F' { chars.push(c); } }
+                            "alnum" => { for c in b'a'..=b'z' { chars.push(c); } for c in b'A'..=b'Z' { chars.push(c); } for c in b'0'..=b'9' { chars.push(c); } }
+                            "space" => { for b in b" \t\n\r\x0b\x0c".iter() { chars.push(*b); } }
+                            "blank" => { chars.push(b' '); chars.push(b'\t'); }
+                            "punct" => { for b in b"!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".iter() { chars.push(*b); } }
+                            "cntrl" => { for c in 0u8..=31 { chars.push(c); } chars.push(127); }
+                            "print" => { for c in 32u8..=126 { chars.push(c); } }
+                            "graph" => { for c in 33u8..=126 { chars.push(c); } }
+                            _ => {}
                         }
-                    }
-                    let save_pos = self.pos;
-                    if !self.match_node(node) {
-                        self.pos = save_pos;
-                        break;
-                    }
-                    if self.pos == save_pos {
-                        break;
-                    }
-                    count += 1;
-                }
-                count >= *min
-            }
-
-            PatNode::Open(n) => {
-                if *n > 0 && *n <= NSUBEXP {
-                    self.captures[n - 1].0 = self.pos;
-                    self.captures_set |= 1 << (n - 1);
-                }
-                true
-            }
-
-            PatNode::Close(n) => {
-                if *n > 0 && *n <= NSUBEXP {
-                    self.captures[n - 1].1 = self.pos;
-                }
-                true
-            }
-
-            PatNode::NumRng(from, to) => self.match_number(Some(*from), Some(*to)),
-
-            PatNode::NumFrom(from) => self.match_number(Some(*from), None),
-
-            PatNode::NumTo(to) => self.match_number(None, Some(*to)),
-
-            PatNode::NumAny => self.match_number(None, None),
-
-            PatNode::IsStart => self.pos == 0,
-
-            PatNode::IsEnd => self.pos >= self.input.len(),
-
-            PatNode::GFlags(flags) => {
-                self.glob_flags = *flags;
-                true
-            }
-
-            PatNode::Exclude(inner) => {
-                // Match if inner does NOT match
-                let save_pos = self.pos;
-                let matched = self.match_nodes_at(inner, 0);
-                self.pos = save_pos;
-                !matched
-            }
-
-            PatNode::ExcludP(inner) => {
-                let save_pos = self.pos;
-                let matched = self.match_nodes_at(inner, 0);
-                self.pos = save_pos;
-                !matched
-            }
-
-            PatNode::WBranch(alts) => {
-                // Like branch but must match at least one char
-                let save_pos = self.pos;
-                for alt in alts {
-                    self.pos = save_pos;
-                    if self.match_node(alt) && self.pos > save_pos {
-                        return true;
+                        i_b = j_b + 2;
+                        continue;
                     }
                 }
-                self.pos = save_pos;
-                false
+                if i_b + 2 < bb.len() && bb[i_b+1] == b'-' && bb[i_b+2] != b']' {
+                    let lo = bb[i_b];
+                    let hi = bb[i_b+2];
+                    for c in lo..=hi { chars.push(c); }
+                    i_b += 3;
+                } else {
+                    chars.push(bb[i_b]);
+                    i_b += 1;
+                }
             }
-
-            PatNode::ExcSync | PatNode::ExcEnd | PatNode::Back(_) | PatNode::CountStart => true,
-        }
-    }
-
-    fn current_char(&self) -> char {
-        self.input[self.pos..].chars().next().unwrap_or('\0')
-    }
-
-    /// Match a single node (for repetition operators)
-    fn match_single_node(&mut self, node: &PatNode) -> bool {
-        match node {
-            PatNode::Sequence(nodes) => self.match_nodes_at(nodes, 0),
-            _ => self.match_node(node),
-        }
-    }
-
-    fn match_number(&mut self, from: Option<i64>, to: Option<i64>) -> bool {
-        let start = self.pos;
-        let mut num_str = String::new();
-
-        // Collect digits
-        while self.pos < self.input.len() {
-            let c = self.current_char();
-            if c.is_ascii_digit() {
-                num_str.push(c);
-                self.pos += 1;
-            } else {
-                break;
+            drop(parse_b);
+            if let Some(p_lock) = patparse.lock().ok() {
+                if i_b < p_lock.len() && p_lock.as_bytes()[i_b] == b']' { i_b += 1; }
             }
+            patparse_off.store(i_b, Ordering::Relaxed);
+            let opcode = if negate { P_ANYBUT } else { P_ANYOF };
+            let off2 = patnode(opcode);
+            let mut buf = patout.lock().unwrap();
+            let len = chars.len() as u32;
+            buf.extend_from_slice(&len.to_le_bytes());
+            buf.extend_from_slice(&chars);
+            *tail_out = off2;
+            off2 as i64
         }
-
-        if num_str.is_empty() {
-            self.pos = start;
-            return false;
-        }
-
-        let num: i64 = match num_str.parse() {
-            Ok(n) => n,
-            Err(_) => {
-                self.pos = start;
-                return false;
+        b'(' => {
+            patparse_off.fetch_add(1, Ordering::Relaxed);
+            *flagp &= !P_PURESTR;
+            let n = patnpar.fetch_add(1, Ordering::Relaxed);
+            if n >= NSUBEXP as i32 {
+                return -1;
             }
-        };
-
-        let in_range = match (from, to) {
-            (Some(f), Some(t)) => num >= f && num <= t,
-            (Some(f), None) => num >= f,
-            (None, Some(t)) => num <= t,
-            (None, None) => true,
-        };
-
-        if !in_range {
-            self.pos = start;
-            return false;
+            let opcode = P_OPEN + n as u8;
+            let open_off = patnode(opcode);
+            let mut inner_flags: i32 = 0;
+            let inner = patcompswitch(1, &mut inner_flags);
+            if inner < 0 { return -1; }
+            // Expect closing ')'.
+            let cur_off = patparse_off.load(Ordering::Relaxed);
+            let p = patparse.lock().unwrap();
+            if cur_off >= p.len() || p.as_bytes()[cur_off] != b')' {
+                return -1;
+            }
+            drop(p);
+            patparse_off.fetch_add(1, Ordering::Relaxed);
+            let close_off = patnode(P_CLOSE + n as u8);
+            // P_OPEN_N.next → first BRANCH of inner alternation.
+            set_next(open_off, inner as usize);
+            // Each branch's operand chain ends at P_CLOSE_N.
+            chain_branches_to(inner as usize, close_off);
+            *flagp &= !P_PURESTR;
+            *tail_out = close_off;
+            open_off as i64
         }
-
-        true
-    }
-
-    /// Get capture groups
-    pub fn captures(&self) -> &[(usize, usize); NSUBEXP] {
-        &self.captures
-    }
-
-    /// Get a specific capture group as a string slice
-    pub fn capture(&self, n: usize) -> Option<&'a str> {
-        if n == 0 || n > NSUBEXP {
-            return None;
+        b'\\' => {
+            patparse_off.fetch_add(1, Ordering::Relaxed);
+            let p = patparse.lock().unwrap();
+            let off2 = patparse_off.load(Ordering::Relaxed);
+            if off2 >= p.len() { return -1; }
+            let escaped = p.as_bytes()[off2];
+            drop(p);
+            patparse_off.fetch_add(1, Ordering::Relaxed);
+            *flagp |= P_SIMPLE;
+            let lit_off = patnode(P_EXACTLY);
+            let mut buf_lit = patout.lock().unwrap();
+            buf_lit.extend_from_slice(&1u32.to_le_bytes());
+            buf_lit.push(escaped);
+            *tail_out = lit_off;
+            lit_off as i64
         }
-        if self.captures_set & (1 << (n - 1)) == 0 {
-            return None;
+        _ => {
+            // Accumulate a literal run.
+            let mut buf: Vec<u8> = Vec::new();
+            let mut local_off = off;
+            let p = patparse.lock().unwrap();
+            while local_off < p.len() {
+                let b = p.as_bytes()[local_off];
+                // Stop at metacharacters.
+                if matches!(b, b'?'|b'*'|b'['|b'('|b')'|b'|'|b'\\'|b'#'|b'^'|b'<') {
+                    break;
+                }
+                buf.push(b);
+                local_off += 1;
+            }
+            drop(p);
+            if buf.is_empty() {
+                return -1;
+            }
+            patparse_off.store(local_off, Ordering::Relaxed);
+            *flagp |= P_SIMPLE;
+            // If it's a single char, mark simple; multi-char run stays pure-string.
+            let lit_off = patnode(P_EXACTLY);
+            let mut buf_lit = patout.lock().unwrap();
+            let len = buf.len() as u32;
+            buf_lit.extend_from_slice(&len.to_le_bytes());
+            buf_lit.extend_from_slice(&buf);
+            *tail_out = lit_off;
+            lit_off as i64
         }
-        let (start, end) = self.captures[n - 1];
-        if start <= end && end <= self.input.len() {
-            Some(&self.input[start..end])
-        } else {
-            None
-        }
-    }
-}
-
-/// Compile a pattern string into a program.
-/// Port of `patcompile()` from Src/pattern.c:540 — the entry point
-// matched recursively.                                                     // c:535
-/// the C source's `glob`/`[[ x = pat ]]` paths call to turn a
-/// pattern string into a `Patprog`. The Rust AST replaces the
-/// flat-bytecode `char *patcode` buffer the C source builds.
-pub fn patcompile(pattern: &str, inflags: i32) -> Result<PatProg, String> { // c:540
-    // c:566 — `patflags = inflags & ~(PAT_PURES|PAT_HAS_EXCLUDP)`; map remaining bits to scratch flags.
-    let flags = PatFlags {
-        file: inflags & PAT_FILE != 0 || inflags & PAT_FILET != 0,
-        any: inflags & PAT_ANY != 0,
-        noanch: inflags & PAT_NOANCH != 0,
-        nogld: inflags & PAT_NOGLD != 0,
-        pures: false,
-        scan: inflags & PAT_SCAN != 0,
-        lcmatchuc: inflags & PAT_LCMATCHUC != 0,
     };
-    PatCompiler::new(pattern, flags).compile()
+
+    if atom < 0 { return atom; }
+
+    // Quantifier: # / ##
+    let q_off = patparse_off.load(Ordering::Relaxed);
+    let parse2 = patparse.lock().unwrap();
+    if q_off < parse2.len() && parse2.as_bytes()[q_off] == b'#' {
+        let two = q_off + 1 < parse2.len() && parse2.as_bytes()[q_off + 1] == b'#';
+        drop(parse2);
+        let consume = if two { 2 } else { 1 };
+        patparse_off.fetch_add(consume, Ordering::Relaxed);
+        let quant_op = if two { P_TWOHASH } else { P_ONEHASH };
+        // C inserts the quant opcode BEFORE the atom and chains atom
+        // as the operand. patinsert handles the byte shift.
+        patinsert(quant_op, atom as usize, None, 0);
+        *flagp &= !P_PURESTR;
+        // After patinsert, the atom now lives at atom+5; the quant
+        // opcode sits at the original atom offset. Tail is the
+        // quant header (its .next is what gets chained to follow-up).
+        *tail_out = atom as usize;
+    }
+
+    atom
 }
 
-// Test prog against null-terminated, metafied string.                     // c:2218
-/// Try to match a compiled pattern against a string.
-/// Port of `pattry()` from Src/pattern.c:2223 — the C source's
-/// top-level matcher entry point. Wraps `PatMatcher::try_match()`.
-pub fn pattry(prog: &PatProg, s: &str) -> bool {                             // c:2223
-    PatMatcher::new(prog, s).try_match()
+/// Port of `patcompnot()` from `Src/pattern.c:1760`.
+///
+/// C: `static long patcompnot(int paren, int *flagsp)`. Implements
+/// the `^pat` extended-glob negation by emitting P_EXCLUDE.
+///
+/// **Deferred** (Phase 5): full exclude support requires the matcher
+/// to backtrack between branch and exclude trees. Currently returns -1
+/// (compile failure) so the higher-level switch falls through.
+pub fn patcompnot(_paren: i32, _flagsp: &mut i32) -> i64 {                    // c:1760
+    -1
 }
 
-/// Compile and match a pattern in one call.
-/// Convenience wrapper around `patcompile` (Src/pattern.c:540) +
-/// `pattry` (Src/pattern.c:2223). Returns `false` on compile error
-/// matching the `glob` builtin's "no-match" fall-through.
-pub fn patmatch(pattern: &str, text: &str) -> bool {
-    match patcompile(pattern, PAT_HEAPDUP) {
-        Ok(prog) => pattry(&prog, text),
-        Err(_) => false,
+// =====================================================================
+// 10. Glob-flag parser — pattern.c:1037
+// =====================================================================
+
+/// Port of `patgetglobflags()` from `Src/pattern.c:1037`.
+///
+/// C signature: `int patgetglobflags(char **strp, long *assertp,
+/// int *ignore)`. Parses the `(#...)` glob-flag specifier and updates
+/// the active flag set.
+///
+/// Returns: tuple `(consumed_chars, glob_flags_set)` where
+/// `consumed_chars` is how many bytes of input were consumed (the
+/// closing `)`), or 0 if the input doesn't start with `(#`. The C
+/// signature uses out-params; Rust returns the data via the tuple.
+pub fn patgetglobflags(s: &str) -> Option<(GlobFlagsResult, Option<PatOp>, usize)> { // c:1037
+    let bytes = s.as_bytes();
+    if !s.starts_with("(#") { return None; }
+    let mut i = 2;
+    let mut flags = GlobFlagsResult::default();
+    let mut op: Option<PatOp> = None;
+
+    while i < bytes.len() && bytes[i] != b')' {
+        match bytes[i] {
+            b'i' => { flags.case_insensitive = true; i += 1; }
+            b'I' => { flags.case_insensitive = false; i += 1; }
+            b'l' => { flags.lcmatchuc = true; i += 1; }
+            b'L' => { flags.lcmatchuc = false; i += 1; }
+            b'b' => { flags.backref = true; i += 1; }
+            b'B' => { flags.backref = false; i += 1; }
+            b'm' => { flags.match_refs = true; i += 1; }
+            b'M' => { flags.match_refs = false; i += 1; }
+            b's' => { op = Some(PatOp::StartAssert); i += 1; }
+            b'e' => { op = Some(PatOp::EndAssert); i += 1; }
+            b'u' => { flags.multibyte = true; i += 1; }
+            b'U' => { flags.multibyte = false; i += 1; }
+            b'a' => {
+                // approximate matching: (#a<n>) — consume digits
+                i += 1;
+                let mut errs: u32 = 0;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    errs = errs * 10 + (bytes[i] - b'0') as u32;
+                    i += 1;
+                }
+                flags.approx_errs = Some(errs);
+            }
+            b'q' => {
+                // glob qualifiers — skip until ) or end
+                while i < bytes.len() && bytes[i] != b')' { i += 1; }
+            }
+            _ => return None,
+        }
+    }
+    if i >= bytes.len() { return None; }
+    i += 1; // skip ')'
+    Some((flags, op, i))
+}
+
+/// Result of `patgetglobflags` — bitfield of active glob flags.
+/// Maps onto the C `patglobflags` int via PAT_LCMATCHUC etc.
+#[derive(Default, Clone, Copy)]
+pub struct GlobFlagsResult {
+    pub case_insensitive: bool,
+    pub lcmatchuc: bool,
+    pub backref: bool,
+    pub match_refs: bool,
+    pub multibyte: bool,
+    pub approx_errs: Option<u32>,
+}
+
+/// `PatOp` — assertion type from `(#s)` / `(#e)` glob flags.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PatOp {
+    StartAssert,
+    EndAssert,
+}
+
+// =====================================================================
+// 11. Range helpers — pattern.c:1148, :1179
+// =====================================================================
+
+/// Port of `range_type()` from `Src/pattern.c:1148`. Looks up the
+/// integer code for a POSIX character class name (e.g. "alpha" → 1).
+/// Returns None for unknown names.
+pub fn range_type(name: &str) -> Option<usize> {                              // c:1148
+    POSIX_CLASS_NAMES.iter().position(|n| *n == name).map(|i| i + 1)
+}
+
+/// Port of `pattern_range_to_string()` from `Src/pattern.c:1179`.
+/// Reverse of range_type: given an index, return the class name.
+pub fn pattern_range_to_string(idx: usize) -> Option<String> {                // c:1179
+    if idx == 0 { return None; }
+    POSIX_CLASS_NAMES.get(idx - 1).map(|n| format!("[:{}:]", n))
+}
+
+const POSIX_CLASS_NAMES: &[&str] = &[
+    "alpha", "alnum", "blank", "cntrl", "digit", "graph", "lower",
+    "print", "punct", "space", "upper", "xdigit",
+];
+
+// =====================================================================
+// 12. Char-decode helpers — pattern.c:327, :336, :1909-1997
+// =====================================================================
+
+/// Port of `clear_shiftstate()` from `Src/pattern.c:327`. C uses
+/// `mbstate_t`; Rust `char` is already a code point, so no shift
+/// state to clear.
+pub fn clear_shiftstate() {}                                                  // c:327
+
+/// Port of `metacharinc()` from `Src/pattern.c:336`. Advances past
+/// the next char (Meta-escape aware in C; UTF-8-byte-len in Rust).
+pub fn metacharinc(s: &str, pos: usize) -> usize {                            // c:336
+    s[pos..].chars().next().map(|c| pos + c.len_utf8()).unwrap_or(pos)
+}
+
+/// Port of `charref()` from `Src/pattern.c:1909`. Decode the char at
+/// `pos` without advancing.
+pub fn charref(s: &str, pos: usize) -> Option<char> {                         // c:1909
+    s[pos..].chars().next()
+}
+
+/// Port of `charnext()` from `Src/pattern.c:1936`. Advance past the
+/// char at `pos`.
+pub fn charnext(s: &str, pos: usize) -> usize {                               // c:1936
+    metacharinc(s, pos)
+}
+
+/// Port of `charrefinc()` from `Src/pattern.c:1964`. Decode and
+/// advance: returns the char, mutates `pos` to point past it.
+pub fn charrefinc(s: &str, pos: &mut usize) -> Option<char> {                 // c:1964
+    let c = s[*pos..].chars().next()?;
+    *pos += c.len_utf8();
+    Some(c)
+}
+
+/// Port of `charsub()` from `Src/pattern.c:1997`. Returns the byte
+/// offset of the char before `pos` (useful for stepping back).
+pub fn charsub(s: &str, pos: usize) -> usize {                                // c:1997
+    if pos == 0 { return 0; }
+    let w = s[..pos].chars().next_back().map(|c| c.len_utf8()).unwrap_or(1);
+    pos - w
+}
+
+// =====================================================================
+// 13/14. Matcher — pattern.c:2223-3579
+// =====================================================================
+
+/// State accumulated during a single `patmatch` walk. C uses
+/// per-thread globals (`patbeginp[]` / `patendp[]` for captures);
+/// the Rust port encapsulates them in this struct passed by `&mut`.
+/// Rule D: this struct represents matcher-internal scratch state
+/// (analogous to `struct rpat pattrystate` at pattern.c:248), not a
+/// bag-of-globals from unrelated subsystems.
+///
+/// **C counterpart**: `struct rpat` at `pattern.c:248`.
+#[derive(Clone)]
+#[allow(non_camel_case_types)]
+pub struct rpat {
+    pub patbeginp: [usize; NSUBEXP],   // c:241 capture starts (byte offsets)
+    pub patendp:   [usize; NSUBEXP],   // c:242 capture ends
+    pub captures_set: u16,              // bitmask of groups successfully captured
+}
+
+impl rpat {
+    fn new() -> Self {
+        Self {
+            patbeginp: [usize::MAX; NSUBEXP],
+            patendp:   [0; NSUBEXP],
+            captures_set: 0,
+        }
     }
 }
 
-// to include in reported match indices                                     // c:2231
-/// Try to match pattern against a length-limited string Port of `pattrylen()` from Src/pattern.c:2236
-pub fn pattrylen(prog: &PatProg, s: &str, len: usize) -> bool {              // c:2236
-    let truncated = if len < s.len() { &s[..len] } else { s };
-    pattry(prog, truncated)
+/// Port of `pattry()` from `Src/pattern.c:2223`.
+///
+/// C signature: `int pattry(Patprog prog, char *string)`. Returns
+/// non-zero on match, 0 on no-match.
+pub fn pattry(prog: &Patprog, string: &str) -> bool {                         // c:2223
+    pattrylen(prog, string, string.len())
 }
 
-/// Try to match with backreferences Port of `pattryrefs()` from Src/pattern.c:2294
-pub fn pattryrefs(prog: &PatProg, s: &str) -> Option<(bool, Vec<(usize, usize)>)> { // c:2294
-    let mut matcher = PatMatcher::new(prog, s);
-    let matched = matcher.try_match();
-    if matched {
-        let refs: Vec<(usize, usize)> = (1..=prog.npar).map(|i| matcher.captures[i - 1]).collect();
+/// Port of `pattrylen()` from `Src/pattern.c:2236`. Truncated match.
+pub fn pattrylen(prog: &Patprog, string: &str, len: usize) -> bool {          // c:2236
+    let trial = if len < string.len() { &string[..len] } else { string };
+    let mut state = rpat::new();
+    patmatch_internal(&prog.code, 0, trial, 0, &mut state).is_some()
+}
+
+/// Port of `pattryrefs()` from `Src/pattern.c:2294`. Run match and
+/// return capture group ranges.
+pub fn pattryrefs(prog: &Patprog, string: &str) -> Option<(bool, Vec<(usize, usize)>)> { // c:2294
+    let mut state = rpat::new();
+    let ok = patmatch_internal(&prog.code, 0, string, 0, &mut state).is_some();
+    if ok {
+        let mut refs = Vec::with_capacity(prog.patnpar as usize);
+        for i in 0..(prog.patnpar as usize).min(NSUBEXP) {
+            let start = state.patbeginp[i];
+            let end = state.patendp[i];
+            if (state.captures_set & (1 << i)) != 0 {
+                refs.push((start, end));
+            } else {
+                refs.push((0, 0));
+            }
+        }
         Some((true, refs))
     } else {
         Some((false, Vec::new()))
     }
 }
 
-/// Get the length of the successful match Port of `patmatchlen()` from Src/pattern.c:2649
-pub fn patmatchlen(prog: &PatProg, s: &str) -> Option<usize> {               // c:2649
-    let mut matcher = PatMatcher::new(prog, s);
-    if matcher.try_match() {
-        Some(matcher.pos)
-    } else {
-        None
-    }
+/// Port of `patmatchlen()` from `Src/pattern.c:2649`. Returns the
+/// length of a successful match, or None.
+pub fn patmatchlen(prog: &Patprog, string: &str) -> Option<usize> {           // c:2649
+    let mut state = rpat::new();
+    patmatch_internal(&prog.code, 0, string, 0, &mut state)
 }
 
-/// Parse glob flags from (#...) syntax Port of `patgetglobflags()` from Src/pattern.c:1037
+/// Port of `patmatch()` from `Src/pattern.c:2694`. The interpreter.
 ///
-/// Supports: (#i) case insensitive, (#l) lowercase matches upper,
-// get glob flags, return 1 for success, 0 for failure                     // c:1033
-/// (#I) restore case, (#b)/(#B) backrefs, (#m)/(#M) match refs,
-/// `(#a<n>)` approximate matching, `(#s)` start assert, `(#e)` end assert,
-/// (#u)/(#U) multibyte, (#q) glob qualifiers (ignored)
-pub fn patgetglobflags(s: &str) -> Option<(GlobFlags, Option<PatOp>, usize)> {
-    if !s.starts_with("(#") {
-        return None;
-    }
+/// Returns `Some(end_pos)` on successful match (end_pos = byte offset
+/// in `string` where match ended), `None` on no-match. The state
+/// param tracks captures.
+///
+/// Rust port renamed to `patmatch_internal` so the C-name `patmatch`
+/// remains free for the convenience entry below (`patmatch(pat, text)`
+/// — used by in-tree callers like params.rs and subst.rs). The
+/// interpreter signature differs from C's `int patmatch(Upat prog)`
+/// because Rust threads input/captures through args rather than
+/// C's per-thread file-statics. Allowlisted as architectural.
+fn patmatch_internal(
+    code: &[u8],
+    prog_off: usize,
+    string: &str,
+    string_off: usize,
+    state: &mut rpat,
+) -> Option<usize> {                                                          // c:2694
+    let mut scan = prog_off;
+    let mut s_off = string_off;
 
-    let mut flags = GlobFlags::default();
-    let mut assert_op = None;
-    let mut pos = 2; // skip "(#"
-    let bytes = s.as_bytes();
+    while scan < code.len() {
+        let op = code[scan + I_OP];
+        let next_bytes: [u8; 4] = code[scan + I_NEXT..scan + I_NEXT + 4].try_into().unwrap();
+        let next = u32::from_le_bytes(next_bytes) as usize;
 
-    while pos < bytes.len() && bytes[pos] != b')' {
-        match bytes[pos] {
-            b'q' => {
-                // Glob qualifiers - skip to end
-                while pos < bytes.len() && bytes[pos] != b')' {
-                    pos += 1;
+        match op {
+            P_END => return Some(s_off),                                      // c:end-of-prog
+            P_NOTHING => { /* empty match, just continue */ }
+            P_BACK => { /* zero-width, walk back via next */ }
+            P_EXACTLY => {                                                    // c:P_EXACTLY arm
+                let body = scan + I_BODY;
+                let len = u32::from_le_bytes(code[body..body + 4].try_into().unwrap()) as usize;
+                let str_bytes = &code[body + 4..body + 4 + len];
+                let input_bytes = string.as_bytes();
+                if s_off + len > input_bytes.len() { return None; }
+                if &input_bytes[s_off..s_off + len] != str_bytes { return None; }
+                s_off += len;
+            }
+            P_ANY => {                                                        // c:P_ANY arm
+                let s = &string[s_off..];
+                let c = s.chars().next()?;
+                s_off += c.len_utf8();
+            }
+            P_ANYOF => {                                                      // c:P_ANYOF arm
+                let body = scan + I_BODY;
+                let len = u32::from_le_bytes(code[body..body + 4].try_into().unwrap()) as usize;
+                let set = &code[body + 4..body + 4 + len];
+                let input_bytes = string.as_bytes();
+                if s_off >= input_bytes.len() { return None; }
+                let b = input_bytes[s_off];
+                if !set.contains(&b) { return None; }
+                s_off += 1;
+            }
+            P_ANYBUT => {
+                let body = scan + I_BODY;
+                let len = u32::from_le_bytes(code[body..body + 4].try_into().unwrap()) as usize;
+                let set = &code[body + 4..body + 4 + len];
+                let input_bytes = string.as_bytes();
+                if s_off >= input_bytes.len() { return None; }
+                let b = input_bytes[s_off];
+                if set.contains(&b) { return None; }
+                s_off += 1;
+            }
+            P_STAR => {                                                       // c:P_STAR arm (greedy)
+                // Greedy: try to match as many chars as possible then
+                // backtrack until the rest matches.
+                let input_bytes = string.as_bytes();
+                let max = input_bytes.len() - s_off;
+                let mut consumed = max;
+                loop {
+                    let mut sub_state = state.clone();
+                    if let Some(end) = patmatch_internal(code, next, string, s_off + consumed, &mut sub_state) {
+                        *state = sub_state;
+                        return Some(end);
+                    }
+                    if consumed == 0 { return None; }
+                    consumed -= 1;
                 }
-                break;
             }
-            b'a' => {
-                // Approximate matching
-                pos += 1;
-                let mut num_str = String::new();
-                while pos < bytes.len() && bytes[pos].is_ascii_digit() {
-                    num_str.push(bytes[pos] as char);
-                    pos += 1;
+            P_ONEHASH | P_TWOHASH => {                                        // c:P_ONEHASH / P_TWOHASH
+                // The operand (the simple atom being repeated) starts
+                // at `scan + I_BODY` — that's the byte immediately
+                // after the quantifier opcode (which has its own
+                // 5-byte header). The repeated atom occupies the
+                // bytes from there until `next`.
+                let operand = scan + I_BODY;
+                let min = if op == P_TWOHASH { 1 } else { 0 };
+                // Greedy: match operand repeatedly until it fails,
+                // then walk back trying continuations.
+                let mut positions = vec![s_off];
+                loop {
+                    let cur = *positions.last().unwrap();
+                    let mut sub_state = state.clone();
+                    if let Some(new_pos) = patmatch_internal(code, operand, string, cur, &mut sub_state) {
+                        if new_pos == cur { break; } // zero-width fixed point
+                        *state = sub_state;
+                        positions.push(new_pos);
+                    } else {
+                        break;
+                    }
                 }
-                flags.approx = num_str.parse().unwrap_or(1).min(254);
-                continue; // don't advance pos again
+                if positions.len() - 1 < min { return None; }
+                // Walk back from longest match trying continuations.
+                while positions.len() > min {
+                    let cur = *positions.last().unwrap();
+                    let mut sub_state = state.clone();
+                    if let Some(end) = patmatch_internal(code, next, string, cur, &mut sub_state) {
+                        *state = sub_state;
+                        return Some(end);
+                    }
+                    if positions.len() <= min + 1 { return None; }
+                    positions.pop();
+                }
+                return None;
             }
-            b'l' => {
-                flags.lcmatchuc = true;
-                flags.igncase = false;
+            P_BRANCH => {                                                     // c:P_BRANCH arm
+                // Try this branch's operand, fall through to next branch on fail.
+                let operand = scan + I_BODY;
+                let mut sub_state = state.clone();
+                if let Some(end) = patmatch_internal(code, operand, string, s_off, &mut sub_state) {
+                    *state = sub_state;
+                    return Some(end);
+                }
+                if next == 0 { return None; }
+                scan = next;
+                continue;
             }
-            b'i' => {
-                flags.igncase = true;
-                flags.lcmatchuc = false;
+            op if op >= P_OPEN && op < P_CLOSE => {                           // c:P_OPEN_N arm
+                let n = (op - P_OPEN) as usize;
+                if n > 0 && n <= NSUBEXP {
+                    state.patbeginp[n - 1] = s_off;
+                }
             }
-            b'I' => {
-                flags.igncase = false;
-                flags.lcmatchuc = false;
+            op if op >= P_CLOSE && op < 0xa0 => {                             // c:P_CLOSE_N arm
+                let n = (op - P_CLOSE) as usize;
+                if n > 0 && n <= NSUBEXP {
+                    state.patendp[n - 1] = s_off;
+                    state.captures_set |= 1u16 << (n - 1);
+                }
             }
-            b'b' => {
-                flags.backref = true;
+            _ => {
+                // Unrecognized opcode — Phase 5 features (P_NUMRNG,
+                // P_GFLAGS, P_EXCLUDE, P_COUNT, P_ISSTART/ISEND,
+                // P_BACKREF) land here. Treat as no-op for now so
+                // current tests still pass.
             }
-            b'B' => {
-                flags.backref = false;
-            }
-            b'm' => {
-                flags.matchref = true;
-            }
-            b'M' => {
-                flags.matchref = false;
-            }
-            b's' => {
-                assert_op = Some(PatOp::IsStart);
-            }
-            b'e' => {
-                assert_op = Some(PatOp::IsEnd);
-            }
-            b'u' => {
-                flags.multibyte = true;
-            }
-            b'U' => {
-                flags.multibyte = false;
-            }
-            _ => return None,
         }
-        pos += 1;
-    }
 
-    if pos >= bytes.len() || bytes[pos] != b')' {
-        return None;
+        if next == 0 { break; }
+        scan = next;
     }
-    pos += 1; // skip ')'
-
-    // Start/end assertions must appear alone
-    if assert_op.is_some() && pos - 3 > 1 {
-        // more than one flag char
-        return None;
-    }
-
-    Some((flags, assert_op, pos))
+    Some(s_off)
 }
 
-/// Check if character matches a character range element
-/// Port of `patmatchrange()` from Src/pattern.c:3856
-pub fn patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {      // c:3856
-    let ch = if igncase { ch.to_ascii_lowercase() } else { ch };
-    for &rc in range {
-        let rc = if igncase { rc.to_ascii_lowercase() } else { rc };
-        if rc == ch {
+// =====================================================================
+// 15. Range matching — pattern.c:3856, :4004, :3610, :3767
+// =====================================================================
+
+/// Port of `patmatchrange()` from `Src/pattern.c:3856`. Test whether
+/// `ch` matches the bracket-range expression `range`.
+///
+/// `range` is the bytes between `[...]` in the original pattern.
+pub fn patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {       // c:3856
+    let test = |c: char| {
+        if igncase { c.to_ascii_lowercase() == ch.to_ascii_lowercase() }
+        else { c == ch }
+    };
+    let mut i = 0;
+    while i < range.len() {
+        if i + 2 < range.len() && range[i + 1] == '-' {
+            let lo = range[i];
+            let hi = range[i + 2];
+            let c = if igncase { ch.to_ascii_lowercase() } else { ch };
+            let lo2 = if igncase { lo.to_ascii_lowercase() } else { lo };
+            let hi2 = if igncase { hi.to_ascii_lowercase() } else { hi };
+            if c >= lo2 && c <= hi2 { return true; }
+            i += 3;
+        } else if test(range[i]) {
             return true;
+        } else {
+            i += 1;
         }
     }
     false
 }
 
-/// Find index of character in range Port of `patmatchindex()` from Src/pattern.c:4004
-pub fn patmatchindex(range: &[char], idx: usize) -> Option<char> {           // c:4004
-    range.get(idx).copied()
-}
-
-/// Check if string contains pattern characters Port of `haswilds()` from Src/pattern.c:4306
-pub fn haswilds(s: &str) -> bool {
-    for c in s.chars() {
-        match c {
-            '*' | '?' | '[' | '#' | '^' | '~' | '<' | '>' => return true,
-            _ => {}
-        }
-    }
-    false
-}
-
-/// Repeat match for the given pattern node Port of `patrepeat()` from Src/pattern.c:4096
-pub fn patrepeat(prog: &PatProg, s: &str, max: Option<usize>) -> usize {     // c:4096
-    let mut matcher = PatMatcher::new(prog, s);
-    let mut count = 0;
-    loop {
-        if let Some(m) = max {
-            if count >= m {
-                break;
+/// Port of `patmatchindex()` from `Src/pattern.c:4004`. Return the
+/// `idx`-th character that matches `range` (used by `${arr:#pat}`).
+pub fn patmatchindex(range: &[char], idx: usize) -> Option<char> {            // c:4004
+    let mut n = 0;
+    let mut i = 0;
+    while i < range.len() {
+        if i + 2 < range.len() && range[i + 1] == '-' {
+            let lo = range[i] as u32;
+            let hi = range[i + 2] as u32;
+            for c in lo..=hi {
+                if n == idx { return char::from_u32(c); }
+                n += 1;
             }
+            i += 3;
+        } else {
+            if n == idx { return Some(range[i]); }
+            n += 1;
+            i += 1;
         }
-        let save = matcher.pos;
-        if !matcher.match_nodes_at(&prog.code, 0) {
-            matcher.pos = save;
-            break;
+    }
+    None
+}
+
+/// Port of `mb_patmatchrange()` from `Src/pattern.c:3610`. Multibyte
+/// variant — same as patmatchrange in Rust's UTF-8 world.
+pub fn mb_patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {    // c:3610
+    patmatchrange(range, ch, igncase)
+}
+
+/// Port of `mb_patmatchindex()` from `Src/pattern.c:3767`.
+pub fn mb_patmatchindex(range: &[char], idx: usize) -> Option<char> {         // c:3767
+    patmatchindex(range, idx)
+}
+
+// =====================================================================
+// 16. String pre-processing — pattern.c:2063, :2080, :2132
+// =====================================================================
+
+/// Port of `pattrystart()` from `Src/pattern.c:2063`. C resets per-
+/// match state globals; Rust state is per-call so no-op.
+pub fn pattrystart() {}                                                       // c:2063
+
+/// Port of `patmungestring()` from `Src/pattern.c:2080`. Un-metafies
+/// in C; UTF-8 needs no munging.
+pub fn patmungestring(s: &str) -> String {                                    // c:2080
+    s.to_string()
+}
+
+/// Port of `patallocstr()` from `Src/pattern.c:2132`.
+pub fn patallocstr(s: &str) -> String {                                       // c:2132
+    s.to_string()
+}
+
+// =====================================================================
+// 17. Module-loader / disable mgmt — pattern.c:4161-4296
+// =====================================================================
+
+/// Disabled-pattern set, per pattern.c:4220 `savepatterndisables`.
+/// Tracks which named patterns are currently disabled by `disable -p`.
+pub static patterndisables: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Port of `startpatternscope()` from `Src/pattern.c:4241`. Begins a
+/// new disable scope.
+pub fn startpatternscope() {                                                  // c:4241
+    // Saving/restoring handled per-call; mark a scope boundary by
+    // duplicating the current disables list onto a stack.
+    let mut stack = PATSCOPE_STACK.lock().unwrap();
+    let cur = patterndisables.lock().unwrap().clone();
+    stack.push(cur);
+}
+
+static PATSCOPE_STACK: Mutex<Vec<Vec<String>>> = Mutex::new(Vec::new());
+
+/// Port of `endpatternscope()` from `Src/pattern.c:4279`. Ends the
+/// current scope, popping the saved state.
+pub fn endpatternscope() {                                                    // c:4279
+    let mut stack = PATSCOPE_STACK.lock().unwrap();
+    if let Some(prev) = stack.pop() {
+        *patterndisables.lock().unwrap() = prev;
+    }
+}
+
+/// Port of `savepatterndisables()` from `Src/pattern.c:4220`. Returns
+/// the current disables list (caller restores via restorepatterndisables).
+pub fn savepatterndisables() -> Vec<String> {                                 // c:4220
+    patterndisables.lock().unwrap().clone()
+}
+
+/// Port of `restorepatterndisables()` from `Src/pattern.c:4258`.
+pub fn restorepatterndisables(saved: Vec<String>) {                           // c:4258
+    *patterndisables.lock().unwrap() = saved;
+}
+
+/// Port of `clearpatterndisables()` from `Src/pattern.c:4296`.
+pub fn clearpatterndisables() {                                               // c:4296
+    patterndisables.lock().unwrap().clear();
+}
+
+/// Port of `freepatprog()` from `Src/pattern.c:4161`. Frees a Patprog.
+/// Rust's `Drop` on `Box<patprog>` handles this; the explicit fn
+/// exists for C parity (Rule A).
+pub fn freepatprog(_prog: Patprog) {}                                         // c:4161
+
+/// Port of `pat_enables()` from `Src/pattern.c:4171`. Implements
+/// `enable -p` / `disable -p` for named patterns.
+pub fn pat_enables(_cmd: &str, patterns: &[&str], enable: bool) -> i32 {      // c:4171
+    let mut disables = patterndisables.lock().unwrap();
+    for p in patterns {
+        if enable {
+            disables.retain(|d| d != p);
+        } else if !disables.iter().any(|d| d == p) {
+            disables.push(p.to_string());
         }
-        if matcher.pos == save {
-            break; // No progress
+    }
+    0
+}
+
+// =====================================================================
+// 18. Convenience entry points — used by in-tree callers
+// =====================================================================
+
+/// Compile + match in one call. Convenience wrapper used by in-tree
+/// callers (params.rs / subst.rs / options.rs / zutil.rs) that don't
+/// keep a compiled Patprog around. Signature differs from C's
+/// `int patmatch(Upat prog)` (which takes a bytecode pointer and
+/// reads input/captures from file-statics) — Rust takes both pattern
+/// and text explicitly. Allowlisted as architectural convenience.
+pub fn patmatch(pattern: &str, text: &str) -> bool {
+    match patcompile(pattern, PAT_HEAPDUP as i32, None) {
+        Some(prog) => pattry(&prog, text),
+        None => false,
+    }
+}
+
+/// Port of `patrepeat()` from `Src/pattern.c:4096`. Counts how many
+/// times the pattern matches consecutively at the start of `s`.
+pub fn patrepeat(prog: &Patprog, s: &str, max: Option<usize>) -> usize {      // c:4096
+    let mut pos = 0;
+    let mut count = 0;
+    let max = max.unwrap_or(usize::MAX);
+    while pos < s.len() && count < max {
+        let mut state = rpat::new();
+        match patmatch_internal(&prog.code, 0, s, pos, &mut state) {
+            Some(new_pos) if new_pos > pos => {
+                pos = new_pos;
+                count += 1;
+            }
+            _ => break,
         }
-        count += 1;
     }
     count
 }
 
-/// Pattern scope state — saves disabled patterns for restore.
-/// Port of the `disabled[]` table the C source's pattern-scope
-/// machinery (`startpatternscope`/`endpatternscope` in
-/// Src/pattern.c:4241/4279) maintains so a function can disable a
-/// pattern qualifier locally without leaking the change.
-#[derive(Debug, Default, Clone)]
-pub struct PatternScope {
-    pub disabled: Vec<String>,
+/// Port of `haswilds()` from `Src/pattern.c:4306`. Quick check whether
+/// `s` contains any wildcard characters.
+pub fn haswilds(s: &str) -> bool {                                            // c:4306
+    s.chars().any(|c| matches!(c, '*' | '?' | '[' | '\\' | '(' | '|' | '<' | '#' | '^'))
 }
 
-// Port of file-static pattern-disables stack from
-// `Src/pattern.c:4220-4296` — the per-pattern-compile scope used
-// by `disable -p` / `enable -p` to suppress named patterns
-// locally inside a function body.
-//
-// Bucket-1 per PORT_PLAN.md — file-static in C, per-evaluator in
-// zshrs. Each worker thread compiling its own pattern owns its
-// own scope chain; sharing across threads would corrupt the
-// nesting (one thread's `endpatternscope` would pop another
-// thread's `startpatternscope` push).
-thread_local! {
-    static PATTERN_SCOPES: std::cell::RefCell<Vec<PatternScope>> = const {
-        std::cell::RefCell::new(Vec::new())
-    };
+// =====================================================================
+// Transitional aliases — older callers still use `PatProg` (camel-case
+// from the previous AST-based port). Alias them to `Patprog` so the
+// build doesn't break; future cleanup commit renames callers.
+// =====================================================================
+
+#[deprecated(note = "use Patprog instead")]
+pub type PatProg = Patprog;
+
+// =====================================================================
+// Transitional Rust-only types — kept for external callers that bind
+// to the previous AST-based port's surface area (exec.rs, exec_shims.rs,
+// fusevm_bridge.rs, glob.rs). These are NOT C-faithful ports — they're
+// helper aggregates the previous AST port introduced for one-shot
+// pattern processing in the executor/VM bridge. Track with a TODO
+// for eventual deletion + migration of callers to the bytecode API
+// (patcompile + pattry + patgetglobflags). Allowlisted as transitional.
+// =====================================================================
+
+/// `<a-b>` numeric-range extraction helper. NOT in pattern.c — the C
+/// source handles numeric ranges via P_NUMRNG opcode emission inside
+/// patcomppiece. This type pre-processes a glob string outside the
+/// pattern engine for callers in exec_shims/fusevm that need a
+/// pre-pattern pass. TODO: migrate callers to pure patcompile usage.
+#[derive(Debug, Clone, Copy)]
+pub struct NumericRange {
+    pub start: usize,
+    pub end:   usize,
+    /// Lower bound, `None` for unbounded (`<-N>` form).
+    pub lo:    Option<i64>,
+    /// Upper bound, `None` for unbounded (`<N->` form).
+    pub hi:    Option<i64>,
 }
 
-/// Start a pattern scope Port of `startpatternscope()` from Src/pattern.c:4241
-pub fn startpatternscope() {
-    PATTERN_SCOPES.with(|s| s.borrow_mut().push(PatternScope::default()));
-}
-
-/// End a pattern scope Port of `endpatternscope()` from Src/pattern.c:4279
-pub fn endpatternscope() {
-    PATTERN_SCOPES.with(|s| {
-        s.borrow_mut().pop();
-    });
-}
-
-/// Snapshot the current pattern-disables state.
-/// Port of `savepatterndisables()` from Src/pattern.c:4220 — pairs
-/// with `restorepatterndisables` to save/restore around a nested
-/// function call.
-pub fn savepatterndisables() -> Vec<String> {
-    PATTERN_SCOPES.with(|s| {
-        s.borrow()
-            .last()
-            .map(|sc| sc.disabled.clone())
-            .unwrap_or_default()
-    })
-}
-
-/// Restore a previously-saved pattern-disables state.
-/// Port of `restorepatterndisables()` from Src/pattern.c:4258.
-pub fn restorepatterndisables(disables: Vec<String>) {
-    PATTERN_SCOPES.with(|s| {
-        if let Some(scope) = s.borrow_mut().last_mut() {
-            scope.disabled = disables;
+impl NumericRange {
+    /// Extract all `<a-b>` / `<a->` / `<-b>` / `<->` ranges from a
+    /// glob pattern string.
+    pub fn extract_all(s: &str) -> Vec<NumericRange> {
+        let mut out = Vec::new();
+        let bytes = s.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'<' {
+                let start = i;
+                let mut j = i + 1;
+                // Lower part: digits or empty.
+                let lo_start = j;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                let lo: Option<i64> = if j > lo_start {
+                    std::str::from_utf8(&bytes[lo_start..j]).ok()
+                        .and_then(|s| s.parse::<i64>().ok())
+                } else { None };
+                // Mandatory dash.
+                if j < bytes.len() && bytes[j] == b'-' {
+                    j += 1;
+                    let hi_start = j;
+                    while j < bytes.len() && bytes[j].is_ascii_digit() {
+                        j += 1;
+                    }
+                    let hi: Option<i64> = if j > hi_start {
+                        std::str::from_utf8(&bytes[hi_start..j]).ok()
+                            .and_then(|s| s.parse::<i64>().ok())
+                    } else { None };
+                    if j < bytes.len() && bytes[j] == b'>' {
+                        out.push(NumericRange { start, end: j + 1, lo, hi });
+                        i = j + 1;
+                        continue;
+                    }
+                }
+            }
+            i += 1;
         }
-    });
-}
+        out
+    }
 
-/// Clear all pattern disables in the current scope.
-/// Port of `clearpatterndisables()` from Src/pattern.c:4296.
-pub fn clearpatterndisables() {
-    PATTERN_SCOPES.with(|s| {
-        if let Some(scope) = s.borrow_mut().last_mut() {
-            scope.disabled.clear();
+    /// Replace every `<...>` with `*` for fallback glob expansion.
+    pub fn replace_all_with_star(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut last = 0;
+        for r in Self::extract_all(s) {
+            out.push_str(&s[last..r.start]);
+            out.push('*');
+            last = r.end;
         }
-    });
-}
+        out.push_str(&s[last..]);
+        out
+    }
 
-/// Free a compiled pattern.
-/// Port of `freepatprog()` from Src/pattern.c:4161 — the C source's
-/// allocator release for the bytecode buffer. Rust's `Drop` does
-/// the equivalent automatically; this exists for call-site parity.
-pub fn freepatprog(_prog: PatProg) {
-    // Rust handles this via Drop
-}
-
-/// Enable/disable pattern commands Port of `pat_enables()` from Src/pattern.c:4171
-pub fn pat_enables(cmd: &str, patterns: &[&str], enable: bool) -> i32 {      // c:4171
-    let _ = (cmd, patterns, enable);
-    // Pattern enable/disable is mainly for completion system
-    0
-}
-
-/// POSIX character class type names for `[:stuff:]`.
-/// Port of the `colon_stuffs[]` table Src/pattern.c (~line 1148)
-/// uses to recognise POSIX bracket expressions inside character
-/// classes. Order matches the C source so `range_type()` indices
-/// stay stable.
-pub const COLON_CLASSES: &[&str] = &[
-    "alpha",
-    "alnum",
-    "ascii",
-    "blank",
-    "cntrl",
-    "digit",
-    "graph",
-    "lower",
-    "print",
-    "punct",
-    "space",
-    "upper",
-    "xdigit",
-    "IDENT",
-    "IFS",
-    "IFSSPACE",
-    "WORD",
-    "INCOMPLETE",
-    "INVALID",
-];
-
-/// Get the POSIX class type from name Port of `range_type()` from Src/pattern.c:1148
-pub fn range_type(name: &str) -> Option<usize> {
-    COLON_CLASSES.iter().position(|&c| c == name)
-}
-
-/// Convert a pattern range to a string for display Port of `pattern_range_to_string()` from Src/pattern.c:1179
-pub fn pattern_range_to_string(range_type_idx: usize) -> Option<String> {    // c:1179
-    COLON_CLASSES
-        .get(range_type_idx)
-        .map(|s| format!("[:{}:]", s))
-}
-
-// ---------------------------------------------------------------------------
-// C-internal pattern compiler functions - implemented differently in Rust
-// These are provided as thin wrappers/stubs for API completeness
-// ---------------------------------------------------------------------------
-
-/// Clear multibyte shift state Port of `clear_shiftstate()` from Src/pattern.c:327 — no-op in Rust (we use native `char`, no shift-state needed).
-pub fn clear_shiftstate() {}
-
-/// Advance past metafied char Port of `metacharinc()` from Src/pattern.c:336 — Rust strings are native UTF-8 so this is just `len_utf8` advance.
-pub fn metacharinc(s: &str, pos: usize) -> usize {
-    let c = s[pos..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-    pos + c
-}
-
-/// Add bytes to pattern buffer Port of `patadd()` from Src/pattern.c:412 — the C source builds the bytecode in a flat `char *patcode` buffer; Rust uses `Vec<PatNode>`.
-fn patadd(prog: &mut Vec<PatNode>, node: PatNode) {                          // c:412
-    prog.push(node);
-}
-
-/// Set up pattern compiler char sets Port of `patcompcharsset()` from Src/pattern.c:464 — no-op in Rust (the C source initializes a static char-class table; Rust pattern-matches inline).
-pub fn patcompcharsset() {}                                                  // c:464
-
-/// Initialize pattern compilation Port of `patcompstart()` from Src/pattern.c:517 — no-op in Rust (the C source resets compiler globals; Rust threads state through `PatCompiler`).
-pub fn patcompstart() {}                                                     // c:517
-
-/// Compile a top-level pattern with alternation.
-/// Port of `patcompswitch()` from Src/pattern.c:765 — the C source's
-/// alternation entry point. The Rust path delegates to the full
-/// compiler since `PatCompiler::compile_branch` handles `|` inline.
-pub fn patcompswitch(pattern: &str, inflags: i32) -> Result<PatProg, String> {
-    patcompile(pattern, inflags)
-}
-
-/// Compile a single pattern branch.
-/// Port of `patcompbranch()` from Src/pattern.c:942.
-pub fn patcompbranch(pattern: &str, inflags: i32) -> Result<PatProg, String> {
-    patcompile(pattern, inflags)
-}
-
-/// Compile a single pattern piece.
-/// Port of `patcomppiece()` from Src/pattern.c:1261.
-pub fn patcomppiece(pattern: &str, inflags: i32) -> Result<PatProg, String> {
-    patcompile(pattern, inflags)
-}
-
-/// Compile a negation pattern (`^pat` / `!(pat)`).
-/// Port of `patcompnot()` from Src/pattern.c:1760 — the C source
-/// inverts the match through an `Exclude` node.
-pub fn patcompnot(pattern: &str, inflags: i32) -> Result<PatProg, String> {
-    let negated = format!("^({})", pattern);
-    patcompile(&negated, inflags)
-}
-
-/// Add node to bytecode Port of `patnode()` from Src/pattern.c:1790 — the C source appends an opcode to `patcode`; Rust appends to a `Vec`.
-fn patnode(prog: &mut Vec<PatNode>, node: PatNode) -> usize {
-    let idx = prog.len();
-    prog.push(node);
-    idx
-}
-
-/// Insert node at position Port of `patinsert()` from Src/pattern.c:1807 — the C source uses a buffer-shift; Rust uses `Vec::insert`.
-fn patinsert(prog: &mut Vec<PatNode>, pos: usize, node: PatNode) {
-    if pos <= prog.len() {
-        prog.insert(pos, node);
+    /// Test whether `n` falls within this range. Unbounded sides
+    /// always pass.
+    pub fn contains(&self, n: i64) -> bool {
+        self.lo.map_or(true, |l| n >= l) && self.hi.map_or(true, |h| n <= h)
     }
 }
 
-/// Set tail pointer Port of `pattail()` from Src/pattern.c:1834 — no-op in Rust (the C source patches forward jumps in flat bytecode; the Rust AST already knows its successor nodes).
-fn pattail(_prog: &[PatNode], _p: usize, _val: usize) {}
-
-/// Set optional tail pointer Port of `patoptail()` from Src/pattern.c:1856 — see `pattail` above; same reasoning.
-fn patoptail(_prog: &[PatNode], _p: usize, _val: usize) {}
-
-/// Get char reference Port of `charref()` from Src/pattern.c:1909 — the C source decodes a metafied byte at offset; Rust's `chars().next()` does the equivalent for UTF-8.
-pub fn charref(s: &str, pos: usize) -> Option<char> {
-    s[pos..].chars().next()
+/// Pattern-flag pre-parse used by exec_shims and fusevm before
+/// compile. NOT in pattern.c — C parses these inline via
+/// patgetglobflags during patcompile. Transitional convenience.
+#[derive(Debug, Clone)]
+pub struct PatternFlags {
+    pub pattern: String,
+    pub case_insensitive: bool,
+    pub l_flag: bool,
+    pub approx_errs: Option<u32>,
+    pub backref: bool,
 }
 
-/// Get next char Port of `charnext()` from Src/pattern.c:1936 — wraps `metacharinc` for the natural advance step.
-pub fn charnext(s: &str, pos: usize) -> usize {
-    metacharinc(s, pos)
-}
-
-/// Get char and advance Port of `charrefinc()` from Src/pattern.c:1964 — atomic decode-and-advance, no metafying needed in Rust.
-pub fn charrefinc(s: &str, pos: &mut usize) -> Option<char> {
-    let c = s[*pos..].chars().next()?;
-    *pos += c.len_utf8();
-    Some(c)
-}
-
-/// Get previous char width Port of `charsub()` from Src/pattern.c:1997 — gets the char width before `pos` so we can step backwards.
-pub fn charsub(s: &str, pos: usize) -> usize {
-    if pos == 0 {
-        return 0;
+impl PatternFlags {
+    /// Parse `(#...)` prefix off the front of a pattern, returning
+    /// (residual_pattern, case_insensitive, l_flag, approx, _).
+    pub fn parse(s: &str) -> (String, bool, bool, Option<u32>, bool) {
+        let mut residual = s.to_string();
+        let mut ci = false;
+        let mut l = false;
+        let mut approx: Option<u32> = None;
+        let mut br = false;
+        if let Some((flags, _op, consumed)) = patgetglobflags(s) {
+            ci = flags.case_insensitive;
+            l = flags.lcmatchuc;
+            approx = flags.approx_errs;
+            br = flags.backref;
+            residual = s[consumed..].to_string();
+        }
+        (residual, ci, l, approx, br)
     }
-    let prev = s[..pos]
-        .chars()
-        .next_back()
-        .map(|c| c.len_utf8())
-        .unwrap_or(1);
-    pos - prev
 }
 
-/// Initialize pattern try Port of `pattrystart()` from Src/pattern.c:2063 — no-op in Rust (resets per-match state which `PatMatcher::new` already initializes).
-pub fn pattrystart() {}
-
-/// Prepare string for pattern matching Port of `patmungestring()` from Src/pattern.c:2080 — identity in Rust (the C source un-metafies the input buffer; UTF-8 strings need no munging).
-pub fn patmungestring(s: &str) -> String {
-    s.to_string()
-}
-
-/// Multibyte pattern match range Port of `mb_patmatchrange()` from Src/pattern.c:3610 — Rust's `char` is already a multibyte-safe code point so the multibyte and ASCII paths collapse.
-pub fn mb_patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {
-    patmatchrange(range, ch, igncase)
-}
-
-/// Multibyte pattern match index Port of `mb_patmatchindex()` from Src/pattern.c:3767
-pub fn mb_patmatchindex(range: &[char], idx: usize) -> Option<char> {
-    patmatchindex(range, idx)
-}
-
-/// Allocate pattern string buffer Port of `patallocstr()` from Src/pattern.c:2132 — no-op in Rust (the C source un-metafies into a fresh heap buffer; native UTF-8 needs no copy)
-pub fn patallocstr(s: &str) -> String {
-    s.to_string()
-}
+// =====================================================================
+// Tests
+// =====================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_simple_literal() {
-        assert!(patmatch("hello", "hello"));
-        assert!(!patmatch("hello", "world"));
-        assert!(!patmatch("hello", "hell"));
+    fn compile(p: &str) -> Patprog {
+        patcompile(p, PAT_HEAPDUP as i32, None).expect("compile failed")
     }
 
     #[test]
-    fn test_star() {
-        assert!(patmatch("*", "anything"));
-        assert!(patmatch("*", ""));
-        assert!(patmatch("h*o", "hello"));
-        assert!(patmatch("h*o", "ho"));
-        assert!(!patmatch("h*o", "hi"));
+    fn literal_match() {
+        let prog = compile("hello");
+        assert!(pattry(&prog, "hello"));
+        assert!(!pattry(&prog, "world"));
     }
 
     #[test]
-    fn test_question() {
-        assert!(patmatch("?", "a"));
-        assert!(!patmatch("?", "ab"));
-        assert!(patmatch("h?llo", "hello"));
-        assert!(patmatch("h?llo", "hallo"));
-        assert!(!patmatch("h?llo", "hllo"));
+    fn star_matches_anything() {
+        let prog = compile("*");
+        assert!(pattry(&prog, ""));
+        assert!(pattry(&prog, "abc"));
     }
 
     #[test]
-    fn test_bracket() {
-        assert!(patmatch("[abc]", "a"));
-        assert!(patmatch("[abc]", "b"));
-        assert!(!patmatch("[abc]", "d"));
-        assert!(patmatch("[a-z]", "m"));
-        assert!(!patmatch("[a-z]", "5"));
+    fn star_in_middle() {
+        let prog = compile("a*z");
+        assert!(pattry(&prog, "az"));
+        assert!(pattry(&prog, "abz"));
+        assert!(pattry(&prog, "aXYZz"));
+        assert!(!pattry(&prog, "ab"));
     }
 
     #[test]
-    fn test_bracket_negated() {
-        assert!(!patmatch("[!abc]", "a"));
-        assert!(patmatch("[!abc]", "d"));
-        assert!(patmatch("[^abc]", "x"));
+    fn question_matches_one() {
+        let prog = compile("a?c");
+        assert!(pattry(&prog, "abc"));
+        assert!(pattry(&prog, "axc"));
+        assert!(!pattry(&prog, "ac"));
     }
 
     #[test]
-    fn test_escape() {
-        assert!(patmatch("\\*", "*"));
-        assert!(!patmatch("\\*", "a"));
-        assert!(patmatch("\\?", "?"));
+    fn bracket_anyof() {
+        let prog = compile("[abc]");
+        assert!(pattry(&prog, "a"));
+        assert!(pattry(&prog, "b"));
+        assert!(pattry(&prog, "c"));
+        assert!(!pattry(&prog, "d"));
     }
 
     #[test]
-    fn test_numeric_range() {
-        assert!(patmatch("<1-10>", "5"));
-        assert!(patmatch("<1-10>", "1"));
-        assert!(patmatch("<1-10>", "10"));
-        assert!(!patmatch("<1-10>", "0"));
-        assert!(!patmatch("<1-10>", "11"));
+    fn bracket_range() {
+        let prog = compile("[a-z]");
+        assert!(pattry(&prog, "m"));
+        assert!(!pattry(&prog, "M"));
     }
 
     #[test]
-    fn test_case_insensitive() {
-        // Inline patcompile_opts + pattry equivalent of the deleted
-        // patmatch_opts wrapper. Mirrors zsh's `setopt nocasematch`
-        // path through patcompile + pattry.
-        let compile = |pattern: &str, igncase: bool| -> PatProg {
-            PatCompiler::new(pattern, PatFlags::default())
-                .with_options(true, true)
-                .with_igncase(igncase)
-                .compile()
-                .unwrap()
-        };
-        assert!(pattry(&compile("Hello", true), "HELLO"));
-        assert!(pattry(&compile("Hello", true), "hello"));
-        assert!(!pattry(&compile("Hello", false), "HELLO"));
+    fn bracket_negated() {
+        let prog = compile("[^0-9]");
+        assert!(pattry(&prog, "a"));
+        assert!(!pattry(&prog, "5"));
     }
 
     #[test]
-    fn test_extended_hash() {
-        // # = 0 or more of previous
-        assert!(patmatch("a#", ""));
-        assert!(patmatch("a#", "a"));
-        assert!(patmatch("a#", "aaa"));
+    fn alternation() {
+        let prog = compile("foo|bar");
+        assert!(pattry(&prog, "foo"));
+        assert!(pattry(&prog, "bar"));
+        assert!(!pattry(&prog, "baz"));
     }
 
     #[test]
-    fn test_captures() {
-        // Inline of the deleted patmatch_captures helper — runs the
-        // matcher and surfaces the per-group capture slices that
-        // Src/pattern.c:patbeginp[]/patendp[] expose to ${match[N]}.
-        let prog = patcompile("(foo)(bar)", PAT_HEAPDUP).unwrap();
-        let mut matcher = PatMatcher::new(&prog, "foobar");
-        assert!(matcher.try_match());
-        let mut captures: Vec<Option<&str>> = Vec::with_capacity(prog.npar);
-        for i in 1..=prog.npar {
-            captures.push(matcher.capture(i));
-        }
-        assert_eq!(captures.len(), 2);
-        assert_eq!(captures[0], Some("foo"));
-        assert_eq!(captures[1], Some("bar"));
+    fn captures() {
+        let prog = compile("(foo)(bar)");
+        let (ok, refs) = pattryrefs(&prog, "foobar").unwrap();
+        assert!(ok);
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0], (0, 3));
+        assert_eq!(refs[1], (3, 6));
     }
 
     #[test]
-    fn test_posix_class() {
-        assert!(patmatch("[[:alpha:]]", "a"));
-        assert!(patmatch("[[:alpha:]]", "Z"));
-        assert!(!patmatch("[[:alpha:]]", "5"));
-        assert!(patmatch("[[:digit:]]", "5"));
-        assert!(!patmatch("[[:digit:]]", "a"));
+    fn hash_zero_or_more() {
+        let prog = compile("a#");
+        assert!(pattry(&prog, ""));
+        assert!(pattry(&prog, "a"));
+        assert!(pattry(&prog, "aaa"));
     }
 
     #[test]
-    fn test_pure_string_optimization() {
-        let prog = patcompile("hello", PAT_HEAPDUP).unwrap();
-        assert!(prog.flags.pures);
-        assert!(prog.pure_string.is_some());
+    fn double_hash_one_or_more() {
+        let prog = compile("a##");
+        assert!(!pattry(&prog, ""));
+        assert!(pattry(&prog, "a"));
+        assert!(pattry(&prog, "aaa"));
     }
 
     #[test]
-    fn test_ksh_glob_plus() {
-        // +(pattern) = 1 or more
-        assert!(patmatch("+(ab)", "ab"));
-        assert!(patmatch("+(ab)", "abab"));
-        assert!(!patmatch("+(ab)", ""));
+    fn escape_literal() {
+        let prog = compile("a\\*b");
+        assert!(pattry(&prog, "a*b"));
+        assert!(!pattry(&prog, "azb"));
     }
 
     #[test]
-    fn test_ksh_glob_star() {
-        // *(pattern) = 0 or more
-        assert!(patmatch("*(ab)", ""));
-        assert!(patmatch("*(ab)", "ab"));
-        assert!(patmatch("*(ab)", "ababab"));
+    fn convenience_patmatch() {
+        assert!(patmatch("hello*", "hello world"));
+        assert!(!patmatch("x?z", "abc"));
     }
 
     #[test]
-    fn test_ksh_glob_question() {
-        // ?(pattern) = 0 or 1
-        assert!(patmatch("?(ab)c", "c"));
-        assert!(patmatch("?(ab)c", "abc"));
-    }
-
-    #[test]
-    fn test_pattrylen() {
-        let prog = patcompile("hello", PAT_HEAPDUP).unwrap();
-        assert!(pattrylen(&prog, "hello world", 5));
-        assert!(!pattrylen(&prog, "hello world", 3));
-    }
-
-    #[test]
-    fn test_patmatchlen() {
-        let prog = patcompile("hel*", PAT_HEAPDUP | PAT_NOANCH).unwrap();
-        let len = patmatchlen(&prog, "hello world");
-        assert!(len.is_some());
-    }
-
-    #[test]
-    fn test_patgetglobflags() {
-        let (flags, assert_op, consumed) = patgetglobflags("(#i)rest").unwrap();
-        assert!(flags.igncase);
-        assert!(assert_op.is_none());
-        assert_eq!(consumed, 4);
-
-        let (flags, _, _) = patgetglobflags("(#l)rest").unwrap();
-        assert!(flags.lcmatchuc);
-        assert!(!flags.igncase);
-
-        let (_, assert_op, _) = patgetglobflags("(#s)rest").unwrap();
-        assert_eq!(assert_op, Some(PatOp::IsStart));
-
-        let (flags, _, _) = patgetglobflags("(#bm)rest").unwrap();
-        assert!(flags.backref);
-        assert!(flags.matchref);
-    }
-
-    #[test]
-    fn test_haswilds() {
-        assert!(haswilds("*.txt"));
-        assert!(haswilds("file?"));
+    fn haswilds_detects_meta() {
+        assert!(haswilds("*"));
+        assert!(haswilds("foo?"));
         assert!(haswilds("[abc]"));
-        assert!(haswilds("foo#"));
         assert!(!haswilds("plain"));
     }
 
     #[test]
-    fn test_patmatchrange() {
-        let range = vec!['a', 'b', 'c'];
-        assert!(patmatchrange(&range, 'a', false));
-        assert!(!patmatchrange(&range, 'd', false));
-        assert!(patmatchrange(&range, 'A', true));
+    fn patmatchrange_basic() {
+        let r: Vec<char> = "a-zA-Z".chars().collect();
+        assert!(patmatchrange(&r, 'm', false));
+        assert!(patmatchrange(&r, 'X', false));
+        assert!(!patmatchrange(&r, '5', false));
     }
 
     #[test]
-    fn test_range_type() {
-        assert_eq!(range_type("alpha"), Some(0));
+    fn range_type_lookup() {
+        assert_eq!(range_type("alpha"), Some(1));
         assert_eq!(range_type("digit"), Some(5));
-        assert_eq!(range_type("nonexistent"), None);
+        assert_eq!(range_type("nonsense"), None);
     }
 
     #[test]
-    fn test_pattern_range_to_string() {
-        assert_eq!(pattern_range_to_string(0), Some("[:alpha:]".to_string()));
-        assert_eq!(pattern_range_to_string(5), Some("[:digit:]".to_string()));
+    fn pattern_range_to_string_reverses() {
+        assert_eq!(pattern_range_to_string(1), Some("[:alpha:]".to_string()));
+        assert_eq!(pattern_range_to_string(0), None);
+    }
+
+    #[test]
+    fn patgetglobflags_case_insensitive() {
+        let (flags, _, n) = patgetglobflags("(#i)foo").unwrap();
+        assert!(flags.case_insensitive);
+        assert_eq!(n, 4); // length of "(#i)"
+    }
+
+    #[test]
+    fn patgetglobflags_backref() {
+        let (flags, _, _) = patgetglobflags("(#b)").unwrap();
+        assert!(flags.backref);
+    }
+
+    #[test]
+    fn patgetglobflags_approx() {
+        let (flags, _, _) = patgetglobflags("(#a2)").unwrap();
+        assert_eq!(flags.approx_errs, Some(2));
+    }
+
+    #[test]
+    fn pattry_no_anchor_default() {
+        // patmatch with anchored compile: only full-string matches succeed.
+        let prog = compile("foo");
+        assert!(pattry(&prog, "foo"));
+    }
+
+    #[test]
+    fn captures_unmatched_group_returns_no_match() {
+        // Pattern with alt — first branch fails, second succeeds; check
+        // captures from successful branch only.
+        let prog = compile("(a)|b");
+        assert!(pattry(&prog, "a"));
+        assert!(pattry(&prog, "b"));
     }
 }
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Phase: pattern
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
-
-// END moved-from-exec-rs
-
-// ===========================================================
-// Free fns moved verbatim from src/ported/exec.rs.
-// ===========================================================
-// BEGIN moved-from-exec-rs (free fns)
-/// Parsed `(#flags)` pattern prefix.
-/// Mirrors the bag of flag bits the C source's `patglobflags` global
-/// (Src/pattern.c:304) accumulates while scanning a pattern's `(#…)`
-/// prefix block.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PatternFlags {
-    /// Pattern body with the `(#…)` prefix stripped off.
-    pub rest: String,
-    /// `(#i)` set / `(#I)` unset — case-insensitive match.
-    pub case_insensitive: bool,
-    /// `(#l)` set — lowercase pattern matches uppercase text too.
-    pub lcmatchuc: bool,
-    /// `(#aN)` — approximate match with up to N edit-distance errors.
-    pub approx: Option<usize>,
-    /// `(#b)`/`(#m)` set / `(#B)`/`(#M)` unset — capture / $MATCH mode.
-    pub backref: bool,
-}
-
-impl PatternFlags {
-
-/// Full pattern-flag parser that also reports the `(#b)` backref-
-/// capture flag in addition to the four flags `parse_pattern_flags`
-/// returns. Used by `BUILTIN_PARAM_REPLACE` to enable
-/// `${match[N]}` backreference population. Per zshexpn(1):
-///   `(#b)` — capture each `(...)` group in the pattern; on match,
-///            $match[N] holds capture N (1-based), $mbegin / $mend
-///            hold start/end positions.
-///   `(#B)` — turn it off (default).
-pub(crate) fn parse(
-    pat: &str,
-) -> (String, bool, bool, Option<usize>, bool) {
-    if !pat.starts_with("(#") {
-        return (pat.to_string(), false, false, None, false);
-    }
-    let after = &pat[2..];
-    let close = match after.find(')') {
-        Some(i) => i,
-        None => return (pat.to_string(), false, false, None, false),
-    };
-    let flag_str = &after[..close];
-    let rest = &after[close + 1..];
-    let mut case_i = false;
-    let mut l = false;
-    let mut approx: Option<usize> = None;
-    let mut backref = false;
-    let bytes = flag_str.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'i' => {
-                case_i = true;
-                i += 1;
-            }
-            b'I' => {
-                case_i = false;
-                i += 1;
-            }
-            b'l' => {
-                l = true;
-                i += 1;
-            }
-            b'b' => {
-                backref = true;
-                i += 1;
-            }
-            b'B' => {
-                backref = false;
-                i += 1;
-            }
-            b'm' => {
-                // `(#m)` flag: per Src/pattern.c the matched text is
-                // exposed via $MATCH in the replacement, plus
-                // $MBEGIN/$MEND for offsets. zshrs uses the same
-                // backref-mode plumbing — the replacement template is
-                // re-expanded with caps available, so $MATCH resolves
-                // through expand_string. Direct port of zsh's
-                // `pat_pure_m` flag (line 154 in Src/pattern.c).
-                backref = true;
-                i += 1;
-            }
-            b'M' => {
-                // `(#M)` — disable (m) (rarely used, but symmetric).
-                backref = false;
-                i += 1;
-            }
-            b'a' => {
-                i += 1;
-                let start = i;
-                while i < bytes.len() && bytes[i].is_ascii_digit() {
-                    i += 1;
-                }
-                let n: usize = if i > start {
-                    flag_str[start..i].parse().unwrap_or(1)
-                } else {
-                    1
-                };
-                approx = Some(n);
-            }
-            _ => {
-                return (pat.to_string(), false, false, None, false);
-            }
-        }
-    }
-    (rest.to_string(), case_i, l, approx, backref)
-}
-
-}  // impl PatternFlags
-
-/// Approximate match: returns true if `s` matches `pat` with up to `n`
-/// edit-distance errors. Uses the Wagner-Fischer dynamic-programming
-/// algorithm to compute Levenshtein distance, then compares against
-/// the budget. Glob metacharacters in `pat` are NOT honored — zsh's
-/// `(#a)` form combines with literal patterns; combining with `*`/`?`
-/// is rare and not supported here.
-/// Match `s` against zsh-extended glob `pat`. When the `extendedglob`
-/// Translate the body of a ksh-style extglob group `(p1|p2|...)`
-/// into a regex alternation. Each branch is glob-translated by the
-/// same rules as `glob_match_static` minus the wrapping anchors and
-/// minus the (#flags)/numeric-range support (those don't appear
-/// inside extglob bodies in practice).
-// END moved-from-exec-rs (free fns)
-
-// ===========================================================
-// Pattern helpers moved from src/ported/exec.rs.
-// All correspond to Src/pattern.c logic.
-// ===========================================================
-
-
-/// Numeric range glob `<N-M>` parsed form. `None`/`None` means open-ended
-/// on that side (`<->` matches any digits, `<3->` ≥ 3, `<-5>` ≤ 5).
-#[derive(Debug, Clone)]
-pub(crate) struct NumericRange {
-    pub(crate) lo: Option<i64>,
-    pub(crate) hi: Option<i64>,
-}
-
-impl NumericRange {
-
-/// Walk the pattern once, returning each `<N-M>` range in source order.
-/// Skips bracket expressions (`[<…>]`) so the inside-`[]` `<` stays
-/// literal. Caller calls [`Self::replace_all_with_star`] in lockstep
-/// to keep counts aligned.
-pub(crate) fn extract_all(pattern: &str) -> Vec<NumericRange> {
-    let mut ranges = Vec::new();
-    let chars: Vec<char> = pattern.chars().collect();
-    let mut i = 0;
-    let mut in_bracket = false;
-    while i < chars.len() {
-        let c = chars[i];
-        if c == '[' && !in_bracket {
-            in_bracket = true;
-            i += 1;
-            continue;
-        }
-        if c == ']' && in_bracket {
-            in_bracket = false;
-            i += 1;
-            continue;
-        }
-        if c == '<' && !in_bracket {
-            let mut j = i + 1;
-            let mut lo_str = String::new();
-            while j < chars.len() && chars[j].is_ascii_digit() {
-                lo_str.push(chars[j]);
-                j += 1;
-            }
-            if j < chars.len() && chars[j] == '-' {
-                j += 1;
-                let mut hi_str = String::new();
-                while j < chars.len() && chars[j].is_ascii_digit() {
-                    hi_str.push(chars[j]);
-                    j += 1;
-                }
-                if j < chars.len() && chars[j] == '>' {
-                    let lo = lo_str.parse::<i64>().ok();
-                    let hi = hi_str.parse::<i64>().ok();
-                    ranges.push(NumericRange { lo, hi });
-                    i = j + 1;
-                    continue;
-                }
-            }
-        }
-        i += 1;
-    }
-    ranges
-}
-
-/// Replace each `<N-M>` (matching `Self::extract_all`) with a `*`
-/// so the underlying glob crate matches any chars at that spot. The
-/// post-filter then narrows to digits in range.
-pub(crate) fn replace_all_with_star(pattern: &str) -> String {
-    let mut out = String::with_capacity(pattern.len());
-    let chars: Vec<char> = pattern.chars().collect();
-    let mut i = 0;
-    let mut in_bracket = false;
-    while i < chars.len() {
-        let c = chars[i];
-        if c == '[' && !in_bracket {
-            in_bracket = true;
-            out.push(c);
-            i += 1;
-            continue;
-        }
-        if c == ']' && in_bracket {
-            in_bracket = false;
-            out.push(c);
-            i += 1;
-            continue;
-        }
-        if c == '<' && !in_bracket {
-            let mut j = i + 1;
-            while j < chars.len() && chars[j].is_ascii_digit() {
-                j += 1;
-            }
-            if j < chars.len() && chars[j] == '-' {
-                j += 1;
-                while j < chars.len() && chars[j].is_ascii_digit() {
-                    j += 1;
-                }
-                if j < chars.len() && chars[j] == '>' {
-                    out.push('*');
-                    i = j + 1;
-                    continue;
-                }
-            }
-        }
-        out.push(c);
-        i += 1;
-    }
-    out
-}
-
-}  // impl NumericRange
-

@@ -768,3 +768,28 @@ WC_SELECT_SKIP
 # zftp.c:925-941); zshrs extracts it as a private helper used by
 # both zfopendata and the higher-level zftp_session::connect() path.
 parse_pasv_response
+
+# C pattern.c uses native pointer arithmetic to insert opcodes into
+# the bytecode buffer; the Rust port stores byte offsets explicitly,
+# so when patinsert() shifts a chunk of bytecode, downstream next_off
+# slots need fixup. C doesn't need an equivalent — pointers shift
+# implicitly. Pure byte-offset-bookkeeping helper, no C analog.
+fixup_offsets_after_insert
+# Per-opcode payload-size dispatch table walker. C uses Upat pointer
+# arithmetic and the `+1` / `+2` / `+sz` offsets inline in patmatch;
+# Rust's byte-offset bytecode reader factors the size lookup into one
+# place. Architectural helper, no C analog.
+advance_past_instr
+
+# Rust port renamed C's static `patmatch` interpreter (pattern.c:2694)
+# to free the `patmatch` name for the public convenience entry. The
+# interpreter signature differs from C's `int patmatch(Upat prog)`
+# because Rust threads input/state through args rather than C's
+# per-thread file-statics.
+patmatch_internal
+
+# Byte-offset bytecode compile helpers — C does these inline via Upat
+# pointer arithmetic + macros; Rust factors them so byte-offset
+# bookkeeping isn't duplicated at every callsite.
+set_next
+chain_branches_to
