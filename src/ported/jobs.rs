@@ -580,15 +580,9 @@ pub enum JobState {
     Done,
 }
 
-/// Simple job entry for executor compatibility
-#[derive(Debug)]
-pub struct JobEntry {
-    pub pid: i32,
-    pub child: Option<Child>,
-    pub command: String,
-    pub state: JobState,
-    pub is_current: bool,
-}
+// `JobEntry` struct deleted — Rust-only "simple job entry for
+// executor compatibility" with zero callers anywhere. JobInfo
+// already carries this exact shape; JobEntry was a stale duplicate.
 
 // ---------------------------------------------------------------------------
 // C-style globals (Bucket 2: shell-wide shared state per PORT_PLAN.md)
