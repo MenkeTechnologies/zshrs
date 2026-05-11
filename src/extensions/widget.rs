@@ -650,7 +650,7 @@ fn widget_accept_line(zle: &mut Zle) {
     // Port of acceptline() from Src/Zle/zle_misc.c:401. The C source is
     // a one-liner: `done = 1`; everything else (return current line,
     // history append, hooks) happens in zleread() after zlecore returns.
-    zle.done = true;
+    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_accept_and_hold(zle: &mut Zle) {
@@ -660,7 +660,7 @@ fn widget_accept_and_hold(zle: &mut Zle) {
     let line: String = zle.zleline.iter().collect();
     zle.bufstack.push(line);
     zle.stackcs = zle.zlecs;
-    zle.done = true;
+    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     zle.accept_line();
 }
 
@@ -676,7 +676,7 @@ fn widget_accept_line_and_down_history(zle: &mut Zle) {
             zle.stackhist = (entry.num as i32).max(0);
         }
     }
-    zle.done = true;
+    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     zle.accept_line();
 }
 
@@ -849,7 +849,7 @@ fn widget_delete_char_or_list(zle: &mut Zle) {
     // buffer this is EOF; with non-end cursor it deletes one char; at
     // end-of-line it falls through to list-choices completion.
     if zle.zlell == 0 {
-        zle.done = true;
+        crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     } else if zle.zlecs < zle.zlell {
         widget_delete_char(zle);
     } else {
@@ -2166,7 +2166,7 @@ fn widget_pound_insert(zle: &mut Zle) {
         }
     }
     zle.zlecs = 0;
-    zle.done = true; // C zsh accepts the line after a pound-insert.
+    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst); // C zsh accepts the line after a pound-insert.
 }
 
 fn widget_quote_line(zle: &mut Zle) {
@@ -2402,7 +2402,7 @@ fn widget_end_of_history(zle: &mut Zle) {
 fn widget_push_line(zle: &mut Zle) {
     // Port of pushline() from Src/Zle/zle_hist.c:832.
     zle.push_line();
-    zle.done = true;
+    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_describe_key_briefly(zle: &mut Zle) {
@@ -2930,7 +2930,7 @@ fn widget_accept_and_infer_next_history(zle: &mut Zle) {
     // Like accept-line but pre-loads the entry following the most
     // recent match for the next prompt.
     widget_infer_next_history(zle);
-    zle.done = true;
+    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_vi_quoted_insert(zle: &mut Zle) {
@@ -3499,7 +3499,7 @@ mod tests {
         widget_pound_insert(&mut zle);
         assert_eq!(zle.zleline.iter().collect::<String>(), "#echo hi");
         // Toggle off.
-        zle.done = false;
+        crate::ported::zle::zle_misc::DONE.store(0, std::sync::atomic::Ordering::SeqCst);
         widget_pound_insert(&mut zle);
         assert_eq!(zle.zleline.iter().collect::<String>(), "echo hi");
     }
@@ -3630,7 +3630,7 @@ mod tests {
         zle.zleline = "echo hi".chars().collect();
         zle.zlell = 7;
         widget_accept_line(&mut zle);
-        assert!(zle.done);
+        assert!(crate::ported::zle::zle_misc::DONE.load(std::sync::atomic::Ordering::SeqCst) != 0);
         // accept-line keeps the buffer intact for the caller to read.
         assert_eq!(zle.zleline.iter().collect::<String>(), "echo hi");
     }
@@ -3642,7 +3642,7 @@ mod tests {
         zle.zlell = 3;
         zle.zlecs = 2;
         widget_send_break(&mut zle);
-        assert!(zle.done);
+        assert!(crate::ported::zle::zle_misc::DONE.load(std::sync::atomic::Ordering::SeqCst) != 0);
         assert!(zle.zleline.is_empty());
         assert_eq!(zle.zlell, 0);
         assert_eq!(zle.zlecs, 0);

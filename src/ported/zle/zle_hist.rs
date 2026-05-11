@@ -823,8 +823,8 @@ mod tests {
                 zle.stackhist = (entry.num as i32).max(0);
             }
         }
-        zle.done = true;
-        assert!(zle.done);
+        crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
+        assert!(crate::ported::zle::zle_misc::DONE.load(std::sync::atomic::Ordering::SeqCst) != 0);
         assert_eq!(zle.bufstack, vec!["two".to_string()]);
     }
 }
@@ -834,7 +834,7 @@ pub fn acceptandinfernexthistory(zle: &mut Zle) -> i32 {                     // 
     // C body (c:691-715): mark line for accept then queue infer-next.
     //                    The actual infer happens after acceptline
     //                    when the next prompt is drawn.
-    zle.done = true;
+    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     zle.history.search_pattern.clear();
     0
 }
@@ -844,7 +844,7 @@ pub fn acceptlineanddownhistory(zle: &mut Zle) -> i32 {                      // 
     // C body (c:716-738): mark for accept; on next prompt, fetch the
     //                    history entry one position later than the
     //                    one currently displayed.
-    zle.done = true;
+    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     zle.stackhist = (zle.history.cursor as i32) + 1;
     0
 }
@@ -1260,7 +1260,7 @@ pub fn pushline(zle: &mut Zle) -> i32 {                                      // 
     });
     zle.zleline.clear();
     zle.zlecs = 0;
-    zle.done = true;
+    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1279,7 +1279,7 @@ pub fn pushlineoredit(zle: &mut Zle) -> i32 {                                // 
     });
     zle.zleline.clear();
     zle.zlecs = 0;
-    zle.done = true;
+    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
