@@ -1055,44 +1055,10 @@ pub fn super_job(jobtab: &[Job], job_idx: usize) -> Option<usize> {          // 
     None
 }
 
-/// Set current/previous job (from jobs.c setjobpwn lines 697-745)
-pub struct JobPointers {
-    // the current job (%+)                                                    // c:75
-    pub cur_job: Option<usize>,
-    // the previous job (%-) */                                                // c:80
-    pub prev_job: Option<usize>,
-}
-
-impl JobPointers {
-    pub fn new() -> Self {
-        JobPointers {
-            cur_job: None,
-            prev_job: None,
-        }
-    }
-
-    pub fn set_current(&mut self, job: usize) {
-        if Some(job) != self.cur_job {
-            self.prev_job = self.cur_job;
-            self.cur_job = Some(job);
-        }
-    }
-
-    pub fn clear(&mut self, job: usize) {
-        if self.cur_job == Some(job) {
-            self.cur_job = self.prev_job;
-            self.prev_job = None;
-        } else if self.prev_job == Some(job) {
-            self.prev_job = None;
-        }
-    }
-}
-
-impl Default for JobPointers {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// `JobPointers` struct deleted — Rust-only aggregate of `curjob`/
+// `prevjob` (Src/jobs.c:75/80) globals that already live on file
+// scope as `CURJOB` / `PREVJOB`. `setcurjob` / `setprevjob` now
+// read/write those directly per the C source.
 
 // ---------------------------------------------------------------------------
 // Missing functions from jobs.c
@@ -1295,7 +1261,7 @@ pub fn isanum(s: &str) -> bool {                                             // 
 /// for (; *envp; envp++) { ... }
 /// done: hackspace = p - hackzero;
 /// ```
-pub fn init_jobs(argv: &[String], envp: &[String]) -> (JobTable, JobPointers) { // c:2164
+pub fn init_jobs(argv: &[String], envp: &[String]) -> JobTable {             // c:2164
     let mut table = JobTable::new();                                         // c:2173 zalloc
     table.jobs.resize_with(MAXJOBS_ALLOC, || None);                          // c:2178 jobtabsize/memset
     // c:2185-2210 — `-Z` hackspace scan: locate contiguous argv+envp
@@ -1317,7 +1283,7 @@ pub fn init_jobs(argv: &[String], envp: &[String]) -> (JobTable, JobPointers) { 
         }
         std::env::set_var("__zshrs_hackspace", hackspace.to_string());       // record for jobs -Z
     }
-    (table, JobPointers::new())                                              // c:2210 done
+    table                                                                    // c:2210 done
 }
 
 /// Direct port of `acquire_pgrp()` from `Src/jobs.c:3222`.
@@ -1661,53 +1627,77 @@ pub fn handle_sub(jobtab: &mut [Job], super_idx: usize, fg: bool) {
 }
 
 // set the previous job to something reasonable                              // c:694
-/// Set the previous job (from jobs.c setprevjob)
-pub fn setprevjob(ptrs: &mut JobPointers, jobtab: &[Job], maxjob: usize) {   // c:698
-    // Find a stopped or running job that isn't the current job
-    let mut best = None;
+/// Direct port of `static void setprevjob(void)` from `Src/jobs.c:697`.
+/// Walks the global jobtab to pick `prevjob` — first stopped (non-
+/// subjob, non-curjob, non-thisjob) candidate, else first in-use one.
+pub fn setprevjob() {                                                        // c:698
+    let tab = JOBTAB.get_or_init(|| Mutex::new(Vec::new()))
+        .lock().expect("jobtab poisoned");
+    let maxjob = *MAXJOB.get_or_init(|| Mutex::new(0))
+        .lock().expect("maxjob poisoned");
+    let curjob = *CURJOB.get_or_init(|| Mutex::new(-1))
+        .lock().expect("curjob poisoned");
+    let thisjob = *THISJOB.get_or_init(|| Mutex::new(-1))
+        .lock().expect("thisjob poisoned");
+    // c:702-707 — stopped candidate.
     for i in (1..=maxjob).rev() {
-        if i >= jobtab.len() {
-            continue;
-        }
-        let job = &jobtab[i];
-        if (job.stat & stat::INUSE) != 0 && Some(i) != ptrs.cur_job {
-            if (job.stat & stat::STOPPED) != 0 {
-                best = Some(i);
-                break;
-            }
-            if best.is_none() {
-                best = Some(i);
-            }
+        if i >= tab.len() { continue; }
+        let j = &tab[i];
+        if (j.stat & (stat::INUSE | stat::STOPPED)) == (stat::INUSE | stat::STOPPED)
+            && (j.stat & stat::SUBJOB) == 0
+            && i as i32 != curjob && i as i32 != thisjob
+        {
+            *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = i as i32;
+            return;
         }
     }
-    ptrs.prev_job = best;
+    // c:709-714 — fallback to any in-use non-subjob.
+    for i in (1..=maxjob).rev() {
+        if i >= tab.len() { continue; }
+        let j = &tab[i];
+        if (j.stat & stat::INUSE) != 0
+            && (j.stat & stat::SUBJOB) == 0
+            && i as i32 != curjob && i as i32 != thisjob
+        {
+            *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = i as i32;
+            return;
+        }
+    }
+    // c:716 — nothing eligible.
+    *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = -1;
 }
 
 // Make sure we have a suitable current and previous job set.               // c:2019
-/// Set current job after state change (from jobs.c setcurjob)
-pub fn setcurjob(ptrs: &mut JobPointers, jobtab: &[Job], maxjob: usize) {    // c:2023
-    ptrs.cur_job = None;
+/// Direct port of `void setcurjob(void)` from `Src/jobs.c:2023`. Picks
+/// the highest stopped job as `curjob`, falling back to any in-use
+/// entry, then refreshes `prevjob` via `setprevjob`.
+pub fn setcurjob() {                                                         // c:2023
+    let tab = JOBTAB.get_or_init(|| Mutex::new(Vec::new()))
+        .lock().expect("jobtab poisoned");
+    let maxjob = *MAXJOB.get_or_init(|| Mutex::new(0))
+        .lock().expect("maxjob poisoned");
+    let mut found: i32 = -1;
     for i in (1..=maxjob).rev() {
-        if i >= jobtab.len() {
-            continue;
-        }
-        if (jobtab[i].stat & (stat::INUSE | stat::STOPPED)) == (stat::INUSE | stat::STOPPED) {
-            ptrs.cur_job = Some(i);
+        if i >= tab.len() { continue; }
+        if (tab[i].stat & (stat::INUSE | stat::STOPPED))
+            == (stat::INUSE | stat::STOPPED)
+        {
+            found = i as i32;
             break;
         }
     }
-    if ptrs.cur_job.is_none() {
+    if found < 0 {
         for i in (1..=maxjob).rev() {
-            if i >= jobtab.len() {
-                continue;
-            }
-            if (jobtab[i].stat & stat::INUSE) != 0 {
-                ptrs.cur_job = Some(i);
+            if i >= tab.len() { continue; }
+            if (tab[i].stat & stat::INUSE) != 0 {
+                found = i as i32;
                 break;
             }
         }
     }
-    setprevjob(ptrs, jobtab, maxjob);
+    *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = found;
+    drop(tab);
+    setprevjob();
 }
 
 /// Check if a job's time should be reported (from jobs.c should_report_time)
@@ -2438,11 +2428,8 @@ pub fn bin_fg(name: &str, argv: &[String],                                   // 
     if func != BIN_JOBS || jobbing
         || *OLDMAXJOB.get_or_init(|| Mutex::new(0)).lock().unwrap() == 0
     {
-        let mut t = table.lock().expect("jobtab poisoned");
-        let mut ptrs = JobPointers::default();
-        let maxjob = t.len();
-        setcurjob(&mut ptrs, &t, maxjob);
-        let _ = (&mut t, maxjob, &ptrs);
+        // c:2481 — `setcurjob()` operates on the global jobtab.
+        setcurjob();
     }
 
     // c:2483-2486 — set stopmsg=2 so zexit doesn't complain about
