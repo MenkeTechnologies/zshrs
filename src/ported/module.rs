@@ -14,7 +14,22 @@
 //! hooks, and math functions).
 
 use std::collections::HashMap;
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
 use crate::ported::utils::zwarnnam;
+use crate::ported::zsh_h::mathfunc as zh_mathfunc;
+
+/// Port of `MathFunc mathfuncs;` from `Src/module.c:1258` — the
+/// global head of the linked list of math functions. Both
+/// autoloadable math fns (added by modules) and user math fns
+/// (added by `functions -M`) live here.
+///
+/// C is a singly linked list with `mathfunc.next` chaining. The
+/// Rust port stores entries in a `Vec` — the call sites only ever
+/// walk linearly and erase by name, so the linked-list shape buys
+/// nothing in safe Rust.
+pub static MATHFUNCS: Lazy<Mutex<Vec<zh_mathfunc>>> =                       // c:1258
+    Lazy::new(|| Mutex::new(Vec::new()));
 
 /// Module feature types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

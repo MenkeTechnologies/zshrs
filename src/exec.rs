@@ -74,6 +74,24 @@ pub(crate) use crate::plugin_cache::PluginSnapshot;
 pub(crate) static REGEX_CACHE: LazyLock<Mutex<std::collections::HashMap<String, regex::Regex>>> =
     LazyLock::new(|| Mutex::new(std::collections::HashMap::with_capacity(64)));
 
+/// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
+/// a trap handler is currently being processed and, paired with
+/// `TRAP_RETURN` below, whether a `return` inside the trap should
+/// promote to `TRAP_STATE_FORCE_RETURN` to unwind the trap caller.
+///
+/// Values: `TRAP_STATE_INACTIVE = 0`, `TRAP_STATE_PRIMED = 1`,
+/// `TRAP_STATE_FORCE_RETURN = 2` (see `Src/zsh.h`).
+pub static TRAP_STATE: std::sync::atomic::AtomicI32 =                       // c:134 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int trap_return;` from `Src/exec.c:155`. Carries the
+/// pending exit status from inside a trap; sentinel `-2` means
+/// "running an EXIT/DEBUG-style trap at the current level"
+/// (signals.c:1166). Promoted to the user's `return N` value by
+/// `bin_return` when POSIX-trap semantics apply (builtin.c:5852).
+pub static TRAP_RETURN: std::sync::atomic::AtomicI32 =                      // c:155 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
 // ───────────────────────────────────────────────────────────────────────────
 // fusevm VM bridge (extension; not a port of Src/exec.c) lives in
 // src/fusevm_bridge.rs. The bridge re-exports the symbols that the
