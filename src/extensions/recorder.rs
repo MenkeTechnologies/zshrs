@@ -73,12 +73,9 @@ impl crate::ported::exec::ShellExecutor {
                 Some(parts.join(" > "))
             }
         });
-        let file = self
-            .variables
-            .get("ZSH_SCRIPT")
-            .or_else(|| self.variables.get("ZSH_ARGZERO"))
-            .or_else(|| self.variables.get("0"))
-            .cloned();
+        let file = crate::ported::params::getsparam("ZSH_SCRIPT")
+            .or_else(|| crate::ported::params::getsparam("ZSH_ARGZERO"))
+            .or_else(|| crate::ported::params::getsparam("0"));
         crate::recorder::RecordCtx {
             file,
             line,

@@ -390,11 +390,22 @@ mod tests {
     }
     fn s(x: &str) -> String { x.to_string() }
 
+    /// Serialises tests that mutate `intparam` / `strparam` / `arrparam`
+    /// (paramdef bindings at `Src/Modules/example.c:208-218`). The C
+    /// source declares those as file-scope statics that `boot_` and
+    /// `bin_example` overwrite; zsh is single-threaded so the C source
+    /// is safe. cargo's parallel test runner can fire `boot_populates_demo_params`
+    /// and `bin_example_returns_zero_and_assigns_state` concurrently —
+    /// each then reads the values the other just wrote and fails. The
+    /// lock restores the single-writer assumption for the test phase.
+    static EXAMPLE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Verifies `boot_()` populates the three paramdef-bound statics
     /// per c:224-228: intparam=42, strparam="example",
     /// arrparam=["example","array"].
     #[test]
     fn boot_populates_demo_params() {
+        let _g = EXAMPLE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         boot_(std::ptr::null());
         assert_eq!(intparam.load(Ordering::SeqCst), 42);
         assert_eq!(strparam.lock().unwrap().as_deref(), Some("example"));
@@ -460,6 +471,7 @@ mod tests {
     /// option letters — c:49-51.
     #[test]
     fn bin_example_returns_zero_and_assigns_state() {
+        let _g = EXAMPLE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let ops = empty_ops();
         let args = vec![s("hello"), s("world")];
         let rc = bin_example("example", &args, &ops, 0);

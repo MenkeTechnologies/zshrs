@@ -58,7 +58,7 @@ pub fn bin_echoti(name: &str, argv: &[String],                               // 
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 {                 // c:75
         return 1;                                                            // c:76
     }
-    let interactive = crate::ported::options::optlookup("interactive") > 0;  // c:77
+    let interactive = crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));  // c:77
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 && interactive {
         return 1;                                                            // c:78
     }
@@ -156,7 +156,7 @@ pub fn getterminfo(name: &str) -> Option<String> {                       // c:13
     }
     // c:144 — `if ((termflags & TERM_UNKNOWN) && (isset(INTERACTIVE) || !init_term())) return NULL;`
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {          // c:144
-        let interactive = crate::ported::options::optlookup("interactive") > 0;
+        let interactive = crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
         if interactive {                                                  // c:144
             return None;                                                  // c:145
         }
@@ -326,7 +326,7 @@ pub fn scanterminfo() -> Vec<(String, String)> {                         // c:17
     const TERM_BAD: i32 = 1 << 1;
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 { return out; }
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
-        let interactive = crate::ported::options::optlookup("interactive") > 0;
+        let interactive = crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
         if interactive { return out; }
     }
     static INITIALIZED: OnceLock<bool> = OnceLock::new();

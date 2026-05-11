@@ -194,14 +194,25 @@ impl ShellOptions {
 
     /// Set zsh-emulation default options. Direct port of the
     /// `defset(on, EMULATE_ZSH)` walk: each option in `ZSH_OPTIONS_SET`
-    /// whose `optns_flags` carries the `EMULATE_ZSH` bit is set true.
-    /// Replaces the hardcoded name list with a real flag-table walk.
+    /// gets its default value (`true` if the option's `optns_flags`
+    /// carries `EMULATE_ZSH`, `false` otherwise).
+    ///
+    /// C `Src/options.c:46` declares `mod_export char opts[OPT_SIZE]`
+    /// as a fixed-size array — every option slot is always allocated
+    /// (zero-initialised at startup, then defset-populated by emulation
+    /// setup). False-default options ARE present in `opts[]` with value
+    /// 0; they aren't absent. The Rust HashMap mirror must preserve
+    /// that invariant so `lookup(name)` returns `Some(false)` for
+    /// false-default known options, not `None`.
+    ///
+    /// Earlier port inserted only true-defaults, which caused
+    /// `optlookup("errexit")` to return `OPT_INVALID` (`options.rs:778`)
+    /// and `bin_setopt` to emit "can't change option: errexit" for
+    /// every false-default option (`Src/options.c:643-647`).
     pub fn set_zsh_defaults(&mut self) {
         let zsh_emu = EMULATE_ZSH;
         for name in ZSH_OPTIONS_SET.iter() {
-            if defset(name, zsh_emu) {
-                self.options.insert((*name).to_string(), true);
-            }
+            self.options.insert((*name).to_string(), defset(name, zsh_emu));  // c:46 opts[optno] = defset(...)
         }
     }
 
@@ -1159,34 +1170,40 @@ pub fn setoption(name: &str, value: i32) -> i32 {
     0
 }
 
-/// Translate an option name to a signed option index.
-/// Port of `optlookup()` from Src/options.c:684. The Rust port
-/// uses an FNV-1a hash of the name as a stable opaque ID;
 // Identify an option name                                                  // c:680
-/// negation encodes the `no` prefix (matches the C source's
-/// negative-encoding for inversion). Returns OPT_INVALID for
-/// unknown names.
+/// Translate an option name to a signed option index.
+/// Port of `optlookup()` from Src/options.c:684.
+///
+/// C body (c:684-715): normalize `name` (strip `_`, lowercase),
+/// then `optiontab->getnode(optiontab, s)` returns the `Optname`
+/// whose `->optno` field is the canonical numeric ID (one of the
+/// `ALIASESOPT` / `ERREXIT` / ... constants from `zsh.h:2050+`).
+/// `no`-prefix returns the negation of the stripped lookup.
+///
+/// Rust port: `optiontab` isn't ported as a runtime hashtable, so
+/// we scan the same canonical `zh::OPT_*` constants `index_to_name`
+/// uses (the inverse direction). The returned value is the C-fixed
+/// optno (so `isset(optlookup("errexit"))` reads `opts[ERREXIT]`),
+/// NOT a Rust-side hash — that earlier hash-based encoding caused
+/// `isset(optlookup(name))` to read a wrong slot via `opt_name(h)`
+/// and `[[ -o NAME ]]` returned false even after `setopt NAME`.
 pub fn optlookup(name: &str) -> i32 {                                        // c:684
-    let normalized = name.chars().filter(|&c| c != '_').flat_map(|c| c.to_lowercase()).collect::<String>();
-    let opts = ShellOptions::new();
-    let hash = |s: &str| -> i32 {
-        // FNV-1a, masked to positive 30 bits.
-        let mut h: u32 = 0x811c9dc5;
-        for b in s.bytes() {
-            h ^= b as u32;
-            h = h.wrapping_mul(0x01000193);
-        }
-        ((h & 0x3fff_ffff) as i32).max(1)
-    };
-    if let Some(stripped) = normalized.strip_prefix("no") {
-        if opts.lookup(stripped).is_some() {
-            return -hash(stripped);
+    // c:689 — `s = t = dupstring(name);`
+    // c:691-705 — strip `_` + lowercase.
+    let s: String = name.chars()                                             // c:689
+        .filter(|&c| c != '_')                                               // c:693-694
+        .flat_map(|c| c.to_lowercase())                                      // c:702-703
+        .collect();
+
+    // c:708-712 — `if s[0..2] == "no" && getnode(s+2)` → -optno, else getnode(s).
+    if let Some(stripped) = s.strip_prefix("no") {                           // c:708
+        if let Some(optno) = optno_by_name(stripped) {                       // c:709
+            return -optno;                                                   // c:710
         }
     }
-    if opts.lookup(&normalized).is_some() {
-        hash(&normalized)
-    } else {
-        OPT_INVALID
+    match optno_by_name(&s) {                                                // c:711
+        Some(optno) => optno,                                                // c:712
+        None => OPT_INVALID,                                                 // c:714
     }
 }
 
@@ -1197,15 +1214,25 @@ pub fn optlookup(name: &str) -> i32 {                                        // 
 pub fn optlookupc(c: char) -> i32 {                                          // c:721
     let opts = ShellOptions::new();
     opts.lookup_letter(c)
-        .map(|(name, _)| {
-            let mut h: u32 = 0x811c9dc5;
-            for b in name.bytes() {
-                h ^= b as u32;
-                h = h.wrapping_mul(0x01000193);
-            }
-            ((h & 0x3fff_ffff) as i32).max(1)
-        })
+        .and_then(|(name, _)| optno_by_name(name))                           // c:725 single-letter→optno via optletters[]
         .unwrap_or(0)
+}
+
+/// Reverse lookup `index_to_name` to map a canonical option name
+/// back to its C-fixed optno (one of the `zh::OPT_*` constants).
+/// Rust-only architectural helper: C iterates `optiontab` (a
+/// HashTable keyed by name) and reads `Optname.optno` — the Rust
+/// port stores the same mapping inverted in `index_to_name`'s match
+/// arms; this fn walks `0..OPT_SIZE` and matches the first idx that
+/// names to `name`.
+fn optno_by_name(name: &str) -> Option<i32> {
+    use crate::ported::zsh_h::OPT_SIZE;
+    for idx in 1..OPT_SIZE {
+        if index_to_name(idx) == Some(name) {
+            return Some(idx);
+        }
+    }
+    None
 }
 
 // =====================================================================

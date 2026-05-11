@@ -30,7 +30,7 @@ impl ShellExecutor {
     /// (exec.rs:7828-7835).
     pub(crate) fn builtin_caller(&self, args: &[String]) -> i32 {
         let depth: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(0);
-        let stack = self.arrays.get("funcstack").cloned().unwrap_or_default();
+        let stack = self.array("funcstack").unwrap_or_default();
         // funcstack[0] is the current (innermost) frame — caller 0
         // refers to the immediate caller per bash semantics, which
         // is funcstack[0] for us. With no args, just LINE FUNC; we
@@ -1320,7 +1320,7 @@ impl ShellExecutor {
             lines.pop();
         }
 
-        self.arrays.insert(array_name, lines);
+        self.set_array(array_name, lines);
         let _ = (callback, callback_quantum);
         0
     }
@@ -1470,11 +1470,11 @@ impl ShellExecutor {
                     }
                 }
                 "builtin" => {
-                    // Use the canonical BUILTIN_SET so every wired
-                    // builtin shows up in completion (was a hardcoded
-                    // 25-entry subset that missed bindkey, fc, getopts,
-                    // shopt, typeset, etc).
-                    let mut names: Vec<&str> = BUILTIN_SET.iter().copied().collect();
+                    // Use the canonical BUILTIN_NAMES (derived from
+                    // src/ported/builtin.rs:BUILTINS, which is the 1:1
+                    // port of `Src/builtin.c:40-137 builtins[]`) so
+                    // every wired builtin shows up in completion.
+                    let mut names: Vec<&str> = BUILTIN_NAMES.iter().map(|s| s.as_str()).collect();
                     names.sort();
                     for name in names {
                         if name.starts_with(&prefix) {
@@ -1792,11 +1792,11 @@ impl ShellExecutor {
                         }
                         self.assoc_arrays
                             .insert("_comps".to_string(), result.comps.into_iter().collect());
-                        self.assoc_arrays.insert(
+                        self.set_assoc(
                             "_services".to_string(),
                             result.services.into_iter().collect(),
                         );
-                        self.assoc_arrays.insert(
+                        self.set_assoc(
                             "_patcomps".to_string(),
                             result.patcomps.into_iter().collect(),
                         );
@@ -2645,7 +2645,7 @@ impl ShellExecutor {
 
     /// promptinit - initialize prompt theme system
     pub(crate) fn builtin_promptinit(&mut self, _args: &[String]) -> i32 {
-        self.arrays.insert(
+        self.set_array(
             "prompt_themes".to_string(),
             vec![
                 "adam1".to_string(),

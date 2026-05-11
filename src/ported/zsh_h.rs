@@ -583,14 +583,20 @@ pub struct alias {
 /// Port of `struct asgment` from `Src/zsh.h:1267-1275`. Note the C
 /// union is split into two Option<…> fields here; only one is set
 /// per asgment (dispatched by `flags & ASG_ARRAY`).
+///
+/// `array` is typed `LinkList<String>` (the generic port in
+/// `src/ported/linklist.rs`) rather than the bare `LinkList` type
+/// alias above — C stores `char *` payload in the list, so the
+/// typed form is what `firstnode`/`getdata`/`nextnode` traversal
+/// expects at every assign-printing site (e.g. `Src/builtin.c:476-482`).
 #[allow(non_camel_case_types)]
 pub struct asgment {
     // c:1267
-    pub node: linknode,          // c:1268
-    pub name: String,            // c:1269
-    pub flags: i32,              // c:1270 ASG_*
-    pub scalar: Option<String>,  // c:1272 union value.scalar
-    pub array: Option<LinkList>, // c:1273 union value.array
+    pub node: linknode,                                          // c:1268
+    pub name: String,                                            // c:1269
+    pub flags: i32,                                              // c:1270 ASG_*
+    pub scalar: Option<String>,                                  // c:1272 union value.scalar
+    pub array: Option<crate::ported::linklist::LinkList<String>>, // c:1273 union value.array (LinkList of char *)
 }
 
 /// Port of `struct cmdnam` from `Src/zsh.h:1301-1308`. The C union

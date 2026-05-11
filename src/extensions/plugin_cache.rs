@@ -927,12 +927,12 @@ impl crate::ported::exec::ShellExecutor {
             if NON_REPLAYABLE_VARS.contains(&name.as_str()) {
                 continue;
             }
-            let value = self.variables.get(name).unwrap();
+            let value = crate::ported::params::getsparam(name).unwrap_or_default();
             match snap.variables.get(name) {
-                Some(old) if old == value => {} // unchanged
+                Some(old) if old == &value => {} // unchanged
                 _ => {
                     // Check if it's also exported
-                    if env::var(name).ok().as_ref() == Some(value) {
+                    if env::var(name).ok().as_ref() == Some(&value) {
                         delta.exports.push((name.clone(), value.clone()));
                     } else {
                         delta.variables.push((name.clone(), value.clone()));
@@ -1054,7 +1054,7 @@ impl crate::ported::exec::ShellExecutor {
             if NON_REPLAYABLE_VARS.contains(&name.as_str()) {
                 continue;
             }
-            self.variables.insert(name.clone(), value.clone());
+            self.set_scalar(name.clone(), value.clone());
         }
 
         // Exports (set in both variables and process env)
@@ -1062,13 +1062,13 @@ impl crate::ported::exec::ShellExecutor {
             if NON_REPLAYABLE_VARS.contains(&name.as_str()) {
                 continue;
             }
-            self.variables.insert(name.clone(), value.clone());
+            self.set_scalar(name.clone(), value.clone());
             env::set_var(name, value);
         }
 
         // Arrays
         for (name, values) in &delta.arrays {
-            self.arrays.insert(name.clone(), values.clone());
+            self.set_array(name.clone(), values.clone());
         }
 
         // Associative arrays — restore plugin-defined assocs (e.g.
@@ -1091,7 +1091,7 @@ impl crate::ported::exec::ShellExecutor {
             for (k, v) in entries {
                 idx_map.insert(k.clone(), v.clone());
             }
-            self.assoc_arrays.insert(name.clone(), idx_map);
+            self.set_assoc(name.clone(), idx_map);
         }
 
         // Fpath additions

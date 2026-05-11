@@ -51,7 +51,7 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {                       // 
     // c:74-76 — flag computation. POSIX REG_EXTENDED is implicit
     // in Rust's regex crate (RE2 syntax is extended-by-default);
     // CASEMATCH off → REG_ICASE → wrap with `(?i)`.
-    let casematch = crate::ported::options::optlookup("casematch") > 0;
+    let casematch = crate::ported::zsh_h::isset(crate::ported::options::optlookup("casematch"));
     let pat_for_compile = if !casematch {                                // c:75
         format!("(?i){}", rhre)                                          // c:76 REG_ICASE
     } else {
@@ -75,8 +75,8 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {                       // 
 
     return_value = 1;                                                    // c:96
     let nsub = re.captures_len() - 1;                                    // re_nsub: # of paren groups
-    let bashre = crate::ported::options::optlookup("bashrematch") > 0;
-    let ksharr = crate::ported::options::optlookup("ksharrays") > 0;
+    let bashre = crate::ported::zsh_h::isset(crate::ported::options::optlookup("bashrematch"));
+    let ksharr = crate::ported::zsh_h::isset(crate::ported::options::optlookup("ksharrays"));
 
     // c:97-103 — start/nelem branch on BASHREMATCH.
     let (start, nelem) = if bashre {

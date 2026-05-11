@@ -701,7 +701,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
                 // c:436-441 — non-interactive exits immediately; an
                 // interactive non-tty also exits via zexit.
                 let interact =
-                    crate::ported::options::optlookup("interactive") > 0;
+                    crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
                 if !interact {
                     unsafe { libc::_exit(libc::SIGPIPE); }                   // c:437
                 } else {
@@ -736,9 +736,9 @@ extern "C" fn zhandler(sig: libc::c_int) {
                 // c:454-456 — PRIVILEGED+INTERACTIVE during a signal-
                 // noerrexit window: immediate exit.
                 let privileged =
-                    crate::ported::options::optlookup("privileged") > 0;
+                    crate::ported::zsh_h::isset(crate::ported::options::optlookup("privileged"));
                 let interactive =
-                    crate::ported::options::optlookup("interactive") > 0;
+                    crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
                 if privileged && interactive {
                     crate::ported::builtin::zexit(
                         libc::SIGINT,
@@ -952,7 +952,7 @@ pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> 
         // c:746 — `if (isset(POSIXTRAPS)) ...`. In POSIX mode SIGEXIT
         // is sticky and not tagged with the local-level shift.
         let posix_traps =
-            crate::ported::options::optlookup("posixtraps") > 0;             // c:746
+            crate::ported::zsh_h::isset(crate::ported::options::optlookup("posixtraps"));             // c:746
         EXIT_TRAP_POSIX.store(posix_traps, Ordering::Relaxed);
         if !posix_traps {
             if let Ok(mut g) = sigtrapped.lock() {
