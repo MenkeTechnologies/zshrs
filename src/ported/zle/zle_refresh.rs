@@ -1493,13 +1493,14 @@ pub static CLEARLIST:    std::sync::atomic::AtomicI32 =
 ///     REFRESH_STRING s;
 ///     REFRESH_STRING sen;
 /// };
-/// typedef struct rparams *Rparams;
+/// typedef struct rparams *rparams;
 /// ```
 ///
 /// Rust port replaces `REFRESH_STRING s/sen` (raw pointers into the
 /// video buffer) with `pos`/`end` byte indices for safe access.
 #[derive(Debug, Clone, Default)]
-pub struct Rparams {                                                         // c:815
+#[allow(non_camel_case_types)]
+pub struct rparams {                                                         // c:815
     /// Number of lines we are allowed to scroll.
     pub canscroll: i32,                                                      // c:816
     /// Current line we're working on.
@@ -1664,7 +1665,7 @@ mod zr_tests {
 
     #[test]
     fn rparams_default_zeros_all_fields() {
-        let r = Rparams::default();
+        let r = rparams::default();
         assert_eq!(r.canscroll, 0);
         assert_eq!(r.ln, 0);
         assert_eq!(r.more_status, 0);
