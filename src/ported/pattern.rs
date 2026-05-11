@@ -213,6 +213,19 @@ const I_BODY: usize = 5; // payload starts here
 // hold just the buffer; patcode/patsize/patalloc are derived.
 pub static patout: Mutex<Vec<u8>> = Mutex::new(Vec::new());     // c:267
 
+/// Serialises every entry into `patcompile`. The C source at
+/// `Src/pattern.c:267-281` declares `patout`, `patparse`, `patstart`,
+/// `patnpar`, `patflags`, `patglobflags`, `errsfound`, `forceerrs`,
+/// `zpc_special`, `patstrcache` as file-scope statics that the compile
+/// mutates in sequence; zsh-the-program is single-threaded so the C
+/// source is safe under that invariant. zshrs callers (zutil's
+/// `StyleTable::get` via `crate::ported::pattern::patmatch`, params.rs,
+/// subst.rs, options.rs) can invoke `patcompile` from concurrent test
+/// threads, so the lock restores the single-writer invariant. Held
+/// only for the compile phase; the matcher (`pattry`/`patmatch_internal`)
+/// operates on the returned `Patprog.code` and touches no globals.
+static PATCOMPILE_LOCK: Mutex<()> = Mutex::new(());
+
 // C: `static char *patparse, *patstart;` — pattern parsing cursors
 // into the *input* pattern string. patstart points to start of
 // pattern; patparse moves forward as we consume tokens.
@@ -479,6 +492,11 @@ pub fn patcompstart() {                                                       //
 pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>)   // c:540
     -> Option<Patprog>
 {
+    // Hold the compile mutex for the entire body — `patcompstart`
+    // resets every file-scope static (`Src/pattern.c:267-281`) and the
+    // emit/parse helpers mutate them in sequence. C is single-threaded
+    // so the statics are race-free there; Rust must serialise.
+    let _compile_guard = PATCOMPILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     patcompstart();
     *patstart.lock().unwrap() = exp.to_string();
     *patparse.lock().unwrap() = exp.to_string();
@@ -2040,6 +2058,25 @@ mod tests {
         let _g = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         assert!(patmatch("hello*", "hello world"));
         assert!(!patmatch("x?z", "abc"));
+    }
+
+    /// Concurrent compile must not corrupt the file-scope statics
+    /// (`Src/pattern.c:267-281`). Verifies `PATCOMPILE_LOCK` serialises
+    /// the entry so colon-bearing patterns from zutil-style consumers
+    /// don't race against simpler call sites.
+    #[test]
+    fn patcompile_concurrent_safe() {
+        use std::thread;
+        let handles: Vec<_> = (0..8).map(|i| {
+            thread::spawn(move || {
+                for _ in 0..200 {
+                    assert!(patmatch(":completion:*", ":completion:zsh"));
+                    assert!(patmatch("hello*", "hello world"));
+                    let _ = i;
+                }
+            })
+        }).collect();
+        for h in handles { h.join().unwrap(); }
     }
 
     #[test]

@@ -106,9 +106,15 @@ pub(crate) use crate::fusevm_bridge::{ExecutorContext};
 /// getoutput(char *cmd, int qt)` but every caller in subst.rs
 /// joins the list back into a string, so the Rust port collapses
 /// the intermediate.
+///
+/// Uses `with_executor` (panics on missing VM context), not
+/// `try_with_executor + unwrap_or_default()`. C `getoutput` calls
+/// `execpline` directly — there's no "no shell" code path. The
+/// silent-no-op pattern (return empty string when no executor) would
+/// mask catastrophic state corruption as "command produced no output",
+/// which is the failure mode the `subst.rs:496` warning block flags.
 pub fn getoutput(cmd: &str) -> String {                                      // c:4712 (Src/exec.c)
-    try_with_executor(|exec| exec.run_command_substitution(cmd))
-        .unwrap_or_default()
+    with_executor(|exec| exec.run_command_substitution(cmd))
 }
 
 /// Match an intercept pattern against a command name or full command string.
@@ -129,11 +135,37 @@ pub(crate) fn cached_regex(pattern: &str) -> Option<regex::Regex> {
     }
 }
 
-/// HashSet of all zsh options for O(1) lookup
-/// O(1) builtin lookup — replaces the 130+ arm matches! macro in is_builtin()
-pub(crate) static BUILTIN_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    [
-        "cd",
+/// O(1) builtin-name lookup set derived from the canonical
+/// `BUILTINS` table (`src/ported/builtin.rs:122`, the 1:1 port of
+/// `static struct builtin builtins[]` at `Src/builtin.c:40-137`).
+/// Earlier incarnation hardcoded a separate 130-entry list which
+/// drifted whenever new builtins landed in the canonical table — and
+/// shadowed the `fusevm::shell_builtins::BUILTIN_SET` u16 opcode
+/// constant. Renaming to `BUILTIN_NAMES` removes the shadow; the
+/// initialiser walks `BUILTINS` so the set stays in sync.
+///
+/// The hardcoded entries inside `LazyLock::new` below are kept as
+/// the union of: (1) names from `BUILTINS` (walked at first access),
+/// (2) zshrs daemon-side builtins from `ZSHRS_BUILTIN_NAMES`. Both
+/// arms run once at static init.
+pub(crate) static BUILTIN_NAMES: LazyLock<HashSet<String>> = LazyLock::new(|| {
+    let mut s: HashSet<String> = HashSet::new();
+    // Walk the canonical `BUILTINS` table (Src/builtin.c:40-137 ported
+    // at src/ported/builtin.rs:122). Every name in there is a real
+    // zsh builtin so the set stays in sync as new ports land.
+    for b in crate::ported::builtin::BUILTINS.iter() {
+        s.insert(b.node.nam.clone());
+    }
+    // Daemon-side (zshrs-specific) builtins.
+    for &n in crate::daemon::builtins::ZSHRS_BUILTIN_NAMES.iter() {
+        s.insert(n.to_string());
+    }
+    // Names not currently in the canonical BUILTINS table but
+    // recognised as builtins by the dispatcher path (fusevm-only
+    // shims, the special-prefix forms `[`/`.`/`:`, and the
+    // bash-compat completion shims `compgen`/`complete`). Keep these
+    // until each lands in the canonical table.
+    for n in [
         "chdir",
         "pwd",
         "echo",
@@ -266,10 +298,10 @@ pub(crate) static BUILTIN_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|
         ":",
         "compgen",
         "complete",
-    ]
-    .into_iter()
-    .chain(crate::daemon::builtins::ZSHRS_BUILTIN_NAMES.iter().copied())
-    .collect()
+    ] {
+        s.insert(n.to_string());
+    }
+    s
 });
 
 /// Slice an array per zsh `${arr:offset[:length]}` semantics: the
@@ -368,6 +400,15 @@ pub struct SubshellSnapshot {
     pub variables: HashMap<String, String>,
     pub arrays: HashMap<String, Vec<String>>,
     pub assoc_arrays: HashMap<String, IndexMap<String, String>>,
+    /// Snapshot of `paramtab` (the C-canonical parameter store) at
+    /// subshell entry. Step 1 of the unification mirrors writes to
+    /// paramtab, so subshell-scoped assignments now show up there
+    /// too — without this snapshot, restoring only `variables` /
+    /// `arrays` / `assoc_arrays` leaks the subshell's writes to the
+    /// parent via paramtab (e.g. `x=outer; (x=inner); echo $x` returned
+    /// `inner` because paramsubst reads through paramtab).
+    pub paramtab: HashMap<String, crate::ported::zsh_h::Param>,
+    pub paramtab_hashed_storage: HashMap<String, indexmap::IndexMap<String, String>>,
     pub positional_params: Vec<String>,
     pub env_vars: HashMap<String, String>,
     /// Process working directory at subshell entry. `cd` inside the
@@ -703,6 +744,90 @@ pub struct ShellExecutor {
 }
 
 impl ShellExecutor {
+    /// Set a scalar parameter. Writes both the in-memory
+    /// `exec.variables` HashMap (legacy fusevm path) AND the canonical
+    /// `paramtab` (`Src/params.c:3350 setsparam`). paramtab is the
+    /// C-source single source of truth; the HashMap is a transitional
+    /// cache for fusevm-emitted reads that haven't yet been migrated
+    /// to paramtab. Bridging at the write site keeps both stores
+    /// coherent so `${name}` resolution behaves the same regardless
+    /// of which reader path observes it.
+    /// Mechanical-migration signature: takes owned `String`s so that
+    /// `exec.set_scalar(name, value)` call sites can swap to
+    /// `exec.set_scalar(name, value)` verbatim without ref/owned
+    /// gymnastics. The `set_scalar` body owns the inserts cleanly.
+    pub(crate) fn set_scalar(&mut self, name: String, value: String) {
+        crate::ported::params::setsparam(&name, &value);                     // c:params.c:3350
+        self.variables.insert(name, value);
+    }
+
+    /// Set an indexed array parameter. Mirrors to paramtab via
+    /// `setaparam` (`Src/params.c:3595`).
+    pub(crate) fn set_array(&mut self, name: String, value: Vec<String>) {
+        crate::ported::params::setaparam(&name, value.clone());              // c:params.c:3595
+        self.arrays.insert(name, value);
+    }
+
+    /// Set an associative array parameter. Mirrors to paramtab via
+    /// `sethparam` (`Src/params.c:3602`) — that helper takes a flat
+    /// `Vec<String>` of alternating k/v pairs, so we flatten the
+    /// IndexMap before handing off.
+    pub(crate) fn set_assoc(&mut self, name: String, value: indexmap::IndexMap<String, String>) {
+        let mut flat: Vec<String> = Vec::with_capacity(value.len() * 2);
+        for (k, v) in &value {
+            flat.push(k.clone());
+            flat.push(v.clone());
+        }
+        crate::ported::params::sethparam(&name, flat);                       // c:params.c:3602
+        self.assoc_arrays.insert(name, value);
+    }
+
+    /// Read a scalar parameter. Mirrors C `getsparam` at
+    /// `Src/params.c:3076` — reads through paramtab, falls back to
+    /// special-var hooks and env. Use this instead of poking
+    /// `self.variables.get(name)` directly so the store boundary
+    /// stays inside one helper.
+    pub fn scalar(&self, name: &str) -> Option<String> {
+        crate::ported::params::getsparam(name)
+    }
+
+    /// Read an array parameter. Mirrors C `getaparam` at
+    /// `Src/params.c:3100` — `paramtab->getnode(s)` then
+    /// `pm->u.arr.clone()`. Returns an owned `Vec<String>` because
+    /// paramtab access requires a mutex lock that can't outlive the
+    /// returned borrow.
+    pub fn array(&self, name: &str) -> Option<Vec<String>> {
+        let tab = crate::ported::params::paramtab().lock().ok()?;
+        tab.get(name).and_then(|pm| pm.u_arr.clone())
+    }
+
+    /// Read an associative array parameter. Mirrors C `gethparam` at
+    /// `Src/params.c:3115` — returns the typed `IndexMap` from
+    /// `paramtab_hashed_storage`.
+    pub fn assoc(&self, name: &str) -> Option<indexmap::IndexMap<String, String>> {
+        crate::ported::params::paramtab_hashed_storage()
+            .lock().ok()
+            .and_then(|m| m.get(name).cloned())
+    }
+
+    /// Unset a parameter from every store. Mirrors the C
+    /// `unsetparam_pm` semantics at `Src/params.c:3905`: clear the
+    /// paramtab entry + the legacy HashMap caches + (for exported
+    /// vars) the env entry. Callers that need to scope the unset to
+    /// just one type pass through this single entry so paramtab and
+    /// the HashMaps don't drift apart.
+    pub(crate) fn unset_var(&mut self, name: &str) {
+        self.variables.remove(name);
+        self.arrays.remove(name);
+        self.assoc_arrays.remove(name);
+        if let Some(tab) = crate::ported::params::paramtab().lock().ok().as_deref_mut() {
+            tab.remove(name);                                                // c:params.c:3900 paramtab removenode
+        }
+        let _ = crate::ported::params::paramtab_hashed_storage()
+            .lock().ok().as_deref_mut()
+            .map(|m| m.remove(name));
+    }
+
     /// Single-string substitution via the canonical pipeline. Snapshots
     /// the executor state into a `SubstState`, runs `singsub` from
     /// `Src/subst.c:514`, commits any side-effects (assigns inside
@@ -842,15 +967,23 @@ impl ShellExecutor {
             libc::setlocale(libc::LC_ALL, c"".as_ptr());
         }
 
+        // c:hashtable.c:1206 createaliastables() — seeds aliastab with
+        // the `run-help` / `which-command` defaults. Run once at shell
+        // init so the canonical port owns the default-alias set; the
+        // Executor's `aliases` HashMap then mirrors aliastab.
+        crate::ported::hashtable::createaliastables();
         let mut exec = Self {
             aliases: {
-                let mut a = IndexMap::new();
-                // zsh ships these two aliases compiled-in; visible in
-                // a fresh `zsh -f -c 'alias'`. Adding them so zshrs's
-                // alias listing matches zsh's defaults.
-                a.insert("run-help".to_string(), "man".to_string());
-                a.insert("which-command".to_string(), "whence".to_string());
-                a
+                // Mirror the canonical aliastab (the C-port single
+                // source of truth populated by createaliastables
+                // above) into the Executor's typed cache. Replaces an
+                // earlier hardcoded `a.insert("run-help",...)`
+                // duplication that drifted from C's actual defaults.
+                let tab = crate::ported::hashtable::aliastab_lock()
+                    .lock().expect("aliastab poisoned");
+                tab.iter()
+                    .map(|(name, al)| (name.clone(), al.text.clone()))
+                    .collect()
             },
             scriptname: None,
             scriptfilename: None,
@@ -1012,7 +1145,7 @@ impl ShellExecutor {
             .map(|p| p.to_string_lossy().to_string())
             .collect();
         if !fpath_arr.is_empty() {
-            exec.arrays.insert("fpath".to_string(), fpath_arr);
+            exec.set_array("fpath".to_string(), fpath_arr);
         }
         if let Ok(path) = env::var("PATH") {
             let path_arr: Vec<String> = path
@@ -1021,7 +1154,7 @@ impl ShellExecutor {
                 .map(String::from)
                 .collect();
             if !path_arr.is_empty() {
-                exec.arrays.insert("path".to_string(), path_arr);
+                exec.set_array("path".to_string(), path_arr);
             }
         }
         // Register the standard tied path-family pairs so `path+=` /
@@ -1041,6 +1174,29 @@ impl ShellExecutor {
                 .insert(arr.to_string(), (scalar.to_string(), ":".to_string()));
             exec.tied_scalar_to_array
                 .insert(scalar.to_string(), (arr.to_string(), ":".to_string()));
+        }
+
+        // Mirror every constructor-time `variables` / `arrays` /
+        // `assoc_arrays` seed into paramtab so the C-port readers see
+        // the same initial state. C does this implicitly because its
+        // single `paramtab` is populated by `setupvals()` /
+        // `createparam()` calls at init (Src/init.c:1014-1300). The
+        // Rust port builds local HashMaps first and then constructs
+        // self; this loop fans the contents out to paramtab in one
+        // pass at the end of new().
+        for (k, v) in &exec.variables {
+            crate::ported::params::setsparam(k, v);                          // c:params.c:3350
+        }
+        for (k, v) in &exec.arrays {
+            crate::ported::params::setaparam(k, v.clone());                  // c:params.c:3595
+        }
+        for (k, v) in &exec.assoc_arrays {
+            let mut flat: Vec<String> = Vec::with_capacity(v.len() * 2);
+            for (kk, vv) in v {
+                flat.push(kk.clone());
+                flat.push(vv.clone());
+            }
+            crate::ported::params::sethparam(k, flat);                       // c:params.c:3602
         }
         exec
     }
@@ -1304,7 +1460,8 @@ impl ShellExecutor {
         } else {
             name.to_string()
         };
-        let saved_zero = self.variables.insert("0".to_string(), display_name);
+        let saved_zero = crate::ported::params::getsparam("0");
+        self.set_scalar("0".to_string(), display_name);
         self.local_scope_depth += 1;
         let line_base = self
             .function_line_base
@@ -1327,7 +1484,7 @@ impl ShellExecutor {
         self.local_scope_depth -= 1;
         match saved_zero {
             Some(v) => {
-                self.variables.insert("0".to_string(), v);
+                self.set_scalar("0".to_string(), v);
             }
             None => {
                 self.variables.remove("0");
@@ -1337,7 +1494,7 @@ impl ShellExecutor {
             if let Some((var_name, old_val)) = self.local_save_stack.pop() {
                 match old_val {
                     Some(v) => {
-                        self.variables.insert(var_name, v);
+                        self.set_scalar(var_name, v);
                     }
                     None => {
                         self.variables.remove(&var_name);
@@ -1349,7 +1506,7 @@ impl ShellExecutor {
             if let Some((arr_name, old_arr)) = self.local_array_save_stack.pop() {
                 match old_arr {
                     Some(items) => {
-                        self.arrays.insert(arr_name, items);
+                        self.set_array(arr_name, items);
                     }
                     None => {
                         self.arrays.remove(&arr_name);
@@ -1361,7 +1518,7 @@ impl ShellExecutor {
             if let Some((assoc_name, old_assoc)) = self.local_assoc_save_stack.pop() {
                 match old_assoc {
                     Some(map) => {
-                        self.assoc_arrays.insert(assoc_name, map);
+                        self.set_assoc(assoc_name, map);
                     }
                     None => {
                         self.assoc_arrays.remove(&assoc_name);
@@ -1724,7 +1881,7 @@ impl ShellExecutor {
         // and increments from there; once it returns, the outer
         // line at the `$(…)` site must read the original outer
         // lineno (so xtrace renders `+:5:> echo …` not `+:1:> …`).
-        let saved_lineno = self.variables.get("LINENO").cloned();
+        let saved_lineno = crate::ported::params::getsparam("LINENO");
         // Anchor the inner program's lineno to the outer's current
         // $LINENO so xtrace inside the cmdsubst renders the outer
         // line. zsh's execlist preserves lineno across the inner
@@ -1762,7 +1919,7 @@ impl ShellExecutor {
         }
         // Restore LINENO so outer xtrace sees the outer line.
         if let Some(ln) = saved_lineno {
-            self.variables.insert("LINENO".to_string(), ln);
+            self.set_scalar("LINENO".to_string(), ln);
         }
         self.cmd_stack.pop();
         // Propagate the inner cmd's status to the parent shell. zsh:
@@ -2014,27 +2171,31 @@ impl ShellExecutor {
     // Additional zsh builtins
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Helper to check if name is a builtin
-    /// O(1) builtin check via static HashSet — replaces 130+ arm linear match
+    /// Helper to check if name is a builtin. Consults the canonical
+    /// `BUILTINS` table (`src/ported/builtin.rs:122`, the 1:1 port of
+    /// `static struct builtin builtins[]` at `Src/builtin.c:40-137`).
+    /// Earlier implementation hardcoded a separate `BUILTIN_SET`
+    /// HashSet of 130+ names — duplicated state that drifts when new
+    /// builtins land in the canonical table. The cached lookup set
+    /// below is built once from `BUILTINS` so the O(1) cost stays
+    /// without a separate authoritative list.
     pub(crate) fn is_builtin(&self, name: &str) -> bool {
-        BUILTIN_SET.contains(name) || name.starts_with('_')
+        BUILTIN_NAMES.contains(name) || name.starts_with('_')
     }
 
-    /// Helper to find command in PATH — checks command_hash first for O(1) hit
+    /// Helper to find command in PATH. The fast path consults the
+    /// `command_hash` table (rebuilt by `rehash` per `Src/Modules/
+    /// hashed.c`); the slow path delegates to the canonical port of
+    /// `findcmd()` (`Src/exec.c:5260`, ported at
+    /// `src/ported/builtin.rs:4047`). Earlier inline PATH walk
+    /// duplicated findcmd's logic without honoring `name.contains('/')`
+    /// (the C source returns the literal path for slashed names
+    /// without walking $PATH).
     pub(crate) fn find_in_path(&self, name: &str) -> Option<String> {
-        // O(1) hash table lookup from rehash
         if let Some(path) = self.command_hash.get(name) {
             return Some(path.clone());
         }
-        // Fallback: linear PATH walk
-        let path_var = env::var("PATH").unwrap_or_default();
-        for dir in path_var.split(':') {
-            let full_path = format!("{}/{}", dir, name);
-            if std::path::Path::new(&full_path).exists() {
-                return Some(full_path);
-            }
-        }
-        None
+        crate::ported::builtin::findcmd(name, 0, 0)                          // c:exec.c:5260
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2089,7 +2250,7 @@ impl ShellExecutor {
     /// Add a child process to tracking
     fn add_child_process(&mut self, pid: i32) {
         // Would track in job table
-        self.variables.insert("!".to_string(), pid.to_string());
+        self.set_scalar("!".to_string(), pid.to_string());
     }
 
     /// Reset signal handlers to defaults
@@ -2302,8 +2463,22 @@ impl ShellExecutor {
         crate::ported::builtin::bin_test("test", args, &ops, 0)
     }
     pub(crate) fn bin_typeset(&mut self, args: &[String]) -> i32 {
-        let mut ops = Self::_empty_ops();
-        crate::ported::builtin::bin_typeset("typeset", args, &mut ops, 0)
+        // Route through `execbuiltin` (Src/builtin.c:250) so `bn->optstr`
+        // ("AE:%F:%HL:%R:%TUZ:%afghi:%klp:%rtuxmnz") gets parsed against
+        // argv into a populated `ops` before `bin_typeset` runs. Direct
+        // call with `_empty_ops()` left flags like `-A` invisible to
+        // `bin_typeset`, breaking `typeset -A` assoc creation entirely.
+        let bn_idx = crate::ported::builtin::BUILTINS.iter()
+            .position(|b| b.node.nam == "typeset");
+        if let Some(idx) = bn_idx {
+            let bn_static: &'static crate::ported::zsh_h::builtin =
+                &crate::ported::builtin::BUILTINS[idx];
+            let bn_ptr = bn_static as *const _ as *mut _;
+            crate::ported::builtin::execbuiltin(args.to_vec(), Vec::new(), bn_ptr)
+        } else {
+            let ops = Self::_empty_ops();
+            crate::ported::builtin::bin_typeset("typeset", args, &ops, 0)
+        }
     }
     pub(crate) fn bin_read(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
@@ -2374,8 +2549,22 @@ impl ShellExecutor {
         crate::ported::builtin::bin_functions("functions", args, &ops, 0)
     }
     pub(crate) fn bin_print(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_print("print", args, &ops, 0)
+        // Route through `execbuiltin` (Src/builtin.c:250) so `bn->optstr`
+        // ("abcC:Df:ilmnNoOpPrRsSu:v:x:X:z-") parses `-l`, `-n`, `-r`,
+        // `-u FD`, `-v VAR`, `-f FMT` etc. into `ops`. Earlier direct
+        // call with `_empty_ops()` made `print -l -- "${(@)arr}"` emit
+        // `-l -- a b c` as positional args instead of one-per-line.
+        let bn_idx = crate::ported::builtin::BUILTINS.iter()
+            .position(|b| b.node.nam == "print");
+        if let Some(idx) = bn_idx {
+            let bn_static: &'static crate::ported::zsh_h::builtin =
+                &crate::ported::builtin::BUILTINS[idx];
+            let bn_ptr = bn_static as *const _ as *mut _;
+            crate::ported::builtin::execbuiltin(args.to_vec(), Vec::new(), bn_ptr)
+        } else {
+            let ops = Self::_empty_ops();
+            crate::ported::builtin::bin_print("print", args, &ops, 0)
+        }
     }
     pub(crate) fn bin_whence(&self, args: &[String]) -> i32 {
         // No canonical bin_whence yet — return 1 (not found) placeholder.

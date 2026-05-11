@@ -33,11 +33,11 @@ impl crate::ported::exec::ShellExecutor {
                     let comps = bg.result.comps.len();
                     self.assoc_arrays
                         .insert("_comps".to_string(), bg.result.comps.into_iter().collect());
-                    self.assoc_arrays.insert(
+                    self.set_assoc(
                         "_services".to_string(),
                         bg.result.services.into_iter().collect(),
                     );
-                    self.assoc_arrays.insert(
+                    self.set_assoc(
                         "_patcomps".to_string(),
                         bg.result.patcomps.into_iter().collect(),
                     );
@@ -109,15 +109,15 @@ impl crate::ported::exec::ShellExecutor {
         }
 
         // Set up _comps associative array
-        self.assoc_arrays.insert(
+        self.set_assoc(
             "_comps".to_string(),
             result.comps.clone().into_iter().collect(),
         );
-        self.assoc_arrays.insert(
+        self.set_assoc(
             "_services".to_string(),
             result.services.clone().into_iter().collect(),
         );
-        self.assoc_arrays.insert(
+        self.set_assoc(
             "_patcomps".to_string(),
             result.patcomps.clone().into_iter().collect(),
         );

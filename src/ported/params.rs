@@ -4115,7 +4115,7 @@ pub fn terminfodirssetfn(x: String) {
 pub fn term_reinit_from_pm() {                                               // c:5163
     use std::sync::atomic::Ordering;
     // c:5167 — `if (unset(INTERACTIVE) || !*term) termflags |= TERM_UNKNOWN;`
-    let interactive = crate::ported::options::optlookup("interactive") > 0;
+    let interactive = crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
     let term = term_lock().lock().map(|s| s.clone()).unwrap_or_default();
     if !interactive || term.is_empty() {                                     // c:5167
         TERMFLAGS.fetch_or(TERM_UNKNOWN, Ordering::Relaxed);                 // c:5168
@@ -6514,7 +6514,7 @@ pub fn fetchvalue<'a>(                                                       // 
             }
         } else if (scanflags & crate::ported::zsh_h::SCANPM_ASSIGNING as i32) == 0
             && v.scanflags != 0
-            && crate::ported::options::optlookup("ksharrays") > 0
+            && crate::ported::zsh_h::isset(crate::ported::options::optlookup("ksharrays"))
         {
             // c:2294-2296 — KSHARRAYS implicit `[0]` for bare arr.
             v.end = 1;

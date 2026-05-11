@@ -2164,11 +2164,32 @@ pub fn createaliastable(_ht: *mut crate::ported::zsh_h::hashtable) {         // 
 
 /// Port of `createaliastables()` from `Src/hashtable.c:1206`.
 ///
-/// C body allocates both the regular alias table and the
-/// suffix-alias table, then seeds the regular one with the
-/// `run-help` and `which-command` defaults.
+/// C body (lines 1206-1224):
+/// ```c
+/// aliastab = newhashtable(23, "aliastab", NULL);
+/// createaliastable(aliastab);
+/// aliastab->addnode(aliastab, ztrdup("run-help"), createaliasnode(ztrdup("man"), 0));
+/// aliastab->addnode(aliastab, ztrdup("which-command"), createaliasnode(ztrdup("whence"), 0));
+/// sufaliastab = newhashtable(11, "sufaliastab", NULL);
+/// createaliastable(sufaliastab);
+/// ```
+///
+/// The OnceLock-backed `aliastab_lock()` / `sufaliastab_lock()`
+/// stand in for `newhashtable(...)` + `createaliastable(...)` — they
+/// lazy-init the underlying maps on first access.
 pub fn createaliastables() {
-    let _ = aliastab_lock();
+    // c:1210 — newhashtable(23, "aliastab", NULL)
+    // c:1212 — createaliastable(aliastab)
+    let mut tab = aliastab_lock().lock().expect("aliastab poisoned");
+    // c:1215 — `aliastab->addnode(aliastab, ztrdup("run-help"),
+    //                              createaliasnode(ztrdup("man"), 0));`
+    tab.add(createaliasnode("run-help", "man", 0));                          // c:1215
+    // c:1216 — `aliastab->addnode(aliastab, ztrdup("which-command"),
+    //                              createaliasnode(ztrdup("whence"), 0));`
+    tab.add(createaliasnode("which-command", "whence", 0));                  // c:1216
+    drop(tab);
+    // c:1221 — newhashtable(11, "sufaliastab", NULL)
+    // c:1223 — createaliastable(sufaliastab)
     let _ = sufaliastab_lock();
 }
 

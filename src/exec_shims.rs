@@ -1953,7 +1953,7 @@ impl crate::ported::exec::ShellExecutor {
             "SECONDS" => {
                 // Seconds since shell start. We approximate via the
                 // tracked `shell_start_time` if present; otherwise 0.
-                self.variables.get("SECONDS").cloned().unwrap_or_else(|| {
+                crate::ported::params::getsparam("SECONDS").unwrap_or_else(|| {
                     use std::time::{SystemTime, UNIX_EPOCH};
                     let now = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
@@ -2089,7 +2089,7 @@ impl crate::ported::exec::ShellExecutor {
                 let resolved = lookup_special_var(name)
                     .or_else(|| {
                         if !assoc_has_entries {
-                            self.variables.get(name).cloned()
+                            crate::ported::params::getsparam(name)
                         } else {
                             None
                         }
@@ -2177,7 +2177,7 @@ impl crate::ported::exec::ShellExecutor {
                         assoc.len()
                     } else if name == "@" || name == "*" {
                         self.positional_params.len()
-                    } else if let Some(s) = self.variables.get(&name) {
+                    } else if let Some(s) = crate::ported::params::getsparam(&name) {
                         s.chars().count()
                     } else {
                         0
@@ -2239,7 +2239,7 @@ impl crate::ported::exec::ShellExecutor {
                 // getarg dispatches to the right pattern-search arm
                 // based on which storage we pass it. Direct port of
                 // C getarg's ishash branch (params.c:1581-1719).
-                let scalar_val = self.variables.get(&name).cloned();
+                let scalar_val = crate::ported::params::getsparam(&name);
                 let result = if let Some(assoc) = self.assoc_arrays.get(&name) {
                     getarg(trimmed_key, None, Some(assoc), None)
                 } else if name == "@" || name == "*" {
@@ -2391,7 +2391,7 @@ impl crate::ported::exec::ShellExecutor {
                         // getarg with the right storage gives back the
                         // matched value or the all-matches join — see
                         // params.c:1581-1719 inside getarg.
-                        let scalar_val = self.variables.get(&name).cloned();
+                        let scalar_val = crate::ported::params::getsparam(&name);
                         let result = if let Some(assoc) = self.assoc_arrays.get(&name) {
                             getarg(trimmed_key, None, Some(assoc), None)
                         } else if name == "@" || name == "*" {
@@ -3632,8 +3632,8 @@ impl crate::ported::exec::ShellExecutor {
             println!("PS1={:?}", ps1);
             println!("RPS1={:?}", rps1);
         } else {
-            self.variables.insert("PS1".to_string(), ps1.to_string());
-            self.variables.insert("RPS1".to_string(), rps1.to_string());
+            self.set_scalar("PS1".to_string(), ps1.to_string());
+            self.set_scalar("RPS1".to_string(), rps1.to_string());
             self.variables
                 .insert("prompt_theme".to_string(), theme.to_string());
         }
@@ -3989,7 +3989,7 @@ impl crate::ported::exec::ShellExecutor {
                 let pos = (idx_val - 1).max(0) as usize;
                 arr.resize(pos + 1, "0".to_string());
                 arr[pos] = new_val.to_string();
-                self.arrays.insert(name, arr);
+                self.set_array(name, arr);
             }
             // Post `++`/`--` returns OLD value; pre-op + compound
             // assigns return NEW value.
@@ -4030,7 +4030,7 @@ impl crate::ported::exec::ShellExecutor {
                 };
                 arr.resize(i_pos + 1, "0".to_string());
                 arr[i_pos] = rhs_val.to_string();
-                self.arrays.insert(name, arr);
+                self.set_array(name, arr);
             }
             return rhs_val.to_string();
         }
@@ -4141,7 +4141,7 @@ impl crate::ported::exec::ShellExecutor {
                         .get(&k)
                         .map(|a| a.export)
                         .unwrap_or(false);
-                    self.variables.insert(k.clone(), formatted.clone());
+                    self.set_scalar(k.clone(), formatted.clone());
                     if is_exported {
                         env::set_var(&k, &formatted);
                     }
@@ -4291,7 +4291,7 @@ impl crate::ported::exec::ShellExecutor {
                 };
                 arr.resize(i_pos + 1, "0".to_string());
                 arr[i_pos] = rhs_val.to_string();
-                self.arrays.insert(name, arr);
+                self.set_array(name, arr);
             }
             return rhs_val;
         }
@@ -4323,7 +4323,7 @@ impl crate::ported::exec::ShellExecutor {
                         .get(&k)
                         .map(|a| a.export)
                         .unwrap_or(false);
-                    self.variables.insert(k.clone(), formatted.clone());
+                    self.set_scalar(k.clone(), formatted.clone());
                     if is_exported {
                         env::set_var(&k, &formatted);
                     }
@@ -4376,7 +4376,7 @@ impl crate::ported::exec::ShellExecutor {
                         .get(&k)
                         .map(|a| a.export)
                         .unwrap_or(false);
-                    self.variables.insert(k.clone(), formatted.clone());
+                    self.set_scalar(k.clone(), formatted.clone());
                     if is_exported {
                         env::set_var(&k, &formatted);
                     }
@@ -5138,7 +5138,7 @@ impl crate::ported::exec::ShellExecutor {
                 // Verify the PID is one of OUR children. If we never
                 // forked it, zsh emits `pid N is not a child of this
                 // shell` and exits 127.
-                let known = self.variables.get("!").and_then(|s| s.parse::<u32>().ok())
+                let known = crate::ported::params::getsparam("!").and_then(|s| s.parse::<u32>().ok())
                     == Some(pid)
                     || self.jobs.list().iter().any(|j| j.pid == pid as i32);
                 if !known {
@@ -7602,8 +7602,8 @@ impl crate::ported::exec::ShellExecutor {
             }
             if let Some(arr) = self.arrays.get(name).cloned() {
                 let quoted: Vec<String> = arr.iter().map(|v| quotedzputs(v)).collect();
-                self.arrays.insert(name.to_string(), quoted);
-            } else if let Some(val) = self.variables.get(name).cloned() {
+                self.set_array(name.to_string(), quoted);
+            } else if let Some(val) = crate::ported::params::getsparam(name) {
                 self.variables
                     .insert(name.to_string(), quotedzputs(&val));
             } else {
@@ -8337,7 +8337,7 @@ impl crate::ported::exec::ShellExecutor {
     /// `ShellExecutor`.
     pub(crate) fn bin_log(&mut self, _args: &[String]) -> i32 {
         let user = std::env::var("USER").unwrap_or_default();
-        let fmt = self.variables.get("WATCHFMT").cloned();
+        let fmt = crate::ported::params::getsparam("WATCHFMT");
         let output = crate::watch::bin_log(&user, fmt.as_deref());
         if !output.is_empty() {
             print!("{}", output);
@@ -8416,10 +8416,10 @@ impl crate::ported::exec::ShellExecutor {
             crate::pcre::bin_pcre_match("pcre_match", &positional, &ops, 0);
         if status == 0 {
             if let Some(m) = full_match {
-                self.variables.insert(var_name, m);
+                self.set_scalar(var_name, m);
             }
             let matches: Vec<String> = captures.into_iter().flatten().collect();
-            self.arrays.insert(array_name, matches);
+            self.set_array(array_name, matches);
         }
         status
     }
@@ -8591,7 +8591,7 @@ impl crate::ported::exec::ShellExecutor {
             if let Ok(p) = crate::ported::modules::db_gdbm::TIED_PARAMS.lock() {
                 if let Some(tied) = p.get(pmname) {
                     let path = tied.db.path().to_string_lossy().to_string();
-                    self.variables.insert("REPLY".to_string(), path.clone());
+                    self.set_scalar("REPLY".to_string(), path.clone());
                     std::env::set_var("REPLY", &path);
                 }
             }

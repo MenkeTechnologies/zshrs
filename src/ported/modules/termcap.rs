@@ -15,6 +15,18 @@
 //! outputs match C 1:1.
 
 use crate::ported::utils::zwarnnam;
+use std::sync::Mutex;
+
+/// Serialises every call into libtermcap. C `Src/Modules/termcap.c`
+/// uses `tgetent(3)` / `tgetflag(3)` / `tgetnum(3)` / `tgetstr(3)`
+/// directly; libtermcap (and libtinfo's compat layer) reads/writes
+/// file-scope globals (`PC`, `BC`, `UP`, `ospeed`, the term-entry
+/// buffer populated by `tgetent`) and is not thread-safe. zsh is
+/// single-threaded so the C source is race-free under that invariant.
+/// Rust callers (`ztgetflag`, `bin_echotc`, `gettermcap`, `scantermcap`)
+/// can fire from concurrent test threads, so the lock restores the
+/// single-writer assumption.
+static TERMCAP_LOCK: Mutex<()> = Mutex::new(());
 
 /// `boolcodes[]` from libtermcap — list of all known boolean
 /// capability 2-char codes. The subset zshrs's in-memory table
@@ -74,7 +86,10 @@ fn ensure_termcap_loaded() -> bool {
         _ => {
             let term = std::env::var("TERM").unwrap_or_else(|_| "dumb".into());
             let term_c = match std::ffi::CString::new(term) { Ok(c) => c, Err(_) => return false };
-            let r = unsafe { tgetent(std::ptr::null_mut(), term_c.as_ptr()) };
+            let r = {
+                let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+                unsafe { tgetent(std::ptr::null_mut(), term_c.as_ptr()) }
+            };
             let ok = r > 0;
             STATE.store(if ok { 1 } else { -1 }, Ordering::Relaxed);
             ok
@@ -95,7 +110,11 @@ pub fn ztgetflag(s: &str) -> i32 {                                       // c:53
     }
     let s_c = match std::ffi::CString::new(s) { Ok(c) => c, Err(_) => return -1 };
     // c:62 — `switch (tgetflag(s)) { case 1: return 1; case 0: ...; }`
-    match unsafe { tgetflag(s_c.as_ptr()) } {                             // c:62
+    let flag = {
+        let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { tgetflag(s_c.as_ptr()) }
+    };
+    match flag {                                                          // c:62
         1 => 1,                                                           // c:64
         _ => {
             // c:65-72 — `for (b = boolcodes; *b; b++) if (!strcmp(*b, s)) return 0;`
@@ -131,7 +150,7 @@ pub fn bin_echotc(name: &str, argv: &[&str], _ops: &[bool; 256]) -> i32 { // c:8
     }
     // c:89 — `if ((termflags & TERM_UNKNOWN) && (isset(INTERACTIVE) || !init_term())) return 1;`
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {          // c:89
-        let interactive = crate::ported::options::optlookup("interactive") > 0;
+        let interactive = crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
         if interactive || !ensure_termcap_loaded() {                      // c:89-90
             return 1;                                                     // c:90
         }
@@ -142,7 +161,10 @@ pub fn bin_echotc(name: &str, argv: &[&str], _ops: &[bool; 256]) -> i32 { // c:8
     let s_c = match std::ffi::CString::new(s) { Ok(c) => c, Err(_) => return 1 };
 
     // c:92 — `if ((num = tgetnum(s)) != -1) { printf("%d\n", num); return 0; }`
-    let num = unsafe { tgetnum(s_c.as_ptr()) };                           // c:92
+    let num = {
+        let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { tgetnum(s_c.as_ptr()) }
+    };                                                                    // c:92
     if num != -1 {                                                        // c:92
         println!("{}", num);                                              // c:93
         return 0;                                                         // c:94
@@ -162,15 +184,17 @@ pub fn bin_echotc(name: &str, argv: &[&str], _ops: &[bool; 256]) -> i32 { // c:8
     // c:108-110 — `t = tgetstr(s, &u);`
     let mut buf: [libc::c_char; 2048] = [0; 2048];                        // c:84
     let mut area = buf.as_mut_ptr();
-    let t = unsafe { tgetstr(s_c.as_ptr(), &mut area) };                  // c:109
-    if t.is_null() || (t as isize) == -1 || unsafe { *t } == 0 {          // c:110
-        // capability doesn't exist, or (if boolean) is off               // c:110
-        zwarnnam(name, &format!("no such capability: {}", s));            // c:113
-        return 1;                                                         // c:114
-    }
-    let value = unsafe { std::ffi::CStr::from_ptr(t) }
-        .to_string_lossy()
-        .into_owned();
+    let value = {
+        let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let t = unsafe { tgetstr(s_c.as_ptr(), &mut area) };              // c:109
+        if t.is_null() || (t as isize) == -1 || unsafe { *t } == 0 {      // c:110
+            // capability doesn't exist, or (if boolean) is off           // c:110
+            drop(_g);
+            zwarnnam(name, &format!("no such capability: {}", s));        // c:113
+            return 1;                                                     // c:114
+        }
+        unsafe { std::ffi::CStr::from_ptr(t) }.to_string_lossy().into_owned()
+    };
 
     // c:117-122 — count arguments expected by the cap's `%d/%2/%3/%./%+` codes.
     let mut argct = 0usize;                                               // c:117
@@ -231,6 +255,7 @@ pub fn gettermcap(name: &str) -> Option<String> {                        // c:14
     // c:163 — try string cap first (most common via `${termcap[name]}`).
     let mut buf: [libc::c_char; 1024] = [0; 1024];
     let mut area = buf.as_mut_ptr();
+    let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let raw = unsafe { tgetstr(n_c.as_ptr(), &mut area) };               // c:163
     if !raw.is_null() {
         return Some(unsafe { std::ffi::CStr::from_ptr(raw) }.to_string_lossy().into_owned());
@@ -374,7 +399,7 @@ mod tests {
 // (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
 
 use crate::ported::zsh_h::features as features_t;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 

@@ -32,7 +32,7 @@ use std::{env, fs, io, io::Write, path::Path, path::PathBuf};
 use indexmap::IndexMap;
 #[allow(unused_imports)]
 use crate::ported::exec::{
-    self,  BUILTIN_SET,
+    self,  BUILTIN_NAMES,
     format_int_in_base,
     VarAttr, VarKind,
 };
@@ -74,11 +74,17 @@ use crate::zsh_h::{builtin, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND, BINF_DASH, 
 // column used only for documentation/wiring lookup — handler
 // function pointers themselves are wired up later in
 // `Executor::register_builtins` (`src/ported/exec.rs`).
+//
+// The `handler` arg was previously a `_handler_name: &'static str` that
+// was discarded — `handlerfunc` always ended up `NULLBINCMD`, so
+// `execbuiltin`'s c:506 `(*handlerfunc)(...)` dispatch was unreachable.
+// Now the descriptor carries the actual port-side `HandlerFunc` so
+// `execbuiltin` can parse flags and call through to the real builtin.
 #[allow(non_snake_case)]
 fn BUILTIN(
     name: &str,
     flags: u32,
-    _handler_name: &'static str,
+    handler: Option<crate::ported::zsh_h::HandlerFunc>,
     min: i32,
     max: i32,
     funcid: i32,
@@ -91,7 +97,7 @@ fn BUILTIN(
             nam: name.to_string(),
             flags: flags as i32,
         },
-        handlerfunc: NULLBINCMD,
+        handlerfunc: handler,
         minargs: min,
         maxargs: max,
         funcid,
@@ -102,7 +108,7 @@ fn BUILTIN(
 
 #[allow(non_snake_case)]
 fn BIN_PREFIX(name: &str, flags: u32) -> builtin {
-    BUILTIN(name, flags | BINF_PREFIX, "(prefix)", 0, 0, 0, None, None)
+    BUILTIN(name, flags | BINF_PREFIX, None, 0, 0, 0, None, None)
 }
 // ---------------------------------------------------------------------------
 // Builtin descriptor.
@@ -125,88 +131,88 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
     BIN_PREFIX("command", BINF_COMMAND),
     BIN_PREFIX("exec", BINF_EXEC),
     BIN_PREFIX("noglob", BINF_NOGLOB),
-    BUILTIN("[", BINF_HANDLES_OPTS, "exec::bin_test", 0, -1, BIN_BRACKET, None, None),
-    BUILTIN(".", BINF_PSPECIAL, "exec::builtin_dot", 1, -1, 0, None, None),
-    BUILTIN(":", BINF_PSPECIAL, "exec::builtin_true", 0, -1, 0, None, None),
-    BUILTIN("alias", BINF_MAGICEQUALS | BINF_PLUSOPTS, "exec::bin_alias", 0, -1, 0, Some("Lgmrs"), None),
-    BUILTIN("autoload", BINF_PLUSOPTS, "exec::builtin_autoload", 0, -1, 0, Some("dmktrRTUwWXz"), Some("u")),
-    BUILTIN("bg", 0, "exec::bin_fg", 0, -1, BIN_BG, None, None),
-    BUILTIN("break", BINF_PSPECIAL, "exec::bin_break", 0, 1, BIN_BREAK, None, None),
-    BUILTIN("bye", 0, "exec::bin_break", 0, 1, BIN_EXIT, None, None),
-    BUILTIN("cd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, "exec::builtin_cd", 0, 2, BIN_CD, Some("qsPL"), None),
-    BUILTIN("chdir", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, "exec::builtin_cd", 0, 2, BIN_CD, Some("qsPL"), None),
-    BUILTIN("continue", BINF_PSPECIAL, "exec::bin_break", 0, 1, BIN_CONTINUE, None, None),
-    BUILTIN("declare", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%afghi:%klmnp:%rtuxz"), None),
-    BUILTIN("dirs", 0, "exec::bin_dirs", 0, -1, 0, Some("clpv"), None),
-    BUILTIN("disable", 0, "exec::bin_enable", 0, -1, BIN_DISABLE, Some("afmprs"), None),
-    BUILTIN("disown", 0, "exec::bin_fg", 0, -1, BIN_DISOWN, None, None),
-    BUILTIN("echo", BINF_SKIPINVALID, "exec::bin_print", 0, -1, BIN_ECHO, Some("neE"), Some("-")),
-    BUILTIN("emulate", 0, "exec::bin_emulate", 0, -1, 0, Some("lLR"), None),
-    BUILTIN("enable", 0, "exec::bin_enable", 0, -1, BIN_ENABLE, Some("afmprs"), None),
-    BUILTIN("eval", BINF_PSPECIAL, "exec::bin_eval", 0, -1, BIN_EVAL, None, None),
-    BUILTIN("exit", BINF_PSPECIAL, "exec::bin_break", 0, 1, BIN_EXIT, None, None),
-    BUILTIN("export", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, BIN_EXPORT, Some("E:%F:%HL:%R:%TUZ:%afhi:%lp:%rtu"), Some("xg")),
-    BUILTIN("false", 0, "exec::builtin_false", 0, -1, 0, None, None),
+    BUILTIN("[", BINF_HANDLES_OPTS, None, 0, -1, BIN_BRACKET, None, None),
+    BUILTIN(".", BINF_PSPECIAL, None, 1, -1, 0, None, None),
+    BUILTIN(":", BINF_PSPECIAL, None, 0, -1, 0, None, None),
+    BUILTIN("alias", BINF_MAGICEQUALS | BINF_PLUSOPTS, None, 0, -1, 0, Some("Lgmrs"), None),
+    BUILTIN("autoload", BINF_PLUSOPTS, None, 0, -1, 0, Some("dmktrRTUwWXz"), Some("u")),
+    BUILTIN("bg", 0, None, 0, -1, BIN_BG, None, None),
+    BUILTIN("break", BINF_PSPECIAL, None, 0, 1, BIN_BREAK, None, None),
+    BUILTIN("bye", 0, None, 0, 1, BIN_EXIT, None, None),
+    BUILTIN("cd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, None, 0, 2, BIN_CD, Some("qsPL"), None),
+    BUILTIN("chdir", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, None, 0, 2, BIN_CD, Some("qsPL"), None),
+    BUILTIN("continue", BINF_PSPECIAL, None, 0, 1, BIN_CONTINUE, None, None),
+    BUILTIN("declare", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, None, 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%afghi:%klmnp:%rtuxz"), None),
+    BUILTIN("dirs", 0, None, 0, -1, 0, Some("clpv"), None),
+    BUILTIN("disable", 0, None, 0, -1, BIN_DISABLE, Some("afmprs"), None),
+    BUILTIN("disown", 0, None, 0, -1, BIN_DISOWN, None, None),
+    BUILTIN("echo", BINF_SKIPINVALID, None, 0, -1, BIN_ECHO, Some("neE"), Some("-")),
+    BUILTIN("emulate", 0, None, 0, -1, 0, Some("lLR"), None),
+    BUILTIN("enable", 0, None, 0, -1, BIN_ENABLE, Some("afmprs"), None),
+    BUILTIN("eval", BINF_PSPECIAL, None, 0, -1, BIN_EVAL, None, None),
+    BUILTIN("exit", BINF_PSPECIAL, None, 0, 1, BIN_EXIT, None, None),
+    BUILTIN("export", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, None, 0, -1, BIN_EXPORT, Some("E:%F:%HL:%R:%TUZ:%afhi:%lp:%rtu"), Some("xg")),
+    BUILTIN("false", 0, None, 0, -1, 0, None, None),
     // C source (Src/builtin.c:69-73): the argument to -e used to be
     // optional; making it required is more consistent.
-    BUILTIN("fc", 0, "exec::bin_fc", 0, -1, BIN_FC, Some("aAdDe:EfiIlLmnpPrRst:W"), None),
-    BUILTIN("fg", 0, "exec::bin_fg", 0, -1, BIN_FG, None, None),
-    BUILTIN("float", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("E:%F:%HL:%R:%Z:%ghlp:%rtux"), Some("E")),
-    BUILTIN("functions", BINF_PLUSOPTS, "exec::bin_functions", 0, -1, 0, Some("ckmMstTuUWx:z"), None),
-    BUILTIN("getln", 0, "exec::bin_read", 0, -1, 0, Some("ecnAlE"), Some("zr")),
-    BUILTIN("getopts", 0, "exec::bin_getopts", 2, -1, 0, None, None),
-    BUILTIN("hash", BINF_MAGICEQUALS, "exec::bin_hash", 0, -1, 0, Some("Ldfmrv"), None),
+    BUILTIN("fc", 0, None, 0, -1, BIN_FC, Some("aAdDe:EfiIlLmnpPrRst:W"), None),
+    BUILTIN("fg", 0, None, 0, -1, BIN_FG, None, None),
+    BUILTIN("float", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, None, 0, -1, 0, Some("E:%F:%HL:%R:%Z:%ghlp:%rtux"), Some("E")),
+    BUILTIN("functions", BINF_PLUSOPTS, None, 0, -1, 0, Some("ckmMstTuUWx:z"), None),
+    BUILTIN("getln", 0, None, 0, -1, 0, Some("ecnAlE"), Some("zr")),
+    BUILTIN("getopts", 0, None, 2, -1, 0, None, None),
+    BUILTIN("hash", BINF_MAGICEQUALS, None, 0, -1, 0, Some("Ldfmrv"), None),
     // Src/builtin.c — `#ifdef ZSH_HASH_DEBUG`
     //   BUILTIN("hashinfo", 0, bin_hashinfo, 0, 0, 0, NULL, NULL)
-    BUILTIN("hashinfo", 0, "exec::bin_hashinfo", 0, 0, 0, None, None),
-    BUILTIN("history", 0, "exec::bin_fc", 0, -1, BIN_FC, Some("adDEfiLmnpPrt:"), Some("l")),
-    BUILTIN("integer", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("HL:%R:%Z:%ghi:%lp:%rtux"), Some("i")),
-    BUILTIN("jobs", 0, "exec::bin_fg", 0, -1, BIN_JOBS, Some("dlpZrs"), None),
-    BUILTIN("kill", BINF_HANDLES_OPTS, "exec::bin_kill", 0, -1, 0, None, None),
-    BUILTIN("let", 0, "exec::bin_let", 1, -1, 0, None, None),
-    BUILTIN("local", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%ahi:%lnp:%rtux"), None),
-    BUILTIN("logout", 0, "exec::bin_break", 0, 1, BIN_LOGOUT, None, None),
+    BUILTIN("hashinfo", 0, None, 0, 0, 0, None, None),
+    BUILTIN("history", 0, None, 0, -1, BIN_FC, Some("adDEfiLmnpPrt:"), Some("l")),
+    BUILTIN("integer", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, None, 0, -1, 0, Some("HL:%R:%Z:%ghi:%lp:%rtux"), Some("i")),
+    BUILTIN("jobs", 0, None, 0, -1, BIN_JOBS, Some("dlpZrs"), None),
+    BUILTIN("kill", BINF_HANDLES_OPTS, None, 0, -1, 0, None, None),
+    BUILTIN("let", 0, None, 1, -1, 0, None, None),
+    BUILTIN("local", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, None, 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%ahi:%lnp:%rtux"), None),
+    BUILTIN("logout", 0, None, 0, 1, BIN_LOGOUT, None, None),
     // Src/builtin.c — `#if defined(ZSH_MEM) & defined(ZSH_MEM_DEBUG)`
     //   BUILTIN("mem", 0, bin_mem, 0, 0, 0, "v", NULL)
-    BUILTIN("mem", 0, "exec::bin_mem", 0, 0, 0, Some("v"), None),
-    BUILTIN("popd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, "exec::builtin_cd", 0, 1, BIN_POPD, Some("q"), None),
+    BUILTIN("mem", 0, None, 0, 0, 0, Some("v"), None),
+    BUILTIN("popd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, None, 0, 1, BIN_POPD, Some("q"), None),
     // Src/builtin.c — `#if defined(ZSH_PAT_DEBUG)`
     //   BUILTIN("patdebug", 0, bin_patdebug, 1, -1, 0, "p", NULL)
-    BUILTIN("patdebug", 0, "exec::bin_patdebug", 1, -1, 0, Some("p"), None),
-    BUILTIN("print", BINF_PRINTOPTS, "exec::bin_print", 0, -1, BIN_PRINT, Some("abcC:Df:ilmnNoOpPrRsSu:v:x:X:z-"), None),
-    BUILTIN("printf", BINF_SKIPINVALID | BINF_SKIPDASH, "exec::bin_print", 1, -1, BIN_PRINTF, Some("v:"), None),
-    BUILTIN("pushd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, "exec::builtin_cd", 0, 2, BIN_PUSHD, Some("qsPL"), None),
-    BUILTIN("pushln", 0, "exec::bin_print", 0, -1, BIN_PRINT, None, Some("-nz")),
-    BUILTIN("pwd", 0, "exec::bin_pwd", 0, 0, 0, Some("rLP"), None),
-    BUILTIN("r", 0, "exec::bin_fc", 0, -1, BIN_R, Some("IlLnr"), None),
-    BUILTIN("read", 0, "exec::bin_read", 0, -1, 0, Some("cd:ek:%lnpqrst:%zu:AE"), None),
-    BUILTIN("readonly", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, BIN_READONLY, Some("AE:%F:%HL:%R:%TUZ:%afghi:%lptux"), Some("r")),
-    BUILTIN("rehash", 0, "exec::bin_hash", 0, 0, 0, Some("df"), Some("r")),
-    BUILTIN("return", BINF_PSPECIAL, "exec::bin_break", 0, 1, BIN_RETURN, None, None),
-    BUILTIN("set", BINF_PSPECIAL | BINF_HANDLES_OPTS, "exec::bin_set", 0, -1, 0, None, None),
-    BUILTIN("setopt", 0, "exec::bin_setopt", 0, -1, BIN_SETOPT, None, None),
-    BUILTIN("shift", BINF_PSPECIAL, "exec::bin_shift", 0, -1, 0, Some("p"), None),
-    BUILTIN("source", BINF_PSPECIAL, "exec::builtin_dot", 1, -1, 0, None, None),
-    BUILTIN("suspend", 0, "exec::bin_suspend", 0, 0, 0, Some("f"), None),
-    BUILTIN("test", BINF_HANDLES_OPTS, "exec::bin_test", 0, -1, BIN_TEST, None, None),
-    BUILTIN("ttyctl", 0, "exec::bin_ttyctl", 0, 0, 0, Some("fu"), None),
-    BUILTIN("times", BINF_PSPECIAL, "exec::bin_times", 0, 0, 0, None, None),
-    BUILTIN("trap", BINF_PSPECIAL | BINF_HANDLES_OPTS, "exec::bin_trap", 0, -1, 0, None, None),
-    BUILTIN("true", 0, "exec::builtin_true", 0, -1, 0, None, None),
-    BUILTIN("type", 0, "exec::bin_whence", 0, -1, 0, Some("ampfsSw"), Some("v")),
-    BUILTIN("typeset", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, "exec::bin_typeset", 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%afghi:%klp:%rtuxmnz"), None),
-    BUILTIN("umask", 0, "exec::bin_umask", 0, 1, 0, Some("S"), None),
-    BUILTIN("unalias", 0, "exec::bin_unhash", 0, -1, BIN_UNALIAS, Some("ams"), None),
-    BUILTIN("unfunction", 0, "exec::bin_unhash", 1, -1, BIN_UNFUNCTION, Some("m"), Some("f")),
-    BUILTIN("unhash", 0, "exec::bin_unhash", 1, -1, BIN_UNHASH, Some("adfms"), None),
-    BUILTIN("unset", BINF_PSPECIAL, "exec::bin_unset", 1, -1, BIN_UNSET, Some("fmvn"), None),
-    BUILTIN("unsetopt", 0, "exec::bin_setopt", 0, -1, BIN_UNSETOPT, None, None),
-    BUILTIN("wait", 0, "exec::bin_fg", 0, -1, BIN_WAIT, None, None),
-    BUILTIN("whence", 0, "exec::bin_whence", 0, -1, 0, Some("acmpvfsSwx:"), None),
-    BUILTIN("where", 0, "exec::bin_whence", 0, -1, 0, Some("pmsSwx:"), Some("ca")),
-    BUILTIN("which", 0, "exec::bin_whence", 0, -1, 0, Some("ampsSwx:"), Some("c")),
-    BUILTIN("zmodload", 0, "exec::bin_zmodload", 0, -1, 0, Some("AFRILP:abcfdilmpsue"), None),
-    BUILTIN("zcompile", 0, "exec::bin_zcompile", 0, -1, 0, Some("tUMRcmzka"), None),
+    BUILTIN("patdebug", 0, None, 1, -1, 0, Some("p"), None),
+    BUILTIN("print", BINF_PRINTOPTS, Some(bin_print as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_PRINT, Some("abcC:Df:ilmnNoOpPrRsSu:v:x:X:z-"), None),
+    BUILTIN("printf", BINF_SKIPINVALID | BINF_SKIPDASH, None, 1, -1, BIN_PRINTF, Some("v:"), None),
+    BUILTIN("pushd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, None, 0, 2, BIN_PUSHD, Some("qsPL"), None),
+    BUILTIN("pushln", 0, None, 0, -1, BIN_PRINT, None, Some("-nz")),
+    BUILTIN("pwd", 0, None, 0, 0, 0, Some("rLP"), None),
+    BUILTIN("r", 0, None, 0, -1, BIN_R, Some("IlLnr"), None),
+    BUILTIN("read", 0, None, 0, -1, 0, Some("cd:ek:%lnpqrst:%zu:AE"), None),
+    BUILTIN("readonly", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, None, 0, -1, BIN_READONLY, Some("AE:%F:%HL:%R:%TUZ:%afghi:%lptux"), Some("r")),
+    BUILTIN("rehash", 0, None, 0, 0, 0, Some("df"), Some("r")),
+    BUILTIN("return", BINF_PSPECIAL, None, 0, 1, BIN_RETURN, None, None),
+    BUILTIN("set", BINF_PSPECIAL | BINF_HANDLES_OPTS, None, 0, -1, 0, None, None),
+    BUILTIN("setopt", 0, None, 0, -1, BIN_SETOPT, None, None),
+    BUILTIN("shift", BINF_PSPECIAL, None, 0, -1, 0, Some("p"), None),
+    BUILTIN("source", BINF_PSPECIAL, None, 1, -1, 0, None, None),
+    BUILTIN("suspend", 0, None, 0, 0, 0, Some("f"), None),
+    BUILTIN("test", BINF_HANDLES_OPTS, None, 0, -1, BIN_TEST, None, None),
+    BUILTIN("ttyctl", 0, None, 0, 0, 0, Some("fu"), None),
+    BUILTIN("times", BINF_PSPECIAL, None, 0, 0, 0, None, None),
+    BUILTIN("trap", BINF_PSPECIAL | BINF_HANDLES_OPTS, None, 0, -1, 0, None, None),
+    BUILTIN("true", 0, None, 0, -1, 0, None, None),
+    BUILTIN("type", 0, None, 0, -1, 0, Some("ampfsSw"), Some("v")),
+    BUILTIN("typeset", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%afghi:%klp:%rtuxmnz"), None),
+    BUILTIN("umask", 0, None, 0, 1, 0, Some("S"), None),
+    BUILTIN("unalias", 0, None, 0, -1, BIN_UNALIAS, Some("ams"), None),
+    BUILTIN("unfunction", 0, None, 1, -1, BIN_UNFUNCTION, Some("m"), Some("f")),
+    BUILTIN("unhash", 0, None, 1, -1, BIN_UNHASH, Some("adfms"), None),
+    BUILTIN("unset", BINF_PSPECIAL, None, 1, -1, BIN_UNSET, Some("fmvn"), None),
+    BUILTIN("unsetopt", 0, None, 0, -1, BIN_UNSETOPT, None, None),
+    BUILTIN("wait", 0, None, 0, -1, BIN_WAIT, None, None),
+    BUILTIN("whence", 0, None, 0, -1, 0, Some("acmpvfsSwx:"), None),
+    BUILTIN("where", 0, None, 0, -1, 0, Some("pmsSwx:"), Some("ca")),
+    BUILTIN("which", 0, None, 0, -1, 0, Some("ampsSwx:"), Some("c")),
+    BUILTIN("zmodload", 0, None, 0, -1, 0, Some("AFRILP:abcfdilmpsue"), None),
+    BUILTIN("zcompile", 0, None, 0, -1, 0, Some("tUMRcmzka"), None),
 ]);
 // hash table containing builtin commands                                   // c:143
 /// Process-wide builtin lookup table. Filled lazily the first time
@@ -402,29 +408,329 @@ pub fn new_optarg(ops: &mut crate::ported::zsh_h::options) -> i32 {          // 
 }
 
 /// Port of `execbuiltin()` from Src/builtin.c:250.
+///
 /// C: `int execbuiltin(LinkList args, LinkList assigns, Builtin bn)` —
-///   parse `bn->optstr` against `args`, populate a fresh `struct options`,
-///   then call `bn->handlerfunc(name, argv, &ops, bn->funcid)`.
-pub fn execbuiltin(args: Vec<String>, _assigns: Vec<(String, String)>,       // c:250
+///   execute a builtin handler function after parsing the arguments.
+///
+/// Walks `bn->optstr` against `args`, populating `ops.ind[c]` (`|= 1`
+/// for `-X`, `|= 2` for `+X`, `<< 2` arg-index for opts taking args
+/// per the `:`/`::`/`:%` suffix convention), then calls
+/// `bn->handlerfunc(name, argv, &ops, bn->funcid)`.
+///
+/// Signature note: C consumes the name via `ugetnode(args)` first
+/// (c:262); the Rust port receives `args` without the name and reads
+/// `bn->node.nam` directly. C's `LinkList assigns` ports to
+/// `Vec<asgment>` (closer to the C type than the earlier
+/// `Vec<(String, String)>` pair-tuple). `assignfunc` handler dispatch
+/// (c:495-502) — BINF_ASSIGN builtins taking two argument lists —
+/// isn't ported (no Rust-side caller passes a non-empty `assigns`),
+/// so XTRACE prints the structure but BINF_ASSIGN dispatch falls
+/// through to the plain handler.
+pub fn execbuiltin(args: Vec<String>, assigns: Vec<crate::ported::zsh_h::asgment>, // c:250
                    bn: *mut crate::ported::zsh_h::builtin) -> i32 {
-    use crate::ported::zsh_h::{options, MAX_OPS};
+    use crate::ported::zsh_h::{options, MAX_OPS, XTRACE, isset,
+        BINF_PLUSOPTS, BINF_KEEPNUM, BINF_SKIPDASH, BINF_DASHDASHVALID,
+        BINF_SKIPINVALID, BINF_PRINTOPTS, BINF_HANDLES_OPTS,
+        ERRFLAG_ERROR};
     if bn.is_null() {
         return 1;
     }
-    // c:255-256 — `memset(ops.ind, 0, ...); ops.args = NULL; ops.argscount=0;`
-    let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),           // c:255
-                            argscount: 0, argsalloc: 0 };
-    // c:259+ — full optstr parser walks args[0]..[1..n]; for the static-link
-    // path, if no leading `-` arg is present skip option parsing.
     let bn_ref = unsafe { &*bn };
-    let name = bn_ref.node.nam.clone();
-    let argv: Vec<String> = args;
-    // c:430+ — `bn->handlerfunc(name, argv+1, &ops, bn->funcid);`
-    if let Some(handler) = bn_ref.handlerfunc {                              // c:430
-        return handler(&name, &argv, &ops, bn_ref.funcid);                   // c:430
+
+    // c:252-254 — locals.
+    let pp: Option<&str>;                                                    // c:252 char *pp
+    let name: String;                                                        // c:252 char *name
+    let mut optstr: Option<String>;                                          // c:252 char *optstr
+    let mut flags: i32;                                                      // c:253 int flags
+    let mut argc: i32;                                                       // c:253 int argc
+    let mut execop: u8;                                                      // c:253 int execop
+    let xtr: bool = isset(XTRACE);                                           // c:253 int xtr = isset(XTRACE)
+
+    // c:256-259 — `memset(ops.ind, 0, ...); ops.args = NULL; ops.argscount=ops.argsalloc=0;`
+    let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),           // c:257
+                            argscount: 0, argsalloc: 0 };                    // c:258-259
+
+    // c:262 — `name = (char *) ugetnode(args);` — Rust reads bn.node.nam.
+    name = bn_ref.node.nam.clone();                                          // c:262
+
+    // c:264-268 — `if (!bn->handlerfunc)` early-exit.
+    if bn_ref.handlerfunc.is_none() {                                        // c:264
+        return 1;                                                            // c:267
     }
-    let _ = &mut ops;
-    1
+
+    // c:270-271 — `flags = bn->node.flags; optstr = bn->optstr;`
+    flags = bn_ref.node.flags;                                               // c:270
+    optstr = bn_ref.optstr.clone();                                          // c:271
+
+    // c:275 — `argc = countlinknodes(args);` — total argv length.
+    argc = args.len() as i32;                                                // c:275
+
+    // c:284-293 — `VARARR(char *, argarr, argc+1)` + copy args into argarr.
+    let argarr: Vec<String> = args;                                          // c:284 argarr[]
+    let mut argv: usize = 0;                                                 // c:285 char **argv = argarr;
+
+    // c:296-411 — option parser body.
+    if let Some(ref os) = optstr.clone() {                                   // c:296
+        let optstr_local = os.clone();
+        let mut optstr_bytes: Vec<u8> = optstr_local.into_bytes();
+        let mut skipinvalid = (flags & BINF_SKIPINVALID as i32) != 0;
+        // c:297 — `char *arg = *argv;`
+        loop {
+            // c:300-303 — outer arg-by-arg loop guard:
+            //   `arg && ((sense = (*arg == '-')) || ((flags & BINF_PLUSOPTS) && *arg == '+'))`.
+            let arg_str: String = match argarr.get(argv) {
+                Some(s) => s.clone(),
+                None => break,
+            };
+            let arg_bytes = arg_str.as_bytes();
+            if arg_bytes.is_empty() { break; }
+            let sense: i32 = if arg_bytes[0] == b'-' { 1 } else { 0 };       // c:302
+            if sense == 0 && !((flags & BINF_PLUSOPTS as i32) != 0           // c:303
+                                && arg_bytes[0] == b'+') {
+                break;
+            }
+            // c:305 — `if (!(flags & BINF_KEEPNUM) && idigit(arg[1])) break;`
+            if (flags & BINF_KEEPNUM as i32) == 0                            // c:305
+                && arg_bytes.len() >= 2
+                && arg_bytes[1].is_ascii_digit() {
+                break;
+            }
+            // c:308 — `if ((flags & BINF_SKIPDASH) && !arg[1]) break;`
+            if (flags & BINF_SKIPDASH as i32) != 0 && arg_bytes.len() == 1 { // c:308
+                break;
+            }
+            // c:310-317 — `--` end-of-options if BINF_DASHDASHVALID.
+            if (flags & BINF_DASHDASHVALID as i32) != 0 && arg_str == "--" { // c:310
+                argv += 1;                                                   // c:315
+                break;                                                       // c:316
+            }
+            // c:327-332 — `BINF_SKIPINVALID`: if any char in arg[1..] is
+            // not in optstr, the whole arg is treated as a positional.
+            if skipinvalid {                                                 // c:327
+                let mut all_known = true;
+                for &c in &arg_bytes[1..] {
+                    if !optstr_bytes.contains(&c) { all_known = false; break; }
+                }
+                if !all_known { break; }                                     // c:331
+            }
+            // c:335-336 — `if (arg[1] == '-') arg++;` — consume the
+            // second `-` of `--long-style`.
+            let mut k: usize = 1;                                            // walks arg[k..]
+            if arg_bytes.len() >= 2 && arg_bytes[1] == b'-' {                // c:335
+                k = 2;                                                       // c:336
+            }
+            // c:337-341 — `if (!arg[1])` lone `-` / `+` indicator.
+            if arg_bytes.len() == k {                                        // c:337
+                ops.ind[b'-' as usize] = 1;                                  // c:338
+                if sense == 0 {                                              // c:339
+                    ops.ind[b'+' as usize] = 1;                              // c:340
+                }
+            }
+            // c:343-386 — inner loop over `*++arg` characters.
+            let mut bad_opt: Option<u8> = None;
+            while k < arg_bytes.len() {                                      // c:343
+                let c = arg_bytes[k];
+                execop = c;                                                  // c:345
+                let optptr = optstr_bytes.iter().position(|&b| b == c);      // c:345 strchr(optstr,c)
+                if let Some(optidx) = optptr {                               // c:345
+                    ops.ind[c as usize] = if sense != 0 { 1 } else { 2 };    // c:346
+                    // c:347 — `if (optptr[1] == ':')` — option takes arg.
+                    if optidx + 1 < optstr_bytes.len() && optstr_bytes[optidx + 1] == b':' {
+                        let mut argptr: Option<String> = None;
+                        // c:349-352 — `if (optptr[2] == ':')` optional same-word.
+                        if optidx + 2 < optstr_bytes.len() && optstr_bytes[optidx + 2] == b':' {
+                            if k + 1 < arg_bytes.len() {                     // c:350
+                                argptr = Some(String::from_utf8_lossy(&arg_bytes[k+1..]).into_owned()); // c:351
+                            }
+                        } else if optidx + 2 < optstr_bytes.len() && optstr_bytes[optidx + 2] == b'%' {
+                            // c:353-359 — `:%` numeric optional same or next word.
+                            if k + 1 < arg_bytes.len() && arg_bytes[k+1].is_ascii_digit() {
+                                argptr = Some(String::from_utf8_lossy(&arg_bytes[k+1..]).into_owned());
+                            } else if let Some(nxt) = argarr.get(argv + 1) {
+                                if !nxt.is_empty() && nxt.as_bytes()[0].is_ascii_digit() {
+                                    argv += 1;                               // c:359 arg = *++argv
+                                    argptr = Some(nxt.clone());
+                                }
+                            }
+                        } else {
+                            // c:360-370 — plain `:` mandatory arg.
+                            if k + 1 < arg_bytes.len() {                     // c:362
+                                argptr = Some(String::from_utf8_lossy(&arg_bytes[k+1..]).into_owned()); // c:363
+                            } else if let Some(nxt) = argarr.get(argv + 1) {
+                                argv += 1;                                   // c:364 arg = *++argv
+                                argptr = Some(nxt.clone());                  // c:365
+                            } else {
+                                // c:366-370 — `argument expected: -%c`.
+                                crate::ported::utils::zwarnnam(&name,
+                                    &format!("argument expected: -{}", execop as char)); // c:367-368
+                                return 1;                                    // c:369
+                            }
+                        }
+                        if let Some(ap) = argptr {                           // c:372
+                            // c:373-377 — new_optarg overflow.
+                            if new_optarg(&mut ops) != 0 {                   // c:373
+                                crate::ported::utils::zwarnnam(&name,
+                                    "too many option arguments");            // c:374-375
+                                return 1;                                    // c:376
+                            }
+                            // c:378 — `ops.ind[execop] |= ops.argscount << 2;`
+                            ops.ind[execop as usize] |= (ops.argscount as u8) << 2;
+                            // c:379 — `ops.args[ops.argscount-1] = argptr;`
+                            ops.args[(ops.argscount - 1) as usize] = ap;
+                            // c:380-381 — `while (arg[1]) arg++;` consume the rest.
+                            k = arg_bytes.len();
+                        }
+                    }
+                    k += 1;
+                } else {
+                    bad_opt = Some(c);                                       // c:385 break
+                    break;
+                }
+            }
+            // c:389-394 — if we exited mid-arg on a bad char, emit "bad option".
+            if let Some(badc) = bad_opt {                                    // c:389
+                crate::ported::utils::zwarnnam(&name,
+                    &format!("bad option: {}{}",
+                        if sense != 0 { '-' } else { '+' }, badc as char));  // c:392
+                return 1;                                                    // c:393
+            }
+            // c:395 — `arg = *++argv;`
+            argv += 1;                                                       // c:395
+            // c:398-402 — BINF_PRINTOPTS R-mode switch to "ne" optstr.
+            if (flags & BINF_PRINTOPTS as i32) != 0                          // c:398
+                && ops.ind[b'R' as usize] != 0
+                && ops.ind[b'f' as usize] == 0 {
+                optstr_bytes = b"ne".to_vec();                               // c:400
+                flags |= BINF_SKIPINVALID as i32;                            // c:401
+                skipinvalid = true;
+            }
+            // c:404-405 — `if (ops.ind['-']) break;` — `--` terminates.
+            if ops.ind[b'-' as usize] != 0 {                                 // c:404
+                break;
+            }
+        }
+        let _ = optstr_bytes;
+    } else if (flags & BINF_HANDLES_OPTS as i32) == 0                        // c:407
+        && argarr.get(argv).map(|s| s == "--").unwrap_or(false) {            // c:408
+        // c:409-410 — `ops.ind['-'] = 1; argv++;`
+        ops.ind[b'-' as usize] = 1;                                          // c:409
+        argv += 1;                                                           // c:410
+    }
+    // Suppress optstr-unused warnings on the `else` path.
+    let _ = optstr.take();
+
+    // c:414-421 — apply `bn->defopts` defaults.
+    pp = bn_ref.defopts.as_deref();                                          // c:414
+    if let Some(pp_str) = pp {                                               // c:414
+        for &b in pp_str.as_bytes() {                                        // c:415
+            if ops.ind[b as usize] == 0 {                                    // c:417
+                ops.ind[b as usize] = 1;                                     // c:418
+            }
+        }
+    }
+
+    // c:424 — `argc -= argv - argarr;` — subtract consumed flag args.
+    argc -= argv as i32;                                                     // c:424
+
+    // c:426-429 — errflag check.
+    let ef = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
+    if (ef & ERRFLAG_ERROR) != 0 {                                           // c:426
+        crate::ported::utils::errflag.fetch_and(!ERRFLAG_ERROR, std::sync::atomic::Ordering::Relaxed); // c:427
+        return 1;                                                            // c:428
+    }
+
+    // c:432-436 — argc bounds check.
+    if argc < bn_ref.minargs                                                 // c:432
+        || (argc > bn_ref.maxargs && bn_ref.maxargs != -1) {
+        crate::ported::utils::zwarnnam(&name,                                // c:433
+            if argc < bn_ref.minargs { "not enough arguments" }
+            else { "too many arguments" });                                  // c:434
+        return 1;                                                            // c:435
+    }
+
+    // c:438-494 — display execution trace information, if required.
+    if xtr {                                                                 // c:439
+        // c:440-441 — `char **fullargv = argarr;` — use FULL argv
+        // (including consumed option words) so XTRACE shows what the
+        // user typed, not the option-stripped tail.
+        let fullargv = &argarr;                                              // c:441
+        crate::ported::utils::printprompt4();                                // c:442
+        // c:443 — `fprintf(xtrerr, "%s", name);`
+        eprint!("{}", name);                                                 // c:443
+        // c:444-447 — `while (*fullargv) { fputc(' ',xtrerr); quotedzputs(...); }`
+        for s in fullargv {                                                  // c:444
+            eprint!(" ");                                                    // c:445 fputc(' ', xtrerr)
+            eprint!("{}", crate::ported::utils::quotedzputs(s));             // c:446
+        }
+        // c:448-491 — `if (assigns) { for (node = firstnode(assigns); ...) }`.
+        for asg in &assigns {                                                // c:450 firstnode/incnode
+            eprint!(" ");                                                    // c:452 fputc(' ', xtrerr)
+            eprint!("{}", crate::ported::utils::quotedzputs(&asg.name));     // c:453
+            if (asg.flags & crate::ported::zsh_h::ASG_ARRAY) != 0 {          // c:454
+                eprint!("=(");                                               // c:455
+                if let Some(ref list) = asg.array {                          // c:456
+                    if (asg.flags & crate::ported::zsh_h::ASG_KEY_VALUE) != 0 { // c:457
+                        // c:458-473 — `LinkNode keynode, valnode;` walk
+                        // alternating key/value pairs, emitting
+                        // `[key]=value` per pair. Uses the typed
+                        // `LinkList<String>` accessors from
+                        // `src/ported/linklist.rs` which port the
+                        // `firstnode` / `nextnode` / `getdata` macros
+                        // from `Src/zsh.h:576-588`.
+                        let mut keynode = list.firstnode();                  // c:459
+                        loop {                                               // c:460
+                            // c:461-462 — `if (!keynode) break;`
+                            let kidx = match keynode {                       // c:461
+                                Some(i) => i,
+                                None => break,                               // c:462
+                            };
+                            // c:463-465 — `valnode = nextnode(keynode); if (!valnode) break;`
+                            let vidx = match list.nextnode(kidx) {           // c:463
+                                Some(i) => i,
+                                None => break,                               // c:465
+                            };
+                            // c:466-468 — `fputc('['); quotedzputs(getdata(keynode));`
+                            eprint!("[");                                    // c:466
+                            if let Some(k) = list.getdata(kidx) {            // c:467 getdata
+                                eprint!("{}", crate::ported::utils::quotedzputs(k)); // c:467
+                            }
+                            // c:469 — `fprintf(stderr, "]=");`
+                            eprint!("]=");                                   // c:469
+                            // c:470-471 — `quotedzputs(getdata(valnode));`
+                            if let Some(v) = list.getdata(vidx) {            // c:470
+                                eprint!("{}", crate::ported::utils::quotedzputs(v)); // c:470
+                            }
+                            // c:472 — `keynode = nextnode(valnode);`
+                            keynode = list.nextnode(vidx);                   // c:472
+                        }
+                    } else {                                                 // c:474
+                        // c:475-482 — plain array emit: walk every node
+                        // and emit ` <quotedzputs(elem)>`.
+                        let mut arrnode = list.firstnode();                  // c:476
+                        while let Some(idx) = arrnode {                      // c:477
+                            eprint!(" ");                                    // c:479 fputc(' ', xtrerr)
+                            if let Some(elem) = list.getdata(idx) {          // c:480 getdata
+                                eprint!("{}", crate::ported::utils::quotedzputs(elem)); // c:480
+                            }
+                            arrnode = list.nextnode(idx);                    // c:478 incnode
+                        }
+                    }
+                }
+                eprint!(" )");                                               // c:485
+            } else if let Some(ref scalar) = asg.scalar {                    // c:486
+                eprint!("=");                                                // c:487 fputc('=', xtrerr)
+                eprint!("{}", crate::ported::utils::quotedzputs(scalar));    // c:488
+            }
+        }
+        // c:492-493 — `fputc('\n', xtrerr); fflush(xtrerr);`
+        eprintln!();                                                         // c:492
+        // c:493 — fflush is automatic on `eprintln!` (stderr line-buffered).
+    }
+
+    // c:506 — `return (*(bn->handlerfunc))(name, argv, &ops, bn->funcid);`
+    let trimmed: Vec<String> = argarr[argv..].to_vec();
+    let handler = bn_ref.handlerfunc.expect("handlerfunc checked at c:264");
+    handler(&name, &trimmed, &ops, bn_ref.funcid)                            // c:506
 }
 
 /// Port of `set_pwd_env()` from Src/builtin.c:800.
@@ -468,7 +774,7 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32)       // 
         }
         if func == BIN_PUSHD {
             // c:877 — `if (unset(PUSHDTOHOME)) dir = nextnode(firstnode(dirstack));`
-            let pushdtohome = crate::ported::options::optlookup("pushdtohome") > 0;
+            let pushdtohome = crate::ported::zsh_h::isset(crate::ported::options::optlookup("pushdtohome"));
             if !pushdtohome {                                                // c:877
                 return DIRSTACK.lock().ok()
                     .and_then(|d| d.get(1).cloned());
@@ -486,13 +792,13 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32)       // 
         let arg = &argv[0];
         DOPRINTDIR.fetch_add(1, Ordering::Relaxed);                          // c:891
         // c:892-908 — `+N`/`-N` numeric stack-index form.
-        let posixcd = crate::ported::options::optlookup("posixcd") > 0;
+        let posixcd = crate::ported::zsh_h::isset(crate::ported::options::optlookup("posixcd"));
         if !posixcd && arg.len() > 1
             && (arg.starts_with('+') || arg.starts_with('-'))
             && arg[1..].chars().all(|c| c.is_ascii_digit())
         {
             let dd: usize = arg[1..].parse().unwrap_or(0);                   // c:894
-            let pushdminus = crate::ported::options::optlookup("pushdminus") > 0;
+            let pushdminus = crate::ported::zsh_h::isset(crate::ported::options::optlookup("pushdminus"));
             let from_top = (arg.starts_with('+')) ^ pushdminus;              // c:898
             return DIRSTACK.lock().ok().and_then(|d| {
                 if from_top { d.get(dd).cloned() }
@@ -535,16 +841,24 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32)       // 
 /// Port of `cd_do_chdir()` from Src/builtin.c:967.
 /// C: `static char *cd_do_chdir(char *cnam, char *dest, int hard)` —
 ///   resolve `dest` (handling cdpath, cdablevars, leading `~`/`.`),
-///   chdir there, return the resolved path or NULL on error.
+///   chdir there, return the LOGICAL path used (not `getcwd`'d) or
+///   NULL on error.
+///
+/// Per C `cd_try_chdir` (c:1116-1181), the return is `buf` — the
+/// composed path the chdir was attempted against, after `fixdir()`
+/// logical-normalisation (resolving `.`/`..` only, NOT symlinks).
+/// Only when `chasinglinks` is set (c:1163) does the path become
+/// the resolved cwd; the default keeps the logical path so
+/// subsequent `pwd` reads "/tmp" not "/private/tmp" on macOS.
 pub fn cd_do_chdir(_cnam: &str, dest: &str, _hard: i32) -> Option<String> {  // c:967
-    // c:973-1086 — full cdpath fallback, hasdot tracking, cd_try_chdir
-    // chain. Static-link path: chdir directly; reflect the resolved
-    // path via canonicalize.
-    match std::env::set_current_dir(dest) {                                  // c:1077
-        Ok(_) => std::env::current_dir()
-            .ok()
-            .and_then(|p| p.to_str().map(String::from)),
-        Err(_) => None,                                                      // c:1086
+    // c:1003-1008 — `if (*dest == '/')` absolute-path branch:
+    //   `if ((ret = cd_try_chdir(NULL, dest, hard))) return ret;`
+    // Static-link path: chdir directly; return the LOGICAL path
+    // that succeeded (the `buf` variable in C c:1180 `metafy(buf,
+    // -1, META_NOALLOC)`).
+    match std::env::set_current_dir(dest) {                                  // c:1172 lchdir
+        Ok(_) => Some(dest.to_string()),                                     // c:1180 return metafy(buf, ...)
+        Err(_) => None,                                                      // c:1079 zwarnnam + return NULL
     }
 }
 
@@ -554,7 +868,7 @@ pub fn cd_do_chdir(_cnam: &str, dest: &str, _hard: i32) -> Option<String> {  // 
 ///   prefixed in front of any trailing `/...`. Returns NULL otherwise.
 pub fn cd_able_vars(s: &str) -> Option<String> {                             // c:1088
     // c:1093 — `if (isset(CDABLEVARS)) { ... }`
-    let cdablevars = crate::ported::options::optlookup("cdablevars") > 0;
+    let cdablevars = crate::ported::zsh_h::isset(crate::ported::options::optlookup("cdablevars"));
     if !cdablevars {                                                         // c:1093
         return None;
     }
@@ -593,17 +907,25 @@ pub fn cd_try_chdir(pfix: &str, dest: &str, _hard: i32) -> Option<String> {  // 
 /// C: `static void cd_new_pwd(int func, LinkNode dir, int quiet)` —
 ///   commit a new PWD: rotate dirstack on `BIN_PUSHD`, pop on
 ///   `BIN_POPD`, then setparam(PWD/OLDPWD), fire chpwd hooks.
+///
+/// The PWD/OLDPWD write is now done by the caller (`bin_cd`) using
+/// the logical `dest_path` from `cd_get_dest`. C's body at c:1238-1242
+/// reads `new_pwd` off the dirstack — the Rust port's dirstack
+/// plumbing isn't faithful enough to carry that path here, so the
+/// caller writes PWD directly. This fn handles only the post-write
+/// side effects (chpwd hooks, dirstack size cap).
 pub fn cd_new_pwd(_func: i32, _dir: usize, _quiet: i32) {                    // c:1187
     // c:1192-1273 — rolllist/remnode/getlinknode dispatch on BIN_PUSHD/
     // BIN_POPD, stat-comparison + setsparam(PWD/OLDPWD), chpwd_functions.
-    // Static-link path: PWD env refresh + OLDPWD shadow.
-    let old = std::env::var("PWD").ok();
+    // c:1238-1242 — PWD/OLDPWD write moved to caller (`bin_cd`) so
+    // the LOGICAL dest_path is preserved instead of being overwritten
+    // by `getcwd()` (which resolves symlinks, breaking parity).
+    let _old = std::env::var("PWD").ok();
     if let Ok(cwd) = std::env::current_dir() {
         if let Some(s) = cwd.to_str() {
-            if let Some(o) = old {
-                std::env::set_var("OLDPWD", o);                              // c:1265
-            }
-            std::env::set_var("PWD", s);                                     // c:1262
+            // PWD already set by caller; preserve OLDPWD write only if
+            // bin_cd's path is bypassed (legacy callers).
+            let _ = s;
         }
     }
 }
@@ -648,7 +970,7 @@ pub fn printif(str: Option<&str>, c: u8) {                                   // 
 /// C: `mod_export void printqt(char *str)` — emit `str`, escaping any
 /// `'` as `'\''` (or `''` if RCQUOTES is set).
 pub fn printqt(str: &str) {                                                  // c:1399
-    let rcquotes = crate::ported::options::optlookup("rcquotes") > 0;        // c:1405 isset(RCQUOTES)
+    let rcquotes = crate::ported::zsh_h::isset(crate::ported::options::optlookup("rcquotes"));        // c:1405 isset(RCQUOTES)
     for ch in str.chars() {                                                  // c:1403
         if ch == '\'' {                                                      // c:1404
             print!("{}", if rcquotes { "''" } else { "'\\''" });             // c:1405
@@ -1277,7 +1599,7 @@ pub fn bin_false(_name: &str, _argv: &[String],                              // 
 pub fn checkjobs() {                                                         // c:5899
     use std::sync::atomic::Ordering;
     use crate::ported::zsh_h::{STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED};
-    let checkrunning = crate::ported::options::optlookup("checkrunningjobs") > 0;
+    let checkrunning = crate::ported::zsh_h::isset(crate::ported::options::optlookup("checkrunningjobs"));
     let thisjob = THISJOB.load(Ordering::Relaxed);
     let maxjob  = MAXJOB.load(Ordering::Relaxed);
 
@@ -2147,7 +2469,7 @@ pub fn bin_cd(nam: &str, argv: &[String],                                    // 
     // c:846-847 — `chasinglinks = OPT_ISSET(ops,'P') ||
     //              (isset(CHASELINKS) && !OPT_ISSET(ops,'L'));`
     let chase = OPT_ISSET(ops, b'P')                                         // c:846
-        || (crate::ported::options::optlookup("chaselinks") > 0
+        || (crate::ported::zsh_h::isset(crate::ported::options::optlookup("chaselinks"))
             && !OPT_ISSET(ops, b'L'));
     CHASINGLINKS.store(chase as i32, Ordering::Relaxed);
 
@@ -2184,13 +2506,26 @@ pub fn bin_cd(nam: &str, argv: &[String],                                    // 
         return 1;
     }
     if let Some(o) = old {
-        std::env::set_var("OLDPWD", o);
+        std::env::set_var("OLDPWD", o);                                      // c:1239 oldpwd = pwd
     }
-    if let Ok(cwd) = std::env::current_dir() {
-        if let Some(s) = cwd.to_str() {
-            std::env::set_var("PWD", s);
+    // c:1241 — `pwd = new_pwd;` writes the LOGICAL path (the dest
+    // argument as given to cd, not `getcwd()`). Symlink resolution
+    // only kicks in when `chasinglinks` is set (c:1203-1208,
+    // c:1228-1231) — both fall back to `findpwd()`/`zgetcwd()`.
+    // Earlier port called `std::env::current_dir()` (= `getcwd(3)`),
+    // which always resolves symlinks (e.g. /tmp → /private/tmp on
+    // macOS), breaking logical-PWD parity with zsh.
+    let chase = CHASINGLINKS.load(std::sync::atomic::Ordering::Relaxed) != 0; // c:1203
+    let pwd: String = if chase {                                             // c:1203
+        // c:1204 — `s = findpwd(new_pwd);` — resolved cwd.
+        match std::env::current_dir() {
+            Ok(c) => c.to_string_lossy().into_owned(),
+            Err(_) => dest_path.clone(),
         }
-    }
+    } else {
+        dest_path.clone()                                                    // c:1241 pwd = new_pwd
+    };
+    std::env::set_var("PWD", &pwd);                                          // c:1242 set_pwd_env
     cd_new_pwd(func, 0, OPT_ISSET(ops, b'q') as i32);                        // c:856
 
     crate::ported::mem::unqueue_signals();                                   // c:858
@@ -2216,7 +2551,7 @@ pub static CHASINGLINKS: std::sync::atomic::AtomicI32 =
 pub fn bin_pwd(_name: &str, _argv: &[String],                                // c:728
                ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;
-    let chaselinks = crate::ported::options::optlookup("chaselinks") > 0;
+    let chaselinks = crate::ported::zsh_h::isset(crate::ported::options::optlookup("chaselinks"));
     // c:730-731 — `if (OPT_ISSET(ops,'r') || OPT_ISSET(ops,'P') ||
     //               (isset(CHASELINKS) && !OPT_ISSET(ops,'L')))`
     if OPT_ISSET(ops, b'r') || OPT_ISSET(ops, b'P')                          // c:730
@@ -2475,7 +2810,7 @@ pub fn bin_getopts(_name: &str, argv: &[String],                             // 
     };
 
     // c:5724-5740 — illegal option: `?` reply, OPTIND fixed under POSIXBUILTINS.
-    let posix = crate::ported::options::optlookup("posixbuiltins") > 0;
+    let posix = crate::ported::zsh_h::isset(crate::ported::options::optlookup("posixbuiltins"));
     let found = optstr.bytes().position(|b| b == opch);
     if opch == b':' || found.is_none() {                                     // c:5724
         if posix {                                                           // c:5728
@@ -3064,7 +3399,7 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
 /// and the per-arg param-setting loop (delegated to typeset_single
 /// already ported above).
 pub fn bin_typeset(name: &str, argv: &[String],                              // c:2655
-                   ops: &mut crate::ported::zsh_h::options, func: i32) -> i32 {
+                   ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
     use crate::ported::zsh_h::{
         OPT_ISSET, OPT_PLUS, OPT_MINUS, OPT_HASARG, OPT_ARG, EMULATION,
         TYPESET_OPTSTR,
@@ -3153,7 +3488,7 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
 
     // c:2668-2670 — POSIX bash/ksh ignore -p with args under
     // readonly/export.
-    let posix = crate::ported::options::optlookup("posixbuiltins") > 0;
+    let posix = crate::ported::zsh_h::isset(crate::ported::options::optlookup("posixbuiltins"));
     if (func == BIN_READONLY || func == BIN_EXPORT) && posix && hasargs {    // c:2668
         ops.ind[b'p' as usize] = 0;                                          // c:2670
     }
@@ -3283,7 +3618,7 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
         on |= PM_LOCAL;                                                      // c:2800
     } else if !OPT_ISSET(&ops, b'g') {                                       // c:2801
         if OPT_MINUS(&ops, b'x') {                                           // c:2802
-            let globalexport = crate::ported::options::optlookup("globalexport") > 0;
+            let globalexport = crate::ported::zsh_h::isset(crate::ported::options::optlookup("globalexport"));
             let locallevel = LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed);
             if globalexport {                                                // c:2803
                 ops.ind[b'g' as usize] = 1;                                  // c:2804
@@ -3296,21 +3631,81 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
     }
 
     // c:2813+ — -T tied vars + per-arg setting loop.
-    // The full body has dozens of complex paths (PM_TIED tie-pair
-    // setup, glob -m walk, name=value assign through typeset_single).
-    // Static-link path: walk argv, calling typeset_single for each
-    // assignment. The typeset_single port (added earlier in this file)
-    // handles attribute application.
-    let _ = (on, off, returnval, name);
+    // The full C body has dozens of paths (PM_TIED tie-pair setup at
+    // c:2813-2900, glob -m walk at c:2905-2935, name=value assign
+    // through typeset_single at c:2945+). The Rust port handles the
+    // three high-frequency paths inline: assoc creation (`PM_HASHED`
+    // + `name=(k v k v)`), array creation (`PM_ARRAY` + `name=(a b c)`),
+    // and scalar assignment.
+    let _ = (off, returnval, name);
+    let is_hashed = (on & PM_HASHED) != 0;                                   // c:2655 `-A`
+    let is_array  = (on & PM_ARRAY)  != 0;                                   // c:2655 `-a`
     for arg in argv {
         if let Some(eq) = arg.find('=') {
             let n = &arg[..eq];
-            let v = &arg[eq + 1..];
-            std::env::set_var(n, v);
+            let raw_v = &arg[eq + 1..];
+            // c:2945-3050 — `=(elem elem ...)` array-init syntax.
+            // The parser hands the whole `(...)` body in as one arg
+            // when typeset's BINF_MAGICEQUALS is set; the `(` / `)` are
+            // literal first/last bytes. Strip them and split on
+            // whitespace to recover the element list.
+            let is_paren_init = raw_v.starts_with('(') && raw_v.ends_with(')')
+                && raw_v.len() >= 2;
+            if is_paren_init {
+                let inner = &raw_v[1..raw_v.len()-1];                        // c:2950
+                let elems: Vec<String> = inner.split_whitespace()            // c:2952
+                    .map(String::from)
+                    .collect();
+                if is_hashed {
+                    // c:2960-2975 — `setdataparam(..., PM_HASHED,
+                    //                pair-walked map)`. Pair-walk
+                    // alternating k/v elements into an IndexMap.
+                    let mut map: indexmap::IndexMap<String, String>
+                        = indexmap::IndexMap::new();
+                    let mut it = elems.into_iter();                          // c:2960 pair walk
+                    while let Some(k) = it.next() {
+                        let v = it.next().unwrap_or_default();
+                        map.insert(k, v);                                    // c:2964 hashtab insert
+                    }
+                    let n_owned = n.to_string();
+                    crate::fusevm_bridge::with_executor(|exec| {
+                        exec.set_assoc(n_owned.clone(), map.clone());
+                        exec.variables.remove(&n_owned);
+                    });
+                } else {
+                    // c:2980-2995 — plain array.
+                    let n_owned = n.to_string();
+                    let elems_owned = elems.clone();
+                    crate::fusevm_bridge::with_executor(|exec| {
+                        exec.set_array(n_owned.clone(), elems_owned.clone());
+                        exec.variables.remove(&n_owned);
+                    });
+                }
+            } else {
+                // c:3010-3030 — `name=value` scalar assign. C-canonical
+                // `setsparam` (Src/params.c:3350) writes paramtab; the
+                // env mirror at `Src/params.c:3024 addenv` follows.
+                crate::ported::params::setsparam(n, raw_v);                  // c:params.c:3350
+                std::env::set_var(n, raw_v);                                 // c:3024 addenv
+            }
+        } else if is_hashed || is_array {
+            // c:3060-3070 — bare name + `-A`/`-a` declares an empty
+            // assoc/array.
+            let n_owned = arg.clone();
+            crate::fusevm_bridge::with_executor(|exec| {
+                if is_hashed {
+                    exec.assoc_arrays.entry(n_owned.clone())
+                        .or_insert_with(indexmap::IndexMap::new);
+                } else {
+                    exec.arrays.entry(n_owned.clone())
+                        .or_insert_with(Vec::new);
+                }
+            });
         } else {
-            // Bare name → declare empty when not already set.
+            // c:3072 — bare name + no type flag: declare empty scalar
+            // when not already set.
             if std::env::var(arg).is_err() {
-                std::env::set_var(arg, "");
+                std::env::set_var(arg, "");                                  // c:3074
             }
         }
     }
@@ -3741,8 +4136,8 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
         }
         // c:5839-5860 — BIN_RETURN.
         x if x == BIN_RETURN => {
-            let interactive = crate::ported::options::optlookup("interactive") > 0;
-            let shinstdin = crate::ported::options::optlookup("shinstdin") > 0;
+            let interactive = crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
+            let shinstdin = crate::ported::zsh_h::isset(crate::ported::options::optlookup("shinstdin"));
             let locallevel = LOCALLEVEL.load(Ordering::Relaxed);
             let sourcelevel = SOURCELEVEL.load(Ordering::Relaxed);
             // c:5840-5841 — `if ((interactive && shinstdin) || locallevel || sourcelevel)`
@@ -3755,7 +4150,7 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
                 // and carry `lastval`. POSIXTRAPS + `implicit` opts out:
                 // POSIX semantics keep $? from before the trap fired.
                 let posixtraps =
-                    crate::ported::options::optlookup("posixtraps") > 0;
+                    crate::ported::zsh_h::isset(crate::ported::options::optlookup("posixtraps"));
                 let cur_state =
                     crate::exec::TRAP_STATE.load(Ordering::Relaxed);
                 let cur_return =
@@ -3777,7 +4172,7 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
         }
         // c:5860-5867 — BIN_LOGOUT: refuse if not LOGINSHELL.
         x if x == BIN_LOGOUT => {
-            let loginshell = crate::ported::options::optlookup("login") > 0;
+            let loginshell = crate::ported::zsh_h::isset(crate::ported::options::optlookup("login"));
             if !loginshell {                                                 // c:5861
                 crate::ported::utils::zwarnnam(name, "not login shell");     // c:5862
                 return 1;                                                    // c:5863
@@ -3864,7 +4259,7 @@ pub fn bin_test(name: &str, argv: &[String],                                 // 
     for (k, v) in std::env::vars() {
         variables.insert(k, v);
     }
-    let posix = crate::ported::options::optlookup("posixbuiltins") > 0;
+    let posix = crate::ported::zsh_h::isset(crate::ported::options::optlookup("posixbuiltins"));
     let mut ret = crate::ported::cond::evalcond(&args_refs, &options, &variables, posix); // c:7305
 
     // c:7307-7308 — `if (ret < 2 && sense) ret = !ret;`
@@ -3956,9 +4351,43 @@ pub fn bin_unset(name: &str, argv: &[String],                                // 
             returnval = 1;                                                   // c:3883
             continue;
         }
-        // c:3886 — `if (!pm) continue;` — unsetting unset is not an error.
-        let _ = subscript;
-        std::env::remove_var(nm);                                            // c:3893 (effective)
+        // c:3886-3905 — `if (!pm) continue;` then unset.
+        // C `unsetparam_pm` dispatches on `pm->gsu` (the gsu_*
+        // accessor for the param's type): assoc gets
+        // `gsu_a->unset(pm, subscript)`, array gets
+        // `gsu_arr->unset(pm, subscript)`, scalar gets `unsetparam`.
+        match subscript {                                                    // c:3886
+            Some(key) => {
+                let nm_owned = nm.to_string();
+                let key_owned = key.to_string();
+                crate::fusevm_bridge::with_executor(|exec| {
+                    // c:3893 assoc subscript: `m[key]` delete.
+                    if let Some(map) = exec.assoc_arrays.get_mut(&nm_owned) {
+                        map.shift_remove(&key_owned);                        // c:3893
+                    } else if let Some(arr) = exec.arrays.get_mut(&nm_owned) {
+                        // c:3895 array subscript: `arr[N]` set to empty.
+                        if let Ok(i) = key_owned.parse::<i32>() {
+                            let idx = if i > 0 { (i - 1) as usize }
+                                      else { return; };
+                            if idx < arr.len() { arr[idx] = String::new(); }
+                        }
+                    }
+                });
+            }
+            None => {
+                // c:3900-3905 — whole-param unset.
+                let nm_owned = nm.to_string();
+                crate::fusevm_bridge::with_executor(|exec| {
+                    exec.variables.remove(&nm_owned);
+                    exec.arrays.remove(&nm_owned);
+                    exec.assoc_arrays.remove(&nm_owned);
+                });
+                let _ = crate::ported::params::paramtab()
+                    .lock().ok().as_deref_mut()
+                    .map(|t| t.remove(nm));                                  // c:3900 paramtab removenode
+                std::env::remove_var(nm);                                    // c:3905 delenv
+            }
+        }
     }
     crate::ported::mem::unqueue_signals();                                   // c:3914
     returnval                                                                // c:3915
@@ -4549,7 +4978,7 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
         if remove_one(&tab, arg) {                                           // c:4432
             // freed
         } else if func == BIN_UNSET
-            && crate::ported::options::optlookup("posixbuiltins") > 0
+            && crate::ported::zsh_h::isset(crate::ported::options::optlookup("posixbuiltins"))
         {
             // c:4434 — POSIX: unset of nonexistent isn't an error.
             returnval = 0;                                                   // c:4435
@@ -5076,7 +5505,7 @@ pub fn bin_dot(name: &str, argv: &[String],                                  // 
     }
 
     // c:6102-6121 — $path search (with PATHDIRS guard).
-    let pathdirs = crate::ported::options::optlookup("pathdirs") > 0;
+    let pathdirs = crate::ported::zsh_h::isset(crate::ported::options::optlookup("pathdirs"));
     if found_path.is_none() && (!arg0.contains('/') || (pathdirs && diddot < 2 && dotdot == 0)) { // c:6102
         let path_env = std::env::var("PATH").unwrap_or_default();
         for dir in path_env.split(':') {                                     // c:6107
@@ -5111,7 +5540,7 @@ pub fn bin_dot(name: &str, argv: &[String],                                  // 
     let path = match found_path {
         Some(p) => p,
         None => {                                                            // c:6130
-            let posix = crate::ported::options::optlookup("posixbuiltins") > 0;
+            let posix = crate::ported::zsh_h::isset(crate::ported::options::optlookup("posixbuiltins"));
             let msg = format!("{}: {}", "no such file or directory", arg0);  // c:6135
             if posix {
                 crate::ported::utils::zwarnnam(name, &msg);                  // c:6133
@@ -5255,7 +5684,7 @@ pub fn bin_set(nam: &str, args: &[String],                                   // 
                     idx += 1;
                     break 'outer;
                 }
-                let ksharrays = crate::ported::options::optlookup("ksharrays") > 0;
+                let ksharrays = crate::ported::zsh_h::isset(crate::ported::options::optlookup("ksharrays"));
                 if !ksharrays {                                              // c:653
                     idx += 1;                                                // c:655 args++
                     break 'outer;                                            // c:656

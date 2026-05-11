@@ -498,7 +498,7 @@ pub fn zpcre_utf8_enabled() -> i32 {                                         // 
     // c:48-67 — under MULTIBYTE_SUPPORT && HAVE_NL_LANGINFO && CODESET.
     // Static-link path: zshrs hosts on macOS/Linux where PCRE2 ships with
     // Unicode by default; check MULTIBYTE option + LANG/LC_ALL CODESET.
-    let multibyte = crate::ported::options::optlookup("multibyte") > 0;      // c:53
+    let multibyte = crate::ported::zsh_h::isset(crate::ported::options::optlookup("multibyte"));      // c:53
     if !multibyte {
         return 0;                                                            // c:54
     }

@@ -1240,8 +1240,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // in user code; populating both removes a portability foot-gun.
         with_executor(|exec| {
             let strs: Vec<String> = pipestatus.iter().map(|s| s.to_string()).collect();
-            exec.arrays.insert("pipestatus".to_string(), strs.clone());
-            exec.arrays.insert("PIPESTATUS".to_string(), strs);
+            exec.set_array("pipestatus".to_string(), strs.clone());
+            exec.set_array("PIPESTATUS".to_string(), strs);
         });
 
         Value::Status(last_status)
@@ -1295,7 +1295,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // script that needs `wait $!`. Also register the
                 // bare-pid job so a no-args `wait` can synchronize.
                 with_executor(|exec| {
-                    exec.variables.insert("!".to_string(), pid.to_string());
+                    exec.set_scalar("!".to_string(), pid.to_string());
                     exec.jobs.add_pid_job(
                         pid,
                         String::new(),
@@ -1369,7 +1369,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         map.insert(k, v);
                     }
                 }
-                exec.assoc_arrays.insert(name.clone(), map);
+                exec.set_assoc(name.clone(), map);
                 // PFA-SMR aspect: assoc bulk init `h=(k1 v1 k2 v2 ...)`.
                 // Recorder emits a structured assoc event with the
                 // ordered (key, value) pairs preserved in
@@ -1401,11 +1401,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             if let Some((scalar_name, sep)) = exec.tied_array_to_scalar.get(&name).cloned() {
                 let joined = values.join(&sep);
-                exec.variables.insert(scalar_name, joined);
-                exec.arrays.insert(name.clone(), values.clone());
+                exec.set_scalar(scalar_name, joined);
+                exec.set_array(name.clone(), values.clone());
             } else {
                 exec.variables.remove(&name);
-                exec.arrays.insert(name.clone(), values.clone());
+                exec.set_array(name.clone(), values.clone());
             }
             // PFA-SMR aspect: array SET (`name=(...)`). emit_path_or_assign
             // routes path-family names to per-element path_mod events
@@ -1507,7 +1507,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .get(&name)
                     .map(|a| a.join(&sep))
                     .unwrap_or_default();
-                exec.variables.insert(scalar_name.clone(), joined.clone());
+                exec.set_scalar(scalar_name.clone(), joined.clone());
                 // Keep the env var (PATH / FPATH / MANPATH / …) in
                 // sync with the scalar so child processes see the
                 // change.
@@ -1672,7 +1672,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let trimmed = line.trim_end_matches(['\n', '\r'][..].as_ref()).to_string();
 
             with_executor(|exec| {
-                exec.variables.insert("REPLY".to_string(), trimmed.clone());
+                exec.set_scalar("REPLY".to_string(), trimmed.clone());
             });
 
             if trimmed.is_empty() {
@@ -1686,7 +1686,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             };
 
             with_executor(|exec| {
-                exec.variables.insert(name.clone(), chosen);
+                exec.set_scalar(name.clone(), chosen);
             });
 
             // Reset the loop signal before running the body so a stale
@@ -3832,7 +3832,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 }
                             }
                             // Then $HOME — only if no named-dir matched.
-                            if let Some(home) = exec.variables.get("HOME").cloned() {
+                            if let Some(home) = crate::ported::params::getsparam("HOME") {
                                 if !home.is_empty() && out.starts_with(&home) {
                                     out = format!("~{}", &out[home.len()..]);
                                 }
@@ -5420,7 +5420,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let prev_n: i64 = prev.parse().unwrap_or(0);
                 let added = exec.eval_arith_expr(&value);
                 let new_val = (prev_n + added).to_string();
-                exec.variables.insert(name.clone(), new_val.clone());
+                exec.set_scalar(name.clone(), new_val.clone());
                 // PFA-SMR aspect: integer-typed append. The append
                 // operator is arithmetic; replay should restore the
                 // POST-add value so the bundle reflects end state.
@@ -5435,7 +5435,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // Scalar concat.
             let prev = exec.get_variable(&name);
             let combined = format!("{}{}", prev, value);
-            exec.variables.insert(name.clone(), combined.clone());
+            exec.set_scalar(name.clone(), combined.clone());
             // PFA-SMR aspect: scalar concat (`PATH+=":/foo"` and any
             // other `NAME+=tail` shape). For PATH-family scalars the
             // path-or-assign helper still emits a path_mod with the
@@ -5534,7 +5534,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 } else {
                     stored.split(&sep).map(String::from).collect()
                 };
-                exec.arrays.insert(arr_name, parts);
+                exec.set_array(arr_name, parts);
                 std::env::set_var(&name, &stored);
                 // Clear the command hash on PATH change so subsequent
                 // command lookups walk the new PATH instead of
@@ -5564,7 +5564,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // variable AND env entry both vanish after cmd returns.
             let in_inline_env = !exec.inline_env_stack.is_empty();
             if in_inline_env {
-                let prev_var = exec.variables.get(&name).cloned();
+                let prev_var = crate::ported::params::getsparam(&name);
                 let prev_env = std::env::var(&name).ok();
                 exec.inline_env_stack
                     .last_mut()
@@ -5572,7 +5572,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .push((name.clone(), prev_var, prev_env));
                 std::env::set_var(&name, &stored);
             }
-            exec.variables.insert(name.clone(), stored.clone());
+            exec.set_scalar(name.clone(), stored.clone());
+            // Mirror the write into paramtab (the C-port canonical
+            // store at `Src/params.c:3350 setsparam`). Without this,
+            // `src/ported/subst.rs::vars_get` and
+            // `src/ported/params.rs::getsparam` see paramtab-only and
+            // miss script-level `x=hello` assignments — heredoc body
+            // substitution, `${x}` inside `singsub`, and any other
+            // C-port reader that doesn't go through fusevm's typed-
+            // variable path returns empty. paramtab IS the C-source
+            // canonical scalar store; this mirror keeps it coherent
+            // with the parallel `exec.variables` HashMap.
+            crate::ported::params::setsparam(&name, &stored);                 // c:params.c:3350
             // `set -o allexport`: every assignment auto-exports the var.
             // zsh: `setopt allexport; a=42; env | grep ^a=` prints `a=42`.
             // Without this, env didn't see user-set scalars.
@@ -5750,7 +5761,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             fd
         };
         with_executor(|exec| {
-            exec.variables.insert(varid, final_fd.to_string());
+            exec.set_scalar(varid, final_fd.to_string());
         });
         Value::Status(0)
     });
@@ -5785,7 +5796,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 for (name, prev_var, prev_env) in frame.into_iter().rev() {
                     match prev_var {
                         Some(v) => {
-                            exec.variables.insert(name.clone(), v);
+                            exec.set_scalar(name.clone(), v);
                         }
                         None => {
                             exec.variables.remove(&name);
@@ -5848,7 +5859,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_SET_LINENO, |vm, _argc| {
         let n = vm.pop().to_int();
         with_executor(|exec| {
-            exec.variables.insert("LINENO".to_string(), n.to_string());
+            exec.set_scalar("LINENO".to_string(), n.to_string());
         });
         fusevm::Value::Status(0)
     });
@@ -5879,31 +5890,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_OPTION_SET, |vm, _argc| {
         let name = vm.pop().to_str();
-        // zsh strips a leading `no` (e.g. `[[ -o nounset ]]` and
-        // `[[ -o nonounset ]]` both query the `nounset` option, with
-        // the latter inverted). Strip any underscores/hyphens too —
-        // user-typed names like `extended_glob` should match the
-        // canonical `extendedglob`.
-        let normalized = name.to_lowercase().replace(['_', '-'], "");
-        let (canonical, invert) = if let Some(stripped) = normalized.strip_prefix("no") {
-            if ZSH_OPTIONS_SET.contains(stripped) {
-                (stripped.to_string(), true)
-            } else {
-                (normalized.clone(), false)
+        // Direct port of `optison()` at Src/cond.c:502 — `[[ -o NAME ]]`
+        // reads through the same `opts[]` array that `setopt NAME`
+        // writes via `dosetopt`. Earlier code read a duplicate Executor
+        // HashMap which never saw `bin_setopt`'s writes (those land in
+        // `OPTS_LIVE` via `opt_state_set`). Routing through the canonical
+        // C port restores the single-store invariant: one `opts[]`,
+        // shared between setopt/unsetopt and `[[ -o ]]`.
+        let r = crate::ported::cond::optison("test", &name);                  // c:cond.c:502
+        match r {
+            0 => fusevm::Value::Bool(true),                                  // c:cond.c:520 set
+            1 => fusevm::Value::Bool(false),                                 // c:cond.c:518/520 unset
+            _ => {
+                // c:cond.c:514 — unknown option: zwarnnam emitted by
+                // optison itself when POSIXBUILTINS is unset; mirror to
+                // stderr here for parity with the earlier diagnostic.
+                eprintln!("zshrs:1: no such option: {}", name);
+                fusevm::Value::Bool(false)
             }
-        } else {
-            (normalized.clone(), false)
-        };
-        // Unknown option: zsh emits "no such option: NAME" to stderr
-        // (and the test result is false). Match the diagnostic so
-        // scripts probing `[[ -o opt ]]` for unknowns get the same
-        // signal in stderr.
-        if !ZSH_OPTIONS_SET.contains(canonical.as_str()) {
-            eprintln!("zshrs:1: no such option: {}", name);
-            return fusevm::Value::Bool(false);
         }
-        let is_set = with_executor(|exec| exec.options.get(&canonical).copied().unwrap_or(false));
-        fusevm::Value::Bool(if invert { !is_set } else { is_set })
     });
 
     vm.register_builtin(BUILTIN_PARAM_FILTER, |vm, _argc| {
@@ -6748,7 +6753,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if missing {
                     let expanded = expand_rhs(&rhs);
                     with_executor(|exec| {
-                        exec.variables.insert(name, expanded.clone());
+                        exec.set_scalar(name, expanded.clone());
                     });
                     maybe_elide(expanded)
                 } else {
@@ -7966,13 +7971,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                     ends.push("0".to_string());
                                 }
                             }
-                            exec.arrays.insert("match".to_string(), arr);
+                            exec.set_array("match".to_string(), arr);
                             // mbegin/mend arrays — 1-based start
                             // and end positions of each capture
                             // group. Direct port of zsh's
                             // pat_pure_m population.
-                            exec.arrays.insert("mbegin".to_string(), begins);
-                            exec.arrays.insert("mend".to_string(), ends);
+                            exec.set_array("mbegin".to_string(), begins);
+                            exec.set_array("mend".to_string(), ends);
                             if let Some(m0) = caps.get(0) {
                                 exec.variables
                                     .insert("MATCH".to_string(), m0.as_str().to_string());
@@ -8242,7 +8247,7 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
     let new_last = args.last().cloned();
     with_executor(|exec| {
         if let Some(prev) = exec.pending_underscore.take() {
-            exec.variables.insert("_".to_string(), prev);
+            exec.set_scalar("_".to_string(), prev);
         }
         if let Some(last) = new_last {
             exec.pending_underscore = Some(last);
@@ -8803,12 +8808,12 @@ impl fusevm::ShellHost for ZshrsHost {
                     }
                 }
                 with_executor(|exec| {
-                    exec.variables.insert("MATCH".to_string(), full);
-                    exec.variables.insert("MBEGIN".to_string(), full_begin);
-                    exec.variables.insert("MEND".to_string(), full_end);
-                    exec.arrays.insert("match".to_string(), group_strs);
-                    exec.arrays.insert("mbegin".to_string(), begins);
-                    exec.arrays.insert("mend".to_string(), ends);
+                    exec.set_scalar("MATCH".to_string(), full);
+                    exec.set_scalar("MBEGIN".to_string(), full_begin);
+                    exec.set_scalar("MEND".to_string(), full_end);
+                    exec.set_array("match".to_string(), group_strs);
+                    exec.set_array("mbegin".to_string(), begins);
+                    exec.set_array("mend".to_string(), ends);
                 });
                 true
             }
@@ -8918,13 +8923,37 @@ impl fusevm::ShellHost for ZshrsHost {
                 libc::umask(m);
                 m as u32
             };
+            // Snapshot paramtab + hashed-storage too (step 1 of the
+            // store unification mirrors writes there; restoring only
+            // the HashMaps leaks subshell-scoped writes to the parent
+            // via paramtab readers like `paramsubst → vars_get`).
+            let paramtab_snap = crate::ported::params::paramtab()
+                .lock().ok()
+                .map(|t| t.clone())
+                .unwrap_or_default();
+            let paramtab_hashed_snap = crate::ported::params::paramtab_hashed_storage()
+                .lock().ok()
+                .map(|m| m.clone())
+                .unwrap_or_default();
             exec.subshell_snapshots.push(SubshellSnapshot {
                 variables: exec.variables.clone(),
                 arrays: exec.arrays.clone(),
                 assoc_arrays: exec.assoc_arrays.clone(),
+                paramtab: paramtab_snap,
+                paramtab_hashed_storage: paramtab_hashed_snap,
                 positional_params: exec.positional_params.clone(),
                 env_vars: std::env::vars().collect(),
-                cwd: std::env::current_dir().ok(),
+                // Save the LOGICAL pwd ($PWD env), not `current_dir()`'s
+                // symlink-resolved path. zsh's subshell isolation per
+                // Src/exec.c at the `entersubsh` path treats `pwd` (the
+                // shell-tracked logical PWD) as the carrier — see
+                // `Src/builtin.c:1239-1242` where cd writes the logical
+                // dest into `pwd`. Falling back to current_dir() only
+                // when PWD is unset matches `setupvals` at
+                // `Src/init.c:1100+`.
+                cwd: std::env::var("PWD").ok()
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| std::env::current_dir().ok()),
                 umask: cur_umask,
                 traps: exec.traps.clone(),
             });
@@ -8964,6 +8993,16 @@ impl fusevm::ShellHost for ZshrsHost {
                 exec.variables = snap.variables;
                 exec.arrays = snap.arrays;
                 exec.assoc_arrays = snap.assoc_arrays;
+                // Restore paramtab + hashed storage so subshell-scoped
+                // writes via setsparam/setaparam/sethparam don't leak
+                // to the parent via paramtab readers.
+                if let Some(tab) = crate::ported::params::paramtab().lock().ok().as_deref_mut() {
+                    *tab = snap.paramtab;
+                }
+                if let Some(m) = crate::ported::params::paramtab_hashed_storage()
+                    .lock().ok().as_deref_mut() {
+                    *m = snap.paramtab_hashed_storage;
+                }
                 exec.positional_params = snap.positional_params;
                 // Restore the OS env to its pre-subshell state.
                 // Removes any `export` writes the subshell made, and
@@ -9018,11 +9057,23 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn heredoc(&mut self, content: &str) {
+        // C `Src/exec.c:4641` — `parsestr(&buf)` runs parameter +
+        // command substitution on the heredoc body. The lexer's
+        // quoted-delimiter detection (`<<'EOF'`) routes through the
+        // `Op::HereDoc` path in `compile_zsh.rs` which short-circuits
+        // before reaching here; unquoted forms route through the
+        // BUILTIN_EXPAND_TEXT mode-4 emit path that calls singsub.
+        // This handler covers the verbatim/quoted case.
         with_executor(|exec| exec.host_set_pending_stdin(content.to_string()));
     }
 
     fn herestring(&mut self, content: &str) {
-        // Shell semantics: herestring appends a newline.
+        // Shell semantics: herestring appends a newline. `<<<` body
+        // substitution (`Src/exec.c:4655 getherestr` calls
+        // `quotesubst` + `untokenize`) lands here verbatim; the
+        // upstream compiler routes through `Op::HereString` after
+        // BUILTIN_EXPAND_TEXT for the substitution pass, so callers
+        // of `host.herestring` see the already-expanded form.
         let mut s = content.to_string();
         s.push('\n');
         with_executor(|exec| exec.host_set_pending_stdin(s));
@@ -9033,7 +9084,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // bash convention). Empty arglists leave it untouched.
         if let Some(last) = args.last() {
             with_executor(|exec| {
-                exec.variables.insert("_".to_string(), last.clone());
+                exec.set_scalar("_".to_string(), last.clone());
             });
         }
         // Route external command spawning through `executor.execute_external`
@@ -9264,7 +9315,8 @@ impl fusevm::ShellHost for ZshrsHost {
             } else {
                 fn_name.clone()
             };
-            let prev_zero = exec.variables.insert("0".to_string(), display_name.clone());
+            let prev_zero = crate::ported::params::getsparam("0");
+            exec.set_scalar("0".to_string(), display_name.clone());
             // scriptname: PS4's `%N` and error-message prefix both
             // read `exec.scriptname`. Inside a function, C zsh sets
             // `scriptname = dupstring(name)` at Src/exec.c:5903 so
@@ -9281,7 +9333,7 @@ impl fusevm::ShellHost for ZshrsHost {
             if let Some(ref s) = prev_stack {
                 new_stack.extend_from_slice(s);
             }
-            exec.arrays.insert("funcstack".to_string(), new_stack);
+            exec.set_array("funcstack".to_string(), new_stack);
             let line_base = exec
                 .function_line_base
                 .get(&fn_name)
@@ -9386,7 +9438,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // `scriptname = oldscriptname;` after execode returns.
             match saved_zero {
                 Some(v) => {
-                    exec.variables.insert("0".to_string(), v);
+                    exec.set_scalar("0".to_string(), v);
                 }
                 None => {
                     exec.variables.remove("0");
@@ -9396,7 +9448,7 @@ impl fusevm::ShellHost for ZshrsHost {
             exec.prompt_funcstack.pop();
             match saved_funcstack {
                 Some(s) => {
-                    exec.arrays.insert("funcstack".to_string(), s);
+                    exec.set_array("funcstack".to_string(), s);
                 }
                 None => {
                     exec.arrays.remove("funcstack");
@@ -9407,7 +9459,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 if let Some((var_name, old_val)) = exec.local_save_stack.pop() {
                     match old_val {
                         Some(v) => {
-                            exec.variables.insert(var_name, v);
+                            exec.set_scalar(var_name, v);
                         }
                         None => {
                             exec.variables.remove(&var_name);
@@ -9421,7 +9473,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 if let Some((arr_name, old_arr)) = exec.local_array_save_stack.pop() {
                     match old_arr {
                         Some(items) => {
-                            exec.arrays.insert(arr_name, items);
+                            exec.set_array(arr_name, items);
                         }
                         None => {
                             exec.arrays.remove(&arr_name);
@@ -9435,7 +9487,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 if let Some((assoc_name, old_assoc)) = exec.local_assoc_save_stack.pop() {
                     match old_assoc {
                         Some(map) => {
-                            exec.assoc_arrays.insert(assoc_name, map);
+                            exec.set_assoc(assoc_name, map);
                         }
                         None => {
                             exec.assoc_arrays.remove(&assoc_name);

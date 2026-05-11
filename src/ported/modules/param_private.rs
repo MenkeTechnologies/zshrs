@@ -589,7 +589,7 @@ pub fn bin_private(nam: &str, args: &[String],                               // 
     // c:235-239 — outside a function: WARNCREATEGLOBAL, then bin_typeset.
     let locallevel = crate::ported::builtin::LOCALLEVEL.load(Ordering::Relaxed);
     if locallevel == 0 {                                                      // c:235
-        let warn = crate::ported::options::optlookup("warncreateglobal") > 0;
+        let warn = crate::ported::zsh_h::isset(crate::ported::options::optlookup("warncreateglobal"));
         if warn {                                                             // c:236
             zwarnnam(nam, "invalid local scope, using globals");              // c:237
         }
