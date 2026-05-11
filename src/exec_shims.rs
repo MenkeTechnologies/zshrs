@@ -6114,13 +6114,17 @@ impl crate::ported::exec::ShellExecutor {
             // basename-sorted `f g sub`). For plain (non-recursive)
             // globs, sort by BASENAME to match zsh's locale-aware
             // case-folded output.
+            // Locale-aware compare via canonical `zstrcmp` (sort.c:191).
+            // C's `gmatchcmp` (glob.c:936) calls `zstrcmp(b->uname,
+            // a->uname, gf_numsort ? SORTIT_NUMERICALLY : 0)` for the
+            // GS_NAME arm — same path here at the callsite.
             if glob_pattern.contains("**/") {
-                expanded.sort_by(|a, b| crate::glob::gmatchcmp(a, b));
+                expanded.sort_by(|a, b| crate::ported::sort::zstrcmp(a, b, 0));
             } else {
                 expanded.sort_by(|a, b| {
                     let an = a.rsplit('/').next().unwrap_or(a);
                     let bn = b.rsplit('/').next().unwrap_or(b);
-                    crate::glob::gmatchcmp(an, bn)
+                    crate::ported::sort::zstrcmp(an, bn, 0)
                 });
             }
         }

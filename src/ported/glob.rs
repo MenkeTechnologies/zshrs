@@ -260,161 +260,71 @@ pub struct GlobMatch {
     pub sort_strings: Vec<String>,
 }
 
-impl GlobMatch {
-    pub fn from_path(path: &Path) -> Option<Self> {
-        let meta = fs::symlink_metadata(path).ok()?;
-        let name = path.file_name()?.to_string_lossy().to_string();
+// `impl GlobMatch` block deleted — C builds Gmatch entries inline
+// in `insert()` (glob.c:346) and `gmatchcmp` (glob.c:936) is a
+// free function taking two Gmatch pointers. The Rust port mirrors
+// that shape: no methods on the struct; construction inlined at
+// the scanner call site, comparator as a free fn below.
 
-        let (target_size, target_atime, target_mtime, target_ctime, target_links) =
-            if meta.file_type().is_symlink() {
-                if let Ok(target_meta) = fs::metadata(path) {
-                    (
-                        target_meta.size(),
-                        target_meta.atime(),
-                        target_meta.mtime(),
-                        target_meta.ctime(),
-                        target_meta.nlink(),
-                    )
-                } else {
-                    (
-                        meta.size(),
-                        meta.atime(),
-                        meta.mtime(),
-                        meta.ctime(),
-                        meta.nlink(),
-                    )
-                }
-            } else {
-                (
-                    meta.size(),
-                    meta.atime(),
-                    meta.mtime(),
-                    meta.ctime(),
-                    meta.nlink(),
-                )
-            };
-
-        Some(GlobMatch {
-            name,
-            path: path.to_path_buf(),
-            size: meta.size(),
-            atime: meta.atime(),
-            mtime: meta.mtime(),
-            ctime: meta.ctime(),
-            links: meta.nlink(),
-            mode: meta.mode(),
-            uid: meta.uid(),
-            gid: meta.gid(),
-            dev: meta.dev(),
-            ino: meta.ino(),
-            target_size,
-            target_atime,
-            target_mtime,
-            target_ctime,
-            target_links,
-            sort_strings: Vec::new(),
-        })
-    }
-
-    /// Port of `gmatchcmp(Gmatch a, Gmatch b)` from Src/glob.c:936
-    /// — the qsort comparator the `o`/`O` glob qualifier drives.
-    /// `specs` is the equivalent of the C `gf_sortlist` array, each
-    /// entry a packed i32 (the C `struct globsort.tp` field):
-    ///   bits 0..=4   — primary key (GS_NAME / GS_DEPTH / GS_EXEC /
-    ///                  GS_SIZE / GS_ATIME / GS_MTIME / GS_CTIME /
-    ///                  GS_LINKS, plus GS_NONE marker)
-    ///   bits << GS_SHIFT — same keys, follow-link variant
-    ///                      (GS__SIZE / GS__ATIME / …)
-    ///   GS_DESC bit — reverse direction (`O` qualifier instead of `o`)
-    pub fn compare(&self, other: &Self, specs: &[i32], numeric_sort: bool) -> Ordering {
-        for &tp in specs {                                                   // c:943 for(i = gf_nsorts, ...)
-            let key = tp & !GS_DESC;                                         // c:944 s->tp & ~GS_DESC
-            let follow = (key & GS_LINKED) != 0;                             // follow-link variant
-            let key_unshifted = if follow { key >> GS_SHIFT } else { key };
-            let cmp = if key_unshifted == GS_NAME {                          // c:945
-                use crate::ported::sort::zstrcmp;
-                if numeric_sort {
-                    zstrcmp(&self.name, &other.name,
-                            crate::zsh_h::SORTIT_NUMERICALLY as u32)
-                } else {
-                    gmatchcmp(&self.name, &other.name)
-                }
-            } else if key_unshifted == GS_DEPTH {                            // c:949
-                self.path.components().count().cmp(&other.path.components().count())
-            } else if key_unshifted == GS_SIZE {                             // c:985
-                if follow { self.target_size.cmp(&other.target_size) }
-                else { self.size.cmp(&other.size) }
-            } else if key_unshifted == GS_ATIME {                            // c:988
-                if follow { other.target_atime.cmp(&self.target_atime) }
-                else { other.atime.cmp(&self.atime) }
-            } else if key_unshifted == GS_MTIME {                            // c:995
-                if follow { other.target_mtime.cmp(&self.target_mtime) }
-                else { other.mtime.cmp(&self.mtime) }
-            } else if key_unshifted == GS_CTIME {
-                if follow { other.target_ctime.cmp(&self.target_ctime) }
-                else { other.ctime.cmp(&self.ctime) }
-            } else if key_unshifted == GS_LINKS {
-                if follow { other.target_links.cmp(&self.target_links) }
-                else { other.links.cmp(&self.links) }
-            } else if key_unshifted == GS_EXEC {                             // c:974
-                // sort-key string index packed in the upper bits.
-                let idx = ((key as u32) >> 16) as usize;
-                let a = self.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
-                let b = other.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
-                if numeric_sort {
-                    crate::ported::sort::zstrcmp(a, b,
-                        crate::zsh_h::SORTIT_NUMERICALLY as u32)
-                } else { a.cmp(b) }
-            } else if (key & GS_NONE) != 0 {
-                Ordering::Equal
-            } else {
-                Ordering::Equal
-            };
-            if cmp != Ordering::Equal {
-                return if (tp & GS_DESC) != 0 { cmp.reverse() } else { cmp };
-            }
-        }
-        Ordering::Equal
-    }
-}
-
-/// Locale-aware name comparison for glob sort. Under a Unicode locale
-/// (LANG / LC_ALL / LC_COLLATE not in the C/POSIX/empty set), zsh
-/// folds case before comparing — so `Aaa bbb Ccc` sorts in declaration
-/// order rather than ASCII (uppercase < lowercase). Fallback to byte
-/// compare under C/POSIX locale to mirror `LC_ALL=C zsh` behavior.
-/// Locale-aware filename compare. Port of `gmatchcmp()` from
-/// Src/glob.c:936 — the qsort comparator the `glob -O` order step
-/// uses. The C variant takes `(Gmatch, Gmatch)` and dispatches via
-/// the active sort spec; this Rust port narrows to the GS_NAME +
-/// non-numeric arm (locale-aware string compare via `strcoll(3)`),
-/// since the other arms (size, mtime, depth) are dispatched
-/// elsewhere at the call site.
-pub fn gmatchcmp(a: &str, b: &str) -> Ordering {                            // c:936
-    let locale_is_c = {
-        let lc_all = std::env::var("LC_ALL").unwrap_or_default();
-        let lc_collate = std::env::var("LC_COLLATE").unwrap_or_default();
-        let lang = std::env::var("LANG").unwrap_or_default();
-        let active = if !lc_all.is_empty() {
-            lc_all
-        } else if !lc_collate.is_empty() {
-            lc_collate
+/// Port of `gmatchcmp(Gmatch a, Gmatch b)` from Src/glob.c:936 —
+/// the qsort comparator the `o`/`O` glob qualifier drives.
+///
+/// `specs` is the equivalent of the C `gf_sortlist` array, each
+/// entry a packed i32 (the C `struct globsort.tp` field):
+///   bits 0..=4        — primary key (GS_NAME / GS_DEPTH / GS_EXEC /
+///                       GS_SIZE / GS_ATIME / GS_MTIME / GS_CTIME /
+///                       GS_LINKS, plus GS_NONE marker)
+///   bits << GS_SHIFT  — same keys, follow-link variant
+///                       (GS__SIZE / GS__ATIME / …)
+///   GS_DESC bit       — reverse direction (`O` qualifier instead of `o`)
+pub fn gmatchcmp(                                                            // c:936
+    a: &GlobMatch,
+    b: &GlobMatch,
+    specs: &[i32],
+    numeric_sort: bool,
+) -> Ordering {
+    for &tp in specs {                                                       // c:943
+        let key = tp & !GS_DESC;                                             // c:944 s->tp & ~GS_DESC
+        let follow = (key & GS_LINKED) != 0;
+        let key_unshifted = if follow { key >> GS_SHIFT } else { key };
+        let cmp = if key_unshifted == GS_NAME {                              // c:945
+            use crate::ported::sort::zstrcmp;
+            zstrcmp(&a.name, &b.name,
+                    if numeric_sort { crate::zsh_h::SORTIT_NUMERICALLY as u32 } else { 0 })
+        } else if key_unshifted == GS_DEPTH {                                // c:949
+            a.path.components().count().cmp(&b.path.components().count())
+        } else if key_unshifted == GS_SIZE {                                 // c:985
+            if follow { a.target_size.cmp(&b.target_size) } else { a.size.cmp(&b.size) }
+        } else if key_unshifted == GS_ATIME {                                // c:988
+            if follow { b.target_atime.cmp(&a.target_atime) } else { b.atime.cmp(&a.atime) }
+        } else if key_unshifted == GS_MTIME {                                // c:995
+            if follow { b.target_mtime.cmp(&a.target_mtime) } else { b.mtime.cmp(&a.mtime) }
+        } else if key_unshifted == GS_CTIME {
+            if follow { b.target_ctime.cmp(&a.target_ctime) } else { b.ctime.cmp(&a.ctime) }
+        } else if key_unshifted == GS_LINKS {
+            if follow { b.target_links.cmp(&a.target_links) } else { b.links.cmp(&a.links) }
+        } else if key_unshifted == GS_EXEC {                                 // c:974
+            let idx = ((key as u32) >> 16) as usize;
+            let asx = a.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
+            let bsx = b.sort_strings.get(idx).map(|s| s.as_str()).unwrap_or("");
+            crate::ported::sort::zstrcmp(asx, bsx,
+                if numeric_sort { crate::zsh_h::SORTIT_NUMERICALLY as u32 } else { 0 })
         } else {
-            lang
+            Ordering::Equal                                                  // GS_NONE / unknown
         };
-        let normalized = active.split('.').next().unwrap_or("").to_uppercase();
-        matches!(normalized.as_str(), "" | "C" | "POSIX")
-    };
-    if locale_is_c {
-        return a.cmp(b);
+        if cmp != Ordering::Equal {
+            return if (tp & GS_DESC) != 0 { cmp.reverse() } else { cmp };
+        }
     }
-    let primary = a.to_lowercase().cmp(&b.to_lowercase());
-    if primary == Ordering::Equal {
-        a.cmp(b)
-    } else {
-        primary
-    }
+    Ordering::Equal
 }
+
+// Misnamed `gmatchcmp(&str, &str)` deleted — was a Rust-only
+// locale-aware string compare claiming to be the C qsort
+// comparator. The real C `gmatchcmp(Gmatch, Gmatch)` at glob.c:936
+// is now ported as `gmatchcmp(&GlobMatch, &GlobMatch, &[i32], bool)`
+// below. The string-compare case the old name claimed routes
+// through canonical `crate::ported::sort::zstrcmp` (sort.c:191).
 
 // `GlobOptions` struct deleted — Rust-only Bag-of-options with no
 // C counterpart. C reads each option directly from the global
@@ -1053,10 +963,50 @@ impl GlobData {
                 let path = entry.path();
 
                 if rest.is_empty() {
-                    // Final component - add to matches if qualifiers pass
+                    // Final component — add to matches if qualifiers pass.
+                    // Inlined `insert()` (glob.c:346) — stat the path
+                    // and populate a Gmatch entry. Symlink targets get
+                    // their own stat for `(o)` follow-link sort keys
+                    // (the `target_*` fields parallel the C `gd_dev2`
+                    // / `gd_ino2` family populated when GS_LINKED is set).
                     if self.check_qualifiers(&path) {
-                        if let Some(m) = GlobMatch::from_path(&path) {
-                            self.matches.push(m);
+                        if let Ok(meta) = fs::symlink_metadata(&path) {
+                            let name = path.file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_default();
+                            let (tsize, tatime, tmtime, tctime, tlinks) =
+                                if meta.file_type().is_symlink() {
+                                    if let Ok(tm) = fs::metadata(&path) {
+                                        (tm.size(), tm.atime(), tm.mtime(),
+                                         tm.ctime(), tm.nlink())
+                                    } else {
+                                        (meta.size(), meta.atime(), meta.mtime(),
+                                         meta.ctime(), meta.nlink())
+                                    }
+                                } else {
+                                    (meta.size(), meta.atime(), meta.mtime(),
+                                     meta.ctime(), meta.nlink())
+                                };
+                            self.matches.push(GlobMatch {
+                                name,
+                                path: path.to_path_buf(),
+                                size: meta.size(),
+                                atime: meta.atime(),
+                                mtime: meta.mtime(),
+                                ctime: meta.ctime(),
+                                links: meta.nlink(),
+                                mode: meta.mode(),
+                                uid: meta.uid(),
+                                gid: meta.gid(),
+                                dev: meta.dev(),
+                                ino: meta.ino(),
+                                target_size: tsize,
+                                target_atime: tatime,
+                                target_mtime: tmtime,
+                                target_ctime: tctime,
+                                target_links: tlinks,
+                                sort_strings: Vec::new(),
+                            });
                         }
                     }
                 } else {
@@ -1322,7 +1272,7 @@ impl GlobData {
         }
 
         let numeric = crate::ported::options::opt_state_get("numericglobsort").unwrap_or(false);
-        self.matches.sort_by(|a, b| a.compare(b, &specs, numeric));
+        self.matches.sort_by(|a, b| gmatchcmp(a, b, &specs, numeric));
     }
 
     fn apply_selection(&mut self) {
