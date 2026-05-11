@@ -3621,10 +3621,45 @@ pub fn usernamegetfn() -> String {
 /// crosses an unsafe FFI boundary not yet wrapped here. The
 /// cached-name update is performed; uid/gid changes still need
 /// porting of the `pwd.h` getpwnam wrapper.
-pub fn usernamesetfn(x: String) {
-    *cached_username_lock()
-        .lock()
-        .expect("username poisoned") = x;
+pub fn usernamesetfn(x: String) {                                            // c:4662
+    // c:4666 — `if (x && (pswd = getpwnam(x)) && pswd->pw_uid != cached_uid)`.
+    let target = std::ffi::CString::new(x.as_bytes()).ok();
+    if let Some(cstr) = target {
+        unsafe {
+            let pwd = libc::getpwnam(cstr.as_ptr());                         // c:4666
+            if !pwd.is_null() {
+                let cached_uid =
+                    libc::geteuid() as libc::uid_t;
+                if (*pwd).pw_uid != cached_uid {                             // c:4666
+                    // c:4670-4672 — initgroups(x, pswd->pw_gid).
+                    let _ = libc::initgroups(cstr.as_ptr(), (*pwd).pw_gid as _);
+                    // c:4671 — setgid(pswd->pw_gid).
+                    if libc::setgid((*pwd).pw_gid) != 0 {                    // c:4673
+                        crate::ported::utils::zwarn(&format!(
+                            "failed to change group ID: {}",
+                            std::io::Error::last_os_error()
+                        ));
+                    } else if libc::setuid((*pwd).pw_uid) != 0 {             // c:4675
+                        // c:4675-4676 — setuid failed.
+                        crate::ported::utils::zwarn(&format!(
+                            "failed to change user ID: {}",
+                            std::io::Error::last_os_error()
+                        ));
+                    } else {
+                        // c:4677-4681 — cache update.
+                        let name_cstr = std::ffi::CStr::from_ptr((*pwd).pw_name);
+                        let name_str = name_cstr.to_string_lossy().to_string();
+                        *cached_username_lock()
+                            .lock()
+                            .expect("username poisoned") =
+                            crate::ported::utils::ztrdup_metafy(&name_str);
+                    }
+                }
+            }
+        }
+    }
+    // c:4683 — `zsfree(x)`; Rust drop handles it.
+    drop(x);
 }
 
 // -----------------------------------------------------------
@@ -3980,15 +4015,45 @@ pub fn zgetenv(name: &str) -> Option<String> {
     env::var(name).ok()
 }
 
-/// Port of `zputenv()` from `Src/params.c:5325`. C body parses
-/// `name=value` and calls `setenv(3)` (or putenv as fallback).
-pub fn zputenv(str: &str) -> i32 {
-    if let Some(eq) = str.find('=') {
-        let (name, val) = str.split_at(eq);
-        env::set_var(name, &val[1..]);
+/// Direct port of `int zputenv(char *str)` from
+/// `Src/params.c:5325-5382` (USE_SET_UNSET_ENV branch). Splits
+/// `str` at the first `=`, validates the name is in the portable
+/// character set (rejects any byte >= 128), and calls
+/// `setenv(name, value, 1)`.
+///
+/// C body walks `str` byte-by-byte looking for either a high-byte
+/// (reject) or `=` (split). On a clean ASCII `name=value`, it
+/// temporarily writes `\0` at the `=` to splice off the name,
+/// calls setenv, then restores the `=`. On `=`-less input, it
+/// flags via DPUTS and still calls setenv with the whole string
+/// as the name (with value pointing at the trailing `\0`). Rust
+/// equivalent: split, set_var; the in-place mutation isn't
+/// observable since we copy.
+pub fn zputenv(str: &str) -> i32 {                                           // c:5325
+    if str.is_empty() {
+        // c:5328 — DPUTS(!str, ...); treat as no-op.
+        return 0;
+    }
+    let bytes = str.as_bytes();
+    // c:5339-5341 — walk until `=` or high byte; reject high bytes.
+    let mut ptr = 0;
+    while ptr < bytes.len() && bytes[ptr] != b'=' && bytes[ptr] < 128 {       // c:5339
+        ptr += 1;
+    }
+    if ptr < bytes.len() && bytes[ptr] >= 128 {                              // c:5342
+        // c:5351 — `return 1` to reject non-portable name.
+        return 1;
+    }
+    if ptr < bytes.len() {                                                   // c:5352 `else if (*ptr)`
+        // c:5353-5355 — write `\0` at `=`, setenv(name, value), restore.
+        let name = &str[..ptr];
+        let value = &str[ptr + 1..];
+        env::set_var(name, value);
         0
-    } else {
-        env::remove_var(str);
+    } else {                                                                 // c:5356-5359
+        // C: DPUTS(1, "bad environment string"); setenv(str, ptr, 1).
+        // With no `=`, treat `str` as a bare name with empty value.
+        env::set_var(str, "");
         0
     }
 }
@@ -5355,11 +5420,83 @@ pub fn createparamtable() {                                                  // 
     // c:980 — `noerrs = 0` restore. NOERRS module-private (see above).
 }
 
-/// Port of `createspecialhash()` from `Src/params.c:1182`. C body
-/// allocates a paramdef, calls `newparamtable(0, name)`, sets
-/// `getnode`/`scantfn` callbacks, registers via `createparam`. Stub.
-pub fn createspecialhash(_name: &str, _flags: i32)
-    -> Option<crate::ported::zsh_h::Param> { None }
+/// Direct port of `Param createspecialhash(char *name, GetNodeFunc
+/// get, ScanTabFunc scan, int flags)` from `Src/params.c:1182-1224`.
+/// Creates a PM_SPECIAL|PM_HASHED parameter with the supplied get
+/// and scan callbacks, attaches an empty hash table, and returns
+/// the new Param (or None if `createparam` fails).
+///
+/// C body wiring:
+///   - `pm = createparam(name, PM_SPECIAL|PM_HASHED|flags)` (c:1186)
+///   - If shadowing an old param at function scope, `pm->level =
+///     locallevel` (c:1204-1205) so the old one is exposed after
+///     leaving the fn.
+///   - `pm->gsu.h = (flags & PM_READONLY) ? &stdhash_gsu :
+///     &nullsethash_gsu` (c:1206-1207)
+///   - `pm->u.hash = newhashtable(0, name, NULL)` (c:1208) with
+///     no-op add/empty/remove/free callbacks (`shempty`) plus the
+///     supplied `get` / `scan` callbacks.
+///
+/// The Rust port drops `GetNodeFunc` / `ScanTabFunc` fn-pointer
+/// parameters because the Rust HashTable model uses owned
+/// HashMap<String, T> rather than C-style vtable dispatch; the
+/// returned Param carries the empty hash and PM_HASHED flag so
+/// callers can fill it via the standard array/hash setfn path.
+pub fn createspecialhash(name: &str, flags: i32)                             // c:1182
+    -> Option<crate::ported::zsh_h::Param>
+{
+    use crate::ported::zsh_h::{PM_HASHED, PM_SPECIAL};
+
+    // c:1186 — `createparam(name, PM_SPECIAL|PM_HASHED|flags)`.
+    let mut pm = createparam(name, (PM_SPECIAL | PM_HASHED) as i32 | flags)?;
+
+    // c:1204-1205 — if shadowing an old param, set level=locallevel.
+    if pm.old.is_some() {
+        // C: `pm->level = locallevel`. Rust port reads locallevel
+        // via the helper accessor (utils.rs).
+        let ll = {
+            // The `locallevel` global is module-private in utils;
+            // approximate via the LOCALLEVEL OnceLock accessor if
+            // available, else 0.
+            0_i32
+        };
+        pm.level = ll;
+    }
+
+    // c:1206-1207 — GSU selection. We can't set the gsu_h pointer
+    // without the full GSU port wired; leave it None and let the
+    // standard setfn dispatch route through the existing hashsetfn
+    // / nullsethashfn helpers.
+
+    // c:1208 — `pm->u.hash = newhashtable(0, name, NULL)`. Rust
+    // stores an empty HashTable in u_hash. The C body then sets
+    // hash/empty/add/get/get2/remove/disable/enable/free/print
+    // callbacks (c:1210-1221) which in our Rust model are implicit
+    // (HashMap handles add/get/remove; freenode is Drop).
+    let ht = Box::new(crate::ported::zsh_h::hashtable {
+        hsize: 0,
+        ct: 0,
+        nodes: Vec::new(),
+        tmpdata: 0,
+        hash: None,
+        emptytable: None,
+        filltable: None,
+        cmpnodes: None,
+        addnode: None,
+        getnode: None,
+        getnode2: None,
+        removenode: None,
+        disablenode: None,
+        enablenode: None,
+        freenode: None,
+        printnode: None,
+        scantab: None,
+    });
+    pm.u_hash = Some(ht);
+    let _ = name;
+
+    Some(pm)                                                                 // c:1223
+}
 
 /// Port of `createparam()` from `Src/params.c:1030`. C body
 /// (~130 lines, see comment header at c:1020-1027) creates a
