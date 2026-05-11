@@ -153,7 +153,8 @@ pub struct ztmout {                                                          // 
 /// state for the `describe-key-briefly` widget — accumulates the
 /// found-binding hits up to `MAXFOUND` and a status message.
 #[derive(Debug, Default)]
-pub struct FindFunc {                                                        // c:1927
+#[allow(non_camel_case_types)]
+pub struct findfunc {                                                        // c:1927
     /// Target Thingy we're searching for; matched against scan key.
     /// Cell holds `None` until set; `usize` indexes into THINGYTAB.
     pub func: Option<usize>,                                                 // c:1928
@@ -1550,7 +1551,7 @@ mod ztmout_findfunc_tests {
     #[test]
     fn findfunc_default_is_empty() {
         // c:1927 — fresh state: no func, zero hits, no msg.
-        let f = FindFunc::default();
+        let f = findfunc::default();
         assert_eq!(f.func, None);
         assert_eq!(f.found, 0);
         assert!(f.msg.is_empty());
@@ -1558,7 +1559,7 @@ mod ztmout_findfunc_tests {
 
     #[test]
     fn findfunc_can_accumulate_message() {
-        let mut f = FindFunc { func: Some(42), found: 0, msg: String::new() };
+        let mut f = findfunc { func: Some(42), found: 0, msg: String::new() };
         f.found += 1;
         f.msg.push_str(" is on KEY1");
         assert_eq!(f.found, 1);
@@ -1993,7 +1994,7 @@ pub fn savekeymap(oldname: &str, newname: &str) -> Option<std::sync::Arc<crate::
 /// from `Src/Zle/zle_main.c:1934-1949`. Per-keymap scan callback for
 /// `describe-key-briefly`: when `func` matches the target in `ff`,
 /// appends " <seq>" to `ff.msg`, capped at MAXFOUND hits.
-pub fn scanfindfunc(seq: &str, func: &str, ff: &mut FindFunc) {              // c:1934
+pub fn scanfindfunc(seq: &str, func: &str, ff: &mut findfunc) {              // c:1934
     const MAXFOUND: usize = 3;                                               // c:1957
     // c:1939 — `if (func != ff->func) return`. Compare by widget name.
     let want = ff.func.map(|i| i.to_string()).unwrap_or_default();
