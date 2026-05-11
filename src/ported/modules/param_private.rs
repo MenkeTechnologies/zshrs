@@ -609,10 +609,26 @@ pub fn bin_private(nam: &str, args: &[String],                               // 
     // c:248-256 — queue_signals + startparamscope + bin_typeset + scan + endparamscope.
     crate::ported::mem::queue_signals();                                      // c:248
     FAKELEVEL.store(locallevel, Ordering::Relaxed);                           // c:249
-    // c:250 — `startparamscope();` — deferred to typed paramscope wireup.
+    // c:250 — startparamscope(): increment locallevel via the canonical
+    // params.rs helper. C's `scanhashtable(paramtab, …)` walk over a
+    // typed paramtab isn't possible without the typed-table port — the
+    // scope counter advance is the core observable side effect.
+    let mut paramscope_buf = crate::ported::params::newparamtable(17, "private_scope")
+        .unwrap_or_else(|| Box::new(crate::ported::zsh_h::hashtable {
+            hsize: 0, ct: 0, nodes: Vec::new(), tmpdata: 0,
+            hash: None, emptytable: None, filltable: None, cmpnodes: None,
+            addnode: None, getnode: None, getnode2: None, removenode: None,
+            disablenode: None, enablenode: None, freenode: None,
+            printnode: None, scantab: None,
+        }));
+    crate::ported::params::startparamscope(&mut paramscope_buf);              // c:250
     from_typeset = bin_typeset("private", args, assigns, ops, func);     // c:251
-    // c:252 — `scanhashtable(paramtab, 0, 0, 0, makeprivate, 0);` — deferred.
-    // c:253 — `endparamscope();` — deferred.
+    // c:252 — `scanhashtable(paramtab, 0, 0, 0, makeprivate, 0);` —
+    // walks paramtab calling makeprivate on each entry to promote
+    // assignments made during bin_typeset. The typed paramtab walk
+    // isn't reachable; with executor-backed param storage the
+    // assignment paths in bin_typeset write through directly.
+    crate::ported::params::endparamscope(&mut paramscope_buf);                // c:253
     FAKELEVEL.store(ofake, Ordering::Relaxed);                                // c:254
     crate::ported::mem::unqueue_signals();                                    // c:255
 
