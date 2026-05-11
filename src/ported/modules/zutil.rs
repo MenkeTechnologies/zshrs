@@ -61,48 +61,6 @@ pub struct MatchData {
     pub mend: Option<Vec<String>>,
 }
 
-impl MatchData {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zutil.c`.
-    /// Snapshot the current match arrays from the supplied accessor.
-    /// Mirrors zutil.c:39-52 savematch.
-    ///
-    /// `get_arr(name)` should return `Some(arr.clone())` if the
-    /// array variable exists, else `None` — same semantic as
-    /// zsh's `getaparam(name)` returning NULL.
-    pub fn save<F: Fn(&str) -> Option<Vec<String>>>(get_arr: F) -> Self {
-        Self {
-            r#match: get_arr("match"),
-            mbegin: get_arr("mbegin"),
-            mend: get_arr("mend"),
-        }
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zutil.c`.
-    /// Restore the match arrays via the supplied set/unset callbacks.
-    /// Mirrors zutil.c:54-69 restorematch — set if Some(arr),
-    /// otherwise unset.
-    pub fn restore<S, U>(self, mut set_arr: S, mut unset_arr: U)
-    where
-        S: FnMut(&str, Vec<String>),
-        U: FnMut(&str),
-    {
-        match self.r#match {
-            Some(a) => set_arr("match", a),
-            None => unset_arr("match"),
-        }
-        match self.mbegin {
-            Some(a) => set_arr("mbegin", a),
-            None => unset_arr("mbegin"),
-        }
-        match self.mend {
-            Some(a) => set_arr("mend", a),
-            None => unset_arr("mend"),
-        }
-    }
-}
-
 /// One pattern→values entry for a `zstyle` style.
 /// Port of `struct stypat` from Src/Modules/zutil.c — `setstypat()`
 /// (line 295) creates entries, `addstyle()` (line 403) inserts them
