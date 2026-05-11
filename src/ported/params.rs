@@ -1078,11 +1078,10 @@ pub fn assigniparam(s: &str, val: i64) {
 /// }
 /// ```
 ///
-/// `assignaparam` (params.c:3357) creates the param if missing
-/// (createparam(s, PM_ARRAY)), then dispatches to `setarrvalue` which
-/// drops any prior scalar / assoc value and stores the array. Rust port
-/// mirrors that "drop scalar+assoc, set array" semantic via the three
-/// separate HashMaps that ShellExecutor uses for parameter storage.
+/// **Signature drift (PORT.md Rule S1 violation):** same as
+/// `assignaparam` below — Rust takes executor HashMap refs
+/// instead of returning a `Param`. Pending the paramtab/executor
+/// unification, the bridge calls into this directly.
 ///
 /// `ASSPM_WARN` (params.c:104) is a no-op in our port — the global
 /// "warn on creation" tracking is not yet ported. Call shape preserved
@@ -1094,9 +1093,9 @@ pub fn setaparam(                                                           // c
     name: &str,
     val: Vec<String>,
 ) {
-    arrays.insert(name.to_string(), val);
-    variables.remove(name);
-    assoc_arrays.remove(name);
+    // c:3766 — `return assignaparam(s, val, ASSPM_WARN)`. Mirror by
+    // routing through assignaparam (the isident guard happens there).
+    assignaparam(variables, arrays, assoc_arrays, name, val);
 }
 
 /// Port of `assignsparam()` from `Src/params.c:3193`. C signature:
@@ -1354,15 +1353,32 @@ pub fn sync_state_from_paramtab(
 
 /// Array parameter assignment (no subscript).
 ///
-/// Port of `assignaparam()` from Src/params.c:3357. Used by the
-/// `(A)`-flagged `${var=val}` form in paramsubst (subst.c:3263).
-/// Splits `val` on IFS into elements and stores as an array,
-/// dropping any prior scalar/assoc value at `name`.
+/// **Signature drift (PORT.md Rule S1 violation):** C's
+/// `Param assignaparam(char *s, char **val, int flags)` writes to
+/// the global `paramtab` and returns the new/updated `Param`.
+/// This Rust shim instead takes mutable refs to the executor's
+/// three storage HashMaps (`variables` / `arrays` /
+/// `assoc_arrays`) because the Rust-side paramtab lives in a
+/// `Mutex<HashMap<String, Param>>` that is NOT the executor's
+/// storage — the two backing stores are not yet unified.
 ///
-/// Pending C semantics not yet covered by this drift wrapper:
+/// **Migration path:** unify `paramtab` with the executor's
+/// parameter store (so a write to one is observable in the
+/// other), then change this fn's signature back to C-faithful
+/// `(s: &str, val: &[String], flags: i32) -> Option<Param>` and
+/// update the `exec_assignaparam` bridge in `subst.rs:253` plus
+/// the three call sites at `subst.rs:2853/2885/2921`.
+///
+/// Pending C semantics inside this body:
 ///   - PM_READONLY check (params.c:3370-3381)
-///   - resetparam from non-array (params.c:3403)
-///   - element-wise subscript assignment with `[k]` syntax
+///   - PM_NAMEREF type-change reject (params.c:3395-3398)
+///   - resetparam from non-array (params.c:3415-3420)
+///   - ASSPM_AUGMENT (`a+=val`) preserve-old prepend
+///     (params.c:3404-3412)
+///   - PM_UNIQUE dedupe (params.c:3401)
+///   - element-wise subscript assignment `a[k]=v`
+///     (params.c:3373-3389 with `getvalue`/`setarrvalue` slice
+///     path)
 pub fn assignaparam(
     variables: &mut std::collections::HashMap<String, String>,
     arrays: &mut std::collections::HashMap<String, Vec<String>>,
@@ -1370,6 +1386,11 @@ pub fn assignaparam(
     name: &str,
     parts: Vec<String>,
 ) {
+    // c:3366-3370 — `if (!isident(s)) { zerr("not an identifier"); ... return NULL }`.
+    if !isident(name) {
+        crate::ported::utils::zerr(&format!("not an identifier: {}", name));
+        return;
+    }
     arrays.insert(name.to_string(), parts);
     variables.remove(name);
     assoc_arrays.remove(name);
@@ -1377,14 +1398,27 @@ pub fn assignaparam(
 
 /// Hash parameter assignment (no subscript).
 ///
-/// Port of `sethparam()` from Src/params.c:3602 / `assignhparam` at
-/// 3357. Used by the `(AA)`-flagged `${var=val}` form in paramsubst
-/// (subst.c:3263). Takes a flat key/value sequence and stores as an
-/// associative array, dropping prior scalar/array.
+/// **Signature drift (PORT.md Rule S1 violation):** C's
+/// `Param sethparam(char *s, char **val)` writes to the global
+/// `paramtab` and returns the new/updated `Param`. This Rust
+/// shim takes executor HashMap refs for the same reason as
+/// `assignaparam` above — unified paramtab/executor storage is a
+/// separate work item.
 ///
-/// Pending C semantics not yet covered by this drift wrapper:
-///   - PM_READONLY rejection (params.c:3617)
-///   - createparam(PM_HASHED) flag propagation
+/// Migration path: same as `assignaparam` — once paramtab and
+/// executor storage are unified, change signature to
+/// `(s: &str, val: &[String]) -> Option<Param>`, update the
+/// `exec_sethparam` bridge in `subst.rs:290` plus the three call
+/// sites at `subst.rs:2863/2895/2931`.
+///
+/// Pending C semantics inside this body:
+///   - isident reject (`zerr("not an identifier: %s")` c:3611)
+///   - nested-assoc reject (`zerr("nested associative arrays
+///     not yet supported")` c:3617)
+///   - PM_READONLY rejection
+///   - createparam(PM_HASHED) when missing
+///   - resetparam(PM_HASHED) for type-change
+///   - PM_SPECIAL type-change reject (c:3637)
 pub fn sethparam(                                                           // c:3602
     variables: &mut std::collections::HashMap<String, String>,
     arrays: &mut std::collections::HashMap<String, Vec<String>>,
@@ -1392,6 +1426,19 @@ pub fn sethparam(                                                           // c
     name: &str,
     parts: Vec<String>,
 ) {
+    // c:3611-3615 — `if (!isident(s)) { zerr("not an identifier"); ... return NULL }`.
+    if !isident(name) {
+        crate::ported::utils::zerr(&format!("not an identifier: {}", name));
+        return;
+    }
+    // c:3617-3621 — `if (strchr(s, '[')) { zerr("nested associative arrays not yet supported"); ... return NULL }`.
+    if name.contains('[') {
+        crate::ported::utils::zerr("nested associative arrays not yet supported");
+        return;
+    }
+    // c:3625-3640 — main body. Rust port walks parts into an IndexMap and
+    // writes through the executor HashMaps (paramtab/executor unification
+    // pending — see signature-drift note above).
     let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
     let mut iter = parts.into_iter();
     while let Some(k) = iter.next() {
