@@ -631,7 +631,16 @@ pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {         // 
 pub fn addmatch(str_: &str, flags: i32, disp: Option<&str>, line: bool) {    // c:2041
     let mut cm = Cmatch::default();                                          // c:2043
     cm.str_ = Some(str_.to_string());                                        // c:2047
-    let complist_extra = lookup_complist_flags();                            // c:2049-2051
+    // c:2049-2051 — inline read of `complist` parameter, parse `packed`/
+    // `rows` substrings into CMF_PACKED/CMF_ROWS flag bits.
+    let complist_extra = {
+        use crate::ported::zle::complete::COMPLIST;
+        let s = COMPLIST.get_or_init(|| Mutex::new(String::new()))
+            .lock().map(|g| g.clone()).unwrap_or_default();
+        let packed = if s.contains("packed") { CMF_PACKED } else { 0 };      // c:2050
+        let rows   = if s.contains("rows")   { CMF_ROWS   } else { 0 };      // c:2051
+        if s.is_empty() { 0 } else { packed | rows }
+    };
     cm.flags = flags | complist_extra;                                       // c:2048
     if let Some(d) = disp {                                                  // c:2052
         cm.disp = Some(d.to_string());                                       // c:2056
@@ -657,15 +666,8 @@ pub fn addmatch(str_: &str, flags: i32, disp: Option<&str>, line: bool) {    // 
     }
 }
 
-fn lookup_complist_flags() -> i32 {
-    use crate::ported::zle::complete::COMPLIST;
-    let s = COMPLIST.get_or_init(|| Mutex::new(String::new()))
-        .lock().map(|g| g.clone()).unwrap_or_default();
-    if s.is_empty() { return 0; }
-    let packed = if s.contains("packed") { CMF_PACKED } else { 0 };          // c:2050
-    let rows   = if s.contains("rows")   { CMF_ROWS   } else { 0 };          // c:2051
-    packed | rows
-}
+// `lookup_complist_flags` deleted — Rust-only 8-line helper. Inlined
+// at the single call site in callcompfunc (c:2049-2051).
 
 // =====================================================================
 // begcmgroup — `Src/Zle/compcore.c:3073-3125`.
@@ -873,10 +875,12 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
 
     // c:300-307 — compqstack reset.
     let instring = crate::ported::zle::zle_tricky::INSTRING.load(Ordering::Relaxed);                                          // c:307
+    // c:305 — `compqstack = instring == QT_NONE ? "\\" : <quote-char>`.
+    // Inlined `char_from_qt(x)` as `(x as u8) as char`.
     let head_q: char = if instring == QT_NONE_STUB {                         // c:305
-        char_from_qt(QT_BACKSLASH_STUB)
+        QT_BACKSLASH_STUB as u8 as char
     } else {
-        char_from_qt(instring)
+        instring as u8 as char
     };
     if let Ok(mut g) = compqstack.get_or_init(|| Mutex::new(String::new())).lock() {
         *g = head_q.to_string();                                              // c:305-306
@@ -1125,9 +1129,8 @@ pub const COMP_LIST_COMPLETE: i32 = 2;                                        //
 pub const QT_NONE_STUB: i32 = 0;                                              // zsh.h QT_NONE
 pub const QT_BACKSLASH_STUB: i32 = crate::ported::zsh_h::QT_BACKSLASH;        // zsh.h
 
-fn char_from_qt(qt: i32) -> char {                                            // local
-    (qt as u8) as char
-}
+// `char_from_qt` deleted — Rust-only 1-line `(qt as u8) as char`
+// helper. Inlined at the two call sites in get_compstate_str.
 
 // `showinglist_stub` / `showinglist_set` / `clearlist_set` /
 // `listshown_stub` / `instring_stub` deleted — Rust-only 1-line
