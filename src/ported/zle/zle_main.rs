@@ -346,7 +346,11 @@ pub struct Zle {
     /// the Rust port keeps `compsys` as a separate crate, so widgets
     /// surface the request and the host (which depends on both crates)
     /// runs the completion engine and writes the result back.
-    pub completion_request: Option<CompletionRequest>,
+    // `completion_request` field + CompletionRequest enum deleted.
+    // No C counterpart: C doesn't surface a "request" type — each
+    // completion widget calls `do_completion()` (zle_tricky.c) directly
+    // with mode flags. The Rust field was set by widget stubs and only
+    // read by their fixture tests.
     /// Per-region text-attribute overlay applied during refresh.
     /// Port of `region_highlights` from Src/Zle/zle_refresh.c — the C
     /// source maintains a Region_highlight* array updated by
@@ -355,23 +359,9 @@ pub struct Zle {
     pub highlight: super::zle_refresh::HighlightManager,
 }
 
-/// What kind of completion the user invoked. Each variant maps to one of
-/// zsh's tab-completion widgets (Src/Zle/zle_tricky.c) which all funnel
-/// through `do_completion()` with different option flags. The host runs
-/// compsys with the matching mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompletionRequest {
-    /// `complete-word` (zle_tricky.c bin_zle 'C') — single-shot match.
-    CompleteWord,
-    /// `expand-or-complete` — try expansion first, fall back to completion.
-    ExpandOrComplete,
-    /// `expand-word` — only run the expansion phase.
-    ExpandWord,
-    /// `list-choices` — show matches without inserting.
-    ListChoices,
-    /// `menu-complete` — start (or step through) menu selection.
-    MenuComplete,
-}
+// `CompletionRequest` enum deleted along with the matching field.
+// C dispatches completion-widget variants via separate function
+// pointers in `Src/Zle/zle_tricky.c` — no enum type.
 
 impl Default for Zle {
     fn default() -> Self {
@@ -458,7 +448,6 @@ impl Zle {
             pending_hooks: Vec::new(),
             lprompt_raw: String::new(),
             rprompt_raw: String::new(),
-            completion_request: None,
             highlight: super::zle_refresh::HighlightManager::new(),
         }
     }
