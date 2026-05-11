@@ -2754,11 +2754,163 @@ pub fn zftp_open(_name: &str, args: &[&str], _flags: i32) -> i32 {
 }
 
 /// Port of `zftp_login()` from `Src/Modules/zftp.c:2118`.
-pub fn zftp_login(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut full: Vec<String> = vec!["login".to_string()];
-    full.extend(args.iter().map(|s| s.to_string()));
-    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+/// C: send USER/PASS/ACCT, drive the reply state machine, set
+/// ZFTP_USER/ACCOUNT/SYSTEM/TYPE parameters, probe SYST type, then
+/// pull current directory via `zfgetcwd()`.
+pub fn zftp_login(name: &str, args: &[&str], _flags: i32) -> i32 {              // c:2118
+    use std::sync::atomic::Ordering;
+    let mut ucmd: String;                                                       // c:2120 char *ucmd
+    let mut passwd: Option<String> = None;                                      // c:2120 *passwd = NULL
+    let mut acct: Option<String> = None;                                        // c:2120 *acct = NULL
+    let user: String;                                                           // c:2121 char *user
+    let mut stopit: i32;                                                        // c:2122 int stopit
+    let mut arg_idx: usize = 0;
+
+    // c:2124-2125 — already logged in; REIN to reset.
+    let already_logged_in = ZFTP_STATE.lock().ok()
+        .and_then(|s| s.get_session(None).map(|sess| sess.logged_in))
+        .unwrap_or(false);
+    if already_logged_in && zfsendcmd("REIN\r\n") >= 4 {                        // c:2124
+        return 1;                                                               // c:2125
+    }
+
+    // c:2127 — clear ZFST_LOGI.
+    if let Ok(mut state) = ZFTP_STATE.lock() {
+        if let Some(sess) = state.get_session_mut(None) {
+            sess.logged_in = false;                                             // c:2127
+        }
+    }
+
+    // c:2128-2132 — user from args[0] or prompt.
+    if arg_idx < args.len() {                                                   // c:2128 *args
+        user = args[arg_idx].to_string();                                       // c:2129 user = *args++
+        arg_idx += 1;
+    } else {
+        user = match zfgetinfo("User: ", 0) {                                   // c:2131
+            Some(s) => s,
+            None => return 1,
+        };
+    }
+
+    // c:2134 — tricat("USER ", user, "\r\n").
+    ucmd = format!("USER {}\r\n", user);
+    stopit = 0;                                                                 // c:2135
+
+    // c:2137-2138 — first send; ret==6 (write fail) → stopit=2.
+    if zfsendcmd(&ucmd) == 6 {                                                  // c:2137
+        stopit = 2;                                                             // c:2138
+    }
+
+    // c:2140-2174 — state-machine on lastcode.
+    let efl_atomic = &crate::ported::utils::errflag;
+    while stopit == 0 && efl_atomic.load(Ordering::Relaxed) == 0 {              // c:2140
+        let code = lastcode.load(Ordering::Relaxed);
+        match code {
+            230 | 202 => {                                                      // c:2142-2144
+                stopit = 1;                                                     // c:2145
+            }
+            331 => {                                                            // c:2148 need password
+                let pw = if arg_idx < args.len() {                              // c:2149
+                    let p = args[arg_idx].to_string();                          // c:2150
+                    arg_idx += 1;
+                    p
+                } else {
+                    match zfgetinfo("Password: ", 1) {                          // c:2152
+                        Some(s) => s,
+                        None => { stopit = 2; break; }
+                    }
+                };
+                passwd = Some(pw.clone());                                      // c:2120/2150 binding
+                // c:2153 zsfree(ucmd); c:2154 tricat("PASS ", passwd, "\r\n").
+                ucmd = format!("PASS {}\r\n", pw);
+                if zfsendcmd(&ucmd) == 6 {                                      // c:2155
+                    stopit = 2;                                                 // c:2156
+                }
+            }
+            332 | 532 => {                                                      // c:2160-2161 need account
+                let ac = if arg_idx < args.len() {                              // c:2162
+                    let a = args[arg_idx].to_string();                          // c:2163
+                    arg_idx += 1;
+                    a
+                } else {
+                    match zfgetinfo("Account: ", 0) {                           // c:2165
+                        Some(s) => s,
+                        None => { stopit = 2; break; }
+                    }
+                };
+                acct = Some(ac.clone());
+                ucmd = format!("ACCT {}\r\n", ac);                              // c:2167
+                if zfsendcmd(&ucmd) == 6 {                                      // c:2168
+                    stopit = 2;                                                 // c:2169
+                }
+            }
+            // c:2173-2179 — 421/501/503/530/550/default → unrecoverable.
+            _ => {
+                stopit = 2;                                                     // c:2180
+            }
+        }
+    }
+    // c:2184 zsfree(ucmd) — Rust Drop.
+    let _ = passwd; // suppress unused-warn; password kept only for parity
+
+    // c:2185-2186 — control gone after exchange.
+    let control_alive = ZFTP_STATE.lock().ok()
+        .and_then(|s| s.get_session(None).map(|sess| sess.control.is_some()))
+        .unwrap_or(false);
+    if !control_alive {                                                         // c:2185
+        return 1;                                                               // c:2186
+    }
+    // c:2187-2190 — login failed.
+    let code = lastcode.load(Ordering::Relaxed);
+    if stopit == 2 || (code != 230 && code != 202) {                            // c:2187
+        crate::ported::utils::zwarnnam(name, "login failed");                   // c:2188
+        return 1;                                                               // c:2189
+    }
+
+    // c:2192-2197 — warn on unused trailing args.
+    if arg_idx < args.len() {                                                   // c:2192
+        let cnt = args.len() - arg_idx;                                         // c:2193-2194
+        crate::ported::utils::zwarnnam(
+            name,
+            &format!("warning: {} command arguments not used", cnt),            // c:2195
+        );
+    }
+
+    // c:2198 — set ZFST_LOGI on the session.
+    if let Ok(mut state) = ZFTP_STATE.lock() {
+        if let Some(sess) = state.get_session_mut(None) {
+            sess.logged_in = true;                                              // c:2198
+            sess.user = Some(user.clone());
+        }
+    }
+    // c:2199 — ZFTP_USER readonly param.
+    zfsetparam("ZFTP_USER", &user, ZFPM_READONLY);                              // c:2199
+    if let Some(ref a) = acct {                                                 // c:2200
+        zfsetparam("ZFTP_ACCOUNT", a, ZFPM_READONLY);                           // c:2201
+    }
+
+    // c:2207-2226 — SYST probe (zfprefs ZFPF_DUMB / ZFST_SYST cache deferred).
+    if zfsendcmd("SYST\r\n") == 2 {                                             // c:2208
+        let systype = lastmsg.lock().ok().map(|m| m.clone()).unwrap_or_default();
+        if systype.starts_with("UNIX Type: L8") {                               // c:2212-2218
+            if let Ok(mut state) = ZFTP_STATE.lock() {
+                if let Some(sess) = state.get_session_mut(None) {
+                    sess.transfer_type = ZFST_IMAG;                             // c:2220
+                }
+            }
+        }
+        zfsetparam("ZFTP_SYSTEM", &systype, ZFPM_READONLY);                     // c:2222
+    }
+
+    // c:2228-2230 — ZFTP_TYPE param.
+    let ttype = ZFTP_STATE.lock().ok()
+        .and_then(|s| s.get_session(None).map(|sess| sess.transfer_type))
+        .unwrap_or(ZFST_ASCI);
+    let tbuf = if ZFST_TYPE(ttype) == ZFST_ASCI { "A" } else { "I" };           // c:2228
+    zfsetparam("ZFTP_TYPE", tbuf, ZFPM_READONLY);                               // c:2229
+
+    // c:2236 — fetch current directory.
+    zfgetcwd()                                                                  // c:2236
 }
 
 /// Port of `zftp_params()` from `Src/Modules/zftp.c:2064`.
