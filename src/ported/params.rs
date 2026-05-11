@@ -1369,7 +1369,7 @@ static PARAMTAB_HASHED_STORAGE_INNER: OnceLock<
     Mutex<HashMap<String, indexmap::IndexMap<String, String>>>,
 > = OnceLock::new();
 
-fn paramtab_hashed_storage()
+pub(crate) fn paramtab_hashed_storage()
     -> &'static Mutex<HashMap<String, indexmap::IndexMap<String, String>>>
 {
     PARAMTAB_HASHED_STORAGE_INNER

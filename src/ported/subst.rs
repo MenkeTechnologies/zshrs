@@ -162,205 +162,148 @@ use crate::ported::zsh_h::{
 pub const NULSTRING: &str = "\u{8F}"; // c:100
 
 // =====================================================================
-// Parameter table read/write helpers — bridge to the canonical
-// `ShellExecutor` parameter store via `fusevm_bridge::try_with_executor`.
-// Replace the deleted `SubstState.variables` / `state.arrays` /
-// `state.assoc_arrays` field accesses. C reads `paramtab` directly via
-// `getsparam` / `getaparam` (`Src/params.c:3194` / `:3245`); these are
-// the Rust equivalents that go through the executor (where the
-// canonical typed `paramtab` actually lives in this port).
+// Parameter table read/write helpers — direct paramtab access.
+// C reads `paramtab` directly via `getsparam`/`getaparam`
+// (`Src/params.c:3194`/`:3245`); these mirror that by hitting
+// `crate::ported::params::paramtab()` (the global Mutex<HashMap<
+// String, Param>>) and the parallel `paramtab_hashed_storage`.
 //
-// Allowlisted as bridge helpers — same status as the existing
-// `IN_PARAMSUBST_NEST` thread_local. All seam fns to keep subst.rs
-// free of `ShellExecutor` direct reaches per the
-// no-shellexecutor-in-src/ported rule.
+// Previous incarnation routed through `fusevm_bridge::try_with_executor`
+// which silently no-ops outside a live VM frame (same fake pattern
+// the user flagged earlier in ksh93.rs). Tests would compile and
+// "pass" while exercising no parameter machinery at all.
 // =====================================================================
 
-/// Read a scalar variable from the canonical parameter store.
-/// Bridge to `exec.variables.get(name).cloned()` — equivalent to C's
-/// `getsparam(name)` (`Src/params.c:3194`) when the parameter is a
-/// scalar.
+/// Read a scalar variable from `paramtab`. Equivalent to C's
+/// `getsparam(name)` (`Src/params.c:3194`) for the scalar case.
 fn vars_get(name: &str) -> Option<String> {
-    crate::fusevm_bridge::try_with_executor(|exec| {
-        exec.variables.get(name).cloned()
-    })
-    .flatten()
+    let tab = crate::ported::params::paramtab().lock().ok()?;
+    let pm = tab.get(name)?;
+    pm.u_str.clone()
 }
 
-/// True if `name` exists in the scalar parameter table.
+/// True if `name` exists in `paramtab` (any type).
 fn vars_contains(name: &str) -> bool {
-    crate::fusevm_bridge::try_with_executor(|exec| {
-        exec.variables.contains_key(name)
-    })
-    .unwrap_or(false)
+    crate::ported::params::paramtab()
+        .lock()
+        .map_or(false, |tab| tab.contains_key(name))
 }
 
-/// Insert / replace a scalar parameter in the canonical store.
-/// Bridge to `exec.variables.insert(k, v)` — equivalent to C's
-/// `setsparam(name, value)` (`Src/params.c:3296`).
+/// Insert / replace a scalar parameter via the canonical
+/// `assignsparam` path. Equivalent to C's `setsparam(name, val)`
+/// (`Src/params.c:3350`).
 fn vars_insert(name: String, value: String) {
-    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
-        exec.variables.insert(name, value);
-    });
+    crate::ported::params::setsparam(&name, &value);
 }
 
-/// Read an array parameter from the canonical store.
-/// Bridge to `exec.arrays.get(name).cloned()` — equivalent to C's
+/// Read an array parameter from `paramtab`. Equivalent to C's
 /// `getaparam(name)` (`Src/params.c:3245`).
 fn arrays_get(name: &str) -> Option<Vec<String>> {
-    crate::fusevm_bridge::try_with_executor(|exec| {
-        exec.arrays.get(name).cloned()
-    })
-    .flatten()
+    let tab = crate::ported::params::paramtab().lock().ok()?;
+    let pm = tab.get(name)?;
+    pm.u_arr.clone()
 }
 
-/// True if `name` exists as an array.
+/// True if `name` is an array in `paramtab`.
 fn arrays_contains(name: &str) -> bool {
-    crate::fusevm_bridge::try_with_executor(|exec| {
-        exec.arrays.contains_key(name)
-    })
-    .unwrap_or(false)
+    crate::ported::params::paramtab()
+        .lock()
+        .map_or(false, |tab| {
+            tab.get(name).map_or(false, |pm| pm.u_arr.is_some())
+        })
 }
 
-/// Insert / replace an array parameter.
-/// Bridge to `exec.arrays.insert(k, v)`.
+/// Insert / replace an array parameter. Writes through the
+/// canonical paramtab as a `PM_ARRAY` entry.
 fn arrays_insert(name: String, value: Vec<String>) {
-    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
-        exec.arrays.insert(name, value);
-    });
+    use crate::ported::zsh_h::{hashnode, param, Param, PM_ARRAY};
+    let mut tab = match crate::ported::params::paramtab().lock() {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    if let Some(pm) = tab.get_mut(&name) {
+        pm.u_arr = Some(value);
+        pm.u_str = None;
+        pm.node.flags |= PM_ARRAY as i32;
+    } else {
+        let pm: Param = Box::new(param {
+            node: hashnode {
+                next: None,
+                nam: name.clone(),
+                flags: PM_ARRAY as i32,
+            },
+            u_data: 0, u_arr: Some(value), u_str: None, u_val: 0,
+            u_dval: 0.0, u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+        });
+        tab.insert(name, pm);
+    }
 }
 
-/// Read an associative array parameter from the canonical store.
+/// Read an associative array parameter from the parallel
+/// `paramtab_hashed_storage` (PM_HASHED values).
 fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>> {
-    crate::fusevm_bridge::try_with_executor(|exec| {
-        exec.assoc_arrays.get(name).cloned()
-    })
-    .flatten()
+    crate::ported::params::paramtab_hashed_storage()
+        .lock()
+        .ok()
+        .and_then(|s| s.get(name).cloned())
 }
 
-/// True if `name` exists as an assoc array.
+/// True if `name` is an assoc-array in `paramtab_hashed_storage`.
 fn assoc_contains(name: &str) -> bool {
-    crate::fusevm_bridge::try_with_executor(|exec| {
-        exec.assoc_arrays.contains_key(name)
-    })
-    .unwrap_or(false)
+    crate::ported::params::paramtab_hashed_storage()
+        .lock()
+        .map_or(false, |s| s.contains_key(name))
 }
 
-/// Bridge to `params::assignaparam(...)` — executor-backed call so
-/// the C-faithful params helper can mutate the canonical scalar /
-/// array / assoc tables without subst.rs holding `&mut SubstState`.
-/// Equivalent to C's `assignaparam(name, parts)` (`Src/params.c:3357`).
+/// Array assignment via paramtab. Equivalent to C's
+/// `assignaparam(name, parts)` (`Src/params.c:3357`).
 fn exec_assignaparam(name: &str, parts: Vec<String>) {
-    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
-        // Snapshot/swap pattern: clone exec.assoc_arrays into the typed
-        // form params::assignaparam expects, mutate, write back.
-        let mut variables = std::mem::take(&mut exec.variables);
-        let mut arrays = std::mem::take(&mut exec.arrays);
-        let mut assoc_arrays: std::collections::HashMap<
-            String,
-            indexmap::IndexMap<String, String>,
-        > = exec
-            .assoc_arrays
-            .iter()
-            .map(|(k, v)| {
-                (k.clone(), v.iter().map(|(ik, iv)| (ik.clone(), iv.clone())).collect())
-            })
-            .collect();
-        crate::ported::params::assignaparam(
-            &mut variables,
-            &mut arrays,
-            &mut assoc_arrays,
-            name,
-            parts,
-        );
-        exec.variables = variables;
-        exec.arrays = arrays;
-        for (k, v) in assoc_arrays {
-            let entry = exec.assoc_arrays.entry(k).or_default();
-            entry.clear();
-            for (ik, iv) in v {
-                entry.insert(ik, iv);
-            }
-        }
-    });
+    arrays_insert(name.to_string(), parts);
 }
 
-/// Bridge to `params::sethparam(...)` — executor-backed call.
-/// Equivalent to C's `sethparam(name, parts)` (`Src/params.c:3602`).
+/// Assoc-array assignment via paramtab_hashed_storage. The `parts`
+/// argument follows the C `sethparam` convention: alternating
+/// key, value, key, value (`Src/params.c:3602`).
 fn exec_sethparam(name: &str, parts: Vec<String>) {
-    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
-        let mut variables = std::mem::take(&mut exec.variables);
-        let mut arrays = std::mem::take(&mut exec.arrays);
-        let mut assoc_arrays: std::collections::HashMap<
-            String,
-            indexmap::IndexMap<String, String>,
-        > = exec
-            .assoc_arrays
-            .iter()
-            .map(|(k, v)| {
-                (k.clone(), v.iter().map(|(ik, iv)| (ik.clone(), iv.clone())).collect())
-            })
-            .collect();
-        crate::ported::params::sethparam(
-            &mut variables,
-            &mut arrays,
-            &mut assoc_arrays,
-            name,
-            parts,
-        );
-        exec.variables = variables;
-        exec.arrays = arrays;
-        for (k, v) in assoc_arrays {
-            let entry = exec.assoc_arrays.entry(k).or_default();
-            entry.clear();
-            for (ik, iv) in v {
-                entry.insert(ik, iv);
-            }
+    use crate::ported::zsh_h::{hashnode, param, Param, PM_HASHED};
+    let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+    let mut it = parts.into_iter();
+    while let (Some(k), Some(v)) = (it.next(), it.next()) {
+        map.insert(k, v);
+    }
+    if let Ok(mut store) = crate::ported::params::paramtab_hashed_storage().lock() {
+        store.insert(name.to_string(), map);
+    }
+    if let Ok(mut tab) = crate::ported::params::paramtab().lock() {
+        if let Some(pm) = tab.get_mut(name) {
+            pm.node.flags |= PM_HASHED as i32;
+        } else {
+            let pm: Param = Box::new(param {
+                node: hashnode {
+                    next: None,
+                    nam: name.to_string(),
+                    flags: PM_HASHED as i32,
+                },
+                u_data: 0, u_arr: None, u_str: None, u_val: 0,
+                u_dval: 0.0, u_hash: None,
+                gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+                base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+            });
+            tab.insert(name.to_string(), pm);
         }
-    });
+    }
 }
 
-/// Bridge to `params::sync_state_from_paramtab(...)` — executor-backed.
-fn exec_sync_state_from_paramtab() {
-    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
-        let mut variables = std::mem::take(&mut exec.variables);
-        let mut arrays = std::mem::take(&mut exec.arrays);
-        let mut assoc_arrays: std::collections::HashMap<
-            String,
-            indexmap::IndexMap<String, String>,
-        > = exec
-            .assoc_arrays
-            .iter()
-            .map(|(k, v)| {
-                (k.clone(), v.iter().map(|(ik, iv)| (ik.clone(), iv.clone())).collect())
-            })
-            .collect();
-        crate::ported::params::sync_state_from_paramtab(
-            &mut variables,
-            &mut arrays,
-            &mut assoc_arrays,
-        );
-        exec.variables = variables;
-        exec.arrays = arrays;
-        for (k, v) in assoc_arrays {
-            let entry = exec.assoc_arrays.entry(k).or_default();
-            entry.clear();
-            for (ik, iv) in v {
-                entry.insert(ik, iv);
-            }
-        }
-    });
-}
+/// No-op now that reads go directly to `paramtab` — the sync-shim
+/// only existed for the executor-backed snapshot path.
+fn exec_sync_state_from_paramtab() {}
 
-/// Bridge to `params::getsparam(...)` — executor-backed read.
-/// Equivalent to C's `getsparam(name)` (`Src/params.c:3194`).
+/// Read a scalar from `paramtab`. Equivalent to C's
+/// `getsparam(name)` (`Src/params.c:3194`).
 fn exec_getsparam(name: &str) -> Option<String> {
-    crate::fusevm_bridge::try_with_executor(|exec| {
-        let variables = exec.variables.clone();
-        let arrays = exec.arrays.clone();
-        crate::ported::params::getsparam(&variables, &arrays, name)
-    })
-    .flatten()
+    vars_get(name)
 }
 
 // =====================================================================
@@ -7258,8 +7201,10 @@ mod tests {
     #[test] // c:3193
     fn paramsubst_alternative_when_unset() {
         // c:3193
+        // Unique name avoids paramtab collision with other tests
+        // that share the global params::paramtab().
         let (result, _, _) =                                // c:3193
-            paramsubst("${X:+yes}", 0, false, 0, &mut 0); // c:3193
+            paramsubst("${__alt_unset_var:+yes}", 0, false, 0, &mut 0); // c:3193
         assert_eq!(result, ""); // c:3193
     } // c:3193
 
