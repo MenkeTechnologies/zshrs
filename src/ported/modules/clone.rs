@@ -293,10 +293,12 @@ fn init_io(cmd: *mut libc::c_char) {                                         // 
     crate::ported::init::init_io(s.as_deref());
 }
 
-// `setsparam` lives in `Src/params.c:3380`. Stub for the static-link
-// path — TTY/$! assignment in the cloned child can't yet feed the
-// real param table.
-fn setsparam(_name: &str, _value: &str) {}
+// `setsparam` lives in `Src/params.c:3380`. Routes through the
+// canonical ksh93::setsparam free-fn (which writes to env-as-param-
+// table on the static-link path).
+fn setsparam(name: &str, value: &str) {                                      // c:3380
+    crate::ported::modules::ksh93::setsparam(name, value);
+}
 
 // `ztrdup` lives in `Src/string.c:18` — `strdup` clone using zsh's
 // allocator. Pass-through here; the `setsparam` stub copies anyway.
