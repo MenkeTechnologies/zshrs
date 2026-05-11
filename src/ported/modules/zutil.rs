@@ -67,7 +67,7 @@ pub struct MatchData {
 /// (line 487) drives every mutation. Stores `stypat` entries
 /// (port of C `struct stypat`, zutil.c:95) per style name,
 /// weight-sorted so the most specific pattern wins.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct StyleTable {
     styles: HashMap<String, Vec<stypat>>,
 }
@@ -86,7 +86,9 @@ impl StyleTable {
         // c:319-333 — Exists → replace.
         if let Some(existing) = style_patterns.iter_mut().find(|p| p.pat == pattern) {
             existing.vals = values;                                           // c:328
-            existing.eval = if eval { Some(()) } else { None };               // c:329
+            existing.eval = if eval {
+                Some(Box::new(crate::ported::zsh_h::eprog::default()))
+            } else { None };                                                  // c:329
             return;
         }
         // c:344-385 — Calculate weight: high 32 bits = colon-component
@@ -112,12 +114,27 @@ impl StyleTable {
         }
         weight += tmp;                                                        // c:386
         // c:337-342 — New pattern: build stypat.
+        // c:339 — p->prog = prog; the C arg comes from patcompile()
+        // before setstypat is called. The StyleTable::set API takes
+        // pattern as &str and compiles at lookup-time via patmatch,
+        // so we record None here and rely on get() to match.
+        let prog: Option<crate::ported::zsh_h::Patprog> = None;
+        // c:341 — p->eval = eprog; signals "this is an -e style".
+        // Eprog body parsing requires parse_string (unported), so we
+        // record Some(Box<eprog>::default()) as a non-NULL sentinel
+        // when eval=true to preserve the C "is eval?" check semantics,
+        // None otherwise.
+        let eval_eprog: Option<crate::ported::zsh_h::Eprog> = if eval {
+            Some(Box::new(crate::ported::zsh_h::eprog::default()))
+        } else {
+            None
+        };
         let sp = stypat {
             next: None,                                                       // c:342
             pat: pattern.to_string(),                                         // c:338
-            prog: None,                                                       // c:339 (Patprog not yet ported)
+            prog,                                                             // c:339
             weight,                                                           // c:386
-            eval: if eval { Some(()) } else { None },                         // c:341
+            eval: eval_eprog,                                                 // c:341
             vals: values,                                                     // c:340
         };
         // c:388-396 — insert q in weight-descending order (highest first).
@@ -1002,14 +1019,13 @@ use crate::ported::zsh_h::HashNode;
 // below operate on that existing struct.
 
 /// `Stypat` mirroring Src/Modules/zutil.c:97-104.
-#[derive(Debug)]
 pub struct stypat {
-    pub next: Option<Box<stypat>>, // c:98 Stypat next
-    pub pat: String,               // c:99 char *pat
-    pub prog: Option<()>,          // c:100 Patprog prog (compiled)
-    pub weight: u64,               // c:101 zulong weight
-    pub eval: Option<()>,          // c:102 Eprog eval
-    pub vals: Vec<String>,         // c:103 char **vals
+    pub next: Option<Box<stypat>>,                            // c:98 Stypat next
+    pub pat: String,                                          // c:99 char *pat
+    pub prog: Option<crate::ported::zsh_h::Patprog>,          // c:100 Patprog prog (compiled)
+    pub weight: u64,                                          // c:101 zulong weight
+    pub eval: Option<crate::ported::zsh_h::Eprog>,            // c:102 Eprog eval
+    pub vals: Vec<String>,                                    // c:103 char **vals
 }
 pub type Stypat = Box<stypat>;
 
