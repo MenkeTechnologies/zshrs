@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
 <title>zshrs-daemon — DAEMON.md coverage matrix (updated 2026-05-11)</title>
-<meta name="description" content="zshrs-daemon DAEMON.md coverage matrix. 23,881 daemon LOC, 111 lib tests passing. Single $ZSHRS_HOME, separate daemon/recorder binaries, three log files, default 127.0.0.1:7733 listener with /openapi. Updated 2026-05-11.">
+<meta name="description" content="zshrs-daemon DAEMON.md coverage matrix. 23,881 daemon LOC (tracked daemon/**/*.rs). Single $ZSHRS_HOME, separate daemon/recorder binaries, three log files, default 127.0.0.1:7733 listener with /openapi. Updated 2026-05-11.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
@@ -51,7 +51,7 @@
 <body>
 <main class="tutorial-main">
 <h1>zshrs-daemon — DAEMON.md coverage matrix</h1>
-<p class="ledger" style="margin-top:-0.4rem;">Last refresh: 2026-05-11 &middot; 23,881 daemon LOC &middot; <code>cargo test -p zshrs-daemon --lib</code> → 111 passed</p>
+<p class="ledger" style="margin-top:-0.4rem;">Last refresh: 2026-05-11 &middot; 23,881 daemon LOC (<code>git ls-files 'daemon/**/*.rs' | xargs wc -l</code>)</p>
 
 <div class="summary-box honest">
   <p><strong>Earlier version of this report claimed "100% implemented." That claim was false.</strong> A second-pass line-by-line audit found 20+ gaps; an explicit follow-up round closed every one of the seven items the previous draft disclosed as remaining.</p>
@@ -66,7 +66,7 @@
   <p>&bull; <strong>Three log files</strong> (<code>zshrs.log</code>, <code>zshrs-daemon.log</code>, <code>zshrs-recorder.log</code>) &mdash; one per binary. <code>paths::is_zshrs_log_file</code> matches all three for rotation/tail/clear. Levels via per-binary <code>[log] level</code>; <code>$ZSHRS_LOG</code> overrides.</p>
   <p>&bull; <strong>Recorder is its own binary</strong> (<code>zshrs-recorder</code>). Sources the full zsh login chain (8 files in order, missing files skipped silently); <code>-f PATH</code> overrides the chain. End-of-run ships <code>recorder_ingest</code> IPC bundle to the daemon.</p>
   <p>&bull; <strong>Daemon binary is independent</strong> (<code>zshrs-daemon</code>). The daemon is started explicitly &mdash; the shell never auto-spawns it. POSIX mode never spawns a daemon at all.</p>
-  <p>&bull; <strong>Default HTTP listener on <code>127.0.0.1:7733</code></strong> seeded into <code>zshrs-daemon.toml</code> so <code>zd health</code> works out of the box. Loopback bind requires no token; non-loopback bind refuses to start until <code>[http.tokens]</code> is populated. <code>GET /openapi</code> (alias <code>/openapi.json</code>) returns OpenAPI 3.1 doc auto-derived from <code>OP_NAMES</code>: 106 paths (4 meta + 99 ops + 3 streams).</p>
+  <p>&bull; <strong>Default HTTP listener on <code>127.0.0.1:7733</code></strong> seeded into <code>zshrs-daemon.toml</code> so <code>zd health</code> works out of the box. Loopback bind requires no token; non-loopback bind refuses to start until <code>[http.tokens]</code> is populated. <code>GET /openapi</code> (alias <code>/openapi.json</code>) returns OpenAPI 3.1 doc auto-derived from <code>OP_NAMES</code>: 108 paths (4 meta + 101 ops + 3 streams).</p>
   <p>&bull; <strong>History split.</strong> Shell-facing history is <code>~/.zshrs/zshrs_history</code> (flat zsh-extended-history-format text) plus FTS5 sibling <code>~/.zshrs/zshrs_history.db</code>. Daemon's separate FTS5 catalog history is <code>~/.zshrs/history.db</code>.</p>
   <p>&bull; <strong><code>[shell] skip_configs = "auto"</code></strong> in <code>zshrs.toml</code>: when daemon is up + a recorded zshrs canonical shard exists, the shell SKIPS sourcing <code>/etc/zshenv</code> + <code>~/.{zshenv,zprofile,zshrc,zlogin}</code> entirely; <code>canonical_apply</code> rebuilds executor state from the rkyv shard (alias/galias/salias/env/params/setopt/path/fpath/named_dirs/autoload_functions/zstyle/bindkey/compdef/zle widgets). Inline functions deferred until recorder ships bytecode in shard.</p>
   <p>&bull; <strong><code>zd</code> two surfaces:</strong> bin (HTTP via <code>ureq</code>, 2.64 ms) for bash/fish/CI; builtin (in-process Unix socket via <code>Client</code>, 0.48 ms, 5.5&times; faster) inside zshrs.</p>
@@ -84,8 +84,8 @@
 </div>
 
 <div class="stat-grid">
-  <div class="stat-card"><div class="stat-val green">111</div><div class="stat-label">Tests passing</div></div>
-  <div class="stat-card"><div class="stat-val">99</div><div class="stat-label">IPC ops dispatched</div></div>
+  <div class="stat-card"><div class="stat-val green">108</div><div class="stat-label">OpenAPI paths</div></div>
+  <div class="stat-card"><div class="stat-val">101</div><div class="stat-label">IPC ops dispatched</div></div>
   <div class="stat-card"><div class="stat-val">14</div><div class="stat-label">Async events</div></div>
   <div class="stat-card"><div class="stat-val accent">23</div><div class="stat-label">z* builtins</div></div>
   <div class="stat-card"><div class="stat-val">41</div><div class="stat-label">Daemon source files</div></div>
@@ -232,7 +232,7 @@
 </table>
 
 <h2 class="section">1. IPC operations — every dispatch arm in <code>ops::dispatch</code></h2>
-<p class="ledger">From the match block in <code>daemon/ops.rs</code>. 99 op names route to a real handler (4 meta + 99 ops + 3 streams = 106 paths exposed via <code>GET /openapi</code>, the OpenAPI 3.1 doc auto-derived from <code>OP_NAMES</code>). Zero <code>unimplemented!()</code> arms remain. Newly added (alphabetically inserted): <code>job_input</code>, <code>job_resize</code> &mdash; bidirectional ptmx attach for <code>--pty</code> jobs (base64 input, <code>TIOCSWINSZ</code> resize).</p>
+<p class="ledger">From the match block in <code>daemon/ops.rs</code>. 101 op names in <code>OP_NAMES</code> route to a real handler; <code>GET /openapi</code> lists 108 paths (4 meta + 101 ops + 3 streams). Zero <code>unimplemented!()</code> arms remain. Newer ops include <code>job_input</code>, <code>job_resize</code> &mdash; bidirectional ptmx attach for <code>--pty</code> jobs (base64 input, <code>TIOCSWINSZ</code> resize).</p>
 
 <table class="fmap">
 <thead><tr><th>Op</th><th>Handler fn</th><th>Where</th><th>Status</th></tr></thead>
@@ -349,7 +349,7 @@
 <h2 class="section">4. Reproduce the verification</h2>
 <p>Three commands, in order, from repo root:</p>
 <code class="build-cmd">cargo build -p zshrs-daemon          # → Finished, zero warnings</code>
-<code class="build-cmd">cargo test -p zshrs-daemon --lib     # → 111 passed; 0 failed; 0 ignored (re-run 2026-05-11)</code>
+<code class="build-cmd">cargo test -p zshrs-daemon --lib     # lib-only matrix (counts drift; run locally)</code>
 <code class="build-cmd">grep -nE "unimplemented|todo!|FIXME" daemon/*.rs   # → no matches</code>
 
 <p class="ledger" style="margin-top:2rem;">
