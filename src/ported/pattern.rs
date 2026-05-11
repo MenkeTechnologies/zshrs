@@ -85,6 +85,10 @@ pub enum PatOp {
     Close = 0x90,      // End of capture group (+ group number)
 }
 
+use crate::ported::zsh_h::{
+    PAT_ANY, PAT_FILE, PAT_FILET, PAT_HEAPDUP, PAT_LCMATCHUC, PAT_NOANCH, PAT_NOGLD, PAT_SCAN,
+};
+
 // Number of active parenthesized expressions allowed in backreferencing   // c:93
 /// Maximum number of backreferences
 const NSUBEXP: usize = 9;
@@ -150,7 +154,7 @@ pub struct PatProg {
 /// into a `char *` buffer with offsets; the Rust AST holds them
 /// directly so we can pattern-match on shapes.
 #[derive(Debug, Clone)]
-pub enum PatNode {
+enum PatNode {
     End,
     ExcSync,
     ExcEnd,
@@ -327,10 +331,22 @@ impl<'a> PatCompiler<'a> {
 
         if !alternatives.is_empty() {
             alternatives.push(nodes);
-            Ok(vec![PatNode::Branch(
-                alternatives.into_iter().flatten().collect(),
-                0,
-            )])
+            let branch_children: Vec<PatNode> = alternatives
+                .into_iter()
+                .map(|seq| {
+                    let body = if seq.len() == 1 {
+                        seq.into_iter().next().unwrap()
+                    } else {
+                        PatNode::Sequence(seq)
+                    };
+                    if add_end {
+                        PatNode::Sequence(vec![body, PatNode::End])
+                    } else {
+                        body
+                    }
+                })
+                .collect();
+            Ok(vec![PatNode::Branch(branch_children, 0)])
         } else {
             if add_end {
                 nodes.push(PatNode::End);
@@ -1059,7 +1075,17 @@ impl<'a> PatMatcher<'a> {
 /// the C source's `glob`/`[[ x = pat ]]` paths call to turn a
 /// pattern string into a `Patprog`. The Rust AST replaces the
 /// flat-bytecode `char *patcode` buffer the C source builds.
-pub fn patcompile(pattern: &str, flags: PatFlags) -> Result<PatProg, String> { // c:540
+pub fn patcompile(pattern: &str, inflags: i32) -> Result<PatProg, String> { // c:540
+    // c:566 — `patflags = inflags & ~(PAT_PURES|PAT_HAS_EXCLUDP)`; map remaining bits to scratch flags.
+    let flags = PatFlags {
+        file: inflags & PAT_FILE != 0 || inflags & PAT_FILET != 0,
+        any: inflags & PAT_ANY != 0,
+        noanch: inflags & PAT_NOANCH != 0,
+        nogld: inflags & PAT_NOGLD != 0,
+        pures: false,
+        scan: inflags & PAT_SCAN != 0,
+        lcmatchuc: inflags & PAT_LCMATCHUC != 0,
+    };
     PatCompiler::new(pattern, flags).compile()
 }
 
@@ -1076,7 +1102,7 @@ pub fn pattry(prog: &PatProg, s: &str) -> bool {                             // 
 /// `pattry` (Src/pattern.c:2223). Returns `false` on compile error
 /// matching the `glob` builtin's "no-match" fall-through.
 pub fn patmatch(pattern: &str, text: &str) -> bool {
-    match patcompile(pattern, PatFlags::default()) {
+    match patcompile(pattern, PAT_HEAPDUP) {
         Ok(prog) => pattry(&prog, text),
         Err(_) => false,
     }
@@ -1395,7 +1421,7 @@ pub fn metacharinc(s: &str, pos: usize) -> usize {
 }
 
 /// Add bytes to pattern buffer Port of `patadd()` from Src/pattern.c:412 — the C source builds the bytecode in a flat `char *patcode` buffer; Rust uses `Vec<PatNode>`.
-pub fn patadd(prog: &mut Vec<PatNode>, node: PatNode) {                      // c:412
+fn patadd(prog: &mut Vec<PatNode>, node: PatNode) {                          // c:412
     prog.push(node);
 }
 
@@ -1409,49 +1435,49 @@ pub fn patcompstart() {}                                                     // 
 /// Port of `patcompswitch()` from Src/pattern.c:765 — the C source's
 /// alternation entry point. The Rust path delegates to the full
 /// compiler since `PatCompiler::compile_branch` handles `|` inline.
-pub fn patcompswitch(pattern: &str, flags: PatFlags) -> Result<PatProg, String> {
-    patcompile(pattern, flags)
+pub fn patcompswitch(pattern: &str, inflags: i32) -> Result<PatProg, String> {
+    patcompile(pattern, inflags)
 }
 
 /// Compile a single pattern branch.
 /// Port of `patcompbranch()` from Src/pattern.c:942.
-pub fn patcompbranch(pattern: &str, flags: PatFlags) -> Result<PatProg, String> {
-    patcompile(pattern, flags)
+pub fn patcompbranch(pattern: &str, inflags: i32) -> Result<PatProg, String> {
+    patcompile(pattern, inflags)
 }
 
 /// Compile a single pattern piece.
 /// Port of `patcomppiece()` from Src/pattern.c:1261.
-pub fn patcomppiece(pattern: &str, flags: PatFlags) -> Result<PatProg, String> {
-    patcompile(pattern, flags)
+pub fn patcomppiece(pattern: &str, inflags: i32) -> Result<PatProg, String> {
+    patcompile(pattern, inflags)
 }
 
 /// Compile a negation pattern (`^pat` / `!(pat)`).
 /// Port of `patcompnot()` from Src/pattern.c:1760 — the C source
 /// inverts the match through an `Exclude` node.
-pub fn patcompnot(pattern: &str, flags: PatFlags) -> Result<PatProg, String> {
+pub fn patcompnot(pattern: &str, inflags: i32) -> Result<PatProg, String> {
     let negated = format!("^({})", pattern);
-    patcompile(&negated, flags)
+    patcompile(&negated, inflags)
 }
 
 /// Add node to bytecode Port of `patnode()` from Src/pattern.c:1790 — the C source appends an opcode to `patcode`; Rust appends to a `Vec`.
-pub fn patnode(prog: &mut Vec<PatNode>, node: PatNode) -> usize {
+fn patnode(prog: &mut Vec<PatNode>, node: PatNode) -> usize {
     let idx = prog.len();
     prog.push(node);
     idx
 }
 
 /// Insert node at position Port of `patinsert()` from Src/pattern.c:1807 — the C source uses a buffer-shift; Rust uses `Vec::insert`.
-pub fn patinsert(prog: &mut Vec<PatNode>, pos: usize, node: PatNode) {
+fn patinsert(prog: &mut Vec<PatNode>, pos: usize, node: PatNode) {
     if pos <= prog.len() {
         prog.insert(pos, node);
     }
 }
 
 /// Set tail pointer Port of `pattail()` from Src/pattern.c:1834 — no-op in Rust (the C source patches forward jumps in flat bytecode; the Rust AST already knows its successor nodes).
-pub fn pattail(_prog: &[PatNode], _p: usize, _val: usize) {}
+fn pattail(_prog: &[PatNode], _p: usize, _val: usize) {}
 
 /// Set optional tail pointer Port of `patoptail()` from Src/pattern.c:1856 — see `pattail` above; same reasoning.
-pub fn patoptail(_prog: &[PatNode], _p: usize, _val: usize) {}
+fn patoptail(_prog: &[PatNode], _p: usize, _val: usize) {}
 
 /// Get char reference Port of `charref()` from Src/pattern.c:1909 — the C source decodes a metafied byte at offset; Rust's `chars().next()` does the equivalent for UTF-8.
 pub fn charref(s: &str, pos: usize) -> Option<char> {
@@ -1597,7 +1623,7 @@ mod tests {
         // Inline of the deleted patmatch_captures helper — runs the
         // matcher and surfaces the per-group capture slices that
         // Src/pattern.c:patbeginp[]/patendp[] expose to ${match[N]}.
-        let prog = patcompile("(foo)(bar)", PatFlags::default()).unwrap();
+        let prog = patcompile("(foo)(bar)", PAT_HEAPDUP).unwrap();
         let mut matcher = PatMatcher::new(&prog, "foobar");
         assert!(matcher.try_match());
         let mut captures: Vec<Option<&str>> = Vec::with_capacity(prog.npar);
@@ -1620,7 +1646,7 @@ mod tests {
 
     #[test]
     fn test_pure_string_optimization() {
-        let prog = patcompile("hello", PatFlags::default()).unwrap();
+        let prog = patcompile("hello", PAT_HEAPDUP).unwrap();
         assert!(prog.flags.pures);
         assert!(prog.pure_string.is_some());
     }
@@ -1650,21 +1676,14 @@ mod tests {
 
     #[test]
     fn test_pattrylen() {
-        let prog = patcompile("hello", PatFlags::default()).unwrap();
+        let prog = patcompile("hello", PAT_HEAPDUP).unwrap();
         assert!(pattrylen(&prog, "hello world", 5));
         assert!(!pattrylen(&prog, "hello world", 3));
     }
 
     #[test]
     fn test_patmatchlen() {
-        let prog = patcompile(
-            "hel*",
-            PatFlags {
-                noanch: true,
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let prog = patcompile("hel*", PAT_HEAPDUP | PAT_NOANCH).unwrap();
         let len = patmatchlen(&prog, "hello world");
         assert!(len.is_some());
     }
