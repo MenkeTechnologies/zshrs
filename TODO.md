@@ -55,11 +55,12 @@ doesn't appear in the matching C source. They violate strict-rule 1
 ("zero Rust-only structs/enums") and need rewrite before being
 ticked DONE in PORT_CHECKLIST.md:
 
-- `modules/zselect.rs` — `SelectMode` enum, `ZselectOptions`
-  struct, `SelectResult` struct. C zselect.c has zero structs/enums.
-  Fix path: rewrite `bin_zselect` as a single fn that does inline
-  flag parsing + select() call, matching `bin_zselect()` at
-  zselect.c:67-200 line-by-line. ~300-line rewrite.
+- `modules/zselect.rs` — DONE. `SelectMode`/`ZselectOptions`/
+  `SelectResult` already deleted; `bin_zselect` rewritten as a
+  single fn doing inline flag parsing + select() call, mirroring
+  `Src/Modules/zselect.c:65-200`. Zero Rust-only types. Tests:
+  6/6 (test-threads=1; pattern/zselect share file-static globals
+  like the C source).
 
 - `modules/langinfo.rs` — DONE. Earlier `LangInfoItem` already
   deleted; liitem already returns raw `Option<libc::nl_item>`.
