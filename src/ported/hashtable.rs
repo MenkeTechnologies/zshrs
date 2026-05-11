@@ -500,36 +500,13 @@ impl Default for ShFuncTable {
 // Reswd.token now stores the raw i32 lextok matching C `struct
 // reswd { HashNode node; int token; }` at zsh.h:1246-1249.
 
-/// Reserved word entry.
-///
-/// Port of `struct reswd` from `Src/zsh.h:1246-1249`. The
-/// canonical port at `crate::ported::zsh_h::reswd` carries
-/// `node: hashnode` for HashTable embedding; the table-side
-/// Reswd here stores the name as a String for HashMap-keyed
-/// lookup until the generic `HashTable` substrate is wired.
-#[derive(Debug, Clone)]
-pub struct Reswd {
-    pub name: String,
-    pub flags: u32,
-    /// Token ID — one of `crate::ported::zsh_h::{BANG_TOK,
-    /// DINBRACK, INBRACE_TOK, ...}` from the lex-token enum
-    /// at zsh.h:345-371.
-    pub token: i32,
-}
-
-impl Reswd {
-    pub fn new(name: &str, token: i32) -> Self {
-        Self {
-            name: name.to_string(),
-            flags: 0,
-            token,
-        }
-    }
-
-    pub fn is_disabled(&self) -> bool {
-        self.flags & flags::DISABLED != 0
-    }
-}
+// `Reswd` struct + impl deleted — Rust-only duplicate of canonical
+// `crate::ported::zsh_h::reswd` (zsh.h:1246-1249). The canonical
+// has `node: hashnode { nam, flags, next }` + `token: i32`; the
+// Rust-only had `name, flags: u32, token: i32` (missing the
+// hashnode embedding). Type alias surfaces the canonical struct
+// to in-file callers and external imports.
+pub use crate::ported::zsh_h::reswd as Reswd;                                // c:1246
 
 /// Reserved word hash table
 #[derive(Debug)]
@@ -589,14 +566,29 @@ impl ReswdTable {
         ];
 
         for (name, token) in words {
-            table.insert(name.to_string(), Reswd::new(name, token));
+            // Direct struct literal — canonical `reswd` has
+            // `node: hashnode` (zsh.h:1246) so we build the
+            // embedded hashnode inline. Mirrors C `{{NULL,
+            // "if", 0}, IF}` at hashtable.c:1077+.
+            table.insert(
+                name.to_string(),
+                Reswd {
+                    node: crate::ported::zsh_h::hashnode {
+                        next: None,
+                        nam: name.to_string(),
+                        flags: 0,
+                    },
+                    token,
+                },
+            );
         }
 
         Self { table }
     }
 
     pub fn get(&self, name: &str) -> Option<&Reswd> {
-        self.table.get(name).filter(|r| !r.is_disabled())
+        self.table.get(name)
+            .filter(|r| (r.node.flags & flags::DISABLED as i32) == 0)
     }
 
     pub fn get_including_disabled(&self, name: &str) -> Option<&Reswd> {
@@ -605,7 +597,7 @@ impl ReswdTable {
 
     pub fn disable(&mut self, name: &str) -> bool {
         if let Some(rw) = self.table.get_mut(name) {
-            rw.flags |= flags::DISABLED;
+            rw.node.flags |= flags::DISABLED as i32;
             true
         } else {
             false
@@ -614,7 +606,7 @@ impl ReswdTable {
 
     pub fn enable(&mut self, name: &str) -> bool {
         if let Some(rw) = self.table.get_mut(name) {
-            rw.flags &= !flags::DISABLED;
+            rw.node.flags &= !(flags::DISABLED as i32);
             true
         } else {
             false
@@ -969,7 +961,7 @@ pub fn printshfuncnode(func: &ShFunc, print_flags: u32) -> String {
 /// Port of `printreswdnode()` from Src/lex.c (the C source's
 /// formatter for the `reswdtab` HashTable).
 pub fn format_reswd(rw: &Reswd, print_flags: u32) -> String {
-    let name = &rw.name;
+    let name = &rw.node.nam;
 
     if print_flags & print_flags::WHENCE_WORD != 0 {
         return format!("{}: reserved\n", name);
@@ -1746,13 +1738,13 @@ impl HashNodeFlags for CmdName {
 
 impl HashNodeFlags for Reswd {
     fn flags(&self) -> u32 {
-        self.flags
+        self.node.flags as u32
     }
     fn set_disabled(&mut self, disabled: bool) {
         if disabled {
-            self.flags |= flags::DISABLED;
+            self.node.flags |= flags::DISABLED as i32;
         } else {
-            self.flags &= !flags::DISABLED;
+            self.node.flags &= !(flags::DISABLED as i32);
         }
     }
 }
