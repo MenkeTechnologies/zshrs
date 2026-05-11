@@ -1143,12 +1143,19 @@ mod tests {
 
 // ─── moved from src/ported/exec.rs (drift extraction) ───
 
-/// A completion specification for the `complete` builtin
+// =====================================================================
+// CompSpec / CompMatch / CompGroup / CompState — Rust-original
+// types backing the bash-style `complete` builtin extension
+// (src/extensions/ext_builtins.rs). NOT direct C ports — zsh's
+// `Cmatch` / `Cmgroup` live in comp_h.rs and have different field
+// layouts; the bash-`complete` builtin doesn't exist in zsh at all.
+// Should ultimately move out of this port file into extensions/.
+// =====================================================================
+
+/// Rust-original — `complete` builtin (bash-style) per-command spec.
+/// Used by `src/extensions/ext_builtins.rs::builtin_complete`. NOT
+/// a port of any zsh C struct.
 #[derive(Debug, Clone, Default)]
-/// One `compdef`/`compctl` completion specification.
-/// Port of the per-command `compspec` shape in
-/// Src/Modules/complete.c — same `pattern` / `action` /
-/// `flags` triplet.
 pub struct CompSpec {
     pub actions: Vec<String>,     // -a, -b, -c, etc.
     pub wordlist: Option<String>, // -W wordlist
@@ -1159,11 +1166,11 @@ pub struct CompSpec {
     pub suffix: Option<String>,   // -S suffix
 }
 
-/// A single completion match for zsh-style completion
+/// Rust-original completion-match candidate. NOT a port of zsh's
+/// `Cmatch` (that lives at comp_h.rs:334 with different fields).
+/// Used by the bash-complete extension to surface match candidates
+/// from the `complete` builtin.
 #[derive(Debug, Clone, Default)]
-/// One completion match candidate.
-/// Port of `Cmatch` from Src/Modules/complist.c — the
-/// completion engine produces these for the menu.
 pub struct CompMatch {
     pub word: String,                   // The actual completion word
     pub display: Option<String>,        // Display string (-d)
@@ -1180,11 +1187,10 @@ pub struct CompMatch {
     pub quote_match: bool,              // -q flag
 }
 
-/// Completion group for organizing matches
+/// Rust-original completion group. NOT a port of zsh's `Cmgroup`
+/// (that lives at comp_h.rs:269 with different fields). Used by
+/// the bash-complete extension to bundle match candidates.
 #[derive(Debug, Clone, Default)]
-/// Group of completion matches with shared formatting.
-/// Port of `Cmgroup` from Src/Modules/complist.c — used by
-/// `compsys` to layer multiple result sets.
 pub struct CompGroup {
     pub name: String,
     pub matches: Vec<CompMatch>,
@@ -1192,12 +1198,11 @@ pub struct CompGroup {
     pub sorted: bool,
 }
 
-/// zsh completion state (compstate associative array)
+/// Rust-original per-completion state. NOT a direct port — zsh's
+/// `$compstate` is a shell-parameter associative array, not a
+/// struct. Used by the bash-complete extension to track state
+/// across `complete` builtin invocations.
 #[derive(Debug, Clone, Default)]
-/// Per-completion state (current point, prefix, suffix).
-/// Port of the `compstate` array in Src/Modules/complete.c —
-/// the completion engine reads/writes it during `compdef`
-/// callback execution.
 pub struct CompState {
     pub context: String,               // completion context
     pub exact: String,                 // exact match handling
