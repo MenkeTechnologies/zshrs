@@ -2421,13 +2421,150 @@ pub fn bin_fg(name: &str, argv: &[String],                                   // 
         return 1;                                                            // c:2464
     }
 
-    // c:2467-2733 — jobspec parsing + per-job dispatch. DEFERRED:
-    // requires getjob / jobtab+oldjobtab globals / deletejob /
-    // printjob / makerunning / killjb / addhistwords / lastval2 /
-    // errflag — none ported yet. The bin_fg shim in src/exec_shims
-    // continues to handle this path until those land.
-    let _ = argv;
-    0                                                                        // c:2734 retval
+    // c:2467 — `queue_signals();`
+    crate::ported::signals::queue_signals();
+    // c:2474 — `wait_for_processes();` reap any newly-finished children
+    // so the table reflects the current state before we list/dispatch.
+    crate::ported::signals::wait_for_processes();
+
+    // c:2477-2478 — `if (unset(NOTIFY)) scanjobs();`
+    // (scanjobs walks the table marking finished jobs for printing).
+    // Skipped: scanjobs port isn't surfaced as a free fn; consumers
+    // that need the print-on-prompt notify will route through it.
+
+    // c:2480-2481 — refresh CURJOB unless we're listing a frozen
+    // oldjobtab snapshot from `jobs` in a non-monitor shell.
+    let table = JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
+    if func != BIN_JOBS || jobbing
+        || *OLDMAXJOB.get_or_init(|| Mutex::new(0)).lock().unwrap() == 0
+    {
+        let mut t = table.lock().expect("jobtab poisoned");
+        let mut ptrs = JobPointers::default();
+        let maxjob = t.len();
+        setcurjob(&mut ptrs, &t, maxjob);
+        let _ = (&mut t, maxjob, &ptrs);
+    }
+
+    // c:2483-2486 — set stopmsg=2 so zexit doesn't complain about
+    // stopped jobs if the user immediately runs `exit` after `jobs`.
+    if func == BIN_JOBS {
+        crate::ported::builtin::STOPMSG
+            .store(2, std::sync::atomic::Ordering::Relaxed);                 // c:2486
+    }
+
+    let mut returnval: i32 = 0;
+
+    if argv.is_empty() {                                                     // c:2487
+        if func == BIN_JOBS {
+            // c:2500-2523 — list jobs.
+            let curjob = *CURJOB.get_or_init(|| Mutex::new(-1))
+                .lock().unwrap();
+            let t = table.lock().expect("jobtab poisoned");
+            let curmaxjob = t.len();
+            let r_only = OPT_ISSET(ops, b'r');
+            let s_only = OPT_ISSET(ops, b's');
+            for job in 0..curmaxjob {                                        // c:2513
+                if job as i32 == curjob {                                    // c:2514 ignorejob
+                    continue;
+                }
+                let j = &t[job];
+                if !j.is_inuse() {                                           // c:2514 stat
+                    continue;
+                }
+                let stopped = j.is_stopped();
+                // c:2515-2519 — flag filtering.
+                if (!r_only && !s_only)
+                    || (r_only && s_only)
+                    || (r_only && !stopped)
+                    || (s_only && stopped)
+                {
+                    // c:2520 — printjob(jobptr, lng, 2). The Rust
+                    // port's printjob takes job_num + cur/prev for
+                    // formatting; pass them through here.
+                    let curjob_opt = if curjob >= 0 {
+                        Some(curjob as usize)
+                    } else {
+                        None
+                    };
+                    let prevjob = *PREVJOB
+                        .get_or_init(|| Mutex::new(-1)).lock().unwrap();
+                    let prevjob_opt = if prevjob >= 0 {
+                        Some(prevjob as usize)
+                    } else {
+                        None
+                    };
+                    print!("{}", printjob(j, job, (lng & 1) != 0,
+                        curjob_opt, prevjob_opt));
+                }
+            }
+            crate::ported::signals::unqueue_signals();                       // c:2522
+            return 0;                                                        // c:2523
+        }
+        if func == BIN_FG || func == BIN_BG {
+            // c:2491-2499 — "no current job" gate.
+            let curjob = *CURJOB.get_or_init(|| Mutex::new(-1))
+                .lock().unwrap();
+            if curjob < 0 {
+                zwarnnam(name, "no current job");                            // c:2495
+                crate::ported::signals::unqueue_signals();
+                return 1;                                                    // c:2497
+            }
+            // Continue current job by sending SIGCONT to its pgrp.
+            let gleader = table.lock().expect("jobtab poisoned")
+                .get(curjob as usize).map(|j| j.gleader).unwrap_or(0);
+            if gleader > 0 {
+                let _ = crate::ported::signals::killjb(gleader, libc::SIGCONT);
+            }
+            crate::ported::signals::unqueue_signals();
+            return 0;
+        }
+        crate::ported::signals::unqueue_signals();
+        return 0;
+    }
+
+    // c:2537+ — per-arg jobspec dispatch (full body handles wait pid,
+    // STAT_SUPERJOB carry-through, killjb retry, etc.). Port the
+    // common path: `%jobspec` → getjob → continue/restart.
+    for arg in argv {
+        let p = if arg.starts_with('%') {
+            getjob(arg, name)                                                // c:2576 getjob
+        } else if let Ok(n) = arg.parse::<i32>() {
+            // jobs/fg numeric → treat as job index, not pid.
+            if n >= 0 { n } else { -1 }
+        } else {
+            zwarnnam(name, &format!("{}: no such job", arg));
+            returnval = 1;
+            continue;
+        };
+        if p < 0 {
+            returnval = 1;
+            continue;
+        }
+        let gleader = table.lock().expect("jobtab poisoned")
+            .get(p as usize).map(|j| j.gleader).unwrap_or(0);
+        if func == BIN_FG || func == BIN_BG {
+            if gleader > 0 {
+                if crate::ported::signals::killjb(gleader, libc::SIGCONT) == -1 {
+                    zwarnnam(name, &format!("{}: kill failed: {}", arg,
+                        std::io::Error::last_os_error()));
+                    returnval = 1;
+                }
+            }
+        } else if func == BIN_JOBS {
+            let t = table.lock().expect("jobtab poisoned");
+            if let Some(j) = t.get(p as usize) {
+                let curjob = *CURJOB.get_or_init(|| Mutex::new(-1))
+                    .lock().unwrap();
+                let prevjob = *PREVJOB.get_or_init(|| Mutex::new(-1))
+                    .lock().unwrap();
+                print!("{}", printjob(j, p as usize, (lng & 1) != 0,
+                    if curjob >= 0 { Some(curjob as usize) } else { None },
+                    if prevjob >= 0 { Some(prevjob as usize) } else { None }));
+            }
+        }
+    }
+    crate::ported::signals::unqueue_signals();                               // c:2729
+    returnval                                                                // c:2734 retval
 }
 
 /// Direct port of `bin_kill()` from `Src/jobs.c:2772`.
