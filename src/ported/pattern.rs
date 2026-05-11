@@ -766,6 +766,69 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 { 
             *tail_out = lit_off;
             lit_off as i64
         }
+        b'<' => {
+            // Numeric range: <a-b> / <a-> / <-b> / <-> .
+            // Port of pattern.c:1528-1570 (Inang case).
+            patparse_off.fetch_add(1, Ordering::Relaxed);
+            *flagp &= !P_PURESTR;
+            let parse_n = patparse.lock().unwrap();
+            let nb = parse_n.as_bytes();
+            let mut j = patparse_off.load(Ordering::Relaxed);
+            let mut len_flag: u8 = 0;  // bit 0 = lo present, bit 1 = hi present
+            let mut from: i64 = 0;
+            let lo_start = j;
+            while j < nb.len() && nb[j].is_ascii_digit() {
+                from = from * 10 + (nb[j] - b'0') as i64;
+                j += 1;
+            }
+            if j > lo_start { len_flag |= 1; }                                // c:1538 — `len |= 1`
+            // Mandatory dash.
+            if j >= nb.len() || nb[j] != b'-' {
+                drop(parse_n);
+                return -1;
+            }
+            j += 1;                                                            // c:1543 patparse++
+            let mut to: i64 = 0;
+            let hi_start = j;
+            while j < nb.len() && nb[j].is_ascii_digit() {
+                to = to * 10 + (nb[j] - b'0') as i64;
+                j += 1;
+            }
+            if j > hi_start { len_flag |= 2; }                                // c:1548 — `len |= 2`
+            // Expect closing '>'.
+            if j >= nb.len() || nb[j] != b'>' {
+                drop(parse_n);
+                return -1;                                                    // c:1551 (return 0 in C)
+            }
+            j += 1;
+            drop(parse_n);
+            patparse_off.store(j, Ordering::Relaxed);
+
+            let off2 = match len_flag {                                       // c:1552-1567
+                3 => {                                                        // c:1554 P_NUMRNG
+                    let off2 = patnode(P_NUMRNG);
+                    let mut buf = patout.lock().unwrap();
+                    buf.extend_from_slice(&from.to_le_bytes());
+                    buf.extend_from_slice(&to.to_le_bytes());
+                    off2
+                }
+                2 => {                                                        // c:1559 P_NUMTO
+                    let off2 = patnode(P_NUMTO);
+                    let mut buf = patout.lock().unwrap();
+                    buf.extend_from_slice(&to.to_le_bytes());
+                    off2
+                }
+                1 => {                                                        // c:1563 P_NUMFROM
+                    let off2 = patnode(P_NUMFROM);
+                    let mut buf = patout.lock().unwrap();
+                    buf.extend_from_slice(&from.to_le_bytes());
+                    off2
+                }
+                _ => patnode(P_NUMANY),                                       // c:1568
+            };
+            *tail_out = off2;
+            off2 as i64
+        }
         _ => {
             // Accumulate a literal run.
             let mut buf: Vec<u8> = Vec::new();
@@ -1177,6 +1240,61 @@ fn patmatch_internal(
                 if next == 0 { return None; }
                 scan = next;
                 continue;
+            }
+            P_NUMRNG => {                                                     // c:P_NUMRNG arm
+                let body = scan + I_BODY;
+                let from = i64::from_le_bytes(code[body..body + 8].try_into().unwrap());
+                let to = i64::from_le_bytes(code[body + 8..body + 16].try_into().unwrap());
+                let input_bytes = string.as_bytes();
+                let start = s_off;
+                let mut k = start;
+                while k < input_bytes.len() && input_bytes[k].is_ascii_digit() {
+                    k += 1;
+                }
+                if k == start { return None; }
+                let n: i64 = std::str::from_utf8(&input_bytes[start..k])
+                    .ok()
+                    .and_then(|s| s.parse::<i64>().ok())?;
+                if n < from || n > to { return None; }
+                s_off = k;
+            }
+            P_NUMFROM => {
+                let body = scan + I_BODY;
+                let from = i64::from_le_bytes(code[body..body + 8].try_into().unwrap());
+                let input_bytes = string.as_bytes();
+                let start = s_off;
+                let mut k = start;
+                while k < input_bytes.len() && input_bytes[k].is_ascii_digit() { k += 1; }
+                if k == start { return None; }
+                let n: i64 = std::str::from_utf8(&input_bytes[start..k])
+                    .ok().and_then(|s| s.parse::<i64>().ok())?;
+                if n < from { return None; }
+                s_off = k;
+            }
+            P_NUMTO => {
+                let body = scan + I_BODY;
+                let to = i64::from_le_bytes(code[body..body + 8].try_into().unwrap());
+                let input_bytes = string.as_bytes();
+                let start = s_off;
+                let mut k = start;
+                while k < input_bytes.len() && input_bytes[k].is_ascii_digit() { k += 1; }
+                if k == start { return None; }
+                let n: i64 = std::str::from_utf8(&input_bytes[start..k])
+                    .ok().and_then(|s| s.parse::<i64>().ok())?;
+                if n > to { return None; }
+                s_off = k;
+            }
+            P_NUMANY => {
+                let input_bytes = string.as_bytes();
+                let start = s_off;
+                while s_off < input_bytes.len() && input_bytes[s_off].is_ascii_digit() { s_off += 1; }
+                if s_off == start { return None; }
+            }
+            P_ISSTART => {                                                    // c:P_ISSTART
+                if s_off != 0 { return None; }
+            }
+            P_ISEND => {                                                      // c:P_ISEND
+                if s_off < string.len() { return None; }
             }
             op if op >= P_OPEN && op < P_CLOSE => {                           // c:P_OPEN_N arm
                 let n = (op - P_OPEN) as usize;
@@ -1691,6 +1809,92 @@ mod tests {
         // patmatch with anchored compile: only full-string matches succeed.
         let prog = compile("foo");
         assert!(pattry(&prog, "foo"));
+    }
+
+    /// `<a-b>` numeric range: digits matching n where lo ≤ n ≤ hi.
+    /// Port of pattern.c:1528 (Inang case).
+    #[test]
+    fn numeric_range_inclusive() {
+        let prog = compile("<10-20>");
+        assert!(pattry(&prog, "15"));
+        assert!(pattry(&prog, "10"));
+        assert!(pattry(&prog, "20"));
+        assert!(!pattry(&prog, "9"));
+        assert!(!pattry(&prog, "21"));
+    }
+
+    #[test]
+    fn numeric_range_from_only() {
+        // <100-> matches any number ≥ 100.
+        let prog = compile("<100->");
+        assert!(pattry(&prog, "100"));
+        assert!(pattry(&prog, "9999"));
+        assert!(!pattry(&prog, "99"));
+    }
+
+    #[test]
+    fn numeric_range_to_only() {
+        // <-5> matches any number ≤ 5.
+        let prog = compile("<-5>");
+        assert!(pattry(&prog, "0"));
+        assert!(pattry(&prog, "5"));
+        assert!(!pattry(&prog, "6"));
+    }
+
+    #[test]
+    fn numeric_range_any() {
+        let prog = compile("<->");
+        assert!(pattry(&prog, "0"));
+        assert!(pattry(&prog, "12345"));
+        assert!(!pattry(&prog, "abc"));
+    }
+
+    /// `(foo)#` — zero-or-more group repetition.
+    #[test]
+    fn group_with_hash_quantifier() {
+        let prog = compile("(foo)#");
+        assert!(pattry(&prog, ""));
+        assert!(pattry(&prog, "foo"));
+        assert!(pattry(&prog, "foofoofoo"));
+    }
+
+    /// `(a|b)##` — one-or-more group with alternation.
+    #[test]
+    fn group_alt_with_double_hash() {
+        let prog = compile("(a|b)##");
+        assert!(!pattry(&prog, ""));
+        assert!(pattry(&prog, "a"));
+        assert!(pattry(&prog, "abab"));
+    }
+
+    /// Mixed numeric range and literal: `v<1-99>`.
+    #[test]
+    fn literal_then_numeric_range() {
+        let prog = compile("v<1-99>");
+        assert!(pattry(&prog, "v1"));
+        assert!(pattry(&prog, "v50"));
+        assert!(pattry(&prog, "v99"));
+        assert!(!pattry(&prog, "v100"));
+        assert!(!pattry(&prog, "v0"));
+    }
+
+    /// Star is greedy — backtracks correctly with trailing literal.
+    #[test]
+    fn star_greedy_backtracks() {
+        let prog = compile("*.txt");
+        assert!(pattry(&prog, "foo.txt"));
+        assert!(pattry(&prog, "a.b.c.txt"));
+        assert!(!pattry(&prog, "foo.txx"));
+    }
+
+    /// Bracket with POSIX class.
+    #[test]
+    fn posix_alpha_class() {
+        let prog = compile("[[:alpha:]]##");
+        assert!(pattry(&prog, "abc"));
+        assert!(pattry(&prog, "XYZ"));
+        assert!(!pattry(&prog, "1"));
+        assert!(!pattry(&prog, ""));
     }
 
     #[test]
