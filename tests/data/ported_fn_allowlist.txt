@@ -838,6 +838,13 @@ WC_SELECT_SKIP
 # both zfopendata and the higher-level zftp_session::connect() path.
 parse_pasv_response
 
+# C zftp writes `errno = ETIMEDOUT` / `errno = EIO` as plain assignments
+# to the POSIX errno macro (Src/Modules/zftp.c:370, 1383, 1400, 1424).
+# Rust libc exposes the thread-local accessor under different names per
+# OS (`__error` macOS/BSD, `__errno_location` Linux/Android, `__errno`
+# OpenBSD/NetBSD), so the cfg-gated pointer helper replaces the C macro.
+errno_ptr
+
 # C pattern.c uses native pointer arithmetic to insert opcodes into
 # the bytecode buffer; the Rust port stores byte offsets explicitly,
 # so when patinsert() shifts a chunk of bytecode, downstream next_off
