@@ -950,7 +950,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
         ZLEMETACS.store(crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::Relaxed), Ordering::Relaxed);                   // c:347
         crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed);                                                    // c:348
         ret = 1;
-        minfo_clear_cur();                                                   // c:350
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() { g.cur = None; }                                                   // c:350
         if useline.load(Ordering::Relaxed) < 0 {                             // c:351
             unmetafy_line();
             ret = selfinsert();                                         // c:353
@@ -1011,7 +1011,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
             }
             ZLEMETACS.store(new_cs as i32, Ordering::Relaxed);
         }
-        minfo_clear_cur();                                                   // c:383
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() { g.cur = None; }                                                   // c:383
         if forcelist.load(Ordering::Relaxed) != 0 {                          // c:385
             crate::ported::zle::zle_refresh::SHOWINGLIST.store(-2, Ordering::Relaxed);
         } else {
@@ -1096,8 +1096,8 @@ fn do_single_first_match() {                                                  //
     let first = groups.into_iter().find(|g| g.mcount > 0)
         .and_then(|g| g.matches.first().cloned());
     if let Some(m) = first {
-        minfo_clear_cur();                                                   // c:407
-        minfo_asked_zero();                                                  // c:408
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() { g.cur = None; }                                                   // c:407
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() { g.asked = 0; }                                                  // c:408
         // c:409 — `do_single(m)`. Inlined: drop the Cmatch payload onto
         // MINFO.cur so the listing path picks it up (matches the C
         // behavior of routing the single-match insert through minfo).
@@ -1244,18 +1244,9 @@ fn selfinsert() -> i32 {                                                 // zle_
 /// Port of `mod_export int lastchar` from `Src/Zle/zle_main.c`. Last
 /// keyboard char consumed by the binding loop — read by `selfinsert`.
 pub static LASTCHAR: AtomicI32 = AtomicI32::new(0);                          // zle_main.c
-/// Direct port of `minfo.cur = NULL` — `Src/Zle/zle_tricky.c minfo`.
-fn minfo_clear_cur() {                                                        // zle_tricky.c minfo
-    if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
-        g.cur = None;
-    }
-}
-/// Direct port of `minfo.asked = 0` — `Src/Zle/zle_tricky.c minfo`.
-fn minfo_asked_zero() {                                                       // zle_tricky.c minfo
-    if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
-        g.asked = 0;
-    }
-}
+// minfo_clear_cur / minfo_asked_zero deleted — Rust-only 2-line
+// wrappers around C's inline writes `minfo.cur = NULL` and
+// `minfo.asked = 0`. All call sites inlined.
 
 /// Direct port of `struct menuinfo minfo` — `Src/Zle/zle_tricky.c`
 /// (the single file-scope instance). The struct type itself lives
@@ -3073,8 +3064,8 @@ mod tests {
             g.cur = Some(Box::new(cm));
             g.asked = 1;
         }
-        minfo_clear_cur();
-        minfo_asked_zero();
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() { g.cur = None; }
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() { g.asked = 0; }
         let m = MINFO.get().unwrap().lock().unwrap().clone();
         assert!(m.cur.is_none());
         assert_eq!(m.asked, 0);
