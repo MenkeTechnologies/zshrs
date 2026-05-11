@@ -245,7 +245,7 @@ impl Zle {
     /// insert keymap with `insmode = false` so subsequent self-inserts
     /// overwrite existing chars instead of pushing them right.
     pub fn vi_replace_mode(&mut self) {
-        self.keymaps.select("viins");
+        crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
         self.insmode = false; // Overwrite mode
     }
 
@@ -667,7 +667,7 @@ impl Zle {
         self.zlell = self.zleline.len();
         self.zlecs = start.min(self.zlell);
         self.vistartchange = self.undo_changeno;
-        self.keymaps.select("main");
+        crate::ported::zle::zle_keymap::selectkeymap("main", 1);
         self.resetneeded = true;
         0
     }

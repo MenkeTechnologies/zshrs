@@ -1379,7 +1379,7 @@ fn widget_vi_cmd_mode(zle: &mut Zle) {
     // Port of vicmdmode() from Src/Zle/zle_vi.c. ESC out of insert →
     // command mode; cursor steps back one (vim convention) since vi
     // command mode treats the cursor as ON a char rather than between.
-    zle.keymaps.select("vicmd");
+    crate::ported::zle::zle_keymap::selectkeymap("vicmd", 1);
     if zle.zlecs > 0 {
         zle.zlecs -= 1;
     }
@@ -1388,14 +1388,14 @@ fn widget_vi_cmd_mode(zle: &mut Zle) {
 
 fn widget_vi_insert(zle: &mut Zle) {
     // Port of viinsert() from Src/Zle/zle_vi.c:355.
-    zle.keymaps.select("viins");
+    crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
     zle.insmode = true;
 }
 
 fn widget_vi_insert_bol(zle: &mut Zle) {
     // Port of viinsertbol() from Src/Zle/zle_vi.c:374. Vim's `I` —
     // first-non-blank of current line, then enter insert mode.
-    zle.keymaps.select("viins");
+    crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
     zle.insmode = true;
     let bol = zle.find_bol(zle.zlecs);
     let mut p = bol;
@@ -1410,7 +1410,7 @@ fn widget_vi_add_next(zle: &mut Zle) {
     // Port of viaddnext() from Src/Zle/zle_vi.c:336. Vim's `a` —
     // step right one then enter insert mode (so insert lands AFTER
     // the cursor's current char).
-    zle.keymaps.select("viins");
+    crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
     zle.insmode = true;
     if zle.zlecs < zle.find_eol(zle.zlecs) {
         zle.zlecs += 1;
@@ -1421,7 +1421,7 @@ fn widget_vi_add_next(zle: &mut Zle) {
 fn widget_vi_add_eol(zle: &mut Zle) {
     // Port of viaddeol() from Src/Zle/zle_vi.c:346. Vim's `A` —
     // jump to end-of-line then enter insert mode.
-    zle.keymaps.select("viins");
+    crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
     zle.insmode = true;
     zle.zlecs = zle.find_eol(zle.zlecs);
     zle.resetneeded = true;
@@ -1673,7 +1673,7 @@ fn widget_vi_replace(zle: &mut Zle) {
     // Port of vireplace() from Src/Zle/zle_vi.c (the `R` command).
     // Switch to insert keymap with overwrite mode so subsequent self-
     // inserts replace existing chars instead of pushing them right.
-    zle.keymaps.select("viins");
+    crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
     zle.insmode = false;
 }
 
