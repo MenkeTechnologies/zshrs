@@ -455,21 +455,11 @@ pub struct vichange {                                                        // 
 // Keymap — `Src/Zle/zle.h:316-322`.
 // =====================================================================
 
-/// Port of `typedef struct keymap *Keymap` from zle.h:320. The
-/// keymap struct itself is opaque (defined in zle_keymap.c); the
-/// type alias here matches the C public API.
-pub type KeymapPtr = Box<keymap_opaque>;                                     // c:320
-
-/// Opaque placeholder for `struct keymap` (defined in
-/// `Src/Zle/zle_keymap.c`). The Rust port keeps the public-API
-/// alias here and lets the concrete struct live in the keymap port
-/// file.
-pub struct keymap_opaque {
-    /// Opaque payload — the keymap implementation lives in
-    /// `keymaps.rs` (extension) for the binding tables; this
-    /// placeholder exists only to satisfy the type alias.
-    pub _opaque: usize,
-}
+// `KeymapPtr` / `keymap_opaque` deleted — Rust-invented placeholder
+// for the `typedef struct keymap *Keymap` opaque alias at zle.h:320.
+// The real `Keymap` struct (full port of `struct keymap` at
+// `zle_keymap.c:64`) lives in `zle_keymap.rs` and callers
+// reference it directly via `Arc<Keymap>`.
 
 /// Port of `KeyScanFunc` from zle.h:322.
 /// C: `void (*KeyScanFunc) (char *, Thingy, char *, void *)`.
