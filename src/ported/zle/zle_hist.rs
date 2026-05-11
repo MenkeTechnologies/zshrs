@@ -1133,7 +1133,8 @@ pub fn endofhistory(zle: &mut Zle) -> i32 {                                  // 
 /// One snapshot of incremental-search position state pushed onto a
 /// per-isearch undo stack.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct IsrchSpot {
+#[allow(non_camel_case_types)]
+pub struct isrch_spot {
     pub hl: i32,
     pub pos: u16,
     pub pat_hl: i32,
@@ -1147,10 +1148,10 @@ pub struct IsrchSpot {
 /// Port of `static struct isrch_spot *isrch_spots` and `static int max_spot`
 /// from `Src/Zle/zle_hist.c:946-947` — heap-grown stack of incremental
 /// search positions used to back-up after deleting search chars.
-pub static ISRCH_SPOTS: std::sync::OnceLock<std::sync::Mutex<Vec<IsrchSpot>>> =
+pub static ISRCH_SPOTS: std::sync::OnceLock<std::sync::Mutex<Vec<isrch_spot>>> =
     std::sync::OnceLock::new();
 
-fn isrch_spots() -> &'static std::sync::Mutex<Vec<IsrchSpot>> {
+fn isrch_spots() -> &'static std::sync::Mutex<Vec<isrch_spot>> {
     ISRCH_SPOTS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
@@ -1208,9 +1209,9 @@ pub fn set_isrch_spot(                                                       // 
     // C body c:977-996: realloc isrch_spots to fit num+1, populate.
     let mut spots = isrch_spots().lock().unwrap();
     if num >= spots.len() {
-        spots.resize(num + 64, IsrchSpot::default());
+        spots.resize(num + 64, isrch_spot::default());
     }
-    spots[num] = IsrchSpot {
+    spots[num] = isrch_spot {
         hl,
         pos: pos as u16,
         pat_hl,
@@ -1473,7 +1474,7 @@ pub fn save_isearch_buffer(zle: &mut Zle) -> i32 {                           // 
     0
 }
 
-// `set_isrch_spot` is ported above with the IsrchSpot/ISRCH_SPOTS substrate
+// `set_isrch_spot` is ported above with the isrch_spot/ISRCH_SPOTS substrate
 // at Src/Zle/zle_hist.c:973. This duplicate shim was retired when the real
 // implementation landed.
 
