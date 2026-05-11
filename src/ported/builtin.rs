@@ -196,21 +196,29 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
     BUILTIN("suspend", 0, None, 0, 0, 0, Some("f"), None),
     BUILTIN("test", BINF_HANDLES_OPTS, None, 0, -1, BIN_TEST, None, None),
     BUILTIN("ttyctl", 0, None, 0, 0, 0, Some("fu"), None),
+    // c:Src/Builtins/rlimits.c:868-870 — limit/ulimit/unlimit are
+    // declared in the rlimits Builtins-module's bintab. zshrs has the
+    // free-fn ports at src/ported/builtins/rlimits.rs but never
+    // registered them; the BUILTIN_NAMES derivation missed them and
+    // `type limit` etc. returned empty.
+    BUILTIN("limit",   0, None, 0, -1, 0, Some("sh"), None),                  // c:rlimits.c:868
+    BUILTIN("ulimit",  0, None, 0, -1, 0, None,       None),                  // c:rlimits.c:869
+    BUILTIN("unlimit", 0, None, 0, -1, 0, Some("hs"), None),                  // c:rlimits.c:870
     BUILTIN("times", BINF_PSPECIAL, None, 0, 0, 0, None, None),
     BUILTIN("trap", BINF_PSPECIAL | BINF_HANDLES_OPTS, None, 0, -1, 0, None, None),
     BUILTIN("true", 0, None, 0, -1, 0, None, None),
-    BUILTIN("type", 0, None, 0, -1, 0, Some("ampfsSw"), Some("v")),
+    BUILTIN("type", 0, Some(bin_whence as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("ampfsSw"), Some("v")),
     BUILTIN("typeset", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%afghi:%klp:%rtuxmnz"), None),
     BUILTIN("umask", 0, None, 0, 1, 0, Some("S"), None),
-    BUILTIN("unalias", 0, None, 0, -1, BIN_UNALIAS, Some("ams"), None),
-    BUILTIN("unfunction", 0, None, 1, -1, BIN_UNFUNCTION, Some("m"), Some("f")),
-    BUILTIN("unhash", 0, None, 1, -1, BIN_UNHASH, Some("adfms"), None),
+    BUILTIN("unalias", 0, Some(bin_unhash as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_UNALIAS, Some("ams"), None),
+    BUILTIN("unfunction", 0, Some(bin_unhash as crate::ported::zsh_h::HandlerFunc), 1, -1, BIN_UNFUNCTION, Some("m"), Some("f")),
+    BUILTIN("unhash", 0, Some(bin_unhash as crate::ported::zsh_h::HandlerFunc), 1, -1, BIN_UNHASH, Some("adfms"), None),
     BUILTIN("unset", BINF_PSPECIAL, None, 1, -1, BIN_UNSET, Some("fmvn"), None),
     BUILTIN("unsetopt", 0, None, 0, -1, BIN_UNSETOPT, None, None),
     BUILTIN("wait", 0, None, 0, -1, BIN_WAIT, None, None),
-    BUILTIN("whence", 0, None, 0, -1, 0, Some("acmpvfsSwx:"), None),
-    BUILTIN("where", 0, None, 0, -1, 0, Some("pmsSwx:"), Some("ca")),
-    BUILTIN("which", 0, None, 0, -1, 0, Some("ampsSwx:"), Some("c")),
+    BUILTIN("whence", 0, Some(bin_whence as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("acmpvfsSwx:"), None),
+    BUILTIN("where", 0, Some(bin_whence as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("pmsSwx:"), Some("ca")),
+    BUILTIN("which", 0, Some(bin_whence as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("ampsSwx:"), Some("c")),
     BUILTIN("zmodload", 0, None, 0, -1, 0, Some("AFRILP:abcfdilmpsue"), None),
     BUILTIN("zcompile", 0, None, 0, -1, 0, Some("tUMRcmzka"), None),
 ]);
@@ -258,15 +266,15 @@ mod tests {
 
     #[test]
     fn registration_table_matches_c_count() {
-        // Src/builtin.c:40-137 has 79 rows total: 76 always-on
-        // plus 3 debug-only (`hashinfo` under ZSH_HASH_DEBUG, `mem`
-        // under ZSH_MEM/ZSH_MEM_DEBUG, `patdebug` under
-        // ZSH_PAT_DEBUG). The Rust port registers all 79 since
-        // the debug builtins are now ported (bin_hashinfo, bin_mem,
-        // bin_patdebug) and exposing them unconditionally matches
-        // a C build with the three ZSH_*_DEBUG flags defined. If
-        // the C source grows or shrinks rows, this test fires.
-        assert_eq!(BUILTINS.len(), 79);
+        // Src/builtin.c:40-137 has 79 rows total (5 BIN_PREFIX + 71
+        // BUILTIN + 3 debug-only BUILTIN). The Rust port also exposes
+        // limit/ulimit/unlimit eagerly even though their C home is
+        // Src/Builtins/rlimits.c:868-870 (loaded via zmodload zsh/rlimits) —
+        // so `type limit` etc. work without an explicit zmodload step.
+        // That bumps the total from 79 → 82. If C grows or shrinks
+        // rows, this fires; bump alongside the additions in BUILTINS
+        // above.
+        assert_eq!(BUILTINS.len(), 82);
     }
 
     #[test]
@@ -3058,7 +3066,17 @@ pub fn bin_print(name: &str, args: &[String],                                // 
 
     // c:4860+ — main print loop.
     let sep = if one_per_line { "\n" } else { " " };
-    let body = args.join(sep);
+    // c:4598-4600 — `-P` prompt-style percent expansion (`%n`, `%d`,
+    // `%?`, `%h`, `%%`, etc.). Routes through `expand_prompt`
+    // (canonical port of `Src/prompt.c:182 promptexpand`).
+    let processed_args: Vec<String> = if OPT_ISSET(ops, b'P') {
+        args.iter()
+            .map(|a| crate::ported::prompt::expand_prompt(a))                // c:Src/prompt.c:182
+            .collect()
+    } else {
+        args.to_vec()
+    };
+    let body = processed_args.join(sep);
     if let Some(ref v) = dest_var {
         crate::ported::params::setsparam(v, &body);
     } else {
@@ -3079,6 +3097,13 @@ pub fn bin_print(name: &str, args: &[String],                                // 
 /// elaborate (width/precision/flag chars/%b/%q/etc.); this is the
 /// minimal subset that covers the common script patterns.
 fn printf_format(fmt: &str, args: &[String]) -> String {
+    // c:Src/builtin.c:4711 — `fmt = getkeystring(fmt, &flen, ...,
+    // GETKEYS_PRINTF_FMT, ...);`. The format string is first run
+    // through getkeystring to interpret backslash escapes (`\n`,
+    // `\t`, `\xNN`, etc.) before %-format substitution. Earlier port
+    // treated `%n`/`%t`/`%\\` as escape sequences, which is wrong:
+    // those are %-format specs, not backslash escapes.
+    let (fmt, _) = crate::ported::utils::getkeystring(fmt);                  // c:builtin.c:4711
     let mut out = String::with_capacity(fmt.len() + 16);
     let mut iter = fmt.chars().peekable();
     let mut arg_i = 0usize;
@@ -3087,16 +3112,77 @@ fn printf_format(fmt: &str, args: &[String]) -> String {
             out.push(c);
             continue;
         }
+        // c:Src/builtin.c:4791+ — parse width/precision/flag chars
+        // between `%` and the conversion. Capture them so `printf
+        // "%-10s" hi` and `printf "%.3f" 3.14159` render correctly.
+        let mut spec = String::from("%");
+        loop {
+            match iter.peek() {
+                Some(&c) if matches!(c, '-' | '+' | ' ' | '#' | '0') => {
+                    spec.push(c); iter.next();
+                }
+                _ => break,
+            }
+        }
+        while let Some(&c) = iter.peek() {
+            if c.is_ascii_digit() { spec.push(c); iter.next(); }
+            else { break; }
+        }
+        if iter.peek() == Some(&'.') {
+            spec.push('.'); iter.next();
+            while let Some(&c) = iter.peek() {
+                if c.is_ascii_digit() { spec.push(c); iter.next(); }
+                else { break; }
+            }
+        }
         match iter.next() {
             Some('%') => out.push('%'),
             Some('s') => {
-                if let Some(a) = args.get(arg_i) { out.push_str(a); }
+                let a = args.get(arg_i).cloned().unwrap_or_default();
+                spec.push('s');
+                out.push_str(&format_spec_str(&spec, &a));
                 arg_i += 1;
             }
             Some('d') | Some('i') => {
-                if let Some(a) = args.get(arg_i) {
-                    out.push_str(&a.parse::<i64>().map(|n| n.to_string()).unwrap_or_else(|_| a.clone()));
-                }
+                let a = args.get(arg_i).cloned().unwrap_or_default();
+                let n: i64 = a.parse().unwrap_or(0);
+                spec.push('d');
+                out.push_str(&format_spec_int(&spec, n));
+                arg_i += 1;
+            }
+            Some('u') => {
+                let a = args.get(arg_i).cloned().unwrap_or_default();
+                let n: u64 = a.parse().unwrap_or(0);
+                spec.push('u');
+                out.push_str(&format_spec_uint(&spec, n));
+                arg_i += 1;
+            }
+            Some('x') => {
+                let a = args.get(arg_i).cloned().unwrap_or_default();
+                let n: i64 = a.parse().unwrap_or(0);
+                spec.push('x');
+                out.push_str(&format!("{:x}", n));
+                arg_i += 1;
+            }
+            Some('X') => {
+                let a = args.get(arg_i).cloned().unwrap_or_default();
+                let n: i64 = a.parse().unwrap_or(0);
+                spec.push('X');
+                out.push_str(&format!("{:X}", n));
+                arg_i += 1;
+            }
+            Some('o') => {
+                let a = args.get(arg_i).cloned().unwrap_or_default();
+                let n: i64 = a.parse().unwrap_or(0);
+                spec.push('o');
+                out.push_str(&format!("{:o}", n));
+                arg_i += 1;
+            }
+            Some('f') | Some('F') | Some('g') | Some('G') | Some('e') | Some('E') => {
+                let a = args.get(arg_i).cloned().unwrap_or_default();
+                let n: f64 = a.parse().unwrap_or(0.0);
+                spec.push('f');
+                out.push_str(&format_spec_float(&spec, n));
                 arg_i += 1;
             }
             Some('c') => {
@@ -3105,14 +3191,78 @@ fn printf_format(fmt: &str, args: &[String]) -> String {
                 }
                 arg_i += 1;
             }
-            Some('n') => out.push('\n'),
-            Some('t') => out.push('\t'),
-            Some('\\') => out.push('\\'),
             Some(other) => { out.push('%'); out.push(other); }
             None => out.push('%'),
         }
     }
     out
+}
+
+/// Apply a printf-style `%[-flag][width][.prec]s` spec to a string.
+/// Mirrors C `printf "%-10s" str` formatting; the Rust `format!` macro
+/// doesn't accept runtime-parsed specs so we hand-parse.
+fn format_spec_str(spec: &str, s: &str) -> String {
+    let (left_align, width, prec) = parse_width_prec(spec);
+    let truncated: &str = if let Some(p) = prec {
+        let end: usize = s.chars().take(p).map(|c| c.len_utf8()).sum();
+        &s[..end.min(s.len())]
+    } else { s };
+    let pad = width.saturating_sub(truncated.chars().count());
+    if left_align {
+        format!("{}{}", truncated, " ".repeat(pad))
+    } else {
+        format!("{}{}", " ".repeat(pad), truncated)
+    }
+}
+
+fn format_spec_int(spec: &str, n: i64) -> String {
+    let (left_align, width, _prec) = parse_width_prec(spec);
+    let zero_pad = spec.contains('0') && !left_align;
+    let body = n.to_string();
+    let pad = width.saturating_sub(body.chars().count());
+    if pad == 0 { body }
+    else if left_align { format!("{}{}", body, " ".repeat(pad)) }
+    else if zero_pad {
+        if let Some(rest) = body.strip_prefix('-') {
+            format!("-{}{}", "0".repeat(pad), rest)
+        } else { format!("{}{}", "0".repeat(pad), body) }
+    } else { format!("{}{}", " ".repeat(pad), body) }
+}
+
+fn format_spec_uint(spec: &str, n: u64) -> String {
+    format_spec_int(spec, n as i64)
+}
+
+fn format_spec_float(spec: &str, n: f64) -> String {
+    let (left_align, width, prec) = parse_width_prec(spec);
+    let p = prec.unwrap_or(6);
+    let body = format!("{:.*}", p, n);
+    let pad = width.saturating_sub(body.chars().count());
+    if pad == 0 { body }
+    else if left_align { format!("{}{}", body, " ".repeat(pad)) }
+    else { format!("{}{}", " ".repeat(pad), body) }
+}
+
+fn parse_width_prec(spec: &str) -> (bool, usize, Option<usize>) {
+    let s = spec.trim_start_matches('%');
+    let mut i = 0;
+    let bytes = s.as_bytes();
+    let mut left_align = false;
+    while i < bytes.len() && matches!(bytes[i], b'-' | b'+' | b' ' | b'#' | b'0') {
+        if bytes[i] == b'-' { left_align = true; }
+        i += 1;
+    }
+    let width_start = i;
+    while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }
+    let width: usize = s[width_start..i].parse().unwrap_or(0);
+    let mut prec: Option<usize> = None;
+    if i < bytes.len() && bytes[i] == b'.' {
+        i += 1;
+        let p_start = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }
+        prec = Some(s[p_start..i].parse().unwrap_or(0));
+    }
+    (left_align, width, prec)
 }
 
 /// Port of `bin_fc()` from Src/builtin.c:1426.
@@ -3950,8 +4100,21 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
                 }
             }
             // c:4160-4165 — builtin command check.
+            // Output shape per `Src/builtin.c:177-194 printbuiltinnode`:
+            //   -w → "name: builtin"
+            //   -c → "name: shell built-in command"
+            //   -v → "name is a shell builtin"
+            //   default → "name"
             if BUILTINS.iter().any(|b| b.node.nam == *arg) {                     // c:4160
-                println!("{}: builtin", arg);                                // c:4162
+                if wd {
+                    println!("{}: builtin", arg);                            // c:179
+                } else if csh {
+                    println!("{}: shell built-in command", arg);             // c:184
+                } else if v {
+                    println!("{} is a shell builtin", arg);                  // c:189
+                } else {
+                    println!("{}", arg);                                     // c:194
+                }
                 informed = 1;                                                // c:4163
                 if !all { continue; }                                        // c:4164
             }
@@ -5766,8 +5929,15 @@ pub fn bin_set(nam: &str, args: &[String],                                   // 
     } else {
         // c:711-712 — `freearray(pparams); pparams = zarrdup(args);`
         if let Ok(mut pp) = PPARAMS.lock() {
-            *pp = sorted;                                                    // c:712
+            *pp = sorted.clone();                                            // c:712
         }
+        // Mirror to fusevm-side `exec.positional_params` so the VM's
+        // `$1`/`$@`/`$*` lookup sees the new values. Two-store
+        // architecture: PPARAMS is the C-port canonical store,
+        // `exec.positional_params` is the fusevm cache.
+        crate::fusevm_bridge::with_executor(|exec| {
+            exec.positional_params = sorted;
+        });
     }
     crate::ported::mem::unqueue_signals();                                   // c:714
     0                                                                        // c:715

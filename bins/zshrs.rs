@@ -729,9 +729,15 @@ pub fn zshrs_main() {
         }
         if xtrace {
             executor.options.insert("xtrace".to_string(), true);
+            // Mirror to canonical options store so printprompt4's
+            // `isset(XTRACE)` early-return check sees the live state.
+            // Without this, `-x` toggled `exec.options` only and the
+            // canonical store stayed false → no PS4 prefix emission.
+            zsh::ported::options::opt_state_set("xtrace", true);
         }
         if verbose {
             executor.options.insert("verbose".to_string(), true);
+            zsh::ported::options::opt_state_set("verbose", true);
         }
         if no_rcs {
             // Match zsh -f: rcs and hashdirs default-on options are
@@ -739,6 +745,8 @@ pub fn zshrs_main() {
             // keeps globalrcs on (only the user-rcs files are skipped).
             executor.options.insert("rcs".to_string(), false);
             executor.options.insert("hashdirs".to_string(), false);
+            zsh::ported::options::opt_state_set("rcs", false);
+            zsh::ported::options::opt_state_set("hashdirs", false);
         }
         // Apply CLI `-o NAME` / `+o NAME` option settings. zsh's
         // option table stores names verbatim (e.g. `nomatch` is
@@ -752,7 +760,8 @@ pub fn zshrs_main() {
         // expand_glob looks up "nomatch" directly.
         for (raw, set_val) in opts {
             let canonical = raw.to_lowercase().replace(['_', '-'], "");
-            executor.options.insert(canonical, *set_val);
+            executor.options.insert(canonical.clone(), *set_val);
+            zsh::ported::options::opt_state_set(&canonical, *set_val);
         }
     }
 
@@ -819,7 +828,13 @@ pub fn zshrs_main() {
         // enter a function (only scriptname mutates), so PS4's
         // %x continues to show the file basename inside function
         // bodies.
-        executor.scriptfilename = Some(basename);
+        executor.scriptfilename = Some(basename.clone());
+        // Propagate to the canonical `SCRIPTNAME` static read by
+        // prompt expansion (`%N`/`%x`) via `utils::scriptname_get`.
+        // Without this, `printprompt4` saw None and `%N`/`%x` fell
+        // back to argzero — the full binary path — making xtrace
+        // emit `/Users/.../zshrs` instead of `zsh`.
+        zsh::ported::utils::set_scriptname(Some(basename));
 
         // Source zshenv per Src/init.c:1473 (GLOBAL_ZSHENV) +
         // Src/init.c:1489 (`sourcehome(".zshenv")`). C zsh sources

@@ -1130,10 +1130,33 @@ pub fn reswordsgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> { // 
 ///     table, synth a Param per matching entry, invoke func.
 #[allow(non_snake_case)]
 pub fn scanaliases(_alht: *mut HashTable, _ht: *mut HashTable,               // c:1965
-                   _func: Option<ScanFunc>, _pmflags: i32, _alflags: i32) {
-    // c:1968-1988 — for each Alias node, build pm with name/value and
-    // call func(&pm.node, pmflags). Static-link path defers to alias.rs
-    // walking ALIASTAB once that's wired.
+                   func: Option<ScanFunc>, pmflags: i32, alflags: i32) {
+    // c:1968-1988 — `for ((al = (Alias) firstnode(alht)); al;
+    //                     incnode(al)) { if (!al->node.flags & alflags
+    //                     && !disabled) emit(al->node.nam) }`.
+    // Walk the canonical `aliastab` (Src/hashtable.c:1210, ported at
+    // src/ported/hashtable.rs::aliastab_lock) and emit each alias
+    // matching the flag filter.
+    if let Some(f) = func {
+        let lock = if alflags == crate::ported::zsh_h::ALIAS_SUFFIX {
+            crate::ported::hashtable::sufaliastab_lock()
+        } else {
+            crate::ported::hashtable::aliastab_lock()
+        };
+        if let Ok(tab) = lock.lock() {
+            for (_, alias) in tab.iter() {                                   // c:1970
+                // c:1972 — `if (al->node.flags & alflags) continue;`
+                if alflags != 0 && alflags != crate::ported::zsh_h::ALIAS_SUFFIX
+                    && (alias.node.flags & alflags) == 0 { continue; }
+                let node = Box::new(crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: alias.node.nam.clone(),                             // c:1979
+                    flags: alias.node.flags,
+                });
+                f(&node, pmflags);                                           // c:1985
+            }
+        }
+    }
 }
 
 /// Port of `scanbuiltins()` from Src/Modules/parameter.c:813.

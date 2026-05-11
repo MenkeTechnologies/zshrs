@@ -28,7 +28,8 @@ use std::sync::{Mutex, OnceLock};
 #[cfg(unix)]
 use libc::{
     geteuid, getrlimit, rlim_t, rlimit, setrlimit, RLIMIT_AS, RLIMIT_CORE, RLIMIT_CPU,
-    RLIMIT_DATA, RLIMIT_FSIZE, RLIMIT_NOFILE, RLIMIT_STACK, RLIM_INFINITY, RLIM_NLIMITS,
+    RLIMIT_DATA, RLIMIT_FSIZE, RLIMIT_MEMLOCK, RLIMIT_NOFILE, RLIMIT_NPROC, RLIMIT_RSS,
+    RLIMIT_STACK, RLIM_INFINITY, RLIM_NLIMITS,
 };
 
 use crate::ported::utils::{zstrtol, zwarnnam};
@@ -144,6 +145,35 @@ pub static known_resources: &[resinfo_T] = &[
         unit: 1024,
         opt: 'v',
         descr: "address space (kbytes)",
+    },
+    // c:rlimits.c:78 — RLIMIT_RSS / RLIMIT_VMEM. On macOS VMEM is
+    // aliased to RLIMIT_AS so this entry's `'m'` opt is the only
+    // place RSS appears; on Linux RSS is a distinct rlimit.
+    resinfo_T {
+        res: RLIMIT_RSS as i32,
+        name: "resident",
+        r#type: zlimtype::ZLIMTYPE_MEMORY,
+        unit: 1024,
+        opt: 'm',
+        descr: "resident set size (kbytes)",
+    },
+    // c:rlimits.c:95 — RLIMIT_NPROC (`-u`).
+    resinfo_T {
+        res: RLIMIT_NPROC as i32,
+        name: "maxproc",
+        r#type: zlimtype::ZLIMTYPE_NUMBER,
+        unit: 1,
+        opt: 'u',
+        descr: "processes",
+    },
+    // c:rlimits.c:99 — RLIMIT_MEMLOCK (`-l`).
+    resinfo_T {
+        res: RLIMIT_MEMLOCK as i32,
+        name: "memorylocked",
+        r#type: zlimtype::ZLIMTYPE_MEMORY,
+        unit: 1024,
+        opt: 'l',
+        descr: "locked-in-memory size (kbytes)",
     },
 ];
 
