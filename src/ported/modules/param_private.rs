@@ -274,8 +274,8 @@ pub fn printprivatenode(pm: *mut crate::ported::zsh_h::param, _printflags: i32) 
     }
     // c:642-643 — printparamnode
     if !cur.is_null() {
-        // crate::ported::params::printparamnode(cur, _printflags);
-        // Stub: existing printparamnode hasn't been wired here yet.
+        let pm: &mut crate::ported::zsh_h::param = unsafe { &mut *cur };
+        crate::ported::params::printparamnode(pm, _printflags);              // c:643
     }
 }
 
