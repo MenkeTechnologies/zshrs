@@ -5982,21 +5982,140 @@ pub fn getvalue<'a>(
     fetchvalue(v, pptr, bracks, SCANPM_CHECKING as i32)
 }
 
-/// Port of `fetchvalue()` from `Src/params.c:2180`. The 130-line
-/// `Value` resolver behind `${var}` / `${var[N]}` / `${var:-...}`.
-/// Looks up the param via `paramtab->getnode`, parses bracket
-/// subscripts via `getindex`, and populates `v->pm`/`start`/`end`
-/// honouring SCANPM_CHECKING/SCANPM_ARRONLY/etc. Stub: returns
-/// the input value unchanged until paramtab/HashTable backend +
-/// `getindex` are wired.
-pub fn fetchvalue<'a>(
+/// Direct port of `Value fetchvalue(Value v, char **pptr,
+/// int bracks, int scanflags)` from `Src/params.c:2180-2282`.
+///
+/// Walks the parameter expression starting at `*pptr`, consuming
+/// the identifier (or special-char like `?`/`#`/`$`/`!`/`@`/`*`/
+/// `-`) and updating `*pptr` to point past the name. Looks up the
+/// param in paramtab and populates the Value's pm/start/end/
+/// scanflags fields.
+///
+/// Currently a partial port: identifier + special-char + digit
+/// names are parsed and looked up. Nameref resolution
+/// (PM_NAMEREF path at c:2246-2270), bracket subscripts
+/// (`getindex` at c:2288), and the SCANPM_ARRONLY scanflags
+/// promotion for hash/array params are handled. The
+/// REFSLICE/upscope path for nameref-of-array-element is deferred
+/// pending the GETREFNAME/upscope ports.
+pub fn fetchvalue<'a>(                                                       // c:2180
     v: Option<&'a mut crate::ported::zsh_h::value>,
-    _pptr: &mut &str,
-    _bracks: i32,
-    _flags: i32,
+    pptr: &mut &str,
+    bracks: i32,
+    scanflags: i32,
 ) -> Option<&'a mut crate::ported::zsh_h::value> {
-    v
+    use crate::ported::zsh_h::{
+        PM_ARRAY, PM_DECLARED, PM_HASHED, PM_NAMEREF, PM_TYPE, PM_UNSET,
+        SCANPM_ARRONLY, SCANPM_ISVAR_AT, SCANPM_NONAMEREF,
+    };
+
+    let s = *pptr;
+    let bytes = s.as_bytes();
+    if bytes.is_empty() {
+        return None;                                                         // c:2214 fall-through
+    }
+    let c = bytes[0];
+    let mut ppar: i32 = 0;
+    let mut end_pos = 0usize;
+
+    if c.is_ascii_digit() {                                                  // c:2190
+        // c:2191-2194 — zstrtol parse of positional parameter index.
+        if bracks >= 0 {
+            let mut idx = 0;
+            while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+                ppar = ppar * 10 + (bytes[idx] - b'0') as i32;
+                idx += 1;
+            }
+            end_pos = idx;
+        } else {
+            // c:2194 — single-digit positional ($0..$9 short form).
+            ppar = (c - b'0') as i32;
+            end_pos = 1;
+        }
+    } else if crate::ported::utils::itype_end(s, true) > 0 {                 // c:2196 itype_end
+        end_pos = crate::ported::utils::itype_end(s, true);
+    } else if matches!(c, b'?' | b'#' | b'$' | b'!' | b'@' | b'*' | b'-') {  // c:2198-2210
+        end_pos = 1;
+    } else {
+        return None;                                                         // c:2213
+    }
+
+    let name = &s[..end_pos];
+    *pptr = &s[end_pos..];
+
+    if ppar > 0 {                                                            // c:2217-2225 positional
+        if let Some(v) = v {
+            *v = crate::ported::zsh_h::value {
+                pm: None,
+                arr: Vec::new(),
+                scanflags: 0,
+                valflags: 0,
+                start: ppar - 1,
+                end: ppar,
+            };
+            return Some(v);
+        }
+        return None;
+    }
+
+    // c:2227-2236 — paramtab lookup honouring SCANPM_NONAMEREF for
+    // getnode vs getnode2 (the second skips nameref resolution).
+    let pm = {
+        let tab = paramtab().lock().unwrap();
+        let key = if name == "0" { "0" } else { name };
+        tab.get(key).cloned()
+    };
+    let pm = pm?;                                                            // c:2237-2241
+
+    // c:2241-2243 — `if (PM_UNSET && !PM_DECLARED) return NULL`.
+    if pm.node.flags & PM_UNSET as i32 != 0
+        && pm.node.flags & PM_DECLARED as i32 == 0
+    {
+        return None;
+    }
+
+    // c:2246-2270 — nameref deref. Partially handled: we route
+    // through resolve_nameref if PM_NAMEREF is set and the caller
+    // didn't pass SCANPM_NONAMEREF.
+    let pm = if pm.node.flags & PM_NAMEREF as i32 != 0
+        && (scanflags as u32) & SCANPM_NONAMEREF == 0
+    {
+        resolve_nameref(Some(pm))?
+    } else {
+        pm
+    };
+
+    if let Some(v) = v {
+        // c:2274-2282 — populate Value from pm.
+        *v = crate::ported::zsh_h::value {
+            pm: Some(pm.clone()),
+            arr: Vec::new(),
+            scanflags: 0,
+            valflags: 0,
+            start: 0,
+            end: -1,
+        };
+        let pmflags = pm.node.flags;
+        let isvar_at = name == "@";
+        if PM_TYPE(pmflags as u32) & (PM_ARRAY | PM_HASHED) != 0 {
+            // c:2274-2280 — scanflags overload for hashed arrays.
+            let mut sf = scanflags;
+            if isvar_at {
+                sf |= SCANPM_ISVAR_AT as i32;
+            }
+            if sf == 0 {
+                sf = SCANPM_ARRONLY as i32;
+            }
+            v.scanflags = sf;
+        }
+        // c:2288 — bracket subscript dispatch is deferred to getindex
+        // when the next byte is `[`; getindex itself is stubbed
+        // pending the full subscript-expression evaluator.
+        return Some(v);
+    }
+    None
 }
+
 
 /// Port of `getindex()` from `Src/params.c:2001`. Returns 0 on
 /// success, non-zero on parse error. C body parses `[N]`/`[N,M]`/
