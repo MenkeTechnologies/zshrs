@@ -475,7 +475,28 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>)   //
     patflags.store(inflags & !(PAT_PURES | PAT_HAS_EXCLUDP) as i32, Ordering::Relaxed); // c:566
     patglobflags.store(0, Ordering::Relaxed);
 
-    // c:583-590 — emit a P_GFLAGS placeholder at start. Skipped in v1.
+    // c:583-590 — emit P_GFLAGS placeholder. Phase 5.1: instead of
+    // emitting an opcode, hoist leading `(#...)` flag specifiers into
+    // patprog.globflags so the matcher applies them globally for the
+    // whole match. Full mid-pattern P_GFLAGS opcode still deferred.
+    let mut hoisted_globflags: i32 = 0;
+    loop {
+        let off = patparse_off.load(Ordering::Relaxed);
+        let p = patparse.lock().unwrap();
+        if off + 1 >= p.len() || &p.as_bytes()[off..off + 2] != b"(#" {
+            break;
+        }
+        let rest = p[off..].to_string();
+        drop(p);
+        match patgetglobflags(&rest) {
+            Some((gflags, _assert, consumed)) => {
+                if gflags.case_insensitive { hoisted_globflags |= PAT_LCMATCHUC as i32; }
+                if gflags.lcmatchuc        { hoisted_globflags |= PAT_LCMATCHUC as i32; }
+                patparse_off.fetch_add(consumed, Ordering::Relaxed);
+            }
+            None => break,
+        }
+    }
 
     let mut flagp: i32 = 0;
     let root = patcompswitch(0, &mut flagp);
@@ -498,9 +519,9 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>)   //
         size: code.len() as i64,
         mustoff: 0,
         patmlen: 0,
-        globflags: 0,
+        globflags: hoisted_globflags,
         globend: patglobflags.load(Ordering::Relaxed),
-        flags: patflags.load(Ordering::Relaxed),
+        flags: patflags.load(Ordering::Relaxed) | hoisted_globflags,
         patnpar: patnpar.load(Ordering::Relaxed) - 1,
         patstartch: 0,
         code,
@@ -1080,14 +1101,14 @@ pub fn pattry(prog: &Patprog, string: &str) -> bool {                         //
 pub fn pattrylen(prog: &Patprog, string: &str, len: usize) -> bool {          // c:2236
     let trial = if len < string.len() { &string[..len] } else { string };
     let mut state = rpat::new();
-    patmatch_internal(&prog.code, 0, trial, 0, &mut state).is_some()
+    patmatch_internal(&prog.code, 0, trial, 0, &mut state, prog.flags).is_some()
 }
 
 /// Port of `pattryrefs()` from `Src/pattern.c:2294`. Run match and
 /// return capture group ranges.
 pub fn pattryrefs(prog: &Patprog, string: &str) -> Option<(bool, Vec<(usize, usize)>)> { // c:2294
     let mut state = rpat::new();
-    let ok = patmatch_internal(&prog.code, 0, string, 0, &mut state).is_some();
+    let ok = patmatch_internal(&prog.code, 0, string, 0, &mut state, prog.flags).is_some();
     if ok {
         let mut refs = Vec::with_capacity(prog.patnpar as usize);
         for i in 0..(prog.patnpar as usize).min(NSUBEXP) {
@@ -1109,7 +1130,7 @@ pub fn pattryrefs(prog: &Patprog, string: &str) -> Option<(bool, Vec<(usize, usi
 /// length of a successful match, or None.
 pub fn patmatchlen(prog: &Patprog, string: &str) -> Option<usize> {           // c:2649
     let mut state = rpat::new();
-    patmatch_internal(&prog.code, 0, string, 0, &mut state)
+    patmatch_internal(&prog.code, 0, string, 0, &mut state, prog.flags)
 }
 
 /// Port of `patmatch()` from `Src/pattern.c:2694`. The interpreter.
@@ -1130,6 +1151,7 @@ fn patmatch_internal(
     string: &str,
     string_off: usize,
     state: &mut rpat,
+    glob_flags: i32,
 ) -> Option<usize> {                                                          // c:2694
     let mut scan = prog_off;
     let mut s_off = string_off;
@@ -1149,7 +1171,17 @@ fn patmatch_internal(
                 let str_bytes = &code[body + 4..body + 4 + len];
                 let input_bytes = string.as_bytes();
                 if s_off + len > input_bytes.len() { return None; }
-                if &input_bytes[s_off..s_off + len] != str_bytes { return None; }
+                let igncase = (glob_flags & PAT_LCMATCHUC as i32) != 0;       // c:globflags check
+                if igncase {
+                    let inp = &input_bytes[s_off..s_off + len];
+                    for k in 0..len {
+                        if inp[k].to_ascii_lowercase() != str_bytes[k].to_ascii_lowercase() {
+                            return None;
+                        }
+                    }
+                } else if &input_bytes[s_off..s_off + len] != str_bytes {
+                    return None;
+                }
                 s_off += len;
             }
             P_ANY => {                                                        // c:P_ANY arm
@@ -1164,7 +1196,14 @@ fn patmatch_internal(
                 let input_bytes = string.as_bytes();
                 if s_off >= input_bytes.len() { return None; }
                 let b = input_bytes[s_off];
-                if !set.contains(&b) { return None; }
+                let igncase = (glob_flags & PAT_LCMATCHUC as i32) != 0;
+                let found = if igncase {
+                    let lb = b.to_ascii_lowercase();
+                    set.iter().any(|&c| c.to_ascii_lowercase() == lb)
+                } else {
+                    set.contains(&b)
+                };
+                if !found { return None; }
                 s_off += 1;
             }
             P_ANYBUT => {
@@ -1174,7 +1213,14 @@ fn patmatch_internal(
                 let input_bytes = string.as_bytes();
                 if s_off >= input_bytes.len() { return None; }
                 let b = input_bytes[s_off];
-                if set.contains(&b) { return None; }
+                let igncase = (glob_flags & PAT_LCMATCHUC as i32) != 0;
+                let found = if igncase {
+                    let lb = b.to_ascii_lowercase();
+                    set.iter().any(|&c| c.to_ascii_lowercase() == lb)
+                } else {
+                    set.contains(&b)
+                };
+                if found { return None; }
                 s_off += 1;
             }
             P_STAR => {                                                       // c:P_STAR arm (greedy)
@@ -1185,7 +1231,7 @@ fn patmatch_internal(
                 let mut consumed = max;
                 loop {
                     let mut sub_state = state.clone();
-                    if let Some(end) = patmatch_internal(code, next, string, s_off + consumed, &mut sub_state) {
+                    if let Some(end) = patmatch_internal(code, next, string, s_off + consumed, &mut sub_state, glob_flags) {
                         *state = sub_state;
                         return Some(end);
                     }
@@ -1207,7 +1253,7 @@ fn patmatch_internal(
                 loop {
                     let cur = *positions.last().unwrap();
                     let mut sub_state = state.clone();
-                    if let Some(new_pos) = patmatch_internal(code, operand, string, cur, &mut sub_state) {
+                    if let Some(new_pos) = patmatch_internal(code, operand, string, cur, &mut sub_state, glob_flags) {
                         if new_pos == cur { break; } // zero-width fixed point
                         *state = sub_state;
                         positions.push(new_pos);
@@ -1220,7 +1266,7 @@ fn patmatch_internal(
                 while positions.len() > min {
                     let cur = *positions.last().unwrap();
                     let mut sub_state = state.clone();
-                    if let Some(end) = patmatch_internal(code, next, string, cur, &mut sub_state) {
+                    if let Some(end) = patmatch_internal(code, next, string, cur, &mut sub_state, glob_flags) {
                         *state = sub_state;
                         return Some(end);
                     }
@@ -1233,7 +1279,7 @@ fn patmatch_internal(
                 // Try this branch's operand, fall through to next branch on fail.
                 let operand = scan + I_BODY;
                 let mut sub_state = state.clone();
-                if let Some(end) = patmatch_internal(code, operand, string, s_off, &mut sub_state) {
+                if let Some(end) = patmatch_internal(code, operand, string, s_off, &mut sub_state, glob_flags) {
                     *state = sub_state;
                     return Some(end);
                 }
@@ -1497,7 +1543,7 @@ pub fn patrepeat(prog: &Patprog, s: &str, max: Option<usize>) -> usize {      //
     let max = max.unwrap_or(usize::MAX);
     while pos < s.len() && count < max {
         let mut state = rpat::new();
-        match patmatch_internal(&prog.code, 0, s, pos, &mut state) {
+        match patmatch_internal(&prog.code, 0, s, pos, &mut state, prog.flags) {
             Some(new_pos) if new_pos > pos => {
                 pos = new_pos;
                 count += 1;
@@ -1895,6 +1941,35 @@ mod tests {
         assert!(pattry(&prog, "XYZ"));
         assert!(!pattry(&prog, "1"));
         assert!(!pattry(&prog, ""));
+    }
+
+    /// `(#i)foo` matches "FOO" / "Foo" / etc. Port of pattern.c
+    /// patgetglobflags `i` case at c:1091 (sets GF_IGNCASE which
+    /// patcompile hoists into patprog.flags as PAT_LCMATCHUC).
+    #[test]
+    fn case_insensitive_via_glob_flag() {
+        let prog = compile("(#i)foo");
+        assert!(pattry(&prog, "foo"));
+        assert!(pattry(&prog, "FOO"));
+        assert!(pattry(&prog, "Foo"));
+        assert!(pattry(&prog, "fOo"));
+    }
+
+    /// `(#i)[abc]` — case-insensitive bracket class.
+    #[test]
+    fn case_insensitive_bracket() {
+        let prog = compile("(#i)[abc]");
+        assert!(pattry(&prog, "A"));
+        assert!(pattry(&prog, "b"));
+        assert!(!pattry(&prog, "d"));
+    }
+
+    /// Without `(#i)`, exact case required.
+    #[test]
+    fn case_sensitive_default() {
+        let prog = compile("foo");
+        assert!(pattry(&prog, "foo"));
+        assert!(!pattry(&prog, "FOO"));
     }
 
     #[test]
