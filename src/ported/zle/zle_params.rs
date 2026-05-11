@@ -33,7 +33,7 @@ impl Zle {
         self.zleline = s.chars().collect();
         self.zlell = self.zleline.len();
         self.zlecs = self.zlecs.min(self.zlell);
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// `$CURSOR` accessor — current cursor position (0-indexed).
@@ -46,7 +46,7 @@ impl Zle {
     /// Port of `set_cursor()` from Src/Zle/zle_params.c.
     pub fn set_cursor(&mut self, pos: usize) {                              // c:267
         self.zlecs = pos.min(self.zlell);
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// `$LBUFFER` accessor — text before the cursor.
@@ -63,7 +63,7 @@ impl Zle {
         self.zleline = s.chars().chain(rbuf.chars()).collect();
         self.zlell = self.zleline.len();
         self.zlecs = s.chars().count();
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// `$RBUFFER` accessor — text after the cursor.
@@ -78,7 +78,7 @@ impl Zle {
         let lbuf: String = self.zleline[..self.zlecs].iter().collect();
         self.zleline = lbuf.chars().chain(s.chars()).collect();
         self.zlell = self.zleline.len();
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// `$CUTBUFFER` accessor — most-recent kill-ring entry.

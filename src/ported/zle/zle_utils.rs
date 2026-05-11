@@ -28,7 +28,7 @@ impl Zle {
             self.zlecs += 1;
             self.zlell += 1;
         }
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Insert chars at cursor position
@@ -38,7 +38,7 @@ impl Zle {
             self.zlecs += 1;
             self.zlell += 1;
         }
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Delete n characters at cursor position
@@ -50,7 +50,7 @@ impl Zle {
                 self.zlell -= 1;
             }
         }
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Delete n characters before cursor
@@ -63,7 +63,7 @@ impl Zle {
                 self.zlell -= 1;
             }
         }
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Get the line as a string
@@ -81,7 +81,7 @@ impl Zle {
         self.zleline = s.chars().collect();
         self.zlell = self.zleline.len();
         self.zlecs = self.zlecs.min(self.zlell);
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Clear the line
@@ -90,7 +90,7 @@ impl Zle {
         self.zlell = 0;
         self.zlecs = 0;
         self.mark = 0;
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Get region between point and mark
@@ -262,7 +262,7 @@ impl Zle {
         }
         for _ in 0..count { self.zleline.remove(self.zlecs); }
         self.zlell -= count;
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         0
     }
 
@@ -282,7 +282,7 @@ impl Zle {
         self.zlecs -= count;
         for _ in 0..count { self.zleline.remove(self.zlecs); }
         self.zlell -= count;
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         0
     }
 
@@ -314,7 +314,7 @@ impl Zle {
             self.zleline.remove(self.zlecs);
         }
         self.zlell -= count;
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Kill backward
@@ -348,7 +348,7 @@ impl Zle {
             self.zleline.remove(self.zlecs);
         }
         self.zlell -= count;
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Direct port of `mod_export void cuttext(ZLE_STRING_T line, int len,
@@ -411,7 +411,7 @@ impl Zle {
         if self.zlecs >= pos {
             self.zlecs += text.chars().count();
         }
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Get line as string
@@ -428,7 +428,7 @@ impl Zle {
         if self.zlecs > self.zlell {
             self.zlecs = self.zlell;
         }
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Get ZLE line
@@ -481,7 +481,7 @@ impl Zle {
         self.zleline = s.chars().collect();
         self.zlell = self.zleline.len();
         self.zlecs = self.zlell;
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -785,7 +785,7 @@ impl Zle {
         }
         self.zlell = self.zleline.len();
         self.zlecs = old_cs.min(self.zlell);
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         true
     }
 
@@ -815,7 +815,7 @@ impl Zle {
         }
         self.zlell = self.zleline.len();
         self.zlecs = new_cs.min(self.zlell);
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         true
     }
 
@@ -900,7 +900,7 @@ pub fn backdel(zle: &mut crate::ported::zle::zle_main::Zle, ct: i32, _flags: i32
     zle.zleline.drain(start..zle.zlecs);                                 // c:1090 shiftchars
     zle.zlell = zle.zleline.len();
     zle.zlecs = start;
-    zle.resetneeded = true;                                              // c:1091 CCRIGHT
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);                                              // c:1091 CCRIGHT
 }
 
 /// Port of `backkill()` from `Src/Zle/zle_utils.c:1045`. Cuts `ct`
@@ -923,7 +923,7 @@ pub fn backkill(zle: &mut crate::ported::zle::zle_main::Zle, ct: i32, flags: i32
     if zle.killring.len() > zle.killringmax {
         zle.killring.pop_back();
     }
-    zle.resetneeded = true;                                              // c:1059 CCRIGHT
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);                                              // c:1059 CCRIGHT
 }
 
 /// Port of `cut()` from Src/Zle/zle_utils.c:935.
@@ -1045,7 +1045,7 @@ pub fn foredel(zle: &mut crate::ported::zle::zle_main::Zle, ct: i32, _flags: i32
     let i = zle.zlecs;
     zle.zleline.drain(i..i + take_n);                                    // c:1111 shiftchars
     zle.zlell = zle.zleline.len();
-    zle.resetneeded = true;                                              // c:1112 CCRIGHT
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);                                              // c:1112 CCRIGHT
 }
 
 /// Port of `forekill()` from `Src/Zle/zle_utils.c:1064`. Cuts `ct`
@@ -1068,7 +1068,7 @@ pub fn forekill(zle: &mut crate::ported::zle::zle_main::Zle, ct: i32, flags: i32
     if zle.killring.len() > zle.killringmax {
         zle.killring.pop_back();
     }
-    zle.resetneeded = true;                                              // c:1079 CCRIGHT
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);                                              // c:1079 CCRIGHT
 }
 
 /// Port of `free_region_highlights_memos()` from Src/Zle/zle_utils.c:567.
@@ -1208,7 +1208,7 @@ pub fn setline(zle: &mut crate::ported::zle::zle_main::Zle, s: &str,         // 
     if flags & 1 == 0 {
         zle.zlecs = zle.zlell;                                               // c:1145
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// Port of `shiftchars()` from Src/Zle/zle_utils.c:846.

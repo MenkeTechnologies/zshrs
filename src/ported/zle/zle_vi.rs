@@ -162,7 +162,7 @@ impl Zle {
         } else if tail < 0 && self.zlecs > 0 {
             self.zlecs -= 1;
         }
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         0
     }
 
@@ -244,7 +244,7 @@ impl Zle {
 
         if depth == 0 {
             self.zlecs = pos;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -283,7 +283,7 @@ impl Zle {
             self.zlecs -= 1;
         }
 
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Vi undo (`u` in command mode). Port of viundo() — which in C zsh just
@@ -389,7 +389,7 @@ impl Zle {
             }
         }
         self.zlecs = cs.min(self.zlell);
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Append `key` to the vi change-replay buffer.
@@ -662,7 +662,7 @@ impl Zle {
             self.zlecs = p;
         }
         let _ = drained;
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         0
     }
 
@@ -682,7 +682,7 @@ impl Zle {
         self.zlecs = start.min(self.zlell);
         self.vistartchange = self.undo_changeno;
         crate::ported::zle::zle_keymap::selectkeymap("main", 1);
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         0
     }
 
@@ -708,7 +708,7 @@ impl Zle {
             }
             self.lastcol = -1;
         }
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         0
     }
 }
@@ -1229,7 +1229,7 @@ pub fn vidowncase(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
     for i in zle.zlecs..eol {
         zle.zleline[i] = zle.zleline[i].to_ascii_lowercase();
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1261,7 +1261,7 @@ pub fn viindent(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // 
     if zle.zlecs >= bol {
         zle.zlecs += 4;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1309,7 +1309,7 @@ pub fn vijoin(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {          // 
         let _ = p;
         zle.zlecs = eol;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1326,7 +1326,7 @@ pub fn vikilleol(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // 
         }
         zle.zlell -= eol - zle.zlecs;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1344,7 +1344,7 @@ pub fn vikillline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
         zle.zlell -= zle.zlecs - bol;
         zle.zlecs = bol;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1357,7 +1357,7 @@ pub fn viopenlineabove(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  //
     zle.zleline.insert(zle.zlecs, '\n');
     zle.zlell += 1;
     startvitext(zle, 1);
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1371,7 +1371,7 @@ pub fn viopenlinebelow(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  //
     zle.zlecs += 1;
     zle.zlell += 1;
     startvitext(zle, 1);
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1395,7 +1395,7 @@ pub fn vioperswapcase(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // 
         zle.zlecs += 1;
     }
     zle.zlecs = oldcs;
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1458,7 +1458,7 @@ pub fn vireplacechars(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // 
         for i in 0..n {
             zle.zleline[zle.zlecs + i] = c;
         }
-        zle.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
     0
 }
@@ -1538,7 +1538,7 @@ pub fn viswapcase(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
         zle.zleline[zle.zlecs] = swapped;
         zle.zlecs += 1;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1557,7 +1557,7 @@ pub fn viunindent(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
     if zle.zlecs >= bol + removed {
         zle.zlecs -= removed;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1569,7 +1569,7 @@ pub fn viupcase(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // 
     for i in zle.zlecs..eol {
         zle.zleline[i] = zle.zleline[i].to_ascii_uppercase();
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
