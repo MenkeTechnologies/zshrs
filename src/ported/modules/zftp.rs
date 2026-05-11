@@ -2338,11 +2338,231 @@ pub fn zfsendcmd(cmd: &str) -> i32 {                                          //
 }
 
 /// Port of `zfsenddata()` from `Src/Modules/zftp.c:1456`.
-/// C: `static int zfsenddata(char *name, int recv, int progress, off_t startat)`.
+/// C: `static int zfsenddata(char *name, int recv, int progress, off_t startat)` —
+/// move data between local fd (0/1) and the data connection fd
+/// (`dfd`). Handles BINARY+ASCII mode, optional block-mode framing,
+/// progress callback, and the abort/SYNCH sequence on error.
 #[allow(non_snake_case)]
-pub fn zfsenddata(_name: &str, _recv: i32, _progress: i32, _startat: libc::off_t) -> i32 {
-    // c:1456-1690 — full transfer loop.
-    0
+pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) -> i32 { // c:1456
+    use std::sync::atomic::Ordering;
+    // c:1458-1459 — buffer sizes.
+    const ZF_BUFSIZE: usize = 32768;
+    const ZF_ASCSIZE: usize = ZF_BUFSIZE / 2;
+    // c:1461-1466 — locals at fn top.
+    let mut n: i32;                                                           // c:1461 int n
+    let mut ret: i32 = 0;                                                     // c:1461 ret = 0
+    let gotack: i32 = 0;                                                      // c:1461 gotack = 0
+    let fdin: i32;                                                            // c:1461
+    let fdout: i32;                                                           // c:1461
+    let mut fromasc: i32 = 0;                                                 // c:1461 fromasc = 0
+    let mut toasc: i32 = 0;                                                   // c:1461 toasc = 0
+    let mut rtmout: i32 = 0;                                                  // c:1462
+    let mut wtmout: i32 = 0;                                                  // c:1462
+    let mut lsbuf = vec![0u8; ZF_BUFSIZE];                                    // c:1463
+    let mut ascbuf: Vec<u8> = Vec::new();                                     // c:1463 ascbuf = NULL
+    let mut sofar: libc::off_t = 0;                                           // c:1464
+    let mut last_sofar: libc::off_t = 0;                                      // c:1464
+    let _ = progress;
+
+    // c:1482-1498 — direction-dependent fd + ascii-flag setup.
+    let mut use_block_mode = false;
+    {
+        let state = match ZFTP_STATE.lock() {
+            Ok(s) => s,
+            Err(_) => return 1,
+        };
+        let sess = match state.get_session(None) {
+            Some(s) => s,
+            None => return 1,
+        };
+        if recv != 0 {                                                        // c:1482
+            fdin = sess.dfd;                                                  // c:1483
+            fdout = 1;                                                        // c:1484
+            rtmout = std::env::var("ZFTP_TMOUT").ok()                         // c:1485
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            if sess.transfer_type == ZFST_ASCI as i32 {                       // c:1486
+                fromasc = 1;                                                  // c:1487
+            }
+            if sess.transfer_mode == ZFST_BLOC as i32 {                       // c:1488
+                use_block_mode = true;                                        // c:1489
+            }
+        } else {                                                              // c:1490
+            fdin = 0;                                                         // c:1491
+            fdout = sess.dfd;                                                 // c:1492
+            wtmout = std::env::var("ZFTP_TMOUT").ok()                         // c:1493
+                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            if sess.transfer_type == ZFST_ASCI as i32 {                       // c:1494
+                toasc = 1;                                                    // c:1495
+            }
+            if sess.transfer_mode == ZFST_BLOC as i32 {                       // c:1496
+                use_block_mode = true;                                        // c:1497
+            }
+        }
+    }
+
+    if progress != 0 {
+        sofar = startat;                                                      // c:1480
+        last_sofar = sofar;
+    }
+    let _ = last_sofar;
+
+    // c:1500-1501 — ascbuf for ASCII translation buffer.
+    if toasc != 0 {
+        ascbuf = vec![0u8; ZF_ASCSIZE];                                       // c:1501
+    }
+    zfpipe();                                                                 // c:1502
+    zfread_eof.store(0, Ordering::Relaxed);                                   // c:1503
+
+    // c:1504-1614 — main transfer loop.
+    while ret == 0 && zfread_eof.load(Ordering::Relaxed) == 0 {
+        // c:1505-1506 — read into either ascbuf or lsbuf.
+        n = if toasc != 0 {
+            if use_block_mode {
+                zfread_block(fdin, &mut ascbuf, ZF_ASCSIZE as libc::off_t, rtmout)
+            } else {
+                zfread(fdin, &mut ascbuf, ZF_ASCSIZE as libc::off_t, rtmout)
+            }
+        } else if use_block_mode {
+            zfread_block(fdin, &mut lsbuf, ZF_BUFSIZE as libc::off_t, rtmout)
+        } else {
+            zfread(fdin, &mut lsbuf, ZF_BUFSIZE as libc::off_t, rtmout)
+        };
+
+        if n > 0 {                                                            // c:1507
+            // c:1509-1520 — toasc: \n → \r\n.
+            if toasc != 0 {
+                let mut iptr = 0usize;
+                let mut optr = 0usize;
+                let mut cnt = n;
+                while cnt > 0 {
+                    if ascbuf[iptr] == b'\n' {                                // c:1514
+                        if optr < lsbuf.len() { lsbuf[optr] = b'\r'; optr += 1; }
+                        n += 1;                                               // c:1516
+                    }
+                    if optr < lsbuf.len() { lsbuf[optr] = ascbuf[iptr]; optr += 1; }
+                    iptr += 1;
+                    cnt -= 1;
+                }
+            }
+            // c:1521-1532 — fromasc: \r\n → \n.
+            if fromasc != 0 {
+                if let Some(_start) = lsbuf[..n as usize].iter().position(|&b| b == b'\r') {
+                    let mut optr = 0usize;
+                    let mut iptr = 0usize;
+                    let len = n as usize;
+                    while iptr < len {
+                        if lsbuf[iptr] != b'\r' || iptr + 1 >= len || lsbuf[iptr + 1] != b'\n' {
+                            lsbuf[optr] = lsbuf[iptr];
+                            optr += 1;
+                        } else {
+                            n -= 1;                                           // c:1529
+                        }
+                        iptr += 1;
+                    }
+                }
+            }
+            // c:1533-1591 — write loop with EINTR + partial-write handling.
+            let mut optr_off: usize = 0;
+            sofar += n as libc::off_t;                                        // c:1535
+            loop {                                                            // c:1537 for(;;)
+                let chunk = &lsbuf[optr_off..optr_off + n as usize];
+                let newn: i32 = if use_block_mode && recv == 0 {
+                    zfwrite_block(fdout, chunk, n as libc::off_t, wtmout)
+                } else {
+                    zfwrite(fdout, chunk, n as libc::off_t, wtmout)
+                };
+                if newn == n { break; }                                       // c:1546
+                if newn < 0 {                                                 // c:1548
+                    let errno = std::io::Error::last_os_error().raw_os_error();
+                    let drrr = ZFDRRRRING.load(Ordering::Relaxed) != 0;
+                    let efl = crate::ported::utils::errflag.load(Ordering::Relaxed) != 0;
+                    if errno != Some(libc::EINTR) || efl || drrr {            // c:1578
+                        if !drrr && (efl || errno != Some(libc::EPIPE)) {     // c:1579-1580
+                            ret = if recv != 0 { 2 } else { 1 };
+                            crate::ported::utils::zwarnnam(name,               // c:1582
+                                &format!("write failed: {}",
+                                         std::io::Error::last_os_error()));
+                        } else {
+                            ret = if recv != 0 { 3 } else { 1 };
+                        }
+                        break;
+                    }
+                    continue;                                                 // c:1587
+                }
+                optr_off += newn as usize;                                    // c:1589
+                n -= newn;                                                    // c:1590
+            }
+        } else if n < 0 {                                                     // c:1592
+            let errno = std::io::Error::last_os_error().raw_os_error();
+            let drrr = ZFDRRRRING.load(Ordering::Relaxed) != 0;
+            let efl = crate::ported::utils::errflag.load(Ordering::Relaxed) != 0;
+            if errno != Some(libc::EINTR) || efl || drrr {                    // c:1593
+                if !drrr && (efl || errno != Some(libc::EPIPE)) {             // c:1594
+                    ret = if recv != 0 { 1 } else { 2 };
+                    crate::ported::utils::zwarnnam(name,                       // c:1597
+                        &format!("read failed: {}",
+                                 std::io::Error::last_os_error()));
+                } else {
+                    ret = if recv != 0 { 1 } else { 3 };
+                }
+                break;
+            }
+        } else {                                                              // c:1602
+            break;                                                            // c:1603
+        }
+        // c:1604-1613 — progress hook (zftp_progress shfunc dispatch);
+        // deferred until doshfunc/getshfunc are wired through src/exec.rs.
+        if ret == 0 && sofar != last_sofar && progress != 0 {
+            zfsetparam("ZFTP_COUNT", &sofar.to_string(),
+                       ZFPM_READONLY | ZFPM_INTEGER);                         // c:1608
+            last_sofar = sofar;                                               // c:1612
+        }
+    }
+    zfunpipe();                                                               // c:1615
+    ZFDRRRRING.store(0, Ordering::Relaxed);                                   // c:1620
+
+    // c:1621-1625 — block-mode EOF marker on send completion.
+    if crate::ported::utils::errflag.load(Ordering::Relaxed) == 0
+        && ret == 0 && recv == 0 && use_block_mode {
+        let eof_buf = [0u8; 1];
+        if zfwrite_block(fdout, &eof_buf, 0, wtmout) < 0 {
+            ret = 1;                                                          // c:1624
+        }
+    }
+
+    // c:1626-1676 — abort/SYNCH sequence on error.
+    if crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 || ret > 1 {
+        // c:1642 — IAC=255, IP=244, SYNCH=242 per Telnet RFC 854.
+        let msg: [u8; 4] = [255, 244, 255, 242];                              // c:1642
+        if ret == 2 {                                                         // c:1644
+            crate::ported::utils::zwarnnam(name, "aborting data transfer...");// c:1645
+        }
+        // c:1651-1652 — send IAC IP IAC + SYNCH OOB on control connection.
+        if let Ok(state) = ZFTP_STATE.lock() {
+            if let Some(sess) = state.get_session(None) {
+                use std::os::unix::io::AsRawFd;
+                if let Some(ref ctrl) = sess.control {
+                    let cfd = ctrl.as_raw_fd();
+                    unsafe {
+                        libc::send(cfd, msg.as_ptr() as *const libc::c_void, 3, 0);                    // c:1651
+                        libc::send(cfd, msg[3..].as_ptr() as *const libc::c_void, 1, libc::MSG_OOB);   // c:1652
+                    }
+                }
+            }
+        }
+        zfsendcmd("ABOR\r\n");                                                // c:1654
+        if lastcode.load(Ordering::Relaxed) != 226 {                          // c:1672
+            ret = 1;                                                          // c:1673
+        }
+    }
+
+    // c:1678-1679 — free ascbuf (Rust Drop).
+    drop(ascbuf);
+    zfclosedata();                                                            // c:1680
+    if gotack == 0 && zfgetmsg() > 2 {                                        // c:1681
+        ret = 1;                                                              // c:1682
+    }
+    if ret != 0 { 1 } else { 0 }                                              // c:1683
 }
 
 /// Port of `zfsetparam()` from `Src/Modules/zftp.c:494`.
