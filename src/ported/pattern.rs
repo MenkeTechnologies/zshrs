@@ -1218,10 +1218,32 @@ fn patmatch_internal(
                 if s_off + len > input_bytes.len() { return None; }
                 let igncase = (glob_flags & PAT_LCMATCHUC as i32) != 0;       // c:globflags check
                 if igncase {
-                    let inp = &input_bytes[s_off..s_off + len];
-                    for k in 0..len {
-                        if inp[k].to_ascii_lowercase() != str_bytes[k].to_ascii_lowercase() {
-                            return None;
+                    // Decode chars from both sides and compare via
+                    // Unicode case-fold. Falls back to byte compare
+                    // if input window is not valid UTF-8.
+                    let inp_slice = &input_bytes[s_off..s_off + len];
+                    let pat_str = std::str::from_utf8(str_bytes).ok();
+                    let inp_str = std::str::from_utf8(inp_slice).ok();
+                    if let (Some(p), Some(i)) = (pat_str, inp_str) {
+                        let mut pc = p.chars();
+                        let mut ic = i.chars();
+                        loop {
+                            match (pc.next(), ic.next()) {
+                                (None, None) => break,
+                                (Some(_), None) | (None, Some(_)) => return None,
+                                (Some(a), Some(b)) => {
+                                    let af: String = a.to_lowercase().collect();
+                                    let bf: String = b.to_lowercase().collect();
+                                    if af != bf { return None; }
+                                }
+                            }
+                        }
+                    } else {
+                        // Fall back to ASCII byte compare.
+                        for k in 0..len {
+                            if inp_slice[k].to_ascii_lowercase() != str_bytes[k].to_ascii_lowercase() {
+                                return None;
+                            }
                         }
                     }
                 } else if &input_bytes[s_off..s_off + len] != str_bytes {
@@ -2015,6 +2037,18 @@ mod tests {
         assert!(pattry(&prog, "A"));
         assert!(pattry(&prog, "b"));
         assert!(!pattry(&prog, "d"));
+    }
+
+    /// Unicode case-fold for `(#i)` — non-ASCII Latin chars.
+    #[test]
+    fn case_insensitive_unicode() {
+        // German Ü/ü and É/é folded via char::to_lowercase.
+        let prog = compile("(#i)Über");
+        assert!(pattry(&prog, "über"));
+        assert!(pattry(&prog, "ÜBER"));
+        let prog2 = compile("(#i)café");
+        assert!(pattry(&prog2, "CAFÉ"));
+        assert!(pattry(&prog2, "Café"));
     }
 
     /// Without `(#i)`, exact case required.
