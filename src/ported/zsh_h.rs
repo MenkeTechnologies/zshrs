@@ -1149,6 +1149,7 @@ pub struct funcdump {
 
 /// Port of `struct eprog` from `Src/zsh.h:805-815`.
 #[allow(non_camel_case_types)]
+#[derive(Default)]
 pub struct eprog {
     // c:805
     pub flags: i32,             // c:806 EF_*
