@@ -221,10 +221,9 @@ pub struct Zle {
     pub watch_fds: Vec<super::zle_h::watch_fd>,
     /// Completion widget
     pub compwidget: Option<Widget>,
-    /// In completion function flag
-    pub incompctlfunc: bool,
-    /// Completion module loaded flag
-    pub hascompmod: bool,
+    // `incompctlfunc` lives as INCOMPCTLFUNC atomic in compctl.rs;
+    // `hascompmod` had no callers and is replaced by an inline check
+    // in zle_tricky.rs when wired.
     /// Terminal file descriptor
     ttyfd: RawFd,
     /// Left prompt
@@ -379,8 +378,6 @@ impl Zle {
             unget_buf: VecDeque::new(),
             watch_fds: Vec::new(),
             compwidget: None,
-            incompctlfunc: false,
-            hascompmod: false,
             ttyfd: 0, // stdin
             lprompt: String::new(),
             rprompt: String::new(),
