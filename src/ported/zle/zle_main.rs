@@ -185,8 +185,8 @@ pub struct Zle {
     // insert mode/overwrite mode flag                                       // c:124
     /// Insert mode (true) or overwrite mode (false)
     pub insmode: bool,
-    /// Last character pressed
-    pub lastchar: ZleInt,
+    // `lastchar` moved to file-scope `LASTCHAR` static in compcore.rs
+    // (matches the C `int lastchar` global from zle_main.c).
     /// Last character as wide char (always used in Rust)
     pub lastchar_wide: ZleInt,
     /// Whether lastchar_wide is valid
@@ -379,7 +379,6 @@ impl Zle {
             zlell: 0,
             mark: 0,
             insmode: true,
-            lastchar: 0,
             lastchar_wide: 0,
             lastchar_wide_valid: false,
             lbindk: None,
@@ -637,7 +636,7 @@ impl Zle {
             b
         };
 
-        self.lastchar = b as ZleInt;
+        crate::ported::zle::compcore::LASTCHAR.store((b as ZleInt) as i32, std::sync::atomic::Ordering::SeqCst);
         Some(b)
     }
 
@@ -743,7 +742,7 @@ impl Zle {
             // EOF on empty line: matches C's eofchar branch
             // (zle_main.c:1139-1150 — guarded by ZLRF_IGNOREEOF too).
             if self.zlell == 0
-                && self.lastchar == self.eofchar as ZleInt
+                && crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) == self.eofchar as ZleInt
                 && (self.zlereadflags & crate::ported::zsh_h::ZLRF_HISTORY) != 0
             {
                 self.eofsent = true;

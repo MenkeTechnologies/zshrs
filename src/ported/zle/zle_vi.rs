@@ -1454,7 +1454,7 @@ pub fn vireplacechars(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // 
     if n > avail {
         return 1;                                                            // not enough chars
     }
-    if let Some(c) = char::from_u32(zle.lastchar as u32) {
+    if let Some(c) = char::from_u32(crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) as u32) {
         for i in 0..n {
             zle.zleline[zle.zlecs + i] = c;
         }
@@ -1469,7 +1469,7 @@ pub fn visetbuffer(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // 
     //         set zmod.vibuf for the next yank/cut. Without vigetkey
     //         interactive read, use lastchar.
     use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
-    let c = (zle.lastchar & 0xff) as u8;
+    let c = (crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) & 0xff) as u8;
     let idx: i32 = if c.is_ascii_digit() {
         (c - b'0') as i32 + 26
     } else if c.is_ascii_lowercase() {

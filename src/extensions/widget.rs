@@ -685,10 +685,10 @@ fn widget_self_insert(zle: &mut Zle) {
     // last-read char at the cursor (`zmult` times — count-aware).
     let n = zle.mult.max(1);
     #[cfg(feature = "multibyte")]
-    let c_opt = char::from_u32(zle.lastchar as u32);
+    let c_opt = char::from_u32(crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) as u32);
     #[cfg(not(feature = "multibyte"))]
-    let c_opt = if (0..=127).contains(&zle.lastchar) {
-        Some(zle.lastchar as u8 as char)
+    let c_opt = if (0..=127).contains(&crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst)) {
+        Some(crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) as u8 as char)
     } else {
         None
     };
@@ -704,7 +704,7 @@ fn widget_self_insert_unmeta(zle: &mut Zle) {
     // 0x80 meta bit from lastchar before inserting — used when the user
     // bound an Esc-prefixed key (e.g. `\\eA`) to literally insert 'A'.
     let n = zle.mult.max(1);
-    let c = (zle.lastchar & 0x7f) as u8 as char;
+    let c = (crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) & 0x7f) as u8 as char;
     for _ in 0..n {
         zle.self_insert(c);
     }
@@ -1996,7 +1996,7 @@ fn widget_digit_argument(zle: &mut Zle) {
     // neg-argument has fired (MOD_NEG set), the first digit replaces
     // the placeholder -1 so `M-- 5` ends up as -5, matching C zsh.
     let base = zle.zmod.base;
-    let new_digit = parse_digit_in_base(zle.lastchar as u8, base);
+    let new_digit = parse_digit_in_base(crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) as u8, base);
     if new_digit < 0 {
         zle.handle_feep();
         return;
@@ -3897,7 +3897,7 @@ mod tests {
         // Simulate the zlecore→handleprefixes step the live loop runs
         // between widgets.
         zle.handleprefixes();
-        zle.lastchar = b'5' as i32;
+        crate::ported::zle::compcore::LASTCHAR.store((b'5' as i32) as i32, std::sync::atomic::Ordering::SeqCst);
         widget_digit_argument(&mut zle);
         assert_eq!(zle.zmod.tmult, -5);
         assert!(!zle.zmod.flags & crate::ported::zle::zle_h::MOD_NEG != 0);
