@@ -47,7 +47,7 @@ use crate::options::ZSH_OPTIONS_SET;
 use crate::exec::ShellExecutor;
 use crate::fusevm_bridge::with_executor;
 use crate::ported::utils::quotedzputs;
-use crate::ported::text::FuncBodyFmt;
+use crate::func_body_fmt::FuncBodyFmt;
 use ::regex::{Regex, RegexBuilder, Error as RegexError};
 
 // =====================================================================

@@ -37,7 +37,7 @@ use crate::ported::exec::{
     VarAttr, VarKind,
 };
 use crate::ported::utils::{zerr, zerrnam, zwarn, zwarnnam};
-use crate::ported::text::FuncBodyFmt;
+use crate::func_body_fmt::FuncBodyFmt;
 #[allow(unused_imports)]
 use crate::ported::options::ZSH_OPTIONS_SET;
 #[allow(unused_imports)]
@@ -3564,7 +3564,8 @@ pub fn bin_test(name: &str, argv: &[String],                                 // 
         // c:7264-7269 — strip `(` ... `)` parens unless the 3-arg middle
         // would be a binary op (which takes priority).
         if argv[0] == "(" && argv[nargs - 1] == ")"                          // c:7264
-            && (nargs != 3 || !crate::ported::text::is_cond_binary_op(&argv[1])) // c:7265
+            && (nargs != 3 || crate::ported::text::is_cond_binary_op(&argv[1]) == 0)
+                // c:7265
         {
             argv.pop();                                                      // c:7266
             argv.remove(0);                                                  // c:7267

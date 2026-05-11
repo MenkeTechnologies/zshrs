@@ -8,7 +8,7 @@
 
 #[allow(unused_imports)]
 use crate::ported::utils::zerr;
-use crate::ported::text::FuncBodyFmt;
+use crate::func_body_fmt::FuncBodyFmt;
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -4876,10 +4876,6 @@ pub fn deleteparamtable(t: Option<crate::ported::zsh_h::HashTable>) {
 pub fn freeparamnode(_hn: crate::ported::zsh_h::Param) {
     // Drop the Box → cascades to all owned fields.
 }
-
-/// Port of `getindex()` from `Src/params.c:2001` — real
-/// implementation below.
-// (real getindex is defined later)
 
 /// Port of `getparamnode()` from `Src/params.c:570`. C body:
 /// `pm = loadparamnode(ht, gethashnode2(ht, nam), nam);

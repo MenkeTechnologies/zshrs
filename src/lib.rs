@@ -69,6 +69,7 @@ pub mod daemon {
     }
 }
 #[path = "extensions/ext_builtins.rs"] pub mod ext_builtins;
+#[path = "extensions/func_body_fmt.rs"] pub mod func_body_fmt;
 #[path = "extensions/fds.rs"] pub mod fds;
 #[path = "extensions/fish_features.rs"] pub mod fish_features;
 #[path = "extensions/ast_sexp.rs"] pub mod ast_sexp;

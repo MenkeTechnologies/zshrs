@@ -8,6 +8,168 @@ use crate::lex::ZshLexer;
 use crate::tokens::LexTok;
 use serde::{Deserialize, Serialize};
 
+/// Port of `ecgetstr()` from `Src/parse.c:2854`.
+///
+/// `strs` must be the **current** string pool tail (`s->strs` in C); it advances
+/// separately via `estate.strs_offset` in `text.c` callers.
+pub fn ecgetstr(
+    prog: &[u32],
+    strs: &[u8],
+    pc: &mut usize,
+    dup: i32,
+    tokflag: Option<&mut i32>,
+) -> String {
+    const EC_NODUP: i32 = 0; // c:869
+    const EC_DUP: i32 = 1;  // c:872
+    if *pc >= prog.len() {
+        return String::new();
+    }
+    let c = prog[*pc];
+    *pc += 1;
+    if let Some(tf) = tokflag {
+        *tf = i32::from((c & 1) != 0);
+    }
+    if c == 6 || c == 7 {
+        return String::new();
+    }
+    let r: String = if (c & 2) != 0 {
+        let b0 = ((c >> 3) & 0xff) as u8;
+        let b1 = ((c >> 11) & 0xff) as u8;
+        let b2 = ((c >> 19) & 0xff) as u8;
+        let mut v = vec![b0, b1, b2];
+        v.retain(|&x| x != 0);
+        String::from_utf8_lossy(&v).into_owned()
+    } else {
+        let off = (c >> 2) as usize;
+        if off >= strs.len() {
+            String::new()
+        } else {
+            let tail = &strs[off..];
+            let end = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
+            String::from_utf8_lossy(&tail[..end]).into_owned()
+        }
+    };
+    let _ = EC_NODUP;
+    let need_dup = dup == EC_DUP || (dup != EC_NODUP && (c & 1) != 0);
+    if need_dup {
+        r
+    } else {
+        r
+    }
+}
+
+// --- Wordcode `ecgetredirs` (`Src/parse.c:2959-2991`) — used by gettext2 / exec, not the AST parser.
+
+type Wordcode = u32;
+const WC_CODEBITS: u32 = 5;
+const WC_REDIR_W: Wordcode = 4;
+const REDIR_TYPE_MASK: i32 = 0x1f; // c: zsh.h
+const REDIR_VARID_MASK: i32 = 0x20;
+const REDIR_FROM_HEREDOC_MASK: i32 = 0x40;
+const REDIRF_FROM_HEREDOC: i32 = 1;
+
+#[inline]
+fn wc_code_w(c: Wordcode) -> Wordcode {
+    c & ((1 << WC_CODEBITS) - 1)
+}
+#[inline]
+fn wc_data_w(c: Wordcode) -> Wordcode {
+    c >> WC_CODEBITS
+}
+#[inline]
+fn wc_redir_type_w(c: Wordcode) -> i32 {
+    (wc_data_w(c) & REDIR_TYPE_MASK as u32) as i32
+}
+#[inline]
+fn wc_redir_varid_w(c: Wordcode) -> i32 {
+    (wc_data_w(c) & REDIR_VARID_MASK as u32) as i32
+}
+#[inline]
+fn wc_redir_from_heredoc_w(c: Wordcode) -> i32 {
+    (wc_data_w(c) & REDIR_FROM_HEREDOC_MASK as u32) as i32
+}
+
+/// Port of `struct redir` from `Src/zsh.h` (wordcode row built by `ecgetredirs`).
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Default)]
+pub struct redir {
+    pub typ: i32,
+    pub flags: i32,
+    pub fd1: i32,
+    pub fd2: i32,
+    pub name: Option<String>,
+    pub varid: Option<String>,
+    pub here_terminator: Option<String>,
+    pub munged_here_terminator: Option<String>,
+}
+
+/// Port of `ecgetredirs()` from `Src/parse.c:2959-2991`.
+///
+/// `strs` must be the same tail `ecgetstr` uses (`s->strs` / `estate.strs` from offset).
+pub fn ecgetredirs(prog: &[Wordcode], strs: &[u8], pc: &mut usize) -> Vec<redir> {
+    const EC_DUP_I: i32 = 1; // c:2969 `EC_DUP` to `ecgetstr`
+    let mut ret: Vec<redir> = Vec::new(); // c:2961 `LinkList ret = newlinklist();`
+    if *pc >= prog.len() {
+        return ret;
+    }
+    let mut code = prog[*pc]; // c:2962 `wordcode code = *s->pc++;`
+    *pc += 1;
+
+    loop {
+        if wc_code_w(code) != WC_REDIR_W {
+            // c:2988-2989 `s->pc--` then break from while
+            *pc = (*pc).saturating_sub(1);
+            break;
+        }
+
+        let typ = wc_redir_type_w(code); // c:2967 `r->type = WC_REDIR_TYPE(code);`
+        if *pc >= prog.len() {
+            break;
+        }
+        let fd1_w = prog[*pc]; // c:2968 `r->fd1 = *s->pc++;`
+        *pc += 1;
+
+        let name = ecgetstr(prog, strs, pc, EC_DUP_I, None); // c:2969 `r->name = ecgetstr(...)`
+
+        let (flags, here_terminator, munged_here_terminator) = if wc_redir_from_heredoc_w(code) != 0 {
+            // c:2970-2973
+            let term = ecgetstr(prog, strs, pc, EC_DUP_I, None);
+            let munged = ecgetstr(prog, strs, pc, EC_DUP_I, None);
+            (REDIRF_FROM_HEREDOC, Some(term), Some(munged))
+        } else {
+            // c:2974-2977
+            (0, None, None)
+        };
+
+        let varid = if wc_redir_varid_w(code) != 0 {
+            // c:2979-2980
+            Some(ecgetstr(prog, strs, pc, EC_DUP_I, None))
+        } else {
+            None // c:2981-2982
+        };
+
+        ret.push(redir {
+            // c:2965-2982 fields + c:2984 `addlinknode`
+            typ,
+            flags,
+            fd1: fd1_w as i32,
+            fd2: 0,
+            name: Some(name),
+            varid,
+            here_terminator,
+            munged_here_terminator,
+        });
+
+        if *pc >= prog.len() {
+            break;
+        }
+        code = prog[*pc]; // c:2986 `code = *s->pc++;`
+        *pc += 1;
+    }
+
+    ret // c:2990 `return ret`
+}
+
 /// AST node for a complete program (list of commands)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZshProgram {
@@ -1056,15 +1218,6 @@ impl<'a> ZshParser<'a> {
     // stubs that preserve the C signatures + cite the source.
     // ============================================================
 
-    /// Read a packed string from the wordcode stream. Direct port of
-    /// zsh/Src/parse.c:2853-2887 `ecgetstr`. C version unpacks
-    /// 4-char inline strings + indexes into the strs table for
-    /// longer ones. zshrs no-op (AST stores strings directly).
-    pub fn ecgetstr(_dup: bool) -> String {
-        // parse.c:2858-2886 — wordcode unpack logic. zshrs no-op.
-        String::new()
-    }
-
     /// Read a packed string without consuming the wordcode pointer.
     /// Direct port of zsh/Src/parse.c:2890-2913 `ecrawstr`. zshrs
     /// no-op.
@@ -1081,13 +1234,6 @@ impl<'a> ZshParser<'a> {
     /// Read a linked-list of strings from wordcode. Direct port of
     /// zsh/Src/parse.c:2936-2955 `ecgetlist`. zshrs no-op.
     pub fn ecgetlist(_num: usize, _dup: bool) -> Vec<String> {
-        Vec::new()
-    }
-
-    /// Read a sequence of redirection wordcodes. Direct port of
-    /// zsh/Src/parse.c:2958-2991 `ecgetredirs`. zshrs no-op
-    /// (redirections live as AST ZshRedir nodes).
-    pub fn ecgetredirs() -> Vec<ZshRedir> {
         Vec::new()
     }
 
