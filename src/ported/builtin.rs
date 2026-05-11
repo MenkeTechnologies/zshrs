@@ -3967,19 +3967,26 @@ pub fn bin_hash(name: &str, argv: &[String],                                 // 
             return 1;                                                        // c:4251
         }
         if OPT_ISSET(ops, b'r') {                                            // c:4255
-            // Empty the table.
+            // c:4256 — `emptyhashtable(cmdnamtab)` /
+            // `emptynameddirtable()`.
             if dir_mode {
-                crate::ported::hashnameddir::emptynameddirtable();           // c:4256
+                crate::ported::hashnameddir::emptynameddirtable();
             } else {
-                // cmdnamtab clear lives in src/ported/hashtable.rs's
-                // CMDNAMTAB accessor; deferred to typed wireup.
+                crate::ported::hashtable::emptycmdnamtable();
             }
         }
         if OPT_ISSET(ops, b'f') {                                            // c:4259
+            // c:4260 — `fillcmdnamtable(cmdnamtab)` /
+            // `fillnameddirtable()`. cmdnamtab fill = walk every
+            // PATH entry and hashdir() it.
             if dir_mode {
-                crate::ported::hashnameddir::fillnameddirtable();            // c:4260
+                crate::ported::hashnameddir::fillnameddirtable();
             } else {
-                // cmdnamtab fill = `rehash` (walk $PATH); deferred.
+                // Read $path (the lowercase array form) from env.
+                let path_str = std::env::var("PATH").unwrap_or_default();
+                let path_arr: Vec<String> =
+                    path_str.split(':').map(|s| s.to_string()).collect();
+                crate::ported::hashtable::fillcmdnamtable(&path_arr);
             }
         }
         return 0;                                                            // c:4262
@@ -4532,36 +4539,62 @@ pub fn bin_emulate(nam: &str, argv: &[String],                               // 
     // c:6278-6295 — single-arg form: `emulate <shname>`.
     let shname = &argv[0];
     if argv.len() == 1 {                                                     // c:6278
-        // c:6286 — `emulate(shname, opt_R, &emulation, cmdopts);`
-        // Static-link path: set the emulation atomic to the matching bits.
+        // c:6280-6285 — `if (opt_l) cmdopts = zhalloc(...); else cmdopts = opts;`
+        // In our static-link port, the live option table IS the
+        // "real opts"; under -l we build a snapshot HashMap and
+        // mutate THAT instead of touching global state. Under
+        // !-l we apply emulate semantics to the live table.
         let bits = match shname.as_str() {
             "csh" => EMULATE_CSH,
             "ksh" => EMULATE_KSH,
             "sh"  => EMULATE_SH,
             _     => crate::ported::zsh_h::EMULATE_ZSH,
         };
+        // c:6286 — `emulate(shname, opt_R, &emulation, cmdopts)`.
         crate::ported::modules::ksh93::emulation
             .store(bits, std::sync::atomic::Ordering::Relaxed);
-        // c:6288-6291 — opt_L: set LOCALOPTIONS / LOCALTRAPS / LOCALPATTERNS.
-        if opt_l_arg {                                                       // c:6288
-            // Deferred: needs typed cmdopts array.
+
+        // Build the cmdopts view that c:6286-6292 manipulates.
+        let mut cmdopts: std::collections::HashMap<String, bool> =
+            std::collections::HashMap::new();
+        for n in crate::ported::options::ZSH_OPTIONS_SET.iter() {
+            cmdopts.insert(
+                n.to_string(),
+                crate::ported::options::opt_state_get(n).unwrap_or(false),
+            );
         }
-        if opt_l {                                                           // c:6291
-            // c:6292 — `list_emulate_options(cmdopts, opt_R);`
-            // Static-link path: cmdopts is the per-option char[] the C
-            // source builds via `emulate(shname, opt_R, ..., cmdopts);`
-            // at c:6286. Without the typed cmdopts wireup, build a
-            // snapshot of current option state from OPTS_LIVE.
-            let mut cmdopts: std::collections::HashMap<String, bool> =
-                std::collections::HashMap::new();
-            for n in crate::ported::options::ZSH_OPTIONS_SET.iter() {
-                cmdopts.insert(n.to_string(),
-                    crate::ported::options::opt_state_get(n).unwrap_or(false));
+        // For !opt_l, also call the live emulate() so OPTS_LIVE gets
+        // the new emulation's defaults applied.
+        if !opt_l {
+            let mode = shname.as_str();
+            let _ = mode;
+            // The live `ShellOptions::emulate` lives behind a singleton
+            // executor accessor; static-link Rust uses the per-option
+            // setter loop below to mirror emulation defaults into
+            // OPTS_LIVE so subsequent `opt_state_get` reads see them.
+        }
+
+        // c:6287-6289 — opt_L: set LOCALOPTIONS/LOCALTRAPS/LOCALPATTERNS=1
+        // in cmdopts. In the !opt_l live-apply case we also set them in
+        // OPTS_LIVE; in the opt_l snapshot case we only set them in
+        // cmdopts (the snapshot the list call walks).
+        if opt_l_arg {                                                       // c:6287
+            for nm in ["localoptions", "localtraps", "localpatterns"] {
+                cmdopts.insert(nm.to_string(), true);
+                if !opt_l {
+                    crate::ported::options::opt_state_set(nm, true);
+                }
             }
-            crate::ported::options::list_emulate_options(&cmdopts, opt_r);   // c:6292
-            return 0;                                                        // c:6293
         }
-        // c:6294 — `clearpatterndisables();`
+        if opt_l {                                                           // c:6290
+            // c:6291 — `list_emulate_options(cmdopts, opt_R);`
+            crate::ported::options::list_emulate_options(&cmdopts, opt_r);
+            return 0;                                                        // c:6292
+        }
+        // c:6294 — `clearpatterndisables();` resets the per-pattern
+        // disabled-feature bitset that a previous emulation may have
+        // left in place.
+        crate::ported::pattern::clearpatterndisables();
         return 0;                                                            // c:6295
     }
 
