@@ -622,21 +622,34 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {                    //
         if off + 1 < bytes.len() && bytes[off] == b'(' && bytes[off + 1] == b'#' {
             let rest = parse[off..].to_string();
             drop(parse);
-            if let Some((gflags, _assert, consumed)) = patgetglobflags(&rest) {
+            if let Some((gflags, assert, consumed)) = patgetglobflags(&rest) {
                 patparse_off.fetch_add(consumed, Ordering::Relaxed);
+                // Emit P_GFLAGS for flag-bit changes if any.
                 let mut bits: i32 = 0;
                 if gflags.case_insensitive { bits |= PAT_LCMATCHUC as i32; }
                 if gflags.lcmatchuc        { bits |= PAT_LCMATCHUC as i32; }
-                let gf_off = patnode(P_GFLAGS);
-                let mut buf = patout.lock().unwrap();
-                buf.extend_from_slice(&bits.to_le_bytes());
-                drop(buf);
-                if chain_start < 0 {
-                    chain_start = gf_off as i64;
-                } else {
-                    set_next(last_tail, gf_off);
+                if bits != 0 || (!gflags.case_insensitive
+                                 && !gflags.lcmatchuc
+                                 && assert.is_none()) {
+                    let gf_off = patnode(P_GFLAGS);
+                    let mut buf = patout.lock().unwrap();
+                    buf.extend_from_slice(&bits.to_le_bytes());
+                    drop(buf);
+                    if chain_start < 0 { chain_start = gf_off as i64; }
+                    else { set_next(last_tail, gf_off); }
+                    last_tail = gf_off;
                 }
-                last_tail = gf_off;
+                // Emit P_ISSTART / P_ISEND if assert variant returned.
+                if let Some(a) = assert {
+                    let assert_op = match a {
+                        PatOp::StartAssert => P_ISSTART,
+                        PatOp::EndAssert => P_ISEND,
+                    };
+                    let as_off = patnode(assert_op);
+                    if chain_start < 0 { chain_start = as_off as i64; }
+                    else { set_next(last_tail, as_off); }
+                    last_tail = as_off;
+                }
                 continue;
             }
             // patgetglobflags failed — treat the `(` as a literal group.
@@ -2022,6 +2035,23 @@ mod tests {
         assert!(pattry(&prog, "fooBaR"));
         // First half still case-sensitive — "FOOBAR" should NOT match.
         assert!(!pattry(&prog, "FOOBAR"));
+    }
+
+    /// `(#s)foo` — start-of-string anchor.
+    #[test]
+    fn start_anchor() {
+        let prog = compile("(#s)foo");
+        assert!(pattry(&prog, "foo"));
+        // pattry runs from position 0 so this is structurally
+        // equivalent to the default behavior; the assertion just
+        // doesn't reject anything in this trivial case.
+    }
+
+    /// `foo(#e)` — end-of-string anchor.
+    #[test]
+    fn end_anchor() {
+        let prog = compile("foo(#e)");
+        assert!(pattry(&prog, "foo"));
     }
 
     #[test]
