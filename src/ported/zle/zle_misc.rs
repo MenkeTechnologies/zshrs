@@ -41,7 +41,8 @@ pub static SUFFIXLEN: AtomicI32 = AtomicI32::new(0);                         // 
 /// Port of `struct suffixset` from `Src/Zle/zle_misc.c`. One node
 /// in the auto-removable suffix list.
 #[derive(Debug, Clone, Default)]
-pub struct SuffixSet {
+#[allow(non_camel_case_types)]
+pub struct suffixset {
     /// Type bits (SUFTYP_POSSTR/POSRNG/etc.).
     pub tp: i32,
     /// Flag bits (SUFFLAGS_SPACE etc.).
@@ -56,10 +57,10 @@ pub struct SuffixSet {
 
 /// Port of `struct suffixset *suffixlist` from `Src/Zle/zle_misc.c`.
 /// Stack of registered auto-removable suffixes.
-pub static SUFFIXLIST: std::sync::OnceLock<std::sync::Mutex<Vec<SuffixSet>>>
+pub static SUFFIXLIST: std::sync::OnceLock<std::sync::Mutex<Vec<suffixset>>>
     = std::sync::OnceLock::new();
 
-fn suffixlist() -> &'static std::sync::Mutex<Vec<SuffixSet>> {
+fn suffixlist() -> &'static std::sync::Mutex<Vec<suffixset>> {
     SUFFIXLIST.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
@@ -116,13 +117,10 @@ pub static PREVIOUS_SEARCH: std::sync::OnceLock<std::sync::Mutex<String>> = std:
 /// `Src/Zle/zle_hist.c`. Set on isearch abort; read by `$LASEARCH`.
 pub static PREVIOUS_ABORTED_SEARCH: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
 
-/// Clipboard/paste buffer for yank operations
-// yankb, yanke; mark the start and end of last yank in editing buffer.    // c:526
-// The original cutbuffer, either cutbuf or one of the vi buffers.         // c:528
-#[derive(Debug, Default)]
-pub struct PasteBuffer {
-    pub content: Vec<char>,
-}
+// `PasteBuffer` deleted — Rust-invented struct that wasn't referenced
+// anywhere. The C source uses `Cutbuffer` (zle.h:342, ported as
+// `cutbuffer` in zle_h.rs:506) and the `cutbuf` global to back yank
+// operations; no separate paste-buffer type exists.
 
 impl Zle {
     // insert a zle string, with repetition and suffix removal              // c:33
@@ -718,7 +716,7 @@ pub fn acceptline() -> i32 {                                                 // 
 pub fn addsuffix(tp: i32, flags: i32, chars: Vec<char>, lenstr: i32, lensuf: i32) {  // c:1558
     // C body (c:1560-1567): `newsuf = zalloc; newsuf->next = suffixlist;
     //                       suffixlist = newsuf; copy fields`.
-    suffixlist().lock().unwrap().push(SuffixSet {
+    suffixlist().lock().unwrap().push(suffixset {
         tp, flags, chars, lenstr, lensuf,
     });
 }
