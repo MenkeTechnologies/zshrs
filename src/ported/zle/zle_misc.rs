@@ -782,7 +782,7 @@ pub fn argumentbase(zle: &mut Zle, args: &[String]) -> i32 {                 // 
     zle.zmod.tmult = 1;
     zle.zmod.vibuf = 0;
     // c:1059 — still operating on prefix arg.
-    zle.prefixflag = true;
+    crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
     0                                                                        // c:1061 return 0
 }
 
@@ -1062,7 +1062,7 @@ pub fn digitargument(zle: &mut Zle) -> i32 {                                 // 
         zle.zmod.tmult = zle.zmod.tmult * zle.zmod.base + sign * newdigit;
     }
     zle.zmod.flags |= MOD_TMULT;                             // c:1059
-    zle.prefixflag = true;                                                   // c:1060
+    crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);                                                   // c:1060
     0                                                                        // c:1061
 }
 
@@ -1439,7 +1439,7 @@ pub fn negargument(zle: &mut Zle) -> i32 {                                   // 
     }
     zle.zmod.tmult = -1;                                                     // c:978
     zle.zmod.flags |= MOD_TMULT | MOD_NEG;             // c:979
-    zle.prefixflag = true;                                                   // c:980
+    crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);                                                   // c:980
     0                                                                        // c:981 return 0
 }
 
@@ -1907,7 +1907,7 @@ pub fn universalargument(zle: &mut Zle, args: &[String]) -> i32 {            // 
         zle.zmod.tmult = zle.zmod.tmult.saturating_mul(4);                   // c:1027
     }
     zle.zmod.flags |= MOD_TMULT;                             // c:1029
-    zle.prefixflag = true;                                                   // c:1030
+    crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);                                                   // c:1030
     0
 }
 
@@ -2095,13 +2095,13 @@ mod tests {
         // Ensure clean modifier state.
         z.zmod.tmult = 1;
         z.zmod.flags = 0;
-        z.prefixflag = false;
+        crate::ported::zle::zle_main::PREFIXFLAG.store(0, std::sync::atomic::Ordering::SeqCst);
         let r = negargument(&mut z);
         assert_eq!(r, 0);
         assert_eq!(z.zmod.tmult, -1);
         assert!(z.zmod.flags & MOD_TMULT != 0);
         assert!(z.zmod.flags & MOD_NEG != 0);
-        assert!(z.prefixflag);
+        assert!(crate::ported::zle::zle_main::PREFIXFLAG.load(std::sync::atomic::Ordering::SeqCst) != 0);
     }
 
     #[test]
@@ -2137,7 +2137,7 @@ mod tests {
         let r = argumentbase(&mut z, &["8".to_string()]);
         assert_eq!(r, 0);
         assert_eq!(z.zmod.base, 8);
-        assert!(z.prefixflag);
+        assert!(crate::ported::zle::zle_main::PREFIXFLAG.load(std::sync::atomic::Ordering::SeqCst) != 0);
         // c:1053-1056 — modifier reset.
         assert_eq!(z.zmod.mult, 1);
         assert_eq!(z.zmod.tmult, 1);
@@ -2265,7 +2265,7 @@ mod tests {
         assert_eq!(r, 0);
         assert_eq!(z.zmod.tmult, 5);
         assert!(z.zmod.flags & MOD_TMULT != 0);
-        assert!(z.prefixflag);
+        assert!(crate::ported::zle::zle_main::PREFIXFLAG.load(std::sync::atomic::Ordering::SeqCst) != 0);
     }
 
     #[test]
