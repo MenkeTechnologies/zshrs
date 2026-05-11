@@ -2768,7 +2768,7 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
                         std::env::var("FCEDIT")                              // c:1651 getsparam("FCEDIT")
                             .or_else(|_| std::env::var("EDITOR"))            // c:1653 getsparam("EDITOR")
                             .unwrap_or_else(|_|
-                                crate::ported::zsh_h::DEFAULT_FCEDIT.to_string()) // c:1654
+                                crate::ported::config_h::DEFAULT_FCEDIT.to_string()) // c:1654
                     };
                     crate::ported::mem::unqueue_signals();                   // c:1657
                     if fcedit(&editor, &fil) != 0 {                          // c:1658

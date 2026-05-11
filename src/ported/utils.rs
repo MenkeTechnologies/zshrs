@@ -990,7 +990,7 @@ pub fn gettempname(prefix: Option<&str>, _use_heap: bool) -> Option<String> { //
     let prefix_owned: String = match prefix {                                // c:2183
         Some(p) => p.to_string(),
         None => std::env::var("TMPPREFIX")
-            .unwrap_or_else(|_| "/tmp/zsh".to_string()),                     // DEFAULT_TMPPREFIX c:2184
+            .unwrap_or_else(|_| crate::ported::config_h::DEFAULT_TMPPREFIX.to_string()), // c:2184
     };
     let template = format!("{}{}", prefix_owned, suffix);                    // c:2186-2188
     // C uses mktemp(3) which mutates the X's into a unique name              // c:2192/2219

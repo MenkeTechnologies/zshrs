@@ -3174,6 +3174,7 @@ impl VarAttr {
 
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
+use crate::config_h::DEFAULT_TMPPREFIX;
 use crate::zsh_h::{paramdef, ERRFLAG_ERROR, PM_DONTIMPORT, PM_DONTIMPORT_SUID, PM_READONLY_SPECIAL};
 // -----------------------------------------------------------
 // Module statics — one per C global referenced by the special-
@@ -4907,7 +4908,7 @@ pub fn createparamtable() {                                                  // 
     // the param table; the Rust port mirrors this.
     setsparam(
         "TMPPREFIX",
-        &crate::ported::utils::ztrdup_metafy("/tmp/zsh"),
+        &crate::ported::utils::ztrdup_metafy(DEFAULT_TMPPREFIX),
     );                                                                       // c:870
     setsparam(
         "TIMEFMT",
@@ -5013,19 +5014,24 @@ pub fn createparamtable() {                                                  // 
 
     // c:949-967 — CPUTYPE / MACHTYPE / OSTYPE / TTY / VENDOR /
     // ZSH_ARGZERO / ZSH_VERSION / ZSH_PATCHLEVEL. C body wraps each
-    // through ztrdup_metafy() — Rust mirrors that.
+    // through ztrdup_metafy() — Rust mirrors that. CPUTYPE is set
+    // from uname()'s `machine` field at runtime (c:957-961); the
+    // other three (MACHTYPE / OSTYPE / VENDOR) come from config.h
+    // values frozen at configure-time (c:961, c:963, c:964).
     let utsname = nix::sys::utsname::uname().ok();
     let cputype = utsname
         .as_ref()
         .map(|u| u.machine().to_string_lossy().to_string())
         .unwrap_or_else(|| "unknown".to_string());
-    setsparam("CPUTYPE", &crate::ported::utils::ztrdup_metafy(&cputype));    // c:954
-    setsparam("MACHTYPE", &crate::ported::utils::ztrdup_metafy(&cputype));   // c:962
-    let ostype = utsname
-        .as_ref()
-        .map(|u| u.sysname().to_string_lossy().to_string().to_lowercase())
-        .unwrap_or_else(|| "unknown".to_string());
-    setsparam("OSTYPE", &crate::ported::utils::ztrdup_metafy(&ostype));      // c:963
+    setsparam("CPUTYPE", &crate::ported::utils::ztrdup_metafy(&cputype));    // c:954/960
+    setsparam(                                                               // c:961
+        "MACHTYPE",
+        &crate::ported::utils::ztrdup_metafy(crate::ported::config_h::MACHTYPE),
+    );
+    setsparam(                                                               // c:962
+        "OSTYPE",
+        &crate::ported::utils::ztrdup_metafy(crate::ported::config_h::OSTYPE),
+    );
     let tty_str = {
         let p = unsafe { libc::ttyname(0) };
         if !p.is_null() {
@@ -5037,10 +5043,10 @@ pub fn createparamtable() {                                                  // 
         }
     };
     setsparam("TTY", &crate::ported::utils::ztrdup_metafy(&tty_str));        // c:963
-    setsparam(
+    setsparam(                                                               // c:964
         "VENDOR",
-        &crate::ported::utils::ztrdup_metafy("unknown"),
-    );                                                                       // c:964
+        &crate::ported::utils::ztrdup_metafy(crate::ported::config_h::VENDOR),
+    );
     let argv0 = std::env::args().next().unwrap_or_default();
     setsparam(
         "ZSH_ARGZERO",
@@ -5049,7 +5055,7 @@ pub fn createparamtable() {                                                  // 
     setsparam(
         "ZSH_VERSION",
         &crate::ported::utils::ztrdup_metafy("5.9"),
-    );                                                                       // c:966
+    );                                                                       // c:966 — TODO: pull from Makefile VERSION
     setsparam(
         "ZSH_PATCHLEVEL",
         &crate::ported::utils::ztrdup_metafy(
