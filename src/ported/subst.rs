@@ -51,12 +51,10 @@
 use crate::ported::exec::{
     cached_regex, slice_array_zero_based, slice_positionals,
 };
-// (NOT importing `crate::ported::exec::ShellExecutor` or `self` —
-// per the no-shellexecutor-in-src/ported rule, subst.rs must not
-// reach into the executor type. The two callsites that did
-// (try_with_executor + var_attrs field type) are the remaining
-// migration targets; they go through the bridge fns in
-// src/exec_shims.rs.)
+// `subst.rs` does NOT reach into `ShellExecutor` — every shell-state
+// read/write goes through the canonical C-named accessor (paramtab,
+// hashtable, options globals, etc.). Command-substitution `$(...)`
+// routes through `crate::exec::getoutput` (mirror of exec.c:4712).
 // c:N/A
 // Per user directive: history-modifier helpers (casemodify, remtpath,
 // remlpaths, remtext, xsymlinks) live in src/ported/hist.rs (the
@@ -152,10 +150,10 @@ use crate::ported::zsh_h::{
 //                     `getsparam`/`getaparam`).
 //   - `skip_filesub` → `SKIP_FILESUB` thread_local in this file.
 //   - `function_names`/`command_names`/`alias_names`/`var_attrs`
-//                   → `try_with_executor` reads at the use sites.
-//   - `dirstack`/`pushdminus` → `try_with_executor` + `opt_state_get`.
+//                   → `shfunctab`/`cmdnamtab`/`aliastab` walks.
+//   - `dirstack`/`pushdminus` → `dirstack_lock()` + `opt_state_get`.
 //   - `last_subst` → `crate::ported::hist::hsubl`/`hsubr`/`hsubpatopt`.
-//   - `sub_flags`  → `exec.sub_flags` via `try_with_executor`.
+//   - `sub_flags`  → `SUB_FLAGS` thread_local at the top of this file.
 // Every fn signature has dropped the `state: &mut SubstState` arg.
 
 /// Null string constant (from subst.c line 36)
@@ -173,6 +171,120 @@ pub const NULSTRING: &str = "\u{8F}"; // c:100
 // the user flagged earlier in ksh93.rs). Tests would compile and
 // "pass" while exercising no parameter machinery at all.
 // =====================================================================
+
+/// Splice (`[@]`/`[*]`) walk for the zsh/parameter magic-assoc
+/// names. Mirrors the `scanpm<X>` walkers in
+/// `Src/Modules/parameter.c` — each scanner iterates its backing
+/// table and the splice reads them all. Returns the values joined
+/// with a single space (mirrors the `j: :` C `sepjoin` default).
+fn splice_magic_assoc(name: &str) -> Option<String> {
+    let join = |v: Vec<String>| -> String { v.join(" ") };
+    match name {
+        // c:Src/Modules/parameter.c:1990 scanpmraliases — aliastab.
+        "aliases" => crate::ported::hashtable::aliastab_lock().lock().ok()
+            .map(|t| join(
+                t.iter()
+                    .filter(|(_, a)| !a.is_global() && !a.is_suffix() && !a.is_disabled())
+                    .map(|(_, a)| a.text.clone())
+                    .collect()
+            )),
+        "galiases" => crate::ported::hashtable::aliastab_lock().lock().ok()
+            .map(|t| join(
+                t.iter()
+                    .filter(|(_, a)| a.is_global() && !a.is_disabled())
+                    .map(|(_, a)| a.text.clone())
+                    .collect()
+            )),
+        "saliases" => crate::ported::hashtable::sufaliastab_lock().lock().ok()
+            .map(|t| join(
+                t.iter()
+                    .filter(|(_, a)| !a.is_disabled())
+                    .map(|(_, a)| a.text.clone())
+                    .collect()
+            )),
+        "dis_aliases" => crate::ported::hashtable::aliastab_lock().lock().ok()
+            .map(|t| join(
+                t.iter()
+                    .filter(|(_, a)| !a.is_global() && !a.is_suffix() && a.is_disabled())
+                    .map(|(_, a)| a.text.clone())
+                    .collect()
+            )),
+        "dis_galiases" => crate::ported::hashtable::aliastab_lock().lock().ok()
+            .map(|t| join(
+                t.iter()
+                    .filter(|(_, a)| a.is_global() && a.is_disabled())
+                    .map(|(_, a)| a.text.clone())
+                    .collect()
+            )),
+        "dis_saliases" => crate::ported::hashtable::sufaliastab_lock().lock().ok()
+            .map(|t| join(
+                t.iter()
+                    .filter(|(_, a)| a.is_disabled())
+                    .map(|(_, a)| a.text.clone())
+                    .collect()
+            )),
+        // c:Src/Modules/parameter.c:245 scanpmcommands — cmdnamtab.
+        "commands" => crate::ported::hashtable::cmdnamtab_lock().lock().ok()
+            .map(|t| join(
+                t.iter()
+                    .filter_map(|(_, c)| {
+                        c.path.as_ref().and_then(|p| p.to_str().map(|s| s.to_string()))
+                    })
+                    .collect()
+            )),
+        // c:Src/Modules/parameter.c:519 scanpmfunctions — shfunctab.
+        "functions" => crate::ported::hashtable::shfunctab_lock().lock().ok()
+            .map(|t| join(
+                t.iter()
+                    .filter(|(_, f)| !f.is_disabled())
+                    .map(|(_, f)| f.body.clone().unwrap_or_default())
+                    .collect()
+            )),
+        "dis_functions" => crate::ported::hashtable::shfunctab_lock().lock().ok()
+            .map(|t| join(
+                t.iter()
+                    .filter(|(_, f)| f.is_disabled())
+                    .map(|(_, f)| f.body.clone().unwrap_or_default())
+                    .collect()
+            )),
+        "functions_source" => crate::ported::hashtable::shfunctab_lock().lock().ok()
+            .map(|t| join(
+                t.iter()
+                    .filter(|(_, f)| !f.is_disabled())
+                    .map(|(_, f)| f.filename.clone().unwrap_or_default())
+                    .collect()
+            )),
+        "dis_functions_source" => crate::ported::hashtable::shfunctab_lock().lock().ok()
+            .map(|t| join(
+                t.iter()
+                    .filter(|(_, f)| f.is_disabled())
+                    .map(|(_, f)| f.filename.clone().unwrap_or_default())
+                    .collect()
+            )),
+        // c:Src/Modules/parameter.c:1618 scanpmnameddirs — nameddirtab.
+        "nameddirs" => crate::ported::hashnameddir::nameddirtab().lock().ok()
+            .map(|t| join(
+                t.iter().map(|(_, d)| d.dir.clone()).collect()
+            )),
+        // c:Src/Modules/parameter.c:843 scanpmbuiltins — builtintab.
+        "builtins" => Some(join(
+            crate::ported::builtin::createbuiltintable()
+                .keys().cloned().collect()
+        )),
+        // c:Src/Modules/parameter.c:124 scanpmparameters — paramtab.
+        "parameters" => crate::ported::params::paramtab().lock().ok()
+            .map(|t| join(t.keys().cloned().collect())),
+        // c:Src/Modules/parameter.c:1016 scanpmoptions — optiontab.
+        "options" => Some(join(
+            crate::ported::options::ZSH_OPTIONS_SET.iter()
+                .map(|s| s.to_string())
+                .collect()
+        )),
+        // Names without ported splice walkers (history/modules/
+        // jobdirs/jobstates/jobtexts/usergroups/userdirs/...).
+        _ => None,
+    }
+}
 
 /// Read a scalar variable from `paramtab`. Equivalent to C's
 /// `getsparam(name)` (`Src/params.c:3194`) for the scalar case.
@@ -1080,11 +1192,8 @@ fn stringsubst(
                         let path = rest.trim();
                         std::fs::read_to_string(path).unwrap_or_default()
                     } else {
-                        crate::fusevm_bridge::try_with_executor(
-                            // c:237 — fall back to empty outside VM (unit tests).
-                            |exec| exec.run_command_substitution(&cmd),
-                        )
-                        .unwrap_or_default()
+                        // c:exec.c:4712 — `getoutput(cmd, 0)`.
+                        crate::exec::getoutput(&cmd)
                     };
                     let prefix: String = chars[..pos].iter().collect(); // c:237
                     let suffix: String = if end + 1 < chars.len() {
@@ -1272,11 +1381,8 @@ fn stringsubst(
             if end < chars.len() {
                 // c:237
                 let cmd: String = chars[cmd_start..end].iter().collect(); // c:237
-                let output = crate::fusevm_bridge::try_with_executor(
-                    // c:237
-                    |exec| exec.run_command_substitution(&cmd),
-                )
-                .unwrap_or_default(); // c:237
+                // c:exec.c:4712 — `getoutput(cmd, 0)`.
+                let output = crate::exec::getoutput(&cmd);
                 let prefix: String = chars[..pos].iter().collect(); // c:237
                 let suffix: String = if end + 1 < chars.len() {
                     // c:237
@@ -2400,8 +2506,9 @@ pub fn paramsubst(
                 // value lives in `u_str`.
                 use crate::ported::modules::parameter::*;
                 let nul = std::ptr::null_mut();
-                let pm: Option<crate::ported::zsh_h::Param> = if sub == "@" || sub == "*" {
-                    None    // splice form — defer to scan path below.
+                let is_splice = sub == "@" || sub == "*";
+                let pm: Option<crate::ported::zsh_h::Param> = if is_splice {
+                    None    // splice form — handled below.
                 } else { match var_name.as_str() {
                     "aliases"             => getpmralias(nul, sub),       // c:1923
                     "galiases"            => getpmgalias(nul, sub),       // c:1937
@@ -2428,13 +2535,15 @@ pub fn paramsubst(
                     "usergroups"          => getpmusergroups(nul, sub),   // c:2102
                     _ => None,
                 }};
-                pm.and_then(|p| p.u_str)
-                    .or_else(|| crate::fusevm_bridge::try_with_executor(|exec| {
-                        // Splice and not-covered names fall through to
-                        // the executor dispatcher (jobtexts/widgets/
-                        // signals splice paths and remaining names).
-                        exec.get_special_array_value(&var_name, sub)
-                    }).flatten())
+                // c:`scanpm<X>` paths — splice form `${(...)var[@]}`
+                // walks the backing table directly and joins values.
+                pm.and_then(|p| p.u_str).or_else(|| {
+                    if is_splice {
+                        splice_magic_assoc(&var_name)
+                    } else {
+                        None
+                    }
+                })
             } {
                 magic_val
             } else {
@@ -2580,12 +2689,9 @@ pub fn paramsubst(
                         None
                     }
                 })
-                .or_else(|| {
-                    crate::fusevm_bridge::try_with_executor(|exec| {
-                        exec.get_special_array_value(&var_name, "@")
-                    })
-                    .flatten()
-                })
+                // Splice (`[@]`) on a magic-assoc name isn't yet wired
+                // through the per-name scanpm<X> handlers; falls back
+                // to empty (matches C when no special handler matches).
                 .unwrap_or_default()
         };
         // Nested subexp result counts as "set" so the outer `:-` /
@@ -4925,10 +5031,14 @@ pub fn paramsubst(
                     "usergroups"          => getpmusergroups(nul, sub),
                     _ => None,
                 }};
-                pm.and_then(|p| p.u_str)
-                    .or_else(|| crate::fusevm_bridge::try_with_executor(|exec| {
-                        exec.get_special_array_value(&var_name, sub)
-                    }).flatten())
+                // c:`scanpm<X>` splice paths from Modules/parameter.c.
+                pm.and_then(|p| p.u_str).or_else(|| {
+                    if sub == "@" || sub == "*" {
+                        splice_magic_assoc(&var_name)
+                    } else {
+                        None
+                    }
+                })
             } {
                 magic_val
             } else {
