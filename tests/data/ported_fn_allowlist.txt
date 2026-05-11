@@ -309,6 +309,20 @@ current_attrs_lock
 pending_attrs_lock
 set_pending_text_attrs
 
+# prompt.rs — colour/zattr pieces hoisted from C macro bodies and
+# inline branches in Src/prompt.c (set_colour_attribute ~2440,
+# parsecolorchar, output_colour ~2136, match_colour ~336). zsh uses
+# preprocessor macros and duplicated logic at each %F/%K site; Rust
+# factors into private fns (no separate C symbol per helper).
+color_rgb
+color_get_rgb
+color_to_ansi
+color_from_name
+zattr_set_fg_palette
+zattr_set_fg_rgb
+zattr_set_bg_palette
+zattr_set_bg_rgb
+
 # params.rs lookup_special_var — Rust-only GSU dispatch bridge. C zsh
 # dispatches `$RANDOM` / `$USERNAME` / `$UID` etc. through
 # `Param.gsu->getfn` inside getsparam (Src/params.c:3076). zshrs has

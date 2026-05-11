@@ -3479,8 +3479,8 @@ impl ZshCompiler {
 
     fn compile_funcdef(&mut self, f: &crate::parse::ZshFuncDef) {
         // Compile the body to a fusevm sub-chunk and register via
-        // BUILTIN_REGISTER_COMPILED_FN with three args:
-        //   [name, base64(bincode(chunk)), body_source]
+        // BUILTIN_REGISTER_COMPILED_FN with four args:
+        //   [name, base64(bincode(chunk)), body_source, line_base_str]
         // The handler stores the chunk in functions_compiled and the source
         // text in function_source so introspection (whence, which, typeset
         // -f, ${functions[name]}) returns canonical body text.
@@ -3498,10 +3498,12 @@ impl ZshCompiler {
             .map(|l| l.sublist.pipe.lineno)
             .unwrap_or(1);
         body_compiler.lineno_offset = first_body_line.saturating_sub(1);
+        let lineno_off = body_compiler.lineno_offset;
         let body_chunk = body_compiler.compile(&f.body);
         let body_bytes = bincode::serialize(&body_chunk).unwrap_or_default();
         let body_str = base64_encode(&body_bytes);
         let source_text = f.body_source.clone().unwrap_or_default();
+        let line_base_str = lineno_off.to_string();
 
         for raw_name in &f.names {
             // Strip any trailing INPAR+OUTPAR markers (\u{88}\u{8a})
@@ -3523,8 +3525,10 @@ impl ZshCompiler {
             self.builder.emit(Op::LoadConst(body_const), 0);
             let source_const = self.builder.add_constant(Value::str(source_text.as_str()));
             self.builder.emit(Op::LoadConst(source_const), 0);
+            let anchor_const = self.builder.add_constant(Value::str(line_base_str.as_str()));
+            self.builder.emit(Op::LoadConst(anchor_const), 0);
             self.builder.emit(
-                Op::CallBuiltin(crate::exec::BUILTIN_REGISTER_COMPILED_FN, 3),
+                Op::CallBuiltin(crate::exec::BUILTIN_REGISTER_COMPILED_FN, 4),
                 0,
             );
             self.builder.emit(Op::SetStatus, 0);

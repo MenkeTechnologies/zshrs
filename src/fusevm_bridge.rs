@@ -8106,12 +8106,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let name = iter.next().unwrap_or_default();
         let body_b64 = iter.next().unwrap_or_default();
         let body_source = iter.next().unwrap_or_default();
+        let line_base_str = iter.next().unwrap_or_default();
+        let line_base: i64 = line_base_str.parse().unwrap_or(0);
         let bytes = base64_decode(&body_b64);
         let status = match bincode::deserialize::<fusevm::Chunk>(&bytes) {
             Ok(chunk) => with_executor(|exec| {
+                let def_file = exec.scriptfilename.clone();
                 if !body_source.is_empty() {
                     exec.function_source.insert(name.clone(), body_source.clone());
                 }
+                exec.function_line_base.insert(name.clone(), line_base);
+                exec.function_def_file.insert(name.clone(), def_file);
                 // PFA-SMR aspect: every `name() {}` / `function name { }`
                 // funnels through here at compile time. Emit one record
                 // with the function name + raw body source.
@@ -9278,6 +9283,18 @@ impl fusevm::ShellHost for ZshrsHost {
                 new_stack.extend_from_slice(s);
             }
             exec.arrays.insert("funcstack".to_string(), new_stack);
+            let line_base = exec
+                .function_line_base
+                .get(&fn_name)
+                .copied()
+                .unwrap_or(0);
+            let def_file = exec
+                .function_def_file
+                .get(&fn_name)
+                .cloned()
+                .flatten();
+            exec.prompt_funcstack
+                .push((fn_name.clone(), line_base, def_file));
             // Set `$_` BEFORE the function body runs. zsh: inside
             // a function, `echo $_` reads the function name (when
             // called with no args) or the last call-arg.
@@ -9377,6 +9394,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 }
             }
             exec.scriptname = saved_scriptname;
+            exec.prompt_funcstack.pop();
             match saved_funcstack {
                 Some(s) => {
                     exec.arrays.insert("funcstack".to_string(), s);

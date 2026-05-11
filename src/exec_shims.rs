@@ -3452,8 +3452,7 @@ impl crate::ported::exec::ShellExecutor {
 impl crate::ported::exec::ShellExecutor {
     /// Expand prompt escape sequences using the full prompt module
     pub(crate) fn expand_prompt_string(&self, s: &str) -> String {
-        let env = self.build_prompt_expand_env();
-        PROMPT_EXPAND_ENV.with(|c| *c.borrow_mut() = env);
+        crate::ported::prompt::prompt_tls::sync_from_executor(self);
         expand_prompt(s)
     }
     /// Same as `expand_prompt_string` but strips the readline cursor-
@@ -3508,123 +3507,6 @@ impl crate::ported::exec::ShellExecutor {
             }
         }
         out
-    }
-    /// Build `prompt_expand_env` from current executor state (`Src/prompt.c`
-    /// globals: logical `$PWD`, `$?`, session history counter, jobs, …).
-    pub(crate) fn build_prompt_expand_env(&self) -> prompt_expand_env {
-        // zsh's prompt expansion uses the *logical* pwd (`$PWD` env var
-        // as set by `cd`), not the canonicalized `getcwd()` form. On
-        // macOS, `cd /tmp` leaves `$PWD=/tmp` but `getcwd()` returns
-        // `/private/tmp`, which would make `%2d` print `/private/tmp`
-        // instead of `/tmp` to match zsh.
-        let pwd = env::var("PWD")
-            .ok()
-            .filter(|p| !p.is_empty())
-            .or_else(|| {
-                env::current_dir()
-                    .ok()
-                    .map(|p| p.to_string_lossy().to_string())
-            })
-            .unwrap_or_else(|| "/".to_string());
-
-        let home = env::var("HOME").unwrap_or_default();
-
-        let user = env::var("USER")
-            .or_else(|_| env::var("LOGNAME"))
-            .unwrap_or_else(|_| "user".to_string());
-
-        let host = hostname::get()
-            .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "localhost".to_string());
-
-        let host_short = host.split('.').next().unwrap_or(&host).to_string();
-
-        // Prefer the in-shell SHLVL (already incremented by 1 over
-        // the parent's value at startup) over the env var which
-        // still holds the parent's pre-increment count. Without
-        // this, `print -P "%L"` was off by one (showed parent's
-        // SHLVL, not zshrs's).
-        let shlvl = self
-            .variables
-            .get("SHLVL")
-            .and_then(|s| s.parse().ok())
-            .or_else(|| env::var("SHLVL").ok().and_then(|s| s.parse().ok()))
-            .unwrap_or(1);
-
-        prompt_expand_env {
-            pwd,
-            home,
-            user,
-            host,
-            host_short,
-            tty: String::new(),
-            lastval: self.last_status,
-            // zsh's `%h`/`%!` is the *current line* number — counted
-            // from session start, not the persistent on-disk history
-            // size. In `-c` (non-interactive) mode no command has been
-            // recorded yet, so zsh emits 0. Use a session counter on
-            // the executor instead of the disk count.
-            histnum: self.session_histnum,
-            shlvl,
-            num_jobs: self.jobs.list().len() as i32,
-            is_root: unsafe { libc::geteuid() } == 0,
-            // `%_` in PS4 / prompt expansion renders the cumulative
-            // control-flow context labels (`if`, `then`, `cmdand`,
-            // `cmdor`, `cmdsubst`, …) — feed the executor's live
-            // `cmd_stack` (pushed by BUILTIN_CMD_PUSH around each
-            // compound command, popped by BUILTIN_CMD_POP) so the
-            // prompt expander sees what zsh's `cmdstack` global
-            // would show. Direct port of Src/prompt.c:855-887 `%_`
-            // expansion which iterates the cmdstack and joins
-            // names with spaces.
-            cmd_stack: self.cmd_stack.clone(),
-            psvar: self.get_psvar(),
-            term_width: self.get_term_width(),
-            // `$LINENO` is updated by `BUILTIN_SET_LINENO` before
-            // every top-level pipe (compile_zsh.rs:142), carrying
-            // the parser's `ZshPipe.lineno`. Reading it here lets
-            // `%i` / `%I` / `%h` prompt expansion (and the xtrace
-            // prefix that wraps each command) reflect the source
-            // line currently executing — matching zsh's
-            // `printprompt4()` reading the `lineno` C global before
-            // it expands `prompt4`. Falls back to 1 only on the very
-            // first dispatch before any SET_LINENO has fired.
-            lineno: self
-                .variables
-                .get("LINENO")
-                .and_then(|s| s.parse::<i64>().ok())
-                .unwrap_or(1),
-            // `%N` / `%x` resolution per Src/prompt.c:541-556:
-            // scriptname wins over argzero. C zsh keeps a separate
-            // `scriptname` global (Src/init.c) — set to the binary
-            // basename in `-c` mode (init.c:479), to the resolved
-            // path when sourcing a file (init.c:1591), and to the
-            // function name during a function call (exec.c:5903).
-            // The dedicated `self.scriptname` field tracks that. Fall
-            // back through $0 then $ZSH_ARGZERO if it's unset (e.g.
-            // a script-file invocation that hasn't pushed a frame
-            // yet).
-            scriptname: self
-                .scriptname
-                .clone()
-                .or_else(|| self.variables.get("0").cloned()),
-            // %x reads scriptfilename — the file being read, NOT
-            // the active function name. Falls back to scriptname
-            // when scriptfilename is unset (the no-function case
-            // where they coincide).
-            scriptfilename: self
-                .scriptfilename
-                .clone()
-                .or_else(|| self.scriptname.clone())
-                .or_else(|| self.variables.get("0").cloned()),
-            argzero: self
-                .variables
-                .get("ZSH_ARGZERO")
-                .cloned()
-                .unwrap_or_else(|| {
-                    std::env::args().next().unwrap_or_else(|| "zsh".to_string())
-                }),
-        }
     }
     /// Interpret bindkey-style escapes per zsh/Src/utils.c:getkeystring
     /// when called with GETKEYS_BINDKEY. Superset of expand_printf_escapes:

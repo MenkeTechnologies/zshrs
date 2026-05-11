@@ -5040,7 +5040,7 @@ pub(crate) fn printprompt4() {
     if !on {
         return;
     }
-    let (prefix_template, env, _posix_mode) = with_executor(|exec| {
+    let prefix_template = with_executor(|exec| {
         let posix = exec
             .options
             .get("kshemulation")
@@ -5066,7 +5066,7 @@ pub(crate) fn printprompt4() {
                     "+%N:%i> ".to_string()
                 }
             });
-        (template, exec.build_prompt_expand_env(), posix)
+        template
     });
     // Suppress recursion: the prompt expander runs subshells for
     // `%(?...)` etc.; with XTRACE still on we'd re-emit a trace of
@@ -5078,7 +5078,6 @@ pub(crate) fn printprompt4() {
         exec.options.insert("xtrace".to_string(), false);
         s
     });
-    crate::ported::prompt::PROMPT_EXPAND_ENV.with(|c| *c.borrow_mut() = env);
     let prefix = crate::prompt::expand_prompt(&prefix_template);
     with_executor(|exec| {
         exec.options.insert("xtrace".to_string(), saved);
