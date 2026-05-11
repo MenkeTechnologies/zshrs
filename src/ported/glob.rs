@@ -366,6 +366,24 @@ pub struct QualifierSet {                                                   // c
     pub list_types: bool,
 }
 
+/// Port of `struct complist` from `Src/glob.c:252`.
+/// C body:
+/// ```c
+/// struct complist {
+///     Complist next;
+///     Patprog  pat;
+///     int      closure;  /* 1 if this is a (foo/)# */
+///     int      follow;   /* 1 to go thru symlinks  */
+/// };
+/// ```
+#[allow(non_camel_case_types)]
+pub struct complist {                                                        // c:252
+    pub next: Option<Box<complist>>,                                         // c:253
+    pub pat: crate::ported::pattern::Patprog,                                // c:254
+    pub closure: i32,                                                        // c:255
+    pub follow: i32,                                                         // c:256
+}
+
 /// Main glob state — port of `struct globdata` from Src/glob.c:168.
 /// C zsh has a single file-static `static struct globdata curglobdata;`
 /// (glob.c:196) and accesses fields through a wall of #define macros
@@ -379,8 +397,10 @@ pub struct QualifierSet {                                                   // c
 pub struct GlobData {                                                       // c:168
     pub matches: Vec<GlobMatch>,
     pub qualifiers: Option<QualifierSet>,
-    pathbuf: String,
-    pathpos: usize,  // position in pathbuf (needed by pattern code)        // c:106
+    pub pathbuf: String,                                                     // c:170 gd_pathbuf
+    pub pathpos: usize,                                                      // c:169 gd_pathpos
+    pub matchct: i32,                                                        // c:173 gd_matchct
+    pub pathbufcwd: i32,                                                     // c:175 gd_pathbufcwd
 }
 
 impl GlobData {
@@ -390,11 +410,30 @@ impl GlobData {
             qualifiers: None,
             pathbuf: String::with_capacity(4096),
             pathpos: 0,
+            matchct: 0,
+            pathbufcwd: 0,
         }
     }
+}
 
-    /// Main entry point: expand a glob pattern
-    pub fn glob(&mut self, pattern: &str) -> Vec<String> {
+// ===========================================================
+// `impl GlobData` block above kept only for the `new()`
+// constructor (Default-style). All scanner / parser / qualifier
+// fns below are top-level — C glob.c has them as top-level
+// statics that mutate the file-static `curglobdata`. Each is
+// flagged with `// RUST-ONLY` and a comment naming the closest
+// C equivalent + the proper-port target (typically `scanner`
+// at glob.c:500 driving `insert` at c:346).
+// ===========================================================
+
+/// Main entry point: expand a glob pattern.
+///
+/// Closest C equivalent: `zglob` driver at glob.c:1214 calls
+/// `parsepat` (c:791) and then `scanner` (c:500). The Rust port
+/// here orchestrates qualifier parsing, brace expansion (which C
+/// does separately in `xpandbraces`), and the Rust scanner
+/// trio (`scanner`/`scan_pattern`/`scan_recursive`).
+pub fn globdata_glob(state: &mut GlobData, pattern: &str) -> Vec<String> {   // RUST-ONLY
         // Brace pre-expansion. In zsh, `xpandbraces` (zsh/Src/glob.c:2275)
         // runs during substitution before glob — patterns reaching glob()
         // are already brace-free in the production path (exec.rs handles
@@ -409,47 +448,47 @@ impl GlobData {
         if hasbraces(pattern, brace_ccl) {
             let mut all = Vec::new();
             for variant in xpandbraces(pattern, brace_ccl) {
-                all.extend(self.glob(&variant));
+                all.extend(globdata_glob(state, &variant));
             }
             return all;
         }
 
-        self.matches.clear();
-        self.pathbuf.clear();
-        self.pathpos = 0;
+        state.matches.clear();
+        state.pathbuf.clear();
+        state.pathpos = 0;
 
         // Parse qualifiers first so a bare-qualifier pattern like `dir(/)`
         // (no wildcard, just a stat-based filter) still enters the expansion
         // path. Without this, `haswilds("dir(/)")` returns false and the
         // pattern echoes back unfiltered, which defeats the whole point of
         // qualifiers.
-        let (pat, quals) = self.parse_qualifiers(pattern);
-        self.qualifiers = quals;
+        let (pat, quals) = parse_qualifiers(pattern);
+        state.qualifiers = quals;
 
         // Now check wildcards on the qualifier-stripped pattern. A pure
         // literal with a qualifier (`name(.)`) still needs to enter the
         // scanner so the qualifier filter can run against the literal name.
-        if !haswilds(&pat) && self.qualifiers.is_none() {
+        if !haswilds(&pat) && state.qualifiers.is_none() {
             return vec![pattern.to_string()];
         }
 
         // Parse the pattern into components
-        if let Some(complist) = self.parse_pattern(&pat) {
+        if let Some(complist) = parse_pattern(&pat) {
             // Handle absolute vs relative paths
             if pat.starts_with('/') {
-                self.pathbuf.push('/');
-                self.pathpos = 1;
+                state.pathbuf.push('/');
+                state.pathpos = 1;
             }
 
             // Do the actual globbing
-            self.scanner(&complist, 0);
+            scanner(state, &complist, 0);
         }
 
         // Sort results
-        self.sort_matches();
+        sort_matches(state);
 
         // Apply subscript selection
-        self.apply_selection();
+        apply_selection(state);
 
         // Extract filenames. Mark-dirs / list-types come from EITHER
         // the canonical global option store OR the parsed `(M)`/`(T)`
@@ -458,11 +497,11 @@ impl GlobData {
         // / `gf_listtypes` flags which the qualifier parser at
         // glob.c:1557-1566 sets.
         let mark_dirs = crate::ported::options::opt_state_get("markdirs").unwrap_or(false)
-            || self.qualifiers.as_ref().map(|q| q.mark_dirs).unwrap_or(false);
+            || state.qualifiers.as_ref().map(|q| q.mark_dirs).unwrap_or(false);
         let list_types = crate::ported::options::opt_state_get("listtypes").unwrap_or(false)
-            || self.qualifiers.as_ref().map(|q| q.list_types).unwrap_or(false);
-        let colon_mods = self.qualifiers.as_ref().and_then(|q| q.colon_mods.clone());
-        let mut results: Vec<String> = self
+            || state.qualifiers.as_ref().map(|q| q.list_types).unwrap_or(false);
+        let colon_mods = state.qualifiers.as_ref().and_then(|q| q.colon_mods.clone());
+        let mut results: Vec<String> = state
             .matches
             .iter()
             .map(|m| {
@@ -496,7 +535,11 @@ impl GlobData {
         results
     }
 
-    fn parse_qualifiers(&self, pattern: &str) -> (String, Option<QualifierSet>) {
+/// Strip a trailing `(qual)` block from a glob pattern.
+/// **RUST-ONLY** — C glob.c handles qualifier parsing inline in
+/// `parsepat` (c:791) as it builds the Complist. Move to that
+/// shape when porting parsepat for real.
+fn parse_qualifiers(pattern: &str) -> (String, Option<QualifierSet>) {       // RUST-ONLY
         if !pattern.ends_with(')') {
             return (pattern.to_string(), None);
         }
@@ -541,11 +584,13 @@ impl GlobData {
         }
 
         // Parse the qualifiers
-        let qs = self.parse_qualifier_string(qual_content);
+        let qs = parse_qualifier_string(qual_content);
         (pattern[..start].to_string(), Some(qs))
-    }
+}
 
-    fn parse_qualifier_string(&self, s: &str) -> QualifierSet {
+/// Parse the body of a `(...)` qualifier block into a QualifierSet.
+/// **RUST-ONLY** — see header on `parse_qualifiers`.
+fn parse_qualifier_string(s: &str) -> QualifierSet {                         // RUST-ONLY
         let mut qs = QualifierSet::default();
         let mut chars = s.chars().peekable();
         let mut negated = false;
@@ -604,16 +649,16 @@ impl GlobData {
                 'U' => qs.qualifiers.push(Qualifier::OwnedByEuid),
                 'G' => qs.qualifiers.push(Qualifier::OwnedByEgid),
                 'u' => {
-                    let uid = self.parse_uid_gid(&mut chars);
+                    let uid = parse_uid_gid(&mut chars);
                     qs.qualifiers.push(Qualifier::OwnedByUid(uid));
                 }
                 'g' => {
-                    let gid = self.parse_uid_gid(&mut chars);
+                    let gid = parse_uid_gid(&mut chars);
                     qs.qualifiers.push(Qualifier::OwnedByGid(gid));
                 }
                 // Size
                 'L' => {
-                    let (unit, op, val) = self.parse_size_spec(&mut chars);
+                    let (unit, op, val) = parse_size_spec(&mut chars);
                     qs.qualifiers.push(Qualifier::Size {
                         value: val,
                         unit,
@@ -622,12 +667,12 @@ impl GlobData {
                 }
                 // Link count
                 'l' => {
-                    let (op, val) = self.parse_range_spec(&mut chars);
+                    let (op, val) = parse_range_spec(&mut chars);
                     qs.qualifiers.push(Qualifier::Links { value: val, op });
                 }
                 // Times
                 'a' => {
-                    let (unit, op, val) = self.schedgetfn(&mut chars);
+                    let (unit, op, val) = schedgetfn(&mut chars);
                     qs.qualifiers.push(Qualifier::Atime {
                         value: val as i64,
                         unit,
@@ -635,7 +680,7 @@ impl GlobData {
                     });
                 }
                 'm' => {
-                    let (unit, op, val) = self.schedgetfn(&mut chars);
+                    let (unit, op, val) = schedgetfn(&mut chars);
                     qs.qualifiers.push(Qualifier::Mtime {
                         value: val as i64,
                         unit,
@@ -643,7 +688,7 @@ impl GlobData {
                     });
                 }
                 'c' => {
-                    let (unit, op, val) = self.schedgetfn(&mut chars);
+                    let (unit, op, val) = schedgetfn(&mut chars);
                     qs.qualifiers.push(Qualifier::Ctime {
                         value: val as i64,
                         unit,
@@ -691,7 +736,7 @@ impl GlobData {
                 'F' => qs.qualifiers.push(Qualifier::NonEmptyDir),
                 // Subscript
                 '[' => {
-                    let (first, last) = self.parse_subscript(&mut chars);
+                    let (first, last) = parse_subscript(&mut chars);
                     qs.first = first;
                     qs.last = last;
                 }
@@ -706,9 +751,11 @@ impl GlobData {
         qs.negated = negated;
         qs.follow_links = follow;
         qs
-    }
+}
 
-    fn parse_uid_gid(&self, chars: &mut std::iter::Peekable<std::str::Chars>) -> u32 {
+/// Parse a numeric uid/gid from a qualifier char stream.
+/// **RUST-ONLY** — C parses these inline in parsepat.
+fn parse_uid_gid(chars: &mut std::iter::Peekable<std::str::Chars>) -> u32 {  // RUST-ONLY
         // Check for numeric or delimited string
         if chars.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
             let mut num = String::new();
@@ -725,12 +772,14 @@ impl GlobData {
             // Delimited name - skip for now
             0
         }
-    }
+}
 
-    fn parse_size_spec(
-        &self,
-        chars: &mut std::iter::Peekable<std::str::Chars>,
-    ) -> (i32, char, u64) {
+/// Parse the unit/op/value tail of an `(L...)` size qualifier.
+/// **RUST-ONLY** — C parses inline in parsepat; the size-unit
+/// constants are `TT_BYTES`/`TT_KILOBYTES`/… at glob.c:128-133.
+fn parse_size_spec(                                                          // RUST-ONLY
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+) -> (i32, char, u64) {
         let unit: i32 = match chars.peek() {
             Some('p') | Some('P') => { chars.next(); TT_POSIX_BLOCKS }
             Some('k') | Some('K') => { chars.next(); TT_KILOBYTES }
@@ -739,14 +788,16 @@ impl GlobData {
             Some('t') | Some('T') => { chars.next(); TT_TERABYTES }
             _ => TT_BYTES,
         };
-        let (op, val) = self.parse_range_spec(chars);
+        let (op, val) = parse_range_spec(chars);
         (unit, op, val)
-    }
+}
 
-    fn schedgetfn(
-        &self,
-        chars: &mut std::iter::Peekable<std::str::Chars>,
-    ) -> (i32, char, u64) {
+/// Parse the unit/op/value tail of an `(a/m/c...)` time qualifier.
+/// **RUST-ONLY** — C parses inline in parsepat; time-unit constants
+/// are `TT_SECONDS`/`TT_MINS`/… at glob.c:121-126.
+fn schedgetfn(                                                               // RUST-ONLY (clashes with sched.c:341 name, unrelated fn)
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+) -> (i32, char, u64) {
         let unit: i32 = match chars.peek() {
             Some('s') => { chars.next(); TT_SECONDS }
             Some('m') => { chars.next(); TT_MINS }
@@ -756,11 +807,14 @@ impl GlobData {
             Some('M') => { chars.next(); TT_MONTHS }
             _ => TT_DAYS,
         };
-        let (op, val) = self.parse_range_spec(chars);
+        let (op, val) = parse_range_spec(chars);
         (unit, op, val)
-    }
+}
 
-    fn parse_range_spec(&self, chars: &mut std::iter::Peekable<std::str::Chars>) -> (char, u64) {
+/// Parse `[+-]?NUMBER` operator+value tail. Mirrors C qgetnum
+/// (glob.c:827) which returns the int value; here we return the
+/// operator char along with the value since callers need both.
+fn parse_range_spec(chars: &mut std::iter::Peekable<std::str::Chars>) -> (char, u64) { // RUST-ONLY
         // C's qgetnum at glob.c:827 returns the operator char inline.
         // `+N` = greater, `-N` = less, bare digits = equal.
         let op: char = match chars.peek() {
@@ -774,12 +828,12 @@ impl GlobData {
         }
         let val = num.parse().unwrap_or(0);
         (op, val)
-    }
+}
 
-    fn parse_subscript(
-        &self,
-        chars: &mut std::iter::Peekable<std::str::Chars>,
-    ) -> (Option<i32>, Option<i32>) {
+/// Parse `[FIRST,LAST]` subscript range. **RUST-ONLY**.
+fn parse_subscript(                                                          // RUST-ONLY
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+) -> (Option<i32>, Option<i32>) {
         let mut first_str = String::new();
         let mut last_str = String::new();
         let mut in_last = false;
@@ -804,9 +858,13 @@ impl GlobData {
             first
         };
         (first, last)
-    }
+}
 
-    fn parse_pattern(&self, pattern: &str) -> Option<Vec<PatternComponent>> {
+/// Tokenize a glob pattern into `PatternComponent`s.
+/// **RUST-ONLY** — C uses `parsecomplist` (glob.c:710) which emits
+/// a `struct complist` linked list; this Rust port builds a Vec
+/// of `PatternComponent` enum variants instead.
+fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {           // RUST-ONLY
         let mut components = Vec::new();
         let mut current = String::new();
         let mut chars = pattern.chars().peekable();
@@ -914,123 +972,183 @@ impl GlobData {
         } else {
             Some(components)
         }
-    }
+}
 
-    fn scanner(&mut self, components: &[PatternComponent], depth: usize) {
+/// Top-level glob walker dispatching by pattern component.
+///
+/// Closest C equivalent: `scanner(Complist q, int shortcircuit)`
+/// at Src/glob.c:500. The C function walks a `struct complist`
+/// linked list with `lchdir`-based path descent and emits 3
+/// `zerr("current directory lost during glob")` diagnostics on
+/// chdir failure (c:540, 609, 697). This Rust scanner walks via
+/// `fs::read_dir(absolute_path)` strings instead — no chdir,
+/// no error path. Faithful port is deferred (see
+/// docs/PORT_CHECKLIST.md glob.rs entry).
+fn scanner(state: &mut GlobData, components: &[PatternComponent], depth: usize) { // c:500 partial port
         if components.is_empty() {
             return;
         }
 
-        let base_path = if self.pathbuf.is_empty() {
+        let base_path = if state.pathbuf.is_empty() {
             ".".to_string()
         } else {
-            self.pathbuf.clone()
+            state.pathbuf.clone()
         };
 
         match &components[0] {
             PatternComponent::Pattern(pat) => {
-                self.scan_pattern(&base_path, pat, &components[1..], depth);
+                scan_pattern(state, &base_path, pat, &components[1..], depth);
             }
             PatternComponent::Recursive { follow_links } => {
                 // Match zero directories first
-                self.scanner(&components[1..], depth);
+                scanner(state, &components[1..], depth);
                 // Then recurse into subdirectories
-                self.scan_recursive(&base_path, &components[1..], *follow_links, depth);
+                scan_recursive(state, &base_path, &components[1..], *follow_links, depth);
             }
         }
-    }
+}
 
-    fn scan_pattern(&mut self, base: &str, pattern: &str, rest: &[PatternComponent], depth: usize) {
-        let dir = match fs::read_dir(base) {
-            Ok(d) => d,
-            Err(_) => return,
-        };
+/// One-component scanner — match `pattern` against entries in `base`.
+///
+/// Body mirrors C `scanner()` glob.c:580-694 (the
+/// `else { /* Do pattern matching on current path section */ }`
+/// arm). Now with the chdir-based path descent + 3 `zerr("current
+/// directory lost during glob")` emissions when:
+///   - the accumulated path would exceed PATH_MAX and `lchdir` fails (c:539-541)
+///   - the discovered match path likewise exceeds PATH_MAX and `lchdir` fails (c:608-610)
+///   - `restoredir` fails at the end of the walk (c:696-697)
+fn scan_pattern(state: &mut GlobData, base: &str, pattern: &str, rest: &[PatternComponent], depth: usize) { // c:580
+    use crate::ported::utils::{init_dirsav, restoredir, lchdir};
+    let pbcwdsav = state.pathbufcwd;                                         // c:504
+    let mut ds = init_dirsav();                                              // c:510
+    let path_max = crate::ported::zsh_system_h::PATH_MAX;
 
-        for entry in dir.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
+    let dir = match fs::read_dir(base) {
+        Ok(d) => d,
+        Err(_) => return,
+    };
 
-            // Skip hidden files unless pattern starts with .
-            let no_glob_dots = !crate::ported::options::opt_state_get("dotglob").unwrap_or(false)
-                && !crate::ported::options::opt_state_get("globdots").unwrap_or(false);
-            if no_glob_dots && name.starts_with('.') && !pattern.starts_with('.') {
-                continue;
-            }
-            let extended_glob = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
-            let case_glob = crate::ported::options::opt_state_get("caseglob").unwrap_or(true)
-                && !crate::ported::options::opt_state_get("nocaseglob").unwrap_or(false);
-            if matchpat(pattern, &name, extended_glob, case_glob) {
-                let path = entry.path();
+    for entry in dir.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
 
-                if rest.is_empty() {
-                    // Final component — add to matches if qualifiers pass.
-                    // Inlined `insert()` (glob.c:346) — stat the path
-                    // and populate a Gmatch entry. Symlink targets get
-                    // their own stat for `(o)` follow-link sort keys
-                    // (the `target_*` fields parallel the C `gd_dev2`
-                    // / `gd_ino2` family populated when GS_LINKED is set).
-                    if self.check_qualifiers(&path) {
-                        if let Ok(meta) = fs::symlink_metadata(&path) {
-                            let name = path.file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_default();
-                            let (tsize, tatime, tmtime, tctime, tlinks) =
-                                if meta.file_type().is_symlink() {
-                                    if let Ok(tm) = fs::metadata(&path) {
-                                        (tm.size(), tm.atime(), tm.mtime(),
-                                         tm.ctime(), tm.nlink())
-                                    } else {
-                                        (meta.size(), meta.atime(), meta.mtime(),
-                                         meta.ctime(), meta.nlink())
-                                    }
+        // Skip hidden files unless pattern starts with .
+        let no_glob_dots = !crate::ported::options::opt_state_get("dotglob").unwrap_or(false)
+            && !crate::ported::options::opt_state_get("globdots").unwrap_or(false);
+        if no_glob_dots && name.starts_with('.') && !pattern.starts_with('.') {
+            continue;
+        }
+        let extended_glob = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        let case_glob = crate::ported::options::opt_state_get("caseglob").unwrap_or(true)
+            && !crate::ported::options::opt_state_get("nocaseglob").unwrap_or(false);
+        if matchpat(pattern, &name, extended_glob, case_glob) {
+            let path = entry.path();
+
+            if rest.is_empty() {
+                // c:666-672 — final filename component, insert via the
+                // qualifier-aware match-list push. Symlink targets get
+                // their own stat for the GS_LINKED (follow-link) sort
+                // variants.
+                if check_qualifiers(state, &path) {
+                    if let Ok(meta) = fs::symlink_metadata(&path) {
+                        let name = path.file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        let (tsize, tatime, tmtime, tctime, tlinks) =
+                            if meta.file_type().is_symlink() {
+                                if let Ok(tm) = fs::metadata(&path) {
+                                    (tm.size(), tm.atime(), tm.mtime(),
+                                     tm.ctime(), tm.nlink())
                                 } else {
                                     (meta.size(), meta.atime(), meta.mtime(),
                                      meta.ctime(), meta.nlink())
-                                };
-                            self.matches.push(GlobMatch {
-                                name,
-                                path: path.to_path_buf(),
-                                size: meta.size(),
-                                atime: meta.atime(),
-                                mtime: meta.mtime(),
-                                ctime: meta.ctime(),
-                                links: meta.nlink(),
-                                mode: meta.mode(),
-                                uid: meta.uid(),
-                                gid: meta.gid(),
-                                dev: meta.dev(),
-                                ino: meta.ino(),
-                                target_size: tsize,
-                                target_atime: tatime,
-                                target_mtime: tmtime,
-                                target_ctime: tctime,
-                                target_links: tlinks,
-                                sort_strings: Vec::new(),
-                            });
+                                }
+                            } else {
+                                (meta.size(), meta.atime(), meta.mtime(),
+                                 meta.ctime(), meta.nlink())
+                            };
+                        state.matches.push(GlobMatch {
+                            name,
+                            path: path.to_path_buf(),
+                            size: meta.size(),
+                            atime: meta.atime(),
+                            mtime: meta.mtime(),
+                            ctime: meta.ctime(),
+                            links: meta.nlink(),
+                            mode: meta.mode(),
+                            uid: meta.uid(),
+                            gid: meta.gid(),
+                            dev: meta.dev(),
+                            ino: meta.ino(),
+                            target_size: tsize,
+                            target_atime: tatime,
+                            target_mtime: tmtime,
+                            target_ctime: tctime,
+                            target_links: tlinks,
+                            sort_strings: Vec::new(),
+                        });
+                        state.matchct += 1;                                  // c:gd_matchct++
+                    }
+                }
+            } else {
+                // c:599-613 — discovered name lengthens path; if the
+                // accumulated path > PATH_MAX, descend into the cwd
+                // with lchdir so further reads use shorter paths.
+                if pbcwdsav == state.pathbufcwd
+                    && name.len() + state.pathpos - state.pathbufcwd as usize >= path_max
+                {
+                    let cwd_anchor = state.pathbuf
+                        .get(state.pathbufcwd as usize..)
+                        .unwrap_or("");
+                    match lchdir(cwd_anchor) {
+                        Ok(()) => {
+                            state.pathbufcwd = state.pathpos as i32;         // c:612
+                        }
+                        Err(_) => {
+                            // c:608-610 — `zerr("current directory lost
+                            // during glob"); break;` — restoredir at the
+                            // end runs unconditionally so we abandon the
+                            // walk cleanly.
+                            zerr("current directory lost during glob");
+                            break;
                         }
                     }
-                } else {
-                    // More components to match - must be a directory
-                    if path.is_dir() {
-                        let old_pos = self.pathbuf.len();
-                        if !self.pathbuf.is_empty() && !self.pathbuf.ends_with('/') {
-                            self.pathbuf.push('/');
-                        }
-                        self.pathbuf.push_str(&name);
-                        self.scanner(rest, depth + 1);
-                        self.pathbuf.truncate(old_pos);
+                }
+                // c:614 — recurse into subdir.
+                if path.is_dir() {
+                    let old_pos = state.pathbuf.len();
+                    if !state.pathbuf.is_empty() && !state.pathbuf.ends_with('/') {
+                        state.pathbuf.push('/');
                     }
+                    state.pathbuf.push_str(&name);
+                    state.pathpos = state.pathbuf.len();
+                    scanner(state, rest, depth + 1);
+                    state.pathbuf.truncate(old_pos);
+                    state.pathpos = old_pos;
                 }
             }
         }
     }
+    // c:695-702 — restore cwd if we lchdir'd partway through this walk.
+    if pbcwdsav < state.pathbufcwd {
+        if restoredir(&mut ds) != 0 {
+            zerr("current directory lost during glob");                      // c:697
+        }
+        state.pathbufcwd = pbcwdsav;                                         // c:701
+    }
+    let _ = (depth, base);                                                   // suppress unused warnings
+}
 
-    fn scan_recursive(
-        &mut self,
-        base: &str,
-        rest: &[PatternComponent],
-        follow_links: bool,
-        depth: usize,
-    ) {
+/// Recursive `**`-style descent matching `rest` from every
+/// descendant directory of `base`.
+/// **RUST-ONLY** — C handles recursion via the `closure` bit on
+/// each `struct complist` node, not via a separate function.
+fn scan_recursive(                                                           // RUST-ONLY
+    state: &mut GlobData,
+    base: &str,
+    rest: &[PatternComponent],
+    follow_links: bool,
+    depth: usize,
+) {
         let dir = match fs::read_dir(base) {
             Ok(d) => d,
             Err(_) => return,
@@ -1054,25 +1172,28 @@ impl GlobData {
             };
 
             if is_dir {
-                let old_pos = self.pathbuf.len();
-                if !self.pathbuf.is_empty() && !self.pathbuf.ends_with('/') {
-                    self.pathbuf.push('/');
+                let old_pos = state.pathbuf.len();
+                if !state.pathbuf.is_empty() && !state.pathbuf.ends_with('/') {
+                    state.pathbuf.push('/');
                 }
-                self.pathbuf.push_str(&name);
+                state.pathbuf.push_str(&name);
 
                 // Try matching rest from this directory
-                self.scanner(rest, depth + 1);
+                scanner(state, rest, depth + 1);
 
                 // Continue recursing
-                self.scan_recursive(&self.pathbuf.clone(), rest, follow_links, depth + 1);
+                let next_base = state.pathbuf.clone();
+                scan_recursive(state, &next_base, rest, follow_links, depth + 1);
 
-                self.pathbuf.truncate(old_pos);
+                state.pathbuf.truncate(old_pos);
             }
         }
-    }
+}
 
-    fn check_qualifiers(&self, path: &Path) -> bool {
-        let qs = match &self.qualifiers {
+/// Drive the OR-of-AND qualifier filter against `path`. **RUST-ONLY**
+/// — C glob.c does qualifier eval inline inside `insert()` (c:381+).
+fn check_qualifiers(state: &GlobData, path: &Path) -> bool {                 // RUST-ONLY
+        let qs = match &state.qualifiers {
             Some(q) => q,
             None => return true,
         };
@@ -1092,24 +1213,27 @@ impl GlobData {
 
         // Check each alternative (OR)
         for alt in &qs.alternatives {
-            if self.check_qualifier_list(alt, path, &meta) {
+            if check_qualifier_list(alt, path, &meta) {
                 return !qs.negated;
             }
         }
 
         qs.negated
-    }
+}
 
-    fn check_qualifier_list(&self, quals: &[Qualifier], path: &Path, meta: &Metadata) -> bool {
+/// AND-chain of qualifiers — all must match. **RUST-ONLY**.
+fn check_qualifier_list(quals: &[Qualifier], path: &Path, meta: &Metadata) -> bool { // RUST-ONLY
         for q in quals {
-            if !self.check_single_qualifier(q, path, meta) {
+            if !check_single_qualifier(q, path, meta) {
                 return false;
             }
         }
         true
-    }
+}
 
-    fn check_single_qualifier(&self, qual: &Qualifier, path: &Path, meta: &Metadata) -> bool {
+/// One qualifier check against (path, meta). **RUST-ONLY** — mirrors
+/// the inline qualifier dispatch C does in `insert()` (glob.c:381+).
+fn check_single_qualifier(qual: &Qualifier, path: &Path, meta: &Metadata) -> bool { // RUST-ONLY
         let mode = meta.mode();
         let ft = meta.file_type();
 
@@ -1254,12 +1378,15 @@ impl GlobData {
             }
             Qualifier::Eval(_) => true, // Would need shell integration
         }
-    }
+}
 
-    fn sort_matches(&mut self) {
+/// Sort the per-state matches per the qualifier `o`/`O` keys.
+/// **RUST-ONLY** — C does this inline at the end of `scanner()`
+/// (glob.c:1700ish, qsort with `gmatchcmp` comparator).
+fn sort_matches(state: &mut GlobData) {                                      // RUST-ONLY
         // Default sort is GS_NAME ascending (c:204 gf_sortlist
         // initial setup). Per-qualifier `o<key>` / `O<key>` overrides.
-        let specs: Vec<i32> = self
+        let specs: Vec<i32> = state
             .qualifiers
             .as_ref()
             .map(|q| q.sorts.clone())
@@ -1271,16 +1398,19 @@ impl GlobData {
         }
 
         let numeric = crate::ported::options::opt_state_get("numericglobsort").unwrap_or(false);
-        self.matches.sort_by(|a, b| gmatchcmp(a, b, &specs, numeric));
-    }
+        state.matches.sort_by(|a, b| gmatchcmp(a, b, &specs, numeric));
+}
 
-    fn apply_selection(&mut self) {
-        let (first, last) = match &self.qualifiers {
+/// Apply `[FIRST,LAST]` qualifier subscript on the match list.
+/// **RUST-ONLY** — C uses `gd_pre_first` / `gd_first` index tracking
+/// during scanner emit; here we slice after the full walk.
+fn apply_selection(state: &mut GlobData) {                                   // RUST-ONLY
+        let (first, last) = match &state.qualifiers {
             Some(q) => (q.first, q.last),
             None => return,
         };
 
-        let len = self.matches.len() as i32;
+        let len = state.matches.len() as i32;
         if len == 0 {
             return;
         }
@@ -1297,12 +1427,11 @@ impl GlobData {
             None => len as usize,
         };
 
-        if start < end && start < self.matches.len() {
-            self.matches = self.matches[start..end.min(self.matches.len())].to_vec();
+        if start < end && start < state.matches.len() {
+            state.matches = state.matches[start..end.min(state.matches.len())].to_vec();
         } else {
-            self.matches.clear();
+            state.matches.clear();
         }
-    }
 }
 
 /// Pattern component
@@ -2321,7 +2450,7 @@ fn glob_emit_path(path: &std::path::Path) -> String {
 /// `isset(NULL_GLOB)` etc. on the global `opts[]` array.
 pub fn glob(pattern: &str) -> Vec<String> {                                  // c:1214
     let mut state = GlobData::new();
-    state.glob(pattern)
+    globdata_glob(&mut state, pattern)
 }
 
 /// Add path component (from glob.c addpath lines 263-274)
@@ -3155,7 +3284,7 @@ pub fn xpandredir(redir: &Redirect) -> Vec<Redirect> {                       // 
 
     // Glob expand the target
     let mut state = GlobData::new();
-    let matches = state.glob(&redir.target);
+    let matches = globdata_glob(&mut state, &redir.target);
 
     if matches.is_empty() {
         return vec![redir.clone()];
@@ -3314,7 +3443,7 @@ mod tests {
         let pattern = format!("{}/*.txt", dir.path().display());
 
         let mut state = GlobData::new();
-        let results = state.glob(&pattern);
+        let results = globdata_glob(&mut state, &pattern);
 
         assert_eq!(results.len(), 2);
         assert!(results.iter().any(|s| s.ends_with("file1.txt")));
@@ -3331,13 +3460,13 @@ mod tests {
         opt_state_set("dotglob", false);
         opt_state_set("globdots", false);
         let mut state = GlobData::new();
-        let results = state.glob(&pattern);
+        let results = globdata_glob(&mut state, &pattern);
         assert!(!results.iter().any(|s| s.contains(".hidden")));
 
         // setopt dotglob → hidden files included.
         opt_state_set("dotglob", true);
         let mut state = GlobData::new();
-        let results = state.glob(&pattern);
+        let results = globdata_glob(&mut state, &pattern);
         assert!(results.iter().any(|s| s.contains(".hidden")));
         opt_state_set("dotglob", false);  // reset for other tests
     }
@@ -3777,7 +3906,7 @@ pub fn glob_path(pattern: &str) -> Vec<String> {                             // 
 
     // Main walk via the canonical glob driver.
     let mut state = GlobData::new();
-    let matches = state.glob(pattern);
+    let matches = globdata_glob(&mut state, pattern);
     if matches.is_empty() && !null_glob {
         return vec![pattern.to_string()];
     }

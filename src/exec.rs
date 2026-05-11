@@ -98,7 +98,7 @@ pub static TRAP_RETURN: std::sync::atomic::AtomicI32 =                      // c
 // rest of the codebase imports as `crate::ported::exec::X`.
 // ───────────────────────────────────────────────────────────────────────────
 pub use crate::fusevm_bridge::*;
-pub(crate) use crate::fusevm_bridge::{try_with_executor, with_executor, ExecutorContext};
+pub(crate) use crate::fusevm_bridge::{ExecutorContext};
 
 /// Match an intercept pattern against a command name or full command string.
 /// Supports: exact match, glob ("git *", "_*", "*"), or "all".
