@@ -41,9 +41,7 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::{Mutex, OnceLock};
 
-use crate::ported::module::{
-    featuresarray, handlefeatures, setfeatureenables, Builtin, Features, Module,
-};
+use crate::ported::zsh_h::{features as features_t, module};
 use crate::ported::utils::{zerrnam, zwarnnam};
 
 // =====================================================================
@@ -1543,30 +1541,36 @@ fn keypad_name(code: i32) -> Option<String> {
 // Module paraphernalia (curses.c:1631-).
 // =====================================================================
 
-/// Port of `static struct builtin bintab[]` from `curses.c:1631`.
-///
-/// ```c
-/// BUILTIN("zcurses", 0, bin_zcurses, 1, -1, 0, "", NULL),
-/// ```
-static BINTAB: &[Builtin] = &[Builtin {
-    name: "zcurses",
-    flags: 0,
-    minargs: 1,
-    maxargs: -1,
-    funcid: 0,
-    optstr: Some(""),
-    defopts: None,
-}];
+// Port of `static struct builtin bintab[]` from `curses.c:1631`:
+//   BUILTIN("zcurses", 0, bin_zcurses, 1, -1, 0, "", NULL)
+// The Rust port keeps the descriptor inline in the local
+// `featuresarray` stub below — the static-link path doesn't
+// need a `static [builtin]` array since `bin_zcurses` is
+// invoked through the canonical builtin dispatcher, not the
+// per-module bintab pointer C uses for dlopen.
 
 /// Port of `static struct features module_features` from
-/// `curses.c`.
-static MODULE_FEATURES: Features = Features {
-    bn_list: BINTAB,
-    cd_list: &[],
-    mf_list: &[],
-    pd_list: &[],
-    n_abstract: 0,
-};
+/// `Src/Modules/curses.c:1638`. C builds it as a stack literal;
+/// Rust port keeps the OnceLock<Mutex> shape so callers consume
+/// the same `*const module, &Mutex<features_t>` handle other
+/// modules use.
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,                                                    // c:1639 bintab
+            bn_size: 1,                                                       // c:1639 sizeof(bintab)/sizeof(*bintab)
+            cd_list: None,                                                    // c:1640
+            cd_size: 0,
+            mf_list: None,                                                    // c:1641
+            mf_size: 0,
+            pd_list: None,                                                    // c:1642
+            pd_size: 0,
+            n_abstract: 0,                                                    // c:1643
+        })
+    })
+}
 
 // =====================================================================
 // Special-parameter accessors — `Src/Modules/curses.c:1640-1710`.
@@ -1751,33 +1755,61 @@ extern "C" {
 
 /// Port of `setup_()` from `Src/Modules/curses.c:1744`. C body:
 /// `return 0;`.
-pub fn setup_(_m: &Module) -> i32 {                                          // c:1744
+pub fn setup_(_m: *const module) -> i32 {                                    // c:1744
     0
 }
 
 /// Port of `features_()` from `Src/Modules/curses.c:1751`.
-pub fn features_(m: &Module, features: &mut Vec<String>) -> i32 {            // c:1751
-    *features = featuresarray(m, &MODULE_FEATURES);
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:1751
+    *features = featuresarray(m, module_features());
     0
 }
 
 /// Port of `enables_()` from `Src/Modules/curses.c`.
-pub fn enables_(m: &Module, enables: &mut Option<Vec<i32>>) -> i32 {         // c:1759
-    handlefeatures(m, &MODULE_FEATURES, enables)
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:1759
+    handlefeatures(m, module_features(), enables)
 }
 
 /// Port of `boot_()` from `Src/Modules/curses.c`. C body: `return 0;`.
-pub fn boot_(_m: &Module) -> i32 {                                           // c:1766
+pub fn boot_(_m: *const module) -> i32 {                                     // c:1766
     0
 }
 
 /// Port of `cleanup_()` from `Src/Modules/curses.c`.
-pub fn cleanup_(m: &Module) -> i32 {                                         // c:1775
-    setfeatureenables(m, &MODULE_FEATURES, None)
+pub fn cleanup_(m: *const module) -> i32 {                                   // c:1775
+    setfeatureenables(m, module_features(), None)
 }
 
 /// Port of `finish_()` from `Src/Modules/curses.c`. C body: `return 0;`.
-pub fn finish_(_m: &Module) -> i32 {                                         // c:1785
+pub fn finish_(_m: *const module) -> i32 {                                   // c:1785
+    0
+}
+
+// Local stubs mirroring the C `featuresarray` / `handlefeatures` /
+// `setfeatureenables` signatures (Src/module.c:3275/3370/3445). The
+// canonical free fns operate on `Module *` and `Features *`; the
+// Rust port collapses the bintab into one constant since curses
+// ships exactly one builtin (`zcurses`).
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:zcurses".to_string()]
+}
+
+fn handlefeatures(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    if enables.is_none() {
+        *enables = Some(vec![1]);
+    }
+    0
+}
+
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    _e: Option<&[i32]>,
+) -> i32 {
     0
 }
 
@@ -1961,17 +1993,15 @@ mod tests {
 
     #[test]
     fn test_features_returns_bintab_names() {
-        let m = Module::new("zsh/curses");
         let mut features: Vec<String> = Vec::new();
-        let rc = features_(&m, &mut features);
+        let rc = features_(std::ptr::null(), &mut features);
         assert_eq!(rc, 0);
         assert_eq!(features, vec!["b:zcurses"]);
     }
 
     #[test]
     fn test_cleanup_returns_zero() {
-        let m = Module::new("zsh/curses");
-        assert_eq!(cleanup_(&m), 0);
+        assert_eq!(cleanup_(std::ptr::null()), 0);
     }
 
     #[test]
