@@ -854,3 +854,11 @@ patmatch_internal
 # bookkeeping isn't duplicated at every callsite.
 set_next
 chain_branches_to
+
+# hashtable.rs cmdnam constructor helpers. C builds cmdnam entries
+# inline in `hashdir()` (hashtable.c:704/712) without a constructor
+# fn — the inline literal sets `node.flags` and the appropriate
+# union arm. Rust provides hashed/unhashed builders to keep the
+# call sites readable; same two-arm dispatch as C.
+cmdnam_hashed
+cmdnam_unhashed
