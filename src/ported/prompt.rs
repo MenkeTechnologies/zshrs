@@ -84,10 +84,21 @@ pub(crate) mod prompt_tls {
         HOST.with(|c| *c.borrow_mut() = host);
         HOST_SHORT.with(|c| *c.borrow_mut() = host_short);
         TTY.with(|c| c.borrow_mut().clear());
-        // c:builtin.c:6443 lastval — the C global $?
+        // c:builtin.c:6443 lastval — the C global $?. The canonical
+        // store is `builtin::LASTVAL` (AtomicI32). When a fusevm op
+        // emits xtrace via `printprompt4`, the live status lives in
+        // `vm.last_status` and gets synced to `exec.last_status` at
+        // statement boundaries — but `LASTVAL` may lag a step behind.
+        // Prefer the executor's view when available so `%(?.X.Y)` and
+        // `%?` reflect the just-finished command's exit code.
         LASTVAL.with(|c| {
-            *c.borrow_mut() = crate::ported::builtin::LASTVAL
-                .load(std::sync::atomic::Ordering::Relaxed);
+            let from_exec = crate::fusevm_bridge::try_with_executor(
+                |exec| exec.last_status as i32,
+            );
+            *c.borrow_mut() = from_exec.unwrap_or_else(|| {
+                crate::ported::builtin::LASTVAL
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            });
         });
         // c:hist.c:233 curhist
         HISTNUM.with(|c| {

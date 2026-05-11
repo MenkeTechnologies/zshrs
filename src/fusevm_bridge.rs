@@ -177,6 +177,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if let Some(s) = try_user_fn_override("echo", &args) {
             return Value::Status(s);
         }
+        // Update `$_` to the last arg before running. C zsh sets
+        // zunderscore in execcmd_exec for every simple command,
+        // including builtins.
+        crate::ported::params::set_zunderscore(&args);
         let status = with_executor(|exec| exec.builtin_echo(&args, &[]));
         Value::Status(status)
     });
@@ -186,6 +190,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if let Some(s) = try_user_fn_override("print", &args) {
             return Value::Status(s);
         }
+        crate::ported::params::set_zunderscore(&args);
         let status = with_executor(|exec| exec.bin_print(&args));
         Value::Status(status)
     });
@@ -5501,6 +5506,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             } else {
                 value.clone()
             };
+            // c:Src/params.c — `typeset -l` (PM_LOWER) / `-u`
+            // (PM_UPPER) case-fold the assigned value before storage.
+            // Direct port of the PM_LOWER/PM_UPPER setstrvalue arms.
+            let stored = if let Some(ref a) = attrs {
+                if a.uppercase { stored.to_uppercase() }
+                else if a.lowercase { stored.to_lowercase() }
+                else { stored }
+            } else { stored };
             // Mirror scalar→array if name is the scalar side of a
             // typeset -T tie. Direct port of Src/params.c PM_TIED:
             // assigning to PATH must update both `path` (the array
@@ -5851,9 +5864,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // `%_` in PS4 / prompt expansion.
     vm.register_builtin(BUILTIN_CMD_PUSH, |vm, _argc| {
         let token = vm.pop().to_int() as u8;
+        // Route through canonical cmdpush (Src/prompt.c:1623). The
+        // prompt expander reads from the file-static `CMDSTACK` at
+        // `prompt.rs:2006`, not `exec.cmd_stack` — without this,
+        // `%_` in PS4 saw an empty stack during xtrace.
+        if (token as i32) < crate::ported::zsh_h::CS_COUNT {
+            crate::ported::prompt::cmdpush(token);
+        }
+        // Mirror to exec.cmd_stack for any reader still on the
+        // legacy field (TODO: dissolve).
         with_executor(|exec| {
-            // Match C's `if (token < CS_COUNT) cmdstack[cmdsp++] = token;`
-            // — bounded by `CS_COUNT` (Src/prompt.c:1624).
             if (token as i32) < crate::ported::zsh_h::CS_COUNT {
                 exec.cmd_stack.push(token);
             }
@@ -5863,6 +5883,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     // Direct port of Src/prompt.c:1631 cmdpop.
     vm.register_builtin(BUILTIN_CMD_POP, |_vm, _argc| {
+        crate::ported::prompt::cmdpop();
         with_executor(|exec| {
             exec.cmd_stack.pop();
         });
@@ -6446,22 +6467,44 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // line: `<PS4>a=1 echo hello\n`. XTRACE_ARGS / XTRACE_NEWLINE
     // reset the flag after emitting the trailing `\n`.
     vm.register_builtin(BUILTIN_XTRACE_LINE, |vm, _argc| {
-        let _cmd_text = vm.pop().to_str();
+        let cmd_text = vm.pop().to_str();
         // Sync exec.last_status with the live vm.last_status BEFORE
         // the next command runs. Direct port of the zsh exec.c
         // contract — `$?` reads the exit status of the *most recent*
         // command. XTRACE_LINE is emitted by the compiler BEFORE
         // every simple command, so it's the natural sync point.
-        //
-        // We DO NOT emit PS4 + cmd_text here — that would double-trace
-        // because XTRACE_ARGS at the bottom of execcmd_exec already
-        // emits PS4 + expanded args + \n (matching Src/exec.c:2055).
-        // XTRACE_LINE is a Rust-only sync point; the real C-faithful
-        // emission lives in XTRACE_ARGS.
         let live = vm.last_status;
         with_executor(|exec| {
             exec.last_status = live;
         });
+        // C zsh emits xtrace for `(( … ))` / `[[ … ]]` / `case` via
+        // a `printprompt4(); fprintf(xtrerr, "%s\n", expr)` at
+        // Src/exec.c:5240/5286/etc. XTRACE_LINE is the compiler-emitted
+        // sentinel for those non-simple constructs. We skip emission
+        // for simple commands (XTRACE_ARGS handles those after expansion)
+        // by gating on a "simple-command" flag set immediately before
+        // dispatch by the compiler. Without that flag in place yet, we
+        // emit only when the command text is wrapped in `(( … ))` /
+        // `[[ … ]]` / starts with `case ` / etc. — the construct
+        // markers the compiler attaches.
+        let on = with_executor(|exec|
+            exec.options.get("xtrace").copied().unwrap_or(false));
+        let is_construct = cmd_text.starts_with("(( ")
+            || cmd_text.starts_with("[[ ")
+            || cmd_text.starts_with("case ")
+            || cmd_text.starts_with("for ")
+            || cmd_text.starts_with("while ")
+            || cmd_text.starts_with("until ")
+            || cmd_text.starts_with("if ")
+            || cmd_text.starts_with("repeat ");
+        if on && is_construct {
+            let already = XTRACE_DONE_PS4.with(|f| f.get());
+            if !already {
+                printprompt4();
+            }
+            eprintln!("{}", cmd_text);
+            XTRACE_DONE_PS4.with(|f| f.set(false));
+        }
         fusevm::Value::Status(0)
     });
 

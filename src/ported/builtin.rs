@@ -3069,13 +3069,29 @@ pub fn bin_print(name: &str, args: &[String],                                // 
     // c:4598-4600 — `-P` prompt-style percent expansion (`%n`, `%d`,
     // `%?`, `%h`, `%%`, etc.). Routes through `expand_prompt`
     // (canonical port of `Src/prompt.c:182 promptexpand`).
-    let processed_args: Vec<String> = if OPT_ISSET(ops, b'P') {
+    let mut processed_args: Vec<String> = if OPT_ISSET(ops, b'P') {
         args.iter()
             .map(|a| crate::ported::prompt::expand_prompt(a))                // c:Src/prompt.c:182
             .collect()
     } else {
         args.to_vec()
     };
+    // c:Src/builtin.c:4866-4886 — when `-r` is NOT set, each arg goes
+    // through `getkeystring` to interpret backslash escapes (`\n`,
+    // `\t`, `\\`, escaped space `\ `, etc.). `echo` follows the same
+    // path when `BSD_ECHO`/`SH_OPTION_LETTERS`-style isn't in effect;
+    // BIN_ECHO with `-E` keeps escapes literal. Without this, `print
+    // -- ${(q)a}` for `a="he llo"` emitted `he\ llo` instead of zsh's
+    // `he llo` (the (q) flag's backslash gets consumed by print).
+    if !raw {
+        let echo_E = echo_mode && OPT_ISSET(ops, b'E');
+        if !echo_E {
+            for a in processed_args.iter_mut() {
+                let (s, _) = crate::ported::utils::getkeystring_print(a);
+                *a = s;
+            }
+        }
+    }
     let body = processed_args.join(sep);
     if let Some(ref v) = dest_var {
         crate::ported::params::setsparam(v, &body);
@@ -3835,8 +3851,40 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
                 // c:3010-3030 — `name=value` scalar assign. C-canonical
                 // `setsparam` (Src/params.c:3350) writes paramtab; the
                 // env mirror at `Src/params.c:3024 addenv` follows.
-                crate::ported::params::setsparam(n, raw_v);                  // c:params.c:3350
-                std::env::set_var(n, raw_v);                                 // c:3024 addenv
+                //
+                // c:Src/params.c PM_LOWER/PM_UPPER setstrvalue arms:
+                // when typeset -l or -u is set, the assigned value is
+                // case-folded BEFORE storage. Without this, `typeset -l
+                // s=HELLO; echo $s` printed `HELLO`. We also mirror to
+                // exec.var_attrs so subsequent plain assigns (`s=NEW`)
+                // pick up the fold via the SET_VAR opcode's attr
+                // check (fusevm_bridge.rs case-fold arm).
+                let lower = (on & PM_LOWER) != 0;
+                let upper = (on & PM_UPPER) != 0;
+                let folded: String = if lower {
+                    raw_v.to_lowercase()
+                } else if upper {
+                    raw_v.to_uppercase()
+                } else {
+                    raw_v.to_string()
+                };
+                crate::ported::params::setsparam(n, &folded);                // c:params.c:3350
+                std::env::set_var(n, &folded);                               // c:3024 addenv
+                if lower || upper {
+                    let n_owned = n.to_string();
+                    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
+                        let attr = exec.var_attrs
+                            .entry(n_owned.clone())
+                            .or_default();
+                        attr.lowercase = lower;
+                        attr.uppercase = upper;
+                        // Mirror to legacy variables map so `$s` reads
+                        // pick up the folded value too (the fusevm
+                        // get_variable path consults `exec.variables`
+                        // before paramtab).
+                        exec.variables.insert(n_owned, folded.clone());
+                    });
+                }
             }
         } else if is_hashed || is_array {
             // c:3060-3070 — bare name + `-A`/`-a` declares an empty
