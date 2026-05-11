@@ -50,70 +50,6 @@ impl PtyCmd {
     }
 }
 
-/// Pty commands manager.
-/// Port of the file-static `ptycmds` linked list in
-/// Src/Modules/zpty.c — `getptycmd()` (line 153) walks it for
-/// lookup, `bin_zpty()` (line 773) drives mutations.
-#[derive(Debug, Default)]
-pub struct PtyCmds {
-    cmds: HashMap<String, PtyCmd>,
-}
-
-impl PtyCmds {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zpty.c`.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zpty.c`.
-    pub fn add(&mut self, cmd: PtyCmd) {
-        self.cmds.insert(cmd.name.clone(), cmd);
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zpty.c`.
-    pub fn get(&self, name: &str) -> Option<&PtyCmd> {
-        self.cmds.get(name)
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zpty.c`.
-    pub fn get_mut(&mut self, name: &str) -> Option<&mut PtyCmd> {
-        self.cmds.get_mut(name)
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zpty.c`.
-    pub fn remove(&mut self, name: &str) -> Option<PtyCmd> {
-        self.cmds.remove(name)
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zpty.c`.
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &PtyCmd)> {
-        self.cmds.iter()
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zpty.c`.
-    pub fn len(&self) -> usize {
-        self.cmds.len()
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zpty.c`.
-    pub fn is_empty(&self) -> bool {
-        self.cmds.is_empty()
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zpty.c`.
-    pub fn names(&self) -> Vec<&str> {
-        self.cmds.keys().map(|s| s.as_str()).collect()
-    }
-}
 
 /// Open a pseudo-terminal master/slave pair.
 /// Port of `get_pty()` from Src/Modules/zpty.c:191 (or :255 for
@@ -276,12 +212,12 @@ pub struct ZptyOptions {
 /// `zpty` builtin entry point.
 /// Port of `bin_zpty()` from Src/Modules/zpty.c:773 — same
 /// dispatch tree (delete / list / write / read / test / spawn).
-pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) -> (i32, String) { // c:773
+pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut HashMap<String, PtyCmd>) -> (i32, String) { // c:773
     let mut output = String::new();
 
     if options.delete {
         if args.is_empty() {
-            let names: Vec<String> = cmds.names().iter().map(|s| s.to_string()).collect();
+            let names: Vec<String> = cmds.keys().cloned().collect();
             for name in names {
                 if let Some(cmd) = cmds.remove(&name) {
                     unsafe { libc::kill(cmd.pid, libc::SIGTERM); }
@@ -292,7 +228,7 @@ pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) -> (i3
         }
 
         for name in args {
-            if let Some(cmd) = cmds.remove(name) {
+            if let Some(cmd) = cmds.remove(*name) {
                 unsafe { libc::kill(cmd.pid, libc::SIGTERM); }
                 unsafe { libc::close(cmd.master_fd); }
             } else {
@@ -454,7 +390,7 @@ pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) -> (i3
 
                         let pty_cmd =
                             PtyCmd::new(name, cmd_args, master, pid, options.echo, !options.block);
-                        cmds.add(pty_cmd);
+                        cmds.insert(pty_cmd.name.clone(), pty_cmd);
 
                         (0, output)
                     }
@@ -476,18 +412,18 @@ mod tests {
 
     #[test]
     fn test_pty_cmds_manager() {
-        let mut cmds = PtyCmds::new();
+        let mut cmds = HashMap::<String, PtyCmd>::new();
         assert!(cmds.is_empty());
 
         let cmd = PtyCmd::new("test", vec!["echo".to_string()], 5, 1234, true, false);
-        cmds.add(cmd);
+        cmds.insert(cmd.name.clone(), cmd);
 
         assert_eq!(cmds.len(), 1);
         assert!(cmds.get("test").is_some());
         assert!(cmds.get("nonexistent").is_none());
 
-        let names = cmds.names();
-        assert!(names.contains(&"test"));
+        let names: Vec<String> = cmds.keys().cloned().collect();
+        assert!(names.contains(&"test".to_string()));
 
         cmds.remove("test");
         assert!(cmds.is_empty());
@@ -515,7 +451,7 @@ mod tests {
 
     #[test]
     fn test_builtin_zpty_list_empty() {
-        let mut cmds = PtyCmds::new();
+        let mut cmds = HashMap::<String, PtyCmd>::new();
         let options = ZptyOptions {
             list: true,
             ..Default::default()
@@ -528,7 +464,7 @@ mod tests {
 
     #[test]
     fn test_builtin_zpty_delete_all() {
-        let mut cmds = PtyCmds::new();
+        let mut cmds = HashMap::<String, PtyCmd>::new();
         let options = ZptyOptions {
             delete: true,
             ..Default::default()
@@ -540,7 +476,7 @@ mod tests {
 
     #[test]
     fn test_builtin_zpty_write_no_args() {
-        let mut cmds = PtyCmds::new();
+        let mut cmds = HashMap::<String, PtyCmd>::new();
         let options = ZptyOptions {
             write: true,
             ..Default::default()
@@ -553,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_builtin_zpty_test_no_args() {
-        let mut cmds = PtyCmds::new();
+        let mut cmds = HashMap::<String, PtyCmd>::new();
         let options = ZptyOptions {
             test: true,
             ..Default::default()
@@ -584,7 +520,7 @@ mod tests {
 // faithful port of C `struct ptycmd` (Src/Modules/zpty.c:48). The
 // dead `ZptyState` was wired into ShellExecutor as
 // `pub zptys: HashMap<String, ZptyState>` but never inserted or
-// read. Use `PtyCmd` + `PtyCmds` (the port of the file-static
+// read. Use `PtyCmd` + `HashMap<String, PtyCmd>` (the port of the file-static
 // `static Ptycmd ptycmds;` linked list at zpty.c:62) for any
 // real wiring.
 
@@ -626,16 +562,16 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // 
 /// Global `ptycmds` linked-list from `Src/Modules/zpty.c:36`.
 /// C declares `static Ptycmd ptycmds;` and mutates it through the
 /// whole module. Rust uses OnceLock<Mutex<>> for thread-safe access.
-pub static PTYCMDS: std::sync::OnceLock<Mutex<PtyCmds>> = std::sync::OnceLock::new();
+pub static PTYCMDS: std::sync::OnceLock<Mutex<HashMap<String, PtyCmd>>> = std::sync::OnceLock::new();
 
-fn ptycmds() -> &'static Mutex<PtyCmds> {
-    PTYCMDS.get_or_init(|| Mutex::new(PtyCmds::default()))
+fn ptycmds() -> &'static Mutex<HashMap<String, PtyCmd>> {
+    PTYCMDS.get_or_init(|| Mutex::new(HashMap::<String, PtyCmd>::new()))
 }
 
 /// Port of `boot_()` from `Src/Modules/zpty.c:918`.
 pub fn boot_(_m: *const module) -> i32 {                                 // c:918
     // C body c:921-922 — `ptycmds = NULL; addhookfunc("exit", ptyhook)`.
-    *ptycmds().lock().unwrap() = PtyCmds::default();
+    *ptycmds().lock().unwrap() = HashMap::<String, PtyCmd>::new();
     let _ = ptyhook(&mut ptycmds().lock().unwrap());                     // c:922 (hook handle)
     0
 }
@@ -683,7 +619,7 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 ///
 /// C signature: `static Ptycmd getptycmd(char *name)`. Returns
 /// the Ptycmd or NULL.
-pub fn getptycmd<'a>(cmds: &'a PtyCmds, name: &str) -> Option<&'a PtyCmd> {  // c:153
+pub fn getptycmd<'a>(cmds: &'a HashMap<String, PtyCmd>, name: &str) -> Option<&'a PtyCmd> {  // c:153
     cmds.get(name)                                                       // c:158-160 strcmp loop
 }
 
@@ -693,7 +629,7 @@ pub fn getptycmd<'a>(cmds: &'a PtyCmds, name: &str) -> Option<&'a PtyCmd> {  // 
 /// `kill(-pid, SIGHUP)`.
 ///
 /// C signature: `static void deleteptycmd(Ptycmd cmd)`.
-pub fn deleteptycmd(cmds: &mut PtyCmds, name: &str) {                    // c:490
+pub fn deleteptycmd(cmds: &mut HashMap<String, PtyCmd>, name: &str) {                    // c:490
     if let Some(cmd) = cmds.remove(name) {                               // c:495-503 list-unlink
         // c:505 — `zsfree(p->name)` + c:506 `freearray(p->args)` —
         // Rust drops String/Vec automatically on `cmd` going out
@@ -710,8 +646,8 @@ pub fn deleteptycmd(cmds: &mut PtyCmds, name: &str) {                    // c:49
 /// Walks the `ptycmds` list and deletes every entry.
 ///
 /// C signature: `static void deleteallptycmds(void)`.
-pub fn deleteallptycmds(cmds: &mut PtyCmds) {                            // c:517
-    let names: Vec<String> = cmds.names().iter().map(|s| s.to_string()).collect();
+pub fn deleteallptycmds(cmds: &mut HashMap<String, PtyCmd>) {                            // c:517
+    let names: Vec<String> = cmds.keys().cloned().collect();
     for n in names {                                                     // c:521-525
         deleteptycmd(cmds, &n);                                          // c:524
     }
@@ -817,7 +753,7 @@ pub fn ptywrite(cmd: &PtyCmd, args: &[&str], nonl: i32) -> i32 {         // c:74
 /// when the shell is exiting (via the `before_trap` hook).
 ///
 /// C signature: `static int ptyhook(Hookdef d, void *dummy)`.
-pub fn ptyhook(cmds: &mut PtyCmds) -> i32 {                              // c:874
+pub fn ptyhook(cmds: &mut HashMap<String, PtyCmd>) -> i32 {                              // c:874
     deleteallptycmds(cmds);                                              // c:878
     0                                                                    // c:879
 }
@@ -836,7 +772,7 @@ pub fn ptyhook(cmds: &mut PtyCmds) -> i32 {                              // c:87
 /// sequence. zshrs's port wires through `std::process::Command`
 /// + a libc pty-spawn helper which doesn't preserve the full C
 /// child-init contract. Returns 0 on success, 1 on failure.
-pub fn newptycmd(cmds: &mut PtyCmds, _nam: &str, pname: &str,                // c:310
+pub fn newptycmd(cmds: &mut HashMap<String, PtyCmd>, _nam: &str, pname: &str,                // c:310
                  args: &[String], echo: bool, nblock: bool) -> i32 {     // c:310
     use std::os::unix::io::IntoRawFd;
     use std::process::Command;
@@ -861,6 +797,6 @@ pub fn newptycmd(cmds: &mut PtyCmds, _nam: &str, pname: &str,                // 
     let stdin = child.stdin.expect("piped").into_raw_fd();
 
     let new = PtyCmd::new(pname, args.to_vec(), stdin, pid, echo, nblock);
-    cmds.add(new);
+    cmds.insert(new.name.clone(), new);
     0
 }
