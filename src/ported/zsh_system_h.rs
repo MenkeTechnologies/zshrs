@@ -86,8 +86,27 @@ pub const VDISABLEVAL: u8 = libc::_POSIX_VDISABLE;                       // c:39
 pub const VDISABLEVAL: u8 = 0;
 
 // ---------------------------------------------------------------------------
-// Default strings (c:427-428).
+// Compatibility with clock_gettime() (c:243-249).
+//
+// C source:
+//   /* Used to provide compatibility with clock_gettime() */
+//   #if !defined(HAVE_STRUCT_TIMESPEC) && !defined(ZSH_OOT_MODULE)
+//   struct timespec {
+//       time_t tv_sec;
+//       long tv_nsec;
+//   };
+//   #endif
+//
+// Rust port: on platforms where libc provides `struct timespec`
+// (which is every Unix target zshrs supports — POSIX guarantees
+// it via <time.h>), this aliases libc::timespec directly so the
+// `&mut timespec` out-args on `zgettime` / `zgettime_monotonic_
+// if_available` (Src/compat.c:101 / :133) bind to the system
+// type with no field-shape mismatch.
 // ---------------------------------------------------------------------------
+
+#[allow(non_camel_case_types)]
+pub type timespec = libc::timespec;                                          // c:245
 
 /// Port of `#define DEFAULT_WORDCHARS` from `Src/zsh_system.h:427`.
 /// Default value of `$WORDCHARS` — the chars besides alphanumerics

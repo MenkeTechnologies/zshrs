@@ -54,7 +54,7 @@ pub mod builtin;
 pub mod builtins;
 pub mod zle;
 pub mod zsh_h;
-pub mod zsh_system;
+pub mod zsh_system_h;
 pub mod ztype;
 mod prototypes_h;
 pub mod patchlevel;
