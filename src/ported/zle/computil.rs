@@ -1143,93 +1143,15 @@ mod tests {
 
 // ─── moved from src/ported/exec.rs (drift extraction) ───
 
-// =====================================================================
-// CompSpec / CompMatch / CompGroup / CompState — Rust-original
-// types backing the bash-style `complete` builtin extension
-// (src/extensions/ext_builtins.rs). NOT direct C ports — zsh's
-// `Cmatch` / `Cmgroup` live in comp_h.rs and have different field
-// layouts; the bash-`complete` builtin doesn't exist in zsh at all.
-// Should ultimately move out of this port file into extensions/.
-// =====================================================================
-
-/// Rust-original — `complete` builtin (bash-style) per-command spec.
-/// Used by `src/extensions/ext_builtins.rs::builtin_complete`. NOT
-/// a port of any zsh C struct.
-#[derive(Debug, Clone, Default)]
-pub struct CompSpec {
-    pub actions: Vec<String>,     // -a, -b, -c, etc.
-    pub wordlist: Option<String>, // -W wordlist
-    pub function: Option<String>, // -F function
-    pub command: Option<String>,  // -C command
-    pub globpat: Option<String>,  // -G glob
-    pub prefix: Option<String>,   // -P prefix
-    pub suffix: Option<String>,   // -S suffix
-}
-
-/// Rust-original completion-match candidate. NOT a port of zsh's
-/// `Cmatch` (that lives at comp_h.rs:334 with different fields).
-/// Used by the bash-complete extension to surface match candidates
-/// from the `complete` builtin.
-#[derive(Debug, Clone, Default)]
-pub struct CompMatch {
-    pub word: String,                   // The actual completion word
-    pub display: Option<String>,        // Display string (-d)
-    pub prefix: Option<String>,         // -P prefix (inserted but not part of match)
-    pub suffix: Option<String>,         // -S suffix (inserted but not part of match)
-    pub hidden_prefix: Option<String>,  // -p hidden prefix
-    pub hidden_suffix: Option<String>,  // -s hidden suffix
-    pub ignored_prefix: Option<String>, // -i ignored prefix
-    pub ignored_suffix: Option<String>, // -I ignored suffix
-    pub group: Option<String>,          // -J/-V group name
-    pub description: Option<String>,    // -X explanation
-    pub remove_suffix: Option<String>,  // -r remove chars
-    pub file_match: bool,               // -f flag
-    pub quote_match: bool,              // -q flag
-}
-
-/// Rust-original completion group. NOT a port of zsh's `Cmgroup`
-/// (that lives at comp_h.rs:269 with different fields). Used by
-/// the bash-complete extension to bundle match candidates.
-#[derive(Debug, Clone, Default)]
-pub struct CompGroup {
-    pub name: String,
-    pub matches: Vec<CompMatch>,
-    pub explanation: Option<String>,
-    pub sorted: bool,
-}
-
-/// Rust-original per-completion state. NOT a direct port — zsh's
-/// `$compstate` is a shell-parameter associative array, not a
-/// struct. Used by the bash-complete extension to track state
-/// across `complete` builtin invocations.
-#[derive(Debug, Clone, Default)]
-pub struct CompState {
-    pub context: String,               // completion context
-    pub exact: String,                 // exact match handling
-    pub exact_string: String,          // the exact string if matched
-    pub ignored: i32,                  // number of ignored matches
-    pub insert: String,                // what to insert
-    pub insert_positions: String,      // cursor positions after insert
-    pub last_prompt: String,           // whether to return to last prompt
-    pub list: String,                  // listing style
-    pub list_lines: i32,               // number of lines for listing
-    pub list_max: i32,                 // max matches to list
-    pub nmatches: i32,                 // number of matches
-    pub old_insert: String,            // previous insert value
-    pub old_list: String,              // previous list value
-    pub parameter: String,             // parameter being completed
-    pub pattern_insert: String,        // pattern insert mode
-    pub matchpat: String,         // pattern matching mode
-    pub bslashquote: String,                 // quoting type
-    pub quoting: String,               // current quoting
-    pub redirect: String,              // redirection type
-    pub restore: String,               // restore mode
-    pub to_end: String,                // move to end mode
-    pub unambiguous: String,           // unambiguous prefix
-    pub unambiguous_cursor: i32,       // cursor pos in unambiguous
-    pub unambiguous_positions: String, // positions in unambiguous
-    pub vared: String,                 // vared context
-}
+// CompSpec / CompMatch / CompGroup / CompState moved out of this
+// port file to `src/extensions/bash_complete.rs` — they are
+// Rust-original types backing the bash-style `complete` builtin
+// extension, not zsh C ports. The ported zle/ tree should stay a
+// faithful C-source mirror; Rust-only types live in extensions/.
+//
+// Callers that used `crate::ported::zle::computil::Comp*` should
+// switch to `crate::bash_complete::Comp*` (the path lib.rs
+// exports). exec.rs's re-export updated to point to the new home.
 
 
 /// Port of `alloc_cadef()` from Src/Zle/computil.c:1147.

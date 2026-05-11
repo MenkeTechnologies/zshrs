@@ -35,6 +35,7 @@ pub use ported::*;
 #[path = "extensions/script_cache.rs"] pub mod script_cache;
 #[path = "extensions/compile_zsh.rs"] pub mod compile_zsh;
 #[path = "extensions/completion.rs"] pub mod completion;
+#[path = "extensions/bash_complete.rs"] pub mod bash_complete;
 #[path = "extensions/config.rs"] pub mod config;
 #[path = "extensions/canonical_apply.rs"] pub mod canonical_apply;
 #[path = "extensions/overlay_snapshot.rs"] pub mod overlay_snapshot;
