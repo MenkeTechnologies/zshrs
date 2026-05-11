@@ -2683,20 +2683,45 @@ pub fn paramsubst(
                 .or_else(|| {
                     // c:2247
                     // c:2247 — magic-assoc {aliases,functions,commands}
-                    // are backed by canonical executor tables (no
-                    // SubstState snapshot). Reach in via try_with_executor.
+                    // are backed by the canonical global HashTables in
+                    // hashtable.rs (mirrors C's `mod_export HashTable
+                    // aliastab` at hashtable.c:1186 and `shfunctab` at
+                    // hashtable.c:808). `commands` is `cmdnamtab`
+                    // (hashtable.c:594).
                     match var_name.as_str() {
                         // c:2247
-                        "aliases" => crate::fusevm_bridge::try_with_executor(|exec| {
-                            exec.aliases.keys().cloned().collect::<Vec<_>>().join(" ")
-                        }),
-                        "functions" | "dis_functions" => crate::fusevm_bridge::try_with_executor(|exec| {
-                            exec.function_names().join(" ")
-                        }),
-                        // c:2247 — `commands` magic-assoc lists names
-                        // resolvable via $PATH. Not yet wired (no
-                        // commands cache on exec); return empty.
-                        "commands" => Some(String::new()),
+                        "aliases" => crate::ported::hashtable::aliastab_lock()
+                            .lock()
+                            .ok()
+                            .map(|t| {
+                                let mut names: Vec<String> = t.iter()
+                                    .map(|(k, _)| k.clone())
+                                    .collect();
+                                names.sort();
+                                names.join(" ")
+                            }),
+                        "functions" | "dis_functions" =>
+                            crate::ported::hashtable::shfunctab_lock()
+                                .lock()
+                                .ok()
+                                .map(|t| {
+                                    let mut names: Vec<String> = t.iter()
+                                        .map(|(k, _)| k.clone())
+                                        .collect();
+                                    names.sort();
+                                    names.join(" ")
+                                }),
+                        "commands" =>
+                            crate::ported::hashtable::cmdnamtab_lock()
+                                .lock()
+                                .ok()
+                                .map(|t| {
+                                    let mut names: Vec<String> = t.iter()
+                                        .map(|(k, _)| k.clone())
+                                        .collect();
+                                    names.sort();
+                                    names.join(" ")
+                                }),
                         _ => None, // c:2247
                     } // c:2247
                 }) // c:2247
@@ -4056,13 +4081,12 @@ pub fn paramsubst(
             // wins (zsh canonical: most-specific tilde-contraction).
             // Direct port of subst.c → modify dir-handling which
             // walks the nameddirtab in length-desc order.
-            let mut named: Vec<(String, String)> = crate::fusevm_bridge::try_with_executor(|exec| {
-                exec.named_dirs
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.to_string_lossy().into_owned()))
-                    .collect()
-            })
-            .unwrap_or_default();
+            // c:2229 — canonical nameddirtab read (mirrors C's
+            // `mod_export HashTable nameddirtab` at hashnameddir.c:48).
+            let mut named: Vec<(String, String)> = crate::ported::hashnameddir::nameddirtab()
+                .lock()
+                .map(|t| t.iter().map(|(k, nd)| (k.clone(), nd.dir.clone())).collect())
+                .unwrap_or_default();
             named.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
             let dir_one = |s: &str| -> String {
                 // c:2229
@@ -4415,21 +4439,18 @@ pub fn paramsubst(
                         out = format!("~{}", &out[home.len()..]);
                     }
                 }
-                // Named-dir entries from the executor — longest-
-                // prefix-first to avoid shallow-prefix shadowing.
-                if let Some(entries) = crate::fusevm_bridge::try_with_executor(|exec| {
-                    let mut entries: Vec<(String, std::path::PathBuf)> = exec
-                        .named_dirs
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
+                // Named-dir entries from canonical nameddirtab —
+                // longest-prefix-first to avoid shallow-prefix
+                // shadowing. Mirrors C's `mod_export HashTable
+                // nameddirtab` (hashnameddir.c:48).
+                if let Ok(t) = crate::ported::hashnameddir::nameddirtab().lock() {
+                    let mut entries: Vec<(String, String)> = t.iter()
+                        .map(|(k, nd)| (k.clone(), nd.dir.clone()))
                         .collect();
-                    entries.sort_by_key(|(_, p)| std::cmp::Reverse(p.as_os_str().len()));
-                    entries
-                }) {
+                    entries.sort_by_key(|(_, p)| std::cmp::Reverse(p.len()));
                     for (name, path) in &entries {
-                        let path_s = path.to_string_lossy();
-                        if !path_s.is_empty() && out.starts_with(path_s.as_ref()) {
-                            out = format!("~{}{}", name, &out[path_s.len()..]);
+                        if !path.is_empty() && out.starts_with(path.as_str()) {
+                            out = format!("~{}{}", name, &out[path.len()..]);
                             break;
                         }
                     }
@@ -5209,7 +5230,12 @@ pub fn filesubstr(s: &str, assign: bool) -> Option<String> { // c:737
                     .unwrap_or_default();
                 // Direct port of subst.c filesub's tilde-+/- arm:
                 // dstackent(ch, val) → pwd or stack entry.
-                let dirstack: Vec<String> = crate::fusevm_bridge::try_with_executor(|exec| exec.dir_stack.iter().map(|p| p.to_string_lossy().into_owned()).collect()).unwrap_or_default(); // c:4902
+                // c:4902 — read from canonical DIRSTACK global (mirrors
+                // C's `mod_export LinkList dirstack` at builtin.c:743).
+                let dirstack: Vec<String> = crate::ported::modules::parameter::DIRSTACK
+                    .lock()
+                    .map(|d| d.clone())
+                    .unwrap_or_default();
                 let pushdminus = crate::ported::options::opt_state_get("pushdminus").unwrap_or(false); // c:4906
                 let entry = dstackent(
                     // c:4902
@@ -5241,12 +5267,12 @@ pub fn filesubstr(s: &str, assign: bool) -> Option<String> { // c:737
             // Direct port of subst.c filesub which checks
             // nameddirtab via getnameddir before falling through to
             // getpwnam.
-            let named = crate::fusevm_bridge::try_with_executor(|exec| {
-                exec.named_dirs
-                    .get(&user)
-                    .map(|p| p.to_string_lossy().into_owned())
-            })
-            .flatten();
+            // Canonical nameddirtab lookup (mirrors C's
+            // `getnameddir(name)` at hashnameddir.c via gethashnode2).
+            let named = crate::ported::hashnameddir::nameddirtab()
+                .lock()
+                .ok()
+                .and_then(|t| t.get(&user).map(|nd| nd.dir.clone()));
             if let Some(path) = named {
                 return Some(format!("{}{}", path, suffix));
             }
@@ -7538,13 +7564,10 @@ pub fn equalsubstr(s: &str, assign: bool, nomatch: bool) -> Option<String> {
     let cmdstr = crate::lex::untokenize(&cmdstr_raw); // c:722
     let cmdstr = cmdstr.replace('\u{0}', ""); // c:723
 
-    // C: `cnam = findcmd(cmdstr, 1, 0)` — `1` is do_hash, `0` is
-    // not-just-builtins. Route through ShellExecutor::findcmd.
-    let cnam = crate::fusevm_bridge::try_with_executor(
-        // c:724
-        |exec| exec.findcmd(&cmdstr, true),
-    )
-    .flatten(); // c:724
+    // C: `cnam = findcmd(cmdstr, 1, 0)` (Src/exec.c:723) — `1` is
+    // do_hash, `0` is not-just-builtins. Routes through the
+    // canonical port at builtin.rs:3392.
+    let cnam = crate::ported::builtin::findcmd(&cmdstr, 1, 0); // c:724
 
     match cnam {
         // c:724
