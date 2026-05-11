@@ -243,55 +243,47 @@ impl Zle {
         }
     }
 
-    /// Delete forward
-    /// Port of foredel() from zle_utils.c
-    pub fn fore_del(&mut self, count: usize, flags: CutFlags) {             // c:1105
-        let count = count.min(self.zlell - self.zlecs);
-        if count == 0 {
-            return;
-        }
-
-        // Save to kill ring if requested
-        if flags.contains(CutFlags::KILL) {
+    /// Direct port of `mod_export int foredel(int n, int flags)` from
+    /// `Src/Zle/zle_utils.c:1105`. Delete `n` chars forward; `flags`
+    /// is a bitmask of `CUT_*` (zle.h:271-281). Returns 0 on success,
+    /// non-zero when the kill failed.
+    pub fn foredel(&mut self, n: i32, flags: i32) -> i32 {                   // c:1105
+        use crate::ported::zle::zle_h::CUT_RAW;
+        let count = (n as usize).min(self.zlell - self.zlecs);
+        if count == 0 { return 0; }
+        // c:1107-1115 — CUT_RAW skips cut-buffer staging; without it
+        // the deleted text is cut (saved to cut buffer / kill ring).
+        if flags & CUT_RAW == 0 {
             let text: ZleString = self.zleline[self.zlecs..self.zlecs + count].to_vec();
             self.killring.push_front(text);
             if self.killring.len() > self.killringmax {
                 self.killring.pop_back();
             }
         }
-
-        // Delete
-        for _ in 0..count {
-            self.zleline.remove(self.zlecs);
-        }
+        for _ in 0..count { self.zleline.remove(self.zlecs); }
         self.zlell -= count;
         self.resetneeded = true;
+        0
     }
 
-    /// Delete backward
-    /// Port of backdel() from zle_utils.c
-    pub fn back_del(&mut self, count: usize, flags: CutFlags) {             // c:1084
-        let count = count.min(self.zlecs);
-        if count == 0 {
-            return;
-        }
-
-        // Save to kill ring if requested
-        if flags.contains(CutFlags::KILL) {
+    /// Direct port of `mod_export int backdel(int n, int flags)` from
+    /// `Src/Zle/zle_utils.c:1084`. Delete `n` chars backward.
+    pub fn backdel(&mut self, n: i32, flags: i32) -> i32 {                   // c:1084
+        use crate::ported::zle::zle_h::CUT_RAW;
+        let count = (n as usize).min(self.zlecs);
+        if count == 0 { return 0; }
+        if flags & CUT_RAW == 0 {
             let text: ZleString = self.zleline[self.zlecs - count..self.zlecs].to_vec();
             self.killring.push_front(text);
             if self.killring.len() > self.killringmax {
                 self.killring.pop_back();
             }
         }
-
-        // Delete
         self.zlecs -= count;
-        for _ in 0..count {
-            self.zleline.remove(self.zlecs);
-        }
+        for _ in 0..count { self.zleline.remove(self.zlecs); }
         self.zlell -= count;
         self.resetneeded = true;
+        0
     }
 
     /// Kill forward
@@ -359,26 +351,29 @@ impl Zle {
         self.resetneeded = true;
     }
 
-    /// Cut text to buffer
-    /// Port of cut() / cuttext() from zle_utils.c
-    pub fn cut_text(&mut self, start: usize, end: usize, dir: CutDirection) { // c:946
+    /// Direct port of `mod_export void cuttext(ZLE_STRING_T line, int len,
+    /// int flags)` from `Src/Zle/zle_utils.c:946`. Stages a slice of the
+    /// edit line into the cut buffer / kill ring, honouring the
+    /// CUT_FRONT / CUT_REPLACE / CUT_RAW flag bits. The previous Rust
+    /// placeholder used a fake `CutDirection` enum (Front/Back) that
+    /// had no C counterpart; we now use `i32 flags` matching C.
+    pub fn cuttext(&mut self, start: usize, end: usize, flags: i32) {        // c:946
         if start >= end || end > self.zlell {
             return;
         }
 
+        use crate::ported::zle::zle_h::CUT_FRONT;
         let text: ZleString = self.zleline[start..end].to_vec();
 
-        match dir {
-            CutDirection::Front => {
-                self.killring.push_front(text);
-            }
-            CutDirection::Back => {
-                if let Some(front) = self.killring.front_mut() {
-                    front.extend(text);
-                } else {
-                    self.killring.push_front(text);
-                }
-            }
+        // c:1017 — `if (flags & (CUT_FRONT|CUT_REPLACE))` pushes onto
+        // the front of the cut/kill stack; otherwise the new text is
+        // appended to the existing front entry.
+        if flags & CUT_FRONT != 0 {
+            self.killring.push_front(text);
+        } else if let Some(front) = self.killring.front_mut() {
+            front.extend(text);
+        } else {
+            self.killring.push_front(text);
         }
 
         if self.killring.len() > self.killringmax {
@@ -490,47 +485,45 @@ impl Zle {
     }
 }
 
-/// Saved position state
+/// Direct port of `struct zle_position` from
+/// `Src/Zle/zle_utils.c:595-605`. One saved-state node in the
+/// zle_positions stack; pushed by `zle_save_positions()` and popped
+/// by `zle_restore_positions()`.
 #[derive(Debug, Clone)]
-pub struct SavedPositions {
-    pub zlecs: usize,
-    pub zlell: usize,
-    pub mark: usize,
+#[allow(non_camel_case_types)]
+pub struct zle_position {                                                    // c:595
+    /// `int cs` — c:599, saved cursor position.
+    pub cs: usize,
+    /// `int mk` — c:600, saved mark position.
+    pub mk: usize,
+    /// `int ll` — c:601, saved line length.
+    pub ll: usize,
+    // `struct zle_region *regions` (c:604) deferred until
+    // region_highlights port lands.
 }
 
 /// Position save/restore
 /// Port of zle_save_positions() / zle_restore_positions() from zle_utils.c
 impl Zle {
-    pub fn save_positions(&self) -> SavedPositions {
-        SavedPositions {
-            zlecs: self.zlecs,
-            zlell: self.zlell,
-            mark: self.mark,
+    pub fn zle_save_positions(&self) -> zle_position {                       // c:619
+        zle_position {
+            cs: self.zlecs,
+            mk: self.mark,
+            ll: self.zlell,
         }
     }
 
-    pub fn restore_positions(&mut self, saved: &SavedPositions) {
-        self.zlecs = saved.zlecs.min(self.zlell);
-        self.mark = saved.mark.min(self.zlell);
+    pub fn zle_restore_positions(&mut self, saved: &zle_position) {          // c:677
+        self.zlecs = saved.cs.min(self.zlell);
+        self.mark = saved.mk.min(self.zlell);
     }
 }
 
-bitflags::bitflags! {
-    /// Flags for cut operations
-    #[derive(Debug, Clone, Copy, Default)]
-    pub struct CutFlags: u32 {
-        const KILL = 1 << 0;   // Add to kill ring
-        const COPY = 1 << 1;   // Don't delete, just copy
-        const APPEND = 1 << 2; // Append to kill ring
-    }
-}
-
-/// Direction for cut operations
-#[derive(Debug, Clone, Copy)]
-pub enum CutDirection {
-    Front,
-    Back,
-}
+// `CutFlags` / `CutDirection` deleted — Rust-only types with no C
+// counterpart. C uses `int flags` with the `CUT_FRONT` / `CUT_REPLACE`
+// / `CUT_RAW` bits at zle.h:271-281 (already legit-ported in
+// zle_h.rs:387-393). `foredel` / `backdel` / `cuttext` now take
+// `i32 flags` matching the C signatures verbatim.
 
 /// Format a key sequence for `bindkey -L` listing.
 /// Port of `bindztrdup()` from Src/Zle/zle_utils.c:1238. Produces the
