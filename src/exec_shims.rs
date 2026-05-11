@@ -32,6 +32,7 @@ use crate::ported::prompt::*;
 use crate::ported::subst::*;
 use crate::ported::math::*;
 use crate::ported::jobs::*;
+use crate::exec_jobs::{JobState, JobInfo};
 use crate::ported::glob::*;
 use crate::ported::module::*;
 use crate::ported::signals::*;

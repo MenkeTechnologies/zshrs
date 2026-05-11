@@ -28,7 +28,7 @@ use std::sync::LazyLock;
 use indexmap::IndexMap;
 
 use crate::ported::exec::*;
-use crate::ported::jobs::JobState;
+use crate::exec_jobs::JobState;
 use crate::intercepts::{AdviceKind, Intercept, intercept_matches};
 use std::io::Write;
 
@@ -1299,7 +1299,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     exec.jobs.add_pid_job(
                         pid,
                         String::new(),
-                        crate::ported::jobs::JobState::Running,
+                        crate::exec_jobs::JobState::Running,
                     );
                 });
                 Value::Status(0)
