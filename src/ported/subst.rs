@@ -7464,9 +7464,14 @@ mod tests {
     fn paramsubst_default_when_unset() {
         // c:1625
         // subst.c:3202-3232 `case '-': case Dash:` — return operand
-        // when value is unset.
+        // when value is unset. Unique name avoids paramtab collision
+        // with other tests that share the global params::paramtab().
+        // Reset `errflag` so prior tests' error states don't short-
+        // circuit paramsubst (it returns early on errflag != 0).
+        crate::ported::utils::errflag
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         let (result, _, _) =                                // c:3202
-            paramsubst("${UNDEF:-fallback}", 0, false, 0, &mut 0); // c:3202
+            paramsubst("${__default_unset_var:-fallback}", 0, false, 0, &mut 0); // c:3202
         assert_eq!(result, "fallback"); // c:3202
     } // c:3202
 
@@ -7478,6 +7483,10 @@ mod tests {
         // `assignsparam` / `sync_state_from_paramtab` mirror into
         // `ShellExecutor.arrays`; without `ExecutorContext` those
         // bridges no-op and the slot never appears in `arrays_get`.
+        // Reset `errflag` so prior tests' error states don't short-
+        // circuit paramsubst (it returns early on errflag != 0).
+        crate::ported::utils::errflag
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         let name = format!(
             "__sub_arr_{}_{}",
             module_path!().replace("::", "_"),
