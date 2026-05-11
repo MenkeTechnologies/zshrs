@@ -463,8 +463,12 @@ pub fn get_widgetstyle(zle: &crate::ported::zle::zle_main::Zle) -> String {  // 
 pub fn get_yankactive(zle: &crate::ported::zle::zle_main::Zle) -> i64 {      // c:555
     // c:558 — `return !!(lastcmd & ZLE_YANK) + !!(lastcmd & ZLE_YANKAFTER)`.
     use crate::ported::zle::widget::WidgetFlags;
-    let yank      = zle.lastcmd.contains(WidgetFlags::YANK)      as i64;
-    let yankafter = zle.lastcmd.contains(WidgetFlags::YANKAFTER) as i64;
+    let _ = zle;
+    let last = WidgetFlags::from_bits_truncate(
+        crate::ported::zle::zle_main::LASTCMD.load(std::sync::atomic::Ordering::SeqCst),
+    );
+    let yank      = last.contains(WidgetFlags::YANK)      as i64;
+    let yankafter = last.contains(WidgetFlags::YANKAFTER) as i64;
     yank + yankafter
 }
 
@@ -985,14 +989,16 @@ mod batch_getters_tests {
 
     #[test]
     fn get_yankactive_reads_lastcmd_flags() {
-        let mut z = Zle::default();
-        z.lastcmd = WidgetFlags::empty();
+        let z = Zle::default();
+        use crate::ported::zle::zle_main::LASTCMD;
+        use std::sync::atomic::Ordering;
+        LASTCMD.store(WidgetFlags::empty().bits(), Ordering::SeqCst);
         assert_eq!(get_yankactive(&z), 0);
-        z.lastcmd = WidgetFlags::YANK;
+        LASTCMD.store(WidgetFlags::YANK.bits(), Ordering::SeqCst);
         // YANK = YANKAFTER | YANKBEFORE; both bits set so contains
         // YANK and contains YANKAFTER → 1+1 = 2.
         assert_eq!(get_yankactive(&z), 2);
-        z.lastcmd = WidgetFlags::YANKBEFORE;
+        LASTCMD.store(WidgetFlags::YANKBEFORE.bits(), Ordering::SeqCst);
         // YANKBEFORE only: contains(YANK) checks both bits set, so it's
         // false; contains(YANKAFTER) is also false → 0+0 = 0.
         assert_eq!(get_yankactive(&z), 0);

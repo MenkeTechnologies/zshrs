@@ -2003,7 +2003,10 @@ pub fn yankpop(zle: &mut Zle) -> i32 {                                       // 
     use crate::ported::zle::widget::WidgetFlags;
     // c:730-735 — `if (!(lastcmd & ZLE_YANK) || !kring || !kctbuf)
     //               return 1`.
-    if !zle.lastcmd.contains(WidgetFlags::YANK) || zle.killring.is_empty() {
+    let last = WidgetFlags::from_bits_truncate(
+        crate::ported::zle::zle_main::LASTCMD.load(std::sync::atomic::Ordering::SeqCst),
+    );
+    if !last.contains(WidgetFlags::YANK) || zle.killring.is_empty() {
         return 1;
     }
     // C body cycles the kill ring index `kct` and re-inserts the

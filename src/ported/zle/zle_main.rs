@@ -192,9 +192,8 @@ pub struct Zle {
     pub lbindk: Option<Thingy>,
     /// Binding for this key
     pub bindk: Option<Thingy>,
-    // flags associated with last command                                    // c:145
-    /// Flags associated with last command
-    pub lastcmd: WidgetFlags,
+    // `lastcmd` moved to file-scope LASTCMD atomic below
+    // (matches `int lastcmd` from zle_main.c:145).
     // current modifier status                                               // c:169
     /// Current modifier status
     pub zmod: modifier,
@@ -368,7 +367,6 @@ impl Zle {
             mark: 0,
             lbindk: None,
             bindk: None,
-            lastcmd: WidgetFlags::empty(),
             zmod: modifier::default(),
             stackhist: 0,
             stackcs: 0,
@@ -880,7 +878,7 @@ impl Zle {
         // Update lastcmd for yank-pop / next-widget chains, unless the
         // widget is NOTCOMMAND (digit-arg, prefix, etc.) — zle_main.c:1497.
         if !widget.flags.contains(super::widget::WidgetFlags::NOTCOMMAND) {
-            self.lastcmd = widget.flags;
+            LASTCMD.store(widget.flags.bits(), std::sync::atomic::Ordering::SeqCst);
         }
 
         // Capture the change (if any) into the undo stack. undo/redo widgets
@@ -1250,7 +1248,8 @@ impl Zle {
 
     /// Check if last command was yank
     pub fn was_yank(&self) -> bool {
-        self.lastcmd.contains(WidgetFlags::YANK)
+        WidgetFlags::from_bits_truncate(LASTCMD.load(std::sync::atomic::Ordering::SeqCst))
+            .contains(WidgetFlags::YANK)
     }
 }
 
@@ -2033,6 +2032,13 @@ pub static ZLE_RECURSIVE: std::sync::atomic::AtomicI32 =
 /// default 40 (0.4s) matches zsh's `$KEYTIMEOUT` startup default.
 pub static KEYTIMEOUT: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(40);
+
+/// Port of `int lastcmd` from `Src/Zle/zle_main.c:145`. Flags of
+/// the most-recently-executed widget — drives `yank`/`yank-pop`
+/// chaining, `WidgetFlags::YANK`/`YANKAFTER` membership tests, etc.
+/// Stored as the raw bits of `WidgetFlags` (u32) in an atomic.
+pub static LASTCMD: std::sync::atomic::AtomicU32 =                           // c:145
+    std::sync::atomic::AtomicU32::new(0);
 
 /// Port of `zleaftertrap()` from `Src/Zle/zle_main.c:2113`.
 /// ```c
