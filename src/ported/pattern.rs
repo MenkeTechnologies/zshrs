@@ -1929,7 +1929,15 @@ impl PatternFlags {
 mod tests {
     use super::*;
 
+    // Pattern compile shares file-static globals (patout, patparse,
+    // patnpar, ...) with the same single-thread semantics as zsh's
+    // C source. `patcompile` clones the globals into prog.code
+    // before returning, so we only need the mutex held during
+    // compile — pattry() reads from prog.code with no global state.
+    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn compile(p: &str) -> Patprog {
+        let _g = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         patcompile(p, PAT_HEAPDUP as i32, None).expect("compile failed")
     }
 
@@ -2030,6 +2038,7 @@ mod tests {
 
     #[test]
     fn convenience_patmatch() {
+        let _g = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         assert!(patmatch("hello*", "hello world"));
         assert!(!patmatch("x?z", "abc"));
     }
