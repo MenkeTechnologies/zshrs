@@ -56,6 +56,30 @@ pub fn curkeymapname() -> std::sync::MutexGuard<'static, String> {
         .unwrap()
 }
 
+/// Port of `Keymap curkeymap` from `Src/Zle/zle_keymap.c:124`. The
+/// currently active keymap (per `bindkey -A` selection or KEYMAP
+/// parameter). Used inline at zle_keymap.c:519 (`curkeymap = km;`)
+/// and read by `getkeycmd`/`getkeybuf` to dispatch the next key.
+pub static curkeymap: Mutex<Option<Arc<Keymap>>> = Mutex::new(None);         // c:124
+
+/// Port of `char *keybuf` from `Src/Zle/zle_keymap.c:136`. The key
+/// sequence currently being read by `getkeycmd`. C uses a flat
+/// `char*` heap allocation sized by `keybufsz`; Rust uses
+/// `Vec<u8>` which manages its own capacity.
+pub static keybuf: Mutex<Vec<u8>> = Mutex::new(Vec::new());                  // c:136
+
+/// Port of `int keybuflen` from `Src/Zle/zle_keymap.c:139`. Current
+/// number of bytes in `keybuf`. Rust mirrors via `keybuf.lock().len()`
+/// but exposes the count as a separate static for callers that need
+/// it without holding the buffer lock.
+pub static keybuflen: std::sync::atomic::AtomicI32 =                         // c:139
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `static Thingy lastnamed` from `Src/Zle/zle_keymap.c:145`.
+/// Last command executed by `execute-named-command` — used to
+/// re-execute via `bindkey -A name` then `getkeycmd`.
+pub static lastnamed: Mutex<Option<Thingy>> = Mutex::new(None);              // c:145
+
 // =====================================================================
 // keymapnamtab — `Src/Zle/zle_keymap.c:128/153`.
 // =====================================================================
@@ -1902,8 +1926,8 @@ pub static LOCALKEYMAP: Mutex<Option<Arc<Keymap>>> = Mutex::new(None);       // 
 /// Port of `ungetkeycmd()` from Src/Zle/zle_keymap.c:1759.
 pub fn ungetkeycmd(zle: &mut crate::ported::zle::zle_main::Zle) {            // c:1758
     // C body (c:1761): `ungetbytes_unmeta(keybuf, keybuflen)`.
-    let keybuf = zle.keymaps.keybuf.clone();
-    crate::ported::zle::zle_main::ungetbytes_unmeta(zle, &keybuf);
+    let buf = zle.keymaps.keybuf.clone();
+    crate::ported::zle::zle_main::ungetbytes_unmeta(zle, &buf);
 }
 
 /// Port of `unlinkkeymap()` from Src/Zle/zle_keymap.c:436.
