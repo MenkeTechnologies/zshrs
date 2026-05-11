@@ -1141,24 +1141,14 @@ pub fn assigniparam(s: &str, val: i64) {
 /// }
 /// ```
 ///
-/// **Signature drift (PORT.md Rule S1 violation):** same as
-/// `assignaparam` below — Rust takes executor HashMap refs
-/// instead of returning a `Param`. Pending the paramtab/executor
-/// unification, the bridge calls into this directly.
-///
 /// `ASSPM_WARN` (params.c:104) is a no-op in our port — the global
-/// "warn on creation" tracking is not yet ported. Call shape preserved
-/// so callers can use this where C calls setaparam.
-pub fn setaparam(                                                           // c:3595
-    variables: &mut std::collections::HashMap<String, String>,
-    arrays: &mut std::collections::HashMap<String, Vec<String>>,
-    assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
-    name: &str,
-    val: Vec<String>,
-) {
-    // c:3766 — `return assignaparam(s, val, ASSPM_WARN)`. Mirror by
-    // routing through assignaparam (the isident guard happens there).
-    assignaparam(variables, arrays, assoc_arrays, name, val);
+/// "warn on creation" tracking is not yet ported. Call shape
+/// preserved so callers can use this where C calls setaparam.
+pub fn setaparam(name: &str, val: Vec<String>)                              // c:3595
+    -> Option<crate::ported::zsh_h::Param>
+{
+    // c:3766 — `return assignaparam(s, val, ASSPM_WARN)`.
+    assignaparam(name, val, crate::ported::zsh_h::ASSPM_WARN)
 }
 
 /// Port of `assignsparam()` from `Src/params.c:3193`. C signature:
@@ -1416,101 +1406,118 @@ pub fn sync_state_from_paramtab(
 
 /// Array parameter assignment (no subscript).
 ///
-/// **Signature drift (PORT.md Rule S1 violation):** C's
-/// `Param assignaparam(char *s, char **val, int flags)` writes to
-/// the global `paramtab` and returns the new/updated `Param`.
-/// This Rust shim instead takes mutable refs to the executor's
-/// three storage HashMaps (`variables` / `arrays` /
-/// `assoc_arrays`) because the Rust-side paramtab lives in a
-/// `Mutex<HashMap<String, Param>>` that is NOT the executor's
-/// storage — the two backing stores are not yet unified.
+/// Direct port of `Param assignaparam(char *s, char **val, int flags)`
+/// from `Src/params.c:3357`. Writes an array value into paramtab
+/// and returns the new/updated Param.
 ///
-/// **Migration path:** unify `paramtab` with the executor's
-/// parameter store (so a write to one is observable in the
-/// other), then change this fn's signature back to C-faithful
-/// `(s: &str, val: &[String], flags: i32) -> Option<Param>` and
-/// update the `exec_assignaparam` bridge in `subst.rs:253` plus
-/// the three call sites at `subst.rs:2853/2885/2921`.
-///
-/// Pending C semantics inside this body:
-///   - PM_READONLY check (params.c:3370-3381)
-///   - PM_NAMEREF type-change reject (params.c:3395-3398)
-///   - resetparam from non-array (params.c:3415-3420)
-///   - ASSPM_AUGMENT (`a+=val`) preserve-old prepend
-///     (params.c:3404-3412)
-///   - PM_UNIQUE dedupe (params.c:3401)
-///   - element-wise subscript assignment `a[k]=v`
-///     (params.c:3373-3389 with `getvalue`/`setarrvalue` slice
-///     path)
+/// Pending C semantics:
+///   - PM_READONLY rejection (c:3370-3381 via setarrvalue chain)
+///   - PM_NAMEREF type-change reject (c:3395-3398)
+///   - resetparam from non-array (c:3415-3420)
+///   - ASSPM_AUGMENT (`a+=val`) preserve-old prepend (c:3404-3412)
+///   - PM_UNIQUE dedupe (c:3401)
+///   - element-wise `a[k]=v` slice path (c:3373-3389)
 pub fn assignaparam(
-    variables: &mut std::collections::HashMap<String, String>,
-    arrays: &mut std::collections::HashMap<String, Vec<String>>,
-    assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
     name: &str,
-    parts: Vec<String>,
-) {
-    // c:3366-3370 — `if (!isident(s)) { zerr("not an identifier"); ... return NULL }`.
+    val: Vec<String>,
+    flags: i32,
+) -> Option<crate::ported::zsh_h::Param> {                                   // c:3357
+    use crate::ported::zsh_h::{
+        PM_ARRAY, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_NAMEREF,
+        PM_SPECIAL,
+    };
+    let _ = flags;
+
+    // c:3366-3370 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
         crate::ported::utils::zerr(&format!("not an identifier: {}", name));
-        return;
+        return None;
     }
-    arrays.insert(name.to_string(), parts);
-    variables.remove(name);
-    assoc_arrays.remove(name);
+
+    // c:3391-3394 — fetchvalue / createparam(PM_ARRAY) if missing.
+    let exists = paramtab().lock().unwrap().contains_key(name);
+    if !exists {
+        createparam(name, PM_ARRAY as i32)?;
+    }
+
+    // c:3434 — setarrvalue(v, val): store array in pm.u_arr.
+    let mut tab = paramtab().lock().unwrap();
+    let pm = tab.get_mut(name)?;
+    if pm.node.flags & PM_SPECIAL as i32 == 0 {
+        let type_mask =
+            PM_ARRAY | PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_HASHED | PM_NAMEREF;
+        pm.node.flags = (pm.node.flags & !type_mask as i32) | PM_ARRAY as i32;
+    }
+    pm.u_arr = Some(val);
+    pm.u_str = None;
+    pm.u_hash = None;
+    let cloned = pm.clone();
+    drop(tab);
+    Some(cloned)
 }
 
-/// Hash parameter assignment (no subscript).
+/// Direct port of `Param sethparam(char *s, char **val)` from
+/// `Src/params.c:3602`. Writes an associative array (flat
+/// alternating key,value list) into paramtab + the parallel
+/// `paramtab_hashed_storage` table; returns the new Param.
 ///
-/// **Signature drift (PORT.md Rule S1 violation):** C's
-/// `Param sethparam(char *s, char **val)` writes to the global
-/// `paramtab` and returns the new/updated `Param`. This Rust
-/// shim takes executor HashMap refs for the same reason as
-/// `assignaparam` above — unified paramtab/executor storage is a
-/// separate work item.
-///
-/// Migration path: same as `assignaparam` — once paramtab and
-/// executor storage are unified, change signature to
-/// `(s: &str, val: &[String]) -> Option<Param>`, update the
-/// `exec_sethparam` bridge in `subst.rs:290` plus the three call
-/// sites at `subst.rs:2863/2895/2931`.
-///
-/// Pending C semantics inside this body:
-///   - isident reject (`zerr("not an identifier: %s")` c:3611)
-///   - nested-assoc reject (`zerr("nested associative arrays
-///     not yet supported")` c:3617)
+/// Pending C semantics:
 ///   - PM_READONLY rejection
-///   - createparam(PM_HASHED) when missing
 ///   - resetparam(PM_HASHED) for type-change
 ///   - PM_SPECIAL type-change reject (c:3637)
-pub fn sethparam(                                                           // c:3602
-    variables: &mut std::collections::HashMap<String, String>,
-    arrays: &mut std::collections::HashMap<String, Vec<String>>,
-    assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
-    name: &str,
-    parts: Vec<String>,
-) {
-    // c:3611-3615 — `if (!isident(s)) { zerr("not an identifier"); ... return NULL }`.
+pub fn sethparam(name: &str, val: Vec<String>)                              // c:3602
+    -> Option<crate::ported::zsh_h::Param>
+{
+    use crate::ported::zsh_h::{
+        PM_ARRAY, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_NAMEREF,
+        PM_SPECIAL,
+    };
+
+    // c:3611-3615 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
         crate::ported::utils::zerr(&format!("not an identifier: {}", name));
-        return;
+        return None;
     }
-    // c:3617-3621 — `if (strchr(s, '[')) { zerr("nested associative arrays not yet supported"); ... return NULL }`.
+    // c:3617-3621 — `if (strchr(s, '[')) { zerr; return NULL }`.
     if name.contains('[') {
         crate::ported::utils::zerr("nested associative arrays not yet supported");
-        return;
+        return None;
     }
-    // c:3625-3640 — main body. Rust port walks parts into an IndexMap and
-    // writes through the executor HashMaps (paramtab/executor unification
-    // pending — see signature-drift note above).
+
+    // c:3625 — fetchvalue / createparam(PM_HASHED) if missing.
+    let exists = paramtab().lock().unwrap().contains_key(name);
+    if !exists {
+        createparam(name, PM_HASHED as i32)?;
+    }
+
+    // Build the IndexMap from flat (k,v) pairs (mirrors c:arrhashsetfn
+    // pair-walking at c:4140-4166).
     let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
-    let mut iter = parts.into_iter();
+    let mut iter = val.into_iter();
     while let Some(k) = iter.next() {
         let v = iter.next().unwrap_or_default();
         map.insert(k, v);
     }
-    assoc_arrays.insert(name.to_string(), map);
-    variables.remove(name);
-    arrays.remove(name);
+
+    // c:3640 — install in paramtab + paramtab_hashed_storage.
+    let mut tab = paramtab().lock().unwrap();
+    let pm = tab.get_mut(name)?;
+    if pm.node.flags & PM_SPECIAL as i32 == 0 {
+        let type_mask =
+            PM_ARRAY | PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_HASHED | PM_NAMEREF;
+        pm.node.flags = (pm.node.flags & !type_mask as i32) | PM_HASHED as i32;
+    }
+    pm.u_arr = None;
+    pm.u_str = None;
+    let cloned = pm.clone();
+    drop(tab);
+
+    paramtab_hashed_storage()
+        .lock()
+        .unwrap()
+        .insert(name.to_string(), map);
+
+    Some(cloned)
 }
 
 /// Unset parameter (from params.c unsetparam_pm)
