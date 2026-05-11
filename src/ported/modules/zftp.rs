@@ -2831,35 +2831,75 @@ pub fn zftp_getput(_name: &str, args: &[&str], _flags: i32) -> i32 {
 }
 
 /// Port of `zftp_delete()` from `Src/Modules/zftp.c:2635`.
-pub fn zftp_delete(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut full: Vec<String> = vec!["delete".to_string()];
-    full.extend(args.iter().map(|s| s.to_string()));
-    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+/// C: walk `args`, send `DELE <name>\r\n` for each. Returns 1 if any
+/// DELE got a 3xx+ reply, else 0.
+pub fn zftp_delete(_name: &str, args: &[&str], _flags: i32) -> i32 {            // c:2635
+    let mut ret: i32 = 0;                                                       // c:2637 int ret = 0
+    let cmd: String;                                                            // c:2638 char *cmd
+    let _ = cmd;
+    for aptr in args.iter() {                                                   // c:2639 for (aptr = args; *aptr; aptr++)
+        let cmd = format!("DELE {}\r\n", aptr);                                 // c:2640 tricat("DELE ", *aptr, "\r\n")
+        if zfsendcmd(&cmd) > 2 {                                                // c:2641
+            ret = 1;                                                            // c:2642
+        }
+        // c:2643 zsfree(cmd) — Rust Drop.
+    }
+    ret                                                                         // c:2645
 }
 
 /// Port of `zftp_mkdir()` from `Src/Modules/zftp.c:2652`.
-pub fn zftp_mkdir(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut full: Vec<String> = vec!["mkdir".to_string()];
-    full.extend(args.iter().map(|s| s.to_string()));
-    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+/// C: send `MKD <args[0]>\r\n` (or `RMD` when ZFTP_DELE flag set —
+/// the `rmdir` subcommand routes through this fn with that bit).
+pub fn zftp_mkdir(_name: &str, args: &[&str], flags: i32) -> i32 {              // c:2652
+    let ret: i32;                                                               // c:2654 int ret
+    if args.is_empty() { return 1; }
+    let cmd_pfx = if (flags & ZFTP_DELE) != 0 { "RMD " } else { "MKD " };       // c:2655
+    let cmd = format!("{}{}\r\n", cmd_pfx, args[0]);                            // c:2656 tricat
+    ret = (zfsendcmd(&cmd) > 2) as i32;                                         // c:2657
+    // c:2658 zsfree — Rust Drop.
+    ret                                                                         // c:2659
 }
 
 /// Port of `zftp_rename()` from `Src/Modules/zftp.c:2666`.
-pub fn zftp_rename(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut full: Vec<String> = vec!["rename".to_string()];
-    full.extend(args.iter().map(|s| s.to_string()));
-    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+/// C: send RNFR (rename-from), expect 3xx, then send RNTO (rename-to),
+/// expect 2xx. Two-phase rename per RFC959.
+pub fn zftp_rename(_name: &str, args: &[&str], _flags: i32) -> i32 {            // c:2666
+    let mut ret: i32;                                                           // c:2668 int ret
+    let cmd: String;                                                            // c:2669 char *cmd
+    let _ = cmd;
+    if args.len() < 2 { return 1; }
+
+    let cmd = format!("RNFR {}\r\n", args[0]);                                  // c:2671 tricat("RNFR ", args[0], "\r\n")
+    ret = 1;                                                                    // c:2672
+    if zfsendcmd(&cmd) == 3 {                                                   // c:2673
+        // c:2674 zsfree(cmd) — Rust Drop.
+        let cmd = format!("RNTO {}\r\n", args[1]);                              // c:2675
+        if zfsendcmd(&cmd) == 2 {                                               // c:2676
+            ret = 0;                                                            // c:2677
+        }
+    }
+    // c:2679 zsfree(cmd) — Rust Drop.
+    ret                                                                         // c:2680
 }
 
 /// Port of `zftp_quote()` from `Src/Modules/zftp.c:2690`.
-pub fn zftp_quote(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut full: Vec<String> = vec!["quote".to_string()];
-    full.extend(args.iter().map(|s| s.to_string()));
-    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+/// C: send a raw FTP command, optionally prefixed with `SITE ` when
+/// ZFTP_SITE flag is set (the `site` subcommand routes here with the
+/// bit). The first arg is the verb; subsequent args are appended.
+pub fn zftp_quote(_name: &str, args: &[&str], flags: i32) -> i32 {              // c:2690
+    let ret: i32;                                                               // c:2692 int ret = 0
+    let cmd: String;                                                            // c:2693 char *cmd
+    let _ = cmd;
+    let argv: Vec<&str> = args.to_vec();
+    let cmd = if (flags & ZFTP_SITE) != 0 {                                     // c:2695
+        zfargstring("SITE", &argv) + "\r\n"
+    } else {
+        if argv.is_empty() { return 1; }
+        zfargstring(argv[0], &argv[1..]) + "\r\n"                               // c:2696
+    };
+    ret = (zfsendcmd(&cmd) > 2) as i32;                                         // c:2697
+    // c:2698 zsfree — Rust Drop.
+    ret                                                                         // c:2700
 }
 
 /// Port of `zftp_close()` from `Src/Modules/zftp.c:2782`.
