@@ -138,7 +138,7 @@ impl Zle {
     /// returns `zmod.mult` only when `MOD_MULT` is set, otherwise
     /// the parameter is unset.
     pub fn get_numeric(&self) -> Option<i32> {                              // c:485
-        if self.zmod.flags.contains(super::zle_main::ModifierFlags::MULT) {
+        if self.zmod.flags & super::zle_h::MOD_MULT != 0 {
             Some(self.zmod.mult)
         } else {
             None
@@ -556,12 +556,12 @@ pub fn set_killring(zle: &mut crate::ported::zle::zle_main::Zle, x: Option<&[Str
 
 /// Port of `set_numeric()` from Src/Zle/zle_params.c:477.
 pub fn set_numeric(zle: &mut crate::ported::zle::zle_main::Zle, x: i64) {   // c:476
-    use crate::ported::zle::zle_main::ModifierFlags;
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     // c:479 — `zmult = x`. zmult is zmod.mult.
     zle.zmod.mult = x as i32;
     // c:480 — `zmod.flags = MOD_MULT`. Replaces the whole flags
     // bitfield with just MOD_MULT (not OR — the C is a plain `=`).
-    zle.zmod.flags = ModifierFlags::MULT;
+    zle.zmod.flags = MOD_MULT;
 }
 
 /// Port of `set_postdisplay()` from Src/Zle/zle_params.c:900.
@@ -702,9 +702,9 @@ pub fn unset_killring(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  
 /// `stdunsetfn` half of the C body fires from the Param.gsu.unsetfn
 /// vtable hook upstream — this fn just performs the zmod side.
 pub fn unset_numeric(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) { // c:491
-    use crate::ported::zle::zle_main::ModifierFlags;
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     if exp != 0 {                                                            // c:494
-        zle.zmod.flags = ModifierFlags::empty();                             // c:496
+        zle.zmod.flags = 0;                             // c:496
         zle.zmod.mult = 1;                                                   // c:497
     }
 }
@@ -797,44 +797,44 @@ mod trap_tests {
 #[cfg(test)]
 mod numeric_tests {
     use super::*;
-    use crate::ported::zle::zle_main::{ModifierFlags, Zle};
+    use crate::ported::zle::zle_main::Zle; use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
 
     #[test]
     fn set_numeric_sets_mult_and_replaces_flags() {
         // c:479-480 — `zmult=x; zmod.flags = MOD_MULT` (assignment,
         // not OR). Pre-existing flags get wiped.
         let mut z = Zle::new();
-        z.zmod.flags.insert(ModifierFlags::TMULT | ModifierFlags::NEG);
+        z.zmod.flags |= MOD_TMULT | MOD_NEG;
         z.zmod.mult = 99;
         set_numeric(&mut z, 7);
         assert_eq!(z.zmod.mult, 7);
         // Only MULT remains; TMULT and NEG are gone.
-        assert!(z.zmod.flags.contains(ModifierFlags::MULT));
-        assert!(!z.zmod.flags.contains(ModifierFlags::TMULT));
-        assert!(!z.zmod.flags.contains(ModifierFlags::NEG));
+        assert!(z.zmod.flags & MOD_MULT != 0);
+        assert_eq!(z.zmod.flags & MOD_TMULT, 0);
+        assert_eq!(z.zmod.flags & MOD_NEG, 0);
     }
 
     #[test]
     fn unset_numeric_resets_when_exp_nonzero() {
         // c:494-498 — only resets when exp != 0.
         let mut z = Zle::new();
-        z.zmod.flags.insert(ModifierFlags::MULT);
+        z.zmod.flags |= MOD_MULT;
         z.zmod.mult = 5;
         unset_numeric(&mut z, 1);
         assert_eq!(z.zmod.mult, 1);
-        assert!(z.zmod.flags.is_empty());
+        assert_eq!(z.zmod.flags, 0);
     }
 
     #[test]
     fn unset_numeric_noop_when_exp_zero() {
         // c:494 — `if (exp)` skips when exp == 0.
         let mut z = Zle::new();
-        z.zmod.flags.insert(ModifierFlags::MULT);
+        z.zmod.flags |= MOD_MULT;
         z.zmod.mult = 5;
         unset_numeric(&mut z, 0);
         // Unchanged.
         assert_eq!(z.zmod.mult, 5);
-        assert!(z.zmod.flags.contains(ModifierFlags::MULT));
+        assert!(z.zmod.flags & MOD_MULT != 0);
     }
 }
 

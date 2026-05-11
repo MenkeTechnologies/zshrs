@@ -4,7 +4,7 @@
 //! three free fns over a `&mut Zle`, no Rust-only types.
 
 use super::zle_main::Zle;
-use super::zle_main::ModifierFlags;
+use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
 
 /// Port of `blankwordclass()` from `Src/Zle/textobjects.c:34`. The
 /// vi blank-word class predicate. Returns 0 for blanks, 1 otherwise.
@@ -30,7 +30,7 @@ pub fn blankwordclass(x: char) -> i32 {                                  // c:34
 /// adjustment needs to handle (the `range`-set branch only fires
 /// from inside `getvirange`, which has its own copy).
 pub fn selectword(zle: &mut Zle) -> i32 {                                // c:41
-    let mut n: i32 = if zle.zmod.flags.contains(ModifierFlags::MULT) {   // c:42 zmult
+    let mut n: i32 = if zle.zmod.flags & MOD_MULT != 0 {   // c:42 zmult
         zle.zmod.mult
     } else {
         1
@@ -284,7 +284,7 @@ pub fn selectword(zle: &mut Zle) -> i32 {                                // c:41
 /// here-docs). Returns 1 when `n` is out of range matching C
 /// (textobjects.c:225).
 pub fn selectargument(zle: &mut Zle) -> i32 {                            // c:212
-    let n: i32 = if zle.zmod.flags.contains(ModifierFlags::MULT) {
+    let n: i32 = if zle.zmod.flags & MOD_MULT != 0 {
         zle.zmod.mult                                                    // c:222 zmult
     } else {
         1

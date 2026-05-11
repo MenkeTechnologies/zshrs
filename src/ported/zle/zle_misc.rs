@@ -757,7 +757,7 @@ pub fn addsuffixstring(tp: i32, flags: i32, chars: &str, lensuf: i32) {      // 
 /// parsing. Valid range 2..36 (10 digits + 26 letters). Returns 1
 /// for out-of-range bases without changing state.
 pub fn argumentbase(zle: &mut Zle, args: &[String]) -> i32 {                 // c:1037
-    use super::zle_main::ModifierFlags;
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     // c:1042-1045 — `if (*args) multbase = zstrtol(...) else zmod.mult`.
     let multbase = if let Some(arg) = args.first() {
         // c:1043 — `zstrtol(*args, NULL, 0)`. Base 0 means auto
@@ -779,7 +779,7 @@ pub fn argumentbase(zle: &mut Zle, args: &[String]) -> i32 {                 // 
     }
     zle.zmod.base = multbase;                                                // c:1050
     // c:1053-1056 — reset modifier apart from base.
-    zle.zmod.flags = ModifierFlags::empty();
+    zle.zmod.flags = 0;
     zle.zmod.mult = 1;
     zle.zmod.tmult = 1;
     zle.zmod.vibuf = 0;
@@ -880,8 +880,8 @@ pub fn bracketedpaste(zle: &mut Zle, args: &[String]) -> i32 {               // 
     let wpaste: Vec<char> = payload.chars().collect();
     // c:826-834 — !(zmod.flags & MOD_VIBUF) → reset kct, killregion if
     // region_active, then doinsert(wpaste).
-    use super::zle_main::ModifierFlags;
-    if !zle.zmod.flags.contains(ModifierFlags::VIBUF) {
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
+    if !zle.zmod.flags & MOD_VIBUF != 0 {
         zle.zmod.mult = 1;                                                   // c:829
         // c:830-832 — `if (region_active) killregion(...)`.
         if zle.region_active != 0 {
@@ -1043,7 +1043,7 @@ pub fn deletechar(zle: &mut Zle) -> i32 {                                    // 
 
 /// Port of `digitargument()` from Src/Zle/zle_misc.c:950.
 pub fn digitargument(zle: &mut Zle) -> i32 {                                 // c:1042
-    use super::zle_main::ModifierFlags;
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     // c:1044 — `int sign = (zmult < 0) ? -1 : 1`.
     let sign: i32 = if zle.zmod.mult < 0 { -1 } else { 1 };
     // c:1045 — `parsedigit(lastchar)`.
@@ -1052,18 +1052,18 @@ pub fn digitargument(zle: &mut Zle) -> i32 {                                 // 
         return 1;                                                            // c:1048
     }
     // c:1050-1051 — `if (!(zmod.flags & MOD_TMULT)) zmod.tmult = 0`.
-    if !zle.zmod.flags.contains(ModifierFlags::TMULT) {
+    if !zle.zmod.flags & MOD_TMULT != 0 {
         zle.zmod.tmult = 0;
     }
     // c:1052-1057 — MOD_NEG path: replace tmult with sign*newdigit.
-    if zle.zmod.flags.contains(ModifierFlags::NEG) {
+    if zle.zmod.flags & MOD_NEG != 0 {
         zle.zmod.tmult = sign * newdigit;
-        zle.zmod.flags.remove(ModifierFlags::NEG);
+        zle.zmod.flags &= !MOD_NEG;
     } else {
         // c:1058 — `zmod.tmult = zmod.tmult * zmod.base + sign*newdigit`.
         zle.zmod.tmult = zle.zmod.tmult * zle.zmod.base + sign * newdigit;
     }
-    zle.zmod.flags.insert(ModifierFlags::TMULT);                             // c:1059
+    zle.zmod.flags |= MOD_TMULT;                             // c:1059
     zle.prefixflag = true;                                                   // c:1060
     0                                                                        // c:1061
 }
@@ -1435,12 +1435,12 @@ pub fn makesuffixstr(_funcnam: Option<&str>, str_arg: Option<&str>, n: i32) {  /
 /// `negative-argument` widget — start a negative count prefix.
 /// Refuses if a tmult is already in flight.
 pub fn negargument(zle: &mut Zle) -> i32 {                                   // c:974
-    use super::zle_main::ModifierFlags;
-    if zle.zmod.flags.contains(ModifierFlags::TMULT) {                       // c:976
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
+    if zle.zmod.flags & MOD_TMULT != 0 {                       // c:976
         return 1;                                                            // c:977
     }
     zle.zmod.tmult = -1;                                                     // c:978
-    zle.zmod.flags.insert(ModifierFlags::TMULT | ModifierFlags::NEG);        // c:979
+    zle.zmod.flags |= MOD_TMULT | MOD_NEG;             // c:979
     zle.prefixflag = true;                                                   // c:980
     0                                                                        // c:981 return 0
 }
@@ -1572,15 +1572,15 @@ pub fn poundinsert(zle: &mut Zle) -> i32 {                                   // 
 
 /// Port of `putreplaceselection()` from Src/Zle/zle_misc.c:679.
 pub fn putreplaceselection(zle: &mut Zle) -> i32 {                           // c:679
-    use crate::ported::zle::zle_main::ModifierFlags;
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     use crate::ported::zle::zle_vi::startvichange;
     let n = zle.zmod.mult;                                                   // c:682
     let mut pos = 2;                                                         // c:686
     startvichange(zle, -1);                                                  // c:688
-    if n < 0 || zle.zmod.flags.contains(ModifierFlags::NULL) {
+    if n < 0 || zle.zmod.flags & MOD_NULL != 0 {
         return 1;                                                            // c:690
     }
-    let prevbuf: Vec<char> = if zle.zmod.flags.contains(ModifierFlags::VIBUF) {
+    let prevbuf: Vec<char> = if zle.zmod.flags & MOD_VIBUF != 0 {
         let idx = zle.zmod.vibuf as usize;
         if idx >= zle.vibuf.len() {
             return 1;
@@ -1592,7 +1592,7 @@ pub fn putreplaceselection(zle: &mut Zle) -> i32 {                           // 
     if prevbuf.is_empty() {
         return 1;                                                            // c:702
     }
-    zle.zmod.flags = ModifierFlags::empty();                                 // c:712
+    zle.zmod.flags = 0;                                 // c:712
     if zle.region_active == 2 {                                              // c:713
         // c:714-717 — regionlines split; lines-flag check elided.
         pos = if zle.zlell == zle.zlecs { 1 } else { 0 };
@@ -1896,13 +1896,13 @@ pub fn undefinedkey() -> i32 {                                               // 
 
 /// Port of `universalargument()` from Src/Zle/zle_misc.c:986.
 pub fn universalargument(zle: &mut Zle, args: &[String]) -> i32 {            // c:986
-    use crate::ported::zle::zle_main::ModifierFlags;
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     // c:988-993 — `if (*args)` short-circuit when invoked with an
     //              explicit numeric arg.
     if let Some(a) = args.first() {
         if let Ok(n) = a.parse::<i32>() {
             zle.zmod.mult = n;
-            zle.zmod.flags.insert(ModifierFlags::MULT);
+            zle.zmod.flags |= MOD_MULT;
             return 0;
         }
     }
@@ -1913,26 +1913,26 @@ pub fn universalargument(zle: &mut Zle, args: &[String]) -> i32 {            // 
     if digcnt == 0 {
         zle.zmod.tmult = zle.zmod.tmult.saturating_mul(4);                   // c:1027
     }
-    zle.zmod.flags.insert(ModifierFlags::TMULT);                             // c:1029
+    zle.zmod.flags |= MOD_TMULT;                             // c:1029
     zle.prefixflag = true;                                                   // c:1030
     0
 }
 
 /// Port of `viputafter()` from Src/Zle/zle_misc.c:643.
 pub fn viputafter(zle: &mut Zle) -> i32 {                                    // c:643
-    use crate::ported::zle::zle_main::ModifierFlags;
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     use crate::ported::zle::zle_vi::startvichange;
     let n = zle.zmod.mult;                                                   // c:646
     startvichange(zle, -1);                                                  // c:648
     if n < 0 {
         return 1;                                                            // c:650
     }
-    if zle.zmod.flags.contains(ModifierFlags::NULL) {
+    if zle.zmod.flags & MOD_NULL != 0 {
         return 0;                                                            // c:652
     }
     // c:653-665 — OS selection branch (MOD_OSSEL = PRI|CLIP). Without
     //              system_clipget we fall through to the cut-buffer path.
-    let buf: Vec<char> = if zle.zmod.flags.contains(ModifierFlags::VIBUF) {
+    let buf: Vec<char> = if zle.zmod.flags & MOD_VIBUF != 0 {
         let idx = zle.zmod.vibuf as usize;
         if idx >= zle.vibuf.len() {
             return 1;
@@ -1949,17 +1949,17 @@ pub fn viputafter(zle: &mut Zle) -> i32 {                                    // 
 
 /// Port of `viputbefore()` from Src/Zle/zle_misc.c:607.
 pub fn viputbefore(zle: &mut Zle) -> i32 {                                   // c:607
-    use crate::ported::zle::zle_main::ModifierFlags;
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     use crate::ported::zle::zle_vi::startvichange;
     let n = zle.zmod.mult;                                                   // c:610
     startvichange(zle, -1);                                                  // c:612
     if n < 0 {
         return 1;                                                            // c:614
     }
-    if zle.zmod.flags.contains(ModifierFlags::NULL) {
+    if zle.zmod.flags & MOD_NULL != 0 {
         return 0;                                                            // c:616
     }
-    let buf: Vec<char> = if zle.zmod.flags.contains(ModifierFlags::VIBUF) {
+    let buf: Vec<char> = if zle.zmod.flags & MOD_VIBUF != 0 {
         let idx = zle.zmod.vibuf as usize;
         if idx >= zle.vibuf.len() {
             return 1;
@@ -2097,26 +2097,26 @@ mod tests {
     #[test]
     fn negargument_sets_tmult_neg_prefix() {
         // c:976-981 — sets tmult=-1 + TMULT|NEG flags + prefixflag.
-        use super::super::zle_main::ModifierFlags;
+        use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
         let mut z = Zle::new();
         // Ensure clean modifier state.
         z.zmod.tmult = 1;
-        z.zmod.flags = ModifierFlags::empty();
+        z.zmod.flags = 0;
         z.prefixflag = false;
         let r = negargument(&mut z);
         assert_eq!(r, 0);
         assert_eq!(z.zmod.tmult, -1);
-        assert!(z.zmod.flags.contains(ModifierFlags::TMULT));
-        assert!(z.zmod.flags.contains(ModifierFlags::NEG));
+        assert!(z.zmod.flags & MOD_TMULT != 0);
+        assert!(z.zmod.flags & MOD_NEG != 0);
         assert!(z.prefixflag);
     }
 
     #[test]
     fn negargument_refuses_when_tmult_in_flight() {
         // c:976-977 — if MOD_TMULT already set → return 1.
-        use super::super::zle_main::ModifierFlags;
+        use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
         let mut z = Zle::new();
-        z.zmod.flags.insert(ModifierFlags::TMULT);
+        z.zmod.flags |= MOD_TMULT;
         z.zmod.tmult = 7; // some pre-existing value
         let r = negargument(&mut z);
         assert_eq!(r, 1);
@@ -2262,25 +2262,25 @@ mod tests {
     fn digitargument_first_digit_no_tmult() {
         // c:1050-1051 — `if (!TMULT) tmult = 0`. First digit: tmult=0
         // then tmult = 0*10 + 1*5 = 5.
-        use super::super::zle_main::ModifierFlags;
+        use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
         let mut z = Zle::new();
-        z.zmod.flags = ModifierFlags::empty();
+        z.zmod.flags = 0;
         z.zmod.base = 10;
         z.zmod.mult = 1; // sign = 1
         z.lastchar = b'5' as i32;
         let r = digitargument(&mut z);
         assert_eq!(r, 0);
         assert_eq!(z.zmod.tmult, 5);
-        assert!(z.zmod.flags.contains(ModifierFlags::TMULT));
+        assert!(z.zmod.flags & MOD_TMULT != 0);
         assert!(z.prefixflag);
     }
 
     #[test]
     fn digitargument_second_digit_accumulates() {
         // c:1058 — second digit: tmult = 5*10 + 1*7 = 57.
-        use super::super::zle_main::ModifierFlags;
+        use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
         let mut z = Zle::new();
-        z.zmod.flags = ModifierFlags::TMULT;
+        z.zmod.flags = MOD_TMULT;
         z.zmod.tmult = 5;
         z.zmod.base = 10;
         z.zmod.mult = 1; // sign = 1
@@ -2302,9 +2302,9 @@ mod tests {
     fn digitargument_neg_flag_replaces_tmult() {
         // c:1054-1056 — MOD_NEG: tmult = sign * newdigit, NEG cleared.
         // sign = -1 (zmult<0); first digit '3' → tmult = -1*3 = -3.
-        use super::super::zle_main::ModifierFlags;
+        use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
         let mut z = Zle::new();
-        z.zmod.flags = ModifierFlags::TMULT | ModifierFlags::NEG;
+        z.zmod.flags = MOD_TMULT | MOD_NEG;
         z.zmod.tmult = -1;  // set by negargument
         z.zmod.base = 10;
         z.zmod.mult = -1;   // negative → sign = -1
@@ -2312,8 +2312,8 @@ mod tests {
         digitargument(&mut z);
         assert_eq!(z.zmod.tmult, -3);
         // NEG cleared.
-        assert!(!z.zmod.flags.contains(ModifierFlags::NEG));
-        assert!(z.zmod.flags.contains(ModifierFlags::TMULT));
+        assert!(!z.zmod.flags & MOD_NEG != 0);
+        assert!(z.zmod.flags & MOD_TMULT != 0);
     }
 
     // ---------- transpose_swap real-port tests ----------

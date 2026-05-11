@@ -911,7 +911,7 @@ pub fn visetmark(zle: &mut crate::ported::zle::zle_main::Zle, ch: char) -> i32 {
 
 /// Port of `visuallinemode()` from Src/Zle/zle_move.c:540.
 pub fn visuallinemode(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:540
-    use crate::ported::zle::zle_main::ModifierFlags;
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     // c:542-547 — `if (virangeflag) { prefixflag = 1; flags &= ~CHAR;
     //                                  flags |= LINE; return 0 }`.
     match zle.region_active {                                                // c:548
@@ -923,13 +923,13 @@ pub fn visuallinemode(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // 
         1 => zle.region_active = 2,                                          // c:555-557
         _ => {}
     }
-    let _ = ModifierFlags::LINE;
+    let _ = MOD_LINE;
     0
 }
 
 /// Port of `visualmode()` from Src/Zle/zle_move.c:516.
 pub fn visualmode(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:516
-    use crate::ported::zle::zle_main::ModifierFlags;
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     // c:518-523 — `if (virangeflag) { prefixflag = 1; flags &= ~LINE;
     //                                  flags |= CHAR; return 0 }`.
     //              No virangeflag tracker yet; skip.
@@ -942,7 +942,7 @@ pub fn visualmode(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
         2 => zle.region_active = 1,                                          // c:531-533
         _ => {}
     }
-    let _ = ModifierFlags::CHAR;
+    let _ = MOD_CHAR;
     0
 }
 

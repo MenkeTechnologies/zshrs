@@ -16,7 +16,7 @@
 //!
 //! Order in this file mirrors C source order verbatim.
 
-use super::zle_main::{Zle, ModifierFlags};
+use super::zle_main::Zle; use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
 
 // ---------------------------------------------------------------------------
 // Helpers shared by every widget below — character classification + cursor
@@ -47,10 +47,10 @@ use super::zle_main::{Zle, ModifierFlags};
 // the build script's drift gate rejects Rust-only helpers, even when
 // they only collapse repeated reads. Pattern:
 //
-//   zmult    → `if zle.zmod.flags.contains(ModifierFlags::MULT)
+//   zmult    → `if zle.zmod.flags & MOD_MULT != 0
 //                 { zle.zmod.mult } else { 1 }`
 //   set zmult → `zle.zmod.mult = v;
-//                zle.zmod.flags.insert(ModifierFlags::MULT);`
+//                zle.zmod.flags |= MOD_MULT;`
 //   wordflag/virangeflag → `false` (vi-mode plumbing not yet wired).
 //
 // See textobjects.rs:32 for the same `zmod.mult` pattern.
@@ -67,12 +67,12 @@ use super::zle_main::{Zle, ModifierFlags};
 ///
 /// C signature: `int forwardword(char **args)`.
 pub fn forwardword(zle: &mut Zle, args: &[String]) -> i32 {              // c:45
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };                                                  // c:47
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };                                                  // c:47
     if n < 0 {                                                           // c:49
         let saved = n;
-        zle.zmod.mult = -n; zle.zmod.flags.insert(ModifierFlags::MULT);                                              // c:51
+        zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;                                              // c:51
         let ret = backwardword(zle, args);                               // c:52
-        zle.zmod.mult = saved; zle.zmod.flags.insert(ModifierFlags::MULT);                                           // c:53
+        zle.zmod.mult = saved; zle.zmod.flags |= MOD_MULT;                                           // c:53
         return ret;
     }
     let mut n = n;
@@ -107,12 +107,12 @@ pub fn wordclass(x: char) -> i32 {                                       // c:74
 
 /// Port of `viforwardword()` from `Src/Zle/zle_word.c:82`.
 pub fn viforwardword(zle: &mut Zle, args: &[String]) -> i32 {            // c:82
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {                                                           // c:86
         let saved = n;
-        zle.zmod.mult = -n; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;
         let ret = vibackwardword(zle, args);                             // c:89
-        zle.zmod.mult = saved; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = saved; zle.zmod.flags |= MOD_MULT;
         return ret;
     }
     let mut n = n;
@@ -136,12 +136,12 @@ pub fn viforwardword(zle: &mut Zle, args: &[String]) -> i32 {            // c:82
 
 /// Port of `viforwardblankword()` from `Src/Zle/zle_word.c:112`.
 pub fn viforwardblankword(zle: &mut Zle, args: &[String]) -> i32 {       // c:112
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
         let saved = n;
-        zle.zmod.mult = -n; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;
         let ret = vibackwardblankword(zle, args);
-        zle.zmod.mult = saved; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = saved; zle.zmod.flags |= MOD_MULT;
         return ret;
     }
     let mut n = n;
@@ -164,12 +164,12 @@ pub fn viforwardblankword(zle: &mut Zle, args: &[String]) -> i32 {       // c:11
 
 /// Port of `emacsforwardword()` from `Src/Zle/zle_word.c:140`.
 pub fn emacsforwardword(zle: &mut Zle, args: &[String]) -> i32 {         // c:140
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {                                                           // c:144
         let saved = n;
-        zle.zmod.mult = -n; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;
         let ret = emacsbackwardword(zle, args);                          // c:147
-        zle.zmod.mult = saved; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = saved; zle.zmod.flags |= MOD_MULT;
         return ret;
     }
     let mut n = n;
@@ -188,12 +188,12 @@ pub fn emacsforwardword(zle: &mut Zle, args: &[String]) -> i32 {         // c:14
 
 /// Port of `viforwardblankwordend()` from `Src/Zle/zle_word.c:164`.
 pub fn viforwardblankwordend(zle: &mut Zle, args: &[String]) -> i32 {    // c:164
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
         let saved = n;
-        zle.zmod.mult = -n; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;
         let ret = vibackwardblankwordend(zle, args);
-        zle.zmod.mult = saved; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = saved; zle.zmod.flags |= MOD_MULT;
         return ret;
     }
     let mut n = n;
@@ -224,12 +224,12 @@ pub fn viforwardblankwordend(zle: &mut Zle, args: &[String]) -> i32 {    // c:16
 
 /// Port of `viforwardwordend()` from `Src/Zle/zle_word.c:198`.
 pub fn viforwardwordend(zle: &mut Zle, args: &[String]) -> i32 {         // c:198
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
         let saved = n;
-        zle.zmod.mult = -n; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;
         let ret = vibackwardwordend(zle, args);
-        zle.zmod.mult = saved; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = saved; zle.zmod.flags |= MOD_MULT;
         return ret;
     }
     let mut n = n;
@@ -265,12 +265,12 @@ pub fn viforwardwordend(zle: &mut Zle, args: &[String]) -> i32 {         // c:19
 
 /// Port of `backwardword()` from `Src/Zle/zle_word.c:240`.
 pub fn backwardword(zle: &mut Zle, args: &[String]) -> i32 {             // c:240
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {                                                           // c:244
         let saved = n;
-        zle.zmod.mult = -n; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;
         let ret = forwardword(zle, args);                                // c:247
-        zle.zmod.mult = saved; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = saved; zle.zmod.flags |= MOD_MULT;
         return ret;
     }
     let mut n = n;
@@ -292,12 +292,12 @@ pub fn backwardword(zle: &mut Zle, args: &[String]) -> i32 {             // c:24
 
 /// Port of `vibackwardword()` from `Src/Zle/zle_word.c:272`.
 pub fn vibackwardword(zle: &mut Zle, args: &[String]) -> i32 {           // c:272
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
         let saved = n;
-        zle.zmod.mult = -n; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;
         let ret = viforwardword(zle, args);
-        zle.zmod.mult = saved; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = saved; zle.zmod.flags |= MOD_MULT;
         return ret;
     }
     let mut n = n;
@@ -332,12 +332,12 @@ pub fn vibackwardword(zle: &mut Zle, args: &[String]) -> i32 {           // c:27
 
 /// Port of `vibackwardblankword()` from `Src/Zle/zle_word.c:313`.
 pub fn vibackwardblankword(zle: &mut Zle, args: &[String]) -> i32 {      // c:313
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
         let saved = n;
-        zle.zmod.mult = -n; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;
         let ret = viforwardblankword(zle, args);
-        zle.zmod.mult = saved; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = saved; zle.zmod.flags |= MOD_MULT;
         return ret;
     }
     let mut n = n;
@@ -362,12 +362,12 @@ pub fn vibackwardblankword(zle: &mut Zle, args: &[String]) -> i32 {      // c:31
 
 /// Port of `vibackwardwordend()` from `Src/Zle/zle_word.c:348`.
 pub fn vibackwardwordend(zle: &mut Zle, args: &[String]) -> i32 {        // c:348
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
         let saved = n;
-        zle.zmod.mult = -n; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;
         let ret = viforwardwordend(zle, args);
-        zle.zmod.mult = saved; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = saved; zle.zmod.flags |= MOD_MULT;
         return ret;
     }
     let mut n = n;
@@ -391,12 +391,12 @@ pub fn vibackwardwordend(zle: &mut Zle, args: &[String]) -> i32 {        // c:34
 
 /// Port of `vibackwardblankwordend()` from `Src/Zle/zle_word.c:375`.
 pub fn vibackwardblankwordend(zle: &mut Zle, args: &[String]) -> i32 {   // c:375
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
         let saved = n;
-        zle.zmod.mult = -n; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;
         let ret = viforwardblankwordend(zle, args);
-        zle.zmod.mult = saved; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = saved; zle.zmod.flags |= MOD_MULT;
         return ret;
     }
     let mut n = n;
@@ -414,12 +414,12 @@ pub fn vibackwardblankwordend(zle: &mut Zle, args: &[String]) -> i32 {   // c:37
 
 /// Port of `emacsbackwardword()` from `Src/Zle/zle_word.c:397`.
 pub fn emacsbackwardword(zle: &mut Zle, args: &[String]) -> i32 {        // c:397
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
         let saved = n;
-        zle.zmod.mult = -n; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;
         let ret = emacsforwardword(zle, args);                           // c:404
-        zle.zmod.mult = saved; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = saved; zle.zmod.flags |= MOD_MULT;
         return ret;
     }
     let mut n = n;
@@ -442,12 +442,12 @@ pub fn emacsbackwardword(zle: &mut Zle, args: &[String]) -> i32 {        // c:39
 /// Port of `backwarddeleteword()` from `Src/Zle/zle_word.c:429`.
 pub fn backwarddeleteword(zle: &mut Zle, args: &[String]) -> i32 {       // c:429
     let mut x = zle.zlecs;                                               // c:431
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {                                                           // c:433
         let saved = n;
-        zle.zmod.mult = -n; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;
         let ret = deleteword(zle, args);                                 // c:436
-        zle.zmod.mult = saved; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = saved; zle.zmod.flags |= MOD_MULT;
         return ret;
     }
     let mut n = n;
@@ -478,7 +478,7 @@ pub fn vibackwardkillword(zle: &mut Zle, _args: &[String]) -> i32 {      // c:46
     // (the safe lower bound — equivalent to `findbol()` returning 0
     // when at/near start of single-line buffer). See TODO.md.
     let lim: usize = 0;
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 { return 1; }                                               // c:467
     let mut n = n;
     while n > 0 {                                                        // c:470
@@ -518,12 +518,12 @@ pub fn vibackwardkillword(zle: &mut Zle, _args: &[String]) -> i32 {      // c:46
 /// Port of `backwardkillword()` from `Src/Zle/zle_word.c:499`.
 pub fn backwardkillword(zle: &mut Zle, args: &[String]) -> i32 {         // c:499
     let mut x = zle.zlecs;                                               // c:501
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {                                                           // c:504
         let saved = n;
-        zle.zmod.mult = -n; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;
         let ret = killword(zle, args);                                   // c:507
-        zle.zmod.mult = saved; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = saved; zle.zmod.flags |= MOD_MULT;
         return ret;
     }
     let mut n = n;
@@ -547,7 +547,7 @@ pub fn backwardkillword(zle: &mut Zle, args: &[String]) -> i32 {         // c:49
 
 /// Port of `upcaseword()` from `Src/Zle/zle_word.c:533`.
 pub fn upcaseword(zle: &mut Zle, _args: &[String]) -> i32 {              // c:533
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     let neg = n < 0;                                                     // c:536
     let ocs = zle.zlecs;                                                 // c:536
     let mut n = if neg { -n } else { n };
@@ -569,7 +569,7 @@ pub fn upcaseword(zle: &mut Zle, _args: &[String]) -> i32 {              // c:53
 
 /// Port of `downcaseword()` from `Src/Zle/zle_word.c:555`.
 pub fn downcaseword(zle: &mut Zle, _args: &[String]) -> i32 {            // c:555
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     let neg = n < 0;
     let ocs = zle.zlecs;
     let mut n = if neg { -n } else { n };
@@ -590,7 +590,7 @@ pub fn downcaseword(zle: &mut Zle, _args: &[String]) -> i32 {            // c:55
 
 /// Port of `capitalizeword()` from `Src/Zle/zle_word.c:577`.
 pub fn capitalizeword(zle: &mut Zle, _args: &[String]) -> i32 {          // c:577
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     let neg = n < 0;
     let ocs = zle.zlecs;
     let mut n = if neg { -n } else { n };
@@ -624,12 +624,12 @@ pub fn capitalizeword(zle: &mut Zle, _args: &[String]) -> i32 {          // c:57
 /// Port of `deleteword()` from `Src/Zle/zle_word.c:604`.
 pub fn deleteword(zle: &mut Zle, args: &[String]) -> i32 {               // c:604
     let mut x = zle.zlecs;
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {                                                           // c:609
         let saved = n;
-        zle.zmod.mult = -n; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;
         let ret = backwarddeleteword(zle, args);                         // c:612
-        zle.zmod.mult = saved; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = saved; zle.zmod.flags |= MOD_MULT;
         return ret;
     }
     let mut n = n;
@@ -650,12 +650,12 @@ pub fn deleteword(zle: &mut Zle, args: &[String]) -> i32 {               // c:60
 /// Port of `killword()` from `Src/Zle/zle_word.c:628`.
 pub fn killword(zle: &mut Zle, args: &[String]) -> i32 {                 // c:628
     let mut x = zle.zlecs;
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {                                                           // c:633
         let saved = n;
-        zle.zmod.mult = -n; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;
         let ret = backwardkillword(zle, args);                           // c:636
-        zle.zmod.mult = saved; zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.mult = saved; zle.zmod.flags |= MOD_MULT;
         return ret;
     }
     let mut n = n;
@@ -675,7 +675,7 @@ pub fn killword(zle: &mut Zle, args: &[String]) -> i32 {                 // c:62
 
 /// Port of `transposewords()` from `Src/Zle/zle_word.c:652`.
 pub fn transposewords(zle: &mut Zle, _args: &[String]) -> i32 {          // c:652
-    let n = if zle.zmod.flags.contains(ModifierFlags::MULT) { zle.zmod.mult } else { 1 };
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     let neg = n < 0;
     let ocs = zle.zlecs;
     let mut n = if neg { -n } else { n };

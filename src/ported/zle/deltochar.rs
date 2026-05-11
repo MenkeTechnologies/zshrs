@@ -27,7 +27,7 @@ pub fn deltochar(zle: &mut Zle) -> i32 {                                 // c:38
     };
     let mut dest = zle.zlecs;                                            // c:42
     let mut ok = 0i32;                                                   // c:42
-    let mut n: i32 = if zle.zmod.flags.contains(crate::ported::zle::zle_main::ModifierFlags::MULT) {
+    let mut n: i32 = if zle.zmod.flags & crate::ported::zle::zle_h::MOD_MULT != 0 {
         zle.zmod.mult
     } else {
         1

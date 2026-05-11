@@ -1750,7 +1750,7 @@ fn widget_vi_digit_or_beginning_of_line(zle: &mut Zle) {
     // Port of vidigitorbeginningofline() from Src/Zle/zle_vi.c. With
     // an active numeric prefix the `0` key acts as a digit; otherwise
     // it's beginning-of-line.
-    if zle.zmod.flags.contains(super::zle_main::ModifierFlags::MULT) {
+    if zle.zmod.flags & crate::ported::zle::zle_h::MOD_MULT != 0 {
         widget_digit_argument(zle);
     } else {
         widget_beginning_of_line(zle);
@@ -1939,7 +1939,7 @@ fn widget_vi_fetch_history(zle: &mut Zle) {
     if zle.mult < 0 {
         return;
     }
-    let has_mult = zle.zmod.flags.contains(super::zle_main::ModifierFlags::MULT);
+    let has_mult = zle.zmod.flags & crate::ported::zle::zle_h::MOD_MULT != 0;
     let on_live = zle.history.cursor >= zle.history.entries.len();
     if on_live || (zle.zlereadflags & crate::ported::zsh_h::ZLRF_HISTORY) == 0 {
         if !has_mult {
@@ -2011,17 +2011,17 @@ fn widget_digit_argument(zle: &mut Zle) {
     if !zle
         .zmod
         .flags
-        .contains(crate::zle::zle_main::ModifierFlags::TMULT)
+         & crate::ported::zle::zle_h::MOD_TMULT != 0
     {
         zle.zmod.tmult = 0;
     }
-    if zle.zmod.flags.contains(crate::zle::zle_main::ModifierFlags::NEG) {
+    if zle.zmod.flags & crate::ported::zle::zle_h::MOD_NEG != 0 {
         zle.zmod.tmult = sign * new_digit;
-        zle.zmod.flags.remove(crate::zle::zle_main::ModifierFlags::NEG);
+        zle.zmod.flags &= !crate::ported::zle::zle_h::MOD_NEG;
     } else {
         zle.zmod.tmult = zle.zmod.tmult * base + sign * new_digit;
     }
-    zle.zmod.flags.insert(crate::zle::zle_main::ModifierFlags::TMULT);
+    zle.zmod.flags |= crate::ported::zle::zle_h::MOD_TMULT;
     zle.prefixflag = true;
 }
 
@@ -2667,7 +2667,7 @@ fn widget_universal_argument(zle: &mut Zle) {
     } else {
         zle.zmod.tmult = zle.zmod.tmult.saturating_mul(4);
     }
-    zle.zmod.flags.insert(crate::zle::zle_main::ModifierFlags::TMULT);
+    zle.zmod.flags |= crate::ported::zle::zle_h::MOD_TMULT;
     zle.prefixflag = true;
 }
 
@@ -2677,13 +2677,13 @@ fn widget_neg_argument(zle: &mut Zle) {
     // only valid as the *first* prefix, not after a digit. Otherwise
     // sets tmult = -1 and the MOD_TMULT|MOD_NEG flags so the next
     // digit-argument knows to use sign on its first digit.
-    if zle.zmod.flags.contains(crate::zle::zle_main::ModifierFlags::TMULT) {
+    if zle.zmod.flags & crate::ported::zle::zle_h::MOD_TMULT != 0 {
         zle.handle_feep();
         return;
     }
     zle.zmod.tmult = -1;
-    zle.zmod.flags.insert(crate::zle::zle_main::ModifierFlags::TMULT);
-    zle.zmod.flags.insert(crate::zle::zle_main::ModifierFlags::NEG);
+    zle.zmod.flags |= crate::ported::zle::zle_h::MOD_TMULT;
+    zle.zmod.flags |= crate::ported::zle::zle_h::MOD_NEG;
     zle.prefixflag = true;
 }
 
@@ -2716,7 +2716,7 @@ fn widget_what_cursor_position(zle: &mut Zle) {
 
 fn widget_set_local_history_widget(zle: &mut Zle) {
     // Port of setlocalhistory() from Src/Zle/zle_hist.c:794.
-    let has_mult = zle.zmod.flags.contains(super::zle_main::ModifierFlags::MULT);
+    let has_mult = zle.zmod.flags & crate::ported::zle::zle_h::MOD_MULT != 0;
     let mult = zle.zmod.mult;
     let mut hist = std::mem::take(&mut zle.history);
     zle.set_local_history(&mut hist, has_mult, mult);
@@ -2902,7 +2902,7 @@ fn widget_argument_base(zle: &mut Zle) {
         return;
     }
     zle.zmod.base = multbase;
-    zle.zmod.flags = super::zle_main::ModifierFlags::empty();
+    zle.zmod.flags = 0;
     zle.zmod.mult = 1;
     zle.zmod.tmult = 1;
     zle.zmod.vibuf = 0;
@@ -3887,7 +3887,7 @@ mod tests {
         widget_universal_argument(&mut zle);
         // No bytes available in test → digcnt=0 path → tmult *= 4.
         assert_eq!(zle.zmod.tmult, 4);
-        assert!(zle.zmod.flags.contains(crate::zle::zle_main::ModifierFlags::TMULT));
+        assert!(zle.zmod.flags & crate::ported::zle::zle_h::MOD_TMULT != 0);
         widget_universal_argument(&mut zle);
         assert_eq!(zle.zmod.tmult, 16);
     }
@@ -3901,7 +3901,7 @@ mod tests {
         zle.ungetbytes(b"42x");
         widget_universal_argument(&mut zle);
         assert_eq!(zle.zmod.tmult, 42);
-        assert!(zle.zmod.flags.contains(crate::zle::zle_main::ModifierFlags::TMULT));
+        assert!(zle.zmod.flags & crate::ported::zle::zle_h::MOD_TMULT != 0);
         // 'x' should still be in the unget buffer.
         let next = zle.getbyte(false);
         assert_eq!(next, Some(b'x'));
@@ -3922,8 +3922,8 @@ mod tests {
         zle.initmodifier();
         widget_neg_argument(&mut zle);
         assert_eq!(zle.zmod.tmult, -1);
-        assert!(zle.zmod.flags.contains(crate::zle::zle_main::ModifierFlags::TMULT));
-        assert!(zle.zmod.flags.contains(crate::zle::zle_main::ModifierFlags::NEG));
+        assert!(zle.zmod.flags & crate::ported::zle::zle_h::MOD_TMULT != 0);
+        assert!(zle.zmod.flags & crate::ported::zle::zle_h::MOD_NEG != 0);
     }
 
     #[test]
@@ -3931,12 +3931,12 @@ mod tests {
         // C: returns 1 (error/beep) if MOD_TMULT was already set.
         let mut zle = Zle::new();
         zle.initmodifier();
-        zle.zmod.flags.insert(crate::zle::zle_main::ModifierFlags::TMULT);
+        zle.zmod.flags |= crate::ported::zle::zle_h::MOD_TMULT;
         zle.zmod.tmult = 5;
         widget_neg_argument(&mut zle);
         // tmult unchanged, NEG NOT set.
         assert_eq!(zle.zmod.tmult, 5);
-        assert!(!zle.zmod.flags.contains(crate::zle::zle_main::ModifierFlags::NEG));
+        assert!(!zle.zmod.flags & crate::ported::zle::zle_h::MOD_NEG != 0);
     }
 
     #[test]
@@ -3954,7 +3954,7 @@ mod tests {
         zle.lastchar = b'5' as i32;
         widget_digit_argument(&mut zle);
         assert_eq!(zle.zmod.tmult, -5);
-        assert!(!zle.zmod.flags.contains(crate::zle::zle_main::ModifierFlags::NEG));
+        assert!(!zle.zmod.flags & crate::ported::zle::zle_h::MOD_NEG != 0);
     }
 
     #[test]
@@ -4309,7 +4309,7 @@ mod tests {
         zle.history.add("b".to_string());
         zle.history.add("c".to_string());
         zle.history.cursor = 3; // live buffer
-        zle.zmod.flags.insert(crate::zle::zle_main::ModifierFlags::MULT);
+        zle.zmod.flags |= crate::ported::zle::zle_h::MOD_MULT;
         zle.zmod.mult = 2; // 1-based: event #2 = entry index 1
         zle.mult = 2;
         widget_vi_fetch_history(&mut zle);
