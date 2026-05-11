@@ -6272,11 +6272,13 @@ pub fn fetchvalue<'a>(                                                       // 
 ///     translation in c:2050-2090).
 ///
 /// Deferred from full C body:
-///   - parse_subscript with quote/nesting handling (uses naive
-///     `]` scan; works for the common case without nested `]`
-///     in regex / glob subscripts).
-///   - MB_METACHARLEN-based inverse-offset translation.
-///   - KSH_ARRAYS / KSHZEROSUBSCRIPT off-by-one fixups.
+///   - MB_METACHARLEN-based inverse-offset translation
+///     (c:2050-2090).
+///   - KSH_ARRAYS / KSHZEROSUBSCRIPT non-strict option dispatch
+///     (c:2130-2150).
+///   - Flag-prefixed subscript forms `[(r)val]` / `[(i)val]` /
+///     `[(I)pat]` route through getarg's separate dispatcher
+///     because the Rust getarg has a different signature from C.
 pub fn getindex(pptr: &mut &str, v: &mut crate::ported::zsh_h::value, scanflags: i32) -> i32 { // c:2001
     use crate::ported::zsh_h::{
         SCANPM_ISVAR_AT, SCANPM_KEYMATCH, SCANPM_MATCHKEY, SCANPM_MATCHMANY,
@@ -6291,11 +6293,11 @@ pub fn getindex(pptr: &mut &str, v: &mut crate::ported::zsh_h::value, scanflags:
     }
     let after_lbrack = &s[1..];
 
-    // c:2008 — `parse_subscript(s, dq, ']')`. Naive scan: find the
-    // matching `]` without honouring nesting / quoting. Works for
-    // simple subscripts; the full parse_subscript port covers
-    // `${arr[1,$(( $#arr - 1 ))]}` etc.
-    let close_pos = after_lbrack.find(']');
+    // c:2008 — `parse_subscript(s, dq, ']')`. Routes through the
+    // existing lex-layer port at `zshrs_parse::lex::parse_subscript`
+    // which honours `[...]` / `(...)` / `{...}` nesting and single/
+    // double quoting (parse/src/lex.rs:3074).
+    let close_pos = crate::lex::parse_subscript(after_lbrack, ']');
     let close_pos = match close_pos {
         Some(p) => p,
         None => {
