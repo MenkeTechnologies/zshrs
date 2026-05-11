@@ -34,9 +34,12 @@ use std::path::PathBuf;
 /// };
 /// ```
 ///
-/// Rust port keeps the same shape; the GSU function-table fields are
-/// type-erased via `usize` because the GsuHash/GsuArray callback
-/// vectors are pre-defined zsh-framework types not yet ported.
+/// Rust port keeps the same shape; the GSU function-table fields
+/// (`hash_gsu`, `array_gsu`) are type-erased via `usize` because the
+/// `GsuHash`/`GsuArray` types (zsh_h.rs:797-798, `Box<gsu_hash>` /
+/// `Box<gsu_array>`) own their callback function pointers and can't
+/// be const-initialised in a Rust static. Consumers cast back at
+/// dispatch time.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy)]
 pub struct pardef {                                                          // c:2179
@@ -256,9 +259,15 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 /// C body sets `pm->node.flags = PM_SCALAR` (c:1869) then dispatches
 /// `pm->gsu.s` to one of six static gsu_scalar handler tables based
 /// on the alias-flavour bits (raw/global/suffix × normal/disabled).
-/// Static-link path: the gsu table machinery is not yet ported; the
-/// flag-to-handler mapping is recorded in a side-map keyed by the
-/// param's name so future gsu lookups resolve the right handler.
+/// The `gsu_scalar` struct IS ported at zsh_h.rs:802 (with `GsuScalar`
+/// = Box<gsu_scalar> alias at c:794), but C uses six C-level statics
+/// for the per-flavour dispatch tables — `pmralias_gsu`, `pmgalias_gsu`,
+/// `pmsalias_gsu`, plus the three `pmdis*alias_gsu` variants — that
+/// can't be const-initialised in Rust because gsu_scalar holds
+/// `Option<GsuFn>` function pointers. Until the six per-flavour
+/// statics land as `LazyLock<gsu_scalar>` entries, the flag-to-handler
+/// mapping is recorded in a name-keyed side-map so future gsu lookups
+/// resolve the right handler.
 #[allow(non_snake_case)]
 pub fn assignaliasdefs(pm: *mut crate::ported::zsh_h::param,                 // c:1867
                        flags: i32) {

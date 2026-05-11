@@ -51,12 +51,15 @@ use crate::ported::utils::zwarnnam;
 /// };
 /// ```
 ///
-/// The `gsu_*` types are pre-defined zsh-framework structs (zsh.h)
-/// not yet ported to Rust; until they land, `Gsu_closure` is a
-/// type-erased pair `(kind, raw_ptr)` recording which GSU variant
-/// the closure stores. Used internally by the `pps_*`/`ppi_*` etc.
-/// callbacks; not yet wired since the GSU dispatch path itself isn't
-/// ported.
+/// The `gsu_*` types ARE ported in zsh_h.rs (gsu_scalar at c:802,
+/// gsu_integer c:810, gsu_float c:818, gsu_array c:826, gsu_hash
+/// c:834, with their `Box<T>` aliases GsuScalar/GsuInteger/etc. at
+/// c:794-798). `Gsu_closure` keeps the type-erased `(kind, raw_ptr)`
+/// shape because the underlying gsu vtable function-pointers
+/// (`Option<GsuFn>`) can't be const-initialised in a `static`. The
+/// closure records which GSU variant fires via `kind` (0..=4 for
+/// scalar/integer/float/array/hash) and a `usize` ptr into the per-
+/// type static table; consumers cast back at call time.
 #[derive(Debug, Clone, Copy)]
 #[allow(non_camel_case_types)]
 pub struct Gsu_closure {                                                 // c:34
