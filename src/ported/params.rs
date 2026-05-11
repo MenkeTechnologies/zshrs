@@ -927,7 +927,12 @@ pub fn getintvalue(v: Option<&mut crate::ported::zsh_h::value>) -> i64 {
 /// (`pm->gsu.s->getfn(pm)`). Then PM_LEFT/PM_RIGHT_B/PM_RIGHT_Z
 /// padding when VALFLAG_SUBST is set.
 pub fn getstrvalue(v: Option<&mut crate::ported::zsh_h::value>) -> String {
+    use crate::ported::zsh_h::{
+        PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z, VALFLAG_SUBST,
+    };
+
     let v = match v { Some(v) => v, None => return String::new() };
+    // c:2344-2348 — `if (VALFLAG_INV && !PM_HASHED) return sprintf("%d", v->start)`.
     if (v.valflags & VALFLAG_INV) != 0 {
         let hashed = v.pm.as_ref().map(|p| (p.node.flags as u32 & PM_HASHED) != 0)
             .unwrap_or(false);
@@ -937,28 +942,86 @@ pub fn getstrvalue(v: Option<&mut crate::ported::zsh_h::value>) -> String {
     }
     let pm = match v.pm.as_mut() { Some(p) => p, None => return String::new() };
     let t = PM_TYPE(pm.node.flags as u32);
-    if t == PM_HASHED || t == PM_ARRAY {
+    let pmflags = pm.node.flags as u32;
+
+    // c:2350-2370 — PM_TYPE dispatch.
+    let mut s: String = if t == PM_HASHED || t == PM_ARRAY {                 // c:2351-2370
         let arr = arrgetfn(pm);
-        if v.scanflags != 0 {
-            return arr.join(" ");
+        if v.scanflags != 0 {                                                // c:2361
+            arr.join(" ")
+        } else {
+            let mut start = v.start;
+            if start < 0 { start += arr.len() as i32; }                       // c:2364
+            if start < 0 || (start as usize) >= arr.len() {                   // c:2365-2366
+                String::new()
+            } else {
+                arr[start as usize].clone()
+            }
         }
-        let mut start = v.start;
-        if start < 0 { start += arr.len() as i32; }
-        if start < 0 || (start as usize) >= arr.len() {
-            return String::new();
+    } else if t == PM_INTEGER {                                              // c:2371
+        // c:2373 — `convbase(buf, pm->gsu.i->getfn(pm), pm->base)`.
+        // Without the base-aware convbase port, default to base-10.
+        intgetfn(pm).to_string()
+    } else if t == PM_EFLOAT || t == PM_FFLOAT {                             // c:2375
+        // c:2377 — `convfloat(getfn(pm), pm->base, pm->flags, NULL)`.
+        floatgetfn(pm).to_string()
+    } else if t == PM_SCALAR || t == PM_NAMEREF {                            // c:2380
+        strgetfn(pm)
+    } else {
+        // c:2384 — `DPUTS(1, "BUG: param node without valid type")`.
+        String::new()
+    };
+
+    // c:2390-2538 — VALFLAG_SUBST padding (PM_LEFT / PM_RIGHT_B /
+    // PM_RIGHT_Z). Partial ASCII port; multibyte (MB_METACHAR*)
+    // and zero-pad numeric-prefix detection deferred.
+    if v.valflags & VALFLAG_SUBST != 0 {
+        let pad_flags = pmflags & (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z);
+        if pad_flags != 0 {
+            let fwidth = if pm.width > 0 {
+                pm.width as usize
+            } else {
+                s.chars().count()
+            };
+            if pad_flags == PM_LEFT || pad_flags == (PM_LEFT | PM_RIGHT_Z) {
+                // c:2393-2424 — left-justify: optional zero/blank trim,
+                // truncate to fwidth, right-pad with spaces.
+                let trimmed: &str = if pad_flags & PM_RIGHT_Z != 0 {
+                    s.trim_start_matches('0')
+                } else {
+                    s.trim_start_matches(|c: char| c == ' ' || c == '\t')
+                };
+                let len = trimmed.chars().count();
+                let take = len.min(fwidth);
+                let mut out: String =
+                    trimmed.chars().take(take).collect();
+                if fwidth > take {
+                    out.extend(std::iter::repeat(' ').take(fwidth - take));
+                }
+                s = out;
+            } else if pad_flags & (PM_RIGHT_B | PM_RIGHT_Z) != 0 {
+                // c:2426-2510 — right-justify with optional zero-padding
+                // honouring leading-blank/minus/0x prefix detection for
+                // numeric values. Simplified ASCII port that left-pads
+                // with the appropriate char.
+                let pad_char = if pad_flags & PM_RIGHT_Z != 0 { '0' } else { ' ' };
+                let len = s.chars().count();
+                if len < fwidth {
+                    let need = fwidth - len;
+                    let mut out: String =
+                        std::iter::repeat(pad_char).take(need).collect();
+                    out.push_str(&s);
+                    s = out;
+                } else if len > fwidth {
+                    // c:2515-2520 — truncate to fwidth chars from end.
+                    let skip = len - fwidth;
+                    s = s.chars().skip(skip).collect();
+                }
+            }
         }
-        return arr[start as usize].clone();
     }
-    if t == PM_INTEGER {
-        return intgetfn(pm).to_string();
-    }
-    if t == PM_EFLOAT || t == PM_FFLOAT {
-        return floatgetfn(pm).to_string();
-    }
-    if t == PM_SCALAR || t == PM_NAMEREF {
-        return strgetfn(pm);
-    }
-    String::new()
+
+    s
 }
 
 /// Port of `getsparam_u()` from `Src/params.c:3091`. C body:
@@ -1959,22 +2022,49 @@ pub fn getarrvalue(arr: &[String], start: i64, end: i64) -> Vec<String> {
     arr[s_idx..e_idx.min(arr.len())].to_vec()
 }
 
-/// Set array element with subscript handling (from params.c setarrvalue)
+/// Set array element with subscript handling.
+///
+/// **Signature drift (PORT.md Rule S1 violation):** C's
+/// `setarrvalue(Value v, char **val)` walks v->pm flags
+/// (PM_READONLY check, PM_ARRAY|PM_HASHED type guard,
+/// VALFLAG_EMPTY guard) before dispatching through pm->gsu.a->setfn.
+/// This Rust shim takes (arr, start, end, val) and inlines the
+/// slice splice — fine for the executor-backed array, but can't
+/// honour the pm-flag guards without the paramtab/executor
+/// unification (see assignaparam doc above for migration path).
+///
+/// Body covers the c:2917 "v->start == 0 && v->end == -1 →
+/// full replacement" and c:2929+ "slice-with-bounds adjust"
+/// paths against `arr` directly.
+///
+/// Pending C semantics inside this body:
+///   - PM_READONLY rejection with zerr (c:2899-2904)
+///   - PM_HASHED dispatch to arrhashsetfn (c:2918-2927)
+///   - VALFLAG_INV + !KSHARRAYS off-by-one (c:2938-2942)
+///   - ASSPM_AUGMENT prepend (c:2945-2954)
+///   - PM_UNIQUE dedupe after assign (c:2966-2967)
 pub fn setarrvalue(arr: &mut Vec<String>, start: i64, end: i64, val: Vec<String>) {
     let len = arr.len() as i64;
+    // c:2950-2954 — negative start: add pre_assignment_length;
+    // clamp to 0.
     let start = if start < 0 {
         (len + start + 1).max(0)
     } else {
         start
     };
+    // c:2955-2959 — negative end: add pre_assignment_length + 1;
+    // clamp to 0.
     let end = if end < 0 { (len + end + 1).max(0) } else { end };
+    // c:2960-2961 — `if (end < start) end = start`.
     let start = (start.max(1) - 1) as usize;
     let end = end.max(0) as usize;
 
+    // c:2980+ — pad with empty strings up to start.
     while arr.len() < start {
         arr.push(String::new());
     }
 
+    // c:2989-2998 — splice val into [start..end] range.
     let end = end.min(arr.len());
     if start <= end {
         arr.splice(start..end, val);
