@@ -610,7 +610,7 @@ impl Zle {
     /// Overwrite mode toggle
     /// Port of overwritemode() from zle_misc.c
     pub fn overwrite_mode(&mut self) {
-        self.insmode = !self.insmode;
+        crate::ported::zle::zle_main::INSMODE.fetch_xor(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Copy previous word
@@ -1454,7 +1454,7 @@ pub fn negargument(zle: &mut Zle) -> i32 {                                   // 
 /// ```
 /// `overwrite-mode` widget — toggle insert/overwrite mode.
 pub fn overwritemode(zle: &mut Zle) -> i32 {                                 // c:842
-    zle.insmode = !zle.insmode;                                              // c:845 insmode ^= 1
+    crate::ported::zle::zle_main::INSMODE.fetch_xor(1, std::sync::atomic::Ordering::SeqCst);                                              // c:845 insmode ^= 1
     0                                                                        // c:846 return 0
 }
 
@@ -2121,11 +2121,11 @@ mod tests {
     fn overwritemode_toggles_insmode() {
         // c:845 — `insmode ^= 1`.
         let mut z = Zle::new();
-        z.insmode = true;
+        crate::ported::zle::zle_main::INSMODE.store(1, std::sync::atomic::Ordering::SeqCst);
         overwritemode(&mut z);
-        assert!(!z.insmode);
+        assert_eq!(crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst), 0);
         overwritemode(&mut z);
-        assert!(z.insmode);
+        assert_eq!(crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     // ---------- argumentbase real-port tests ----------
