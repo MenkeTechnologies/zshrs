@@ -1181,24 +1181,17 @@ impl Zle {
     /// Execute an immortal (built-in) function
     /// Port of execimmortal() from zle_main.c
     pub fn exec_immortal(&mut self, name: &str) -> bool {
-        if let Some(widget) = acceptline(name) {
-            self.execute_widget(&widget);
-            true
-        } else {
-            false
-        }
+        let widget = Widget::builtin(name);
+        self.execute_widget(&widget);
+        true
     }
 
     /// Execute a ZLE function by name
     /// Port of execzlefunc() from zle_main.c
     pub fn exec_zle_func(&mut self, name: &str, _args: &[String]) -> i32 {
-        if let Some(widget) = acceptline(name) {
-            self.execute_widget(&widget);
-            0
-        } else {
-            // Try user-defined widget
-            1
-        }
+        let widget = Widget::builtin(name);
+        self.execute_widget(&widget);
+        0
     }
 
     /// Break read (for signals)
@@ -1290,10 +1283,12 @@ impl Zle {
 // `SavedKeymap` deleted — Rust-invented helper for `save_keymap` /
 // `restore_keymap` (also deleted above). No C counterpart.
 
-/// Get a builtin widget by name
-fn acceptline(name: &str) -> Option<Widget> {
-    Some(Widget::builtin(name))
-}
+// `acceptline(&str) -> Option<Widget>` deleted — Rust-only helper
+// that just wrapped `Widget::builtin(name)` in `Some(...)`. Callers
+// (exec_immortal, exec_zle_func) inlined to use `Widget::builtin`
+// directly. The real C `acceptline()` (zle_misc.c:401) takes
+// `char **args` and returns int; its Rust port lives at
+// `zle_misc.rs:708` (the legit free fn).
 
 // `vared_zle_run` deleted — Rust-only helper with no C counterpart
 // (the C `bin_vared` inlines its zleread call at c:1839-1860). The
