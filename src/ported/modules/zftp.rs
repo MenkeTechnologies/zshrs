@@ -1686,11 +1686,37 @@ pub fn zfpipe() {                                                             //
 }
 
 /// Port of `zfread()` from `Src/Modules/zftp.c:1307`.
-/// C: `static int zfread(int fd, char *bf, off_t sz, int tmout)`.
+/// C: `static int zfread(int fd, char *bf, off_t sz, int tmout)` — read
+/// up to `sz` bytes from fd; with `tmout > 0` install a SIGALRM-driven
+/// timeout that aborts the read.
 #[allow(non_snake_case)]
-pub fn zfread(_fd: i32, _bf: &mut [u8], _sz: libc::off_t, _tmout: i32) -> i32 {
-    // c:1307-1355 — read with EINTR + timeout handling.
-    0
+pub fn zfread(fd: i32, bf: &mut [u8], sz: libc::off_t, tmout: i32) -> i32 {   // c:1307
+    let ret: isize;                                                           // c:1309 int ret
+
+    // c:1311-1312 — no timeout: plain read.
+    if tmout == 0 {
+        let n = unsafe {
+            libc::read(fd, bf.as_mut_ptr() as *mut libc::c_void, sz as libc::size_t)
+        };
+        return n as i32;                                                      // c:1312
+    }
+
+    // c:1314-1318 — setjmp guard; Rust port uses ZFDRRRRING as polled
+    // signal-trip indicator instead of longjmp.
+    if ZFDRRRRING.load(std::sync::atomic::Ordering::Relaxed) != 0 {           // c:1314 setjmp
+        unsafe { libc::alarm(0); }                                            // c:1315
+        crate::ported::utils::zwarnnam("zftp", "timeout on network read");    // c:1316
+        return -1;                                                            // c:1317
+    }
+    zfalarm(tmout);                                                           // c:1319
+
+    // c:1321 — ret = read(fd, bf, sz);
+    ret = unsafe {
+        libc::read(fd, bf.as_mut_ptr() as *mut libc::c_void, sz as libc::size_t)
+    };
+    // c:1324 — alarm(0);
+    unsafe { libc::alarm(0); }
+    ret as i32                                                                // c:1325
 }
 
 /// Port of `zfread_block()` from `Src/Modules/zftp.c:1359`.
@@ -1702,11 +1728,67 @@ pub fn zfread_block(_fd: i32, _bf: &mut [u8], _sz: libc::off_t, _tmout: i32) -> 
 }
 
 /// Port of `zfsendcmd()` from `Src/Modules/zftp.c:825`.
-/// C: `static int zfsendcmd(char *cmd)` — writes cmd to control fd.
+/// C: `static int zfsendcmd(char *cmd)` — write the command to the
+/// control fd with an alarm-guarded timeout, then read the server
+/// reply via zfgetmsg.
 #[allow(non_snake_case)]
-pub fn zfsendcmd(_cmd: &str) -> i32 {
-    // c:825-880 — write(cfd, cmd, strlen(cmd)) + zfgetmsg().
-    0
+pub fn zfsendcmd(cmd: &str) -> i32 {                                          // c:825
+    use std::io::Write;
+    // c:832 — int ret, tmout;
+    let ret: isize;
+    let tmout: i32;
+
+    // c:834-835 — if (!zfsess->control) return 6;
+    let mut state = match ZFTP_STATE.lock() {
+        Ok(s) => s,
+        Err(_) => return 6,
+    };
+    let sess = match state.get_session_mut(None) {                            // c:834
+        Some(s) => s,
+        None => return 6,
+    };
+    if sess.control.is_none() {                                               // c:834
+        return 6;                                                             // c:835
+    }
+
+    // c:836 — tmout = getiparam("ZFTP_TMOUT");
+    tmout = std::env::var("ZFTP_TMOUT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    // c:837-841 — setjmp / timeout handler. The Rust port uses
+    // ZFDRRRRING as the polled flag instead of longjmp; zfalarm
+    // installs the SIGALRM handler.
+    zfalarm(tmout);                                                           // c:842
+
+    // c:843 — ret = write(zfsess->control->fd, cmd, strlen(cmd));
+    let bytes = cmd.as_bytes();
+    ret = match sess.control.as_mut() {
+        Some(stream) => match stream.write(bytes) {
+            Ok(n) => {
+                let _ = stream.flush();
+                n as isize
+            }
+            Err(_) => -1,
+        },
+        None => -1,
+    };
+    // c:844 — alarm(0);
+    unsafe { libc::alarm(0); }
+
+    // c:846-849 — write failure.
+    if ret <= 0 {
+        crate::ported::utils::zwarnnam(                                       // c:847
+            "zftp send",
+            &format!("failure sending control message: {}",
+                     std::io::Error::last_os_error()));
+        return 6;                                                             // c:848
+    }
+
+    // c:851 — return zfgetmsg();
+    drop(state);
+    zfgetmsg()
 }
 
 /// Port of `zfsenddata()` from `Src/Modules/zftp.c:1456`.
