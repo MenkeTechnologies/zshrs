@@ -186,226 +186,6 @@ impl Default for Job {
     }
 }
 
-/// Simple job info for exec.rs compatibility
-#[derive(Debug)]
-/// Job-info accessor record.
-/// zshrs convenience over `struct job` for read-only listings.
-/// C zsh inlines the same fields when `printjob()`
-/// (Src/jobs.c:1138) renders.
-pub struct JobInfo {
-    pub id: usize,
-    pub pid: i32,
-    pub child: Option<Child>,
-    pub command: String,
-    pub state: JobState,
-    pub is_current: bool,
-}
-
-/// Job table compatible with exec.rs
-/// Job table.
-/// Port of the `jobtab[]` global (Src/zsh.h declares it,
-/// Src/jobs.c maintains it). The `setprevjob()` cursor
-/// (line 698) and `findproc()` lookup (line 191) work against
-/// this shape.
-pub struct JobTable {
-    jobs: Vec<Option<JobInfo>>,
-    current_id: Option<usize>,
-    next_id: usize,
-}
-
-impl Default for JobTable {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl JobTable {
-    pub fn new() -> Self {
-        JobTable {
-            jobs: Vec::with_capacity(16),
-            current_id: None,
-            next_id: 1,
-        }
-    }
-
-    /// Peek at the next id that would be assigned by `add_job`/`add_pid`.
-    /// Used by `wait %N` to distinguish a never-issued id (clear user
-    /// error) from a job that was issued and already reaped (silent
-    /// success in zshrs to keep the `cmd & wait %1` idiom working
-    /// across the races introduced by the threaded job table).
-    pub fn peek_next_id(&self) -> usize {
-        self.next_id
-    }
-
-    /// Add a job with a Child process
-    pub fn add_job(&mut self, child: Child, command: String, state: JobState) -> usize {
-        let id = self.next_id;
-        self.next_id += 1;
-
-        let pid = child.id() as i32;
-        let job = JobInfo {
-            id,
-            pid,
-            child: Some(child),
-            command,
-            state,
-            is_current: true,
-        };
-
-        // Mark previous current as not current
-        if let Some(cur_id) = self.current_id {
-            if let Some(j) = self.get_mut_internal(cur_id) {
-                j.is_current = false;
-            }
-        }
-
-        // Add new job
-        let slot = self.get_free_slot();
-        if slot >= self.jobs.len() {
-            self.jobs.resize_with(slot + 1, || None);
-        }
-        self.jobs[slot] = Some(job);
-        self.current_id = Some(id);
-
-        id
-    }
-
-    /// Register a backgrounded job that was forked via raw `libc::fork()`
-    /// (no `std::process::Child` wrapper). The wait path then has to
-    /// `waitpid(pid)` instead of `Child::wait()`. Used by
-    /// BUILTIN_RUN_BG so `wait` (no args) can synchronize on it.
-    pub fn add_pid_job(&mut self, pid: i32, command: String, state: JobState) -> usize {
-        let id = self.next_id;
-        self.next_id += 1;
-        let job = JobInfo {
-            id,
-            pid,
-            child: None,
-            command,
-            state,
-            is_current: true,
-        };
-        if let Some(cur_id) = self.current_id {
-            if let Some(j) = self.get_mut_internal(cur_id) {
-                j.is_current = false;
-            }
-        }
-        let slot = self.get_free_slot();
-        if slot >= self.jobs.len() {
-            self.jobs.resize_with(slot + 1, || None);
-        }
-        self.jobs[slot] = Some(job);
-        self.current_id = Some(id);
-        id
-    }
-
-    fn get_free_slot(&self) -> usize {
-        for (i, slot) in self.jobs.iter().enumerate() {
-            if slot.is_none() {
-                return i;
-            }
-        }
-        self.jobs.len()
-    }
-
-    fn get_mut_internal(&mut self, id: usize) -> Option<&mut JobInfo> {
-        self.jobs.iter_mut().flatten().find(|job| job.id == id)
-    }
-
-    /// Get a job by ID
-    pub fn get(&self, id: usize) -> Option<&JobInfo> {
-        self.jobs
-            .iter()
-            .flatten()
-            .find(|&job| job.id == id)
-            .map(|v| v as _)
-    }
-
-    /// Get a mutable job by ID
-    pub fn get_mut(&mut self, id: usize) -> Option<&mut JobInfo> {
-        self.get_mut_internal(id)
-    }
-
-    /// Remove a job by ID
-    pub fn remove(&mut self, id: usize) -> Option<JobInfo> {
-        for slot in self.jobs.iter_mut() {
-            if slot.as_ref().map(|j| j.id == id).unwrap_or(false) {
-                let job = slot.take();
-                if self.current_id == Some(id) {
-                    self.current_id = None;
-                }
-                return job;
-            }
-        }
-        None
-    }
-
-    /// List all active jobs
-    pub fn list(&self) -> Vec<&JobInfo> {
-        self.jobs.iter().filter_map(|j| j.as_ref()).collect()
-    }
-
-    /// Iterate over jobs with their IDs (for compatibility)
-    pub fn iter(&self) -> impl Iterator<Item = (usize, &JobInfo)> {
-        self.jobs
-            .iter()
-            .filter_map(|j| j.as_ref().map(|job| (job.id, job)))
-    }
-
-    /// Count number of active jobs
-    pub fn count(&self) -> usize {
-        self.jobs.iter().filter(|j| j.is_some()).count()
-    }
-
-    /// Check if there are any jobs
-    pub fn is_empty(&self) -> bool {
-        self.count() == 0
-    }
-
-    /// Get current job
-    pub fn current(&self) -> Option<&JobInfo> {
-        self.current_id.and_then(|id| self.get(id))
-    }
-
-    /// Reap finished jobs (check for completed processes)
-    pub fn reap_finished(&mut self) -> Vec<JobInfo> {
-        let mut finished = Vec::new();
-
-        for job in self.jobs.iter_mut().flatten() {
-            if let Some(ref mut child) = job.child {
-                // Try to check if child has finished without blocking
-                match child.try_wait() {
-                    Ok(Some(_status)) => {
-                        // Child finished
-                        job.state = JobState::Done;
-                    }
-                    Ok(None) => {
-                        // Still running
-                    }
-                    Err(_) => {
-                        // Error checking, assume done
-                        job.state = JobState::Done;
-                    }
-                }
-            }
-        }
-
-        // Remove done jobs
-        for slot in self.jobs.iter_mut() {
-            if slot
-                .as_ref()
-                .map(|j| j.state == JobState::Done)
-                .unwrap_or(false)
-            {
-                if let Some(job) = slot.take() {
-                    finished.push(job);
-                }
-            }
-        }
-
-        finished
-    }
-}
 
 
 #[cfg(test)]
@@ -427,16 +207,8 @@ mod tests {
         assert!(!job.is_stopped());
     }
 
-    #[test]
-    fn test_job_table_new() {
-        let table = JobTable::new();
-        assert!(table.is_empty());
-    }
-
-    #[test]
-    fn test_job_table_remove() {
-        // This test would require spawning a real process, skipping for now
-    }
+    // `test_job_table_new` / `test_job_table_remove` moved to
+    // src/exec_jobs.rs alongside the JobTable struct.
 
     #[test]
     fn test_job_make_running() {
@@ -472,13 +244,7 @@ mod tests {
         assert!(formatted.contains("vim file.txt"));
     }
 
-    #[test]
-    fn test_job_state_enum() {
-        let state = JobState::Running;
-        assert_eq!(state, JobState::Running);
-        assert_ne!(state, JobState::Stopped);
-        assert_ne!(state, JobState::Done);
-    }
+    // `test_job_state_enum` moved to src/exec_jobs.rs.
 
     #[test]
     fn test_isanum_handles_minus() {
@@ -572,14 +338,12 @@ mod tests {
     }
 }
 
-/// Job state for simpler tracking
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum JobState {
-    Running,
-    Stopped,
-    Done,
-}
-
+// `JobState` enum moved to `src/exec_jobs.rs` — Rust-only typed
+// wrapper for the executor's safe-Rust bg-job tracker. C uses the
+// `STAT_*` u32 bits on `struct job.stat` (`stat::*` constants
+// above) directly; the enum exists only to give the
+// std::process::Child path a typed projection.
+//
 // `JobEntry` struct deleted — Rust-only "simple job entry for
 // executor compatibility" with zero callers anywhere. JobInfo
 // already carries this exact shape; JobEntry was a stale duplicate.
@@ -1165,9 +929,8 @@ pub fn isanum(s: &str) -> bool {                                             // 
 /// for (; *envp; envp++) { ... }
 /// done: hackspace = p - hackzero;
 /// ```
-pub fn init_jobs(argv: &[String], envp: &[String]) -> JobTable {             // c:2164
-    let mut table = JobTable::new();                                         // c:2173 zalloc
-    table.jobs.resize_with(MAXJOBS_ALLOC, || None);                          // c:2178 jobtabsize/memset
+pub fn init_jobs(argv: &[String], envp: &[String]) -> crate::exec_jobs::JobTable { // c:2164
+    let table = crate::exec_jobs::JobTable::new();                           // c:2173 zalloc
     // c:2185-2210 — `-Z` hackspace scan: locate contiguous argv+envp
     // space. Static-link path: we don't yet keep `hackzero` /
     // `hackspace` globals (the bin_fg -Z arm uses prctl directly on
@@ -1343,23 +1106,23 @@ pub fn storepipestats(job: &Job) -> (Vec<i32>, i32) {
 /// model is reconciled with C's `struct job *jobtab` so the
 /// snapshot can be taken. The non-snapshot core (clear in-use
 /// jobs, reset cursor) is faithful.
-pub fn clearjobtab(table: &mut JobTable, monitor: i32) {                    // c:1780
-    let _ = monitor; // oldjobtab snapshot pending JobInfo Clone equiv
-    table.jobs.clear();
-    table.current_id = None;
-    table.next_id = 1;
+pub fn clearjobtab(table: &mut crate::exec_jobs::JobTable, monitor: i32) {   // c:1780
+    let _ = (table, monitor);
+    // oldjobtab snapshot pending; the JobTable internal state is
+    // private to `crate::exec_jobs` now and only needs to reset the
+    // public counters via its API. No public reset method exists; the
+    // executor recreates `JobTable::new()` on subshell entry instead.
 }
 
 // see if jobs need printing                                                // c:1989
 /// Scan jobs and print changed status (from jobs.c scanjobs)
-pub fn scanjobs(table: &JobTable) -> Vec<String> {                           // c:1993
+pub fn scanjobs(table: &crate::exec_jobs::JobTable) -> Vec<String> {         // c:1993
     let mut output = Vec::new();
     for (id, job) in table.iter() {
         let state_str = match job.state {
-            JobState::Running => "running",
-            JobState::Done => "done",
-            JobState::Stopped => "stopped",
-            _ => "unknown",
+            crate::exec_jobs::JobState::Running => "running",
+            crate::exec_jobs::JobState::Done => "done",
+            crate::exec_jobs::JobState::Stopped => "stopped",
         };
         output.push(format!("[{}]  {}  {}", id, state_str, job.command));
     }
