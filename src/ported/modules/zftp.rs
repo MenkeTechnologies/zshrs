@@ -3539,9 +3539,26 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {              
         let mut rest_cmd: String = String::new();                               // c:2564 char *rest = NULL
         let mut startat: libc::off_t = 0;                                       // c:2565
 
-        // c:2566-2587 — getsize hint via zfstats (zftp_progress callback path
-        // depends on doshfunc; deferred — progress callback never fires).
-        let _ = progress;
+        // c:2566-2587 — getsize hint via zfstats + initial progress
+        // callback. Only fires when a zftp_progress shfunc is defined.
+        // ZFST_NOSZ/ZFST_TRSZ per-session status bits aren't ported;
+        // the c:2577-2585 cache check collapses to "always probe SIZE"
+        // (or "always set getsize on STOR") — matching C's behavior
+        // when those bits are unset on a fresh session.
+        if progress != 0 && crate::ported::utils::getshfunc("zftp_progress").is_some() {
+            let mut sz: libc::off_t = -1;                                       // c:2567
+            let mut _mdtm: Option<String> = None;
+            if recv || (flags & ZFTP_REST) == 0 {                               // c:2578-2585
+                let _ = zfstats(arg, if recv { 1 } else { 0 },                  // c:2580
+                                &mut sz, &mut _mdtm, 0);
+                if recv && sz == -1 {                                           // c:2582
+                    getsize = 1;                                                // c:2583
+                }
+            } else {
+                getsize = 1;                                                    // c:2585
+            }
+            zfstarttrans(arg, if recv { 1 } else { 0 }, sz);                    // c:2587
+        }
 
         // c:2589-2592 — REST resume.
         if (flags & ZFTP_REST) != 0 && i + 1 < args.len() {
