@@ -97,14 +97,14 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {                       // 
 
     if bashre {                                                          // c:115
         // c:116 — `assignaparam("BASH_REMATCH", arr, 0);`
-        crate::ported::modules::ksh93::setsparam("BASH_REMATCH", &arr.join(":"));
+        crate::ported::params::setsparam("BASH_REMATCH", &arr.join(":"));
         return return_value;
     }
 
     // c:119-121 — assignsparam("MATCH", full-match-text).
     let m0 = captures.get(0).expect("regex matched but no group 0");
     let full = m0.as_str().to_string();                                  // c:120 metafy
-    crate::ported::modules::ksh93::setsparam("MATCH", &full);            // c:121 assignsparam
+    crate::ported::params::setsparam("MATCH", &full);            // c:121 assignsparam
 
     // c:124-135 — char-offset MBEGIN. C walks the pre-match bytes
     // counting MB_CHARLEN-stepped characters; Rust collapses to
@@ -115,13 +115,13 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {                       // 
     let mbegin_chars = lhstr[..so].chars().count() as i64;               // c:128-133
     let kshoff: i64 = if ksharr { 0 } else { 1 };                        // c:134 !isset(KSHARRAYS)
     let mbegin = mbegin_chars + kshoff;                                  // c:134
-    crate::ported::modules::ksh93::setiparam("MBEGIN", mbegin);          // c:134 assigniparam
+    crate::ported::params::setiparam("MBEGIN", mbegin);          // c:134 assigniparam
 
     // c:138-145 — MEND.
     let match_chars = lhstr[so..eo].chars().count() as i64;
     let mend_total = mbegin_chars + match_chars;
     let mend = mend_total + kshoff - 1;                                  // c:145
-    crate::ported::modules::ksh93::setiparam("MEND", mend);              // c:145 assigniparam
+    crate::ported::params::setiparam("MEND", mend);              // c:145 assigniparam
 
     // c:147-180 — populate $match[], $mbegin[], $mend[] subgroup
     // arrays.
@@ -144,9 +144,9 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {                       // 
             }
         }
         // c:182-184 — `setaparam("match"/"mbegin"/"mend", ...);`
-        crate::ported::modules::ksh93::setsparam("match",  &arr.join(":"));
-        crate::ported::modules::ksh93::setsparam("mbegin", &mbegin_arr.join(":"));
-        crate::ported::modules::ksh93::setsparam("mend",   &mend_arr.join(":"));
+        crate::ported::params::setsparam("match",  &arr.join(":"));
+        crate::ported::params::setsparam("mbegin", &mbegin_arr.join(":"));
+        crate::ported::params::setsparam("mend",   &mend_arr.join(":"));
     }
 
     return_value                                                         // c:200

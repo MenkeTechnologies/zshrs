@@ -95,7 +95,7 @@ pub fn reverse_strftime(nam: &str, argv: &[&str],                            // 
         }
     };
     if let Some(name) = scalar {                                          // c:90 scalar
-        crate::ported::modules::ksh93::setiparam(name, secs);             // c:91 setiparam
+        crate::ported::params::setiparam(name, secs);             // c:91 setiparam
     } else {                                                              // c:93
         println!("{}", secs);                                             // c:94 printf("%ld\n", ...)
     }
@@ -209,7 +209,7 @@ pub fn output_strftime(nam: &str, argv: &[&str],                             // 
 
     // c:178 — `if (scalar) { setsparam(scalar, metafy(buffer, len, META_DUP)); }`
     if let Some(name) = scalar {
-        crate::ported::modules::ksh93::setsparam(name,
+        crate::ported::params::setsparam(name,
             &crate::ported::utils::metafy(&formatted));                   // c:178
     } else {
         // c:180-183 — fwrite + putchar('\n') unless -n
@@ -385,17 +385,24 @@ mod tests {
         ops
     }
 
+    /// Reads a scalar from the canonical paramtab — used by tests
+    /// to assert side-effects of params::setsparam writes.
+    fn pt_get(name: &str) -> Option<String> {
+        crate::ported::params::paramtab().lock().ok()
+            .and_then(|t| t.get(name).and_then(|p| p.u_str.clone()))
+    }
+
     #[test]
     fn test_output_strftime_nanoseconds() {
         let ops = ops_for(&[b'n'], Some("OUT"));
         let r = output_strftime("strftime",
             &["%9N", "1700000000", "123456789"], &ops, 0);
         assert_eq!(r, 0);
-        assert_eq!(std::env::var("OUT").as_deref(), Ok("123456789"));
+        assert_eq!(pt_get("OUT").as_deref(), Some("123456789"));
         let r = output_strftime("strftime",
             &["%3N", "1700000000", "123456789"], &ops, 0);
         assert_eq!(r, 0);
-        assert_eq!(std::env::var("OUT").as_deref(), Ok("123"));
+        assert_eq!(pt_get("OUT").as_deref(), Some("123"));
     }
 
     #[test]
@@ -403,7 +410,7 @@ mod tests {
         let ops = ops_for(&[b'n'], Some("OUT2"));
         let r = output_strftime("strftime", &["%s", "1700000000"], &ops, 0);
         assert_eq!(r, 0);
-        assert_eq!(std::env::var("OUT2").as_deref(), Ok("1700000000"));
+        assert_eq!(pt_get("OUT2").as_deref(), Some("1700000000"));
     }
 
     #[test]

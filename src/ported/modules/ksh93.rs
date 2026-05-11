@@ -77,7 +77,10 @@ pub fn edcharsetfn(_pm: *mut param, _x: *mut libc::c_char) {           // c:47
 /// ```
 pub fn matchgetfn(pm: *mut param) -> Vec<String> {                     // c:60
     // c:62 — `char **zsh_match = getaparam("match");`
-    let zsh_match: Vec<String> = getaparam("match");
+    let zsh_match: Vec<String> = crate::ported::params::paramtab()
+        .lock().ok()
+        .and_then(|t| t.get("match").and_then(|p| p.u_arr.clone()))
+        .unwrap_or_default();
     /*
      * For this to work accurately, ksh emulation should always imply
      * that the (#m) and (#b) extendedglob operators are enabled.
@@ -94,36 +97,48 @@ pub fn matchgetfn(pm: *mut param) -> Vec<String> {                     // c:60
             // c:75-80 — char **ap = zalloc(...); pm->u.arr = ap;
             //           *ap++ = ztrdup(getsparam("MATCH"));
             //           while (*zsh_match) *ap = ztrdup(*zsh_match++);
+            let match_str: String = crate::ported::params::paramtab()
+                .lock().ok()
+                .and_then(|t| t.get("MATCH").and_then(|p| p.u_str.clone()))
+                .unwrap_or_default();
             let mut ap: Vec<String> = Vec::with_capacity(zsh_match.len() + 1);
-            ap.push(ztrdup(&getsparam("MATCH")));                       // c:78
+            ap.push(crate::ported::utils::ztrdup(&match_str));          // c:78
             for s in &zsh_match {                                       // c:79-80
-                ap.push(ztrdup(s));
+                ap.push(crate::ported::utils::ztrdup(s));
             }
             if !pm.is_null() {
                 unsafe { (*pm).u_arr = Some(ap.clone()); }
             }
-            return arrgetfn(pm, ap);
+            // c:88 — `return arrgetfn(pm);` — arrgetfn (params.c) reads
+            // pm->u.arr we just set, so return the same vec.
+            ap
         } else {
             // c:81-82 — pm->u.arr = zarrdup(zsh_match);
-            let dup: Vec<String> = zsh_match.iter().map(|s| ztrdup(s)).collect();
+            let dup: Vec<String> = zsh_match.iter()
+                .map(|s| crate::ported::utils::ztrdup(s))
+                .collect();
             if !pm.is_null() {
                 unsafe { (*pm).u_arr = Some(dup.clone()); }
             }
-            return arrgetfn(pm, dup);
+            dup                                                          // c:88 arrgetfn(pm)
         }
     } else if isset(KSHARRAYS) {                                        // c:83
         // c:84 — pm->u.arr = mkarray(ztrdup(getsparam("MATCH")));
-        let one = vec![ztrdup(&getsparam("MATCH"))];
+        let match_str: String = crate::ported::params::paramtab()
+            .lock().ok()
+            .and_then(|t| t.get("MATCH").and_then(|p| p.u_str.clone()))
+            .unwrap_or_default();
+        let one = vec![crate::ported::utils::ztrdup(&match_str)];
         if !pm.is_null() {
             unsafe { (*pm).u_arr = Some(one.clone()); }
         }
-        return arrgetfn(pm, one);
+        one                                                              // c:88 arrgetfn(pm)
     } else {
         // c:86 — pm->u.arr = NULL;
         if !pm.is_null() {
             unsafe { (*pm).u_arr = None; }
         }
-        return arrgetfn(pm, Vec::new());
+        Vec::new()                                                       // c:88 arrgetfn(pm) → NULL
     }
 }
 
@@ -200,7 +215,12 @@ pub fn ksh93_wrapper(_prog: *const eprog, _w: *const funcwrap, name: *mut libc::
     // c:147 — `zlong num = funcstack->prev ? getiparam(".sh.level") : 0;`
     // funcstack is the global from Src/exec.c:340; stub holds NULL so
     // funcstack->prev is always NULL → branch picks 0.
-    let mut num: i64 = if (*funcstack.lock().unwrap()) != 0 { getiparam(".sh.level") } else { 0 };
+    let mut num: i64 = if (*funcstack.lock().unwrap()) != 0 {
+        crate::ported::params::paramtab().lock().ok()
+            .and_then(|t| t.get(".sh.level")
+                .and_then(|p| p.u_str.as_ref().and_then(|s| s.parse::<i64>().ok())))
+            .unwrap_or(0)
+    } else { 0 };
 
     if !EMULATION(emulation.load(Ordering::Relaxed), EMULATE_KSH) {     // c:149
         return 1;                                                       // c:150
@@ -223,34 +243,39 @@ pub fn ksh93_wrapper(_prog: *const eprog, _w: *const funcwrap, name: *mut libc::
     /* Make these local */                                              // c:158 trailing comment
 
     // c:160-165 — .sh.command setup
-    pm = createparam(".sh.command", LOCAL_NAMEREF);
+    pm = crate::ported::params::createparam(".sh.command", LOCAL_NAMEREF as i32)
+        .map(Box::into_raw).unwrap_or(std::ptr::null_mut());
     if !pm.is_null() {
         unsafe { (*pm).level = locallevel.load(Ordering::Relaxed); }    // c:161 pm->level = locallevel;
                                                                          //       /* Why is this necessary? */
         /* Force scoping by assignent hack */                           // c:162
-        setloopvar(".sh.command", "ZSH_DEBUG_CMD");                     // c:163
+        crate::ported::params::setloopvar(".sh.command", "ZSH_DEBUG_CMD"); // c:163
         unsafe { (*pm).node.flags |= PM_READONLY as i32; }              // c:164
     }
     /* .sh.edchar is in partab and below */                             // c:166
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
-        pm = createparam(".sh.edcol", LOCAL_NAMEREF);                   // c:167
+        pm = crate::ported::params::createparam(".sh.edcol", LOCAL_NAMEREF as i32) // c:167
+            .map(Box::into_raw).unwrap_or(std::ptr::null_mut());
         if !pm.is_null() {
             unsafe { (*pm).level = locallevel.load(Ordering::Relaxed); } // c:168
-            setloopvar(".sh.edcol", "CURSOR");                          // c:169
+            crate::ported::params::setloopvar(".sh.edcol", "CURSOR");   // c:169
             unsafe { (*pm).node.flags |= (PM_NAMEREF | PM_READONLY) as i32; } // c:170
         }
     }
     /* .sh.edmode is in partab and below */                             // c:172
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
-        pm = createparam(".sh.edtext", LOCAL_NAMEREF);                  // c:173
+        pm = crate::ported::params::createparam(".sh.edtext", LOCAL_NAMEREF as i32) // c:173
+            .map(Box::into_raw).unwrap_or(std::ptr::null_mut());
         if !pm.is_null() {
             unsafe { (*pm).level = locallevel.load(Ordering::Relaxed); } // c:174
-            setloopvar(".sh.edtext", "BUFFER");                         // c:175
+            crate::ported::params::setloopvar(".sh.edtext", "BUFFER");  // c:175
             unsafe { (*pm).node.flags |= PM_READONLY as i32; }          // c:176
         }
     }
 
-    pm = createparam(".sh.fun", PM_LOCAL | PM_UNSET);                   // c:179
+    pm = crate::ported::params::createparam(".sh.fun",                  // c:179
+            (PM_LOCAL | PM_UNSET) as i32)
+        .map(Box::into_raw).unwrap_or(std::ptr::null_mut());
     if !pm.is_null() {
         unsafe { (*pm).level = locallevel.load(Ordering::Relaxed); }    // c:180
         let name_str: String = if name.is_null() {
@@ -258,13 +283,16 @@ pub fn ksh93_wrapper(_prog: *const eprog, _w: *const funcwrap, name: *mut libc::
         } else {
             unsafe { std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned() }
         };
-        setsparam(".sh.fun", &ztrdup(&name_str));                       // c:181
+        crate::ported::params::setsparam(".sh.fun",                     // c:181
+            &crate::ported::utils::ztrdup(&name_str));
         unsafe { (*pm).node.flags |= PM_READONLY as i32; }              // c:182
     }
-    pm = createparam(".sh.level", PM_LOCAL | PM_UNSET);                 // c:184
+    pm = crate::ported::params::createparam(".sh.level",                // c:184
+            (PM_LOCAL | PM_UNSET) as i32)
+        .map(Box::into_raw).unwrap_or(std::ptr::null_mut());
     if !pm.is_null() {
         unsafe { (*pm).level = locallevel.load(Ordering::Relaxed); }    // c:185
-        setiparam(".sh.level", num);                                    // c:186
+        crate::ported::params::setiparam(".sh.level", num);             // c:186
     }
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {                                          // c:188
         // c:189-190 — extern mod_import_variable char *curkeymapname / *varedarg;
@@ -286,7 +314,11 @@ pub fn ksh93_wrapper(_prog: *const eprog, _w: *const funcwrap, name: *mut libc::
         // c:197-198 — if (sh_edchar == sh_unsetval) sh_edchar = dupstring(getsparam("KEYS"));
         let edch_unset = sh_edchar.lock().unwrap().is_empty();
         if edch_unset {
-            *sh_edchar.lock().unwrap() = dupstring(&getsparam("KEYS"));
+            let keys: String = crate::ported::params::paramtab()
+                .lock().ok()
+                .and_then(|t| t.get("KEYS").and_then(|p| p.u_str.clone()))
+                .unwrap_or_default();
+            *sh_edchar.lock().unwrap() = dupstring(&keys);
         }
         let varedarg_val = varedarg.lock().unwrap().clone();
         if !varedarg_val.is_empty() {                                   // c:199
@@ -325,10 +357,12 @@ pub fn ksh93_wrapper(_prog: *const eprog, _w: *const funcwrap, name: *mut libc::
                 // c:208 — sh_subscript = sh_unsetval;
                 sh_subscript.lock().unwrap().clear();
             }
-            pm = createparam(".sh.value", LOCAL_NAMEREF);               // c:209
+            pm = crate::ported::params::createparam(".sh.value",        // c:209
+                    LOCAL_NAMEREF as i32)
+                .map(Box::into_raw).unwrap_or(std::ptr::null_mut());
             if !pm.is_null() {
                 unsafe { (*pm).level = locallevel.load(Ordering::Relaxed); } // c:210
-                setloopvar(".sh.value", "BUFFER");      /* Hack */      // c:211
+                crate::ported::params::setloopvar(".sh.value", "BUFFER"); /* Hack */ // c:211
                 unsafe { (*pm).node.flags |= PM_READONLY as i32; }      // c:212
             }
         } else {
@@ -530,81 +564,6 @@ static funcstack: Mutex<usize> = Mutex::new(0);
 const KSHARRAYS: i32 = crate::ported::zsh_h::KSHARRAYS;
 const VIMODE:    i32 = crate::ported::zsh_h::VIMODE;
 fn isset(_opt: i32) -> bool { false }
-
-// Port of `getsparam()` from Src/params.c:3076.
-// C: `mod_export char *getsparam(char *s)` →
-//   `if (!(v = getvalue(&vbuf, &s, 0))) return NULL; return getstrvalue(v);`
-fn getsparam(name: &str) -> String {                                         // c:3076
-    // Static-link path: read from process env (the closest analog
-    // available without the full param subsystem wired). The full
-    // path goes through getvalue() → getstrvalue() against paramtab.
-    std::env::var(name).unwrap_or_default()                                  // c:3084
-}
-
-// Port of `getaparam()` from Src/params.c:3100.
-// C: `mod_export char **getaparam(char *s)` — returns the array param's
-//   gsu.a->getfn(pm), or NULL if not an array.
-fn getaparam(name: &str) -> Vec<String> {                                    // c:3100
-    // Static-link path: split colon-separated env var (matches PATH-style
-    // arrays the way zsh exposes them in the simple env-only case).
-    std::env::var(name)
-        .ok()
-        .map(|v| v.split(':').map(String::from).collect())                   // c:3107
-        .unwrap_or_default()
-}
-
-// Port of `getiparam()` from Src/params.c:3044.
-// C: `zlong getiparam(char *s)` → `if (!(v = getvalue(...))) return 0;
-//   return getintvalue(v);`
-fn getiparam(name: &str) -> i64 {                                            // c:3044
-    // Static-link path: parse env var as decimal int; mirror zsh's
-    // getintvalue() best-effort conversion.
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())                                 // c:3049
-        .unwrap_or(0)                                                        // c:3048
-}
-
-// Port of `setsparam()` from Src/params.c:3350.
-// C: `mod_export Param setsparam(char *s, char *val)` — assigns scalar
-//   `val` to param `s` (creates if absent).
-pub fn setsparam(name: &str, value: &str) {                                  // c:3350
-    std::env::set_var(name, value);                                          // c:3360
-}
-
-// Port of `setiparam()` from Src/params.c:3765.
-// C: `mod_export Param setiparam(char *s, zlong val)` — assigns integer
-//   `val` to param `s`.
-pub fn setiparam(name: &str, value: i64) {                                   // c:3765
-    std::env::set_var(name, value.to_string());                              // c:3777
-}
-
-// Port of `setaparam()` from Src/params.c:3372.
-// C: `mod_export Param setaparam(char *s, char **aval)` — assigns
-// array `aval` to param `s` (creates if absent). Static-link path:
-// joins with zsh's standard inter-array separator (FS) `\x01` and
-// stores in env so the rest of the runtime sees a single canonical
-// representation.
-pub fn setaparam(name: &str, value: &[String]) {                             // c:3372
-    std::env::set_var(name, value.join("\u{1}"));
-}
-
-// `setloopvar` lives in `Src/params.c:3408`. Stub.
-fn setloopvar(_name: &str, _value: &str) {}
-
-// `createparam` lives in `Src/params.c:1320`. Returns a new (or
-// existing) param pointer with the requested flags. Stub returns NULL
-// — ksh93_wrapper's `if (pm = createparam(...))` branches all become
-// no-op until the real param-table port lands.
-fn createparam(_name: &str, _flags: u32) -> *mut param { std::ptr::null_mut() }
-
-// `arrgetfn` lives in `Src/params.c:5045`. C signature returns the
-// param's array value as `char **`. Stub forwards the array.
-fn arrgetfn(_pm: *mut param, fallback: Vec<String>) -> Vec<String> { fallback }
-
-// `ztrdup` lives in `Src/string.c:18`. Pass-through clone.
-fn ztrdup(s: &str) -> String { s.to_string() }
-
 
 // `param.u.arr` field — the C `union u` has `char **arr` at c:1835.
 // The Rust `param` struct exposes it as `pub u_arr: Option<Vec<String>>`

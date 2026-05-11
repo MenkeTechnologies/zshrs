@@ -448,7 +448,7 @@ pub fn bin_ztcp(nam: &str, args: &[String],                                  // 
             tcp_close(sess);                                             // c:463
             return 1;                                                    // c:464
         }
-        crate::ported::modules::ksh93::setiparam("REPLY", nfd as i64);   // c:467 setiparam_no_convert
+        crate::ported::params::setiparam("REPLY", nfd as i64);   // c:467 setiparam_no_convert
         if verbose != 0 {                                                // c:469
             println!("{} listener is on fd {}",                          // c:470
                 u16::from_be(lport), nfd);
@@ -523,7 +523,7 @@ pub fn bin_ztcp(nam: &str, args: &[String],                                  // 
             sess_with(sidx, |s| { s.fd = rfd; });                        // c:566
         }
         let nfd = sess_get(sidx, |s| s.fd);
-        crate::ported::modules::ksh93::setiparam("REPLY", nfd as i64);   // c:569 setiparam_no_convert
+        crate::ported::params::setiparam("REPLY", nfd as i64);   // c:569 setiparam_no_convert
         if verbose != 0 {                                                // c:571
             println!("{} is on fd {}", u16::from_be(peer.sin_port), nfd); // c:572
         }
@@ -634,7 +634,7 @@ pub fn bin_ztcp(nam: &str, args: &[String],                                  // 
                 }
             }
             let nfd = sess_get(sidx, |s| s.fd);
-            crate::ported::modules::ksh93::setiparam("REPLY", nfd as i64); // c:691 setiparam_no_convert
+            crate::ported::params::setiparam("REPLY", nfd as i64); // c:691 setiparam_no_convert
             if verbose != 0 {                                            // c:693
                 println!("{}:{} is now on fd {}",                        // c:694
                     desthost, u16::from_be(destport), nfd);
