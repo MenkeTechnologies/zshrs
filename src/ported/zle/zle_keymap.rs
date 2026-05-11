@@ -908,26 +908,17 @@ impl KeymapManager {
     }
 }
 
-/// Bindkey builtin implementation
-/// Port of bin_bindkey() from zle_keymap.c
-pub fn bin_bindkey(args: &[String], opts: BindkeyOpts) -> i32 {
-    // This would be called from the shell's builtin system
-    // For now, just a stub that documents the interface
-    let _ = (args, opts);
+/// Direct port of `static int bin_bindkey(char *name, char **argv,
+/// Options ops, UNUSED(int func))` from `Src/Zle/zle_keymap.c:872`.
+/// Top-level dispatcher for the `bindkey` builtin. C body parses
+/// the -lLdrmNMp option flags via OPT_ISSET/OPT_ARG, then routes to
+/// the appropriate sub-handler (list / delete / new-keymap / link
+/// / bind). Real body deferred — needs options.rs wired through
+/// this call site. `BindkeyOpts` (Rust-invented bool-bundle) deleted.
+pub fn bin_bindkey(name: &str, args: &[String],                              // c:872
+                   _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    let _ = (name, args);
     0
-}
-
-/// Bindkey options
-#[derive(Debug, Default)]
-pub struct BindkeyOpts {
-    pub list: bool,             // -l
-    pub list_all: bool,         // -L
-    pub delete: bool,           // -d
-    pub remove: bool,           // -r
-    pub meta: bool,             // -m
-    pub new_keymap: bool,       // -N
-    pub keymap: Option<String>, // -M keymap
-    pub prefix: Option<String>, // -p prefix
 }
 
 #[cfg(test)]
