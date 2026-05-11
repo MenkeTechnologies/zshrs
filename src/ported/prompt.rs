@@ -176,7 +176,7 @@ pub static CMDNAMES: [&str; crate::ported::zsh_h::CS_COUNT as usize] = [
 // `:846`, `:861`, `:872`). Use `CMDNAMES.get(b as usize).copied()`
 // at every call site to mirror that pattern faithfully.
 
-// `pub struct TextAttrs` and `pub enum Color` — DELETED per user
+// `pub struct zattr` and `pub enum Color` — DELETED per user
 // directive. Both were Rust-only abstractions over the canonical
 // `zattr` (u64) bitfield from `Src/zsh.h:2685-2741`. C packs every
 // attribute (bold/faint/standout/underline/italic) PLUS the
@@ -193,7 +193,8 @@ pub static CMDNAMES: [&str; crate::ported::zsh_h::CS_COUNT as usize] = [
 //   bits 16-39: TXT_ATTR_FG_COL_MASK (palette index 0-255 OR
 //               packed RGB if TXT_ATTR_FG_24BIT)
 //   bits 40-63: TXT_ATTR_BG_COL_MASK (same for BG)
-pub use crate::ported::zsh_h::zattr as TextAttrs; // c:Src/zsh.h:2685
+// `zattr` is the canonical C typedef from Src/zsh.h:2689
+// (`typedef uint64_t zattr;`). Imported directly below.
 use crate::ported::zsh_h::{
     TXTBOLDFACE, TXTFGCOLOUR, TXTBGCOLOUR, TXTSTANDOUT, TXTUNDERLINE, // c:zsh.h:2694
     TXT_ATTR_FG_COL_MASK, TXT_ATTR_FG_COL_SHIFT,
@@ -353,7 +354,7 @@ pub struct buf_vars {                                                        // 
     pub trunccount: i32,
     pub rstring: Option<String>,
     pub Rstring: Option<String>,
-    attrs: TextAttrs,
+    attrs: zattr,
     in_escape: bool,
     prompt_percent: bool,
     prompt_bang: bool,
@@ -394,7 +395,7 @@ impl buf_vars {
             trunccount: 0,
             rstring: None,
             Rstring: None,
-            attrs: 0 as TextAttrs, // c:zsh.h:2685 (zattr=0 == no attrs)
+            attrs: 0 as zattr, // c:zsh.h:2685 (zattr=0 == no attrs)
             in_escape: false,
             prompt_percent: true, // c:325 (PROMPTPERCENT default)
             prompt_bang: true,    // c:325 (PROMPTBANG default)
@@ -1541,8 +1542,8 @@ pub fn output_truecolor(r: u8, g: u8, b: u8, is_fg: bool) -> String {
 // Parse the argument for %H                                                // c:282
 /// `bold` / `underline` / `standout` / `none` plus `fg=NAME` and
 /// `bg=NAME` color targets.
-pub fn parsehighlight(spec: &str) -> TextAttrs {                             // c:285
-    let mut attrs: TextAttrs = 0;
+pub fn parsehighlight(spec: &str) -> zattr {                             // c:285
+    let mut attrs: zattr = 0;
     for part in spec.split(',') {
         let part = part.trim();
         match part {
@@ -1572,7 +1573,7 @@ pub fn parsehighlight(spec: &str) -> TextAttrs {                             // 
 // functions for handling attributes                                        // c:1641
 /// Port of `applytextattributes()` from Src/prompt.c:1645 —
 /// builds one SGR sequence with all active codes joined.
-pub fn apply_text_attributes(attrs: TextAttrs) -> String {                   // c:1645
+pub fn apply_text_attributes(attrs: zattr) -> String {                   // c:1645
     let mut codes: Vec<String> = Vec::new();
     if attrs & TXTBOLDFACE != 0 { codes.push("1".to_string()); } // c:1645
     if attrs & TXTUNDERLINE != 0 { codes.push("4".to_string()); } // c:1645
@@ -1708,7 +1709,7 @@ pub fn promptexpand(                                                         // 
 /// Escape text attributes back to a `%`-prefixed prompt string.
 /// Port of `zattrescape()` from Src/prompt.c:257 — inverse of
 /// `parsehighlight()`; used by the `print -P` output path.
-pub fn zattrescape(attrs: TextAttrs) -> String {                             // c:257
+pub fn zattrescape(attrs: zattr) -> String {                             // c:257
     let mut result = String::new();
     if attrs & TXTBOLDFACE != 0 { result.push_str("%B"); } // c:259
     if attrs & TXTUNDERLINE != 0 { result.push_str("%U"); } // c:259
@@ -1798,7 +1799,7 @@ pub fn putstr(cap: &str) -> String {
 /// Replace one set of text attributes with another.
 /// Port of `treplaceattrs()` from Src/prompt.c:1719 — emits the
 /// minimal SGR delta between two attribute states.
-pub fn treplaceattrs(old: TextAttrs, new: TextAttrs) -> String {             // c:1719
+pub fn treplaceattrs(old: zattr, new: zattr) -> String {             // c:1719
     let mut result = String::new();
 
     let old_b = old & TXTBOLDFACE != 0;
@@ -1849,13 +1850,13 @@ pub fn treplaceattrs(old: TextAttrs, new: TextAttrs) -> String {             // 
 
 /// Set text attributes (full apply).
 /// Port of `tsetattrs()` from Src/prompt.c:1737.
-pub fn tsetattrs(attrs: TextAttrs) -> String {                               // c:1737
+pub fn tsetattrs(attrs: zattr) -> String {                               // c:1737
     apply_text_attributes(attrs)
 }
 
 /// Unset (clear) text attributes via SGR-22/24/27 + 39/49.
 /// Port of `tunsetattrs()` from Src/prompt.c:1755.
-pub fn tunsetattrs(attrs: TextAttrs) -> String {                             // c:1755
+pub fn tunsetattrs(attrs: zattr) -> String {                             // c:1755
     let mut result = String::new();
     if attrs & TXTBOLDFACE != 0 { result.push_str("\x1b[22m"); }
     if attrs & TXTUNDERLINE != 0 {
@@ -1897,9 +1898,9 @@ pub fn match_colour(spec: &str, is_fg: bool) -> Option<String> {
 /// attribute / TXT*COLOUR bits as `attrs` but zeroes out the
 /// actual colour indices so callers can detect "this bit was
 /// set vs default" by mask-and against `TXT_ATTR_*_MASK`.
-pub fn match_highlight(spec: &str) -> (TextAttrs, TextAttrs) {
+pub fn match_highlight(spec: &str) -> (zattr, zattr) {
     let attrs = parsehighlight(spec);
-    let mut mask: TextAttrs = 0;
+    let mut mask: zattr = 0;
     mask |= attrs & (TXTBOLDFACE | TXTUNDERLINE | TXTSTANDOUT); // c:2031
     if attrs & TXTFGCOLOUR != 0 { mask |= TXTFGCOLOUR; } // c:2031
     if attrs & TXTBGCOLOUR != 0 { mask |= TXTBGCOLOUR; } // c:2031
@@ -1908,7 +1909,7 @@ pub fn match_highlight(spec: &str) -> (TextAttrs, TextAttrs) {
 
 /// Emit highlight attributes as an ANSI escape string.
 /// Port of `output_highlight()` from Src/prompt.c:2179.
-pub fn output_highlight(attrs: TextAttrs) -> String {
+pub fn output_highlight(attrs: zattr) -> String {
     apply_text_attributes(attrs)
 }
 
@@ -1924,11 +1925,11 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
 /// Mix two sets of text attributes through a mask.
 /// Port of `mixattrs()` from Src/prompt.c:1802 — primary wins
 /// where the mask says "set"; secondary fills the rest.
-pub fn mixattrs(primary: TextAttrs, mask: TextAttrs, secondary: TextAttrs) -> TextAttrs {
+pub fn mixattrs(primary: zattr, mask: zattr, secondary: zattr) -> zattr {
     // Bit-level mix: for each TXT* bit set in `mask`, take the
     // value from `primary`; else from `secondary`. Mirrors the C
     // idiom `(mask & primary) | (!mask & secondary)`.
-    let mut out: TextAttrs = 0;
+    let mut out: zattr = 0;
     for bit in [TXTBOLDFACE, TXTUNDERLINE, TXTSTANDOUT] {
         if mask & bit != 0 { out |= primary & bit; } else { out |= secondary & bit; }
     }
@@ -2089,20 +2090,20 @@ pub fn map256toRGB(atr: &mut u64, shift: u32, set24: u64) {
 /// globals (Src/prompt.c file-statics, around line 1640). Used
 /// by [`applytextattributes`] to compute the SGR diff between
 /// the last-flushed and the pending attribute state.
-fn current_attrs_lock() -> &'static std::sync::Mutex<TextAttrs> {
-    static CUR: std::sync::OnceLock<std::sync::Mutex<TextAttrs>> = std::sync::OnceLock::new();
-    CUR.get_or_init(|| std::sync::Mutex::new(0 as TextAttrs))
+fn current_attrs_lock() -> &'static std::sync::Mutex<zattr> {
+    static CUR: std::sync::OnceLock<std::sync::Mutex<zattr>> = std::sync::OnceLock::new();
+    CUR.get_or_init(|| std::sync::Mutex::new(0 as zattr))
 }
 
-fn pending_attrs_lock() -> &'static std::sync::Mutex<TextAttrs> {
-    static PND: std::sync::OnceLock<std::sync::Mutex<TextAttrs>> = std::sync::OnceLock::new();
-    PND.get_or_init(|| std::sync::Mutex::new(0 as TextAttrs))
+fn pending_attrs_lock() -> &'static std::sync::Mutex<zattr> {
+    static PND: std::sync::OnceLock<std::sync::Mutex<zattr>> = std::sync::OnceLock::new();
+    PND.get_or_init(|| std::sync::Mutex::new(0 as zattr))
 }
 
 /// Set the pending text-attributes that the next
 /// [`applytextattributes`] call will diff against the current
 /// state. Mirrors callers writing to C's `txtpendingattrs`.
-pub fn set_pending_text_attrs(attrs: TextAttrs) {
+pub fn set_pending_text_attrs(attrs: zattr) {
     *pending_attrs_lock()
         .lock()
         .expect("pending_attrs poisoned") = attrs;
