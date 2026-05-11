@@ -181,45 +181,69 @@ fn splice_magic_assoc(name: &str) -> Option<String> {
     let join = |v: Vec<String>| -> String { v.join(" ") };
     match name {
         // c:Src/Modules/parameter.c:1990 scanpmraliases — aliastab.
+        // Flag checks inline against `node.flags` matching C's
+        // `(a->node.flags & ALIAS_GLOBAL)` etc. style.
         "aliases" => crate::ported::hashtable::aliastab_lock().lock().ok()
             .map(|t| join(
                 t.iter()
-                    .filter(|(_, a)| !a.is_global() && !a.is_suffix() && !a.is_disabled())
+                    .filter(|(_, a)| {
+                        let f = a.node.flags;
+                        (f & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) == 0
+                            && (f & crate::ported::hashtable::flags::ALIAS_SUFFIX as i32) == 0
+                            && (f & crate::ported::hashtable::flags::DISABLED as i32) == 0
+                    })
                     .map(|(_, a)| a.text.clone())
                     .collect()
             )),
         "galiases" => crate::ported::hashtable::aliastab_lock().lock().ok()
             .map(|t| join(
                 t.iter()
-                    .filter(|(_, a)| a.is_global() && !a.is_disabled())
+                    .filter(|(_, a)| {
+                        let f = a.node.flags;
+                        (f & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) != 0
+                            && (f & crate::ported::hashtable::flags::DISABLED as i32) == 0
+                    })
                     .map(|(_, a)| a.text.clone())
                     .collect()
             )),
         "saliases" => crate::ported::hashtable::sufaliastab_lock().lock().ok()
             .map(|t| join(
                 t.iter()
-                    .filter(|(_, a)| !a.is_disabled())
+                    .filter(|(_, a)| {
+                        (a.node.flags & crate::ported::hashtable::flags::DISABLED as i32) == 0
+                    })
                     .map(|(_, a)| a.text.clone())
                     .collect()
             )),
         "dis_aliases" => crate::ported::hashtable::aliastab_lock().lock().ok()
             .map(|t| join(
                 t.iter()
-                    .filter(|(_, a)| !a.is_global() && !a.is_suffix() && a.is_disabled())
+                    .filter(|(_, a)| {
+                        let f = a.node.flags;
+                        (f & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) == 0
+                            && (f & crate::ported::hashtable::flags::ALIAS_SUFFIX as i32) == 0
+                            && (f & crate::ported::hashtable::flags::DISABLED as i32) != 0
+                    })
                     .map(|(_, a)| a.text.clone())
                     .collect()
             )),
         "dis_galiases" => crate::ported::hashtable::aliastab_lock().lock().ok()
             .map(|t| join(
                 t.iter()
-                    .filter(|(_, a)| a.is_global() && a.is_disabled())
+                    .filter(|(_, a)| {
+                        let f = a.node.flags;
+                        (f & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) != 0
+                            && (f & crate::ported::hashtable::flags::DISABLED as i32) != 0
+                    })
                     .map(|(_, a)| a.text.clone())
                     .collect()
             )),
         "dis_saliases" => crate::ported::hashtable::sufaliastab_lock().lock().ok()
             .map(|t| join(
                 t.iter()
-                    .filter(|(_, a)| a.is_disabled())
+                    .filter(|(_, a)| {
+                        (a.node.flags & crate::ported::hashtable::flags::DISABLED as i32) != 0
+                    })
                     .map(|(_, a)| a.text.clone())
                     .collect()
             )),

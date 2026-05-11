@@ -492,7 +492,7 @@ pub fn getalias(_alht: *mut HashTable, _ht: *mut HashTable,                  // 
     let entry = g.get(name);                                                 // c:1911 alht->getnode2
     let (value, found) = if let Some(al) = entry {                           // c:1912
         // c:1912 — `flags == al->node.flags` strict equality match.
-        if (al.flags as i32) == flags {                                      // c:1912
+        if al.node.flags == flags {                                          // c:1912 al->node.flags
             (al.text.clone(), true)                                          // c:1913 al->text
         } else {
             (String::new(), false)                                           // c:1916

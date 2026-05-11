@@ -10,20 +10,24 @@ use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 
-fn opts() -> zsh::glob::GlobOptions {
-    zsh::glob::GlobOptions {
-        null_glob: true,
-        mark_dirs: false,
-        no_glob_dots: true,
-        list_types: false,
-        numeric_sort: false,
-        follow_links: false,
-        extended_glob: true,
-        case_glob: true,
-        glob_star_short: true,
-        bare_glob_qual: true,
-        brace_ccl: false,
-    }
+// GlobOptions struct was deleted (Rust-only bag). Options are now
+// read from the canonical option store; tests set the relevant
+// flags before each call.
+fn set_opts() {
+    use zsh::ported::options::opt_state_set;
+    opt_state_set("nullglob", true);
+    opt_state_set("markdirs", false);
+    opt_state_set("dotglob", false);
+    opt_state_set("globdots", false);
+    opt_state_set("listtypes", false);
+    opt_state_set("numericglobsort", false);
+    opt_state_set("globlinks", false);
+    opt_state_set("extendedglob", true);
+    opt_state_set("caseglob", true);
+    opt_state_set("nocaseglob", false);
+    opt_state_set("globstarshort", true);
+    opt_state_set("bareglobqual", true);
+    opt_state_set("braceccl", false);
 }
 
 #[test]
@@ -53,7 +57,7 @@ fn globstarshort_double_star_dot_stk_matches_at_any_depth() {
     }
 
     let pattern = format!("{}/**.stk", root.display());
-    let mut got = zsh::glob::glob_with_options(&pattern, opts());
+    let mut got = { set_opts(); zsh::glob::glob(&pattern) };
     got.sort();
 
     let normalize = |p: &Path| p.canonicalize().unwrap().to_string_lossy().to_string();
@@ -93,7 +97,7 @@ fn globstarshort_double_star_dot_stk_matches_at_any_depth() {
 fn globstarshort_double_star_dot_rs_finds_project_sources() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let pattern = format!("{}/src/**.rs", manifest_dir);
-    let got = zsh::glob::glob_with_options(&pattern, opts());
+    let got = { set_opts(); zsh::glob::glob(&pattern) };
 
     assert!(
         !got.is_empty(),

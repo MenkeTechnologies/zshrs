@@ -628,57 +628,27 @@ impl Default for ReswdTable {
     }
 }
 
-/// Alias entry
-#[derive(Debug, Clone)]
-/// Alias table entry.
-/// Port of `struct alias` from Src/zsh.h — used by both
-/// `aliastab` and `sufaliastab` HashTables (regular vs. suffix
-/// aliases).
-pub struct Alias {
-    pub name: String,
-    pub flags: u32,
-    pub text: String,
-    pub inuse: i32,
-}
+// `Alias` struct + impl deleted — Rust-only duplicate of canonical
+// `crate::ported::zsh_h::alias` (zsh.h:1253-1257). The canonical
+// has `node: hashnode { nam, flags, next }` embedded (c:1254) +
+// `text: String` (c:1255) + `inuse: i32` (c:1256); the Rust-only
+// had a flat `name: String, flags: u32, text: String, inuse: i32`
+// (missing the hashnode embedding).
+pub use crate::ported::zsh_h::alias as Alias;                                // c:1253
 
-impl Alias {
-    pub fn new(name: &str, text: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            flags: 0,
-            text: text.to_string(),
-            inuse: 0,
-        }
-    }
-
-    pub fn global(name: &str, text: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            flags: flags::ALIAS_GLOBAL,
-            text: text.to_string(),
-            inuse: 0,
-        }
-    }
-
-    pub fn suffix(name: &str, text: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            flags: flags::ALIAS_SUFFIX,
-            text: text.to_string(),
-            inuse: 0,
-        }
-    }
-
-    pub fn is_disabled(&self) -> bool {
-        self.flags & flags::DISABLED != 0
-    }
-
-    pub fn is_global(&self) -> bool {
-        self.flags & flags::ALIAS_GLOBAL != 0
-    }
-
-    pub fn is_suffix(&self) -> bool {
-        self.flags & flags::ALIAS_SUFFIX != 0
+/// Build an alias node with the canonical `alias` shape.
+/// Mirrors C `addaliasnode(aliastab, name, createaliasnode(text, flags))`
+/// at hashtable.c:1230 — caller-side bundle for the
+/// hashnode+text+flags inline-build.
+pub fn createaliasnode(name: &str, text: &str, flags: u32) -> Alias {        // c:1230
+    Alias {
+        node: crate::ported::zsh_h::hashnode {
+            next: None,
+            nam: name.to_string(),
+            flags: flags as i32,
+        },
+        text: text.to_string(),
+        inuse: 0,
     }
 }
 
@@ -702,17 +672,20 @@ impl AliasTable {
 
     pub fn with_defaults() -> Self {
         let mut table = Self::new();
-        table.add(Alias::new("run-help", "man"));
-        table.add(Alias::new("which-command", "whence"));
+        // C addaliasnode(aliastab, "run-help", createaliasnode("man", 0));
+        // at hashtable.c:1215-1216.
+        table.add(createaliasnode("run-help", "man", 0));                    // c:1215
+        table.add(createaliasnode("which-command", "whence", 0));            // c:1216
         table
     }
 
     pub fn add(&mut self, alias: Alias) -> Option<Alias> {
-        self.table.insert(alias.name.clone(), alias)
+        self.table.insert(alias.node.nam.clone(), alias)
     }
 
     pub fn get(&self, name: &str) -> Option<&Alias> {
-        self.table.get(name).filter(|a| !a.is_disabled())
+        self.table.get(name)
+            .filter(|a| (a.node.flags & flags::DISABLED as i32) == 0)
     }
 
     pub fn get_including_disabled(&self, name: &str) -> Option<&Alias> {
@@ -720,7 +693,8 @@ impl AliasTable {
     }
 
     pub fn get_mut(&mut self, name: &str) -> Option<&mut Alias> {
-        self.table.get_mut(name).filter(|a| !a.is_disabled())
+        self.table.get_mut(name)
+            .filter(|a| (a.node.flags & flags::DISABLED as i32) == 0)
     }
 
     pub fn remove(&mut self, name: &str) -> Option<Alias> {
@@ -729,7 +703,7 @@ impl AliasTable {
 
     pub fn disable(&mut self, name: &str) -> bool {
         if let Some(alias) = self.table.get_mut(name) {
-            alias.flags |= flags::DISABLED;
+            alias.node.flags |= flags::DISABLED as i32;
             true
         } else {
             false
@@ -738,7 +712,7 @@ impl AliasTable {
 
     pub fn enable(&mut self, name: &str) -> bool {
         if let Some(alias) = self.table.get_mut(name) {
-            alias.flags &= !flags::DISABLED;
+            alias.node.flags &= !(flags::DISABLED as i32);
             true
         } else {
             false
@@ -980,17 +954,20 @@ pub fn format_reswd(rw: &Reswd, print_flags: u32) -> String {
 
 /// Format an alias for output
 pub fn format_alias(alias: &Alias, print_flags: u32) -> String {
-    let name = &alias.name;
+    let name = &alias.node.nam;
     let text = &alias.text;
+    let af = alias.node.flags;
+    let is_suffix = (af & flags::ALIAS_SUFFIX as i32) != 0;
+    let is_global = (af & flags::ALIAS_GLOBAL as i32) != 0;
 
     if print_flags & print_flags::NAMEONLY != 0 {
         return format!("{}\n", name);
     }
 
     if print_flags & print_flags::WHENCE_WORD != 0 {
-        let kind = if alias.is_suffix() {
+        let kind = if is_suffix {
             "suffix alias"
-        } else if alias.is_global() {
+        } else if is_global {
             "global alias"
         } else {
             "alias"
@@ -1003,9 +980,9 @@ pub fn format_alias(alias: &Alias, print_flags: u32) -> String {
     }
 
     if print_flags & print_flags::WHENCE_CSH != 0 {
-        let kind = if alias.is_suffix() {
+        let kind = if is_suffix {
             "suffix "
-        } else if alias.is_global() {
+        } else if is_global {
             "globally "
         } else {
             ""
@@ -1014,9 +991,9 @@ pub fn format_alias(alias: &Alias, print_flags: u32) -> String {
     }
 
     if print_flags & print_flags::WHENCE_VERBOSE != 0 {
-        let kind = if alias.is_suffix() {
+        let kind = if is_suffix {
             " suffix"
-        } else if alias.is_global() {
+        } else if is_global {
             " global"
         } else {
             "n"
@@ -1030,9 +1007,9 @@ pub fn format_alias(alias: &Alias, print_flags: u32) -> String {
         }
 
         let mut result = String::from("alias ");
-        if alias.is_suffix() {
+        if is_suffix {
             result.push_str("-s ");
-        } else if alias.is_global() {
+        } else if is_global {
             result.push_str("-g ");
         }
 
@@ -1128,11 +1105,13 @@ mod tests {
         assert!(table.get("run-help").is_some());
         assert_eq!(table.get("run-help").unwrap().text, "man");
 
-        table.add(Alias::global("G", "| grep"));
-        assert!(table.get("G").unwrap().is_global());
+        table.add(createaliasnode("G", "| grep", flags::ALIAS_GLOBAL));
+        let g = table.get("G").unwrap();
+        assert!((g.node.flags & flags::ALIAS_GLOBAL as i32) != 0);
 
-        table.add(Alias::suffix("pdf", "zathura"));
-        assert!(table.get("pdf").unwrap().is_suffix());
+        table.add(createaliasnode("pdf", "zathura", flags::ALIAS_SUFFIX));
+        let p = table.get("pdf").unwrap();
+        assert!((p.node.flags & flags::ALIAS_SUFFIX as i32) != 0);
 
         table.disable("G");
         assert!(table.get("G").is_none());
@@ -1159,11 +1138,11 @@ mod tests {
 
     #[test]
     fn test_format_alias() {
-        let alias = Alias::new("ll", "ls -l");
+        let alias = createaliasnode("ll", "ls -l", 0);
         let output = format_alias(&alias, print_flags::WHENCE_VERBOSE);
         assert!(output.contains("is an alias for"));
 
-        let global = Alias::global("G", "| grep");
+        let global = createaliasnode("G", "| grep", flags::ALIAS_GLOBAL);
         let output = format_alias(&global, print_flags::WHENCE_WORD);
         assert!(output.contains("global alias"));
     }
@@ -1302,8 +1281,8 @@ mod tests {
     #[test]
     fn test_generic_addhashnode_displaces_old() {
         let mut ht: HashMap<String, Alias> = HashMap::new();
-        addhashnode(&mut ht, "x", Alias::new("x", "echo a"));
-        let old = addhashnode2(&mut ht, "x", Alias::new("x", "echo b"));
+        addhashnode(&mut ht, "x", createaliasnode("x", "echo a", 0));
+        let old = addhashnode2(&mut ht, "x", createaliasnode("x", "echo b", 0));
         assert!(old.is_some());
         assert_eq!(old.unwrap().text, "echo a");
         assert_eq!(gethashnode2(&ht, "x").unwrap().text, "echo b");
@@ -1312,7 +1291,7 @@ mod tests {
     #[test]
     fn test_generic_disable_filters_get() {
         let mut ht: HashMap<String, Alias> = HashMap::new();
-        ht.insert("a".to_string(), Alias::new("a", "1"));
+        ht.insert("a".to_string(), createaliasnode("a", "1", 0));
         assert!(gethashnode(&ht, "a").is_some());
         disablehashnode(&mut ht, "a");
         // gethashnode filters disabled, gethashnode2 doesn't.
@@ -1325,9 +1304,9 @@ mod tests {
     #[test]
     fn test_scanmatchtable_pattern_and_count() {
         let mut ht: HashMap<String, Alias> = HashMap::new();
-        ht.insert("foo".to_string(), Alias::new("foo", "1"));
-        ht.insert("foobar".to_string(), Alias::new("foobar", "2"));
-        ht.insert("baz".to_string(), Alias::new("baz", "3"));
+        ht.insert("foo".to_string(), createaliasnode("foo", "1", 0));
+        ht.insert("foobar".to_string(), createaliasnode("foobar", "2", 0));
+        ht.insert("baz".to_string(), createaliasnode("baz", "3", 0));
         let mut hits: Vec<String> = Vec::new();
         let count = scanmatchtable(&ht, Some("foo*"), true, 0, 0, |n, _| {
             hits.push(n.to_string())
@@ -1340,8 +1319,8 @@ mod tests {
     #[test]
     fn test_emptyhashtable_clears() {
         let mut ht: HashMap<String, Alias> = HashMap::new();
-        ht.insert("a".to_string(), Alias::new("a", "1"));
-        ht.insert("b".to_string(), Alias::new("b", "2"));
+        ht.insert("a".to_string(), createaliasnode("a", "1", 0));
+        ht.insert("b".to_string(), createaliasnode("b", "2", 0));
         assert_eq!(ht.len(), 2);
         emptyhashtable(&mut ht);
         assert_eq!(ht.len(), 0);
@@ -1367,14 +1346,14 @@ mod tests {
     #[test]
     fn test_createaliasnode_sets_flags() {
         let a = createaliasnode("foo", "echo bar", flags::ALIAS_GLOBAL);
-        assert_eq!(a.name, "foo");
+        assert_eq!(a.node.nam, "foo");
         assert_eq!(a.text, "echo bar");
-        assert!(a.is_global());
+        assert!((a.node.flags & flags::ALIAS_GLOBAL as i32) != 0);
     }
 
     #[test]
     fn test_printaliasnode_formats() {
-        let a = Alias::new("ll", "ls -la");
+        let a = createaliasnode("ll", "ls -la", 0);
         let out = printaliasnode(&a, print_flags::WHENCE_VERBOSE);
         assert!(out.contains("ll is an alias for ls -la"));
         let list = printaliasnode(&a, print_flags::LIST);
@@ -1699,13 +1678,13 @@ pub trait HashNodeFlags {
 
 impl HashNodeFlags for Alias {
     fn flags(&self) -> u32 {
-        self.flags
+        self.node.flags as u32
     }
     fn set_disabled(&mut self, disabled: bool) {
         if disabled {
-            self.flags |= flags::DISABLED;
+            self.node.flags |= flags::DISABLED as i32;
         } else {
-            self.flags &= !flags::DISABLED;
+            self.node.flags &= !(flags::DISABLED as i32);
         }
     }
 }
@@ -2178,11 +2157,8 @@ pub fn createaliastables() {
 /// al->inuse = 0;
 /// return al;
 /// ```
-pub fn createaliasnode(name: &str, txt: &str, alias_flags: u32) -> Alias {
-    let mut a = Alias::new(name, txt);
-    a.flags = alias_flags;
-    a
-}
+// Duplicate `createaliasnode` removed — canonical port is at the
+// earlier definition (matches C hashtable.c:1230).
 
 /// Port of `freealiasnode()` from `Src/hashtable.c:1243`.
 ///
@@ -2201,56 +2177,45 @@ pub fn freealiasnode(nam: &str) {
 /// PRINT_WHENCE_CSH / PRINT_WHENCE_VERBOSE / PRINT_LIST flag
 /// dispatch.
 pub fn printaliasnode(a: &Alias, printflags: u32) -> String {
+    let nam = &a.node.nam;
+    let af = a.node.flags;
+    let is_suffix = (af & flags::ALIAS_SUFFIX as i32) != 0;
+    let is_global = (af & flags::ALIAS_GLOBAL as i32) != 0;
     if printflags & print_flags::NAMEONLY != 0 {
-        return a.name.clone();
+        return nam.clone();
     }
     if printflags & print_flags::WHENCE_WORD != 0 {
-        let kind = if a.is_suffix() {
-            "suffix alias"
-        } else if a.is_global() {
-            "global alias"
-        } else {
-            "alias"
-        };
-        return format!("{}: {}", a.name, kind);
+        let kind = if is_suffix { "suffix alias" }
+                   else if is_global { "global alias" }
+                   else { "alias" };
+        return format!("{}: {}", nam, kind);
     }
     if printflags & print_flags::WHENCE_SIMPLE != 0 {
         return a.text.clone();
     }
     if printflags & print_flags::WHENCE_CSH != 0 {
-        let qual = if a.is_suffix() {
-            "suffix "
-        } else if a.is_global() {
-            "globally "
-        } else {
-            ""
-        };
-        return format!("{}: {}aliased to {}", a.name, qual, a.text);
+        let qual = if is_suffix { "suffix " }
+                   else if is_global { "globally " }
+                   else { "" };
+        return format!("{}: {}aliased to {}", nam, qual, a.text);
     }
     if printflags & print_flags::WHENCE_VERBOSE != 0 {
-        let qual = if a.is_suffix() {
-            "a suffix"
-        } else if a.is_global() {
-            "a global"
-        } else {
-            "an"
-        };
-        return format!("{} is {} alias for {}", a.name, qual, a.text);
+        let qual = if is_suffix { "a suffix" }
+                   else if is_global { "a global" }
+                   else { "an" };
+        return format!("{} is {} alias for {}", nam, qual, a.text);
     }
     if printflags & print_flags::LIST != 0 {
         let mut out = String::from("alias ");
-        if a.is_suffix() {
-            out.push_str("-s ");
-        } else if a.is_global() {
-            out.push_str("-g ");
-        }
-        if a.name.starts_with('-') || a.name.starts_with('+') {
+        if is_suffix { out.push_str("-s "); }
+        else if is_global { out.push_str("-g "); }
+        if nam.starts_with('-') || nam.starts_with('+') {
             out.push_str("-- ");
         }
-        out.push_str(&format!("{}={}", a.name, a.text));
+        out.push_str(&format!("{}={}", nam, a.text));
         return out;
     }
-    format!("{}={}", a.name, a.text)
+    format!("{}={}", nam, a.text)
 }
 
 /// Port of `createhisttable()` from `Src/hashtable.c:1345`.
