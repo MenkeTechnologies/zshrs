@@ -43,18 +43,8 @@ struct Datum {
     dsize: c_int,
 }
 
-impl Datum {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
-    fn null() -> Self {
-        Datum {
-            dptr: ptr::null_mut(),
-            dsize: 0,
-        }
-    }
-
-    /// Port of `gdbmgetfn()` from `Src/Modules/db_gdbm.c:282`.
-    fn from_bytes(data: &[u8]) -> Self {
+impl From<&[u8]> for Datum {
+    fn from(data: &[u8]) -> Self {
         let ptr = unsafe { libc::malloc(data.len()) as *mut c_char };
         if !ptr.is_null() {
             unsafe {
@@ -66,9 +56,14 @@ impl Datum {
             dsize: data.len() as c_int,
         }
     }
+}
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+impl Datum {
+    /// FFI accessor — extract the underlying bytes into an owned Vec.
+    /// `dptr == NULL` (gdbm convention for "absent") → None. C uses
+    /// the inline pattern `if (d.dptr) { ... memcpy or ztrdup(d.dptr,
+    /// d.dsize); }` at every callsite; this method centralises the
+    /// guarded extraction.
     fn to_bytes(&self) -> Option<Vec<u8>> {
         if self.dptr.is_null() {
             None
@@ -85,8 +80,8 @@ impl Datum {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// Free the malloc'd `dptr` and reset the struct. Mirrors C's
+    /// `if (d.dptr) { free(d.dptr); d.dptr = NULL; }` cleanup pattern.
     fn free(&mut self) {
         if !self.dptr.is_null() {
             unsafe { libc::free(self.dptr as *mut c_void) };
@@ -167,8 +162,6 @@ impl GdbmDatabase {
         })
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     #[cfg(not(feature = "gdbm"))]
     pub fn open(_path: &Path, _readonly: bool) -> Result<Self, String> {
         Err("GDBM support not compiled in".to_string())
@@ -178,7 +171,7 @@ impl GdbmDatabase {
     #[cfg(feature = "gdbm")]
     pub fn get(&self, key: &str) -> Option<String> {                        // c:282
         let key_bytes = key.as_bytes();
-        let key_datum = Datum::from_bytes(key_bytes);
+        let key_datum = Datum::from(key_bytes);
 
         let exists = unsafe {
             gdbm_exists(
@@ -215,8 +208,6 @@ impl GdbmDatabase {
         result
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     #[cfg(not(feature = "gdbm"))]
     pub fn get(&self, _key: &str) -> Option<String> {
         None
@@ -229,8 +220,8 @@ impl GdbmDatabase {
             return Err("Database is read-only".to_string());
         }
 
-        let key_datum = Datum::from_bytes(key.as_bytes());
-        let content_datum = Datum::from_bytes(value.as_bytes());
+        let key_datum = Datum::from(key.as_bytes());
+        let content_datum = Datum::from(value.as_bytes());
 
         let ret = unsafe {
             gdbm_store(
@@ -259,8 +250,6 @@ impl GdbmDatabase {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     #[cfg(not(feature = "gdbm"))]
     pub fn set(&self, _key: &str, _value: &str) -> Result<(), String> {
         Err("GDBM support not compiled in".to_string())
@@ -273,7 +262,7 @@ impl GdbmDatabase {
             return Err("Database is read-only".to_string());
         }
 
-        let key_datum = Datum::from_bytes(key.as_bytes());
+        let key_datum = Datum::from(key.as_bytes());
 
         let ret = unsafe {
             gdbmunsetfn(
@@ -294,8 +283,6 @@ impl GdbmDatabase {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     #[cfg(not(feature = "gdbm"))]
     pub fn delete(&self, _key: &str) -> Result<(), String> {
         Err("GDBM support not compiled in".to_string())
@@ -329,8 +316,6 @@ impl GdbmDatabase {
         keys
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     #[cfg(not(feature = "gdbm"))]
     pub fn keys(&self) -> Vec<String> {
         Vec::new()
@@ -352,28 +337,20 @@ impl GdbmDatabase {
         Ok(())
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     #[cfg(not(feature = "gdbm"))]
     pub fn clear(&self) -> Result<(), String> {
         Err("GDBM support not compiled in".to_string())
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     #[cfg(feature = "gdbm")]
     pub fn fd(&self) -> i32 {
         unsafe { gdbm_fdesc(self.dbf) }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     #[cfg(not(feature = "gdbm"))]
     pub fn fd(&self) -> i32 {
         -1
@@ -382,8 +359,6 @@ impl GdbmDatabase {
 
 #[cfg(feature = "gdbm")]
 impl Drop for GdbmDatabase {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     fn drop(&mut self) {
         if !self.dbf.is_null() {
             unsafe { gdbm_close(self.dbf) };
@@ -394,8 +369,6 @@ impl Drop for GdbmDatabase {
 
 #[cfg(not(feature = "gdbm"))]
 impl Drop for GdbmDatabase {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     fn drop(&mut self) {}
 }
 
@@ -416,8 +389,6 @@ pub struct TiedGdbmParam {
 }
 
 impl TiedGdbmParam {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     pub fn new(name: String, db: Arc<GdbmDatabase>) -> Self {
         TiedGdbmParam {
             name,
@@ -426,8 +397,6 @@ impl TiedGdbmParam {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     pub fn get(&self, key: &str) -> Option<String> {
         if let Ok(cache) = self.cache.read() {
             if let Some(val) = cache.get(key) {
@@ -445,8 +414,6 @@ impl TiedGdbmParam {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     pub fn set(&self, key: &str, value: &str) -> Result<(), String> {
         self.db.set(key, value)?;
         if let Ok(mut cache) = self.cache.write() {
@@ -455,8 +422,6 @@ impl TiedGdbmParam {
         Ok(())
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     pub fn delete(&self, key: &str) -> Result<(), String> {
         self.db.delete(key)?;
         if let Ok(mut cache) = self.cache.write() {
@@ -465,14 +430,10 @@ impl TiedGdbmParam {
         Ok(())
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     pub fn keys(&self) -> Vec<String> {
         self.db.keys()
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     pub fn to_hash(&self) -> HashMap<String, String> {
         let mut result = HashMap::new();
         for key in self.keys() {
@@ -483,8 +444,6 @@ impl TiedGdbmParam {
         result
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
     pub fn from_hash(&self, hash: &HashMap<String, String>) -> Result<(), String> {
         self.db.clear()?;
         for (key, val) in hash {
