@@ -244,11 +244,12 @@ mod tests {
         // Src/builtin.c:40-137 has 79 rows total: 76 always-on
         // plus 3 debug-only (`hashinfo` under ZSH_HASH_DEBUG, `mem`
         // under ZSH_MEM/ZSH_MEM_DEBUG, `patdebug` under
-        // ZSH_PAT_DEBUG). We currently include only the 76
-        // always-on rows; the debug rows can be added behind a cfg
-        // when those features land. If the C source grows or
-        // shrinks rows, this test fires.
-        assert_eq!(BUILTINS.len(), 76);
+        // ZSH_PAT_DEBUG). The Rust port registers all 79 since
+        // the debug builtins are now ported (bin_hashinfo, bin_mem,
+        // bin_patdebug) and exposing them unconditionally matches
+        // a C build with the three ZSH_*_DEBUG flags defined. If
+        // the C source grows or shrinks rows, this test fires.
+        assert_eq!(BUILTINS.len(), 79);
     }
 
     #[test]
