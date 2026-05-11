@@ -1144,21 +1144,10 @@ impl Zle {
 }
 
 impl Zle {
-    /// Save current keymap state
-    /// Port of savekeymap() from zle_main.c
-    pub fn save_keymap(&mut self) -> SavedKeymap {
-        SavedKeymap {
-            name: self.keymaps.current_name.clone(),
-            local: self.keymaps.local.clone(),
-        }
-    }
-
-    /// Restore keymap state
-    /// Port of restorekeymap() from zle_main.c
-    pub fn restore_keymap(&mut self, saved: SavedKeymap) {
-        self.keymaps.select(&saved.name);
-        self.keymaps.local = saved.local;
-    }
+    // `save_keymap` / `restore_keymap` + `SavedKeymap` struct deleted —
+    // none of those names exist in Src/Zle/zle_main.c. C handles
+    // keymap save/restore by reading/writing the `curkeymap` and
+    // `localkeymap` globals directly inside the bindkey paths.
 
     /// Describe key briefly
     /// Port of describekeybriefly() from zle_main.c
@@ -1309,12 +1298,8 @@ impl Zle {
     }
 }
 
-/// Saved keymap state
-#[derive(Debug, Clone)]
-pub struct SavedKeymap {
-    pub name: String,
-    pub local: Option<std::sync::Arc<Keymap>>,
-}
+// `SavedKeymap` deleted — Rust-invented helper for `save_keymap` /
+// `restore_keymap` (also deleted above). No C counterpart.
 
 /// Get a builtin widget by name
 fn acceptline(name: &str) -> Option<Widget> {
@@ -1437,46 +1422,10 @@ pub struct VaredOpts {
     pub history: bool,
 }
 
-/// ZLE main entry point for module
-/// Port of zle_main_entry() from zle_main.c
-pub fn zle_main_entry(op: ZleOperation, data: ZleData) -> i32 {              // c:2123
-    match op {
-        ZleOperation::Read => {
-            // Would call zleread
-            0
-        }
-        ZleOperation::Refresh => {
-            // Would call refresh
-            0
-        }
-        ZleOperation::Invalidate => {
-            // Would invalidate display
-            0
-        }
-        ZleOperation::Reset => {
-            // Would reset ZLE
-            0
-        }
-        _ => 1,
-    }
-}
-
-/// ZLE operation types
-#[derive(Debug, Clone, Copy)]
-pub enum ZleOperation {
-    Read,
-    Refresh,
-    Invalidate,
-    Reset,
-    SetKeymap,
-}
-
-/// ZLE operation data
-#[derive(Debug, Default)]
-pub struct ZleData {
-    pub prompt: Option<String>,
-    pub keymap: Option<String>,
-}
+// `zle_main_entry` / `ZleOperation` / `ZleData` deleted — none of
+// these names exist in Src/Zle/zle_main.c. The C module entry
+// points are `setup_` (c:2123), `boot_`, `cleanup_`, `finish_`
+// (the standard module-loader callbacks).
 
 /// Module for termios operations
 mod termios {
