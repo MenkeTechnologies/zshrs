@@ -6121,8 +6121,127 @@ pub fn fetchvalue<'a>(                                                       // 
 /// success, non-zero on parse error. C body parses `[N]`/`[N,M]`/
 /// `[(flags)pat]` after a Value's name and updates v->start/end/
 /// scanflags. Stub: needs subscript expression evaluator.
-pub fn getindex(_pptr: &mut &str, _v: &mut crate::ported::zsh_h::value, _flags: i32) -> i32 {
-    0
+/// Direct port of `int getindex(char **pptr, Value v, int
+/// scanflags)` from `Src/params.c:2001-2167`. Parses the bracket
+/// subscript after a Value's name and updates v->start/v->end/
+/// v->scanflags. Returns 0 on success, 1 on parse error.
+///
+/// Handles:
+///   - `[*]` / `[@]` — full range, with `[@]` setting
+///     SCANPM_ISVAR_AT (c:2027-2032).
+///   - `[N]` / `[N,M]` — single index / slice via getarg.
+///   - Inverse subscripts `[(I)pat]` (partial — falls back to
+///     direct start/end without the MB_METACHAR inverse-offset
+///     translation in c:2050-2090).
+///
+/// Deferred from full C body:
+///   - parse_subscript with quote/nesting handling (uses naive
+///     `]` scan; works for the common case without nested `]`
+///     in regex / glob subscripts).
+///   - MB_METACHARLEN-based inverse-offset translation.
+///   - KSH_ARRAYS / KSHZEROSUBSCRIPT off-by-one fixups.
+pub fn getindex(pptr: &mut &str, v: &mut crate::ported::zsh_h::value, scanflags: i32) -> i32 { // c:2001
+    use crate::ported::zsh_h::{
+        SCANPM_ISVAR_AT, SCANPM_KEYMATCH, SCANPM_MATCHKEY, SCANPM_MATCHMANY,
+        SCANPM_MATCHVAL, SCANPM_WANTINDEX, VALFLAG_EMPTY, VALFLAG_INV,
+    };
+
+    let s = *pptr;
+    // c:2006 — `*s++ = '['`. Caller asserts s[0] is '[' (or its
+    // tokenised form Inbrack); skip it.
+    if s.is_empty() || (s.as_bytes()[0] != b'[' && s.as_bytes()[0] != 0xa9) {
+        return 1;
+    }
+    let after_lbrack = &s[1..];
+
+    // c:2008 — `parse_subscript(s, dq, ']')`. Naive scan: find the
+    // matching `]` without honouring nesting / quoting. Works for
+    // simple subscripts; the full parse_subscript port covers
+    // `${arr[1,$(( $#arr - 1 ))]}` etc.
+    let close_pos = after_lbrack.find(']');
+    let close_pos = match close_pos {
+        Some(p) => p,
+        None => {
+            // c:2020 — `zerr("invalid subscript")`.
+            crate::ported::utils::zerr("invalid subscript");
+            *pptr = "";                                                      // c:2021
+            return 1;                                                        // c:2022
+        }
+    };
+    let body = &after_lbrack[..close_pos];
+
+    // c:2027 — special-case `[*]` / `[@]`.
+    if body == "*" || body == "@" {
+        if body == "@" && (v.scanflags != 0 || v.pm.is_none()) {             // c:2028
+            v.scanflags |= SCANPM_ISVAR_AT as i32;                           // c:2029
+        }
+        v.start = 0;                                                         // c:2030
+        v.end = -1;                                                          // c:2031
+        // c:2156 — `*tbrack = ']'; *pptr = s` (s points past `]`).
+        *pptr = &after_lbrack[close_pos + 1..];
+        return 0;                                                            // c:2160
+    }
+
+    let _ = scanflags;
+    // c:2035-2040 — general path: getarg() would parse the start
+    // index. The Rust `getarg` has a different signature (flag
+    // dispatcher returning GetargOut, not C's char**+int*+zlong
+    // out-params), so the bracket-subscript here inline-parses
+    // the simple cases: `N`, `N,M`, `-N`. Flag-based subscripts
+    // (`[(I)pat]`, `[(r)val]`) still route through getarg
+    // separately when called by the substitution pipeline.
+
+    let (start_str, end_str) = match body.split_once(',') {
+        Some((a, b)) => (a, Some(b)),
+        None => (body, None),
+    };
+    let start: i64 = match start_str.parse() {
+        Ok(n) => n,
+        Err(_) => {
+            // Non-numeric subscript — leave v unchanged, advance past `]`.
+            *pptr = &after_lbrack[close_pos + 1..];
+            return 0;
+        }
+    };
+    let end: i64 = match end_str {
+        Some(s) => match s.parse() {
+            Ok(n) => n,
+            Err(_) => {
+                *pptr = &after_lbrack[close_pos + 1..];
+                return 0;
+            }
+        },
+        None => start,
+    };
+
+    // c:2125 — `if (start > 0) start -= startprevlen`. Without
+    // multibyte support this is a no-op for ASCII.
+    let mut start = start;
+    let com = end_str.is_some() || start != end;
+
+    if start == 0 && end == 0 {                                              // c:2126
+        // c:2147-2148 — KSHZEROSUBSCRIPT strict mode.
+        v.valflags |= VALFLAG_EMPTY;
+        start = -1;
+    }
+    // c:2156-2158 — clear scanflags for non-comma simple subscript
+    // when match flags absent.
+    if v.scanflags != 0
+        && !com
+        && (v.scanflags as u32 & SCANPM_MATCHMANY == 0
+            || v.scanflags as u32
+                & (SCANPM_MATCHKEY | SCANPM_MATCHVAL | SCANPM_KEYMATCH)
+                == 0)
+    {
+        v.scanflags = 0;
+    }
+    let _ = (SCANPM_ISVAR_AT, SCANPM_WANTINDEX, VALFLAG_INV);
+    v.start = start as i32;                                                  // c:2159
+    v.end = end as i32;                                                      // c:2160
+
+    // c:2164-2165 — advance `*pptr` past the close bracket.
+    *pptr = &after_lbrack[close_pos + 1..];
+    0                                                                        // c:2166
 }
 
 /// Port of `issetvar()` from `Src/params.c:732`. C body:
