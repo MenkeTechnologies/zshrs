@@ -51,16 +51,16 @@ pub const ZLEEOF: ZleInt = -1;
 // `Zle.zlecontext` is now `i32` matching C's `int zlecontext`
 // (zle_main.c:163).
 
-/// Modifier state for commands.
+/// modifier state for commands.
 /// Layout mirrors `struct modifier` in Src/Zle/zle.h. The Default impl
 /// matches `initmodifier()` from Src/Zle/zle_main.c:1604 — mult=1,
-/// tmult=1, base=10 — so a fresh Modifier behaves like the result of
+/// tmult=1, base=10 — so a fresh modifier behaves like the result of
 /// initmodifier() rather than the all-zero Rust derive default.
 /// Direct port of `struct modifier` from `Src/Zle/zle.h:245-251`.
-/// Command modifier prefixes. `Modifier` PascalCase kept since
-/// callers reference it widely; field layout matches C verbatim.
+/// Command modifier prefixes — `zmod` reads/writes this.
 #[derive(Debug, Clone)]
-pub struct Modifier {                                                        // c:245
+#[allow(non_camel_case_types)]
+pub struct modifier {                                                        // c:245
     pub flags: i32,                                                          // c:246 int flags
     pub mult: i32,                                                           // c:247 int mult
     pub tmult: i32,                                                          // c:248 int tmult
@@ -68,10 +68,10 @@ pub struct Modifier {                                                        // 
     pub base: i32,                                                           // c:250 int base
 }
 
-impl Default for Modifier {
+impl Default for modifier {
     fn default() -> Self {
         // c:1604 initmodifier — mult=1, tmult=1, base=10.
-        Modifier {
+        modifier {
             flags: 0,
             mult: 1,
             tmult: 1,
@@ -86,7 +86,7 @@ use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL,
 // `ModifierFlags` bitflags wrapper deleted — C uses bare `int flags`
 // in `struct modifier` (zle.h:246) with the `MOD_*` bit constants
 // at zle.h:253-263, already legit-ported in zle_h.rs:371-381.
-// Modifier.flags is now `i32` matching C verbatim.
+// modifier.flags is now `i32` matching C verbatim.
 
 /// Direct port of `struct change` from `Src/Zle/zle.h:284-294`.
 /// Undo change record. `ChangeFlags` bitflags wrapper deleted —
@@ -196,7 +196,7 @@ pub struct Zle {
     pub lastcmd: WidgetFlags,
     // current modifier status                                               // c:169
     /// Current modifier status
-    pub zmod: Modifier,
+    pub zmod: modifier,
     /// Prefix command flag
     pub prefixflag: bool,
     /// Recursive edit depth
@@ -400,7 +400,7 @@ impl Zle {
             lbindk: None,
             bindk: None,
             lastcmd: WidgetFlags::empty(),
-            zmod: Modifier::default(),
+            zmod: modifier::default(),
             prefixflag: false,
             zle_recursive: 0,
             // C default: input.c:418 — `int flags = ZLRF_HISTORY|ZLRF_NOSETTY;`
@@ -1012,7 +1012,7 @@ impl Zle {
     /// vibuf=0, base=10 — `tmult=1` is what makes successive C-u
     /// invocations multiply (1→4→16→64) instead of staying at 0.
     pub fn initmodifier(&mut self) {
-        self.zmod = Modifier {
+        self.zmod = modifier {
             flags: 0,
             mult: 1,
             tmult: 1,
