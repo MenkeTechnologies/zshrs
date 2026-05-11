@@ -2783,11 +2783,21 @@ pub fn zftp_test(_name: &str, _args: &[&str], _flags: i32) -> i32 {            /
 }
 
 /// Port of `zftp_dir()` from `Src/Modules/zftp.c:2305`.
-pub fn zftp_dir(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut full: Vec<String> = vec!["dir".to_string()];
-    full.extend(args.iter().map(|s| s.to_string()));
-    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+pub fn zftp_dir(name: &str, args: &[&str], flags: i32) -> i32 {                 // c:2305
+    let cmd: String;                                                            // c:2308 char *cmd
+    let ret: i32;                                                               // c:2309 int ret
+    // c:2316 — zfsettype(ZFST_ASCI); RFC959 requires ASCII for LIST.
+    zfsettype(ZFST_ASCI);
+    // c:2318 — cmd = zfargstring(NLST or LIST, args);
+    let verb = if (flags & ZFTP_NLST) != 0 { "NLST" } else { "LIST" };
+    cmd = zfargstring(verb, args) + "\r\n";
+    // c:2319 — ret = zfgetdata(name, NULL, cmd, 0);
+    ret = zfgetdata(name, "", &cmd, 0);
+    // c:2320 zsfree(cmd) — Rust Drop.
+    if ret != 0 { return 1; }                                                   // c:2321-2322
+    use std::io::Write;
+    let _ = std::io::stdout().flush();                                          // c:2324
+    zfsenddata(name, 1, 0, 0)                                                   // c:2325
 }
 
 /// Port of `zftp_cd()` from `Src/Modules/zftp.c:2332`.
@@ -2895,19 +2905,111 @@ pub fn zftp_mode(name: &str, args: &[&str], _flags: i32) -> i32 {               
 }
 
 /// Port of `zftp_local()` from `Src/Modules/zftp.c:2491`.
-pub fn zftp_local(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut full: Vec<String> = vec!["local".to_string()];
-    full.extend(args.iter().map(|s| s.to_string()));
-    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+pub fn zftp_local(_name: &str, args: &[&str], flags: i32) -> i32 {              // c:2491
+    use std::io::Write;
+    let more = args.len() > 1;                                                  // c:2493 more = !!args[1]
+    let mut ret: i32 = 0;                                                       // c:2493 ret = 0
+    let dofd = args.is_empty();                                                 // c:2493 dofd = !*args
+    let mut i = 0usize;
+    loop {                                                                      // c:2494 while (*args || dofd)
+        if !dofd && i >= args.len() { break; }
+        let arg = if dofd { "" } else { args[i] };
+        let mut sz: libc::off_t = 0;                                            // c:2495 off_t sz
+        let mut mt: Option<String> = None;                                      // c:2496 char *mt
+        // c:2497-2498 — zfstats(*args, !(flags & ZFTP_HERE), &sz, &mt, dofd ? 0 : -1);
+        let remote = if (flags & ZFTP_HERE) != 0 { 0 } else { 1 };
+        let fd = if dofd { 0 } else { -1 };
+        let newret = zfstats(arg, remote, &mut sz, &mut mt, fd);
+        if newret == 2 {                                                        // c:2499
+            return 2;                                                           // c:2500
+        } else if newret != 0 {                                                 // c:2501
+            ret = 1;                                                            // c:2502
+            // c:2503-2504 — Rust Drop.
+            i += 1;                                                             // c:2505
+            continue;                                                           // c:2506
+        }
+        if more {                                                               // c:2508
+            print!("{} ", arg);                                                 // c:2509-2510
+        }
+        let mt_s = mt.unwrap_or_default();
+        println!("{} {}", sz, mt_s);                                            // c:2517
+        if dofd { break; }                                                      // c:2520-2521
+        i += 1;                                                                 // c:2522
+    }
+    let _ = std::io::stdout().flush();                                          // c:2524
+    ret                                                                         // c:2526
 }
 
 /// Port of `zftp_getput()` from `Src/Modules/zftp.c:2544`.
-pub fn zftp_getput(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut full: Vec<String> = vec!["get".to_string()];
-    full.extend(args.iter().map(|s| s.to_string()));
-    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {              // c:2544
+    use std::io::Write;
+    let mut ret: i32 = 0;                                                       // c:2546 ret = 0
+    let recv = (flags & ZFTP_RECV) != 0;                                        // c:2546 recv
+    let mut getsize: i32 = 0;                                                   // c:2546 getsize = 0
+    let progress: i32 = 1;                                                      // c:2546 progress = 1
+    let cmd_pfx = if recv { "RETR " }                                           // c:2547
+                  else if (flags & ZFTP_APPE) != 0 { "APPE " }
+                  else { "STOR " };
+
+    // c:2559 — zfsettype(ZFST_TYPE(zfstatusp[zfsessno]));
+    let ttype = ZFTP_STATE.lock().ok()
+        .and_then(|s| s.get_session(None).map(|sess| sess.transfer_type))
+        .unwrap_or(ZFST_IMAG as i32);
+    zfsettype(ttype);
+
+    if recv { let _ = std::io::stdout().flush(); }                              // c:2561-2562
+
+    // c:2563 — for (; *args; args++) — with REST advancing args twice.
+    let mut i = 0usize;
+    while i < args.len() {
+        let arg = args[i];
+        let mut rest_cmd: String = String::new();                               // c:2564 char *rest = NULL
+        let mut startat: libc::off_t = 0;                                       // c:2565
+
+        // c:2566-2587 — getsize hint via zfstats (zftp_progress callback path
+        // depends on doshfunc; deferred — progress callback never fires).
+        let _ = progress;
+
+        // c:2589-2592 — REST resume.
+        if (flags & ZFTP_REST) != 0 && i + 1 < args.len() {
+            startat = args[i + 1].parse().unwrap_or(0);
+            rest_cmd = format!("REST {}\r\n", args[i + 1]);
+        }
+
+        // c:2594 — ln = tricat(cmd, *args, "\r\n");
+        let ln = format!("{}{}\r\n", cmd_pfx, arg);
+
+        // c:2596 — zfgetdata returns 0 on success, 1 on failure.
+        let gd = zfgetdata(name, &rest_cmd, &ln, getsize);
+        if gd != 0 {
+            ret = 2;                                                            // c:2597
+        } else {
+            // c:2598 — zfsenddata(name, recv, progress, startat).
+            if zfsenddata(name, if recv { 1 } else { 0 }, progress, startat) != 0 {
+                ret = 1;                                                        // c:2599
+            }
+        }
+        // c:2600 — zsfree(ln) — Rust Drop.
+
+        // c:2606-2616 — final progress callback (deferred per doshfunc gap #3).
+        if progress != 0 && ret != 2 {
+            zfsetparam("ZFTP_TRANSFER",                                         // c:2611-2612
+                if recv { "GF" } else { "PF" }, ZFPM_READONLY);
+        }
+        // c:2617-2620 — REST consumed two args.
+        if (flags & ZFTP_REST) != 0 {
+            i += 1;
+        }
+        // c:2621-2622 — break on errflag.
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            break;
+        }
+        let _ = getsize;
+        getsize = 0;                                                            // reset per-iteration
+        i += 1;
+    }
+    zfendtrans();                                                               // c:2624
+    if ret != 0 { 1 } else { 0 }                                                // c:2625
 }
 
 /// Port of `zftp_delete()` from `Src/Modules/zftp.c:2635`.
