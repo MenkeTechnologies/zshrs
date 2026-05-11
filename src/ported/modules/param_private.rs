@@ -848,13 +848,26 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     handlefeatures(m, module_features(), enables)
 }
 
+/// `emptytable` — file-scope `static HashTable emptytable;` from
+/// Src/Modules/param_private.c:447. Holds the empty paramtab marker
+/// the wrapper swaps in on `private`-builtin entry. Allocated in
+/// boot_, freed in finish_ via deletehashtable.
+#[allow(non_upper_case_globals)]
+pub static emptytable: std::sync::Mutex<Option<crate::ported::zsh_h::HashTable>> =
+    std::sync::Mutex::new(None);                                              // c:447
+
 /// Port of `boot_()` from `Src/Modules/param_private.c:709`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:709
-    // C body c:711-712 — `emptytable = newparamtable(1, "private");
-    //                     return addwrapper(m, wrapper)`.
-    //                    The wrapper substrate (paramtab swap-on-call)
-    //                    isn't ported; structural dispatch deferred.
-    0
+    // c:711 — `emptytable = newparamtable(1, "private");`
+    if let Some(t) = crate::ported::params::newparamtable(1, "private") {     // c:711
+        if let Ok(mut e) = emptytable.lock() {
+            *e = Some(t);
+        }
+    }
+    // c:712 — `return addwrapper(m, wrapper);` — the addwrapper
+    // substrate (paramtab swap-on-call) isn't ported; returns 0 to
+    // mirror "wrapper installed successfully".
+    0                                                                         // c:713
 }
 
 /// Port of `cleanup_()` from `Src/Modules/param_private.c:717`.
@@ -865,13 +878,19 @@ pub fn cleanup_(m: *const module) -> i32 {
 
 /// Port of `finish_()` from `Src/Modules/param_private.c:734`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:734
-    // C body c:736-743 — restores realparamtab->getnode/getnode2/
-    //                    printnode to their save_* originals and
-    //                    restores `local` builtintab node from
-    //                    save_local, then deletes `private` reswd.
-    //                    Reverse of setup_; deferred until substrate
-    //                    overrides land.
-    0
+    // c:736 — `deletehashtable(emptytable);` — release the wrapper's
+    // empty-paramtab marker allocated by boot_.
+    if let Ok(mut e) = emptytable.lock() {
+        if let Some(t) = e.take() {                                          // c:736
+            crate::ported::params::deleteparamtable(Some(t));
+        }
+    }
+    // c:737-743 — restores realparamtab->getnode/getnode2/printnode to
+    // their save_* originals + restores `local` builtintab node from
+    // save_local + deletes `private` reswd. The realparamtab/
+    // builtintab override substrate isn't ported; the deferred
+    // restore is a no-op on the static-link path.
+    0                                                                         // c:744
 }
 
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
