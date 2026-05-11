@@ -1698,7 +1698,7 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
             crate::ported::mem::queue_signals();                             // c:3676
             // c:3678 — `tokenize(*argv)` + `patcompile(...)`
             let pprog = crate::ported::pattern::patcompile(pat,              // c:3680
-                crate::ported::zsh_h::PAT_HEAPDUP).ok();
+                crate::ported::zsh_h::PAT_HEAPDUP, None);
             if let Some(prog) = pprog {
                 // c:3680-3683 — scan-and-print matching shfuncs.
                 if (on | off) == 0 && !OPT_ISSET(ops, b'X') {                // c:3682
@@ -2619,9 +2619,9 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
         let pat = argv.remove(0);
         // c:1495 — tokenize(*argv); — Rust `patcompile` handles tokenisation.
         match crate::ported::pattern::patcompile(&pat,                       // c:1496
-            crate::ported::zsh_h::PAT_HEAPDUP) {
-            Ok(p) => pprog = Some(p),
-            Err(_) => {
+            crate::ported::zsh_h::PAT_HEAPDUP, None) {
+            Some(p) => pprog = Some(p),
+            None => {
                 crate::ported::utils::zwarnnam(nam, "invalid match pattern"); // c:1497
                 return 1;                                                    // c:1498
             }
@@ -3147,7 +3147,7 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
         for pat in argv {                                                    // c:4031
             // c:4034 — `tokenize(*argv);` (preserves Rust-side noop).
             let pprog = crate::ported::pattern::patcompile(pat,              // c:4035
-                crate::ported::zsh_h::PAT_HEAPDUP).ok();
+                crate::ported::zsh_h::PAT_HEAPDUP, None);
             match pprog {
                 None => {                                                    // c:4036
                     crate::ported::utils::zwarnnam(nam,
@@ -3628,7 +3628,7 @@ pub fn bin_unset(name: &str, argv: &[String],                                // 
         for s in argv {                                                      // c:3831
             crate::ported::mem::queue_signals();                             // c:3832
             let pprog = crate::ported::pattern::patcompile(s,                // c:3835
-                crate::ported::zsh_h::PAT_HEAPDUP).ok();
+                crate::ported::zsh_h::PAT_HEAPDUP, None);
             if let Some(prog) = pprog {
                 // c:3837-3850 — walk paramtab, unset matches via unsetparam.
                 let names: Vec<String> = std::env::vars()
@@ -3892,7 +3892,7 @@ pub fn bin_enable(name: &str, argv: &[String],                               // 
         for arg in argv {                                                    // c:562
             crate::ported::mem::queue_signals();                             // c:563
             let pprog = crate::ported::pattern::patcompile(arg,              // c:566
-                crate::ported::zsh_h::PAT_HEAPDUP).ok();
+                crate::ported::zsh_h::PAT_HEAPDUP, None);
             if let Some(prog) = pprog {
                 for nm in collect_names(&tab) {
                     if crate::ported::pattern::pattry(&prog, &nm) {          // c:567
@@ -4011,7 +4011,7 @@ pub fn bin_hash(name: &str, argv: &[String],                                 // 
         if OPT_ISSET(ops, b'm') {                                            // c:4279
             // c:4280-4290 — glob-match path.
             let pprog = crate::ported::pattern::patcompile(arg,              // c:4282
-                crate::ported::zsh_h::PAT_HEAPDUP).ok();
+                crate::ported::zsh_h::PAT_HEAPDUP, None);
             if let Some(prog) = pprog {
                 if dir_mode {
                     if let Ok(t) = crate::ported::hashnameddir::nameddirtab().lock() {
@@ -4178,7 +4178,7 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
         for arg in argv {                                                    // c:4396
             crate::ported::mem::queue_signals();                             // c:4397
             let pprog = crate::ported::pattern::patcompile(arg,              // c:4400
-                crate::ported::zsh_h::PAT_HEAPDUP).ok();
+                crate::ported::zsh_h::PAT_HEAPDUP, None);
             if let Some(prog) = pprog {
                 // Collect names then remove (avoid iterator/mutation conflict).
                 let names: Vec<String> = match &tab {
@@ -4314,7 +4314,7 @@ pub fn bin_alias(name: &str, argv: &[String],                                // 
             crate::ported::mem::queue_signals();                             // c:4505
             // c:4506 — `tokenize + patcompile`.
             let pprog = crate::ported::pattern::patcompile(pat,              // c:4507
-                crate::ported::zsh_h::PAT_HEAPDUP).ok();
+                crate::ported::zsh_h::PAT_HEAPDUP, None);
             if let Some(prog) = pprog {
                 let lock = if use_suffix { sufaliastab_lock() } else { aliastab_lock() };
                 if let Ok(t) = lock.lock() {
