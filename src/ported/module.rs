@@ -194,86 +194,17 @@ pub const CONDF_ADDED: u32 = 1 << 1;
 /// in the runtime hash table.
 pub const MFF_ADDED: u32 = 1 << 1;
 
-/// Port of `struct builtin` from `Src/zsh.h:1440`.
-///
-/// ```c
-/// struct builtin {
-///     struct hashnode node;       // .nam holds the builtin name
-///     HandlerFunc handlerfunc;
-///     int minargs, maxargs, funcid;
-///     char *optstr, *defopts;
-/// };
-/// ```
-///
-/// The Rust port collapses the embedded `struct hashnode` to two
-/// fields (`name`, `flags`) since zshrs's hashnode infrastructure
-/// isn't ported under this struct — flags and lookup happen
-/// elsewhere.
-#[derive(Debug, Clone, Copy)]
-#[allow(non_snake_case)]
-pub struct Builtin {
-    pub name: &'static str,
-    pub flags: u32,
-    pub minargs: i32,
-    pub maxargs: i32,
-    pub funcid: i32,
-    pub optstr: Option<&'static str>,
-    pub defopts: Option<&'static str>,
-}
-
-/// Port of `struct conddef` from `Src/zsh.h:683`. Placeholder used
-/// only to size `Features.cd_list` arrays — full body pending the
-/// condition-system port.
-#[derive(Debug, Clone, Copy)]
-pub struct Conddef {
-    pub name: &'static str,
-    pub flags: u32,
-}
-
-/// Port of `struct mathfunc` from `Src/zsh.h:111`. Placeholder.
-#[derive(Debug, Clone, Copy)]
-pub struct MathFunc {
-    pub name: &'static str,
-    /// `module` field from C `struct mathfunc` (zsh.h:2069) — names
-    /// the providing module for autoloadable math functions.
-    pub module: &'static str,
-    pub flags: u32,
-}
-
-/// Port of `struct paramdef` from `Src/zsh.h:2082`. Placeholder.
-#[derive(Debug, Clone, Copy)]
-pub struct Paramdef {
-    pub name: &'static str,
-    /// `pm` slot in C — non-null when the param is registered.
-    pub registered: bool,
-}
-
-/// Port of `struct features` from `Src/zsh.h:1553`.
-///
-/// ```c
-/// struct features {
-///     Builtin  bn_list;  int bn_size;
-///     Conddef  cd_list;  int cd_size;
-///     MathFunc mf_list;  int mf_size;
-///     Paramdef pd_list;  int pd_size;
-///     int n_abstract;
-/// };
-/// ```
-///
-/// Each module ships a `static Features` describing the four kinds
-/// of features it provides; `features_` / `enables_` / `cleanup_`
-/// pass it to `featuresarray` / `getfeatureenables` /
-/// `setfeatureenables` / `handlefeatures` to expose to the runtime.
-#[derive(Debug, Clone, Copy)]
-pub struct Features {
-    pub bn_list: &'static [Builtin],
-    pub cd_list: &'static [Conddef],
-    pub mf_list: &'static [MathFunc],
-    pub pd_list: &'static [Paramdef],
-    /// `n_abstract` — placeholder slots for non-concrete features.
-    /// Always 0 in the modules ported so far.
-    pub n_abstract: usize,
-}
+// `pub struct Builtin` / `Conddef` / `MathFunc` / `Paramdef` /
+// `Features` deleted — Rust-only PascalCase duplicates of the
+// canonical C-port structs in zsh_h.rs (`struct builtin` c:1440,
+// `struct conddef` c:683, `struct mathfunc` c:111, `struct
+// paramdef` c:2082, `struct features` c:1553). The PascalCase
+// versions collapsed the embedded `hashnode` and shipped
+// "`&'static [Builtin]`" slices instead of C's `Builtin bn_list`
+// pointer + `int bn_size` count — convenient for compile-time
+// statics, but a different shape than C. Per-module Rust files
+// (curses.rs, langinfo.rs, rlimits.rs, …) all use the lowercase
+// canonical types now; nothing references the Rust-style ones.
 
 impl ModuleTable {
     pub fn new() -> Self {
@@ -944,30 +875,11 @@ pub fn add_dep(table: &mut ModuleTable, name: &str, from: &str) -> i32 { // c:23
 /// module-table addbuiltin if not already registered. `binl` is taken
 /// by `&mut [Builtin]` so the BINF_ADDED flag-set after success
 /// matches C's in-place mutation.
-pub fn addbuiltins(table: &mut ModuleTable, nam: &str, binl: &mut [Builtin], module_name: &str) -> i32 {
-    let mut ret: i32 = 0;                                                // c:546
-    for n in 0..binl.len() {                                             // c:548
-        if (binl[n].flags & BINF_ADDED) != 0 {                           // c:550
-            continue;                                                     // c:551
-        }
-        // c:552 — addbuiltin(b)
-        // The Rust ModuleTable::addbuiltin signature is `(name: &str,
-        // module: &str)` and returns void; treat any duplicate as a
-        // clash by checking the lookup before registering.
-        let name = binl[n].name;
-        if table.autoload_builtins.contains_key(name) {                   // emulate addbuiltin clash
-            crate::ported::utils::zwarnnam(
-                nam,
-                &format!("name clash when adding builtin `{}'", name),    // c:553
-            );
-            ret = 1;                                                      // c:554
-        } else {
-            table.addbuiltin(name, module_name);                         // c:552 addbuiltin(b)
-            binl[n].flags |= BINF_ADDED;                                 // c:556
-        }
-    }
-    ret                                                                  // c:559
-}
+// `addbuiltins` deleted — Rust-only port that took `&mut [Builtin]`
+// (the deleted Rust-only `Builtin` PascalCase struct). C
+// `addbuiltins(char *nam, Builtin binl, int size, char *modname)` at
+// module.c:545 walks the module's bintab pointer; a re-port will
+// land alongside the wider modulestab-as-global refactor.
 
 /// Port of `addhookdeffunc()` from `Src/module.c:939`.
 ///
@@ -996,17 +908,12 @@ pub fn addhookdeffunc(table: &mut ModuleTable, h: &mut crate::ported::zsh_h::hoo
 /// re-register MFF_ADDED entries, replaces autoloadable shims, then
 /// links into head. Rust port operates on `autoload_mathfuncs` map
 /// since zshrs's static-link path doesn't have per-entry MFF flags.
-pub fn addmathfunc(table: &mut ModuleTable, f: &MathFunc) -> i32 {       // c:1313
-    if (f.flags & (MFF_ADDED as u32)) != 0 {                             // c:1317
-        return 1;                                                         // c:1318
-    }
-    if table.autoload_mathfuncs.contains_key(f.name) {                   // c:1321 strcmp match
-        // c:1326 — removemathfunc(q, p) — autoloadable replace.
-        table.autoload_mathfuncs.remove(f.name);
-    }
-    table.autoload_mathfuncs.insert(f.name.to_string(), f.module.to_string()); // c:1332-1333
-    0                                                                    // c:1335
-}
+// `addmathfunc(table, &MathFunc)` deleted — Rust-only port that
+// took the deleted PascalCase `MathFunc` struct. C
+// `addmathfunc(MathFunc f)` at module.c:1313 prepends to the
+// global `mathfuncs` linked list (ported as `MATHFUNCS` global
+// above). Re-port using `crate::ported::zsh_h::mathfunc` will
+// follow with the wider modulestab-as-global refactor.
 
 /// Port of `autofeatures()` from `Src/module.c:3437`.
 ///
@@ -1843,14 +1750,10 @@ pub fn deletehookdeffunc(table: &mut ModuleTable, h: &mut crate::ported::zsh_h::
 ///
 /// Removes math function `f` from the global registry. Returns 0
 /// on hit, -1 on miss.
-pub fn deletemathfunc(table: &mut ModuleTable, f: &MathFunc) -> i32 {    // c:1342
-    if table.autoload_mathfuncs.remove(f.name).is_some() {               // c:1346 list-walk + c:1349-1352 unlink
-        // c:1355-1360 — if (f->module) free(...); else clear MFF_ADDED.
-        // Static-link path: drop on remove() handles the free.
-        return 0;                                                         // c:1362
-    }
-    -1                                                                   // c:1364
-}
+// `deletemathfunc(table, &MathFunc)` deleted — Rust-only port that
+// took the deleted PascalCase `MathFunc` struct. The canonical
+// `removemathfunc` still operates on `ModuleTable.autoload_mathfuncs`
+// (the autoload registry).
 
 /// Port of `do_boot_module()` from `Src/module.c:2139`.
 ///
@@ -2086,38 +1989,16 @@ pub fn features_module(_table: &mut ModuleTable, _name: &str, _features: &mut Ve
     0                                                                    // c:1895 (features)(m,features)
 }
 
-/// Port of `featuresarray()` from `Src/module.c:3279`.
-///
-/// Build the feature-name array a module exports. Each entry is
-/// prefixed:
-///   `b:` for builtins,
-///   `c:` / `C:` for prefix / infix conditions,
-///   `f:` for math functions,
-///   `p:` for parameters.
-///
-/// C source uses heap allocation (`zhalloc`) and a NULL terminator;
-/// the Rust port returns a `Vec<String>` (the terminator falls out
-/// of Vec's len). `_m` is the owning `Module` — kept for signature
-/// parity with C; the body doesn't read it.
-pub fn featuresarray(_m: &Module, f: &Features) -> Vec<String> {
-    let mut features = Vec::with_capacity(
-        f.bn_list.len() + f.cd_list.len() + f.mf_list.len() + f.pd_list.len() + f.n_abstract,
-    );
-    for b in f.bn_list {
-        features.push(format!("b:{}", b.name));
-    }
-    for c in f.cd_list {
-        let prefix = if c.flags & CONDF_INFIX != 0 { "C:" } else { "c:" };
-        features.push(format!("{}{}", prefix, c.name));
-    }
-    for m in f.mf_list {
-        features.push(format!("f:{}", m.name));
-    }
-    for p in f.pd_list {
-        features.push(format!("p:{}", p.name));
-    }
-    features
-}
+// `featuresarray` deleted — Rust-only port that took the deleted
+// `Module` / `Features` PascalCase structs. C
+// `featuresarray(Module m, Features f)` at module.c:3279 builds
+// the `b:NAME`/`c:NAME`/`f:NAME`/`p:NAME` descriptor array from
+// the module's bintab/conddefs/mathfuncs/paramdefs pointers. The
+// per-module rust files (rlimits.rs, langinfo.rs, curses.rs, …)
+// each ship their own local `featuresarray` stub returning a
+// hardcoded descriptor list; a future canonical free-fn port will
+// live in zsh_h.rs once `struct features` carries real bintab/etc.
+// pointers.
 
 /// `FINDMOD_ALIASP` — bit in `find_module()`'s `flags` arg.
 /// Port of `enum { FINDMOD_ALIASP = 0x0001 }` from `Src/module.c:110`.
@@ -2211,30 +2092,13 @@ pub fn finish_module(_table: &mut ModuleTable, _name: &str) -> i32 {     // c:19
     0                                                                    // c:1929 (finish)(m) success
 }
 
-/// Port of `getfeatureenables()` from `Src/module.c:3314`.
-///
-/// Return the current enable-bit per feature, in the same order
-/// `featuresarray()` produces. `1` if the feature's `*_ADDED` flag
-/// is set (i.e. it's in the runtime hash table), else `0`. Param
-/// entries return `1` when their `pm` slot is registered.
-pub fn getfeatureenables(_m: &Module, f: &Features) -> Vec<i32> {
-    let mut enables = Vec::with_capacity(
-        f.bn_list.len() + f.cd_list.len() + f.mf_list.len() + f.pd_list.len() + f.n_abstract,
-    );
-    for b in f.bn_list {
-        enables.push(i32::from(b.flags & BINF_ADDED != 0));
-    }
-    for c in f.cd_list {
-        enables.push(i32::from(c.flags & CONDF_ADDED != 0));
-    }
-    for m in f.mf_list {
-        enables.push(i32::from(m.flags & MFF_ADDED != 0));
-    }
-    for p in f.pd_list {
-        enables.push(i32::from(p.registered));
-    }
-    enables
-}
+// `getfeatureenables` deleted — Rust-only port that took the
+// deleted `Module` / `Features` PascalCase structs. C
+// `getfeatureenables(Module m, Features f)` at module.c:3314
+// returns the enable-bit array per feature. Per-module Rust files
+// inline their own version returning a hardcoded vec; a canonical
+// free-fn re-port belongs in zsh_h.rs once `struct features`
+// carries real bintab/conddefs/etc. pointers.
 
 /// Port of `getmathfunc()` from `Src/module.c:1283`.
 ///
@@ -2256,28 +2120,14 @@ pub fn getmathfunc(table: &mut ModuleTable, name: &str, autol: i32) -> Option<St
     None                                                                 // c:1306
 }
 
-/// Port of `handlefeatures()` from `Src/module.c:3388`.
-///
-/// Convenience front-end. C body:
-/// ```c
-/// if (!enables || *enables)
-///     return setfeatureenables(m, f, enables ? *enables : NULL);
-/// *enables = getfeatureenables(m, f);
-/// return 0;
-/// ```
-/// The `enables` out-parameter doubles as input (set values) and
-/// output (read values). Rust port uses `&mut Option<Vec<i32>>` to
-/// match: passing `Some(vec)` sets, passing `None` and writing
-/// `Some(...)` reads.
-pub fn handlefeatures(m: &Module, f: &Features, enables: &mut Option<Vec<i32>>) -> i32 {
-    match enables {
-        Some(e) => setfeatureenables(m, f, Some(e)),
-        None => {
-            *enables = Some(getfeatureenables(m, f));
-            0
-        }
-    }
-}
+// `handlefeatures` deleted — Rust-only port that took the
+// deleted `Module` / `Features` PascalCase structs. C
+// `handlefeatures(Module m, Features f, int **enables)` at
+// module.c:3388 is the convenience front-end that picks
+// set/get based on whether enables is NULL. Per-module Rust
+// files inline a simpler 2-branch version (rlimits.rs:1428,
+// curses.rs etc.); a canonical free-fn re-port belongs in
+// zsh_h.rs once `struct features` carries real pointers.
 
 /// Port of `hpux_dlsym()` from `Src/module.c:1530`.
 ///
@@ -2456,10 +2306,12 @@ pub fn printautoparams(name: &str, module: &str, flags: u32, lon: i32) { // c:27
 /// Unlinks `current` from the global `mathfuncs` list and frees it.
 /// Rust port: `previous` is unused since the underlying HashMap
 /// removal doesn't need predecessor tracking.
-pub fn removemathfunc(table: &mut ModuleTable, _previous: Option<&MathFunc>, current: &MathFunc) -> i32 { // c:1267
-    table.autoload_mathfuncs.remove(current.name);                       // c:1269-1276
-    0
-}
+// `removemathfunc(table, &MathFunc, &MathFunc)` deleted — Rust-only
+// port that took the deleted PascalCase `MathFunc` struct. C
+// `removemathfunc(MathFunc previous, MathFunc current)` at
+// module.c:1267 unlinks `current` from the global `mathfuncs`
+// linked list (ported here as `MATHFUNCS`) — a re-port operating
+// on `zsh_h::mathfunc` belongs alongside `addmathfunc` above.
 
 /// Port of `require_module()` from `Src/module.c:3338`.
 ///
@@ -2507,86 +2359,15 @@ pub fn ensurefeature(table: &mut ModuleTable, modname: &str, prefix: &str, featu
     }
 }
 
-/// Port of `setbuiltins()` from `Src/module.c:501`.
-///
-/// Add (`e[i] != 0`) or remove (`e[i] == 0`) each builtin in
-/// `binl` from the runtime hash table. Passing `None` for `e`
-/// disables every builtin. C source flips `BINF_ADDED` and inserts
-/// into / removes from `builtintab`; zshrs's static-linkage model
-/// makes the in-memory hash table fixed at build time, so this is
-/// a no-op returning 0 (success). The `enable -n` / `disable`
-/// builtins handle per-name disable through a different path.
-pub fn setbuiltins(_nam: &str, _binl: &[Builtin], _e: Option<&[i32]>) -> i32 {
-    0
-}
-
-/// Port of `setconddefs()` from `Src/module.c:754`.
-///
-/// Same shape as `setbuiltins` but for conditions. No-op in
-/// zshrs's static-linkage model.
-pub fn setconddefs(_nam: &str, _cdl: &[Conddef], _e: Option<&[i32]>) -> i32 {
-    0
-}
-
-/// Port of `setfeatureenables()` from `Src/module.c:3350`.
-///
-/// Add or remove the concrete features per the corresponding
-/// element of `e`. C dispatches each feature kind to its own
-/// helper (`setbuiltins`, `setconddefs`, `setmathfuncs`,
-/// `setparamdefs`); zshrs links modules statically so disabling /
-/// enabling individual features at module-cleanup time is a no-op
-/// (`enable -n NAME` / `disable NAME` go through a different path).
-/// Returns 0 (success) — same as C's `ret = 0` no-failure path.
-pub fn setfeatureenables(m: &Module, f: &Features, e: Option<&[i32]>) -> i32 {
-    let mut ret = 0;
-    let mut idx = 0usize;
-    if !f.bn_list.is_empty() {
-        let slice = e.map(|all| &all[idx..idx + f.bn_list.len()]);
-        if setbuiltins(&m.name, f.bn_list, slice) != 0 {
-            ret = 1;
-        }
-        idx += f.bn_list.len();
-    }
-    if !f.cd_list.is_empty() {
-        let slice = e.map(|all| &all[idx..idx + f.cd_list.len()]);
-        if setconddefs(&m.name, f.cd_list, slice) != 0 {
-            ret = 1;
-        }
-        idx += f.cd_list.len();
-    }
-    if !f.mf_list.is_empty() {
-        let slice = e.map(|all| &all[idx..idx + f.mf_list.len()]);
-        if setmathfuncs(&m.name, f.mf_list, slice) != 0 {
-            ret = 1;
-        }
-        idx += f.mf_list.len();
-    }
-    if !f.pd_list.is_empty() {
-        let slice = e.map(|all| &all[idx..idx + f.pd_list.len()]);
-        if setparamdefs(&m.name, f.pd_list, slice) != 0 {
-            ret = 1;
-        }
-        idx += f.pd_list.len();
-    }
-    let _ = idx;
-    ret
-}
-
-/// Port of `setmathfuncs()` from `Src/module.c:1374`.
-///
-/// Same shape as `setbuiltins` but for math functions. No-op in
-/// zshrs's static-linkage model.
-pub fn setmathfuncs(_nam: &str, _mfl: &[MathFunc], _e: Option<&[i32]>) -> i32 {
-    0
-}
-
-/// Port of `setparamdefs()` from `Src/module.c:1165`.
-///
-/// Same shape as `setbuiltins` but for parameter definitions.
-/// No-op in zshrs's static-linkage model.
-pub fn setparamdefs(_nam: &str, _pdl: &[Paramdef], _e: Option<&[i32]>) -> i32 {
-    0
-}
+// `setbuiltins` / `setconddefs` / `setmathfuncs` / `setparamdefs`
+// / `setfeatureenables` all deleted — Rust-only ports that took
+// the deleted `Builtin` / `Conddef` / `MathFunc` / `Paramdef` /
+// `Module` / `Features` PascalCase structs. C versions
+// (module.c:501/754/1374/1165/3350) flip `*_ADDED` flags and
+// insert/remove from the global hashtabs; per-module Rust files
+// stub these locally and the canonical free-fn re-ports belong
+// in zsh_h.rs / hashtable.rs once `struct features` carries
+// real pointers.
 
 /// Port of `setup_()` from `Src/module.c:306`.
 ///
