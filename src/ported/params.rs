@@ -23,7 +23,7 @@ use crate::ported::zsh_h::{
     PM_TYPE, PM_SCALAR, PM_NAMEREF, PM_INTEGER, PM_EFLOAT, PM_FFLOAT,
     PM_ARRAY, PM_HASHED, PM_HASHELEM, PM_NAMEDDIR, PM_UNIQUE,
     PM_READONLY, PM_UNSET, PM_EXPORTED, PM_AUTOLOAD, PM_DEFAULTED,
-    PM_DECLARED, PM_REMOVABLE, PM_NORESTORE, PM_LOCAL,
+    PM_DECLARED, PM_REMOVABLE, PM_NORESTORE, PM_LOCAL, PM_RO_BY_DESIGN,
     PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_UPPER,
     SCANPM_CHECKING, SCANPM_MATCHMANY, SCANPM_MATCHKEY, SCANPM_MATCHVAL,
     SCANPM_KEYMATCH, SCANPM_WANTKEYS, SCANPM_WANTVALS, SCANPM_ARRONLY,
@@ -6395,9 +6395,13 @@ pub fn printparamnode(p: &mut crate::ported::zsh_h::param, mut printflags: i32) 
         return;
     }
     if (f & PM_UNSET) != 0 {
+        // c:6133-6143 — POSIX readonly/exported keep + PM_DEFAULTED
+        // path: show as readonly/exported even if unset, with no
+        // value (NAMEONLY).
         let posix_keep = (printflags & (PRINT_POSIX_READONLY | PRINT_POSIX_EXPORT)) != 0
             && (f & (PM_READONLY | PM_EXPORTED)) != 0;
-        if posix_keep {
+        let defaulted = (f & PM_DEFAULTED) == PM_DEFAULTED;                  // c:6137
+        if posix_keep || defaulted {
             printflags |= PRINT_NAMEONLY;
         } else {
             return;
@@ -6409,6 +6413,16 @@ pub fn printparamnode(p: &mut crate::ported::zsh_h::param, mut printflags: i32) 
     if (printflags & (PRINT_TYPESET | PRINT_POSIX_READONLY | PRINT_POSIX_EXPORT)) != 0 {
         if (f & PM_AUTOLOAD) != 0 {
             return;
+        }
+        // c:6157-6163 — PM_RO_BY_DESIGN with level check.
+        if (f & PM_RO_BY_DESIGN) != 0 {
+            // C uses `locallevel` global; the Rust port treats it as 0
+            // until that global is wired. With locallevel==0, suppress
+            // unless p.level == 0 (matches the C "show anyway in scope
+            // of declaration" path).
+            if p.level != 0 {
+                return;
+            }
         }
         if (printflags & PRINT_POSIX_EXPORT) != 0 {
             if (f & PM_EXPORTED) == 0 { return; }
