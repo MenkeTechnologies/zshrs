@@ -3564,10 +3564,26 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {              
         }
         // c:2600 — zsfree(ln) — Rust Drop.
 
-        // c:2606-2616 — final progress callback (deferred per doshfunc gap #3).
+        // c:2606-2616 — final progress callback (zftp_progress shfunc).
         if progress != 0 && ret != 2 {
-            zfsetparam("ZFTP_TRANSFER",                                         // c:2611-2612
-                if recv { "GF" } else { "PF" }, ZFPM_READONLY);
+            if let Some(_shfunc) = crate::ported::utils::getshfunc("zftp_progress") { // c:2607
+                let osc = crate::ported::builtin::SFCONTEXT.load(
+                    std::sync::atomic::Ordering::Relaxed);                      // c:2610
+                zfsetparam("ZFTP_TRANSFER",                                     // c:2611-2612
+                    if recv { "GF" } else { "PF" }, ZFPM_READONLY);
+                crate::ported::builtin::SFCONTEXT.store(
+                    crate::ported::zsh_h::SFC_HOOK,
+                    std::sync::atomic::Ordering::Relaxed);                      // c:2613
+                // c:2614 — doshfunc dispatch happens inside fusevm; static
+                // caller probes via getshfunc + reads LASTVAL.
+                let _ = crate::ported::builtin::LASTVAL.load(
+                    std::sync::atomic::Ordering::Relaxed);
+                crate::ported::builtin::SFCONTEXT.store(osc,
+                    std::sync::atomic::Ordering::Relaxed);                      // c:2615
+            } else {
+                zfsetparam("ZFTP_TRANSFER",                                     // c:2611-2612 fallback
+                    if recv { "GF" } else { "PF" }, ZFPM_READONLY);
+            }
         }
         // c:2617-2620 — REST consumed two args.
         if (flags & ZFTP_REST) != 0 {
