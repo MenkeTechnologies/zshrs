@@ -1144,8 +1144,8 @@ pub fn fixunmeta(zle: &mut Zle) {                                            // 
         crate::ported::zle::compcore::LASTCHAR.store((b'\n' as i32) as i32, std::sync::atomic::Ordering::SeqCst);
     }
     // c:140 — `lastchar_wide = (ZLE_INT_T)lastchar`. Sync wide.
-    zle.lastchar_wide = crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst);
-    zle.lastchar_wide_valid = true;
+    crate::ported::zle::zle_main::LASTCHAR_WIDE.store((crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst)) as i32, std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// Port of `gosmacstransposechars()` from Src/Zle/zle_misc.c:274.
@@ -1752,12 +1752,12 @@ pub fn scancompcmd(name: &str) -> i32 {                                      // 
 /// and the ASCII-promotion is the correct fallback for the rare
 /// case where a widget sets `lastchar` directly.
 pub fn selfinsert(zle: &mut Zle) -> i32 {                                    // c:112
-    if !zle.lastchar_wide_valid {                                            // c:118
-        zle.lastchar_wide = crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst);
-        zle.lastchar_wide_valid = true;
+    if !(crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.load(std::sync::atomic::Ordering::SeqCst) != 0) {                                            // c:118
+        crate::ported::zle::zle_main::LASTCHAR_WIDE.store((crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst)) as i32, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
     }
     // c:123 — `tmp = LASTFULLCHAR; doinsert(&tmp, 1)`.
-    if let Some(c) = char::from_u32(zle.lastchar_wide as u32) {
+    if let Some(c) = char::from_u32(crate::ported::zle::zle_main::LASTCHAR_WIDE.load(std::sync::atomic::Ordering::SeqCst) as u32) {
         zle.self_insert(c);
     }
     0                                                                        // c:125
@@ -2379,7 +2379,7 @@ mod tests {
         z.zlell = 3;
         z.zlecs = 1;
         crate::ported::zle::compcore::LASTCHAR.store((b'X' as i32) as i32, std::sync::atomic::Ordering::SeqCst);
-        z.lastchar_wide_valid = false;
+        crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(0, std::sync::atomic::Ordering::SeqCst);
         selfinsert(&mut z);
         let s: String = z.zleline.iter().collect();
         assert_eq!(s, "aXbc");
@@ -2392,7 +2392,7 @@ mod tests {
         z.zlell = 2;
         z.zlecs = 1;
         crate::ported::zle::compcore::LASTCHAR.store((0x80 | b'X' as i32) as i32, std::sync::atomic::Ordering::SeqCst);
-        z.lastchar_wide_valid = false;
+        crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(0, std::sync::atomic::Ordering::SeqCst);
         selfinsertunmeta(&mut z);
         let s: String = z.zleline.iter().collect();
         assert_eq!(s, "aXb");
