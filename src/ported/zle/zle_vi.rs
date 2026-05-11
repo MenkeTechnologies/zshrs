@@ -2,7 +2,7 @@
 //!
 //! Direct port from zsh/Src/Zle/zle_vi.c
 
-use super::zle_main::{ModifierFlags, Zle};
+use super::zle_main::Zle; use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
 
 // Note: dead `ViState` / `ViChange` / `ViPendingOp` aggregates
 // removed per PORT_PLAN Phase 2. They had zero references across the
@@ -30,7 +30,7 @@ impl Zle {
     /// otherwise 1 — the default-1 fall-through that initmodifier
     /// installs (zle_main.c:1604).
     pub fn vi_get_arg(&self) -> i32 {
-        if self.zmod.flags.contains(ModifierFlags::MULT) {
+        if self.zmod.flags & MOD_MULT != 0 {
             self.zmod.mult
         } else {
             1
@@ -1198,8 +1198,8 @@ pub fn vidigitorbeginningofline(zle: &mut crate::ported::zle::zle_main::Zle) -> 
     // C body: `if (zmod.flags & MOD_TMULT) return digitargument(args);
     //          else { removesuffix(); invalidatelist();
     //                 return vibeginningofline(args); }`.
-    use crate::ported::zle::zle_main::ModifierFlags;
-    if zle.zmod.flags.contains(ModifierFlags::TMULT) {
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
+    if zle.zmod.flags & MOD_TMULT != 0 {
         return crate::ported::zle::zle_misc::digitargument(zle);
     }
     crate::ported::zle::zle_move::vibeginningofline(zle)
@@ -1455,7 +1455,7 @@ pub fn visetbuffer(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // 
     // C body: read one char as the vi buffer name (a-z or 1-9 or '"');
     //         set zmod.vibuf for the next yank/cut. Without vigetkey
     //         interactive read, use lastchar.
-    use crate::ported::zle::zle_main::ModifierFlags;
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     let c = (zle.lastchar & 0xff) as u8;
     let idx: i32 = if c.is_ascii_digit() {
         (c - b'0') as i32 + 26
@@ -1463,13 +1463,13 @@ pub fn visetbuffer(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // 
         (c - b'a') as i32
     } else if c.is_ascii_uppercase() {
         // uppercase = append to register
-        zle.zmod.flags.insert(ModifierFlags::VIAPP);
+        zle.zmod.flags |= MOD_VIAPP;
         (c - b'A') as i32
     } else {
         return 1;
     };
     zle.zmod.vibuf = idx;
-    zle.zmod.flags.insert(ModifierFlags::VIBUF);
+    zle.zmod.flags |= MOD_VIBUF;
     zle.prefixflag = true;
     0
 }

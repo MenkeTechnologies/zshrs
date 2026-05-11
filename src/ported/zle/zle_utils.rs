@@ -957,13 +957,13 @@ pub fn cut(zle: &mut crate::ported::zle::zle_main::Zle, i: i32,              // 
 /// Port of `cuttext()` from Src/Zle/zle_utils.c:946.
 pub fn cuttext(zle: &mut crate::ported::zle::zle_main::Zle, txt: &[char],    // c:946
                dir: i32) {
-    use crate::ported::zle::zle_main::ModifierFlags;
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     // C body c:948-1043 — pushes `txt` into vibuf[zmod.vibuf] when
     //                     MOD_VIBUF is set, else front of killring.
     //                     CUT_APPEND/CUT_REPLACE flag handling skipped
     //                     in this distilled body.
     let chars: Vec<char> = txt.to_vec();
-    if zle.zmod.flags.contains(ModifierFlags::VIBUF) {                       // c:961
+    if zle.zmod.flags & MOD_VIBUF != 0 {                       // c:961
         let idx = zle.zmod.vibuf as usize;
         if idx < zle.vibuf.len() {
             if dir != 0 {

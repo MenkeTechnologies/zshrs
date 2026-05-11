@@ -60,23 +60,23 @@ pub enum ZleContext {
 /// matches `initmodifier()` from Src/Zle/zle_main.c:1604 — mult=1,
 /// tmult=1, base=10 — so a fresh Modifier behaves like the result of
 /// initmodifier() rather than the all-zero Rust derive default.
+/// Direct port of `struct modifier` from `Src/Zle/zle.h:245-251`.
+/// Command modifier prefixes. `Modifier` PascalCase kept since
+/// callers reference it widely; field layout matches C verbatim.
 #[derive(Debug, Clone)]
-pub struct Modifier {
-    pub flags: ModifierFlags,
-    /// Repeat count
-    pub mult: i32,
-    /// Repeat count being edited
-    pub tmult: i32,
-    /// Vi cut buffer
-    pub vibuf: i32,
-    /// Numeric base for digit arguments (usually 10)
-    pub base: i32,
+pub struct Modifier {                                                        // c:245
+    pub flags: i32,                                                          // c:246 int flags
+    pub mult: i32,                                                           // c:247 int mult
+    pub tmult: i32,                                                          // c:248 int tmult
+    pub vibuf: i32,                                                          // c:249 int vibuf
+    pub base: i32,                                                           // c:250 int base
 }
 
 impl Default for Modifier {
     fn default() -> Self {
+        // c:1604 initmodifier — mult=1, tmult=1, base=10.
         Modifier {
-            flags: ModifierFlags::empty(),
+            flags: 0,
             mult: 1,
             tmult: 1,
             vibuf: 0,
@@ -85,31 +85,12 @@ impl Default for Modifier {
     }
 }
 
-bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy, Default)]
-    pub struct ModifierFlags: u32 {
-        /// A repeat count has been selected
-        const MULT = 1 << 0;
-        /// A repeat count is being entered
-        const TMULT = 1 << 1;
-        /// A vi cut buffer has been selected
-        const VIBUF = 1 << 2;
-        /// Appending to the vi cut buffer
-        const VIAPP = 1 << 3;
-        /// Last command was negate argument
-        const NEG = 1 << 4;
-        /// Throw away text for the vi cut buffer
-        const NULL = 1 << 5;
-        /// Force character-wise movement
-        const CHAR = 1 << 6;
-        /// Force line-wise movement
-        const LINE = 1 << 7;
-        /// OS primary selection for the vi cut buffer
-        const PRI = 1 << 8;
-        /// OS clipboard for the vi cut buffer
-        const CLIP = 1 << 9;
-    }
-}
+use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
+
+// `ModifierFlags` bitflags wrapper deleted — C uses bare `int flags`
+// in `struct modifier` (zle.h:246) with the `MOD_*` bit constants
+// at zle.h:253-263, already legit-ported in zle_h.rs:371-381.
+// Modifier.flags is now `i32` matching C verbatim.
 
 /// Direct port of `struct change` from `Src/Zle/zle.h:284-294`.
 /// Undo change record. `ChangeFlags` bitflags wrapper deleted —
@@ -1049,7 +1030,7 @@ impl Zle {
     /// invocations multiply (1→4→16→64) instead of staying at 0.
     pub fn initmodifier(&mut self) {
         self.zmod = Modifier {
-            flags: ModifierFlags::empty(),
+            flags: 0,
             mult: 1,
             tmult: 1,
             vibuf: 0,
@@ -1068,9 +1049,9 @@ impl Zle {
     pub fn handleprefixes(&mut self) {
         if self.prefixflag {
             self.prefixflag = false;
-            if self.zmod.flags.contains(ModifierFlags::TMULT) {
-                self.zmod.flags.remove(ModifierFlags::TMULT);
-                self.zmod.flags.insert(ModifierFlags::MULT);
+            if self.zmod.flags & MOD_TMULT != 0 {
+                self.zmod.flags &= !MOD_TMULT;
+                self.zmod.flags |= MOD_MULT;
                 self.zmod.mult = self.zmod.tmult;
             }
         } else {
@@ -1306,7 +1287,7 @@ impl Zle {
 
     /// Get repeat count
     pub fn get_mult(&self) -> i32 {
-        if self.zmod.flags.contains(ModifierFlags::MULT) {
+        if self.zmod.flags & MOD_MULT != 0 {
             self.zmod.mult
         } else {
             1
@@ -1315,12 +1296,12 @@ impl Zle {
 
     /// Toggle negative argument flag
     pub fn toggle_neg_arg(&mut self) {
-        self.zmod.flags.toggle(ModifierFlags::NEG);
+        self.zmod.flags ^= MOD_NEG;
     }
 
     /// Check if negative argument
     pub fn is_neg(&self) -> bool {
-        self.zmod.flags.contains(ModifierFlags::NEG)
+        self.zmod.flags & MOD_NEG != 0
     }
 
     /// Vi command mode flag
@@ -1609,12 +1590,12 @@ mod tests {
     #[test]
     fn handleprefixes_promotes_tmult_to_mult_when_prefixflag_set() {
         let mut zle = Zle::new();
-        zle.zmod.flags.insert(ModifierFlags::TMULT);
+        zle.zmod.flags |= MOD_TMULT;
         zle.zmod.tmult = 7;
         zle.prefixflag = true;
         zle.handleprefixes();
-        assert!(zle.zmod.flags.contains(ModifierFlags::MULT));
-        assert!(!zle.zmod.flags.contains(ModifierFlags::TMULT));
+        assert!(zle.zmod.flags & MOD_MULT != 0);
+        assert!(!zle.zmod.flags & MOD_TMULT != 0);
         assert_eq!(zle.zmod.mult, 7);
         assert!(!zle.prefixflag);
     }
@@ -1622,13 +1603,13 @@ mod tests {
     #[test]
     fn handleprefixes_resets_modifier_when_prefixflag_cleared() {
         let mut zle = Zle::new();
-        zle.zmod.flags.insert(ModifierFlags::MULT);
+        zle.zmod.flags |= MOD_MULT;
         zle.zmod.mult = 9;
         zle.prefixflag = false;
         zle.handleprefixes();
         // initmodifier resets to defaults: mult=1, no flags.
         assert_eq!(zle.zmod.mult, 1);
-        assert!(!zle.zmod.flags.contains(ModifierFlags::MULT));
+        assert!(!zle.zmod.flags & MOD_MULT != 0);
     }
 
     #[test]
