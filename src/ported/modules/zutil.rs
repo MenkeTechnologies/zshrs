@@ -61,163 +61,106 @@ pub struct MatchData {
     pub mend: Option<Vec<String>>,
 }
 
-/// One pattern→values entry for a `zstyle` style.
-/// Port of `struct stypat` from Src/Modules/zutil.c — `setstypat()`
-/// (line 295) creates entries, `addstyle()` (line 403) inserts them
-/// into the style table, `lookupstyle()` (line 443) walks them in
-/// weight order. Same `weight` formula as the C source.
-#[derive(Debug, Clone)]
-pub struct StylePattern {
-    pub pattern: String,
-    pub weight: u64,
-    pub values: Vec<String>,
-    pub eval: bool,
+/// `zstyle` storage table.
+/// Port of the `zstyletab` HashTable Src/Modules/zutil.c builds —
+/// `newzstyletable()` (line 270) creates it, `bin_zstyle()`
+/// (line 487) drives every mutation. Stores `stypat` entries
+/// (port of C `struct stypat`, zutil.c:95) per style name,
+/// weight-sorted so the most specific pattern wins.
+#[derive(Debug, Default)]
+pub struct StyleTable {
+    styles: HashMap<String, Vec<stypat>>,
 }
 
-impl StylePattern {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zutil.c`.
-    pub fn new(pattern: &str, values: Vec<String>, eval: bool) -> Self {
-        let weight = Self::calculate_weight(pattern);
-        Self {
-            pattern: pattern.to_string(),
-            weight,
-            values,
-            eval,
-        }
+impl StyleTable {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    /// Port of `setstypat()` from `Src/Modules/zutil.c:295`.
-    fn calculate_weight(pattern: &str) -> u64 {
+    /// Insert or replace a pattern→values mapping for a style.
+    /// Mirrors Src/Modules/zutil.c:295 `setstypat` + c:403 `addstyle`
+    /// — find or create the style's pats list, replace if pattern
+    /// already present, else insert in weight-descending order.
+    pub fn set(&mut self, pattern: &str, style: &str, values: Vec<String>, eval: bool) {
+        let style_patterns = self.styles.entry(style.to_string()).or_default();
+        // c:319-333 — Exists → replace.
+        if let Some(existing) = style_patterns.iter_mut().find(|p| p.pat == pattern) {
+            existing.vals = values;                                           // c:328
+            existing.eval = if eval { Some(()) } else { None };               // c:329
+            return;
+        }
+        // c:344-385 — Calculate weight: high 32 bits = colon-component
+        // count, low 32 bits = sum of per-component specificity (0/1/2).
         let mut weight: u64 = 0;
-        let mut tmp = 2u64;
+        let mut tmp: u64 = 2;
         let mut first = true;
-
         for ch in pattern.chars() {
-            if first && ch == '*' {
+            if first && ch == '*' {                                           // c:365
                 tmp = 0;
                 continue;
             }
             first = false;
-
-            if ch == '('
-                || ch == '|'
-                || ch == '*'
-                || ch == '['
-                || ch == '<'
-                || ch == '?'
-                || ch == '#'
-                || ch == '^'
-            {
+            if matches!(ch, '(' | '|' | '*' | '[' | '<' | '?' | '#' | '^') {  // c:372
                 tmp = 1;
             }
-
-            if ch == ':' {
-                weight += 1 << 32;
+            if ch == ':' {                                                    // c:377
+                weight += 1u64 << 32;                                         // c:379
                 first = true;
                 weight += tmp;
                 tmp = 2;
             }
         }
-        weight + tmp
+        weight += tmp;                                                        // c:386
+        // c:337-342 — New pattern: build stypat.
+        let sp = stypat {
+            next: None,                                                       // c:342
+            pat: pattern.to_string(),                                         // c:338
+            prog: None,                                                       // c:339 (Patprog not yet ported)
+            weight,                                                           // c:386
+            eval: if eval { Some(()) } else { None },                         // c:341
+            vals: values,                                                     // c:340
+        };
+        // c:388-396 — insert q in weight-descending order (highest first).
+        let pos = style_patterns
+            .iter()
+            .position(|p| p.weight < weight)
+            .unwrap_or(style_patterns.len());
+        style_patterns.insert(pos, sp);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zutil.c`.
-    pub fn matches(&self, context: &str) -> bool {
-        if self.pattern == "*" {
-            return true;
-        }
-
-        let regex_pattern = setstypat(&self.pattern);
-        if let Ok(re) = Regex::new(&regex_pattern) {
-            re.is_match(context)
-        } else {
-            self.pattern == context
-        }
-    }
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/zutil.c`.
-fn setstypat(pattern: &str) -> String {
-    let mut result = String::from("^");
-    for ch in pattern.chars() {
-        match ch {
-            '*' => result.push_str(".*"),
-            '?' => result.push('.'),
-            '.' | '+' | '(' | ')' | '[' | ']' | '{' | '}' | '^' | '$' | '|' | '\\' => {
-                result.push('\\');
-                result.push(ch);
-            }
-            _ => result.push(ch),
-        }
-    }
-    result.push('$');
-    result
-}
-
-/// `zstyle` storage table.
-/// Port of the `zstyletab` HashTable Src/Modules/zutil.c builds —
-/// `newzstyletable()` (line 270) creates it, `bin_zstyle()`
-/// (line 487) drives every mutation. Same per-style insertion
-/// semantics: weight-sorted so the most specific pattern wins.
-#[derive(Debug, Default)]
-pub struct StyleTable {
-    styles: HashMap<String, Vec<StylePattern>>,
-}
-
-impl StyleTable {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zutil.c`.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zutil.c`.
-    pub fn set(&mut self, pattern: &str, style: &str, values: Vec<String>, eval: bool) {
-        let style_patterns = self.styles.entry(style.to_string()).or_default();
-
-        if let Some(existing) = style_patterns.iter_mut().find(|p| p.pattern == pattern) {
-            existing.values = values;
-            existing.eval = eval;
-        } else {
-            let sp = StylePattern::new(pattern, values, eval);
-            let weight = sp.weight;
-            let pos = style_patterns
-                .iter()
-                .position(|p| p.weight < weight)
-                .unwrap_or(style_patterns.len());
-            style_patterns.insert(pos, sp);
-        }
-    }
-
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zutil.c`.
+    /// Look up the values for (context, style). Mirrors
+    /// Src/Modules/zutil.c:443 `lookupstyle` — walk the style's pats
+    /// list, return values from the first weight-sorted entry whose
+    /// pat matches the context.
     pub fn get(&self, context: &str, style: &str) -> Option<&[String]> {
         self.styles.get(style).and_then(|patterns| {
             patterns
                 .iter()
-                .find(|p| p.matches(context))
-                .map(|p| p.values.as_slice())
+                .find(|p| {
+                    if p.pat == "*" {
+                        true
+                    } else {
+                        crate::ported::pattern::patmatch(&p.pat, context)
+                    }
+                })
+                .map(|p| p.vals.as_slice())
         })
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zutil.c`.
+    /// Remove style/pattern entries from the table. Mirrors the
+    /// `-d` dispatch arms of `bin_zstyle` (Src/Modules/zutil.c:487).
     pub fn delete(&mut self, pattern: Option<&str>, style: Option<&str>) {
         match (pattern, style) {
             (None, None) => self.styles.clear(),
             (Some(pat), None) => {
                 for patterns in self.styles.values_mut() {
-                    patterns.retain(|p| p.pattern != pat);
+                    patterns.retain(|p| p.pat != pat);
                 }
                 self.styles.retain(|_, v| !v.is_empty());
             }
             (Some(pat), Some(sty)) => {
                 if let Some(patterns) = self.styles.get_mut(sty) {
-                    patterns.retain(|p| p.pattern != pat);
+                    patterns.retain(|p| p.pat != pat);
                     if patterns.is_empty() {
                         self.styles.remove(sty);
                     }
@@ -229,47 +172,50 @@ impl StyleTable {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zutil.c`.
-    /// Returns `(pattern, style, values)` triples — the order matches
-    /// how zsh prints `zstyle -L` lines (`zstyle <pattern> <style> ...`).
+    /// Return `(pattern, style, values)` triples for `zstyle -L` /
+    /// `zstyle -a` listing. Mirrors bin_zstyle list dispatch
+    /// (Src/Modules/zutil.c:487 -L/-a arms).
     pub fn list(&self, context: Option<&str>) -> Vec<(String, String, Vec<String>)> {
         let mut result = Vec::new();
         for (style, patterns) in &self.styles {
             for pat in patterns {
                 if let Some(ctx) = context {
-                    if !pat.matches(ctx) {
+                    let matches = if pat.pat == "*" {
+                        true
+                    } else {
+                        crate::ported::pattern::patmatch(&pat.pat, ctx)
+                    };
+                    if !matches {
                         continue;
                     }
                 }
-                result.push((pat.pattern.clone(), style.clone(), pat.values.clone()));
+                result.push((pat.pat.clone(), style.clone(), pat.vals.clone()));
             }
         }
         result
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zutil.c`.
+    /// List all registered style names (bin_zstyle -g without args).
     pub fn list_styles(&self) -> Vec<&str> {
         self.styles.keys().map(|s| s.as_str()).collect()
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zutil.c`.
+    /// List all distinct patterns across every style (bin_zstyle -g
+    /// with a single pattern arg).
     pub fn list_patterns(&self) -> Vec<&str> {
         let mut patterns = Vec::new();
         for pats in self.styles.values() {
             for pat in pats {
-                if !patterns.contains(&pat.pattern.as_str()) {
-                    patterns.push(pat.pattern.as_str());
+                if !patterns.contains(&pat.pat.as_str()) {
+                    patterns.push(pat.pat.as_str());
                 }
             }
         }
         patterns
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zutil.c`.
+    /// Boolean-truthy `zstyle -T` / `zstyle -t` check.
+    /// Mirrors bin_zstyle -t / -T arms in Src/Modules/zutil.c:487.
     pub fn test(&self, context: &str, style: &str, values: Option<&[&str]>) -> bool {
         if let Some(found) = self.get(context, style) {
             if let Some(test_vals) = values {
@@ -285,8 +231,8 @@ impl StyleTable {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zutil.c`.
+    /// Single-value "yes/no" interrogation of a style. The `bin_zstyle`
+    /// -b arm of Src/Modules/zutil.c:487.
     pub fn test_bool(&self, context: &str, style: &str) -> Option<bool> {
         self.get(context, style).and_then(|vals| {
             if vals.len() == 1 {
@@ -540,94 +486,25 @@ impl ZFormat {
     }
 } // impl ZFormat
 
-/// Option description for zparseopts
-#[derive(Debug, Clone)]
-/// `zparseopts` option descriptor.
-/// Port of the per-option entries `bin_zparseopts()` from
-/// Src/Modules/zutil.c builds while parsing the `-D`/`-K`/`-E`/
-/// `-M` argument set — the C source uses inline locals; we wrap
-/// them in a struct.
-pub struct OptDesc {
-    pub name: String,
-    pub takes_arg: bool,
-    pub optional_arg: bool,
-    pub multiple: bool,
-    pub array_name: Option<String>,
-}
-
-impl OptDesc {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zutil.c`.
-    pub fn parse(spec: &str) -> Option<Self> {
-        if spec.is_empty() {
-            return None;
-        }
-
-        let mut name = String::new();
-        let mut takes_arg = false;
-        let mut optional_arg = false;
-        let mut multiple = false;
-        let mut array_name = None;
-        let mut chars = spec.chars().peekable();
-
-        while let Some(&ch) = chars.peek() {
-            if ch == '+' {
-                multiple = true;
-                chars.next();
-                break;
-            } else if ch == ':' || ch == '=' {
-                break;
-            } else if ch == '\\' {
-                chars.next();
-                if let Some(c) = chars.next() {
-                    name.push(c);
-                }
-            } else {
-                name.push(ch);
-                chars.next();
-            }
-        }
-
-        if name.is_empty() {
-            return None;
-        }
-
-        if chars.peek() == Some(&':') {
-            takes_arg = true;
-            chars.next();
-            if chars.peek() == Some(&':') {
-                optional_arg = true;
-                chars.next();
-            }
-        }
-
-        if chars.peek() == Some(&'=') {
-            chars.next();
-            array_name = Some(chars.collect());
-        }
-
-        Some(Self {
-            name,
-            takes_arg,
-            optional_arg,
-            multiple,
-            array_name,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Verifies the weight formula matches C's setstypat (zutil.c:344-385):
+    /// component count (high 32 bits) + per-component specificity sum
+    /// (low 32 bits). More specific = higher weight. Drives weight via
+    /// StyleTable::set's inline weight calc (insertion order reflects
+    /// weight ordering — most specific pattern appears first).
     #[test]
     fn test_style_pattern_weight() {
-        let p1 = StylePattern::new("*", vec![], false);
-        let p2 = StylePattern::new(":completion:*", vec![], false);
-        let p3 = StylePattern::new(":completion:zsh:*", vec![], false);
-
-        assert!(p3.weight > p2.weight);
-        assert!(p2.weight > p1.weight);
+        let mut t = StyleTable::new();
+        t.set("*",                  "s", vec!["broad".to_string()], false);
+        t.set(":completion:*",      "s", vec!["mid".to_string()],   false);
+        t.set(":completion:zsh:*",  "s", vec!["narrow".to_string()],false);
+        // Most-specific match wins (sorted descending by weight at insertion).
+        assert_eq!(t.get(":completion:zsh:complete", "s").unwrap()[0], "narrow");
+        assert_eq!(t.get(":completion:bash:complete", "s").unwrap()[0], "mid");
+        assert_eq!(t.get(":other:thing", "s").unwrap()[0], "broad");
     }
 
     #[test]
@@ -643,14 +520,19 @@ mod tests {
         }
     }
 
+    /// Verifies pattern matching via the StyleTable.get path mirrors
+    /// C's lookupstyle (zutil.c:443) walking the pats list for the
+    /// first weight-sorted match.
     #[test]
     fn test_style_pattern_matches() {
-        let p = StylePattern::new(":completion:*", vec![], false);
-        assert!(p.matches(":completion:zsh:complete"));
-        assert!(!p.matches(":other:zsh"));
+        let mut t = StyleTable::new();
+        t.set(":completion:*", "s1", vec!["v".to_string()], false);
+        assert!(t.get(":completion:zsh:complete", "s1").is_some());
+        assert!(t.get(":other:zsh", "s1").is_none());
 
-        let p2 = StylePattern::new("*", vec![], false);
-        assert!(p2.matches("anything"));
+        let mut t2 = StyleTable::new();
+        t2.set("*", "s2", vec!["v".to_string()], false);
+        assert!(t2.get("anything", "s2").is_some());
     }
 
     #[test]
@@ -741,26 +623,6 @@ mod tests {
         assert_eq!(result, "100%");
     }
 
-    #[test]
-    fn test_opt_desc_parse() {
-        let desc = OptDesc::parse("v").unwrap();
-        assert_eq!(desc.name, "v");
-        assert!(!desc.takes_arg);
-
-        let desc = OptDesc::parse("o:").unwrap();
-        assert_eq!(desc.name, "o");
-        assert!(desc.takes_arg);
-        assert!(!desc.optional_arg);
-
-        let desc = OptDesc::parse("o::").unwrap();
-        assert!(desc.optional_arg);
-
-        let desc = OptDesc::parse("v+").unwrap();
-        assert!(desc.multiple);
-
-        let desc = OptDesc::parse("a:=myarray").unwrap();
-        assert_eq!(desc.array_name, Some("myarray".to_string()));
-    }
 }
 
 // ===========================================================
@@ -1140,6 +1002,7 @@ use crate::ported::zsh_h::HashNode;
 // below operate on that existing struct.
 
 /// `Stypat` mirroring Src/Modules/zutil.c:97-104.
+#[derive(Debug)]
 pub struct stypat {
     pub next: Option<Box<stypat>>, // c:98 Stypat next
     pub pat: String,               // c:99 char *pat
