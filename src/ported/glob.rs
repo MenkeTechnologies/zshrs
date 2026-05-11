@@ -379,9 +379,13 @@ impl GlobMatch {
         for spec in specs {
             let cmp = match spec.sort_type {
                 GlobSort::Name => {
-                    use crate::ported::sort::{zstrcmp, flags as sf};
+                    use crate::ported::sort::zstrcmp;
                     if numeric_sort {
-                        zstrcmp(&self.name, &other.name, sf::NUMERIC)
+                        zstrcmp(
+                            &self.name,
+                            &other.name,
+                            crate::zsh_h::SORTIT_NUMERICALLY as u32,
+                        )
                     } else {
                         gmatchcmp(&self.name, &other.name)
                     }
@@ -435,7 +439,11 @@ impl GlobMatch {
                         .map(|s| s.as_str())
                         .unwrap_or("");
                     if numeric_sort {
-                        crate::ported::sort::zstrcmp(a, b, crate::ported::sort::flags::NUMERIC)
+                        crate::ported::sort::zstrcmp(
+                            a,
+                            b,
+                            crate::zsh_h::SORTIT_NUMERICALLY as u32,
+                        )
                     } else {
                         a.cmp(b)
                     }
@@ -3620,10 +3628,11 @@ mod tests {
 
     #[test]
     fn test_zstrcmp_numeric() {
-        use crate::ported::sort::{zstrcmp, flags::NUMERIC};
-        assert_eq!(zstrcmp("file1", "file2", NUMERIC), Ordering::Less);
-        assert_eq!(zstrcmp("file10", "file2", NUMERIC), Ordering::Greater);
-        assert_eq!(zstrcmp("file10", "file10", NUMERIC), Ordering::Equal);
+        use crate::ported::sort::zstrcmp;
+        let n = crate::zsh_h::SORTIT_NUMERICALLY as u32;
+        assert_eq!(zstrcmp("file1", "file2", n), Ordering::Less);
+        assert_eq!(zstrcmp("file10", "file2", n), Ordering::Greater);
+        assert_eq!(zstrcmp("file10", "file10", n), Ordering::Equal);
     }
 }
 
