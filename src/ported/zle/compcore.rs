@@ -971,7 +971,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
     let nm = nmatches.load(Ordering::Relaxed);                               // c:366
     let dm = diffmatches.load(Ordering::Relaxed);
     if iforcemenu.load(Ordering::Relaxed) != 0 {                             // c:366
-        if nm != 0 { do_ambig_menu_stub(); }                                 // c:367
+        if nm != 0 { { let _ = crate::ported::zle::compresult::do_ambig_menu(); }; }                                 // c:367
         ret = if nm == 0 { 1 } else { 0 };                                   // c:369
     } else if useline.load(Ordering::Relaxed) < 0 {                          // c:370
         unmetafy_line_stub();
@@ -986,16 +986,49 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
         ZLEMETACS.store(crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::Relaxed), Ordering::Relaxed);                   // c:378
         crate::ported::zle::zle_refresh::SHOWINGLIST.store(-2, Ordering::Relaxed);                                                 // c:379
     } else if useline.load(Ordering::Relaxed) == 2 && nm > 1 {               // c:380
-        do_allmatches_stub(1);                                               // c:381
+        // c:381 — `do_allmatches(1)`. Inlined: build flat match list
+        // from `amatches` and dispatch to compresult::do_allmatches.
+        {
+            let groups = amatches.get_or_init(|| Mutex::new(Vec::new()))
+                .lock().map(|g| g.clone()).unwrap_or_default();
+            let mut all: Vec<String> = Vec::new();
+            for g in groups {
+                for m in g.matches {
+                    if let Some(s) = m.str_ { all.push(s); }
+                }
+            }
+            let buf = ZLEMETALINE.get_or_init(|| Mutex::new(String::new()))
+                .lock().map(|g| g.clone()).unwrap_or_default();
+            let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
+            let wb = WB.load(Ordering::Relaxed) as usize;
+            let we = WE.load(Ordering::Relaxed) as usize;
+            let (new_buf, new_cs) = crate::ported::zle::compresult::do_allmatches(
+                &buf, cs, wb, we, &all, " ",
+            );
+            if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
+                *g = new_buf;
+                ZLEMETALL.store(g.len() as i32, Ordering::Relaxed);
+            }
+            ZLEMETACS.store(new_cs as i32, Ordering::Relaxed);
+        }
         minfo_clear_cur();                                                   // c:383
         if forcelist.load(Ordering::Relaxed) != 0 {                          // c:385
             crate::ported::zle::zle_refresh::SHOWINGLIST.store(-2, Ordering::Relaxed);
         } else {
-            invalidatelist_stub();                                           // c:388
+            crate::ported::zle::zle_h::invalidatelist();                                           // c:388
         }
     } else if useline.load(Ordering::Relaxed) != 0 {                         // c:389
         if nm > 1 && dm != 0 {                                               // c:391
-            ret = do_ambiguous_stub();                                       // c:393
+            // c:393 — `ret = do_ambiguous()`. Inlined: flatten `amatches`
+            // into &[String] and dispatch.
+            ret = {
+                let groups = amatches.get_or_init(|| Mutex::new(Vec::new()))
+                    .lock().map(|g| g.clone()).unwrap_or_default();
+                let all: Vec<String> = groups.into_iter()
+                    .flat_map(|g| g.matches.into_iter().filter_map(|m| m.str_))
+                    .collect();
+                crate::ported::zle::compresult::do_ambiguous(&all)
+            };
             if crate::ported::zle::zle_refresh::SHOWINGLIST.load(Ordering::Relaxed) == 0
                 && uselist.load(Ordering::Relaxed) != 0
                 && crate::ported::zle::zle_refresh::LISTSHOWN.load(Ordering::Relaxed) != 0
@@ -1014,7 +1047,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
                     crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed);
                 }
             } else {
-                invalidatelist_stub();                                       // c:418
+                crate::ported::zle::zle_h::invalidatelist();                                       // c:418
             }
         } else if nmessages.load(Ordering::Relaxed) != 0
             && forcelist.load(Ordering::Relaxed) != 0
@@ -1026,7 +1059,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
             }
         }
     } else {                                                                 // c:425
-        invalidatelist_stub();                                               // c:426
+        crate::ported::zle::zle_h::invalidatelist();                                               // c:426
         crate::ported::zle::zle_tricky::LASTAMBIG.store(                     // c:427
             opt_isset_stub("BASHAUTOLIST"),
             Ordering::Relaxed,
@@ -1065,7 +1098,12 @@ fn do_single_first_match() {                                                  //
     if let Some(m) = first {
         minfo_clear_cur();                                                   // c:407
         minfo_asked_zero();                                                  // c:408
-        do_single_stub(m);                                                   // c:409
+        // c:409 — `do_single(m)`. Inlined: drop the Cmatch payload onto
+        // MINFO.cur so the listing path picks it up (matches the C
+        // behavior of routing the single-match insert through minfo).
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
+            g.cur = Some(Box::new(m));
+        }
     }
 }
 
@@ -1227,58 +1265,13 @@ pub static MINFO: OnceLock<Mutex<crate::ported::zle::comp_h::Menuinfo>> = OnceLo
 // `set_minfo_cur` deleted — Rust-only wrapper for the C inline
 // write `minfo.cur = &m;`. Callers should inline the
 // `MINFO.lock().cur = Some(Box::new(m))` write directly.
-fn do_ambig_menu_stub() {                                                     // compresult.c:1381
-    let _ = crate::ported::zle::compresult::do_ambig_menu();
-}
-fn do_ambiguous_stub() -> i32 {                                               // compresult.c:744
-    let groups = amatches.get_or_init(|| Mutex::new(Vec::new()))
-        .lock().map(|g| g.clone()).unwrap_or_default();
-    let all: Vec<String> = groups.into_iter()
-        .flat_map(|g| g.matches.into_iter().filter_map(|m| m.str_))
-        .collect();
-    crate::ported::zle::compresult::do_ambiguous(&all)
-}
-/// Bridge to `do_single(Cmatch)` — `Src/Zle/compresult.c:963`. The
-/// real Rust port takes a different shape (positional args); compcore
-/// drops the Cmatch payload onto `MINFO.cur` so the listing path can
-/// pick it up, matching the C behavior of routing the single-match
-/// insert through `minfo`.
-fn do_single_stub(m: Cmatch) {                                                // compresult.c:963
-    if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
-        g.cur = Some(Box::new(m));
-    }
-}
-
-/// Bridge to `do_allmatches(int hide)` — `Src/Zle/compresult.c:897`.
-/// Inserts every match in `amatches` into the line space-separated,
-/// matching the C body's effect even though the real Rust signature
-/// takes `&[String]`.
-fn do_allmatches_stub(_v: i32) {                                              // compresult.c:897
-    let groups = amatches.get_or_init(|| Mutex::new(Vec::new()))
-        .lock().map(|g| g.clone()).unwrap_or_default();
-    let mut all: Vec<String> = Vec::new();
-    for g in groups {
-        for m in g.matches {
-            if let Some(s) = m.str_ { all.push(s); }
-        }
-    }
-    let buf = ZLEMETALINE.get_or_init(|| Mutex::new(String::new()))
-        .lock().map(|g| g.clone()).unwrap_or_default();
-    let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
-    let wb = WB.load(Ordering::Relaxed) as usize;
-    let we = WE.load(Ordering::Relaxed) as usize;
-    let (new_buf, new_cs) = crate::ported::zle::compresult::do_allmatches(
-        &buf, cs, wb, we, &all, " ",
-    );
-    if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
-        *g = new_buf;
-        ZLEMETALL.store(g.len() as i32, Ordering::Relaxed);
-    }
-    ZLEMETACS.store(new_cs as i32, Ordering::Relaxed);
-}
-fn invalidatelist_stub() {                                                    // zle_h.c:402
-    crate::ported::zle::zle_h::invalidatelist();
-}
+// do_ambig_menu_stub deleted — inlined as
+// `{ let _ = crate::ported::zle::compresult::do_ambig_menu(); }`
+// at the single call site (c:367).
+// do_ambiguous_stub / do_single_stub / do_allmatches_stub /
+// invalidatelist_stub deleted — Rust-only glue wrappers, all
+// inlined at their (single) call sites in do_completion / dupmatch.
+// The real C names live as `pub fn` in compresult.rs / zle_h.rs.
 fn opt_isset_stub(name: &str) -> i32 {                                        // options.c
     if crate::ported::options::opt_state_get(name).unwrap_or(false) { 1 } else { 0 }
 }
@@ -1322,9 +1315,9 @@ pub fn callcompfunc(s: &str, fn_name: &str) {                                // 
     use crate::ported::zle::zle_tricky::USEGLOB;
 
     if fn_name.is_empty() { return; }                                        // c:552 getshfunc(NULL)
-    let _lv  = lastval_stub();                                               // c:548 int lv = lastval
-    let _icf = incompfunc_stub();                                            // c:555
-    let _osc = sfcontext_stub();                                             // c:555
+    let _lv  = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);                                               // c:548 int lv = lastval
+    let _icf = crate::ported::utils::INCOMPFUNC.load(Ordering::Relaxed);                                            // c:555
+    let _osc = crate::ported::builtin::SFCONTEXT.load(Ordering::Relaxed);                                             // c:555
 
     let _useglob = USEGLOB.load(Ordering::Relaxed);                          // c:579
 
@@ -1418,15 +1411,9 @@ pub const IN_MATH_LW:    i32 = 3;                                            // 
 pub const IN_PAR_LW:     i32 = 4;                                            // lex.h
 pub const IN_ENV_LW:     i32 = 5;                                            // lex.h
 
-fn lastval_stub() -> i32 {                                                    // init.c via builtin.c
-    crate::ported::builtin::LASTVAL.load(Ordering::Relaxed)
-}
-fn incompfunc_stub() -> i32 {                                                 // utils.c:46
-    crate::ported::utils::INCOMPFUNC.load(Ordering::Relaxed)
-}
-fn sfcontext_stub() -> i32 {                                                  // exec.c:239 via builtin.c
-    crate::ported::builtin::SFCONTEXT.load(Ordering::Relaxed)
-}
+// lastval_stub / incompfunc_stub / sfcontext_stub deleted — inlined
+// at all call sites: LASTVAL.load / INCOMPFUNC.load / SFCONTEXT.load
+// respectively, matching C's inline global reads.
 /// Real call into `doshfunc` — `Src/exec.c`. Looks up the function
 /// in the global shfunctab (`getshfunc`) and dispatches via the VM's
 /// `functions_compiled` map. Returns the function's exit status
