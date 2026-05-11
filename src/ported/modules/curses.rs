@@ -491,11 +491,28 @@ pub(crate) fn zcurses_free_window(name: &str) -> i32 {
 /// Port of `zccmd_init()` from `Src/Modules/curses.c:434`.
 pub(crate) fn zccmd_init(_nam: &str, _args: &[String]) -> i32 {
     if zcurses_getwindowbyname("stdscr") {
-        // C: settyinfo(&curses_tty_state); — restore tty state. The
-        // Rust port skips the gettyinfo/settyinfo dance pending the
-        // termios.c port; the cbreak() call below covers the only
-        // observable termios change.
+        // c:438 — `settyinfo(&curses_tty_state);` — restore the saved
+        // tty state captured during the first init so re-entry doesn't
+        // re-set the termios from scratch.
+        if let Ok(saved) = curses_tty_state.lock() {
+            if let Some(ti) = saved.as_ref() {
+                unsafe {
+                    libc::tcsetattr(0, libc::TCSANOW, ti as *const _);
+                }
+            }
+        }
         return 0;
+    }
+    // c:442-443 — `gettyinfo(&curses_tty_state);` — snapshot initial
+    // termios before we mutate it via cbreak().
+    {
+        let mut saved = curses_tty_state.lock().unwrap();
+        if saved.is_none() {
+            let mut ti: libc::termios = unsafe { std::mem::zeroed() };
+            if unsafe { libc::tcgetattr(0, &mut ti) } == 0 {
+                *saved = Some(ti);
+            }
+        }
     }
     let mut stdout = io::stdout();
     let _ = write!(stdout, "\x1b[?1049h\x1b[2J\x1b[H");
@@ -515,6 +532,13 @@ pub(crate) fn zccmd_init(_nam: &str, _args: &[String]) -> i32 {
         .insert("default/default".into(), 0);
     0
 }
+
+/// `curses_tty_state` — file-static `struct ttyinfo curses_tty_state;`
+/// from Src/Modules/curses.c:75. Snapshotted by gettyinfo at first
+/// init (c:443), restored by settyinfo on re-entry (c:438).
+#[allow(non_upper_case_globals)]
+static curses_tty_state: std::sync::Mutex<Option<libc::termios>> =
+    std::sync::Mutex::new(None);                                              // c:75
 
 // =====================================================================
 // Port of `zccmd_addwin()` from `Src/Modules/curses.c:503`.
