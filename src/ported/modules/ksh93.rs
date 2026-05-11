@@ -525,20 +525,11 @@ pub static varedarg: Mutex<String> = Mutex::new(String::new());
 static funcstack: Mutex<usize> = Mutex::new(0);
 
 // `KSHARRAYS` / `VIMODE` — option indices from `Src/zsh.h`. `isset(X)`
-// macro reads `opts[X]` (zsh.h:1455). Wired through the executor's
-// options map keyed by the canonical lowercase name; index_to_name
-// (options.rs:1991) maps the numeric index to the option name.
+// macro reads `opts[X]` (zsh.h:1455). Stub: false until options.c
+// global table is wired through.
 const KSHARRAYS: i32 = crate::ported::zsh_h::KSHARRAYS;
 const VIMODE:    i32 = crate::ported::zsh_h::VIMODE;
-fn isset(opt: i32) -> bool {                                                  // c:zsh.h:1455 isset(X)
-    let name = match crate::ported::options::index_to_name(opt) {
-        Some(n) => n,
-        None => return false,
-    };
-    crate::exec::try_with_executor(|exec| {
-        exec.options.get(name).copied()
-    }).flatten().unwrap_or(false)
-}
+fn isset(_opt: i32) -> bool { false }
 
 // Port of `getsparam()` from Src/params.c:3076.
 // C: `mod_export char *getsparam(char *s)` →

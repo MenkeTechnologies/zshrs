@@ -1988,7 +1988,7 @@ pub fn list_emulate_options(cmdopts: &std::collections::HashMap<String, bool>,
 /// table, which doesn't exist in the C source — there it's just
 /// implicit in the order of `OPT_*` enum entries paired with the
 /// `optns[]` array. This match collapses both into one lookup.
-pub fn index_to_name(idx: i32) -> Option<&'static str> {
+fn index_to_name(idx: i32) -> Option<&'static str> {
     use crate::ported::zsh_h as zh;
     let i = idx.unsigned_abs() as i32;
     Some(match i {
