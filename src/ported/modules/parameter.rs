@@ -1070,9 +1070,39 @@ use crate::ported::zsh_h::ScanFunc;
 /// from the current line back to the start of history.
 #[allow(non_snake_case)]
 pub fn histwgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> {    // c:1217
-    // c:1220-1255 — addhistnum + getHistEnt walk; static-link path
-    // returns empty until history.rs exposes the iteration.
-    Vec::new()
+    // c:1222-1248 — walk hist_ring newest-to-oldest, slicing words by
+    // the histent.words[iw*2..iw*2+2] byte offsets. zshrs's hist_ring
+    // (hist.rs:27) carries the same `histent` shape (node.nam + words
+    // + nwords); read the lock then iterate.
+    let mut out: Vec<String> = Vec::new();
+    let ring = crate::ported::hist::hist_ring.lock();
+    if let Ok(ring) = ring {
+        // c:1229-1247 — newest entry first.
+        for he in ring.iter().rev() {                                         // c:1229
+            let hstr = he.node.nam.as_bytes();
+            let len = hstr.len() as i32;
+            // c:1232 — for (iw = he->nwords - 1; iw >= 0; iw--)
+            let nwords = he.nwords as i32;
+            let mut iw = nwords - 1;
+            while iw >= 0 {                                                   // c:1232
+                let i2 = (iw as usize) * 2;
+                if i2 + 1 >= he.words.len() {
+                    break;
+                }
+                let wbegin = he.words[i2] as i32;                             // c:1233
+                let wend = he.words[i2 + 1] as i32;                           // c:1234
+                if wbegin < 0 || wbegin >= len || wend < 0 || wend > len {    // c:1236
+                    break;
+                }
+                let slice = &hstr[wbegin as usize .. wend as usize];          // c:1240-1244
+                if let Ok(s) = std::str::from_utf8(slice) {
+                    out.push(s.to_string());                                  // c:1244 addlinknode
+                }
+                iw -= 1;
+            }
+        }
+    }
+    out                                                                       // c:1250 hlinklist2array
 }
 
 /// Port of `patcharsgetfn()` from Src/Modules/parameter.c:911.
