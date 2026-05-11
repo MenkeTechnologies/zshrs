@@ -158,9 +158,19 @@ pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering
 /// Command name entry
 #[derive(Debug, Clone)]
 /// One entry in the command-name (`$cmdtab`) table.
-/// Port of `struct cmdnam` from Src/zsh.h — `addhashnode()` /
-/// `gethashnode()` (Src/hashtable.c lines 157/231) wrap entries
-/// of this shape for `hash`/`rehash`/`unhash` builtin use.
+///
+/// **NOT C-FAITHFUL — field semantics differ from canonical
+/// `crate::ported::zsh_h::cmdnam` (zsh.h:1301-1308).** The C
+/// struct's `name: char **` field stores the FULL $PATH array
+/// on every unhashed entry; this Rust port replaces that with
+/// `dir_index: Option<usize>` storing just an index into the
+/// PATH array maintained on `CmdNameTable` (memory-efficient
+/// but lossy translation). When the canonical `HashTable`
+/// substrate is wired, this struct should switch to the C
+/// shape (`node: hashnode`, `name: Option<Vec<String>>`,
+/// `cmd: Option<String>`) — or the dir_index optimization
+/// gets accepted as an intentional Rust-side divergence with
+/// the same observable semantics.
 pub struct CmdName {
     pub name: String,
     pub flags: u32,
@@ -212,6 +222,15 @@ impl CmdName {
 /// Port of `cmdnamtab` from Src/hashtable.c — `createcmdnamtable()`
 /// (line 601), `emptycmdnamtable()` (line 623), and `hashdir()`
 /// (line 634) drive populate/clear/fill cycles.
+/// **NOT C-FAITHFUL — Rust-only typed wrapper around HashMap.**
+/// C uses the generic `HashTable` struct (zsh.h:1530 / zsh_h.rs:535)
+/// with per-table GSU callback fn pointers (`hash`/`addnode`/
+/// `getnode`/`removenode`/`freenode`/`printnode`/`scantab`). Each
+/// per-table accessor (`cmdnamtab_lock`, `shfunctab_lock`, etc.)
+/// returns a `Mutex<HashTable>` instance with the appropriate
+/// callbacks wired. When the generic-HashTable substrate lands,
+/// CmdNameTable/ShFuncTable/ReswdTable/AliasTable get deleted
+/// in favor of typed views over the shared `HashTable` storage.
 pub struct CmdNameTable {
     table: HashMap<String, CmdName>,
     path_checked_index: usize,
@@ -354,11 +373,18 @@ impl Default for CmdNameTable {
     }
 }
 
-/// Shell function entry
+/// Shell function entry.
+///
+/// **NOT C-FAITHFUL — field shape differs from canonical
+/// `crate::ported::zsh_h::shfunc` (zsh.h:1316-1325).** Canonical
+/// embeds `node: hashnode` and carries `funcdef: Option<Eprog>`
+/// + `redir: Option<Eprog>` + `sticky: Option<Emulation_options>`
+/// pointing at the compiled wordcode; this Rust port stores raw
+/// source text on `body: Option<String>` and re-parses at first
+/// call. When fusevm bytecode caching lands, this struct should
+/// switch to carry the compiled `Eprog` directly (matching C's
+/// `shf->funcdef`).
 #[derive(Debug, Clone)]
-/// Shell function table entry.
-/// Port of `struct shfunc` from Src/zsh.h — referenced via
-/// `shfunctab` HashTable across Src/builtin.c and Src/exec.c.
 pub struct ShFunc {
     pub name: String,
     pub flags: u32,
@@ -414,6 +440,8 @@ impl ShFunc {
 /// Port of the `shfunctab` HashTable Src/hashtable.c builds —
 /// `printshfuncnode` / `freeshfuncnode` (Src/builtin.c) hang off
 /// the same shape.
+/// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
+/// `CmdNameTable` for the canonical-port direction.
 pub struct ShFuncTable {
     table: HashMap<String, ShFunc>,
 }
@@ -514,6 +542,8 @@ pub use crate::ported::zsh_h::reswd as Reswd;                                // 
 // hash table containing the reserved words                                 // c:1111
 /// Port of the `reswdtab` HashTable from Src/hashtable.c — used
 /// by Src/lex.c to recognize keywords like `if`/`while`/`do`.
+/// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
+/// `CmdNameTable` for the canonical-port direction.
 pub struct ReswdTable {
     table: HashMap<String, Reswd>,
 }
@@ -659,6 +689,8 @@ pub fn createaliasnode(name: &str, text: &str, flags: u32) -> Alias {        // 
 // hash table containing the aliases                                        // c:1174
 /// `bin_alias()` (Src/builtin.c) drives every mutation. Suffix
 /// aliases live in a separate `sufaliastab` instance.
+/// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
+/// `CmdNameTable` for the canonical-port direction.
 pub struct AliasTable {
     table: HashMap<String, Alias>,
 }

@@ -2755,7 +2755,7 @@ pub fn islogin() -> bool {
 }
 
 /// Helper: convert option constant to its name for lookup.
-fn opt_name(opt: i32) -> &'static str {
+pub(crate) fn opt_name(opt: i32) -> &'static str {
     match opt {
         x if x == ALLEXPORT => "allexport",
         x if x == ALWAYSLASTPROMPT => "alwayslastprompt",

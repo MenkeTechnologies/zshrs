@@ -12,6 +12,7 @@
 
 use std::cmp::Ordering;
 use crate::ported::utils::zerr;
+use crate::ported::zsh_h::{isset, GLOBDOTS, EXTENDEDGLOB, CASEGLOB};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, Metadata};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
