@@ -534,7 +534,7 @@ pub struct ShellExecutor {
     /// `%_` in PS4 / prompt expansion to render the cumulative
     /// control-flow context labels in the xtrace prefix
     /// (`if`, `then`, `cmdand`, `cmdor`, `cmdsubst`, …).
-    /// `build_prompt_expand_env` clones this into `PROMPT_EXPAND_ENV` so
+    /// `prompt_tls::sync_from_executor` copies this into per-thread TLS so
     /// the prompt expander sees the live stack.
     /// Direct port of `unsigned char *cmdstack; int cmdsp;` from
     /// `Src/prompt.c:55-58`. Each byte is a `CS_*` value from
@@ -649,6 +649,15 @@ pub struct ShellExecutor {
     /// function is in `functions_compiled` but not here, introspection falls
     /// back to `text::getpermtext(self.functions[name])`.
     pub function_source: HashMap<String, String>,
+    /// `first_body_line - 1` per compiled function — matches inner
+    /// `ZshCompiler::lineno_offset` / zsh `funcstack->flineno` combined with
+    /// relative `$LINENO` for Src/prompt.c:909 `%I`.
+    pub function_line_base: HashMap<String, i64>,
+    /// `scriptfilename` when `BUILTIN_REGISTER_COMPILED_FN` ran — `%x` inside
+    /// a function (prompt.c:931-934) reads `funcstack->filename`.
+    pub function_def_file: HashMap<String, Option<String>>,
+    /// Innermost-last stack of active compiled-call frames for prompt `%I` / `%x`.
+    pub prompt_funcstack: Vec<(String, i64, Option<String>)>,
     /// Scalar→(array, sep) tie table set up by `typeset -T VAR var [SEP]`.
     /// Used by BUILTIN_SET_VAR to split the assigned scalar on `sep` and
     /// mirror it into `array`.
@@ -957,6 +966,9 @@ impl ShellExecutor {
             pending_stdin: None,
             functions_compiled: HashMap::new(),
             function_source: HashMap::new(),
+            function_line_base: HashMap::new(),
+            function_def_file: HashMap::new(),
+            prompt_funcstack: Vec::new(),
             tied_scalar_to_array: HashMap::new(),
             tied_array_to_scalar: HashMap::new(),
             buffer_stack: Vec::new(),
@@ -1186,6 +1198,8 @@ impl ShellExecutor {
     pub fn remove_function(&mut self, name: &str) -> bool {
         let a = self.functions_compiled.remove(name).is_some();
         let c = self.function_source.remove(name).is_some();
+        let _ = self.function_line_base.remove(name);
+        let _ = self.function_def_file.remove(name);
         a || c
     }
 
@@ -1263,6 +1277,14 @@ impl ShellExecutor {
         };
         let saved_zero = self.variables.insert("0".to_string(), display_name);
         self.local_scope_depth += 1;
+        let line_base = self
+            .function_line_base
+            .get(name)
+            .copied()
+            .unwrap_or(0);
+        let def_file = self.function_def_file.get(name).cloned().flatten();
+        self.prompt_funcstack
+            .push((name.to_string(), line_base, def_file));
 
         let mut vm = fusevm::VM::new(chunk);
         register_builtins(&mut vm);
@@ -1272,6 +1294,7 @@ impl ShellExecutor {
         drop(_ctx);
 
         self.positional_params = saved_params;
+        self.prompt_funcstack.pop();
         self.local_scope_depth -= 1;
         match saved_zero {
             Some(v) => {

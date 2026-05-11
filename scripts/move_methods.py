@@ -155,7 +155,6 @@ PHASES: dict[str, dict[str, str]] = {
     # prompt.c -> src/ported/prompt.rs
     # =================================================================
     "prompt": {
-        "build_prompt_expand_env":        "src/exec_shims.rs",
         "apply_prompt_theme":             "src/ported/prompt.rs",
         "expand_prompt_string":           "src/ported/prompt.rs",
         "expand_prompt_string_for_print": "src/ported/prompt.rs",

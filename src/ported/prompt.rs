@@ -1,29 +1,163 @@
-//! Prompt expansion for zshrs
+//! Prompt expansion — control flow follows zsh `Src/prompt.c` (`promptexpand`,
+//! `putpromptchar`). Output is a Rust `String` (C: metafied `char *` + `bp`).
+//! Inpar/Outpar/Nularg handling for `promptexpand(..., ns != 0, ...)` is incomplete.
 //!
-//! Direct port from zsh/Src/prompt.c
-//!
-//! Supports zsh prompt escape sequences:
-//! - %d, %/, %~ - current directory
-//! - %c, %., %C - trailing path components
-//! - %n - username
-//! - %m, %M - hostname
-//! - %l - tty name
-//! - %? - exit status
-//! - %# - privilege indicator
-//! - %h, %! - history number
-//! - %j - number of jobs
-//! - %L - shell level
-//! - %D, %T, %t, %*, %w, %W - date/time
-//! - %B, %b - bold on/off
-//! - %U, %u - underline on/off
-//! - %S, %s - standout on/off
-//! - %F{color}, %f - foreground color
-//! - %K{color}, %k - background color
-//! - %{ %}  - literal escape sequences
-//! - %(x.true.false) - conditional
+//! [`prompt_tls`] holds values C reads as file-scope globals. Call
+//! [`prompt_tls::sync_from_executor`] before expansion when an executor is active.
 
 use std::cell::RefCell;
 use std::env;
+
+/// Thread-local mirrors of zsh globals read during `promptexpand()` (logical
+/// `$PWD`, `$?`, `cmdstack`, …). C uses scattered globals; zshrs uses TLS,
+/// then copies into `buf_vars` for each expansion walk.
+pub(crate) mod prompt_tls {
+    use std::cell::RefCell;
+    use std::env;
+
+    use crate::ported::exec::ShellExecutor;
+
+    thread_local! {
+        pub(super) static PWD: RefCell<String> = const { RefCell::new(String::new()) };
+        pub(super) static HOME: RefCell<String> = const { RefCell::new(String::new()) };
+        pub(super) static USER: RefCell<String> = const { RefCell::new(String::new()) };
+        pub(super) static HOST: RefCell<String> = const { RefCell::new(String::new()) };
+        pub(super) static HOST_SHORT: RefCell<String> = const { RefCell::new(String::new()) };
+        pub(super) static TTY: RefCell<String> = const { RefCell::new(String::new()) };
+        pub(super) static LASTVAL: RefCell<i32> = const { RefCell::new(0) };
+        pub(super) static HISTNUM: RefCell<i64> = const { RefCell::new(1) };
+        pub(super) static SHLVL: RefCell<i32> = const { RefCell::new(1) };
+        pub(super) static NUM_JOBS: RefCell<i32> = const { RefCell::new(0) };
+        pub(super) static IS_ROOT: RefCell<bool> = const { RefCell::new(false) };
+        pub(super) static CMDSTACK: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+        pub(super) static PSVAR: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+        pub(super) static TERM_WIDTH: RefCell<usize> = const { RefCell::new(80) };
+        pub(super) static LINENO: RefCell<i64> = const { RefCell::new(1) };
+        pub(super) static SCRIPTNAME: RefCell<Option<String>> = const { RefCell::new(None) };
+        pub(super) static SCRIPTFILENAME: RefCell<Option<String>> =
+            const { RefCell::new(None) };
+        pub(super) static ARGEXTRA: RefCell<String> = const { RefCell::new(String::new()) };
+        pub(super) static FUNC_LINE_BASE: RefCell<Option<i64>> = const { RefCell::new(None) };
+        pub(super) static FUNCSTACK_FILENAME: RefCell<Option<String>> =
+            const { RefCell::new(None) };
+    }
+
+    /// First-time process snapshot when no executor sync has run on this thread.
+    pub(crate) fn ensure_defaults_from_process_env() {
+        if !PWD.with(|c: &RefCell<String>| c.borrow().is_empty()) {
+            return;
+        }
+        let pwd = env::var("PWD")
+            .ok()
+            .filter(|p| !p.is_empty())
+            .or_else(|| {
+                env::current_dir()
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+            })
+            .unwrap_or_else(|| "/".to_string());
+        let home = env::var("HOME").unwrap_or_default();
+        let user = env::var("USER")
+            .or_else(|_| env::var("LOGNAME"))
+            .unwrap_or_else(|_| "user".to_string());
+        let host = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "localhost".to_string());
+        let host_short = host.split('.').next().unwrap_or(&host).to_string();
+        let tty = std::fs::read_link("/proc/self/fd/0")
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let shlvl = env::var("SHLVL")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1);
+        PWD.with(|c| *c.borrow_mut() = pwd);
+        HOME.with(|c| *c.borrow_mut() = home);
+        USER.with(|c| *c.borrow_mut() = user);
+        HOST.with(|c| *c.borrow_mut() = host);
+        HOST_SHORT.with(|c| *c.borrow_mut() = host_short);
+        TTY.with(|c| *c.borrow_mut() = tty);
+        SHLVL.with(|c| *c.borrow_mut() = shlvl);
+        IS_ROOT.with(|c| *c.borrow_mut() = unsafe { libc::geteuid() } == 0);
+        ARGEXTRA.with(|c| {
+            *c.borrow_mut() = env::args().next().unwrap_or_else(|| "zsh".to_string());
+        });
+    }
+
+    pub(crate) fn sync_from_executor(exec: &ShellExecutor) {
+        let pwd = env::var("PWD")
+            .ok()
+            .filter(|p| !p.is_empty())
+            .or_else(|| {
+                env::current_dir()
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+            })
+            .unwrap_or_else(|| "/".to_string());
+        let home = env::var("HOME").unwrap_or_default();
+        let user = env::var("USER")
+            .or_else(|_| env::var("LOGNAME"))
+            .unwrap_or_else(|_| "user".to_string());
+        let host = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "localhost".to_string());
+        let host_short = host.split('.').next().unwrap_or(&host).to_string();
+        let shlvl = exec
+            .variables
+            .get("SHLVL")
+            .and_then(|s| s.parse().ok())
+            .or_else(|| env::var("SHLVL").ok().and_then(|s| s.parse().ok()))
+            .unwrap_or(1);
+        PWD.with(|c| *c.borrow_mut() = pwd);
+        HOME.with(|c| *c.borrow_mut() = home);
+        USER.with(|c| *c.borrow_mut() = user);
+        HOST.with(|c| *c.borrow_mut() = host);
+        HOST_SHORT.with(|c| *c.borrow_mut() = host_short);
+        TTY.with(|c| c.borrow_mut().clear());
+        LASTVAL.with(|c| *c.borrow_mut() = exec.last_status);
+        HISTNUM.with(|c| *c.borrow_mut() = exec.session_histnum);
+        SHLVL.with(|c| *c.borrow_mut() = shlvl);
+        NUM_JOBS.with(|c| *c.borrow_mut() = exec.jobs.list().len() as i32);
+        IS_ROOT.with(|c| *c.borrow_mut() = unsafe { libc::geteuid() } == 0);
+        CMDSTACK.with(|c| *c.borrow_mut() = exec.cmd_stack.clone());
+        PSVAR.with(|c| *c.borrow_mut() = exec.get_psvar());
+        TERM_WIDTH.with(|c| *c.borrow_mut() = exec.get_term_width());
+        LINENO.with(|c| {
+            *c.borrow_mut() = exec
+                .variables
+                .get("LINENO")
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(1);
+        });
+        SCRIPTNAME.with(|c| {
+            *c.borrow_mut() = exec
+                .scriptname
+                .clone()
+                .or_else(|| exec.variables.get("0").cloned());
+        });
+        FUNC_LINE_BASE.with(|c| *c.borrow_mut() = exec.prompt_funcstack.last().map(|(_, b, _)| *b));
+        FUNCSTACK_FILENAME.with(|c| {
+            *c.borrow_mut() = exec
+                .prompt_funcstack
+                .last()
+                .and_then(|(_, _, f)| f.clone());
+        });
+        SCRIPTFILENAME.with(|c| {
+            *c.borrow_mut() = exec
+                .scriptfilename
+                .clone()
+                .or_else(|| exec.scriptname.clone())
+                .or_else(|| exec.variables.get("0").cloned());
+        });
+        ARGEXTRA.with(|c| {
+            *c.borrow_mut() = exec
+                .variables
+                .get("ZSH_ARGZERO")
+                .cloned()
+                .unwrap_or_else(|| env::args().next().unwrap_or_else(|| "zsh".to_string()));
+        });
+    }
+}
 
 // `pub enum CmdState` + `impl CmdState { from_u8, name }` —
 // DELETED per user directive ("CmdState fake"). Was a Rust-only
@@ -113,75 +247,6 @@ pub const COLOR_CYAN:    Color = 6; // c:1885
 pub const COLOR_WHITE:   Color = 7; // c:1885
 pub const COLOR_DEFAULT: Color = COLOUR_DEFAULT as Color; // c:1909
 
-// Colour helpers as `macro_rules!` — C does these as inline
-// bit-twiddling at each call site (no `fn` indirection in
-// Src/prompt.c). Macros preserve port fidelity.
-
-/// Pack an `(r, g, b)` triplet into a `Color` with the 24-bit
-/// flag set. Mirrors C's `attr |= TXTFGCOLOUR | TXT_ATTR_FG_24BIT
-/// | (((zattr)r<<16|g<<8|b) << TXT_ATTR_FG_COL_SHIFT)` idiom
-/// scattered across `Src/prompt.c:2380-2440`.
-macro_rules! color_rgb {
-    ($r:expr, $g:expr, $b:expr) => {{
-        COLOR_24BIT
-            | (($r as Color) << 16)
-            | (($g as Color) << 8)
-            | ($b as Color)
-    }};
-}
-
-/// Decode RGB from a `Color` if its 24-bit flag is set, else `None`.
-/// Inline expression form — C tests the bit directly at the call site.
-macro_rules! color_get_rgb {
-    ($c:expr) => {{
-        let c: Color = $c;
-        if c & COLOR_24BIT == 0 { None }
-        else { Some((((c >> 16) & 0xff) as u8, ((c >> 8) & 0xff) as u8, (c & 0xff) as u8)) }
-    }};
-}
-
-/// Translate a `Color` into an ANSI escape for FG or BG. Wraps
-/// the dispatch C does inline inside `set_colour_attribute()`
-/// (Src/prompt.c:2440) — 24-bit RGB path vs the `output_colour()`
-/// (c:2136) palette path.
-macro_rules! color_to_ansi {
-    ($c:expr, $is_fg:expr) => {{
-        let c: Color = $c;
-        let is_fg: bool = $is_fg;
-        if let Some((r, g, b)) = color_get_rgb!(c) {
-            let lead = if is_fg { 38 } else { 48 };
-            format!("\x1b[{};2;{};{};{}m", lead, r, g, b)
-        } else {
-            output_colour(c as u8, is_fg)
-        }
-    }};
-}
-
-/// Try parsing `name` as a named colour, palette index, or
-/// `#RRGGBB` hex triplet. Combines `match_named_colour()` (c:1915)
-/// with the `#hex` branch inside `match_colour()` (c:1995-2030).
-/// Inline at the two call sites in `parsehighlight` / `parse_percent`.
-macro_rules! color_from_name {
-    ($name:expr) => {{
-        let name: &str = $name;
-        if let Some(rest) = name.strip_prefix('#') {
-            if rest.len() == 6 {
-                let r = u8::from_str_radix(&rest[0..2], 16).ok();
-                let g = u8::from_str_radix(&rest[2..4], 16).ok();
-                let b = u8::from_str_radix(&rest[4..6], 16).ok();
-                match (r, g, b) {
-                    (Some(r), Some(g), Some(b)) => Some(color_rgb!(r, g, b) as Color),
-                    _ => None,
-                }
-            } else {
-                match_named_colour(name).map(|idx| idx as Color)
-            }
-        } else {
-            match_named_colour(name).map(|idx| idx as Color)
-        }
-    }};
-}
-
 // Defines standard ANSI colour names in index order                        // c:1883
 /// Direct port of `colour_names[]` from `Src/prompt.c:1884-1887`.
 /// Indexed 0-7 = basic ANSI, 8 = "default" sentinel (per
@@ -196,181 +261,100 @@ pub static COLOUR_NAMES: [&str; 9] = [
     "default", // c:1886
 ];
 
-// Bit-twiddling helpers as `macro_rules!` — C uses inline macros
-// (`Src/prompt.c:2350+` does `attr |= TXTFGCOLOUR | ((zattr)idx <<
-// TXT_ATTR_FG_COL_SHIFT)` literally at each call site). Rust
-// equivalent uses `macro_rules!` for the same scope (file-local,
-// no `fn` indirection per port-fidelity rules).
-
-/// Encode a palette index (0..=255) into the FG slot of a `zattr`.
-/// Mirrors `attr |= TXTFGCOLOUR | ((zattr)idx <<
-/// TXT_ATTR_FG_COL_SHIFT)` from `Src/prompt.c:2350+`.
-macro_rules! zattr_set_fg_palette {
-    ($attrs:expr, $idx:expr) => {{
-        let cleared = $attrs & !crate::ported::zsh_h::TXT_ATTR_FG_MASK; // c:2350
-        cleared
-            | crate::ported::zsh_h::TXTFGCOLOUR
-            | (($idx as crate::ported::zsh_h::zattr)
-                << crate::ported::zsh_h::TXT_ATTR_FG_COL_SHIFT)
-    }};
+// Colour / zattr helpers — C inlines these at each call site in Src/prompt.c.
+fn color_rgb(r: u8, g: u8, b: u8) -> Color {
+    COLOR_24BIT | ((r as Color) << 16) | ((g as Color) << 8) | (b as Color)
 }
 
-/// Encode a 24-bit RGB triplet into the FG slot. Mirrors
-/// `attr |= TXTFGCOLOUR | TXT_ATTR_FG_24BIT |
-/// (((zattr)r<<16|g<<8|b) << TXT_ATTR_FG_COL_SHIFT)`.
-macro_rules! zattr_set_fg_rgb {
-    ($attrs:expr, $r:expr, $g:expr, $b:expr) => {{
-        let cleared = $attrs & !crate::ported::zsh_h::TXT_ATTR_FG_MASK; // c:2350
-        let rgb = (($r as crate::ported::zsh_h::zattr) << 16)
-            | (($g as crate::ported::zsh_h::zattr) << 8)
-            | ($b as crate::ported::zsh_h::zattr);
-        cleared
-            | crate::ported::zsh_h::TXTFGCOLOUR
-            | crate::ported::zsh_h::TXT_ATTR_FG_24BIT
-            | (rgb << crate::ported::zsh_h::TXT_ATTR_FG_COL_SHIFT)
-    }};
-}
-
-macro_rules! zattr_set_bg_palette {
-    ($attrs:expr, $idx:expr) => {{
-        let cleared = $attrs & !crate::ported::zsh_h::TXT_ATTR_BG_MASK; // c:2350
-        cleared
-            | crate::ported::zsh_h::TXTBGCOLOUR
-            | (($idx as crate::ported::zsh_h::zattr)
-                << crate::ported::zsh_h::TXT_ATTR_BG_COL_SHIFT)
-    }};
-}
-
-macro_rules! zattr_set_bg_rgb {
-    ($attrs:expr, $r:expr, $g:expr, $b:expr) => {{
-        let cleared = $attrs & !crate::ported::zsh_h::TXT_ATTR_BG_MASK; // c:2350
-        let rgb = (($r as crate::ported::zsh_h::zattr) << 16)
-            | (($g as crate::ported::zsh_h::zattr) << 8)
-            | ($b as crate::ported::zsh_h::zattr);
-        cleared
-            | crate::ported::zsh_h::TXTBGCOLOUR
-            | crate::ported::zsh_h::TXT_ATTR_BG_24BIT
-            | (rgb << crate::ported::zsh_h::TXT_ATTR_BG_COL_SHIFT)
-    }};
-}
-
-/// Values C reads from scattered globals during `promptexpand()`.
-/// `expand_prompt` does not take this as a parameter — callers
-/// either rely on `PROMPT_EXPAND_ENV` (thread-local, default-filled)
-/// or `ShellExecutor::expand_prompt_string` which refreshes it from
-/// executor state first. Direct port intent: replace Rust-only
-/// `PromptContext` pass-by-reference with C's file-scope reads.
-// c: Src/prompt.c (pwd, hist, jobs, …) + Src/utils.c (printprompt4).
-#[derive(Clone)]
-pub(crate) struct prompt_expand_env {
-    pub pwd: String,
-    pub home: String,
-    pub user: String,
-    pub host: String,
-    pub host_short: String,
-    pub tty: String,
-    pub lastval: i32,
-    pub histnum: i64,
-    pub shlvl: i32,
-    pub num_jobs: i32,
-    pub is_root: bool,
-    /// `unsigned char cmdstack[]` — `CS_*` indices (`Src/prompt.c:55`).
-    pub cmd_stack: Vec<u8>,
-    pub psvar: Vec<String>,
-    pub term_width: usize,
-    pub lineno: i64,
-    pub scriptname: Option<String>,
-    pub scriptfilename: Option<String>,
-    pub argzero: String,
-}
-
-impl Default for prompt_expand_env {
-    fn default() -> Self {
-        let home = env::var("HOME").unwrap_or_default();
-        let pwd = env::current_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "/".to_string());
-
-        let user = env::var("USER")
-            .or_else(|_| env::var("LOGNAME"))
-            .unwrap_or_else(|_| "user".to_string());
-
-        let host = hostname::get()
-            .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "localhost".to_string());
-
-        let host_short = host.split('.').next().unwrap_or(&host).to_string();
-
-        let tty = std::fs::read_link("/proc/self/fd/0")
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| String::new());
-
-        let shlvl = env::var("SHLVL")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(1);
-
-        Self {
-            pwd,
-            home,
-            user,
-            host,
-            host_short,
-            tty,
-            lastval: 0,
-            histnum: 1,
-            shlvl,
-            num_jobs: 0,
-            is_root: unsafe { libc::geteuid() } == 0,
-            cmd_stack: Vec::new(),
-            psvar: Vec::new(),
-            term_width: 80,
-            lineno: 1,
-            scriptname: None,
-            scriptfilename: None,
-            argzero: env::args().next().unwrap_or_else(|| "zsh".to_string()),
-        }
+fn color_get_rgb(c: Color) -> Option<(u8, u8, u8)> {
+    if c & COLOR_24BIT == 0 {
+        None
+    } else {
+        Some((
+            ((c >> 16) & 0xff) as u8,
+            ((c >> 8) & 0xff) as u8,
+            (c & 0xff) as u8,
+        ))
     }
 }
 
-/// Per-thread prompt globals (C zsh: file-static / global bindings).
-/// `ShellExecutor::expand_prompt_string` overwrites this immediately
-/// before calling `expand_prompt`.
-thread_local! {
-    pub(crate) static PROMPT_EXPAND_ENV: RefCell<prompt_expand_env> =
-        RefCell::new(prompt_expand_env::default());
+fn color_to_ansi(c: Color, is_fg: bool) -> String {
+    if let Some((r, g, b)) = color_get_rgb(c) {
+        let lead = if is_fg { 38 } else { 48 };
+        format!("\x1b[{};2;{};{};{}m", lead, r, g, b)
+    } else {
+        output_colour(c as u8, is_fg)
+    }
 }
 
-/// 1:1 port of `struct buf_vars` from `Src/prompt.c:76-121`. Holds
-/// every per-call piece of state that the C expander reads via
-/// `bv->X` while walking a format string.
-///
-/// Field naming follows the C struct exactly where it makes sense:
-/// - `fm`        — format string pointer (C:104). Rust uses
-///   `(input: &str, pos: usize)` instead of a raw `char *`.
-/// - `buf`       — output buffer (C:84). Rust uses an owned
-///   `String`; `bp`/`bufline`/`bp1` collapse into byte-index
-///   tracking on `buf` and `output.len()`.
-/// - `dontcount` — nesting depth of `%{ / %}` non-spacing
-///   sequences (C:112). Renamed `in_escape` in earlier port; the
-///   `bool` is sufficient because the expander never sees nested
-///   `%{...%}` (zsh's parser flattens them before reaching here).
-/// - `last`/`bp1`/`bufspc`/`bufline`/`truncwidth`/`trunccount`/
-///   `rstring`/`Rstring` — not represented because the Rust port
-///   uses owned `String`s + return tuples instead of a linked
-///   stack of scratch buffers. `rstring`/`Rstring` are handled
-///   by `promptexpand`'s return tuple (Src/prompt.c:218-219).
-///
-/// `prompt_percent` / `prompt_bang` mirror the global option
-/// reads that C does (`isset(PROMPTPERCENT)` / `isset(PROMPTBANG)`
-/// at Src/prompt.c:325). They live here so the recursive expander
-/// can suppress them for sub-expansions (Src/prompt.c:328-330).
+fn color_from_name(name: &str) -> Option<Color> {
+    if let Some(rest) = name.strip_prefix('#') {
+        if rest.len() == 6 {
+            let r = u8::from_str_radix(&rest[0..2], 16).ok();
+            let g = u8::from_str_radix(&rest[2..4], 16).ok();
+            let b = u8::from_str_radix(&rest[4..6], 16).ok();
+            match (r, g, b) {
+                (Some(r), Some(g), Some(b)) => Some(color_rgb(r, g, b) as Color),
+                _ => None,
+            }
+        } else {
+            match_named_colour(name).map(|idx| idx as Color)
+        }
+    } else {
+        match_named_colour(name).map(|idx| idx as Color)
+    }
+}
+
+fn zattr_set_fg_palette(attrs: zattr, idx: u8) -> zattr {
+    let cleared = attrs & !TXT_ATTR_FG_MASK;
+    cleared | TXTFGCOLOUR | ((idx as zattr) << TXT_ATTR_FG_COL_SHIFT)
+}
+
+fn zattr_set_fg_rgb(attrs: zattr, r: u8, g: u8, b: u8) -> zattr {
+    let cleared = attrs & !TXT_ATTR_FG_MASK;
+    let rgb = ((r as zattr) << 16) | ((g as zattr) << 8) | (b as zattr);
+    cleared | TXTFGCOLOUR | TXT_ATTR_FG_24BIT | (rgb << TXT_ATTR_FG_COL_SHIFT)
+}
+
+fn zattr_set_bg_palette(attrs: zattr, idx: u8) -> zattr {
+    let cleared = attrs & !TXT_ATTR_BG_MASK;
+    cleared | TXTBGCOLOUR | ((idx as zattr) << TXT_ATTR_BG_COL_SHIFT)
+}
+
+fn zattr_set_bg_rgb(attrs: zattr, r: u8, g: u8, b: u8) -> zattr {
+    let cleared = attrs & !TXT_ATTR_BG_MASK;
+    let rgb = ((r as zattr) << 16) | ((g as zattr) << 8) | (b as zattr);
+    cleared | TXTBGCOLOUR | TXT_ATTR_BG_24BIT | (rgb << TXT_ATTR_BG_COL_SHIFT)
+}
+
+/// `struct buf_vars` from `Src/prompt.c:76-121` — prompt expansion state.
+/// C uses `char *fm/buf/bp/...`; Rust uses `input` + `pos` and `output`
+/// (`buf`/`bp` collapsed). Linked `last`, `truncwidth`, `trunccount`,
+/// `rstring`/`Rstring` are not ported yet (truncation/`%r` use simplified paths).
 #[allow(non_camel_case_types)]
-pub struct buf_vars<'a> {                                                   // c:Src/prompt.c:76
-    /// Snapshot of thread-local prompt globals at expand start (C globals).
-    env: prompt_expand_env,
-    input: &'a str,           // c:104 (fm — format pointer)
-    pos: usize,               // c:104 (fm cursor — Rust uses byte index)
+pub struct buf_vars {                                                        // c:Src/prompt.c:76
+    pwd: String,
+    home: String,
+    user: String,
+    host: String,
+    host_short: String,
+    tty: String,
+    lastval: i32,
+    histnum: i64,
+    shlvl: i32,
+    num_jobs: i32,
+    is_root: bool,
+    cmd_stack: Vec<u8>,
+    psvar: Vec<String>,
+    term_width: usize,
+    lineno: i64,
+    scriptname: Option<String>,
+    scriptfilename: Option<String>,
+    argzero: String,
+    func_line_base: Option<i64>,
+    funcstack_filename: Option<String>,
+    input: String,            // c:104 (`fm` — owned; nested expands clone)
+    pos: usize,               // c:104 (`fm` cursor, byte index)
     output: String,           // c:84  (buf — output buffer)
     attrs: TextAttrs,         // c:txtattrmask (active SGR state)
     in_escape: bool,          // c:112 (dontcount)
@@ -378,12 +362,31 @@ pub struct buf_vars<'a> {                                                   // c
     prompt_bang: bool,        // c:325 (isset(PROMPTBANG))
 }
 
-impl<'a> buf_vars<'a> {
-    pub fn new(input: &'a str) -> Self {
-        let env = PROMPT_EXPAND_ENV.with(|c| c.borrow().clone());
+impl buf_vars {
+    pub fn new(input: &str) -> Self {
+        prompt_tls::ensure_defaults_from_process_env();
         Self {
-            env,
-            input,
+            pwd: prompt_tls::PWD.with(|c| c.borrow().clone()),
+            home: prompt_tls::HOME.with(|c| c.borrow().clone()),
+            user: prompt_tls::USER.with(|c| c.borrow().clone()),
+            host: prompt_tls::HOST.with(|c| c.borrow().clone()),
+            host_short: prompt_tls::HOST_SHORT.with(|c| c.borrow().clone()),
+            tty: prompt_tls::TTY.with(|c| c.borrow().clone()),
+            lastval: prompt_tls::LASTVAL.with(|c| *c.borrow()),
+            histnum: prompt_tls::HISTNUM.with(|c| *c.borrow()),
+            shlvl: prompt_tls::SHLVL.with(|c| *c.borrow()),
+            num_jobs: prompt_tls::NUM_JOBS.with(|c| *c.borrow()),
+            is_root: prompt_tls::IS_ROOT.with(|c| *c.borrow()),
+            cmd_stack: prompt_tls::CMDSTACK.with(|c| c.borrow().clone()),
+            psvar: prompt_tls::PSVAR.with(|c| c.borrow().clone()),
+            term_width: prompt_tls::TERM_WIDTH.with(|c| *c.borrow()),
+            lineno: prompt_tls::LINENO.with(|c| *c.borrow()),
+            scriptname: prompt_tls::SCRIPTNAME.with(|c| c.borrow().clone()),
+            scriptfilename: prompt_tls::SCRIPTFILENAME.with(|c| c.borrow().clone()),
+            argzero: prompt_tls::ARGEXTRA.with(|c| c.borrow().clone()),
+            func_line_base: prompt_tls::FUNC_LINE_BASE.with(|c| *c.borrow()),
+            funcstack_filename: prompt_tls::FUNCSTACK_FILENAME.with(|c| c.borrow().clone()),
+            input: input.to_string(),
             pos: 0,
             output: String::with_capacity(input.len() * 2),
             attrs: 0 as TextAttrs, // c:zsh.h:2685 (zattr=0 == no attrs)
@@ -401,6 +404,84 @@ impl<'a> buf_vars<'a> {
     pub fn with_prompt_bang(mut self, enable: bool) -> Self {
         self.prompt_bang = enable;
         self
+    }
+
+    fn fork_snapshot(&self, input: String) -> buf_vars {
+        buf_vars {
+            pwd: self.pwd.clone(),
+            home: self.home.clone(),
+            user: self.user.clone(),
+            host: self.host.clone(),
+            host_short: self.host_short.clone(),
+            tty: self.tty.clone(),
+            lastval: self.lastval,
+            histnum: self.histnum,
+            shlvl: self.shlvl,
+            num_jobs: self.num_jobs,
+            is_root: self.is_root,
+            cmd_stack: self.cmd_stack.clone(),
+            psvar: self.psvar.clone(),
+            term_width: self.term_width,
+            lineno: self.lineno,
+            scriptname: self.scriptname.clone(),
+            scriptfilename: self.scriptfilename.clone(),
+            argzero: self.argzero.clone(),
+            func_line_base: self.func_line_base,
+            funcstack_filename: self.funcstack_filename.clone(),
+            input,
+            pos: 0,
+            output: String::new(),
+            attrs: self.attrs,
+            in_escape: false,
+            prompt_percent: self.prompt_percent,
+            prompt_bang: self.prompt_bang,
+        }
+    }
+
+    /// Src/prompt.c:359 — core of `putpromptchar(int doprint, int endchar)`.
+    pub(crate) fn run_putpromptchar(&mut self, doprint: i32, endchar: i32) -> i32 {
+        loop {
+            if self.pos >= self.input.len() {
+                return 0;
+            }
+            let ec = endchar as u8;
+            if ec != 0 {
+                let b = self.input.as_bytes()[self.pos];
+                if b == ec {
+                    return endchar;
+                }
+            }
+
+            let c = match self.peek() {
+                Some(c) => c,
+                None => return 0,
+            };
+
+            if c == '%' && self.prompt_percent {
+                self.advance();
+                self.process_percent(doprint);
+            } else if c == '!' && self.prompt_bang {
+                if doprint != 0 {
+                    self.advance();
+                    if self.peek() == Some('!') {
+                        self.advance();
+                        self.output.push('!');
+                    } else {
+                        self.output.push_str(&self.histnum.to_string());
+                    }
+                } else {
+                    self.advance();
+                    if self.peek() == Some('!') {
+                        self.advance();
+                    }
+                }
+            } else {
+                self.advance();
+                if doprint != 0 {
+                    self.output.push(c);
+                }
+            }
+        }
     }
 
     fn peek(&self) -> Option<char> {
@@ -472,8 +553,8 @@ impl<'a> buf_vars<'a> {
 
     /// Get path with tilde substitution
     fn path_with_tilde(&self, path: &str) -> String {
-        if !self.env.home.is_empty() && path.starts_with(&self.env.home) {
-            format!("~{}", &path[self.env.home.len()..])
+        if !self.home.is_empty() && path.starts_with(&self.home) {
+            format!("~{}", &path[self.home.len()..])
         } else {
             path.to_string()
         }
@@ -556,20 +637,20 @@ impl<'a> buf_vars<'a> {
             let c = if self.attrs & TXT_ATTR_FG_24BIT != 0 {
                 COLOR_24BIT | (raw as Color & 0x00ff_ffff)
             } else { raw as Color };
-            self.output.push_str(&color_to_ansi!(c, true));
+            self.output.push_str(&color_to_ansi(c, true));
         }
         if self.attrs & TXTBGCOLOUR != 0 { // c:1645
             let raw = (self.attrs & TXT_ATTR_BG_COL_MASK) >> TXT_ATTR_BG_COL_SHIFT;
             let c = if self.attrs & TXT_ATTR_BG_24BIT != 0 {
                 COLOR_24BIT | (raw as Color & 0x00ff_ffff)
             } else { raw as Color };
-            self.output.push_str(&color_to_ansi!(c, false));
+            self.output.push_str(&color_to_ansi(c, false));
         }
         self.end_escape();
     }
 
     /// Parse conditional %(x.true.false)
-    fn parse_conditional(&mut self, arg: i32) -> bool {
+    fn parse_conditional(&mut self, arg: i32, doprint: i32) -> bool {
         if self.peek() != Some('(') {
             return false;
         }
@@ -585,7 +666,7 @@ impl<'a> buf_vars<'a> {
         let test = match cond_char {
             '/' | 'c' | '.' | '~' | 'C' => {
                 // Directory depth test
-                let path = self.path_with_tilde(&self.env.pwd);
+                let path = self.path_with_tilde(&self.pwd);
                 let depth = path.matches('/').count() as i32;
                 if arg == 0 {
                     depth > 0
@@ -593,22 +674,22 @@ impl<'a> buf_vars<'a> {
                     depth >= arg
                 }
             }
-            '?' => self.env.lastval == arg,
+            '?' => self.lastval == arg,
             '#' => {
                 let euid = unsafe { libc::geteuid() };
                 euid == arg as u32
             }
-            'L' => self.env.shlvl >= arg,
-            'j' => self.env.num_jobs >= arg,
-            'v' => (arg as usize) <= self.env.psvar.len(),
+            'L' => self.shlvl >= arg,
+            'j' => self.num_jobs >= arg,
+            'v' => (arg as usize) <= self.psvar.len(),
             'V' => {
-                if arg <= 0 || (arg as usize) > self.env.psvar.len() {
+                if arg <= 0 || (arg as usize) > self.psvar.len() {
                     false
                 } else {
-                    !self.env.psvar[arg as usize - 1].is_empty()
+                    !self.psvar[arg as usize - 1].is_empty()
                 }
             }
-            '_' => self.env.cmd_stack.len() >= arg as usize,
+            '_' => self.cmd_stack.len() >= arg as usize,
             't' | 'T' | 'd' | 'D' | 'w' => {
                 let now = chrono::Local::now();
                 match cond_char {
@@ -620,7 +701,7 @@ impl<'a> buf_vars<'a> {
                     _ => false,
                 }
             }
-            '!' => self.env.is_root,
+            '!' => self.is_root,
             _ => false,
         };
 
@@ -646,7 +727,7 @@ impl<'a> buf_vars<'a> {
             }
             self.advance();
         }
-        let true_branch = &self.input[true_start..self.pos].to_string();
+        let true_branch = self.input[true_start..self.pos].to_string();
 
         if self.peek() != Some(sep) {
             return false;
@@ -667,29 +748,78 @@ impl<'a> buf_vars<'a> {
             }
             self.advance();
         }
-        let false_branch = &self.input[false_start..self.pos].to_string();
+        let false_branch = self.input[false_start..self.pos].to_string();
 
         if self.peek() != Some(')') {
             return false;
         }
         self.advance(); // skip )
 
-        // Expand the appropriate branch
-        let branch = if test { true_branch } else { false_branch };
-        let expanded = expand_prompt(branch);
-        self.output.push_str(&expanded);
+        // Src/prompt.c:511-516 — `putpromptchar(test && doprint, sep)` then
+        // `putpromptchar(!test && doprint, ')' )`; same `bv->buf`, we append serially.
+        let mut tsub = self.fork_snapshot(true_branch);
+        tsub.run_putpromptchar(if test { doprint } else { 0 }, 0);
+        self.output.push_str(&tsub.output);
+        let mut fsub = self.fork_snapshot(false_branch);
+        fsub.run_putpromptchar(if test { 0 } else { doprint }, 0);
+        self.output.push_str(&fsub.output);
 
         true
     }
 
     /// Parse and process a % escape sequence
-    fn process_percent(&mut self) {
+    fn process_percent(&mut self, doprint: i32) {
         let arg = self.parse_number().unwrap_or(0);
 
         // Check for conditional
         if self.peek() == Some('(') {
-            self.parse_conditional(arg);
+            self.parse_conditional(arg, doprint);
             return;
+        }
+
+        if doprint == 0 {
+            // Src/prompt.c:520-538 — parse-only skips; C `default: continue` advances
+            // past one opcode byte after the (already-parsed) numeric arg.
+            match self.peek() {
+                Some('[') => {
+                    self.advance();
+                    let _ = self.parse_number();
+                    while self.peek() != Some(']') {
+                        if self.advance().is_none() {
+                            break;
+                        }
+                    }
+                    let _ = self.advance();
+                    return;
+                }
+                Some('<') | Some('>') => {
+                    let end = self.peek().unwrap();
+                    self.advance();
+                    while self.peek() != Some(end) {
+                        if self.advance().is_none() {
+                            break;
+                        }
+                    }
+                    let _ = self.advance();
+                    return;
+                }
+                Some('D') => {
+                    self.advance();
+                    if self.peek() == Some('{') {
+                        while self.peek() != Some('}') {
+                            if self.advance().is_none() {
+                                break;
+                            }
+                        }
+                        let _ = self.advance();
+                    }
+                    return;
+                }
+                _ => {
+                    let _ = self.advance();
+                    return;
+                }
+            }
         }
 
         let c = match self.advance() {
@@ -701,21 +831,21 @@ impl<'a> buf_vars<'a> {
             // Directory
             '~' => {
                 let path = if arg == 0 {
-                    self.path_with_tilde(&self.env.pwd)
+                    self.path_with_tilde(&self.pwd)
                 } else if arg > 0 {
-                    self.trailing_path(&self.env.pwd, arg as usize, true)
+                    self.trailing_path(&self.pwd, arg as usize, true)
                 } else {
-                    self.leading_path(&self.path_with_tilde(&self.env.pwd), (-arg) as usize)
+                    self.leading_path(&self.path_with_tilde(&self.pwd), (-arg) as usize)
                 };
                 self.output.push_str(&path);
             }
             'd' | '/' => {
                 let path = if arg == 0 {
-                    self.env.pwd.clone()
+                    self.pwd.clone()
                 } else if arg > 0 {
-                    self.trailing_path(&self.env.pwd, arg as usize, false)
+                    self.trailing_path(&self.pwd, arg as usize, false)
                 } else {
-                    self.leading_path(&self.env.pwd, (-arg) as usize)
+                    self.leading_path(&self.pwd, (-arg) as usize)
                 };
                 self.output.push_str(&path);
             }
@@ -725,7 +855,7 @@ impl<'a> buf_vars<'a> {
                 } else {
                     arg.unsigned_abs() as usize
                 };
-                let path = self.trailing_path(&self.env.pwd, n, true);
+                let path = self.trailing_path(&self.pwd, n, true);
                 self.output.push_str(&path);
             }
             'C' => {
@@ -734,7 +864,7 @@ impl<'a> buf_vars<'a> {
                 } else {
                     arg.unsigned_abs() as usize
                 };
-                let path = self.trailing_path(&self.env.pwd, n, false);
+                let path = self.trailing_path(&self.pwd, n, false);
                 self.output.push_str(&path);
             }
 
@@ -744,10 +874,9 @@ impl<'a> buf_vars<'a> {
             // trailing path components (0 = full path).
             'N' => {
                 let name = self
-                    .env
                     .scriptname
                     .as_deref()
-                    .unwrap_or(&self.env.argzero);
+                    .unwrap_or(&self.argzero);
                 let n = if arg <= 0 {
                     0
                 } else {
@@ -760,16 +889,16 @@ impl<'a> buf_vars<'a> {
                 }
             }
             // User/host
-            'n' => self.output.push_str(&self.env.user),
-            'M' => self.output.push_str(&self.env.host),
+            'n' => self.output.push_str(&self.user),
+            'M' => self.output.push_str(&self.host),
             'm' => {
                 let n = if arg == 0 { 1 } else { arg };
                 if n > 0 {
-                    let parts: Vec<&str> = self.env.host.split('.').collect();
+                    let parts: Vec<&str> = self.host.split('.').collect();
                     let take = (n as usize).min(parts.len());
                     self.output.push_str(&parts[..take].join("."));
                 } else {
-                    let parts: Vec<&str> = self.env.host.split('.').collect();
+                    let parts: Vec<&str> = self.host.split('.').collect();
                     let skip = ((-n) as usize).min(parts.len());
                     self.output.push_str(&parts[skip..].join("."));
                 }
@@ -777,10 +906,10 @@ impl<'a> buf_vars<'a> {
 
             // TTY
             'l' => {
-                let tty = if self.env.tty.starts_with("/dev/tty") {
-                    &self.env.tty[8..]
-                } else if self.env.tty.starts_with("/dev/") {
-                    &self.env.tty[5..]
+                let tty = if self.tty.starts_with("/dev/tty") {
+                    &self.tty[8..]
+                } else if self.tty.starts_with("/dev/") {
+                    &self.tty[5..]
                 } else {
                     "()"
                 };
@@ -790,86 +919,137 @@ impl<'a> buf_vars<'a> {
                 // zsh: `%y` is the tty short name (without `/dev/`).
                 // When not connected to a tty (e.g. in `-c` mode or
                 // a pipe), zsh outputs `()` matching the `%l` form.
-                let tty = if self.env.tty.is_empty() {
+                let tty = if self.tty.is_empty() {
                     "()"
-                } else if self.env.tty.starts_with("/dev/") {
-                    &self.env.tty[5..]
+                } else if self.tty.starts_with("/dev/") {
+                    &self.tty[5..]
                 } else {
-                    &self.env.tty
+                    &self.tty
                 };
                 self.output.push_str(tty);
             }
 
             // Status
-            '?' => self.output.push_str(&self.env.lastval.to_string()),
-            '#' => self.output.push(if self.env.is_root { '#' } else { '%' }),
+            '?' => self.output.push_str(&self.lastval.to_string()),
+            '#' => self.output.push(if self.is_root { '#' } else { '%' }),
 
             // History
-            'h' | '!' => self.output.push_str(&self.env.histnum.to_string()),
+            'h' | '!' => self.output.push_str(&self.histnum.to_string()),
 
             // Jobs
-            'j' => self.output.push_str(&self.env.num_jobs.to_string()),
+            'j' => self.output.push_str(&self.num_jobs.to_string()),
 
             // Shell level
-            'L' => self.output.push_str(&self.env.shlvl.to_string()),
+            'L' => self.output.push_str(&self.shlvl.to_string()),
 
-            // Line number
-            'i' => self.output.push_str(&self.env.lineno.to_string()),
+            // Line number (`%i`) — Src/prompt.c:923-929 after optional `%I` block.
+            'i' => self.output.push_str(&self.lineno.to_string()),
 
-            // `%I` — line number being executed in the current
-            // script / file / function. Port of Src/prompt.c case
-            // 'I' which adds funcstack->flineno when inside a
-            // function. At top-level (no funcstack), it falls
-            // through to plain lineno. zshrs doesn't yet track
-            // funcstack-relative line numbers in prompt_expand_env, so
-            // emit the same lineno as `%i` — matches zsh at top
-            // level and degrades gracefully inside functions.
-            'I' => self.output.push_str(&self.env.lineno.to_string()),
+            // `%I` — Src/prompt.c:901-920: inside `funcstack` (not SOURCE,
+            // not `IN_EVAL_TRAP`), file line is `lineno + funcstack->flineno`.
+            // zshrs stores the addend as `func_line_base` (`first_body_line - 1`
+            // at registration). `FS_EVAL` / trap nuances not wired yet.
+            'I' => {
+                let n = if let Some(base) = self.func_line_base {
+                    self.lineno.saturating_add(base)
+                } else {
+                    self.lineno
+                };
+                self.output.push_str(&n.to_string());
+            }
 
-            // `%x` — file containing the source code currently
-            // being executed. Port of Src/prompt.c case 'x':
-            // `promptpath(scriptfilename ? scriptfilename :
-            // argzero, arg, 0)` (the funcstack->filename path
-            // inside functions isn't modeled yet — same TODO as
-            // `%I`). zshrs's prompt_expand_env.scriptname mirrors C
-            // zsh's `scriptname`/`scriptfilename`; both globals
-            // stay in sync (init.c:479, init.c:1591), so we read
-            // scriptname here too. Honors the `arg` (npath) digit
-            // identically to %N — `%2x` returns the last 2 path
-            // components, `%0x` (default) is the full path.
+            // `%x` — Src/prompt.c:931-937: inside the same frames, use
+            // `funcstack->filename` (here `funcstack_filename`); else
+            // `scriptfilename ? scriptfilename : argzero`.
             'x' => {
-                // %x reads `scriptfilename` (Src/prompt.c:567 case 'x':
-                //   `promptpath(scriptfilename ? scriptfilename :
-                //               argzero, arg, 0)`). Distinct from %N
-                // which reads `scriptname`. Inside a function call,
-                // `scriptname` mutates to the function name but
-                // `scriptfilename` keeps the original file path —
-                // so PS4 trace inside `f() { … }; f` shows
-                // `<file>\t<fn>\t…` not `<fn>\t<fn>\t…`.
-                let name = self
-                    .env
-                    .scriptfilename
-                    .as_deref()
-                    .or(self.env.scriptname.as_deref())
-                    .unwrap_or(&self.env.argzero);
                 let n = if arg <= 0 {
                     0
                 } else {
                     arg.unsigned_abs() as usize
                 };
-                if n == 0 {
-                    self.output.push_str(name);
+                if self.func_line_base.is_some() {
+                    let path = self.funcstack_filename.as_deref().unwrap_or("");
+                    if n == 0 {
+                        self.output.push_str(path);
+                    } else {
+                        self.output.push_str(&self.trailing_path(path, n, false));
+                    }
                 } else {
-                    self.output.push_str(&self.trailing_path(name, n, false));
+                    let name = self
+                        .scriptfilename
+                        .as_deref()
+                        .or(self.scriptname.as_deref())
+                        .unwrap_or(self.argzero.as_str());
+                    if n == 0 {
+                        self.output.push_str(name);
+                    } else {
+                        self.output.push_str(&self.trailing_path(name, n, false));
+                    }
                 }
             }
 
-            // Date/time
+            // Date/time (`%D{...}` — zsh strftime → chrono format)
             'D' => {
                 let now = chrono::Local::now();
                 if let Some(fmt) = self.parse_braced_arg() {
-                    let zsh_fmt = convert_zsh_time_format(&fmt);
-                    self.output.push_str(&now.format(&zsh_fmt).to_string());
+                    let mut chrono_fmt = String::new();
+                    let mut chars = fmt.chars().peekable();
+                    while let Some(c) = chars.next() {
+                        if c == '%' {
+                            match chars.next() {
+                                Some('a') => chrono_fmt.push_str("%a"),
+                                Some('A') => chrono_fmt.push_str("%A"),
+                                Some('b') | Some('h') => chrono_fmt.push_str("%b"),
+                                Some('B') => chrono_fmt.push_str("%B"),
+                                Some('c') => chrono_fmt.push_str("%c"),
+                                Some('C') => chrono_fmt.push_str("%y"),
+                                Some('d') => chrono_fmt.push_str("%d"),
+                                Some('D') => chrono_fmt.push_str("%m/%d/%y"),
+                                Some('e') => chrono_fmt.push_str("%e"),
+                                Some('f') => chrono_fmt.push_str("%e"),
+                                Some('F') => chrono_fmt.push_str("%Y-%m-%d"),
+                                Some('H') => chrono_fmt.push_str("%H"),
+                                Some('I') => chrono_fmt.push_str("%I"),
+                                Some('j') => chrono_fmt.push_str("%j"),
+                                Some('k') => chrono_fmt.push_str("%k"),
+                                Some('K') => chrono_fmt.push_str("%H"),
+                                Some('l') => chrono_fmt.push_str("%l"),
+                                Some('L') => chrono_fmt.push_str("%3f"),
+                                Some('m') => chrono_fmt.push_str("%m"),
+                                Some('M') => chrono_fmt.push_str("%M"),
+                                Some('n') => chrono_fmt.push('\n'),
+                                Some('N') => chrono_fmt.push_str("%9f"),
+                                Some('p') => chrono_fmt.push_str("%p"),
+                                Some('P') => chrono_fmt.push_str("%P"),
+                                Some('r') => chrono_fmt.push_str("%r"),
+                                Some('R') => chrono_fmt.push_str("%R"),
+                                Some('s') => chrono_fmt.push_str("%s"),
+                                Some('S') => chrono_fmt.push_str("%S"),
+                                Some('t') => chrono_fmt.push('\t'),
+                                Some('T') => chrono_fmt.push_str("%T"),
+                                Some('u') => chrono_fmt.push_str("%u"),
+                                Some('U') => chrono_fmt.push_str("%U"),
+                                Some('V') => chrono_fmt.push_str("%V"),
+                                Some('w') => chrono_fmt.push_str("%w"),
+                                Some('W') => chrono_fmt.push_str("%W"),
+                                Some('x') => chrono_fmt.push_str("%x"),
+                                Some('X') => chrono_fmt.push_str("%X"),
+                                Some('y') => chrono_fmt.push_str("%y"),
+                                Some('Y') => chrono_fmt.push_str("%Y"),
+                                Some('z') => chrono_fmt.push_str("%z"),
+                                Some('Z') => chrono_fmt.push_str("%Z"),
+                                Some('%') => chrono_fmt.push('%'),
+                                Some(other) => {
+                                    chrono_fmt.push('%');
+                                    chrono_fmt.push(other);
+                                }
+                                None => chrono_fmt.push('%'),
+                            }
+                        } else {
+                            chrono_fmt.push(c);
+                        }
+                    }
+                    self.output.push_str(&now.format(&chrono_fmt).to_string());
                 } else {
                     self.output.push_str(&now.format("%y-%m-%d").to_string());
                 }
@@ -956,23 +1136,23 @@ impl<'a> buf_vars<'a> {
             // Colors
             'F' => {
                 let color: Option<Color> = if let Some(name) = self.parse_braced_arg() {
-                    color_from_name!(&name) // c:336 (match_colour)
+color_from_name(&name) // c:336 (match_colour)
                 } else if arg > 0 {
                     Some(arg as Color) // c:622 (parsecolorchar numeric)
                 } else {
                     None
                 };
                 if let Some(c) = color {
-                    if let Some((r, g, b)) = color_get_rgb!(c) {
-                        self.attrs = zattr_set_fg_rgb!(self.attrs, r, g, b); // c:2440
+                    if let Some((r, g, b)) = color_get_rgb(c) {
+                        self.attrs = zattr_set_fg_rgb(self.attrs, r, g, b); // c:2440
                     } else {
-                        self.attrs = zattr_set_fg_palette!(self.attrs, c as u8); // c:2440
+                        self.attrs = zattr_set_fg_palette(self.attrs, c as u8); // c:2440
                     }
                     // Emit ONLY the color code, not all active attrs.
                     // apply_attrs would re-emit bold/underline/standout
                     // each time `%F` runs, producing duplicate codes.
                     self.start_escape();
-                    self.output.push_str(&color_to_ansi!(c, true));
+                    self.output.push_str(&color_to_ansi(c, true));
                     self.end_escape();
                 }
             }
@@ -988,20 +1168,20 @@ impl<'a> buf_vars<'a> {
             }
             'K' => {
                 let color: Option<Color> = if let Some(name) = self.parse_braced_arg() {
-                    color_from_name!(&name) // c:336
+color_from_name(&name) // c:336
                 } else if arg > 0 {
                     Some(arg as Color) // c:634
                 } else {
                     None
                 };
                 if let Some(c) = color {
-                    if let Some((r, g, b)) = color_get_rgb!(c) {
-                        self.attrs = zattr_set_bg_rgb!(self.attrs, r, g, b); // c:2440
+                    if let Some((r, g, b)) = color_get_rgb(c) {
+                        self.attrs = zattr_set_bg_rgb(self.attrs, r, g, b); // c:2440
                     } else {
-                        self.attrs = zattr_set_bg_palette!(self.attrs, c as u8); // c:2440
+                        self.attrs = zattr_set_bg_palette(self.attrs, c as u8); // c:2440
                     }
                     self.start_escape();
-                    self.output.push_str(&color_to_ansi!(c, false));
+                    self.output.push_str(&color_to_ansi(c, false));
                     self.end_escape();
                 }
             }
@@ -1030,8 +1210,8 @@ impl<'a> buf_vars<'a> {
             // psvar
             'v' => {
                 let idx = if arg == 0 { 1 } else { arg };
-                if idx > 0 && (idx as usize) <= self.env.psvar.len() {
-                    self.output.push_str(&self.env.psvar[idx as usize - 1]);
+                if idx > 0 && (idx as usize) <= self.psvar.len() {
+                    self.output.push_str(&self.psvar[idx as usize - 1]);
                 }
             }
 
@@ -1040,7 +1220,7 @@ impl<'a> buf_vars<'a> {
             // BOTTOM-UP (oldest first). arg < 0 prints the BOTTOM
             // `-arg` elements bottom-up. arg == 0 prints all.
             '_' => {
-                let cmdsp = self.env.cmd_stack.len();
+                let cmdsp = self.cmd_stack.len();
                 if cmdsp > 0 {
                     let names: Vec<&str> = if arg >= 0 {
                         let mut n = if arg == 0 { cmdsp } else { arg as usize };
@@ -1049,8 +1229,7 @@ impl<'a> buf_vars<'a> {
                         }
                         // Walk forward from `cmdsp - n` to top.
                         // c:Src/prompt.c:835 — `cmdnames[cmdstack[t0]]`
-                        self.env
-                            .cmd_stack
+                        self.cmd_stack
                             .iter()
                             .skip(cmdsp - n)
                             .filter_map(|b| CMDNAMES.get(*b as usize).copied())
@@ -1062,8 +1241,7 @@ impl<'a> buf_vars<'a> {
                         }
                         // Walk forward from 0 to `n`.
                         // c:Src/prompt.c:872 — `cmdnames[cmdstack[t0]]`
-                        self.env
-                            .cmd_stack
+                        self.cmd_stack
                             .iter()
                             .take(n)
                             .filter_map(|b| CMDNAMES.get(*b as usize).copied())
@@ -1093,98 +1271,18 @@ impl<'a> buf_vars<'a> {
         }
     }
 
-    /// Expand the prompt
+    /// Expand the prompt (`promptexpand` → `putpromptchar(1,0)` in C).
     pub fn expand(mut self) -> String {
-        while let Some(c) = self.advance() {
-            if c == '%' && self.prompt_percent {
-                self.process_percent();
-            } else if c == '!' && self.prompt_bang {
-                if self.peek() == Some('!') {
-                    self.advance();
-                    self.output.push('!');
-                } else {
-                    self.output.push_str(&self.env.histnum.to_string());
-                }
-            } else {
-                self.output.push(c);
-            }
-        }
-
-        // zsh: no auto-reset at end of prompt expansion. The user is
-        // responsible for emitting `%b`/`%f`/`%k` to reset attributes;
-        // `print -P "%B"` outputs only `\e[1m` with no trailing
-        // `\e[0m`. Leaving any open escapes is the caller's intent.
-
+        self.run_putpromptchar(1, 0);
         self.output
     }
 }
 
-/// Convert zsh time format to chrono format
-fn convert_zsh_time_format(fmt: &str) -> String {
-    let mut result = String::new();
-    let mut chars = fmt.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            match chars.next() {
-                Some('a') => result.push_str("%a"),             // weekday abbrev
-                Some('A') => result.push_str("%A"),             // weekday full
-                Some('b') | Some('h') => result.push_str("%b"), // month abbrev
-                Some('B') => result.push_str("%B"),             // month full
-                Some('c') => result.push_str("%c"),             // locale datetime
-                Some('C') => result.push_str("%y"),             // century (use year for simplicity)
-                Some('d') => result.push_str("%d"),             // day of month
-                Some('D') => result.push_str("%m/%d/%y"),       // date
-                Some('e') => result.push_str("%e"),             // day of month, space padded
-                Some('f') => result.push_str("%e"),             // zsh: day of month, no padding
-                Some('F') => result.push_str("%Y-%m-%d"),       // ISO date
-                Some('H') => result.push_str("%H"),             // hour 24
-                Some('I') => result.push_str("%I"),             // hour 12
-                Some('j') => result.push_str("%j"),             // day of year
-                Some('k') => result.push_str("%k"),             // hour 24, space padded
-                Some('K') => result.push_str("%H"),             // zsh: hour 24
-                Some('l') => result.push_str("%l"),             // hour 12, space padded
-                Some('L') => result.push_str("%3f"),            // zsh: milliseconds (approx)
-                Some('m') => result.push_str("%m"),             // month
-                Some('M') => result.push_str("%M"),             // minute
-                Some('n') => result.push('\n'),
-                Some('N') => result.push_str("%9f"), // zsh: nanoseconds (approx)
-                Some('p') => result.push_str("%p"),  // AM/PM
-                Some('P') => result.push_str("%P"),  // am/pm
-                Some('r') => result.push_str("%r"),  // 12-hour time
-                Some('R') => result.push_str("%R"),  // 24-hour time
-                Some('s') => result.push_str("%s"),  // epoch seconds
-                Some('S') => result.push_str("%S"),  // seconds
-                Some('t') => result.push('\t'),
-                Some('T') => result.push_str("%T"), // time
-                Some('u') => result.push_str("%u"), // weekday 1-7
-                Some('U') => result.push_str("%U"), // week of year (Sunday)
-                Some('V') => result.push_str("%V"), // ISO week
-                Some('w') => result.push_str("%w"), // weekday 0-6
-                Some('W') => result.push_str("%W"), // week of year (Monday)
-                Some('x') => result.push_str("%x"), // locale date
-                Some('X') => result.push_str("%X"), // locale time
-                Some('y') => result.push_str("%y"), // year 2-digit
-                Some('Y') => result.push_str("%Y"), // year 4-digit
-                Some('z') => result.push_str("%z"), // timezone offset
-                Some('Z') => result.push_str("%Z"), // timezone name
-                Some('%') => result.push('%'),
-                Some(other) => {
-                    result.push('%');
-                    result.push(other);
-                }
-                None => result.push('%'),
-            }
-        } else {
-            result.push(c);
-        }
-    }
-
-    result
-}
-
 /// Expand a prompt string
 pub fn expand_prompt(s: &str) -> String {
+    let _ = crate::ported::exec::try_with_executor(|exec| {
+        prompt_tls::sync_from_executor(exec);
+    });
     buf_vars::new(s).expand() // c:Src/prompt.c:214 (new_vars init)
 }
 
@@ -1230,55 +1328,6 @@ pub fn prompt_width(s: &str) -> usize {
 /// Port of `prompttrunc()` from Src/prompt.c:1276 — the C source
 /// implements the `%N>string>` (right-truncate) and `%N<string<`
 /// (left-truncate) sequences with a configurable indicator.
-pub fn prompt_truncate(s: &str, max_width: usize, from_right: bool, indicator: &str) -> String {
-    let visible_len = prompt_width(s);
-    if visible_len <= max_width {
-        return s.to_string();
-    }
-
-    let ind_len = indicator.len();
-    if max_width <= ind_len {
-        return indicator[..max_width.min(ind_len)].to_string();
-    }
-
-    let keep = max_width - ind_len;
-
-    if from_right {
-        // Keep the left part: "long text..."
-        let mut result = String::new();
-        let mut width = 0;
-        for c in s.chars() {
-            let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
-            if width + cw > keep {
-                break;
-            }
-            result.push(c);
-            width += cw;
-        }
-        result.push_str(indicator);
-        result
-    } else {
-        // Keep the right part: "...ng text"
-        let chars: Vec<char> = s.chars().collect();
-        let total_chars = chars.len();
-        let mut width = 0;
-        let mut start = total_chars;
-        for i in (0..total_chars).rev() {
-            let cw = unicode_width::UnicodeWidthChar::width(chars[i]).unwrap_or(1);
-            if width + cw > keep {
-                break;
-            }
-            width += cw;
-            start = i;
-        }
-        let mut result = indicator.to_string();
-        for &c in &chars[start..] {
-            result.push(c);
-        }
-        result
-    }
-}
-
 /// Port of `countprompt()` from `Src/prompt.c:1140`.
 ///
 /// C signature:
@@ -1305,58 +1354,6 @@ pub fn prompt_truncate(s: &str, max_width: usize, from_right: bool, indicator: &
 /// Previous Rust port took only `&str` and returned `(width,
 /// newlines)` — missing the `terminal_width` overflow tracking
 /// and the `overf` flag entirely.
-pub fn countprompt(s: &str, terminal_width: usize, overf: i32) -> (usize, usize) { // c:1140
-    let mut w: usize = 0;
-    let mut h: usize = 1;
-    let mut in_escape = false;
-    let mut chars = s.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        // Pre-loop wrap check (matches C's while at line 1158).
-        while terminal_width > 0 && w > terminal_width && overf >= 0 {
-            h += 1;
-            w -= terminal_width;
-        }
-
-        match c {
-            '\x01' => in_escape = true,
-            '\x02' => in_escape = false,
-            '\x1b' => {
-                // ANSI escape — consume until 'm' or end of string.
-                for next in chars.by_ref() {
-                    if next == 'm' {
-                        break;
-                    }
-                }
-            }
-            '\t' if !in_escape => {
-                // C: w = (w | 7) + 1;
-                w = (w | 7) + 1;
-            }
-            '\n' if !in_escape => {
-                w = 0;
-                h += 1;
-            }
-            _ if !in_escape => {
-                w += unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
-            }
-            _ => {}
-        }
-    }
-
-    // Post-loop wrap drain (C lines 1255-1263).
-    while terminal_width > 0 && w > terminal_width && overf >= 0 {
-        h += 1;
-        w -= terminal_width;
-    }
-    // Final-column edge case (C lines 1265-1268).
-    if terminal_width > 0 && w == terminal_width && overf == 0 {
-        w = 0;
-        h += 1;
-    }
-
-    (w, h)
-}
 
 // `pub struct CmdStack` + `impl CmdStack { new, push, pop, top,
 // depth, as_slice }` — DELETED per user directive. C source uses
@@ -1364,8 +1361,8 @@ pub fn countprompt(s: &str, terminal_width: usize, overf: i32) -> (usize, usize)
 // (`Src/prompt.c:55-58`) plus `cmdpush()`/`cmdpop()` functions
 // (`Src/prompt.c:1624-1632`). The Rust-only `CmdStack` wrapper had
 // zero callers outside this file. The canonical port lives on
-// `prompt_expand_env.cmd_stack: Vec<u8>` and `ShellExecutor.cmd_stack:
-// Vec<u8>`. `cmdpush()`/`cmdpop()` ports go on those.
+// `prompt_tls::CMDSTACK` and `ShellExecutor.cmd_stack: Vec<u8>`.
+// `cmdpush()`/`cmdpop()` thread-local stack mirrors C file-statics.
 
 /// Resolve a color name to an ANSI base index.
 /// Port of `match_named_colour()` from Src/prompt.c:1915 —
@@ -1421,12 +1418,12 @@ pub fn parsehighlight(spec: &str) -> TextAttrs {                             // 
             }
             s if s.starts_with("fg=") => {
                 if let Some(code) = match_named_colour(&s[3..]) { // c:295
-                    attrs = zattr_set_fg_palette!(attrs, code); // c:295
+                    attrs = zattr_set_fg_palette(attrs, code); // c:295
                 }
             }
             s if s.starts_with("bg=") => {
                 if let Some(code) = match_named_colour(&s[3..]) { // c:295
-                    attrs = zattr_set_bg_palette!(attrs, code); // c:295
+                    attrs = zattr_set_bg_palette(attrs, code); // c:295
                 }
             }
             _ => {}
@@ -1452,7 +1449,7 @@ pub fn apply_text_attributes(attrs: TextAttrs) -> String {                   // 
         } else {
             raw as Color
         };
-        codes.push(color_to_ansi!(c, true).trim_start_matches("\x1b[")
+        codes.push(color_to_ansi(c, true).trim_start_matches("\x1b[")
             .trim_end_matches('m').to_string());
     }
     if attrs & TXTBGCOLOUR != 0 { // c:1645
@@ -1462,7 +1459,7 @@ pub fn apply_text_attributes(attrs: TextAttrs) -> String {                   // 
         } else {
             raw as Color
         };
-        codes.push(color_to_ansi!(c, false).trim_start_matches("\x1b[")
+        codes.push(color_to_ansi(c, false).trim_start_matches("\x1b[")
             .trim_end_matches('m').to_string());
     }
     if codes.is_empty() {
@@ -1598,7 +1595,7 @@ pub fn zattrescape(attrs: TextAttrs) -> String {                             // 
 }
 
 fn color_name(c: Color) -> String {
-    if let Some((r, g, b)) = color_get_rgb!(c) {
+    if let Some((r, g, b)) = color_get_rgb(c) {
         return format!("#{:02x}{:02x}{:02x}", r, g, b);
     }
     let idx = (c & 0xff) as usize;
@@ -1611,8 +1608,8 @@ fn color_name(c: Color) -> String {
 /// Parse a single colour character from a `%F{...}` argument.
 /// Port of `parsecolorchar()` from Src/prompt.c:318.
 pub fn parsecolorchar(arg: &str, is_fg: bool) -> Option<(Color, String)> {   // c:318
-    let color = color_from_name!(arg)?; // c:336 (match_colour)
-    let ansi = color_to_ansi!(color, is_fg); // c:2440
+    let color = color_from_name(arg)?; // c:336 (match_colour)
+    let ansi = color_to_ansi(color, is_fg); // c:2440
     Some((color, ansi))
 }
 
@@ -1694,7 +1691,7 @@ pub fn treplaceattrs(old: TextAttrs, new: TextAttrs) -> String {             // 
             let c = if new & TXT_ATTR_FG_24BIT != 0 {
                 COLOR_24BIT | (raw as Color & 0x00ff_ffff)
             } else { raw as Color };
-            result.push_str(&color_to_ansi!(c, true));
+            result.push_str(&color_to_ansi(c, true));
         } else {
             result.push_str("\x1b[39m");
         }
@@ -1705,7 +1702,7 @@ pub fn treplaceattrs(old: TextAttrs, new: TextAttrs) -> String {             // 
             let c = if new & TXT_ATTR_BG_24BIT != 0 {
                 COLOR_24BIT | (raw as Color & 0x00ff_ffff)
             } else { raw as Color };
-            result.push_str(&color_to_ansi!(c, false));
+            result.push_str(&color_to_ansi(c, false));
         } else {
             result.push_str("\x1b[49m");
         }
@@ -1779,258 +1776,13 @@ pub fn output_highlight(attrs: TextAttrs) -> String {
     apply_text_attributes(attrs)
 }
 
-#[cfg(test)]
-#[allow(clippy::items_after_test_module)]
-// Trailing helpers (`prompt_width`, etc.) live below the tests to
-// keep the prompt module's C-port topology cohesive — reordering
-// would split related functions across the file.
-mod tests {
-    use super::*;
-
-    fn with_prompt_env<F: FnOnce()>(env: prompt_expand_env, f: F) {
-        PROMPT_EXPAND_ENV.with(|c| {
-            let prev = std::mem::replace(&mut *c.borrow_mut(), env);
-            f();
-            *c.borrow_mut() = prev;
-        });
-    }
-
-    fn test_ctx() -> prompt_expand_env {
-        prompt_expand_env {
-            pwd: "/home/user/projects/test".to_string(),
-            home: "/home/user".to_string(),
-            user: "testuser".to_string(),
-            host: "myhost.example.com".to_string(),
-            host_short: "myhost".to_string(),
-            tty: "/dev/pts/0".to_string(),
-            lastval: 0,
-            histnum: 42,
-            shlvl: 2,
-            num_jobs: 1,
-            is_root: false,
-            cmd_stack: vec![],
-            psvar: vec!["one".to_string(), "two".to_string()],
-            term_width: 80,
-            lineno: 10,
-            scriptname: None,
-            scriptfilename: None,
-            argzero: "zsh".to_string(),
-        }
-    }
-
-    #[test]
-    fn test_directory() {
-        with_prompt_env(test_ctx(), || {
-            assert_eq!(expand_prompt("%~"), "~/projects/test");
-            assert_eq!(expand_prompt("%/"), "/home/user/projects/test");
-            assert_eq!(expand_prompt("%d"), "/home/user/projects/test");
-            assert_eq!(expand_prompt("%1~"), "test");
-            assert_eq!(expand_prompt("%2~"), "projects/test");
-            assert_eq!(expand_prompt("%c"), "test");
-            assert_eq!(expand_prompt("%2c"), "projects/test");
-        });
-    }
-
-    #[test]
-    fn test_user_host() {
-        with_prompt_env(test_ctx(), || {
-            assert_eq!(expand_prompt("%n"), "testuser");
-            assert_eq!(expand_prompt("%M"), "myhost.example.com");
-            assert_eq!(expand_prompt("%m"), "myhost");
-            assert_eq!(expand_prompt("%2m"), "myhost.example");
-        });
-    }
-
-    #[test]
-    fn test_status() {
-        let mut e = test_ctx();
-        e.lastval = 127;
-        with_prompt_env(e, || {
-            assert_eq!(expand_prompt("%?"), "127");
-            assert_eq!(expand_prompt("%#"), "%");
-        });
-    }
-
-    #[test]
-    fn test_history() {
-        with_prompt_env(test_ctx(), || {
-            assert_eq!(expand_prompt("%h"), "42");
-            assert_eq!(expand_prompt("%!"), "42");
-        });
-    }
-
-    #[test]
-    fn test_misc() {
-        with_prompt_env(test_ctx(), || {
-            assert_eq!(expand_prompt("%L"), "2");
-            assert_eq!(expand_prompt("%j"), "1");
-            assert_eq!(expand_prompt("%i"), "10");
-            assert_eq!(expand_prompt("%%"), "%");
-        });
-    }
-
-    #[test]
-    fn test_psvar() {
-        with_prompt_env(test_ctx(), || {
-            assert_eq!(expand_prompt("%v"), "one");
-            assert_eq!(expand_prompt("%1v"), "one");
-            assert_eq!(expand_prompt("%2v"), "two");
-            assert_eq!(expand_prompt("%3v"), ""); // out of bounds
-        });
-    }
-
-    #[test]
-    fn test_conditional() {
-        with_prompt_env({
-            let mut e = test_ctx();
-            e.lastval = 0;
-            e
-        }, || {
-            assert_eq!(expand_prompt("%(?.ok.fail)"), "ok");
-        });
-        with_prompt_env({
-            let mut e = test_ctx();
-            e.lastval = 1;
-            e
-        }, || {
-            assert_eq!(expand_prompt("%(?.ok.fail)"), "fail");
-        });
-    }
-
-    #[test]
-    fn test_time_format() {
-        let fmt = convert_zsh_time_format("%Y-%m-%d %H:%M:%S");
-        assert_eq!(fmt, "%Y-%m-%d %H:%M:%S");
-    }
-
-    #[test]
-    fn test_bang_expansion() {
-        with_prompt_env(test_ctx(), || {
-            let exp = buf_vars::new("cmd !!").with_prompt_bang(true);
-            assert_eq!(exp.expand(), "cmd !");
-
-            let exp2 = buf_vars::new("cmd !").with_prompt_bang(true);
-            assert_eq!(exp2.expand(), "cmd 42");
-        });
-    }
-
-    // -------------------------------------------------------------
-    // countprompt + applytextattributes + promptexpand C-shape tests.
-    // -------------------------------------------------------------
-
-    #[test]
-    fn test_countprompt_simple_no_wrap() {
-        // 5 chars, terminal_width=80, no wrap.
-        let (w, h) = countprompt("hello", 80, 0);
-        assert_eq!(w, 5);
-        assert_eq!(h, 1);
-    }
-
-    #[test]
-    fn test_countprompt_tab_advances_to_next_8() {
-        // C: w = (w | 7) + 1; — tab snaps to next multiple of 8.
-        let (w, h) = countprompt("a\tb", 80, 0);
-        assert_eq!(w, 9); // 'a' = 1, tab to 8, 'b' = 9
-        assert_eq!(h, 1);
-        let (w, _) = countprompt("\t", 80, 0);
-        assert_eq!(w, 8);
-    }
-
-    #[test]
-    fn test_countprompt_newline_resets_width_bumps_height() {
-        let (w, h) = countprompt("foo\nbar", 80, 0);
-        assert_eq!(w, 3);
-        assert_eq!(h, 2);
-    }
-
-    #[test]
-    fn test_countprompt_wraps_at_terminal_width() {
-        // 12 chars at width=10 → wraps once. Final col=2, h=2.
-        let (w, h) = countprompt("123456789012", 10, 1);
-        assert_eq!(h, 2);
-        assert_eq!(w, 2);
-    }
-
-    #[test]
-    fn test_countprompt_overf_zero_snaps_at_boundary() {
-        // C lines 1265-1268: w == terminal_width && overf == 0
-        // → (0, h+1).
-        let (w, h) = countprompt("0123456789", 10, 0);
-        assert_eq!(w, 0);
-        assert_eq!(h, 2);
-    }
-
-    #[test]
-    fn test_countprompt_skips_ansi_escape() {
-        // ANSI escape \x1b[31m takes 0 visible columns.
-        let (w, h) = countprompt("\x1b[31mhello\x1b[0m", 80, 0);
-        assert_eq!(w, 5);
-        assert_eq!(h, 1);
-    }
-
-    #[test]
-    fn test_countprompt_skips_rl_ignore_markers() {
-        // \x01 ... \x02 markers are invisible.
-        let (w, _) = countprompt("\x01raw_zero_width\x02visible", 80, 0);
-        assert_eq!(w, "visible".len());
-    }
-
-    #[test]
-    fn test_promptexpand_returns_tuple_with_anchors() {
-        with_prompt_env(prompt_expand_env::default(), || {
-            let (expanded, rs_offset, cap_rs_offset) =
-                promptexpand("user@host %E rprompt", 0, None);
-            assert!(expanded.contains("rprompt"));
-            // %E offset captured.
-            assert_eq!(rs_offset, Some("user@host ".len()));
-            assert!(cap_rs_offset.is_none());
-        });
-    }
-
-    #[test]
-    fn test_applytextattributes_emits_diff() {
-        set_pending_text_attrs(0); // c:zsh.h:2685 (zattr=0 = no attrs)
-        let _ = applytextattributes(0);
-        // Set bold pending; diff should include the bold SGR.
-        set_pending_text_attrs(TXTBOLDFACE);
-        let diff = applytextattributes(0);
-        assert!(diff.contains("\x1b[") && diff.contains("1"));
-        // Clear pending; diff should reset.
-        set_pending_text_attrs(0);
-        let diff = applytextattributes(0);
-        assert!(diff.contains("\x1b[0m"));
-    }
-
-    #[test]
-    fn test_applytextattributes_no_diff_when_unchanged() {
-        set_pending_text_attrs(0);
-        let _ = applytextattributes(0);
-        // Re-apply same state — should be empty diff.
-        let diff = applytextattributes(0);
-        assert!(diff.is_empty());
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Remaining 7 missing prompt.c functions
+// Remaining prompt.c entry points (after `putpromptchar` / `buf_vars`)
 // ---------------------------------------------------------------------------
 
-/// Core character-by-character prompt renderer.
-/// Port of `putpromptchar()` from Src/prompt.c:359 — the ~600-line
-// section is ended by an instance of endchar.  If doprint is 0, the valid // c:354
-// % sequences are merely skipped over, and nothing is stored.              // c:355
-/// `%` escape dispatcher in the C source. The actual dispatch
-/// lives in `buf_vars::expand()`; this exists for call-site
-/// parity with C callers.
-pub fn putpromptchar(c: char, buf: &mut String) {       // c:359
-    if c == '%' {
-        // The full handling is in buf_vars::expand()
-        // This function is called character by character in C
-        // but in Rust we process the whole string at once
-        buf.push(c);
-    } else {
-        buf.push(c);
-    }
+/// Src/prompt.c:359 `static int putpromptchar(int doprint, int endchar)`
+pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
+    bv.run_putpromptchar(doprint, endchar)
 }
 
 /// Mix two sets of text attributes through a mask.
@@ -2092,7 +1844,7 @@ pub fn free_colour_buffer() {
 /// Apply a parsed colour attribute as an ANSI escape.
 /// Port of `set_colour_attribute()` from Src/prompt.c:2440.
 pub fn set_colour_attribute(color: Color, is_fg: bool) -> String {           // c:2440
-    color_to_ansi!(color, is_fg) // c:2440
+color_to_ansi(color, is_fg) // c:2440
 }
 
 /// Maximum cmdstack depth, mirroring C zsh's `CMDSTACKSZ`.
