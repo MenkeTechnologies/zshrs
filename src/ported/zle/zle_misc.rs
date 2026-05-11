@@ -1698,42 +1698,36 @@ pub fn regionlines(zle: &mut Zle) -> (usize, usize) {                        // 
     (start, end)
 }
 
-/// Per-`scancompcmd` state — port of the file-static globals
-/// `namedcmdstr`, `namedcmdll`, `namedcmdambig` referenced from
-/// `Src/Zle/zle_misc.c:1240-1244`.
-pub static NAMEDCMD_STATE: std::sync::OnceLock<std::sync::Mutex<NamedCmdState>> =
-    std::sync::OnceLock::new();
+/// Port of `static char *namedcmdstr` from `Src/Zle/zle_misc.c:1229`.
+pub static namedcmdstr: std::sync::Mutex<String> =                           // c:1229
+    std::sync::Mutex::new(String::new());
 
-#[derive(Debug, Default)]
-pub struct NamedCmdState {
-    pub namedcmdstr: String,
-    pub namedcmdll: Vec<String>,
-    pub namedcmdambig: usize,
-}
+/// Port of `static LinkList namedcmdll` from `Src/Zle/zle_misc.c:1230`.
+pub static namedcmdll: std::sync::Mutex<Vec<String>> =                       // c:1230
+    std::sync::Mutex::new(Vec::new());
 
-fn named_cmd_state() -> &'static std::sync::Mutex<NamedCmdState> {
-    NAMEDCMD_STATE.get_or_init(|| std::sync::Mutex::new(NamedCmdState::default()))
-}
+/// Port of `static int namedcmdambig` from `Src/Zle/zle_misc.c:1231`.
+pub static namedcmdambig: std::sync::atomic::AtomicUsize =                   // c:1231
+    std::sync::atomic::AtomicUsize::new(0);
 
-/// Port of `scancompcmd()` from Src/Zle/zle_misc.c:1235.
+/// Direct port of `static int scancompcmd(HashNode hn, UNUSED(int flags))`
+/// from `Src/Zle/zle_misc.c:1235`.
 pub fn scancompcmd(name: &str) -> i32 {                                      // c:1235
-    // C body c:1240-1245 — `if (strpfx(namedcmdstr, t->nam))
-    //                       addlinknode(namedcmdll, t->nam);
-    //                       l = pfxlen(peekfirst(namedcmdll), t->nam);
-    //                       if (l < namedcmdambig) namedcmdambig = l`.
-    let mut s = named_cmd_state().lock().unwrap();
-    if !name.starts_with(&s.namedcmdstr) {
-        return 0;
-    }
-    let first = s.namedcmdll.first().cloned();
-    s.namedcmdll.push(name.to_string());
+    use std::sync::atomic::Ordering;
+    // c:1240 — `if (strpfx(namedcmdstr, t->nam))`.
+    let prefix = namedcmdstr.lock().unwrap().clone();
+    if !name.starts_with(&prefix) { return 0; }
+    let mut ll = namedcmdll.lock().unwrap();
+    let first = ll.first().cloned();
+    ll.push(name.to_string());                                               // c:1241 addlinknode
     if let Some(f) = first {
+        // c:1242 — `pfxlen(peekfirst(namedcmdll), t->nam)`.
         let l = f.bytes().zip(name.bytes()).take_while(|(a, b)| a == b).count();
-        if l < s.namedcmdambig {
-            s.namedcmdambig = l;
+        if l < namedcmdambig.load(Ordering::Relaxed) {
+            namedcmdambig.store(l, Ordering::Relaxed);                       // c:1243
         }
     } else {
-        s.namedcmdambig = name.len();
+        namedcmdambig.store(name.len(), Ordering::Relaxed);
     }
     0
 }
