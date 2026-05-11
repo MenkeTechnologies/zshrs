@@ -843,6 +843,13 @@ pub fn zfopendata(name: &str) -> (i32, bool) {                                  
 
     // c:967-1037 — PORT-mode (active FTP): bind+listen locally, send
     // PORT a,b,c,d,p1,p2, return so caller can accept().
+    // c:977 — refuse PORT mode if SNDP preference isn't set (e.g. when
+    // PASV-only and the server rejected PASV).
+    if (zfprefs.load(Ordering::Relaxed) & ZFPF_SNDP) == 0 {                     // c:977
+        crate::ported::utils::zwarnnam(name,
+            "only sendport mode available for data");                           // c:978
+        return (1, false);                                                      // c:979
+    }
     let listener = match std::net::TcpListener::bind("0.0.0.0:0") {             // c:967 bind
         Ok(l) => l,
         Err(_) => {
