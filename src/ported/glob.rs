@@ -416,37 +416,13 @@ pub fn gmatchcmp(a: &str, b: &str) -> Ordering {                            // c
     }
 }
 
-/// Glob options
-#[derive(Debug, Clone, Default)]
-/// Glob behavior options.
-/// Port of the various flag bits in Src/glob.c —
-/// `GLOB_NULL`/`GLOB_NOCHECK`/etc. that `setopt NULL_GLOB` /
-/// `setopt NOMATCH` flip.
-pub struct GlobOptions {
-    pub null_glob: bool,
-    pub mark_dirs: bool,
-    pub no_glob_dots: bool,
-    pub list_types: bool,
-    pub numeric_sort: bool,
-    pub follow_links: bool,
-    pub extended_glob: bool,
-    pub case_glob: bool,
-    /// `**` recursion semantics. False = strict zsh: `**` requires
-    /// `/` (or `***/`) after to be recursive; bare `**foo` is a
-    /// literal star pair. True = bash globstar: bare `**` recurses
-    /// without trailing `/`. Direct mirror of GLOBSTARSHORT option
-    /// at zsh/Src/options.c:148, consulted by parse_pattern in
-    /// zshrs/Src/glob.c:715-742 parsecomplist.
-    pub glob_star_short: bool,
-    pub bare_glob_qual: bool,
-    /// Brace character-class expansion (`{a-z}` → `a b c … z`).
-    /// Direct mirror of zsh's BRACECCL option (zsh/Src/options.c:104,
-    /// consulted in zsh/Src/glob.c:2046 hasbraces and glob.c:2424
-    /// xpandbraces). When false, only comma lists `{a,b,c}` and
-    /// numeric/char ranges `{1..5}`/`{a..e}` expand; the `{a-z}`
-    /// dash-form is left literal.
-    pub brace_ccl: bool,
-}
+// `GlobOptions` struct deleted — Rust-only Bag-of-options with no
+// C counterpart. C reads each option directly from the global
+// `opts[]` array via `isset(NULL_GLOB)` / `isset(EXTENDED_GLOB)`
+// / etc. (Src/options.c). The Rust port uses the canonical
+// `crate::ported::options::opt_state_get(name) -> Option<bool>`
+// which reads from the same global store. Inlined at each
+// callsite as `opt_state_get("name").unwrap_or(default)`.
 
 /// Parsed glob qualifier set
 #[derive(Debug, Clone, Default)]
@@ -492,7 +468,6 @@ pub struct QualifierSet {                                                   // c
 /// 1:1 correspondence to `struct globdata` is otherwise faithful.
 // struct to easily save/restore current state                              // c:166
 pub struct GlobData {                                                       // c:168
-    pub options: GlobOptions,
     pub matches: Vec<GlobMatch>,
     pub qualifiers: Option<QualifierSet>,
     pathbuf: String,
@@ -500,9 +475,8 @@ pub struct GlobData {                                                       // c
 }
 
 impl GlobData {
-    pub fn new(options: GlobOptions) -> Self {
+    pub fn new() -> Self {
         GlobData {
-            options,
             matches: Vec::new(),
             qualifiers: None,
             pathbuf: String::with_capacity(4096),
@@ -521,9 +495,11 @@ impl GlobData {
         // per glob.c:2424 BRACECCL block; without, only `{a,b}` lists and
         // `{1..5}`/`{a..e}` ranges expand. Recurse on each variant and
         // concatenate matches.
-        if hasbraces(pattern, self.options.brace_ccl) {
+        let brace_ccl = crate::ported::options::opt_state_get("braceccl")
+            .unwrap_or(false);
+        if hasbraces(pattern, brace_ccl) {
             let mut all = Vec::new();
-            for variant in xpandbraces(pattern, self.options.brace_ccl) {
+            for variant in xpandbraces(pattern, brace_ccl) {
                 all.extend(self.glob(&variant));
             }
             return all;
@@ -566,24 +542,16 @@ impl GlobData {
         // Apply subscript selection
         self.apply_selection();
 
-        // Extract filenames. Mark-dirs / list-types come from EITHER the
-        // GlobOptions (caller-supplied default) OR the parsed `(M)`/`(T)`
-        // qualifier on this glob — whichever is set wins. Direct port of
-        // zsh/Src/glob.c:355,372 — output marker emission consults the
-        // per-glob `gf_markdirs` / `gf_listtypes` flags which the qualifier
-        // parser at glob.c:1557-1566 sets.
-        let mark_dirs = self.options.mark_dirs
-            || self
-                .qualifiers
-                .as_ref()
-                .map(|q| q.mark_dirs)
-                .unwrap_or(false);
-        let list_types = self.options.list_types
-            || self
-                .qualifiers
-                .as_ref()
-                .map(|q| q.list_types)
-                .unwrap_or(false);
+        // Extract filenames. Mark-dirs / list-types come from EITHER
+        // the canonical global option store OR the parsed `(M)`/`(T)`
+        // qualifier on this glob. Direct port of zsh/Src/glob.c:355,372
+        // — output marker emission consults the per-glob `gf_markdirs`
+        // / `gf_listtypes` flags which the qualifier parser at
+        // glob.c:1557-1566 sets.
+        let mark_dirs = crate::ported::options::opt_state_get("markdirs").unwrap_or(false)
+            || self.qualifiers.as_ref().map(|q| q.mark_dirs).unwrap_or(false);
+        let list_types = crate::ported::options::opt_state_get("listtypes").unwrap_or(false)
+            || self.qualifiers.as_ref().map(|q| q.list_types).unwrap_or(false);
         let colon_mods = self.qualifiers.as_ref().and_then(|q| q.colon_mods.clone());
         let mut results: Vec<String> = self
             .matches
@@ -610,7 +578,9 @@ impl GlobData {
             .collect();
 
         // Handle no matches
-        if results.is_empty() && !self.options.null_glob {
+        if results.is_empty()
+            && !crate::ported::options::opt_state_get("nullglob").unwrap_or(false)
+        {
             results.push(pattern.to_string());
         }
 
@@ -650,7 +620,7 @@ impl GlobData {
         let qual_str = &pattern[start + 1..pattern.len() - 1];
         let (is_explicit, qual_content) = if let Some(after) = qual_str.strip_prefix("#q") {
             (true, after)
-        } else if self.options.bare_glob_qual {
+        } else if crate::ported::options::opt_state_get("bareglobqual").unwrap_or(true) {
             (false, qual_str)
         } else {
             return (pattern.to_string(), None);
@@ -969,7 +939,8 @@ impl GlobData {
                     // contexts in zsh). The glob_star_short option flips the
                     // strict gate off so bare `**` recurses without `/`.
                     let has_slash = chars.peek() == Some(&'/');
-                    let recursive = has_slash || follow || self.options.glob_star_short;
+                    let recursive = has_slash || follow
+                        || crate::ported::options::opt_state_get("globstarshort").unwrap_or(false);
                     if has_slash {
                         chars.next();
                     }
@@ -1070,16 +1041,15 @@ impl GlobData {
             let name = entry.file_name().to_string_lossy().to_string();
 
             // Skip hidden files unless pattern starts with .
-            if self.options.no_glob_dots && name.starts_with('.') && !pattern.starts_with('.') {
+            let no_glob_dots = !crate::ported::options::opt_state_get("dotglob").unwrap_or(false)
+                && !crate::ported::options::opt_state_get("globdots").unwrap_or(false);
+            if no_glob_dots && name.starts_with('.') && !pattern.starts_with('.') {
                 continue;
             }
-
-            if matchpat(
-                pattern,
-                &name,
-                self.options.extended_glob,
-                self.options.case_glob,
-            ) {
+            let extended_glob = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+            let case_glob = crate::ported::options::opt_state_get("caseglob").unwrap_or(true)
+                && !crate::ported::options::opt_state_get("nocaseglob").unwrap_or(false);
+            if matchpat(pattern, &name, extended_glob, case_glob) {
                 let path = entry.path();
 
                 if rest.is_empty() {
@@ -1121,7 +1091,9 @@ impl GlobData {
             let name = entry.file_name().to_string_lossy().to_string();
 
             // Skip hidden files
-            if self.options.no_glob_dots && name.starts_with('.') {
+            let no_glob_dots = !crate::ported::options::opt_state_get("dotglob").unwrap_or(false)
+                && !crate::ported::options::opt_state_get("globdots").unwrap_or(false);
+            if no_glob_dots && name.starts_with('.') {
                 continue;
             }
 
@@ -1349,7 +1321,7 @@ impl GlobData {
             return;
         }
 
-        let numeric = self.options.numeric_sort;
+        let numeric = crate::ported::options::opt_state_get("numericglobsort").unwrap_or(false);
         self.matches.sort_by(|a, b| a.compare(b, &specs, numeric));
     }
 
@@ -2391,31 +2363,15 @@ fn glob_emit_path(path: &std::path::Path) -> String {
 /// Glob with default options
 // np points to a node in the list which will be expanded                  // c:1209
 // into a series of nodes.                                                  // c:1210
-/// Top-level glob entry point with default options.
-/// Port of `zglob()` from Src/glob.c:1214.
+/// Top-level glob entry point.
+/// Port of `zglob()` from Src/glob.c:1214. Reads all option flags
+/// (nullglob / extendedglob / dotglob / caseglob / globstarshort /
+/// bareglobqual / braceccl / markdirs / numericglobsort / …)
+/// directly from the canonical global option store via
+/// `crate::ported::options::opt_state_get` — same path C uses via
+/// `isset(NULL_GLOB)` etc. on the global `opts[]` array.
 pub fn glob(pattern: &str) -> Vec<String> {                                  // c:1214
-    let mut state = GlobData::new(GlobOptions {
-        null_glob: false,
-        mark_dirs: false,
-        no_glob_dots: true,
-        list_types: false,
-        numeric_sort: false,
-        follow_links: false,
-        extended_glob: true,
-        case_glob: true,
-        glob_star_short: false,
-        bare_glob_qual: true,
-        brace_ccl: false,
-    });
-    state.glob(pattern)
-}
-
-/// Glob with custom options
-/// Top-level glob entry point with explicit options.
-/// Port of `zglob()` from Src/glob.c:1214 — same `LinkList`
-/// of expanded matches the C source threads through.
-pub fn glob_with_options(pattern: &str, options: GlobOptions) -> Vec<String> { // c:1214
-    let mut state = GlobData::new(options);
+    let mut state = GlobData::new();
     state.glob(pattern)
 }
 
@@ -3239,15 +3195,17 @@ pub enum RedirectType {
     Pipe,      // |
 }
 
-/// Expand redirections with glob patterns (from glob.c xpandredir lines 1690-1770)
-pub fn xpandredir(redir: &Redirect, options: &GlobOptions) -> Vec<Redirect> {
+/// Expand redirections with glob patterns. Port of `xpandredir()`
+/// from `Src/glob.c:1690-1770`. Reads option state from the global
+/// option store (same as C).
+pub fn xpandredir(redir: &Redirect) -> Vec<Redirect> {                       // c:1690
     // Check if target has wildcards
     if !haswilds(&redir.target) {
         return vec![redir.clone()];
     }
 
     // Glob expand the target
-    let mut state = GlobData::new(options.clone());
+    let mut state = GlobData::new();
     let matches = state.glob(&redir.target);
 
     if matches.is_empty() {
@@ -3406,7 +3364,7 @@ mod tests {
         let dir = setup_test_dir();
         let pattern = format!("{}/*.txt", dir.path().display());
 
-        let mut state = GlobData::new(GlobOptions::default());
+        let mut state = GlobData::new();
         let results = state.glob(&pattern);
 
         assert_eq!(results.len(), 2);
@@ -3416,24 +3374,23 @@ mod tests {
 
     #[test]
     fn test_glob_hidden() {
+        use crate::ported::options::opt_state_set;
         let dir = setup_test_dir();
         let pattern = format!("{}/*", dir.path().display());
 
-        // With no_glob_dots = true (default)
-        let mut state = GlobData::new(GlobOptions {
-            no_glob_dots: true,
-            ..Default::default()
-        });
+        // Default (dotglob off / globdots off) → hidden files skipped.
+        opt_state_set("dotglob", false);
+        opt_state_set("globdots", false);
+        let mut state = GlobData::new();
         let results = state.glob(&pattern);
         assert!(!results.iter().any(|s| s.contains(".hidden")));
 
-        // With no_glob_dots = false
-        let mut state = GlobData::new(GlobOptions {
-            no_glob_dots: false,
-            ..Default::default()
-        });
+        // setopt dotglob → hidden files included.
+        opt_state_set("dotglob", true);
+        let mut state = GlobData::new();
         let results = state.glob(&pattern);
         assert!(results.iter().any(|s| s.contains(".hidden")));
+        opt_state_set("dotglob", false);  // reset for other tests
     }
 
     #[test]
@@ -3771,21 +3728,12 @@ pub fn zglob(list: &mut Vec<String>, np: usize, _nountok: i32) {             // 
 pub fn glob_path(pattern: &str) -> Vec<String> {                             // c:1214
     use crate::ported::options::opt_state_get;
     let opt = |n: &str, default: bool| opt_state_get(n).unwrap_or(default);
-    // Build canonical GlobOptions from option state.
-    let options = GlobOptions {
-        null_glob:       opt("nullglob", false),
-        mark_dirs:       opt("markdirs", false),
-        no_glob_dots:    !(opt("dotglob", false) || opt("globdots", false)),
-        list_types:      opt("listtypes", false),
-        numeric_sort:    opt("numericglobsort", false),
-        follow_links:    opt("globlinks", false),
-        extended_glob:   opt("extendedglob", false),
-        // C `caseglob` defaults ON; `nocaseglob` is its inverse.
-        case_glob:       opt("caseglob", true) && !opt("nocaseglob", false),
-        glob_star_short: opt("globstarshort", false),
-        bare_glob_qual:  opt("bareglobqual", true),
-        brace_ccl:       opt("braceccl", false),
-    };
+    // Read option state directly — matches C's per-callsite
+    // `isset(NULLGLOB)` / `isset(EXTENDEDGLOB)` reads (Src/glob.c).
+    let null_glob     = opt("nullglob",       false);
+    let extended_glob = opt("extendedglob",   false);
+    let no_glob_dots  = !(opt("dotglob",      false) || opt("globdots", false));
+    let case_glob     = opt("caseglob",       true)  && !opt("nocaseglob", false);
 
     // c:1230 — `(a|b|c)` top-level alternation pre-pass.
     if let Some(alternatives) = expand_glob_alternation(pattern) {
@@ -3809,7 +3757,7 @@ pub fn glob_path(pattern: &str) -> Vec<String> {                             // 
 
     // c:155 (P_EXCLUDE) — extendedglob `^pat` negation + `pat1~pat2`
     // exclusion. Only applies when extendedglob option is on.
-    if options.extended_glob {
+    if extended_glob {
         let last_seg_start = pattern.rfind('/').map(|i| i + 1).unwrap_or(0);
         let last_seg = &pattern[last_seg_start..];
         if last_seg.starts_with('^') && last_seg.len() > 1 {
@@ -3824,10 +3772,10 @@ pub fn glob_path(pattern: &str) -> Vec<String> {                             // 
             if let Ok(entries) = std::fs::read_dir(&dir) {
                 for entry in entries.flatten() {
                     let name = entry.file_name().to_string_lossy().to_string();
-                    if name.starts_with('.') && options.no_glob_dots {
+                    if name.starts_with('.') && no_glob_dots {
                         continue;
                     }
-                    if !matchpat(neg, &name, true, options.case_glob) {
+                    if !matchpat(neg, &name, true, case_glob) {
                         let path = if prefix.is_empty() {
                             name
                         } else {
@@ -3839,7 +3787,7 @@ pub fn glob_path(pattern: &str) -> Vec<String> {                             // 
             }
             out.sort();
             if !out.is_empty() { return out; }
-            if options.null_glob { return Vec::new(); }
+            if null_glob { return Vec::new(); }
             return vec![pattern.to_string()];
         }
         // c:155 — top-level `~` exclusion.
@@ -3868,20 +3816,20 @@ pub fn glob_path(pattern: &str) -> Vec<String> {                             // 
                 .into_iter()
                 .filter(|p| {
                     let basename = p.rsplit('/').next().unwrap_or(p);
-                    !matchpat(&rhs, basename, true, options.case_glob)
-                        && !matchpat(&rhs, p, true, options.case_glob)
+                    !matchpat(&rhs, basename, true, case_glob)
+                        && !matchpat(&rhs, p, true, case_glob)
                 })
                 .collect();
             if !filtered.is_empty() { return filtered; }
-            if options.null_glob { return Vec::new(); }
+            if null_glob { return Vec::new(); }
             return vec![pattern.to_string()];
         }
     }
 
     // Main walk via the canonical glob driver.
-    let mut state = GlobData::new(options.clone());
+    let mut state = GlobData::new();
     let matches = state.glob(pattern);
-    if matches.is_empty() && !options.null_glob {
+    if matches.is_empty() && !null_glob {
         return vec![pattern.to_string()];
     }
     matches
