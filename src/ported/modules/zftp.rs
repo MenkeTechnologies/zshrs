@@ -977,29 +977,6 @@ impl Zftp {
 #[allow(non_snake_case)]
 pub fn bin_zftp(_nam: &str, args: &[String],                                 // c:3002
                 _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    // c:3074-3100 — parse $ZFTP_PREFS into zfprefs each invocation so
-    // user toggles between subcommand calls take effect. C does this
-    // inside bin_zftp's body before dispatch.
-    let prefs_str: Option<String> = crate::exec::try_with_executor(|exec| {
-        exec.variables.get("ZFTP_PREFS").cloned()
-    }).flatten();
-    if let Some(p) = prefs_str.as_deref() {                                   // c:3074
-        let mut new_prefs: i32 = 0;
-        for ch in p.chars() {
-            match ch.to_ascii_uppercase() {
-                'S' => new_prefs |= ZFPF_SNDP,                                // c:3081
-                'P' => {
-                    if (new_prefs & ZFPF_SNDP) == 0 {                         // c:3090
-                        new_prefs |= ZFPF_PASV;                               // c:3091
-                    }
-                }
-                'D' => new_prefs |= ZFPF_DUMB,                                // c:3095
-                _ => {} // unknown char: C warns; static-link path silent
-            }
-        }
-        zfprefs.store(new_prefs, std::sync::atomic::Ordering::Relaxed);
-    }
-
     let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let mut zftp_guard = ZFTP_STATE.lock()
         .unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
