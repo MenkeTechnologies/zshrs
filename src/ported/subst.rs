@@ -2535,9 +2535,10 @@ pub fn paramsubst(
                 })
                 .or_else(|| {
                     if is_special_name {
-                        crate::fusevm_bridge::try_with_executor(|exec| {
-                            exec.get_variable(&var_name)
-                        })
+                        // POSIX shell-specials ($?/$#/$$/$!/$*/$@/$-/$N).
+                        // Canonical dispatch through params::lookup_special_var
+                        // (Src/params.c special_assigns getfn).
+                        crate::ported::params::lookup_special_var(&var_name)
                     } else {
                         None
                     }
@@ -3644,11 +3645,39 @@ pub fn paramsubst(
             // synthesized tag from the storage table the value
             // lives in. Direct port of subst.c:2814 wantt arm
             // which checks paramtab + storage shape.
-            value = crate::fusevm_bridge::try_with_executor(|exec| {
-                    exec.var_attrs.get(&var_name).cloned() // c:2814
-                })
-                .flatten()
-                .map(|attr| attr.format_zsh()) // c:2825
+            // c:2814 — read PM_* flags directly from paramtab and
+            // synthesize the type tag. Mirrors C `pm->node.flags &
+            // PM_TYPE` dispatch at subst.c:2814-2900.
+            value = crate::ported::params::paramtab()
+                .lock()
+                .ok()
+                .and_then(|tab| tab.get(&var_name).map(|pm| {
+                    use crate::ported::zsh_h::{
+                        PM_ARRAY, PM_HASHED, PM_INTEGER, PM_EFLOAT, PM_FFLOAT,
+                        PM_READONLY, PM_EXPORTED, PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z,
+                        PM_UPPER, PM_LOWER, PM_HIDE, PM_HIDEVAL, PM_TAGGED,
+                        PM_UNIQUE,
+                    };
+                    let f = pm.node.flags as u32;
+                    let base = if f & PM_HASHED != 0 { "association" }
+                          else if f & PM_ARRAY != 0 { "array" }
+                          else if f & PM_INTEGER != 0 { "integer" }
+                          else if f & (PM_EFLOAT | PM_FFLOAT) != 0 { "float" }
+                          else { "scalar" };
+                    let mut out = String::from(base);
+                    if f & PM_LEFT != 0    { out.push_str("-left"); }
+                    if f & PM_RIGHT_B != 0 { out.push_str("-right_blanks"); }
+                    if f & PM_RIGHT_Z != 0 { out.push_str("-zero"); }
+                    if f & PM_LOWER != 0   { out.push_str("-lower"); }
+                    if f & PM_UPPER != 0   { out.push_str("-upper"); }
+                    if f & PM_READONLY != 0{ out.push_str("-readonly"); }
+                    if f & PM_TAGGED != 0  { out.push_str("-tag"); }
+                    if f & PM_EXPORTED != 0{ out.push_str("-export"); }
+                    if f & PM_UNIQUE != 0  { out.push_str("-unique"); }
+                    if f & PM_HIDE != 0    { out.push_str("-hide"); }
+                    if f & PM_HIDEVAL != 0 { out.push_str("-hideval"); }
+                    out
+                }))
                 .unwrap_or_else(|| {
                     if assoc_contains(&var_name) {
                         "association".to_string() // c:2814
@@ -3939,9 +3968,10 @@ pub fn paramsubst(
         // 3977 presc handling.
         if flag_pct_prompt > 0 {
             // c:2405
+            // Canonical prompt expansion (Src/prompt.c:182 promptexpand).
             let prompt_one = |s: &str| -> String {
-                crate::fusevm_bridge::try_with_executor(|exec| exec.expand_prompt_string(s))
-                    .unwrap_or_else(|| s.to_string())
+                let (expanded, _, _) = crate::ported::prompt::promptexpand(s, 0, None);
+                expanded
             };
             if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| prompt_one(s)).collect();
