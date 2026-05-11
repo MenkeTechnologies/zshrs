@@ -161,12 +161,14 @@ pub fn printbind(seq: &[u8]) -> String {                                     // 
 /// is installed. Uses `Arc::make_mut` to copy-on-write the wrapped Keymap so
 /// the mutation respects the existing Arc-shared layout.
 pub fn bindkey(km: &mut KeymapManager, keymap: &str, seq: &str, widget: &str) -> bool { // c:zle_keymap.c:566
+    let _ = km;
     let seq_bytes = getkeystring(seq);
-    let map = match km.keymaps.get_mut(keymap) {
-        Some(m) => m,
+    let mut tab = crate::ported::zle::zle_keymap::keymapnamtab().lock().unwrap();
+    let node = match tab.get_mut(keymap) {
+        Some(n) => n,
         None => return false,
     };
-    let inner = std::sync::Arc::make_mut(map);
+    let inner = std::sync::Arc::make_mut(&mut node.keymap);
     inner.bind_seq(&seq_bytes, Thingy::new(widget));
     true
 }
@@ -176,9 +178,10 @@ pub fn bindkey(km: &mut KeymapManager, keymap: &str, seq: &str, widget: &str) ->
 /// listing branch of `bin_bindkey`). Both 1-byte fast-path entries
 /// (`first[]`) and multi-byte trie entries (`multi`) are included.
 pub fn bindlistout(km: &KeymapManager, keymap: &str) -> Vec<(String, String)> { // c:zle_keymap.c:1094
+    let _ = km;
     let mut bindings = Vec::new();
 
-    if let Some(map) = km.keymaps.get(keymap) {
+    if let Some(map) = crate::ported::zle::zle_keymap::openkeymap(keymap) {
         // Single character bindings
         for (i, thingy) in map.first.iter().enumerate() {
             if let Some(t) = thingy {
@@ -228,10 +231,13 @@ mod tests {
             listed
         );
         // Now remove it (inline of the deleted unbindkey helper).
+        let _ = &km;
         let seq_bytes = getkeystring("\\ez");
-        let map = km.keymaps.get_mut("emacs").unwrap();
-        let inner = std::sync::Arc::make_mut(map);
+        let mut tab = crate::ported::zle::zle_keymap::keymapnamtab().lock().unwrap();
+        let node = tab.get_mut("emacs").unwrap();
+        let inner = std::sync::Arc::make_mut(&mut node.keymap);
         inner.unbind_seq(&seq_bytes);
+        drop(tab);
         let listed = bindlistout(&km, "emacs");
         assert!(
             !listed.iter().any(|(k, _)| k == &seq),

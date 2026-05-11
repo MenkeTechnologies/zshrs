@@ -1516,7 +1516,7 @@ pub fn pastebuf(zle: &mut Zle, buf: &[char], mult: i32, position: i32) -> i32 { 
     // c:600 — `yanke = zlecs`.
     zle.yank_end = zle.zlecs;
     // c:601-602 — vicmd → DECCS.
-    if zle.zlecs > 0 && zle.keymaps.current_name == "vicmd" {
+    if zle.zlecs > 0 && *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd" {
         zle.zlecs -= 1;
     }
     zle.resetneeded = true;
@@ -1637,7 +1637,8 @@ pub fn quoteline(zle: &mut Zle) -> i32 {                                     // 
 /// Port of `quoteregion()` from Src/Zle/zle_misc.c:1152.
 pub fn quoteregion(zle: &mut Zle) -> i32 {                                   // c:1151
     // c:1156 — `int extra = invicmdmode()`. Vi-cmd-mode bias.
-    let mut extra = zle.keymaps.current_name == "vicmd";
+    let _ = &zle;
+    let mut extra = *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd";
     // c:1158-1159 — `if (mark > zlell) mark = zlell`.
     if zle.mark > zle.zlell {
         zle.mark = zle.zlell;

@@ -740,7 +740,7 @@ pub fn viforwardchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {   // 
     // c:672-673 — invicmdmode + !virangeflag → DECPOS(lim). Skip
     // the vicmd/virangeflag global check; cursor-end-of-line bias
     // applies the same in both modes for the Rust port.
-    if zle.keymaps.current_name == "vicmd" && lim > 0 {
+    if *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd" && lim > 0 {
         lim -= 1;
     }
     if zle.zlecs >= lim {                                                    // c:674

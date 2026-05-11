@@ -1155,13 +1155,12 @@ pub fn vicmdmode(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // 
     //                     0)) return 1; mergeundo(); insmode = unset(
     //                     OVERSTRIKE); ...; if (zlecs != findbol())
     //                     DECCS()`.
-    if zle.keymaps.current_name == "vicmd" {
+    if *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd" {
         return 1;
     }
     if crate::ported::zle::zle_keymap::selectkeymap("vicmd", 0) != 0 {
         return 1;
     }
-    zle.keymaps.current_name = "vicmd".to_string();
     let bol = crate::ported::zle::zle_utils::findbol(zle);
     if zle.zlecs != bol {
         crate::ported::zle::zle_move::deccs(zle);
