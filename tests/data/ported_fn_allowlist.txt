@@ -92,6 +92,18 @@ module_features
 # Rust port collapses both into one match-based lookup.
 index_to_name
 
+# printf_format helpers (builtin.rs) — `printf` spec formatter
+# fragments. C zsh inlines width/precision parsing in bin_print
+# (Src/builtin.c:4791+); the Rust port factors it into helpers so
+# each numeric vs string spec branch stays readable. Each helper
+# corresponds to one `case '%[xs...]':` arm in bin_print and is
+# only called from `printf_format`.
+format_spec_str
+format_spec_int
+format_spec_uint
+format_spec_float
+parse_width_prec
+
 # optno_by_name (options.rs) — forward direction of the same
 # `optiontab` lookup C does at `Src/options.c:709-711` via
 # `optiontab->getnode(optiontab, name)` returning `Optname.optno`.

@@ -1488,7 +1488,6 @@ pub fn assignaparam(
         ASSPM_AUGMENT, PM_ARRAY, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER,
         PM_NAMEREF, PM_SPECIAL, PM_UNIQUE, PM_UNSET,
     };
-
     // c:3366-3370 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
         crate::ported::utils::zerr(&format!("not an identifier: {}", name));
@@ -1539,11 +1538,18 @@ pub fn assignaparam(
         pm.node.flags |= PM_UNIQUE as i32;
     }
     let val_final = if uniq { simple_arrayuniq(val) } else { val };
-    pm.u_arr = Some(val_final);
+    pm.u_arr = Some(val_final.clone());
     pm.u_str = None;
     pm.u_hash = None;
     let cloned = pm.clone();
     drop(tab);
+    // Mirror to exec.arrays for fusevm read path. Two-store coherence
+    // until exec.arrays is dissolved. Use try_with_executor because
+    // setaparam may be called outside VM context (init, tests).
+    let name_owned = name.to_string();
+    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
+        exec.arrays.insert(name_owned, val_final);
+    });
     Some(cloned)
 }
 
@@ -1606,7 +1612,14 @@ pub fn sethparam(name: &str, val: Vec<String>)                              // c
     paramtab_hashed_storage()
         .lock()
         .unwrap()
-        .insert(name.to_string(), map);
+        .insert(name.to_string(), map.clone());
+
+    // Mirror to exec.assoc_arrays for fusevm read path. Two-store
+    // coherence until exec.assoc_arrays is dissolved.
+    let name_owned = name.to_string();
+    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
+        exec.assoc_arrays.insert(name_owned, map);
+    });
 
     Some(cloned)
 }
@@ -6206,6 +6219,14 @@ pub fn createparam(                                                          // 
     pm.node.flags = flags & !(PM_LOCAL as i32);                              // c:1155
     if (pm.node.flags as u32 & PM_SPECIAL) == 0 {                            // c:1157
         assigngetset(&mut pm);                                               // c:1158
+    }
+    // c:1146 `paramtab->addnode(paramtab, ztrdup(name), pm)`. Without
+    // this, callers that re-fetch the param via paramtab->getnode would
+    // miss it. Empty-name (nulstring) path c:1152-1153 stays paramtab-less.
+    if !name.is_empty() {
+        let cloned = pm.clone();
+        paramtab().lock().unwrap().insert(name.to_string(), pm);
+        return Some(cloned);
     }
     Some(pm)                                                                 // c:1159
 }

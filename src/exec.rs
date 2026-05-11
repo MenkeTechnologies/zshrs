@@ -2569,7 +2569,12 @@ impl ShellExecutor {
         }
         crate::ported::modules::zutil::bin_zstyle("zstyle", &positional, &ops, 0)
     }
-    pub(crate) fn bin_zparseopts(&mut self, _args: &[String]) -> i32 { 0 }
+    pub(crate) fn bin_zparseopts(&mut self, args: &[String]) -> i32 {
+        // Canonical bin_zparseopts per zutil.c:1738 — BUILTIN spec at
+        // zutil.c:2137 takes no option flags (parses its own opts).
+        let ops = Self::_empty_ops();
+        crate::ported::modules::zutil::bin_zparseopts("zparseopts", args, &ops, 0)
+    }
     pub(crate) fn bin_zformat(&mut self, args: &[String]) -> i32 {
         // bin_zformat takes no flag options (BUILTIN spec at
         // zutil.c:2138 has none); pass empty `options` and dispatch
@@ -2982,14 +2987,20 @@ impl crate::ported::exec::ShellExecutor {
             // Iterating HashMap::values() gave random order; tests
             // and prompt code that snapshot ${(v)aliases} flickered.
             "aliases" => {
-                if key == "@" || key == "*" {
-                    let mut keys: Vec<&String> = self.aliases.keys().collect();
-                    keys.sort();
-                    let vals: Vec<String> = keys
-                        .iter()
-                        .filter_map(|k| self.aliases.get(*k).cloned())
-                        .collect();
-                    return Some(vals.join(" "));
+                // Read from canonical `aliastab` (`Src/hashtable.c:1210`,
+                // ported at `src/ported/hashtable.rs::aliastab_lock`).
+                // bin_alias writes through `aliastab.add()` — the local
+                // `exec.aliases` HashMap is a stale init-time snapshot.
+                if let Ok(tab) = crate::ported::hashtable::aliastab_lock().lock() {
+                    if key == "@" || key == "*" {
+                        let mut names: Vec<&String> = tab.iter().map(|(n, _)| n).collect();
+                        names.sort();
+                        let vals: Vec<String> = names.iter()
+                            .filter_map(|n| tab.get(n).map(|a| a.text.clone()))
+                            .collect();
+                        return Some(vals.join(" "));
+                    }
+                    return Some(tab.get(key).map(|a| a.text.clone()).unwrap_or_default());
                 }
                 Some(self.aliases.get(key).cloned().unwrap_or_default())
             }
@@ -9643,6 +9654,19 @@ pub fn scan_magic_assoc_keys(name: &str) -> Option<Vec<String>> {
         "nameddirs" | "userdirs" | "usergroups" |
         "parameters" | "errnos" | "sysparams" | "dirstack"
             => Some(Vec::new()),
+        // `mapfile` — zsh/mapfile module's magic assoc. Keys are
+        // discoverable via `scanpmmapfile` (Src/Modules/mapfile.c:241)
+        // which walks `.` but uses an empty value list per the
+        // comment "grotesquely wasteful to read every file into
+        // memory." Routing through here lets `${mapfile[$path]}`
+        // hit get_special_array_value's "mapfile" arm and call
+        // get_contents() directly.
+        "mapfile" => Some(
+            crate::modules::mapfile::scanpmmapfile()
+                .into_iter()
+                .map(|(k, _v)| k)
+                .collect(),
+        ),
         _ => None,
     }
 }

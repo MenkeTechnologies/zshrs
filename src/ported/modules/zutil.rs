@@ -815,10 +815,12 @@ pub fn bin_zstyle(nam: &str, args: &[String],                                 //
         }
         return 0;                                                            // c:524
     }
-    // c:541-942 — -s/-b/-t/-T/-m/-a/-g/-e per-context lookup arms.
+    // c:541-942 — -s/-b/-t/-T/-m/-a/-e per-context lookup arms.
+    // -g has different arg layout (args[0] = output name, not context)
+    // so it gets its own block below.
     if OPT_ISSET(ops, b's') || OPT_ISSET(ops, b'b') || OPT_ISSET(ops, b't')
         || OPT_ISSET(ops, b'T') || OPT_ISSET(ops, b'a')
-        || OPT_ISSET(ops, b'g') || OPT_ISSET(ops, b'e')
+        || OPT_ISSET(ops, b'e')
         || OPT_ISSET(ops, b'm')
     {
         if args.len() < 2 { return 1; }
@@ -840,15 +842,111 @@ pub fn bin_zstyle(nam: &str, args: &[String],                                 //
             }
             return 0;
         }
-        if vals.is_empty() { return 1; }
-        // -s / -a / -g / -b / -m / -e: bind first value into named param.
-        // C uses setsparam/setaparam; static-link path stores into the
-        // shared executor variable bag where available.
-        if args.len() >= 3 {
+        // -m PATTERN: pattern-match args[2] against each value, return
+        // 0 if any matches. C: zutil.c:727-747.
+        if OPT_ISSET(ops, b'm') {                                            // c:727
+            if args.len() < 3 { return 1; }
+            let pat = &args[2];
+            let prog = match crate::ported::pattern::patcompile(
+                pat,
+                crate::ported::zsh_h::PAT_STATIC,
+                None,
+            ) {
+                Some(p) => p,
+                None => return 1,
+            };
+            for v in &vals {                                                 // c:738
+                if crate::ported::pattern::pattry(&prog, v) {                // c:739
+                    return 0;                                                // c:741
+                }
+            }
+            return 1;                                                        // c:746
+        }
+        // -s CONTEXT STYLE NAME [SEP]: join vals with SEP (default " "),
+        // setsparam(NAME, joined). Return 0 if found else 1 (empty str).
+        // C: zutil.c:643-658.
+        if OPT_ISSET(ops, b's') {                                            // c:643
+            if args.len() < 3 { return 1; }
             let pname = &args[2];
+            if !vals.is_empty() {
+                let sep = args.get(3).map(|s| s.as_str()).unwrap_or(" ");    // c:649
+                let ret = vals.join(sep);
+                crate::ported::params::setsparam(pname, &ret);
+                return 0;                                                    // c:650
+            }
+            crate::ported::params::setsparam(pname, "");                     // c:652
+            return 1;                                                        // c:653
+        }
+        // -b CONTEXT STYLE NAME: coerce single bool-ish val to "yes"/"no".
+        // C: zutil.c:660-680.
+        if OPT_ISSET(ops, b'b') {                                            // c:660
+            if args.len() < 3 { return 1; }
+            let pname = &args[2];
+            let truthy = vals.len() == 1                                     // c:665-670
+                && matches!(vals[0].as_str(),
+                            "yes" | "true" | "on" | "1");
+            let (ret, code) = if truthy { ("yes", 0) } else { ("no", 1) };
+            crate::ported::params::setsparam(pname, ret);                    // c:677
+            return code;                                                     // c:672/675
+        }
+        // -a CONTEXT STYLE NAME: setaparam(NAME, vals).
+        // C: zutil.c:682-699.
+        if OPT_ISSET(ops, b'a') {                                            // c:682
+            if args.len() < 3 { return 1; }
+            let pname = &args[2];
+            let found = !vals.is_empty();
+            crate::ported::params::setaparam(pname,                          // c:696
+                if found { vals } else { Vec::new() });
+            return if found { 0 } else { 1 };                                // c:689/694
+        }
+        // -e: deferred-eval style lookup. For now: bind joined value.
+        if OPT_ISSET(ops, b'e') {
+            if args.len() < 3 { return 1; }
+            let pname = &args[2];
+            if vals.is_empty() { return 1; }
             let val = vals.join(" ");
             crate::ported::params::setsparam(pname, &val);
+            return 0;
         }
+        // -g: handled below (different arg layout).
+        if vals.is_empty() { return 1; }
+        return 0;
+    }
+    // -g NAME [PATTERN [STYLE]]: collect into array NAME.
+    // C: zutil.c:758-795. Distinct arg layout: args[0]=NAME (not ctxt).
+    if OPT_ISSET(ops, b'g') {                                                // c:758
+        if args.is_empty() { return 1; }
+        let pname = &args[0];                                                // c:792 args[1]→args[0]
+        let pat_arg = args.get(1).map(|s| s.as_str());                       // c:766
+        let sty_arg = args.get(2).map(|s| s.as_str());                       // c:767
+        let mut out: Vec<String> = Vec::new();
+        let t = match zstyletab.lock() { Ok(g) => g, Err(_) => return 1 };
+        match (pat_arg, sty_arg) {
+            (None, _) => {
+                // Collect distinct context patterns. c:788
+                let mut seen: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                for (p, _s, _v) in t.list(None) {
+                    if seen.insert(p.clone()) { out.push(p); }
+                }
+            }
+            (Some(pat), None) => {
+                // Collect style names attached to context = pat. c:783
+                let mut seen: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                for (p, s, _v) in t.list(None) {
+                    if p == pat && seen.insert(s.clone()) { out.push(s); }
+                }
+            }
+            (Some(pat), Some(sty)) => {
+                // Values at context=pat, style=sty. c:768-779
+                if let Some(v) = t.get(pat, sty) {
+                    out.extend(v.iter().cloned());
+                }
+            }
+        }
+        drop(t);
+        crate::ported::params::setaparam(pname, out);                        // c:792
         return 0;
     }
 
@@ -867,6 +965,371 @@ pub fn bin_zstyle(nam: &str, args: &[String],                                 //
 }
 
 /// Direct port of `bin_zformat()` from `Src/Modules/zutil.c:954`.
+/// C signature: `static int bin_zformat(char *nam, char **args,
+/// Port of `bin_zparseopts()` from `Src/Modules/zutil.c:1738`. C
+/// signature: `static int bin_zparseopts(char *nam, char **args,
+/// UNUSED(Options ops), UNUSED(int func))`.
+///
+/// Implements the full GNU/zsh option parser:
+///   - Flags: -D (delete consumed from argv), -E (extract),
+///     -F (fail on unknown), -G (GNU long-opt mode),
+///     -K (keep existing), -M (map), -a NAME (default array),
+///     -A NAME (assoc array), -v NAME (source argv from NAME).
+///   - Option descs: `name`, `name+` (multi), `name:` (mandatory arg),
+///     `name::` (optional arg), `name:-` (same-arg), `=ARR` suffix.
+pub fn bin_zparseopts(nam: &str, args: &[String],                             // c:1738
+                      _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::utils::zwarnnam;
+
+    #[derive(Clone)]
+    struct Desc {
+        name: String,
+        flags: i32,
+        arr_name: Option<String>,
+        vals: Vec<Val>,                 // collected values
+    }
+    #[derive(Clone)]
+    struct Val {
+        name: String,                   // option name as it appeared
+        arg: Option<String>,            // arg if any
+    }
+
+    let mut del = false;                // c:1742
+    let mut flags_map = 0i32;           // c:1742
+    let mut extract = false;
+    let mut fail = false;
+    let mut gnu = false;
+    let mut keep = false;
+    let mut assoc: Option<String> = None;
+    let mut paramsname: Option<String> = None;
+    let mut defarr: Option<String> = None;
+    let mut named_arrays: Vec<String> = Vec::new();
+
+    // Phase 1: parse zparseopts flags (c:1751-1873).
+    let mut i = 0usize;
+    while i < args.len() {
+        let o = &args[i];
+        if !o.starts_with('-') { break; }
+        if o.len() == 1 { break; }                                            // "-"
+        let bytes = o.as_bytes();
+        match bytes[1] {
+            b'-' if bytes.len() == 2 => { i += 1; break; }                    // "--"
+            b'-' => { break; }                                                // "-something"
+            b'D' if bytes.len() == 2 => { del = true; i += 1; }
+            b'E' if bytes.len() == 2 => { extract = true; i += 1; }
+            b'F' if bytes.len() == 2 => { fail = true; i += 1; }
+            b'G' if bytes.len() == 2 => { gnu = true; i += 1; }
+            b'K' if bytes.len() == 2 => { keep = true; i += 1; }
+            b'M' if bytes.len() == 2 => { flags_map |= ZOF_MAP; i += 1; }
+            b'a' => {
+                if defarr.is_some() {
+                    zwarnnam(nam, "default array given more than once");
+                    return 1;
+                }
+                let n = if o.len() > 2 { o[2..].to_string() }
+                        else if i + 1 < args.len() { i += 1; args[i].clone() }
+                        else { zwarnnam(nam, "missing array name"); return 1; };
+                defarr = Some(n);
+                i += 1;
+            }
+            b'A' => {
+                if assoc.is_some() {
+                    zwarnnam(nam, "associative array given more than once");
+                    return 1;
+                }
+                let n = if o.len() > 2 { o[2..].to_string() }
+                        else if i + 1 < args.len() { i += 1; args[i].clone() }
+                        else { zwarnnam(nam, "missing array name"); return 1; };
+                assoc = Some(n);
+                i += 1;
+            }
+            b'v' => {
+                if paramsname.is_some() {
+                    zwarnnam(nam, "argv array given more than once");
+                    return 1;
+                }
+                let n = if o.len() > 2 { o[2..].to_string() }
+                        else if i + 1 < args.len() { i += 1; args[i].clone() }
+                        else { zwarnnam(nam, "missing array name"); return 1; };
+                paramsname = Some(n);
+                i += 1;
+            }
+            _ => break,                                                       // option-desc
+        }
+    }
+    if i >= args.len() {                                                      // c:1874
+        zwarnnam(nam, "missing option descriptions");
+        return 1;
+    }
+
+    // Phase 2: parse option descriptions (c:1878-1954).
+    let mut descs: Vec<Desc> = Vec::new();
+    while i < args.len() {
+        let raw = &args[i];
+        i += 1;
+        if raw.is_empty() {
+            zwarnnam(nam, &format!("invalid option description: {}", raw));
+            return 1;
+        }
+        let bytes = raw.as_bytes();
+        let mut name = String::new();
+        let mut f = 0i32;
+        let mut p = 0usize;
+        // Parse name with backslash-escape, stopping at +/:/=. c:1884-1895.
+        while p < bytes.len() {
+            let c = bytes[p];
+            if c == b'\\' && p + 1 < bytes.len() {
+                name.push(bytes[p + 1] as char);
+                p += 2;
+                continue;
+            }
+            if p > 0 {
+                if c == b'+' { f |= ZOF_MULT; p += 1; break; }
+                if c == b':' || c == b'=' { break; }
+            }
+            name.push(c as char);
+            p += 1;
+        }
+        // c:1897-1911 — :: arg flags.
+        if p < bytes.len() && bytes[p] == b':' {
+            f |= ZOF_ARG;
+            p += 1;
+            if gnu {
+                f |= if name.len() > 1 { ZOF_GNUL } else { ZOF_GNUS };
+            }
+            if p < bytes.len() && bytes[p] == b':' { p += 1; f |= ZOF_OPT; }
+            if p < bytes.len() && bytes[p] == b'-' { p += 1; f |= ZOF_SAME; }
+        }
+        // c:1913-1930 — `=ARR` suffix → bind to named array.
+        let mut arr_name: Option<String> = None;
+        if p < bytes.len() && bytes[p] == b'=' {
+            p += 1;
+            let arr = std::str::from_utf8(&bytes[p..]).unwrap_or("").to_string();
+            if !named_arrays.contains(&arr) { named_arrays.push(arr.clone()); }
+            arr_name = Some(arr);
+            f |= flags_map;
+        } else if p < bytes.len() {
+            zwarnnam(nam, &format!("invalid option description: {}", raw));
+            return 1;
+        } else if defarr.is_none() && assoc.is_none() {
+            zwarnnam(nam, &format!("no default array defined: {}", raw));
+            return 1;
+        }
+        if descs.iter().any(|d| d.name == name) {
+            zwarnnam(nam, &format!("option defined more than once: {}", name));
+            return 1;
+        }
+        descs.push(Desc { name, flags: f, arr_name, vals: Vec::new() });
+    }
+
+    // Phase 3: source params (c:1955-1959).
+    let params_src = paramsname.clone().unwrap_or_else(|| "argv".to_string());
+    let mut params: Vec<String> = crate::fusevm_bridge::with_executor(|exec| {
+        if params_src == "argv" {
+            exec.positional_params.clone()
+        } else {
+            exec.arrays.get(&params_src).cloned().unwrap_or_default()
+        }
+    });
+
+    // Phase 4: walk params (c:1961-2060).
+    let mut new_params: Vec<String> = Vec::new();          // -E -D rebuild
+    let mut pi = 0usize;
+    let mut stopped = false;
+    while pi < params.len() {
+        let o_raw = params[pi].clone();
+        // Not an option (or `-` in GNU mode).
+        if !o_raw.starts_with('-') || (gnu && o_raw == "-") {
+            if extract {
+                if del { new_params.push(o_raw); }
+                pi += 1;
+                continue;
+            } else { stopped = true; break; }
+        }
+        // `--` or non-GNU `-`: end.
+        if o_raw == "-" || o_raw == "--" {
+            if del && extract { new_params.push(o_raw); }
+            pi += 1;
+            stopped = true;
+            break;
+        }
+        // Try whole-name match. c:1978.
+        let body = &o_raw[1..];
+        let whole_idx = descs.iter().position(|d|
+            body == d.name || body.starts_with(&d.name)
+                && body.as_bytes().get(d.name.len()).is_some_and(|b| *b == b'=' || *b == 0));
+        let whole_match = whole_idx.map(|idx| {
+            let d = &descs[idx];
+            body == d.name ||
+                (body.starts_with(&d.name) && (
+                    body.as_bytes().get(d.name.len()) == Some(&b'=')))
+        }).unwrap_or(false);
+        if whole_match {
+            let idx = whole_idx.unwrap();
+            let dn_len = descs[idx].name.len();
+            let dflags = descs[idx].flags;
+            let dname = descs[idx].name.clone();
+            if (dflags & ZOF_ARG) != 0 {
+                let e = &body[dn_len..];                 // pointer past name
+                if (dflags & ZOF_GNUL) != 0 && e.starts_with('=') {  // c:2031
+                    let arg = e[1..].to_string();
+                    descs[idx].vals.push(Val { name: o_raw.clone(), arg: Some(arg) });
+                } else if !e.is_empty() {                              // c:2038
+                    descs[idx].vals.push(Val { name: o_raw.clone(), arg: Some(e.to_string()) });
+                } else if (dflags & ZOF_OPT) == 0
+                    || ((dflags & (ZOF_GNUL | ZOF_GNUS)) == 0
+                        && pi + 1 < params.len()
+                        && !params[pi + 1].starts_with('-'))
+                {                                                       // c:2044
+                    if pi + 1 >= params.len() {
+                        zwarnnam(nam,
+                            &format!("missing argument for option: -{}", dname));
+                        return 1;
+                    }
+                    pi += 1;
+                    let arg = params[pi].clone();
+                    descs[idx].vals.push(Val { name: o_raw.clone(), arg: Some(arg) });
+                } else {                                                // c:2055
+                    descs[idx].vals.push(Val { name: o_raw.clone(), arg: None });
+                }
+            } else {
+                descs[idx].vals.push(Val { name: o_raw.clone(), arg: None });
+            }
+            pi += 1;
+            continue;
+        }
+        // Fallback: each char as short opt. c:1980-2016.
+        let chars: Vec<char> = o_raw[1..].chars().collect();
+        let mut ci = 0usize;
+        let mut consumed_param = true;
+        while ci < chars.len() {
+            let ch = chars[ci];
+            let name1 = ch.to_string();
+            let didx = descs.iter().position(|d| d.name == name1);
+            let Some(idx) = didx else {
+                if fail {
+                    if ch != '-' || ci > 0 {
+                        zwarnnam(nam, &format!("bad option: -{}", ch));
+                    } else {
+                        zwarnnam(nam, &format!("bad option: -{}", chars.iter().collect::<String>()));
+                    }
+                    return 1;
+                }
+                consumed_param = false;
+                break;
+            };
+            let dflags = descs[idx].flags;
+            let dname = descs[idx].name.clone();
+            if (dflags & ZOF_ARG) != 0 {
+                if ci + 1 < chars.len() {
+                    // arg in same param: rest of chars
+                    let arg: String = chars[ci + 1..].iter().collect();
+                    descs[idx].vals.push(Val {
+                        name: format!("-{}", ch),
+                        arg: Some(arg),
+                    });
+                    break;
+                } else if (dflags & ZOF_OPT) == 0
+                    || ((dflags & (ZOF_GNUL | ZOF_GNUS)) == 0
+                        && pi + 1 < params.len()
+                        && !params[pi + 1].starts_with('-'))
+                {
+                    if pi + 1 >= params.len() {
+                        zwarnnam(nam, &format!("missing argument for option: -{}", dname));
+                        return 1;
+                    }
+                    pi += 1;
+                    let arg = params[pi].clone();
+                    descs[idx].vals.push(Val { name: format!("-{}", ch), arg: Some(arg) });
+                } else {
+                    descs[idx].vals.push(Val { name: format!("-{}", ch), arg: None });
+                }
+            } else {
+                descs[idx].vals.push(Val { name: format!("-{}", ch), arg: None });
+            }
+            ci += 1;
+        }
+        if !consumed_param {
+            if extract {
+                if del { new_params.push(o_raw); }
+                pi += 1;
+                continue;
+            } else {
+                stopped = true;
+                break;
+            }
+        }
+        pi += 1;
+    }
+    let _ = stopped;
+    // c:2069 — append remaining params if extract+del.
+    if extract && del {
+        while pi < params.len() {
+            new_params.push(params[pi].clone());
+            pi += 1;
+        }
+    } else if del && !extract {
+        // c:2129: setaparam(paramsname, pp) — what's left from pi.
+        new_params = params[pi..].to_vec();
+    }
+
+    // Phase 5: emit per-array results. c:2073-2088.
+    // Group descs by arr_name → array of [name, arg, name, arg, ...].
+    let mut arr_outputs: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for d in &descs {
+        let target = d.arr_name.clone().or_else(|| defarr.clone());
+        let Some(tgt) = target else { continue };
+        let entry = arr_outputs.entry(tgt).or_default();
+        for v in &d.vals {
+            entry.push(v.name.clone());
+            if let Some(a) = &v.arg {
+                entry.push(a.clone());
+            }
+        }
+    }
+    for (name, vals) in arr_outputs {
+        if !keep || !vals.is_empty() {
+            crate::ported::params::setaparam(&name, vals);
+        }
+    }
+
+    // c:2089-2123 — assoc emission.
+    if let Some(aname) = assoc {
+        let mut flat: Vec<String> = Vec::new();
+        for d in &descs {
+            if d.vals.is_empty() { continue; }
+            flat.push(format!("-{}", d.name));
+            let joined: String = d.vals.iter()
+                .filter_map(|v| v.arg.clone())
+                .collect::<Vec<_>>().join(" ");
+            flat.push(joined);
+        }
+        if !keep || !flat.is_empty() {
+            crate::ported::params::sethparam(&aname, flat);
+        }
+    }
+
+    // c:2124-2131 — write back consumed argv when -D was given.
+    if del {
+        if params_src == "argv" {
+            crate::fusevm_bridge::with_executor(|exec| {
+                exec.positional_params = new_params.clone();
+            });
+            if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
+                *pp = new_params;
+            }
+        } else {
+            crate::ported::params::setaparam(&params_src, new_params);
+        }
+    } else {
+        let _ = params;
+    }
+
+    0
+}
+
+/// Port of `bin_zformat()` from `Src/Modules/zutil.c:954`.
 /// C signature: `static int bin_zformat(char *nam, char **args,
 /// UNUSED(Options ops), UNUSED(int func))`.
 /// BUILTIN spec at zutil.c:2138 takes just two-or-more args (no

@@ -246,7 +246,20 @@ pub fn statlinkprint(sbuf_mode: u32, fname: &str) -> String {            // c:21
 /// C signature: `static void statprint(struct stat *sbuf, char *outbuf,
 ///                                      char *fname, int iwhich, int flags)`.
 pub fn statprint(meta: &fs::Metadata, fname: &str, iwhich: i32, flags: i32) -> String {  // c:234
-    match iwhich {
+    // c:238-241 — `if (flags & STF_NAME)` prefix with `name<space>`.
+    // `%-8s` left-justifies the name to 8 chars when not PICK/ARRAY,
+    // `%s ` otherwise.
+    let name_prefix = if (flags & STF_NAME) != 0 {
+        let n = STATELTS.get(iwhich as usize).copied().unwrap_or("");
+        if (flags & (STF_PICK | STF_ARRAY)) != 0 {
+            format!("{} ", n)                                            // c:239
+        } else {
+            format!("{:<8}", n)                                          // c:240
+        }
+    } else {
+        String::new()
+    };
+    let val = match iwhich {
         ST_DEV      => format!("{}", meta.dev()),                        // c:240
         ST_INO      => format!("{}", meta.ino()),                        // c:241
         ST_MODE     => statmodeprint(meta.mode(), flags),                // c:242
@@ -262,7 +275,8 @@ pub fn statprint(meta: &fs::Metadata, fname: &str, iwhich: i32, flags: i32) -> S
         ST_BLOCKS   => statulprint(meta.blocks()),                       // c:252
         ST_READLINK => statlinkprint(meta.mode(), fname),                // c:253
         _ => String::new(),
-    }
+    };
+    format!("{}{}", name_prefix, val)
 }
 
 /// Port of `bin_stat()` from `Src/Modules/stat.c:368`. The `zstat`
@@ -414,16 +428,38 @@ pub fn bin_stat(nam: &str, args: &[String],                                  // 
     let use_lstat = ops[b'L' as usize];
     let mut hash_out: Vec<(String, String)> = Vec::new();
     let mut array_out: Vec<String> = Vec::new();
-    let show_name = ops[b'n' as usize];                                  // c: -n
     let show_type = ops[b't' as usize];                                  // c: -t
     let mut local_flags = flags;
-    if ops[b's' as usize] { local_flags |= STF_STRING; }                  // c: -s force string
-    if ops[b'r' as usize] { local_flags |= STF_RAW; }                     // c: -r raw
-    if ops[b'o' as usize] { local_flags |= STF_OCTAL; }                   // c: -o octal
-    // Default: if neither raw nor string, use raw.
-    if (local_flags & (STF_RAW | STF_STRING)) == 0 {
+    // c:513 — `if (OPT_ISSET(ops,'s') || !OPT_ISSET(ops,'r'))` STF_STRING.
+    if ops[b's' as usize] { local_flags |= STF_STRING; }                  // c:514
+    // c:516 — `if (OPT_ISSET(ops,'r') || !OPT_ISSET(ops,'s'))` STF_RAW.
+    if ops[b'r' as usize] || !ops[b's' as usize] {                        // c:516
         local_flags |= STF_RAW;
     }
+    // c:518-519 — `-n` → STF_FILE (filename prefix).
+    if ops[b'n' as usize] { local_flags |= STF_FILE; }                    // c:519
+    // c:520-521 — `-o` → STF_OCTAL.
+    if ops[b'o' as usize] { local_flags |= STF_OCTAL; }                   // c:521
+    // c:522-523 — `-t` → STF_NAME explicit.
+    if ops[b't' as usize] { local_flags |= STF_NAME; }                    // c:523
+    // c:525-530 — default STF_NAME when neither -A nor -H and no
+    // single-element pick: every line gets a `name<sp>` prefix so
+    // `zstat /etc/hosts` looks like `mode    33188` etc.
+    if arrnam.is_none() && hashnam.is_none() {
+        if argv.len() > 1 { local_flags |= STF_FILE; }                    // c:527
+        if (local_flags & STF_PICK) == 0 {                                // c:528
+            local_flags |= STF_NAME;                                      // c:529
+        }
+    }
+    // c:532-535 — explicit -N / -f turn off STF_FILE; -T / -H turn off
+    // STF_NAME (suppress prefix for `read` / hash use).
+    if ops[b'N' as usize] || ops[b'f' as usize] {                         // c:532
+        local_flags &= !STF_FILE;
+    }
+    if ops[b'T' as usize] || ops[b'H' as usize] {                         // c:534
+        local_flags &= !STF_NAME;
+    }
+    let _ = show_type;
 
     for path in &argv {
         let meta = if use_lstat {
@@ -439,6 +475,14 @@ pub fn bin_stat(nam: &str, args: &[String],                                  // 
             }
         };
 
+        // c:573-581 — `STF_FILE` prefix the filename per file.
+        if (local_flags & STF_FILE) != 0 && arrnam.is_none() && hashnam.is_none() {
+            if (local_flags & STF_PICK) != 0 {
+                print!("{} ", path);                                     // c:580
+            } else {
+                println!("{}:", path);
+            }
+        }
         if iwhich >= 0 {
             // -E single element.
             let val = statprint(&meta, path, iwhich, local_flags);
@@ -449,9 +493,7 @@ pub fn bin_stat(nam: &str, args: &[String],                                  // 
                 hash_out.push((STATELTS[iwhich as usize].to_string(), val));
                 let _ = hname;
             } else {
-                if show_name { print!("{} ", STATELTS[iwhich as usize]); }
-                if show_type && argv.len() > 1 { print!("{} ", path); }
-                println!("{}", val);
+                println!("{}", val);                                     // c:591
             }
         } else {
             // All elements.
@@ -462,27 +504,25 @@ pub fn bin_stat(nam: &str, args: &[String],                                  // 
                 } else if let Some(_) = &hashnam {
                     hash_out.push((STATELTS[idx].to_string(), val));
                 } else {
-                    if show_name {
-                        println!("{:<8} {}", STATELTS[idx], val);
-                    } else {
-                        println!("{}", val);
-                    }
+                    println!("{}", val);                                 // c:603
                 }
             }
         }
     }
 
     if let Some(name) = arrnam {                                         // c:setaparam
-        // c — `setaparam(name, zarrdup(array_out));` — colon-join through
-        // the static-link env-var bridge until the typed array writer is wired.
-        crate::ported::params::setsparam(&name, &array_out.join(":"));
+        // c — `setaparam(name, zarrdup(array_out));` — real indexed array.
+        crate::ported::params::setaparam(&name, array_out);              // c:params.c:3595
     }
     if let Some(name) = hashnam {                                        // c:sethparam
-        // c — `sethparam(name, ...);` — encode as `key=val` pairs joined
-        // by tabs for the static-link env-var bridge.
-        let pairs: Vec<String> = hash_out.into_iter()
-            .map(|(k, v)| format!("{}={}", k, v)).collect();
-        crate::ported::params::setsparam(&name, &pairs.join("\t"));
+        // c — `sethparam(name, ...);` — real assoc array. Flatten
+        // hash_out into alternating [k,v,k,v,...].
+        let mut flat: Vec<String> = Vec::with_capacity(hash_out.len() * 2);
+        for (k, v) in hash_out {
+            flat.push(k);
+            flat.push(v);
+        }
+        crate::ported::params::sethparam(&name, flat);                   // c:params.c:3602
     }
     0
 }

@@ -505,12 +505,38 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    // BUILTIN_TYPE / BUILTIN_WHERE / BUILTIN_WHICH wires deleted with
-    // their stubs. `bin_whence` stays — wired to the canonical port.
+    // type / whence / where / which all route through `bin_whence`
+    // (canonical port at `src/ported/builtin.rs:3734` of
+    // `Src/builtin.c:3975`). Each gets its own opcode so funcid +
+    // defopts come from the BUILTINS table entry — execbuiltin
+    // applies them correctly.
+    fn whence_via_execbuiltin(name: &str, args: Vec<String>) -> i32 {
+        let bn_idx = crate::ported::builtin::BUILTINS.iter()
+            .position(|b| b.node.nam == name);
+        if let Some(idx) = bn_idx {
+            let bn_static: &'static crate::ported::zsh_h::builtin =
+                &crate::ported::builtin::BUILTINS[idx];
+            let bn_ptr = bn_static as *const _ as *mut _;
+            crate::ported::builtin::execbuiltin(args, Vec::new(), bn_ptr)
+        } else {
+            1
+        }
+    }
     vm.register_builtin(BUILTIN_WHENCE, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_whence(&args));
-        Value::Status(status)
+        Value::Status(whence_via_execbuiltin("whence", args))
+    });
+    vm.register_builtin(BUILTIN_TYPE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        Value::Status(whence_via_execbuiltin("type", args))
+    });
+    vm.register_builtin(BUILTIN_WHICH, |vm, argc| {
+        let args = pop_args(vm, argc);
+        Value::Status(whence_via_execbuiltin("which", args))
+    });
+    vm.register_builtin(BUILTIN_WHERE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        Value::Status(whence_via_execbuiltin("where", args))
     });
 
     vm.register_builtin(BUILTIN_HASH, |vm, argc| {
@@ -525,10 +551,35 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
+    // `unhash`/`unalias`/`unfunction` share `bin_unhash` (Src/builtin.c:
+    // c:4350) but each carries its own funcid (BIN_UNHASH /
+    // BIN_UNALIAS / BIN_UNFUNCTION) in the BUILTINS table. Route each
+    // through `execbuiltin` so the correct funcid + optstr propagate
+    // — earlier wiring passed funcid=0 unconditionally and `unalias`
+    // silently no-op'd on the cmdnamtab path.
+    fn unhash_via_execbuiltin(name: &str, args: Vec<String>) -> i32 {
+        let bn_idx = crate::ported::builtin::BUILTINS.iter()
+            .position(|b| b.node.nam == name);
+        if let Some(idx) = bn_idx {
+            let bn_static: &'static crate::ported::zsh_h::builtin =
+                &crate::ported::builtin::BUILTINS[idx];
+            let bn_ptr = bn_static as *const _ as *mut _;
+            crate::ported::builtin::execbuiltin(args, Vec::new(), bn_ptr)
+        } else {
+            1
+        }
+    }
     vm.register_builtin(BUILTIN_UNHASH, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_unhash(&args));
-        Value::Status(status)
+        Value::Status(unhash_via_execbuiltin("unhash", args))
+    });
+    vm.register_builtin(BUILTIN_UNALIAS, |vm, argc| {
+        let args = pop_args(vm, argc);
+        Value::Status(unhash_via_execbuiltin("unalias", args))
+    });
+    vm.register_builtin(BUILTIN_UNFUNCTION, |vm, argc| {
+        let args = pop_args(vm, argc);
+        Value::Status(unhash_via_execbuiltin("unfunction", args))
     });
 
     // Completion
@@ -1734,14 +1785,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         }),
                     ))
                 }
-                "aliases" => Some(Value::str(
-                    exec.aliases.get(idx).cloned().unwrap_or_default(),
-                )),
-                "galiases" => Some(Value::str(
-                    exec.global_aliases.get(idx).cloned().unwrap_or_default(),
-                )),
-                "saliases" => Some(Value::str(
-                    exec.suffix_aliases.get(idx).cloned().unwrap_or_default(),
+                "aliases" | "galiases" | "saliases" => Some(Value::str(
+                    exec.get_special_array_value(name, idx).unwrap_or_default(),
                 )),
                 "functions" => {
                     if let Some(text) = exec.function_definition_text(idx) {
@@ -2435,11 +2480,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
             }
             _ => {
-                // Assoc lookup wins if the name is in assoc_arrays — the user
-                // declared it via `typeset -A` or assigned via foo[key]=val.
-                // Subscript flags (k)/(v) on assoc handled separately by
-                // BUILTIN_PARAM_FLAG; (r)/(R)/(i)/(I) on assoc would search
-                // values/keys, supported below.
+                // Magic-assoc lookup (`${aliases[gst]}`,
+                // `${commands[ls]}`, etc.) — names backed by zsh's
+                // parameter-module hashes (Src/Modules/parameter.c)
+                // that don't live in `exec.assoc_arrays`. Direct
+                // delegation to the canonical port reader.
+                if crate::exec::scan_magic_assoc_keys(&name).is_some() {
+                    return Value::str(
+                        exec.get_special_array_value(&name, &idx).unwrap_or_default());
+                }
                 if let Some(map) = exec.assoc_arrays.get(&name) {
                     if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
                         // Port of subst.c subscript-flag parser:
@@ -6397,31 +6446,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // line: `<PS4>a=1 echo hello\n`. XTRACE_ARGS / XTRACE_NEWLINE
     // reset the flag after emitting the trailing `\n`.
     vm.register_builtin(BUILTIN_XTRACE_LINE, |vm, _argc| {
-        let cmd_text = vm.pop().to_str();
+        let _cmd_text = vm.pop().to_str();
         // Sync exec.last_status with the live vm.last_status BEFORE
         // the next command runs. Direct port of the zsh exec.c
         // contract — `$?` reads the exit status of the *most recent*
-        // command, including across function boundaries. zshrs's
-        // function-entry path reads exec.last_status to seed the
-        // child VM's `$?`, but exec.last_status was only updated at
-        // top-level script boundaries, leaking 0 into every nested
-        // CallFunction. XTRACE_LINE is emitted by the compiler
-        // BEFORE every simple command (right after the previous
-        // command's SetStatus), so it's the natural sync point.
+        // command. XTRACE_LINE is emitted by the compiler BEFORE
+        // every simple command, so it's the natural sync point.
+        //
+        // We DO NOT emit PS4 + cmd_text here — that would double-trace
+        // because XTRACE_ARGS at the bottom of execcmd_exec already
+        // emits PS4 + expanded args + \n (matching Src/exec.c:2055).
+        // XTRACE_LINE is a Rust-only sync point; the real C-faithful
+        // emission lives in XTRACE_ARGS.
         let live = vm.last_status;
         with_executor(|exec| {
             exec.last_status = live;
         });
-        let on = with_executor(|exec| exec.options.get("xtrace").copied().unwrap_or(false));
-        if on {
-            // Mirrors Src/exec.c xtrace emission: printprompt4() writes
-            // the PS4 prefix to xtrerr (no newline), then the caller
-            // emits the line text + newline. Without the `on` guard,
-            // every command still printed its text to stderr — zsh does
-            // not (BUILTIN_XTRACE_ARGS already gated the same way).
-            printprompt4();
-            eprintln!("{}", cmd_text);
-        }
         fusevm::Value::Status(0)
     });
 
@@ -6453,24 +6493,41 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             } else {
                 Vec::new()
             };
-            let line = if arg_strs.is_empty() {
-                prefix
-            } else {
-                format!("{} {}", prefix, arg_strs.join(" "))
-            };
-            // Mirrors Src/exec.c:2055 xtrace emission. C does:
-            //   if (!doneps4) printprompt4();
-            //   ... emit args + spaces ...
-            //   fputc('\n', xtrerr); fflush(xtrerr);
-            // We honor doneps4 via XTRACE_DONE_PS4 — if a prior
-            // XTRACE_ASSIGN this line already emitted PS4, skip it.
-            // Then reset the flag after the trailing newline so the
-            // next command starts fresh.
-            let already_ps4 = XTRACE_DONE_PS4.with(|f| f.get());
-            if !already_ps4 {
-                printprompt4();
+            // Builtins dispatch through `execbuiltin` (Src/builtin.c:442)
+            // which emits its own PS4 + name + args xtrace. To avoid
+            // double-emission, skip our emission here when the first
+            // arg is a known builtin with a registered HandlerFunc —
+            // those go through execbuiltin and will trace themselves.
+            //
+            // Externals + builtins without HandlerFunc (still pending
+            // canonical port) keep our emission as a stand-in until
+            // they migrate over.
+            // The `prefix` IS the command name (first whitespace-token
+            // of the original cmd text). If a BUILTIN entry with a
+            // HandlerFunc matches, execbuiltin will emit xtrace there.
+            let goes_through_execbuiltin = crate::ported::builtin::BUILTINS
+                .iter()
+                .any(|b| b.node.nam == prefix && b.handlerfunc.is_some());
+            if !goes_through_execbuiltin {
+                let line = if arg_strs.is_empty() {
+                    prefix
+                } else {
+                    format!("{} {}", prefix, arg_strs.join(" "))
+                };
+                // Mirrors Src/exec.c:2055 xtrace emission. C does:
+                //   if (!doneps4) printprompt4();
+                //   ... emit args + spaces ...
+                //   fputc('\n', xtrerr); fflush(xtrerr);
+                // We honor doneps4 via XTRACE_DONE_PS4 — if a prior
+                // XTRACE_ASSIGN this line already emitted PS4, skip
+                // it. Then reset the flag after the trailing newline
+                // so the next command starts fresh.
+                let already_ps4 = XTRACE_DONE_PS4.with(|f| f.get());
+                if !already_ps4 {
+                    printprompt4();
+                }
+                eprintln!("{}", line);
             }
-            eprintln!("{}", line);
             XTRACE_DONE_PS4.with(|f| f.set(false));
         }
         fusevm::Value::Status(0)
@@ -6565,8 +6622,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // `process::exit` would tear down the parent shell. Match
             // zsh's "errexit aborts the subshell only" by leaving the
             // parent alive (subshell continues until natural end).
-            let on = exec.options.get("errexit").copied().unwrap_or(false);
-            on && exec.local_scope_depth == 0 && exec.subshell_snapshots.is_empty()
+            // errexit lives in two stores. `set -e` / `setopt errexit`
+            // write through bin_setopt → OPTS_LIVE (canonical
+            // `opts[ERREXIT]` per Src/options.c:46). Older paths still
+            // populate `exec.options`. Check both — agree when EITHER
+            // says on.
+            let on_canonical = crate::ported::zsh_h::isset(
+                crate::ported::zsh_h::ERREXIT);
+            let on_legacy = exec.options.get("errexit").copied().unwrap_or(false);
+            (on_canonical || on_legacy)
+                && exec.local_scope_depth == 0
+                && exec.subshell_snapshots.is_empty()
         });
         if should_exit {
             std::process::exit(last);
@@ -8067,6 +8133,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         Some(body_source.as_str())
                     };
                     crate::recorder::emit_function(&name, body, ctx);
+                }
+                // Mirror into canonical shfunctab so scanfunctions /
+                // ${(k)functions} / functions builtin see user defs.
+                // C: exec.c:funcdef → shfunctab->addnode(ztrdup(name),shf).
+                if let Ok(mut tab) =
+                    crate::ported::hashtable::shfunctab_lock().lock()
+                {
+                    let shf = crate::ported::hashtable::shfunc_with_body(
+                        &name,
+                        &body_source,
+                    );
+                    tab.add(shf);
                 }
                 exec.functions_compiled.insert(name, chunk);
                 0
@@ -9788,6 +9866,27 @@ impl crate::ported::exec::ShellExecutor {
             }
             "zformat" => return self.bin_zformat(&rest_vec),
             "zregexparse" => return self.bin_zregexparse(&rest_vec),
+            // `unalias`/`unhash`/`unfunction` share `bin_unhash` but
+            // each carries its own funcid (BIN_UNALIAS / BIN_UNHASH /
+            // BIN_UNFUNCTION) in the BUILTINS table. Route through
+            // execbuiltin so the correct funcid + optstr propagate —
+            // without this `unalias` was a silent no-op.
+            "unalias" | "unhash" | "unfunction" => {
+                // Fallback when fusevm doesn't have a BUILTIN_*
+                // opcode registered for the name (e.g. shell-builtin
+                // table mismatch). Route through execbuiltin with the
+                // correct entry from BUILTINS.
+                let bn_idx = crate::ported::builtin::BUILTINS.iter()
+                    .position(|b| b.node.nam == cmd.as_str());
+                if let Some(idx) = bn_idx {
+                    let bn_static: &'static crate::ported::zsh_h::builtin =
+                        &crate::ported::builtin::BUILTINS[idx];
+                    let bn_ptr = bn_static as *const _ as *mut _;
+                    return crate::ported::builtin::execbuiltin(
+                        rest_vec, Vec::new(), bn_ptr);
+                }
+                return 1;
+            }
             // zsh-bundled rename helpers — implemented natively in
             // Rust so `autoload -U zmv` works without shipping the
             // function source. (Without this, the autoload path hangs.)
@@ -9873,18 +9972,85 @@ impl crate::ported::exec::ShellExecutor {
             // names to the SAME `bin_chmod` etc. handlers — the
             // prefixed forms exist so a script can portably reach
             // the builtin even when a function or alias has shadowed
-            // the bare name. Each arm here routes to the matching
-            // `builtin_*` method already defined further down in
-            // this file.
-            // "zf_chmod" => return self.bin_chmod(&rest_vec),
-            // "zf_chown" => return self.bin_chown("zf_chown", &rest_vec),
-            // "zf_chgrp" => return self.bin_chown("zf_chgrp", &rest_vec),
-            // "zf_ln" => return self.bin_ln("zf_ln", &rest_vec),
-            // "zf_mkdir" => return self.bin_mkdir(&rest_vec),
-            // "zf_mv" => return self.bin_ln("zf_mv", &rest_vec),
-            // "zf_rm" => return self.bin_rm(&rest_vec),
-            // "zf_rmdir" => return self.bin_rmdir(&rest_vec),
-            // "zf_sync" => return self.bin_sync(&rest_vec),
+            // the bare name. Each arm routes through the canonical
+            // free-fn port of Src/Modules/files.c, parsing the BUILTIN
+            // optstr inline since the framework doesn't pre-parse.
+            "zf_mkdir" | "mkdir" => {
+                use crate::ported::zsh_h::{options, MAX_OPS};
+                let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                        argscount: 0, argsalloc: 0 };
+                let mut positional: Vec<String> = Vec::new();
+                let mut i = 0;
+                while i < rest_vec.len() {
+                    let a = &rest_vec[i];
+                    if a == "--" {
+                        i += 1;
+                        positional.extend_from_slice(&rest_vec[i..]);
+                        break;
+                    }
+                    if let Some(rest) = a.strip_prefix('-') {
+                        if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
+                        let chars: Vec<char> = rest.chars().collect();
+                        let mut j = 0;
+                        while j < chars.len() {
+                            let c = chars[j] as u8;
+                            if c == b'm' {
+                                ops.ind[c as usize] = (ops.args.len() + 1) as u8;
+                                let rest_after = &rest[j + 1..];
+                                if !rest_after.is_empty() {
+                                    ops.args.push(rest_after.to_string());
+                                } else {
+                                    i += 1;
+                                    ops.args.push(rest_vec.get(i).cloned().unwrap_or_default());
+                                }
+                                ops.argscount = ops.args.len() as i32;
+                                break;
+                            }
+                            if c.is_ascii_alphabetic() { ops.ind[c as usize] = 1; }
+                            j += 1;
+                        }
+                    } else {
+                        positional.push(a.clone());
+                    }
+                    i += 1;
+                }
+                return crate::ported::modules::files::bin_mkdir(
+                    cmd, &positional, &ops, 0);
+            }
+            "zf_rm" => {
+                use crate::ported::zsh_h::{options, MAX_OPS};
+                let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                        argscount: 0, argsalloc: 0 };
+                let mut positional: Vec<String> = Vec::new();
+                let mut i = 0;
+                while i < rest_vec.len() {
+                    let a = &rest_vec[i];
+                    if a == "--" {
+                        i += 1;
+                        positional.extend_from_slice(&rest_vec[i..]);
+                        break;
+                    }
+                    if let Some(rest) = a.strip_prefix('-') {
+                        if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
+                        for c in rest.chars() {
+                            let cb = c as u8;
+                            if cb.is_ascii_alphabetic() { ops.ind[cb as usize] = 1; }
+                        }
+                    } else {
+                        positional.push(a.clone());
+                    }
+                    i += 1;
+                }
+                return crate::ported::modules::files::bin_rm(
+                    "zf_rm", &positional, &ops, 0);
+            }
+            "zf_rmdir" => {
+                use crate::ported::zsh_h::{options, MAX_OPS};
+                let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                    argscount: 0, argsalloc: 0 };
+                return crate::ported::modules::files::bin_rmdir(
+                    "zf_rmdir", &rest_vec, &ops, 0);
+            }
             // `zstat` — port of zsh/stat module (Src/Modules/stat.c
             // BUILTIN("zstat", …)). Returns file metadata as
             // `field value` pairs / an assoc / a plus-separated
