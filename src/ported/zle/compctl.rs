@@ -2073,11 +2073,11 @@ pub const BNULL: char  = '\u{9f}';  // Backslash null
 pub const STRING_TOK: char  = '\u{85}';  // META-$
 pub const QSTRING_TOK: char = '\u{84}';  // QSTRING (for $'...')
 
-/// Test whether `c` is one of the inull token chars.
-/// Port of `inull()` macro from Src/zsh.h — `c >= Pound && c <= LAST_NORMAL_TOK`
-/// per the zsh range. We use the explicit set since the byte values
-/// are stable across the codebase.
-fn inull(c: char) -> bool {
+/// Direct port of `#define inull(X) zistype(X,INULL)` from
+/// `Src/ztype.h:62`. Tests whether `c` is one of the parser's
+/// "inull" token chars (the high-bit token bytes the lexer
+/// produces).
+fn inull(c: char) -> bool {                                                  // c:62
     matches!(c, SNULL | DNULL | BNULL | STRING_TOK | QSTRING_TOK)
 }
 

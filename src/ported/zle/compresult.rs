@@ -668,7 +668,13 @@ pub fn do_ambig_menu() -> i32 {                                              // 
 
     if iforcemenu.load(Ordering::Relaxed) != -1 {                            // c:1454
         if let Some(ref m) = mc {
-            crate::ported::zle::compcore::set_minfo_cur(m.clone());          // c:1455 do_single
+            // c:1455 — `minfo.cur = m;`. Inlined per the no-fake-helper
+            // rule (set_minfo_cur was a Rust-only wrapper).
+            if let Ok(mut g) = crate::ported::zle::compcore::MINFO.get_or_init(
+                || std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())
+            ).lock() {
+                g.cur = Some(Box::new(m.clone()));
+            }
         }
     }
     if let Ok(mut mst) = MINFO.get_or_init(

@@ -4881,9 +4881,59 @@ pub fn freeparamnode(_hn: crate::ported::zsh_h::Param) {
 /// `pm = loadparamnode(ht, gethashnode2(ht, nam), nam);
 ///  if (pm && ht == realparamtab && !PM_UNSET) pm = resolve_nameref(pm);
 ///  return (HashNode)pm;`
-/// Stub: needs HashTable + autoload + nameref resolve.
-pub fn getparamnode(_ht: &crate::ported::zsh_h::HashTable, _nam: &str)
-    -> Option<crate::ported::zsh_h::Param> { None }
+///
+/// Static-link path: the typed paramtab isn't ported, so we synthesize
+/// a `Param` (Box<param>) from the executor's variables / arrays /
+/// assoc_arrays maps. Scalar wins first, then array, then assoc.
+/// This unblocks the (Param)hn cast deferrals in parameter.rs which
+/// previously had to fall through to empty fetchvalue chains.
+pub fn getparamnode(_ht: &crate::ported::zsh_h::hashtable, nam: &str)
+    -> Option<crate::ported::zsh_h::Param> {                                 // c:570
+    use crate::ported::zsh_h::{param, hashnode, PM_SCALAR, PM_ARRAY, PM_HASHED};
+    crate::exec::try_with_executor(|exec| {
+        // c:572 — gethashnode2(ht, nam).
+        if let Some(val) = exec.variables.get(nam) {                         // PM_SCALAR
+            return Some(Box::new(param {
+                node: hashnode { next: None, nam: nam.to_string(), flags: PM_SCALAR as i32 },
+                u_data: 0,
+                u_arr: None,
+                u_str: Some(val.clone()),
+                u_val: 0,
+                u_dval: 0.0,
+                u_hash: None,
+                gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+                base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+            }));
+        }
+        if let Some(arr) = exec.arrays.get(nam) {                            // PM_ARRAY
+            return Some(Box::new(param {
+                node: hashnode { next: None, nam: nam.to_string(), flags: PM_ARRAY as i32 },
+                u_data: 0,
+                u_arr: Some(arr.clone()),
+                u_str: None,
+                u_val: 0,
+                u_dval: 0.0,
+                u_hash: None,
+                gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+                base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+            }));
+        }
+        if exec.assoc_arrays.contains_key(nam) {                             // PM_HASHED
+            return Some(Box::new(param {
+                node: hashnode { next: None, nam: nam.to_string(), flags: PM_HASHED as i32 },
+                u_data: 0,
+                u_arr: None,
+                u_str: None,
+                u_val: 0,
+                u_dval: 0.0,
+                u_hash: None,
+                gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+                base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+            }));
+        }
+        None
+    }).flatten()
+}
 
 /// Port of `getvalue()` from `Src/params.c:2173`. C body:
 /// `return fetchvalue(v, pptr, bracks, SCANPM_CHECKING);` — pure

@@ -37,7 +37,12 @@ pub static ISEARCH_STARTPOS: AtomicI32 = AtomicI32::new(0);                  // 
 /// Byte offset of the end of the current isearch match.
 pub static ISEARCH_ENDPOS: AtomicI32 = AtomicI32::new(0);                    // c:1078
 
-/// History entry
+/// Rust-only simplified history entry. NOT a port of zsh's
+/// `struct histent` (already legit-ported at zsh_h.rs:932 with
+/// 8 fields: node/text/ftim/stim/words/nwords/histnum/down/up).
+/// Pending a cascade-rewrite that switches the ~80 HistEntry users
+/// (Zle.history, zle_params.rs, widget.rs) over to `histent` and
+/// the `hist_ring` linked list in hist.rs.
 #[derive(Debug, Clone)]
 pub struct HistEntry {
     /// The command line
@@ -48,7 +53,10 @@ pub struct HistEntry {
     pub time: Option<i64>,
 }
 
-/// History state
+/// Rust-only simplified history-state container. NOT a port of any
+/// C struct — zsh uses scattered file-statics (`hist_ring`, `histsiz`,
+/// `searchstr`, `have_edits`, `hist_skip_flags`, etc.). This struct
+/// collects equivalents into one type for the per-Zle session.
 #[derive(Debug, Default)]
 pub struct History {
     /// History entries (newest last)
