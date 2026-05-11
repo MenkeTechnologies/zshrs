@@ -139,10 +139,10 @@ impl Zle {
                 1
             };
             self.mult = saved_mult;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
             ret
         } else {
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
             0
         }
     }
@@ -165,10 +165,10 @@ impl Zle {
                 1
             };
             self.mult = saved_mult;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
             ret
         } else {
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
             0
         }
     }
@@ -230,7 +230,7 @@ impl Zle {
             } else {
                 self.zlell
             };
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
             self.lastcol = -1;
         }
         true
@@ -253,7 +253,7 @@ impl Zle {
             self.zleline = entry.line.chars().collect();
             self.zlell = self.zleline.len();
             self.zlecs = self.zlell;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -267,13 +267,13 @@ impl Zle {
             self.zleline = entry.line.chars().collect();
             self.zlell = self.zleline.len();
             self.zlecs = self.zlell;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         } else if let Some(saved) = hist.saved_line.take() {
             // Restore saved line
             self.zleline = saved;
             self.zlell = self.zleline.len();
             self.zlecs = hist.saved_cs;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -303,7 +303,7 @@ impl Zle {
         if let Some(entry) = hist.search_backward(&prefix) {
             self.zleline = entry.line.chars().collect();
             self.zlell = self.zleline.len();
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -321,7 +321,7 @@ impl Zle {
                 self.zleline = entry.line.chars().collect();
                 self.zlell = self.zleline.len();
                 self.zlecs = 0;
-                self.resetneeded = true;
+                crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
             }
         }
     }
@@ -335,7 +335,7 @@ impl Zle {
             self.zleline = saved;
             self.zlell = self.zleline.len();
             self.zlecs = hist.saved_cs;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -376,7 +376,7 @@ impl Zle {
                 self.zleline = hist.entries[i].line.chars().collect();
                 self.zlell = self.zleline.len();
                 self.zlecs = prefix.len();
-                self.resetneeded = true;
+                crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
                 return;
             }
         }
@@ -394,7 +394,7 @@ impl Zle {
                 self.zleline = hist.entries[i].line.chars().collect();
                 self.zlell = self.zleline.len();
                 self.zlecs = prefix.len();
-                self.resetneeded = true;
+                crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
                 return;
             }
         }
@@ -407,7 +407,7 @@ impl Zle {
                 self.zleline = saved.clone();
                 self.zlell = self.zleline.len();
                 self.zlecs = hist.saved_cs;
-                self.resetneeded = true;
+                crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
             }
         }
     }
@@ -424,7 +424,7 @@ impl Zle {
                     self.zlecs += 1;
                 }
                 self.zlell = self.zleline.len();
-                self.resetneeded = true;
+                crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
             }
         }
     }
@@ -452,7 +452,7 @@ impl Zle {
         self.zleline.clear();
         self.zlell = 0;
         self.zlecs = 0;
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Accept line and go to next history (for walking through history executing each)
@@ -487,7 +487,7 @@ impl Zle {
                 self.zleline = entry.line.chars().collect();
                 self.zlell = self.zleline.len();
                 self.zlecs = 0;
-                self.resetneeded = true;
+                crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
             }
         }
     }
@@ -502,7 +502,7 @@ impl Zle {
             self.zleline = entry.line.chars().collect();
             self.zlell = self.zleline.len();
             self.zlecs = 0;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -516,7 +516,7 @@ impl Zle {
             self.zleline = entry.line.chars().collect();
             self.zlell = self.zleline.len();
             self.zlecs = 0;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 

@@ -131,7 +131,7 @@ impl Zle {
         self.zleline.insert(self.zlecs, c);
         self.zlecs += 1;
         self.zlell += 1;
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Self insert unmeta - insert character with meta bit stripped
@@ -163,7 +163,7 @@ impl Zle {
         self.zleline.insert(self.zlecs, c);
         self.zlecs += 1;
         self.zlell += 1;
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Bracketed paste - handle paste mode
@@ -176,7 +176,7 @@ impl Zle {
                 self.zlell += 1;
             }
         }
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Delete char under cursor
@@ -185,7 +185,7 @@ impl Zle {
         if self.zlecs < self.zlell {
             self.zleline.remove(self.zlecs);
             self.zlell -= 1;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -196,7 +196,7 @@ impl Zle {
             self.zlecs -= 1;
             self.zleline.remove(self.zlecs);
             self.zlell -= 1;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -210,7 +210,7 @@ impl Zle {
                 self.killring.pop_back();
             }
             self.zlell = self.zlecs;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -225,7 +225,7 @@ impl Zle {
             }
             self.zlell -= self.zlecs;
             self.zlecs = 0;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -241,7 +241,7 @@ impl Zle {
             self.zlell = 0;
             self.zlecs = 0;
             self.mark = 0;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -259,7 +259,7 @@ impl Zle {
     /// `widget_exchange_point_and_mark` honours the count semantics.
     pub fn exchange_point_and_mark(&mut self) {
         std::mem::swap(&mut self.zlecs, &mut self.mark);
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Set mark at the current cursor position.
@@ -305,7 +305,7 @@ impl Zle {
         self.zlell -= end - start;
         self.zlecs = start;
         self.mark = start;
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Yank - insert from kill ring
@@ -319,7 +319,7 @@ impl Zle {
             }
             self.zlell = self.zleline.len();
             self.yanklast = true;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -355,7 +355,7 @@ impl Zle {
             self.zlell = self.zleline.len();
         }
 
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Transpose chars
@@ -374,7 +374,7 @@ impl Zle {
         if pos > 0 {
             self.zleline.swap(pos - 1, pos);
             self.zlecs = pos + 1;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -404,7 +404,7 @@ impl Zle {
             self.zlecs += 1;
         }
 
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Lowercase the next word.
@@ -423,7 +423,7 @@ impl Zle {
             self.zlecs += 1;
         }
 
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Uppercase the next word.
@@ -442,7 +442,7 @@ impl Zle {
             self.zlecs += 1;
         }
 
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Transpose words
@@ -499,7 +499,7 @@ impl Zle {
 
             self.zlell = self.zleline.len();
             self.zlecs = new_end1;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -511,7 +511,7 @@ impl Zle {
         self.zlecs += 1;
         self.zleline.push('\'');
         self.zlell += 1;
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Quote region
@@ -528,7 +528,7 @@ impl Zle {
         self.zlell += 2;
         self.zlecs = end + 2;
         self.mark = start;
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// What cursor position - display cursor info
@@ -586,7 +586,7 @@ impl Zle {
         self.zlell = 0;
         self.zlecs = 0;
         self.mark = 0;
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Vi put after cursor
@@ -637,7 +637,7 @@ impl Zle {
                 self.zlecs += 1;
             }
             self.zlell = self.zleline.len();
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -662,7 +662,7 @@ impl Zle {
             self.zlell += 1;
             self.zlecs += 1;
         }
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -807,7 +807,7 @@ pub fn backwarddeletechar(zle: &mut Zle) -> i32 {                            // 
             zle.zlell -= 1;
         }
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0                                                                        // c:190
 }
 
@@ -847,7 +847,7 @@ pub fn backwardkillline(zle: &mut Zle) -> i32 {                              // 
         }
         zle.zlell -= i;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0                                                                        // c:245
 }
 
@@ -891,7 +891,7 @@ pub fn bracketedpaste(zle: &mut Zle, args: &[String]) -> i32 {               // 
             zle.zlecs += 1;
             zle.zlell += 1;
         }
-        zle.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
     0                                                                        // c:838
 }
@@ -934,7 +934,7 @@ pub fn copyprevshellword(zle: &mut Zle) -> i32 {                             // 
     }
     zle.zlecs += copied.len();
     zle.zlell += copied.len();
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -970,7 +970,7 @@ pub fn copyprevword(zle: &mut Zle) -> i32 {                                  // 
     }
     zle.zlecs += len;
     zle.zlell += len;
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1035,7 +1035,7 @@ pub fn deletechar(zle: &mut Zle) -> i32 {                                    // 
             }
         }
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0                                                                        // c:175
 }
 
@@ -1091,7 +1091,7 @@ pub fn doinsert(zle: &mut Zle, zstr: &[char]) {                              // 
         }
         zle.zlell += zstr.len();
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// Port of `NAMLEN` from `Src/Zle/zle_misc.c:1249`. Maximum length
@@ -1169,7 +1169,7 @@ pub fn gosmacstransposechars(zle: &mut Zle) -> i32 {                         // 
     }
     if zle.zlecs >= 2 && zle.zlecs <= zle.zleline.len() {
         zle.zleline.swap(zle.zlecs - 2, zle.zlecs - 1);
-        zle.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
     0
 }
@@ -1251,7 +1251,7 @@ pub fn killbuffer(zle: &mut Zle) -> i32 {                                    // 
         }
         zle.zlell = 0;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0                                                                        // c:220
 }
 
@@ -1292,7 +1292,7 @@ pub fn killline(zle: &mut Zle) -> i32 {                                      // 
         zle.zlell -= i;
         zle.zlecs = start;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0                                                                        // c:439
 }
 
@@ -1319,7 +1319,7 @@ pub fn killregion(zle: &mut Zle) -> i32 {                                    // 
         zle.zlecs = start;
         zle.mark = start;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1358,7 +1358,7 @@ pub fn killwholeline(zle: &mut Zle) -> i32 {                                 // 
         }
         n -= 1;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0                                                                        // c:210
 }
 
@@ -1519,7 +1519,7 @@ pub fn pastebuf(zle: &mut Zle, buf: &[char], mult: i32, position: i32) -> i32 { 
     if zle.zlecs > 0 && *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd" {
         zle.zlecs -= 1;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1564,7 +1564,7 @@ pub fn poundinsert(zle: &mut Zle) -> i32 {                                   // 
         }
     }
     DONE.store(1, Ordering::SeqCst);                                         // c:395
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0                                                                        // c:396
 }
 
@@ -1630,7 +1630,7 @@ pub fn quoteline(zle: &mut Zle) -> i32 {                                     // 
     zle.zleline = quoted;
     zle.zlell = len;
     zle.zlecs = len;
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0                                                                        // c:1196
 }
 
@@ -1672,7 +1672,7 @@ pub fn quoteregion(zle: &mut Zle) -> i32 {                                   // 
     // c:1180-1181 — `mark = zlecs; zlecs += len`.
     zle.mark = zle.zlecs;
     zle.zlecs += qlen;
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -2029,7 +2029,7 @@ pub fn yankpop(zle: &mut Zle) -> i32 {                                       // 
         zle.zlell += next.len();
         zle.yank_end = zle.zlecs;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 

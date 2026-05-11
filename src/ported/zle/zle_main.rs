@@ -242,8 +242,6 @@ pub struct Zle {
     lprompt: String,
     /// Right prompt
     rprompt: String,
-    /// Needs refresh
-    pub resetneeded: bool,
     // Primary cut buffer                                                    // c:33
     /// Vi cut buffers (0-35: 0-9, a-z)
     pub vibuf: [ZleString; 36],
@@ -409,7 +407,6 @@ impl Zle {
             ttyfd: 0, // stdin
             lprompt: String::new(),
             rprompt: String::new(),
-            resetneeded: false,
             vibuf: std::array::from_fn(|_| Vec::new()),
             killring: VecDeque::new(),
             killringmax: 8,
@@ -783,9 +780,9 @@ impl Zle {
             self.redrawhook();
 
             // Refresh display if any widget asked for it.
-            if self.resetneeded {
+            if crate::ported::zle::zle_main::ZLE_RESET_NEEDED.load(std::sync::atomic::Ordering::SeqCst) != 0 {
                 self.zrefresh();
-                self.resetneeded = false;
+                crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(0, std::sync::atomic::Ordering::SeqCst);
             }
         }
     }
@@ -937,7 +934,7 @@ impl Zle {
             }
             self.zlecs += 1;
         }
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Run a line edit and return the user's accepted line.
@@ -1040,7 +1037,7 @@ impl Zle {
         // Reset attributes (C source: applytextattributes(0)).
         print!("\x1b[0m");
         let _ = io::stdout().flush();
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Mark the prompt as needing a re-expand on next refresh.
@@ -1049,7 +1046,7 @@ impl Zle {
     /// `clearflag`; our simplified version just flips `resetneeded`
     /// (clearflag's TCCLEAREOD path isn't wired through this crate).
     pub fn resetprompt(&mut self) {
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Re-run prompt expansion against the saved templates.
@@ -1064,7 +1061,7 @@ impl Zle {
         // env/state internally.
         self.lprompt = crate::prompt::expand_prompt(&self.lprompt_raw);
         self.rprompt = crate::prompt::expand_prompt(&self.rprompt_raw);
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Run a nested edit session — used by user widgets to invoke the
@@ -1215,13 +1212,13 @@ impl Zle {
     /// Port of zleaftertrap() from zle_main.c
     pub fn after_trap(&mut self) {
         // Restore state after running trap
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// ZLE reset prompt
     /// Port of zle_resetprompt() from zle_main.c  
     pub fn zle_reset_prompt(&mut self) {
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Display message to user (internal)
@@ -1242,7 +1239,7 @@ impl Zle {
     /// Set prompt
     pub fn set_prompt(&mut self, prompt: &str) {
         self.lprompt = prompt.to_string();
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Get repeat count
