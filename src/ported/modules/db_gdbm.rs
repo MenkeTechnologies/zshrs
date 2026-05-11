@@ -953,7 +953,7 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 /// C signature: `static char *unmetafy_zalloc(const char *to_copy, int *new_len)`.
 pub fn unmetafy_zalloc(to_copy: &str) -> (String, usize) {               // c:776
     // c:783 — `result = ztrdup(to_copy); unmetafy(result, new_len);`
-    let s = crate::ported::utils::unmetafy_dup(to_copy);
+    let s = crate::ported::utils::unmeta(to_copy);
     let len = s.len();
     (s, len)
 }

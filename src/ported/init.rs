@@ -592,9 +592,9 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) { /
     // ZSH_EXEPATH                                                           // c:1315
     {
         let exename = argv0.lock().unwrap().clone();                         // c:1318
-        let exename = crate::ported::compat::unmetafy(&exename);             // c:1318
+        let exename = crate::ported::utils::unmeta(&exename);                // c:1318
         let cwd = std::env::var("PWD").ok().map(|s|
-            crate::ported::compat::unmetafy(&s));                            // c:1319
+            crate::ported::utils::unmeta(&s));                               // c:1319
         let mypath = getmypath(Some(&exename),                               // c:1320
                                 cwd.as_deref());
         if let Some(mp) = mypath {                                           // c:1323
@@ -613,7 +613,7 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) { /
 /// Port of `static void setupshin(char *runscript)` from Src/init.c:1339.
 fn setupshin(runscript: Option<&str>) {                                      // c:1340
     if let Some(script) = runscript {                                        // c:1342
-        let funmeta = crate::ported::compat::unmetafy(script);               // c:1346
+        let funmeta = crate::ported::utils::unmeta(script);            // c:1346
         let mut sfname: Option<String> = None;                               // c:1343
         if std::path::Path::new(&funmeta).is_file() {                        // c:1350-1352
             sfname = Some(script.to_string());                               // c:1353
@@ -716,7 +716,7 @@ pub fn init_misc(cmd: Option<&str>, zsh_name: &str) {                        // 
 
 /// Port of `mod_export enum source_return source(char *s)` from Src/init.c:1550.
 pub fn source(s: &str) -> i32 {                                              // c:1551
-    let _us = crate::ported::compat::unmetafy(s);                            // c:1566
+    let _us = crate::ported::utils::unmeta(s);                         // c:1566
     let path = std::path::Path::new(&_us);
     if !path.exists() {                                                      // c:1565-1568
         return 1; /* SOURCE_NOT_FOUND */

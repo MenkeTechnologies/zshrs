@@ -17,7 +17,7 @@
 //! and `static struct paramdef partab[]` aggregates of pre-defined
 //! zsh-framework types).
 
-use crate::ported::utils::{metafy, unmetafy_dup, zwarn};
+use crate::ported::utils::{metafy, unmeta, zwarn};
 use std::fs::OpenOptions;
 use std::io;
 #[cfg(unix)]
@@ -46,9 +46,9 @@ use std::os::unix::io::AsRawFd;
 #[cfg(unix)]
 pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:67
     // c:71 — `char *name = ztrdup(pm->node.nam);`
-    let name_unmeta = unmetafy_dup(name);                                // c:71+82
+    let name_unmeta = unmeta(name);                                // c:71+82
     // c:82-83 — `unmetafy(name, &len); unmetafy(value, &len);`
-    let value_unmeta = unmetafy_dup(value);                              // c:83
+    let value_unmeta = unmeta(value);                              // c:83
     let value_bytes = value_unmeta.as_bytes();
     let len = value_bytes.len();                                         // c:83 len out
 
@@ -131,7 +131,7 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:67
     }
 
     // c:118-121 — close(fd) (auto on drop), free(name), free(value)
-    // (both unmetafy_dup-allocated Strings, dropped at scope end).
+    // (both unmeta-allocated Strings, dropped at scope end).
 }
 
 /// Non-`USE_MMAP` build path (port of the `#else` arm at
@@ -141,8 +141,8 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:67
 pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:67
     use std::io::Write;
     if readonly { return; }                                              // c:87 readonly skip
-    let name_unmeta = unmetafy_dup(name);
-    let value_unmeta = unmetafy_dup(value);
+    let name_unmeta = unmeta(name);
+    let value_unmeta = unmeta(value);
     if let Ok(mut fout) = OpenOptions::new().write(true).create(true).truncate(true)
                           .open(&name_unmeta)
     {
@@ -159,7 +159,7 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:67
 pub fn unsetpmmapfile(name: &str, readonly: bool) {                      // c:126
     // c:129 — `char *fname = ztrdup(pm->node.nam);`
     // c:131 — `unmetafy(fname, &dummy);`
-    let fname = unmetafy_dup(name);                                      // c:129+131
+    let fname = unmeta(name);                                      // c:129+131
     // c:133-134 — `if (!(pm->node.flags & PM_READONLY)) unlink(fname);`
     if !readonly {                                                       // c:133
         let _ = std::fs::remove_file(&fname);                            // c:134
@@ -211,7 +211,7 @@ pub fn get_contents(fname: &str) -> Option<String> {                     // c:16
     use std::os::unix::fs::MetadataExt;
     use std::io::Read;
     // c:177 — `unmetafy(fname = ztrdup(fname), &fd);`
-    let fname_unmeta = unmetafy_dup(fname);
+    let fname_unmeta = unmeta(fname);
 
     // c:180 — `(fd = open(fname, O_RDONLY | O_NOCTTY)) < 0`
     let file = match OpenOptions::new().read(true).open(&fname_unmeta) {
@@ -280,7 +280,7 @@ pub fn get_contents(fname: &str) -> Option<String> {                     // c:16
 /// `Src/Modules/mapfile.c:199-202`): plain read with metafy.
 #[cfg(not(unix))]
 pub fn get_contents(fname: &str) -> Option<String> {                     // c:167
-    let fname_unmeta = unmetafy_dup(fname);
+    let fname_unmeta = unmeta(fname);
     let raw = std::fs::read_to_string(&fname_unmeta).ok()?;
     Some(metafy(&raw))
 }

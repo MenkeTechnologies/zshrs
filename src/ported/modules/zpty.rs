@@ -741,7 +741,7 @@ pub fn ptywrite(cmd: &PtyCmd, args: &[&str], nonl: i32) -> i32 {         // c:74
     if !args.is_empty() {                                                // c:746
         for (i, a) in args.iter().enumerate() {                          // c:751
             // c:752 — unmetafy + ptywritestr.
-            let unmeta = crate::ported::utils::unmetafy_dup(a);
+            let unmeta = crate::ported::utils::unmeta(a);
             let bytes = unmeta.as_bytes();
             let r = unsafe { libc::write(cmd.master_fd, bytes.as_ptr() as *const _, bytes.len()) };
             if r < 0 { return 1; }                                       // c:753
