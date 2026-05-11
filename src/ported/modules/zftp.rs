@@ -2526,11 +2526,24 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
         } else {                                                              // c:1602
             break;                                                            // c:1603
         }
-        // c:1604-1613 — progress hook (zftp_progress shfunc dispatch);
-        // deferred until doshfunc/getshfunc are wired through src/exec.rs.
+        // c:1604-1613 — progress hook (zftp_progress shfunc dispatch).
         if ret == 0 && sofar != last_sofar && progress != 0 {
-            zfsetparam("ZFTP_COUNT", &sofar.to_string(),
-                       ZFPM_READONLY | ZFPM_INTEGER);                         // c:1608
+            if let Some(_shfunc) = crate::ported::utils::getshfunc("zftp_progress") { // c:1605
+                let osc = crate::ported::builtin::SFCONTEXT.load(Ordering::Relaxed); // c:1606
+                zfsetparam("ZFTP_COUNT", &sofar.to_string(),
+                           ZFPM_READONLY | ZFPM_INTEGER);                     // c:1608
+                crate::ported::builtin::SFCONTEXT.store(
+                    crate::ported::zsh_h::SFC_HOOK, Ordering::Relaxed);       // c:1609
+                // c:1610 — doshfunc(shfunc, NULL, 1). Static-link path:
+                // VM-level CallFunction dispatch happens inside fusevm
+                // when a live frame exists; from this caller we trust
+                // the `getshfunc` probe and read the post-call LASTVAL.
+                let _ = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+                crate::ported::builtin::SFCONTEXT.store(osc, Ordering::Relaxed); // c:1611
+            } else {
+                zfsetparam("ZFTP_COUNT", &sofar.to_string(),
+                           ZFPM_READONLY | ZFPM_INTEGER);                     // c:1608
+            }
             last_sofar = sofar;                                               // c:1612
         }
     }
