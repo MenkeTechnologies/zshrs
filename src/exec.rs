@@ -300,7 +300,7 @@ use std::process::{Child, Command, Stdio};
 // (src/ported/zle/computil.rs, modules/{zutil,zpty,zprof,socket}.rs,
 // builtins/sched.rs). Re-exported here so existing call-sites that
 // reference `crate::ported::exec::<Name>` keep compiling.
-pub use crate::ported::zle::computil::{CompSpec, CompMatch, CompGroup, CompState};
+pub use crate::bash_complete::{CompSpec, CompMatch, CompGroup, CompState};
 pub use crate::ported::modules::zutil::ZStyle;
 // `ProfileEntry` re-export deleted — was unused outside
 // `ShellExecutor::profile_data` (which itself is now removed).
