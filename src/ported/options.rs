@@ -9,7 +9,18 @@
 //! - setopt/unsetopt builtins
 
 use std::collections::HashMap;
+use std::sync::atomic::AtomicI32;
 use crate::ported::utils::zwarnnam;
+
+/// Port of `mod_export int emulation;` from `Src/options.c:36`.
+/// Current emulation bitmap; one of EMULATE_ZSH / EMULATE_KSH /
+/// EMULATE_SH / EMULATE_CSH. Tested via the `EMULATION(bits)` macro
+/// at zsh.h:2347 (`(emulation & bits) != 0`). Default 0 — the
+/// initial value matches C's zero-initialised BSS slot; `setup_init`
+/// calls `installemulation()` (options.c:523) early in startup to
+/// flip the right bit.
+#[allow(non_upper_case_globals)]
+pub static emulation: AtomicI32 = AtomicI32::new(0);                         // c:36
 
 /// Shell emulation modes.
 /// Port of the `EMULATE_*` constants from Src/zsh.h —
@@ -835,9 +846,9 @@ pub fn printoptionnode(name: &str, set: bool) {                              // 
 /// Port of `defset()` macro from `Src/options.c:73`.
 /// Returns true if the option is on by default for the given emulation.
 #[inline]
-pub fn defset(optname: &str, emulation: i32) -> bool {
+pub fn defset(optname: &str, my_emulation: i32) -> bool {
     let flags = optns_flags(optname);
-    (flags & (emulation as u16)) != 0
+    (flags & (my_emulation as u16)) != 0
 }
 
 /// Get the flags for an option from the optns[] table.
