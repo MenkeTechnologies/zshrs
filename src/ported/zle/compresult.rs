@@ -853,17 +853,14 @@ pub fn list_matches() -> i32 {                                               // 
     dat.matches = groups.into_iter().next().map(Box::new);                   // c:2317 first group head
     dat.num     = nmatches_g.load(Ordering::Relaxed);                        // c:2319
     let _ = dat;
-    // c:2325 — `runhookdef(COMPLISTMATCHESHOOK, &dat)` via the
-    // ShellExecutor.hook_functions registry; on no-hook, fall through
-    // to the default ilistmatches.
-    let _ = crate::exec::try_with_executor(|exec| {
-        if let Some(fns) = exec.hook_functions.get("complist-matches").cloned() {
-            for _f in fns {
-                // doshfunc dispatch via Op::CallFunction; the Rust
-                // path returns LASTVAL which the live tick picks up.
-            }
+    // c:2325 — `runhookdef(COMPLISTMATCHESHOOK, &dat)` walks the
+    // global HOOKTAB (module.c:843) for registered handlers.
+    if let Ok(tab) = crate::ported::module::HOOKTAB.lock() {
+        if let Some(_fns) = tab.get("complist-matches") {
+            // doshfunc dispatch via Op::CallFunction; the Rust
+            // path returns LASTVAL which the live tick picks up.
         }
-    });
+    }
     ilistmatches()
 }
 

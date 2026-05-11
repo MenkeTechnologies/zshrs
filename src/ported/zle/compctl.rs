@@ -1552,19 +1552,12 @@ pub(crate) fn addhnmatch(name: &str, _flags: i32) {
 /// "expand a single word with errors swallowed". Returns owned
 /// String (vs C's heap-string-pointer).
 pub(crate) fn getreal(str_in: &str) -> String {
-    // C: c:2135 — save noerrs
-    // C: c:2138-2139 — prefork the duplicated string
-    // Routes through singsub when a VM/executor is available;
-    // outside the VM (unit tests, direct calls) returns the input
-    // unchanged. Direct port of the C "noerrs swallow" path.
-    let result = crate::fusevm_bridge::try_with_executor(|_exec| {
-        crate::ported::subst::singsub(str_in)
-    });
+    // C: c:2135 — `int ne = noerrs; noerrs = 2;`
+    // C: c:2138-2139 — `t = dupstring(str); singsub(&t);`
+    // C: c:2140 — `noerrs = ne;`
     // C: c:2141-2143 — non-empty + first char non-empty → use it.
-    match result {
-        Some(s) if !s.is_empty() => s,
-        _ => str_in.to_string(),
-    }
+    let s = crate::ported::subst::singsub(str_in);
+    if !s.is_empty() { s } else { str_in.to_string() }
 }
 
 // (getreal port location; impl above already routes through singsub)

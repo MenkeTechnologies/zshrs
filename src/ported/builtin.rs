@@ -358,19 +358,27 @@ pub fn freebuiltinnode(hn: *mut crate::ported::zsh_h::hashnode) {            // 
 /// Port of `init_builtins()` from Src/builtin.c:212.
 /// C: `void init_builtins(void)` — when not in EMULATE_ZSH, disable
 ///   the `repeat` reserved word (compat for sh/ksh).
+///
+/// ```c
+/// if (!EMULATION(EMULATE_ZSH)) {
+///     HashNode hn = reswdtab->getnode2(reswdtab, "repeat");
+///     if (hn)
+///         reswdtab->disablenode(hn, 0);
+/// }
+/// ```
 pub fn init_builtins() {                                                     // c:212
     use crate::ported::zsh_h::EMULATE_ZSH;
-    use crate::ported::options::{ShellOptions, Emulation};
-    let emul = match ShellOptions::new().emulation {
-        Emulation::Zsh => crate::ported::zsh_h::EMULATE_ZSH,
-        Emulation::Ksh => crate::ported::zsh_h::EMULATE_KSH,
-        Emulation::Sh  => crate::ported::zsh_h::EMULATE_SH,
-        Emulation::Csh => crate::ported::zsh_h::EMULATE_CSH,
-    };
-    // c:215 — `if (!EMULATION(EMULATE_ZSH))` disable `repeat`.
-    if !crate::ported::zsh_h::EMULATION(emul, EMULATE_ZSH) {                 // c:215
-        // c:216-218 — reswdtab->getnode2(reswdtab, "repeat") + disablenode.
-        // Static-link path: reswdtab lives in src/ported/lex.rs.
+    // c:214 — `if (!EMULATION(EMULATE_ZSH))`. Read the live emulation
+    // bitmap from the canonical global, not the per-call ShellOptions
+    // snapshot (which lags behind `emulate -L` switches).
+    let emul = crate::ported::modules::ksh93::emulation
+        .load(std::sync::atomic::Ordering::Relaxed);
+    if !crate::ported::zsh_h::EMULATION(emul, EMULATE_ZSH) {                 // c:214
+        // c:215-217 — `hn = reswdtab->getnode2(reswdtab,"repeat");
+        //              if (hn) reswdtab->disablenode(hn, 0);`
+        if let Ok(mut tab) = crate::ported::hashtable::reswdtab_lock().lock() {
+            tab.disable("repeat");
+        }
     }
 }
 

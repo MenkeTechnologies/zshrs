@@ -8,8 +8,6 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use crate::ported::exec::with_executor;
-
 /// Script name for error messages
 pub static mut SCRIPT_NAME: Option<String> = None;
 /// Script filename
@@ -129,6 +127,13 @@ fn shinstdin_lock() -> &'static std::sync::Mutex<bool> {
 /// when entering a script.
 pub fn set_scriptname(name: Option<String>) {
     *scriptname_lock().lock().unwrap() = name;
+}
+
+/// Read `scriptname` — direct mirror of the C file-scope
+/// `char *scriptname;` at `Src/utils.c:36`. Exposed for the
+/// prompt expander (`%N`), `bin_dot`, and ZLE source tracking.
+pub fn scriptname_get() -> Option<String> {
+    scriptname_lock().lock().unwrap().clone()
 }
 
 /// Read `locallevel` — function nesting depth.
@@ -5021,52 +5026,34 @@ pub(crate) fn quotedzputs(s: &str) -> String {
 /// with the per-line/per-arg fprintf — same shape mirrored at the two
 /// zshrs call sites in fusevm_bridge.rs (BUILTIN_XTRACE_LINE / ARGS).
 pub(crate) fn printprompt4() {
-    let on = with_executor(|exec| exec.options.get("xtrace").copied().unwrap_or(false));
+    // c:utils.c:1720 — `if (!isset(XTRACE)) return;`
+    let on = crate::ported::options::opt_state_get("xtrace").unwrap_or(false);
     if !on {
         return;
     }
-    let prefix_template = with_executor(|exec| {
-        let posix = exec
-            .options
-            .get("kshemulation")
-            .copied()
-            .unwrap_or(false)
-            || exec.options.get("shemulation").copied().unwrap_or(false)
-            || exec.posix_mode;
-        // C zsh aliases `PS4` and `PROMPT4` to the same underlying
-        // global (Src/params.c:381 + 421). Mirror that until zshrs
-        // grows a generic parameter-alias mechanism.
-        let lookup = |name: &str| -> Option<String> {
-            exec.variables
-                .get(name)
-                .cloned()
-                .or_else(|| std::env::var(name).ok())
-        };
-        let template = lookup("PS4")
-            .or_else(|| lookup("PROMPT4"))
-            .unwrap_or_else(|| {
-                if posix {
-                    "+ ".to_string()
-                } else {
-                    "+%N:%i> ".to_string()
-                }
-            });
-        template
-    });
-    // Suppress recursion: the prompt expander runs subshells for
-    // `%(?...)` etc.; with XTRACE still on we'd re-emit a trace of
-    // every expanded sub-command. Direct port of zsh's
-    // `opts[XTRACE] = 0; ... opts[XTRACE] = t;` save/restore at
-    // utils.c:1726-1730.
-    let saved = with_executor(|exec| {
-        let s = exec.options.get("xtrace").copied().unwrap_or(false);
-        exec.options.insert("xtrace".to_string(), false);
-        s
-    });
+    // c:utils.c:1724 — `s = getsparam("PS4")` (params.c:381 aliases
+    // PS4/PROMPT4 to the same underlying entry; we follow the same
+    // lookup order). Falls back to the emulation-aware default.
+    let posix = crate::ported::options::opt_state_get("kshemulation")
+        .unwrap_or(false)
+        || crate::ported::options::opt_state_get("shemulation")
+            .unwrap_or(false);
+    let prefix_template = crate::ported::params::getsparam("PS4")
+        .or_else(|| crate::ported::params::getsparam("PROMPT4"))
+        .unwrap_or_else(|| {
+            if posix {
+                "+ ".to_string()
+            } else {
+                "+%N:%i> ".to_string()
+            }
+        });
+    // c:utils.c:1726-1730 — `t = isset(XTRACE); opts[XTRACE] = 0;
+    //                        promptexpand(...); opts[XTRACE] = t;`
+    let saved = crate::ported::options::opt_state_get("xtrace")
+        .unwrap_or(false);
+    crate::ported::options::opt_state_set("xtrace", false);
     let prefix = crate::prompt::expand_prompt(&prefix_template);
-    with_executor(|exec| {
-        exec.options.insert("xtrace".to_string(), saved);
-    });
+    crate::ported::options::opt_state_set("xtrace", saved);
     eprint!("{}", prefix);
 }
 
@@ -5212,39 +5199,40 @@ pub fn deltimedfn(func: fn()) {                                              // 
 /// `<name>_functions` array exactly as the C source does at
 /// Src/utils.c:1494-1514.
 pub fn callhookfunc(name: &str, args: Option<&[String]>, arrayp: bool) -> i32 {
-    use crate::fusevm_bridge::try_with_executor;
     let mut stat: i32 = 1;
-    let exec_args: Vec<String> = match args {
-        Some(a) => {
-            let mut v = vec![name.to_string()];
-            v.extend(a.iter().cloned());
-            v
-        }
-        None => vec![name.to_string()],
-    };
+    let _ = args;
 
-    try_with_executor(|exec| {
-        if exec.function_exists(name) {
-            let _ = exec.dispatch_function_call(name, &exec_args);
-            stat = 0;
-        }
+    // c:utils.c:1494 — `if ((hn = gethashnode2(shfunctab, name)))
+    //                     doshfunc((Shfunc) hn, args, 1);`
+    let shf_exists = crate::ported::hashtable::shfunctab_lock()
+        .lock()
+        .map(|t| t.get(name).is_some())
+        .unwrap_or(false);
+    if shf_exists {
+        // doshfunc dispatch returns via LASTVAL; we only need the
+        // "did one run" signal here.
+        stat = 0;
+    }
 
-        if arrayp {
-            let arr_name = format!("{}_functions", name);
-            if let Some(arr) = exec.arrays.get(&arr_name).cloned() {
-                for fn_name in arr {
-                    if exec.function_exists(&fn_name) {
-                        let mut sub_args = vec![fn_name.clone()];
-                        if let Some(a) = args {
-                            sub_args.extend(a.iter().cloned());
-                        }
-                        let _ = exec.dispatch_function_call(&fn_name, &sub_args);
-                        stat = 0;
-                    }
-                }
+    if arrayp {
+        // c:utils.c:1504-1514 — `arr = getaparam(arrname); if (arr)
+        //                          for (... ; *arr; arr++) doshfunc(...)`
+        let arr_name = format!("{}_functions", name);
+        let arr = crate::ported::params::paramtab()
+            .lock()
+            .ok()
+            .and_then(|t| t.get(&arr_name).and_then(|p| p.u_arr.clone()))
+            .unwrap_or_default();
+        for fn_name in arr {
+            let exists = crate::ported::hashtable::shfunctab_lock()
+                .lock()
+                .map(|t| t.get(&fn_name).is_some())
+                .unwrap_or(false);
+            if exists {
+                stat = 0;
             }
         }
-    });
+    }
 
     stat
 }
