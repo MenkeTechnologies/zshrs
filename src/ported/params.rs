@@ -5424,24 +5424,81 @@ pub fn createparamtable() {                                                  // 
 
     crate::ported::mem::popheap();                                           // c:921
 
-    // c:931-936 — HOME post-import: clear PM_UNSET (EMULATE_ZSH
-    // implicit since the Rust port defaults to zsh emulation).
-    {
+    // c:933-944 — HOME / LOGNAME / SHLVL post-import wiring.
+    //
+    // C body (verbatim):
+    //   pm = paramtab->getnode(paramtab, "HOME");
+    //   if (EMULATION(EMULATE_ZSH)) {
+    //       pm->node.flags &= ~PM_UNSET;
+    //       if (!(pm->node.flags & PM_EXPORTED))
+    //           addenv(pm, home);
+    //   } else if (!home)
+    //       pm->node.flags |= PM_UNSET;
+    //   pm = paramtab->getnode(paramtab, "LOGNAME");
+    //   if (!(pm->node.flags & PM_EXPORTED))
+    //       addenv(pm, pm->u.str);
+    //   pm = paramtab->getnode(paramtab, "SHLVL");
+    //   sprintf(buf, "%d", (int)++shlvl);
+    //   addenv(pm, buf);
+
+    // c:938-945 — HOME. EMULATE_ZSH path clears PM_UNSET and
+    // addenv(home) when not already exported; non-zsh path sets
+    // PM_UNSET when `home` is empty/unset.
+    let is_zsh = crate::ported::zsh_h::EMULATION(
+        emul,
+        crate::ported::zsh_h::EMULATE_ZSH,
+    );
+    let home_val = home_lock().lock().expect("home poisoned").clone();
+    let home_action: Option<bool> = {
         let mut tab = paramtab().lock().unwrap();
         if let Some(pm) = tab.get_mut("HOME") {
-            pm.node.flags &= !(PM_UNSET as i32);
+            if is_zsh {                                                      // c:939
+                pm.node.flags &= !(PM_UNSET as i32);                         // c:941
+                if pm.node.flags & PM_EXPORTED as i32 == 0 {                 // c:942
+                    Some(true)
+                } else {
+                    Some(false)
+                }
+            } else if home_val.is_empty() {                                  // c:944
+                pm.node.flags |= PM_UNSET as i32;                            // c:945
+                Some(false)
+            } else {
+                Some(false)
+            }
+        } else {
+            None
         }
+    };
+    if let Some(true) = home_action {
+        addenv("HOME", &home_val);                                           // c:943
     }
 
-    // c:939-944 — SHLVL increment + addenv. C body: `sprintf(buf,
-    // "%d", (int)++shlvl); addenv(pm, buf)`. The Rust port reads the
-    // inherited SHLVL from env (default 0), bumps, and exports back.
+    // c:946-948 — LOGNAME. If not already exported, addenv(pm, pm->u.str).
+    let logname_export: Option<String> = {
+        let tab = paramtab().lock().unwrap();
+        tab.get("LOGNAME").and_then(|pm| {
+            if pm.node.flags & PM_EXPORTED as i32 == 0 {
+                pm.u_str.clone()
+            } else {
+                None
+            }
+        })
+    };
+    if let Some(ustr) = logname_export {
+        addenv("LOGNAME", &ustr);                                            // c:948
+    }
+
+    // c:949-953 — SHLVL: unconditionally addenv with the incremented
+    // value (C says "shlvl value in environment needs updating
+    // unconditionally"). C uses `++shlvl` and sprintf into a stack
+    // buf, then addenv(pm, buf).
     let new_shlvl: i32 = std::env::var("SHLVL")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0)
-        + 1;
+        + 1;                                                                 // c:951 `++shlvl`
     setiparam("SHLVL", new_shlvl as i64);
+    addenv("SHLVL", &new_shlvl.to_string());                                 // c:953
 
     // c:949-967 — CPUTYPE / MACHTYPE / OSTYPE / TTY / VENDOR /
     // ZSH_ARGZERO / ZSH_VERSION / ZSH_PATCHLEVEL. C body wraps each
