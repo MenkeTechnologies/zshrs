@@ -111,35 +111,21 @@ bitflags::bitflags! {
     }
 }
 
-/// Undo change record
+/// Direct port of `struct change` from `Src/Zle/zle.h:284-294`.
+/// Undo change record. `ChangeFlags` bitflags wrapper deleted —
+/// C uses bare `int flags` with `CH_NEXT` (1<<0) and `CH_PREV`
+/// (1<<1) bits (zle.h:297-298, ported in zle_h.rs as i32).
 #[derive(Debug, Clone)]
-pub struct Change {
-    /// Flags (CH_NEXT, CH_PREV)
-    pub flags: ChangeFlags,
-    /// History line being changed
-    pub hist: i32,
-    /// Offset of the text changes
-    pub off: usize,
-    /// Characters to delete
-    pub del: ZleString,
-    /// Characters to insert
-    pub ins: ZleString,
-    /// Old cursor position
-    pub old_cs: usize,
-    /// New cursor position
-    pub new_cs: usize,
-    /// Unique change number
-    pub changeno: u64,
-}
-
-bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy, Default)]
-    pub struct ChangeFlags: u32 {
-        /// Next structure is also part of this change
-        const NEXT = 1 << 0;
-        /// Previous structure is also part of this change
-        const PREV = 1 << 1;
-    }
+#[allow(non_camel_case_types)]
+pub struct change {                                                          // c:284
+    pub flags: i32,                                                          // c:286 int flags
+    pub hist: i32,                                                           // c:287 zlong hist
+    pub off: usize,                                                          // c:288 int off
+    pub del: ZleString,                                                      // c:289 ZLE_STRING_T del
+    pub ins: ZleString,                                                      // c:290 ZLE_STRING_T ins
+    pub old_cs: usize,                                                       // c:291 int old_cs
+    pub new_cs: usize,                                                       // c:292 int new_cs
+    pub changeno: u64,                                                       // c:293 zlong changeno
 }
 
 // `WatchFd` deleted — duplicate of `struct watch_fd` already legit-
@@ -268,7 +254,7 @@ pub struct Zle {
     /// Vi start change position in undo stack
     pub vistartchange: u64,
     /// Undo stack
-    pub undo_stack: Vec<Change>,
+    pub undo_stack: Vec<change>,
     /// Current change number
     pub changeno: u64,
     // Number of characters waiting to be read by the ungetbytes mechanism   // c:185

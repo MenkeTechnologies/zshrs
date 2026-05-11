@@ -155,7 +155,7 @@ pub fn unmetafy(s: &str) -> String {
 // Note: dead `UndoEntry`/`UndoState`/`apply_undo_entry` aggregates
 // removed per PORT_PLAN Phase 2. They were a Rust-only invention
 // with zero references across the codebase. The canonical undo
-// machinery lives directly on `Zle` (`undo_stack: Vec<Change>`,
+// machinery lives directly on `Zle` (`undo_stack: Vec<change>`,
 // `changeno`, `cur_change`, `undo_changeno`, `undo_limitno` —
 // declared in zle_main.rs) and the canonical port methods are:
 //
@@ -733,8 +733,8 @@ impl Zle {
             self.zleline[pre..self.zlell - suf].to_vec()
         };
         self.undo_changeno += 1;
-        let ch = super::zle_main::Change {
-            flags: super::zle_main::ChangeFlags::empty(),
+        let ch = super::zle_main::change {
+            flags: 0,
             hist: self.history.cursor as i32,
             off: pre,
             del,
@@ -866,7 +866,7 @@ impl Zle {
 /// inserts `ch->ins` at the same position, and updates `zlecs`.
 /// Returns 1 if there are more changes to apply (CH_NEXT), else 0.
 pub fn applychange(zle: &mut crate::ported::zle::zle_main::Zle, ch: i32) -> i32 { // c:1678
-    use crate::ported::zle::zle_main::ChangeFlags;
+    use crate::ported::zle::zle_h::{CH_NEXT, CH_PREV};
     let idx = ch as usize;
     if idx >= zle.undo_stack.len() { return 0; }
     let change = zle.undo_stack[idx].clone();
@@ -887,7 +887,7 @@ pub fn applychange(zle: &mut crate::ported::zle::zle_main::Zle, ch: i32) -> i32 
     zle.zlecs = change.new_cs;                                               // c:1718
     zle.zlell = zle.zleline.len();
     // c:1721 — return 1 if CH_NEXT, else 0.
-    if change.flags.contains(ChangeFlags::NEXT) { 1 } else { 0 }
+    if change.flags & CH_NEXT != 0 { 1 } else { 0 }
 }
 
 /// Port of `backdel()` from `Src/Zle/zle_utils.c:1084`. Removes `ct`
@@ -1162,15 +1162,15 @@ pub fn initundo() {                                                          // 
 /// since `vistartchange+1` form a single undo step (atomic vi
 /// insert-mode group). Resets `vistartchange = u64::MAX` (C's -1).
 pub fn mergeundo(zle: &mut crate::ported::zle::zle_main::Zle) {              // c:1733
-    use crate::ported::zle::zle_main::ChangeFlags;
+    use crate::ported::zle::zle_h::{CH_NEXT, CH_PREV};
     // c:1735-1742 — walk current->prev while changeno > vistartchange+1.
     if zle.cur_change == 0 { return; }
     let mut current = zle.cur_change - 1;                                    // c:1735 prev
     while current > 0
         && zle.undo_stack[current].changeno > zle.vistartchange + 1
     {
-        zle.undo_stack[current].flags |= ChangeFlags::PREV;                  // c:1740
-        zle.undo_stack[current - 1].flags |= ChangeFlags::NEXT;              // c:1741
+        zle.undo_stack[current].flags |= CH_PREV;                  // c:1740
+        zle.undo_stack[current - 1].flags |= CH_NEXT;              // c:1741
         current -= 1;
     }
     zle.vistartchange = u64::MAX;                                            // c:1744 = -1
@@ -1181,14 +1181,14 @@ pub fn mergeundo(zle: &mut crate::ported::zle::zle_main::Zle) {              // 
 /// from `zle.cur_change` calling `applychange` on each; returns 0
 /// on success, 1 when nothing to redo.
 pub fn redo(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {            // c:1661
-    use crate::ported::zle::zle_main::ChangeFlags;
+    use crate::ported::zle::zle_h::{CH_NEXT, CH_PREV};
     loop {
         if zle.cur_change >= zle.undo_stack.len() { return 1; }              // c:1664
         let cur_idx = zle.cur_change;
         if applychange(zle, cur_idx as i32) == 0 { break; }                  // c:1668
         zle.cur_change = cur_idx + 1;
         let has_next = zle.undo_stack.get(cur_idx)
-            .map(|c| c.flags.contains(ChangeFlags::NEXT))
+            .map(|c| c.flags & CH_NEXT != 0)
             .unwrap_or(false);
         if !has_next { break; }                                              // c:1670
     }
@@ -1314,7 +1314,7 @@ pub fn stringaszleline(s: &str) -> Vec<char> {                               // 
 /// `Src/Zle/zle_utils.c:1634-1652`. Reverse of applychange: deletes
 /// `ch->ins` at `ch->off` and re-inserts `ch->del`.
 pub fn unapplychange(zle: &mut crate::ported::zle::zle_main::Zle, ch: i32) -> i32 { // c:1634
-    use crate::ported::zle::zle_main::ChangeFlags;
+    use crate::ported::zle::zle_h::{CH_NEXT, CH_PREV};
     let idx = ch as usize;
     if idx >= zle.undo_stack.len() { return 0; }
     let change = zle.undo_stack[idx].clone();
@@ -1335,7 +1335,7 @@ pub fn unapplychange(zle: &mut crate::ported::zle::zle_main::Zle, ch: i32) -> i3
     zle.zlecs = change.old_cs;                                               // c:1649
     zle.zlell = zle.zleline.len();
     // c:1651 — return 1 if CH_PREV, else 0.
-    if change.flags.contains(ChangeFlags::PREV) { 1 } else { 0 }
+    if change.flags & CH_PREV != 0 { 1 } else { 0 }
 }
 
 /// Direct port of `int undo(char **args)` from
@@ -1345,7 +1345,7 @@ pub fn unapplychange(zle: &mut crate::ported::zle::zle_main::Zle, ch: i32) -> i3
 /// "single step") or at `undo_limitno`. Returns 0 on success,
 /// 1 when nothing left to undo.
 pub fn undo(zle: &mut crate::ported::zle::zle_main::Zle, args: &[String]) -> i32 { // c:1601
-    use crate::ported::zle::zle_main::ChangeFlags;
+    use crate::ported::zle::zle_h::{CH_NEXT, CH_PREV};
     let last_change: i64 = if !args.is_empty() {                             // c:1605
         args[0].parse().unwrap_or(-1)
     } else {
@@ -1371,7 +1371,7 @@ pub fn undo(zle: &mut crate::ported::zle::zle_main::Zle, args: &[String]) -> i32
             zle.cur_change = prev_idx;                                       // c:1627
         }
         let has_prev = zle.undo_stack.get(prev_idx)
-            .map(|c| c.flags.contains(ChangeFlags::PREV))
+            .map(|c| c.flags & CH_PREV != 0)
             .unwrap_or(false);
         if !(last_change >= 0 || has_prev) { break; }                        // c:1630
     }
