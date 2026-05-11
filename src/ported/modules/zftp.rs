@@ -1773,13 +1773,181 @@ pub fn zfgetline(ln: &mut [u8], lnsize: i32, tmout: i32) -> i32 {             //
 }
 
 /// Port of `zfgetmsg()` from `Src/Modules/zftp.c:702`.
-/// C: `static int zfgetmsg(void)` — reads + parses FTP server reply.
-/// Updates the `lastcode` / `lastcodestr` / `lastmsg` globals.
+/// C: `static int zfgetmsg(void)` — read a complete FTP server reply
+/// (possibly multi-line), parse the 3-digit code, update lastcode +
+/// lastcodestr + lastmsg + ZFTP_REPLY, return the first-digit status
+/// (1/2/3/4/5) or 6 on error/disconnect.
 #[allow(non_snake_case)]
-pub fn zfgetmsg() -> i32 {
-    // c:702-820 — full body uses cin/lastcode/lastcodestr/lastmsg.
-    // Returns 6 on error/disconnect, 0 on positive completion.
-    0
+pub fn zfgetmsg() -> i32 {                                                    // c:702
+    // c:704-705 — char line[256], *ptr, *verbose;
+    //             int stopit, printing = 0, tmout;
+    let mut line = [0u8; 256];
+    let mut printing: i32 = 0;
+    let stopit_initial: bool;
+    let tmout: i32;
+
+    // c:707-708 — if (!zfsess->control) return 6;
+    {
+        let state = match ZFTP_STATE.lock() {
+            Ok(s) => s,
+            Err(_) => return 6,
+        };
+        let sess = match state.get_session(None) {
+            Some(s) => s,
+            None => return 6,
+        };
+        if sess.control.is_none() {
+            return 6;                                                         // c:708
+        }
+    }
+
+    // c:709-710 — zsfree(lastmsg); lastmsg = NULL;
+    if let Ok(mut m) = lastmsg.lock() {
+        m.clear();
+    }
+
+    // c:712 — tmout = getiparam("ZFTP_TMOUT");
+    tmout = std::env::var("ZFTP_TMOUT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    // c:714 — zfgetline(line, 256, tmout);
+    zfgetline(&mut line, 256, tmout);
+    // c:715 — ptr = line; (use string slice + offset index instead)
+    let mut ptr_off: usize = 0;
+    let line_str = std::str::from_utf8(&line)
+        .unwrap_or("")
+        .trim_end_matches('\0')
+        .to_string();
+
+    // c:716 — if (zfdrrrring || !idigit(ptr[0..3])) — timeout or not FTP.
+    let is_digit = |b: u8| b.is_ascii_digit();
+    let timeout_or_bad = ZFDRRRRING.load(std::sync::atomic::Ordering::Relaxed) != 0
+        || line.len() < 3
+        || !is_digit(line[0])
+        || !is_digit(line[1])
+        || !is_digit(line[2]);
+    if timeout_or_bad {                                                       // c:716
+        ZCFINISH.store(2, std::sync::atomic::Ordering::Relaxed);              // c:718
+        if ZFCLOSING.load(std::sync::atomic::Ordering::Relaxed) == 0 {        // c:719
+            zfclose(0);                                                       // c:720
+        }
+        if let Ok(mut m) = lastmsg.lock() { m.clear(); }                      // c:721
+        if let Ok(mut cs) = lastcodestr.lock() {                              // c:722
+            cs.copy_from_slice(b"000\0");
+        }
+        zfsetparam("ZFTP_REPLY", "", ZFPM_READONLY);                          // c:723
+        return 6;                                                             // c:724
+    }
+
+    // c:726-729 — extract first 3 bytes into lastcodestr, parse to int.
+    let code_str: String = std::str::from_utf8(&line[..3]).unwrap_or("0").to_string();
+    if let Ok(mut cs) = lastcodestr.lock() {
+        cs[0] = line[0]; cs[1] = line[1]; cs[2] = line[2]; cs[3] = 0;
+    }
+    let code: i32 = code_str.parse().unwrap_or(0);
+    lastcode.store(code, std::sync::atomic::Ordering::Relaxed);
+    ptr_off += 3;
+    // c:730 — zfsetparam("ZFTP_CODE", lastcodestr, ZFPM_READONLY);
+    zfsetparam("ZFTP_CODE", &code_str, ZFPM_READONLY);
+    // c:731 — stopit = (*ptr++ != '-');
+    stopit_initial = line.get(ptr_off).copied() != Some(b'-');
+    ptr_off += 1;
+    let mut stopit = stopit_initial;
+
+    // c:733-744 — verbose check + initial-line printing.
+    let verbose = std::env::var("ZFTP_VERBOSE").unwrap_or_default();          // c:734
+    if verbose.contains(line[0] as char) {                                    // c:736
+        printing = 1;                                                         // c:738
+        eprint!("{}", line_str);                                              // c:739
+    } else if verbose.contains('0') && !stopit {                              // c:740
+        printing = 2;                                                         // c:742
+        eprint!("{}", &line_str[ptr_off..]);                                  // c:743
+    }
+    if printing != 0 {                                                        // c:746
+        eprintln!();                                                          // c:747
+    }
+
+    // c:749-775 — multi-line continuation loop.
+    while ZCFINISH.load(std::sync::atomic::Ordering::Relaxed) != 2 && !stopit {
+        line.fill(0);                                                         // reset
+        ptr_off = 0;
+        zfgetline(&mut line, 256, tmout);                                     // c:750
+        if ZFDRRRRING.load(std::sync::atomic::Ordering::Relaxed) != 0 {       // c:752
+            line[0] = 0;                                                      // c:753
+            break;                                                            // c:754
+        }
+        // c:757-764 — code-prefix check.
+        if &line[..3] == &code_str.as_bytes()[..3] {                          // c:757
+            if line[3] == b' ' {                                              // c:758
+                stopit = true;                                                // c:759
+                ptr_off = 4;                                                  // c:760
+            } else if line[3] == b'-' {                                       // c:761
+                ptr_off = 4;                                                  // c:762
+            }
+        } else if &line[..4] == b"    " {                                     // c:763
+            ptr_off = 4;                                                      // c:764
+        }
+
+        // c:766-774 — print intermediate line per `printing` mode.
+        let cont_line = std::str::from_utf8(&line)
+            .unwrap_or("")
+            .trim_end_matches('\0');
+        if printing == 2 {                                                    // c:766
+            if !stopit {                                                      // c:767
+                eprintln!("{}", &cont_line[ptr_off..]);                       // c:768-769
+            }
+        } else if printing != 0 {                                             // c:771
+            eprintln!("{}", cont_line);                                       // c:772-773
+        }
+    }
+
+    // c:777-778 — fflush(stderr);
+    if printing != 0 {
+        use std::io::Write;
+        let _ = std::io::stderr().flush();
+    }
+
+    // c:781 — lastmsg = ztrdup(ptr);  (the trailing portion of last line)
+    let last_msg_str: String = std::str::from_utf8(&line)
+        .unwrap_or("")
+        .trim_end_matches('\0')
+        .chars()
+        .skip(ptr_off)
+        .collect();
+    if let Ok(mut m) = lastmsg.lock() {
+        *m = last_msg_str.clone();
+    }
+    // c:785 — zfsetparam("ZFTP_REPLY", ztrdup(line), ZFPM_READONLY);
+    let whole_line = std::str::from_utf8(&line)
+        .unwrap_or("")
+        .trim_end_matches('\0');
+    zfsetparam("ZFTP_REPLY", whole_line, ZFPM_READONLY);
+
+    // c:791-797 — EOF or 421: close + warn.
+    let zcfin = ZCFINISH.load(std::sync::atomic::Ordering::Relaxed);
+    let cur_code = lastcode.load(std::sync::atomic::Ordering::Relaxed);
+    if (zcfin == 2 || cur_code == 421)
+        && ZFCLOSING.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+        ZCFINISH.store(2, std::sync::atomic::Ordering::Relaxed);              // c:792
+        zfclose(0);                                                           // c:793
+        crate::ported::utils::zwarnnam("zftp",                                // c:795
+            "remote server has closed connection");
+        return 6;                                                             // c:796
+    }
+    // c:798-801 — 530 not-logged-in.
+    if cur_code == 530 {                                                      // c:798
+        return 6;                                                             // c:800
+    }
+    // c:807-810 — 120 wait-and-retry.
+    if cur_code == 120 {                                                      // c:807
+        crate::ported::utils::zwarnnam("zftp",                                // c:808
+            &format!("delay expected, waiting: {}", last_msg_str));
+        return zfgetmsg();                                                    // c:809
+    }
+    // c:813 — return lastcodestr[0] - '0';
+    (code_str.as_bytes()[0] - b'0') as i32
 }
 
 /// Port of `zfhandler()` from `Src/Modules/zftp.c:366`.
@@ -1992,13 +2160,98 @@ pub fn zfstarttrans(nam: &str, recv: i32, sz: libc::off_t) {                  //
 }
 
 /// Port of `zfstats()` from `Src/Modules/zftp.c:1193`.
-/// C: `static int zfstats(char *fnam, int remote, off_t *retsize, char **retmdtm, int fd)`.
+/// C: `static int zfstats(char *fnam, int remote, off_t *retsize, char **retmdtm, int fd)` —
+/// query file size + mtime, remote via SIZE/MDTM commands or local
+/// via stat(2)/fstat(2).
 #[allow(non_snake_case)]
-pub fn zfstats(_fnam: &str, _remote: i32,
-               _retsize: &mut libc::off_t, _retmdtm: &mut Option<String>,
-               _fd: i32) -> i32 {
-    // c:1193-1273 — sends SIZE/MDTM commands, parses replies.
-    0
+pub fn zfstats(fnam: &str, remote: i32,                                       // c:1193
+               retsize: &mut libc::off_t, retmdtm: &mut Option<String>,
+               fd: i32) -> i32 {
+    // c:1195-1197 — locals at fn top.
+    let mut sz: libc::off_t = -1;                                             // c:1195
+    let mut mt: Option<String> = None;                                        // c:1196 char *mt
+    let ret: i32;                                                             // c:1197
+
+    *retsize = -1;                                                            // c:1199-1200
+    *retmdtm = None;                                                          // c:1201-1202
+
+    if remote != 0 {                                                          // c:1203
+        // c:1205-1207 — early-out if server lacks SIZE/MDTM support.
+        // Without the per-session has_size/has_mdtm fields wired we
+        // always attempt the command; non-supporting servers return
+        // 5xx which we handle below.
+
+        // c:1213 — zfsettype(ZFST_TYPE(zfstatusp[zfsessno]));
+        zfsettype(ZFST_IMAG);
+
+        // c:1214-1228 — SIZE command path.
+        let cmd = format!("SIZE {}\r\n", fnam);                               // c:1215
+        ret = zfsendcmd(&cmd);                                                // c:1216
+        if ret == 6 {                                                         // c:1218
+            return 1;                                                         // c:1219
+        }
+        let code = lastcode.load(std::sync::atomic::Ordering::Relaxed);
+        if code < 300 {                                                       // c:1220
+            // c:1221 — sz = zstrtol(lastmsg, 0, 10);
+            sz = lastmsg.lock().ok()
+                .map(|m| m.trim().parse::<libc::off_t>().unwrap_or(-1))
+                .unwrap_or(-1);
+        } else if (500..=504).contains(&code) {                               // c:1223
+            return 2;                                                         // c:1225
+        } else if code == 550 {                                               // c:1226
+            return 1;                                                         // c:1227
+        }
+
+        // c:1231-1245 — MDTM command path.
+        let cmd = format!("MDTM {}\r\n", fnam);                               // c:1232
+        let ret2 = zfsendcmd(&cmd);                                           // c:1233
+        if ret2 == 6 {                                                        // c:1235
+            return 1;                                                         // c:1236
+        }
+        let code = lastcode.load(std::sync::atomic::Ordering::Relaxed);
+        if code < 300 {                                                       // c:1237
+            // c:1238 — mt = ztrdup(lastmsg);
+            mt = lastmsg.lock().ok().map(|m| m.clone());
+        } else if (500..=504).contains(&code) {                               // c:1240
+            return 2;                                                         // c:1242
+        } else if code == 550 {                                               // c:1243
+            return 1;                                                         // c:1244
+        }
+    } else {                                                                  // c:1246
+        // c:1248-1263 — local file: stat or fstat.
+        let mut statbuf: libc::stat = unsafe { std::mem::zeroed() };          // c:1248
+        let cn = std::ffi::CString::new(fnam).unwrap_or_default();
+        let rc = if fd == -1 {                                                // c:1252
+            unsafe { libc::stat(cn.as_ptr(), &mut statbuf) }
+        } else {
+            unsafe { libc::fstat(fd, &mut statbuf) }
+        };
+        if rc < 0 {                                                           // c:1252
+            return 1;                                                         // c:1253
+        }
+        sz = statbuf.st_size as libc::off_t;                                  // c:1255
+
+        // c:1257-1263 — format mtime as YYYYMMDDHHMMSS via gmtime.
+        let mtime = statbuf.st_mtime;
+        let mut tmbuf = [0u8; 20];
+        let tmbuf_len = unsafe {
+            let mut tm: libc::tm = std::mem::zeroed();
+            libc::gmtime_r(&mtime, &mut tm);                                  // c:1259
+            // c:1261 — ztrftime(tmbuf, 20, "%Y%m%d%H%M%S", tm, 0);
+            let fmt = std::ffi::CString::new("%Y%m%d%H%M%S").unwrap();
+            libc::strftime(
+                tmbuf.as_mut_ptr() as *mut libc::c_char,
+                20,
+                fmt.as_ptr(),
+                &tm,
+            )
+        };
+        mt = std::str::from_utf8(&tmbuf[..tmbuf_len]).ok().map(|s| s.to_string());
+    }
+
+    *retsize = sz;                                                            // c:1265-1266
+    *retmdtm = mt;                                                            // c:1267-1268
+    0                                                                         // c:1269
 }
 
 // Subcommand dispatch table for zftp. Each `zftp_<subcmd>` C function
