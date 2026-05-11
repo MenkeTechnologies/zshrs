@@ -683,7 +683,7 @@ pub fn run_init_scripts() {                                                  // 
         // if (unset(PRIVILEGED)) { sourcehome(".profile"); ... ENV ... }    // c:1452-1469
     } else {
         // source(GLOBAL_ZSHENV);                                            // c:1473
-        let _ = source("/etc/zshenv");
+        let _ = source(crate::ported::config_h::GLOBAL_ZSHENV);
         // if (isset(RCS) && unset(PRIVILEGED)) sourcehome(".zshenv");       // c:1476-1490
         sourcehome(".zshenv");
         // if (islogin) { ... .zprofile ... }                                // c:1491-1498
