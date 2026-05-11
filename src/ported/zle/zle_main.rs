@@ -184,12 +184,10 @@ pub struct Zle {
     pub mark: usize,
     // `insmode` moved to file-scope `INSMODE` static below
     // (matches `int insmode` from zle_main.c:124).
-    // `lastchar` moved to file-scope `LASTCHAR` static in compcore.rs
-    // (matches the C `int lastchar` global from zle_main.c).
-    /// Last character as wide char (always used in Rust)
-    pub lastchar_wide: ZleInt,
-    /// Whether lastchar_wide is valid
-    pub lastchar_wide_valid: bool,
+    // `lastchar`, `lastchar_wide`, `lastchar_wide_valid` moved to
+    // file-scope statics (LASTCHAR in compcore.rs; LASTCHAR_WIDE +
+    // LASTCHAR_WIDE_VALID below). All three are C globals from
+    // zle_main.c.
     /// Binding for the previous key
     pub lbindk: Option<Thingy>,
     /// Binding for this key
@@ -377,8 +375,6 @@ impl Zle {
             zlecs: 0,
             zlell: 0,
             mark: 0,
-            lastchar_wide: 0,
-            lastchar_wide_valid: false,
             lbindk: None,
             bindk: None,
             lastcmd: WidgetFlags::empty(),
@@ -652,8 +648,8 @@ impl Zle {
         // UTF-8 decoding
         if b < 0x80 {
             let c = b as char;
-            self.lastchar_wide = c as ZleInt;
-            self.lastchar_wide_valid = true;
+            crate::ported::zle::zle_main::LASTCHAR_WIDE.store((c as ZleInt) as i32, std::sync::atomic::Ordering::SeqCst);
+            crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
             return Some(c);
         }
 
@@ -682,13 +678,13 @@ impl Zle {
 
         if let Ok(s) = std::str::from_utf8(&bytes) {
             if let Some(c) = s.chars().next() {
-                self.lastchar_wide = c as ZleInt;
-                self.lastchar_wide_valid = true;
+                crate::ported::zle::zle_main::LASTCHAR_WIDE.store((c as ZleInt) as i32, std::sync::atomic::Ordering::SeqCst);
+                crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
                 return Some(c);
             }
         }
 
-        self.lastchar_wide_valid = false;
+        crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(0, std::sync::atomic::Ordering::SeqCst);
         None
     }
 
@@ -1839,17 +1835,17 @@ pub fn finish_(_m: *const crate::ported::zsh_h::module) -> i32 {             // 
 /// Port of `getrestchar()` from Src/Zle/zle_main.c:990.
 pub fn getrestchar(zle: &mut Zle, inchar: i32) -> i32 {                      // c:990
     // c:1002 — `lastchar_wide_valid = 1`. Mark wide cache as valid.
-    zle.lastchar_wide_valid = true;
+    crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
     // c:1006-1009 — `if (inchar == EOF) return WEOF (cached)`.
     if inchar < 0 {
-        zle.lastchar_wide = -1;
+        crate::ported::zle::zle_main::LASTCHAR_WIDE.store((-1) as i32, std::sync::atomic::Ordering::SeqCst);
         return -1;                                                           // c:1009 ZLEEOF
     }
     // c:1016+ — multibyte byte-stream → wide-char accumulator.
     // zshrs is UTF-8 native; for an ASCII char inchar fits in
     // lastchar_wide directly (mb_metacharlenconv state machine
     // collapses to identity for the BMP single-byte path).
-    zle.lastchar_wide = inchar;
+    crate::ported::zle::zle_main::LASTCHAR_WIDE.store((inchar) as i32, std::sync::atomic::Ordering::SeqCst);
     inchar
 }
 
@@ -2000,6 +1996,20 @@ pub static ZLE_RESET_NEEDED: std::sync::atomic::AtomicI32 =
 /// `selfinsert()` to choose insert vs replace semantics.
 pub static INSMODE: std::sync::atomic::AtomicI32 =                           // c:124
     std::sync::atomic::AtomicI32::new(1);
+
+/// Port of `int lastchar_wide` from `Src/Zle/zle_main.c`. Wide
+/// (multi-byte) version of the last input character — populated by
+/// `getfullchar()` after assembling a multi-byte sequence, then
+/// consumed by `selfinsert()`-class widgets in preference to the
+/// byte-level `LASTCHAR` when the input was non-ASCII.
+pub static LASTCHAR_WIDE: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int lastchar_wide_valid` from `Src/Zle/zle_main.c`.
+/// Set when `LASTCHAR_WIDE` holds a freshly-assembled wide-char
+/// from `getfullchar()`; cleared by callers that consumed it.
+pub static LASTCHAR_WIDE_VALID: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `zleaftertrap()` from `Src/Zle/zle_main.c:2113`.
 /// ```c

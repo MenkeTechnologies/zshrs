@@ -711,8 +711,8 @@ pub fn fixmagicspace(zle: &mut crate::ported::zle::zle_main::Zle) {          // 
     // C body c:2869-2876 — `lastchar = ' '; lastchar_wide = L' ';
     //                       lastchar_wide_valid = 1`.
     crate::ported::zle::compcore::LASTCHAR.store((b' ' as crate::ported::zle::zle_main::ZleInt) as i32, std::sync::atomic::Ordering::SeqCst);
-    zle.lastchar_wide = b' ' as crate::ported::zle::zle_main::ZleInt;
-    zle.lastchar_wide_valid = true;
+    crate::ported::zle::zle_main::LASTCHAR_WIDE.store((b' ' as crate::ported::zle::zle_main::ZleInt) as i32, std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// Port of `freebrinfo()` from `Src/Zle/zle_tricky.c:1015`.
