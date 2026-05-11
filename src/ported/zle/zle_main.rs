@@ -164,7 +164,12 @@ pub struct findfunc {                                                        // 
     pub msg: String,                                                         // c:1930
 }
 
-/// The main ZLE state
+/// Rust-only central state container that collects the ~50 C
+/// file-scope globals from `Src/Zle/zle_main.c` (zleline, zlecs,
+/// zlell, lastchar, eofchar, mark, region_active, undo_stack,
+/// keymaps, history, ...) into one struct. Each field corresponds
+/// to a C global declared inline at zle_main.c — see the per-field
+/// citations below. The struct itself has no C counterpart.
 pub struct Zle {
     // The input line assembled so far                                       // c:40
     /// The input line assembled so far
