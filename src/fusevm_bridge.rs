@@ -358,23 +358,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    vm.register_builtin(BUILTIN_EXEC, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_exec(&args, &[]));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_COMMAND, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_command(&args, &[]));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_BUILTIN, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_builtin(&args, &[]));
-        Value::Status(status)
-    });
+    // BUILTIN_EXEC / BUILTIN_COMMAND / BUILTIN_BUILTIN wires deleted
+    // along with their handler stubs in src/exec.rs. The opcodes were
+    // never emitted by the fusevm compiler (zero `Op::CallBuiltin(...)`
+    // references) — leftover from the deleted `Src/exec.c` tree-walker
+    // port. When `command` / `exec` / `builtin` land as canonical
+    // ports in `src/ported/builtin.rs` (`Src/builtin.c:4017 bin_command`,
+    // `:6052 bin_exec`, etc.), wire them here through `execbuiltin`.
 
     vm.register_builtin(BUILTIN_LET, |vm, argc| {
         let args = pop_args(vm, argc);
@@ -426,24 +416,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     // History
-    vm.register_builtin(BUILTIN_HISTORY, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_history(&args));
-        Value::Status(status)
-    });
-
+    // BUILTIN_HISTORY / BUILTIN_R wires deleted with their stubs.
+    // Opcodes never emitted by the fusevm compiler (dead since the
+    // tree-walker port was replaced). `bin_fc` stays — it's wired to
+    // the canonical port at `src/ported/builtin.rs`.
     vm.register_builtin(BUILTIN_FC, |vm, argc| {
         let args = pop_args(vm, argc);
         let status = with_executor(|exec| exec.bin_fc(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_R, |vm, argc| {
-        let args = pop_args(vm, argc);
-        if let Some(s) = try_user_fn_override("r", &args) {
-            return Value::Status(s);
-        }
-        let status = with_executor(|exec| exec.builtin_r(&args));
         Value::Status(status)
     });
 
@@ -454,11 +433,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    vm.register_builtin(BUILTIN_UNALIAS, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_unalias(&args));
-        Value::Status(status)
-    });
+    // BUILTIN_UNALIAS wire deleted with its stub.
 
     // Options
     vm.register_builtin(BUILTIN_SET, |vm, argc| {
@@ -507,22 +482,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    // Functions / Autoload
-    vm.register_builtin(BUILTIN_AUTOLOAD, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_autoload(&args));
-        Value::Status(status)
-    });
-
+    // BUILTIN_AUTOLOAD / BUILTIN_UNFUNCTION wires deleted with their
+    // stubs. `bin_functions` stays — wired to the canonical port.
     vm.register_builtin(BUILTIN_FUNCTIONS, |vm, argc| {
         let args = pop_args(vm, argc);
         let status = with_executor(|exec| exec.bin_functions(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_UNFUNCTION, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_unfunction(&args));
         Value::Status(status)
     });
 
@@ -533,47 +497,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    // Directory stack
-    vm.register_builtin(BUILTIN_PUSHD, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_pushd(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_POPD, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_popd(&args));
-        Value::Status(status)
-    });
-
+    // BUILTIN_PUSHD / BUILTIN_POPD wires deleted with their stubs.
+    // `bin_dirs` stays — wired to the canonical port.
     vm.register_builtin(BUILTIN_DIRS, |vm, argc| {
         let args = pop_args(vm, argc);
         let status = with_executor(|exec| exec.bin_dirs(&args));
         Value::Status(status)
     });
 
-    // Type / Which / Hash
-    vm.register_builtin(BUILTIN_TYPE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_type(&args));
-        Value::Status(status)
-    });
-
+    // BUILTIN_TYPE / BUILTIN_WHERE / BUILTIN_WHICH wires deleted with
+    // their stubs. `bin_whence` stays — wired to the canonical port.
     vm.register_builtin(BUILTIN_WHENCE, |vm, argc| {
         let args = pop_args(vm, argc);
         let status = with_executor(|exec| exec.bin_whence(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_WHERE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_where(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_WHICH, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_which(&args));
         Value::Status(status)
     });
 
@@ -755,11 +691,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    vm.register_builtin(BUILTIN_NOGLOB, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_noglob(&args, &[]));
-        Value::Status(status)
-    });
+    // BUILTIN_NOGLOB wire deleted with its stub.
 
     vm.register_builtin(BUILTIN_TTYCTL, |vm, argc| {
         let args = pop_args(vm, argc);
@@ -1756,7 +1688,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         })(idx);
         if let Some((flags, pat)) = parsed_flags.clone() {
             let pairs = with_executor(|exec| -> Option<Vec<(String, String)>> {
-                let keys = crate::exec_shims::scan_magic_assoc_keys(name)?;
+                let keys = crate::exec::scan_magic_assoc_keys(name)?;
                 Some(keys
                     .into_iter()
                     .map(|k| {
@@ -3008,7 +2940,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // scanfn dispatch (Src/Modules/parameter.c +
                     // system.c + terminfo.c et al.).
                     if let Some(keys) =
-                        crate::exec_shims::scan_magic_assoc_keys(&name)
+                        crate::exec::scan_magic_assoc_keys(&name)
                     {
                         St::A(keys)
                     } else {
@@ -3022,7 +2954,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // (v) symmetry was missing, so plugin code that
                     // looped over alias bodies got an empty list.
                     if let Some(keys) =
-                        crate::exec_shims::scan_magic_assoc_keys(&name)
+                        crate::exec::scan_magic_assoc_keys(&name)
                     {
                         let values: Vec<String> = keys
                             .iter()
@@ -3889,7 +3821,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 // alternating [key, value] pairs by
                                 // pairing magic_assoc_keys with
                                 // get_special_array_value lookups.
-                                if let Some(keys) = crate::exec_shims::scan_magic_assoc_keys(&name) {
+                                if let Some(keys) = crate::exec::scan_magic_assoc_keys(&name) {
                                     let mut out = Vec::with_capacity(keys.len() * 2);
                                     for k in keys {
                                         let v = exec
@@ -3922,7 +3854,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 // parameter.c et al.). Returns the
                                 // sorted key set the C source builds
                                 // by walking each magic table.
-                                crate::exec_shims::scan_magic_assoc_keys(&name)
+                                crate::exec::scan_magic_assoc_keys(&name)
                                     .unwrap_or_default()
                             }
                         });
@@ -3949,7 +3881,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 }
                                 out
                             } else if let Some(keys) =
-                                crate::exec_shims::scan_magic_assoc_keys(&name)
+                                crate::exec::scan_magic_assoc_keys(&name)
                             {
                                 let mut out = Vec::with_capacity(keys.len() * 2);
                                 for k in keys {
@@ -3970,7 +3902,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             if let Some(m) = exec.assoc_arrays.get(&name) {
                                 m.values().cloned().collect::<Vec<_>>()
                             } else if let Some(keys) =
-                                crate::exec_shims::scan_magic_assoc_keys(&name)
+                                crate::exec::scan_magic_assoc_keys(&name)
                             {
                                 keys.iter()
                                     .map(|k| {
@@ -5301,7 +5233,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // splitting for assoc-bare references.
         let magic_vals = with_executor(|exec| {
             sync_status(exec);
-            crate::exec_shims::scan_magic_assoc_keys(&name).map(|keys| {
+            crate::exec::scan_magic_assoc_keys(&name).map(|keys| {
                 keys.iter()
                     .map(|k| exec.get_special_array_value(&name, k).unwrap_or_default())
                     .collect::<Vec<_>>()
@@ -9212,26 +9144,14 @@ impl fusevm::ShellHost for ZshrsHost {
         //   5. Not a function → None so fusevm falls back to host.exec
         let chunk = with_executor(|exec| {
             // Autoload pending: the legacy stub in self.functions makes
-            // function_exists() true even though no Chunk has landed yet,
-            // so trigger autoload BEFORE the existence check. maybe_autoload
-            // is a no-op when autoload_pending doesn't hold the name.
-            if exec.autoload_pending.contains_key(name) {
-                exec.maybe_autoload(name);
-            }
+            // maybe_autoload / autoload_function were deleted with
+            // the old exec.c stubs (they were return-false / no-op).
+            // The autoload dispatch needs a proper port of
+            // `Src/builtin.c:bin_autoload` + `Src/exec.c:loadautofn`.
+            // Until that lands, skip the autoload trigger — the eager
+            // fpath scan below covers the common interactive case.
             if let Some(c) = exec.functions_compiled.get(name) {
                 return Some(c.clone());
-            }
-            // Eager fpath/ZWC scan for unknown names is non-zsh-compatible
-            // (zsh only autoloads when an explicit `autoload name` was
-            // declared). Skip the scan in `-f` (no-rcs) mode so the user's
-            // FPATH-resident wrappers — `rm`, `cd`, etc. — don't shadow
-            // builtins/externals when they explicitly asked for a
-            // minimal shell. With rcs enabled we keep the legacy eager
-            // behavior to avoid breaking interactive sessions that rely
-            // on it.
-            let rcs_enabled = exec.options.get("rcs").copied().unwrap_or(true);
-            if rcs_enabled && !exec.function_exists(name) {
-                let _ = exec.autoload_function(name);
             }
             exec.functions_compiled.get(name).cloned()
         });
@@ -9805,7 +9725,7 @@ impl crate::ported::exec::ShellExecutor {
             "sched" => return self.bin_sched(&rest_vec),
             "echotc" => return self.bin_echotc(&rest_vec),
             "echoti" => return self.bin_echoti(&rest_vec),
-            "getln" => return self.builtin_getln(&rest_vec),
+            // "getln" handler deleted with its stub.
             "zpty" => return self.bin_zpty(&rest_vec),
             "ztcp" => return self.bin_ztcp(&rest_vec),
             "zsocket" => {

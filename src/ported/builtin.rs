@@ -146,7 +146,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
     BUILTIN("dirs", 0, None, 0, -1, 0, Some("clpv"), None),
     BUILTIN("disable", 0, None, 0, -1, BIN_DISABLE, Some("afmprs"), None),
     BUILTIN("disown", 0, None, 0, -1, BIN_DISOWN, None, None),
-    BUILTIN("echo", BINF_SKIPINVALID, None, 0, -1, BIN_ECHO, Some("neE"), Some("-")),
+    BUILTIN("echo", BINF_SKIPINVALID, Some(bin_print as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_ECHO, Some("neE"), Some("-")),
     BUILTIN("emulate", 0, None, 0, -1, 0, Some("lLR"), None),
     BUILTIN("enable", 0, None, 0, -1, BIN_ENABLE, Some("afmprs"), None),
     BUILTIN("eval", BINF_PSPECIAL, None, 0, -1, BIN_EVAL, None, None),
@@ -180,7 +180,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
     //   BUILTIN("patdebug", 0, bin_patdebug, 1, -1, 0, "p", NULL)
     BUILTIN("patdebug", 0, None, 1, -1, 0, Some("p"), None),
     BUILTIN("print", BINF_PRINTOPTS, Some(bin_print as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_PRINT, Some("abcC:Df:ilmnNoOpPrRsSu:v:x:X:z-"), None),
-    BUILTIN("printf", BINF_SKIPINVALID | BINF_SKIPDASH, None, 1, -1, BIN_PRINTF, Some("v:"), None),
+    BUILTIN("printf", BINF_SKIPINVALID | BINF_SKIPDASH, Some(bin_print as crate::ported::zsh_h::HandlerFunc), 1, -1, BIN_PRINTF, Some("v:"), None),
     BUILTIN("pushd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, None, 0, 2, BIN_PUSHD, Some("qsPL"), None),
     BUILTIN("pushln", 0, None, 0, -1, BIN_PRINT, None, Some("-nz")),
     BUILTIN("pwd", 0, None, 0, 0, 0, Some("rLP"), None),

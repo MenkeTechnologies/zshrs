@@ -1053,7 +1053,7 @@ fn optns_flags(name: &str) -> u16 {
 
 /// !!! RUST-ONLY HELPER — see WARNING block above.
 /// Returns options that are on by default for zsh emulation.
-fn default_on_options() -> std::collections::HashSet<&'static str> {
+pub(crate) fn default_on_options() -> std::collections::HashSet<&'static str> {
     // Default-on options have OPT_ZSH bit set in their flags
     let zsh_emu = crate::ported::zsh_h::EMULATE_ZSH as u16;
     let mut set = std::collections::HashSet::new();

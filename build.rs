@@ -29,6 +29,30 @@ fn main() {
     println!("cargo:rerun-if-changed=tests/data/zsh_c_fn_names.txt");
     println!("cargo:rerun-if-changed=tests/data/ported_fn_allowlist.txt");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/zsh/Config/version.mk");
+
+    // Parse `src/zsh/Config/version.mk` for VERSION + VERSION_DATE
+    // and emit them as compile-time constants. Replaces hardcoded
+    // `"5.9"` / `"zsh-5.9-0-g73d3173"` literals in `src/exec.rs`
+    // with values derived from the vendored zsh source so future
+    // version bumps land automatically.
+    let version_mk = manifest_dir.join("src/zsh/Config/version.mk");
+    let (zsh_version, zsh_version_date) = parse_version_mk(&version_mk);
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let dest = out_dir.join("zsh_version.rs");
+    let generated = format!(
+        "/// Vendored zsh source `Config/version.mk` `VERSION=...` value.\n\
+         pub const ZSH_VERSION: &str = {:?};\n\
+         /// Vendored zsh source `Config/version.mk` `VERSION_DATE=...` value.\n\
+         pub const ZSH_VERSION_DATE: &str = {:?};\n\
+         /// `$ZSH_PATCHLEVEL` default — C `Src/params.c:43` sets `\"unknown\"`\n\
+         /// when no custom value is configured. The vendored zsh tarball\n\
+         /// doesn't ship a patchlevel hash; emit `\"unknown\"` to match\n\
+         /// upstream's no-CUSTOM_PATCHLEVEL build.\n\
+         pub const ZSH_PATCHLEVEL: &str = \"unknown\";\n",
+        zsh_version, zsh_version_date
+    );
+    fs::write(&dest, generated).expect("write zsh_version.rs");
 
     // Link libtermcap (BSD/macOS) or libtinfo (Linux) for the
     // tgetent/tgetflag/tgetnum/tgetstr FFI in src/ported/modules/termcap.rs.
@@ -137,6 +161,32 @@ fn main() {
             violations.join("\n")
         );
     }
+}
+
+/// Parse `Config/version.mk` for the `VERSION=...` and
+/// `VERSION_DATE='...'` lines. The file is a Makefile fragment +
+/// shell script (see the file's header comment); the assignments use
+/// `KEY=VALUE` with no spaces around the `=`.
+fn parse_version_mk(path: &Path) -> (String, String) {
+    let s = fs::read_to_string(path)
+        .unwrap_or_else(|_| String::new());
+    let mut version = String::new();
+    let mut version_date = String::new();
+    for line in s.lines() {
+        let line = line.trim();
+        if let Some(v) = line.strip_prefix("VERSION=") {
+            version = v.trim().trim_matches('\'').trim_matches('"').to_string();
+        } else if let Some(v) = line.strip_prefix("VERSION_DATE=") {
+            version_date = v.trim().trim_matches('\'').trim_matches('"').to_string();
+        }
+    }
+    if version.is_empty() {
+        // version.mk missing or malformed — fall back to a marker so
+        // the build still produces a valid const but the wrong value
+        // surfaces as a visible "unknown" in `$ZSH_VERSION`.
+        version = "unknown".to_string();
+    }
+    (version, version_date)
 }
 
 fn collect_rust_files(root: &Path, out: &mut Vec<PathBuf>) {

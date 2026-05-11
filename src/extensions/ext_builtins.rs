@@ -42,13 +42,10 @@ impl ShellExecutor {
             0
         } else if depth < stack.len() {
             let func = stack[depth].clone();
-            // 'main' synonyms shouldn't carry a file. For others,
-            // surface the source file from find_function_file when
-            // available — same path used by $functions_source.
-            let file = self
-                .find_function_file(&func)
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "main".to_string());
+            // `find_function_file` was deleted with the old exec.c
+            // stubs (it always returned None). Until the canonical
+            // `functions_source` map is wired, fall back to "main".
+            let file = "main".to_string();
             println!("0 {} {}", func, file);
             0
         } else {
@@ -1840,9 +1837,12 @@ impl ShellExecutor {
                                             let mut parser = crate::parse::ZshParser::new(body);
                                             if let Ok(program) = parser.parse() {
                                                 if !program.lists.is_empty() {
-                                                    let target =
-                                                        ShellExecutor::ksh_autoload_body(&program, name)
-                                                            .unwrap_or(&program);
+                                                    // ksh_autoload_body stub (deleted with the
+                                                    // old exec.c port) returned `Some(program)`
+                                                    // unchanged — same observable behavior as
+                                                    // using `&program` directly.
+                                                    let target = &program;
+                                                    let _ = name;
                                                     let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
                                                     if let Ok(blob) = bincode::serialize(&chunk) {
                                                         batch.insert(name.clone(), blob);
@@ -1943,8 +1943,10 @@ impl ShellExecutor {
                             // ksh-style file (`name() { body }`) — compile only
                             // the inner body so the chunk runs the function on
                             // call instead of re-registering it.
-                            let target = ShellExecutor::ksh_autoload_body(&program, &file.name)
-                                .unwrap_or(&program);
+                            // ksh_autoload_body stub (deleted with old exec.c)
+                            // returned `Some(program)` unchanged.
+                            let target = &program;
+                            let _ = &file.name;
                             let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
                             if let Ok(blob) = bincode::serialize(&chunk) {
                                 all_entries.insert(file.name.clone(), blob);
@@ -2015,18 +2017,20 @@ impl ShellExecutor {
     /// modifier (Src/exec.c precommand-modifier loop). Without this
     /// handler, `nocorrect echo hello` resolved `nocorrect` as a
     /// command and exited 127.
-    pub(crate) fn builtin_nocorrect(&mut self, args: &[String], redirects: &[Redirect]) -> i32 {
+    pub(crate) fn builtin_nocorrect(&mut self, args: &[String], _redirects: &[Redirect]) -> i32 {
         if args.is_empty() {
             return 0;
         }
-        let cmd = &args[0];
-        if self.is_builtin(cmd) {
-            self.builtin_builtin(args, redirects)
-        } else if self.function_exists(cmd) {
-            self.builtin_command(args, redirects)
-        } else {
-            self.builtin_command(args, redirects)
-        }
+        // Earlier code routed through `builtin_builtin` / `builtin_command`
+        // dead stubs (return-0 fakes from the old `Src/exec.c` port).
+        // Until `nocorrect` dispatch is wired through the fusevm
+        // execute-command path properly, return 0 — same observable
+        // behavior as the stubs but without pretending to dispatch.
+        // C zsh `nocorrect` is a precommand modifier handled in
+        // `Src/exec.c`; the real port lives in the parser/compiler,
+        // not as a builtin call.
+        let _ = args;
+        0
     }
 
     /// zsleep - sleep with fractional seconds
