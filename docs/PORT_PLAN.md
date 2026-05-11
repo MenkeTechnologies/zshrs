@@ -17,7 +17,7 @@ identity.** Those globals must become `Arc<Mutex/RwLock<…>>`, not
 | Phase | Total Items | Done | Remaining |
 |-------|-------------|------|-----------|
 | Phase 1 — Bucket-1 Mutex→TLS | 16 | 0 | 16 |
-| Phase 2 — Bag-of-globals structs | 20 | 12 | 8 |
+| Phase 2 — Bag-of-globals structs | 20 | 16 | 4 |
 | Phase 3 — Bucket-2 shared holders | 11 | 0 | 11 |
 | Phase 4 — Daemon image holders | 5 | 0 | 5 |
 | Phase 5 — Test invariants | 3 | 0 | 3 |
@@ -25,12 +25,95 @@ identity.** Those globals must become `Arc<Mutex/RwLock<…>>`, not
 **Phase 2 remaining structs to dissolve:**
 - `init.rs` `ShellState`
 - `subst.rs` `SubstState`
-- `zle/zle_tricky.rs` `CompletionState`
-- `zle/zle_keymap.rs` `BindState`
-- `zle/zle_refresh.rs` `RefreshState`
-- `zle/computil.rs` `CompState`
 - `modules/parameter.rs` `JobState`
 - `glob.rs` `GlobState` (needs rename/field verification)
+
+**Phase 2 landed since previous update:**
+- `zle/zle_tricky.rs` `CompletionState` — deleted; the eight
+  `impl Zle` methods that took `&mut CompletionState` had no real
+  callers and were redundant with the live `pub fn`-at-file-scope
+  C-faithful ports (`completeword` / `menucomplete` / `docomplete` /
+  `docompletion`). File-scope C globals (`compcontext`, `compfunc`,
+  `usemenu`, `useglob`, `nbrbeg`, `nbrend`, `origcs`, `origll`,
+  `instring`, `inbackt`, `menucmp`, `comppref`, `validlist`,
+  `showagain`, `lastambig`, `bashlistfirst`, `amenu`) carry the
+  state.
+- `zle/zle_keymap.rs` `BindState` — deleted; the C `struct bindstate`
+  is only used as a stack-local in `printbinding()` /
+  `scanbindings()` / `bin_bindkey -L`. Those ports model it as a
+  local struct when they land.
+- `zle/zle_refresh.rs` `RefreshState` — relocated to
+  `src/extensions/zle_refresh_state.rs` alongside `TextAttr`,
+  `RefreshElement`, `VideoBuffer`, `RegionHighlight`,
+  `HighlightCategory`, `HighlightManager`. Full unification with
+  C's flat `zattr u64` + `nbuf[]`/`obuf[]` arrays + discrete
+  `winw`/`winh`/`vcs`/`vln`/`lpromptw`/`rpromptw` statics is a
+  separate work item — entangled in the zrefresh paint loop with
+  ~100+ internal sites in zle_refresh.rs to rewire.
+- `zle/computil.rs` `CompState` — relocated; the bash-complete
+  branch (`CompSpec`/`CompMatch`/`CompGroup`/`CompState`) moved
+  to `src/extensions/bash_complete.rs`.
+
+**Adjacent zle cascades landed (not in original Phase 2 list):**
+
+- `zle/zle_keymap.rs` `KeymapManager` — all six fields dropped
+  (`keymaps`/`current`/`current_name`/`local`/`keybuf`/`lastnamed`).
+  The struct is now zero-sized; method bodies route through the
+  file-scope statics that already mirror zsh's C globals
+  (`keymapnamtab`, `curkeymap`, `curkeymapname`, `LOCALKEYMAP`,
+  `keybuf`, `lastnamed`). `selectkeymap()` now actually writes
+  `curkeymap` + `curkeymapname` (was a no-op stub matching the
+  doc-comment "Without curkeymap/curkeymapname mutable globals,
+  simplified"). `Zle.keymaps` field deleted; the 15 remaining
+  method-call sites (`.select(X)`, `.is_emacs()`, `.is_vi_cmd()`,
+  `.is_vi_insert()`, `.lookup_key(c)`) inlined to direct static
+  reads / `selectkeymap()` calls.
+- `zle/zle_hist.rs` `HistEntry`/`History` — relocated to
+  `src/extensions/zle_history.rs` (Rust-only types; zsh's per-ZLE
+  history state lives in scattered file-statics — `hist_ring`,
+  `histline`, `searchstr`, `have_edits`, `hist_skip_flags`). Full
+  unification with `crate::ported::hist::hist_ring` deferred.
+
+**Zle struct field cascade (started; runs in parallel to Phase 2):**
+
+| Field migrated | New file-scope static | C source |
+|---|---|---|
+| `done` | `DONE: AtomicI32` (zle_misc.rs) | `int done` zle_main.c:79 |
+| `resetneeded` | `ZLE_RESET_NEEDED: AtomicI32` (zle_main.rs) | `int resetneeded` zle_main.c |
+| `lastchar` | `LASTCHAR: AtomicI32` (compcore.rs) | `int lastchar` zle_main.c |
+| `lastchar_wide` | `LASTCHAR_WIDE: AtomicI32` (zle_main.rs) | `int lastchar_wide` zle_main.c |
+| `lastchar_wide_valid` | `LASTCHAR_WIDE_VALID: AtomicI32` (zle_main.rs) | `int lastchar_wide_valid` zle_main.c |
+| `vi_last_find_char/_dir/_tail` | `VFINDCHAR/VFINDDIR/TAILADD` (zle_misc.rs) | `int vfindchar` zle_move.c:734-735 |
+| `insmode` | `INSMODE: AtomicI32` (zle_main.rs) | `int insmode` zle_main.c:124 |
+| `eofchar` | `EOFCHAR: AtomicI32` (zle_main.rs) | `int eofchar` zle_main.c |
+| `eofsent` | `EOFSENT: AtomicI32` (zle_main.rs) | `int eofsent` zle_main.c |
+| `keytimeout` | `KEYTIMEOUT: AtomicU64` (zle_main.rs) | `time_t keytimeout` zle_main.c |
+| `prefixflag` | `PREFIXFLAG: AtomicI32` (zle_main.rs) | `int prefixflag` zle_main.c |
+| `zle_recursive` | `ZLE_RECURSIVE: AtomicI32` (zle_main.rs) | `int zle_recursive` zle_main.c |
+| `zlereadflags` | `ZLEREADFLAGS: AtomicI32` (zle_main.rs) | `int zlereadflags` zle_main.c |
+| `zlecontext` | `ZLECONTEXT: AtomicI32` (zle_main.rs) | `int zlecontext` zle_main.c |
+| `lastcmd` | `LASTCMD: AtomicU32` (zle_main.rs) | `int lastcmd` zle_main.c:145 |
+| `incompctlfunc` | `INCOMPCTLFUNC: AtomicI32` (compctl.rs) — unified | (existing) |
+
+**Future-wire Zle fields (kept; reserved for upcoming subsystems):**
+
+`statusline` (zle_main.c `char *statusline`), `baud` (zle_main.c
+termcap), `pre_zle_status` (zle_main.c lastval shadow), `watch_fds`
+(zle_main.c `bin_zle -F` registry), `compwidget` (zle_tricky.c
+new-style `compctl -K`), `hascompmod` (zle_tricky.c module guard) —
+each is a real C global. **Do NOT delete these on dead-code grounds**;
+they reserve the slot until their subsystem ports land.
+
+**Zle struct fields remaining for migration (have C-global analogs):**
+
+`zleline`/`zlecs`/`zlell` (the big three — 200+ sites each), `mark`,
+`lbindk`/`bindk` (Option<Thingy>; needs Mutex<Option<Thingy>>), `zmod`
+(struct), `stackhist`/`stackcs`, `vistartchange`, `undo_stack`,
+`changeno`, `unget_buf` (`kungetbuf`), `vibuf` (`vibuf[36]`),
+`killring`/`killringmax`, `mult`, `lastcol`, `bufstack`, `vi_chg_buf`
+(`vichgbuf`), `srch_str`, `last_line`/`last_ll`/`last_cs`. Per-field
+migration each carries the same rule: only if a real C global exists,
+and only as a true state-of-truth unification (no dual state).
 
 **compctl.rs Mutex count:** 37 statics still using `Mutex` (Phase 1 target: 16)
 
@@ -549,9 +632,15 @@ real C struct exists under a different name.
       **Status: DONE — struct dissolved.**
 - [x] `zle/zle_vi.rs:22` `ViState` ← `Src/Zle/zle_vi.c` has 0
       structs. Verdict: **bucket-1**. **Status: DONE — struct dissolved.**
-- [ ] `zle/zle_tricky.rs:17` `CompletionState` ←
+- [x] `zle/zle_tricky.rs:17` `CompletionState` ←
       `Src/Zle/zle_tricky.c` has 0 structs. Verdict: **bucket-1**.
-      **Status: NOT DONE — struct still exists.**
+      **Status: DONE — struct deleted with the eight `impl Zle`
+      methods that took `&mut CompletionState`. State carried by
+      file-scope C globals (USEMENU, USEGLOB, WOULDINSTAB, NBRBEG,
+      NBREND, ORIGCS, ORIGLL, INSUBSCR, INSTRING, INBACKT,
+      ORIGLINE, LASTPREBR, LASTPOSTBR, COMPQUOTE, AUTOQ, MENUCMP,
+      COMPPREF, VALIDLIST, SHOWAGAIN, LASTAMBIG, BASHLISTFIRST,
+      AMENU) already present in zle_tricky.rs.**
 - [x] `zle/compcore.rs:26` `CompState` ← `Src/Zle/compcore.c` has
       0 structs. Verdict: **bucket-1** (also disambiguate from
       computil's CompState — see below). **Status: DONE — struct dissolved.**
@@ -581,26 +670,45 @@ real C struct exists under a different name.
       matches ZleState's role (top-level ZLE state aggregator).
       Verdict: **bucket-1**, dissolve into per-static
       `thread_local!`s. **Status: DONE — struct dissolved.**
-- [ ] `zle/zle_keymap.rs:65` `BindState` ← `Src/Zle/zle_keymap.c`
+- [x] `zle/zle_keymap.rs:65` `BindState` ← `Src/Zle/zle_keymap.c`
       has 5 structs (`keymapname`, `keymap`, `key`, etc.). None
       match BindState (binding-context aggregator). Verdict:
-      **bucket-1**, dissolve. **Status: NOT DONE — struct still exists.**
+      **bucket-1**, dissolve. **Status: DONE — struct + flags
+      deleted (zle_keymap.rs:133 comment cites the rationale: C
+      `struct bindstate` is only used as a stack-local in
+      `printbinding()`/`scanbindings()`/`bin_bindkey -L`; those
+      ports model it as a local struct when they land).**
 - [x] `zle/zle_utils.rs:166` `UndoState` ← `Src/Zle/zle_utils.c`
       has 2 structs (`zle_region`, `zle_position`). Neither maps
       to UndoState — C has `static struct change *changes` /
       `static struct change *curchange` as file-statics for the
       undo ring. Verdict: **bucket-1**, dissolve.
       **Status: DONE — struct dissolved.**
-- [ ] `zle/zle_refresh.rs:156` `RefreshState` ←
+- [x] `zle/zle_refresh.rs:156` `RefreshState` ←
       `Src/Zle/zle_refresh.c:815` `struct rparams`. Field-by-
       field verification needed; if matches, **rename** to
       `RParams`. Otherwise **bucket-1**.
-      **Status: NOT DONE — struct still exists, needs verification.**
-- [ ] `zle/computil.rs:542` `CompState` ← `Src/Zle/computil.c`
+      **Status: DONE (partial) — moved to
+      `src/extensions/zle_refresh_state.rs` along with TextAttr /
+      RefreshElement / VideoBuffer / RegionHighlight /
+      HighlightCategory / HighlightManager (all Rust-only
+      abstractions over zsh's `zattr u64` + `nbuf[]`/`obuf[]` flat
+      arrays + discrete winw/winh/vcs/vln/lpromptw/rpromptw
+      statics). The standalone `pub struct rparams` lower in
+      zle_refresh.rs (the legit port of c:815) is unaffected. Full
+      unification to the C flat-array model deferred — ~100+
+      internal sites in zle_refresh.rs to rewire.**
+- [x] `zle/computil.rs:542` `CompState` ← `Src/Zle/computil.c`
       has 13 structs (`cdstate`, `cdstr`, `cdrun`, etc.). The
       most likely match is `cdstate` at line 40. Verdict:
       **rename** to `Cdstate` + verify fields.
-      **Status: NOT DONE — struct still exists.**
+      **Status: DONE — the bash-complete CompState branch (and
+      its companions CompSpec/CompMatch/CompGroup) relocated to
+      `src/extensions/bash_complete.rs`. The legit
+      C-faithful `cdstate` port (matching computil.c:40 with all
+      15 fields) lives in computil.rs alongside 12 other ported
+      C structs (caarg, caopt, cadef, castate, cvdef, cvval,
+      cvstate, cdstr, cdrun, cdset, ctags, ctset).**
 - [x] `modules/zpty.rs:629` `ZptyState` ←
       `Src/Modules/zpty.c:48 struct ptycmd` — single struct in
       the file. Verdict: **rename** to `Ptycmd` + verify fields.

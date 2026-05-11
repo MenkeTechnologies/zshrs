@@ -76,8 +76,9 @@ bag-of-globals from modules/parameter.rs" on 2026-05-10.
 
 See PORT_PLAN.md "Anti-pattern 1" and Phase 2 dissolution checklist
 for the active list of remaining bag-of-globals targets (`SubstState`,
-`ShellState`, `CompletionState`, `BindState`, `RefreshState`,
-`CompState` in computil.rs, `JobState` in parameter.rs/jobs).
+`ShellState`, `JobState` in parameter.rs/jobs, `GlobState` in glob.rs
+needing field-parity verification). `CompletionState`, `BindState`,
+`RefreshState`, `CompState` in computil.rs landed 2026-05-10.
 
 **Rule E — Local variables must use the C source's exact names.**
 
