@@ -347,73 +347,14 @@ mod tests {
 // =====================================================================
 
 use crate::ported::zsh_h::module;
-use crate::ported::module::{Features, MathFunc, Module as RsModule};
 
 // `mftab` — port of `static struct mathfunc mftab[]` (mathfunc.c:497).
-static MFTAB: &[MathFunc] = &[                                               // c:497
-    MathFunc { name: "abs",      module: "mathfunc", flags: 0 },
-    MathFunc { name: "acos",     module: "mathfunc", flags: 0 },
-    MathFunc { name: "acosh",    module: "mathfunc", flags: 0 },
-    MathFunc { name: "asin",     module: "mathfunc", flags: 0 },
-    MathFunc { name: "asinh",    module: "mathfunc", flags: 0 },
-    MathFunc { name: "atan",     module: "mathfunc", flags: 0 },
-    MathFunc { name: "atanh",    module: "mathfunc", flags: 0 },
-    MathFunc { name: "cbrt",     module: "mathfunc", flags: 0 },
-    MathFunc { name: "ceil",     module: "mathfunc", flags: 0 },
-    MathFunc { name: "copysign", module: "mathfunc", flags: 0 },
-    MathFunc { name: "cos",      module: "mathfunc", flags: 0 },
-    MathFunc { name: "cosh",     module: "mathfunc", flags: 0 },
-    MathFunc { name: "erf",      module: "mathfunc", flags: 0 },
-    MathFunc { name: "erfc",     module: "mathfunc", flags: 0 },
-    MathFunc { name: "exp",      module: "mathfunc", flags: 0 },
-    MathFunc { name: "expm1",    module: "mathfunc", flags: 0 },
-    MathFunc { name: "fabs",     module: "mathfunc", flags: 0 },
-    MathFunc { name: "float",    module: "mathfunc", flags: 0 },
-    MathFunc { name: "floor",    module: "mathfunc", flags: 0 },
-    MathFunc { name: "fmod",     module: "mathfunc", flags: 0 },
-    MathFunc { name: "gamma",    module: "mathfunc", flags: 0 },
-    MathFunc { name: "hypot",    module: "mathfunc", flags: 0 },
-    MathFunc { name: "ilogb",    module: "mathfunc", flags: 0 },
-    MathFunc { name: "int",      module: "mathfunc", flags: 0 },
-    MathFunc { name: "isinf",    module: "mathfunc", flags: 0 },
-    MathFunc { name: "isnan",    module: "mathfunc", flags: 0 },
-    MathFunc { name: "j0",       module: "mathfunc", flags: 0 },
-    MathFunc { name: "j1",       module: "mathfunc", flags: 0 },
-    MathFunc { name: "jn",       module: "mathfunc", flags: 0 },
-    MathFunc { name: "ldexp",    module: "mathfunc", flags: 0 },
-    MathFunc { name: "lgamma",   module: "mathfunc", flags: 0 },
-    MathFunc { name: "log",      module: "mathfunc", flags: 0 },
-    MathFunc { name: "log10",    module: "mathfunc", flags: 0 },
-    MathFunc { name: "log1p",    module: "mathfunc", flags: 0 },
-    MathFunc { name: "log2",     module: "mathfunc", flags: 0 },
-    MathFunc { name: "logb",     module: "mathfunc", flags: 0 },
-    MathFunc { name: "nextafter",module: "mathfunc", flags: 0 },
-    MathFunc { name: "rint",     module: "mathfunc", flags: 0 },
-    MathFunc { name: "scalb",    module: "mathfunc", flags: 0 },
-    MathFunc { name: "signgam",  module: "mathfunc", flags: 0 },
-    MathFunc { name: "sin",      module: "mathfunc", flags: 0 },
-    MathFunc { name: "sinh",     module: "mathfunc", flags: 0 },
-    MathFunc { name: "sqrt",     module: "mathfunc", flags: 0 },
-    MathFunc { name: "tan",      module: "mathfunc", flags: 0 },
-    MathFunc { name: "tanh",     module: "mathfunc", flags: 0 },
-    MathFunc { name: "y0",       module: "mathfunc", flags: 0 },
-    MathFunc { name: "y1",       module: "mathfunc", flags: 0 },
-    MathFunc { name: "yn",       module: "mathfunc", flags: 0 },
-];
+
 
 // `module_features` — port of `static struct features module_features`
 // from mathfunc.c:540.
-static MODULE_FEATURES: Features = Features {                                // c:540
-    bn_list: &[],
-    cd_list: &[],
-    mf_list: MFTAB,
-    pd_list: &[],
-    n_abstract: 0,
-};
 
-fn module_handle() -> RsModule {
-    RsModule::new("zsh/mathfunc")
-}
+
 
 /// Port of `setup_()` from `Src/Modules/mathfunc.c:548`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:548
@@ -423,18 +364,15 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 
 /// Port of `features_()` from `Src/Modules/mathfunc.c:555`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {     // c:555
-    *features = crate::ported::module::featuresarray(                   // c:557
-        &module_handle(),
-        &MODULE_FEATURES,
-    );
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:555
+    *features = featuresarray(m, module_features());
     0                                                                    // c:559
 }
 
 /// Port of `enables_()` from `Src/Modules/mathfunc.c:563`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:563
-    crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables) // c:566
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:563
+    handlefeatures(m, module_features(), enables) // c:566
 }
 
 /// Port of `boot_()` from `Src/Modules/mathfunc.c:570`.
@@ -447,8 +385,8 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 
 /// Port of `cleanup_()` from `Src/Modules/mathfunc.c:577`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(_m: *const module) -> i32 {                                  // c:577
-    crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None) // c:580
+pub fn cleanup_(m: *const module) -> i32 {                                  // c:577
+    setfeatureenables(m, module_features(), None) // c:580
 }
 
 /// Port of `finish_()` from `Src/Modules/mathfunc.c:584`.
@@ -457,3 +395,51 @@ pub fn finish_(_m: *const module) -> i32 {                                   // 
     //                    math functions are unregistered via cleanup_.
     0
 }
+
+use crate::ported::zsh_h::features as features_t;
+use std::sync::{Mutex, OnceLock};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,
+        bn_size: 0,
+        cd_list: None,
+        cd_size: 0,
+        mf_list: None,
+        mf_size: 48,
+        pd_list: None,
+        pd_size: 0,
+        n_abstract: 0,
+    }))
+}
+
+// Local stubs for the per-module entry points. C uses generic
+// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
+// 3275/3370/3445) but those take `Builtin` + `Features` pointer
+// fields the Rust port doesn't carry. The hardcoded descriptor
+// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["f:abs".to_string(), "f:acos".to_string(), "f:acosh".to_string(), "f:asin".to_string(), "f:asinh".to_string(), "f:atan".to_string(), "f:atanh".to_string(), "f:cbrt".to_string(), "f:ceil".to_string(), "f:copysign".to_string(), "f:cos".to_string(), "f:cosh".to_string(), "f:erf".to_string(), "f:erfc".to_string(), "f:exp".to_string(), "f:expm1".to_string(), "f:fabs".to_string(), "f:float".to_string(), "f:floor".to_string(), "f:fmod".to_string(), "f:gamma".to_string(), "f:hypot".to_string(), "f:ilogb".to_string(), "f:int".to_string(), "f:isinf".to_string(), "f:isnan".to_string(), "f:j0".to_string(), "f:j1".to_string(), "f:jn".to_string(), "f:ldexp".to_string(), "f:lgamma".to_string(), "f:log".to_string(), "f:log10".to_string(), "f:log1p".to_string(), "f:log2".to_string(), "f:logb".to_string(), "f:nextafter".to_string(), "f:rint".to_string(), "f:scalb".to_string(), "f:signgam".to_string(), "f:sin".to_string(), "f:sinh".to_string(), "f:sqrt".to_string(), "f:tan".to_string(), "f:tanh".to_string(), "f:y0".to_string(), "f:y1".to_string(), "f:yn".to_string()]
+}
+
+fn handlefeatures(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    if enables.is_none() {
+        *enables = Some(vec![1; 48]);
+    }
+    0
+}
+
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    _e: Option<&[i32]>,
+) -> i32 {
+    0
+}
+

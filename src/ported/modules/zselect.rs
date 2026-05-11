@@ -264,26 +264,14 @@ fn is_ident(s: &str) -> bool {
 // =====================================================================
 
 use crate::ported::zsh_h::module;
-use crate::ported::module::{Builtin, Features, Module as RsModule};
 
 // `bintab` — port of `static struct builtin bintab[]` (zselect.c:271).
-static BINTAB: &[Builtin] = &[                                               // c:271
-    Builtin { name: "zselect", flags: 0, minargs: 0, maxargs: -1, funcid: 0, optstr: None, defopts: None },
-];
+
 
 // `module_features` — port of `static struct features module_features`
 // from zselect.c:275.
-static MODULE_FEATURES: Features = Features {                                // c:275
-    bn_list: BINTAB,
-    cd_list: &[],
-    mf_list: &[],
-    pd_list: &[],
-    n_abstract: 0,
-};
 
-fn module_handle() -> RsModule {
-    RsModule::new("zselect")
-}
+
 
 /// Port of `setup_()` from `Src/Modules/zselect.c:288`.
 pub fn setup_(_m: *const module) -> i32 {                                // c:288
@@ -292,18 +280,15 @@ pub fn setup_(_m: *const module) -> i32 {                                // c:28
 
 /// Port of `features_()` from `Src/Modules/zselect.c:295`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 { // c:295
-    *features = crate::ported::module::featuresarray(                   // c:298
-        &module_handle(),
-        &MODULE_FEATURES,
-    );
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 { // c:295
+    *features = featuresarray(m, module_features());
     0                                                                    // c:299
 }
 
 /// Port of `enables_()` from `Src/Modules/zselect.c:303`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:303
-    crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables) // c:306
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:303
+    handlefeatures(m, module_features(), enables) // c:306
 }
 
 /// Port of `boot_()` from `Src/Modules/zselect.c:310`.
@@ -313,8 +298,8 @@ pub fn boot_(_m: *const module) -> i32 {                                 // c:31
 
 /// Port of `cleanup_()` from `Src/Modules/zselect.c:318`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(_m: *const module) -> i32 {                              // c:318
-    crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None) // c:321
+pub fn cleanup_(m: *const module) -> i32 {                              // c:318
+    setfeatureenables(m, module_features(), None) // c:321
 }
 
 /// Port of `finish_()` from `Src/Modules/zselect.c:325`.
@@ -387,3 +372,51 @@ mod tests {
         assert!(unsafe { libc::FD_ISSET(5, &fdset) });
     }
 }
+
+use crate::ported::zsh_h::features as features_t;
+use std::sync::{Mutex, OnceLock};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,
+        bn_size: 1,
+        cd_list: None,
+        cd_size: 0,
+        mf_list: None,
+        mf_size: 0,
+        pd_list: None,
+        pd_size: 0,
+        n_abstract: 0,
+    }))
+}
+
+// Local stubs for the per-module entry points. C uses generic
+// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
+// 3275/3370/3445) but those take `Builtin` + `Features` pointer
+// fields the Rust port doesn't carry. The hardcoded descriptor
+// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:zselect".to_string()]
+}
+
+fn handlefeatures(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    if enables.is_none() {
+        *enables = Some(vec![1; 1]);
+    }
+    0
+}
+
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    _e: Option<&[i32]>,
+) -> i32 {
+    0
+}
+

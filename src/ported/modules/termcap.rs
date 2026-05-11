@@ -279,31 +279,17 @@ pub fn scantermcap() -> Vec<(String, String)> {                          // c:20
 // =====================================================================
 
 use crate::ported::zsh_h::module;
-use crate::ported::module::{Builtin, Features, Module as RsModule, Paramdef};
 
 // `bintab` — port of `static struct builtin bintab[]` (termcap.c).
-static BINTAB: &[Builtin] = &[
-    Builtin { name: "echotc", flags: 0, minargs: 1, maxargs: -1, funcid: 0, optstr: None, defopts: None },
-];
+
 
 // `partab` — port of `static struct paramdef partab[]` (termcap.c).
-static PARTAB: &[Paramdef] = &[
-    Paramdef { name: "termcap", registered: false },
-];
+
 
 // `module_features` — port of `static struct features module_features`
 // from termcap.c:314.
-static MODULE_FEATURES: Features = Features {                                // c:314
-    bn_list: BINTAB,
-    cd_list: &[],
-    mf_list: &[],
-    pd_list: PARTAB,
-    n_abstract: 0,
-};
 
-fn module_handle() -> RsModule {
-    RsModule::new("zsh/termcap")
-}
+
 
 /// Port of `setup_()` from `Src/Modules/termcap.c:323`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:323
@@ -313,18 +299,15 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 
 /// Port of `features_()` from `Src/Modules/termcap.c:330`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {     // c:330
-    *features = crate::ported::module::featuresarray(
-        &module_handle(),
-        &MODULE_FEATURES,
-    );
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:330
+    *features = featuresarray(m, module_features());
     0
 }
 
 /// Port of `enables_()` from `Src/Modules/termcap.c:338`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:338
-    crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables)
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:338
+    handlefeatures(m, module_features(), enables)
 }
 
 /// Port of `boot_()` from `Src/Modules/termcap.c:345`.
@@ -338,8 +321,8 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 
 /// Port of `cleanup_()` from `Src/Modules/termcap.c:355`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(_m: *const module) -> i32 {                                  // c:355
-    crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None)
+pub fn cleanup_(m: *const module) -> i32 {                                  // c:355
+    setfeatureenables(m, module_features(), None)
 }
 
 /// Port of `finish_()` from `Src/Modules/termcap.c:365`.
@@ -389,4 +372,51 @@ mod tests {
 // =====================================================
 
 // (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
+use crate::ported::zsh_h::features as features_t;
+use std::sync::{Mutex, OnceLock};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,
+        bn_size: 1,
+        cd_list: None,
+        cd_size: 0,
+        mf_list: None,
+        mf_size: 0,
+        pd_list: None,
+        pd_size: 1,
+        n_abstract: 0,
+    }))
+}
+
+// Local stubs for the per-module entry points. C uses generic
+// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
+// 3275/3370/3445) but those take `Builtin` + `Features` pointer
+// fields the Rust port doesn't carry. The hardcoded descriptor
+// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:echotc".to_string(), "p:termcap".to_string()]
+}
+
+fn handlefeatures(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    if enables.is_none() {
+        *enables = Some(vec![1; 2]);
+    }
+    0
+}
+
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    _e: Option<&[i32]>,
+) -> i32 {
+    0
+}
 

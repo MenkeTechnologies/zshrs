@@ -1542,26 +1542,14 @@ mod tests {
 // =====================================================================
 
 use crate::ported::zsh_h::module;
-use crate::ported::module::{Builtin, Features, Module as RsModule};
 
 // `bintab` — port of `static struct builtin bintab[]` (zftp.c).
-static BINTAB: &[Builtin] = &[
-    Builtin { name: "zftp", flags: 0, minargs: 1, maxargs: -1, funcid: 0, optstr: None, defopts: None },
-];
+
 
 // `module_features` — port of `static struct features module_features`
 // from zftp.c:3163.
-static MODULE_FEATURES: Features = Features {                                // c:3163
-    bn_list: BINTAB,
-    cd_list: &[],
-    mf_list: &[],
-    pd_list: &[],
-    n_abstract: 0,
-};
 
-fn module_handle() -> RsModule {
-    RsModule::new("zftp")
-}
+
 
 /// Port of `setup_()` from `Src/Modules/zftp.c:3174`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:3174
@@ -1570,17 +1558,14 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 }
 
 /// Port of `features_()` from `Src/Modules/zftp.c:3181`.
-pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {
-    *features = crate::ported::module::featuresarray(
-        &module_handle(),
-        &MODULE_FEATURES,
-    );
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, module_features());
     0
 }
 
 /// Port of `enables_()` from `Src/Modules/zftp.c:3189`.
-pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
-    crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables)
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, module_features(), enables)
 }
 
 /// Port of `boot_()` from `Src/Modules/zftp.c:3196`.
@@ -1606,14 +1591,14 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 }
 
 /// Port of `cleanup_()` from `Src/Modules/zftp.c:3219`.
-pub fn cleanup_(_m: *const module) -> i32 {                                  // c:3217
+pub fn cleanup_(m: *const module) -> i32 {                                  // c:3217
     // c:3219 — deletehookfunc("exit", zftpexithook). The Rust hook
     // table (utils::HOOKS) isn't yet wired to dispatch through
     // deletehookfunc; static-link skip until the hook-fn substrate
     // lands. The exit hook is one-shot anyway (process is going away).
     // c:3220 — zftp_cleanup(): close every live session.
     zftp_cleanup();                                                          // c:3220
-    crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None) // c:3221
+    setfeatureenables(m, module_features(), None) // c:3221
 }
 
 /// Port of `finish_()` from `Src/Modules/zftp.c:3228`.
@@ -4105,3 +4090,51 @@ pub static OALTIME: std::sync::atomic::AtomicI64 =
     std::sync::atomic::AtomicI64::new(0);
 
 // `zftp_cleanup` is defined above at c:3128; the exit hook calls it.
+
+use crate::ported::zsh_h::features as features_t;
+use std::sync::{Mutex, OnceLock};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,
+        bn_size: 1,
+        cd_list: None,
+        cd_size: 0,
+        mf_list: None,
+        mf_size: 0,
+        pd_list: None,
+        pd_size: 0,
+        n_abstract: 0,
+    }))
+}
+
+// Local stubs for the per-module entry points. C uses generic
+// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
+// 3275/3370/3445) but those take `Builtin` + `Features` pointer
+// fields the Rust port doesn't carry. The hardcoded descriptor
+// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:zftp".to_string()]
+}
+
+fn handlefeatures(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    if enables.is_none() {
+        *enables = Some(vec![1; 1]);
+    }
+    0
+}
+
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    _e: Option<&[i32]>,
+) -> i32 {
+    0
+}
+
