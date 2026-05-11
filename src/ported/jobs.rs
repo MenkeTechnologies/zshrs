@@ -2628,12 +2628,36 @@ pub fn bin_kill(nam: &str, argv: &[String],                                  // 
                     returnval = 1;
                 }
             }
-        } else if arg.starts_with('%') {                                     // c:3017 jobspec
-            // %jobspec — defer to executor's jobtab walk; without
-            // a global jobtab accessor in src/ported, we error out
-            // honestly rather than silently no-op.
-            zwarnnam(nam, &format!("kill: %jobspec dispatch deferred (no global jobtab): {}", arg));
-            returnval = 1;
+        } else if arg.starts_with('%') {                                     // c:2985 jobspec
+            // c:2989 — `if ((p = getjob(*argv, nam)) == -1)`.
+            let p = crate::ported::jobs::getjob(arg, nam);
+            if p < 0 {                                                       // c:2989
+                returnval += 1;                                              // c:2990
+                continue;
+            }
+            // c:2993 — `killjb(jobtab + p, sig)`. Look up the job's
+            // process-group leader and send via killjb.
+            let gleader = JOBTAB.get_or_init(|| Mutex::new(Vec::new()))
+                .lock().expect("jobtab poisoned")
+                .get(p as usize).map(|j| j.gleader).unwrap_or(0);
+            if crate::ported::signals::killjb(gleader, sig) == -1 {          // c:2993
+                zwarnnam("kill", &format!("kill {} failed: {}", arg,         // c:2994
+                    std::io::Error::last_os_error()));
+                returnval += 1;                                              // c:2995
+                continue;
+            }
+            // c:3001-3010 — if stopped + non-stopping signal,
+            // SIGCONT after to wake the job so it processes `sig`.
+            let stopped = JOBTAB.get_or_init(|| Mutex::new(Vec::new()))
+                .lock().expect("jobtab poisoned")
+                .get(p as usize).map(|j| j.is_stopped()).unwrap_or(false);
+            if stopped
+                && sig != libc::SIGKILL && sig != libc::SIGCONT
+                && sig != libc::SIGTSTP && sig != libc::SIGTTOU
+                && sig != libc::SIGTTIN && sig != libc::SIGSTOP
+            {
+                let _ = crate::ported::signals::killjb(gleader, libc::SIGCONT); // c:3009
+            }
         } else {
             match arg.parse::<i32>() {                                       // c:3024 PID
                 Ok(pid) => {

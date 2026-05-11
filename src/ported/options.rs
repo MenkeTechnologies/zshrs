@@ -1502,9 +1502,13 @@ pub fn installemulation(new_emulation: i32,
     crate::ported::modules::ksh93::emulation                                 // c:526 emulation = ...
         .store(new_emulation, std::sync::atomic::Ordering::Relaxed);
     for (k, v) in new_opts {                                                 // c:527-530
-        // c:528-529 — `if (!(optns[i].node.flags & OPT_SPECIAL))` —
-        // OPT_SPECIAL flag tracking deferred; copy every entry.
-        opt_state_set(k, *v);                                                // c:530 opts[i] = ...
+        // c:528-529 — `if (!(optns[i].node.flags & OPT_SPECIAL))`. The
+        // SPECIAL options (interactive, loginshell, monitor, privileged,
+        // restricted, shinstdin, singlecommand, zle) preserve their
+        // current value across an emulation switch.
+        if (optns_flags(k) & OPT_SPECIAL) == 0 {
+            opt_state_set(k, *v);                                            // c:530 opts[i] = ...
+        }
     }
 }
 

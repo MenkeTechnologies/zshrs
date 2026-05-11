@@ -1190,7 +1190,11 @@ pub fn readhistline(line: &str) -> Option<histent> {
     Some(make_histent(0, line.to_string()))
 }
 
-/// WARNING FAKE
+/// Construct a fresh `histent` for the ring. Rust-port helper —
+/// in C every call site inlines `zshcalloc(sizeof(struct histent))`
+/// plus field-by-field assignment (hist.c:1614/2098/...) so there
+/// is no C function to mirror. Justified in
+/// `tests/data/ported_fn_allowlist.txt:676`.
 fn make_histent(num: i64, text: String) -> histent {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
