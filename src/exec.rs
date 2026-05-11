@@ -597,7 +597,7 @@ pub struct ShellExecutor {
     /// Persistent set of named zpty subprocesses — the canonical
     /// port at `src/ported/modules/zpty.rs:367` looks up names
     /// across calls (`zpty -r`, `zpty -w`, `zpty -d`).
-    pub pty_cmds: crate::zpty::PtyCmds,
+    pub pty_cmds: std::collections::HashMap<String, crate::zpty::PtyCmd>,
     // sched: scheduled commands now live in `SCHEDCMDS` static in
     // `src/ported/builtins/sched.rs` (port of `static struct schedcmd
     // *schedcmds` from Src/Builtins/sched.c:52). No state on
