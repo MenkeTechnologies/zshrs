@@ -7,7 +7,12 @@ use std::io::{self, Write};
 use super::zle_main::Zle;
 
 // Text attributes after displaying prompts                                 // c:149
-/// Text attributes for display
+/// Rust-only unpacked-bool form of `zattr` (C's u64 packed attribute
+/// bitmap from `Src/zsh.h:2685`, ported as `pub type zattr = u64`).
+/// C stores attributes inline in `REFRESH_ELEMENT.atr` (a `zattr`);
+/// Rust port pre-unpacked to a 6-field struct for ergonomic access.
+/// Pending a cascade-rewrite that switches all TextAttr users to
+/// use bare `zattr: u64` + `TXT*` bit constants matching C inline.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TextAttr {
     pub bold: bool,
@@ -52,7 +57,12 @@ impl TextAttr {
     }
 }
 
-/// A single display element (character + attributes)
+/// Rust-only display cell. NOT a port of zsh's `REFRESH_ELEMENT`
+/// (legit-ported at zle_h.rs:688 as `pub struct REFRESH_ELEMENT
+/// { chr: REFRESH_CHAR, atr: zattr }`). The Rust port here adds a
+/// `width: u8` field that C doesn't have and uses `TextAttr` (also
+/// Rust-only) for `atr`. Pending migration to the legit
+/// REFRESH_ELEMENT type.
 #[derive(Debug, Clone, Default)]
 pub struct RefreshElement {
     pub chr: char,
@@ -87,7 +97,11 @@ impl RefreshElement {
     }
 }
 
-/// Video buffer for screen state
+/// Rust-only 2D screen-buffer struct. NOT a port of any C type —
+/// C uses `REFRESH_STRING nbuf[]` and `obuf[]` flat arrays of
+/// `REFRESH_ELEMENT *` (zle_refresh.c globals). Pending a cascade-
+/// rewrite that switches the refresh engine to the C flat-array
+/// model.
 #[derive(Debug, Clone)]
 pub struct VideoBuffer {
     /// Buffer contents - 2D array of lines
@@ -152,7 +166,11 @@ impl VideoBuffer {
     }
 }
 
-/// Refresh parameters
+/// Rust-only composite of zle_refresh.c globals (winw/winh/vcs/vln/
+/// vmaxln, oldmax, lastrow, lastcol, more_status, etc.). C uses
+/// separate file-statics per name (`int winw, winh, vcs, vln, ...`).
+/// NOT a C struct port — pending cascade-rewrite to discrete
+/// file-scope statics matching C verbatim.
 #[derive(Debug, Clone, Default)]
 pub struct RefreshState {
     /// Number of columns
@@ -537,7 +555,10 @@ fn countprompt(s: &str) -> usize {
     width
 }
 
-/// Region highlight entry
+/// Rust-only simplified region-highlight entry. NOT a port of C's
+/// `struct region_highlight` (already legit-ported at zle_h.rs:613
+/// with different fields: start/end/atr/flags/memo/layer). Pending
+/// migration to the legit type.
 #[derive(Debug, Clone)]
 pub struct RegionHighlight {
     pub start: usize,
@@ -546,12 +567,12 @@ pub struct RegionHighlight {
     pub memo: Option<String>,
 }
 
-/// Highlight category — fixed slots that mirror zsh's
-/// `region_highlights[N_SPECIAL_HIGHLIGHTS]` indices in
-/// Src/Zle/zle_refresh.c (0=region, 1=isearch, 2=suffix, 3=paste) plus
-/// the standalone `default` / `special` / `ellipsis` attrs that the C
-/// source tracks as separate globals (`default_attr`, `special_attr`,
-/// `ellipsis_attr`).
+/// Rust-only enum identifying a fixed slot in zsh's
+/// `region_highlights[N_SPECIAL_HIGHLIGHTS]` array (zle_refresh.c
+/// indices 0=region, 1=isearch, 2=suffix, 3=paste) plus the
+/// standalone default/special/ellipsis attr globals (`default_attr`/
+/// `special_attr`/`ellipsis_attr`). C uses bare integer indexing —
+/// no enum. Pending migration to bare i32 + index constants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HighlightCategory {
     Region,
@@ -563,7 +584,10 @@ pub enum HighlightCategory {
     Ellipsis,
 }
 
-/// Highlight manager
+/// Rust-only container collecting C's `region_highlights[]` array
+/// + per-category attr globals (`default_attr`/`special_attr`/
+/// `ellipsis_attr` from zle_refresh.c). NOT a port of any C struct.
+/// Pending migration to discrete file-scope statics matching C.
 #[derive(Debug, Default)]
 pub struct HighlightManager {
     pub regions: Vec<RegionHighlight>,

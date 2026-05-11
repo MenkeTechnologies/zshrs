@@ -2472,7 +2472,10 @@ impl ShellExecutor {
         }
         crate::ported::modules::zutil::bin_zstyle("zstyle", &positional, &ops, 0)
     }
-    pub(crate) fn bin_zparseopts(&mut self, _args: &[String]) -> i32 { 0 }
+    pub(crate) fn bin_zparseopts(&mut self, args: &[String]) -> i32 {
+        let ops = Self::_empty_ops();
+        crate::ported::modules::zutil::bin_zparseopts("zparseopts", args, &ops, 0)
+    }
     pub(crate) fn bin_zformat(&mut self, args: &[String]) -> i32 {
         // bin_zformat takes no flag options (BUILTIN spec at
         // zutil.c:2138 has none); pass empty `options` and dispatch

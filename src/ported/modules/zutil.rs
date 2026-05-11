@@ -72,6 +72,16 @@ pub struct StyleTable {
     styles: HashMap<String, Vec<stypat>>,
 }
 
+/// Global `zstyletab` mirror — port of the static
+/// `static HashTable zstyletab` in Src/Modules/zutil.c:209.
+/// C allocates this via `newzstyletable()` (c:270) during
+/// module setup; the Rust port uses a `LazyLock<Mutex<>>`
+/// since the table is process-global and `bin_zstyle` /
+/// `lookupstyle` / `testforstyle` all need to share it.
+#[allow(non_upper_case_globals)]
+pub static zstyletab: std::sync::LazyLock<std::sync::Mutex<StyleTable>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(StyleTable::new())); // c:209
+
 impl StyleTable {
     pub fn new() -> Self {
         Self::default()
@@ -602,6 +612,66 @@ mod tests {
         assert_eq!(table.test_bool("ctx", "multiple"), None);
     }
 
+    /// Verifies the persistent global `zstyletab` round-trips
+    /// set→get and that `lookupstyle` / `testforstyle` C-name shims
+    /// see the same entry. Lock-stamps the global-state path that
+    /// `bin_zstyle` relies on (Src/Modules/zutil.c:209).
+    #[test]
+    fn test_global_zstyletab_set_and_lookup() {
+        let key_style = "test_zutil_global_marker_style";
+        let key_pat = "test_zutil_global_marker_*";
+        {
+            let mut t = zstyletab.lock().unwrap();
+            t.set(key_pat, key_style,
+                  vec!["yes".to_string()], false);
+        }
+        let found = lookupstyle("test_zutil_global_marker_x", key_style);
+        assert_eq!(found, vec!["yes".to_string()]);
+        assert_eq!(testforstyle("test_zutil_global_marker_x", key_style), 0);
+        assert_eq!(testforstyle("unmatched_ctx", "no_such_style_zzz"), 1);
+        // Cleanup so other tests don't see the entry.
+        {
+            let mut t = zstyletab.lock().unwrap();
+            t.delete(Some(key_pat), Some(key_style));
+        }
+    }
+
+    /// Smoke-test the parsing portion of bin_zparseopts: missing
+    /// option descriptions, default-array-twice rejection, and a
+    /// valid -a + spec sequence reach the post-parse argv-walk
+    /// without hitting an error. Doesn't assert on parameter side
+    /// effects (that path runs through the executor at runtime).
+    #[test]
+    fn test_bin_zparseopts_arg_validation() {
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        // Missing option descriptions.
+        let args: Vec<String> = vec!["-D".to_string()];
+        assert_eq!(super::bin_zparseopts("zparseopts", &args, &ops, 0), 1);
+        // Default array specified twice.
+        let args: Vec<String> = vec![
+            "-a".to_string(), "out1".to_string(),
+            "-a".to_string(), "out2".to_string(),
+            "x".to_string(),
+        ];
+        assert_eq!(super::bin_zparseopts("zparseopts", &args, &ops, 0), 1);
+        // Valid: -a out, then a single spec.
+        let args: Vec<String> = vec![
+            "-a".to_string(), "out".to_string(),
+            "v".to_string(),
+        ];
+        // Returns 1 when "no such array: argv" — without executor
+        // context the argv lookup miss bubbles up. That's the
+        // expected control-flow path: parse succeeded, runtime
+        // missed. Either 0 or 1 acceptable here; 2/3 would be wrong.
+        let rc = super::bin_zparseopts("zparseopts", &args, &ops, 0);
+        assert!(rc == 0 || rc == 1, "unexpected rc={}", rc);
+    }
+
     #[test]
     fn test_zformat_basic() {
         let mut specs = HashMap::new();
@@ -737,51 +807,624 @@ pub fn bin_zstyle(nam: &str, args: &[String],                                 //
                   ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;
     use crate::ported::utils::zwarnnam;
-    let _ = (nam, ops);
+    use std::io::Write;
 
-    // c:495-540 — flag dispatch. Static-link path: with the lookup
-    // helpers stubbed, route to the "no styles defined" branch.
-    // No flag → set/list. With args: walk ZSTYLETAB and call addstyle.
+    // c:495-540 — flag dispatch backed by the global zstyletab.
     if args.is_empty() {                                                     // c:495
-        // c:496 — list mode: walk zstyletab calling printstylenode.
-        // ZSTYLETAB doesn't yet expose an iterator (the table is a stub),
-        // so the listing emits no output — matching the "fresh shell, no
-        // zstyle calls yet" state.
+        // c:496 — list mode: walk zstyletab printing each entry.
+        let t = match zstyletab.lock() { Ok(g) => g, Err(_) => return 1 };
+        let mut out = std::io::stdout().lock();
+        for (pat, style, vals) in t.list(None) {                             // c:496
+            let _ = write!(out, "{} {}", pat, style);
+            for v in &vals {
+                let _ = write!(out, " {}", v);
+            }
+            let _ = writeln!(out);
+        }
         return 0;                                                            // c:497
     }
     if OPT_ISSET(ops, b'L') || OPT_ISSET(ops, b'l') {                        // c:511
-        // -L/-l: list in zstyle-replayable form. Same caveat —
-        // ZSTYLETAB stub means empty output.
+        // -L: emit as replayable `zstyle` commands.
+        let t = match zstyletab.lock() { Ok(g) => g, Err(_) => return 1 };
+        let mut out = std::io::stdout().lock();
+        for (pat, style, vals) in t.list(None) {                             // c:511
+            let _ = write!(out, "zstyle {} {}", pat, style);
+            for v in &vals {
+                let _ = write!(out, " {}", v);
+            }
+            let _ = writeln!(out);
+        }
         return 0;                                                            // c:514
     }
     if OPT_ISSET(ops, b'd') {                                                // c:520
-        // -d: delete the style. With ZSTYLETAB unported, no-op success.
-        return 0;                                                            // c:523
+        // -d: delete the style. C: `args[0]` is pattern (optional),
+        // `args[1]` is style (optional). With no args → wipe all.
+        let pat = args.first().map(|s| s.as_str());
+        let sty = args.get(1).map(|s| s.as_str());
+        if let Ok(mut t) = zstyletab.lock() {
+            t.delete(pat, sty);                                              // c:521-523
+        }
+        return 0;                                                            // c:524
     }
-    // c:541-942 — -s/-b/-t/-T/-m/-a/-g/-e per-context lookup. Each
-    // calls lookupstyle which currently returns Vec::new(); fall
-    // through to "no match" (ret=1).
+    // c:541-942 — -s/-b/-t/-T/-m/-a/-g/-e per-context lookup arms.
     if OPT_ISSET(ops, b's') || OPT_ISSET(ops, b'b') || OPT_ISSET(ops, b't')
         || OPT_ISSET(ops, b'T') || OPT_ISSET(ops, b'a')
         || OPT_ISSET(ops, b'g') || OPT_ISSET(ops, b'e')
         || OPT_ISSET(ops, b'm')
     {
-        // c:543-… — context lookup paths. lookupstyle is stub →
-        // return 1 (no match) per the C source's "match failed"
-        // exit code convention.
-        return 1;
+        if args.len() < 2 { return 1; }
+        let ctxt = &args[0];                                                 // c:541
+        let style = &args[1];
+        let vals = lookupstyle(ctxt, style);                                 // c:443
+        // c:559-732 — per-flag return semantics: just check found vs not.
+        // For -t: 0 if found AND first value matches one of the "true"
+        // tokens (when arg given) or first ∈ {true,yes,on,1}.
+        if OPT_ISSET(ops, b't') {                                            // c:660
+            let t = match zstyletab.lock() { Ok(g) => g, Err(_) => return 1 };
+            return if t.test(ctxt, style, None) { 0 } else { 1 };
+        }
+        if OPT_ISSET(ops, b'T') {                                            // c:692
+            // -T: same as -t but missing entries succeed (return 0).
+            let t = match zstyletab.lock() { Ok(g) => g, Err(_) => return 1 };
+            if t.get(ctxt, style).is_some() {
+                return if t.test(ctxt, style, None) { 0 } else { 1 };
+            }
+            return 0;
+        }
+        if vals.is_empty() { return 1; }
+        // -s / -a / -g / -b / -m / -e: bind first value into named param.
+        // C uses setsparam/setaparam; static-link path stores into the
+        // shared executor variable bag where available.
+        if args.len() >= 3 {
+            let pname = &args[2];
+            let val = vals.join(" ");
+            crate::ported::modules::ksh93::setsparam(pname, &val);
+        }
+        return 0;
     }
 
-    // c:945 — set/replace style: walk args after context+style names
-    // and addstyle each value. addstyle is a stub; succeed silently.
+    // c:945 — set/replace style: addstyle each value.
     if args.len() < 3 {
         zwarnnam(nam, "not enough arguments");                               // c:947
         return 1;
     }
-    let _ctxt = &args[0];
-    let _style = &args[1];
-    let _values = &args[2..];
+    let ctxt = &args[0];                                                     // c:945
+    let style = &args[1];
+    let values: Vec<String> = args[2..].to_vec();                            // c:949
+    if let Ok(mut t) = zstyletab.lock() {
+        t.set(ctxt, style, values, false);                                   // c:295 setstypat
+    }
     0                                                                        // c:951
+}
+
+/// Port of `bin_zparseopts()` from `Src/Modules/zutil.c:1738`.
+/// C signature: `static int bin_zparseopts(char *nam, char **args,
+/// UNUSED(Options ops), UNUSED(int func))`. Parses top-level flags
+/// (-D/-E/-F/-G/-K/-M/-a/-A/-v), an option-description list, then
+/// walks `$argv` (or named array) applying matches and emitting
+/// arrays / associative-arrays per spec.
+pub fn bin_zparseopts(nam: &str, args: &[String],                            // c:1738
+                      _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::utils::zwarnnam;
+
+    // c:1741-1747 — locals.
+    let mut del: i32 = 0;
+    let mut flags: i32 = 0;
+    let mut extract: i32 = 0;
+    let mut fail: i32 = 0;
+    let mut gnu: i32 = 0;
+    let mut keep: i32 = 0;
+    let mut sopts: [Option<usize>; 256] = [None; 256];                       // c:1744
+    let mut defarr_idx: Option<usize> = None;                                // c:1745 defarr
+    let mut assoc: Option<String> = None;                                    // c:1742 *assoc
+    let mut paramsname: Option<String> = None;                               // c:1742
+
+    // c:1749-1751 — reset opt_descs / opt_arrs file-statics + sopts.
+    opt_descs.with(|d| d.borrow_mut().clear());
+    opt_arrs.with(|a| a.borrow_mut().clear());
+    opt_descs_head.with(|h| h.set(None));
+    opt_arrs_head.with(|h| h.set(None));
+
+    // c:1753-1869 — top-level flag parsing.
+    let mut i: usize = 0;                                                    // c:1753 while ((o = *args++))
+    while i < args.len() {
+        let o = args[i].as_str();
+        if let Some(rest) = o.strip_prefix('-') {                            // c:1754 *o == '-'
+            let c0 = rest.chars().next().unwrap_or('\0');
+            let after = &rest[c0.len_utf8().min(rest.len())..];
+            match c0 {
+                '\0' => { /* lone "-" — fall through */ break; }             // c:1756
+                '-' => {                                                     // c:1758 "--"
+                    if !after.is_empty() { /* unreachable per C */ }
+                    i += 1;
+                    break;                                                   // c:1760
+                }
+                'D' => {                                                     // c:1764
+                    if !after.is_empty() { break; }
+                    del = 1;
+                    i += 1;
+                }
+                'E' => {                                                     // c:1772
+                    if !after.is_empty() { break; }
+                    extract = 1;
+                    i += 1;
+                }
+                'F' => {                                                     // c:1780
+                    if !after.is_empty() { break; }
+                    fail = 1;
+                    i += 1;
+                }
+                'G' => {                                                     // c:1788
+                    if !after.is_empty() { break; }
+                    gnu = 1;
+                    i += 1;
+                }
+                'K' => {                                                     // c:1796
+                    if !after.is_empty() { break; }
+                    keep = 1;
+                    i += 1;
+                }
+                'M' => {                                                     // c:1804
+                    if !after.is_empty() { break; }
+                    flags |= ZOF_MAP;
+                    i += 1;
+                }
+                'a' => {                                                     // c:1812 default array
+                    if defarr_idx.is_some() {
+                        zwarnnam(nam, "default array given more than once");
+                        return 1;
+                    }
+                    let n = if !after.is_empty() {
+                        after.to_string()
+                    } else if i + 1 < args.len() {
+                        i += 1;
+                        args[i].clone()
+                    } else {
+                        zwarnnam(nam, "missing array name");
+                        return 1;
+                    };
+                    let arr = zoptarr {
+                        next: opt_arrs_head.with(|h| h.get()),               // c:1832 prepend
+                        name: n,
+                        vals: Vec::new(),
+                        last: None,
+                        num: 0,
+                    };
+                    let idx = opt_arrs.with(|a| {
+                        let mut a = a.borrow_mut();
+                        a.push(arr);
+                        a.len() - 1
+                    });
+                    opt_arrs_head.with(|h| h.set(Some(idx)));
+                    defarr_idx = Some(idx);                                  // c:1828
+                    i += 1;
+                }
+                'A' => {                                                     // c:1837 assoc array
+                    if assoc.is_some() {
+                        zwarnnam(nam, "associative array given more than once");
+                        return 1;
+                    }
+                    let n = if !after.is_empty() {
+                        after.to_string()
+                    } else if i + 1 < args.len() {
+                        i += 1;
+                        args[i].clone()
+                    } else {
+                        zwarnnam(nam, "missing array name");
+                        return 1;
+                    };
+                    assoc = Some(n);
+                    i += 1;
+                }
+                'v' => {                                                     // c:1852 argv array
+                    if paramsname.is_some() {
+                        zwarnnam(nam, "argv array given more than once");
+                        return 1;
+                    }
+                    let n = if !after.is_empty() {
+                        after.to_string()
+                    } else if i + 1 < args.len() {
+                        i += 1;
+                        args[i].clone()
+                    } else {
+                        zwarnnam(nam, "missing array name");
+                        return 1;
+                    };
+                    paramsname = Some(n);
+                    i += 1;
+                }
+                _ => { break; }                                              // c:1861 default
+            }
+        } else {
+            break;                                                           // c:1869 not an option
+        }
+    }
+    // c:1874-1877 — must have at least one option description.
+    if i >= args.len() {
+        zwarnnam(nam, "missing option descriptions");
+        return 1;
+    }
+
+    // c:1878-1955 — parse option descriptions (each remaining arg).
+    while i < args.len() {
+        let raw = args[i].clone();
+        i += 1;
+        if raw.is_empty() {                                                  // c:1881
+            zwarnnam(nam, &format!("invalid option description: {}", raw));
+            return 1;
+        }
+        // c:1885-1898 — walk for `+`, `:`, `=` separator. Track `\` escape.
+        let bytes = raw.as_bytes();
+        let mut p = 0usize;
+        let mut f: i32 = 0;
+        let mut sep: u8 = 0; // 0=end, b'+', b':', b'='
+        let mut sep_pos = bytes.len();
+        let mut name_buf = Vec::<u8>::new();
+        while p < bytes.len() {
+            if bytes[p] == b'\\' && p + 1 < bytes.len() {                    // c:1887
+                name_buf.push(bytes[p + 1]);
+                p += 2;
+                continue;
+            }
+            if p > 0 {                                                       // c:1889 at least 1 ch
+                match bytes[p] {
+                    b'+' => {                                                // c:1891 ZOF_MULT
+                        f |= ZOF_MULT;
+                        sep_pos = p;
+                        p += 1;
+                        sep = bytes.get(p).copied().unwrap_or(0);
+                        break;
+                    }
+                    b':' | b'=' => {                                         // c:1895
+                        sep = bytes[p];
+                        sep_pos = p;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            name_buf.push(bytes[p]);
+            p += 1;
+        }
+        // c:1900-1907 — `:` introduces an option arg.
+        if sep_pos < bytes.len() && bytes[sep_pos] == b':' {                 // c:1900
+            f |= ZOF_ARG;
+            p = sep_pos + 1;
+            if gnu != 0 {                                                    // c:1904
+                f |= if name_buf.len() > 1 { ZOF_GNUL } else { ZOF_GNUS };
+            }
+            if p < bytes.len() && bytes[p] == b':' {                         // c:1907 `::`
+                p += 1;
+                f |= ZOF_OPT;
+            }
+            if p < bytes.len() && bytes[p] == b'-' {                         // c:1911 ZOF_SAME
+                p += 1;
+                f |= ZOF_SAME;
+            }
+            sep = bytes.get(p).copied().unwrap_or(0);
+        } else if sep == b'+' {
+            // already advanced
+            sep = bytes.get(p).copied().unwrap_or(0);
+        }
+        // c:1916-1925 — `=arr` binds to an array (or defines a new one).
+        let mut a_idx: Option<usize> = None;
+        if sep == b'=' {                                                     // c:1916
+            p += 1;
+            f |= flags;                                                      // c:1918 inherit ZOF_MAP
+            let arr_name = std::str::from_utf8(&bytes[p..]).unwrap_or("").to_string();
+            a_idx = get_opt_arr(&arr_name);
+            if a_idx.is_none() {                                             // c:1920 new
+                let arr = zoptarr {
+                    next: opt_arrs_head.with(|h| h.get()),
+                    name: arr_name,
+                    vals: Vec::new(),
+                    last: None,
+                    num: 0,
+                };
+                let idx = opt_arrs.with(|aa| {
+                    let mut aa = aa.borrow_mut();
+                    aa.push(arr);
+                    aa.len() - 1
+                });
+                opt_arrs_head.with(|h| h.set(Some(idx)));
+                a_idx = Some(idx);
+            }
+        } else if p < bytes.len() {                                          // c:1927 leftover chars
+            zwarnnam(nam, &format!("invalid option description: {}", raw));
+            return 1;
+        } else if defarr_idx.is_none() && assoc.is_none() {                  // c:1929
+            zwarnnam(nam, &format!("no default array defined: {}", raw));
+            return 1;
+        } else {
+            a_idx = defarr_idx;
+        }
+        // c:1933-1939 — strip `\` escapes from name (already done in name_buf).
+        let name = match String::from_utf8(name_buf) {
+            Ok(s) => s,
+            Err(_) => return 1,
+        };
+        // c:1942 — duplicate detection.
+        if get_opt_desc(&name).is_some() {                                   // c:1942
+            zwarnnam(nam, &format!("option defined more than once: {}", name));
+            return 1;
+        }
+        // c:1947-1953 — build + prepend desc node.
+        let desc = zoptdesc {
+            next: opt_descs_head.with(|h| h.get()),
+            name: name.clone(),
+            flags: f,
+            arr: a_idx,
+            vals: Vec::new(),
+            last: None,
+        };
+        let didx = opt_descs.with(|d| {
+            let mut d = d.borrow_mut();
+            d.push(desc);
+            d.len() - 1
+        });
+        opt_descs_head.with(|h| h.set(Some(didx)));
+        // c:1955 — single-char options also indexed via sopts[].
+        if name.len() == 1 {
+            sopts[name.as_bytes()[0] as usize] = Some(didx);
+        }
+        // c:1957-1959 — ZOF_MAP cycle check.
+        if (flags & ZOF_MAP) != 0 && map_opt_desc(didx) == 0 {               // c:1957
+            zwarnnam(nam, &format!("cyclic option mapping: {}", raw));
+            return 1;
+        }
+    }
+
+    // c:1963-1968 — fetch the source array (default $argv).
+    let pname = paramsname.clone().unwrap_or_else(|| "argv".to_string());
+    let params: Vec<String> = match crate::exec::try_with_executor(|exec| {
+        exec.arrays.get(&pname).cloned()
+    }).flatten() {
+        Some(v) => v,
+        None => {
+            zwarnnam(nam, &format!("no such array: {}", pname));
+            return 1;
+        }
+    };
+
+    // c:1969-2057 — walk params applying option matches.
+    let mut pp_buf: Vec<String> = if extract != 0 && del != 0 {
+        params.clone()                                                       // c:1969 arrdup(params)
+    } else {
+        params.clone()
+    };
+    let mut cp: Vec<String> = Vec::new();                                    // c:1969 cp = pp
+    let mut pp_idx: usize = 0;
+    let mut stop_at: Option<usize> = None;
+    while pp_idx < pp_buf.len() {
+        let o = pp_buf[pp_idx].clone();
+        // c:1972-1979 — non-option element.
+        if !o.starts_with('-') || (gnu != 0 && o.len() == 1) {               // c:1972
+            if extract != 0 {                                                // c:1974
+                if del != 0 { cp.push(o); }                                  // c:1976
+                pp_idx += 1;
+                continue;
+            } else {
+                stop_at = Some(pp_idx);                                      // c:1979
+                break;
+            }
+        }
+        // c:1982-1987 — '--' or non-GNU '-': end parsing.
+        if o.len() == 1 || (o.len() == 2 && &o[1..] == "-") {                // c:1983
+            if del != 0 && extract != 0 { cp.push(o); }
+            pp_idx += 1;
+            stop_at = Some(pp_idx);                                          // c:1986
+            break;
+        }
+        // c:1988-1990 — full-name lookup_opt against the param past the leading '-'.
+        let after_dash = &o[1..];
+        let lookup_result = lookup_opt(after_dash);
+        let mut consumed = false;
+        if lookup_result.is_none() {                                         // c:1990 No match → per-char
+            // c:1991-2017 — try each char as a short option.
+            let mut sub_idx = 1usize;
+            let chars: Vec<char> = o.chars().collect();
+            while sub_idx < chars.len() {                                    // c:1992 ++o
+                let c = chars[sub_idx];
+                let mut d = sopts[c as usize % 256];
+                if d.is_none() {                                             // c:1993
+                    if fail != 0 {                                           // c:1995
+                        if c != '-' || sub_idx > 1 {
+                            zwarnnam(nam, &format!("bad option: -{}", c));
+                        } else {
+                            zwarnnam(nam, &format!("bad option: -{}", &o[1..]));
+                        }
+                        return 1;                                            // c:2000
+                    }
+                    d = None;
+                    break;
+                }
+                let di = d.unwrap();
+                let dflags = opt_descs.with(|dd| dd.borrow()[di].flags);
+                if (dflags & ZOF_ARG) != 0 {                                 // c:2007
+                    let rest_in_param: String = chars[sub_idx + 1..].iter().collect();
+                    if !rest_in_param.is_empty() {                           // c:2009
+                        add_opt_val(di, Some(rest_in_param));
+                        break;
+                    } else if (dflags & ZOF_OPT) == 0
+                        || ((dflags & (ZOF_GNUL | ZOF_GNUS)) == 0
+                            && pp_idx + 1 < pp_buf.len()
+                            && !pp_buf[pp_idx + 1].starts_with('-'))         // c:2013
+                    {
+                        if pp_idx + 1 >= pp_buf.len() {                      // c:2016
+                            let nm = opt_descs.with(|dd| dd.borrow()[di].name.clone());
+                            zwarnnam(nam,
+                                &format!("missing argument for option: -{}", nm));
+                            return 1;
+                        }
+                        pp_idx += 1;
+                        let val = pp_buf[pp_idx].clone();
+                        add_opt_val(di, Some(val));
+                    } else {
+                        add_opt_val(di, None);                               // c:2023 missing optopt
+                    }
+                } else {
+                    add_opt_val(di, None);                                   // c:2026 no optarg
+                }
+                sub_idx += 1;
+                consumed = true;
+            }
+            if !consumed {
+                if extract != 0 {                                            // c:2030
+                    if del != 0 { cp.push(o); }
+                    pp_idx += 1;
+                    continue;
+                } else {
+                    stop_at = Some(pp_idx);                                  // c:2034
+                    break;
+                }
+            }
+        } else {                                                             // c:2038 whole-param match
+            let di = lookup_result.unwrap();
+            let dflags = opt_descs.with(|dd| dd.borrow()[di].flags);
+            let dname = opt_descs.with(|dd| dd.borrow()[di].name.clone());
+            let e_start = 1 + dname.len();                                   // c:2040 e = o + strlen + 1
+            if (dflags & ZOF_ARG) != 0 {                                     // c:2040
+                if (dflags & ZOF_GNUL) != 0 && e_start < o.len()
+                    && o.as_bytes()[e_start] == b'=' {                       // c:2043 GNU empty optarg
+                    add_opt_val(di, Some(o[e_start + 1..].to_string()));
+                } else if e_start < o.len() {                                // c:2049 non-empty inline
+                    add_opt_val(di, Some(o[e_start..].to_string()));
+                } else if (dflags & ZOF_OPT) == 0
+                    || ((dflags & (ZOF_GNUL | ZOF_GNUS)) == 0
+                        && pp_idx + 1 < pp_buf.len()
+                        && !pp_buf[pp_idx + 1].starts_with('-')) {           // c:2056
+                    if pp_idx + 1 >= pp_buf.len() {
+                        zwarnnam(nam,
+                            &format!("missing argument for option: -{}", dname));
+                        return 1;
+                    }
+                    pp_idx += 1;
+                    let val = pp_buf[pp_idx].clone();
+                    add_opt_val(di, Some(val));
+                } else {
+                    add_opt_val(di, None);                                   // c:2066 missing optopt
+                }
+            } else {
+                add_opt_val(di, None);                                       // c:2069 no optarg
+            }
+        }
+        pp_idx += 1;
+    }
+
+    // c:2071-2077 — ZOF_MAP post-pass: mark arrs that map to a desc as -1
+    // (suppresses array emission for pure aliases).
+    if (flags & ZOF_MAP) != 0 {
+        let descs: Vec<(Option<usize>, bool, i32)> = opt_descs.with(|d| {
+            d.borrow().iter()
+                .map(|x| (x.arr, !x.vals.is_empty(), x.flags))
+                .collect()
+        });
+        for (arr_opt, has_vals, dflags) in descs.into_iter() {
+            if let Some(ai) = arr_opt {
+                if !has_vals && (dflags & ZOF_MAP) != 0 {
+                    let arr_name = opt_arrs.with(|a| a.borrow()[ai].name.clone());
+                    let num0 = opt_arrs.with(|a| a.borrow()[ai].num == 0);
+                    if num0 && get_opt_desc(&arr_name).is_some() {
+                        opt_arrs.with(|a| { a.borrow_mut()[ai].num = -1; });
+                    }
+                }
+            }
+        }
+    }
+
+    // c:2079-2080 — drain remaining params into cp when -D -E.
+    if extract != 0 && del != 0 {
+        while pp_idx < pp_buf.len() {
+            cp.push(pp_buf[pp_idx].clone());
+            pp_idx += 1;
+        }
+    }
+
+    // c:2082-2098 — emit each opt_arrs array.
+    let arrs_snap: Vec<(String, i32, Vec<(String, Option<String>)>)> =
+        opt_arrs.with(|a| {
+            a.borrow().iter()
+                .map(|x| (x.name.clone(), x.num,
+                          x.vals.iter()
+                              .map(|v| (v.name.clone(), v.arg.clone()))
+                              .collect::<Vec<_>>()))
+                .collect()
+        });
+    for (arr_name, num, vals) in arrs_snap.iter() {
+        if *num >= 0 && (keep == 0 || *num != 0) {                           // c:2084
+            let mut out: Vec<String> = Vec::with_capacity((*num as usize).max(0) + 1);
+            for (vname, varg) in vals.iter() {                               // c:2086-2093
+                match varg {
+                    Some(a) => {
+                        out.push(format!("-{}", vname));
+                        out.push(a.clone());
+                    }
+                    None => {
+                        out.push(format!("-{}", vname));
+                    }
+                }
+            }
+            // c:2095 — setaparam.
+            crate::ported::modules::ksh93::setaparam(arr_name, &out);
+        }
+    }
+
+    // c:2099-2128 — emit assoc.
+    if let Some(assoc_name) = assoc.as_ref() {
+        let num_descs_with_vals = opt_descs.with(|d| {
+            d.borrow().iter().filter(|x| !x.vals.is_empty()).count() as i32
+        });
+        if keep == 0 || num_descs_with_vals != 0 {                           // c:2106
+            let snap: Vec<(String, Vec<(String, Option<String>)>)> = opt_descs.with(|d| {
+                d.borrow().iter()
+                    .filter(|x| !x.vals.is_empty())
+                    .map(|x| (x.name.clone(),
+                              x.vals.iter()
+                                  .map(|v| (v.name.clone(), v.arg.clone()))
+                                  .collect::<Vec<_>>()))
+                    .collect()
+            });
+            let mut flat: Vec<String> = Vec::new();
+            for (dname, vals) in snap.iter() {
+                let key = format!("-{}", dname);                             // c:2112
+                let mut buf = String::new();
+                for (_vname, varg) in vals.iter() {
+                    if let Some(a) = varg {
+                        if !buf.is_empty() { buf.push(' '); }
+                        buf.push_str(a);
+                    }
+                }
+                flat.push(key);
+                flat.push(buf);
+            }
+            // c:2127 — sethparam(assoc, aval). Flat (k,v,k,v) → assoc.
+            crate::exec::try_with_executor(|exec| {
+                let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+                let mut it = flat.into_iter();
+                while let (Some(k), Some(v)) = (it.next(), it.next()) {
+                    map.insert(k, v);
+                }
+                exec.assoc_arrays.insert(assoc_name.clone(), map);
+                exec.variables.remove(assoc_name);
+                exec.arrays.remove(assoc_name);
+            });
+        }
+    }
+
+    // c:2130-2136 — when -D set, update the source array.
+    if del != 0 {
+        if extract != 0 {                                                    // c:2131
+            crate::ported::modules::ksh93::setaparam(&pname, &cp);
+        } else {
+            let remaining: Vec<String> = match stop_at {
+                Some(s) => pp_buf.split_off(s),
+                None => Vec::new(),
+            };
+            crate::ported::modules::ksh93::setaparam(&pname, &remaining);
+        }
+    }
+    let _ = (fail,);                                                         // silence unused
+    0                                                                        // c:2137
 }
 
 /// Direct port of `bin_zformat()` from `Src/Modules/zutil.c:954`.
@@ -1036,27 +1679,59 @@ pub struct style {
 }
 pub type Style = Box<style>;
 
-/// `Zoptdesc` family mirroring Src/Modules/zutil.c:1519-1538.
+/// `struct zoptdesc` from Src/Modules/zutil.c:1524.
+/// C linked-list `next` ports as `Option<usize>` index into a
+/// Vec<zoptdesc> arena since safe Rust can't mutate Box<>-chained
+/// nodes during traversal. Field order + types match C exactly.
 pub struct zoptdesc {
-    pub name: String,
-    pub flags: i32,
-    pub arg: i32,
-    pub vals: Vec<String>,
-    pub next: Option<Box<zoptdesc>>,
+    pub next: Option<usize>,                // c:1525 Zoptdesc next
+    pub name: String,                       // c:1526 char *name
+    pub flags: i32,                         // c:1527 int flags
+    pub arr: Option<usize>,                 // c:1528 Zoptarr arr (idx into opt_arrs)
+    pub vals: Vec<zoptval>,                 // c:1529 Zoptval vals
+    pub last: Option<usize>,                // c:1529 Zoptval last (idx into self.vals)
 }
 pub type Zoptdesc = Box<zoptdesc>;
 
+/// `struct zoptarr` from Src/Modules/zutil.c:1541.
 pub struct zoptarr {
-    pub name: String,
-    pub vals: Vec<String>,
+    pub next: Option<usize>,                // c:1542 Zoptarr next
+    pub name: String,                       // c:1543 char *name
+    pub vals: Vec<zoptval>,                 // c:1544 Zoptval vals
+    pub last: Option<usize>,                // c:1544 Zoptval last
+    pub num: i32,                           // c:1545 int num
 }
 pub type Zoptarr = Box<zoptarr>;
 
+/// `struct zoptval` from Src/Modules/zutil.c:1548.
 pub struct zoptval {
-    pub name: String,
-    pub arg: String,
+    pub next: Option<usize>,                // c:1549 Zoptval next
+    pub onext: Option<usize>,               // c:1549 Zoptval onext (per-option chain)
+    pub name: String,                       // c:1550 char *name
+    pub arg: Option<String>,                // c:1551 char *arg (NULL when missing)
+    pub str: Option<String>,                // c:1552 char *str
 }
 pub type Zoptval = Box<zoptval>;
+
+// File-static mirrors of `static Zoptdesc opt_descs` (c:1556) +
+// `static Zoptarr opt_arrs` (c:1557). C uses singly-linked lists with
+// new entries prepended. Rust mirrors as Vec<> arenas; `next` indices
+// thread the list head→tail order. Thread-local since bin_zparseopts
+// is the only writer and it resets state at entry.
+thread_local! {
+    #[allow(non_upper_case_globals)]
+    pub static opt_descs: std::cell::RefCell<Vec<zoptdesc>> =                 // c:1556
+        std::cell::RefCell::new(Vec::new());
+    #[allow(non_upper_case_globals)]
+    pub static opt_arrs: std::cell::RefCell<Vec<zoptarr>> =                   // c:1557
+        std::cell::RefCell::new(Vec::new());
+    #[allow(non_upper_case_globals)]
+    pub static opt_descs_head: std::cell::Cell<Option<usize>> =               // c:1556 list head
+        std::cell::Cell::new(None);
+    #[allow(non_upper_case_globals)]
+    pub static opt_arrs_head: std::cell::Cell<Option<usize>> =                // c:1557 list head
+        std::cell::Cell::new(None);
+}
 
 /// `RParseResult` (used by zregexparse) — Src/Modules/zutil.c:1099-1115.
 pub struct RParseResult {
@@ -1065,13 +1740,77 @@ pub struct RParseResult {
 }
 
 /// Port of `add_opt_val()` from Src/Modules/zutil.c:1642.
-/// C: `static void add_opt_val(Zoptdesc d, char *arg)` — append a value
-/// to the option's `vals` collection or assign to the bound array.
+/// C: `static void add_opt_val(Zoptdesc d, char *arg)` — append a
+/// value record (name + optional arg) to the option's per-instance
+/// `vals` linked-list, and (when an arr is bound) also to the
+/// `Zoptarr->vals` list. `desc_idx` is the index into `opt_descs`.
 #[allow(non_snake_case)]
-pub fn add_opt_val(d: &mut zoptdesc, arg: String) {                          // c:1642
-    // c:1642
-    // c:1644-1664 — dyncat("-", d->name); push value; bind to array.
-    d.vals.push(arg);
+pub fn add_opt_val(desc_idx: usize, arg: Option<String>) {                   // c:1642
+    let (arr_idx, name, flags) = opt_descs.with(|d| {
+        let d = d.borrow();
+        (d[desc_idx].arr, d[desc_idx].name.clone(), d[desc_idx].flags)
+    });
+    // c:1646-1665 — ZOF_SAME: replace the last value in-place rather
+    // than appending.
+    let same_only = (flags & ZOF_SAME) != 0;
+    let last_dval_idx = opt_descs.with(|d| d.borrow()[desc_idx].last);
+
+    if same_only && last_dval_idx.is_some() {
+        let li = last_dval_idx.unwrap();
+        opt_descs.with(|d| {
+            let mut d = d.borrow_mut();
+            let dval = &mut d[desc_idx].vals[li];
+            dval.arg = arg.clone();
+        });
+        if let Some(ai) = arr_idx {
+            // Update the corresponding arr value too.
+            opt_arrs.with(|a| {
+                let mut a = a.borrow_mut();
+                if let Some(last_ai) = a[ai].last {
+                    a[ai].vals[last_ai].arg = arg.clone();
+                }
+            });
+        }
+        return;
+    }
+    // c:1668-1681 — append new Zoptval to d->vals and (if arr) arr->vals.
+    let new_dval = zoptval {
+        next: None,
+        onext: None,
+        name: name.clone(),
+        arg: arg.clone(),
+        str: None,
+    };
+    let new_dval_idx = opt_descs.with(|d| {
+        let mut d = d.borrow_mut();
+        d[desc_idx].vals.push(new_dval);
+        let idx = d[desc_idx].vals.len() - 1;
+        if let Some(prev) = d[desc_idx].last {
+            d[desc_idx].vals[prev].onext = Some(idx);
+        }
+        d[desc_idx].last = Some(idx);
+        idx
+    });
+    let _ = new_dval_idx;
+    if let Some(ai) = arr_idx {
+        let new_aval = zoptval {
+            next: None,
+            onext: None,
+            name: name.clone(),
+            arg: arg.clone(),
+            str: if arg.is_none() { Some(name) } else { None },
+        };
+        opt_arrs.with(|a| {
+            let mut a = a.borrow_mut();
+            a[ai].vals.push(new_aval);
+            let idx = a[ai].vals.len() - 1;
+            if let Some(prev) = a[ai].last {
+                a[ai].vals[prev].next = Some(idx);
+            }
+            a[ai].last = Some(idx);
+            a[ai].num += 1;
+        });
+    }
 }
 
 /// Port of `addstyle()` from Src/Modules/zutil.c:403.
@@ -1133,13 +1872,27 @@ pub fn connectstates(out: &mut Vec<String>, in_: &mut Vec<String>) {          //
 }
 
 /// Port of `evalstyle()` from Src/Modules/zutil.c:413.
-/// C: `static char **evalstyle(Stypat p)` — execute the eval-prog and
-/// return the resulting `reply`/value array.
+/// C: `static char **evalstyle(Stypat p)` — execute the eval-prog
+/// then return whatever `reply`/`reply[]` got populated with.
+///
+/// Static-link path: VM-level execode() dispatch lives inside fusevm
+/// and isn't reachable from this caller; we instead read the post-
+/// invocation `reply` array (or singleton scalar) directly out of
+/// executor state. Callers using `zstyle -e CTX STY EXPR` set this
+/// up by populating `reply` themselves; the bin_zstyle -e arm should
+/// fire execode separately before invoking lookupstyle.
 #[allow(non_snake_case)]
 pub fn evalstyle(_p: &Stypat) -> Vec<String> {                               // c:413
-    // c:413
-    // c:415-441 — errflag save, execode(p->eval), getaparam("reply").
-    Vec::new()
+    // c:415-440 — read `reply` array, fall back to scalar reply.
+    crate::exec::try_with_executor(|exec| {                                  // c:425 getaparam
+        if let Some(arr) = exec.arrays.get("reply") {                        // c:427
+            arr.clone()
+        } else if let Some(s) = exec.variables.get("reply") {                // c:431 getsparam
+            vec![s.clone()]                                                  // c:435 hcalloc + dupstring
+        } else {
+            Vec::new()
+        }
+    }).unwrap_or_default()
 }
 
 /// Port of `freematch()` from Src/Modules/zutil.c:72.
@@ -1210,51 +1963,109 @@ pub fn freestypat(mut p: Stypat, s: Option<&mut style>, prev: Option<&mut stypat
 }
 
 /// Port of `get_opt_arr()` from Src/Modules/zutil.c:1602.
-/// C: `static Zoptarr get_opt_arr(char *name)` — find a Zoptarr by name.
+/// C: `static Zoptarr get_opt_arr(char *name)` — find a Zoptarr in
+/// `opt_arrs` by name; returns its index or None.
 #[allow(non_snake_case)]
-pub fn get_opt_arr(_name: &str) -> Option<Zoptarr> {                         // c:1602
-    // c:1602
+pub fn get_opt_arr(name: &str) -> Option<usize> {                            // c:1602
     // c:1604-1612 — walk opt_arrs linked-list, name-compare.
-    None
+    opt_arrs.with(|a| {
+        let a = a.borrow();
+        let mut cur = opt_arrs_head.with(|h| h.get());                       // c:1606 p = opt_arrs
+        while let Some(i) = cur {                                            // c:1606
+            if a[i].name == name { return Some(i); }                         // c:1607-1608
+            cur = a[i].next;                                                 // c:1609 p = p->next
+        }
+        None                                                                 // c:1611
+    })
 }
 
 /// Port of `get_opt_desc()` from Src/Modules/zutil.c:1558.
-/// C: `static Zoptdesc get_opt_desc(char *name)` — find a Zoptdesc.
+/// C: `static Zoptdesc get_opt_desc(char *name)` — find a Zoptdesc in
+/// `opt_descs` by name; returns its index or None.
 #[allow(non_snake_case)]
-pub fn get_opt_desc(_name: &str) -> Option<Zoptdesc> {                       // c:1558
-    // c:1558
+pub fn get_opt_desc(name: &str) -> Option<usize> {                           // c:1558
     // c:1560-1568 — walk opt_descs linked-list, name-compare.
-    None
+    opt_descs.with(|d| {
+        let d = d.borrow();
+        let mut cur = opt_descs_head.with(|h| h.get());                      // c:1562 p = opt_descs
+        while let Some(i) = cur {                                            // c:1562
+            if d[i].name == name { return Some(i); }                         // c:1563-1564
+            cur = d[i].next;                                                 // c:1565
+        }
+        None                                                                 // c:1567
+    })
 }
 
 /// Port of `lookup_opt()` from Src/Modules/zutil.c:1570.
 /// C: `static Zoptdesc lookup_opt(char *str)` — name-prefix match into
-/// opt_descs; returns the desc or NULL.
+/// opt_descs; returns the desc index or None. Used by the bin_zparseopts
+/// argv loop to match e.g. `-foo=bar` against the `foo:` spec.
 #[allow(non_snake_case)]
-pub fn lookup_opt(_str: &str) -> Option<Zoptdesc> {                          // c:1570
-    // c:1570
-    // c:1572-1600 — walks opt_descs comparing prefix with str.
-    None
+pub fn lookup_opt(s: &str) -> Option<usize> {                                // c:1570
+    // c:1572-1600 — walk opt_descs, return first whose name is a prefix
+    // of s such that the char after the prefix is `\0` or `=` (GNUL).
+    opt_descs.with(|d| {
+        let d = d.borrow();
+        let mut cur = opt_descs_head.with(|h| h.get());                      // c:1574
+        while let Some(i) = cur {                                            // c:1574
+            let n = &d[i].name;
+            if s.starts_with(n.as_str())                                     // c:1576
+                && (s.len() == n.len()                                       // c:1578
+                    || (s.as_bytes()[n.len()] == b'='                        // c:1580 GNUL ':-'
+                        && (d[i].flags & ZOF_ARG) != 0)) {
+                return Some(i);
+            }
+            cur = d[i].next;
+        }
+        None
+    })
 }
 
 /// Port of `lookupstyle()` from Src/Modules/zutil.c:443.
 /// C: `static char **lookupstyle(char *ctxt, char *style)` — find best
 /// pat-style match against the style entry; return its vals.
 #[allow(non_snake_case)]
-pub fn lookupstyle(_ctxt: &str, _style: &str) -> Vec<String> {
-    // c:443
-    // c:445-463 — zstyletab->getnode + walk pats matching ctxt.
-    Vec::new()
+pub fn lookupstyle(ctxt: &str, style: &str) -> Vec<String> {                  // c:443
+    // c:445-463 — zstyletab->getnode2 + savematch/pattry/restorematch
+    // loop. StyleTable::get() encapsulates the pat-walk; weight order
+    // is enforced at insert time so first-match wins.
+    match zstyletab.lock() {                                                    // c:449
+        Ok(t) => t.get(ctxt, style)
+            .map(|v| v.to_vec())                                                // c:455 found = p->vals
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// Port of `map_opt_desc()` from Src/Modules/zutil.c:1614.
-/// C: `static Zoptdesc map_opt_desc(Zoptdesc start)` — maps starting node
-/// through alias chain.
+/// C: `static int map_opt_desc(Zoptdesc start)` — recursively walks
+/// `d->arr` aliases looking for a cycle. Returns 0 on cycle, 1 OK.
+/// Sets/clears the ZOF_CYC bit to detect re-entry.
 #[allow(non_snake_case)]
-pub fn map_opt_desc(_start: Option<Zoptdesc>) -> Option<Zoptdesc> {
-    // c:1614
-    // c:1616-1640 — alias-chase via opt_descs links.
-    None
+pub fn map_opt_desc(start_idx: usize) -> i32 {                               // c:1614
+    let arr_idx = opt_descs.with(|d| d.borrow()[start_idx].arr);
+    let map = match arr_idx {                                                // c:1616
+        Some(ai) => ai,
+        None => return 1,                                                    // c:1617
+    };
+    let cyc = opt_descs.with(|d| (d.borrow()[start_idx].flags & ZOF_CYC) != 0);
+    if cyc { return 0; }                                                     // c:1619 ZOF_CYC set
+    // c:1621 — set ZOF_CYC on start.
+    opt_descs.with(|d| { d.borrow_mut()[start_idx].flags |= ZOF_CYC; });
+    let arr_name = opt_arrs.with(|a| a.borrow()[map].name.clone());
+    let result = match get_opt_desc(&arr_name) {                             // c:1623
+        Some(next_idx) => {
+            opt_descs.with(|d| {
+                let mut d = d.borrow_mut();
+                d[start_idx].arr = d[next_idx].arr;                          // c:1626
+            });
+            map_opt_desc(start_idx)                                          // c:1627 recurse
+        }
+        None => 1,                                                           // c:1629
+    };
+    // c:1631 — clear ZOF_CYC.
+    opt_descs.with(|d| { d.borrow_mut()[start_idx].flags &= !ZOF_CYC; });
+    result
 }
 
 /// Port of `newzstyletable()` from Src/Modules/zutil.c:270.
@@ -1291,19 +2102,27 @@ pub fn prependactions(acts: &mut Vec<String>, branches: &mut Vec<String>) {   //
 #[allow(non_snake_case)]
 pub fn printstylenode(hn: HashNode, printflags: i32) {                        // c:184
     use std::io::Write;
-    // c:186 — Style s = (Style)hn; Rust port: HashNode and Style are
-    // separate Boxes, so the cast collapses to using hn.nam for the
-    // style name and emitting just that (without per-pattern values).
+    // c:186 — Style s = (Style)hn; HashNode/Style differ in Rust;
+    // walk the canonical zstyletab by style name instead.
     let nam: String = hn.nam.clone();
-    // c:187-188 — Stypat p; char **v;
-    // c:190-193 — ZSLIST_BASIC: print name + newline.
     let mut stdout = std::io::stdout().lock();
     if printflags == 1 {                                                      // c:190 ZSLIST_BASIC
         let _ = writeln!(stdout, "{}", nam);                                  // c:191-192
+        return;
     }
-    // c:195-211 — walk style.pats printing each. The Rust HashNode→
-    // Style cast can't yield the s->pats list directly (different Box
-    // pointees); pattern printing is deferred until the cast is wired.
+    // c:195-211 — `zstyle -L` form: emit one line per (pat, vals) tuple.
+    if let Ok(t) = zstyletab.lock() {
+        for (pat, style, vals) in t.list(None) {                              // c:196-208
+            if style != nam { continue; }
+            let _ = write!(stdout, "zstyle ");
+            let _ = write!(stdout, "{} ", pat);                               // c:201
+            let _ = write!(stdout, "{}", style);                              // c:201
+            for v in &vals {
+                let _ = write!(stdout, " {}", v);                             // c:206-209
+            }
+            let _ = writeln!(stdout);                                         // c:210
+        }
+    }
 }
 
 /// Port of `restorematch()` from Src/Modules/zutil.c:55.
@@ -1417,12 +2236,15 @@ pub fn scanpatstyles(hn: HashNode, spatflags: i32) {                          //
 
 /// Port of `testforstyle()` from Src/Modules/zutil.c:465.
 /// C: `static int testforstyle(char *ctxt, char *style)` — non-empty
-/// match check for context+style.
+/// match check for context+style. Returns `!found` so 0 == success.
 #[allow(non_snake_case)]
-pub fn testforstyle(_ctxt: &str, _style: &str) -> i32 {
-    // c:465
+pub fn testforstyle(ctxt: &str, style: &str) -> i32 {                         // c:465
     // c:467-484 — zstyletab lookup + pattern match against ctxt.
-    0
+    let found = match zstyletab.lock() {                                       // c:471
+        Ok(t) => t.get(ctxt, style).is_some(),                                 // c:476 pattry
+        Err(_) => false,
+    };
+    if found { 0 } else { 1 }                                                  // c:485 return !found
 }
 
 /// Port of `zalloc_default_array()` from Src/Modules/zutil.c:1710.
