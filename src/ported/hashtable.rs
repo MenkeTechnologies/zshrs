@@ -155,63 +155,54 @@ pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering
     }
 }
 
-/// Command name entry
-#[derive(Debug, Clone)]
-/// One entry in the command-name (`$cmdtab`) table.
-///
-/// **NOT C-FAITHFUL — field semantics differ from canonical
-/// `crate::ported::zsh_h::cmdnam` (zsh.h:1301-1308).** The C
-/// struct's `name: char **` field stores the FULL $PATH array
-/// on every unhashed entry; this Rust port replaces that with
-/// `dir_index: Option<usize>` storing just an index into the
-/// PATH array maintained on `CmdNameTable` (memory-efficient
-/// but lossy translation). When the canonical `HashTable`
-/// substrate is wired, this struct should switch to the C
-/// shape (`node: hashnode`, `name: Option<Vec<String>>`,
-/// `cmd: Option<String>`) — or the dir_index optimization
-/// gets accepted as an intentional Rust-side divergence with
-/// the same observable semantics.
-pub struct CmdName {
-    pub name: String,
-    pub flags: u32,
-    pub path: Option<PathBuf>,
-    pub dir_index: Option<usize>,
+// `CmdName` struct + impl deleted — Rust-only duplicate of canonical
+// `crate::ported::zsh_h::cmdnam` (zsh.h:1301-1308). C struct:
+//
+//     struct cmdnam {
+//         struct hashnode node;
+//         union {
+//             char **name;   /* HASHED off: full $PATH array (u.name) */
+//             char  *cmd;    /* HASHED on:  resolved abs path (u.cmd) */
+//         } u;
+//     };
+//
+// The Rust-only version had a flat `name, flags, path: PathBuf,
+// dir_index` shape that lost the hashnode embedding and the
+// name/cmd union (the C source uses `flags & HASHED` to dispatch
+// which arm holds the value). Type alias surfaces the canonical
+// struct directly; the previous `path: PathBuf` becomes
+// `cmd: Option<String>` and `dir_index: Option<usize>` becomes
+// `name: Option<Vec<String>>` (the full PATH-segment slice the
+// command would be looked up against).
+pub use crate::ported::zsh_h::cmdnam as CmdName;                             // c:1301
+
+/// Build a hashed `cmdnam` carrying a resolved path. Mirrors C's
+/// inline `cn->u.cmd = ztrdup(path); cn->node.flags = HASHED;` at
+/// hashtable.c:704.
+pub fn cmdnam_hashed(name: &str, path: &str) -> CmdName {                    // c:704 idiom
+    CmdName {
+        node: crate::ported::zsh_h::hashnode {
+            next: None,
+            nam: name.to_string(),
+            flags: flags::HASHED as i32,
+        },
+        name: None,
+        cmd: Some(path.to_string()),
+    }
 }
 
-impl CmdName {
-    pub fn new(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
+/// Build an unhashed `cmdnam` whose lookup will scan
+/// `path_segments`. Mirrors C's `cn->u.name = pathchecked;
+/// cn->node.flags = 0;` at hashtable.c:712.
+pub fn cmdnam_unhashed(name: &str, path_segments: Vec<String>) -> CmdName {  // c:712 idiom
+    CmdName {
+        node: crate::ported::zsh_h::hashnode {
+            next: None,
+            nam: name.to_string(),
             flags: 0,
-            path: None,
-            dir_index: None,
-        }
-    }
-
-    pub fn with_path(name: &str, path: PathBuf) -> Self {
-        Self {
-            name: name.to_string(),
-            flags: flags::HASHED,
-            path: Some(path),
-            dir_index: None,
-        }
-    }
-
-    pub fn with_dir_index(name: &str, dir_index: usize) -> Self {
-        Self {
-            name: name.to_string(),
-            flags: 0,
-            path: None,
-            dir_index: Some(dir_index),
-        }
-    }
-
-    pub fn is_disabled(&self) -> bool {
-        self.flags & flags::DISABLED != 0
-    }
-
-    pub fn is_hashed(&self) -> bool {
-        self.flags & flags::HASHED != 0
+        },
+        name: Some(path_segments),
+        cmd: None,
     }
 }
 
@@ -258,11 +249,12 @@ impl CmdNameTable {
     }
 
     pub fn add(&mut self, cmd: CmdName) {
-        self.table.insert(cmd.name.clone(), cmd);
+        self.table.insert(cmd.node.nam.clone(), cmd);
     }
 
     pub fn get(&self, name: &str) -> Option<&CmdName> {
-        self.table.get(name).filter(|c| !c.is_disabled())
+        self.table.get(name)
+            .filter(|c| (c.node.flags & flags::DISABLED as i32) == 0)
     }
 
     pub fn get_including_disabled(&self, name: &str) -> Option<&CmdName> {
@@ -324,8 +316,18 @@ impl CmdNameTable {
             };
 
             if should_add {
-                self.table
-                    .insert(name.clone(), CmdName::with_dir_index(&name, dir_index));
+                // C `cn->u.name = pathchecked;` at hashtable.c:712 —
+                // the unhashed entry carries the PATH-array slice it
+                // would scan. Rust port: snapshot the single PATH
+                // segment at `dir_index` so lookup later resolves
+                // the path. Older Rust-only code stored just the
+                // index; canonical port stores the actual segment.
+                let segment = self.path.get(dir_index).cloned()
+                    .unwrap_or_else(|| dir.to_string());
+                self.table.insert(
+                    name.clone(),
+                    cmdnam_unhashed(&name, vec![segment]),
+                );
             }
         }
     }
@@ -344,25 +346,27 @@ impl CmdNameTable {
         self.table.iter()
     }
 
-    /// Get full path for a command
+    /// Get full path for a command. Mirrors C's
+    /// `findcmd(name, 1, 0)` lookup via cmdnamtab (Src/exec.c:5260).
     pub fn get_full_path(&self, name: &str) -> Option<PathBuf> {
         let cmd = self.table.get(name)?;
-        if cmd.is_disabled() {
+        if (cmd.node.flags & flags::DISABLED as i32) != 0 {
             return None;
         }
-
-        if let Some(ref path) = cmd.path {
-            return Some(path.clone());
+        // HASHED branch: cn->u.cmd holds the resolved path.
+        if (cmd.node.flags & flags::HASHED as i32) != 0 {
+            if let Some(ref s) = cmd.cmd {
+                return Some(PathBuf::from(s));
+            }
         }
-
-        if let Some(idx) = cmd.dir_index {
-            if idx < self.path.len() {
-                let mut path = PathBuf::from(&self.path[idx]);
+        // Unhashed branch: cn->u.name holds PATH segments to scan.
+        if let Some(ref segs) = cmd.name {
+            if let Some(seg) = segs.first() {
+                let mut path = PathBuf::from(seg);
                 path.push(name);
                 return Some(path);
             }
         }
-
         None
     }
 }
@@ -835,68 +839,47 @@ pub mod print_flags {
 /// Format a `$cmdtab` entry for `hash` listing.
 /// Port of `printcmdnamnode()` from Src/hashtable.c (the C
 /// source's per-command formatter `bin_hash()` invokes).
-pub fn printcmdnamnode(cmd: &CmdName, path: &[String], print_flags: u32) -> String {
-    let name = &cmd.name;
+pub fn printcmdnamnode(cmd: &CmdName, _path: &[String], print_flags: u32) -> String {
+    let name = &cmd.node.nam;
+    let is_hashed = (cmd.node.flags & flags::HASHED as i32) != 0;
+    // Resolved path either from cn->u.cmd (HASHED) or from first
+    // entry of cn->u.name (unhashed PATH-array slice).
+    let resolved = || -> Option<String> {
+        if is_hashed { cmd.cmd.clone() }
+        else { cmd.name.as_ref()
+                 .and_then(|v| v.first())
+                 .map(|seg| format!("{}/{}", seg, name)) }
+    };
 
     if print_flags & print_flags::WHENCE_WORD != 0 {
-        let kind = if cmd.is_hashed() { "hashed" } else { "command" };
+        let kind = if is_hashed { "hashed" } else { "command" };
         return format!("{}: {}\n", name, kind);
     }
-
     if print_flags & (print_flags::WHENCE_CSH | print_flags::WHENCE_SIMPLE) != 0 {
-        if cmd.is_hashed() {
-            if let Some(ref p) = cmd.path {
-                return format!("{}\n", p.display());
-            }
-        } else if let Some(idx) = cmd.dir_index {
-            if idx < path.len() {
-                return format!("{}/{}\n", path[idx], name);
-            }
+        if let Some(p) = resolved() {
+            return format!("{}\n", p);
         }
         return format!("{}\n", name);
     }
-
     if print_flags & print_flags::WHENCE_VERBOSE != 0 {
-        if cmd.is_hashed() {
-            if let Some(ref p) = cmd.path {
-                return format!("{} is hashed to {}\n", name, p.display());
+        if is_hashed {
+            if let Some(p) = resolved() {
+                return format!("{} is hashed to {}\n", name, p);
             }
-        } else if let Some(idx) = cmd.dir_index {
-            if idx < path.len() {
-                return format!("{} is {}/{}\n", name, path[idx], name);
-            }
+        } else if let Some(p) = resolved() {
+            return format!("{} is {}\n", name, p);
         }
         return format!("{} is {}\n", name, name);
     }
-
     if print_flags & print_flags::LIST != 0 {
-        let prefix = if name.starts_with('-') {
-            "hash -- "
-        } else {
-            "hash "
-        };
-
-        if cmd.is_hashed() {
-            if let Some(ref p) = cmd.path {
-                return format!("{}{}={}\n", prefix, name, p.display());
-            }
-        } else if let Some(idx) = cmd.dir_index {
-            if idx < path.len() {
-                return format!("{}{}={}/{}\n", prefix, name, path[idx], name);
-            }
+        let prefix = if name.starts_with('-') { "hash -- " } else { "hash " };
+        if let Some(p) = resolved() {
+            return format!("{}{}={}\n", prefix, name, p);
         }
     }
-
-    if cmd.is_hashed() {
-        if let Some(ref p) = cmd.path {
-            return format!("{}={}\n", name, p.display());
-        }
-    } else if let Some(idx) = cmd.dir_index {
-        if idx < path.len() {
-            return format!("{}={}/{}\n", name, path[idx], name);
-        }
+    if let Some(p) = resolved() {
+        return format!("{}={}\n", name, p);
     }
-
     format!("{}={}\n", name, name)
 }
 
@@ -1089,14 +1072,14 @@ mod tests {
     #[test]
     fn test_cmdnam_table() {
         let mut table = CmdNameTable::new();
-        table.add(CmdName::with_path("ls", PathBuf::from("/bin/ls")));
+        table.add(cmdnam_hashed("ls", "/bin/ls"));
 
         assert!(table.get("ls").is_some());
         assert!(table.get("nonexistent").is_none());
 
         let ls = table.get("ls").unwrap();
-        assert!(ls.is_hashed());
-        assert!(!ls.is_disabled());
+        assert!((ls.node.flags & flags::HASHED as i32) != 0);
+        assert!((ls.node.flags & flags::DISABLED as i32) == 0);
     }
 
     #[test]
@@ -1415,7 +1398,7 @@ mod tests {
         emptycmdnamtable();
         {
             let mut tab = cmdnamtab_lock().lock().unwrap();
-            tab.add(CmdName::new("ls"));
+            tab.add(cmdnam_unhashed("ls", vec!["/bin".to_string()]));
         }
         assert!(cmdnamtab_lock().lock().unwrap().get("ls").is_some());
         freecmdnamnode("ls");
@@ -1736,13 +1719,13 @@ impl HashNodeFlags for ShFunc {
 
 impl HashNodeFlags for CmdName {
     fn flags(&self) -> u32 {
-        self.flags
+        self.node.flags as u32
     }
     fn set_disabled(&mut self, disabled: bool) {
         if disabled {
-            self.flags |= flags::DISABLED;
+            self.node.flags |= flags::DISABLED as i32;
         } else {
-            self.flags &= !flags::DISABLED;
+            self.node.flags &= !(flags::DISABLED as i32);
         }
     }
 }

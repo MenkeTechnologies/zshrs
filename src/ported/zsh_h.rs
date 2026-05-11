@@ -597,6 +597,7 @@ pub struct asgment {
 /// `{ char **name; char *cmd; }` becomes two Option fields; only
 /// one is set per cmdnam (dispatched by `flags & HASHED`).
 #[allow(non_camel_case_types)]
+#[derive(Debug, Clone)]
 pub struct cmdnam {
     // c:1301
     pub node: hashnode,            // c:1302

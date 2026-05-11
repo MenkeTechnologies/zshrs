@@ -676,13 +676,15 @@ pub fn getpmcommand(_ht: *mut HashTable, name: &str) -> Option<Param> {      // 
     let g = crate::ported::hashtable::cmdnamtab_lock().lock().ok()?;
     let entry = g.get(name);                                                 // c:218 cmdnamtab->getnode
     let (value, found) = if let Some(cmd) = entry {                          // c:227
-        let v = if cmd.is_hashed() {                                         // c:229 HASHED
-            cmd.path.as_ref().and_then(|p| p.to_str())
-                .unwrap_or("").to_string()                                   // c:230
+        use crate::ported::hashtable::flags::HASHED;
+        let v = if (cmd.node.flags & HASHED as i32) != 0 {                  // c:229 HASHED
+            cmd.cmd.clone().unwrap_or_default()                              // c:230 cn->u.cmd
         } else {
-            let dir = std::env::var("PATH").ok()
-                .and_then(|p| p.split(':').next().map(|s| s.to_string()))
-                .unwrap_or_default();                                        // c:232 *(cmd->u.name)
+            let dir = cmd.name.as_ref()
+                .and_then(|v| v.first().cloned())                            // c:232 *(cmd->u.name)
+                .unwrap_or_else(|| std::env::var("PATH").ok()
+                    .and_then(|p| p.split(':').next().map(|s| s.to_string()))
+                    .unwrap_or_default());
             format!("{}/{}", dir, name)                                      // c:233-235 strcat
         };
         (v, true)
@@ -1269,16 +1271,18 @@ pub fn scanpmcommands(_ht: *mut HashTable, func: Option<ScanFunc>,           // 
     let cmds: Vec<(String, bool, String)> = {
         let g = crate::ported::hashtable::cmdnamtab_lock().lock().unwrap();
         g.iter().map(|(name, cmd)| {                                        // c:259-260
-            let hashed = cmd.is_hashed();
+            use crate::ported::hashtable::flags::HASHED;
+            let hashed = (cmd.node.flags & HASHED as i32) != 0;
             // c:266-274 — pm.u.str: HASHED → cmd->u.cmd (real path);
             // unhashed → first $PATH dir + "/" + name.
             let value = if hashed {
-                cmd.path.as_ref().and_then(|p| p.to_str())
-                    .unwrap_or("").to_string()                               // c:267
+                cmd.cmd.clone().unwrap_or_default()                          // c:267 cn->u.cmd
             } else {
-                let dir = std::env::var("PATH").ok()
-                    .and_then(|p| p.split(':').next().map(|s| s.to_string()))
-                    .unwrap_or_default();                                    // c:269 *(cmd->u.name)
+                let dir = cmd.name.as_ref()
+                    .and_then(|v| v.first().cloned())                        // c:269 *(cmd->u.name)
+                    .unwrap_or_else(|| std::env::var("PATH").ok()
+                        .and_then(|p| p.split(':').next().map(|s| s.to_string()))
+                        .unwrap_or_default());
                 format!("{}/{}", dir, name)                                  // c:271-273 strcat
             };
             (name.clone(), hashed, value)
@@ -1639,13 +1643,13 @@ pub fn setfunctions(_pm: Param, ht: *mut HashTable, dis: i32) {              // 
 /// alias in cmdnamtab for the named command.
 #[allow(non_snake_case)]
 pub fn setpmcommand(pm: Param, value: String) {                              // c:151
-    use crate::ported::hashtable::{CmdName, flags::HASHED};
-    let mut cn = CmdName::new(&pm.node.nam);                                 // c:153 zshcalloc
-    cn.flags = HASHED;                                                       // c:155
-    cn.path = Some(std::path::PathBuf::from(value));                         // c:156 cn->u.cmd = value
+    // c:153-158 — `cn = zshcalloc(...); cn->node.flags = HASHED;
+    //   cn->u.cmd = ztrdup(value); cmdnamtab->addnode(...)`. The
+    //   helper bundles the hashnode literal so the call-site stays
+    //   one line.
+    let cn = crate::ported::hashtable::cmdnam_hashed(&pm.node.nam, &value);  // c:155-156
     if let Ok(mut tab) = crate::ported::hashtable::cmdnamtab_lock().lock() {
-        // c:158 — cmdnamtab->addnode(cmdnamtab, ztrdup(pm->node.nam), &cn->node)
-        tab.add(cn);
+        tab.add(cn);                                                         // c:158 addnode
     }
 }
 
@@ -1653,7 +1657,6 @@ pub fn setpmcommand(pm: Param, value: String) {                              // 
 /// C: `static void setpmcommands(Param pm, HashTable ht)` — bulk install.
 #[allow(non_snake_case)]
 pub fn setpmcommands(_pm: Param, ht: *mut HashTable) {                       // c:173
-    use crate::ported::hashtable::{CmdName, flags::HASHED};
     // c:175-176 — locals at function top.
     let mut i: i32;                                                          // c:175 int i
     let mut hn: Option<crate::ported::zsh_h::HashNode>;                      // c:176 HashNode hn
@@ -1667,8 +1670,6 @@ pub fn setpmcommands(_pm: Param, ht: *mut HashTable) {                       // 
     while i < ht_ref.hsize {                                                 // c:181 i < ht->hsize; i++)
         hn = ht_ref.nodes.get(i as usize).and_then(|n| n.clone());           // c:182 hn = ht->nodes[i]
         while let Some(node) = hn.clone() {                                  // c:182 hn;
-            // c:183 — Cmdnam cn = zshcalloc(sizeof(*cn));
-            let mut cn = CmdName::new(&node.nam);
             // c:184-189 — struct value v (block-scoped per C).
             let mut v = crate::ported::zsh_h::value {
                 pm: None,                                                    // c:189 v.pm = (Param) hn (cast deferred)
@@ -1678,11 +1679,10 @@ pub fn setpmcommands(_pm: Param, ht: *mut HashTable) {                       // 
                 start: 0,                                                    // c:186
                 end: -1,                                                     // c:187
             };
-            // c:191 — cn->node.flags = HASHED;
-            cn.flags = HASHED;
-            // c:192 — cn->u.cmd = ztrdup(getstrvalue(&v));
-            cn.path = Some(std::path::PathBuf::from(
-                crate::ported::params::getstrvalue(Some(&mut v))));
+            // c:183/191/192 — `cn = zshcalloc(...); cn->node.flags
+            //   = HASHED; cn->u.cmd = ztrdup(getstrvalue(&v));`
+            let path = crate::ported::params::getstrvalue(Some(&mut v));
+            let cn = crate::ported::hashtable::cmdnam_hashed(&node.nam, &path);
             // c:194 — cmdnamtab->addnode(cmdnamtab, ztrdup(hn->nam), &cn->node);
             if let Ok(mut tab) = crate::ported::hashtable::cmdnamtab_lock().lock() {
                 tab.add(cn);

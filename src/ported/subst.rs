@@ -248,11 +248,22 @@ fn splice_magic_assoc(name: &str) -> Option<String> {
                     .collect()
             )),
         // c:Src/Modules/parameter.c:245 scanpmcommands — cmdnamtab.
+        // For each cmdnam: HASHED arm reads `cmd` (resolved path);
+        // unhashed reads first path segment in `name` (Vec<String>)
+        // joined with the command name.
         "commands" => crate::ported::hashtable::cmdnamtab_lock().lock().ok()
             .map(|t| join(
                 t.iter()
-                    .filter_map(|(_, c)| {
-                        c.path.as_ref().and_then(|p| p.to_str().map(|s| s.to_string()))
+                    .filter_map(|(nm, c)| {
+                        let hashed = (c.node.flags
+                            & crate::ported::hashtable::flags::HASHED as i32) != 0;
+                        if hashed {
+                            c.cmd.clone()
+                        } else {
+                            c.name.as_ref()
+                                .and_then(|v| v.first())
+                                .map(|seg| format!("{}/{}", seg, nm))
+                        }
                     })
                     .collect()
             )),
