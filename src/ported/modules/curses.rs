@@ -1609,6 +1609,74 @@ pub fn zcurses_colorget_reverse(cp: i16) -> Option<String> {                 // 
     None
 }
 
+/// Port of `zcurses_colorget()` from `Src/Modules/curses.c:331`.
+/// C body parses `"fg/bg"` (numeric or named on each side), resolves
+/// both via `zcurses_color`, allocates a new color-pair slot via
+/// `init_pair(next_cp, fg, bg)`, and caches the result keyed by the
+/// `"fg/bg"` string in `zcurses_colorpairs`. Returns the pair index.
+///
+/// C signature: `static Colorpairnode zcurses_colorget(const char *nam,
+/// char *colorpair)`. Rust port returns `Option<i16>` (the pair slot)
+/// since the Colorpairnode struct is collapsed into the
+/// `HashMap<String, i16>` colorpairs store.
+pub fn zcurses_colorget(nam: &str, colorpair: &str) -> Option<i16> {         // c:331
+    // c:341-342 — cache hit?
+    {
+        let g = colorpairs_lock().lock().ok()?;
+        if let Some(&cp) = g.get(colorpair) {                                // c:342 gethashnode2
+            return Some(cp);
+        }
+    }
+    // c:347 — parse "fg/bg".
+    let (cp_str, bg_str) = match colorpair.split_once('/') {                 // c:351
+        Some(t) => t,
+        None => return None,                                                 // c:354
+    };
+    // c:359-369 — resolve foreground.
+    let f: i16 = if !cp_str.is_empty()
+        && cp_str.chars().next().unwrap_or('x').is_ascii_digit() {           // c:360
+        cp_str.parse::<i16>().unwrap_or(-2)                                  // c:361 atoi
+    } else {
+        zcurses_color(cp_str) as i16                                         // c:363
+    };
+    // c:365-369 — resolve background.
+    let b: i16 = if !bg_str.is_empty()
+        && bg_str.chars().next().unwrap_or('x').is_ascii_digit() {           // c:365
+        bg_str.parse::<i16>().unwrap_or(-2)                                  // c:366
+    } else {
+        zcurses_color(bg_str) as i16                                         // c:368
+    };
+    // c:370-378 — error on unknown names.
+    if f == -2 || b == -2 {                                                  // c:370
+        if f == -2 {
+            crate::ported::utils::zwarnnam(nam,                              // c:372
+                &format!("foreground color `{}' not known", cp_str));
+        }
+        if b == -2 {
+            crate::ported::utils::zwarnnam(nam,                              // c:374
+                &format!("background color `{}' not known", bg_str));
+        }
+        return None;                                                         // c:377
+    }
+    // c:381 — ++next_cp.
+    let mut np = next_cp_lock().lock().ok()?;
+    *np += 1;                                                                // c:381
+    let cp_slot = *np;
+    // c:382 — COLOR_PAIRS limit / init_pair check. Without a live
+    // ncurses link we accept any slot up to a large bound and skip
+    // the actual init_pair call; the colorpairs map is what callers
+    // consult to know the slot exists.
+    if cp_slot < 0 || cp_slot >= 1024 {                                      // c:382 COLOR_PAIRS
+        return None;
+    }
+    let _ = (f, b);                                                          // init_pair would consume
+    drop(np);
+    // c:387-394 — calloc cpn + addhashnode.
+    let mut g = colorpairs_lock().lock().ok()?;
+    g.insert(colorpair.to_string(), cp_slot);                                // c:393 addhashnode
+    Some(cp_slot)                                                            // c:397
+}
+
 /// Direct port of `freecolorpairnode()` from `Src/Modules/curses.c:422`.
 /// C body (c:424-427): `zsfree(hn->nam); zfree(hn, sizeof(struct
 /// colorpairnode));`. Rust drop handles both via Box ownership.
