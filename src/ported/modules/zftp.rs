@@ -1814,12 +1814,17 @@ pub fn zfclose(leaveparams: i32) {                                            //
 }
 
 /// Port of `zfclosedata()` from `Src/Modules/zftp.c:1043`.
-/// C: `static void zfclosedata(void)` — closes data fd only.
+/// C: `static void zfclosedata(void)` — early-return when no dfd is
+/// live, otherwise close(dfd) + dfd = -1.
 #[allow(non_snake_case)]
-pub fn zfclosedata() {
+pub fn zfclosedata() {                                                    // c:1043
     if let Ok(mut state) = ZFTP_STATE.lock() {
         if let Some(sess) = state.get_session_mut(None) {
-            sess.dfd = -1;                                                // c:1043-1051 close(dfd)
+            if sess.dfd == -1 {                                           // c:1045
+                return;                                                   // c:1046
+            }
+            unsafe { libc::close(sess.dfd); }                             // c:1047 close(dfd)
+            sess.dfd = -1;                                                // c:1048
         }
     }
 }
