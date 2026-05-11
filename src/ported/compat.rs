@@ -182,22 +182,21 @@ pub fn zgetcwd() -> Option<String> {                                        // c
 
 /// Saved-directory state (name + inode + device).
 /// Port of `struct dirsav` from Src/zsh.h — populated by
-/// `zgetdir()` (Src/compat.c:355) so `cd OLDDIR` can detect
-/// when the named directory has been moved/replaced.
-#[derive(Default)]
-pub struct DirSav {
-    pub dirname: Option<String>,
-    #[cfg(unix)]
-    pub ino: u64,
-    #[cfg(unix)]
-    pub dev: u64,
-}
+// `struct dirsav` lives in `crate::ported::zsh_h::dirsav` per Rule C
+// (its C definition is `Src/zsh.h:1159`, not compat.c). The previous
+// Rust port had a partial Rust-only duplicate `pub struct DirSav`
+// missing `dirfd` + `level`. Deleted; callers go through the
+// canonical lowercase `dirsav` directly.
 
 /// Get the current directory with optional metadata capture.
 /// Port of `zgetdir()` from Src/compat.c:355 — when called with
 /// a `dirsav` slot, fills inode/device the C source uses to
 /// detect rename-replace cases.
-pub fn zgetdir(d: Option<&mut DirSav>) -> Option<String> {                  // c:355
+///
+/// C signature: `char *zgetdir(struct dirsav *d)`. Rust port keeps
+/// the out-arg shape but adds `Option<&mut>` so callers can pass
+/// `None` (matching the `NULL` legal value the C body checks for).
+pub fn zgetdir(d: Option<&mut crate::ported::zsh_h::dirsav>) -> Option<String> { // c:355
     let cwd = env::current_dir().ok()?;
     let cwd_str = cwd.to_str()?.to_string();
 

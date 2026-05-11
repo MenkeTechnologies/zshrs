@@ -3529,7 +3529,7 @@ pub fn dquotedztrdup(s: &str) -> String {
 /// Signature change: previous Rust port took `saved: &str` and
 /// returned `bool` — different shape from C, missed the dirfd /
 /// level / dev / ino fields entirely.
-pub fn restoredir(d: &mut DirSav) -> i32 {
+pub fn restoredir(d: &mut crate::ported::zsh_h::dirsav) -> i32 {
     use std::os::unix::fs::MetadataExt;
 
     // C: if (d->dirname && *d->dirname == '/') return chdir(d->dirname);
@@ -4551,27 +4551,28 @@ pub fn dquotedzputs(s: &str) -> String {
 /// `restoredir` integrity check (utils.c:7592) reads. Adding them
 /// so callers can verify the saved-and-restored cwd matches the
 /// captured device + inode.
-#[derive(Debug, Clone)]
-pub struct DirSav {
-    pub dirfd: i32,
-    pub level: i32,
-    pub dirname: Option<String>,
-    pub dev: u64,
-    pub ino: u64,
-}
+// `struct dirsav` lives in `crate::ported::zsh_h::dirsav` per Rule C
+// (its C definition is `Src/zsh.h:1159`, not utils.c). The previous
+// Rust port had a `pub struct DirSav` PascalCase duplicate of the
+// canonical lowercase struct; deleted in favour of routing through
+// `zsh_h::dirsav` directly.
 
 /// Port of `init_dirsav()` from `Src/utils.c:7468`. Initialize a
-/// `DirSav` struct to its empty/default state. C body memset's
-/// the fields to 0 (dirfd to -1).
-pub fn init_dirsav() -> DirSav {
-    DirSav {
-        dirfd: -1,
-        level: 0,
+/// `dirsav` struct to its empty/default state. C body memset's the
+/// fields to 0 (dirfd to -1).
+///
+/// C signature: `void init_dirsav(Dirsav d)` where
+/// `Dirsav = struct dirsav *`. Rust port returns the initialised
+/// struct since callers always pair-with a fresh allocation.
+pub fn init_dirsav() -> crate::ported::zsh_h::dirsav {                       // c:7468
+    crate::ported::zsh_h::dirsav {
+        dirfd: -1,                                                           // c:7469 d->dirfd = -1
+        level: 0,                                                            // c:7470 d->level = 0
         dirname: std::env::current_dir()
             .ok()
             .map(|p| p.to_string_lossy().to_string()),
-        dev: 0,
-        ino: 0,
+        dev: 0,                                                              // c:7472 d->dev = 0
+        ino: 0,                                                              // c:7471 d->ino = 0
     }
 }
 
