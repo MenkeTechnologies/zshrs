@@ -3450,9 +3450,11 @@ impl crate::ported::exec::ShellExecutor {
 // =====================================================================
 
 impl crate::ported::exec::ShellExecutor {
-    /// Expand prompt escape sequences using the full prompt module
+    /// Expand prompt escape sequences using the full prompt module.
+    /// `expand_prompt` itself now reads C globals (paramtab / LASTVAL /
+    /// curhist / JOBTAB / scriptname) so no per-executor sync is
+    /// needed — the executor's state already mirrors those globals.
     pub(crate) fn expand_prompt_string(&self, s: &str) -> String {
-        crate::ported::prompt::prompt_tls::sync_from_executor(self);
         expand_prompt(s)
     }
     /// Same as `expand_prompt_string` but strips the readline cursor-

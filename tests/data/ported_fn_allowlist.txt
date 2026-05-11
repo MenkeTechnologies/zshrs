@@ -366,6 +366,7 @@ locallevel_lock
 lineno_lock
 shinstdin_lock
 set_scriptname
+scriptname_get
 set_argzero
 set_noerrs
 set_locallevel

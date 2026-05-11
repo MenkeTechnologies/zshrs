@@ -2271,18 +2271,12 @@ fn errflag_get() -> bool {
 
 /// Direct port of `void runhookdef(Hookdef h, void *arg)` from
 /// `Src/init.c:990` — dispatches each registered shell function for
-/// the named hook. Reads from `ShellExecutor::hook_functions` via
-/// `try_with_executor` (canonical Rust home for the zsh hook
-/// registry) and falls back to the local `HOOK_FNS` mirror when
-/// invoked outside VM context (e.g. unit tests).
+/// the named hook by walking the global `hooktab` (module.c:843).
 fn runhookdef_compcore(hook: &str) {                                              // init.c:990
-    let fns: Vec<String> = crate::exec::try_with_executor(|exec| {
-        exec.hook_functions.get(hook).cloned().unwrap_or_default()
-    })
-    .unwrap_or_else(|| {
-        HOOK_FNS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-            .lock().ok().and_then(|g| g.get(hook).cloned()).unwrap_or_default()
-    });
+    let fns: Vec<String> = crate::ported::module::HOOKTAB.lock()
+        .ok()
+        .and_then(|g| g.get(hook).cloned())
+        .unwrap_or_default();
     for f in fns {
         let _ = shfunc_call(&f);
     }

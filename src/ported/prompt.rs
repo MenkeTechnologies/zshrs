@@ -2,7 +2,8 @@
 //! Unicode text run `unmetafy` (see [`buf_vars::expanded_utf8`]).
 //!
 //! [`prompt_tls`] holds values C reads as file-scope globals. Call
-//! [`prompt_tls::sync_from_executor`] before expansion when an executor is active.
+//! [`prompt_tls::sync_from_globals`] before expansion to refresh from
+//! the canonical C globals (paramtab, LASTVAL, curhist, JOBTAB, ...).
 
 use std::cell::RefCell;
 use std::env;
@@ -12,8 +13,6 @@ use std::env;
 pub(crate) mod prompt_tls {
     use std::cell::RefCell;
     use std::env;
-
-    use crate::ported::exec::ShellExecutor;
 
     thread_local! {
         pub(super) static PWD: RefCell<String> = const { RefCell::new(String::new()) };
@@ -40,27 +39,42 @@ pub(crate) mod prompt_tls {
             const { RefCell::new(None) };
     }
 
-    pub(crate) fn sync_from_executor(exec: &ShellExecutor) {
-        let pwd = env::var("PWD")
-            .ok()
+    /// Populate prompt-side thread-locals from the C globals each
+    /// `Src/prompt.c` field maps to. Replaces an earlier read of
+    /// `ShellExecutor` state with the canonical C source:
+    ///   - `$PWD`/`$HOME`/`$USER`/`$SHLVL`/`$LINENO` etc. → paramtab
+    ///     reads via `getsparam(name)` (params.c:3076)
+    ///   - `$?` → LASTVAL atomic (builtin.c:6443 lastval)
+    ///   - `curhist` → HISTNUM atomic (hist.c:233)
+    ///   - active job count → JOBTAB scan (jobs.c:88)
+    ///   - PSVAR → paramtab "psvar" array
+    ///   - term width → `adjustcolumns()` (utils.c)
+    ///   - scriptname → utils.rs::scriptname()
+    pub(crate) fn sync_from_globals() {
+        use crate::ported::params::getsparam;
+
+        let pwd = getsparam("PWD")
             .filter(|p| !p.is_empty())
+            .or_else(|| env::var("PWD").ok().filter(|p| !p.is_empty()))
             .or_else(|| {
                 env::current_dir()
                     .ok()
                     .map(|p| p.to_string_lossy().to_string())
             })
             .unwrap_or_else(|| "/".to_string());
-        let home = env::var("HOME").unwrap_or_default();
-        let user = env::var("USER")
-            .or_else(|_| env::var("LOGNAME"))
-            .unwrap_or_else(|_| "user".to_string());
-        let host = hostname::get()
-            .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "localhost".to_string());
+        let home = getsparam("HOME").unwrap_or_default();
+        let user = getsparam("USER")
+            .or_else(|| getsparam("LOGNAME"))
+            .or_else(|| env::var("USER").ok())
+            .or_else(|| env::var("LOGNAME").ok())
+            .unwrap_or_else(|| "user".to_string());
+        let host = getsparam("HOST")
+            .or_else(|| {
+                hostname::get().ok().map(|h| h.to_string_lossy().to_string())
+            })
+            .unwrap_or_else(|| "localhost".to_string());
         let host_short = host.split('.').next().unwrap_or(&host).to_string();
-        let shlvl = exec
-            .variables
-            .get("SHLVL")
+        let shlvl = getsparam("SHLVL")
             .and_then(|s| s.parse().ok())
             .or_else(|| env::var("SHLVL").ok().and_then(|s| s.parse().ok()))
             .unwrap_or(1);
@@ -70,47 +84,64 @@ pub(crate) mod prompt_tls {
         HOST.with(|c| *c.borrow_mut() = host);
         HOST_SHORT.with(|c| *c.borrow_mut() = host_short);
         TTY.with(|c| c.borrow_mut().clear());
-        LASTVAL.with(|c| *c.borrow_mut() = exec.last_status);
-        HISTNUM.with(|c| *c.borrow_mut() = exec.session_histnum);
+        // c:builtin.c:6443 lastval — the C global $?
+        LASTVAL.with(|c| {
+            *c.borrow_mut() = crate::ported::builtin::LASTVAL
+                .load(std::sync::atomic::Ordering::Relaxed);
+        });
+        // c:hist.c:233 curhist
+        HISTNUM.with(|c| {
+            *c.borrow_mut() =
+                crate::ported::hist::curhist.load(std::sync::atomic::Ordering::Relaxed);
+        });
         SHLVL.with(|c| *c.borrow_mut() = shlvl);
-        NUM_JOBS.with(|c| *c.borrow_mut() = exec.jobs.list().len() as i32);
+        // c:jobs.c:88 jobtab — count in-use job slots
+        NUM_JOBS.with(|c| {
+            *c.borrow_mut() = crate::ported::jobs::JOBTAB
+                .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+                .lock()
+                .map(|t| t.iter().filter(|j| j.is_inuse()).count() as i32)
+                .unwrap_or(0);
+        });
         IS_ROOT.with(|c| *c.borrow_mut() = unsafe { libc::geteuid() } == 0);
-        CMDSTACK.with(|c| *c.borrow_mut() = exec.cmd_stack.clone());
-        PSVAR.with(|c| *c.borrow_mut() = exec.get_psvar());
-        TERM_WIDTH.with(|c| *c.borrow_mut() = exec.get_term_width());
+        // c:prompt.c:56 cmdstack — the canonical store is the
+        // file-static CMDSTACK at the bottom of this file.
+        CMDSTACK.with(|c| {
+            *c.borrow_mut() = super::CMDSTACK.with(|stack| stack.borrow().clone());
+        });
+        // c:params.c PSVAR special — array read from paramtab.
+        PSVAR.with(|c| {
+            *c.borrow_mut() = crate::ported::params::paramtab()
+                .lock()
+                .ok()
+                .and_then(|t| t.get("psvar").and_then(|p| p.u_arr.clone()))
+                .unwrap_or_default();
+        });
+        // c:utils.c adjustcolumns — re-read TIOCGWINSZ.
+        TERM_WIDTH.with(|c| {
+            *c.borrow_mut() = crate::ported::utils::adjustcolumns();
+        });
         LINENO.with(|c| {
-            *c.borrow_mut() = exec
-                .variables
-                .get("LINENO")
+            *c.borrow_mut() = getsparam("LINENO")
                 .and_then(|s| s.parse::<i64>().ok())
                 .unwrap_or(1);
         });
-        SCRIPTNAME.with(|c| {
-            *c.borrow_mut() = exec
-                .scriptname
-                .clone()
-                .or_else(|| exec.variables.get("0").cloned());
-        });
-        FUNC_LINE_BASE.with(|c| *c.borrow_mut() = exec.prompt_funcstack.last().map(|(_, b, _)| *b));
+        // c:utils.c:36 scriptname
+        let scriptname = crate::ported::utils::scriptname_get();
+        SCRIPTNAME.with(|c| *c.borrow_mut() = scriptname.clone()
+            .or_else(|| getsparam("0")));
+        SCRIPTFILENAME.with(|c| *c.borrow_mut() = scriptname.clone()
+            .or_else(|| getsparam("0")));
+        FUNC_LINE_BASE.with(|c| *c.borrow_mut() = None);
         FUNCSTACK_FILENAME.with(|c| {
-            *c.borrow_mut() = exec
-                .prompt_funcstack
-                .last()
-                .and_then(|(_, _, f)| f.clone());
-        });
-        SCRIPTFILENAME.with(|c| {
-            *c.borrow_mut() = exec
-                .scriptfilename
-                .clone()
-                .or_else(|| exec.scriptname.clone())
-                .or_else(|| exec.variables.get("0").cloned());
+            *c.borrow_mut() = crate::ported::modules::parameter::FUNCSTACK
+                .lock().ok()
+                .and_then(|s| s.last().and_then(|fs| fs.filename.clone()));
         });
         ARGEXTRA.with(|c| {
-            *c.borrow_mut() = exec
-                .variables
-                .get("ZSH_ARGZERO")
-                .cloned()
-                .unwrap_or_else(|| env::args().next().unwrap_or_else(|| "zsh".to_string()));
+            *c.borrow_mut() = getsparam("ZSH_ARGZERO")
+                .or_else(|| env::args().next())
+                .unwrap_or_else(|| "zsh".to_string());
         });
     }
 }
@@ -1387,9 +1418,7 @@ color_from_name(&name) // c:336
 
 /// Expand a prompt string
 pub fn expand_prompt(s: &str) -> String {
-    let _ = crate::ported::exec::try_with_executor(|exec| {
-        prompt_tls::sync_from_executor(exec);
-    });
+    prompt_tls::sync_from_globals();
     buf_vars::new(s).expand() // c:Src/prompt.c:214 (new_vars init)
 }
 
