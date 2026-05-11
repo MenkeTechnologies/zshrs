@@ -24,7 +24,7 @@ use std::collections::HashMap;
 
 // `ListColors` / `ListLayout` and their Rust-only methods deleted.
 // The C source uses `struct listcols` (legit port at line 645 as
-// `Listcols`, c:253) plus file-scope `int columns, lines` globals
+// `listcols`, c:253) plus file-scope `int columns, lines` globals
 // for the layout — no separate layout struct. Real `getcols()`,
 // `filecol()`, `calclist()` ports live below using those types.
 //
@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn filecol_allocates_with_defaults() {
-        // c:487-498 — fresh Filecol: prog=NULL, col=arg, next=NULL.
+        // c:487-498 — fresh filecol: prog=NULL, col=arg, next=NULL.
         let fc = filecol("0;32");
         assert_eq!(fc.col, "0;32");
         assert!(fc.prog.is_none());
@@ -382,7 +382,7 @@ pub static DEFCOLS: &[Option<&str>] = &[                                     // 
     Some("0"), Some("7"), None, None, Some("0"),
 ];
 
-/// Port of `struct filecol` / `typedef struct filecol *Filecol` from
+/// Port of `struct filecol` / `typedef struct filecol *filecol` from
 /// `Src/Zle/complist.c:213-219`. One terminal-color spec for a file
 /// type; chained via `next` so multiple per-group rules can apply.
 ///
@@ -390,20 +390,22 @@ pub static DEFCOLS: &[Option<&str>] = &[                                     // 
 /// Patprog doesn't impl Debug/Clone in the Rust port, so this struct
 /// can't auto-derive them; impl manually if needed by callers.
 #[derive(Default)]
-pub struct Filecol {                                                         // c:215
+#[allow(non_camel_case_types)]
+pub struct filecol {                                                         // c:215
     /// Group pattern (NULL → applies to all groups).
     pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:216
     /// Color string (ANSI escape-code body).
     pub col: String,                                                         // c:217
     /// Next entry chained for the same color slot.
-    pub next: Option<Box<Filecol>>,                                          // c:218
+    pub next: Option<Box<filecol>>,                                          // c:218
 }
 
 /// Port of `struct patcol` from `Src/Zle/complist.c:225`. Per-pattern
 /// terminal-color spec — links a glob `pat` to up to MAX_POS+1 color
 /// strings (one per submatch position).
 #[derive(Default)]
-pub struct Patcol {                                                          // c:225
+#[allow(non_camel_case_types)]
+pub struct patcol {                                                          // c:225
     /// Group pattern (NULL → all groups).
     pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:226
     /// Pattern for match.
@@ -411,13 +413,14 @@ pub struct Patcol {                                                          // 
     /// Color strings indexed by submatch position (MAX_POS + 1 slots).
     pub cols: Vec<String>,                                                   // c:228
     /// Next entry in the patcol chain.
-    pub next: Option<Box<Patcol>>,                                           // c:229
+    pub next: Option<Box<patcol>>,                                           // c:229
 }
 
 /// Port of `struct extcol` from `Src/Zle/complist.c:236`. Per-extension
 /// terminal-color spec.
 #[derive(Default)]
-pub struct Extcol {                                                          // c:236
+#[allow(non_camel_case_types)]
+pub struct extcol {                                                          // c:236
     /// Group pattern (NULL → all groups).
     pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:237
     /// File extension (e.g. ".tar").
@@ -425,7 +428,7 @@ pub struct Extcol {                                                          // 
     /// Terminal color string.
     pub col: String,                                                         // c:239
     /// Next entry in the extcol chain.
-    pub next: Option<Box<Extcol>>,                                           // c:240
+    pub next: Option<Box<extcol>>,                                           // c:240
 }
 
 /// Port of `LC_FOLLOW_SYMLINKS` from `Src/Zle/complist.c:251`.
@@ -435,13 +438,14 @@ pub const LC_FOLLOW_SYMLINKS: i32 = 0x0001;                                  // 
 /// Port of `struct listcols` from `Src/Zle/complist.c:253`. Holds
 /// every terminal-color string a completion-listing run might emit.
 #[derive(Default)]
-pub struct Listcols {                                                        // c:253
+#[allow(non_camel_case_types)]
+pub struct listcols {                                                        // c:253
     /// Strings for file types (indexed by `col::*` constants).
-    pub files: Vec<Filecol>,                                                 // c:254 [NUM_COLS]
+    pub files: Vec<filecol>,                                                 // c:254 [NUM_COLS]
     /// Strings for patterns.
-    pub pats: Option<Box<Patcol>>,                                           // c:255
+    pub pats: Option<Box<patcol>>,                                           // c:255
     /// Strings for extensions.
-    pub exts: Option<Box<Extcol>>,                                           // c:256
+    pub exts: Option<Box<extcol>>,                                           // c:256
     /// Special settings, see `LC_FOLLOW_SYMLINKS` above.
     pub flags: i32,                                                          // c:257
 }
@@ -451,7 +455,8 @@ pub struct Listcols {                                                        // 
 /// on entry and pops on exit so nested menu invocations restore
 /// previous state.
 #[derive(Default)]
-pub struct Menustack {                                                       // c:2159
+#[allow(non_camel_case_types)]
+pub struct menustack {                                                       // c:2159
     /// Saved zleline contents.
     pub line: String,                                                        // c:2161
     /// Brace-info head + tail.
@@ -482,7 +487,8 @@ pub struct Menustack {                                                       // 
 /// state for incremental match-search inside the menu — back-stack so
 /// backspace can undo one step.
 #[derive(Default)]
-pub struct Menusearch {                                                      // c:2186
+#[allow(non_camel_case_types)]
+pub struct menusearch {                                                      // c:2186
     /// The search string accumulator.
     pub str: String,                                                         // c:2188
     /// Saved line + column.
@@ -604,21 +610,21 @@ pub static MAX_CAPLEN:  std::sync::atomic::AtomicI32 = std::sync::atomic::Atomic
 
 /// Port of `filecol()` from `Src/Zle/complist.c:487-498`.
 /// ```c
-/// static Filecol
+/// static filecol
 /// filecol(char *col)
 /// {
-///     Filecol fc;
-///     fc = (Filecol) zhalloc(sizeof(*fc));
+///     filecol fc;
+///     fc = (filecol) zhalloc(sizeof(*fc));
 ///     fc->prog = NULL;
 ///     fc->col = col;
 ///     fc->next = NULL;
 ///     return fc;
 /// }
 /// ```
-/// Allocate a fresh Filecol with no group pattern and the given
+/// Allocate a fresh filecol with no group pattern and the given
 /// color string. Caller is expected to chain it via `mcolors.files[i]`.
-pub fn filecol(col: &str) -> Filecol {                                       // c:487
-    Filecol {                                                                // c:492 zhalloc
+pub fn filecol(col: &str) -> filecol {                                       // c:487
+    filecol {                                                                // c:492 zhalloc
         prog: None,                                                          // c:493 fc->prog = NULL
         col:  col.to_string(),                                               // c:494 fc->col = col
         next: None,                                                          // c:495 fc->next = NULL

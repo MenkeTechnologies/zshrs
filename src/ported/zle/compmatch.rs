@@ -1275,7 +1275,8 @@ pub fn bld_parts(
 /// Port of `struct cmdata` from `Src/Zle/compmatch.c:2142-2147`.
 /// Working state for `check_cmdata` / `undo_cmdata` / `sub_match`.
 #[derive(Default, Clone, Debug)]
-pub struct Cmdata {                                                          // c:2142
+#[allow(non_camel_case_types)]
+pub struct cmdata {                                                          // c:2142
     pub cl:   Option<Box<crate::ported::zle::comp_h::Cline>>,                // c:2143
     pub pcl:  Option<Box<crate::ported::zle::comp_h::Cline>>,                // c:2143
     pub str_: String,                                                        // c:2144
@@ -1286,11 +1287,11 @@ pub struct Cmdata {                                                          // 
     pub line: i32,                                                           // c:2145
 }
 
-/// Direct port of `static int check_cmdata(Cmdata md, int sfx)` from
+/// Direct port of `static int check_cmdata(cmdata md, int sfx)` from
 /// `Src/Zle/compmatch.c:2152-2186`. Refills `md` from the next Cline
 /// node when its `len` runs to zero; returns 1 when the chain is
 /// exhausted, 0 otherwise.
-pub fn check_cmdata(md: &mut Cmdata, sfx: i32) -> i32 {                      // c:2152
+pub fn check_cmdata(md: &mut cmdata, sfx: i32) -> i32 {                      // c:2152
     use crate::ported::zle::comp_h::CLF_LINE;
 
     if md.len != 0 { return 0; }                                             // c:2155
@@ -1661,13 +1662,13 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str)               // 
     if !out.is_empty() { Some(out) } else { None }                           // c:2100-2104
 }
 
-/// Direct port of `static Cline join_sub(Cmdata md, char *str, int len,
+/// Direct port of `static Cline join_sub(cmdata md, char *str, int len,
 ///                                       int *mlen, int sfx, int join)`
 /// from `Src/Zle/compmatch.c:2212-2299`. Tries to match the new
 /// substring `str[..len]` against the data currently in `md` via
 /// one of the no-anchor matchers in `bmatchers`; on success
 /// returns the matched-portion Cline and updates `md`/`*mlen`.
-pub fn join_sub(md: &mut Cmdata, str_: &str, len: i32, mlen: &mut i32,       // c:2212
+pub fn join_sub(md: &mut cmdata, str_: &str, len: i32, mlen: &mut i32,       // c:2212
                 sfx: i32, join: i32) -> Option<Box<crate::ported::zle::comp_h::Cline>>
 {
     use crate::ported::zle::comp_h::CLF_JOIN;
@@ -2066,7 +2067,7 @@ pub fn sub_join(a: &mut crate::ported::zle::comp_h::Cline,                   // 
     max_total - min_total                                                    // c:2702
 }
 
-/// Direct port of `static int sub_match(Cmdata md, char *str, int len,
+/// Direct port of `static int sub_match(cmdata md, char *str, int len,
 ///                                       int sfx)` from
 /// `Src/Zle/compmatch.c:2301-2442`. Accumulates the longest common
 /// prefix (or suffix when `sfx` set) between the substring
@@ -2074,7 +2075,7 @@ pub fn sub_join(a: &mut crate::ported::zle::comp_h::Cline,                   // 
 /// as it consumes characters.
 ///
 /// Returns the count of matched bytes — the C source's "ret" value.
-pub fn sub_match(md: &mut Cmdata, str_: &str, len: i32, sfx: i32) -> i32 {   // c:2301
+pub fn sub_match(md: &mut cmdata, str_: &str, len: i32, sfx: i32) -> i32 {   // c:2301
     let mut ret = 0i32;
     let str_bytes = str_.as_bytes();
     let mut remaining = len as usize;
@@ -2152,11 +2153,11 @@ pub fn sub_match(md: &mut Cmdata, str_: &str, len: i32, sfx: i32) -> i32 {   // 
 }
 
 /// Port of `undo_cmdata()` from Src/Zle/compmatch.c:2188.
-/// Direct port of `static Cline undo_cmdata(Cmdata md, int sfx)` from
+/// Direct port of `static Cline undo_cmdata(cmdata md, int sfx)` from
 /// `Src/Zle/compmatch.c:2187-2207`. Puts the not-yet-matched portion
 /// of `md` back into the previous cline node so it can be revisited
 /// on a different match path.
-pub fn undo_cmdata(md: &Cmdata, sfx: i32) -> Option<Box<crate::ported::zle::comp_h::Cline>> { // c:2187
+pub fn undo_cmdata(md: &cmdata, sfx: i32) -> Option<Box<crate::ported::zle::comp_h::Cline>> { // c:2187
     use crate::ported::zle::comp_h::CLF_LINE;
     let mut r = md.pcl.as_deref().cloned()?;                                 // c:2189 r = md->pcl
 
