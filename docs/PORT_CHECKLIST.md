@@ -438,7 +438,20 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - C: 0 structs/enums • Rust: 0 structs/enums ✓ (only `LinkList` type alias).
   - Paramtab bridges (`vars_get`/`vars_insert`/`arrays_get`/`arrays_insert`/`assoc_get`/`exec_assignaparam`/`exec_sethparam`/`exec_getsparam`) hit `crate::ported::params::paramtab()` and `paramtab_hashed_storage()` directly. Previous incarnation routed through `fusevm_bridge::try_with_executor` (silently no-op outside live VM frame).
   - `sub_flags` migrated to thread_local `SUB_FLAGS: Cell<i32>` (mirrors C `static int sub_flags` at Src/subst.c:2169). subst.rs (3 sites) and fusevm_bridge.rs (3 sites) read/write through `sub_flags_get`/`sub_flags_set`.
-  - **Remaining `try_with_executor` calls (~20):** reach for executor-only state — `exec.aliases` (magic `$aliases`), `exec.functions` (`$functions`), `exec.dir_stack` (~/-N expansion), `exec.var_attrs`, `exec.expand_glob`, `exec.expand_prompt_string`, magic variables. All blocked on porting the corresponding subsystems (alias.rs / hashtable.rs / dir-stack module / prompt.rs) to canonical paramtab-style globals. Cannot be removed in subst.rs scope.
+  - **Magic-var canonical routing (10 sites converted):**
+    - `$aliases` → `hashtable::aliastab_lock()` (mirrors `mod_export HashTable aliastab` at hashtable.c:1186)
+    - `$functions` / `$dis_functions` → `hashtable::shfunctab_lock()` (c:808)
+    - `$commands` → `hashtable::cmdnamtab_lock()` (c:594)
+    - `~user` tilde expansion (3 sites) → `hashnameddir::nameddirtab()` (hashnameddir.c:48)
+    - `~±N` dir-stack expansion → `modules::parameter::DIRSTACK` (mirrors `mod_export LinkList dirstack` at builtin.c:743)
+    - `$(cmd)` PATH lookup → `builtin::findcmd` (builtin.c:5260)
+    - `${(%)...}` prompt expansion → `prompt::promptexpand` (prompt.c:182)
+    - `${(t)var}` typeset info → reads `Param.flags` directly from `paramtab` (mirrors subst.c:2814 `pm->node.flags & PM_TYPE` dispatch)
+    - POSIX shell-specials (`$?`/`$#`/`$$`/`$!`/`$*`/`$@`/`$-`/`$0`..`$N`) → `params::lookup_special_var` (consolidated with existing GSU dispatch). Also fixed a duplicate `pparams_lock` bug in params.rs that caused `$#` (via `poundgetfn`) to always return 0; pparams_lock now points at `builtin::PPARAMS`, the canonical store.
+  - **Remaining 6 `try_with_executor` sites — genuinely executor-coupled:**
+    - 2 × `run_command_substitution` (fork/exec subshell — fundamentally executor work)
+    - 3 × `get_special_array_value` (821-line dispatch in exec_shims.rs over 20+ magic-assoc names; needs per-array port via `modules/parameter.rs` GSU getfn callbacks)
+    - 1 × `expand_glob` (canonical `glob::zglob` is a stub; the real glob driver lives in exec_shims.rs)
   - Tests: 25/25 subst pass. Net full-suite: 1293/1297 (4 pre-existing test-isolation failures unrelated).
 - [ ] `text.rs` ↔ `text.c`
 - [ ] `utils.rs` ↔ `utils.c`
