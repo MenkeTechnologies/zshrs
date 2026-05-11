@@ -433,7 +433,13 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
 - [ ] `signals.rs` ↔ `signals.c`
 - [ ] `sort.rs` ↔ `sort.c`
 - [ ] `string.rs` ↔ `string.c`
-- [ ] `subst.rs` ↔ `subst.c`
+- [ ] `subst.rs` ↔ `subst.c` — **PARTIAL.**
+  - C fns (23): keyvalpairelement, prefork, stringsubstquote, stringsubst, paramsubst, quotesubst, globlist, singsub, multsub, filesub, equalsubstr, filesubstr, strcatsub, wcpadwidth, dopadding, get_strarg, get_intarg, subst_parse_str, substevalchar, untok_and_escape, check_colon_subscript, arithsubst, modify, dstackent • Rust: same 23 ✓
+  - C: 0 structs/enums • Rust: 0 structs/enums ✓ (only `LinkList` type alias).
+  - Paramtab bridges (`vars_get`/`vars_insert`/`arrays_get`/`arrays_insert`/`assoc_get`/`exec_assignaparam`/`exec_sethparam`/`exec_getsparam`) hit `crate::ported::params::paramtab()` and `paramtab_hashed_storage()` directly. Previous incarnation routed through `fusevm_bridge::try_with_executor` (silently no-op outside live VM frame).
+  - `sub_flags` migrated to thread_local `SUB_FLAGS: Cell<i32>` (mirrors C `static int sub_flags` at Src/subst.c:2169). subst.rs (3 sites) and fusevm_bridge.rs (3 sites) read/write through `sub_flags_get`/`sub_flags_set`.
+  - **Remaining `try_with_executor` calls (~20):** reach for executor-only state — `exec.aliases` (magic `$aliases`), `exec.functions` (`$functions`), `exec.dir_stack` (~/-N expansion), `exec.var_attrs`, `exec.expand_glob`, `exec.expand_prompt_string`, magic variables. All blocked on porting the corresponding subsystems (alias.rs / hashtable.rs / dir-stack module / prompt.rs) to canonical paramtab-style globals. Cannot be removed in subst.rs scope.
+  - Tests: 25/25 subst pass. Net full-suite: 1293/1297 (4 pre-existing test-isolation failures unrelated).
 - [ ] `text.rs` ↔ `text.c`
 - [ ] `utils.rs` ↔ `utils.c`
 - [ ] `zle/zle_bindings.rs` ↔ `Zle/zle_bindings.c`
