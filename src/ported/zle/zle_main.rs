@@ -215,10 +215,8 @@ pub struct Zle {
     // Number of characters waiting to be read by the ungetbytes mechanism   // c:185
     /// Unget buffer for bytes
     pub unget_buf: VecDeque<u8>,
-    // `eofchar` / `eofsent` moved to file-scope EOFCHAR / EOFSENT
-    // atomics below (matches int eofchar / int eofsent in zle_main.c).
-    /// Key timeout in 100ths of a second
-    pub keytimeout: u64,
+    // `eofchar` / `eofsent` / `keytimeout` moved to file-scope
+    // EOFCHAR / EOFSENT / KEYTIMEOUT atomics below.
     /// Watch file descriptors
     pub watch_fds: Vec<super::zle_h::watch_fd>,
     /// Completion widget
@@ -379,7 +377,6 @@ impl Zle {
             undo_stack: Vec::new(),
             changeno: 0,
             unget_buf: VecDeque::new(),
-            keytimeout: 40, // 0.4 seconds default
             watch_fds: Vec::new(),
             compwidget: None,
             incompctlfunc: false,
@@ -475,12 +472,9 @@ impl Zle {
     /// timedfns list. Truncated to the keymap timeout subset until
     /// timedfns wiring lands.
     fn calc_timeout(&self, do_keytmout: bool) -> ztmout {                    // c:454
-        if do_keytmout && self.keytimeout > 0 {
-            let exp = if self.keytimeout > ZMAXTIMEOUT * 100 {
-                ZMAXTIMEOUT * 100
-            } else {
-                self.keytimeout
-            };
+        let kt = KEYTIMEOUT.load(std::sync::atomic::Ordering::SeqCst);
+        if do_keytmout && kt > 0 {
+            let exp = if kt > ZMAXTIMEOUT * 100 { ZMAXTIMEOUT * 100 } else { kt };
             ztmout {
                 tp: ztmouttp::ZTM_KEY,
                 exp100ths: exp as i64,
@@ -2036,6 +2030,12 @@ pub static ZLECONTEXT: std::sync::atomic::AtomicI32 =
 /// loop exit.
 pub static ZLE_RECURSIVE: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `time_t keytimeout` from `Src/Zle/zle_main.c`. Multi-byte
+/// key-sequence timeout in 100ths of a second. 0 = no timeout. The
+/// default 40 (0.4s) matches zsh's `$KEYTIMEOUT` startup default.
+pub static KEYTIMEOUT: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(40);
 
 /// Port of `zleaftertrap()` from `Src/Zle/zle_main.c:2113`.
 /// ```c
