@@ -377,30 +377,31 @@ pub fn addx(zle: &mut crate::ported::zle::zle_main::Zle, ptmp: &mut String) -> i
 }
 
 /// Port of `checkparams()` from Src/Zle/zle_tricky.c:435.
-pub fn checkparams(p: &str, vars: &std::collections::HashMap<String, String>,
-                   arrays: &std::collections::HashMap<String, Vec<String>>) -> i32 { // c:435
+pub fn checkparams(p: &str) -> i32 {                                         // c:435
     use std::sync::atomic::Ordering;
-    // C body c:437-449 — walk paramtab, find param names that have
-    //                    `pfxlen(p, nam) == l`, count how many up to 2,
-    //                    track exact-match. Then:
-    //                    if n == 1 return (getsparam(p) != NULL)
-    //                    else      return !menucmp && exact && (!hascompmod || isset(RECEXACT))
+    // C body c:437-449 — walks `paramtab` directly via `scanhashtable`
+    // to find names with `pfxlen(p, nam) == l`, count up to 2, track
+    // exact-match. Then:
+    //   if n == 1 return (getsparam(p) != NULL)
+    //   else      return !menucmp && exact && (!hascompmod || isset(RECEXACT))
     let l = p.len();
     let mut n = 0;
     let mut exact = false;
-    for name in vars.keys().chain(arrays.keys()) {
-        if name.starts_with(p) && name.len() >= l {
-            n += 1;
-            if name.len() == l {
-                exact = true;
-            }
-            if n >= 2 {
-                break;
+    if let Ok(tab) = crate::ported::params::paramtab().lock() {              // c:437
+        for name in tab.keys() {
+            if name.starts_with(p) && name.len() >= l {
+                n += 1;
+                if name.len() == l {
+                    exact = true;
+                }
+                if n >= 2 {
+                    break;
+                }
             }
         }
     }
     if n == 1 {
-        return if crate::ported::params::getsparam(vars, arrays, p).is_some() { 1 } else { 0 };
+        return if crate::ported::params::getsparam(p).is_some() { 1 } else { 0 };
     }
     let menucmp = MENUCMP.load(Ordering::SeqCst) != 0;
     let recexact = crate::ported::options::opt_state_get("recexact").unwrap_or(false);

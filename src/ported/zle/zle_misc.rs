@@ -1116,11 +1116,8 @@ pub fn executenamedcommand(prompt: &str) -> Option<String> {                 // 
     let _ = prompt;
     // c:1304 — `bindztrdup(name)` resolves the typed widget. Rust
     // path reads $REPLY (set by widgets like `read-command`).
-    crate::exec::try_with_executor(|exec| {
-        crate::ported::params::getsparam(&exec.variables, &exec.arrays, "REPLY")
-    })
-    .flatten()
-    .filter(|s| !s.is_empty())
+    crate::ported::params::getsparam("REPLY")                                // c:1304
+        .filter(|s| !s.is_empty())
 }
 
 // Fix the suffix in place, if there is one, making it non-removable.      // c:1820

@@ -1101,6 +1101,13 @@ pub const ZR_START_ELLIPSIS_SIZE: usize = ZR_START_ELLIPSIS.len();           // 
 // them between widget invocations without locking.
 // =====================================================================
 
+/// Port of `char *tcout_func_name;` from `Src/Zle/zle_refresh.c:246`.
+/// Holds the name of the user `zle -T tc <fn>` redisplay-transform
+/// function; cleared by `zle -T -r`. The refresh path invokes it
+/// via `getshfunc(tcout_func_name)` (zle_refresh.c:2303).
+pub static TCOUT_FUNC_NAME: std::sync::Mutex<Option<String>> =               // c:246
+    std::sync::Mutex::new(None);
+
 /// Port of `static int cleareol` from `Src/Zle/zle_refresh.c:827`.
 /// Clear-to-end-of-line flag — set when the terminal lacks `cleareod`
 /// and we have to fall back to per-line clear.

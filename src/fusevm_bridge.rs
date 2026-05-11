@@ -8740,10 +8740,8 @@ impl fusevm::ShellHost for ZshrsHost {
         // of this fetch — matching C's split between getsparam
         // (value fetch) and paramsubst's modifier-walk loop. This
         // bridge is the value-fetch step only.
-        let val_str = with_executor(|exec| {
-            crate::ported::params::getsparam(&exec.variables, &exec.arrays, name)
-                .unwrap_or_default()
-        });
+        let val_str = crate::ported::params::getsparam(name)
+            .unwrap_or_default();
         fusevm::Value::str(val_str)
     }
 
