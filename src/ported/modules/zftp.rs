@@ -1231,6 +1231,8 @@ pub fn bin_zftp(_nam: &str, args: &[String],                                 // 
         }
 
         "test" => {
+            // c:158 zftpcmdtab entry — inline check (zftp_test re-acquires
+            // the lock; doing it here avoids cross-fn deadlock).
             let sess = zftp.get_session(None);
             if sess.map(|s| s.connected).unwrap_or(false) {
                 (0, String::new())
@@ -2768,9 +2770,16 @@ pub fn zftp_params(_name: &str, args: &[&str], _flags: i32) -> i32 {
 }
 
 /// Port of `zftp_test()` from `Src/Modules/zftp.c:2251`.
-pub fn zftp_test(_name: &str, _args: &[&str], _flags: i32) -> i32 {
-    let rc = bin_zftp("zftp", &["test".to_string()], &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+/// C: `static int zftp_test(char *name, char **args, int flags)` —
+/// returns 0 when the current session has a live control connection,
+/// 1 otherwise (zftpcmdtab flags = ZFTP_TEST).
+pub fn zftp_test(_name: &str, _args: &[&str], _flags: i32) -> i32 {            // c:2251
+    let state = match ZFTP_STATE.lock() {
+        Ok(s) => s,
+        Err(_) => return 1,
+    };
+    let sess = state.get_session(None);
+    if sess.map(|s| s.connected).unwrap_or(false) { 0 } else { 1 }
 }
 
 /// Port of `zftp_dir()` from `Src/Modules/zftp.c:2305`.
