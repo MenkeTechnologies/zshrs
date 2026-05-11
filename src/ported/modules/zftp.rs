@@ -2863,9 +2863,12 @@ pub fn zftp_quote(_name: &str, args: &[&str], _flags: i32) -> i32 {
 }
 
 /// Port of `zftp_close()` from `Src/Modules/zftp.c:2782`.
-pub fn zftp_close(_name: &str, _args: &[&str], _flags: i32) -> i32 {
-    let rc = bin_zftp("zftp", &["close".to_string()], &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+/// C: `static int zftp_close(UNUSED(char *name), UNUSED(char **args),
+/// UNUSED(int flags))` — closes the current session's control
+/// connection. Body is a single zfclose(0) call.
+pub fn zftp_close(_name: &str, _args: &[&str], _flags: i32) -> i32 {           // c:2782
+    zfclose(0);                                                                // c:2784
+    0                                                                          // c:2785
 }
 
 /// Port of `zftp_session()` from `Src/Modules/zftp.c:2889`.
