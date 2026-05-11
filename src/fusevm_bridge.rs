@@ -7586,6 +7586,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 "functions" => return exec.function_names().len(),
                 "options" => return exec.options.len(),
                 "sysparams" => return 3, // pid, ppid, procsubstpid
+                // Magic-assoc lengths backed by canonical scanners.
+                // Direct ports of parameter.c SPECIALPMDEF entries —
+                // each scan callback emits one entry per node, so the
+                // count is the length of the scan_magic_assoc_keys
+                // collected list.
+                "builtins" | "dis_builtins"
+                | "dis_functions" | "dis_aliases"
+                | "dis_galiases" | "dis_saliases" => {
+                    return crate::exec::scan_magic_assoc_keys(&name)
+                        .map(|v| v.len())
+                        .unwrap_or(0);
+                }
                 _ => {}
             }
             if let Some(arr) = exec.arrays.get(&name) {
