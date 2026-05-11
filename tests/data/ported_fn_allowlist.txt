@@ -759,6 +759,13 @@ exec_sethparam
 exec_sync_state_from_paramtab
 exec_getsparam
 
+# subst.rs SUB_FLAGS thread_local accessors. C stores `sub_flags`
+# as a static int in subst.c (Src/subst.c:2169); Rust uses a
+# thread_local Cell<i32> to keep callers re-entrant. The get/set
+# pair is the singleton-accessor pattern, no C counterpart.
+sub_flags_get
+sub_flags_set
+
 # Pre-existing zsh.h macro-shaped helpers (Src/zsh.h is a header,
 # not in zsh_c_fn_names.txt which only lists fns from .c files).
 IS_WRITE_FILE

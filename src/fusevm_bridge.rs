@@ -5945,11 +5945,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // non-matching (vs default which drops matches). Direct port
         // of subst.c's SUB_MATCH bit which getmatch consults to
         // pick the "matched" disposition over the "rest" default.
-        let invert = with_executor(|exec| {
-            let inv = (exec.sub_flags & 0x0008) != 0;       // c:2171 SUB_MATCH
-            exec.sub_flags = 0;                              // c:2169 (consume)
+        let invert = {
+            let sf = crate::ported::subst::sub_flags_get();  // c:2171
+            let inv = (sf & 0x0008) != 0;                    // c:2171 SUB_MATCH
+            crate::ported::subst::sub_flags_set(0);          // c:2169 (consume)
             inv
-        });
+        };
         if let Some(arr) = arr_val {
             let kept: Vec<fusevm::Value> = arr
                 .into_iter()
@@ -7011,12 +7012,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // result). S = search anywhere instead of anchored to start
         // (#/##) or end (%/%%). Direct port of subst.c:2171/2186
         // SUB_MATCH / SUB_SUBSTR bits + getmatch dispatch.
-        let (sub_match, sub_substr) = with_executor(|exec| {
-            let m = (exec.sub_flags & 0x0008) != 0;
-            let s = (exec.sub_flags & 0x0004) != 0;
-            exec.sub_flags = 0;
+        let (sub_match, sub_substr) = {
+            let sf = crate::ported::subst::sub_flags_get();
+            let m = (sf & 0x0008) != 0;
+            let s = (sf & 0x0004) != 0;
+            crate::ported::subst::sub_flags_set(0);
             (m, s)
-        });
+        };
         // Pattern may contain `$var` / `$(cmd)` / `$((expr))` — zsh
         // expands these before applying the strip. Was emitted as-is.
         let pattern = with_executor(|exec| exec.singsub(&pattern_raw));
@@ -7614,19 +7616,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         //   S=0x04 — substring search (anywhere) instead of anchored
         // Read once and consume so subsequent paramsubst calls see
         // a clean slate — direct port of subst.c flag-loop pattern.
-        let (sub_match, sub_rest, sub_bind, sub_eind, sub_len, _sub_substr) =
-            with_executor(|exec| {
-                let f = exec.sub_flags;
-                exec.sub_flags = 0;
-                (
-                    (f & 0x0008) != 0,                       // c:2171 M
-                    (f & 0x0010) != 0,                       // c:2174 R
-                    (f & 0x0020) != 0,                       // c:2177 B
-                    (f & 0x0040) != 0,                       // c:2180 E
-                    (f & 0x0080) != 0,                       // c:2183 N
-                    (f & 0x0004) != 0,                       // c:2186 S
-                )
-            });
+        let (sub_match, sub_rest, sub_bind, sub_eind, sub_len, _sub_substr) = {
+            let f = crate::ported::subst::sub_flags_get();
+            crate::ported::subst::sub_flags_set(0);
+            (
+                (f & 0x0008) != 0,                       // c:2171 M
+                (f & 0x0010) != 0,                       // c:2174 R
+                (f & 0x0020) != 0,                       // c:2177 B
+                (f & 0x0040) != 0,                       // c:2180 E
+                (f & 0x0080) != 0,                       // c:2183 N
+                (f & 0x0004) != 0,                       // c:2186 S
+            )
+        };
         // Both pattern and replacement get parameter / cmd-subst /
         // arith expansion before use (zsh semantics — `${s/$pat/X}`
         // resolves $pat).

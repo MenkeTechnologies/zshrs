@@ -337,6 +337,34 @@ thread_local! {
     pub static SKIP_FILESUB: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+// =====================================================================
+// !!! RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
+// =====================================================================
+// `SUB_FLAGS` is the per-paramsubst `sub_flags` bitmask
+// (`Src/subst.c:2169`) — SUB_MATCH / SUB_REST / SUB_BIND / SUB_EIND
+// / SUB_LEN / SUB_SUBSTR / SUB_EGLOB bits set by the (M)/(B)/(E)/
+// (S)/(I) flag-parsing arm and consumed by the match / replace
+// operators downstream. C stores it in a static int; Rust uses
+// thread_local to keep callers re-entrant. Previously routed
+// through `try_with_executor` (fake — silently no-ops outside a
+// live VM frame).
+// =====================================================================
+thread_local! {
+    pub static SUB_FLAGS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+}
+
+/// Read the current paramsubst flag bitmask. Equivalent to C's
+/// `sub_flags` read at `Src/subst.c:2171`.
+pub fn sub_flags_get() -> i32 {
+    SUB_FLAGS.with(|c| c.get())
+}
+
+/// Write the paramsubst flag bitmask. Equivalent to C's
+/// `sub_flags = X` at `Src/subst.c:2169`.
+pub fn sub_flags_set(v: i32) {
+    SUB_FLAGS.with(|c| c.set(v));
+}
+
 /// Check for array assignment with entries like [key]=val
 /// Port of keyvalpairelement() from subst.c lines 47-77
 /// Port of `keyvalpairelement()` from `Src/subst.c:49-79`.
@@ -1987,7 +2015,7 @@ pub fn paramsubst(
             }
             break;
         }
-        let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.sub_flags = sub_flags_bits); // c:2169
+        sub_flags_set(sub_flags_bits); // c:2169
         let post_flags_start = idx;
         // ${...$(...)...} / ${...${var}...} / ${...$((...))...} —
         // subexp arm. Port of subst.c:2637-2729. When the body has a
@@ -2713,9 +2741,9 @@ pub fn paramsubst(
                 // non-matching). Direct port of subst.c:3540
                 // SUB_FILTER + getmatch SUB_MATCH branch.
                 let p = singsub(pat); // c:3540
-                let cur_sub_flags = crate::fusevm_bridge::try_with_executor(|exec| exec.sub_flags).unwrap_or(0); // c:2171
+                let cur_sub_flags = sub_flags_get(); // c:2171
                 let invert = (cur_sub_flags & 0x0008) != 0; // c:2171 SUB_MATCH
-                let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.sub_flags = 0); // c:2169 (consume)
+                sub_flags_set(0); // c:2169 (consume)
                                      // Direct port of subst.c:3422 `if (!vunset && isarr)` —
                                      // the array iteration only fires when `isarr` is set.
                                      // After getindex computes a single-slot subscript, isarr
