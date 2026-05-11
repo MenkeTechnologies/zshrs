@@ -1423,10 +1423,9 @@ pub fn assignaparam(
     flags: i32,
 ) -> Option<crate::ported::zsh_h::Param> {                                   // c:3357
     use crate::ported::zsh_h::{
-        PM_ARRAY, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_NAMEREF,
-        PM_SPECIAL,
+        ASSPM_AUGMENT, PM_ARRAY, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER,
+        PM_NAMEREF, PM_SPECIAL, PM_UNIQUE, PM_UNSET,
     };
-    let _ = flags;
 
     // c:3366-3370 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
@@ -1435,20 +1434,50 @@ pub fn assignaparam(
     }
 
     // c:3391-3394 — fetchvalue / createparam(PM_ARRAY) if missing.
-    let exists = paramtab().lock().unwrap().contains_key(name);
-    if !exists {
+    let (existed, prior_scalar, prior_flags) = {
+        let tab = paramtab().lock().unwrap();
+        match tab.get(name) {
+            Some(pm) => (true, pm.u_str.clone(), pm.node.flags),
+            None => (false, None, 0),
+        }
+    };
+    if !existed {
         createparam(name, PM_ARRAY as i32)?;
+    }
+
+    // c:3402-3412 — ASSPM_AUGMENT preserve-old prepend. When the
+    // previous value was a scalar (not array/hashed) and we're
+    // augmenting (`a+=val`), prepend that scalar's string form as
+    // val[0]. Only fires when the existing param is not PM_UNSET.
+    let was_scalar_array_target = existed
+        && prior_flags & (PM_ARRAY | PM_HASHED) as i32 == 0
+        && prior_flags & PM_SPECIAL as i32 == 0;
+    let mut val = val;
+    if (flags & ASSPM_AUGMENT) != 0
+        && was_scalar_array_target
+        && prior_flags & PM_UNSET as i32 == 0
+    {
+        if let Some(old_scalar) = prior_scalar {
+            val.insert(0, old_scalar);                                       // c:3408-3411
+        }
     }
 
     // c:3434 — setarrvalue(v, val): store array in pm.u_arr.
     let mut tab = paramtab().lock().unwrap();
     let pm = tab.get_mut(name)?;
+    let uniq = pm.node.flags & PM_UNIQUE as i32 != 0;                        // c:3401
     if pm.node.flags & PM_SPECIAL as i32 == 0 {
         let type_mask =
             PM_ARRAY | PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_HASHED | PM_NAMEREF;
         pm.node.flags = (pm.node.flags & !type_mask as i32) | PM_ARRAY as i32;
     }
-    pm.u_arr = Some(val);
+    // c:3401 — preserve PM_UNIQUE through the type change, then let
+    // arrsetfn dedupe via the actual write.
+    if uniq {
+        pm.node.flags |= PM_UNIQUE as i32;
+    }
+    let val_final = if uniq { simple_arrayuniq(val) } else { val };
+    pm.u_arr = Some(val_final);
     pm.u_str = None;
     pm.u_hash = None;
     let cloned = pm.clone();
@@ -2085,9 +2114,10 @@ pub fn setarrvalue(v: &mut crate::ported::zsh_h::value, val: Vec<String>) {  // 
             // c:2920 — arrhashsetfn(pm, val, 0).
             arrhashsetfn(pm, val, 0);
         } else {
-            // c:2922 — gsu.a->setfn(pm, val). Without a fully-wired
-            // GSU table, write directly into u_arr.
-            pm.u_arr = Some(val);
+            // c:2922 — `pm->gsu.a->setfn(pm, val)`. Route through
+            // arrsetfn so PM_UNIQUE dedupe + arrfixenv side-effects
+            // fire (params.c:4066-4076).
+            arrsetfn(pm, val);
         }
         return;
     }
@@ -2103,16 +2133,29 @@ pub fn setarrvalue(v: &mut crate::ported::zsh_h::value, val: Vec<String>) {  // 
         return;
     }
 
+    // c:2938-2942 — VALFLAG_INV + !KSHARRAYS off-by-one. Inverse
+    // subscripts (`a[(i)pat]=val`) are 1-based when KSHARRAYS is
+    // off; shift start/end down by 1 to match the 0-based slice
+    // arithmetic below.
+    if v.valflags & VALFLAG_INV != 0
+        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+    {
+        if v.start > 0 {
+            v.start -= 1;
+        }
+        v.end -= 1;
+    }
+
     // c:2933+ — PM_ARRAY slice path.
     let arr = pm.u_arr.get_or_insert_with(Vec::new);
     let len = arr.len() as i64;
-    // c:2950-2954 — negative start: add pre_assignment_length; clamp to 0.
+    // c:2944-2949 — negative start: add pre_assignment_length; clamp to 0.
     let start = if v.start < 0 {
-        (len + v.start as i64 + 1).max(0)
+        (len + v.start as i64).max(0)
     } else {
         v.start as i64
     };
-    // c:2955-2959 — negative end: add pre_assignment_length + 1; clamp to 0.
+    // c:2950-2953 — negative end: add pre_assignment_length + 1; clamp to 0.
     let end = if v.end < 0 {
         (len + v.end as i64 + 1).max(0)
     } else {
