@@ -214,6 +214,17 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
 /// builtintab` exposed at `Src/builtin.c:146`.
 static builtintab: OnceLock<HashMap<String, &'static builtin>> = OnceLock::new();
 
+/// Names whose `node.flags & DISABLED` is set in C. The Rust port's
+/// `builtintab` is an immutable static, so the disabled bit lives
+/// in this parallel set; `bin_enable` toggles it via builtin.c:587.
+/// Dispatch sites check `is_builtin_disabled(name)` before calling
+/// `handlerfunc` to mirror C's "skip nodes with DISABLED set" walk.
+pub static BUILTINS_DISABLED: std::sync::LazyLock<                           // c:587 (Src/builtin.c)
+    std::sync::Mutex<std::collections::HashSet<String>>
+> = std::sync::LazyLock::new(|| {
+    std::sync::Mutex::new(std::collections::HashSet::new())
+});
+
 /// Construct the builtin lookup table.
 /// Port of `createbuiltintable()` from `Src/builtin.c:149`. The C
 /// version installs the hashtable function pointers (hash, addnode,
@@ -1497,7 +1508,7 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
     };
     // c:3346-3347 — `int returnval = 0; int on = 0, off = 0, pflags = 0,
     //                roff, expand = 0;`
-    let returnval: i32 = 0;                                                  // c:3346
+    let mut returnval: i32 = 0;                                              // c:3346
     let mut on:  u32 = 0;                                                    // c:3347
     let mut off: u32 = 0;                                                    // c:3347
     let _pflags: i32 = 0;                                                    // c:3347
@@ -1684,13 +1695,161 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
         if argv.is_empty() {                                                 // c:3478
             // c:3479-3484 — list user math fns.
             crate::ported::mem::queue_signals();                             // c:3480
-            // walk MATHFUNCS chain — when src/ported/math.rs exposes the
-            // typed table; for now, no-op listing (no fns defined).
+            if let Ok(table) = crate::ported::module::MATHFUNCS.lock() {     // c:3481
+                for p in table.iter() {                                      // c:3481
+                    if (p.flags & crate::ported::zsh_h::MFF_USERFUNC) != 0 { // c:3482
+                        listusermathfunc(p);                                 // c:3483
+                    }
+                }
+            }
             crate::ported::mem::unqueue_signals();                           // c:3484
             return returnval;
+        } else if OPT_ISSET(ops, b'm') {                                     // c:3485
+            // c:3486-3515 — list/delete matching math fns by pattern.
+            for arg in argv.iter() {
+                crate::ported::mem::queue_signals();                         // c:3488
+                // c:3489 — `tokenize(*argv)`; Rust patcompile handles it.
+                if let Some(pprog) = crate::ported::pattern::patcompile(
+                    arg, crate::ported::zsh_h::PAT_STATIC, None,
+                ) {                                                           // c:3490
+                    if OPT_PLUS(ops, b'M') {                                 // c:3497
+                        // Delete matching user fns.
+                        if let Ok(mut table) =
+                            crate::ported::module::MATHFUNCS.lock()
+                        {
+                            table.retain(|p| {
+                                !((p.flags & crate::ported::zsh_h::MFF_USERFUNC) != 0
+                                  && crate::ported::pattern::pattry(&pprog, &p.name))
+                            });
+                        }
+                    } else {
+                        // c:3502 — listusermathfunc for matches.
+                        if let Ok(table) = crate::ported::module::MATHFUNCS.lock() {
+                            for p in table.iter() {
+                                if (p.flags & crate::ported::zsh_h::MFF_USERFUNC) != 0
+                                    && crate::ported::pattern::pattry(&pprog, &p.name)
+                                {
+                                    listusermathfunc(p);
+                                }
+                            }
+                        }
+                    }
+                } else {                                                     // c:3509
+                    // c:3510-3512 — bad pattern.
+                    crate::ported::utils::zwarnnam(name,                     // c:3511
+                        &format!("bad pattern : {}", arg));
+                    returnval = 1;                                           // c:3512
+                }
+                crate::ported::mem::unqueue_signals();                       // c:3514
+            }
+            return returnval;
+        } else if OPT_PLUS(ops, b'M') {                                      // c:3516
+            // c:3517-3533 — `+M name…` delete by exact name.
+            for arg in argv.iter() {
+                crate::ported::mem::queue_signals();                         // c:3519
+                if let Ok(mut table) = crate::ported::module::MATHFUNCS.lock() {
+                    let idx = table.iter().position(|p| p.name == *arg);     // c:3520-3521
+                    if let Some(i) = idx {
+                        if (table[i].flags & crate::ported::zsh_h::MFF_USERFUNC) == 0 {
+                            // c:3522-3527 — library function, refuse.
+                            crate::ported::utils::zwarnnam(name,             // c:3523
+                                &format!("+M {}: is a library function", arg));
+                            returnval = 1;                                   // c:3525
+                        } else {
+                            table.remove(i);                                 // c:3528
+                        }
+                    }
+                }
+                crate::ported::mem::unqueue_signals();                       // c:3532
+            }
+            return returnval;
+        } else {
+            // c:3535-3611 — `-M name [min [max [mod]]]` add a user math fn.
+            let mut argv_iter = argv.iter();
+            let funcname = argv_iter.next().unwrap();                        // c:3537
+            let mut minargs: i32;
+            let mut maxargs: i32;
+            if OPT_ISSET(ops, b's') {                                        // c:3541
+                minargs = 1;                                                 // c:3542
+                maxargs = 1;                                                 // c:3542
+            } else {
+                minargs = 0;                                                 // c:3544
+                maxargs = -1;                                                // c:3545
+            }
+            // c:3548-3552 — bad math function name check.
+            let bytes = funcname.as_bytes();
+            let first_bad = bytes.is_empty()
+                || (bytes[0] as char).is_ascii_digit()
+                || !bytes.iter().all(|&c| c.is_ascii_alphanumeric() || c == b'_');
+            if first_bad {                                                   // c:3549
+                crate::ported::utils::zwarnnam(name,                         // c:3550
+                    &format!("-M {}: bad math function name", funcname));
+                return 1;                                                    // c:3551
+            }
+            if let Some(arg) = argv_iter.next() {                            // c:3554
+                match arg.parse::<i32>() {                                   // c:3555 zstrtol
+                    Ok(n) if n >= 0 => minargs = n,                          // c:3556
+                    _ => {
+                        crate::ported::utils::zwarnnam(name,                 // c:3557
+                            &format!("-M: invalid min number of arguments: {}", arg));
+                        return 1;                                            // c:3559
+                    }
+                }
+                if OPT_ISSET(ops, b's') && minargs != 1 {                    // c:3561
+                    crate::ported::utils::zwarnnam(name,                     // c:3562
+                        "-Ms: must take a single string argument");
+                    return 1;                                                // c:3563
+                }
+                maxargs = minargs;                                           // c:3565
+            }
+            if let Some(arg) = argv_iter.next() {                            // c:3568
+                match arg.parse::<i32>() {                                   // c:3569
+                    Ok(n) if n >= -1 && (n == -1 || n >= minargs) => maxargs = n,
+                    _ => {
+                        crate::ported::utils::zwarnnam(name,                 // c:3573
+                            &format!("-M: invalid max number of arguments: {}", arg));
+                        return 1;                                            // c:3576
+                    }
+                }
+                if OPT_ISSET(ops, b's') && maxargs != 1 {                    // c:3578
+                    crate::ported::utils::zwarnnam(name,                     // c:3579
+                        "-Ms: must take a single string argument");
+                    return 1;                                                // c:3580
+                }
+            }
+            let modname = argv_iter.next().cloned();                         // c:3584-3585
+            if argv_iter.next().is_some() {                                  // c:3586
+                crate::ported::utils::zwarnnam(name, "-M: too many arguments"); // c:3587
+                return 1;                                                    // c:3588
+            }
+            // c:3591-3598 — alloc and populate mathfunc.
+            let mut flags = crate::ported::zsh_h::MFF_USERFUNC;              // c:3593
+            if OPT_ISSET(ops, b's') {                                        // c:3594
+                flags |= crate::ported::zsh_h::MFF_STR;                      // c:3595
+            }
+            let new_fn = crate::ported::zsh_h::mathfunc {
+                next: None,                                                  // c:3608 chain via Vec
+                name: funcname.clone(),                                      // c:3592
+                flags,                                                       // c:3593
+                nfunc: None,
+                sfunc: None,
+                module: modname,                                             // c:3596
+                minargs,                                                     // c:3597
+                maxargs,                                                     // c:3598
+                funcid: 0,
+            };
+            crate::ported::mem::queue_signals();                             // c:3600
+            if let Ok(mut table) = crate::ported::module::MATHFUNCS.lock() {
+                // c:3601-3606 — remove existing user entry with same name.
+                if let Some(i) = table.iter().position(|p| p.name == new_fn.name) {
+                    table.remove(i);                                         // c:3603
+                }
+                // c:3608-3609 — prepend to mathfuncs head.
+                table.insert(0, new_fn);
+            }
+            crate::ported::mem::unqueue_signals();                           // c:3610
+            return returnval;
         }
-        // c:3485+ — pattern/glob match + add/remove paths deferred.
-        return returnval;
     }
 
     // c:3616-3655 — `-X` re-autoload from inside a function.
@@ -3582,9 +3741,27 @@ pub fn bin_break(name: &str, argv: &[String],                                // 
                 RETFLAG.store(1, Ordering::Relaxed);                         // c:5842
                 BREAKS.store(loops, Ordering::Relaxed);                      // c:5843
                 LASTVAL.store(num, Ordering::Relaxed);                       // c:5844
-                // c:5845-5854 — POSIX-trap return-status handling, deferred.
-                let _ = implicit;
-                return num;                                                  // c:5856
+                // c:5845-5854 — inside a primed trap with the sentinel
+                // `trap_return == -2`, promote to TRAP_STATE_FORCE_RETURN
+                // and carry `lastval`. POSIXTRAPS + `implicit` opts out:
+                // POSIX semantics keep $? from before the trap fired.
+                let posixtraps =
+                    crate::ported::options::optlookup("posixtraps") > 0;
+                let cur_state =
+                    crate::exec::TRAP_STATE.load(Ordering::Relaxed);
+                let cur_return =
+                    crate::exec::TRAP_RETURN.load(Ordering::Relaxed);
+                if cur_state == crate::ported::zsh_h::TRAP_STATE_PRIMED      // c:5845
+                    && cur_return == -2                                      // c:5845
+                    && !(posixtraps && implicit)                             // c:5851
+                {
+                    crate::exec::TRAP_STATE.store(                           // c:5852
+                        crate::ported::zsh_h::TRAP_STATE_FORCE_RETURN,
+                        Ordering::Relaxed,
+                    );
+                    crate::exec::TRAP_RETURN.store(num, Ordering::Relaxed);  // c:5853
+                }
+                return num;                                                  // c:5855
             }
             // c:5858 — fallthrough: treat as logout/exit.
             zexit(num, ZEXIT_NORMAL);                                        // c:5858
@@ -3951,8 +4128,46 @@ pub fn bin_enable(name: &str, argv: &[String],                               // 
             Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().lock()
                 .map(|mut t| if on { t.enable(nm) } else { t.disable(nm) })
                 .unwrap_or(false),
-            // Builtin/Shfunc/Reswd toggles deferred to typed tables.
-            _ => false,
+            // c:541-547 — `enable`/`disable -r` toggles DISABLED on the
+            // reswdtab entry; reswords resolve through getreswdnode in
+            // the lexer so toggling here is enough to mask/unmask.
+            Tab::Reswd => {
+                let exists = crate::ported::hashtable::reswdtab_lock().lock()
+                    .map(|t| t.get_including_disabled(nm).is_some())
+                    .unwrap_or(false);
+                if !exists { return false; }
+                crate::ported::hashtable::reswdtab_lock().lock()
+                    .map(|mut t| if on { t.enable(nm) } else { t.disable(nm) })
+                    .unwrap_or(false)
+            }
+            // c:541-547 — `enable`/`disable -f` toggles DISABLED on the
+            // shfunctab entry; ports to disableshfuncnode/enableshfuncnode
+            // which also unsettrap/settrap TRAP* fns.
+            Tab::Shfunc => {
+                let exists = crate::ported::hashtable::shfunctab_lock().lock()
+                    .map(|t| t.get_including_disabled(nm).is_some())
+                    .unwrap_or(false);
+                if !exists { return false; }
+                if on {
+                    crate::ported::hashtable::enableshfuncnode(nm);
+                } else {
+                    crate::ported::hashtable::disableshfuncnode(nm);
+                }
+                true
+            }
+            // c:541-547 — `enable`/`disable` toggles DISABLED on the
+            // builtin. The C struct `builtintab` stores DISABLED in
+            // `node.flags`; Rust port keeps `builtintab` as an
+            // immutable static lookup and tracks the disabled set in
+            // BUILTINS_DISABLED so dispatch can mask the entry.
+            Tab::Builtin => {
+                if createbuiltintable().get(nm).is_none() { return false; }
+                if let Ok(mut set) = BUILTINS_DISABLED.lock() {
+                    if on { set.remove(nm); } else { set.insert(nm.to_string()); }
+                    return true;
+                }
+                false
+            }
         }
     };
     let collect_names = |tab: &Tab| -> Vec<String> {
@@ -3961,7 +4176,11 @@ pub fn bin_enable(name: &str, argv: &[String],                               // 
                 .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
             Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().lock()
                 .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
-            _ => Vec::new(),
+            Tab::Reswd => crate::ported::hashtable::reswdtab_lock().lock()
+                .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
+            Tab::Shfunc => crate::ported::hashtable::shfunctab_lock().lock()
+                .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
+            Tab::Builtin => createbuiltintable().keys().cloned().collect(),
         }
     };
 
