@@ -13,6 +13,23 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::time::Duration;
 
+/// Platform-gated `errno` pointer. zsh's C source writes `errno` directly
+/// after `select(2)`/`read(2)` races; macOS exposes `__error()`, Linux/Android
+/// expose `__errno_location()`, BSDs use `__errno`. Returning a raw pointer
+/// keeps the original `*errno = X` write-shape from the C source intact.
+#[inline]
+fn errno_ptr() -> *mut libc::c_int {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    unsafe { libc::__errno_location() }
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "dragonfly"))]
+    unsafe { libc::__error() }
+    #[cfg(any(target_os = "openbsd", target_os = "netbsd"))]
+    unsafe {
+        extern "C" { fn __errno() -> *mut libc::c_int; }
+        __errno()
+    }
+}
+
 // `TransferType` enum removed — was Rust-only invention. C uses the
 // `ZFST_ASCI` (0x0000) / `ZFST_IMAG` (0x0001) bits from the ZFST_*
 // status word (c:246-247) for the next-transfer type, and
@@ -2322,7 +2339,7 @@ pub extern "C" fn zfhandler(sig: i32) {                                       //
         ZFDRRRRING.store(1, std::sync::atomic::Ordering::Relaxed);            // c:369
         // c:370-374 — errno = ETIMEDOUT (or EIO).
         unsafe {
-            *libc::__error() = libc::ETIMEDOUT;
+            *errno_ptr() = libc::ETIMEDOUT;
         }
         // c:375 — longjmp(zfalrmbuf, 1). Rust port doesn't use setjmp;
         // the ZFDRRRRING flag is the timeout signal each blocking
@@ -2434,7 +2451,7 @@ pub fn zfread_block(fd: i32, bf: &mut [u8], sz: libc::off_t, tmout: i32) -> i32 
         // c:1378-1385 — caller's buffer too small.
         if blksz > sz {
             crate::ported::utils::zwarnnam("zftp", "block too large to handle");
-            unsafe { *libc::__error() = libc::EIO; }                          // c:1383
+            unsafe { *errno_ptr() = libc::EIO; }                              // c:1383
             return -1;                                                        // c:1384
         }
         // c:1386-1397 — drain the payload.
@@ -2461,7 +2478,7 @@ pub fn zfread_block(fd: i32, bf: &mut [u8], sz: libc::off_t, tmout: i32) -> i32 
         // c:1398-1402 — short data block.
         if cnt != 0 {
             crate::ported::utils::zwarnnam("zftp", "short data block");
-            unsafe { *libc::__error() = libc::EIO; }                          // c:1400
+            unsafe { *errno_ptr() = libc::EIO; }                              // c:1400
             return -1;                                                        // c:1401
         }
         // c:1403 — } while ((hdr.flags & ZFHD_MARK) && !zfread_eof);
@@ -4062,7 +4079,7 @@ pub fn zfwrite_block(fd: i32, bf: &[u8], sz: i64, tmout: i32) -> i32 {       // 
             std::slice::from_raw_parts(&hdr as *const _ as *const u8, 3)
         };
         n = zfwrite(fd, hdr_bytes, 3, tmout);                                // c:1422
-        if !(n < 0 && unsafe { *libc::__error() } == libc::EINTR) { break; } // c:1424
+        if !(n < 0 && unsafe { *errno_ptr() } == libc::EINTR) { break; }     // c:1424
     }
     if n != 3 {                                                              // c:1426
         return n;                                                            // c:1428
