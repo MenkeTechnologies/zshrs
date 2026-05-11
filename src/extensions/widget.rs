@@ -1941,14 +1941,14 @@ fn widget_vi_fetch_history(zle: &mut Zle) {
     }
     let has_mult = zle.zmod.flags.contains(super::zle_main::ModifierFlags::MULT);
     let on_live = zle.history.cursor >= zle.history.entries.len();
-    if on_live || zle.zlereadflags.no_history {
+    if on_live || (zle.zlereadflags & crate::ported::zsh_h::ZLRF_HISTORY) == 0 {
         if !has_mult {
             zle.zlecs = zle.zlell;
             zle.zlecs = zle.find_bol(zle.zlecs);
             zle.resetneeded = true;
             return;
         }
-        if zle.zlereadflags.no_history {
+        if (zle.zlereadflags & crate::ported::zsh_h::ZLRF_HISTORY) == 0 {
             return;
         }
     }
