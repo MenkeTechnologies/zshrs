@@ -1306,30 +1306,10 @@ fn acceptline(name: &str) -> Option<Widget> {
     Some(Widget::builtin(name))
 }
 
-// =====================================================================
-// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
-// =====================================================================
-//
-// `vared_zle_run` packages the C body's c:1839-1860 sequence (set
-// vared globals + call `zleread(ZLCON_VARED)`) as a callable Rust
-// helper because `bin_vared` is split here: the canonical free-fn
-// port handles the flag-parse + variable-fetch path (c:1678-1735),
-// then delegates the actual edit to this helper. The C source has
-// no separate function — it inlines the zleread() call. Splitting
-// the helper out lets test callers and future executor wireups
-// reach the edit path without re-running the option parser.
-// =====================================================================
-pub fn vared_zle_run(zle: &mut Zle, varname: &str, opts: VaredOpts) -> io::Result<String> {
-    let initial = std::env::var(varname).unwrap_or_default();
-    zle.zleline = initial.chars().collect();
-    zle.zlell = zle.zleline.len();
-    zle.zlecs = if opts.cursor_at_end { zle.zlell } else { 0 };
-    let prompt = opts.prompt.as_deref().unwrap_or("");
-    let rprompt = opts.rprompt.as_deref().unwrap_or("");
-    // C zle_main.c:1837 vared path passes 0 for flags + ZLCON_VARED context.
-    let result = zle.zleread(prompt, rprompt, 0, crate::ported::zsh_h::ZLCON_VARED)?;
-    Ok(result)
-}
+// `vared_zle_run` deleted — Rust-only helper with no C counterpart
+// (the C `bin_vared` inlines its zleread call at c:1839-1860). The
+// fake helper had no callers and bundled a `VaredOpts` struct
+// (also deleted) that doesn't exist in C.
 
 /// Direct port of `bin_vared()` from `Src/Zle/zle_main.c:1678`.
 /// C signature: `static int bin_vared(char *name, char **args,
@@ -1413,14 +1393,10 @@ pub fn bin_vared(name: &str, args: &[String],                                // 
     1
 }
 
-/// Vared options
-#[derive(Debug, Default)]
-pub struct VaredOpts {
-    pub prompt: Option<String>,
-    pub rprompt: Option<String>,
-    pub cursor_at_end: bool,
-    pub history: bool,
-}
+// `VaredOpts` deleted — Rust-invented options struct that bundled
+// the per-flag args bin_vared parses (-p/-r/-e/-h). C reads them
+// from `Options ops` via OPT_ARG/OPT_ISSET inline, no separate
+// struct. The fake had no users after `vared_zle_run` was deleted.
 
 // `zle_main_entry` / `ZleOperation` / `ZleData` deleted — none of
 // these names exist in Src/Zle/zle_main.c. The C module entry
