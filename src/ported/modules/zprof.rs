@@ -112,10 +112,14 @@ pub static NARCS: AtomicI32 = AtomicI32::new(0);                         // c:69
 pub static STACK: Mutex<Vec<Sfunc>> = Mutex::new(Vec::new());            // c:70
 
 /// Port of `static Module zprof_module;` from `Src/Modules/zprof.c:71`.
-/// `Module` opaque pointer not yet ported; the C `setup_` records
-/// the module here so `zprof_wrapper` can short-circuit when
-/// `MOD_UNLOAD` is set. Rust port uses `AtomicBool` — true when
-/// the module is "loaded" (boot_ has run, cleanup_ hasn't).
+/// C uses a `Module` (struct module *) pointer to track which module
+/// owns the wrapper; `zprof_wrapper` short-circuits when
+/// `MOD_UNLOAD` is set on it. Module is ported as
+/// `Box<crate::ported::zsh_h::module>` (zsh_h.rs:425) but recording
+/// the raw `*const module` would deadlock with Sync/Send for the
+/// static — `AtomicBool` captures the only state `zprof_wrapper`
+/// actually inspects (loaded vs. unloading), matching the C
+/// `MOD_UNLOAD` flag-check on the same pointer.
 pub static ZPROF_MODULE: AtomicBool = AtomicBool::new(false);            // c:71
 
 // ---------------------------------------------------------------------------
