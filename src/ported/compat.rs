@@ -11,88 +11,87 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// Time with nanosecond precision
-#[derive(Debug, Clone, Copy, Default)]
-pub struct TimeSpec {
-    pub tv_sec: i64,
-    pub tv_nsec: i64,
-}
+// `TimeSpec` Rust-only struct deleted — C uses `struct timespec`
+// directly (Src/compat.c:101 `zgettime(struct timespec *ts)`).
+// The canonical type port lives at
+// `crate::ported::zsh_system_h::timespec` (Src/zsh_system.h:245).
 
-impl TimeSpec {
-    pub fn new(sec: i64, nsec: i64) -> Self {
-        TimeSpec {
-            tv_sec: sec,
-            tv_nsec: nsec,
+use crate::ported::zsh_system_h::timespec;
+
+/// Provide clock time with nanoseconds.
+///
+/// Port of `zgettime()` from Src/compat.c:101.
+/// C signature: `int zgettime(struct timespec *ts)`.
+/// Returns 0 on success, -1 if `clock_gettime(CLOCK_REALTIME)`
+/// failed and `gettimeofday` fallback succeeded, -2 if both
+/// failed.
+pub fn zgettime(ts: &mut timespec) -> i32 {                                  // c:101
+    let mut ret: i32 = -1;                                                   // c:103
+    unsafe {
+        let mut dts: timespec = std::mem::zeroed();
+        if libc::clock_gettime(libc::CLOCK_REALTIME, &mut dts) < 0 {         // c:107
+            // c:108 — `zwarn("unable to retrieve time: %e", errno)`.
+            crate::ported::utils::zwarn(&format!(
+                "unable to retrieve time: {}",
+                std::io::Error::last_os_error()
+            ));
+            ret -= 1;                                                        // c:109
+        } else {                                                             // c:110
+            ret += 1;                                                        // c:111
+            ts.tv_sec = dts.tv_sec;                                          // c:112
+            ts.tv_nsec = dts.tv_nsec;                                        // c:113
+        }
+        if ret != 0 {                                                        // c:117
+            let mut dtv: libc::timeval = std::mem::zeroed();                 // c:118
+            libc::gettimeofday(&mut dtv, std::ptr::null_mut());              // c:120
+            ret += 1;                                                        // c:121
+            ts.tv_sec = dtv.tv_sec;                                          // c:122
+            ts.tv_nsec = (dtv.tv_usec as libc::c_long) * 1000;               // c:123
         }
     }
-
-    pub fn now() -> Self {
-        match SystemTime::now().duration_since(UNIX_EPOCH) {
-            Ok(d) => TimeSpec {
-                tv_sec: d.as_secs() as i64,
-                tv_nsec: d.subsec_nanos() as i64,
-            },
-            Err(_) => TimeSpec::default(),
-        }
-    }
-
-    pub fn as_duration(&self) -> Duration {
-        Duration::new(self.tv_sec as u64, self.tv_nsec as u32)
-    }
-
-    pub fn as_secs_f64(&self) -> f64 {
-        self.tv_sec as f64 + (self.tv_nsec as f64 / 1_000_000_000.0)
-    }
+    ret                                                                      // c:126
 }
 
-impl std::ops::Sub for TimeSpec {
-    type Output = TimeSpec;
-
-    fn sub(self, other: TimeSpec) -> TimeSpec {
-        let mut sec = self.tv_sec - other.tv_sec;
-        let mut nsec = self.tv_nsec - other.tv_nsec;
-        if nsec < 0 {
-            sec -= 1;
-            nsec += 1_000_000_000;
-        }
-        TimeSpec {
-            tv_sec: sec,
-            tv_nsec: nsec,
-        }
-    }
-}
-
-// Provide clock time with nanoseconds                                      // c:97
-/// Get current real-time with nanosecond precision.
-/// Port of `zgettime()` from Src/compat.c:101 — the C source
-/// uses `clock_gettime(CLOCK_REALTIME)` (with fallbacks for older
-/// systems); Rust's `SystemTime::now()` does the same.
-pub fn zgettime() -> TimeSpec {                                              // c:101
-    TimeSpec::now()
-}
-
-/// Monotonic time tracking
-static MONOTONIC_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-
-// Likewise with CLOCK_MONOTONIC if available.                              // c:129
-// On at least some versions of macOS it appears that CLOCK_MONOTONIC is not // c:141
-// actually monotonic -- there are reports that it can go backwards.         // c:142
-// CLOCK_MONOTONIC_RAW does not have this problem. On top of that, it is faster // c:143
-// to read and it has nanosecond precision.                                  // c:144
-/// Get monotonic time for elapsed-duration measurement.
+/// Likewise with CLOCK_MONOTONIC if available.
+///
 /// Port of `zgettime_monotonic_if_available()` from
-/// Src/compat.c:133 — uses `CLOCK_MONOTONIC` so the value never
-/// goes backwards across NTP corrections. Rust's `Instant`
-/// guarantees monotonicity.
-pub fn zgettime_monotonic_if_available() -> TimeSpec {                       // c:133
-    let start = MONOTONIC_START.get_or_init(Instant::now);
-    let elapsed = start.elapsed();
-    TimeSpec {
-        tv_sec: elapsed.as_secs() as i64,
-        tv_nsec: elapsed.subsec_nanos() as i64,
+/// Src/compat.c:133. C signature: `int
+/// zgettime_monotonic_if_available(struct timespec *ts)`.
+/// Falls back to `zgettime` (CLOCK_REALTIME) when CLOCK_MONOTONIC
+/// fails.
+///
+/// On at least some versions of macOS it appears that CLOCK_MONOTONIC // c:141
+/// is not actually monotonic -- there are reports that it can go     // c:142
+/// backwards. CLOCK_MONOTONIC_RAW does not have this problem. On top // c:143
+/// of that, it is faster to read and it has nanosecond precision.    // c:144
+pub fn zgettime_monotonic_if_available(ts: &mut timespec) -> i32 {           // c:133
+    let mut ret: i32 = -1;                                                   // c:135
+    unsafe {
+        let mut dts: timespec = std::mem::zeroed();                          // c:138
+        // c:147 — Apple prefers CLOCK_MONOTONIC_RAW; other systems
+        // use CLOCK_MONOTONIC.
+        #[cfg(target_os = "macos")]
+        let clk = libc::CLOCK_MONOTONIC_RAW;
+        #[cfg(not(target_os = "macos"))]
+        let clk = libc::CLOCK_MONOTONIC;
+        if libc::clock_gettime(clk, &mut dts) < 0 {                          // c:148/150
+            // c:152 — `zwarn("unable to retrieve CLOCK_MONOTONIC time: %e", errno)`.
+            crate::ported::utils::zwarn(&format!(
+                "unable to retrieve CLOCK_MONOTONIC time: {}",
+                std::io::Error::last_os_error()
+            ));
+            ret -= 1;                                                        // c:153
+        } else {
+            ret += 1;                                                        // c:155
+            ts.tv_sec = dts.tv_sec;                                          // c:156
+            ts.tv_nsec = dts.tv_nsec;                                        // c:157
+        }
     }
+    if ret != 0 {                                                            // c:161
+        ret = zgettime(ts);                                                  // c:162
+    }
+    ret                                                                      // c:164
 }
 
 // compute the difference between two calendar times                        // c:168
@@ -335,36 +334,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_timespec() {
-        let t1 = TimeSpec::new(10, 500_000_000);
-        let t2 = TimeSpec::new(12, 200_000_000);
-        let diff = t2 - t1;
-        assert_eq!(diff.tv_sec, 1);
-        assert_eq!(diff.tv_nsec, 700_000_000);
-    }
-
-    #[test]
-    fn test_timespec_negative() {
-        let t1 = TimeSpec::new(10, 800_000_000);
-        let t2 = TimeSpec::new(12, 200_000_000);
-        let diff = t2 - t1;
-        assert_eq!(diff.tv_sec, 1);
-        assert_eq!(diff.tv_nsec, 400_000_000);
-    }
-
-    #[test]
     fn test_zgettime() {
-        let t = zgettime();
-        assert!(t.tv_sec > 0);
+        let mut ts: timespec = unsafe { std::mem::zeroed() };
+        let r = zgettime(&mut ts);
+        assert!(r >= 0);
+        assert!(ts.tv_sec > 0);
     }
 
     #[test]
     fn test_zgettime_monotonic() {
-        let t1 = zgettime_monotonic_if_available();
+        let mut t1: timespec = unsafe { std::mem::zeroed() };
+        let mut t2: timespec = unsafe { std::mem::zeroed() };
+        let r1 = zgettime_monotonic_if_available(&mut t1);
         std::thread::sleep(std::time::Duration::from_millis(10));
-        let t2 = zgettime_monotonic_if_available();
-        let diff = t2 - t1;
-        assert!(diff.tv_sec > 0 || diff.tv_nsec > 0);
+        let r2 = zgettime_monotonic_if_available(&mut t2);
+        assert!(r1 >= 0 && r2 >= 0);
+        // Elapsed must be strictly positive in ns.
+        let elapsed_ns = (t2.tv_sec - t1.tv_sec) * 1_000_000_000
+                       + (t2.tv_nsec - t1.tv_nsec) as i64;
+        assert!(elapsed_ns > 0);
     }
 
     #[test]

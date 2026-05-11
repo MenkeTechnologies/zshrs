@@ -5695,7 +5695,7 @@ pub fn createparamtable() {                                                  // 
     setsparam(
         "TIMEFMT",
         &crate::ported::utils::ztrdup_metafy(
-            crate::ported::zsh_system::DEFAULT_TIMEFMT,
+            crate::ported::zsh_system_h::DEFAULT_TIMEFMT,
         ),
     );                                                                       // c:871
 

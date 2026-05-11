@@ -38,7 +38,8 @@ pub fn getcurrentsecs() -> i64 {                                         // c:20
 /// return (double)now.tv_sec + (double)now.tv_nsec * 1e-9;
 /// ```
 pub fn getcurrentrealtime() -> f64 {                                     // c:212
-    let now = crate::compat::zgettime();                                 // c:215
+    let mut now: crate::ported::zsh_system_h::timespec = unsafe { std::mem::zeroed() };          // c:213
+    crate::ported::compat::zgettime(&mut now);                            // c:215
     (now.tv_sec as f64) + (now.tv_nsec as f64) * 1e-9                    // c:216
 }
 
@@ -55,8 +56,9 @@ pub fn getcurrentrealtime() -> f64 {                                     // c:21
 /// return arr;
 /// ```
 pub fn getcurrenttime() -> (i64, i64) {                                  // c:220
-    let now = crate::compat::zgettime();                                 // c:226
-    (now.tv_sec, now.tv_nsec)                                            // c:228-231 sprintf %ld
+    let mut now: crate::ported::zsh_system_h::timespec = unsafe { std::mem::zeroed() };          // c:222
+    crate::ported::compat::zgettime(&mut now);                            // c:226
+    (now.tv_sec as i64, now.tv_nsec as i64)                              // c:228-231 sprintf %ld
 }
 
 /// Port of `reverse_strftime()` from `Src/Modules/datetime.c:42`.
