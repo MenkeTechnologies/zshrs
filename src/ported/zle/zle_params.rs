@@ -194,13 +194,13 @@ pub fn free_prepostdisplay() {                                               // 
 
 /// Port of `get_context()` from Src/Zle/zle_params.c:942.
 pub fn get_context(zle: &crate::ported::zle::zle_main::Zle) -> &'static str {  // c:942
-    use crate::ported::zle::zle_main::ZleContext;
+    use crate::ported::zsh_h::{ZLCON_LINE_CONT, ZLCON_SELECT, ZLCON_VARED};
     // c:944-958 — switch on zlecontext → "cont" / "select" / "vared" / "line".
     match zle.zlecontext {
-        ZleContext::Cont   => "cont",                                        // c:945-946
-        ZleContext::Select => "select",                                      // c:949-950
-        ZleContext::Vared  => "vared",                                       // c:953-954
-        ZleContext::Line   => "line",                                        // c:957-958 default
+        x if x == ZLCON_LINE_CONT => "cont",                                  // c:945-946
+        x if x == ZLCON_SELECT    => "select",                                // c:949-950
+        x if x == ZLCON_VARED     => "vared",                                 // c:953-954
+        _                         => "line",                                  // c:957-958 default
     }
 }
 
@@ -1051,7 +1051,8 @@ mod keybuf_tests {
 #[cfg(test)]
 mod display_tests {
     use super::*;
-    use crate::ported::zle::zle_main::{Zle, ZleContext};
+    use crate::ported::zle::zle_main::Zle;
+    use crate::ported::zsh_h::{ZLCON_LINE_START, ZLCON_LINE_CONT, ZLCON_SELECT, ZLCON_VARED};
 
     #[test]
     fn get_set_predisplay_round_trip() {
@@ -1082,10 +1083,10 @@ mod display_tests {
     #[test]
     fn get_context_branches() {
         let mut z = Zle::default();
-        z.zlecontext = ZleContext::Line;   assert_eq!(get_context(&z), "line");
-        z.zlecontext = ZleContext::Cont;   assert_eq!(get_context(&z), "cont");
-        z.zlecontext = ZleContext::Select; assert_eq!(get_context(&z), "select");
-        z.zlecontext = ZleContext::Vared;  assert_eq!(get_context(&z), "vared");
+        z.zlecontext = ZLCON_LINE_START; assert_eq!(get_context(&z), "line");
+        z.zlecontext = ZLCON_LINE_CONT;  assert_eq!(get_context(&z), "cont");
+        z.zlecontext = ZLCON_SELECT;     assert_eq!(get_context(&z), "select");
+        z.zlecontext = ZLCON_VARED;      assert_eq!(get_context(&z), "vared");
     }
 
     #[test]
