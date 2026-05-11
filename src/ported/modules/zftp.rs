@@ -2791,27 +2791,107 @@ pub fn zftp_dir(_name: &str, args: &[&str], _flags: i32) -> i32 {
 }
 
 /// Port of `zftp_cd()` from `Src/Modules/zftp.c:2332`.
-pub fn zftp_cd(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut full: Vec<String> = vec!["cd".to_string()];
-    full.extend(args.iter().map(|s| s.to_string()));
-    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+/// C: send CDUP\r\n or CWD <dir>\r\n based on flags + arg shape.
+/// Then call zfgetcwd to update the cached pwd.
+pub fn zftp_cd(_name: &str, args: &[&str], flags: i32) -> i32 {                 // c:2332
+    let ret: i32;                                                               // c:2335 int ret
+    // c:2337-2340 — CDUP when flag set OR arg is ".." / "../".
+    let arg0 = args.first().copied().unwrap_or("");
+    if (flags & ZFTP_CDUP) != 0 || arg0 == ".." || arg0 == "../" {              // c:2337
+        ret = zfsendcmd("CDUP\r\n");                                            // c:2339
+    } else {                                                                    // c:2340
+        let cmd = format!("CWD {}\r\n", arg0);                                  // c:2341 tricat
+        ret = zfsendcmd(&cmd);                                                  // c:2342
+        // c:2343 zsfree — Rust Drop.
+    }
+    if ret > 2 { return 1; }                                                    // c:2345
+    // c:2347-2349 — `if (zfgetcwd()) return 1;`
+    if zfgetcwd() != 0 { return 1; }
+    0                                                                           // c:2351
 }
 
 /// Port of `zftp_type()` from `Src/Modules/zftp.c:2426`.
-pub fn zftp_type(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut full: Vec<String> = vec!["type".to_string()];
-    full.extend(args.iter().map(|s| s.to_string()));
-    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+/// C: set the transfer-type byte (A=ASCII, I=binary). When ZFTP_TASC/
+/// ZFTP_TBIN flags are set (ascii/binary subcommands route here),
+/// pick the type from the flag; otherwise read from args[0]. With no
+/// args, print the current type.
+pub fn zftp_type(name: &str, args: &[&str], flags: i32) -> i32 {                // c:2426
+    use std::io::Write;
+    let mut tbuf: [u8; 2] = [b'A', 0];                                          // c:2428 char tbuf[2] = "A"
+    let nt: u8;                                                                 // c:2428 char nt
+    let str_: &str;                                                             // c:2428 char *str
+    let _ = str_;
+
+    if (flags & (ZFTP_TBIN | ZFTP_TASC)) != 0 {                                 // c:2429
+        nt = if (flags & ZFTP_TBIN) != 0 { b'I' } else { b'A' };                // c:2430
+    } else if args.first().copied().unwrap_or("").is_empty() {                  // c:2431
+        // No args: print current type ('A' or 'I').
+        let ttype = ZFTP_STATE.lock().ok()
+            .and_then(|s| s.get_session(None).map(|sess| sess.transfer_type))
+            .unwrap_or(ZFST_IMAG as i32);
+        let is_ascii = (ttype & ZFST_ASCI) != 0;
+        println!("{}", if is_ascii { 'A' } else { 'I' });                       // c:2436-2437
+        let _ = std::io::stdout().flush();                                      // c:2438
+        return 0;                                                               // c:2439
+    } else {
+        str_ = args[0];
+        let c0 = str_.as_bytes()[0].to_ascii_uppercase();                       // c:2441 toupper
+        if str_.len() > 1 || (c0 != b'A' && c0 != b'B' && c0 != b'I') {         // c:2446
+            crate::ported::utils::zwarnnam(name,                                 // c:2447
+                &format!("transfer type {} not recognised", str_));
+            return 1;                                                           // c:2448
+        }
+        nt = if c0 == b'B' { b'I' } else { c0 };                                // c:2451-2452
+    }
+
+    // c:2455-2456 — update zfstatusp[zfsessno] (kept on the session.transfer_type).
+    if let Ok(mut state) = ZFTP_STATE.lock() {
+        if let Some(sess) = state.get_session_mut(None) {
+            sess.transfer_type = if nt == b'I' { ZFST_IMAG } else { ZFST_ASCI } as i32;
+        }
+    }
+    tbuf[0] = nt;                                                               // c:2457
+    let tb = std::str::from_utf8(&tbuf[..1]).unwrap_or("A");
+    zfsetparam("ZFTP_TYPE", tb, ZFPM_READONLY);                                 // c:2458
+    0                                                                           // c:2459
 }
 
 /// Port of `zftp_mode()` from `Src/Modules/zftp.c:2464`.
-pub fn zftp_mode(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut full: Vec<String> = vec!["mode".to_string()];
-    full.extend(args.iter().map(|s| s.to_string()));
-    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+/// C: set stream-mode (S=stream, B=block). With no arg, print current.
+pub fn zftp_mode(name: &str, args: &[&str], _flags: i32) -> i32 {               // c:2464
+    use std::io::Write;
+    let str_: &str;
+    let nt: u8;                                                                 // c:2467 int nt
+
+    if args.first().copied().unwrap_or("").is_empty() {                         // c:2469
+        let tmode = ZFTP_STATE.lock().ok()
+            .and_then(|s| s.get_session(None).map(|sess| sess.transfer_mode))
+            .unwrap_or(ZFST_STRE as i32);
+        let is_stream = tmode == ZFST_STRE;
+        println!("{}", if is_stream { 'S' } else { 'B' });                      // c:2470-2471
+        let _ = std::io::stdout().flush();                                      // c:2472
+        return 0;                                                               // c:2473
+    }
+    str_ = args[0];
+    nt = str_.as_bytes()[0].to_ascii_uppercase();                               // c:2475
+    if str_.len() > 1 || (nt != b'S' && nt != b'B') {                           // c:2476
+        crate::ported::utils::zwarnnam(name,                                    // c:2477
+            &format!("transfer mode {} not recognised", str_));
+        return 1;                                                               // c:2478
+    }
+    let cmd = format!("MODE {}\r\n", nt as char);                               // c:2480 cmd[5] = nt
+    if zfsendcmd(&cmd) > 2 {                                                    // c:2481
+        return 1;                                                               // c:2482
+    }
+    // c:2483-2484 — update session transfer_mode.
+    if let Ok(mut state) = ZFTP_STATE.lock() {
+        if let Some(sess) = state.get_session_mut(None) {
+            sess.transfer_mode = if nt == b'S' { ZFST_STRE } else { ZFST_BLOC } as i32;
+        }
+    }
+    let mb = (nt as char).to_string();
+    zfsetparam("ZFTP_MODE", &mb, ZFPM_READONLY);                                // c:2485
+    0                                                                           // c:2486
 }
 
 /// Port of `zftp_local()` from `Src/Modules/zftp.c:2491`.
