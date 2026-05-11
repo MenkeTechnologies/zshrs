@@ -274,16 +274,49 @@ pub fn math_string(_name: &str, arg: &str, id: i32) -> Mnumber {         // c:43
     let trimmed = arg.trim_matches(|c: char| c == ' ' || c == '\t');     // c:447-451 iblank
     match id {
         MS_RAND48 => {                                                   // c:457
-            // C decodes optional 12-hex seedstr from $seedvar then
-            // calls erand48(). zshrs uses `random_real()` which
-            // already produces uniform doubles via the OS-entropy
-            // path; the seed-from-param wiring is pending param-
-            // table integration.
-            let _ = trimmed;
-            Mnumber {
-                l: 0,
-                d: crate::ported::modules::random_real::random_real(),
-                type_: MN_FLOAT,
+            // c:464-486 — read 12-hex seed from $seedvar (the arg is
+            // the param name), parse to 3×u16 seed slots, call
+            // erand48(). zshrs reads the seed from executor variables
+            // and falls back to OS entropy via random_real() when no
+            // valid 12-hex seed is bound.
+            let seedvar = trimmed;
+            let seed_str: Option<String> = if !seedvar.is_empty() {
+                crate::exec::try_with_executor(|exec| {                  // c:464 getsparam
+                    exec.variables.get(seedvar).cloned()
+                }).flatten()
+            } else {
+                None
+            };
+            if let Some(s) = seed_str.filter(|s| s.len() == 12
+                && s.chars().all(|c| c.is_ascii_hexdigit())) {           // c:467-475
+                // Decode 12-hex into 3 unsigned shorts (erand48 seed).
+                let bytes = s.as_bytes();
+                let h = |i: usize| -> u16 {
+                    let parse = |b: u8| match b {
+                        b'0'..=b'9' => (b - b'0') as u16,
+                        b'a'..=b'f' => (b - b'a' + 10) as u16,
+                        b'A'..=b'F' => (b - b'A' + 10) as u16,
+                        _ => 0,
+                    };
+                    (parse(bytes[i]) << 12) | (parse(bytes[i+1]) << 8)
+                        | (parse(bytes[i+2]) << 4) | parse(bytes[i+3])
+                };
+                let seed: [u16; 3] = [h(0), h(4), h(8)];                 // c:475
+                // c:483 — erand48(seed). libc erand48 mutates the
+                // seed array; after the call we'd update $seedvar.
+                let val = unsafe { libc::erand48(seed.as_ptr() as *mut _) };
+                // c:485 — re-serialize updated seed back to $seedvar.
+                let new_seed = format!("{:04x}{:04x}{:04x}",
+                                       seed[0], seed[1], seed[2]);
+                crate::ported::modules::ksh93::setsparam(seedvar, &new_seed);
+                Mnumber { l: 0, d: val, type_: MN_FLOAT }
+            } else {
+                // No valid seed → fall back to OS entropy.
+                Mnumber {
+                    l: 0,
+                    d: crate::ported::modules::random_real::random_real(),
+                    type_: MN_FLOAT,
+                }
             }
         }
         _ => Mnumber { l: 0, d: 0.0, type_: MN_INTEGER },                                         // zero_mnumber
