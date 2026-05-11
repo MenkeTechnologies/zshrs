@@ -544,18 +544,28 @@ fn isset(opt: i32) -> bool {                                                  //
 // C: `mod_export char *getsparam(char *s)` →
 //   `if (!(v = getvalue(&vbuf, &s, 0))) return NULL; return getstrvalue(v);`
 fn getsparam(name: &str) -> String {                                         // c:3076
-    // Static-link path: read from process env (the closest analog
-    // available without the full param subsystem wired). The full
-    // path goes through getvalue() → getstrvalue() against paramtab.
-    std::env::var(name).unwrap_or_default()                                  // c:3084
+    // Prefer executor.variables (the canonical scalar param store)
+    // over std::env so setsparam-bound values that haven't been
+    // exported still resolve. Env fallback covers the embed-only
+    // path where no executor is live.
+    crate::exec::try_with_executor(|exec| {
+        exec.variables.get(name).cloned()
+    }).flatten()
+        .or_else(|| std::env::var(name).ok())
+        .unwrap_or_default()                                                 // c:3084
 }
 
 // Port of `getaparam()` from Src/params.c:3100.
 // C: `mod_export char **getaparam(char *s)` — returns the array param's
 //   gsu.a->getfn(pm), or NULL if not an array.
 fn getaparam(name: &str) -> Vec<String> {                                    // c:3100
-    // Static-link path: split colon-separated env var (matches PATH-style
-    // arrays the way zsh exposes them in the simple env-only case).
+    // Prefer executor.arrays; fall back to colon-split of env var
+    // for PATH-style arrays the env exposes.
+    if let Some(arr) = crate::exec::try_with_executor(|exec| {
+        exec.arrays.get(name).cloned()
+    }).flatten() {
+        return arr;                                                          // c:3107
+    }
     std::env::var(name)
         .ok()
         .map(|v| v.split(':').map(String::from).collect())                   // c:3107
@@ -566,11 +576,11 @@ fn getaparam(name: &str) -> Vec<String> {                                    // 
 // C: `zlong getiparam(char *s)` → `if (!(v = getvalue(...))) return 0;
 //   return getintvalue(v);`
 fn getiparam(name: &str) -> i64 {                                            // c:3044
-    // Static-link path: parse env var as decimal int; mirror zsh's
-    // getintvalue() best-effort conversion.
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())                                 // c:3049
+    // Prefer executor.variables → parse as decimal; env fallback.
+    crate::exec::try_with_executor(|exec| {
+        exec.variables.get(name).and_then(|s| s.parse::<i64>().ok())
+    }).flatten()
+        .or_else(|| std::env::var(name).ok().and_then(|v| v.parse::<i64>().ok()))
         .unwrap_or(0)                                                        // c:3048
 }
 
