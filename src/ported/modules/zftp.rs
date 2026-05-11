@@ -1796,8 +1796,16 @@ pub fn zfendtrans() {                                                         //
 /// C: `static int zfgetcwd(void)` — sends PWD, parses reply.
 #[allow(non_snake_case)]
 pub fn zfgetcwd() -> i32 {
-    let _ = zfsendcmd("PWD\r\n");
-    if zfgetmsg() == 0 && lastcode.load(std::sync::atomic::Ordering::Relaxed) >= 200 { 0 } else { 1 }
+    // c:2364 — short-circuit when ZFPF_DUMB is set (don't fiddle with
+    // variables in dumb mode).
+    if (zfprefs.load(std::sync::atomic::Ordering::Relaxed) & ZFPF_DUMB) != 0 { // c:2364
+        return 1;                                                              // c:2365
+    }
+    if zfsendcmd("PWD\r\n") > 2 {                                              // c:2366
+        zfunsetparam("ZFTP_PWD");                                              // c:2367
+        return 1;                                                              // c:2368
+    }
+    if lastcode.load(std::sync::atomic::Ordering::Relaxed) >= 200 { 0 } else { 1 }
 }
 
 /// Port of `zfgetdata()` from `Src/Modules/zftp.c:1065`.
