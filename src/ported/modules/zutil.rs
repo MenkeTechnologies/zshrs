@@ -719,9 +719,11 @@ pub fn bin_zregexparse(nam: &str, args: &[String],                            //
     let _ = (var1, var2, subj);
 
     // c:1494 — `oldextendedglob = opts[EXTENDEDGLOB]; opts[EXTENDEDGLOB] = 1;`
-    let oldext = crate::ported::options::opt_state_get("extendedglob")
-        .unwrap_or(false);                                                   // c:1494
-    crate::ported::options::opt_state_set("extendedglob", true);             // c:1496
+    let oldext = crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB); // c:1494
+    crate::ported::options::opt_state_set(
+        &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::EXTENDEDGLOB),
+        true,
+    );                                                                       // c:1496
 
     // c:1499 — `pushheap(); rparsestates = newlinklist();`
     crate::ported::mem::pushheap();                                          // c:1499
@@ -752,7 +754,10 @@ pub fn bin_zregexparse(nam: &str, args: &[String],                            //
     }
 
     crate::ported::mem::popheap();                                           // c:1513
-    crate::ported::options::opt_state_set("extendedglob", oldext);           // c:1514
+    crate::ported::options::opt_state_set(
+        &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::EXTENDEDGLOB),
+        oldext,
+    );                                                                       // c:1514
     ret                                                                      // c:1515
 }
 
@@ -1110,13 +1115,14 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 // state owned by the module's typed struct. Name-parity shims.
 
 use crate::ported::zsh_h::HashNode;
-
+use crate::zsh_h::isset;
 // `MatchData` is defined above (line 23) — Option<Vec<String>> per field
 // matches the C `char **match`/`mbegin`/`mend` semantics where NULL means
 // the variable was unset. The savematch/restorematch/freematch ports
 // below operate on that existing struct.
 
 /// `Stypat` mirroring Src/Modules/zutil.c:97-104.
+#[allow(non_camel_case_types)]
 pub struct stypat {
     pub next: Option<Box<stypat>>,                            // c:98 Stypat next
     pub pat: String,                                          // c:99 char *pat
@@ -1128,6 +1134,7 @@ pub struct stypat {
 pub type Stypat = Box<stypat>;
 
 /// `Style` mirroring Src/Modules/zutil.c:91-94.
+#[allow(non_camel_case_types)]
 pub struct style {
     pub node: crate::ported::zsh_h::hashnode, // c:92 struct hashnode node
     pub pats: Option<Stypat>,                 // c:93 Stypat pats (sorted by weight)
@@ -1135,6 +1142,7 @@ pub struct style {
 pub type Style = Box<style>;
 
 /// `Zoptdesc` family mirroring Src/Modules/zutil.c:1519-1538.
+#[allow(non_camel_case_types)]
 pub struct zoptdesc {
     pub name: String,
     pub flags: i32,
@@ -1143,12 +1151,14 @@ pub struct zoptdesc {
     pub next: Option<Box<zoptdesc>>,
 }
 pub type Zoptdesc = Box<zoptdesc>;
-
+#[allow(non_camel_case_types)]
 pub struct zoptarr {
     pub name: String,
     pub vals: Vec<String>,
 }
 pub type Zoptarr = Box<zoptarr>;
+
+#[allow(non_camel_case_types)]
 
 pub struct zoptval {
     pub name: String,

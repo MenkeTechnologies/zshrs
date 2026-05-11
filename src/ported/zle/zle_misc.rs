@@ -16,7 +16,7 @@
 //! - vi-put-after, vi-put-before, overwrite-mode
 
 use std::sync::atomic::AtomicI32;
-
+use crate::zsh_h::isset;
 use super::zle_main::Zle;
 
 // =====================================================================
@@ -1365,7 +1365,7 @@ pub fn makeparamsuffix(br: i32, n: i32) {                                    // 
     //                       unset(KSHARRAYS)) ? 2 : strlen(charstr);
     //                       addsuffix(SUFTYP_POSSTR, 0, charstr, lenstr, n)`.
     let charstr: Vec<char> = ":[#%?-+=".chars().collect();
-    let kshcheck = !crate::ported::options::opt_state_get("ksharrays").unwrap_or(false);
+    let kshcheck = !crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
     let lenstr = if br != 0 || kshcheck { 2 } else { charstr.len() as i32 };
     let prefix: Vec<char> = charstr.iter().take(lenstr as usize).copied().collect();
     addsuffix(0, 0, prefix, lenstr, n);

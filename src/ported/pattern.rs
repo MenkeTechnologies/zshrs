@@ -178,7 +178,6 @@ pub const NSUBEXP: usize = 9;
 pub use crate::ported::zsh_h::{
     GF_LCMATCHUC, GF_IGNCASE, GF_BACKREF, GF_MATCHREF, GF_MULTIBYTE,
 };
-
 // =====================================================================
 // Bytecode field offsets within each instruction.
 //

@@ -22,7 +22,11 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use crate::signals_h::{MAX_QUEUE_SIZE, SIGCOUNT, SIGDEBUG, SIGEXIT, SIGZERR, TRAPCOUNT, signal_default, signal_ignore};
-use crate::zsh_h::{ZSIG_FUNC, ZSIG_IGNORED, ZSIG_SHIFT, ZSIG_TRAPPED};
+use crate::zsh_h::{
+    isset, ERRFLAG_INT, INTERACTIVE, POSIXTRAPS, PRIVILEGED,
+    TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZEXIT_SIGNAL,
+    ZSIG_FUNC, ZSIG_IGNORED, ZSIG_SHIFT, ZSIG_TRAPPED,
+};
 
 
 // getsigidx / getsigname live in `jobs.rs` per C source split:
@@ -691,7 +695,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
                             .store(1, std::sync::atomic::Ordering::Relaxed);
                         crate::ported::builtin::zexit(
                             libc::SIGPIPE,
-                            crate::ported::zsh_h::ZEXIT_SIGNAL,
+                            ZEXIT_SIGNAL,
                         );                                                  // c:440
                     }
                 }
@@ -704,7 +708,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
                     .store(1, std::sync::atomic::Ordering::Relaxed);
                 crate::ported::builtin::zexit(
                     libc::SIGHUP,
-                    crate::ported::zsh_h::ZEXIT_SIGNAL,
+                    ZEXIT_SIGNAL,
                 );                                                          // c:448
             }
         }
@@ -719,14 +723,14 @@ extern "C" fn zhandler(sig: libc::c_int) {
                 if privileged && interactive {
                     crate::ported::builtin::zexit(
                         libc::SIGINT,
-                        crate::ported::zsh_h::ZEXIT_SIGNAL,
+                        ZEXIT_SIGNAL,
                     );
                 }
                 // c:457 — `errflag |= ERRFLAG_INT;`
                 let cur = crate::ported::utils::errflag
                     .load(std::sync::atomic::Ordering::Relaxed);
                 crate::ported::utils::errflag.store(
-                    cur | crate::ported::zsh_h::ERRFLAG_INT,
+                    cur | ERRFLAG_INT,
                     std::sync::atomic::Ordering::Relaxed,
                 );                                                          // c:457
                 // c:458-462 — list_pipe/chline/simple_pline branch
@@ -775,7 +779,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
                         .store(1, std::sync::atomic::Ordering::Relaxed);    // c:488
                     crate::ported::builtin::zexit(
                         libc::SIGALRM,
-                        crate::ported::zsh_h::ZEXIT_SIGNAL,
+                        ZEXIT_SIGNAL,
                     );                                                       // c:489
                 }
             }

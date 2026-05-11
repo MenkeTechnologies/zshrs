@@ -8,6 +8,11 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use crate::ported::zsh_h::{
+    isset, opt_name, AUTONAMEDIRS, BEEP, MULTIBYTE, POSIXIDENTIFIERS,
+    PRINTEIGHTBIT, XTRACE,
+};
+
 /// Script name for error messages
 pub static mut SCRIPT_NAME: Option<String> = None;
 /// Script filename
@@ -1681,7 +1686,7 @@ pub fn zbeep() {                                                             // 
         }
         #[cfg(not(unix))]
         eprint!("{}", decoded);
-    } else if crate::ported::options::opt_state_get("beep").unwrap_or(true) {// c:4113
+    } else if isset(crate::ported::zsh_h::BEEP) {// c:4113
         #[cfg(unix)]
         {
             use std::sync::atomic::Ordering;
@@ -2545,8 +2550,7 @@ pub fn wcs_nicechar(c: char) -> String {
 pub fn is_wcs_nicechar(c: char) -> bool {                                    // c:720
     let cv = c as u32;
     let printable = !c.is_control() && cv >= 0x20;
-    let print_eight = crate::ported::options::opt_state_get("printeightbit") // c:722
-        .unwrap_or(false);
+    let print_eight = isset(crate::ported::zsh_h::PRINTEIGHTBIT); // c:722
     if !printable && (cv < 0x80 || !print_eight) {
         if cv == 0x7f || c == '\n' || c == '\t' || cv < 0x20 {               // c:723
             return true;
@@ -2726,8 +2730,7 @@ pub fn adduserdir(name: &str, dir: &str, flags: i32, always: bool) {        // c
             return;
         }
         if !always
-            && !crate::ported::options::opt_state_get("autonamedirs")
-                .unwrap_or(false)
+            && !isset(crate::ported::zsh_h::AUTONAMEDIRS)
             && !t.contains_key(name)
         {                                                                    // c:1207
             return;
@@ -4323,7 +4326,7 @@ pub fn wcsiblank(c: char) -> bool {
 /// fallback at line 4346.
 pub fn wcsitype(c: char, itype: u32) -> bool {                               // c:4321
     use crate::ported::ztype::{TYPTAB, IIDENT, IWORD, IALNUM, ISEP};
-    if !crate::ported::options::opt_state_get("multibyte").unwrap_or(true) { // c:4327
+    if !isset(crate::ported::zsh_h::MULTIBYTE) { // c:4327
         if (c as u32) < 256 {
             let tab = TYPTAB.lock().unwrap();
             return (tab[c as usize] & itype) != 0;
@@ -4336,8 +4339,9 @@ pub fn wcsitype(c: char, itype: u32) -> bool {                               // 
     }
     let cls = itype as u16;
     if cls == IIDENT {                                                       // c:4347
-        if crate::ported::options::opt_state_get("posixidentifiers")
-            .unwrap_or(false) { return false; }                              // c:4348
+        if isset(crate::ported::zsh_h::POSIXIDENTIFIERS) {
+            return false;                                                    // c:4348
+        }
         return c.is_alphanumeric();                                          // c:4350
     }
     if cls == IWORD {                                                        // c:4352
@@ -5056,11 +5060,11 @@ pub(crate) fn printprompt4() {
     //                              promptexpand(...);  opts[XTRACE] = t;`
     let saved = isset(XTRACE);
     crate::ported::options::opt_state_set(
-        &crate::ported::zsh_h::opt_name(XTRACE), false,
+        &opt_name(XTRACE), false,
     );
     let prefix = crate::prompt::expand_prompt(&prefix_template);
     crate::ported::options::opt_state_set(
-        &crate::ported::zsh_h::opt_name(XTRACE), saved,
+        &opt_name(XTRACE), saved,
     );
     eprint!("{}", prefix);
 }

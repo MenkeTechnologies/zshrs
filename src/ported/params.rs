@@ -318,148 +318,148 @@ pub const special_params: &[SpecialParamDef] = &[
     // Integer specials with custom GSU
     SpecialParamDef {
         name: "#",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_READONLY,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_READONLY,
         tied_name: None,
     },
     SpecialParamDef {
         name: "ERRNO",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "GID",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "EGID",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "HISTSIZE",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_type: PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "RANDOM",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_type: PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "SAVEHIST",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_type: PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "SECONDS",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
+        pm_type: PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "UID",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "EUID",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "TTYIDLE",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_READONLY,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_READONLY,
         tied_name: None,
     },
     // Scalar specials with custom GSU
     SpecialParamDef {
         name: "USERNAME",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "-",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_READONLY,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_READONLY,
         tied_name: None,
     },
     SpecialParamDef {
         name: "histchars",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "HOME",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "TERM",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "TERMINFO",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "TERMINFO_DIRS",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_UNSET,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_UNSET,
         tied_name: None,
     },
     SpecialParamDef {
         name: "WORDCHARS",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     SpecialParamDef {
         name: "IFS",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "_",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "KEYBOARD_HACK",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
-        pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
+        pm_type: PM_SCALAR,
+        pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
     SpecialParamDef {
         name: "0",
-        pm_type: crate::ported::zsh_h::PM_SCALAR,
+        pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     // Readonly integer variables bound to C globals
     SpecialParamDef {
         name: "!",
-        pm_type: crate::ported::zsh_h::PM_INTEGER,
-        pm_flags: crate::ported::zsh_h::PM_READONLY,
+        pm_type: PM_INTEGER,
+        pm_flags: PM_READONLY,
         tied_name: None,
     },
     SpecialParamDef {
@@ -1366,7 +1366,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32)                          // 
         if is_array_or_hash
             && !is_special_or_tied
             && !augment_bit
-            && !crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+            && !isset(crate::ported::zsh_h::KSHARRAYS)
         {
             // c:3242 — flip type to PM_SCALAR, drop array/hash slots.
             let pm_mut = tab.get_mut(name).unwrap();
@@ -2210,7 +2210,7 @@ pub fn setarrvalue(v: &mut crate::ported::zsh_h::value, val: Vec<String>) {  // 
     // off; shift start/end down by 1 to match the 0-based slice
     // arithmetic below.
     if v.valflags & VALFLAG_INV != 0
-        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+        && !isset(crate::ported::zsh_h::KSHARRAYS)
     {
         if v.start > 0 {
             v.start -= 1;
@@ -3942,7 +3942,7 @@ pub fn argzerosetfn(x: String) {                                             // 
     // c:4939 — if (x).
     if !x.is_empty() {
         // c:4940 — isset(POSIXARGZERO) reject.
-        if crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXARGZERO) {
+        if isset(crate::ported::zsh_h::POSIXARGZERO) {
             crate::ported::utils::zerr("read-only variable: 0");             // c:4941
         } else {
             // c:4943-4944 — zsfree(argzero); argzero = ztrdup(x).
@@ -4644,7 +4644,7 @@ pub fn arrfixenv(s: &str, t: Option<&[String]>) {                            // 
     }
 
     // c:5304 — `if (isset(ALLEXPORT)) pm->flags |= PM_EXPORTED`.
-    let allexport = crate::ported::zsh_h::isset(ALLEXPORT);
+    let allexport = isset(ALLEXPORT);
     // c:5305 — `pm->flags &= ~PM_DEFAULTED` always.
     {
         let mut tab = paramtab().lock().unwrap();
@@ -5307,7 +5307,7 @@ pub fn assignstrvalue(
                 let mut start = v.start;
                 let mut end = v.end;
                 if (v.valflags & VALFLAG_INV) != 0
-                    && !crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                    && !isset(crate::ported::zsh_h::KSHARRAYS)
                 {
                     start -= 1;
                     end -= 1;
@@ -5342,7 +5342,7 @@ pub fn assignstrvalue(
                 strsetfn(pm, x);
                 if (pm.node.flags as u32 & PM_HASHELEM) == 0
                     && ((pm.node.flags as u32 & PM_NAMEDDIR) != 0
-                        || crate::ported::zsh_h::isset(crate::ported::zsh_h::AUTONAMEDIRS))
+                        || isset(crate::ported::zsh_h::AUTONAMEDIRS))
                 {
                     pm.node.flags |= PM_NAMEDDIR as i32;
                     // adduserdir(pm.node.nam, &z, 0, 0); -- userdirs not ported
@@ -5449,7 +5449,7 @@ pub fn assignstrvalue(
     setscope(pm);
     if errflag.load(std::sync::atomic::Ordering::Relaxed) != 0
         || ((pm.env.is_none() && (pm.node.flags as u32 & PM_EXPORTED) == 0
-             && !(crate::ported::zsh_h::isset(crate::ported::zsh_h::ALLEXPORT)
+             && !(isset(crate::ported::zsh_h::ALLEXPORT)
                   && (pm.node.flags as u32 & PM_HASHELEM) == 0))
             || (pm.node.flags as u32 & PM_ARRAY) != 0
             || pm.ename.is_some())
@@ -5642,7 +5642,7 @@ fn dontimport(flags: i32) -> i32 {                                           // 
     }
     // c:805-806 — `if ((flags & PM_DONTIMPORT_SUID) && isset(PRIVILEGED)) return 1`.
     if flags & crate::ported::zsh_h::PM_DONTIMPORT_SUID != 0                 // c:805
-        && crate::ported::zsh_h::isset(crate::ported::zsh_h::PRIVILEGED)
+        && isset(crate::ported::zsh_h::PRIVILEGED)
     {
         return 1;                                                            // c:806
     }

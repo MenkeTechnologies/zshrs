@@ -65,7 +65,7 @@ pub use crate::ported::hashtable_h::{
     BIN_COMMAND, BIN_UNHASH, BIN_UNALIAS, BIN_UNFUNCTION,
     BIN_UNSET, BIN_EXPORT, BIN_SETOPT, BIN_UNSETOPT,
 };
-use crate::zsh_h::{builtin, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND, BINF_DASH, BINF_DASHDASHVALID, BINF_EXEC, BINF_HANDLES_OPTS, BINF_MAGICEQUALS, BINF_NOGLOB, BINF_PLUSOPTS, BINF_PREFIX, BINF_PRINTOPTS, BINF_PSPECIAL, BINF_SKIPDASH, BINF_SKIPINVALID, hashnode, NULLBINCMD};
+use crate::zsh_h::{builtin, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND, BINF_DASH, BINF_DASHDASHVALID, BINF_EXEC, BINF_HANDLES_OPTS, BINF_MAGICEQUALS, BINF_NOGLOB, BINF_PLUSOPTS, BINF_PREFIX, BINF_PRINTOPTS, BINF_PSPECIAL, BINF_SKIPDASH, BINF_SKIPINVALID, hashnode, NULLBINCMD, isset};
 
 // Local builders that construct C-shape `builtin` rows for the
 // static registration table below. They mirror the
@@ -5044,7 +5044,7 @@ pub fn bin_dot(name: &str, argv: &[String],                                  // 
     // bin_dot; under FUNCTIONARGZERO, the sourced file becomes the
     // active $0 for the duration of the source.
     let saved_argzero: Option<Option<String>> =
-        if crate::ported::zsh_h::isset(crate::ported::zsh_h::FUNCTIONARGZERO) {
+        if isset(crate::ported::zsh_h::FUNCTIONARGZERO) {
             let prev = crate::ported::utils::argzero();
             crate::ported::utils::set_argzero(Some(arg0.clone()));
             Some(prev)
