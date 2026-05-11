@@ -1527,11 +1527,63 @@ pub fn setalias(_ht: *mut HashTable, _pm: Param, _value: String,             // 
 
 /// Port of `setaliases()` from Src/Modules/parameter.c:1769.
 /// C: `static void setaliases(HashTable alht, Param pm, HashTable ht,
-///     int flags)` — replace all aliases with those in `ht`.
+///     int flags)` — clear aliases whose flags equal `flags`, then
+/// install every (name, value) from `ht` as a new alias with `flags`.
+///
+/// Static-link path: routes through the canonical alias storage in
+/// hashtable.rs (aliastab/sufaliastab/dis_aliastab). The `alht`
+/// pointer arg is the target table; we resolve which one by matching
+/// the `flags` argument since the Rust port stores aliases in a single
+/// global table keyed by name with flag bits per entry.
 #[allow(non_snake_case)]
 pub fn setaliases(_alht: *mut HashTable, _pm: Param,                         // c:1769
-                  _ht: *mut HashTable, _flags: i32) {
-    // c:1772-1810 — clear matching aliases, then walk ht adding each.
+                  ht: *mut HashTable, flags: i32) {
+    use crate::ported::hashtable::Alias;
+    if ht.is_null() {                                                        // c:1774
+        return;                                                              // c:1775
+    }
+    // c:1777-1788 — clear existing aliases matching `flags`.
+    if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().lock() {
+        let to_remove: Vec<String> = tab.iter()
+            .filter(|(_, a)| a.flags as i32 == flags)                        // c:1784
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in to_remove {
+            tab.remove(&k);                                                  // c:1786
+        }
+    }
+    // c:1790-1804 — walk ht, addnode each (name, value) under `flags`.
+    let ht_ref: &crate::ported::zsh_h::hashtable = unsafe { &**ht };
+    let mut i: i32 = 0;
+    while i < ht_ref.hsize {                                                 // c:1790
+        let mut hn = ht_ref.nodes.get(i as usize).and_then(|n| n.clone());
+        while let Some(node) = hn.clone() {                                  // c:1791
+            // c:1797-1799 — synthesize value from the param.
+            let synthesized = crate::ported::params::getparamnode(
+                ht_ref, &node.nam);
+            let mut v = crate::ported::zsh_h::value {
+                pm: synthesized,                                             // c:1797 v.pm = (Param) hn
+                arr: Vec::new(), scanflags: 0, valflags: 0, start: 0,
+                end: -1,
+            };
+            // c:1801-1803 — `if ((val = getstrvalue(&v)))` then addnode.
+            let val = crate::ported::params::getstrvalue(Some(&mut v));
+            if !val.is_empty() {
+                if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().lock() {
+                    let mut a = Alias::new(&node.nam, &val);
+                    a.flags = flags as u32;
+                    tab.add(a);
+                }
+            }
+            hn = node.next.clone();
+        }
+        i += 1;
+    }
+    // c:1807-1808 — if (ht != pm->u.hash) deleteparamtable(ht);
+    if !ht.is_null() {
+        let owned: HashTable = unsafe { std::ptr::read(ht) };
+        crate::ported::params::deleteparamtable(Some(owned));                // c:1808
+    }
 }
 
 /// Port of `setfunction()` from Src/Modules/parameter.c:284.
