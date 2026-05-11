@@ -975,42 +975,20 @@ pub fn scanpmsysparams() -> Vec<(String, String)> {                      // c:88
 // =====================================================================
 
 use crate::ported::zsh_h::module;
-use crate::ported::module::{Builtin, Features, MathFunc, Module as RsModule, Paramdef};
 
 // `bintab` — port of `static struct builtin bintab[]` (system.c).
-static BINTAB: &[Builtin] = &[
-    Builtin { name: "syserror", flags: 0, minargs: 0, maxargs:  1, funcid: 0, optstr: Some("e:p:"),       defopts: None },
-    Builtin { name: "sysread",  flags: 0, minargs: 0, maxargs:  1, funcid: 0, optstr: Some("c:i:o:s:t:"), defopts: None },
-    Builtin { name: "syswrite", flags: 0, minargs: 1, maxargs:  1, funcid: 0, optstr: Some("c:o:"),       defopts: None },
-    Builtin { name: "sysopen",  flags: 0, minargs: 1, maxargs:  1, funcid: 0, optstr: Some("rwau:o:m:"),  defopts: None },
-    Builtin { name: "sysseek",  flags: 0, minargs: 1, maxargs:  1, funcid: 0, optstr: Some("u:w:"),       defopts: None },
-    Builtin { name: "zsystem",  flags: 0, minargs: 1, maxargs: -1, funcid: 0, optstr: None,               defopts: None },
-];
+
 
 // `mftab` — port of `static struct mathfunc mftab[]` (system.c).
-static MFTAB: &[MathFunc] = &[
-    MathFunc { name: "systell", module: "system", flags: 0 },
-];
+
 
 // `partab` — port of `static struct paramdef partab[]` (system.c).
-static PARTAB: &[Paramdef] = &[
-    Paramdef { name: "errnos",    registered: false },
-    Paramdef { name: "sysparams", registered: false },
-];
+
 
 // `module_features` — port of `static struct features module_features`
 // from system.c:910.
-static MODULE_FEATURES: Features = Features {                                // c:910
-    bn_list: BINTAB,
-    cd_list: &[],
-    mf_list: MFTAB,
-    pd_list: PARTAB,
-    n_abstract: 0,
-};
 
-fn module_handle() -> RsModule {
-    RsModule::new("zsh/system")
-}
+
 
 /// Port of `setup_()` from `Src/Modules/system.c:920`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:920
@@ -1020,18 +998,15 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 
 /// Port of `features_()` from `Src/Modules/system.c:927`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {
-    *features = crate::ported::module::featuresarray(                   // c:929
-        &module_handle(),
-        &MODULE_FEATURES,
-    );
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, module_features());
     0                                                                    // c:930
 }
 
 /// Port of `enables_()` from `Src/Modules/system.c:935`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
-    crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables) // c:937
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, module_features(), enables) // c:937
 }
 
 /// Port of `boot_()` from `Src/Modules/system.c:942`.
@@ -1044,8 +1019,8 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 
 /// Port of `cleanup_()` from `Src/Modules/system.c:950`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(_m: *const module) -> i32 {
-    crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None) // c:952
+pub fn cleanup_(m: *const module) -> i32 {
+    setfeatureenables(m, module_features(), None) // c:952
 }
 
 /// Port of `finish_()` from `Src/Modules/system.c:957`.
@@ -1332,3 +1307,51 @@ mod tests {
         unsafe { libc::close(fd); }
     }
 }
+
+use crate::ported::zsh_h::features as features_t;
+use std::sync::{Mutex, OnceLock};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,
+        bn_size: 6,
+        cd_list: None,
+        cd_size: 0,
+        mf_list: None,
+        mf_size: 1,
+        pd_list: None,
+        pd_size: 2,
+        n_abstract: 0,
+    }))
+}
+
+// Local stubs for the per-module entry points. C uses generic
+// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
+// 3275/3370/3445) but those take `Builtin` + `Features` pointer
+// fields the Rust port doesn't carry. The hardcoded descriptor
+// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:syserror".to_string(), "b:sysread".to_string(), "b:syswrite".to_string(), "b:sysopen".to_string(), "b:sysseek".to_string(), "b:zsystem".to_string(), "f:systell".to_string(), "p:errnos".to_string(), "p:sysparams".to_string()]
+}
+
+fn handlefeatures(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    if enables.is_none() {
+        *enables = Some(vec![1; 9]);
+    }
+    0
+}
+
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    _e: Option<&[i32]>,
+) -> i32 {
+    0
+}
+

@@ -29,6 +29,7 @@
 
 use std::io::Write;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use crate::ported::compat::output64;
@@ -288,11 +289,8 @@ pub fn setup_(_m: *const module) -> i32 {
 
 /// Port of `features_()` from `Src/Modules/example.c:207`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {
-    *features = crate::ported::module::featuresarray(                   // c:209
-        &module_handle(),
-        &MODULE_FEATURES,
-    );
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
+    *features = featuresarray(m, module_features());
     0                                                                   // c:210
 }
 
@@ -302,8 +300,8 @@ pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {
 
 /// Port of `enables_()` from `Src/Modules/example.c:215`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
-    crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables) // c:217
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
+    handlefeatures(m, module_features(), enables) // c:217
 }
 
 // =====================================================================
@@ -335,10 +333,10 @@ pub fn boot_(m: *const module) -> i32 {
 
 /// Port of `cleanup_()` from `Src/Modules/example.c:235`.
 /// C body: `deletewrapper(m, wrapper); return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(_m: *const module) -> i32 {
+pub fn cleanup_(m: *const module) -> i32 {
     // c:237 — deletewrapper(m, wrapper); paired with c:230 addwrapper,
     // no-op until the wrapper machinery has a Rust equivalent.
-    crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None) // c:238
+    setfeatureenables(m, module_features(), None) // c:238
 }
 
 // =====================================================================
@@ -363,46 +361,24 @@ pub fn finish_(_m: *const module) -> i32 {
 // `deletewrapper` from `Src/module.c`.
 // =====================================================================
 
-use crate::ported::module::{Builtin, Conddef, Features, MathFunc, Module as RsModule, Paramdef};
 
 // `bintab` — port of `static struct builtin bintab[]` (example.c:182).
-static BINTAB: &[Builtin] = &[                                               // c:182
-    Builtin { name: "example", flags: 0, minargs: 0, maxargs: -1, funcid: 0, optstr: Some("flags"), defopts: None },
-];
+
 
 // `cotab` — port of `static struct conddef cotab[]` (example.c).
 // `CONDDEF("ex", CONDF_INFIX|CONDF_ADDED, …)` + `CONDDEF("len", 0, …)`.
-static COTAB: &[Conddef] = &[
-    Conddef { name: "ex",  flags: crate::ported::module::CONDF_INFIX },
-    Conddef { name: "len", flags: 0 },
-];
+
 
 // `mftab` — port of `static struct mathfunc mftab[]` (example.c).
-static MFTAB: &[MathFunc] = &[
-    MathFunc { name: "length", module: "example", flags: 0 },
-    MathFunc { name: "sum",    module: "example", flags: 0 },
-];
+
 
 // `patab` — port of `static struct paramdef patab[]` (example.c).
-static PATAB: &[Paramdef] = &[
-    Paramdef { name: "exarr", registered: false },
-    Paramdef { name: "exint", registered: false },
-    Paramdef { name: "exstr", registered: false },
-];
+
 
 // `module_features` — port of `static struct features module_features`
 // from example.c:188.
-static MODULE_FEATURES: Features = Features {                                // c:188
-    bn_list: BINTAB,
-    cd_list: COTAB,
-    mf_list: MFTAB,
-    pd_list: PATAB,
-    n_abstract: 0,
-};
 
-fn module_handle() -> RsModule {
-    RsModule::new("example")
-}
+
 
 #[cfg(test)]
 mod tests {
@@ -495,3 +471,50 @@ mod tests {
         assert_eq!(arr.as_ref().unwrap().as_slice(), &[s("hello"), s("world")]);
     }
 }
+
+use crate::ported::zsh_h::features as features_t;
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,
+        bn_size: 1,
+        cd_list: None,
+        cd_size: 2,
+        mf_list: None,
+        mf_size: 2,
+        pd_list: None,
+        pd_size: 3,
+        n_abstract: 0,
+    }))
+}
+
+// Local stubs for the per-module entry points. C uses generic
+// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
+// 3275/3370/3445) but those take `Builtin` + `Features` pointer
+// fields the Rust port doesn't carry. The hardcoded descriptor
+// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:example".to_string(), "c:ex".to_string(), "c:len".to_string(), "f:length".to_string(), "f:sum".to_string(), "p:exarr".to_string(), "p:exint".to_string(), "p:exstr".to_string()]
+}
+
+fn handlefeatures(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    if enables.is_none() {
+        *enables = Some(vec![1; 8]);
+    }
+    0
+}
+
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    _e: Option<&[i32]>,
+) -> i32 {
+    0
+}
+

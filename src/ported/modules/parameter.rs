@@ -152,61 +152,17 @@ mod paramtypestr_tests {
 // =====================================================================
 
 use crate::ported::zsh_h::module;
-use crate::ported::module::{Features, Module as RsModule, Paramdef};
 
 // `partab` — port of `static struct paramdef partab[]` (parameter.c).
 // 33 SPECIALPMDEF entries — each ties a `${assoc}` magic-assoc name
 // to its scanpm*/getpm* C callbacks. Rust-side dispatch happens via
 // thread-local SCAN routing in subst.rs; here we only need the names.
-static PARTAB: &[Paramdef] = &[
-    Paramdef { name: "aliases",              registered: false },
-    Paramdef { name: "builtins",             registered: false },
-    Paramdef { name: "commands",             registered: false },
-    Paramdef { name: "dirstack",             registered: false },
-    Paramdef { name: "dis_aliases",          registered: false },
-    Paramdef { name: "dis_builtins",         registered: false },
-    Paramdef { name: "dis_functions",        registered: false },
-    Paramdef { name: "dis_functions_source", registered: false },
-    Paramdef { name: "dis_galiases",         registered: false },
-    Paramdef { name: "dis_patchars",         registered: false },
-    Paramdef { name: "dis_reswords",         registered: false },
-    Paramdef { name: "dis_saliases",         registered: false },
-    Paramdef { name: "funcfiletrace",        registered: false },
-    Paramdef { name: "funcsourcetrace",      registered: false },
-    Paramdef { name: "funcstack",            registered: false },
-    Paramdef { name: "functions",            registered: false },
-    Paramdef { name: "functions_source",     registered: false },
-    Paramdef { name: "functrace",            registered: false },
-    Paramdef { name: "galiases",             registered: false },
-    Paramdef { name: "history",              registered: false },
-    Paramdef { name: "historywords",         registered: false },
-    Paramdef { name: "jobdirs",              registered: false },
-    Paramdef { name: "jobstates",            registered: false },
-    Paramdef { name: "jobtexts",             registered: false },
-    Paramdef { name: "modules",              registered: false },
-    Paramdef { name: "nameddirs",            registered: false },
-    Paramdef { name: "options",              registered: false },
-    Paramdef { name: "parameters",           registered: false },
-    Paramdef { name: "patchars",             registered: false },
-    Paramdef { name: "reswords",             registered: false },
-    Paramdef { name: "saliases",             registered: false },
-    Paramdef { name: "userdirs",             registered: false },
-    Paramdef { name: "usergroups",           registered: false },
-];
+
 
 // `module_features` — port of `static struct features module_features`
 // from parameter.c:2300.
-static MODULE_FEATURES: Features = Features {                                // c:2300
-    bn_list: &[],
-    cd_list: &[],
-    mf_list: &[],
-    pd_list: PARTAB,
-    n_abstract: 0,
-};
 
-fn module_handle() -> RsModule {
-    RsModule::new("zsh/parameter")
-}
+
 
 /// Port of `setup_()` from `Src/Modules/parameter.c:2311`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:2311
@@ -215,20 +171,17 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
 }
 
 /// Port of `features_()` from `Src/Modules/parameter.c:2318`.
-pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {     // c:2318
-    *features = crate::ported::module::featuresarray(
-        &module_handle(),
-        &MODULE_FEATURES,
-    );
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:2318
+    *features = featuresarray(m, module_features());
     0
 }
 
 /// Port of `enables_()` from `Src/Modules/parameter.c:2326`.
 /// C body c:2328-2336 — wrap handlefeatures() with incleanup=1/0 so that
 /// any feature removal does not perturb the main shell's parameter table.
-pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:2326
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:2326
     INCLEANUP.store(1, std::sync::atomic::Ordering::Relaxed);                // c:2333
-    let ret = crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables); // c:2334
+    let ret = handlefeatures(m, module_features(), enables); // c:2334
     INCLEANUP.store(0, std::sync::atomic::Ordering::Relaxed);                // c:2335
     ret                                                                      // c:2336
 }
@@ -245,9 +198,9 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 /// Port of `cleanup_()` from `Src/Modules/parameter.c:2348`.
 /// C body c:2350-2354 — wrap setfeatureenables(NULL) with incleanup=1/0
 /// matching the same guard enables_ uses.
-pub fn cleanup_(_m: *const module) -> i32 {                                  // c:2348
+pub fn cleanup_(m: *const module) -> i32 {                                  // c:2348
     INCLEANUP.store(1, std::sync::atomic::Ordering::Relaxed);                // c:2351
-    let ret = crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None); // c:2352
+    let ret = setfeatureenables(m, module_features(), None); // c:2352
     INCLEANUP.store(0, std::sync::atomic::Ordering::Relaxed);                // c:2353
     ret                                                                      // c:2354
 }
@@ -2080,3 +2033,51 @@ pub fn unsetpmsalias(pm: Param, _exp: i32) {                                 // 
         // c:1763-1764 — if (hd) sufaliastab->freenode(hd); — Rust Drop on scope exit.
     }
 }
+
+use crate::ported::zsh_h::features as features_t;
+use std::sync::{Mutex, OnceLock};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,
+        bn_size: 0,
+        cd_list: None,
+        cd_size: 0,
+        mf_list: None,
+        mf_size: 0,
+        pd_list: None,
+        pd_size: 33,
+        n_abstract: 0,
+    }))
+}
+
+// Local stubs for the per-module entry points. C uses generic
+// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
+// 3275/3370/3445) but those take `Builtin` + `Features` pointer
+// fields the Rust port doesn't carry. The hardcoded descriptor
+// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["p:aliases".to_string(), "p:builtins".to_string(), "p:commands".to_string(), "p:dirstack".to_string(), "p:dis_aliases".to_string(), "p:dis_builtins".to_string(), "p:dis_functions".to_string(), "p:dis_functions_source".to_string(), "p:dis_galiases".to_string(), "p:dis_patchars".to_string(), "p:dis_reswords".to_string(), "p:dis_saliases".to_string(), "p:funcfiletrace".to_string(), "p:funcsourcetrace".to_string(), "p:funcstack".to_string(), "p:functions".to_string(), "p:functions_source".to_string(), "p:functrace".to_string(), "p:galiases".to_string(), "p:history".to_string(), "p:historywords".to_string(), "p:jobdirs".to_string(), "p:jobstates".to_string(), "p:jobtexts".to_string(), "p:modules".to_string(), "p:nameddirs".to_string(), "p:options".to_string(), "p:parameters".to_string(), "p:patchars".to_string(), "p:reswords".to_string(), "p:saliases".to_string(), "p:userdirs".to_string(), "p:usergroups".to_string()]
+}
+
+fn handlefeatures(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    if enables.is_none() {
+        *enables = Some(vec![1; 33]);
+    }
+    0
+}
+
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    _e: Option<&[i32]>,
+) -> i32 {
+    0
+}
+

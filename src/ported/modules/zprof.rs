@@ -14,8 +14,8 @@
 //!
 //! Order in this file mirrors C source order verbatim.
 
-use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 // ---------------------------------------------------------------------------
 // Structs (port of c:36-64).
@@ -395,26 +395,14 @@ pub fn zprof_wrapper(_name: &str) -> i32 {                               // c:23
 // =====================================================================
 
 use crate::ported::zsh_h::module;
-use crate::ported::module::{Builtin, Features, Module as RsModule};
 
 // `bintab` — port of `static struct builtin bintab[]` (zprof.c:309).
-static BINTAB: &[Builtin] = &[                                               // c:309
-    Builtin { name: "zprof", flags: 0, minargs: 0, maxargs: 0, funcid: 0, optstr: Some("c"), defopts: None },
-];
+
 
 // `module_features` — port of `static struct features module_features`
 // from zprof.c:323.
-static MODULE_FEATURES: Features = Features {                                // c:323
-    bn_list: BINTAB,
-    cd_list: &[],
-    mf_list: &[],
-    pd_list: &[],
-    n_abstract: 0,
-};
 
-fn module_handle() -> RsModule {
-    RsModule::new("zprof")
-}
+
 
 /// Port of `setup_()` from `Src/Modules/zprof.c:332`.
 /// C body: `zprof_module = m; return 0;`
@@ -425,18 +413,15 @@ pub fn setup_(_m: *const module) -> i32 {                                // c:33
 
 /// Port of `features_()` from `Src/Modules/zprof.c:340`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 { // c:340
-    *features = crate::ported::module::featuresarray(                   // c:342
-        &module_handle(),
-        &MODULE_FEATURES,
-    );
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 { // c:340
+    *features = featuresarray(m, module_features());
     0                                                                    // c:343
 }
 
 /// Port of `enables_()` from `Src/Modules/zprof.c:348`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(_m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:348
-    crate::ported::module::handlefeatures(&module_handle(), &MODULE_FEATURES, enables) // c:350
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:348
+    handlefeatures(m, module_features(), enables) // c:350
 }
 
 /// Port of `boot_()` from `Src/Modules/zprof.c:355`.
@@ -453,13 +438,13 @@ pub fn boot_(_m: *const module) -> i32 {                                 // c:35
 
 /// Port of `cleanup_()` from `Src/Modules/zprof.c:367`.
 /// C body: free pfuncs + parcs, deletewrapper, setfeatureenables.
-pub fn cleanup_(_m: *const module) -> i32 {                              // c:367
+pub fn cleanup_(m: *const module) -> i32 {                              // c:367
     let mut calls = CALLS.lock().unwrap();
     freepfuncs(&mut calls);                                              // c:369
     let mut arcs = ARCS.lock().unwrap();
     freeparcs(&mut arcs);                                                // c:370
     ZPROF_MODULE.store(false, Ordering::SeqCst);
-    crate::ported::module::setfeatureenables(&module_handle(), &MODULE_FEATURES, None) // c:372
+    setfeatureenables(m, module_features(), None) // c:372
 }
 
 /// Port of `finish_()` from `Src/Modules/zprof.c:377`.
@@ -581,3 +566,50 @@ mod tests {
         assert_eq!(s, "anon [/tmp/foo.zsh:42]");
     }
 }
+
+use crate::ported::zsh_h::features as features_t;
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,
+        bn_size: 1,
+        cd_list: None,
+        cd_size: 0,
+        mf_list: None,
+        mf_size: 0,
+        pd_list: None,
+        pd_size: 0,
+        n_abstract: 0,
+    }))
+}
+
+// Local stubs for the per-module entry points. C uses generic
+// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
+// 3275/3370/3445) but those take `Builtin` + `Features` pointer
+// fields the Rust port doesn't carry. The hardcoded descriptor
+// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:zprof".to_string()]
+}
+
+fn handlefeatures(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    if enables.is_none() {
+        *enables = Some(vec![1; 1]);
+    }
+    0
+}
+
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    _e: Option<&[i32]>,
+) -> i32 {
+    0
+}
+
