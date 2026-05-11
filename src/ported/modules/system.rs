@@ -160,7 +160,7 @@ pub fn bin_sysread(nam: &str, args: &[String],                               // 
     }
     // c:192-193 — `if (countvar) setiparam(countvar, count);`
     if let Some(ref cv) = countvar {
-        crate::ported::modules::ksh93::setiparam(cv, count as i64);          // c:192
+        crate::ported::params::setiparam(cv, count as i64);          // c:192
     }
     // c:194-195 — `if (count < 0) return 2;`
     if count < 0 {
@@ -188,10 +188,10 @@ pub fn bin_sysread(nam: &str, args: &[String],                               // 
                 if let Some(ref ov) = outvar {
                     let buf_remaining = String::from_utf8_lossy(&inbuf[p..p+remaining]);
                     let m = metafy(&buf_remaining);
-                    crate::ported::modules::ksh93::setsparam(ov, &m);        // c:209
+                    crate::ported::params::setsparam(ov, &m);        // c:209
                 }
                 if let Some(ref cv) = countvar {
-                    crate::ported::modules::ksh93::setiparam(cv, remaining as i64); // c:210
+                    crate::ported::params::setiparam(cv, remaining as i64); // c:210
                 }
                 return 3;                                                // c:212
             }
@@ -205,7 +205,7 @@ pub fn bin_sysread(nam: &str, args: &[String],                               // 
     let target = outvar.unwrap_or_else(|| "REPLY".to_string());          // c:220-221
     let buf_str = String::from_utf8_lossy(&inbuf[..count]);
     let m = metafy(&buf_str);
-    crate::ported::modules::ksh93::setsparam(&target, &m);                   // c:223
+    crate::ported::params::setsparam(&target, &m);                   // c:223
     if count != 0 { 0 } else { 5 }                                       // c:225
 }
 
@@ -266,7 +266,7 @@ pub fn bin_syswrite(nam: &str, args: &[String],                              // 
             let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             if eno != libc::EINTR {                                      // c:265
                 if let Some(ref cv) = countvar {                         // c:267-268
-                    crate::ported::modules::ksh93::setiparam(cv, totcount as i64); // c:268
+                    crate::ported::params::setiparam(cv, totcount as i64); // c:268
                 }
                 return 2;                                                // c:269
             }
@@ -278,7 +278,7 @@ pub fn bin_syswrite(nam: &str, args: &[String],                              // 
     }
     // c:276-277 — `if (countvar) setiparam(countvar, totcount);`
     if let Some(ref cv) = countvar {
-        crate::ported::modules::ksh93::setiparam(cv, totcount as i64);       // c:277
+        crate::ported::params::setiparam(cv, totcount as i64);       // c:277
     }
     0                                                                    // c:279
 }
@@ -439,7 +439,7 @@ pub fn bin_sysopen(nam: &str, args: &[String],                               // 
 
     // c:413-418 — `if (explicit == -1) { setiparam(fdvar, moved_fd); ... }`
     if explicit == -1 {
-        crate::ported::modules::ksh93::setiparam(&fdvar, moved_fd as i64);   // c:414
+        crate::ported::params::setiparam(&fdvar, moved_fd as i64);   // c:414
     }
 
     0                                                                    // c:420
@@ -590,7 +590,7 @@ pub fn bin_syserror(nam: &str, args: &[String],                              // 
     // c:533-539 — write back to errvar or stderr.
     if let Some(ev) = errvar {
         let str_out = format!("{}{}", pfx, msg);                         // c:534-535
-        crate::ported::modules::ksh93::setsparam(&ev, &str_out);             // c:536
+        crate::ported::params::setsparam(&ev, &str_out);             // c:536
     } else {
         eprintln!("{}{}", pfx, msg);                                     // c:538
     }
@@ -846,7 +846,7 @@ pub fn bin_zsystem_flock(nam: &str, args: &[String],                         // 
 
     // c:764-765 — `if (fdvar) setiparam(fdvar, flock_fd);`
     if let Some(ref var) = fdvar {
-        crate::ported::modules::ksh93::setiparam(var, flock_fd as i64);      // c:765
+        crate::ported::params::setiparam(var, flock_fd as i64);      // c:765
     }
     0                                                                    // c:767
 }
@@ -1255,9 +1255,10 @@ mod tests {
         let r = bin_syserror("syserror",
             &["ENOENT".to_string()], &ops, 0);
         assert_eq!(r, 0);
-        // Side-effect param now flows through ksh93::setsparam env-var
-        // bridge — read back via std::env.
-        let val = std::env::var("myerr").unwrap_or_default();
+        // Side-effect param flows through params::setsparam → paramtab().
+        let val = crate::ported::params::paramtab().lock().ok()
+            .and_then(|t| t.get("myerr").and_then(|p| p.u_str.clone()))
+            .unwrap_or_default();
         assert!(val.starts_with("PFX:"), "expected PFX: prefix, got {:?}", val);
     }
 
@@ -1284,7 +1285,10 @@ mod tests {
         let r = bin_sysopen("sysopen",
             &[p.to_str().unwrap().to_string()], &ops, 0);
         assert_eq!(r, 0);
-        let fd_str = std::env::var("MYFD").unwrap_or_default();
+        // Side-effect param flows through params::setiparam → paramtab().
+        let fd_str = crate::ported::params::paramtab().lock().ok()
+            .and_then(|t| t.get("MYFD").and_then(|p| p.u_str.clone()))
+            .unwrap_or_default();
         let fd: i32 = fd_str.parse().expect("MYFD should be integer");
         assert!(fd >= 10);   // movefd lifts to 10+
         unsafe { libc::close(fd); }

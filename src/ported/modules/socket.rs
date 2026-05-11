@@ -90,7 +90,7 @@ pub fn bin_zsocket(nam: &str, args: &[String],                           // c:57
             return 1;                                                    // c:130
         }
         crate::ported::utils::fdtable_set(sfd, FDT_EXTERNAL);            // c:134
-        crate::ported::modules::ksh93::setiparam("REPLY", sfd as i64);   // c:136 setiparam_no_convert
+        crate::ported::params::setiparam("REPLY", sfd as i64);   // c:136 setiparam_no_convert
         if verbose != 0 {                                                // c:138
             println!("{} listener is on fd {}", localfn, sfd);           // c:139
         }
@@ -149,7 +149,7 @@ pub fn bin_zsocket(nam: &str, args: &[String],                           // c:57
         } else {
             sfd = rfd;                                                   // c:217
         }
-        crate::ported::modules::ksh93::setiparam("REPLY", sfd as i64);   // c:220 setiparam_no_convert
+        crate::ported::params::setiparam("REPLY", sfd as i64);   // c:220 setiparam_no_convert
         if verbose != 0 {                                                // c:222
             let path = soun.sun_path.iter()
                 .take_while(|&&c| c != 0)
@@ -199,7 +199,7 @@ pub fn bin_zsocket(nam: &str, args: &[String],                           // c:57
             sfd = targetfd;                                              // c:259
             crate::ported::utils::fdtable_set(sfd, FDT_EXTERNAL);        // c:260
         }
-        crate::ported::modules::ksh93::setiparam("REPLY", sfd as i64);   // c:263 setiparam_no_convert
+        crate::ported::params::setiparam("REPLY", sfd as i64);   // c:263 setiparam_no_convert
         if verbose != 0 {                                                // c:265
             let path = &args[0];
             println!("{} is now on fd {}", path, sfd);                   // c:266

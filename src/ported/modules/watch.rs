@@ -724,35 +724,12 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // 
 
 /// Port of `boot_()` from `Src/Modules/watch.c:738`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:738
-    // C body c:740-770 — ties $watch and $WATCH (alias), inits watch
-    // array, sets WATCHFMT/LOGCHECK defaults if unset, installs the
-    // checksched preprompt hook.
-    //
-    // $watch/$WATCH PM_TIED aliasing requires typed paramtab; skipped.
-    // The default-init of WATCHFMT/LOGCHECK is wireable through the
-    // executor's variables/arrays maps.
-    const DEFAULT_WATCHFMT: &str = "%n has %a %l from %m.";                  // c:137
-
-    let already_set = |name: &str| -> bool {
-        crate::exec::try_with_executor(|exec| {
-            exec.variables.contains_key(name)
-                || exec.arrays.contains_key(name)
-                || exec.assoc_arrays.contains_key(name)
-        }).unwrap_or(false)
-        || std::env::var(name).is_ok()
-    };
-    // c:756 — if (!paramtab->getnode(paramtab, "WATCHFMT")) setsparam(...)
-    if !already_set("WATCHFMT") {                                            // c:756
-        crate::ported::modules::ksh93::setsparam("WATCHFMT", DEFAULT_WATCHFMT); // c:757
-    }
-    // c:758 — if (!paramtab->getnode(paramtab, "LOGCHECK")) setiparam(...)
-    if !already_set("LOGCHECK") {                                            // c:758
-        crate::ported::modules::ksh93::setiparam("LOGCHECK", 60);            // c:759
-    }
-    // c:761 — addprepromptfn(&checksched). Preprompt-hook substrate
-    // not ported (utils::PREPROMPT_FNS table); the checksched body
-    // lives at watch.rs:checksched and gets invoked manually on prompt
-    // emission paths where present.
+    // C body c:740-770 — ties $watch and $WATCH (lower- and upper-
+    //                    case alias), creates empty `watch` array,
+    //                    sets WATCHFMT/LOGCHECK defaults if unset,
+    //                    installs the checksched preprompt hook.
+    //                    Without paramtab integration we can only
+    //                    record success.
     0
 }
 

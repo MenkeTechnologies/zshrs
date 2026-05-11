@@ -33,7 +33,7 @@ impl Zle {
         self.zleline = s.chars().collect();
         self.zlell = self.zleline.len();
         self.zlecs = self.zlecs.min(self.zlell);
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// `$CURSOR` accessor — current cursor position (0-indexed).
@@ -46,7 +46,7 @@ impl Zle {
     /// Port of `set_cursor()` from Src/Zle/zle_params.c.
     pub fn set_cursor(&mut self, pos: usize) {                              // c:267
         self.zlecs = pos.min(self.zlell);
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// `$LBUFFER` accessor — text before the cursor.
@@ -63,7 +63,7 @@ impl Zle {
         self.zleline = s.chars().chain(rbuf.chars()).collect();
         self.zlell = self.zleline.len();
         self.zlecs = s.chars().count();
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// `$RBUFFER` accessor — text after the cursor.
@@ -78,7 +78,7 @@ impl Zle {
         let lbuf: String = self.zleline[..self.zlecs].iter().collect();
         self.zleline = lbuf.chars().chain(s.chars()).collect();
         self.zlell = self.zleline.len();
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// `$CUTBUFFER` accessor — most-recent kill-ring entry.
@@ -149,7 +149,7 @@ impl Zle {
     /// Sub-port of `get_zle_state()` (Src/Zle/zle_params.c) which
     /// emits "insert" / "overwrite" + " " + "vicmd" / "main".
     pub fn is_insert_mode(&self) -> bool {
-        self.insmode
+        (crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst) != 0)
     }
 
     /// `$REGION_ACTIVE` accessor — non-zero when a visual selection
@@ -168,7 +168,7 @@ impl Zle {
     pub fn get_zle_state(&self) -> String {
         let mut state = String::new();
 
-        if self.insmode {
+        if (crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst) != 0) {
             state.push_str("insert");
         } else {
             state.push_str("overwrite");
@@ -196,7 +196,7 @@ pub fn free_prepostdisplay() {                                               // 
 pub fn get_context(zle: &crate::ported::zle::zle_main::Zle) -> &'static str {  // c:942
     use crate::ported::zsh_h::{ZLCON_LINE_CONT, ZLCON_SELECT, ZLCON_VARED};
     // c:944-958 — switch on zlecontext → "cont" / "select" / "vared" / "line".
-    match zle.zlecontext {
+    match crate::ported::zle::zle_main::ZLECONTEXT.load(std::sync::atomic::Ordering::SeqCst) {
         x if x == ZLCON_LINE_CONT => "cont",                                  // c:945-946
         x if x == ZLCON_SELECT    => "select",                                // c:949-950
         x if x == ZLCON_VARED     => "vared",                                 // c:953-954
@@ -325,7 +325,7 @@ pub fn get_prepost(text: &str, len: usize) -> String {                       // 
 /// `$ZLE_RECURSIVE` getter — current ZLE recursion depth (>0 when
 /// inside a `recursive-edit` widget call).
 pub fn get_recursive(zle: &crate::ported::zle::zle_main::Zle) -> i64 {       // c:534
-    zle.zle_recursive as i64                                                 // c:537 return zle_recursive
+    crate::ported::zle::zle_main::ZLE_RECURSIVE.load(std::sync::atomic::Ordering::SeqCst) as i64                                                 // c:537 return zle_recursive
 }
 
 /// Port of `get_region_active()` from `Src/Zle/zle_params.c:324`.
@@ -463,8 +463,12 @@ pub fn get_widgetstyle(zle: &crate::ported::zle::zle_main::Zle) -> String {  // 
 pub fn get_yankactive(zle: &crate::ported::zle::zle_main::Zle) -> i64 {      // c:555
     // c:558 — `return !!(lastcmd & ZLE_YANK) + !!(lastcmd & ZLE_YANKAFTER)`.
     use crate::ported::zle::widget::WidgetFlags;
-    let yank      = zle.lastcmd.contains(WidgetFlags::YANK)      as i64;
-    let yankafter = zle.lastcmd.contains(WidgetFlags::YANKAFTER) as i64;
+    let _ = zle;
+    let last = WidgetFlags::from_bits_truncate(
+        crate::ported::zle::zle_main::LASTCMD.load(std::sync::atomic::Ordering::SeqCst),
+    );
+    let yank      = last.contains(WidgetFlags::YANK)      as i64;
+    let yankafter = last.contains(WidgetFlags::YANKAFTER) as i64;
     yank + yankafter
 }
 
@@ -913,10 +917,10 @@ mod widget_tests {
     #[test]
     fn get_recursive_reads_zle_recursive_field() {
         // c:537 — `return zle_recursive`.
-        let mut z = Zle::default();
-        z.zle_recursive = 0;
+        let z = Zle::default();
+        crate::ported::zle::zle_main::ZLE_RECURSIVE.store(0, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(get_recursive(&z), 0);
-        z.zle_recursive = 5;
+        crate::ported::zle::zle_main::ZLE_RECURSIVE.store(5, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(get_recursive(&z), 5);
     }
 }
@@ -985,14 +989,16 @@ mod batch_getters_tests {
 
     #[test]
     fn get_yankactive_reads_lastcmd_flags() {
-        let mut z = Zle::default();
-        z.lastcmd = WidgetFlags::empty();
+        let z = Zle::default();
+        use crate::ported::zle::zle_main::LASTCMD;
+        use std::sync::atomic::Ordering;
+        LASTCMD.store(WidgetFlags::empty().bits(), Ordering::SeqCst);
         assert_eq!(get_yankactive(&z), 0);
-        z.lastcmd = WidgetFlags::YANK;
+        LASTCMD.store(WidgetFlags::YANK.bits(), Ordering::SeqCst);
         // YANK = YANKAFTER | YANKBEFORE; both bits set so contains
         // YANK and contains YANKAFTER → 1+1 = 2.
         assert_eq!(get_yankactive(&z), 2);
-        z.lastcmd = WidgetFlags::YANKBEFORE;
+        LASTCMD.store(WidgetFlags::YANKBEFORE.bits(), Ordering::SeqCst);
         // YANKBEFORE only: contains(YANK) checks both bits set, so it's
         // false; contains(YANKAFTER) is also false → 0+0 = 0.
         assert_eq!(get_yankactive(&z), 0);
@@ -1085,11 +1091,13 @@ mod display_tests {
 
     #[test]
     fn get_context_branches() {
-        let mut z = Zle::default();
-        z.zlecontext = ZLCON_LINE_START; assert_eq!(get_context(&z), "line");
-        z.zlecontext = ZLCON_LINE_CONT;  assert_eq!(get_context(&z), "cont");
-        z.zlecontext = ZLCON_SELECT;     assert_eq!(get_context(&z), "select");
-        z.zlecontext = ZLCON_VARED;      assert_eq!(get_context(&z), "vared");
+        use crate::ported::zle::zle_main::ZLECONTEXT;
+        use std::sync::atomic::Ordering;
+        let z = Zle::default();
+        ZLECONTEXT.store(ZLCON_LINE_START, Ordering::SeqCst); assert_eq!(get_context(&z), "line");
+        ZLECONTEXT.store(ZLCON_LINE_CONT,  Ordering::SeqCst); assert_eq!(get_context(&z), "cont");
+        ZLECONTEXT.store(ZLCON_SELECT,     Ordering::SeqCst); assert_eq!(get_context(&z), "select");
+        ZLECONTEXT.store(ZLCON_VARED,      Ordering::SeqCst); assert_eq!(get_context(&z), "vared");
     }
 
     #[test]

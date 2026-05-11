@@ -977,29 +977,6 @@ impl Zftp {
 #[allow(non_snake_case)]
 pub fn bin_zftp(_nam: &str, args: &[String],                                 // c:3002
                 _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    // c:3074-3100 — parse $ZFTP_PREFS into zfprefs each invocation so
-    // user toggles between subcommand calls take effect. C does this
-    // inside bin_zftp's body before dispatch.
-    let prefs_str: Option<String> = crate::exec::try_with_executor(|exec| {
-        exec.variables.get("ZFTP_PREFS").cloned()
-    }).flatten();
-    if let Some(p) = prefs_str.as_deref() {                                   // c:3074
-        let mut new_prefs: i32 = 0;
-        for ch in p.chars() {
-            match ch.to_ascii_uppercase() {
-                'S' => new_prefs |= ZFPF_SNDP,                                // c:3081
-                'P' => {
-                    if (new_prefs & ZFPF_SNDP) == 0 {                         // c:3090
-                        new_prefs |= ZFPF_PASV;                               // c:3091
-                    }
-                }
-                'D' => new_prefs |= ZFPF_DUMB,                                // c:3095
-                _ => {} // unknown char: C warns; static-link path silent
-            }
-        }
-        zfprefs.store(new_prefs, std::sync::atomic::Ordering::Relaxed);
-    }
-
     let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let mut zftp_guard = ZFTP_STATE.lock()
         .unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
@@ -2842,16 +2819,11 @@ pub fn zfsetparam(name: &str, val: &str, flags: i32) {                        //
     let _ = flags & ZFPM_INTEGER;
 
     // c:499-509 — getnode + IFUNSET / PM_UNSET handling. The Rust paramtab
-    // is split across executor.variables (scalars) + arrays + assoc_arrays;
-    // IFUNSET skips the write when any of those already binds `name`.
+    // doesn't expose IFUNSET semantics yet — assignsparam always writes.
     if (flags & ZFPM_IFUNSET) != 0 {                                          // c:507
-        let already_set = crate::exec::try_with_executor(|exec| {
-            exec.variables.contains_key(name)
-                || exec.arrays.contains_key(name)
-                || exec.assoc_arrays.contains_key(name)
-        }).unwrap_or(false)
-        || std::env::var(name).is_ok();
-        if already_set {
+        // Only set if not currently set. Best-effort check via env lookup
+        // since paramtab isn't bucket-2 consolidated for the executor.
+        if std::env::var(name).is_ok() {
             return;                                                           // c:508-509 pm = NULL → skip
         }
     }
@@ -3484,12 +3456,35 @@ pub fn zftp_params(_name: &str, args: &[&str], _flags: i32) -> i32 {            
 /// returns 0 when the current session has a live control connection,
 /// 1 otherwise (zftpcmdtab flags = ZFTP_TEST).
 pub fn zftp_test(_name: &str, _args: &[&str], _flags: i32) -> i32 {            // c:2251
-    let state = match ZFTP_STATE.lock() {
-        Ok(s) => s,
-        Err(_) => return 1,
+    // c:2263 — early-return when no control connection.
+    let control_fd = ZFTP_STATE.lock().ok().and_then(|s| {
+        s.get_session(None).and_then(|sess| {
+            sess.control.as_ref().map(|c| {
+                use std::os::unix::io::AsRawFd;
+                c.as_raw_fd()
+            })
+        })
+    });
+    let fd = match control_fd {                                                 // c:2262
+        Some(f) => f,
+        None => return 1,                                                       // c:2263
     };
-    let sess = state.get_session(None);
-    if sess.map(|s| s.connected).unwrap_or(false) { 0 } else { 1 }
+    // c:2266-2280 — poll(2) with 0 timeout. POLLIN events on the
+    // control fd mean the server pushed an unsolicited message (e.g.
+    // "421 Timeout") — consume it via zfgetmsg.
+    let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+    let ret = unsafe { libc::poll(&mut pfd, 1, 0) };                            // c:2272
+    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    if ret < 0 && errno != libc::EINTR && errno != libc::EAGAIN {               // c:2273
+        zfclose(0);                                                             // c:2274
+    } else if ret > 0 && pfd.revents != 0 {                                     // c:2275
+        zfgetmsg();                                                             // c:2277 handles 421
+    }
+    // c:2291 — return zfsess->control ? 0 : 2;
+    let still_alive = ZFTP_STATE.lock().ok()
+        .and_then(|s| s.get_session(None).map(|sess| sess.control.is_some()))
+        .unwrap_or(false);
+    if still_alive { 0 } else { 2 }                                             // c:2291
 }
 
 /// Port of `zftp_dir()` from `Src/Modules/zftp.c:2305`.

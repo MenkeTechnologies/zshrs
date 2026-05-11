@@ -2,7 +2,10 @@
 //!
 //! Direct port from zsh/Src/Zle/zle_vi.c
 
+use std::sync::atomic::Ordering;
+
 use super::zle_main::Zle; use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
+use super::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
 
 // Note: dead `ViState` / `ViChange` / `ViPendingOp` aggregates
 // removed per PORT_PLAN Phase 2. They had zero references across the
@@ -47,14 +50,17 @@ impl Zle {
             Some(c) => c,
             None => return,
         };
-        self.vi_last_find_char = Some(c);
-        self.vi_last_find_dir = if forward { 1 } else { -1 };
+        VFINDCHAR.store(c as i32, Ordering::SeqCst);
+        VFINDDIR.store(if forward { 1 } else { -1 }, Ordering::SeqCst);
         // tailadd: f/F → 0; t → -1; T → +1.
-        self.vi_last_find_tail = match (forward, skip) {
-            (_, false) => 0,
-            (true, true) => -1,
-            (false, true) => 1,
-        };
+        TAILADD.store(
+            match (forward, skip) {
+                (_, false) => 0,
+                (true, true) => -1,
+                (false, true) => 1,
+            },
+            Ordering::SeqCst,
+        );
         let _ = self.vi_find_char_inner(false);
     }
 
@@ -62,11 +68,12 @@ impl Zle {
     /// from `;` / `,` re-runs.
     /// Port of `vifindchar(int repeat, ...)` from Src/Zle/zle_move.c:787.
     pub fn vi_find_char_inner(&mut self, repeat: bool) -> i32 {
-        let target = match self.vi_last_find_char {
-            Some(c) => c,
-            None => return 1,
+        let target_raw = VFINDCHAR.load(Ordering::SeqCst);
+        let target = match char::from_u32(target_raw as u32) {
+            Some(c) if target_raw != 0 => c,
+            _ => return 1,
         };
-        if self.vi_last_find_dir == 0 {
+        if VFINDDIR.load(Ordering::SeqCst) == 0 {
             return 1;
         }
         let ocs = self.zlecs;
@@ -74,20 +81,20 @@ impl Zle {
         if n < 0 {
             // Negative count flips direction; faithful to C virevrepeatfind path.
             n = -n;
-            self.vi_last_find_dir = -self.vi_last_find_dir;
-            self.vi_last_find_tail = -self.vi_last_find_tail;
+            VFINDDIR.store(-VFINDDIR.load(Ordering::SeqCst), Ordering::SeqCst);
+            TAILADD.store(-TAILADD.load(Ordering::SeqCst), Ordering::SeqCst);
             let saved_mult = self.zmod.mult;
             self.zmod.mult = n;
             let ret = self.vi_find_char_inner(repeat);
             self.zmod.mult = saved_mult;
-            self.vi_last_find_dir = -self.vi_last_find_dir;
-            self.vi_last_find_tail = -self.vi_last_find_tail;
+            VFINDDIR.store(-VFINDDIR.load(Ordering::SeqCst), Ordering::SeqCst);
+            TAILADD.store(-TAILADD.load(Ordering::SeqCst), Ordering::SeqCst);
             return ret;
         }
         // On `;` (repeat) with t/T, step over the immediately-adjacent match
         // so we don't get stuck on the same char.
-        if repeat && self.vi_last_find_tail != 0 {
-            if self.vi_last_find_dir > 0 {
+        if repeat && TAILADD.load(Ordering::SeqCst) != 0 {
+            if VFINDDIR.load(Ordering::SeqCst) > 0 {
                 if self.zlecs < self.zlell
                     && self.zlecs + 1 < self.zlell
                     && self.zleline[self.zlecs + 1] == target
@@ -98,7 +105,7 @@ impl Zle {
                 self.zlecs -= 1;
             }
         }
-        let dir = self.vi_last_find_dir;
+        let dir = VFINDDIR.load(Ordering::SeqCst);
         for _ in 0..n {
             // Step at least once, then keep stepping until we land on the char,
             // hit a newline, or run off the end.
@@ -149,12 +156,13 @@ impl Zle {
             }
         }
         // Apply the t/T adjustment after the final landing.
-        if self.vi_last_find_tail > 0 && self.zlecs < self.zlell {
+        let tail = TAILADD.load(Ordering::SeqCst);
+        if tail > 0 && self.zlecs < self.zlell {
             self.zlecs += 1;
-        } else if self.vi_last_find_tail < 0 && self.zlecs > 0 {
+        } else if tail < 0 && self.zlecs > 0 {
             self.zlecs -= 1;
         }
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         0
     }
 
@@ -171,11 +179,11 @@ impl Zle {
         if n < 0 {
             return self.vi_find_char_inner(true);
         }
-        self.vi_last_find_tail = -self.vi_last_find_tail;
-        self.vi_last_find_dir = -self.vi_last_find_dir;
+        TAILADD.store(-TAILADD.load(Ordering::SeqCst), Ordering::SeqCst);
+        VFINDDIR.store(-VFINDDIR.load(Ordering::SeqCst), Ordering::SeqCst);
         let ret = self.vi_find_char_inner(true);
-        self.vi_last_find_dir = -self.vi_last_find_dir;
-        self.vi_last_find_tail = -self.vi_last_find_tail;
+        VFINDDIR.store(-VFINDDIR.load(Ordering::SeqCst), Ordering::SeqCst);
+        TAILADD.store(-TAILADD.load(Ordering::SeqCst), Ordering::SeqCst);
         ret
     }
 
@@ -236,7 +244,7 @@ impl Zle {
 
         if depth == 0 {
             self.zlecs = pos;
-            self.resetneeded = true;
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -245,8 +253,8 @@ impl Zle {
     /// insert keymap with `insmode = false` so subsequent self-inserts
     /// overwrite existing chars instead of pushing them right.
     pub fn vi_replace_mode(&mut self) {
-        self.keymaps.select("viins");
-        self.insmode = false; // Overwrite mode
+        crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
+        crate::ported::zle::zle_main::INSMODE.store(0, std::sync::atomic::Ordering::SeqCst); // Overwrite mode
     }
 
     /// Toggle the case of the character under the cursor and advance.
@@ -275,7 +283,7 @@ impl Zle {
             self.zlecs -= 1;
         }
 
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Vi undo (`u` in command mode). Port of viundo() — which in C zsh just
@@ -381,7 +389,7 @@ impl Zle {
             }
         }
         self.zlecs = cs.min(self.zlell);
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Append `key` to the vi change-replay buffer.
@@ -573,14 +581,20 @@ impl Zle {
             // motion char as the find-char target.
             'f' | 'F' | 't' | 'T' => {
                 let next = self.getfullchar(false)?;
-                self.vi_last_find_char = Some(next);
-                self.vi_last_find_dir = if motion == 'f' || motion == 't' { 1 } else { -1 };
-                self.vi_last_find_tail = match motion {
-                    'f' | 'F' => 0,
-                    't' => -1,
-                    'T' => 1,
-                    _ => 0,
-                };
+                VFINDCHAR.store(next as i32, Ordering::SeqCst);
+                VFINDDIR.store(
+                    if motion == 'f' || motion == 't' { 1 } else { -1 },
+                    Ordering::SeqCst,
+                );
+                TAILADD.store(
+                    match motion {
+                        'f' | 'F' => 0,
+                        't' => -1,
+                        'T' => 1,
+                        _ => 0,
+                    },
+                    Ordering::SeqCst,
+                );
                 let saved_mult = self.zmod.mult;
                 self.zmod.mult = n;
                 let ok = self.vi_find_char_inner(false) == 0;
@@ -648,7 +662,7 @@ impl Zle {
             self.zlecs = p;
         }
         let _ = drained;
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         0
     }
 
@@ -667,8 +681,8 @@ impl Zle {
         self.zlell = self.zleline.len();
         self.zlecs = start.min(self.zlell);
         self.vistartchange = self.undo_changeno;
-        self.keymaps.select("main");
-        self.resetneeded = true;
+        crate::ported::zle::zle_keymap::selectkeymap("main", 1);
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         0
     }
 
@@ -694,7 +708,7 @@ impl Zle {
             }
             self.lastcol = -1;
         }
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         0
     }
 }
@@ -726,9 +740,9 @@ mod tests {
     #[test]
     fn vi_find_char_inner_lands_on_target_forward() {
         let mut zle = zle_with("abcdef", 0);
-        zle.vi_last_find_char = Some('d');
-        zle.vi_last_find_dir = 1;
-        zle.vi_last_find_tail = 0;
+        VFINDCHAR.store('d' as i32, Ordering::SeqCst);
+        VFINDDIR.store(1, Ordering::SeqCst);
+        TAILADD.store(0, Ordering::SeqCst);
         assert_eq!(zle.vi_find_char_inner(false), 0);
         assert_eq!(zle.zlecs, 3);
     }
@@ -736,9 +750,9 @@ mod tests {
     #[test]
     fn vi_find_char_inner_skip_stops_one_short_forward() {
         let mut zle = zle_with("abcdef", 0);
-        zle.vi_last_find_char = Some('d');
-        zle.vi_last_find_dir = 1;
-        zle.vi_last_find_tail = -1; // t = forward skip
+        VFINDCHAR.store('d' as i32, Ordering::SeqCst);
+        VFINDDIR.store(1, Ordering::SeqCst);
+        TAILADD.store(-1, Ordering::SeqCst); // t = forward skip
         assert_eq!(zle.vi_find_char_inner(false), 0);
         assert_eq!(zle.zlecs, 2);
     }
@@ -746,9 +760,9 @@ mod tests {
     #[test]
     fn vi_find_char_inner_lands_on_target_backward() {
         let mut zle = zle_with("abcdef", 5);
-        zle.vi_last_find_char = Some('b');
-        zle.vi_last_find_dir = -1;
-        zle.vi_last_find_tail = 0;
+        VFINDCHAR.store('b' as i32, Ordering::SeqCst);
+        VFINDDIR.store(-1, Ordering::SeqCst);
+        TAILADD.store(0, Ordering::SeqCst);
         assert_eq!(zle.vi_find_char_inner(false), 0);
         assert_eq!(zle.zlecs, 1);
     }
@@ -756,9 +770,9 @@ mod tests {
     #[test]
     fn vi_find_char_inner_returns_1_and_restores_when_missing() {
         let mut zle = zle_with("abcdef", 0);
-        zle.vi_last_find_char = Some('z');
-        zle.vi_last_find_dir = 1;
-        zle.vi_last_find_tail = 0;
+        VFINDCHAR.store('z' as i32, Ordering::SeqCst);
+        VFINDDIR.store(1, Ordering::SeqCst);
+        TAILADD.store(0, Ordering::SeqCst);
         assert_eq!(zle.vi_find_char_inner(false), 1);
         assert_eq!(zle.zlecs, 0);
     }
@@ -766,9 +780,9 @@ mod tests {
     #[test]
     fn vi_find_char_inner_stops_at_newline() {
         let mut zle = zle_with("abc\ndef", 0);
-        zle.vi_last_find_char = Some('e');
-        zle.vi_last_find_dir = 1;
-        zle.vi_last_find_tail = 0;
+        VFINDCHAR.store('e' as i32, Ordering::SeqCst);
+        VFINDDIR.store(1, Ordering::SeqCst);
+        TAILADD.store(0, Ordering::SeqCst);
         // 'e' is past the \n on the next line; vi find must not cross it.
         assert_eq!(zle.vi_find_char_inner(false), 1);
         assert_eq!(zle.zlecs, 0);
@@ -777,9 +791,9 @@ mod tests {
     #[test]
     fn vi_repeat_find_walks_to_next_match_in_same_direction() {
         let mut zle = zle_with("a-b-c-d", 0);
-        zle.vi_last_find_char = Some('-');
-        zle.vi_last_find_dir = 1;
-        zle.vi_last_find_tail = 0;
+        VFINDCHAR.store('-' as i32, Ordering::SeqCst);
+        VFINDDIR.store(1, Ordering::SeqCst);
+        TAILADD.store(0, Ordering::SeqCst);
         // Initial find lands on first '-'.
         assert_eq!(zle.vi_find_char_inner(false), 0);
         assert_eq!(zle.zlecs, 1);
@@ -964,9 +978,9 @@ mod tests {
     #[test]
     fn vi_rev_repeat_find_walks_back() {
         let mut zle = zle_with("a-b-c-d", 0);
-        zle.vi_last_find_char = Some('-');
-        zle.vi_last_find_dir = 1;
-        zle.vi_last_find_tail = 0;
+        VFINDCHAR.store('-' as i32, Ordering::SeqCst);
+        VFINDDIR.store(1, Ordering::SeqCst);
+        TAILADD.store(0, Ordering::SeqCst);
         // Forward to first '-' at index 1.
         assert_eq!(zle.vi_find_char_inner(false), 0);
         assert_eq!(zle.zlecs, 1);
@@ -1023,7 +1037,7 @@ pub fn getvirange(zle: &mut crate::ported::zle::zle_main::Zle, _wf: i32) -> i32 
 /// recording branch leaves to a later widget tick.
 pub fn startvichange(zle: &mut crate::ported::zle::zle_main::Zle, im: i32) { // c:88
     if im > -1 {                                                             // c:90
-        zle.insmode = im != 0;                                               // c:91
+        crate::ported::zle::zle_main::INSMODE.store(if im != 0 { 1 } else { 0 }, std::sync::atomic::Ordering::SeqCst);                                               // c:91
     }
 }
 
@@ -1215,7 +1229,7 @@ pub fn vidowncase(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
     for i in zle.zlecs..eol {
         zle.zleline[i] = zle.zleline[i].to_ascii_lowercase();
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1247,7 +1261,7 @@ pub fn viindent(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // 
     if zle.zlecs >= bol {
         zle.zlecs += 4;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1295,7 +1309,7 @@ pub fn vijoin(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {          // 
         let _ = p;
         zle.zlecs = eol;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1312,7 +1326,7 @@ pub fn vikilleol(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // 
         }
         zle.zlell -= eol - zle.zlecs;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1330,7 +1344,7 @@ pub fn vikillline(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
         zle.zlell -= zle.zlecs - bol;
         zle.zlecs = bol;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1343,7 +1357,7 @@ pub fn viopenlineabove(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  //
     zle.zleline.insert(zle.zlecs, '\n');
     zle.zlell += 1;
     startvitext(zle, 1);
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1357,7 +1371,7 @@ pub fn viopenlinebelow(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  //
     zle.zlecs += 1;
     zle.zlell += 1;
     startvitext(zle, 1);
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1381,7 +1395,7 @@ pub fn vioperswapcase(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // 
         zle.zlecs += 1;
     }
     zle.zlecs = oldcs;
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1440,11 +1454,11 @@ pub fn vireplacechars(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // 
     if n > avail {
         return 1;                                                            // not enough chars
     }
-    if let Some(c) = char::from_u32(zle.lastchar as u32) {
+    if let Some(c) = char::from_u32(crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) as u32) {
         for i in 0..n {
             zle.zleline[zle.zlecs + i] = c;
         }
-        zle.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
     0
 }
@@ -1455,7 +1469,7 @@ pub fn visetbuffer(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // 
     //         set zmod.vibuf for the next yank/cut. Without vigetkey
     //         interactive read, use lastchar.
     use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
-    let c = (zle.lastchar & 0xff) as u8;
+    let c = (crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) & 0xff) as u8;
     let idx: i32 = if c.is_ascii_digit() {
         (c - b'0') as i32 + 26
     } else if c.is_ascii_lowercase() {
@@ -1469,7 +1483,7 @@ pub fn visetbuffer(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // 
     };
     zle.zmod.vibuf = idx;
     zle.zmod.flags |= MOD_VIBUF;
-    zle.prefixflag = true;
+    crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1524,7 +1538,7 @@ pub fn viswapcase(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
         zle.zleline[zle.zlecs] = swapped;
         zle.zlecs += 1;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1543,7 +1557,7 @@ pub fn viunindent(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
     if zle.zlecs >= bol + removed {
         zle.zlecs -= removed;
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1555,7 +1569,7 @@ pub fn viupcase(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {        // 
     for i in zle.zlecs..eol {
         zle.zleline[i] = zle.zleline[i].to_ascii_uppercase();
     }
-    zle.resetneeded = true;
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 

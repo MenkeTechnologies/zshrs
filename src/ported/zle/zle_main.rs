@@ -182,36 +182,27 @@ pub struct Zle {
     // location of mark                                                      // c:81
     /// Mark position
     pub mark: usize,
-    // insert mode/overwrite mode flag                                       // c:124
-    /// Insert mode (true) or overwrite mode (false)
-    pub insmode: bool,
-    /// Done editing flag
-    pub done: bool,
-    /// Last character pressed
-    pub lastchar: ZleInt,
-    /// Last character as wide char (always used in Rust)
-    pub lastchar_wide: ZleInt,
-    /// Whether lastchar_wide is valid
-    pub lastchar_wide_valid: bool,
+    // `insmode` moved to file-scope `INSMODE` static below
+    // (matches `int insmode` from zle_main.c:124).
+    // `lastchar`, `lastchar_wide`, `lastchar_wide_valid` moved to
+    // file-scope statics (LASTCHAR in compcore.rs; LASTCHAR_WIDE +
+    // LASTCHAR_WIDE_VALID below). All three are C globals from
+    // zle_main.c.
     /// Binding for the previous key
     pub lbindk: Option<Thingy>,
     /// Binding for this key
     pub bindk: Option<Thingy>,
-    // flags associated with last command                                    // c:145
-    /// Flags associated with last command
-    pub lastcmd: WidgetFlags,
+    // `lastcmd` moved to file-scope LASTCMD atomic below
+    // (matches `int lastcmd` from zle_main.c:145).
     // current modifier status                                               // c:169
     /// Current modifier status
     pub zmod: modifier,
-    /// Prefix command flag
-    pub prefixflag: bool,
-    /// Recursive edit depth
-    pub zle_recursive: i32,
-    /// Read flags
-    pub zlereadflags: i32,
-    /// Context
-    pub zlecontext: i32,
-    /// Status line
+    // `prefixflag` / `zle_recursive` / `zlereadflags` / `zlecontext`
+    // moved to file-scope atomics below (PREFIXFLAG / ZLE_RECURSIVE /
+    // ZLEREADFLAGS / ZLECONTEXT — match the four C globals from
+    // zle_main.c).
+    /// Status line — port of `char *statusline` from zle_main.c.
+    /// Reserved for `bin_zle -M` message rendering / `$STATUSLINE`.
     pub statusline: Option<String>,
     /// History position for buffer stack
     pub stackhist: i32,
@@ -226,23 +217,23 @@ pub struct Zle {
     // Number of characters waiting to be read by the ungetbytes mechanism   // c:185
     /// Unget buffer for bytes
     pub unget_buf: VecDeque<u8>,
-    /// EOF character
-    eofchar: u8,
-    /// EOF sent flag
-    eofsent: bool,
-    /// Key timeout in 100ths of a second
-    pub keytimeout: u64,
-    /// Terminal baud rate
+    // `eofchar` / `eofsent` / `keytimeout` moved to file-scope
+    // EOFCHAR / EOFSENT / KEYTIMEOUT atomics below.
+    /// Terminal baud rate (port of `int baud` from zle_main.c —
+    /// reserved for the termcap-driven baud probe used by typeahead
+    /// detection).
     baud: u32,
-    /// Watch file descriptors
+    /// Watch file descriptors (port of `watch_fds` from zle_main.c —
+    /// reserved for the zsh/zle `bin_zle -F` callback registry).
     pub watch_fds: Vec<super::zle_h::watch_fd>,
-    /// Keymap manager
-    pub keymaps: KeymapManager,
-    /// Completion widget
+    /// Completion widget (port of `compwidget` from zle_tricky.c —
+    /// reserved for the new-style `compctl -K` widget dispatch).
     pub compwidget: Option<Widget>,
-    /// In completion function flag
-    pub incompctlfunc: bool,
-    /// Completion module loaded flag
+    /// `hascompmod` — port of `int hascompmod` from zle_tricky.c.
+    /// Reserved for "zsh/complete module loaded" guard on
+    /// completion-system dispatch. (`incompctlfunc` is unified with
+    /// the live INCOMPCTLFUNC atomic in compctl.rs — Zle field
+    /// deleted to avoid dual state.)
     pub hascompmod: bool,
     /// Terminal file descriptor
     ttyfd: RawFd,
@@ -250,10 +241,9 @@ pub struct Zle {
     lprompt: String,
     /// Right prompt
     rprompt: String,
-    /// Pre-ZLE status
+    /// Pre-ZLE status (port of `int pre_zle_status` from zle_main.c —
+    /// reserved for the lastval shadow needed by `$?` after zleread).
     pre_zle_status: i32,
-    /// Needs refresh
-    pub resetneeded: bool,
     // Primary cut buffer                                                    // c:33
     /// Vi cut buffers (0-35: 0-9, a-z)
     pub vibuf: [ZleString; 36],
@@ -279,12 +269,8 @@ pub struct Zle {
     /// to be re-fed at the next zleread. Port of `bufstack` in zle_hist.c
     /// (a linked list there; a Vec used as a LIFO works the same here).
     pub bufstack: Vec<String>,
-    /// Vi find-char state for repeat-find / rev-repeat-find.
-    /// Port of `vfindchar` (zle_move.c:734), `vfinddir` and `tailadd` (zle_move.c:735).
-    /// `vi_last_find_tail` is the C `tailadd`: 0=on, -1=skip-back-after, +1=skip-forward-after.
-    pub vi_last_find_char: Option<char>,
-    pub vi_last_find_dir: i32,
-    pub vi_last_find_tail: i32,
+    // Vi find-char state moved to file-scope statics in zle_misc.rs
+    // matching C: VFINDCHAR (c:734), VFINDDIR (c:735), TAILADD (c:735).
     /// Vi last change replay buffer (for `.` operator).
     /// Port of `vichgbuf` from zle_vi.c — bytes of the last change op.
     pub vi_chg_buf: Vec<u8>,
@@ -383,25 +369,20 @@ impl Zle {
     /// collapses those globals into a single Zle instance so
     /// callers can hold multiple independent line-edit sessions.
     pub fn new() -> Self {
+        // Seed the global keymap table on first Zle construction.
+        // The C source fires `createkeymapnamtab()` + `default_bindings()`
+        // once at module init (zle.c:init_zle); a Zle session needs
+        // those keymaps in place before key dispatch.
+        crate::ported::zle::zle_keymap::createkeymapnamtab();
+        crate::ported::zle::zle_keymap::default_bindings();
         Zle {
             zleline: Vec::new(),
             zlecs: 0,
             zlell: 0,
             mark: 0,
-            insmode: true,
-            done: false,
-            lastchar: 0,
-            lastchar_wide: 0,
-            lastchar_wide_valid: false,
             lbindk: None,
             bindk: None,
-            lastcmd: WidgetFlags::empty(),
             zmod: modifier::default(),
-            prefixflag: false,
-            zle_recursive: 0,
-            // C default: input.c:418 — `int flags = ZLRF_HISTORY|ZLRF_NOSETTY;`
-            zlereadflags: crate::ported::zsh_h::ZLRF_HISTORY | crate::ported::zsh_h::ZLRF_NOSETTY,
-            zlecontext: crate::ported::zsh_h::ZLCON_LINE_START,
             statusline: None,
             stackhist: 0,
             stackcs: 0,
@@ -409,20 +390,14 @@ impl Zle {
             undo_stack: Vec::new(),
             changeno: 0,
             unget_buf: VecDeque::new(),
-            eofchar: 4, // Ctrl-D
-            eofsent: false,
-            keytimeout: 40, // 0.4 seconds default
             baud: 38400,
             watch_fds: Vec::new(),
-            keymaps: KeymapManager::new(),
             compwidget: None,
-            incompctlfunc: false,
             hascompmod: false,
             ttyfd: 0, // stdin
             lprompt: String::new(),
             rprompt: String::new(),
             pre_zle_status: 0,
-            resetneeded: false,
             vibuf: std::array::from_fn(|_| Vec::new()),
             killring: VecDeque::new(),
             killringmax: 8,
@@ -432,9 +407,6 @@ impl Zle {
             history: super::zle_hist::History::new(2000),
             lastcol: -1,
             bufstack: Vec::new(),
-            vi_last_find_char: None,
-            vi_last_find_dir: 0,
-            vi_last_find_tail: 0,
             vi_chg_buf: Vec::new(),
             srch_str: None,
             last_line: Vec::new(),
@@ -477,7 +449,7 @@ impl Zle {
         // against eofchar for the empty-line EOF branch (zle_main.c:1139).
         let veof = termios.c_cc[termios::VEOF];
         if veof != 0 {
-            self.eofchar = veof;
+            EOFCHAR.store((veof) as i32, std::sync::atomic::Ordering::SeqCst);
         }
 
         // Disable canonical line input + echo so we receive raw keys.
@@ -514,12 +486,9 @@ impl Zle {
     /// timedfns list. Truncated to the keymap timeout subset until
     /// timedfns wiring lands.
     fn calc_timeout(&self, do_keytmout: bool) -> ztmout {                    // c:454
-        if do_keytmout && self.keytimeout > 0 {
-            let exp = if self.keytimeout > ZMAXTIMEOUT * 100 {
-                ZMAXTIMEOUT * 100
-            } else {
-                self.keytimeout
-            };
+        let kt = KEYTIMEOUT.load(std::sync::atomic::Ordering::SeqCst);
+        if do_keytmout && kt > 0 {
+            let exp = if kt > ZMAXTIMEOUT * 100 { ZMAXTIMEOUT * 100 } else { kt };
             ztmout {
                 tp: ztmouttp::ZTM_KEY,
                 exp100ths: exp as i64,
@@ -656,7 +625,7 @@ impl Zle {
             b
         };
 
-        self.lastchar = b as ZleInt;
+        crate::ported::zle::compcore::LASTCHAR.store((b as ZleInt) as i32, std::sync::atomic::Ordering::SeqCst);
         Some(b)
     }
 
@@ -674,8 +643,8 @@ impl Zle {
         // UTF-8 decoding
         if b < 0x80 {
             let c = b as char;
-            self.lastchar_wide = c as ZleInt;
-            self.lastchar_wide_valid = true;
+            crate::ported::zle::zle_main::LASTCHAR_WIDE.store((c as ZleInt) as i32, std::sync::atomic::Ordering::SeqCst);
+            crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
             return Some(c);
         }
 
@@ -704,13 +673,13 @@ impl Zle {
 
         if let Ok(s) = std::str::from_utf8(&bytes) {
             if let Some(c) = s.chars().next() {
-                self.lastchar_wide = c as ZleInt;
-                self.lastchar_wide_valid = true;
+                crate::ported::zle::zle_main::LASTCHAR_WIDE.store((c as ZleInt) as i32, std::sync::atomic::Ordering::SeqCst);
+                crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
                 return Some(c);
             }
         }
 
-        self.lastchar_wide_valid = false;
+        crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(0, std::sync::atomic::Ordering::SeqCst);
         None
     }
 
@@ -738,9 +707,9 @@ impl Zle {
     /// `^X^E`) currently rely on the binding's first byte; the
     /// keymap-trie walk is a follow-up port.
     pub fn zlecore(&mut self) {                                              // c:1110
-        self.done = false;
+        crate::ported::zle::zle_misc::DONE.store(0, std::sync::atomic::Ordering::SeqCst);
 
-        while !self.done {
+        while crate::ported::zle::zle_misc::DONE.load(std::sync::atomic::Ordering::SeqCst) == 0 {
             // EOF handling: empty line + Ctrl-D (eofchar) => terminate.
             // Mirrors zle_main.c:1139-1150 (lastchar == eofchar guard).
             // We can only check this *after* reading a char, so the
@@ -753,8 +722,8 @@ impl Zle {
             let thingy = match self.get_key_cmd() {
                 Some(t) => t,
                 None => {
-                    self.eofsent = true;
-                    self.done = true;
+                    EOFSENT.store(1, std::sync::atomic::Ordering::SeqCst);
+                    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
                     continue;
                 }
             };
@@ -762,11 +731,11 @@ impl Zle {
             // EOF on empty line: matches C's eofchar branch
             // (zle_main.c:1139-1150 — guarded by ZLRF_IGNOREEOF too).
             if self.zlell == 0
-                && self.lastchar == self.eofchar as ZleInt
-                && (self.zlereadflags & crate::ported::zsh_h::ZLRF_HISTORY) != 0
+                && crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) == EOFCHAR.load(std::sync::atomic::Ordering::SeqCst)
+                && (crate::ported::zle::zle_main::ZLEREADFLAGS.load(std::sync::atomic::Ordering::SeqCst) & crate::ported::zsh_h::ZLRF_HISTORY) != 0
             {
-                self.eofsent = true;
-                self.done = true;
+                EOFSENT.store(1, std::sync::atomic::Ordering::SeqCst);
+                crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
                 continue;
             }
 
@@ -799,9 +768,9 @@ impl Zle {
             self.redrawhook();
 
             // Refresh display if any widget asked for it.
-            if self.resetneeded {
+            if crate::ported::zle::zle_main::ZLE_RESET_NEEDED.load(std::sync::atomic::Ordering::SeqCst) != 0 {
                 self.zrefresh();
-                self.resetneeded = false;
+                crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(0, std::sync::atomic::Ordering::SeqCst);
             }
         }
     }
@@ -928,7 +897,7 @@ impl Zle {
         // Update lastcmd for yank-pop / next-widget chains, unless the
         // widget is NOTCOMMAND (digit-arg, prefix, etc.) — zle_main.c:1497.
         if !widget.flags.contains(super::widget::WidgetFlags::NOTCOMMAND) {
-            self.lastcmd = widget.flags;
+            LASTCMD.store(widget.flags.bits(), std::sync::atomic::Ordering::SeqCst);
         }
 
         // Capture the change (if any) into the undo stack. undo/redo widgets
@@ -938,7 +907,7 @@ impl Zle {
 
     /// Self-insert character (internal, used by zlecore)
     fn do_self_insert(&mut self, c: char) {
-        if self.insmode {
+        if (crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst) != 0) {
             // Insert mode
             self.zleline.insert(self.zlecs, c);
             self.zlecs += 1;
@@ -953,7 +922,7 @@ impl Zle {
             }
             self.zlecs += 1;
         }
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Run a line edit and return the user's accepted line.
@@ -980,15 +949,15 @@ impl Zle {
         self.rprompt_raw = rprompt.to_string();
         self.lprompt = crate::prompt::expand_prompt(lprompt);
         self.rprompt = crate::prompt::expand_prompt(rprompt);
-        self.zlereadflags = flags;
-        self.zlecontext = context;
+        crate::ported::zle::zle_main::ZLEREADFLAGS.store(flags, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECONTEXT.store(context, std::sync::atomic::Ordering::SeqCst);
 
         // Initialize line
         self.zleline.clear();
         self.zlecs = 0;
         self.zlell = 0;
         self.mark = 0;
-        self.done = false;
+        crate::ported::zle::zle_misc::DONE.store(0, std::sync::atomic::Ordering::SeqCst);
 
         // Set up terminal
         self.zsetterm()?;
@@ -1028,8 +997,8 @@ impl Zle {
     /// non-prefix widget, so reset the modifier to its default state via
     /// `initmodifier`.
     pub fn handleprefixes(&mut self) {
-        if self.prefixflag {
-            self.prefixflag = false;
+        if (crate::ported::zle::zle_main::PREFIXFLAG.load(std::sync::atomic::Ordering::SeqCst) != 0) {
+            crate::ported::zle::zle_main::PREFIXFLAG.store(0, std::sync::atomic::Ordering::SeqCst);
             if self.zmod.flags & MOD_TMULT != 0 {
                 self.zmod.flags &= !MOD_TMULT;
                 self.zmod.flags |= MOD_MULT;
@@ -1056,7 +1025,7 @@ impl Zle {
         // Reset attributes (C source: applytextattributes(0)).
         print!("\x1b[0m");
         let _ = io::stdout().flush();
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Mark the prompt as needing a re-expand on next refresh.
@@ -1065,7 +1034,7 @@ impl Zle {
     /// `clearflag`; our simplified version just flips `resetneeded`
     /// (clearflag's TCCLEAREOD path isn't wired through this crate).
     pub fn resetprompt(&mut self) {
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Re-run prompt expansion against the saved templates.
@@ -1080,7 +1049,7 @@ impl Zle {
         // env/state internally.
         self.lprompt = crate::prompt::expand_prompt(&self.lprompt_raw);
         self.rprompt = crate::prompt::expand_prompt(&self.rprompt_raw);
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Run a nested edit session — used by user widgets to invoke the
@@ -1094,28 +1063,28 @@ impl Zle {
     /// returns. Returns 1 if the inner edit aborted with errflag set,
     /// matching the C `locerror` path at zle_main.c:1992.
     pub fn recursive_edit(&mut self) -> i32 {
-        self.zle_recursive += 1;
-        let old_done = self.done;
-        let old_eofsent = self.eofsent;
+        crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let old_done = crate::ported::zle::zle_misc::DONE.load(std::sync::atomic::Ordering::SeqCst) != 0;
+        let old_eofsent = EOFSENT.load(std::sync::atomic::Ordering::SeqCst);
 
         // Mirror zle_main.c:1984-1986 — refresh before entering the
         // sub-loop so the user sees current state on enter.
         self.redrawhook();
         self.zrefresh();
 
-        self.done = false;
-        self.eofsent = false;
+        crate::ported::zle::zle_misc::DONE.store(0, std::sync::atomic::Ordering::SeqCst);
+        EOFSENT.store(0, std::sync::atomic::Ordering::SeqCst);
         self.zlecore();
 
         // C source resets errflag/done/eofsent on exit (zle_main.c:1993)
         // so the outer loop continues. We don't have an errflag global,
         // so the local-error signal collapses to "did the inner exit
         // via abort_line?" — approximated by checking eofsent.
-        let locerror = if self.eofsent { 1 } else { 0 };
+        let locerror = EOFSENT.load(std::sync::atomic::Ordering::SeqCst);
 
-        self.done = old_done;
-        self.eofsent = old_eofsent;
-        self.zle_recursive -= 1;
+        crate::ported::zle::zle_misc::DONE.store(if old_done { 1 } else { 0 }, std::sync::atomic::Ordering::SeqCst);
+        EOFSENT.store(old_eofsent, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
 
         locerror
     }
@@ -1124,7 +1093,7 @@ impl Zle {
     /// Port of `acceptline()` from Src/Zle/zle_misc.c:401 — the C source
     /// just sets the global `done` flag.
     pub fn finish_line(&mut self) {
-        self.done = true;
+        crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Abort the current line edit and exit zlecore with an empty buffer.
@@ -1136,7 +1105,7 @@ impl Zle {
         self.zleline.clear();
         self.zlecs = 0;
         self.zlell = 0;
-        self.done = true;
+        crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -1150,7 +1119,19 @@ impl Zle {
     /// Port of describekeybriefly() from zle_main.c
     pub fn describe_key_briefly(&mut self) {
         if let Some(c) = self.getfullchar(false) {
-            if let Some(thingy) = self.keymaps.lookup_key(c) {
+            let thingy = if c as u32 > 255 {
+                None
+            } else {
+                let km = crate::ported::zle::zle_keymap::LOCALKEYMAP
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .or_else(|| {
+                        crate::ported::zle::zle_keymap::curkeymap.lock().unwrap().clone()
+                    });
+                km.and_then(|k| k.first[c as usize].clone())
+            };
+            if let Some(thingy) = thingy {
                 self.display_msg(&format!("{} is bound to {}", c, thingy.nam));
             } else {
                 self.display_msg(&format!("{} is not bound", c));
@@ -1206,7 +1187,7 @@ impl Zle {
     /// Break read (for signals)
     /// Port of breakread() from zle_main.c
     pub fn break_read(&mut self) {
-        self.done = true;
+        crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Handle before trap
@@ -1219,13 +1200,13 @@ impl Zle {
     /// Port of zleaftertrap() from zle_main.c
     pub fn after_trap(&mut self) {
         // Restore state after running trap
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// ZLE reset prompt
     /// Port of zle_resetprompt() from zle_main.c  
     pub fn zle_reset_prompt(&mut self) {
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Display message to user (internal)
@@ -1246,7 +1227,7 @@ impl Zle {
     /// Set prompt
     pub fn set_prompt(&mut self, prompt: &str) {
         self.lprompt = prompt.to_string();
-        self.resetneeded = true;
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Get repeat count
@@ -1270,22 +1251,24 @@ impl Zle {
 
     /// Vi command mode flag
     pub fn is_vicmd(&self) -> bool {
-        self.keymaps.is_vi_cmd()
+        *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd"
     }
 
     /// Vi insert mode flag
     pub fn is_viins(&self) -> bool {
-        self.keymaps.is_vi_insert()
+        *crate::ported::zle::zle_keymap::curkeymapname() == "viins"
     }
 
     /// Emacs mode flag
     pub fn is_emacs(&self) -> bool {
-        self.keymaps.is_emacs()
+        let n = crate::ported::zle::zle_keymap::curkeymapname();
+        *n == "emacs" || *n == "main"
     }
 
     /// Check if last command was yank
     pub fn was_yank(&self) -> bool {
-        self.lastcmd.contains(WidgetFlags::YANK)
+        WidgetFlags::from_bits_truncate(LASTCMD.load(std::sync::atomic::Ordering::SeqCst))
+            .contains(WidgetFlags::YANK)
     }
 }
 
@@ -1380,7 +1363,7 @@ pub fn bin_vared(name: &str, args: &[String],                                // 
     let mut input = String::new();
     if std::io::stdin().read_line(&mut input).is_ok() {                      // c:1841 zleread fallback
         let value = input.trim_end_matches('\n').to_string();
-        crate::ported::modules::ksh93::setsparam(varname, &value);           // c:1893 setsparam
+        crate::ported::params::setsparam(varname, &value);           // c:1893 setsparam
         return 0;                                                            // c:1903
     }
     1
@@ -1494,12 +1477,12 @@ mod tests {
         let mut zle = Zle::new();
         zle.zmod.flags |= MOD_TMULT;
         zle.zmod.tmult = 7;
-        zle.prefixflag = true;
+        crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
         zle.handleprefixes();
         assert!(zle.zmod.flags & MOD_MULT != 0);
         assert!(!zle.zmod.flags & MOD_TMULT != 0);
         assert_eq!(zle.zmod.mult, 7);
-        assert!(!zle.prefixflag);
+        assert!(crate::ported::zle::zle_main::PREFIXFLAG.load(std::sync::atomic::Ordering::SeqCst) == 0);
     }
 
     #[test]
@@ -1507,7 +1490,7 @@ mod tests {
         let mut zle = Zle::new();
         zle.zmod.flags |= MOD_MULT;
         zle.zmod.mult = 9;
-        zle.prefixflag = false;
+        crate::ported::zle::zle_main::PREFIXFLAG.store(0, std::sync::atomic::Ordering::SeqCst);
         zle.handleprefixes();
         // initmodifier resets to defaults: mult=1, no flags.
         assert_eq!(zle.zmod.mult, 1);
@@ -1517,7 +1500,7 @@ mod tests {
     #[test]
     fn get_key_cmd_resolves_single_byte_binding() {
         let mut zle = Zle::new();
-        zle.keymaps.select("emacs");
+        crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
         zle.ungetbytes(b"\x05"); // Ctrl-E — emacs default = end-of-line
         let t = zle.get_key_cmd().expect("should resolve Ctrl-E");
         assert_eq!(t.nam, "end-of-line");
@@ -1526,7 +1509,7 @@ mod tests {
     #[test]
     fn get_key_cmd_resolves_multi_byte_sequence() {
         let mut zle = Zle::new();
-        zle.keymaps.select("emacs");
+        crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
         // ESC-d is bind to kill-word in zle_bindings.c emacs table.
         // Push the bytes and resolve — multi-byte traversal kicks in.
         zle.ungetbytes(b"\x1bd");
@@ -1542,7 +1525,7 @@ mod tests {
     #[test]
     fn get_key_cmd_returns_none_on_eof() {
         let mut zle = Zle::new();
-        zle.keymaps.select("emacs");
+        crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
         // No bytes fed, no terminal attached — getbyte should return None.
         let result = zle.get_key_cmd();
         // In test context with no real tty, getbyte may block; but our
@@ -1848,17 +1831,17 @@ pub fn finish_(_m: *const crate::ported::zsh_h::module) -> i32 {             // 
 /// Port of `getrestchar()` from Src/Zle/zle_main.c:990.
 pub fn getrestchar(zle: &mut Zle, inchar: i32) -> i32 {                      // c:990
     // c:1002 — `lastchar_wide_valid = 1`. Mark wide cache as valid.
-    zle.lastchar_wide_valid = true;
+    crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
     // c:1006-1009 — `if (inchar == EOF) return WEOF (cached)`.
     if inchar < 0 {
-        zle.lastchar_wide = -1;
+        crate::ported::zle::zle_main::LASTCHAR_WIDE.store((-1) as i32, std::sync::atomic::Ordering::SeqCst);
         return -1;                                                           // c:1009 ZLEEOF
     }
     // c:1016+ — multibyte byte-stream → wide-char accumulator.
     // zshrs is UTF-8 native; for an ASCII char inchar fits in
     // lastchar_wide directly (mb_metacharlenconv state machine
     // collapses to identity for the BMP single-byte path).
-    zle.lastchar_wide = inchar;
+    crate::ported::zle::zle_main::LASTCHAR_WIDE.store((inchar) as i32, std::sync::atomic::Ordering::SeqCst);
     inchar
 }
 
@@ -1871,9 +1854,9 @@ pub fn recursiveedit(zle: &mut Zle) -> i32 {                                 // 
     // zlecore needs the editor mainloop substrate; we faithfully
     // bump/decrement zle_recursive and reset errflag/done.
     use std::sync::atomic::Ordering;
-    zle.zle_recursive += 1;
+    crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     // c:1984-1986 — `redrawhook(); zrefresh(); zlecore()`. Deferred.
-    zle.zle_recursive -= 1;
+    crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     let cur_errflag = crate::ported::utils::errflag.load(Ordering::Relaxed);
     let locerror = if cur_errflag != 0 { 1 } else { 0 };
     crate::ported::utils::errflag.store(0, Ordering::Relaxed);
@@ -2002,6 +1985,79 @@ pub fn zle_resetprompt() {                                                   // 
 /// without a live Zle handle here we route through this flag.
 pub static ZLE_RESET_NEEDED: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int insmode` from `Src/Zle/zle_main.c:124`. Non-zero
+/// when ZLE is in insert mode (vs overwrite). Toggled by
+/// `overwrite-mode` widget; consulted by `self-insert` /
+/// `selfinsert()` to choose insert vs replace semantics.
+pub static INSMODE: std::sync::atomic::AtomicI32 =                           // c:124
+    std::sync::atomic::AtomicI32::new(1);
+
+/// Port of `int lastchar_wide` from `Src/Zle/zle_main.c`. Wide
+/// (multi-byte) version of the last input character — populated by
+/// `getfullchar()` after assembling a multi-byte sequence, then
+/// consumed by `selfinsert()`-class widgets in preference to the
+/// byte-level `LASTCHAR` when the input was non-ASCII.
+pub static LASTCHAR_WIDE: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int lastchar_wide_valid` from `Src/Zle/zle_main.c`.
+/// Set when `LASTCHAR_WIDE` holds a freshly-assembled wide-char
+/// from `getfullchar()`; cleared by callers that consumed it.
+pub static LASTCHAR_WIDE_VALID: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int eofchar` from `Src/Zle/zle_main.c`. The termios
+/// VEOF byte (typically Ctrl-D); compared against `LASTCHAR` to
+/// detect end-of-file on an empty line.
+pub static EOFCHAR: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(4);
+
+/// Port of `int eofsent` from `Src/Zle/zle_main.c`. Set when the
+/// user sent EOF on an empty line — drives the outer `zleread()`
+/// loop to break and return an EOF sentinel.
+pub static EOFSENT: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int prefixflag` from `Src/Zle/zle_main.c`. Sticky flag
+/// set by a prefix command (universal-argument, digit-argument,
+/// vi-set-buffer, etc.) so the next widget consumes the argument
+/// rather than starting a fresh count.
+pub static PREFIXFLAG: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int zlereadflags` from `Src/Zle/zle_main.c`. ZLRF_*
+/// flags passed to `zleread()` controlling history/setty behaviour.
+/// Default value matches input.c:418 (`ZLRF_HISTORY | ZLRF_NOSETTY`).
+pub static ZLEREADFLAGS: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(
+        crate::ported::zsh_h::ZLRF_HISTORY | crate::ported::zsh_h::ZLRF_NOSETTY,
+    );
+
+/// Port of `int zlecontext` from `Src/Zle/zle_main.c`. ZLCON_*
+/// context tag passed to `zleread()` — distinguishes line-start
+/// vs continuation-line vs vared etc.
+pub static ZLECONTEXT: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(crate::ported::zsh_h::ZLCON_LINE_START);
+
+/// Port of `int zle_recursive` from `Src/Zle/zle_main.c`. Depth of
+/// nested `recursive-edit` invocations; non-zero inhibits outer
+/// loop exit.
+pub static ZLE_RECURSIVE: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `time_t keytimeout` from `Src/Zle/zle_main.c`. Multi-byte
+/// key-sequence timeout in 100ths of a second. 0 = no timeout. The
+/// default 40 (0.4s) matches zsh's `$KEYTIMEOUT` startup default.
+pub static KEYTIMEOUT: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(40);
+
+/// Port of `int lastcmd` from `Src/Zle/zle_main.c:145`. Flags of
+/// the most-recently-executed widget — drives `yank`/`yank-pop`
+/// chaining, `WidgetFlags::YANK`/`YANKAFTER` membership tests, etc.
+/// Stored as the raw bits of `WidgetFlags` (u32) in an atomic.
+pub static LASTCMD: std::sync::atomic::AtomicU32 =                           // c:145
+    std::sync::atomic::AtomicU32::new(0);
 
 /// Port of `zleaftertrap()` from `Src/Zle/zle_main.c:2113`.
 /// ```c

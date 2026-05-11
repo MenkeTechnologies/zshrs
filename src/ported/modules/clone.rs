@@ -297,7 +297,7 @@ fn init_io(cmd: *mut libc::c_char) {                                         // 
 // canonical ksh93::setsparam free-fn (which writes to env-as-param-
 // table on the static-link path).
 fn setsparam(name: &str, value: &str) {                                      // c:3380
-    crate::ported::modules::ksh93::setsparam(name, value);
+    crate::ported::params::setsparam(name, value);
 }
 
 // `ztrdup` lives in `Src/string.c:18` — `strdup` clone using zsh's
