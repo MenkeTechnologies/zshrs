@@ -1159,7 +1159,10 @@ fn foredel(ct: i32) {                                                    // zle_
 
 /// Direct port of `inststr(char *s)` from `Src/Zle/zle_tricky.c:278`.
 /// Inserts `s` at `ZLEMETACS` in the global metafied line.
-fn inststr(s: &str) {                                                    // zle_tricky.c:278
+/// Direct port of `#define inststr(X) inststrlen((X),1,-1)` from
+/// `Src/Zle/zle_tricky.c:57`. Inserts `s` at `ZLEMETACS` in the
+/// global metafied line; cursor advances by `s.len()`.
+fn inststr(s: &str) {                                                    // c:57
     if s.is_empty() { return; }
     let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
     if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {

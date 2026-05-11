@@ -334,7 +334,21 @@ impl Keymap {
     }
 }
 
-/// Manager for all keymaps
+/// Rust-only container collecting 6 C globals from
+/// `Src/Zle/zle_keymap.c` into one struct:
+///   - `keymaps`      ↔ `keymapnamtab`  (c:131)
+///   - `current`      ↔ `curkeymap`     (c:124)
+///   - `current_name` ↔ `curkeymapname` (c:126)
+///   - `local`        ↔ `localkeymap`   (c:124)
+///   - `keybuf`       ↔ `keybuf`        (c:136)
+///   - `lastnamed`    ↔ `lastnamed`     (c:145)
+///
+/// Each field has a file-scope static equivalent declared above
+/// (KEYMAPNAMTAB / curkeymap / CURKEYMAPNAME / LOCALKEYMAP /
+/// keybuf / lastnamed). This struct exists for the per-`Zle`
+/// container shape — pending a cascade-rewrite that switches all
+/// 74 `.keymaps.X` callers to read from the file-scope statics
+/// directly (matching C's inline access).
 #[derive(Debug)]
 pub struct KeymapManager {
     // the hash table of keymap names                                        // c:128
