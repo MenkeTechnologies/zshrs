@@ -198,14 +198,10 @@ pub struct Zle {
     // current modifier status                                               // c:169
     /// Current modifier status
     pub zmod: modifier,
-    // `prefixflag` moved to file-scope PREFIXFLAG atomic below
-    // (matches int prefixflag from zle_main.c).
-    /// Recursive edit depth
-    pub zle_recursive: i32,
-    /// Read flags
-    pub zlereadflags: i32,
-    /// Context
-    pub zlecontext: i32,
+    // `prefixflag` / `zle_recursive` / `zlereadflags` / `zlecontext`
+    // moved to file-scope atomics below (PREFIXFLAG / ZLE_RECURSIVE /
+    // ZLEREADFLAGS / ZLECONTEXT — match the four C globals from
+    // zle_main.c).
     /// History position for buffer stack
     pub stackhist: i32,
     /// Cursor position for buffer stack
@@ -377,10 +373,6 @@ impl Zle {
             bindk: None,
             lastcmd: WidgetFlags::empty(),
             zmod: modifier::default(),
-            zle_recursive: 0,
-            // C default: input.c:418 — `int flags = ZLRF_HISTORY|ZLRF_NOSETTY;`
-            zlereadflags: crate::ported::zsh_h::ZLRF_HISTORY | crate::ported::zsh_h::ZLRF_NOSETTY,
-            zlecontext: crate::ported::zsh_h::ZLCON_LINE_START,
             stackhist: 0,
             stackcs: 0,
             vistartchange: 0,
@@ -732,7 +724,7 @@ impl Zle {
             // (zle_main.c:1139-1150 — guarded by ZLRF_IGNOREEOF too).
             if self.zlell == 0
                 && crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) == EOFCHAR.load(std::sync::atomic::Ordering::SeqCst)
-                && (self.zlereadflags & crate::ported::zsh_h::ZLRF_HISTORY) != 0
+                && (crate::ported::zle::zle_main::ZLEREADFLAGS.load(std::sync::atomic::Ordering::SeqCst) & crate::ported::zsh_h::ZLRF_HISTORY) != 0
             {
                 EOFSENT.store(1, std::sync::atomic::Ordering::SeqCst);
                 crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -949,8 +941,8 @@ impl Zle {
         self.rprompt_raw = rprompt.to_string();
         self.lprompt = crate::prompt::expand_prompt(lprompt);
         self.rprompt = crate::prompt::expand_prompt(rprompt);
-        self.zlereadflags = flags;
-        self.zlecontext = context;
+        crate::ported::zle::zle_main::ZLEREADFLAGS.store(flags, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECONTEXT.store(context, std::sync::atomic::Ordering::SeqCst);
 
         // Initialize line
         self.zleline.clear();
@@ -1063,7 +1055,7 @@ impl Zle {
     /// returns. Returns 1 if the inner edit aborted with errflag set,
     /// matching the C `locerror` path at zle_main.c:1992.
     pub fn recursive_edit(&mut self) -> i32 {
-        self.zle_recursive += 1;
+        crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let old_done = crate::ported::zle::zle_misc::DONE.load(std::sync::atomic::Ordering::SeqCst) != 0;
         let old_eofsent = EOFSENT.load(std::sync::atomic::Ordering::SeqCst);
 
@@ -1084,7 +1076,7 @@ impl Zle {
 
         crate::ported::zle::zle_misc::DONE.store(if old_done { 1 } else { 0 }, std::sync::atomic::Ordering::SeqCst);
         EOFSENT.store(old_eofsent, std::sync::atomic::Ordering::SeqCst);
-        self.zle_recursive -= 1;
+        crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
 
         locerror
     }
@@ -1853,9 +1845,9 @@ pub fn recursiveedit(zle: &mut Zle) -> i32 {                                 // 
     // zlecore needs the editor mainloop substrate; we faithfully
     // bump/decrement zle_recursive and reset errflag/done.
     use std::sync::atomic::Ordering;
-    zle.zle_recursive += 1;
+    crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     // c:1984-1986 — `redrawhook(); zrefresh(); zlecore()`. Deferred.
-    zle.zle_recursive -= 1;
+    crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     let cur_errflag = crate::ported::utils::errflag.load(Ordering::Relaxed);
     let locerror = if cur_errflag != 0 { 1 } else { 0 };
     crate::ported::utils::errflag.store(0, Ordering::Relaxed);
@@ -2023,6 +2015,26 @@ pub static EOFSENT: std::sync::atomic::AtomicI32 =
 /// vi-set-buffer, etc.) so the next widget consumes the argument
 /// rather than starting a fresh count.
 pub static PREFIXFLAG: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int zlereadflags` from `Src/Zle/zle_main.c`. ZLRF_*
+/// flags passed to `zleread()` controlling history/setty behaviour.
+/// Default value matches input.c:418 (`ZLRF_HISTORY | ZLRF_NOSETTY`).
+pub static ZLEREADFLAGS: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(
+        crate::ported::zsh_h::ZLRF_HISTORY | crate::ported::zsh_h::ZLRF_NOSETTY,
+    );
+
+/// Port of `int zlecontext` from `Src/Zle/zle_main.c`. ZLCON_*
+/// context tag passed to `zleread()` — distinguishes line-start
+/// vs continuation-line vs vared etc.
+pub static ZLECONTEXT: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(crate::ported::zsh_h::ZLCON_LINE_START);
+
+/// Port of `int zle_recursive` from `Src/Zle/zle_main.c`. Depth of
+/// nested `recursive-edit` invocations; non-zero inhibits outer
+/// loop exit.
+pub static ZLE_RECURSIVE: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `zleaftertrap()` from `Src/Zle/zle_main.c:2113`.

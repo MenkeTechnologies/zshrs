@@ -1935,14 +1935,14 @@ fn widget_vi_fetch_history(zle: &mut Zle) {
     }
     let has_mult = zle.zmod.flags & crate::ported::zle::zle_h::MOD_MULT != 0;
     let on_live = zle.history.cursor >= zle.history.entries.len();
-    if on_live || (zle.zlereadflags & crate::ported::zsh_h::ZLRF_HISTORY) == 0 {
+    if on_live || (crate::ported::zle::zle_main::ZLEREADFLAGS.load(std::sync::atomic::Ordering::SeqCst) & crate::ported::zsh_h::ZLRF_HISTORY) == 0 {
         if !has_mult {
             zle.zlecs = zle.zlell;
             zle.zlecs = zle.find_bol(zle.zlecs);
             crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
             return;
         }
-        if (zle.zlereadflags & crate::ported::zsh_h::ZLRF_HISTORY) == 0 {
+        if (crate::ported::zle::zle_main::ZLEREADFLAGS.load(std::sync::atomic::Ordering::SeqCst) & crate::ported::zsh_h::ZLRF_HISTORY) == 0 {
             return;
         }
     }

@@ -128,7 +128,7 @@ impl Zle {
         let n = self.upline();
         if n != 0 {
             self.zlecs = ocs;
-            if (self.zlereadflags & crate::ported::zsh_h::ZLRF_HISTORY) == 0 {
+            if (crate::ported::zle::zle_main::ZLEREADFLAGS.load(std::sync::atomic::Ordering::SeqCst) & crate::ported::zsh_h::ZLRF_HISTORY) == 0 {
                 return 1;
             }
             let saved_mult = self.mult;
@@ -154,7 +154,7 @@ impl Zle {
         let n = self.downline();
         if n != 0 {
             self.zlecs = ocs;
-            if (self.zlereadflags & crate::ported::zsh_h::ZLRF_HISTORY) == 0 {
+            if (crate::ported::zle::zle_main::ZLEREADFLAGS.load(std::sync::atomic::Ordering::SeqCst) & crate::ported::zsh_h::ZLRF_HISTORY) == 0 {
                 return 1;
             }
             let saved_mult = self.mult;
