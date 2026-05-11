@@ -19,6 +19,7 @@
 #![allow(deprecated)]
 #![allow(unexpected_cfgs)]
 
+pub mod exec_jobs;
 pub mod extensions;
 pub mod ported;
 
