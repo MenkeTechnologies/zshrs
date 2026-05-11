@@ -201,6 +201,9 @@ pub struct Zle {
     // moved to file-scope atomics below (PREFIXFLAG / ZLE_RECURSIVE /
     // ZLEREADFLAGS / ZLECONTEXT — match the four C globals from
     // zle_main.c).
+    /// Status line — port of `char *statusline` from zle_main.c.
+    /// Reserved for `bin_zle -M` message rendering / `$STATUSLINE`.
+    pub statusline: Option<String>,
     /// History position for buffer stack
     pub stackhist: i32,
     /// Cursor position for buffer stack
@@ -216,19 +219,31 @@ pub struct Zle {
     pub unget_buf: VecDeque<u8>,
     // `eofchar` / `eofsent` / `keytimeout` moved to file-scope
     // EOFCHAR / EOFSENT / KEYTIMEOUT atomics below.
-    /// Watch file descriptors
+    /// Terminal baud rate (port of `int baud` from zle_main.c —
+    /// reserved for the termcap-driven baud probe used by typeahead
+    /// detection).
+    baud: u32,
+    /// Watch file descriptors (port of `watch_fds` from zle_main.c —
+    /// reserved for the zsh/zle `bin_zle -F` callback registry).
     pub watch_fds: Vec<super::zle_h::watch_fd>,
-    /// Completion widget
+    /// Completion widget (port of `compwidget` from zle_tricky.c —
+    /// reserved for the new-style `compctl -K` widget dispatch).
     pub compwidget: Option<Widget>,
-    // `incompctlfunc` lives as INCOMPCTLFUNC atomic in compctl.rs;
-    // `hascompmod` had no callers and is replaced by an inline check
-    // in zle_tricky.rs when wired.
+    /// `hascompmod` — port of `int hascompmod` from zle_tricky.c.
+    /// Reserved for "zsh/complete module loaded" guard on
+    /// completion-system dispatch. (`incompctlfunc` is unified with
+    /// the live INCOMPCTLFUNC atomic in compctl.rs — Zle field
+    /// deleted to avoid dual state.)
+    pub hascompmod: bool,
     /// Terminal file descriptor
     ttyfd: RawFd,
     /// Left prompt
     lprompt: String,
     /// Right prompt
     rprompt: String,
+    /// Pre-ZLE status (port of `int pre_zle_status` from zle_main.c —
+    /// reserved for the lastval shadow needed by `$?` after zleread).
+    pre_zle_status: i32,
     // Primary cut buffer                                                    // c:33
     /// Vi cut buffers (0-35: 0-9, a-z)
     pub vibuf: [ZleString; 36],
@@ -368,17 +383,21 @@ impl Zle {
             lbindk: None,
             bindk: None,
             zmod: modifier::default(),
+            statusline: None,
             stackhist: 0,
             stackcs: 0,
             vistartchange: 0,
             undo_stack: Vec::new(),
             changeno: 0,
             unget_buf: VecDeque::new(),
+            baud: 38400,
             watch_fds: Vec::new(),
             compwidget: None,
+            hascompmod: false,
             ttyfd: 0, // stdin
             lprompt: String::new(),
             rprompt: String::new(),
+            pre_zle_status: 0,
             vibuf: std::array::from_fn(|_| Vec::new()),
             killring: VecDeque::new(),
             killringmax: 8,
