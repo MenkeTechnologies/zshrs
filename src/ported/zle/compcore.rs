@@ -861,7 +861,7 @@ pub fn freematches(_g: Vec<Cmgroup>) {                                       // 
 pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // c:287
     use crate::ported::zle::zle_tricky::{USEGLOB, WOULDINSTAB};
 
-    let osl = showinglist_stub();                                            // c:289
+    let osl = crate::ported::zle::zle_refresh::SHOWINGLIST.load(Ordering::Relaxed);                                            // c:289
     let mut ret: i32 = 0;                                                    // c:289
 
     // c:296-297 — `ainfo = fainfo = NULL`.
@@ -872,7 +872,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
     }
 
     // c:300-307 — compqstack reset.
-    let instring = instring_stub();                                          // c:307
+    let instring = crate::ported::zle::zle_tricky::INSTRING.load(Ordering::Relaxed);                                          // c:307
     let head_q: char = if instring == QT_NONE_STUB {                         // c:305
         char_from_qt(QT_BACKSLASH_STUB)
     } else {
@@ -933,7 +933,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
         if zlc == we_v || opt_isset_stub("ALWAYSTOEND") != 0 { 2 } else { 1 },
         Ordering::Relaxed,
     );
-    showinglist_set(0);                                                      // c:333
+    crate::ported::zle::zle_refresh::SHOWINGLIST.store(0, Ordering::Relaxed);                                                      // c:333
     hasmatched.store(0, Ordering::Relaxed);                                  // c:334
     hasunmatched.store(0, Ordering::Relaxed);                                // c:334
     minmlen.store(1_000_000, Ordering::Relaxed);                             // c:335
@@ -948,7 +948,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
         foredel_stub(ZLEMETALL.load(Ordering::Relaxed));                     // c:345
         inststr_stub(&origline_stub());                                      // c:346
         ZLEMETACS.store(origcs_stub(), Ordering::Relaxed);                   // c:347
-        clearlist_set(1);                                                    // c:348
+        crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed);                                                    // c:348
         ret = 1;
         minfo_clear_cur();                                                   // c:350
         if useline.load(Ordering::Relaxed) < 0 {                             // c:351
@@ -984,34 +984,34 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
         foredel_stub(ZLEMETALL.load(Ordering::Relaxed));                     // c:376
         inststr_stub(&origline_stub());                                      // c:377
         ZLEMETACS.store(origcs_stub(), Ordering::Relaxed);                   // c:378
-        showinglist_set(-2);                                                 // c:379
+        crate::ported::zle::zle_refresh::SHOWINGLIST.store(-2, Ordering::Relaxed);                                                 // c:379
     } else if useline.load(Ordering::Relaxed) == 2 && nm > 1 {               // c:380
         do_allmatches_stub(1);                                               // c:381
         minfo_clear_cur();                                                   // c:383
         if forcelist.load(Ordering::Relaxed) != 0 {                          // c:385
-            showinglist_set(-2);
+            crate::ported::zle::zle_refresh::SHOWINGLIST.store(-2, Ordering::Relaxed);
         } else {
             invalidatelist_stub();                                           // c:388
         }
     } else if useline.load(Ordering::Relaxed) != 0 {                         // c:389
         if nm > 1 && dm != 0 {                                               // c:391
             ret = do_ambiguous_stub();                                       // c:393
-            if showinglist_stub() == 0
+            if crate::ported::zle::zle_refresh::SHOWINGLIST.load(Ordering::Relaxed) == 0
                 && uselist.load(Ordering::Relaxed) != 0
-                && listshown_stub() != 0
+                && crate::ported::zle::zle_refresh::LISTSHOWN.load(Ordering::Relaxed) != 0
                 && (crate::ported::zle::zle_tricky::USEMENU
                        .load(Ordering::Relaxed) == 2
                     || oldlist.load(Ordering::Relaxed) != 0)
             {
-                showinglist_set(osl);                                        // c:395
+                crate::ported::zle::zle_refresh::SHOWINGLIST.store(osl, Ordering::Relaxed);                                        // c:395
             }
         } else if nm == 1 || (nm > 1 && dm == 0) {                           // c:396
             do_single_first_match();                                         // c:399-411
             if forcelist.load(Ordering::Relaxed) != 0 {                      // c:412
                 if uselist.load(Ordering::Relaxed) != 0 {
-                    showinglist_set(-2);
+                    crate::ported::zle::zle_refresh::SHOWINGLIST.store(-2, Ordering::Relaxed);
                 } else {
-                    clearlist_set(1);
+                    crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed);
                 }
             } else {
                 invalidatelist_stub();                                       // c:418
@@ -1020,9 +1020,9 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
             && forcelist.load(Ordering::Relaxed) != 0
         {                                                                    // c:419
             if uselist.load(Ordering::Relaxed) != 0 {
-                showinglist_set(-2);
+                crate::ported::zle::zle_refresh::SHOWINGLIST.store(-2, Ordering::Relaxed);
             } else {
-                clearlist_set(1);
+                crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed);
             }
         }
     } else {                                                                 // c:425
@@ -1031,7 +1031,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
             opt_isset_stub("BASHAUTOLIST"),
             Ordering::Relaxed,
         );
-        if forcelist.load(Ordering::Relaxed) != 0 { clearlist_set(1); }      // c:428
+        if forcelist.load(Ordering::Relaxed) != 0 { crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed); }      // c:428
         ZLEMETACS.store(0, Ordering::Relaxed);                               // c:429
         foredel_stub(ZLEMETALL.load(Ordering::Relaxed));                     // c:430
         inststr_stub(&origline_stub());                                      // c:431
@@ -1039,17 +1039,17 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
     }
 
     // c:436 — explanation strings.
-    if showinglist_stub() == 0
+    if crate::ported::zle::zle_refresh::SHOWINGLIST.load(Ordering::Relaxed) == 0
         && crate::ported::zle::zle_tricky::VALIDLIST.load(Ordering::Relaxed) != 0
         && crate::ported::zle::zle_tricky::USEMENU.load(Ordering::Relaxed) != 2
         && uselist.load(Ordering::Relaxed) != 0
         && (nm != 1 || dm != 0)
         && useline.load(Ordering::Relaxed) >= 0
         && useline.load(Ordering::Relaxed) != 2
-        && (oldlist.load(Ordering::Relaxed) == 0 || listshown_stub() == 0)
+        && (oldlist.load(Ordering::Relaxed) == 0 || crate::ported::zle::zle_refresh::LISTSHOWN.load(Ordering::Relaxed) == 0)
     {
         onlyexpl.store(3, Ordering::Relaxed);                                // c:441
-        showinglist_set(-2);                                                 // c:442
+        crate::ported::zle::zle_refresh::SHOWINGLIST.store(-2, Ordering::Relaxed);                                                 // c:442
     }
 
     goto_compend(ret)
@@ -1091,21 +1091,12 @@ fn char_from_qt(qt: i32) -> char {                                            //
     (qt as u8) as char
 }
 
-fn showinglist_stub() -> i32 {                                                // zle_refresh.c:165
-    crate::ported::zle::zle_refresh::SHOWINGLIST.load(Ordering::Relaxed)
-}
-fn showinglist_set(v: i32) {                                                  // zle_refresh.c:165
-    crate::ported::zle::zle_refresh::SHOWINGLIST.store(v, Ordering::Relaxed);
-}
-fn clearlist_set(v: i32) {                                                    // zle_refresh.c:188
-    crate::ported::zle::zle_refresh::CLEARLIST.store(v, Ordering::Relaxed);
-}
-fn listshown_stub() -> i32 {                                                  // zle_refresh.c:171
-    crate::ported::zle::zle_refresh::LISTSHOWN.load(Ordering::Relaxed)
-}
-fn instring_stub() -> i32 {                                                   // zle_tricky.c:419
-    crate::ported::zle::zle_tricky::INSTRING.load(Ordering::Relaxed)
-}
+// `showinglist_stub` / `showinglist_set` / `clearlist_set` /
+// `listshown_stub` / `instring_stub` deleted — Rust-only 1-line
+// accessors for C globals (SHOWINGLIST / CLEARLIST / LISTSHOWN /
+// INSTRING). C reads/writes the bare globals inline; callers in
+// compcore.rs now do `<GLOBAL>.load(Ordering::Relaxed)` /
+// `<GLOBAL>.store(v, Ordering::Relaxed)` directly.
 /// Direct port of `foredel(int ct, int flags)` from
 /// `Src/Zle/zle_utils.c:1105`. Deletes `ct` chars forward from
 /// `ZLEMETACS` in the global metafied line. Operates on the
