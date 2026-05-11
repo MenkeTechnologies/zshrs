@@ -3484,12 +3484,35 @@ pub fn zftp_params(_name: &str, args: &[&str], _flags: i32) -> i32 {            
 /// returns 0 when the current session has a live control connection,
 /// 1 otherwise (zftpcmdtab flags = ZFTP_TEST).
 pub fn zftp_test(_name: &str, _args: &[&str], _flags: i32) -> i32 {            // c:2251
-    let state = match ZFTP_STATE.lock() {
-        Ok(s) => s,
-        Err(_) => return 1,
+    // c:2263 — early-return when no control connection.
+    let control_fd = ZFTP_STATE.lock().ok().and_then(|s| {
+        s.get_session(None).and_then(|sess| {
+            sess.control.as_ref().map(|c| {
+                use std::os::unix::io::AsRawFd;
+                c.as_raw_fd()
+            })
+        })
+    });
+    let fd = match control_fd {                                                 // c:2262
+        Some(f) => f,
+        None => return 1,                                                       // c:2263
     };
-    let sess = state.get_session(None);
-    if sess.map(|s| s.connected).unwrap_or(false) { 0 } else { 1 }
+    // c:2266-2280 — poll(2) with 0 timeout. POLLIN events on the
+    // control fd mean the server pushed an unsolicited message (e.g.
+    // "421 Timeout") — consume it via zfgetmsg.
+    let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+    let ret = unsafe { libc::poll(&mut pfd, 1, 0) };                            // c:2272
+    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    if ret < 0 && errno != libc::EINTR && errno != libc::EAGAIN {               // c:2273
+        zfclose(0);                                                             // c:2274
+    } else if ret > 0 && pfd.revents != 0 {                                     // c:2275
+        zfgetmsg();                                                             // c:2277 handles 421
+    }
+    // c:2291 — return zfsess->control ? 0 : 2;
+    let still_alive = ZFTP_STATE.lock().ok()
+        .and_then(|s| s.get_session(None).map(|sess| sess.control.is_some()))
+        .unwrap_or(false);
+    if still_alive { 0 } else { 2 }                                             // c:2291
 }
 
 /// Port of `zftp_dir()` from `Src/Modules/zftp.c:2305`.
