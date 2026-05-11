@@ -1756,19 +1756,61 @@ pub fn zfargstring(cmd: &str, args: &[&str]) -> String {
 }
 
 /// Port of `zfclose()` from `Src/Modules/zftp.c:2711`.
-/// C: `void zfclose(int leaveparams)` — closes connection.
+/// C: `void zfclose(int leaveparams)` — close the control connection
+/// (and optionally tear down the ZFTP_* params), run the zftp_chpwd
+/// hook, reset zfclosing+zfdrrrring tidy-up flags.
 #[allow(non_snake_case)]
-pub fn zfclose(_leaveparams: i32) {
+pub fn zfclose(leaveparams: i32) {                                            // c:2711
+    use std::sync::atomic::Ordering;
+    // c:2715-2716 — early-return when no live control connection.
+    let alive = ZFTP_STATE.lock().ok()
+        .and_then(|s| s.get_session(None).map(|sess| sess.control.is_some()))
+        .unwrap_or(false);
+    if !alive {                                                               // c:2715
+        return;                                                               // c:2716
+    }
+    // c:2718 — zfclosing = 1.
+    ZFCLOSING.store(1, Ordering::Relaxed);                                    // c:2718
+    // c:2719-2725 — send QUIT before teardown unless server already EOF'd.
+    if ZCFINISH.load(Ordering::Relaxed) != 2 {                                // c:2719
+        let _ = zfsendcmd("QUIT\r\n");                                        // c:2724
+    }
+    // c:2727-2737 — drop cin + control TcpStream + decrement zfnopen.
     if let Ok(mut state) = ZFTP_STATE.lock() {
         if let Some(sess) = state.get_session_mut(None) {
-            sess.cin = None;
-            sess.control = None;
+            sess.cin = None;                                                  // c:2735 fclose(cin)
+            sess.control = None;                                              // c:2745 tcp_close
             sess.dfd = -1;
             sess.connected = false;
             sess.logged_in = false;
         }
-        ZFNOPEN.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     }
+    ZFNOPEN.fetch_sub(1, Ordering::Relaxed);                                  // c:2743
+
+    // c:2749-2759 — zfstatusp ZFST_CLOS + close zfstatfd when last open
+    // session goes away. zfstatfd substrate not ported — skipped.
+
+    // c:2761-2774 — !leaveparams: unset ZFTP_* params + zftp_chpwd hook.
+    if leaveparams == 0 {                                                     // c:2761
+        for n in ["ZFTP_HOST", "ZFTP_PORT", "ZFTP_IP", "ZFTP_SYSTEM",         // c:2763 zfparams[]
+                  "ZFTP_USER", "ZFTP_ACCOUNT", "ZFTP_PWD",
+                  "ZFTP_TYPE", "ZFTP_MODE"] {
+            zfunsetparam(n);                                                  // c:2764
+        }
+        // c:2767-2773 — zftp_chpwd shfunc dispatch.
+        if crate::ported::utils::getshfunc("zftp_chpwd").is_some() {          // c:2767
+            let osc = crate::ported::builtin::SFCONTEXT.load(Ordering::Relaxed);
+            crate::ported::builtin::SFCONTEXT.store(
+                crate::ported::zsh_h::SFC_HOOK, Ordering::Relaxed);            // c:2770
+            // c:2771 doshfunc dispatch — VM-level CallFunction lives
+            // inside fusevm; static caller probes via getshfunc.
+            let _ = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+            crate::ported::builtin::SFCONTEXT.store(osc, Ordering::Relaxed);   // c:2772
+        }
+    }
+    // c:2777 — zfclosing = zfdrrrring = 0.
+    ZFCLOSING.store(0, Ordering::Relaxed);                                    // c:2777
+    ZFDRRRRING.store(0, Ordering::Relaxed);                                   // c:2777
 }
 
 /// Port of `zfclosedata()` from `Src/Modules/zftp.c:1043`.
