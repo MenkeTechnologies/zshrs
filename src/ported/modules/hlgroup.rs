@@ -199,22 +199,18 @@ pub fn convertattr(attrstr: &str, sgr: bool) -> String {                 // c:40
 /// Rust port returns `Option<String>` — the synthesised Param's
 /// rendered value (or None for PM_UNSET).
 ///
-/// Reads from the global assoc `.zle.hlgroups`. C looks it up through
-/// the typed-param table via `getvalue`; the Rust port reads the same
-/// data out of the executor's `assoc_arrays` map (assoc-param store).
-/// Missing entries map to None (matches C's PM_UNSET branch at c:102).
-///
-/// C signature: `static HashNode getgroup(const char *name, int sgr)`.
-pub fn getgroup(name: &str, sgr: bool) -> Option<String> {               // c:82
-    // c:91-94 — pm setup; in Rust we just read the assoc directly.
-    // c:96-100 — getvalue check + PM_HASHED + PM_UNSET guards.
-    let raw = crate::exec::try_with_executor(|exec| {                    // c:96 getvalue
-        exec.assoc_arrays.get(".zle.hlgroups")
-            .and_then(|m| m.get(name))
-            .cloned()
-    }).flatten()?;
-    // c:104-106 — pm->u.str = convertattr(value, sgr);
-    Some(convertattr(&raw, sgr))                                         // c:105
+/// **Strict-rule status: PARTIAL.** Reading `$.zle.hlgroups` requires
+/// the magic-assoc dispatch path through the executor's hash-param
+/// table; that wiring depends on a faithful Param/HashTable port
+/// which is a multi-file undertaking. Current body returns None
+/// (mirrors C's c:99-103 PM_UNSET branch). See `TODO.md`.
+pub fn getgroup(_name: &str, _sgr: bool) -> Option<String> {             // c:82
+    // c:91-94 — pm setup with PM_SCALAR|PM_SPECIAL.
+    // c:96-100 — `if (!(v = getvalue(...)) || ... PM_HASHED ... ||
+    //                 (((Param) hn)->node.flags & PM_UNSET))`
+    //   → c:102-103: `pm->u.str = ""; pm->node.flags |= PM_UNSET;`
+    // c:104-106 — `else: pm->u.str = convertattr(((Param) hn)->u.str, sgr);`
+    None                                                                 // c:103 PM_UNSET
 }
 
 /// Port of `scangroup()` from `Src/Modules/hlgroup.c:113`. The
@@ -227,18 +223,18 @@ pub fn getgroup(name: &str, sgr: bool) -> Option<String> {               // c:82
 /// Rust port returns the `(name, value)` pairs as a Vec since
 /// zshrs's magic-assoc dispatcher consumes the entire list rather
 /// than a per-entry callback.
-pub fn scangroup(sgr: bool) -> Vec<(String, String)> {                   // c:113
-    // c:123-125 — getvalue + PM_HASHED check.
-    // c:126 — walk the .zle.hlgroups assoc map; the executor's
-    // assoc_arrays IndexMap preserves insertion order, matching the
-    // C hashnode-list walk semantics.
-    let entries: Vec<(String, String)> = crate::exec::try_with_executor(|exec| {
-        exec.assoc_arrays.get(".zle.hlgroups")                           // c:126
-            .map(|m| m.iter()
-                .map(|(k, v)| (k.clone(), convertattr(v, sgr)))          // c:132-137
-                .collect::<Vec<_>>())
-    }).flatten().unwrap_or_default();
-    entries
+///
+/// **Strict-rule status: PARTIAL** for the same reason as `getgroup`
+/// (depends on the `$.zle.hlgroups` hash being readable through the
+/// param table). See `TODO.md`.
+pub fn scangroup(_sgr: bool) -> Vec<(String, String)> {                  // c:113
+    // c:123-125 — `if (!(v = getvalue(...)) || ... PM_HASHED) return;`
+    // c:126 — hlg = v->pm->gsu.h->getfn(v->pm)
+    // c:128-130 — `pm` setup + PM_SCALAR + pmesc_gsu
+    // c:132-137 — for each hashnode: `pm.u.str = convertattr(...,sgr);
+    //                                   pm.node.nam = hn->nam;
+    //                                   func(&pm.node, flags);`
+    Vec::new()                                                           // c:124-125 empty exit
 }
 
 /// Port of `getpmesc()` from `Src/Modules/hlgroup.c:141`.
@@ -422,21 +418,19 @@ mod tests {
         assert!(s.contains("38;2;0;255;0"));
     }
 
-    /// With no `.zle.hlgroups` assoc set, getgroup mirrors C's
-    /// PM_UNSET branch at c:99-103 and returns None.
+    /// `getgroup` returns None until the magic-assoc dispatch is
+    /// wired (c:99-103 PM_UNSET branch).
     #[test]
-    fn getgroup_unset_assoc_returns_none() {
-        assert_eq!(getgroup("nonexistent_zzz", false), None);
-        assert_eq!(getgroup("nonexistent_zzz", true), None);
+    fn getgroup_returns_none_until_paramtable_wired() {
+        assert_eq!(getgroup("any", false), None);
+        assert_eq!(getgroup("any", true), None);
     }
 
-    /// With no `.zle.hlgroups` assoc set, scangroup mirrors C's
-    /// empty-table early exit at c:124-125.
+    /// `scangroup` returns empty until paramtable wiring lands
+    /// (c:124-125 early exit).
     #[test]
-    fn scangroup_unset_assoc_returns_empty() {
-        // With no executor or no assoc, returns empty per the C
-        // c:124-125 path (`if (!v || not PM_HASHED) return;`).
-        let _ = scangroup(false);
-        let _ = scangroup(true);
+    fn scangroup_returns_empty_until_paramtable_wired() {
+        assert!(scangroup(false).is_empty());
+        assert!(scangroup(true).is_empty());
     }
 }
