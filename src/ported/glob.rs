@@ -3456,19 +3456,21 @@ mod tests {
         let dir = setup_test_dir();
         let pattern = format!("{}/*", dir.path().display());
 
-        // Default (dotglob off / globdots off) → hidden files skipped.
-        opt_state_set("dotglob", false);
+        // Default (globdots off) → hidden files skipped. `dotglob`
+        // is the bash alias for zsh's canonical `globdots` option;
+        // the C-faithful read goes through `isset(GLOBDOTS)` which
+        // resolves the canonical name.
         opt_state_set("globdots", false);
         let mut state = GlobData::new();
         let results = globdata_glob(&mut state, &pattern);
         assert!(!results.iter().any(|s| s.contains(".hidden")));
 
-        // setopt dotglob → hidden files included.
-        opt_state_set("dotglob", true);
+        // setopt globdots → hidden files included.
+        opt_state_set("globdots", true);
         let mut state = GlobData::new();
         let results = globdata_glob(&mut state, &pattern);
         assert!(results.iter().any(|s| s.contains(".hidden")));
-        opt_state_set("dotglob", false);  // reset for other tests
+        opt_state_set("globdots", false);  // reset for other tests
     }
 
     #[test]

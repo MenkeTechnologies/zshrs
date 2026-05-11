@@ -384,10 +384,19 @@ mod tests {
 
     #[test]
     fn test_default_options() {
+        // C-faithful: `defset(emulation)` at options.c:507 sets only
+        // options whose `optns->node.flags` carries the matching
+        // EMULATE_X bit. `glob` (OPT_EMULATE | OPT_ALL) and `exec`
+        // (OPT_ALL) carry the EMULATE_ZSH bit so they're set by
+        // default. `zle` is OPT_SPECIAL — enabled separately on
+        // interactive-shell init (init.c), not by defset. `xtrace`
+        // is OPT_EMULATE (no OPT_ALL) — default off in zsh emulation.
         let opts = ShellOptions::new();
         assert!(opts.is_set("glob"));
         assert!(opts.is_set("exec"));
-        assert!(opts.is_set("zle"));
+        assert!(!opts.is_set("zle"),
+            "zle is OPT_SPECIAL — must NOT be set by defset; only \
+             interactive-shell init turns it on");
         assert!(!opts.is_set("xtrace"));
     }
 
@@ -459,8 +468,11 @@ mod tests {
 
     #[test]
     fn test_dash_string() {
+        // `interactive` is not user-settable (OPT_NOT_SETTABLE in C);
+        // it reflects shell-startup detection. Inject directly into
+        // the options map for the test rather than via set().
         let mut opts = ShellOptions::new();
-        opts.set("interactive", true).unwrap();
+        opts.options.insert("interactive".to_string(), true);
         opts.set("monitor", true).unwrap();
 
         let dash = opts.dash_string();
