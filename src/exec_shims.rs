@@ -8371,43 +8371,47 @@ impl crate::ported::exec::ShellExecutor {
     /// `ShellExecutor` so `zpty -w NAME ...` and `zpty -r NAME` can
     /// reach a session started by an earlier `zpty NAME ...` call.
     pub(crate) fn bin_zpty(&mut self, args: &[String]) -> i32 {
-        use crate::zpty::ZptyOptions;
-        let mut options = ZptyOptions::default();
-        let mut positional: Vec<&str> = Vec::new();
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let mut ops = options {
+            ind: [0u8; MAX_OPS], args: Vec::new(),
+            argscount: 0, argsalloc: 0,
+        };
+        let mut positional: Vec<String> = Vec::new();
         let mut iter = args.iter();
+        let mut argi: usize = 0;
         while let Some(arg) = iter.next() {
             match arg.as_str() {
-                "-d" => options.delete = true,
-                "-L" => options.list = true,
-                "-w" => options.write = true,
+                "-d" => ops.ind[b'd' as usize] = 1,
+                "-L" => ops.ind[b'L' as usize] = 1,
+                "-w" => ops.ind[b'w' as usize] = 1,
                 "-r" => {
                     if let Some(s) = iter.next() {
-                        options.read_var = Some(s.clone());
+                        argi += 1;
+                        ops.ind[b'r' as usize] = ((argi << 2) | 1) as u8;
+                        ops.args.push(s.clone());
                     }
                 }
-                "-e" => options.echo = true,
-                "-t" => options.test = true,
-                "-b" => options.block = true,
+                "-e" => ops.ind[b'e' as usize] = 1,
+                "-t" => ops.ind[b't' as usize] = 1,
+                "-b" => ops.ind[b'b' as usize] = 1,
                 "-m" => {
                     if let Some(s) = iter.next() {
-                        options.pattern = Some(s.clone());
+                        argi += 1;
+                        ops.ind[b'm' as usize] = ((argi << 2) | 1) as u8;
+                        ops.args.push(s.clone());
                     }
                 }
                 "-T" => {
                     if let Some(s) = iter.next() {
-                        options.timeout = s.parse().ok();
+                        argi += 1;
+                        ops.ind[b'T' as usize] = ((argi << 2) | 1) as u8;
+                        ops.args.push(s.clone());
                     }
                 }
-                _ => positional.push(arg.as_str()),
+                _ => positional.push(arg.clone()),
             }
         }
-        let (status, output) = crate::zpty::bin_zpty(
-            &positional, &options, &mut self.pty_cmds,
-        );
-        if !output.is_empty() {
-            if status == 0 { print!("{}", output); } else { eprint!("{}", output); }
-        }
-        status
+        crate::zpty::bin_zpty("zpty", &positional, &ops, 0)
     }
 }
 

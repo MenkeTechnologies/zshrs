@@ -2551,6 +2551,8 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
         if ret == 2 {                                                         // c:1644
             crate::ported::utils::zwarnnam(name, "aborting data transfer...");// c:1645
         }
+        // c:1647 — holdintr(); block SIGINT around the abort handshake.
+        crate::ported::signals::holdintr();                                   // c:1647
         // c:1651-1652 — send IAC IP IAC + SYNCH OOB on control connection.
         if let Ok(state) = ZFTP_STATE.lock() {
             if let Some(sess) = state.get_session(None) {
@@ -2568,6 +2570,8 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
         if lastcode.load(Ordering::Relaxed) != 226 {                          // c:1672
             ret = 1;                                                          // c:1673
         }
+        // c:1675 — noholdintr(); restore SIGINT handling.
+        crate::ported::signals::noholdintr();                                 // c:1675
     }
 
     // c:1678-1679 — free ascbuf (Rust Drop).
