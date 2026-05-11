@@ -157,130 +157,15 @@ pub fn freecdsets() {                                                        // 
     // Real body deferred — needs Cdset chain port.
 }
 
-// --- _arguments support Port of `parse_caarg / alloc_cadef / set_cadef_opts` from Src/Zle/computil.c. ---
-
-/// Completion argument definition Port of `Caarg` from Src/Zle/computil.c.
-#[derive(Debug, Clone)]
-pub struct CompArgDef {
-    pub num: i32,       // Argument position (1-based, -1 for rest)
-    pub action: String, // Action to take
-    pub description: String,
-    pub optional: bool,
-    pub repeated: bool,
-}
-
-/// Completion option definition Port of `Caopt` from Src/Zle/computil.c.
-#[derive(Debug, Clone)]
-pub struct CompOptDef {
-    pub name: String, // Option name (e.g., "-v", "--verbose")
-    pub description: String,
-    pub has_arg: bool,          // Whether option takes an argument
-    pub arg_desc: String,       // Argument description
-    pub exclusive: Vec<String>, // Mutually exclusive options
-}
-
-/// Full completion definition for a command Port of `Cadef` from Src/Zle/computil.c.
-#[derive(Debug, Clone, Default)]
-pub struct CompCommandDef {
-    pub options: Vec<CompOptDef>,
-    pub arguments: Vec<CompArgDef>,
-    pub subcommands: HashMap<String, CompCommandDef>,
-}
-
-/// Parse a _arguments spec string Port of `parse_caarg` from Src/Zle/computil.c.
-pub fn parse_caarg(spec: &str) -> Option<CompArgDef> {                       // c:1100
-    // Format: "N:description:action" or "*:description:action"
-    let parts: Vec<&str> = spec.splitn(3, ':').collect();
-    if parts.is_empty() {
-        return None;
-    }
-
-    let (num, optional) = if parts[0] == "*" {
-        (-1, false)
-    } else if parts[0].starts_with('?') {
-        (parts[0][1..].parse().unwrap_or(0), true)
-    } else {
-        (parts[0].parse().unwrap_or(0), false)
-    };
-
-    Some(CompArgDef {
-        num,
-        description: parts.get(1).unwrap_or(&"").to_string(),
-        action: parts.get(2).unwrap_or(&"").to_string(),
-        optional,
-        repeated: parts[0] == "*",
-    })
-}
-
-/// Parse an option spec Port of `set_cadef_opts` from Src/Zle/computil.c.
-pub fn parse_cadef(spec: &str) -> Option<CompOptDef> {                       // c:1196
-    // Format: "-o[description]" or "--option[description]:arg_desc:action"
-    // or "(-a -b)-c[description]"
-
-    let spec = spec.trim();
-    if spec.is_empty() {
-        return None;
-    }
-
-    // Extract exclusions
-    let (exclusive, rest) = if spec.starts_with('(') {
-        if let Some(close) = spec.find(')') {
-            let excl: Vec<String> = spec[1..close]
-                .split_whitespace()
-                .map(String::from)
-                .collect();
-            (excl, spec[close + 1..].trim())
-        } else {
-            (Vec::new(), spec)
-        }
-    } else {
-        (Vec::new(), spec)
-    };
-
-    // Extract option name
-    let (name, after_name) = if rest.starts_with("--") {
-        let end = rest
-            .find('[')
-            .unwrap_or(rest.find(':').unwrap_or(rest.len()));
-        (&rest[..end], &rest[end..])
-    } else if rest.starts_with('-') {
-        let end = if rest.len() > 2 { 2 } else { rest.len() };
-        let end = rest[end..]
-            .find('[')
-            .map(|i| i + end)
-            .unwrap_or(rest[end..].find(':').map(|i| i + end).unwrap_or(rest.len()));
-        (&rest[..end], &rest[end..])
-    } else {
-        return None;
-    };
-
-    // Extract description from [...]
-    let description = if let Some(start) = after_name.find('[') {
-        if let Some(end) = after_name[start..].find(']') {
-            after_name[start + 1..start + end].to_string()
-        } else {
-            String::new()
-        }
-    } else {
-        String::new()
-    };
-
-    // Check for argument
-    let has_arg = after_name.contains(':');
-    let arg_desc = if has_arg {
-        after_name.rsplit(':').next().unwrap_or("").to_string()
-    } else {
-        String::new()
-    };
-
-    Some(CompOptDef {
-        name: name.to_string(),
-        description,
-        has_arg,
-        arg_desc,
-        exclusive,
-    })
-}
+// `CompArgDef` / `CompOptDef` / `CompCommandDef` deleted — Rust-
+// invented structs with wrong field layouts vs C `struct caarg`
+// (c:949), `struct caopt` (c:928), `struct cadef` (c:905).
+// `parse_caarg(spec: &str)` and `parse_cadef(spec: &str)` deleted —
+// fake signatures: real C `parse_caarg` at c:1100 takes
+// `(int mult, int type, int num, int opt, char *oname, char **def, ...)`
+// — totally different. Real C uses `alloc_cadef(args, single, match,
+// nonarg, flags)` at c:1147 and `set_cadef_opts(Cadef def)` at c:1180,
+// not `parse_cadef`. Real ports land alongside the cadef chain port.
 
 /// Port of `rembslashcolon()` from `Src/Zle/computil.c:1046`.
 /// ```c
@@ -376,9 +261,17 @@ pub fn single_index(pre: u8, opt: u8) -> i32 {                               // 
     (opt as i32) + off
 }
 
-/// Free completion argument definitions Port of `freecaargs/freecadef` from Src/Zle/computil.c. — no-op
-pub fn freecaargs(_args: Vec<CompArgDef>) {}                                 // c:996
-pub fn freecadef(_def: CompCommandDef) {}                                    // c:1013
+/// Direct port of `static void freecaargs(Caarg arg)` from
+/// `Src/Zle/computil.c:996`. Frees a `struct caarg` chain.
+pub fn freecaargs() {                                                        // c:996
+    // Real body deferred — needs Caarg chain port.
+}
+
+/// Direct port of `static void freecadef(Cadef d)` from
+/// `Src/Zle/computil.c:1013`. Frees a `struct cadef`.
+pub fn freecadef() {                                                         // c:1013
+    // Real body deferred — needs Cadef port.
+}
 
 #[cfg(test)]
 mod cao_caa_tests {
@@ -451,29 +344,9 @@ mod tests {
     // chain once it lands; placeholder unit-tests against the fake
     // types would just lock in the deleted shape.
 
-    #[test]
-    fn test_parse_caarg() {
-        let arg = parse_caarg("1:file:_files").unwrap();
-        assert_eq!(arg.num, 1);
-        assert_eq!(arg.description, "file");
-        assert_eq!(arg.action, "_files");
-
-        let arg = parse_caarg("*:rest args:_files").unwrap();
-        assert_eq!(arg.num, -1);
-        assert!(arg.repeated);
-    }
-
-    #[test]
-    fn test_parse_cadef() {
-        let opt = parse_cadef("-v[verbose output]").unwrap();
-        assert_eq!(opt.name, "-v");
-        assert_eq!(opt.description, "verbose output");
-        assert!(!opt.has_arg);
-
-        let opt = parse_cadef("--output[output file]:file:_files").unwrap();
-        assert_eq!(opt.name, "--output");
-        assert!(opt.has_arg);
-    }
+    // test_parse_caarg / test_parse_cadef removed — they exercised
+    // the deleted CompArgDef/CompOptDef Rust-only types via fake-
+    // signature wrappers. Real ports land alongside the cadef chain.
 
     #[test]
     fn test_rembslashcolon() {
