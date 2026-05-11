@@ -750,11 +750,19 @@ extern "C" fn zhandler(sig: libc::c_int) {
                 // c:476-489 — idle vs TMOUT — re-alarm if still idle,
                 // else zexit. Skip the "still idle" re-arm here (no
                 // ttyidlegetfn port) and proceed to the timeout exit.
-                let tmout = crate::exec::try_with_executor(|exec| {
-                    crate::ported::params::getiparam(
-                        &exec.variables, &exec.arrays, "TMOUT",
-                    )
-                }).unwrap_or(0);                                              // c:477
+                // c:477 — `getiparam("TMOUT")`. Read straight from
+                // paramtab (the global) so this matches C's bare call.
+                let tmout: i64 = crate::ported::params::paramtab()
+                    .lock()
+                    .ok()
+                    .and_then(|t| {
+                        t.get("TMOUT").and_then(|pm| {
+                            pm.u_str.as_ref()
+                                .and_then(|s| s.parse::<i64>().ok())
+                                .or(Some(pm.u_val))
+                        })
+                    })
+                    .unwrap_or(0);                                            // c:477
                 if tmout == 0 {
                     // No timeout configured — bail out silently.
                 } else {
