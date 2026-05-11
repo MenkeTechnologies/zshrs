@@ -1934,11 +1934,7 @@ pub(crate) fn makecomplistext(occ: &Arc<Compctl>, os: &str, incmd: bool) {
             use crate::ported::zle::compctl_h::{CCT_POS, CCT_NUMWORDS};
             let cs = crate::ported::zle::compcore::ZLECS
                 .load(std::sync::atomic::Ordering::Relaxed);
-            let total = crate::exec::try_with_executor(|exec| {
-                crate::ported::params::getiparam(
-                    &exec.variables, &exec.arrays, "CURRENT",
-                ) as i32
-            }).unwrap_or(0);
+            let total = crate::ported::params::getiparam("CURRENT") as i32;
             let mut accepted = false;
             let mut or_cur: Option<&Compcond> = Some(cond);
             while let Some(o) = or_cur {

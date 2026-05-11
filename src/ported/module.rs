@@ -31,6 +31,36 @@ use crate::ported::zsh_h::mathfunc as zh_mathfunc;
 pub static MATHFUNCS: Lazy<Mutex<Vec<zh_mathfunc>>> =                       // c:1258
     Lazy::new(|| Mutex::new(Vec::new()));
 
+/// Port of `Hookdef hooktab;` from `Src/module.c:843` — the global
+/// hook-definition table. Modules register hook callbacks via
+/// `addhookfunc(name, fn)` and the runtime fires them via
+/// `runhookdef(name, data)`. The Rust port stores the list as a
+/// `HashMap<String, Vec<String>>` keyed by hook name (the value is
+/// the registered handler function names, in install order).
+pub static HOOKTAB: Lazy<Mutex<HashMap<String, Vec<String>>>> =              // c:843
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Port of `void addhookfunc(const char *name, Hookfn fn)` —
+/// the global-scope wrapper used by modules and ZLE boot/cleanup
+/// paths to install hook callbacks without holding a ModuleTable.
+pub fn addhookfunc(hook: &str, func: &str) {                                 // c:module.c
+    if let Ok(mut tab) = HOOKTAB.lock() {
+        tab.entry(hook.to_string())
+            .or_default()
+            .push(func.to_string());
+    }
+}
+
+/// Port of `void deletehookfunc(const char *name, Hookfn fn)`.
+/// Removes one registered handler from the global HOOKTAB.
+pub fn deletehookfunc(hook: &str, func: &str) {                              // c:module.c
+    if let Ok(mut tab) = HOOKTAB.lock() {
+        if let Some(v) = tab.get_mut(hook) {
+            v.retain(|f| f != func);
+        }
+    }
+}
+
 /// Module feature types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Module feature category.

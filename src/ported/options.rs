@@ -1516,11 +1516,12 @@ pub fn installemulation(new_emulation: i32,
 /// Port of `setoption()` from Src/options.c:573 — the inner loop
 /// of `bin_setopt`. Returns 0 on success, -1 on bad option name.
 pub fn setoption(name: &str, value: i32) -> i32 {
-    crate::fusevm_bridge::try_with_executor(|exec| {
-        exec.options.insert(name.to_string(), value != 0);
-        0i32
-    })
-    .unwrap_or(-1)
+    // C: `opts[optno] = value;` — the C source writes the option's
+    // live state into the `opts[]` array. The Rust port stores it
+    // in OPTS_LIVE via `opt_state_set` (the same global the
+    // `optlookup("name")>0` and `isset(OPT)` paths read).
+    opt_state_set(name, value != 0);                                         // c:735+ dosetopt body
+    0
 }
 
 /// Translate an option name to a signed option index.
@@ -1807,13 +1808,14 @@ pub fn bin_setopt(nam: &str, args: &[String],                                // 
 /// Port of `dashgetfn()` from Src/options.c:890. C source iterates
 /// `[FIRST_OPT..=LAST_OPT]` and appends each set option's letter.
 pub fn dashgetfn() -> String {
-    let opts = crate::fusevm_bridge::try_with_executor(|exec| exec.options.clone())
-        .unwrap_or_default();
+    // C reads `opts[optno]` for each single-letter option (c:890-895).
+    // The Rust port's authoritative store is OPTS_LIVE (the same map
+    // `opt_state_get` reads), so route each lookup through it.
     let opt_obj = ShellOptions::new();
     let mut out = String::new();
     for c in (b'A'..=b'z').map(|b| b as char) {
         if let Some((name, negated)) = opt_obj.lookup_letter(c) {
-            let value = opts.get(name).copied().unwrap_or(false);
+            let value = opt_state_get(name).unwrap_or(false);                // c:891 `opts[optno]`
             let effective = if negated { !value } else { value };
             if effective {
                 out.push(c);

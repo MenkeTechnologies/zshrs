@@ -773,12 +773,9 @@ pub fn bin_zle_del(args: &[String]) -> i32 {                                 // 
 /// table: `-d` removes, single-arg lists, two-args register a
 /// handler.
 ///
-/// Mutates the active `Zle.watch_fds: Vec<WatchFd>`
-/// (zle_main.rs:291) via the `try_with_executor`/Zle-bridge.
-/// Without a direct Zle handle here, registrations land on the
-/// `ShellExecutor.hook_functions` registry under a synthetic
-/// `zle-fd-<n>` key — the poll loop reads the same registry when
-/// dispatching readable events.
+/// Mutates the global `WATCH_FDS` (`Src/Zle/zle_main.c:204`)
+/// directly so the poll loop in `zle_main::raw_getbyte` sees the
+/// new registration on the next iteration.
 pub fn bin_zle_fd(args: &[String]) -> i32 {                                  // c:856
     if args.is_empty() {                                                     // c:871-905
         return 0;                                                            // list-all path
@@ -787,17 +784,23 @@ pub fn bin_zle_fd(args: &[String]) -> i32 {                                  // 
     let fd: i32 = args[0].parse().unwrap_or(-1);
     if fd < 0 { return 1; }                                                  // c:866
 
-    let key = format!("zle-fd-{}", fd);
-    let _ = crate::exec::try_with_executor(|exec| {
+    if let Ok(mut tab) = crate::ported::zle::zle_main::WATCH_FDS.lock() {
         match args.len() {
-            1 => { exec.hook_functions.remove(&key); }                       // c:935 -d remove
+            1 => {
+                // c:935 — `zle -F -d fd` remove.
+                tab.retain(|w| w.fd != fd);
+            }
             _ => {
-                exec.hook_functions.insert(                                  // c:921 register
-                    key, vec![args[1].clone()],
-                );
+                // c:921 — install / replace.
+                tab.retain(|w| w.fd != fd);
+                tab.push(crate::ported::zle::zle_h::watch_fd {
+                    func: args[1].clone(),
+                    fd,
+                    widget: 0,
+                });
             }
         }
-    });
+    }
     0                                                                        // c:952
 }
 
@@ -1071,30 +1074,27 @@ pub fn bin_zle_transform(args: &[String]) -> i32 {                           // 
     if args.len() > 2 {
         return 1;
     }
-    let _ = crate::exec::try_with_executor(|exec| {
+    // C body c:965-1004 — only the `tc` transform exists in C; the
+    // global `tcout_func_name` (zle_refresh.c:246) holds the user
+    // function name. The Rust port mirrors the same single slot.
+    if let Ok(mut name) =
+        crate::ported::zle::zle_refresh::TCOUT_FUNC_NAME.lock()
+    {
         match args.len() {
-            0 => {
-                // c:971 — clear all transformations.
-                let keys: Vec<String> = exec.hook_functions.keys()
-                    .filter(|k| k.starts_with("zle-transform-"))
-                    .cloned().collect();
-                for k in keys {
-                    exec.hook_functions.remove(&k);
+            0 | 1 => {
+                // No-arg listing path or `-r` reset — clear the slot.
+                if args.first().map(|s| s.as_str()) != Some("tc") {
+                    *name = None;                                            // c:984
                 }
             }
-            1 => {
-                // c:982 — clear specific (`zle -T -` or `zle -T tcfn`).
-                let key = format!("zle-transform-{}", args[0]);
-                exec.hook_functions.remove(&key);
-            }
             2 => {
-                // c:996 — install args[1] under args[0].
-                let key = format!("zle-transform-{}", args[0]);
-                exec.hook_functions.insert(key, vec![args[1].clone()]);
+                if args[0] == "tc" {                                         // c:992
+                    *name = Some(args[1].clone());                           // c:996
+                }
             }
             _ => {}
         }
-    });
+    }
     0
 }
 

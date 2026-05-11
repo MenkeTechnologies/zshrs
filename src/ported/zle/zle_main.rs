@@ -1630,19 +1630,10 @@ mod tests {
 /// return 0;
 /// ```
 pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {               // c:2301
-    // c:2303-2304 — register the trap hook callbacks on the
-    // ShellExecutor.hook_functions registry (the canonical Rust
-    // home for the zsh hook system).
-    let _ = crate::exec::try_with_executor(|exec| {
-        exec.hook_functions
-            .entry("before_trap".to_string())
-            .or_insert_with(Vec::new)
-            .push("zlebeforetrap".to_string());
-        exec.hook_functions
-            .entry("after_trap".to_string())
-            .or_insert_with(Vec::new)
-            .push("zleaftertrap".to_string());
-    });
+    // c:2303-2304 — `addhookfunc("before_trap", zlebeforetrap);
+    //                addhookfunc("after_trap",  zleaftertrap);`
+    crate::ported::module::addhookfunc("before_trap", "zlebeforetrap");      // c:2303
+    crate::ported::module::addhookfunc("after_trap",  "zleaftertrap");       // c:2304
     0                                                                        // c:2309
 }
 
@@ -1675,16 +1666,10 @@ pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {            // 
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
         return 1;
     }
-    // c:2318-2319 — `deletehookfunc("before_trap"); deletehookfunc("after_trap")`.
-    // Hook unregistration: remove our entries from ShellExecutor.hook_functions.
-    let _ = crate::exec::try_with_executor(|exec| {
-        if let Some(v) = exec.hook_functions.get_mut("before_trap") {
-            v.retain(|s| s != "zlebeforetrap");
-        }
-        if let Some(v) = exec.hook_functions.get_mut("after_trap") {
-            v.retain(|s| s != "zleaftertrap");
-        }
-    });
+    // c:2318-2319 — `deletehookfunc("before_trap", zlebeforetrap);
+    //                deletehookfunc("after_trap",  zleaftertrap);`
+    crate::ported::module::deletehookfunc("before_trap", "zlebeforetrap");   // c:2318
+    crate::ported::module::deletehookfunc("after_trap",  "zleaftertrap");    // c:2319
     // c:2321-2324 — `deletekeymap(...)`. Drop is automatic on Arc<Keymap>;
     // explicit-name unlink from keymapnamtab so the next module load starts
     // fresh.
@@ -2058,6 +2043,14 @@ pub static KEYTIMEOUT: std::sync::atomic::AtomicU64 =
 /// Stored as the raw bits of `WidgetFlags` (u32) in an atomic.
 pub static LASTCMD: std::sync::atomic::AtomicU32 =                           // c:145
     std::sync::atomic::AtomicU32::new(0);
+
+/// Port of `Watch_fd watch_fds;` from `Src/Zle/zle_main.c:204`.
+/// Global linked list (here: `Vec<watch_fd>`) of fd watchers
+/// registered via `zle -F fd handler` for select/poll dispatch
+/// inside `getkey()`. `bin_zle_fd` mutates this; the poll loop
+/// reads it to know which fds to watch.
+pub static WATCH_FDS: std::sync::Mutex<Vec<super::zle_h::watch_fd>> =        // c:204
+    std::sync::Mutex::new(Vec::new());
 
 /// Port of `zleaftertrap()` from `Src/Zle/zle_main.c:2113`.
 /// ```c

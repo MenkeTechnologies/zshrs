@@ -1723,26 +1723,31 @@ pub fn setiparam_no_convert(s: &str, val: i64)                               // 
 // Retrieve a scalar (string) parameter                                     // c:3072
 /// Returns `None` only if all four paths miss (parameter genuinely
 /// unset).
-pub fn getsparam(                                                            // c:3076
-    variables: &std::collections::HashMap<String, String>,
-    arrays: &std::collections::HashMap<String, Vec<String>>,
-    name: &str,
-) -> Option<String> {
-    // 1. GSU dispatch — Param.gsu->getfn equivalent.
+pub fn getsparam(name: &str) -> Option<String> {                             // c:3076
+    // 1. GSU dispatch — `Param.gsu->getfn(pm)` equivalent. Special
+    //    parameters (UID/RANDOM/USERNAME/...) live behind getfn
+    //    hooks that the table read below would otherwise miss.
     if let Some(v) = lookup_special_var(name) {
         return Some(v);
     }
-    // 2. Local shell variable (PM_SCALAR pm->u.str).
-    if let Some(s) = variables.get(name) {
-        return Some(s.clone());
+    // 2. Paramtab read — `(Value)gethashnode2(paramtab, name)`.
+    //    Walk the global paramtab for the named param, returning
+    //    `pm->u.str` for PM_SCALAR/PM_NAMEREF or `sepjoin(pm->u.arr)`
+    //    for PM_ARRAY (matches `getstrvalue` at params.c:2358).
+    if let Ok(tab) = paramtab().lock() {
+        if let Some(pm) = tab.get(name) {
+            if let Some(s) = pm.u_str.as_ref() {
+                return Some(s.clone());
+            }
+            if let Some(arr) = pm.u_arr.as_ref() {
+                return Some(arr.join(" "));
+            }
+        }
     }
-    // 3. Env-imported parameter (C imports env into paramtab at
-    //    init, so reads route through the same dispatch).
-    if let Ok(s) = std::env::var(name) {
-        return Some(s);
-    }
-    // 4. PM_ARRAY → scalar join (C: sepjoin in getstrvalue).
-    arrays.get(name).map(|a| a.join(" "))
+    // 3. Env fallback — C imports env into paramtab at init so the
+    //    read above would hit. If the import hasn't happened yet
+    //    (e.g. during very early init) fall back to the live env.
+    std::env::var(name).ok()
 }
 
 /// Retrieve integer parameter.
@@ -1750,14 +1755,18 @@ pub fn getsparam(                                                            // 
 /// getintvalue. Our adaptation reads the scalar string and parses;
 /// returns 0 on missing or unparseable, matching getintvalue's
 /// failure-returns-0 convention (params.c:2601).
-pub fn getiparam(
-    variables: &std::collections::HashMap<String, String>,
-    arrays: &std::collections::HashMap<String, Vec<String>>,
-    name: &str,
-) -> i64 {
-    getsparam(variables, arrays, name)
-        .and_then(|s| s.parse::<i64>().ok())
-        .unwrap_or(0)
+pub fn getiparam(name: &str) -> i64 {
+    // C also honours PM_INTEGER's `pm->u.val` payload directly when
+    // the param is typed numeric; check paramtab first for that case.
+    if let Ok(tab) = paramtab().lock() {
+        if let Some(pm) = tab.get(name) {
+            if (pm.node.flags as u32 & crate::ported::zsh_h::PM_INTEGER) != 0
+            {
+                return pm.u_val;
+            }
+        }
+    }
+    getsparam(name).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0)
 }
 
 /// Retrieve numeric (int-or-float) parameter.
@@ -1766,12 +1775,21 @@ pub fn getiparam(
 /// `(i64, f64, bool)` where the bool is true for float. Unset
 /// returns `(0, 0.0, false)`, matching the MN_INTEGER zero
 /// fallback in the C source's not-found branch.
-pub fn getnparam(
-    variables: &std::collections::HashMap<String, String>,
-    arrays: &std::collections::HashMap<String, Vec<String>>,
-    name: &str,
-) -> (i64, f64, bool) {
-    let s = match getsparam(variables, arrays, name) {
+pub fn getnparam(name: &str) -> (i64, f64, bool) {
+    if let Ok(tab) = paramtab().lock() {
+        if let Some(pm) = tab.get(name) {
+            let fl = pm.node.flags as u32;
+            if (fl & (crate::ported::zsh_h::PM_EFLOAT
+                | crate::ported::zsh_h::PM_FFLOAT)) != 0
+            {
+                return (pm.u_dval as i64, pm.u_dval, true);
+            }
+            if (fl & crate::ported::zsh_h::PM_INTEGER) != 0 {
+                return (pm.u_val, pm.u_val as f64, false);
+            }
+        }
+    }
+    let s = match getsparam(name) {
         Some(s) => s,
         None => return (0, 0.0, false),
     };

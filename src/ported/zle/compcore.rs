@@ -1274,15 +1274,10 @@ fn opt_isset(name: &str) -> i32 {                                        // opti
     if crate::ported::options::opt_state_get(name).unwrap_or(false) { 1 } else { 0 }
 }
 /// Real call into `getiparam(name)` — the canonical paramtab read.
-/// Mirrors C's `getiparam` at params.c:3044. Threads through the
-/// executor's variables/arrays maps via try_with_executor.
+/// Mirrors C's `getiparam` at params.c:3044 which reads the global
+/// `paramtab` directly via `gethashnode2`.
 fn env_iparam(name: &str) -> i32 {                                            // params.c:3044
-    crate::exec::try_with_executor(|exec| {
-        crate::ported::params::getiparam(&exec.variables, &exec.arrays, name) as i32
-    })
-    .unwrap_or_else(|| {
-        std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(0)
-    })
+    crate::ported::params::getiparam(name) as i32
 }
 fn lastprebr_set(s: &str) {                                                   // zle_tricky.c lastprebr
     if let Ok(mut g) = crate::ported::zle::zle_tricky::LASTPREBR
@@ -1370,10 +1365,8 @@ pub fn callcompfunc(s: &str, fn_name: &str) {                                // 
     // c:909-912 — unwind: read `$compstate[insert]` etc. back into
     // the compcore globals so do_completion sees the user fn's
     // mutations.
-    let post_insert = crate::exec::try_with_executor(|exec| {
-        crate::ported::params::getsparam(&exec.variables, &exec.arrays,
-                                         "compstate[insert]")
-    }).flatten().unwrap_or_default();
+    let post_insert = crate::ported::params::getsparam("compstate[insert]")
+        .unwrap_or_default();
     if !post_insert.is_empty() {
         if post_insert.contains("automenu") {
             crate::ported::zle::zle_tricky::USEMENU.store(2, Ordering::Relaxed);
@@ -2086,18 +2079,10 @@ fn cline_matched_compcore(line: Option<&str>) {                                 
 /// Real read of `char *qisuf` via the paramtab. Mirrors C's direct
 /// global read at `Src/Zle/zle_tricky.c qisuf`.
 fn qisuf_get() -> String {                                                   // zle_tricky.c qisuf
-    crate::exec::try_with_executor(|exec| {
-        crate::ported::params::getsparam(&exec.variables, &exec.arrays, "qisuf")
-    })
-    .flatten()
-    .unwrap_or_default()
+    crate::ported::params::getsparam("qisuf").unwrap_or_default()
 }
 fn qipre_get() -> String {                                                   // zle_tricky.c qipre
-    crate::exec::try_with_executor(|exec| {
-        crate::ported::params::getsparam(&exec.variables, &exec.arrays, "qipre")
-    })
-    .flatten()
-    .unwrap_or_default()
+    crate::ported::params::getsparam("qipre").unwrap_or_default()
 }
 
 // =====================================================================
