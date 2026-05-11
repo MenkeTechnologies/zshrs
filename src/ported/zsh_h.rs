@@ -572,6 +572,7 @@ pub struct reswd {
 
 /// Port of `struct alias` from `Src/zsh.h:1253-1257`.
 #[allow(non_camel_case_types)]
+#[derive(Debug, Clone)]
 pub struct alias {
     // c:1253
     pub node: hashnode, // c:1254

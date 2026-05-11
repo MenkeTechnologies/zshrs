@@ -3502,9 +3502,9 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
             if let Ok(t) = crate::ported::hashtable::aliastab_lock().lock() {
                 if let Some(a) = t.get(arg) {                                // c:4128
                     if (printflags & PRINT_LIST) != 0 {
-                        println!("alias {}={}", a.name, a.text);
+                        println!("alias {}={}", a.node.nam, a.text);
                     } else {
-                        println!("{}={}", a.name, a.text);
+                        println!("{}={}", a.node.nam, a.text);
                     }
                     informed = 1;                                            // c:4131
                     if !all { continue; }                                    // c:4132
@@ -3516,7 +3516,7 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
                     let suf = &arg[idx + 1..];
                     if let Ok(t) = crate::ported::hashtable::sufaliastab_lock().lock() {
                         if let Some(a) = t.get(suf) {                        // c:4140
-                            println!("{}={}", a.name, a.text);               // c:4141
+                            println!("{}={}", a.node.nam, a.text);               // c:4141
                             informed = 1;                                    // c:4142
                             if !all { continue; }                            // c:4143
                         }
@@ -4614,12 +4614,12 @@ pub fn bin_alias(name: &str, argv: &[String],                                // 
     // Helper closure that prints one Alias respecting printflags.
     let print_alias = |a: &Alias, pflags: i32| {
         if (pflags & PRINT_NAMEONLY) != 0 {
-            println!("{}", a.name);
+            println!("{}", a.node.nam);
         } else if (pflags & PRINT_LIST) != 0 {
             // c form: `alias name=value`
-            println!("alias {}={}", a.name, a.text);
+            println!("alias {}={}", a.node.nam, a.text);
         } else {
-            println!("{}={}", a.name, a.text);
+            println!("{}={}", a.node.nam, a.text);
         }
     };
 
@@ -4629,7 +4629,8 @@ pub fn bin_alias(name: &str, argv: &[String],                                // 
         let lock = if use_suffix { sufaliastab_lock() } else { aliastab_lock() };
         if let Ok(t) = lock.lock() {
             for (_n, a) in t.iter() {                                        // c:4497
-                if (a.flags & flags1) == flags1 && (a.flags & flags2) == 0 {
+                if (a.node.flags & flags1 as i32) == flags1 as i32
+                    && (a.node.flags & flags2 as i32) == 0 {
                     print_alias(a, printflags);
                 }
             }
@@ -4649,8 +4650,9 @@ pub fn bin_alias(name: &str, argv: &[String],                                // 
                 let lock = if use_suffix { sufaliastab_lock() } else { aliastab_lock() };
                 if let Ok(t) = lock.lock() {
                     for (_n, a) in t.iter() {                                // c:4509
-                        if (a.flags & flags1) == flags1 && (a.flags & flags2) == 0
-                            && crate::ported::pattern::pattry(&prog, &a.name)
+                        if (a.node.flags & flags1 as i32) == flags1 as i32
+                            && (a.node.flags & flags2 as i32) == 0
+                            && crate::ported::pattern::pattry(&prog, &a.node.nam)
                         {
                             print_alias(a, printflags);
                         }
@@ -4678,8 +4680,7 @@ pub fn bin_alias(name: &str, argv: &[String],                                // 
                 let v = &arg[eq + 1..];
                 let lock = if use_suffix { sufaliastab_lock() } else { aliastab_lock() };
                 if let Ok(mut t) = lock.lock() {
-                    let mut a = Alias::new(n, v);                            // c:4527
-                    a.flags = flags1;
+                    let a = crate::ported::hashtable::createaliasnode(n, v, flags1); // c:4527
                     t.add(a);
                 }
                 continue;
@@ -4688,7 +4689,7 @@ pub fn bin_alias(name: &str, argv: &[String],                                // 
         let n = if let Some(eq) = arg.find('=') { &arg[..eq] } else { arg.as_str() };
         let lock = if use_suffix { sufaliastab_lock() } else { aliastab_lock() };
         let found = lock.lock().ok().and_then(|t|
-            t.get_including_disabled(n).map(|a| (a.name.clone(), a.flags, a.text.clone()))
+            t.get_including_disabled(n).map(|a| (a.node.nam.clone(), a.node.flags as u32, a.text.clone()))
         );
         match found {
             Some((nm, fl, txt)) => {                                         // c:4530
@@ -4700,7 +4701,7 @@ pub fn bin_alias(name: &str, argv: &[String],                                // 
                     || (OPT_ISSET(ops, b'g')
                         && (fl & ALIAS_GLOBAL as u32) != 0);
                 if show {
-                    let a = Alias { name: nm, flags: fl, text: txt, inuse: 0 };
+                    let a = crate::ported::hashtable::createaliasnode(&nm, &txt, fl);
                     print_alias(&a, printflags);
                 }
             }
