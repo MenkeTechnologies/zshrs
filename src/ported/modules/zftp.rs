@@ -1630,11 +1630,146 @@ pub fn zfgetinfo(_prompt: &str, _noecho: i32) -> Option<String> {
 }
 
 /// Port of `zfgetline()` from `Src/Modules/zftp.c:571`.
-/// C: `int zfgetline(char *ln, int lnsize, int tmout)` — read CRLF line.
+/// C: `int zfgetline(char *ln, int lnsize, int tmout)` — read a single
+/// CRLF-terminated line from the control connection, handling TELNET
+/// IAC command escapes and SIGALRM-driven timeout.
 #[allow(non_snake_case)]
-pub fn zfgetline(_ln: &mut [u8], _lnsize: i32, _tmout: i32) -> i32 {
-    // c:571-690 — reads from cin until \n with timeout.
-    0
+pub fn zfgetline(ln: &mut [u8], lnsize: i32, tmout: i32) -> i32 {             // c:571
+    use std::io::Read;
+    // c:573-575 — locals at function top (Rule 5).
+    let mut ch: i32;                                                          // c:573 int ch
+    let mut added: i32 = 0;                                                   // c:573 added
+    // c:575 — char *pcur = ln, cmdbuf[3];
+    let mut pcur: usize = 0;                                                  // pointer index into ln
+    let mut cmdbuf: [u8; 3] = [0; 3];
+
+    ZCFINISH.store(0, std::sync::atomic::Ordering::Relaxed);                  // c:577 zcfinish = 0
+    let lnsize = lnsize - 1;                                                  // c:579 leave room for null
+    if !ln.is_empty() {
+        ln[0] = 0;                                                            // c:581 ln[0] = '\0'
+    }
+
+    // c:583-587 — setjmp guard via ZFDRRRRING flag.
+    if ZFDRRRRING.load(std::sync::atomic::Ordering::Relaxed) != 0 {           // c:583
+        unsafe { libc::alarm(0); }                                            // c:584
+        crate::ported::utils::zwarnnam("zftp", "timeout getting response");   // c:585
+        return 6;                                                             // c:586
+    }
+    zfalarm(tmout);                                                           // c:588
+
+    // c:597-678 — for (;;) read loop with TELNET IAC handling.
+    let mut state = match ZFTP_STATE.lock() {
+        Ok(s) => s,
+        Err(_) => return 6,
+    };
+    let sess = match state.get_session_mut(None) {
+        Some(s) => s,
+        None => return 6,
+    };
+    let stream = match sess.cin.as_mut() {
+        Some(s) => s,
+        None => return 6,
+    };
+    let mut byte = [0u8; 1];
+
+    'main: loop {                                                             // c:597 for (;;)
+        // c:598 — ch = fgetc(zfsess->cin);
+        ch = match stream.read(&mut byte) {
+            Ok(0) => -1,                                                      // EOF
+            Ok(_) => byte[0] as i32,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,// c:602 EINTR retry
+            Err(_) => -1,
+        };
+
+        match ch {
+            -1 => {                                                           // c:601 EOF
+                ZCFINISH.store(2, std::sync::atomic::Ordering::Relaxed);      // c:606
+            }
+            0x0d => {                                                         // c:609 '\r'
+                ch = match stream.read(&mut byte) {                           // c:611
+                    Ok(0) => -1,
+                    Ok(_) => byte[0] as i32,
+                    Err(_) => -1,
+                };
+                if ch == -1 {                                                 // c:612 EOF
+                    ZCFINISH.store(2, std::sync::atomic::Ordering::Relaxed);  // c:613
+                } else if ch == 0x0a {                                        // c:616 '\n'
+                    ZCFINISH.store(1, std::sync::atomic::Ordering::Relaxed);  // c:617
+                } else if ch == 0x00 {                                        // c:620 '\0'
+                    ch = 0x0d;                                                // c:621
+                } else {
+                    ch = 0x0d;                                                // c:625
+                }
+            }
+            0x0a => {                                                         // c:628 '\n' (unexpected)
+                ZCFINISH.store(1, std::sync::atomic::Ordering::Relaxed);      // c:630
+            }
+            255 => {                                                          // c:633 IAC
+                ch = match stream.read(&mut byte) {                           // c:638
+                    Ok(0) => -1,
+                    Ok(_) => byte[0] as i32,
+                    Err(_) => -1,
+                };
+                match ch {
+                    251 | 252 => {                                            // c:640-641 WILL/WONT
+                        ch = match stream.read(&mut byte) {                   // c:642
+                            Ok(0) => -1,
+                            Ok(_) => byte[0] as i32,
+                            Err(_) => -1,
+                        };
+                        cmdbuf[0] = 255;                                      // c:644 IAC
+                        cmdbuf[1] = 254;                                      // c:645 DONT
+                        cmdbuf[2] = ch as u8;                                 // c:646
+                        // c:647 — write_loop(zfsess->control->fd, cmdbuf, 3);
+                        if let Some(ctrl) = sess.control.as_mut() {
+                            use std::io::Write;
+                            let _ = ctrl.write_all(&cmdbuf);
+                        }
+                        continue 'main;                                       // c:648
+                    }
+                    253 | 254 => {                                            // c:650-651 DO/DONT
+                        ch = match stream.read(&mut byte) {                   // c:652
+                            Ok(0) => -1,
+                            Ok(_) => byte[0] as i32,
+                            Err(_) => -1,
+                        };
+                        cmdbuf[0] = 255;                                      // c:654 IAC
+                        cmdbuf[1] = 252;                                      // c:655 WONT
+                        cmdbuf[2] = ch as u8;                                 // c:656
+                        if let Some(ctrl) = sess.control.as_mut() {
+                            use std::io::Write;
+                            let _ = ctrl.write_all(&cmdbuf);
+                        }
+                        continue 'main;                                       // c:658
+                    }
+                    -1 => {                                                   // c:660 EOF
+                        ZCFINISH.store(2, std::sync::atomic::Ordering::Relaxed); // c:662
+                    }
+                    _ => {}                                                   // c:665 default
+                }
+            }
+            _ => {}
+        }
+
+        // c:671-672 — if (zcfinish) break;
+        if ZCFINISH.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            break;
+        }
+        // c:673-676 — if (added < lnsize) { *pcur++ = ch; added++; }
+        if added < lnsize && pcur < ln.len() {
+            ln[pcur] = ch as u8;
+            pcur += 1;
+            added += 1;
+        }
+        // c:677 — junk if no room, keep reading.
+    }
+
+    unsafe { libc::alarm(0); }                                                // c:680
+    if pcur < ln.len() {
+        ln[pcur] = 0;                                                         // c:682 *pcur = '\0'
+    }
+    // c:684 — return (zcfinish & 2);
+    ZCFINISH.load(std::sync::atomic::Ordering::Relaxed) & 2
 }
 
 /// Port of `zfgetmsg()` from `Src/Modules/zftp.c:702`.
