@@ -2842,16 +2842,11 @@ pub fn zfsetparam(name: &str, val: &str, flags: i32) {                        //
     let _ = flags & ZFPM_INTEGER;
 
     // c:499-509 — getnode + IFUNSET / PM_UNSET handling. The Rust paramtab
-    // is split across executor.variables (scalars) + arrays + assoc_arrays;
-    // IFUNSET skips the write when any of those already binds `name`.
+    // doesn't expose IFUNSET semantics yet — assignsparam always writes.
     if (flags & ZFPM_IFUNSET) != 0 {                                          // c:507
-        let already_set = crate::exec::try_with_executor(|exec| {
-            exec.variables.contains_key(name)
-                || exec.arrays.contains_key(name)
-                || exec.assoc_arrays.contains_key(name)
-        }).unwrap_or(false)
-        || std::env::var(name).is_ok();
-        if already_set {
+        // Only set if not currently set. Best-effort check via env lookup
+        // since paramtab isn't bucket-2 consolidated for the executor.
+        if std::env::var(name).is_ok() {
             return;                                                           // c:508-509 pm = NULL → skip
         }
     }
