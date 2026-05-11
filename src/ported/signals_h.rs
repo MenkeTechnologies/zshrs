@@ -241,20 +241,22 @@ pub const MAX_QUEUE_SIZE: usize = 128;                                   // c:76
 // ---------------------------------------------------------------------------
 
 /// Port of `#define queue_signals()` from `Src/signals.h:90/112`.
-/// Increment the queueing-enabled counter so subsequent signals are
-/// queued instead of handled immediately.
+/// C body: `(queue_in++, queueing_enabled++)` — both counters bump.
 #[inline]
 #[allow(non_snake_case)]
 pub fn queue_signals() {                                                 // c:90/112
+    crate::ported::signals::queue_in.fetch_add(1, Ordering::SeqCst);
     crate::ported::signals::queueing_enabled.fetch_add(1, Ordering::SeqCst);
 }
 
 /// Port of `#define unqueue_signals()` from `Src/signals.h:92/114`.
-/// Decrement the queueing-enabled counter; when it reaches 0, drain
-/// the signal queue via `run_queued_signals()`.
+/// C body decrements `queue_in` and `queueing_enabled`; when the
+/// latter reaches 0, drains the signal queue via
+/// `run_queued_signals()`.
 #[inline]
 #[allow(non_snake_case)]
 pub fn unqueue_signals() {                                               // c:92/114
+    crate::ported::signals::queue_in.fetch_sub(1, Ordering::SeqCst);
     let prev = crate::ported::signals::queueing_enabled.fetch_sub(1, Ordering::SeqCst);
     if prev == 1 {
         run_queued_signals();
@@ -262,13 +264,14 @@ pub fn unqueue_signals() {                                               // c:92
 }
 
 /// Port of `#define dont_queue_signals()` from `Src/signals.h:98/118`.
-/// Force the queueing counter to 0 (skipping the decrement chain) and
-/// drain whatever's queued. Used by code paths that need to flush
-/// before a long-running operation.
+/// C body: `queue_in = queueing_enabled; queueing_enabled = 0`. The
+/// `queue_in` snapshot lets `restore_queue_signals` later re-arm a
+/// later DPUTS2 invariant check.
 #[inline]
 #[allow(non_snake_case)]
 pub fn dont_queue_signals() {                                            // c:98/118
-    crate::ported::signals::queueing_enabled.store(0, Ordering::SeqCst);
+    let level = crate::ported::signals::queueing_enabled.swap(0, Ordering::SeqCst);
+    crate::ported::signals::queue_in.store(level, Ordering::SeqCst);
     run_queued_signals();
 }
 

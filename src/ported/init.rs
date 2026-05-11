@@ -675,7 +675,7 @@ pub fn run_init_scripts() {                                                  // 
     // noerrexit = NOERREXIT_EXIT | NOERREXIT_RETURN | NOERREXIT_SIGNAL;     // c:1447
 
     // if (EMULATION(KSH|SH)) { ... } else { ... zsh paths ... }             // c:1449
-    let emul = crate::ported::modules::ksh93::emulation.load(Ordering::SeqCst);
+    let emul = crate::ported::options::emulation.load(Ordering::SeqCst);
     let is_posix = (emul & 6) != 0; /* EMULATE_KSH=2 | EMULATE_SH=4 */
 
     if is_posix {
@@ -741,7 +741,7 @@ pub fn source(s: &str) -> i32 {                                              // 
 /// Port of `void sourcehome(char *s)` from Src/init.c:1678.
 pub fn sourcehome(s: &str) {                                                 // c:1679
     crate::ported::signals::queue_signals();                                 // c:1683
-    let emul = crate::ported::modules::ksh93::emulation.load(Ordering::SeqCst);
+    let emul = crate::ported::options::emulation.load(Ordering::SeqCst);
     let is_posix = (emul & 6) != 0;
     let h = if is_posix {                                                    // c:1684
         std::env::var("HOME").ok()

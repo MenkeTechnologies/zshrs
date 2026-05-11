@@ -61,7 +61,9 @@ static NOERRS: std::sync::OnceLock<std::sync::Mutex<i32>> = std::sync::OnceLock:
 /// Port of `int locallevel` from `Src/init.c`. Function-call depth
 /// (0 = top-level, 1+ = inside a fn). `zwarning()` checks this in
 /// the script-prefix path (utils.c:150).
-static LOCALLEVEL: std::sync::OnceLock<std::sync::Mutex<i32>> = std::sync::OnceLock::new();
+// `LOCALLEVEL` removed — see `locallevel_lock` removal comment
+// below. Canonical static lives in `crate::ported::params::locallevel`
+// (port of params.c:54).
 
 /// Port of `int lineno` from `Src/init.c`. Current line number;
 /// `zerrmsg()` includes it in the diagnostic when locallevel > 0
@@ -114,10 +116,9 @@ fn argzero_lock() -> &'static std::sync::Mutex<Option<String>> {
 fn noerrs_lock() -> &'static std::sync::Mutex<i32> {
     NOERRS.get_or_init(|| std::sync::Mutex::new(0))
 }
-// WARNING: NOT IN UTILS.C — see scriptname_lock above.
-fn locallevel_lock() -> &'static std::sync::Mutex<i32> {
-    LOCALLEVEL.get_or_init(|| std::sync::Mutex::new(0))
-}
+// `locallevel_lock` removed — duplicate of canonical
+// `crate::ported::params::locallevel` (port of params.c:54). All
+// accessors here now route through the canonical AtomicI32.
 // WARNING: NOT IN UTILS.C — see scriptname_lock above.
 fn lineno_lock() -> &'static std::sync::Mutex<i32> {
     LINENO.get_or_init(|| std::sync::Mutex::new(0))
@@ -141,19 +142,23 @@ pub fn scriptname_get() -> Option<String> {
     scriptname_lock().lock().unwrap().clone()
 }
 
-/// Read `locallevel` — function nesting depth.
+/// Read `locallevel` — function nesting depth. Routes through the
+/// canonical `crate::ported::params::locallevel` static (port of
+/// `Src/params.c:54`). The prior Rust port stored a duplicate
+/// `Mutex<i32>` here that split state from params.rs; both copies
+/// were never kept in sync.
 pub fn locallevel() -> i32 {
-    *locallevel_lock().lock().unwrap()
+    crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Bump `locallevel` (called by `startparamscope`).
 pub fn inc_locallevel() {
-    *locallevel_lock().lock().unwrap() += 1;
+    crate::ported::params::locallevel.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Decrement `locallevel` (called by `endparamscope`).
 pub fn dec_locallevel() {
-    *locallevel_lock().lock().unwrap() -= 1;
+    crate::ported::params::locallevel.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Setter for `argzero`. Called once at shell init from `parseargs`.
@@ -174,7 +179,7 @@ pub fn set_noerrs(v: i32) {
 
 /// Setter for `locallevel`. Called by function-call entry/exit.
 pub fn set_locallevel(v: i32) {
-    *locallevel_lock().lock().unwrap() = v;
+    crate::ported::params::locallevel.store(v, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Setter for `lineno`. Called by the parser as it advances.
@@ -222,7 +227,8 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
     let _ = unsafe { libc::isatty(2) };
     let scriptname = scriptname_lock().lock().unwrap().clone();
     let argzero = argzero_lock().lock().unwrap().clone();
-    let locallevel = *locallevel_lock().lock().unwrap();
+    let locallevel = crate::ported::params::locallevel
+        .load(std::sync::atomic::Ordering::Relaxed);
     let shinstdin = *shinstdin_lock().lock().unwrap();
     let prefix: String = scriptname
         .or(argzero)
@@ -339,7 +345,8 @@ pub fn zwarnnam(cmd: &str, msg: &str) {                                      // 
 pub fn zerrmsg(msg: &str, errno: Option<i32>) {                              // c:289
     let lineno = *lineno_lock().lock().unwrap();
     let shinstdin = *shinstdin_lock().lock().unwrap();
-    let locallevel = *locallevel_lock().lock().unwrap();
+    let locallevel = crate::ported::params::locallevel
+        .load(std::sync::atomic::Ordering::Relaxed);
     // C: if ((unset(SHINSTDIN) || locallevel) && lineno) — prefix
     // with the line number.
     if (!shinstdin || locallevel != 0) && lineno != 0 {
@@ -3529,7 +3536,7 @@ pub fn dquotedztrdup(s: &str) -> String {
 /// Signature change: previous Rust port took `saved: &str` and
 /// returned `bool` — different shape from C, missed the dirfd /
 /// level / dev / ino fields entirely.
-pub fn restoredir(d: &mut DirSav) -> i32 {
+pub fn restoredir(d: &mut crate::ported::zsh_h::dirsav) -> i32 {
     use std::os::unix::fs::MetadataExt;
 
     // C: if (d->dirname && *d->dirname == '/') return chdir(d->dirname);
@@ -4551,27 +4558,28 @@ pub fn dquotedzputs(s: &str) -> String {
 /// `restoredir` integrity check (utils.c:7592) reads. Adding them
 /// so callers can verify the saved-and-restored cwd matches the
 /// captured device + inode.
-#[derive(Debug, Clone)]
-pub struct DirSav {
-    pub dirfd: i32,
-    pub level: i32,
-    pub dirname: Option<String>,
-    pub dev: u64,
-    pub ino: u64,
-}
+// `struct dirsav` lives in `crate::ported::zsh_h::dirsav` per Rule C
+// (its C definition is `Src/zsh.h:1159`, not utils.c). The previous
+// Rust port had a `pub struct DirSav` PascalCase duplicate of the
+// canonical lowercase struct; deleted in favour of routing through
+// `zsh_h::dirsav` directly.
 
 /// Port of `init_dirsav()` from `Src/utils.c:7468`. Initialize a
-/// `DirSav` struct to its empty/default state. C body memset's
-/// the fields to 0 (dirfd to -1).
-pub fn init_dirsav() -> DirSav {
-    DirSav {
-        dirfd: -1,
-        level: 0,
+/// `dirsav` struct to its empty/default state. C body memset's the
+/// fields to 0 (dirfd to -1).
+///
+/// C signature: `void init_dirsav(Dirsav d)` where
+/// `Dirsav = struct dirsav *`. Rust port returns the initialised
+/// struct since callers always pair-with a fresh allocation.
+pub fn init_dirsav() -> crate::ported::zsh_h::dirsav {                       // c:7468
+    crate::ported::zsh_h::dirsav {
+        dirfd: -1,                                                           // c:7469 d->dirfd = -1
+        level: 0,                                                            // c:7470 d->level = 0
         dirname: std::env::current_dir()
             .ok()
             .map(|p| p.to_string_lossy().to_string()),
-        dev: 0,
-        ino: 0,
+        dev: 0,                                                              // c:7472 d->dev = 0
+        ino: 0,                                                              // c:7471 d->ino = 0
     }
 }
 
@@ -5045,9 +5053,7 @@ pub(crate) fn printprompt4() {
     // IPDEF7R/IPDEF7 (params.c:381, 421). Read from paramtab to
     // honour user-set values, fall back to the same emulation
     // default C uses at init.c:1192.
-    let emul = crate::ported::modules::ksh93::emulation
-        .load(std::sync::atomic::Ordering::Relaxed);
-    let posix = EMULATION(emul, EMULATE_KSH | EMULATE_SH);                   // c:init.c:1192
+    let posix = EMULATION(EMULATE_KSH | EMULATE_SH);                         // c:init.c:1192
     let prefix_template = crate::ported::params::getsparam("PS4")
         .or_else(|| crate::ported::params::getsparam("PROMPT4"))
         .unwrap_or_else(|| {

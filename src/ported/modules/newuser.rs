@@ -89,18 +89,7 @@ pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {           // c:68
         .collect();
 
     // c:81 — `if (!EMULATION(EMULATE_ZSH)) return 0;`
-    // EMULATION macro reads `Src/options.c:emulation` global; map
-    // zshrs's enum to the matching bit.
-    let emul_bits = {
-        use crate::ported::options::Emulation;
-        match crate::ported::options::ShellOptions::new().emulation {
-            Emulation::Zsh => crate::ported::zsh_h::EMULATE_ZSH,
-            Emulation::Sh  => crate::ported::zsh_h::EMULATE_SH,
-            Emulation::Ksh => crate::ported::zsh_h::EMULATE_KSH,
-            Emulation::Csh => crate::ported::zsh_h::EMULATE_CSH,
-        }
-    };
-    if !crate::ported::zsh_h::EMULATION(emul_bits, crate::ported::zsh_h::EMULATE_ZSH) {
+    if !crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_ZSH) {
         return 0;                                                         // c:82
     }
 

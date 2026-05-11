@@ -83,7 +83,7 @@ pub struct Gsu_closure {                                                 // c:34
 pub fn makeprivate(pm: *mut crate::ported::zsh_h::param, _flags: i32) {  // c:80
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
-    let cur_local = crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed);
+    let cur_local = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
     if pm_level != cur_local { return; }                                  // c:83 only act on this scope's entries
 
     let pm_flags = unsafe { (*pm).node.flags };
@@ -235,7 +235,7 @@ pub static private_wraplevel: std::sync::atomic::AtomicI32
     = std::sync::atomic::AtomicI32::new(0);
 
 // `locallevel` is the global from `Src/init.c:166`, mirrored as
-// `crate::ported::modules::ksh93::locallevel: AtomicI32`. Read inline
+// `crate::ported::params::locallevel: AtomicI32`. Read inline
 // at every call site below — `ksh93::locallevel.load(Relaxed)`.
 
 /// Port of `printprivatenode()` from `Src/Modules/param_private.c:632`.
@@ -267,7 +267,7 @@ pub fn printprivatenode(pm: *mut crate::ported::zsh_h::param, _printflags: i32) 
             && fakelvl > pm_level
             && (pm_flags & crate::ported::zsh_h::PM_UNSET as i32) != 0;
         let cond = (fakelvl == 0 || unset_in_fake)
-            && crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) > pm_level
+            && crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > pm_level
             && is_private(cur) != 0;
         if !cond { break; }
         // c:638 — pm = pm->old
@@ -305,7 +305,7 @@ pub static FAKELEVEL: std::sync::atomic::AtomicI32 =
 pub fn pps_getfn(pm: *mut crate::ported::zsh_h::param) -> String {       // c:287
     if pm.is_null() { return String::new(); }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {                                         // c:292
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {                                         // c:292
         // c:293 — gsu->getfn(pm). Static-link path: read the param's
         // u_str field directly since the gsu_closure indirection
         // collapses to a single string slot.
@@ -331,8 +331,8 @@ pub fn pps_getfn(pm: *mut crate::ported::zsh_h::param) -> String {       // c:28
 pub fn pps_setfn(pm: *mut crate::ported::zsh_h::param, x: &str) {        // c:300
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) == pm_level
-        || crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed) { // c:304
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) == pm_level
+        || crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed) { // c:304
         unsafe { (*pm).u_str = Some(x.to_string()); }                    // c:305 gsu->setfn
     } else {
         setfn_error(pm);                                                 // c:307
@@ -359,7 +359,7 @@ pub fn pps_setfn(pm: *mut crate::ported::zsh_h::param, x: &str) {        // c:30
 pub fn pps_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:312
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {                                         // c:317
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {                                         // c:317
         // c:318 — gsu->unsetfn(pm, explicit). Set u_str to None.
         unsafe { (*pm).u_str = None; }
     }
@@ -377,7 +377,7 @@ pub fn pps_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:
 pub fn ppi_getfn(pm: *mut crate::ported::zsh_h::param) -> i64 {          // c:328
     if pm.is_null() { return 0; }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {                                         // c:332
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {                                         // c:332
         unsafe { (*pm).u_val }                                           // c:333 gsu->getfn
     } else {
         0                                                                // c:335
@@ -388,8 +388,8 @@ pub fn ppi_getfn(pm: *mut crate::ported::zsh_h::param) -> i64 {          // c:32
 pub fn ppi_setfn(pm: *mut crate::ported::zsh_h::param, x: i64) {         // c:340
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) == pm_level
-        || crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed) {
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) == pm_level
+        || crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed) {
         unsafe { (*pm).u_val = x; }                                      // c:345
     } else {
         setfn_error(pm);                                                 // c:347
@@ -400,7 +400,7 @@ pub fn ppi_setfn(pm: *mut crate::ported::zsh_h::param, x: i64) {         // c:34
 pub fn ppi_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:352
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {                                         // c:357
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {                                         // c:357
         unsafe { (*pm).u_val = 0; }                                      // c:358
     }
     if explicit != 0 {                                                    // c:359
@@ -416,7 +416,7 @@ pub fn ppi_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:
 pub fn ppf_getfn(pm: *mut crate::ported::zsh_h::param) -> f64 {          // c:368
     if pm.is_null() { return 0.0; }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {                                         // c:372
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {                                         // c:372
         unsafe { (*pm).u_dval }                                          // c:373
     } else {
         0.0                                                              // c:375
@@ -427,8 +427,8 @@ pub fn ppf_getfn(pm: *mut crate::ported::zsh_h::param) -> f64 {          // c:36
 pub fn ppf_setfn(pm: *mut crate::ported::zsh_h::param, x: f64) {         // c:380
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) == pm_level
-        || crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed) {
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) == pm_level
+        || crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed) {
         unsafe { (*pm).u_dval = x; }                                     // c:385
     } else {
         setfn_error(pm);                                                 // c:387
@@ -439,7 +439,7 @@ pub fn ppf_setfn(pm: *mut crate::ported::zsh_h::param, x: f64) {         // c:38
 pub fn ppf_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:392
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {                                         // c:397
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {                                         // c:397
         unsafe { (*pm).u_dval = 0.0; }                                   // c:398
     }
     if explicit != 0 {                                                    // c:399
@@ -455,7 +455,7 @@ pub fn ppf_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:
 pub fn ppa_getfn(pm: *mut crate::ported::zsh_h::param) -> Vec<String> {  // c:408
     if pm.is_null() { return Vec::new(); }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {                                         // c:413
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {                                         // c:413
         unsafe { (*pm).u_arr.clone().unwrap_or_default() }              // c:414
     } else {
         Vec::new()                                                       // c:416 nullarray
@@ -466,8 +466,8 @@ pub fn ppa_getfn(pm: *mut crate::ported::zsh_h::param) -> Vec<String> {  // c:40
 pub fn ppa_setfn(pm: *mut crate::ported::zsh_h::param, x: Vec<String>) {  // c:421
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) == pm_level
-        || crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed) {
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) == pm_level
+        || crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed) {
         unsafe { (*pm).u_arr = Some(x); }                                // c:426
     } else {
         setfn_error(pm);                                                 // c:428
@@ -478,7 +478,7 @@ pub fn ppa_setfn(pm: *mut crate::ported::zsh_h::param, x: Vec<String>) {  // c:4
 pub fn ppa_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:433
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {                                         // c:438
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {                                         // c:438
         unsafe { (*pm).u_arr = None; }                                   // c:439
     }
     if explicit != 0 {                                                    // c:440
@@ -500,7 +500,7 @@ pub fn ppa_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:
 pub fn pph_getfn(pm: *mut crate::ported::zsh_h::param) -> Option<()> {   // c:451
     if pm.is_null() { return None; }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {                                         // c:455
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) >= pm_level {                                         // c:455
         unsafe { (*pm).u_hash.as_ref().map(|_| ()) }                     // c:456
     } else {
         None                                                             // c:458 emptytable
@@ -512,8 +512,8 @@ pub fn pph_setfn(pm: *mut crate::ported::zsh_h::param,                       // 
                  x: Option<crate::ported::zsh_h::HashTable>) {            // c:463
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) == pm_level
-        || crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed) {
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) == pm_level
+        || crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > private_wraplevel.load(std::sync::atomic::Ordering::Relaxed) {
         unsafe { (*pm).u_hash = x; }                                     // c:468
     } else {
         setfn_error(pm);                                                 // c:470
@@ -524,7 +524,7 @@ pub fn pph_setfn(pm: *mut crate::ported::zsh_h::param,                       // 
 pub fn pph_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:475
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
-    if crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {                                         // c:480
+    if crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) <= pm_level {                                         // c:480
         unsafe { (*pm).u_hash = None; }                                  // c:481
     }
     if explicit != 0 {                                                    // c:482
@@ -672,7 +672,7 @@ pub fn getprivatenode(pm: *mut crate::ported::zsh_h::param)               // c:5
     while !cur.is_null() {
         let cur_level = unsafe { (*cur).level };
         let fakelvl = FAKELEVEL.load(std::sync::atomic::Ordering::Relaxed);
-        let local = crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed);
+        let local = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
         let pwl = private_wraplevel.load(std::sync::atomic::Ordering::Relaxed);
         if !(fakelvl == 0 && local > cur_level && is_private(cur) != 0) { break; }
         if cur_level == pwl + 1 { break; }                                // c:581
@@ -702,7 +702,7 @@ pub fn getprivatenode2(pm: *mut crate::ported::zsh_h::param)              // c:6
     while !cur.is_null() {
         let cur_level = unsafe { (*cur).level };
         let fakelvl = FAKELEVEL.load(std::sync::atomic::Ordering::Relaxed);
-        let local = crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed);
+        let local = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
         if !(fakelvl == 0 && local > cur_level && is_private(cur) != 0) { break; }
         cur = unsafe {
             (*cur).old.as_mut().map(|b| &mut **b as *mut _).unwrap_or(std::ptr::null_mut())
@@ -720,7 +720,7 @@ pub fn getprivatenode2(pm: *mut crate::ported::zsh_h::param)              // c:6
 pub fn scopeprivate(pm: *mut crate::ported::zsh_h::param, onoff: i32) {  // c:512
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
-    let local = crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed);
+    let local = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
     if pm_level != local { return; }                                      // c:515
     if is_private(pm) == 0 { return; }                                    // c:516-517
     unsafe {
@@ -782,7 +782,7 @@ pub fn scopeprivate(pm: *mut crate::ported::zsh_h::param, onoff: i32) {  // c:51
 pub fn wrap_private(_prog: *const crate::ported::zsh_h::eprog,               // c:550
                     _w: *const crate::ported::zsh_h::funcwrap,
                     _name: *mut libc::c_char) -> i32 {                    // c:550
-    let local = crate::ported::modules::ksh93::locallevel.load(std::sync::atomic::Ordering::Relaxed);
+    let local = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
     let pwl = private_wraplevel.load(std::sync::atomic::Ordering::Relaxed);
     if pwl < local {                                                      // c:552
         let owl = pwl;                                                    // c:553
