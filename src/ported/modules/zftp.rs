@@ -307,6 +307,10 @@ pub struct zftp_session {
     pub transfer_type: i32,
     pub transfer_mode: i32,
     pub passive: bool,
+    /// Mirrors the ZFST_SYST bit of `zfstatusp[zfsessno]` (c:240).
+    /// Set after a successful SYST probe so re-login on the same
+    /// session doesn't re-issue SYST.
+    pub syst_probed: bool,
 }
 
 /// Port of `typedef struct zftp_session *Zftp_session;` from
@@ -341,6 +345,7 @@ impl zftp_session {
             transfer_type: ZFST_IMAG,
             transfer_mode: ZFST_STRE,
             passive: true,
+            syst_probed: false,
         }
     }
 
@@ -3242,8 +3247,13 @@ pub fn zftp_login(name: &str, args: &[&str], _flags: i32) -> i32 {              
         zfsetparam("ZFTP_ACCOUNT", a, ZFPM_READONLY);                           // c:2201
     }
 
-    // c:2207-2226 — SYST probe (zfprefs ZFPF_DUMB / ZFST_SYST cache deferred).
-    if zfsendcmd("SYST\r\n") == 2 {                                             // c:2208
+    // c:2207-2226 — SYST probe gated by per-session ZFST_SYST cache bit.
+    let already_probed = ZFTP_STATE.lock().ok()
+        .and_then(|s| s.get_session(None).map(|sess| sess.syst_probed))
+        .unwrap_or(false);
+    // c:2207 — zfprefs ZFPF_DUMB skipped (zfprefs not ported); always
+    // probe when not yet cached.
+    if !already_probed && zfsendcmd("SYST\r\n") == 2 {                          // c:2208
         let systype = lastmsg.lock().ok().map(|m| m.clone()).unwrap_or_default();
         if systype.starts_with("UNIX Type: L8") {                               // c:2212-2218
             if let Ok(mut state) = ZFTP_STATE.lock() {
@@ -3253,6 +3263,12 @@ pub fn zftp_login(name: &str, args: &[&str], _flags: i32) -> i32 {              
             }
         }
         zfsetparam("ZFTP_SYSTEM", &systype, ZFPM_READONLY);                     // c:2222
+        // c:2224 — zfstatusp[zfsessno] |= ZFST_SYST.
+        if let Ok(mut state) = ZFTP_STATE.lock() {
+            if let Some(sess) = state.get_session_mut(None) {
+                sess.syst_probed = true;                                        // c:2224
+            }
+        }
     }
 
     // c:2228-2230 — ZFTP_TYPE param.
