@@ -1774,7 +1774,9 @@ pub fn bin_setopt(nam: &str, args: &[String],                                // 
                 .map(|c| c.to_ascii_lowercase()).collect();
             // c:670 — patcompile(s, PAT_HEAPDUP, NULL).
             let prog = crate::ported::pattern::patcompile(
-                &normalized, crate::ported::pattern::PatFlags::default());
+                &normalized,
+                crate::ported::zsh_h::PAT_HEAPDUP,
+            );
             if prog.is_err() {                                               // c:670
                 zwarnnam(nam, &format!("bad pattern: {}", raw));             // c:671
                 retval |= 1;

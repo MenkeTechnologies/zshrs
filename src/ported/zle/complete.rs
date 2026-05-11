@@ -816,7 +816,7 @@ pub fn bin_compset(name: &str, argv: &[String],                              // 
 pub fn do_comp_vars(test: i32, mut na: i32, sa: &str,                        // c:935
                     mut nb: i32, sb: &str, mod_: i32) -> i32 {
     use std::sync::atomic::Ordering;
-    use crate::ported::pattern::{patcompile, pattry, PatFlags};
+    use crate::ported::pattern::{patcompile, pattry};
     match test {                                                             // c:937
         CVT_RANGENUM => {                                                    // c:938
             let words = COMPWORDS.get()
@@ -843,7 +843,7 @@ pub fn do_comp_vars(test: i32, mut na: i32, sa: &str,                        // 
             let mut i = COMPCURRENT.load(Ordering::Relaxed) - 1;             // c:964 i = compcurrent - 1
             if i < 0 || i >= l { return 0; }                                 // c:965
             // c:968 — singsub(&sa); — caller already expanded.
-            let pp = patcompile(sa, PatFlags::default());                    // c:969
+            let pp = patcompile(sa, crate::ported::zsh_h::PAT_HEAPDUP);     // c:969
             // c:971-977 — walk compwords backward looking for sa match.
             i -= 1;                                                          // c:971
             while i >= 0 {
@@ -859,7 +859,7 @@ pub fn do_comp_vars(test: i32, mut na: i32, sa: &str,                        // 
             // c:980-993 — if matched and sb given, walk forward for sb.
             if t != 0 && !sb.is_empty() {                                    // c:980
                 let mut tt = 0i32;
-                let pp2 = patcompile(sb, PatFlags::default());               // c:983
+                let pp2 = patcompile(sb, crate::ported::zsh_h::PAT_HEAPDUP);  // c:983
                 i += 1;                                                      // c:984
                 while i < l {
                     if let Ok(ref prog) = pp2 {
@@ -906,7 +906,7 @@ pub fn do_comp_vars(test: i32, mut na: i32, sa: &str,                        // 
         }
         CVT_PREPAT | CVT_SUFPAT => {                                         // c:1042
             if na == 0 { return 0; }                                         // c:1045
-            let pp = match patcompile(sa, PatFlags::default()) {             // c:1047
+            let pp = match patcompile(sa, crate::ported::zsh_h::PAT_HEAPDUP) { // c:1047
                 Ok(p) => p,
                 Err(_) => return 0,
             };

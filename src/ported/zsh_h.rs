@@ -743,6 +743,7 @@ pub struct hookdef {
 }
 
 /// Port of `struct patprog` from `Src/zsh.h:1601-1611`.
+#[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub struct patprog {
     // c:1601

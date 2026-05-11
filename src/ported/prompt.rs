@@ -1,13 +1,11 @@
-//! Prompt expansion — control flow follows zsh `Src/prompt.c` (`promptexpand`,
-//! `putpromptchar`). Output is a Rust `String` (C: metafied `char *` + `bp`).
-//! Inpar/Outpar/Nularg handling for `promptexpand(..., ns != 0, ...)` is incomplete.
+//! `buf` holds metafied bytes (`Src/prompt.c` `char *buf`); callers that need
+//! Unicode text run `unmetafy` (see [`buf_vars::expanded_utf8`]).
 //!
 //! [`prompt_tls`] holds values C reads as file-scope globals. Call
 //! [`prompt_tls::sync_from_executor`] before expansion when an executor is active.
 
 use std::cell::RefCell;
 use std::env;
-
 /// Thread-local mirrors of zsh globals read during `promptexpand()` (logical
 /// `$PWD`, `$?`, `cmdstack`, …). C uses scattered globals; zshrs uses TLS,
 /// then copies into `buf_vars` for each expansion walk.
@@ -40,48 +38,6 @@ pub(crate) mod prompt_tls {
         pub(super) static FUNC_LINE_BASE: RefCell<Option<i64>> = const { RefCell::new(None) };
         pub(super) static FUNCSTACK_FILENAME: RefCell<Option<String>> =
             const { RefCell::new(None) };
-    }
-
-    /// First-time process snapshot when no executor sync has run on this thread.
-    pub(crate) fn ensure_defaults_from_process_env() {
-        if !PWD.with(|c: &RefCell<String>| c.borrow().is_empty()) {
-            return;
-        }
-        let pwd = env::var("PWD")
-            .ok()
-            .filter(|p| !p.is_empty())
-            .or_else(|| {
-                env::current_dir()
-                    .ok()
-                    .map(|p| p.to_string_lossy().to_string())
-            })
-            .unwrap_or_else(|| "/".to_string());
-        let home = env::var("HOME").unwrap_or_default();
-        let user = env::var("USER")
-            .or_else(|_| env::var("LOGNAME"))
-            .unwrap_or_else(|_| "user".to_string());
-        let host = hostname::get()
-            .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "localhost".to_string());
-        let host_short = host.split('.').next().unwrap_or(&host).to_string();
-        let tty = std::fs::read_link("/proc/self/fd/0")
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let shlvl = env::var("SHLVL")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(1);
-        PWD.with(|c| *c.borrow_mut() = pwd);
-        HOME.with(|c| *c.borrow_mut() = home);
-        USER.with(|c| *c.borrow_mut() = user);
-        HOST.with(|c| *c.borrow_mut() = host);
-        HOST_SHORT.with(|c| *c.borrow_mut() = host_short);
-        TTY.with(|c| *c.borrow_mut() = tty);
-        SHLVL.with(|c| *c.borrow_mut() = shlvl);
-        IS_ROOT.with(|c| *c.borrow_mut() = unsafe { libc::geteuid() } == 0);
-        ARGEXTRA.with(|c| {
-            *c.borrow_mut() = env::args().next().unwrap_or_else(|| "zsh".to_string());
-        });
     }
 
     pub(crate) fn sync_from_executor(exec: &ShellExecutor) {
@@ -214,7 +170,9 @@ use crate::ported::zsh_h::{
     TXT_ATTR_FG_24BIT, TXT_ATTR_BG_24BIT,
     TXT_ATTR_FG_MASK, TXT_ATTR_BG_MASK,
     zattr,
-}; // c:zsh.h:2685-2741
+};
+use crate::zsh_h::{INPAR, NULARG, OUTPAR};
+// c:zsh.h:2685-2741
 
 // `Color` is the colour slot lifted out of `zattr` so callers can
 // pass a single integer around. Bit layout mirrors the C zattr
@@ -327,10 +285,9 @@ fn zattr_set_bg_rgb(attrs: zattr, r: u8, g: u8, b: u8) -> zattr {
     cleared | TXTBGCOLOUR | TXT_ATTR_BG_24BIT | (rgb << TXT_ATTR_BG_COL_SHIFT)
 }
 
-/// `struct buf_vars` from `Src/prompt.c:76-121` — prompt expansion state.
-/// C uses `char *fm/buf/bp/...`; Rust uses `input` + `pos` and `output`
-/// (`buf`/`bp` collapsed). Linked `last`, `truncwidth`, `trunccount`,
-/// `rstring`/`Rstring` are not ported yet (truncation/`%r` use simplified paths).
+/// `struct buf_vars` from `Src/prompt.c:76-121`. `dontcount` is C `%{`/`%}`
+/// nesting; `in_escape` holds readline `\x01`/`\x02` glue only.
+/// `last` pointer / full trunc `bp1` realloc: TODO.
 #[allow(non_camel_case_types)]
 pub struct buf_vars {                                                        // c:Src/prompt.c:76
     pwd: String,
@@ -353,18 +310,26 @@ pub struct buf_vars {                                                        // 
     argzero: String,
     func_line_base: Option<i64>,
     funcstack_filename: Option<String>,
-    input: String,            // c:104 (`fm` — owned; nested expands clone)
-    pos: usize,               // c:104 (`fm` cursor, byte index)
-    output: String,           // c:84  (buf — output buffer)
-    attrs: TextAttrs,         // c:txtattrmask (active SGR state)
-    in_escape: bool,          // c:112 (dontcount)
-    prompt_percent: bool,     // c:325 (isset(PROMPTPERCENT))
-    prompt_bang: bool,        // c:325 (isset(PROMPTBANG))
+    pub buf: Vec<u8>,
+    pub bufspc: usize,
+    pub bp: usize,
+    pub bufline: usize,
+    pub bp1: Option<usize>,
+    pub fm: String,
+    pub fm_pos: usize,
+    pub truncwidth: i32,
+    pub dontcount: i32,
+    pub trunccount: i32,
+    pub rstring: Option<String>,
+    pub Rstring: Option<String>,
+    attrs: TextAttrs,
+    in_escape: bool,
+    prompt_percent: bool,
+    prompt_bang: bool,
 }
 
 impl buf_vars {
     pub fn new(input: &str) -> Self {
-        prompt_tls::ensure_defaults_from_process_env();
         Self {
             pwd: prompt_tls::PWD.with(|c| c.borrow().clone()),
             home: prompt_tls::HOME.with(|c| c.borrow().clone()),
@@ -386,9 +351,18 @@ impl buf_vars {
             argzero: prompt_tls::ARGEXTRA.with(|c| c.borrow().clone()),
             func_line_base: prompt_tls::FUNC_LINE_BASE.with(|c| *c.borrow()),
             funcstack_filename: prompt_tls::FUNCSTACK_FILENAME.with(|c| c.borrow().clone()),
-            input: input.to_string(),
-            pos: 0,
-            output: String::with_capacity(input.len() * 2),
+            buf: vec![0u8; 256],
+            bufspc: 256,
+            bp: 0,
+            bufline: 0,
+            bp1: None,
+            fm: input.to_string(),
+            fm_pos: 0,
+            truncwidth: 0,
+            dontcount: 0,
+            trunccount: 0,
+            rstring: None,
+            Rstring: None,
             attrs: 0 as TextAttrs, // c:zsh.h:2685 (zattr=0 == no attrs)
             in_escape: false,
             prompt_percent: true, // c:325 (PROMPTPERCENT default)
@@ -428,9 +402,18 @@ impl buf_vars {
             argzero: self.argzero.clone(),
             func_line_base: self.func_line_base,
             funcstack_filename: self.funcstack_filename.clone(),
-            input,
-            pos: 0,
-            output: String::new(),
+            buf: Vec::new(),
+            bufspc: 0,
+            bp: 0,
+            bufline: 0,
+            bp1: None,
+            fm: input,
+            fm_pos: 0,
+            truncwidth: 0,
+            dontcount: 0,
+            trunccount: 0,
+            rstring: None,
+            Rstring: None,
             attrs: self.attrs,
             in_escape: false,
             prompt_percent: self.prompt_percent,
@@ -438,15 +421,126 @@ impl buf_vars {
         }
     }
 
+    /// Src/prompt.c:991 `addbufspc`
+    fn addbufspc(&mut self, need: usize) {
+        let need = need.saturating_mul(2).max(need.max(1));
+        self.buf.reserve(need);
+        self.bufspc = self.buf.capacity();
+    }
+
+    /// Src/prompt.c:976 `pputc` — metafy high bytes.
+    fn pputc(&mut self, c: u8) {
+        self.addbufspc(2);
+        let bp = self.bp;
+        if crate::ported::utils::imeta_byte(c) {
+            self.buf.resize(bp + 2, 0);
+            self.buf[bp] = crate::ported::utils::Meta;
+            self.buf[bp + 1] = c ^ 32;
+            self.bp = bp + 2;
+        } else {
+            self.buf.resize(bp + 1, 0);
+            self.buf[bp] = c;
+            self.bp = bp + 1;
+        }
+        if c == b'\n' && self.dontcount == 0 {
+            self.bufline = self.bp;
+        }
+    }
+
+    fn out_raw_byte(&mut self, b: u8) {
+        self.addbufspc(1);
+        let bp = self.bp;
+        self.buf.resize(bp + 1, 0);
+        self.buf[bp] = b;
+        self.bp = bp + 1;
+    }
+
+    fn out_char(&mut self, c: char) {
+        let mut tmp = [0u8; 4];
+        let enc = c.encode_utf8(&mut tmp);
+        for &b in enc.as_bytes() {
+            self.pputc(b);
+        }
+    }
+
+    fn out_str(&mut self, s: &str) {
+        for &b in s.as_bytes() {
+            self.pputc(b);
+        }
+    }
+
+    /// Append raw metafied bytes from a nested `putpromptchar` (`%(…)` branches).
+    fn append_buf_from(&mut self, other: &buf_vars) {
+        let end = other.bp.min(other.buf.len());
+        if end == 0 {
+            return;
+        }
+        self.addbufspc(end);
+        let bp0 = self.bp;
+        self.buf.resize(bp0 + end, 0);
+        self.buf[bp0..bp0 + end].copy_from_slice(&other.buf[..end]);
+        self.bp = bp0 + end;
+        if self.dontcount == 0 {
+            for i in 0..end {
+                if other.buf[i] == b'\n' {
+                    self.bufline = bp0 + i + 1;
+                }
+            }
+        }
+    }
+
+    /// After expansion: `unmetafy` for display (lossy UTF-8).
+    pub fn expanded_utf8(&self) -> String {
+        let end = self.bp.min(self.buf.len());
+        let mut v = self.buf[..end].to_vec();
+        crate::ported::utils::unmetafy(&mut v);
+        String::from_utf8_lossy(&v).into_owned()
+    }
+
+    /// Src/prompt.c:236-246 — strip Inpar/Outpar/Nularg when `ns == 0`.
+    fn strip_prompt_tokens_ns0(&mut self) {
+        let end = self.bp.min(self.buf.len());
+        let mut v = Vec::with_capacity(end);
+        let mut i = 0usize;
+        while i < end {
+            let b = self.buf[i];
+            if b == crate::ported::utils::Meta {
+                if i + 1 < end {
+                    v.push(b);
+                    v.push(self.buf[i + 1]);
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+            if b == INPAR as u8 || b == OUTPAR as u8 || b == NULARG as u8 {
+                i += 1;
+                continue;
+            }
+            v.push(b);
+            i += 1;
+        }
+        self.buf = v;
+        self.bp = self.buf.len();
+    }
+
+    pub fn finish_expanded_string(&mut self, keep_spacing_tokens: bool) -> String {
+        if !keep_spacing_tokens {
+            self.strip_prompt_tokens_ns0();
+        }
+        self.expanded_utf8()
+    }
+
     /// Src/prompt.c:359 — core of `putpromptchar(int doprint, int endchar)`.
     pub(crate) fn run_putpromptchar(&mut self, doprint: i32, endchar: i32) -> i32 {
         loop {
-            if self.pos >= self.input.len() {
+            if self.fm_pos >= self.fm.len() {
                 return 0;
             }
             let ec = endchar as u8;
             if ec != 0 {
-                let b = self.input.as_bytes()[self.pos];
+                let b = self.fm.as_bytes()[self.fm_pos];
                 if b == ec {
                     return endchar;
                 }
@@ -465,9 +559,9 @@ impl buf_vars {
                     self.advance();
                     if self.peek() == Some('!') {
                         self.advance();
-                        self.output.push('!');
+                        self.out_char('!');
                     } else {
-                        self.output.push_str(&self.histnum.to_string());
+                        self.out_str(&self.histnum.to_string());
                     }
                 } else {
                     self.advance();
@@ -478,24 +572,24 @@ impl buf_vars {
             } else {
                 self.advance();
                 if doprint != 0 {
-                    self.output.push(c);
+                    self.out_char(c);
                 }
             }
         }
     }
 
     fn peek(&self) -> Option<char> {
-        self.input[self.pos..].chars().next()
+        self.fm[self.fm_pos..].chars().next()
     }
 
     fn advance(&mut self) -> Option<char> {
         let c = self.peek()?;
-        self.pos += c.len_utf8();
+        self.fm_pos += c.len_utf8();
         Some(c)
     }
 
     fn parse_number(&mut self) -> Option<i32> {
-        let start = self.pos;
+        let start = self.fm_pos;
         let mut negative = false;
 
         if self.peek() == Some('-') {
@@ -511,14 +605,14 @@ impl buf_vars {
             }
         }
 
-        if self.pos == start || (negative && self.pos == start + 1) {
+        if self.fm_pos == start || (negative && self.fm_pos == start + 1) {
             if negative {
-                self.pos = start;
+                self.fm_pos = start;
             }
             return None;
         }
 
-        let num_str = &self.input[if negative { start + 1 } else { start }..self.pos];
+        let num_str = &self.fm[if negative { start + 1 } else { start }..self.fm_pos];
         let num: i32 = num_str.parse().ok()?;
         Some(if negative { -num } else { num })
     }
@@ -529,7 +623,7 @@ impl buf_vars {
         }
         self.advance(); // skip {
 
-        let start = self.pos;
+        let start = self.fm_pos;
         let mut depth = 1;
 
         while let Some(c) = self.advance() {
@@ -538,7 +632,7 @@ impl buf_vars {
                 '}' => {
                     depth -= 1;
                     if depth == 0 {
-                        return Some(self.input[start..self.pos - 1].to_string());
+                        return Some(self.fm[start..self.fm_pos - 1].to_string());
                     }
                 }
                 '\\' => {
@@ -602,7 +696,7 @@ impl buf_vars {
     /// Start escape sequence (non-printing characters)
     fn start_escape(&mut self) {
         if !self.in_escape {
-            self.output.push('\x01'); // RL_PROMPT_START_IGNORE
+            self.out_char('\x01'); // RL_PROMPT_START_IGNORE
             self.in_escape = true;
         }
     }
@@ -610,7 +704,7 @@ impl buf_vars {
     /// End escape sequence
     fn end_escape(&mut self) {
         if self.in_escape {
-            self.output.push('\x02'); // RL_PROMPT_END_IGNORE
+            self.out_char('\x02'); // RL_PROMPT_END_IGNORE
             self.in_escape = false;
         }
     }
@@ -622,29 +716,29 @@ impl buf_vars {
     fn apply_attrs(&mut self) {
         self.start_escape();
         if self.attrs & TXTBOLDFACE != 0 { // c:1645
-            self.output.push_str("\x1b[1m");
+            self.out_str("\x1b[1m");
         }
         if self.attrs & TXTUNDERLINE != 0 { // c:1645
-            self.output.push_str("\x1b[4m");
+            self.out_str("\x1b[4m");
         }
         if self.attrs & TXTSTANDOUT != 0 { // c:1645
             // zsh emits italic (`3m`) for `%S` standout, not reverse
             // video (`7m`). Match zsh's actual prompt output.
-            self.output.push_str("\x1b[3m");
+            self.out_str("\x1b[3m");
         }
         if self.attrs & TXTFGCOLOUR != 0 { // c:1645
             let raw = (self.attrs & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT;
             let c = if self.attrs & TXT_ATTR_FG_24BIT != 0 {
                 COLOR_24BIT | (raw as Color & 0x00ff_ffff)
             } else { raw as Color };
-            self.output.push_str(&color_to_ansi(c, true));
+            self.out_str(&color_to_ansi(c, true));
         }
         if self.attrs & TXTBGCOLOUR != 0 { // c:1645
             let raw = (self.attrs & TXT_ATTR_BG_COL_MASK) >> TXT_ATTR_BG_COL_SHIFT;
             let c = if self.attrs & TXT_ATTR_BG_24BIT != 0 {
                 COLOR_24BIT | (raw as Color & 0x00ff_ffff)
             } else { raw as Color };
-            self.output.push_str(&color_to_ansi(c, false));
+            self.out_str(&color_to_ansi(c, false));
         }
         self.end_escape();
     }
@@ -712,7 +806,7 @@ impl buf_vars {
         };
 
         // Parse true branch
-        let true_start = self.pos;
+        let true_start = self.fm_pos;
         let mut depth = 1;
         while let Some(c) = self.peek() {
             if c == '(' {
@@ -727,7 +821,7 @@ impl buf_vars {
             }
             self.advance();
         }
-        let true_branch = self.input[true_start..self.pos].to_string();
+        let true_branch = self.fm[true_start..self.fm_pos].to_string();
 
         if self.peek() != Some(sep) {
             return false;
@@ -735,7 +829,7 @@ impl buf_vars {
         self.advance(); // skip separator
 
         // Parse false branch
-        let false_start = self.pos;
+        let false_start = self.fm_pos;
         depth = 1;
         while let Some(c) = self.peek() {
             if c == '(' {
@@ -748,7 +842,7 @@ impl buf_vars {
             }
             self.advance();
         }
-        let false_branch = self.input[false_start..self.pos].to_string();
+        let false_branch = self.fm[false_start..self.fm_pos].to_string();
 
         if self.peek() != Some(')') {
             return false;
@@ -759,10 +853,10 @@ impl buf_vars {
         // `putpromptchar(!test && doprint, ')' )`; same `bv->buf`, we append serially.
         let mut tsub = self.fork_snapshot(true_branch);
         tsub.run_putpromptchar(if test { doprint } else { 0 }, 0);
-        self.output.push_str(&tsub.output);
+        self.append_buf_from(&tsub);
         let mut fsub = self.fork_snapshot(false_branch);
         fsub.run_putpromptchar(if test { 0 } else { doprint }, 0);
-        self.output.push_str(&fsub.output);
+        self.append_buf_from(&fsub);
 
         true
     }
@@ -837,7 +931,7 @@ impl buf_vars {
                 } else {
                     self.leading_path(&self.path_with_tilde(&self.pwd), (-arg) as usize)
                 };
-                self.output.push_str(&path);
+                self.out_str(&path);
             }
             'd' | '/' => {
                 let path = if arg == 0 {
@@ -847,7 +941,7 @@ impl buf_vars {
                 } else {
                     self.leading_path(&self.pwd, (-arg) as usize)
                 };
-                self.output.push_str(&path);
+                self.out_str(&path);
             }
             'c' | '.' => {
                 let n = if arg == 0 {
@@ -856,7 +950,7 @@ impl buf_vars {
                     arg.unsigned_abs() as usize
                 };
                 let path = self.trailing_path(&self.pwd, n, true);
-                self.output.push_str(&path);
+                self.out_str(&path);
             }
             'C' => {
                 let n = if arg == 0 {
@@ -865,7 +959,7 @@ impl buf_vars {
                     arg.unsigned_abs() as usize
                 };
                 let path = self.trailing_path(&self.pwd, n, false);
-                self.output.push_str(&path);
+                self.out_str(&path);
             }
 
             // Script name (or argzero fallback) — port of
@@ -875,75 +969,82 @@ impl buf_vars {
             'N' => {
                 let name = self
                     .scriptname
-                    .as_deref()
-                    .unwrap_or(&self.argzero);
+                    .clone()
+                    .unwrap_or_else(|| self.argzero.clone());
                 let n = if arg <= 0 {
                     0
                 } else {
                     arg.unsigned_abs() as usize
                 };
                 if n == 0 {
-                    self.output.push_str(name);
+                    self.out_str(&name);
                 } else {
-                    self.output.push_str(&self.trailing_path(name, n, false));
+                    let tail = self.trailing_path(&name, n, false);
+                    self.out_str(&tail);
                 }
             }
             // User/host
-            'n' => self.output.push_str(&self.user),
-            'M' => self.output.push_str(&self.host),
+            'n' => {
+                let u = self.user.clone();
+                self.out_str(&u);
+            }
+            'M' => {
+                let h = self.host.clone();
+                self.out_str(&h);
+            }
             'm' => {
                 let n = if arg == 0 { 1 } else { arg };
                 if n > 0 {
                     let parts: Vec<&str> = self.host.split('.').collect();
                     let take = (n as usize).min(parts.len());
-                    self.output.push_str(&parts[..take].join("."));
+                    self.out_str(&parts[..take].join("."));
                 } else {
                     let parts: Vec<&str> = self.host.split('.').collect();
                     let skip = ((-n) as usize).min(parts.len());
-                    self.output.push_str(&parts[skip..].join("."));
+                    self.out_str(&parts[skip..].join("."));
                 }
             }
 
             // TTY
             'l' => {
                 let tty = if self.tty.starts_with("/dev/tty") {
-                    &self.tty[8..]
+                    self.tty[8..].to_string()
                 } else if self.tty.starts_with("/dev/") {
-                    &self.tty[5..]
+                    self.tty[5..].to_string()
                 } else {
-                    "()"
+                    "()".to_string()
                 };
-                self.output.push_str(tty);
+                self.out_str(&tty);
             }
             'y' => {
                 // zsh: `%y` is the tty short name (without `/dev/`).
                 // When not connected to a tty (e.g. in `-c` mode or
                 // a pipe), zsh outputs `()` matching the `%l` form.
                 let tty = if self.tty.is_empty() {
-                    "()"
+                    "()".to_string()
                 } else if self.tty.starts_with("/dev/") {
-                    &self.tty[5..]
+                    self.tty[5..].to_string()
                 } else {
-                    &self.tty
+                    self.tty.clone()
                 };
-                self.output.push_str(tty);
+                self.out_str(&tty);
             }
 
             // Status
-            '?' => self.output.push_str(&self.lastval.to_string()),
-            '#' => self.output.push(if self.is_root { '#' } else { '%' }),
+            '?' => self.out_str(&self.lastval.to_string()),
+            '#' => self.out_char(if self.is_root { '#' } else { '%' }),
 
             // History
-            'h' | '!' => self.output.push_str(&self.histnum.to_string()),
+            'h' | '!' => self.out_str(&self.histnum.to_string()),
 
             // Jobs
-            'j' => self.output.push_str(&self.num_jobs.to_string()),
+            'j' => self.out_str(&self.num_jobs.to_string()),
 
             // Shell level
-            'L' => self.output.push_str(&self.shlvl.to_string()),
+            'L' => self.out_str(&self.shlvl.to_string()),
 
             // Line number (`%i`) — Src/prompt.c:923-929 after optional `%I` block.
-            'i' => self.output.push_str(&self.lineno.to_string()),
+            'i' => self.out_str(&self.lineno.to_string()),
 
             // `%I` — Src/prompt.c:901-920: inside `funcstack` (not SOURCE,
             // not `IN_EVAL_TRAP`), file line is `lineno + funcstack->flineno`.
@@ -955,7 +1056,7 @@ impl buf_vars {
                 } else {
                     self.lineno
                 };
-                self.output.push_str(&n.to_string());
+                self.out_str(&n.to_string());
             }
 
             // `%x` — Src/prompt.c:931-937: inside the same frames, use
@@ -968,22 +1069,27 @@ impl buf_vars {
                     arg.unsigned_abs() as usize
                 };
                 if self.func_line_base.is_some() {
-                    let path = self.funcstack_filename.as_deref().unwrap_or("");
+                    let path = self
+                        .funcstack_filename
+                        .clone()
+                        .unwrap_or_default();
                     if n == 0 {
-                        self.output.push_str(path);
+                        self.out_str(&path);
                     } else {
-                        self.output.push_str(&self.trailing_path(path, n, false));
+                        let tail = self.trailing_path(&path, n, false);
+                        self.out_str(&tail);
                     }
                 } else {
                     let name = self
                         .scriptfilename
-                        .as_deref()
-                        .or(self.scriptname.as_deref())
-                        .unwrap_or(self.argzero.as_str());
+                        .clone()
+                        .or_else(|| self.scriptname.clone())
+                        .unwrap_or_else(|| self.argzero.clone());
                     if n == 0 {
-                        self.output.push_str(name);
+                        self.out_str(&name);
                     } else {
-                        self.output.push_str(&self.trailing_path(name, n, false));
+                        let tail = self.trailing_path(&name, n, false);
+                        self.out_str(&tail);
                     }
                 }
             }
@@ -1049,9 +1155,9 @@ impl buf_vars {
                             chrono_fmt.push(c);
                         }
                     }
-                    self.output.push_str(&now.format(&chrono_fmt).to_string());
+                    self.out_str(&now.format(&chrono_fmt).to_string());
                 } else {
-                    self.output.push_str(&now.format("%y-%m-%d").to_string());
+                    self.out_str(&now.format("%y-%m-%d").to_string());
                 }
             }
             'T' => {
@@ -1062,24 +1168,24 @@ impl buf_vars {
                 // hours.
                 let now = chrono::Local::now();
                 let formatted = now.format("%k:%M").to_string();
-                self.output.push_str(formatted.trim_start());
+                self.out_str(formatted.trim_start());
             }
             '*' => {
                 let now = chrono::Local::now();
                 let formatted = now.format("%k:%M:%S").to_string();
-                self.output.push_str(formatted.trim_start());
+                self.out_str(formatted.trim_start());
             }
             't' | '@' => {
                 let now = chrono::Local::now();
-                self.output.push_str(&now.format("%l:%M%p").to_string());
+                self.out_str(&now.format("%l:%M%p").to_string());
             }
             'w' => {
                 let now = chrono::Local::now();
-                self.output.push_str(&now.format("%a %e").to_string());
+                self.out_str(&now.format("%a %e").to_string());
             }
             'W' => {
                 let now = chrono::Local::now();
-                self.output.push_str(&now.format("%m/%d/%y").to_string());
+                self.out_str(&now.format("%m/%d/%y").to_string());
             }
 
             // Text attributes — emit only the SGR for the newly
@@ -1090,7 +1196,7 @@ impl buf_vars {
             'B' => {
                 self.attrs |= TXTBOLDFACE; // c:zsh.h:2694
                 self.start_escape();
-                self.output.push_str("\x1b[1m");
+                self.out_str("\x1b[1m");
                 self.end_escape();
             }
             'b' => {
@@ -1100,19 +1206,19 @@ impl buf_vars {
                 // full reset.
                 self.attrs &= !TXTBOLDFACE; // c:zsh.h:2694
                 self.start_escape();
-                self.output.push_str("\x1b[0m");
+                self.out_str("\x1b[0m");
                 self.end_escape();
             }
             'U' => {
                 self.attrs |= TXTUNDERLINE; // c:zsh.h:2697
                 self.start_escape();
-                self.output.push_str("\x1b[4m");
+                self.out_str("\x1b[4m");
                 self.end_escape();
             }
             'u' => {
                 self.attrs &= !TXTUNDERLINE; // c:zsh.h:2697
                 self.start_escape();
-                self.output.push_str("\x1b[24m");
+                self.out_str("\x1b[24m");
                 self.end_escape();
             }
             'S' => {
@@ -1120,7 +1226,7 @@ impl buf_vars {
                 self.start_escape();
                 // zsh emits italic (`3m`) for `%S` standout, not
                 // reverse video (`7m`). Match zsh's actual output.
-                self.output.push_str("\x1b[3m");
+                self.out_str("\x1b[3m");
                 self.end_escape();
             }
             's' => {
@@ -1129,7 +1235,7 @@ impl buf_vars {
                 // zsh emits the italic-end (`23m`) for `%s` rather
                 // than the reverse-end (`27m`). Match zsh's output
                 // so terminal state agrees with what `%S` set.
-                self.output.push_str("\x1b[23m");
+                self.out_str("\x1b[23m");
                 self.end_escape();
             }
 
@@ -1152,7 +1258,7 @@ color_from_name(&name) // c:336 (match_colour)
                     // apply_attrs would re-emit bold/underline/standout
                     // each time `%F` runs, producing duplicate codes.
                     self.start_escape();
-                    self.output.push_str(&color_to_ansi(c, true));
+                    self.out_str(&color_to_ansi(c, true));
                     self.end_escape();
                 }
             }
@@ -1163,7 +1269,7 @@ color_from_name(&name) // c:336 (match_colour)
                 // would emit a full reset which over-clears.
                 self.attrs &= !TXT_ATTR_FG_MASK; // c:zsh.h:2732
                 self.start_escape();
-                self.output.push_str("\x1b[39m");
+                self.out_str("\x1b[39m");
                 self.end_escape();
             }
             'K' => {
@@ -1181,7 +1287,7 @@ color_from_name(&name) // c:336
                         self.attrs = zattr_set_bg_palette(self.attrs, c as u8); // c:2440
                     }
                     self.start_escape();
-                    self.output.push_str(&color_to_ansi(c, false));
+                    self.out_str(&color_to_ansi(c, false));
                     self.end_escape();
                 }
             }
@@ -1191,7 +1297,7 @@ color_from_name(&name) // c:336
                 // all active attrs.
                 self.attrs &= !TXT_ATTR_BG_MASK; // c:zsh.h:2736
                 self.start_escape();
-                self.output.push_str("\x1b[49m");
+                self.out_str("\x1b[49m");
                 self.end_escape();
             }
 
@@ -1203,7 +1309,7 @@ color_from_name(&name) // c:336
             'G' => {
                 let n = if arg > 0 { arg as usize } else { 1 };
                 for _ in 0..n {
-                    self.output.push(' ');
+                    self.out_char(' ');
                 }
             }
 
@@ -1211,7 +1317,8 @@ color_from_name(&name) // c:336
             'v' => {
                 let idx = if arg == 0 { 1 } else { arg };
                 if idx > 0 && (idx as usize) <= self.psvar.len() {
-                    self.output.push_str(&self.psvar[idx as usize - 1]);
+                    let s = self.psvar[idx as usize - 1].clone();
+                    self.out_str(&s);
                 }
             }
 
@@ -1247,26 +1354,26 @@ color_from_name(&name) // c:336
                             .filter_map(|b| CMDNAMES.get(*b as usize).copied())
                             .collect()
                     };
-                    self.output.push_str(&names.join(" "));
+                    self.out_str(&names.join(" "));
                 }
             }
 
             // Clear to end of line
             'E' => {
                 self.start_escape();
-                self.output.push_str("\x1b[K");
+                self.out_str("\x1b[K");
                 self.end_escape();
             }
 
             // Literal characters
-            '%' => self.output.push('%'),
-            ')' => self.output.push(')'),
+            '%' => self.out_char('%'),
+            ')' => self.out_char(')'),
             '\0' => {}
 
             // Unknown - output literally
             _ => {
-                self.output.push('%');
-                self.output.push(c);
+                self.out_char('%');
+                self.out_char(c);
             }
         }
     }
@@ -1274,7 +1381,7 @@ color_from_name(&name) // c:336
     /// Expand the prompt (`promptexpand` → `putpromptchar(1,0)` in C).
     pub fn expand(mut self) -> String {
         self.run_putpromptchar(1, 0);
-        self.output
+        self.finish_expanded_string(false)
     }
 }
 
