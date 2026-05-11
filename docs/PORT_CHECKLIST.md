@@ -166,7 +166,7 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - `zcond_regex_match(exec, a, id)` — port of c:54-200. Compiles regex with CASEMATCH-aware `(?i)` prefix, runs match, writes back $MATCH/$MBEGIN/$MEND/$match[]/$mbegin[]/$mend[] (or $BASH_REMATCH when BASHREMATCH set), with KSHARRAYS-aware 1-based vs 0-based offset indexing. 8 tests covering all branches pass. Verified.
   - `zregex_regerrwarn(prefix, msg)` — collapses C's two-`regerror()` size+fill pattern into a single `zwarnnam` call (c:40-51). Rust's regex crate carries pre-formatted error strings. Verified.
 
-- [ ] `modules/zselect.rs` ↔ `Modules/zselect.c`
+- [x] `modules/zselect.rs` ↔ `Modules/zselect.c`
   - C: 0 structs/enums • Rust: 0 structs/enums ✓ (after deleting `SelectMode`, `ZselectOptions`, `SelectResult`)
   - C fns (8): `bin_zselect`, `handle_digits` (static), `setup_`, `features_`, `enables_`, `boot_`, `cleanup_`, `finish_` • Rust: same 8 ✓
   - 6 module loaders match C 1:1.
@@ -399,7 +399,7 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
 - [ ] `modules/zutil.rs` ↔ `Modules/zutil.c`
 - [ ] `modules/mathfunc.rs` ↔ `Modules/mathfunc.c`
 - [ ] `modules/regex.rs` ↔ `Modules/regex.c`
-- [ ] `modules/zselect.rs` ↔ `Modules/zselect.c`
+- [x] `modules/zselect.rs` ↔ `Modules/zselect.c`
 - [ ] `zle/zle_utils.rs` ↔ `Zle/zle_utils.c`
 - [ ] `zle/zle_hist.rs` ↔ `Zle/zle_hist.c`
 - [ ] `zle/zle_keymap.rs` ↔ `Zle/zle_keymap.c`
