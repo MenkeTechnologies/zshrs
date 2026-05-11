@@ -2029,58 +2029,114 @@ pub fn getarrvalue(arr: &[String], start: i64, end: i64) -> Vec<String> {
     arr[s_idx..e_idx.min(arr.len())].to_vec()
 }
 
-/// Set array element with subscript handling.
+/// Direct port of `void setarrvalue(Value v, char **val)` from
+/// `Src/params.c:2895-3037`. Sets an array (or assoc-array via
+/// arrhashsetfn) into the param identified by v.pm, honouring
+/// PM_READONLY / type-guards / VALFLAG_EMPTY rejections and the
+/// slice-bounds adjust for `[N,M]` subscripts.
 ///
-/// **Signature drift (PORT.md Rule S1 violation):** C's
-/// `setarrvalue(Value v, char **val)` walks v->pm flags
-/// (PM_READONLY check, PM_ARRAY|PM_HASHED type guard,
-/// VALFLAG_EMPTY guard) before dispatching through pm->gsu.a->setfn.
-/// This Rust shim takes (arr, start, end, val) and inlines the
-/// slice splice — fine for the executor-backed array, but can't
-/// honour the pm-flag guards without the paramtab/executor
-/// unification (see assignaparam doc above for migration path).
+/// C dispatch:
+///   - !EXECOPT → silent return (c:2897-2898)
+///   - PM_READONLY → zerr + return (c:2899-2904)
+///   - !PM_ARRAY && !PM_HASHED → zerr (c:2905-2911)
+///   - VALFLAG_EMPTY → zerr (c:2913-2917)
+///   - start==0,end==-1 && PM_HASHED → arrhashsetfn(0) (c:2919-2922)
+///   - start==0,end==-1 && PM_ARRAY → gsu.a->setfn (c:2922-2923)
+///   - start==-1,end==0 && PM_HASHED → arrhashsetfn(AUGMENT) (c:2925-2928)
+///   - PM_HASHED with other bounds → zerr slice-of-assoc (c:2929-2932)
+///   - PM_ARRAY with slice → bounds adjust + splice (c:2933+)
 ///
-/// Body covers the c:2917 "v->start == 0 && v->end == -1 →
-/// full replacement" and c:2929+ "slice-with-bounds adjust"
-/// paths against `arr` directly.
-///
-/// Pending C semantics inside this body:
-///   - PM_READONLY rejection with zerr (c:2899-2904)
-///   - PM_HASHED dispatch to arrhashsetfn (c:2918-2927)
-///   - VALFLAG_INV + !KSHARRAYS off-by-one (c:2938-2942)
-///   - ASSPM_AUGMENT prepend (c:2945-2954)
-///   - PM_UNIQUE dedupe after assign (c:2966-2967)
-pub fn setarrvalue(arr: &mut Vec<String>, start: i64, end: i64, val: Vec<String>) {
-    let len = arr.len() as i64;
-    // c:2950-2954 — negative start: add pre_assignment_length;
-    // clamp to 0.
-    let start = if start < 0 {
-        (len + start + 1).max(0)
-    } else {
-        start
+/// Pending: ASSPM_AUGMENT prepend (c:2945-2954), PM_UNIQUE dedupe
+/// after assign (c:2966-2967), VALFLAG_INV + !KSHARRAYS off-by-one
+/// (c:2938-2942).
+pub fn setarrvalue(v: &mut crate::ported::zsh_h::value, val: Vec<String>) {  // c:2895
+    use crate::ported::zsh_h::{
+        PM_HASHED, PM_READONLY, PM_TYPE, VALFLAG_EMPTY,
     };
-    // c:2955-2959 — negative end: add pre_assignment_length + 1;
-    // clamp to 0.
-    let end = if end < 0 { (len + end + 1).max(0) } else { end };
-    // c:2960-2961 — `if (end < start) end = start`.
-    let start = (start.max(1) - 1) as usize;
-    let end = end.max(0) as usize;
 
-    // c:2980+ — pad with empty strings up to start.
-    while arr.len() < start {
+    let pm = match v.pm.as_mut() { Some(p) => p, None => return };
+
+    // c:2899-2904 — PM_READONLY rejection.
+    if pm.node.flags & PM_READONLY as i32 != 0 {
+        crate::ported::utils::zerr(&format!("read-only variable: {}", pm.node.nam));
+        return;
+    }
+    // c:2905-2911 — type guard.
+    let t = PM_TYPE(pm.node.flags as u32);
+    if t & (crate::ported::zsh_h::PM_ARRAY | PM_HASHED) == 0 {
+        crate::ported::utils::zerr(&format!(
+            "{}: attempt to assign array value to non-array",
+            pm.node.nam
+        ));
+        return;
+    }
+    // c:2913-2917 — VALFLAG_EMPTY rejection.
+    if v.valflags & VALFLAG_EMPTY != 0 {
+        crate::ported::utils::zerr(&format!(
+            "{}: assignment to invalid subscript range",
+            pm.node.nam
+        ));
+        return;
+    }
+
+    // c:2919-2932 — full-replace / AUGMENT / hash-slice-reject paths.
+    if v.start == 0 && v.end == -1 {
+        if t == PM_HASHED {
+            // c:2920 — arrhashsetfn(pm, val, 0).
+            arrhashsetfn(pm, val, 0);
+        } else {
+            // c:2922 — gsu.a->setfn(pm, val). Without a fully-wired
+            // GSU table, write directly into u_arr.
+            pm.u_arr = Some(val);
+        }
+        return;
+    }
+    if v.start == -1 && v.end == 0 && t == PM_HASHED {
+        arrhashsetfn(pm, val, crate::ported::zsh_h::ASSPM_AUGMENT);
+        return;
+    }
+    if t == PM_HASHED {
+        crate::ported::utils::zerr(&format!(
+            "{}: attempt to set slice of associative array",
+            pm.node.nam
+        ));
+        return;
+    }
+
+    // c:2933+ — PM_ARRAY slice path.
+    let arr = pm.u_arr.get_or_insert_with(Vec::new);
+    let len = arr.len() as i64;
+    // c:2950-2954 — negative start: add pre_assignment_length; clamp to 0.
+    let start = if v.start < 0 {
+        (len + v.start as i64 + 1).max(0)
+    } else {
+        v.start as i64
+    };
+    // c:2955-2959 — negative end: add pre_assignment_length + 1; clamp to 0.
+    let end = if v.end < 0 {
+        (len + v.end as i64 + 1).max(0)
+    } else {
+        v.end as i64
+    };
+    // c:2960-2961 — `if (end < start) end = start`.
+    let start_idx = (start.max(1) - 1) as usize;
+    let end_idx = end.max(0) as usize;
+
+    // c:2980 — pad with empty strings up to start.
+    while arr.len() < start_idx {
         arr.push(String::new());
     }
 
     // c:2989-2998 — splice val into [start..end] range.
-    let end = end.min(arr.len());
-    if start <= end {
-        arr.splice(start..end, val);
+    let end_idx = end_idx.min(arr.len());
+    if start_idx <= end_idx {
+        arr.splice(start_idx..end_idx, val);
     } else {
-        for (i, v) in val.into_iter().enumerate() {
-            if start + i < arr.len() {
-                arr[start + i] = v;
+        for (i, x) in val.into_iter().enumerate() {
+            if start_idx + i < arr.len() {
+                arr[start_idx + i] = x;
             } else {
-                arr.push(v);
+                arr.push(x);
             }
         }
     }
@@ -2400,8 +2456,27 @@ mod tests {
 
     #[test]
     fn test_setarrvalue() {
-        let mut arr = vec!["a".into(), "b".into(), "c".into(), "d".into()];
-        setarrvalue(&mut arr, 2, 3, vec!["X".into(), "Y".into()]);
+        // C-faithful: setarrvalue takes a Value pointing at a Param
+        // with u_arr set. Construct one inline.
+        use crate::ported::zsh_h::{hashnode, param, PM_ARRAY};
+        let pm = Box::new(param {
+            node: hashnode { next: None, nam: "test".to_string(), flags: PM_ARRAY as i32 },
+            u_data: 0,
+            u_arr: Some(vec!["a".into(), "b".into(), "c".into(), "d".into()]),
+            u_str: None, u_val: 0, u_dval: 0.0, u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+            base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+        });
+        let mut v = crate::ported::zsh_h::value {
+            pm: Some(pm),
+            arr: Vec::new(),
+            scanflags: 0,
+            valflags: 0,
+            start: 2,
+            end: 3,
+        };
+        setarrvalue(&mut v, vec!["X".into(), "Y".into()]);
+        let arr = v.pm.unwrap().u_arr.unwrap();
         assert_eq!(arr, vec!["a", "X", "Y", "d"]);
     }
 
@@ -5197,17 +5272,50 @@ pub fn assignstrvalue(
             }
         }
         t if t == PM_ARRAY => {
-            // char **ss = zalloc(2*sizeof(char*)); ss[0]=val; ss[1]=NULL; setarrvalue(v,ss);
+            // c:2826-2828 — `char **ss = zalloc(2*sizeof(char*));
+            // ss[0]=val; ss[1]=NULL; setarrvalue(v, ss);` — wrap the
+            // single value in a 1-element array. The C-faithful
+            // setarrvalue takes &mut Value; we already hold a &mut
+            // borrow of pm from v.pm.as_mut() higher up, so inline
+            // the dispatch directly against pm here to avoid the
+            // double-borrow.
             let one = vec![val.take().unwrap_or_default()];
-            // Real C invocation goes through setarrvalue(Value, char**).
-            // Our setarrvalue currently takes (&mut Vec<String>, start, end, val);
-            // route through arrsetfn for the no-subscript case (start==0,end==-1).
             if v.start == 0 && v.end == -1 {
-                arrsetfn(pm, one);
-            } else if let Some(arr) = pm.u_arr.as_mut() {
-                setarrvalue(arr, v.start as i64, v.end as i64, one);
-            } else {
+                // c:2922 — full replace.
                 pm.u_arr = Some(one);
+            } else {
+                // c:2933+ — slice splice path with bounds adjust.
+                let arr = pm.u_arr.get_or_insert_with(Vec::new);
+                let len = arr.len() as i64;
+                let start_raw = v.start as i64;
+                let end_raw = v.end as i64;
+                let start = if start_raw < 0 {
+                    (len + start_raw + 1).max(0)
+                } else {
+                    start_raw
+                };
+                let end = if end_raw < 0 {
+                    (len + end_raw + 1).max(0)
+                } else {
+                    end_raw
+                };
+                let start_idx = (start.max(1) - 1) as usize;
+                let end_idx = end.max(0) as usize;
+                while arr.len() < start_idx {
+                    arr.push(String::new());
+                }
+                let end_idx = end_idx.min(arr.len());
+                if start_idx <= end_idx {
+                    arr.splice(start_idx..end_idx, one);
+                } else {
+                    for (i, x) in one.into_iter().enumerate() {
+                        if start_idx + i < arr.len() {
+                            arr[start_idx + i] = x;
+                        } else {
+                            arr.push(x);
+                        }
+                    }
+                }
             }
         }
         t if t == PM_HASHED => {
