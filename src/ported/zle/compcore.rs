@@ -877,8 +877,8 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
     let instring = crate::ported::zle::zle_tricky::INSTRING.load(Ordering::Relaxed);                                          // c:307
     // c:305 — `compqstack = instring == QT_NONE ? "\\" : <quote-char>`.
     // Inlined `char_from_qt(x)` as `(x as u8) as char`.
-    let head_q: char = if instring == QT_NONE_STUB {                         // c:305
-        QT_BACKSLASH_STUB as u8 as char
+    let head_q: char = if instring == crate::ported::zsh_h::QT_NONE {        // c:305
+        crate::ported::zsh_h::QT_BACKSLASH as u8 as char
     } else {
         instring as u8 as char
     };
@@ -889,7 +889,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
     hasunqu.store(0, Ordering::Relaxed);                                     // c:309
     let wouldinstab_v = WOULDINSTAB.load(Ordering::Relaxed);                 // c:310
     useline.store(                                                           // c:310
-        if wouldinstab_v != 0 { -1 } else if lst != COMP_LIST_COMPLETE { 1 } else { 0 },
+        if wouldinstab_v != 0 { -1 } else if lst != crate::ported::zle::zle_h::COMP_LIST_COMPLETE { 1 } else { 0 },
         Ordering::Relaxed,
     );
     useexact.store(opt_isset("RECEXACT"), Ordering::Relaxed);           // c:311
@@ -1123,11 +1123,12 @@ fn goto_compend(ret: i32) -> i32 {                                            //
     ret                                                                      // c:453
 }
 
-// ---- Extern stubs for do_completion's bucket-3 dependencies ----
-
-pub const COMP_LIST_COMPLETE: i32 = 2;                                        // zle.h
-pub const QT_NONE_STUB: i32 = 0;                                              // zsh.h QT_NONE
-pub const QT_BACKSLASH_STUB: i32 = crate::ported::zsh_h::QT_BACKSLASH;        // zsh.h
+// `COMP_LIST_COMPLETE` / `QT_NONE_STUB` / `QT_BACKSLASH_STUB` local
+// aliases deleted — call sites now reach the real C-side constants
+// directly (`crate::ported::zle::zle_h::COMP_LIST_COMPLETE`,
+// `crate::ported::zsh_h::QT_NONE`, `crate::ported::zsh_h::QT_BACKSLASH`).
+// The local `COMP_LIST_COMPLETE = 2` was a value-mismatch bug (the
+// real constant is 1 per `Src/Zle/zle.h:357`).
 
 // `char_from_qt` deleted — Rust-only 1-line `(qt as u8) as char`
 // helper. Inlined at the two call sites in get_compstate_str.
