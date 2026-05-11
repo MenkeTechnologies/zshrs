@@ -1871,6 +1871,30 @@ pub fn connectstates(out: &mut Vec<String>, in_: &mut Vec<String>) {          //
     }
 }
 
+/// Port of `setstypat()` from Src/Modules/zutil.c:295.
+/// C: `static int setstypat(Style s, char *pat, Patprog prog,
+/// char **vals, int eval)` — store/replace a (pat, vals) entry on
+/// the Style's pat list. Returns 1 on parse error, 0 on success.
+///
+/// Static-link path routes through StyleTable::set on the global
+/// zstyletab. The `style_name` arg replaces the C `Style s` since
+/// Rust's StyleTable is keyed by name. The `prog` (Patprog) arg is
+/// ignored because StyleTable::set compiles at lookup-time via patmatch.
+#[allow(non_snake_case)]
+pub fn setstypat(style_name: &str, pat: &str,                                // c:295
+                 _prog: Option<crate::ported::zsh_h::Patprog>,
+                 vals: Vec<String>, eval: i32) -> i32 {
+    // c:307-318 — eval branch needs parse_string (unported); StyleTable
+    // records the eval=true flag via the Option<Eprog> sentinel and
+    // emits via the evalstyle hook at lookup time.
+    if let Ok(mut t) = zstyletab.lock() {
+        t.set(pat, style_name, vals, eval != 0);                             // c:319 set/replace
+        0
+    } else {
+        1
+    }
+}
+
 /// Port of `evalstyle()` from Src/Modules/zutil.c:413.
 /// C: `static char **evalstyle(Stypat p)` — execute the eval-prog
 /// then return whatever `reply`/`reply[]` got populated with.
