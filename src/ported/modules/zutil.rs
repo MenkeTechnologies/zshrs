@@ -1872,13 +1872,27 @@ pub fn connectstates(out: &mut Vec<String>, in_: &mut Vec<String>) {          //
 }
 
 /// Port of `evalstyle()` from Src/Modules/zutil.c:413.
-/// C: `static char **evalstyle(Stypat p)` — execute the eval-prog and
-/// return the resulting `reply`/value array.
+/// C: `static char **evalstyle(Stypat p)` — execute the eval-prog
+/// then return whatever `reply`/`reply[]` got populated with.
+///
+/// Static-link path: VM-level execode() dispatch lives inside fusevm
+/// and isn't reachable from this caller; we instead read the post-
+/// invocation `reply` array (or singleton scalar) directly out of
+/// executor state. Callers using `zstyle -e CTX STY EXPR` set this
+/// up by populating `reply` themselves; the bin_zstyle -e arm should
+/// fire execode separately before invoking lookupstyle.
 #[allow(non_snake_case)]
 pub fn evalstyle(_p: &Stypat) -> Vec<String> {                               // c:413
-    // c:413
-    // c:415-441 — errflag save, execode(p->eval), getaparam("reply").
-    Vec::new()
+    // c:415-440 — read `reply` array, fall back to scalar reply.
+    crate::exec::try_with_executor(|exec| {                                  // c:425 getaparam
+        if let Some(arr) = exec.arrays.get("reply") {                        // c:427
+            arr.clone()
+        } else if let Some(s) = exec.variables.get("reply") {                // c:431 getsparam
+            vec![s.clone()]                                                  // c:435 hcalloc + dupstring
+        } else {
+            Vec::new()
+        }
+    }).unwrap_or_default()
 }
 
 /// Port of `freematch()` from Src/Modules/zutil.c:72.
