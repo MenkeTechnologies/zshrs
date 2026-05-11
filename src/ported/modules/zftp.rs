@@ -1615,8 +1615,14 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
 }
 
 /// Port of `cleanup_()` from `Src/Modules/zftp.c:3219`.
-pub fn cleanup_(m: *const module) -> i32 {
-    setfeatureenables(m, module_features(), None)
+pub fn cleanup_(m: *const module) -> i32 {                                   // c:3217
+    // c:3219 — deletehookfunc("exit", zftpexithook). The Rust hook
+    // table (utils::HOOKS) isn't yet wired to dispatch through
+    // deletehookfunc; static-link skip until the hook-fn substrate
+    // lands. The exit hook is one-shot anyway (process is going away).
+    // c:3220 — zftp_cleanup(): close every live session.
+    zftp_cleanup();                                                          // c:3220
+    setfeatureenables(m, module_features(), None)                            // c:3221
 }
 
 /// Port of `finish_()` from `Src/Modules/zftp.c:3228`.
