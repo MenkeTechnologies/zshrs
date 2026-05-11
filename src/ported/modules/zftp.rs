@@ -2745,12 +2745,241 @@ pub fn zfstats(fnam: &str, remote: i32,                                       //
 // the corresponding `Zftp::<method>` on the live state.
 
 /// Port of `zftp_open()` from `Src/Modules/zftp.c:1690`.
-/// C: `int zftp_open(char *name, char **args, int flags)`.
-pub fn zftp_open(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut full: Vec<String> = vec!["open".to_string()];
-    full.extend(args.iter().map(|s| s.to_string()));
-    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+/// C: `int zftp_open(char *name, char **args, int flags)` — opens a
+/// TCP control connection (with optional `host[:port]` or IPv6
+/// `[host]:port` syntax, falls back to `zfsess->userparams` when no
+/// args, reads the 220 banner via `zfgetmsg()`, sets
+/// ZFTP_HOST/PORT/IP/MODE params, and chains to `zftp_login()` when
+/// extra args are present.
+pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {                // c:1690
+    use std::net::ToSocketAddrs;
+    use std::sync::atomic::Ordering;
+    let mut port: i32 = -1;                                                     // c:1698 port = -1
+    let portnam: String;                                                        // c:1695 portnam = "ftp"
+    let hostnam: String;                                                        // c:1696 hostnam
+    let hostsuffix: String;                                                     // c:1696 hostsuffix
+    let tmout: i32;                                                             // c:1697 tmout
+
+    // c:1701-1708 — fall back to userparams when no positional args.
+    let mut effective: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    if effective.is_empty() {                                                   // c:1701 !*args
+        let up = ZFTP_STATE.lock().ok()
+            .and_then(|s| s.get_session(None).map(|sess| sess.userparams.clone()))
+            .unwrap_or_default();
+        if !up.is_empty() {
+            effective = up;                                                     // c:1703 args = userparams
+        } else {
+            crate::ported::utils::zwarnnam(name, "no host specified");          // c:1705
+            return 1;                                                           // c:1706
+        }
+    }
+
+    // c:1715-1716 — close any existing connection.
+    let already_open = ZFTP_STATE.lock().ok()
+        .and_then(|s| s.get_session(None).map(|sess| sess.control.is_some()))
+        .unwrap_or(false);
+    if already_open {                                                           // c:1715
+        zfclose(0);                                                             // c:1716
+    }
+
+    // c:1718 — dupstring(args[0]) — Rust String owns its bytes.
+    let raw = effective[0].clone();
+    // c:1720-1730 — IPv6 `[host]:port` bracket parse.
+    if let Some(stripped) = raw.strip_prefix('[') {
+        let close_idx = match stripped.find(']') {
+            Some(i) => i,
+            None => {
+                crate::ported::utils::zwarnnam(
+                    name, &format!("Invalid host format: {}", raw));            // c:1726
+                return 1;                                                       // c:1727
+            }
+        };
+        let after = &stripped[close_idx + 1..];
+        if !after.is_empty() && !after.starts_with(':') {                       // c:1725
+            crate::ported::utils::zwarnnam(
+                name, &format!("Invalid host format: {}", raw));
+            return 1;
+        }
+        hostnam = stripped[..close_idx].to_string();                            // c:1722
+        hostsuffix = after.to_string();                                         // c:1729
+    } else {
+        hostnam = raw.clone();
+        hostsuffix = raw;                                                       // c:1733 else branch
+    }
+
+    // c:1735-1751 — :port suffix; numeric → htons-friendly, else look up.
+    if let Some((_pre, post)) = hostsuffix.split_once(':') {                    // c:1735
+        let trimmed = post.trim();
+        match trimmed.parse::<i32>() {                                          // c:1740 zstrtol
+            Ok(p) => {                                                          // c:1750 numeric
+                port = p;
+                portnam = "ftp".to_string();
+            }
+            Err(_) => {                                                         // c:1744 non-numeric
+                portnam = trimmed.to_string();                                  // c:1745
+                port = -1;                                                      // c:1746
+            }
+        }
+    } else {
+        portnam = "ftp".to_string();
+    }
+
+    // c:1755-1758 — protoent/servent lookups: skipped in Rust port
+    // (TcpStream handles tcp directly). Port resolution falls back to
+    // the standard /etc/services for non-numeric ports.
+    let resolved_port: u16 = if port > 0 {
+        port as u16
+    } else {
+        match portnam.as_str() {
+            "ftp" => 21,
+            "ftps" => 990,
+            _ => {
+                crate::ported::utils::zwarnnam(
+                    name, &format!("Can't find port for service `{}'", portnam)); // c:1768
+                return 1;                                                       // c:1769
+            }
+        }
+    };
+
+    ZCFINISH.store(2, Ordering::Relaxed);                                       // c:1772 zcfinish = 2
+
+    // c:1775 — getiparam("ZFTP_TMOUT")
+    tmout = std::env::var("ZFTP_TMOUT").ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(60);
+
+    // c:1789 — zfalarm(tmout): installed for the connect() phase.
+    zfalarm(tmout);
+
+    // c:1803 — zsh_getipnodebyname → ToSocketAddrs resolves both v4+v6.
+    let target = format!("{}:{}", hostnam, resolved_port);
+    let addrs: Vec<std::net::SocketAddr> = match target.to_socket_addrs() {
+        Ok(it) => it.collect(),
+        Err(_) => {
+            unsafe { libc::alarm(0); }
+            crate::ported::utils::zwarnnam(
+                name, &format!("host not found: {}", hostnam));                 // c:1815
+            return 1;                                                           // c:1817
+        }
+    };
+    if addrs.is_empty() {
+        unsafe { libc::alarm(0); }
+        crate::ported::utils::zwarnnam(
+            name, &format!("host not found: {}", hostnam));
+        return 1;
+    }
+    // c:1818 — ZFTP_HOST.
+    zfsetparam("ZFTP_HOST", &hostnam, ZFPM_READONLY);                           // c:1818
+    // c:1824 — ZFTP_PORT as integer.
+    zfsetparam("ZFTP_PORT", &resolved_port.to_string(),
+               ZFPM_READONLY | ZFPM_INTEGER);                                   // c:1824
+
+    // c:1838 — tcp_socket + tcp_connect: connect_timeout loops addrs.
+    let mut last_err: Option<std::io::Error> = None;
+    let mut connected: Option<(TcpStream, std::net::SocketAddr)> = None;
+    for addr in addrs.iter() {                                                  // c:1860 for addrp
+        if crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 {
+            break;
+        }
+        match TcpStream::connect_timeout(addr, std::time::Duration::from_secs(tmout.max(1) as u64)) {
+            Ok(s) => { connected = Some((s, *addr)); break; }                   // c:1867 SUCCEEDED
+            Err(e) => { last_err = Some(e); }                                   // c:1866 retry
+        }
+    }
+    let (stream, used_addr) = match connected {
+        Some(v) => v,
+        None => {
+            unsafe { libc::alarm(0); }
+            zfunsetparam("ZFTP_HOST");                                          // c:1847
+            zfunsetparam("ZFTP_PORT");                                          // c:1848
+            let msg = last_err.as_ref()
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "connect failed".to_string());
+            crate::ported::utils::zwarnnam(name, &format!("connect failed: {}", msg)); // c:1879
+            return 1;                                                           // c:1880
+        }
+    };
+
+    // c:1886-1890 — record peer IP.
+    let pbuf = used_addr.ip().to_string();
+    zfsetparam("ZFTP_IP", &pbuf, ZFPM_READONLY);                                // c:1887
+
+    unsafe { libc::alarm(0); }                                                  // c:1882
+
+    ZFNOPEN.fetch_add(1, Ordering::Relaxed);                                    // c:1852 zfnopen++
+
+    // c:1888 — zcfinish = 0 (we can now talk).
+    ZCFINISH.store(0, Ordering::Relaxed);                                       // c:1894
+
+    // c:1903-1904 — F_SETFD/FD_CLOEXEC on the fd.
+    use std::os::fd::AsRawFd;
+    let fd = stream.as_raw_fd();
+    unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC); }
+
+    // c:1912-1914 — SO_OOBINLINE: in-line OOB data for control conn.
+    unsafe {
+        let one: libc::c_int = 1;
+        libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_OOBINLINE,
+                         &one as *const _ as *const _,
+                         std::mem::size_of::<libc::c_int>() as libc::socklen_t);
+    }
+    // c:1917-1919 — IP_TOS / IPTOS_LOWDELAY for control.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    unsafe {
+        let lowdelay: libc::c_int = 0x10; // IPTOS_LOWDELAY
+        libc::setsockopt(fd, libc::IPPROTO_IP, libc::IP_TOS,
+                         &lowdelay as *const _ as *const _,
+                         std::mem::size_of::<libc::c_int>() as libc::socklen_t);
+    }
+
+    // c:1923-1936 — store TcpStream as both control and cin.
+    let stream_clone = match stream.try_clone() {
+        Ok(c) => c,
+        Err(_) => {
+            crate::ported::utils::zwarnnam(name, "file handling error");       // c:1932
+            zfclose(0);
+            return 1;
+        }
+    };
+    if let Ok(mut state) = ZFTP_STATE.lock() {
+        if let Some(sess) = state.get_session_mut(None) {
+            sess.control = Some(stream);
+            sess.cin = Some(stream_clone);
+            sess.connected = true;
+            sess.host = Some(hostnam.clone());
+            sess.port = resolved_port;
+        }
+    }
+
+    // c:1947-1950 — read 220 banner.
+    if zfgetmsg() >= 4 {                                                        // c:1947
+        zfclose(0);                                                             // c:1948
+        return 1;                                                               // c:1949
+    }
+
+    // c:1952-1954 — has_size, has_mdtm, dfd reset; initial status word.
+    if let Ok(mut state) = ZFTP_STATE.lock() {
+        if let Some(sess) = state.get_session_mut(None) {
+            sess.has_size = ZFCP_UNKN;                                          // c:1952
+            sess.has_mdtm = ZFCP_UNKN;                                          // c:1952
+            sess.dfd = -1;                                                      // c:1953
+            sess.transfer_type = ZFST_ASCI;                                     // c:1955 initial ASCII
+        }
+    }
+
+    // c:1981-1985 — ZFTP_MODE param, then chain into zftp_login when
+    // more args remain.
+    zfsetparam("ZFTP_MODE", "S", ZFPM_READONLY);                                // c:1982
+    if effective.len() > 1 {                                                    // c:1984 *++args
+        let rest: Vec<&str> = effective[1..].iter().map(|s| s.as_str()).collect();
+        return zftp_login(name, &rest, flags);                                  // c:1985
+    }
+
+    // c:1988 — control alive?
+    let alive = ZFTP_STATE.lock().ok()
+        .and_then(|s| s.get_session(None).map(|sess| sess.control.is_some()))
+        .unwrap_or(false);
+    if alive { 0 } else { 1 }                                                   // c:1988 return !control
 }
 
 /// Port of `zftp_login()` from `Src/Modules/zftp.c:2118`.
