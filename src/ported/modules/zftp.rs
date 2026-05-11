@@ -246,6 +246,20 @@ pub const ZFST_TRSZ: i32 = 0x0080;
 /// `ZFST_CLOS` — connection closed.
 pub const ZFST_CLOS: i32 = 0x0100;
 
+/// `ZFPF_SNDP` — use send port (active mode) preference.
+pub const ZFPF_SNDP: i32 = 0x01;                                           // c:280
+/// `ZFPF_PASV` — try passive mode preference.
+pub const ZFPF_PASV: i32 = 0x02;                                           // c:281
+/// `ZFPF_DUMB` — don't do clever things with variables.
+pub const ZFPF_DUMB: i32 = 0x04;                                           // c:282
+
+/// `zfprefs` — file-scope `static int zfprefs;` from
+/// Src/Modules/zftp.c:218. Bitfield of ZFPF_SNDP|ZFPF_PASV|ZFPF_DUMB.
+/// Default set by boot_ (c:3206) to ZFPF_SNDP|ZFPF_PASV.
+#[allow(non_upper_case_globals)]
+pub static zfprefs: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                 // c:218
+
 /// `ZFST_TYPE(x)` macro — extract type-flag bits.
 /// Port of `#define ZFST_TYPE(x) (x & ZFST_TMSK)` from
 /// `Src/Modules/zftp.c`.
@@ -1559,6 +1573,8 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
     zfsetparam("ZFTP_VERBOSE", "450", 0);                                    // c:3203
     zfsetparam("ZFTP_TMOUT", "60", 0);                                       // c:3204
     zfsetparam("ZFTP_PREFS", "PS", 0);                                       // c:3205
+    zfprefs.store(ZFPF_SNDP | ZFPF_PASV,                                     // c:3206
+                  std::sync::atomic::Ordering::Relaxed);
     let _default = newsession("default");                                    // c:3210
     0
 }
@@ -3247,13 +3263,14 @@ pub fn zftp_login(name: &str, args: &[&str], _flags: i32) -> i32 {              
         zfsetparam("ZFTP_ACCOUNT", a, ZFPM_READONLY);                           // c:2201
     }
 
-    // c:2207-2226 — SYST probe gated by per-session ZFST_SYST cache bit.
+    // c:2207-2226 — SYST probe gated by per-session ZFST_SYST cache bit
+    // AND zfprefs ZFPF_DUMB bit (when DUMB set, skip the probe entirely).
     let already_probed = ZFTP_STATE.lock().ok()
         .and_then(|s| s.get_session(None).map(|sess| sess.syst_probed))
         .unwrap_or(false);
-    // c:2207 — zfprefs ZFPF_DUMB skipped (zfprefs not ported); always
-    // probe when not yet cached.
-    if !already_probed && zfsendcmd("SYST\r\n") == 2 {                          // c:2208
+    let dumb = (zfprefs.load(std::sync::atomic::Ordering::Relaxed)
+                & ZFPF_DUMB) != 0;                                              // c:2207
+    if !dumb && !already_probed && zfsendcmd("SYST\r\n") == 2 {                 // c:2208
         let systype = lastmsg.lock().ok().map(|m| m.clone()).unwrap_or_default();
         if systype.starts_with("UNIX Type: L8") {                               // c:2212-2218
             if let Ok(mut state) = ZFTP_STATE.lock() {
