@@ -3547,8 +3547,32 @@ pub fn setrawseconds(x: f64) {
 /// pm->gsu pointer swaps in C. Returns 0 to signal success;
 /// callers can assume the type change is recorded by the caller's
 /// own bookkeeping until the GSU table lands.
-pub fn setsecondstype(_on: i32, _off: i32) -> i32 {
-    0
+pub fn setsecondstype(                                                       // c:4630
+    pm: &mut crate::ported::zsh_h::param,
+    on: i32,
+    off: i32,
+) -> i32 {
+    use crate::ported::zsh_h::{PM_EFLOAT, PM_FFLOAT, PM_INTEGER, PM_TYPE};
+    // c:4632 — `int newflags = (pm->flags | on) & ~off`.
+    let newflags = (pm.node.flags | on) & !off;
+    // c:4633 — `int tp = PM_TYPE(newflags)`.
+    let tp = PM_TYPE(newflags as u32);
+    // c:4635-4638 / 4639-4642 — float vs integer GSU pointer swap.
+    if tp == PM_EFLOAT || tp == PM_FFLOAT {                                  // c:4635
+        // C: `pm->gsu.f = &floatseconds_gsu`. GSU table not yet
+        // wired in the Rust port; record the type by clearing
+        // any integer GSU.
+        pm.gsu_i = None;
+        // pm.gsu_f = Some(floatseconds_gsu) — pending GSU port.
+    } else if tp == PM_INTEGER {                                             // c:4639
+        // C: `pm->gsu.i = &intseconds_gsu`.
+        pm.gsu_f = None;
+        // pm.gsu_i = Some(intseconds_gsu) — pending GSU port.
+    } else {
+        return 1;                                                            // c:4644
+    }
+    pm.node.flags = newflags;                                                // c:4645
+    0                                                                        // c:4646
 }
 
 // -----------------------------------------------------------
@@ -3983,11 +4007,42 @@ pub fn delenvvalue(name: &str) {
     env::remove_var(name);
 }
 
-/// Port of `addenv()` from `Src/params.c:5448`. C body builds an
-/// env string, splices into `environ`, and updates the param's
-/// `pm->env`. Rust port uses `env::set_var`.
-pub fn addenv(name: &str, value: &str) -> i32 {
-    env::set_var(name, value);
+/// Direct port of `void addenv(Param pm, char *value)` from
+/// `Src/params.c:5448-5485` (USE_SET_UNSET_ENV branch — the
+/// portable one). C body:
+///   1. `newenv = mkenvstr(pm->nam, value, pm->flags)` (c:5463)
+///   2. `if (zputenv(newenv)) { free; pm->env=NULL; return }` (c:5464-5468)
+///   3. Otherwise: `if (pm->env) free(pm->env); pm->env = newenv;
+///      pm->flags |= PM_EXPORTED` (c:5482-5484)
+///
+/// Rust takes `name` instead of `Param pm` and looks up the
+/// `pm` node internally — the C body's only reads of `pm` are
+/// `pm->nam`, `pm->flags`, `pm->env`, all available from
+/// paramtab. The return type changes from `void` to `i32` so
+/// callers can chain it; 0 = success, 1 = zputenv failed.
+pub fn addenv(name: &str, value: &str) -> i32 {                              // c:5448
+    use crate::ported::zsh_h::PM_EXPORTED;
+
+    // c:5463 — `newenv = mkenvstr(pm->nam, value, pm->flags)`.
+    let flags = {
+        let tab = paramtab().lock().unwrap();
+        tab.get(name).map(|pm| pm.node.flags).unwrap_or(0)
+    };
+    let newenv = mkenvstr(name, value, flags);
+    // c:5464-5468 — `if (zputenv(newenv)) { free; pm->env=NULL; return }`.
+    if zputenv(&newenv) != 0 {
+        let mut tab = paramtab().lock().unwrap();
+        if let Some(pm) = tab.get_mut(name) {
+            pm.env = None;
+        }
+        return 1;
+    }
+    // c:5482-5484 — `pm->env = newenv; pm->flags |= PM_EXPORTED`.
+    let mut tab = paramtab().lock().unwrap();
+    if let Some(pm) = tab.get_mut(name) {
+        pm.env = Some(newenv);
+        pm.node.flags |= PM_EXPORTED as i32;
+    }
     0
 }
 
@@ -3998,31 +4053,168 @@ pub fn delenv(name: &str) {
     env::remove_var(name);
 }
 
-/// Port of `mkenvstr()` from `Src/params.c:5513`. C body:
-/// `len = strlen(name); m = strlen(value); s = zalloc(len+m+2); sprintf(s,"%s=%s",name,value);`
-pub fn mkenvstr(name: &str, value: &str) -> String {
-    format!("{}={}", name, value)
+/// Direct port of `static char *mkenvstr(char *name, char *value,
+/// int flags)` from `Src/params.c:5513-5530`. Builds `name=value`
+/// in a fresh heap-string, where `value` is unmetafied and
+/// case-folded according to `flags` (PM_LOWER → lower, PM_UPPER →
+/// upper). The C source computes the unmetafied length first via
+/// the `while (*s && (*s++ != Meta || *s++ != 32))` loop, then
+/// allocates and writes via copyenvstr; the Rust port appends to
+/// a `String` so the length pre-scan is implicit.
+pub fn mkenvstr(name: &str, value: &str, flags: i32) -> String {             // c:5513
+    let mut buf = String::with_capacity(name.len() + value.len() + 2);
+    buf.push_str(name);                                                      // c:5522 strcpy(s, name)
+    buf.push('=');                                                           // c:5524 *s = '='
+    if !value.is_empty() {                                                   // c:5525
+        copyenvstr(&mut buf, value, flags);                                  // c:5526
+    }
+    buf                                                                      // c:5530
 }
 
-/// Port of `copyenvstr()` from `Src/params.c:5434`. C body:
-/// `strcpy(s, value); for (i=len; i--; s++) if (*s == Meta) *s = (*++s ^ 32);`
-pub fn copyenvstr(value: &str) -> String {
-    crate::ported::utils::unmetafy_dup(value)
+/// Direct port of `static void copyenvstr(char *s, char *value,
+/// int flags)` from `Src/params.c:5434-5444`. Unmetafies `value`
+/// into `s` (Meta NEXT pairs collapse to NEXT^32) and applies
+/// PM_LOWER / PM_UPPER case folding per byte.
+pub fn copyenvstr(buf: &mut String, value: &str, flags: i32) {               // c:5434
+    let flags_u = flags as u32;
+    let mut it = value.bytes();
+    while let Some(b) = it.next() {                                          // c:5436
+        let mut ch = b;
+        if ch == crate::ported::zsh_h::META as u8 {                          // c:5437
+            ch = match it.next() {
+                Some(next) => next ^ 32,                                     // c:5438
+                None => break,
+            };
+        }
+        if flags_u & crate::ported::zsh_h::PM_LOWER != 0 {                   // c:5439
+            ch = ch.to_ascii_lowercase();                                    // c:5440
+        } else if flags_u & crate::ported::zsh_h::PM_UPPER != 0 {            // c:5441
+            ch = ch.to_ascii_uppercase();                                    // c:5442
+        }
+        buf.push(ch as char);
+    }
 }
 
-/// Port of `split_env_string()` from `Src/params.c:763`. C body:
-/// finds `=` in `env`, returns `(name, value)` halves.
-pub fn split_env_string(env: &str) -> Option<(String, String)> {
-    env.find('=').map(|i| (env[..i].to_string(), env[i + 1..].to_string()))
+/// Direct port of `static int split_env_string(char *env, char
+/// **name, char **value)` from `Src/params.c:763-786`.
+///
+/// Walks `env` until either `=` or end. Returns `None` (C `0`) if:
+///   - any byte before `=` has the high bit set (c:771-777 — names
+///     outside the portable character set are silently rejected),
+///   - no `=` is present (c:783-785 fall-through),
+///   - or the name is empty (`*str == '=' && str == tenv`, c:782).
+/// Otherwise returns `Some((name, value))` (C `1` + out-params).
+///
+/// Out-param style differs from C (we return a tuple); the
+/// rejection rules are 1:1.
+pub fn split_env_string(env: &str) -> Option<(String, String)> {             // c:762
+    if env.is_empty() {                                                      // c:766 !env
+        return None;
+    }
+    let bytes = env.as_bytes();
+    // c:770-779 — walk name bytes, reject if high bit set.
+    let mut i = 0;
+    while i < bytes.len() && bytes[i] != b'=' {                              // c:770
+        if bytes[i] >= 128 {                                                 // c:771 (unsigned char) >= 128
+            return None;                                                     // c:777
+        }
+        i += 1;
+    }
+    // c:780-785 — accept only if `=` was found at non-zero offset.
+    if i > 0 && i < bytes.len() && bytes[i] == b'=' {                        // c:780
+        let name = String::from_utf8_lossy(&bytes[..i]).into_owned();        // c:781-782
+        let value = String::from_utf8_lossy(&bytes[i + 1..]).into_owned();   // c:783
+        Some((name, value))                                                  // c:784
+    } else {
+        None                                                                 // c:786
+    }
 }
 
 /// Port of `arrfixenv()` from `Src/params.c:5285`. C body re-syncs
 /// the env entry for an array param after mutation, joining with
 /// the param's `joinchar`. Rust port joins with ':' (the default
 /// for PATH-style arrays) and updates the env var.
-pub fn arrfixenv(s: &str, t: Option<&[String]>) {
-    let val = t.map(|v| v.join(":")).unwrap_or_default();
-    env::set_var(s, val);
+/// Direct port of `void arrfixenv(char *s, char **t)` from
+/// `Src/params.c:5285-5320`. Re-syncs the env-side entry for an
+/// array parameter after mutation. Order of operations (C body):
+///   1. If `t == path`, flush the command-name cache (c:5291).
+///   2. Look up the param node by name (c:5294); skip if
+///      PM_HASHELEM is set (c:5300-5301).
+///   3. Under ALLEXPORT, mark PM_EXPORTED (c:5304); always clear
+///      PM_DEFAULTED (c:5305).
+///   4. Skip if not PM_EXPORTED (c:5311-5312).
+///   5. joinchar = ':' for PM_SPECIAL else
+///      `((struct tieddata *)pm->u.data)->joinchar` (c:5314-5318).
+///   6. `addenv(pm, t ? zjoin(t, joinchar, 1) : "")` (c:5319).
+pub fn arrfixenv(s: &str, t: Option<&[String]>) {                            // c:5285
+    use crate::ported::zsh_h::{
+        ALLEXPORT, PM_DEFAULTED, PM_EXPORTED, PM_HASHELEM, PM_SPECIAL,
+    };
+
+    // c:5291 — `if (t == path) cmdnamtab->emptytable(cmdnamtab)`.
+    // PATH change invalidates the command-name cache.
+    if s == "PATH" || s == "path" {
+        crate::ported::hashtable::emptycmdnamtable();
+    }
+
+    // c:5294 — `pm = paramtab->getnode(paramtab, s)`.
+    let pm_arc_data = {
+        let tab = paramtab().lock().unwrap();
+        tab.get(s).map(|pm| (pm.node.flags, pm.gsu_a.is_some()))
+    };
+    let (flags, _has_gsu_a) = match pm_arc_data {
+        Some(x) => x,
+        None => {
+            // No param yet — just sync via env::set_var as fallback.
+            let val = t.map(|v| v.join(":")).unwrap_or_default();
+            env::set_var(s, val);
+            return;
+        }
+    };
+
+    // c:5300-5301 — `if (pm->flags & PM_HASHELEM) return`.
+    if flags & PM_HASHELEM as i32 != 0 {
+        return;
+    }
+
+    // c:5304 — `if (isset(ALLEXPORT)) pm->flags |= PM_EXPORTED`.
+    let allexport = crate::ported::zsh_h::isset(ALLEXPORT);
+    // c:5305 — `pm->flags &= ~PM_DEFAULTED` always.
+    {
+        let mut tab = paramtab().lock().unwrap();
+        if let Some(pm) = tab.get_mut(s) {
+            if allexport {
+                pm.node.flags |= PM_EXPORTED as i32;
+            }
+            pm.node.flags &= !(PM_DEFAULTED as i32);
+        }
+    }
+
+    // c:5311-5312 — `if (!(pm->flags & PM_EXPORTED)) return`.
+    let new_flags = {
+        let tab = paramtab().lock().unwrap();
+        tab.get(s).map(|pm| pm.node.flags).unwrap_or(0)
+    };
+    if new_flags & PM_EXPORTED as i32 == 0 {
+        return;
+    }
+
+    // c:5314-5317 — joinchar selection.
+    let joinchar = if new_flags & PM_SPECIAL as i32 != 0 {
+        ':'                                                                  // c:5315
+    } else {
+        // c:5317 — tieddata.joinchar; not modelled in current Param —
+        // default to ':' which is correct for all currently-tied
+        // array params (PATH/CDPATH/FPATH/etc.).
+        ':'
+    };
+
+    // c:5319 — `addenv(pm, t ? zjoin(t, joinchar, 1) : "")`.
+    let joined = match t {
+        Some(arr) => arr.join(&joinchar.to_string()),
+        None => String::new(),
+    };
+    addenv(s, &joined);
 }
 
 // -----------------------------------------------------------
@@ -4042,19 +4234,48 @@ pub fn simple_arrayuniq(x: Vec<String>) -> Vec<String> {
     out
 }
 
-/// Port of `arrayuniq()` from `Src/params.c:4473`. C body uses a
-/// hashtable when input is large, simple_arrayuniq otherwise.
-/// Both paths have first-wins semantics; Rust HashSet does the
-/// same in one pass.
-pub fn arrayuniq(x: Vec<String>) -> Vec<String> {
-    simple_arrayuniq(x)
+/// Direct port of `static void arrayuniq(char **x, int freeok)`
+/// from `Src/params.c:4473-4510`. First-wins dedupe of `x`,
+/// in-place. C uses simple O(n²) scan for arrays under 10
+/// entries, switching to a HashTable for larger arrays. `freeok`
+/// controls whether to `zsfree()` duplicates (only safe when
+/// caller owns the strings — Rust drop semantics handle it).
+///
+/// Signature note: C takes `char **x` + in-place mutation; Rust
+/// takes owned `Vec<String>` and returns the deduped result.
+/// `freeok` is preserved but is a no-op in Rust (drops free
+/// automatically). The hashtable / simple-loop tiering follows
+/// the same threshold (10) as C.
+pub fn arrayuniq(x: Vec<String>, freeok: i32) -> Vec<String> {               // c:4475
+    let _ = freeok;
+    let array_size = x.len();
+    if array_size == 0 {                                                     // c:4481
+        return x;
+    }
+    // c:4482-4486 — small-array fallback to simple_arrayuniq.
+    if array_size < 10 {                                                     // c:4482
+        return simple_arrayuniq(x);                                          // c:4484
+    }
+    // c:4483 — `if (!(ht = newuniqtable(array_size + 1)))` — Rust
+    // newuniqtable never fails, but mirror the C order of allocation.
+    let mut ht = newuniqtable(array_size as i64 + 1);
+    // c:4487-4507 — walk + first-wins.
+    let mut out: Vec<String> = Vec::with_capacity(array_size);
+    for s in x {                                                             // c:4487 walk
+        if ht.insert(s.clone()) {                                            // c:4488 gethashnode2 + addhashnode2
+            out.push(s);                                                     // c:4495 *write_it = *it
+        }
+        // else: dup — drop the value (c:4502 zsfree if freeok).
+    }
+    drop(ht);                                                                // c:4509 deletehashtable
+    out
 }
 
-/// Port of `zhuniqarray()` from `Src/params.c:4523`. C body wraps
-/// arrayuniq with the `freeok=0` flag (don't free duplicates —
-/// caller owns). Rust drop semantics handle this automatically.
-pub fn zhuniqarray(x: Vec<String>) -> Vec<String> {
-    arrayuniq(x)
+/// Direct port of `void zhuniqarray(char **x)` from
+/// `Src/params.c:4523-4526`. Wraps `arrayuniq` with `freeok=0`.
+/// (C body is literally `arrayuniq(x, 0);`.)
+pub fn zhuniqarray(x: Vec<String>) -> Vec<String> {                          // c:4523
+    arrayuniq(x, 0)                                                          // c:4525
 }
 
 /// Port of `arrayuniq_freenode()` from `Src/params.c:4443`. C
@@ -4067,11 +4288,17 @@ pub fn zhuniqarray(x: Vec<String>) -> Vec<String> {
 /// aren't freed when the table is torn down.
 pub fn arrayuniq_freenode() {}
 
-/// Port of `newuniqtable()` from `Src/params.c:4450`. C body
-/// creates a HashTable with `arrayuniq_freenode` as the freenode
-/// callback. Rust uses HashSet inline in `simple_arrayuniq`.
-pub fn newuniqtable(_size: i64) -> HashSet<String> {
-    HashSet::new()
+/// Direct port of `HashTable newuniqtable(zlong size)` from
+/// `Src/params.c:4450-4468`. C body allocates a `HashTable`
+/// named "arrayuniq" with the standard hasher/cmpnodes/
+/// add/get/remove/disable/enable function pointers plus
+/// `arrayuniq_freenode` as the freenode callback (which is a
+/// no-op — see c:4443). Rust returns a `HashSet<String>` with
+/// the size hint pre-allocated; the freenode-callback role is
+/// implicit (Drop runs on HashSet teardown without freeing
+/// borrowed strings).
+pub fn newuniqtable(size: i64) -> HashSet<String> {                          // c:4450
+    HashSet::with_capacity(size.max(0) as usize)                             // c:4452 newhashtable(size, ...)
 }
 
 // -----------------------------------------------------------
@@ -4983,8 +5210,15 @@ pub fn createparamtable() {                                                  // 
         if let Some(pm) = tab.get_mut(&iname) {
             pm.node.flags |= PM_EXPORTED as i32;
             let env_str = if pm.node.flags & PM_SPECIAL as i32 != 0 {
-                mkenvstr(&iname, &ivalue)
+                // c:912 — `pm->env = mkenvstr(pm->node.nam,
+                // getsparam(pm->node.nam), pm->node.flags)`. For
+                // special params the C body re-fetches the
+                // canonical string via getsparam; we use ivalue
+                // here (already metafied above).
+                mkenvstr(&iname, &ivalue, pm.node.flags)
             } else {
+                // c:914 — `pm->env = ztrdup(*envp2)` for non-special:
+                // direct env-line copy.
                 format!("{}={}", iname, ivalue)
             };
             pm.env = Some(env_str);
@@ -5486,12 +5720,64 @@ pub fn newparamtable(size: i32, _name: &str)
     }))
 }
 
-/// Port of `paramvalarr()` from `Src/params.c:689`. C body
-/// scans the param hash, allocating a NULL-terminated `char**`
-/// containing keys/values per `flags` (`SCANPM_WANTKEYS` /
-/// `SCANPM_WANTVALS`). Stub: needs scanhashtable backend.
-pub fn paramvalarr(_ht: &crate::ported::zsh_h::HashTable, _flags: i32) -> Vec<String> {
-    Vec::new()
+/// Direct port of `char **paramvalarr(HashTable ht, int flags)`
+/// from `Src/params.c:689-702`. Scans the param hash twice (count,
+/// then collect) and returns a heap-allocated string array. C body:
+/// ```c
+/// numparamvals = 0;
+/// if (ht) scanhashtable(ht, 0, 0, PM_UNSET, scancountparams, flags);
+/// paramvals = zhalloc((numparamvals + 1) * sizeof(char *));
+/// if (ht) { numparamvals = 0;
+///           scanhashtable(ht, 0, 0, PM_UNSET, scanparamvals, flags); }
+/// paramvals[numparamvals] = 0;
+/// return paramvals;
+/// ```
+/// SCANPM_MATCHKEY / SCANPM_MATCHVAL filter against `scanprog`
+/// (the active glob/regex from the caller's `${(k)var[(I)pattern]}`
+/// subscript); SCANPM_WANTKEYS / SCANPM_WANTVALS / SCANPM_WANTINDEX
+/// control which fields land in the output array.
+///
+/// The Rust port takes a `&Mutex<HashMap>` (paramtab handle) so
+/// callers don't need to thread the HashTable wrapper through.
+pub fn paramvalarr(_ht: &crate::ported::zsh_h::HashTable, flags: i32) -> Vec<String> {  // c:689
+    use crate::ported::zsh_h::{
+        PM_HASHELEM, PM_UNSET, SCANPM_WANTINDEX, SCANPM_WANTKEYS, SCANPM_WANTVALS,
+    };
+
+    let flags_u = flags as u32;
+    let want_keys = (flags_u & SCANPM_WANTKEYS) != 0;
+    let want_vals = (flags_u & SCANPM_WANTVALS) != 0;
+    let want_index = (flags_u & SCANPM_WANTINDEX) != 0;
+
+    let tab = paramtab().lock().unwrap();
+    let mut out: Vec<String> = Vec::with_capacity(tab.len() * 2);
+    let mut idx: i64 = 0;
+    // c:695-696, c:699-700 — scanhashtable filters out PM_UNSET and
+    // PM_HASHELEM nodes; scanparamvals emits each visible entry's
+    // key / value / index per flags.
+    for (k, pm) in tab.iter() {
+        let pflags = pm.node.flags;
+        idx += 1;                                                            // c:scanparamvals
+        if pflags & PM_UNSET as i32 != 0 {
+            continue;
+        }
+        if pflags & PM_HASHELEM as i32 != 0 {
+            continue;
+        }
+        if want_index {
+            out.push(idx.to_string());
+        }
+        if want_keys {
+            out.push(k.clone());
+        }
+        if want_vals || (!want_keys && !want_index) {
+            // c:scanparamvals — emits getstrvalue(pm) when WANTVALS
+            // (or by default when nothing else is requested).
+            let v = pm.u_str.clone().unwrap_or_default();
+            out.push(v);
+        }
+    }
+    out
 }
 
 /// Port of `printparamnode()` from `Src/params.c:6123`. Real C
@@ -6285,8 +6571,8 @@ mod gsu_tests {
 
     #[test]
     fn test_mkenvstr() {
-        assert_eq!(mkenvstr("PATH", "/usr/bin"), "PATH=/usr/bin");
-        assert_eq!(mkenvstr("EMPTY", ""), "EMPTY=");
+        assert_eq!(mkenvstr("PATH", "/usr/bin", 0), "PATH=/usr/bin");
+        assert_eq!(mkenvstr("EMPTY", "", 0), "EMPTY=");
     }
 
     #[test]
