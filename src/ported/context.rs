@@ -139,8 +139,17 @@ pub fn zcontext_restore(                                                     // 
 mod tests {
     use super::*;
 
+    /// Drain any leftover frames from `cstack` before a test starts
+    /// so cross-test contamination doesn't cascade. Necessary because
+    /// the global `cstack: Mutex<Option<…>>` is shared across tests
+    /// and a panic mid-test would leave a frame behind.
+    fn reset_cstack() {
+        *cstack.lock().unwrap() = None;
+    }
+
     #[test]
     fn save_restore_balances_stack() {
+        reset_cstack();
         let mut lexer = ZshLexer::new("");
         let mut parser = ZshParser::new("");
         zcontext_save(Some(&mut lexer), Some(&mut parser));
@@ -151,6 +160,7 @@ mod tests {
 
     #[test]
     fn nested_saves_pop_lifo() {
+        reset_cstack();
         let mut lexer = ZshLexer::new("");
         let mut parser = ZshParser::new("");
         zcontext_save(Some(&mut lexer), Some(&mut parser));
@@ -163,6 +173,7 @@ mod tests {
 
     #[test]
     fn restore_without_save_is_noop() {
+        reset_cstack();
         let mut lexer = ZshLexer::new("");
         let mut parser = ZshParser::new("");
         zcontext_restore(Some(&mut lexer), Some(&mut parser));
@@ -171,15 +182,20 @@ mod tests {
 
     #[test]
     fn lex_save_restore_roundtrips_state() {
+        reset_cstack();
         let mut lexer = ZshLexer::new("echo hello");
         let mut parser = ZshParser::new("echo hello");
         // Mutate lexer state.
         lexer.dbparens = true;
         lexer.toklineno = 42;
         zcontext_save(Some(&mut lexer), Some(&mut parser));
-        // Lexer should be reset to defaults after save.
-        assert!(!lexer.dbparens);
-        assert_eq!(lexer.toklineno, 0);
+        // c:lex.c:235-238 — lex_context_save resets only
+        // `tokstr/zshlextext/lexbuf.ptr/lexbuf.siz` + raw counterparts.
+        // `dbparens` and `toklineno` are saved but NOT reset (C
+        // explicitly preserves them so the nested parser can read the
+        // outer context's line tracker / arith-DPAREN state).
+        assert!(lexer.dbparens);
+        assert_eq!(lexer.toklineno, 42);
         zcontext_restore(Some(&mut lexer), Some(&mut parser));
         assert!(lexer.dbparens);
         assert_eq!(lexer.toklineno, 42);
