@@ -62,6 +62,13 @@ pub static queue_front: AtomicUsize = AtomicUsize::new(0);                   // 
 /// from `Src/signals.c:77`.
 pub static queue_rear: AtomicUsize = AtomicUsize::new(0);                    // c:77
 
+/// Port of `mod_export volatile int queue_in` from `Src/signals.c:84`.
+/// Companion counter bumped by `queue_signals()` (signals.h:90) and
+/// decremented by `unqueue_signals()` (signals.h:94); used by
+/// `dont_queue_signals()` to snapshot the depth (signals.h:99) and
+/// by debug assertions (DPUTS2 at signals.h:105).
+pub static queue_in: AtomicI32 = AtomicI32::new(0);                          // c:84
+
 #[allow(clippy::declare_interior_mutable_const)]
 const ATOM_I32_ZERO: AtomicI32 = AtomicI32::new(0);
 

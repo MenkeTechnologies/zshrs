@@ -61,7 +61,9 @@ static NOERRS: std::sync::OnceLock<std::sync::Mutex<i32>> = std::sync::OnceLock:
 /// Port of `int locallevel` from `Src/init.c`. Function-call depth
 /// (0 = top-level, 1+ = inside a fn). `zwarning()` checks this in
 /// the script-prefix path (utils.c:150).
-static LOCALLEVEL: std::sync::OnceLock<std::sync::Mutex<i32>> = std::sync::OnceLock::new();
+// `LOCALLEVEL` removed — see `locallevel_lock` removal comment
+// below. Canonical static lives in `crate::ported::params::locallevel`
+// (port of params.c:54).
 
 /// Port of `int lineno` from `Src/init.c`. Current line number;
 /// `zerrmsg()` includes it in the diagnostic when locallevel > 0
@@ -114,10 +116,9 @@ fn argzero_lock() -> &'static std::sync::Mutex<Option<String>> {
 fn noerrs_lock() -> &'static std::sync::Mutex<i32> {
     NOERRS.get_or_init(|| std::sync::Mutex::new(0))
 }
-// WARNING: NOT IN UTILS.C — see scriptname_lock above.
-fn locallevel_lock() -> &'static std::sync::Mutex<i32> {
-    LOCALLEVEL.get_or_init(|| std::sync::Mutex::new(0))
-}
+// `locallevel_lock` removed — duplicate of canonical
+// `crate::ported::params::locallevel` (port of params.c:54). All
+// accessors here now route through the canonical AtomicI32.
 // WARNING: NOT IN UTILS.C — see scriptname_lock above.
 fn lineno_lock() -> &'static std::sync::Mutex<i32> {
     LINENO.get_or_init(|| std::sync::Mutex::new(0))
@@ -141,19 +142,23 @@ pub fn scriptname_get() -> Option<String> {
     scriptname_lock().lock().unwrap().clone()
 }
 
-/// Read `locallevel` — function nesting depth.
+/// Read `locallevel` — function nesting depth. Routes through the
+/// canonical `crate::ported::params::locallevel` static (port of
+/// `Src/params.c:54`). The prior Rust port stored a duplicate
+/// `Mutex<i32>` here that split state from params.rs; both copies
+/// were never kept in sync.
 pub fn locallevel() -> i32 {
-    *locallevel_lock().lock().unwrap()
+    crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Bump `locallevel` (called by `startparamscope`).
 pub fn inc_locallevel() {
-    *locallevel_lock().lock().unwrap() += 1;
+    crate::ported::params::locallevel.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Decrement `locallevel` (called by `endparamscope`).
 pub fn dec_locallevel() {
-    *locallevel_lock().lock().unwrap() -= 1;
+    crate::ported::params::locallevel.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Setter for `argzero`. Called once at shell init from `parseargs`.
@@ -174,7 +179,7 @@ pub fn set_noerrs(v: i32) {
 
 /// Setter for `locallevel`. Called by function-call entry/exit.
 pub fn set_locallevel(v: i32) {
-    *locallevel_lock().lock().unwrap() = v;
+    crate::ported::params::locallevel.store(v, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Setter for `lineno`. Called by the parser as it advances.
@@ -222,7 +227,8 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
     let _ = unsafe { libc::isatty(2) };
     let scriptname = scriptname_lock().lock().unwrap().clone();
     let argzero = argzero_lock().lock().unwrap().clone();
-    let locallevel = *locallevel_lock().lock().unwrap();
+    let locallevel = crate::ported::params::locallevel
+        .load(std::sync::atomic::Ordering::Relaxed);
     let shinstdin = *shinstdin_lock().lock().unwrap();
     let prefix: String = scriptname
         .or(argzero)
@@ -339,7 +345,8 @@ pub fn zwarnnam(cmd: &str, msg: &str) {                                      // 
 pub fn zerrmsg(msg: &str, errno: Option<i32>) {                              // c:289
     let lineno = *lineno_lock().lock().unwrap();
     let shinstdin = *shinstdin_lock().lock().unwrap();
-    let locallevel = *locallevel_lock().lock().unwrap();
+    let locallevel = crate::ported::params::locallevel
+        .load(std::sync::atomic::Ordering::Relaxed);
     // C: if ((unset(SHINSTDIN) || locallevel) && lineno) — prefix
     // with the line number.
     if (!shinstdin || locallevel != 0) && lineno != 0 {
