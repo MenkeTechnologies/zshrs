@@ -27,21 +27,18 @@ const SHIN_BUF_SIZE: usize = 8192;
 #[allow(dead_code)]
 const INSTACK_INITIAL: usize = 4;                                            // c:122
 
-/// Input flags
-pub mod flags {
-    pub const INP_FREE: u32 = 0x01; // Free input string when done
-    pub const INP_CONT: u32 = 0x02; // Continue to next stack element
-    pub const INP_ALIAS: u32 = 0x04; // Input is alias expansion
-    pub const INP_HIST: u32 = 0x08; // Input is history expansion
-    pub const INP_LINENO: u32 = 0x10; // Increment line number on newline
-    pub const INP_APPEND: u32 = 0x20; // Append to existing input
-    pub const INP_ALCONT: u32 = 0x40; // Alias continuation marker
-    pub const INP_HISTCONT: u32 = 0x80; // History continuation marker
-    pub const INP_RAW_KEEP: u32 = 0x100; // Keep raw input for history
-}
+// `pub mod flags { … INP_* … }` deleted — Rust-only namespace with
+// values that diverged from the C `#define INP_FREE (1<<0)` etc. at
+// Src/zsh.h:467-476. The canonical mirror lives in
+// `crate::ported::zsh_h::INP_*` (matching the C bit positions
+// exactly); this file uses those constants directly.
+use crate::ported::zsh_h::{
+    INP_ALCONT, INP_ALIAS, INP_APPEND, INP_CONT, INP_FREE, INP_HIST,
+    INP_HISTCONT, INP_LINENO, INP_RAW_KEEP,
+};
 
 /// Port of `struct instacks` from `Src/input.c:109`. One frame in
-/// the input stack — pushed by `inpush()` and popped by `inpop()`
+/// the input stack — pushed by `inpush()` and popped by `inpoptop()`
 /// to layer alias expansion / history-substitution / `eval`
 /// continuations over the active input.
 #[derive(Clone, Default)]
@@ -49,7 +46,7 @@ pub mod flags {
 struct instacks {                                                            // c:109
     buf: String,                                                             // c:110 char *buf
     bufpos: usize,                                                           // c:110 char *bufptr offset
-    flags: u32,                                                              // c:112 int flags
+    flags: i32,                                                              // c:112 int flags
     alias: Option<String>,                                                   // c:111 Alias alias
 }
 
@@ -80,7 +77,7 @@ thread_local! {
     /// Port of `int inbufflags` from `Src/input.c:96`. Bit-mask of
     /// the `INP_*` flags governing the current input level.
     #[allow(non_upper_case_globals)]
-    pub static inbufflags: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    pub static inbufflags: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
 
     /// Port of `static char *inbuf` from `Src/input.c:98`. Current
     /// input buffer.
@@ -276,7 +273,7 @@ pub fn ingetc() -> Option<char> {                                            // 
             }
 
             let inp_lineno =
-                (inbufflags.with(|f| f.get()) & flags::INP_LINENO) != 0;
+                (inbufflags.with(|f| f.get()) & INP_LINENO) != 0;
             let is_strin = strin.with(|s| s.get()) != 0;
             if (inp_lineno || !is_strin) && c == '\n' {
                 lineno.with(|l| l.set(l.get() + 1));
@@ -294,7 +291,7 @@ pub fn ingetc() -> Option<char> {                                            // 
             return None;
         }
 
-        if (inbufflags.with(|f| f.get()) & flags::INP_CONT) != 0 {
+        if (inbufflags.with(|f| f.get()) & INP_CONT) != 0 {
             inpoptop();
             continue;
         }
@@ -315,7 +312,7 @@ pub fn inungetc(c: char) {                                                   // 
         inbufpos.with(|p| p.set(pos - 1));
         inbufct.with(|cell| cell.set(cell.get() + 1));
         let inp_lineno =
-            (inbufflags.with(|f| f.get()) & flags::INP_LINENO) != 0;
+            (inbufflags.with(|f| f.get()) & INP_LINENO) != 0;
         let is_strin = strin.with(|s| s.get()) != 0;
         if (inp_lineno || !is_strin) && c == '\n' {
             lineno.with(|l| l.set(l.get().saturating_sub(1)));
@@ -331,7 +328,7 @@ pub fn inungetc(c: char) {                                                   // 
 /// Port of `inpush()` from Src/input.c:675 — used for `eval`/
 /// `source`, alias expansion, and process substitution to layer a
 /// new input on top of the current one.
-pub fn inpush(s: &str, new_flags: u32, alias: Option<String>) {              // c:675
+pub fn inpush(s: &str, new_flags: i32, alias: Option<String>) {              // c:675
     let saved = instacks {
         buf: inbuf.with(|b| std::mem::take(&mut *b.borrow_mut())),
         bufpos: inbufpos.with(|p| p.replace(0)),
@@ -344,16 +341,16 @@ pub fn inpush(s: &str, new_flags: u32, alias: Option<String>) {              // 
     inbufpos.with(|p| p.set(0));
 
     let mut combined = new_flags;
-    if (new_flags & (flags::INP_ALIAS | flags::INP_HIST)) != 0 {
-        combined |= flags::INP_CONT | flags::INP_ALIAS;
+    if (new_flags & (INP_ALIAS | INP_HIST)) != 0 {
+        combined |= INP_CONT | INP_ALIAS;
         if let Some(a) = alias {
             instack.with(|st| {
                 if let Some(last) = st.borrow_mut().last_mut() {
                     last.alias = Some(a);
-                    if (new_flags & flags::INP_HIST) != 0 {
-                        last.flags |= flags::INP_HISTCONT;
+                    if (new_flags & INP_HIST) != 0 {
+                        last.flags |= INP_HISTCONT;
                     } else {
-                        last.flags |= flags::INP_ALCONT;
+                        last.flags |= INP_ALCONT;
                     }
                 }
             });
@@ -361,7 +358,7 @@ pub fn inpush(s: &str, new_flags: u32, alias: Option<String>) {              // 
     }
 
     let new_len = inbuf.with(|b| b.borrow().len()) as i32;
-    if (combined & flags::INP_CONT) != 0 {
+    if (combined & INP_CONT) != 0 {
         inbufct.with(|c| c.set(c.get() + new_len));
     } else {
         inbufct.with(|c| c.set(new_len));
@@ -388,7 +385,7 @@ pub fn inpoptop() {                                                          // 
 /// Port of `inpop()` from Src/input.c:785.
 pub fn inpop() {                                                             // c:785
     loop {
-        let was_cont = (inbufflags.with(|f| f.get()) & flags::INP_CONT) != 0;
+        let was_cont = (inbufflags.with(|f| f.get()) & INP_CONT) != 0;
         inpoptop();
         if !was_cont {
             break;
@@ -400,18 +397,18 @@ pub fn inpop() {                                                             // 
 /// Port of `inpopalias()` from Src/input.c:804 — used to unwind
 /// alias expansion without disturbing the underlying source.
 pub fn inpopalias() {                                                        // c:804
-    while (inbufflags.with(|f| f.get()) & flags::INP_ALIAS) != 0 {
+    while (inbufflags.with(|f| f.get()) & INP_ALIAS) != 0 {
         inpoptop();
     }
 }
 
 /// Replace the current input line.
 /// Port of `inputsetline()` from Src/input.c:510.
-pub fn inputsetline(s: &str, new_flags: u32) {                               // c:510
+pub fn inputsetline(s: &str, new_flags: i32) {                               // c:510
     inbuf.with(|b| *b.borrow_mut() = s.to_string());
     inbufpos.with(|p| p.set(0));
     let len = s.len() as i32;
-    if (new_flags & flags::INP_CONT) != 0 {
+    if (new_flags & INP_CONT) != 0 {
         inbufct.with(|c| c.set(c.get() + len));
     } else {
         inbufct.with(|c| c.set(len));
@@ -457,7 +454,7 @@ pub fn stuff(filename: &str) -> i32 {                                        // 
     };
     let _ = std::io::stderr().write_all(buf.as_bytes());
     let _ = std::io::stderr().flush();
-    inpush(&buf, flags::INP_FREE, None);
+    inpush(&buf, INP_FREE, None);
     0
 }
 
@@ -532,7 +529,7 @@ mod tests {
         reset_input();
         inputsetline("outer", 0);
         assert_eq!(ingetc(), Some('o'));
-        inpush("inner", flags::INP_CONT, None);
+        inpush("inner", INP_CONT, None);
         assert_eq!(ingetc(), Some('i'));
         assert_eq!(ingetc(), Some('n'));
         assert_eq!(ingetc(), Some('n'));
@@ -545,7 +542,7 @@ mod tests {
     #[test]
     fn test_line_number_tracking() {
         reset_input();
-        inputsetline("a\nb\nc", flags::INP_LINENO);
+        inputsetline("a\nb\nc", INP_LINENO);
         assert_eq!(lineno.with(|l| l.get()), 1);
         ingetc(); // a
         ingetc(); // \n
