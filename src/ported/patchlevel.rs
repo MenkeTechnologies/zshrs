@@ -19,7 +19,7 @@
 /// `src/zsh/Src/patchlevel.h` so the `$ZSH_PATCHLEVEL` shell
 /// parameter (params.rs:1690) reports the same value zsh would on
 /// the same source tree.
-pub const ZSH_PATCHLEVEL: &str = "zsh-5.9.0.2-test-179-ge73499b";        // c:1
+pub const ZSH_PATCHLEVEL: &str = "zsh-5.9-465-g6b9704e";                     // c:1
 
 #[cfg(test)]
 mod tests {
@@ -31,7 +31,7 @@ mod tests {
     /// must move together.
     #[test]
     fn patchlevel_matches_upstream_snapshot() {
-        assert_eq!(ZSH_PATCHLEVEL, "zsh-5.9.0.2-test-179-ge73499b");
+        assert_eq!(ZSH_PATCHLEVEL, "zsh-5.9-465-g6b9704e");
         assert!(ZSH_PATCHLEVEL.starts_with("zsh-"));
     }
 }

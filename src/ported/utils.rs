@@ -5045,7 +5045,7 @@ pub(crate) fn printprompt4() {
     // IPDEF7R/IPDEF7 (params.c:381, 421). Read from paramtab to
     // honour user-set values, fall back to the same emulation
     // default C uses at init.c:1192.
-    let emul = crate::ported::modules::ksh93::emulation
+    let emul = crate::ported::options::emulation
         .load(std::sync::atomic::Ordering::Relaxed);
     let posix = EMULATION(emul, EMULATE_KSH | EMULATE_SH);                   // c:init.c:1192
     let prefix_template = crate::ported::params::getsparam("PS4")

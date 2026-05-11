@@ -337,70 +337,36 @@ pub fn appstr(base: &mut String, append: &str) {                            // c
     base.push_str(append);
 }
 
-/// Memory statistics structure.
-/// Port of the per-heap counters Src/mem.c tracks for `bin_mem()`
-/// (line 1722) — the `mem` builtin in `zsh/mem` reports these.
-#[derive(Default, Debug, Clone)]
-pub struct MemStats {
-    pub heap_count: usize,
-    pub heap_total: usize,
-    pub heap_used: usize,
-    pub alloc_count: usize,
-    pub free_count: usize,
+/// Port of `bin_mem()` from `Src/mem.c:1722`.
+/// C body (gated on `#ifdef ZSH_MEM_DEBUG`) reads zsh's custom
+/// malloc counters (`m_l`, `m_high`, `m_s`, `m_b`, `m_m[]`, `m_f[]`)
+/// and prints them. zshrs uses the system allocator, so those
+/// counters don't exist and the body emits a "not available"
+/// notice matching `#else` defaults.
+///
+/// C signature: `int bin_mem(char *name, char **argv, Options ops,
+///                            int func)`.
+pub fn bin_mem(                                                              // c:1722
+    _name: &str,
+    _argv: &[String],
+    _ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
+    // c:1725-1727 — queue_signals(); print verbose header if -v.
+    // Static-link Rust path uses system malloc; the C-only `m_*`
+    // globals (m_l/m_high/m_s/m_b/m_m/m_f) don't exist.
+    println!("memory statistics not available with system allocator");
+    0
 }
 
-impl MemStats {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-/// Get memory statistics.
-/// Port of `bin_mem()` from Src/mem.c:1722. Rust manages memory
-/// automatically so the counters are zero by default; the function
-/// is kept for parity with the `mem` builtin's parameter-shape.
-pub fn bin_mem() -> MemStats {
-    MemStats::new()
-}
-
-/// Context save/restore for memory state.
-/// Port of `zcontext_save()`/`zcontext_restore()` from
-/// Src/init.c. The C source captures the heap stack depth so a
-/// fault deep in eval can unwind to a known-good marker; we
-/// replicate the pattern with the arena depth counter.
-pub struct MemContext {
-    heap_depth: usize,
-}
-
-impl MemContext {
-    pub fn save() -> Self {
-        let depth = HEAP.with(|h| h.borrow().depth());
-        MemContext { heap_depth: depth }
-    }
-
-    pub fn restore(self) {
-        HEAP.with(|h| {
-            let mut heap = h.borrow_mut();
-            while heap.depth() > self.heap_depth {
-                heap.pop();
-            }
-        });
-    }
-}
-
-/// Save memory context.
-/// Port of `zcontext_save()` from Src/init.c — entry-point
-/// function form.
-pub fn zcontext_save() -> MemContext {
-    MemContext::save()
-}
-
-/// Restore memory context.
-/// Port of `zcontext_restore()` from Src/init.c — pops every
-/// generation pushed since the saved depth.
-pub fn zcontext_restore(ctx: MemContext) {
-    ctx.restore();
-}
+// The canonical `zcontext_save()` / `zcontext_restore()` port lives
+// in `crate::ported::context` (Src/context.c:80/117), NOT here. The
+// previous Rust port had a `MemContext` aggregate + zero-arg
+// `zcontext_save() -> MemContext` shim attributed to "Src/init.c"
+// which is not where the C versions live — invented Rust-only
+// duplicate name. Deleted per PORT.md Rule A (no fns/structs whose
+// name doesn't exist in upstream C source at the cited location).
+// No external callers used the mem.rs versions.
 
 // queue_signals / unqueue_signals / QUEUEING_ENABLED / run_queued_signals
 // live in `signals_h.rs` — that's the canonical Rust home for the
