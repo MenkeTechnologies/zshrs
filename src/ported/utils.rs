@@ -2405,6 +2405,75 @@ pub fn getkeystring(s: &str) -> (String, usize) {                           // c
     (result, consumed)
 }
 
+/// Print-mode variant of `getkeystring` — mirrors C's
+/// `GETKEYS_PRINT = GETKEY_OCTAL_ESC | GETKEY_BACKSLASH_C |
+/// GETKEY_EMACS` (zsh.h:3185). The crucial difference vs the
+/// non-EMACS default arm at utils.c:7180-7184: when an unknown
+/// `\<char>` appears, the leading backslash is DROPPED (only the
+/// literal char survives). This is what `print` and `echo` expect —
+/// `print -- "he\ llo"` becomes `he llo`, not `he\ llo`.
+pub fn getkeystring_print(s: &str) -> (String, usize) {                       // c:6915 + GETKEYS_PRINT
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+    let mut consumed = 0;
+    while let Some(c) = chars.next() {
+        consumed += c.len_utf8();
+        if c != '\\' {
+            result.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => { result.push('\n'); consumed += 1; }
+            Some('t') => { result.push('\t'); consumed += 1; }
+            Some('r') => { result.push('\r'); consumed += 1; }
+            Some('e') | Some('E') => { result.push('\x1b'); consumed += 1; }
+            Some('a') => { result.push('\x07'); consumed += 1; }
+            Some('b') => { result.push('\x08'); consumed += 1; }
+            Some('f') => { result.push('\x0c'); consumed += 1; }
+            Some('v') => { result.push('\x0b'); consumed += 1; }
+            Some('\\') => { result.push('\\'); consumed += 1; }
+            Some('\'') => { result.push('\''); consumed += 1; }
+            Some('"') => { result.push('"'); consumed += 1; }
+            Some('x') => {
+                consumed += 1;
+                let mut hex = String::new();
+                for _ in 0..2 {
+                    if let Some(&c) = chars.peek() {
+                        if c.is_ascii_hexdigit() {
+                            hex.push(chars.next().unwrap());
+                            consumed += 1;
+                        } else { break; }
+                    }
+                }
+                if let Ok(val) = u8::from_str_radix(&hex, 16) {
+                    result.push(val as char);
+                }
+            }
+            // Octal escape: \NNN (1-3 octal digits) per GETKEY_OCTAL_ESC.
+            Some(d) if d.is_digit(8) => {
+                consumed += 1;
+                let mut oct = String::from(d);
+                for _ in 0..2 {
+                    if let Some(&c) = chars.peek() {
+                        if c.is_digit(8) {
+                            oct.push(chars.next().unwrap());
+                            consumed += 1;
+                        } else { break; }
+                    }
+                }
+                if let Ok(val) = u8::from_str_radix(&oct, 8) {
+                    result.push(val as char);
+                }
+            }
+            // c:utils.c:7180 GETKEY_EMACS arm — unknown escape:
+            // drop the backslash, push only the char.
+            Some(c) => { consumed += 1; result.push(c); }
+            None => { result.push('\\'); }
+        }
+    }
+    (result, consumed)
+}
+
 /// Convert UCS-4 to UTF-8 (from utils.c ucs4toutf8)
 pub fn ucs4toutf8(codepoint: u32) -> Option<String> {
     char::from_u32(codepoint).map(|c| c.to_string())
