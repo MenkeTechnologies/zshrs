@@ -1,20 +1,24 @@
-//! Conditional expression evaluation for zshrs
+//! Conditional expression evaluation — port of Src/cond.c.
 //!
-//! Direct port from zsh/Src/cond.c
+//! Evaluates `[[ … ]]` (zsh extended test) and `[`/`test` (POSIX)
+//! conditional expressions.
 //!
-//! tracingcond: updated by execcond() in exec.c                             // c:34
+//! ## Port status
 //!
-//! Evaluates conditional expressions used in:
-//! - `[[ ... ]]` (zsh extended test)
-//! - `[ ... ]` and `test` (POSIX test)
+//! C-faithful: the per-test helpers `doaccess` (c:438), `getstat`
+//! (c:452), `dostat` (c:474), `dolstat` (c:488), `optison` (c:502),
+//! `cond_str` (c:525), `cond_val` (c:539), `cond_match` (c:552),
+//! `tracemodcond` (c:563) are direct ports with C-named signatures.
 //!
-//! Supports:
-//! - File tests (-e, -f, -d, -r, -w, -x, etc.)
-//! - String tests (-n, -z, =, !=, <, >)
-//! - Numeric comparisons (-eq, -ne, -lt, -gt, -le, -ge)
-//! - Logical operators (!, &&, ||)
-//! - Pattern matching (=~, ==, !=)
-//! - File comparisons (-nt, -ot, -ef)
+//! NOT C-faithful: the C `evalcond()` at cond.c:70 walks pre-compiled
+//! wordcode bytecode (`Estate state`, opcodes via `WC_COND_TYPE`,
+//! operand strings via `ecgetstr`). The argv-driven Rust entry point
+//! here parses + evaluates inline because the wordcode + Estate
+//! plumbing isn't fully wired through this call site yet. When that
+//! lands, this file becomes a thin wrapper around the wordcode
+//! walker that mirrors cond.c:70 line-by-line. The `CondExpr` /
+//! `CondParser` types below are the intermediate scaffold — also
+//! NOT in C and slated for deletion once the wordcode path lands.
 
 use std::collections::HashMap;
 use std::fs::{self, Metadata};
@@ -22,566 +26,62 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use crate::glob::matchpat;
-
-/// `[[ ... ]]` operator codes.
-/// Port of the `COND_*` enum from Src/zsh.h — `evalcond()`
-/// (Src/cond.c:70) dispatches between these for every binary /
-/// unary / regex test the C source supports. Single-character
-/// `FileTest('e')` etc. delegates to `doaccess()` (Src/cond.c:438)
-/// / `dostat()` (line 474) / `dolstat()` (line 488).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CondType {
-    // Logical operators
-    Not, // !
-    And, // &&
-    Or,  // ||
-
-    // String comparisons
-    StrEq,  // = or ==
-    StrDeq, // == (double equals)
-    StrNeq, // !=
-    StrLt,  // <
-    StrGt,  // >
-
-    // File comparisons
-    Nt, // -nt (newer than)
-    Ot, // -ot (older than)
-    Ef, // -ef (same file)
-
-    // Numeric comparisons
-    Eq, // -eq
-    Ne, // -ne
-    Lt, // -lt
-    Gt, // -gt
-    Le, // -le
-    Ge, // -ge
-
-    // Regex
-    Regex, // =~
-
-    // Unary file tests (single character codes)
-    FileTest(char),
-
-    // Module conditions (custom tests)
-    Mod,
-    Modi,
-}
-
-/// Outcome of evaluating a `[[ ... ]]` test.
-/// Port of the integer return values `evalcond()` from
-/// Src/cond.c:70 produces — `0` true, `1` false, `2` error,
-/// `3` option-not-found (the `-o NONEXISTENT_OPT` case).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CondResult {
-    True,           // 0 - condition is true
-    False,          // 1 - condition is false
-    Error,          // 2 - syntax error
-    OptionNotExist, // 3 - option tested with -o does not exist
-}
-
-impl CondResult {
-    pub fn to_exit_code(self) -> i32 {
-        match self {
-            CondResult::True => 0,
-            CondResult::False => 1,
-            CondResult::Error => 2,
-            CondResult::OptionNotExist => 3,
-        }
-    }
-
-    pub fn from_bool(b: bool) -> Self {
-        if b {
-            CondResult::True
-        } else {
-            CondResult::False
-        }
-    }
-
-    pub fn negate(self) -> Self {
-        match self {
-            CondResult::True => CondResult::False,
-            CondResult::False => CondResult::True,
-            other => other,
-        }
-    }
-}
-
-/// Conditional expression evaluator state.
-/// Port of the per-evaluation locals `evalcond()` from
-/// Src/cond.c:70 keeps on the C source's stack — the option /
-/// variable tables it consults plus tracing/posix flags.
-pub struct CondEval<'a> {
-    /// Shell options (for -o test)
-    options: &'a HashMap<String, bool>,
-    /// Shell variables (for -v test)
-    variables: &'a HashMap<String, String>,
-    /// Whether we're in POSIX test mode ([ ] or test)
-    posix_mode: bool,
-    /// Enable tracing output
-    tracing: bool,
-}
-
-impl<'a> CondEval<'a> {
-    pub fn new(options: &'a HashMap<String, bool>, variables: &'a HashMap<String, String>) -> Self {
-        CondEval {
-            options,
-            variables,
-            posix_mode: false,
-            tracing: false,
-        }
-    }
-
-    pub fn with_posix_mode(mut self, posix: bool) -> Self {
-        self.posix_mode = posix;
-        self
-    }
-
-    pub fn with_tracing(mut self, tracing: bool) -> Self {
-        self.tracing = tracing;
-        self
-    }
-
-    /// Evaluate a parsed conditional expression
-    pub fn eval(&self, expr: &CondExpr) -> CondResult {
-        match expr {
-            CondExpr::Not(inner) => {
-                let result = self.eval(inner);
-                result.negate()
-            }
-
-            CondExpr::And(left, right) => {
-                let left_result = self.eval(left);
-                if left_result != CondResult::True {
-                    return left_result;
-                }
-                self.eval(right)
-            }
-
-            CondExpr::Or(left, right) => {
-                let left_result = self.eval(left);
-                if left_result == CondResult::True {
-                    return CondResult::True;
-                }
-                if left_result == CondResult::Error {
-                    return CondResult::Error;
-                }
-                self.eval(right)
-            }
-
-            CondExpr::Unary(op, arg) => self.eval_unary(*op, arg),
-
-            CondExpr::Binary(op, left, right) => self.eval_binary(*op, left, right),
-
-            CondExpr::Ternary(_, _, _, _) => CondResult::Error, // Not used in conditionals
-        }
-    }
-
-    fn eval_unary(&self, op: char, arg: &str) -> CondResult {
-        match op {
-            // File existence tests
-            'a' | 'e' => CondResult::from_bool(self.file_exists(arg)),
-            'b' => CondResult::from_bool(self.is_block_device(arg)),
-            'c' => CondResult::from_bool(self.is_char_device(arg)),
-            'd' => CondResult::from_bool(self.is_directory(arg)),
-            'f' => CondResult::from_bool(self.is_regular_file(arg)),
-            'g' => CondResult::from_bool(self.has_setgid(arg)),
-            'h' | 'L' => CondResult::from_bool(self.is_symlink(arg)),
-            'k' => CondResult::from_bool(self.has_sticky(arg)),
-            'p' => CondResult::from_bool(self.is_fifo(arg)),
-            'r' => CondResult::from_bool(self.is_readable(arg)),
-            's' => CondResult::from_bool(self.has_size(arg)),
-            'S' => CondResult::from_bool(self.is_socket(arg)),
-            'u' => CondResult::from_bool(self.has_setuid(arg)),
-            'w' => CondResult::from_bool(self.is_writable(arg)),
-            'x' => CondResult::from_bool(self.is_executable(arg)),
-            'O' => CondResult::from_bool(self.is_owned_by_euid(arg)),
-            'G' => CondResult::from_bool(self.is_owned_by_egid(arg)),
-            'N' => CondResult::from_bool(self.is_modified_since_read(arg)),
-
-            // String tests
-            'n' => CondResult::from_bool(!arg.is_empty()),
-            'z' => CondResult::from_bool(arg.is_empty()),
-
-            // Option test
-            'o' => self.test_option(arg),
-
-            // Variable test
-            'v' => CondResult::from_bool(self.variables.contains_key(arg)),
-
-            // TTY test
-            't' => {
-                if let Ok(fd) = arg.parse::<i32>() {
-                    CondResult::from_bool(unsafe { libc::isatty(fd) } != 0)
-                } else {
-                    CondResult::Error
-                }
-            }
-
-            _ => CondResult::Error,
-        }
-    }
-
-    fn eval_binary(&self, op: CondType, left: &str, right: &str) -> CondResult {
-        match op {
-            // String comparisons
-            CondType::StrEq | CondType::StrDeq => {
-                // In [[ ]], right side is a pattern
-                if !self.posix_mode {
-                    CondResult::from_bool(matchpat(right, left, true, true))
-                } else {
-                    CondResult::from_bool(left == right)
-                }
-            }
-            CondType::StrNeq => {
-                if !self.posix_mode {
-                    CondResult::from_bool(!matchpat(right, left, true, true))
-                } else {
-                    CondResult::from_bool(left != right)
-                }
-            }
-            CondType::StrLt => CondResult::from_bool(left < right),
-            CondType::StrGt => CondResult::from_bool(left > right),
-
-            // Numeric comparisons
-            CondType::Eq => self.numeric_compare(left, right, |a, b| a == b),
-            CondType::Ne => self.numeric_compare(left, right, |a, b| a != b),
-            CondType::Lt => self.numeric_compare(left, right, |a, b| a < b),
-            CondType::Gt => self.numeric_compare(left, right, |a, b| a > b),
-            CondType::Le => self.numeric_compare(left, right, |a, b| a <= b),
-            CondType::Ge => self.numeric_compare(left, right, |a, b| a >= b),
-
-            // File comparisons
-            CondType::Nt => self.file_newer_than(left, right),
-            CondType::Ot => self.file_older_than(left, right),
-            CondType::Ef => self.same_file(left, right),
-
-            // Regex match
-            CondType::Regex => self.regex_match(left, right),
-
-            _ => CondResult::Error,
-        }
-    }
-
-    // File test implementations
-
-    fn get_metadata(&self, path: &str) -> Option<Metadata> {
-        // Handle /dev/fd/N
-        if let Some(fd_str) = path.strip_prefix("/dev/fd/") {
-            if let Ok(fd) = fd_str.parse::<i32>() {
-                // Use fstat for /dev/fd/N
-                let mut stat: libc::stat = unsafe { std::mem::zeroed() };
-                if unsafe { libc::fstat(fd, &mut stat) } == 0 {
-                    // We can't easily convert libc::stat to std::fs::Metadata,
-                    // so fall back to regular stat
-                    return fs::metadata(path).ok();
-                }
-            }
-        }
-        fs::metadata(path).ok()
-    }
-
-    fn get_symlink_metadata(&self, path: &str) -> Option<Metadata> {
-        fs::symlink_metadata(path).ok()
-    }
-
-    fn file_exists(&self, path: &str) -> bool {
-        Path::new(path).exists()
-    }
-
-    fn is_block_device(&self, path: &str) -> bool {
-        self.get_metadata(path)
-            .map(|m| m.mode() & libc::S_IFMT as u32 == libc::S_IFBLK as u32)
-            .unwrap_or(false)
-    }
-
-    fn is_char_device(&self, path: &str) -> bool {
-        self.get_metadata(path)
-            .map(|m| m.mode() & libc::S_IFMT as u32 == libc::S_IFCHR as u32)
-            .unwrap_or(false)
-    }
-
-    fn is_directory(&self, path: &str) -> bool {
-        Path::new(path).is_dir()
-    }
-
-    fn is_regular_file(&self, path: &str) -> bool {
-        Path::new(path).is_file()
-    }
-
-    fn is_symlink(&self, path: &str) -> bool {
-        self.get_symlink_metadata(path)
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false)
-    }
-
-    fn is_fifo(&self, path: &str) -> bool {
-        self.get_metadata(path)
-            .map(|m| m.mode() & libc::S_IFMT as u32 == libc::S_IFIFO as u32)
-            .unwrap_or(false)
-    }
-
-    fn is_socket(&self, path: &str) -> bool {
-        self.get_metadata(path)
-            .map(|m| m.mode() & libc::S_IFMT as u32 == libc::S_IFSOCK as u32)
-            .unwrap_or(false)
-    }
-
-    fn has_setuid(&self, path: &str) -> bool {
-        self.get_metadata(path)
-            .map(|m| m.mode() & libc::S_ISUID as u32 != 0)
-            .unwrap_or(false)
-    }
-
-    fn has_setgid(&self, path: &str) -> bool {
-        self.get_metadata(path)
-            .map(|m| m.mode() & libc::S_ISGID as u32 != 0)
-            .unwrap_or(false)
-    }
-
-    fn has_sticky(&self, path: &str) -> bool {
-        self.get_metadata(path)
-            .map(|m| m.mode() & libc::S_ISVTX as u32 != 0)
-            .unwrap_or(false)
-    }
-
-    fn is_readable(&self, path: &str) -> bool {
-        use std::ffi::CString;
-        if let Ok(c_path) = CString::new(path) {
-            unsafe { libc::access(c_path.as_ptr(), libc::R_OK) == 0 }
-        } else {
-            fs::metadata(path).is_ok()
-        }
-    }
-
-    fn is_writable(&self, path: &str) -> bool {
-        use std::ffi::CString;
-        if let Ok(c_path) = CString::new(path) {
-            unsafe { libc::access(c_path.as_ptr(), libc::W_OK) == 0 }
-        } else {
-            self.get_metadata(path)
-                .map(|m| m.mode() & 0o200 != 0)
-                .unwrap_or(false)
-        }
-    }
-
-    fn is_executable(&self, path: &str) -> bool {
-        self.get_metadata(path)
-            .map(|m| {
-                let mode = m.mode();
-                // Check if any execute bit is set, or if it's a directory
-                (mode & 0o111 != 0) || (mode & libc::S_IFMT as u32 == libc::S_IFDIR as u32)
-            })
-            .unwrap_or(false)
-    }
-
-    fn has_size(&self, path: &str) -> bool {
-        self.get_metadata(path)
-            .map(|m| m.len() > 0)
-            .unwrap_or(false)
-    }
-
-    fn is_owned_by_euid(&self, path: &str) -> bool {
-        self.get_metadata(path)
-            .map(|m| m.uid() == unsafe { libc::geteuid() })
-            .unwrap_or(false)
-    }
-
-    fn is_owned_by_egid(&self, path: &str) -> bool {
-        self.get_metadata(path)
-            .map(|m| m.gid() == unsafe { libc::getegid() })
-            .unwrap_or(false)
-    }
-
-    fn is_modified_since_read(&self, path: &str) -> bool {
-        self.get_metadata(path)
-            .map(|m| m.mtime() >= m.atime())
-            .unwrap_or(false)
-    }
-
-    // Numeric comparison
-
-    fn numeric_compare<F>(&self, left: &str, right: &str, cmp: F) -> CondResult
-    where
-        F: Fn(f64, f64) -> bool,
-    {
-        let left_val = self.parse_number(left);
-        let right_val = self.parse_number(right);
-
-        match (left_val, right_val) {
-            (Some(l), Some(r)) => CondResult::from_bool(cmp(l, r)),
-            _ => CondResult::Error,
-        }
-    }
-
-    fn parse_number(&self, s: &str) -> Option<f64> {
-        // In POSIX mode, only base-10 integers
-        if self.posix_mode {
-            s.trim().parse::<i64>().ok().map(|i| i as f64)
-        } else {
-            // Try integer first, then float
-            if let Ok(i) = s.trim().parse::<i64>() {
-                Some(i as f64)
-            } else {
-                s.trim().parse::<f64>().ok()
-            }
-        }
-    }
-
-    // File comparisons
-
-    fn file_newer_than(&self, left: &str, right: &str) -> CondResult {
-        let left_meta = match self.get_metadata(left) {
-            Some(m) => m,
-            None => return CondResult::False,
-        };
-        let right_meta = match self.get_metadata(right) {
-            Some(m) => m,
-            None => return CondResult::False,
-        };
-
-        CondResult::from_bool(left_meta.mtime() > right_meta.mtime())
-    }
-
-    fn file_older_than(&self, left: &str, right: &str) -> CondResult {
-        let left_meta = match self.get_metadata(left) {
-            Some(m) => m,
-            None => return CondResult::False,
-        };
-        let right_meta = match self.get_metadata(right) {
-            Some(m) => m,
-            None => return CondResult::False,
-        };
-
-        CondResult::from_bool(left_meta.mtime() < right_meta.mtime())
-    }
-
-    fn same_file(&self, left: &str, right: &str) -> CondResult {
-        let left_meta = match self.get_metadata(left) {
-            Some(m) => m,
-            None => return CondResult::False,
-        };
-        let right_meta = match self.get_metadata(right) {
-            Some(m) => m,
-            None => return CondResult::False,
-        };
-
-        CondResult::from_bool(
-            left_meta.dev() == right_meta.dev() && left_meta.ino() == right_meta.ino(),
-        )
-    }
-
-    // Option test
-
-    fn test_option(&self, name: &str) -> CondResult {
-        // Single character option — direct port of zsh's optletters
-        // lookup at Src/options.c:287 / 726. Map shorthand letters
-        // (`-e`, `-x`, etc.) to their full option names.
-        if name.len() == 1 {
-            let ch = name.chars().next().unwrap();
-            let opt_name = match ch {
-                'a' => Some("allexport"),
-                'B' => Some("braceccl"),
-                'C' => Some("noclobber"),
-                'e' => Some("errexit"),
-                'f' => Some("noglob"),
-                'g' => Some("histignorespace"),
-                'h' => Some("hashcmds"),
-                'H' => Some("histexpand"),
-                'i' => Some("interactive"),
-                'I' => Some("ignoreeof"),
-                'j' => Some("monitor"),
-                'k' => Some("keywordargs"),
-                'l' => Some("login"),
-                'm' => Some("monitor"),
-                'n' => Some("noexec"),
-                'p' => Some("privileged"),
-                'P' => Some("physical"),
-                'r' => Some("restricted"),
-                's' => Some("stdin"),
-                't' => Some("singlecommand"),
-                'u' => Some("nounset"),
-                'v' => Some("verbose"),
-                'w' => Some("chaselinks"),
-                'x' => Some("xtrace"),
-                'X' => Some("listtypes"),
-                'Y' => Some("menucomplete"),
-                'Z' => Some("zle"),
-                '0' => Some("correct"),
-                '1' => Some("printexitvalue"),
-                '2' => Some("autolist"),
-                '3' => Some("autocontinue"),
-                '4' => Some("autoparamslash"),
-                '5' => Some("autopushd"),
-                '6' => Some("autoremoveslash"),
-                '7' => Some("bsdecho"),
-                '8' => Some("nocaseglob"),
-                '9' => Some("cdablevars"),
-                _ => None,
-            };
-            if let Some(opt_name) = opt_name {
-                if let Some(&val) = self.options.get(opt_name) {
-                    return CondResult::from_bool(val);
-                }
-            }
-        }
-
-        // Full option name
-        if let Some(&val) = self.options.get(name) {
-            CondResult::from_bool(val)
-        } else {
-            CondResult::OptionNotExist
-        }
-    }
-
-    // Regex match
-
-    fn regex_match(&self, text: &str, pattern: &str) -> CondResult {
-        #[cfg(feature = "regex")]
-        {
-            match regex::Regex::new(pattern) {
-                Ok(re) => CondResult::from_bool(re.is_match(text)),
-                Err(_) => CondResult::Error,
-            }
-        }
-        #[cfg(not(feature = "regex"))]
-        {
-            // Fallback: simple pattern match
-            CondResult::from_bool(matchpat(pattern, text, true, true))
-        }
-    }
-}
-
-/// Parsed `[[ ... ]]` expression tree.
-/// Port of the `Wordcode` shape `parse_cond()` from Src/parse.c
-/// produces and `evalcond()` (Src/cond.c:70) walks. Each variant
-/// matches one of the C `COND_*` operator categories.
+use crate::ported::zsh_h::{
+    COND_AND, COND_EF, COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_NE, COND_NOT, COND_NT,
+    COND_OR, COND_OT, COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ,
+};
+
+// C-style i32 return codes from `evalcond` (mirroring cond.c:70):
+//   0 — condition true
+//   1 — condition false
+//   2 — syntax error
+//   3 — option tested with -o does not exist
+//
+// `evalcond`'s integer return values are documented in the C source
+// at cond.c:62-66; we use bare i32 throughout (no enum wrapper).
+
+// ===========================================================
+// CondExpr / CondParser — Rust-only scaffold (NOT in C).
+//
+// The C parser (par_cond_* in parse.c) emits wordcode bytecode.
+// This Rust scaffold builds a tagged AST instead. Operator codes
+// reuse the canonical `COND_*` i32 constants from zsh_h.rs:1199
+// (which mirror zsh.h:660-679) so the AST discriminator at least
+// matches C wire values.
+// ===========================================================
+
+/// Parsed expression tree.
+///
+/// **WARNING — NOT IN C.** zsh's parser emits wordcode bytecode,
+/// not a typed AST. Will be deleted when the wordcode path lands.
 #[derive(Debug, Clone)]
 pub enum CondExpr {
     Not(Box<CondExpr>),
     And(Box<CondExpr>, Box<CondExpr>),
     Or(Box<CondExpr>, Box<CondExpr>),
+    /// One-letter unary test (`-e file`, `-z str`, …).
     Unary(char, String),
-    Binary(CondType, String, String),
-    Ternary(CondType, String, String, String),
+    /// Binary test, op = one of `crate::ported::zsh_h::COND_*` values.
+    Binary(i32, String, String),
+    /// Three-operand variant (unused by builtin/test path; reserved
+    /// for future module-defined infix operators).
+    Ternary(i32, String, String, String),
 }
 
-/// Parser for `[[ ... ]]` / `test`-style expressions.
-/// Port of the cond-parsing path inside Src/parse.c (`par_cond_*`
-/// functions) — the C source emits wordcode; this Rust parser
-/// produces a typed AST instead.
+/// Recursive-descent parser for argv-form conditional expressions.
+///
+/// **WARNING — NOT IN C.** Real port goes via `par_cond_*` in parse.c
+/// emitting wordcode. Will be deleted when the wordcode path lands.
 pub struct CondParser<'a> {
     tokens: Vec<&'a str>,
     pos: usize,
+    #[allow(dead_code)]
     posix_mode: bool,
 }
 
 impl<'a> CondParser<'a> {
     pub fn new(tokens: Vec<&'a str>, posix_mode: bool) -> Self {
-        CondParser {
-            tokens,
-            pos: 0,
-            posix_mode,
-        }
+        CondParser { tokens, pos: 0, posix_mode }
     }
 
     pub fn parse(&mut self) -> Result<CondExpr, String> {
@@ -590,23 +90,19 @@ impl<'a> CondParser<'a> {
 
     fn parse_or(&mut self) -> Result<CondExpr, String> {
         let mut left = self.parse_and()?;
-
         while self.match_token("||") || self.match_token("-o") {
             let right = self.parse_and()?;
             left = CondExpr::Or(Box::new(left), Box::new(right));
         }
-
         Ok(left)
     }
 
     fn parse_and(&mut self) -> Result<CondExpr, String> {
         let mut left = self.parse_not()?;
-
         while self.match_token("&&") || self.match_token("-a") {
             let right = self.parse_not()?;
             left = CondExpr::And(Box::new(left), Box::new(right));
         }
-
         Ok(left)
     }
 
@@ -620,7 +116,6 @@ impl<'a> CondParser<'a> {
     }
 
     fn parse_primary(&mut self) -> Result<CondExpr, String> {
-        // Parenthesized expression
         if self.match_token("(") {
             let expr = self.parse_or()?;
             if !self.match_token(")") {
@@ -628,17 +123,11 @@ impl<'a> CondParser<'a> {
             }
             return Ok(expr);
         }
-
-        // Check for unary operators (file/string tests). Direct port
-        // of Src/cond.c parser's `-X arg` recognizer — every char in
-        // this set takes one operand: `-a` exists, `-d` directory,
-        // `-f` regular file, `-n` non-empty string, `-z` empty
-        // string, `-r/-w/-x` perm bits, etc.
+        // Unary `-X arg`.
         if let Some(tok) = self.peek() {
             if tok.starts_with('-') && tok.len() == 2 {
                 let op = tok.chars().nth(1).unwrap();
-                if matches!(
-                    op,
+                if matches!(op,
                     'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h'
                     | 'k' | 'L' | 'n' | 'o' | 'p' | 'r' | 's' | 'S'
                     | 't' | 'u' | 'v' | 'w' | 'x' | 'z'
@@ -650,217 +139,227 @@ impl<'a> CondParser<'a> {
                 }
             }
         }
-
-        // Binary expression: left op right. Operator dispatch is the
-        // direct port of cond.c's binary-op parser — string and arith
-        // comparators, file-relation tests (-nt/-ot/-ef), and the
-        // regex match `=~` (plus the zsh/regex module's
-        // `-regex-match` per Src/Modules/regex.c:214).
+        // Binary `left op right`. Operator → COND_* code mapping
+        // mirrors cond.c:70 dispatch and zsh.h:660-679 constants.
         let left = self.expect_arg()?;
-
-        if let Some(op) = self.peek() {
-            let cond_type = match op {
-                "=" | "==" => Some(CondType::StrEq),
-                "!=" => Some(CondType::StrNeq),
-                "<" => Some(CondType::StrLt),
-                ">" => Some(CondType::StrGt),
-                "-eq" => Some(CondType::Eq),
-                "-ne" => Some(CondType::Ne),
-                "-lt" => Some(CondType::Lt),
-                "-gt" => Some(CondType::Gt),
-                "-le" => Some(CondType::Le),
-                "-ge" => Some(CondType::Ge),
-                "-nt" => Some(CondType::Nt),
-                "-ot" => Some(CondType::Ot),
-                "-ef" => Some(CondType::Ef),
-                "=~" => Some(CondType::Regex),
-                "-regex-match" => Some(CondType::Regex),
+        if let Some(op_tok) = self.peek() {
+            let code: Option<i32> = match op_tok {
+                "="   => Some(COND_STREQ),
+                "=="  => Some(COND_STRDEQ),
+                "!="  => Some(COND_STRNEQ),
+                "<"   => Some(COND_STRLT),
+                ">"   => Some(COND_STRGTR),
+                "-eq" => Some(COND_EQ),
+                "-ne" => Some(COND_NE),
+                "-lt" => Some(COND_LT),
+                "-gt" => Some(COND_GT),
+                "-le" => Some(COND_LE),
+                "-ge" => Some(COND_GE),
+                "-nt" => Some(COND_NT),
+                "-ot" => Some(COND_OT),
+                "-ef" => Some(COND_EF),
+                "=~" | "-regex-match" => Some(COND_REGEX),
                 _ => None,
             };
-            if let Some(cond_type) = cond_type {
+            if let Some(code) = code {
                 self.advance();
                 let right = self.expect_arg()?;
-                return Ok(CondExpr::Binary(
-                    cond_type,
-                    left.to_string(),
-                    right.to_string(),
-                ));
+                return Ok(CondExpr::Binary(code, left.to_string(), right.to_string()));
             }
         }
-
-        // Implicit -n test for non-empty string
+        // Implicit -n (non-empty) test.
         Ok(CondExpr::Unary('n', left.to_string()))
     }
 
-    fn peek(&self) -> Option<&'a str> {
-        self.tokens.get(self.pos).copied()
-    }
-
+    fn peek(&self) -> Option<&'a str> { self.tokens.get(self.pos).copied() }
     fn advance(&mut self) -> Option<&'a str> {
-        let tok = self.tokens.get(self.pos).copied();
+        let t = self.tokens.get(self.pos).copied();
         self.pos += 1;
-        tok
+        t
     }
-
     fn match_token(&mut self, expected: &str) -> bool {
-        if self.peek() == Some(expected) {
-            self.advance();
-            true
-        } else {
-            false
-        }
+        if self.peek() == Some(expected) { self.advance(); true } else { false }
     }
-
     fn expect_arg(&mut self) -> Result<&'a str, String> {
-        self.advance()
-            .ok_or_else(|| "expected argument".to_string())
+        self.advance().ok_or_else(|| "expected argument".to_string())
     }
 }
 
+// ===========================================================
+// Tree-walking evaluator — implemented as `impl CondExpr`
+// methods (NOT free fns) because the AST itself is Rust-only;
+// the eval logic stays scoped to the type rather than leaking
+// into module-level free fns with no C counterpart.
+//
+// All eval methods return i32 in the convention C's evalcond
+// uses (0=true, 1=false, 2=error, 3=opt-not-found, cond.c:62-66).
+// ===========================================================
 
-/// Convenience function to evaluate a test expression
-/// Evaluate a POSIX `test`/`[[` expression.
-/// Top-level wrapper around `CondParser` + `CondEval`. Port of
-// -o does not exist".                                                      // c:65
-/// the `evalcond()` driver from Src/cond.c:70 — the C source's
-/// entry point that the `[[` keyword and the `test`/`[`
-/// builtins both delegate to.
+impl CondExpr {
+    /// Evaluate this AST node against the given option/variable
+    /// tables. Mirrors C's evalcond switch (cond.c:81+ for
+    /// NOT/AND/OR, c:179+ for the per-opcode default arm).
+    pub fn eval(
+        &self,
+        options: &HashMap<String, bool>,
+        variables: &HashMap<String, String>,
+        posix_mode: bool,
+    ) -> i32 {
+        // Rust-only `bool → i32` helper. Inlined as a closure
+        // so it doesn't surface as a free fn (no C counterpart).
+        let b2i = |b: bool| -> i32 { if b { 0 } else { 1 } };
+
+        match self {
+            CondExpr::Not(inner) => {                                        // c:81 COND_NOT
+                let r = inner.eval(options, variables, posix_mode);
+                if r < 2 { if r == 0 { 1 } else { 0 } } else { r }
+            }
+            CondExpr::And(l, r) => {                                         // c:88 COND_AND
+                let lr = l.eval(options, variables, posix_mode);
+                if lr != 0 { lr } else { r.eval(options, variables, posix_mode) }
+            }
+            CondExpr::Or(l, r) => {                                          // c:96 COND_OR
+                let lr = l.eval(options, variables, posix_mode);
+                if lr == 0 { 0 }
+                else if lr >= 2 { lr }
+                else { r.eval(options, variables, posix_mode) }
+            }
+            CondExpr::Unary(op, arg) => match *op {
+                'a' | 'e' => b2i(Path::new(arg).exists()),                   // c:179-180
+                'b' => b2i(dostat(arg) & libc::S_IFMT as u32 == libc::S_IFBLK as u32),
+                'c' => b2i(dostat(arg) & libc::S_IFMT as u32 == libc::S_IFCHR as u32),
+                'd' => b2i(Path::new(arg).is_dir()),
+                'f' => b2i(Path::new(arg).is_file()),
+                'g' => b2i(dostat(arg) & libc::S_ISGID as u32 != 0),
+                'h' | 'L' => b2i(dolstat(arg) & libc::S_IFMT as u32 == libc::S_IFLNK as u32),
+                'k' => b2i(dostat(arg) & libc::S_ISVTX as u32 != 0),
+                'p' => b2i(dostat(arg) & libc::S_IFMT as u32 == libc::S_IFIFO as u32),
+                'r' => b2i(doaccess(arg, 4) != 0),                           // c:438
+                's' => b2i(getstat(arg).map(|m| m.len() > 0).unwrap_or(false)),
+                'S' => b2i(dostat(arg) & libc::S_IFMT as u32 == libc::S_IFSOCK as u32),
+                'u' => b2i(dostat(arg) & libc::S_ISUID as u32 != 0),
+                'w' => b2i(doaccess(arg, 2) != 0),                           // c:438
+                'x' => b2i(doaccess(arg, 1) != 0
+                           || getstat(arg)
+                                  .map(|m| m.mode() & libc::S_IFMT as u32 == libc::S_IFDIR as u32)
+                                  .unwrap_or(false)),
+                'O' => b2i(getstat(arg).map(|m| m.uid() == unsafe { libc::geteuid() })
+                           .unwrap_or(false)),
+                'G' => b2i(getstat(arg).map(|m| m.gid() == unsafe { libc::getegid() })
+                           .unwrap_or(false)),
+                'N' => b2i(getstat(arg).map(|m| m.mtime() >= m.atime()).unwrap_or(false)),
+                'n' => b2i(!arg.is_empty()),
+                'z' => b2i(arg.is_empty()),
+                'o' => {
+                    // Route through canonical optison (cond.c:502);
+                    // fall back to the per-call HashMap so tests
+                    // without the global option table see what
+                    // they explicitly set.
+                    let r = optison("test", arg);
+                    if r != 3 { r }
+                    else if options.contains_key(arg) { b2i(options[arg]) }
+                    else { 3 }
+                }
+                'v' => b2i(variables.contains_key(arg)),
+                't' => arg.parse::<i32>()
+                       .map(|fd| b2i(unsafe { libc::isatty(fd) } != 0))
+                       .unwrap_or(2),
+                _ => 2,
+            },
+            CondExpr::Binary(code, left, right) => {
+                // Parse a number with POSIX-mode integer-only
+                // restriction. Inlined per Rule A — no C analog
+                // for "parse_number with posix toggle".
+                let parse_num = |s: &str| -> Option<f64> {
+                    let t = s.trim();
+                    if posix_mode {
+                        t.parse::<i64>().ok().map(|i| i as f64)
+                    } else {
+                        t.parse::<i64>().map(|i| i as f64)
+                            .or_else(|_| t.parse::<f64>()).ok()
+                    }
+                };
+                let num_cmp = |l: &str, r: &str, f: fn(f64, f64) -> bool| -> i32 {
+                    match (parse_num(l), parse_num(r)) {
+                        (Some(a), Some(b)) => b2i(f(a, b)),
+                        _ => 2,
+                    }
+                };
+                let mtime_cmp = |l: &str, r: &str, f: fn(i64, i64) -> bool| -> i32 {
+                    let lm = match getstat(l) { Some(m) => m, None => return 1 };
+                    let rm = match getstat(r) { Some(m) => m, None => return 1 };
+                    b2i(f(lm.mtime(), rm.mtime()))
+                };
+                let strpat = |pat: &str, text: &str| -> bool {
+                    if posix_mode { text == pat } else { matchpat(pat, text, true, true) }
+                };
+                match *code {
+                    c if c == COND_STREQ || c == COND_STRDEQ => b2i(strpat(right, left)),
+                    c if c == COND_STRNEQ => b2i(!strpat(right, left)),
+                    c if c == COND_STRLT  => b2i(left.as_str() < right.as_str()),
+                    c if c == COND_STRGTR => b2i(left.as_str() > right.as_str()),
+                    c if c == COND_EQ => num_cmp(left, right, |a, b| a == b),
+                    c if c == COND_NE => num_cmp(left, right, |a, b| a != b),
+                    c if c == COND_LT => num_cmp(left, right, |a, b| a <  b),
+                    c if c == COND_GT => num_cmp(left, right, |a, b| a >  b),
+                    c if c == COND_LE => num_cmp(left, right, |a, b| a <= b),
+                    c if c == COND_GE => num_cmp(left, right, |a, b| a >= b),
+                    c if c == COND_NT => mtime_cmp(left, right, |a, b| a >  b),
+                    c if c == COND_OT => mtime_cmp(left, right, |a, b| a <  b),
+                    c if c == COND_EF => {
+                        let lm = match getstat(left)  { Some(m) => m, None => return 1 };
+                        let rm = match getstat(right) { Some(m) => m, None => return 1 };
+                        b2i(lm.dev() == rm.dev() && lm.ino() == rm.ino())
+                    }
+                    c if c == COND_REGEX => {
+                        #[cfg(feature = "regex")]
+                        {
+                            match regex::Regex::new(right) {
+                                Ok(re) => b2i(re.is_match(left)),
+                                Err(_) => 2,
+                            }
+                        }
+                        #[cfg(not(feature = "regex"))]
+                        {
+                            b2i(matchpat(right, left, true, true))
+                        }
+                    }
+                    _ => 2,
+                }
+            }
+            CondExpr::Ternary(..) => 2,
+        }
+    }
+}
+
+// ===========================================================
+// evalcond — argv entry point.
+//
+// **WARNING — NOT C-FAITHFUL SHAPE.** C signature is
+// `int evalcond(Estate state, char *fromtest)` (cond.c:70); the C
+// source walks pre-built wordcode. This Rust function takes argv
+// directly because the parse-cond-to-wordcode + Estate machinery
+// isn't wired into the test/[ builtin callsite yet.
+// ===========================================================
+
+/// Argv-form `[[ … ]]` / `test … ]` driver.
 pub fn evalcond(                                                             // c:70
     args: &[&str],
     options: &HashMap<String, bool>,
     variables: &HashMap<String, String>,
     posix_mode: bool,
 ) -> i32 {
-    // Handle empty args
-    if args.is_empty() {
-        return 1; // false
-    }
-
-    // Filter out [ and ] if present
-    let args: Vec<&str> = args
+    if args.is_empty() { return 1; }
+    let filt: Vec<&str> = args
         .iter()
-        .filter(|&s| *s != "[" && *s != "]" && *s != "[[" && *s != "]]")
+        .filter(|s| !matches!(**s, "[" | "]" | "[[" | "]]"))
         .copied()
         .collect();
-
-    if args.is_empty() {
-        return 1;
-    }
-
-    let mut parser = CondParser::new(args, posix_mode);
+    if filt.is_empty() { return 1; }
+    let mut parser = CondParser::new(filt, posix_mode);
     match parser.parse() {
-        Ok(expr) => {
-            let evaluator = CondEval::new(options, variables).with_posix_mode(posix_mode);
-            evaluator.eval(&expr).to_exit_code()
-        }
-        Err(_) => 2, // syntax error
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs::File;
-    use tempfile::TempDir;
-
-    fn empty_maps() -> (HashMap<String, bool>, HashMap<String, String>) {
-        (HashMap::new(), HashMap::new())
-    }
-
-    #[test]
-    fn test_string_empty() {
-        let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["-z", ""], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["-z", "hello"], &opts, &vars, true), 1);
-        assert_eq!(evalcond(&["-n", "hello"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["-n", ""], &opts, &vars, true), 1);
-    }
-
-    #[test]
-    fn test_string_compare() {
-        let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["hello", "=", "hello"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["hello", "!=", "world"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["abc", "<", "def"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["xyz", ">", "abc"], &opts, &vars, true), 0);
-    }
-
-    #[test]
-    fn test_numeric_compare() {
-        let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["5", "-eq", "5"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["5", "-ne", "3"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["3", "-lt", "5"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["5", "-gt", "3"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["5", "-le", "5"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["5", "-ge", "5"], &opts, &vars, true), 0);
-    }
-
-    #[test]
-    fn test_file_exists() {
-        let dir = TempDir::new().unwrap();
-        let file_path = dir.path().join("testfile");
-        File::create(&file_path).unwrap();
-
-        let (opts, vars) = empty_maps();
-        let path_str = file_path.to_str().unwrap();
-
-        assert_eq!(evalcond(&["-e", path_str], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["-f", path_str], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["-d", path_str], &opts, &vars, true), 1);
-    }
-
-    #[test]
-    fn test_directory() {
-        let dir = TempDir::new().unwrap();
-        let (opts, vars) = empty_maps();
-        let path_str = dir.path().to_str().unwrap();
-
-        assert_eq!(evalcond(&["-d", path_str], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["-f", path_str], &opts, &vars, true), 1);
-    }
-
-    #[test]
-    fn test_logical_not() {
-        let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["!", "-z", "hello"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["!", "-n", ""], &opts, &vars, true), 0);
-    }
-
-    #[test]
-    fn test_logical_and() {
-        let (opts, vars) = empty_maps();
-        assert_eq!(
-            evalcond(&["-n", "a", "-a", "-n", "b"], &opts, &vars, true),
-            0
-        );
-        assert_eq!(
-            evalcond(&["-n", "a", "-a", "-z", "b"], &opts, &vars, true),
-            1
-        );
-    }
-
-    #[test]
-    fn test_logical_or() {
-        let (opts, vars) = empty_maps();
-        assert_eq!(
-            evalcond(&["-z", "a", "-o", "-n", "b"], &opts, &vars, true),
-            0
-        );
-        assert_eq!(
-            evalcond(&["-z", "a", "-o", "-z", "b"], &opts, &vars, true),
-            1
-        );
-    }
-
-    #[test]
-    fn test_variable_exists() {
-        let opts = HashMap::new();
-        let mut vars = HashMap::new();
-        vars.insert("MYVAR".to_string(), "value".to_string());
-
-        assert_eq!(evalcond(&["-v", "MYVAR"], &opts, &vars, true), 0);
-        assert_eq!(evalcond(&["-v", "NOTEXIST"], &opts, &vars, true), 1);
+        Ok(expr) => expr.eval(options, variables, posix_mode),
+        Err(_) => 2,
     }
 }
 
@@ -895,11 +394,7 @@ pub fn doaccess(s: &str, c: i32) -> i32 {                                    // 
         Err(_) => return 0,
     };
     unsafe {
-        if libc::access(cs.as_ptr(), mode) == 0 {
-            1
-        } else {
-            0
-        }
+        if libc::access(cs.as_ptr(), mode) == 0 { 1 } else { 0 }
     }
 }
 
@@ -907,13 +402,12 @@ pub fn doaccess(s: &str, c: i32) -> i32 {                                    // 
 /// special-cases `/dev/fd/N` with `fstat()`. Returns the metadata or
 /// `None` on error. Replaces the C global `static struct stat st`
 /// with a returned `Metadata` value (Rust avoids globals here).
-pub fn getstat(s: &str) -> Option<std::fs::Metadata> {                       // c:452
+pub fn getstat(s: &str) -> Option<Metadata> {                                // c:452
     if let Some(rest) = s.strip_prefix("/dev/fd/") {
         if let Ok(fd) = rest.parse::<i32>() {
             use std::os::unix::io::FromRawFd;
             let f = unsafe { std::fs::File::from_raw_fd(libc::dup(fd)) };
-            let m = f.metadata().ok();
-            return m;
+            return f.metadata().ok();
         }
     }
     fs::metadata(s).ok()
@@ -929,38 +423,31 @@ pub fn dostat(s: &str) -> u32 {                                              // 
 /// Port of `dolstat()` from Src/cond.c:488 — like `dostat()` but
 /// uses `lstat(2)` so symlinks are *not* followed. Underpins
 /// `[[ -h ]]` / `[[ -L ]]`.
-pub fn dolstat(s: &str) -> u32 {                                            // c:488
+pub fn dolstat(s: &str) -> u32 {                                             // c:488
     fs::symlink_metadata(s).map(|m| m.mode()).unwrap_or(0)
 }
 
 /// Port of `optison()` from Src/cond.c:502 — `[[ -o NAME ]]` shell-
 /// option test. Returns 0 (true) when the option is set, 1 (false)
-/// when unset, 3 (error) when the name is unrecognised. The Rust
-/// rewrite stores options in the executor's `HashMap`; this entry
-/// is a free-fn shim — callers in `evalcond` already inspect the
-/// passed-in option map directly.
-pub fn optison(name: &str, s: &str) -> i32 {                            // c:502
-    /*
-     * optison returns evalcond-friendly statuses (true, false, error).
-     */                                                                  // c:496-498
-    let i: i32;                                                          // c:504
-    if s.len() == 1 {                                                    // c:506
-        i = crate::ported::options::optlookupc(s.as_bytes()[0] as char); // c:507
+/// when unset, 3 (error) when the name is unrecognised. Routes
+/// through the canonical option table via `optlookup` /
+/// `optlookupc` (Src/options.c:684 / :721).
+pub fn optison(name: &str, s: &str) -> i32 {                                 // c:502
+    let i: i32 = if s.len() == 1 {                                           // c:506
+        crate::ported::options::optlookupc(s.as_bytes()[0] as char)          // c:507
     } else {
-        i = crate::ported::options::optlookup(s);                        // c:509
-    }
-    if i == 0 {                                                          // c:510
-        if isset(crate::ported::zsh_h::POSIXBUILTINS) {                  // c:511
-            return 1;                                                     // c:512
+        crate::ported::options::optlookup(s)                                 // c:509
+    };
+    if i == 0 {                                                              // c:510
+        if isset(crate::ported::zsh_h::POSIXBUILTINS) {                      // c:511
+            return 1;                                                        // c:512
         } else {
             crate::ported::utils::zwarnnam(name, &format!("no such option: {}", s)); // c:514
-            return 3;                                                     // c:515
+            return 3;                                                        // c:515
         }
-    } else if i < 0 {                                                    // c:517
-        if unset(-i) { 0 } else { 1 }                                    // c:518 !unset(-i)
-    } else {
-        if isset(i) { 0 } else { 1 }                                     // c:520 !isset(i)
-    }
+    } else if i < 0 {                                                        // c:517
+        if unset(-i) { 0 } else { 1 }                                        // c:518 !unset(-i)
+    } else if isset(i) { 0 } else { 1 }                                      // c:520 !isset(i)
 }
 
 // `isset` macro from `Src/options.h:62` — `(opts[X] != 0)`. Reads
@@ -1023,5 +510,96 @@ pub fn tracemodcond(name: &str, args: &[String], inf: bool) {                // 
         for a in args {
             let _ = write!(out, " {}", a);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use tempfile::TempDir;
+
+    fn empty_maps() -> (HashMap<String, bool>, HashMap<String, String>) {
+        (HashMap::new(), HashMap::new())
+    }
+
+    #[test]
+    fn test_string_empty() {
+        let (opts, vars) = empty_maps();
+        assert_eq!(evalcond(&["-z", ""], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["-z", "hello"], &opts, &vars, true), 1);
+        assert_eq!(evalcond(&["-n", "hello"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["-n", ""], &opts, &vars, true), 1);
+    }
+
+    #[test]
+    fn test_string_compare() {
+        let (opts, vars) = empty_maps();
+        assert_eq!(evalcond(&["hello", "=", "hello"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["hello", "!=", "world"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["abc", "<", "def"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["xyz", ">", "abc"], &opts, &vars, true), 0);
+    }
+
+    #[test]
+    fn test_numeric_compare() {
+        let (opts, vars) = empty_maps();
+        assert_eq!(evalcond(&["5", "-eq", "5"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["5", "-ne", "3"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["3", "-lt", "5"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["5", "-gt", "3"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["5", "-le", "5"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["5", "-ge", "5"], &opts, &vars, true), 0);
+    }
+
+    #[test]
+    fn test_file_exists() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("testfile");
+        File::create(&file_path).unwrap();
+        let (opts, vars) = empty_maps();
+        let path_str = file_path.to_str().unwrap();
+        assert_eq!(evalcond(&["-e", path_str], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["-f", path_str], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["-d", path_str], &opts, &vars, true), 1);
+    }
+
+    #[test]
+    fn test_directory() {
+        let dir = TempDir::new().unwrap();
+        let (opts, vars) = empty_maps();
+        let path_str = dir.path().to_str().unwrap();
+        assert_eq!(evalcond(&["-d", path_str], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["-f", path_str], &opts, &vars, true), 1);
+    }
+
+    #[test]
+    fn test_logical_not() {
+        let (opts, vars) = empty_maps();
+        assert_eq!(evalcond(&["!", "-z", "hello"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["!", "-n", ""], &opts, &vars, true), 0);
+    }
+
+    #[test]
+    fn test_logical_and() {
+        let (opts, vars) = empty_maps();
+        assert_eq!(evalcond(&["-n", "a", "-a", "-n", "b"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["-n", "a", "-a", "-z", "b"], &opts, &vars, true), 1);
+    }
+
+    #[test]
+    fn test_logical_or() {
+        let (opts, vars) = empty_maps();
+        assert_eq!(evalcond(&["-z", "a", "-o", "-n", "b"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["-z", "a", "-o", "-z", "b"], &opts, &vars, true), 1);
+    }
+
+    #[test]
+    fn test_variable_exists() {
+        let opts = HashMap::new();
+        let mut vars = HashMap::new();
+        vars.insert("MYVAR".to_string(), "value".to_string());
+        assert_eq!(evalcond(&["-v", "MYVAR"], &opts, &vars, true), 0);
+        assert_eq!(evalcond(&["-v", "NOTEXIST"], &opts, &vars, true), 1);
     }
 }
