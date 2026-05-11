@@ -2356,9 +2356,12 @@ pub fn bin_read(name: &str, args: &[String],                                 // 
         return 1;
     }
 
-    // c:6453-6454 — compctl path.
+    // c:6453-6455 — `return compctlreadptr(name, args, ops, reply)`.
+    // The compctlreadptr function pointer is set by the zsh/compctl
+    // module's load hook; Rust dispatches to the static
+    // crate::ported::zle::compctl::compctlread port (zle/compctl.rs:1235).
     if OPT_ISSET(ops, b'l') || OPT_ISSET(ops, b'c') {                        // c:6453
-        return 0; // compctlread deferred
+        return crate::ported::zle::compctl::compctlread(name, &args[argi..]);
     }
 
     // Optional explicit input FD via -u.
