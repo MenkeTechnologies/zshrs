@@ -566,15 +566,17 @@ pub fn finish_(_m: *const module) -> i32 {                                   // 
 // pending the proper ports of their home files.
 // =====================================================================
 
-/// `emulation` — int global from `Src/options.c`. Holds the current
-/// emulation bitmap (EMULATE_ZSH/KSH/SH/CSH); EMULATION() macro tests
-/// bits against it.
-pub static emulation: AtomicI32 = AtomicI32::new(0);
+// `emulation` lives in `crate::ported::options::emulation` per Rule C
+// (its C definition is `Src/options.c:36`, not `ksh93.c`). The
+// `EMULATION(bits)` macro at zsh.h:2347 tests bits against it.
+pub use crate::ported::options::emulation;
 
-/// `locallevel` — int global from `Src/init.c:166`. Tracks function-
-/// local-scope nesting depth. ksh93_wrapper increments before
-/// createparam() (c:158) and decrements after (c:224).
-pub static locallevel: AtomicI32 = AtomicI32::new(0);
+// `locallevel` lives in `crate::ported::params::locallevel` per Rule C
+// (its C definition is `Src/params.c:54`, not `ksh93.c`). Bumped by
+// `startparamscope` on function entry, decremented by `endparamscope`
+// on return. `ksh93_wrapper` increments before `createparam()` and
+// decrements after.
+pub use crate::ported::params::locallevel;
 
 /// `curkeymapname` — `char *` global from `Src/Zle/zle_keymap.c`,
 /// declared `extern` at c:189. Holds the active keymap name.

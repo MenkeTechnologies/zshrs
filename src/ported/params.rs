@@ -81,6 +81,14 @@ pub fn set_foundparam(nam: Option<String>) {
 // Hand-wavingly, this is incremented at every function call and decremented // c:49
 // at every function return.  See startparamscope().                        // c:50
 
+/// Port of `mod_export int locallevel;` from `Src/params.c:54`.
+/// Tracks function-local-scope nesting depth. Bumped by
+/// `startparamscope()` (params.c:5879) on every function call,
+/// decremented by `endparamscope()` (params.c:5950) on return.
+#[allow(non_upper_case_globals)]
+pub static locallevel: std::sync::atomic::AtomicI32 =                        // c:54
+    std::sync::atomic::AtomicI32::new(0);
+
 
 // ---------------------------------------------------------------------------
 // Real `param` struct lives in Src/zsh.h:1829 (port at zsh_h.rs:750).
@@ -5519,16 +5527,17 @@ pub fn check_warn_pm(
     if may_warn_about_nested_vars == 0 && created == 0 {
         return;
     }
-    // locallevel global from utils; forklevel global pending its
-    // own port — treat as 0 until exec.rs lands the fork-depth tracker.
-    let locallevel: i32 = crate::ported::utils::locallevel();
+    // forklevel global pending its own port — treat as 0 until exec.rs
+    // lands the fork-depth tracker. `locallevel` is the canonical
+    // `pub static` above (port of params.c:54).
+    let cur_local: i32 = locallevel.load(std::sync::atomic::Ordering::Relaxed);
     let forklevel: i32 = 0;
     if created != 0 && isset(WARNCREATEGLOBAL) {
-        if locallevel <= forklevel || pm.level != 0 {
+        if cur_local <= forklevel || pm.level != 0 {
             return;
         }
     } else if created == 0 && isset(WARNNESTEDVAR) {
-        if pm.level >= locallevel {
+        if pm.level >= cur_local {
             return;
         }
     } else {
@@ -7211,8 +7220,9 @@ pub fn scancountparams(_hn: &crate::ported::zsh_h::param, flags: i32, numparamva
 /// global isn't yet ported. `setsecondstype`/`setrawseconds`/
 /// `delenv` are not yet in zshrs and route through best-effort
 /// no-ops for now (C macros / Src/params.c:4640 / Src/params.c:5266).
-pub fn scanendscope(pm: &mut crate::ported::zsh_h::param, locallevel: i32, _flags: i32) {
-    if pm.level <= locallevel {
+pub fn scanendscope(pm: &mut crate::ported::zsh_h::param, _flags: i32) {     // c:5900
+    let cur_local = locallevel.load(std::sync::atomic::Ordering::Relaxed);
+    if pm.level <= cur_local {                                                // c:5903
         return;
     }
     let pmflags = pm.node.flags as u32;
