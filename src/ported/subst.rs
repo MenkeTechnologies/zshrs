@@ -2390,16 +2390,53 @@ pub fn paramsubst(
                 } else {
                     String::new()
                 }
-            } else if let Some(magic_val) = crate::fusevm_bridge::try_with_executor(|exec| {
-                exec.get_special_array_value(&var_name, sub)
-            })
-            .flatten() {
-                // Magic-assoc lookup: aliases, functions, options,
-                // commands, jobtexts, etc. Direct port of zsh's
-                // per-magic-table getfn dispatch (Src/Modules/
-                // parameter.c et al.). Was falling through to scalar
-                // char-index which returned empty.
-                magic_val // c:2926
+            } else if let Some(magic_val) = {
+                // c:2926 — magic-assoc per-key lookup. Mirrors C's
+                // paramtab dispatch through `partab[]` (Src/Modules/
+                // parameter.c:2234): each magic-name is registered
+                // with its own getfn pointer; we inline the same
+                // dispatch by calling the per-array `getpm<X>` ports.
+                // Each C fn returns a freshly-built `Param`; the
+                // value lives in `u_str`.
+                use crate::ported::modules::parameter::*;
+                let nul = std::ptr::null_mut();
+                let pm: Option<crate::ported::zsh_h::Param> = if sub == "@" || sub == "*" {
+                    None    // splice form — defer to scan path below.
+                } else { match var_name.as_str() {
+                    "aliases"             => getpmralias(nul, sub),       // c:1923
+                    "galiases"            => getpmgalias(nul, sub),       // c:1937
+                    "saliases"            => getpmsalias(nul, sub),       // c:1951
+                    "dis_aliases"         => getpmdisralias(nul, sub),    // c:1930
+                    "dis_galiases"        => getpmdisgalias(nul, sub),    // c:1944
+                    "dis_saliases"        => getpmdissalias(nul, sub),    // c:1958
+                    "builtins"            => getpmbuiltin(nul, sub),      // c:799
+                    "dis_builtins"        => getpmdisbuiltin(nul, sub),   // c:806
+                    "commands"            => getpmcommand(nul, sub),      // c:213
+                    "functions"           => getpmfunction(nul, sub),     // c:444
+                    "dis_functions"       => getpmdisfunction(nul, sub),  // c:451
+                    "functions_source"    => getpmfunction_source(nul, sub),     // c:591
+                    "dis_functions_source"=> getpmdisfunction_source(nul, sub),  // c:600
+                    "nameddirs"           => getpmnameddir(nul, sub),     // c:1597
+                    "userdirs"            => getpmuserdir(nul, sub),      // c:1646
+                    "options"             => getpmoption(nul, sub),       // c:988
+                    "parameters"          => getpmparameter(nul, sub),    // c:99
+                    "history"             => getpmhistory(nul, sub),      // c:1156
+                    "modules"             => getpmmodule(nul, sub),       // c:1040
+                    "jobdirs"             => getpmjobdir(nul, sub),       // c:1457
+                    "jobstates"           => getpmjobstate(nul, sub),     // c:1385
+                    "jobtexts"            => getpmjobtext(nul, sub),      // c:1277
+                    "usergroups"          => getpmusergroups(nul, sub),   // c:2102
+                    _ => None,
+                }};
+                pm.and_then(|p| p.u_str)
+                    .or_else(|| crate::fusevm_bridge::try_with_executor(|exec| {
+                        // Splice and not-covered names fall through to
+                        // the executor dispatcher (jobtexts/widgets/
+                        // signals splice paths and remaining names).
+                        exec.get_special_array_value(&var_name, sub)
+                    }).flatten())
+            } {
+                magic_val
             } else {
                 // Scalar with subscript — char-index access.
                 let scalar = vars_get(&var_name).unwrap_or_default();
@@ -4854,15 +4891,46 @@ pub fn paramsubst(
                     // c:1625
                     String::new() // c:1625
                 } // c:1625
-            } else if let Some(magic_val) = crate::fusevm_bridge::try_with_executor(|exec| {
-                exec.get_special_array_value(&var_name, sub)
-            })
-            .flatten() {
-                // Magic-assoc lookup — \$aliases[name],
-                // \$functions[name], etc. Mirror of braced-form
-                // fix from bb2b489624. Direct port of zsh's
-                // per-magic-table getfn dispatch.
-                magic_val // c:1625
+            } else if let Some(magic_val) = {
+                // c:1625 — magic-assoc per-key lookup via the
+                // partab[] dispatch (Src/Modules/parameter.c:2234).
+                // See companion dispatch at the braced-form site.
+                use crate::ported::modules::parameter::*;
+                let nul = std::ptr::null_mut();
+                let pm: Option<crate::ported::zsh_h::Param> = if sub == "@" || sub == "*" {
+                    None
+                } else { match var_name.as_str() {
+                    "aliases"             => getpmralias(nul, sub),
+                    "galiases"            => getpmgalias(nul, sub),
+                    "saliases"            => getpmsalias(nul, sub),
+                    "dis_aliases"         => getpmdisralias(nul, sub),
+                    "dis_galiases"        => getpmdisgalias(nul, sub),
+                    "dis_saliases"        => getpmdissalias(nul, sub),
+                    "builtins"            => getpmbuiltin(nul, sub),
+                    "dis_builtins"        => getpmdisbuiltin(nul, sub),
+                    "commands"            => getpmcommand(nul, sub),
+                    "functions"           => getpmfunction(nul, sub),
+                    "dis_functions"       => getpmdisfunction(nul, sub),
+                    "functions_source"    => getpmfunction_source(nul, sub),
+                    "dis_functions_source"=> getpmdisfunction_source(nul, sub),
+                    "nameddirs"           => getpmnameddir(nul, sub),
+                    "userdirs"            => getpmuserdir(nul, sub),
+                    "options"             => getpmoption(nul, sub),
+                    "parameters"          => getpmparameter(nul, sub),
+                    "history"             => getpmhistory(nul, sub),
+                    "modules"             => getpmmodule(nul, sub),
+                    "jobdirs"             => getpmjobdir(nul, sub),
+                    "jobstates"           => getpmjobstate(nul, sub),
+                    "jobtexts"            => getpmjobtext(nul, sub),
+                    "usergroups"          => getpmusergroups(nul, sub),
+                    _ => None,
+                }};
+                pm.and_then(|p| p.u_str)
+                    .or_else(|| crate::fusevm_bridge::try_with_executor(|exec| {
+                        exec.get_special_array_value(&var_name, sub)
+                    }).flatten())
+            } {
+                magic_val
             } else {
                 // c:1625
                 let s = vars_get(&var_name).unwrap_or_default(); // c:1625
