@@ -100,6 +100,17 @@ pub static TRAP_RETURN: std::sync::atomic::AtomicI32 =                      // c
 pub use crate::fusevm_bridge::*;
 pub(crate) use crate::fusevm_bridge::{ExecutorContext};
 
+/// Free-function wrapper for `getoutput()` from `Src/exec.c:4712`.
+/// Runs a command-substitution body in the active executor and
+/// returns its captured stdout. The C signature is `LinkList
+/// getoutput(char *cmd, int qt)` but every caller in subst.rs
+/// joins the list back into a string, so the Rust port collapses
+/// the intermediate.
+pub fn getoutput(cmd: &str) -> String {                                      // c:4712 (Src/exec.c)
+    try_with_executor(|exec| exec.run_command_substitution(cmd))
+        .unwrap_or_default()
+}
+
 /// Match an intercept pattern against a command name or full command string.
 /// Supports: exact match, glob ("git *", "_*", "*"), or "all".
 
