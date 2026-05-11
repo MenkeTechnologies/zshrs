@@ -1334,7 +1334,7 @@ fn widget_overwrite_mode(zle: &mut Zle) {
     // Port of overwritemode() from Src/Zle/zle_misc.c. Toggles between
     // insert (default) and overwrite. Insert mode appends at the cursor;
     // overwrite replaces the char under the cursor.
-    zle.insmode = !zle.insmode;
+    crate::ported::zle::zle_main::INSMODE.fetch_xor(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_quoted_insert(zle: &mut Zle) {
@@ -1389,14 +1389,14 @@ fn widget_vi_cmd_mode(zle: &mut Zle) {
 fn widget_vi_insert(zle: &mut Zle) {
     // Port of viinsert() from Src/Zle/zle_vi.c:355.
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
-    zle.insmode = true;
+    crate::ported::zle::zle_main::INSMODE.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_vi_insert_bol(zle: &mut Zle) {
     // Port of viinsertbol() from Src/Zle/zle_vi.c:374. Vim's `I` —
     // first-non-blank of current line, then enter insert mode.
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
-    zle.insmode = true;
+    crate::ported::zle::zle_main::INSMODE.store(1, std::sync::atomic::Ordering::SeqCst);
     let bol = zle.find_bol(zle.zlecs);
     let mut p = bol;
     while p < zle.zlell && zle.zleline[p].is_whitespace() && zle.zleline[p] != '\n' {
@@ -1411,7 +1411,7 @@ fn widget_vi_add_next(zle: &mut Zle) {
     // step right one then enter insert mode (so insert lands AFTER
     // the cursor's current char).
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
-    zle.insmode = true;
+    crate::ported::zle::zle_main::INSMODE.store(1, std::sync::atomic::Ordering::SeqCst);
     if zle.zlecs < zle.find_eol(zle.zlecs) {
         zle.zlecs += 1;
     }
@@ -1422,7 +1422,7 @@ fn widget_vi_add_eol(zle: &mut Zle) {
     // Port of viaddeol() from Src/Zle/zle_vi.c:346. Vim's `A` —
     // jump to end-of-line then enter insert mode.
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
-    zle.insmode = true;
+    crate::ported::zle::zle_main::INSMODE.store(1, std::sync::atomic::Ordering::SeqCst);
     zle.zlecs = zle.find_eol(zle.zlecs);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
@@ -1674,7 +1674,7 @@ fn widget_vi_replace(zle: &mut Zle) {
     // Switch to insert keymap with overwrite mode so subsequent self-
     // inserts replace existing chars instead of pushing them right.
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
-    zle.insmode = false;
+    crate::ported::zle::zle_main::INSMODE.store(0, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_vi_replace_chars(zle: &mut Zle) {
@@ -3651,11 +3651,11 @@ mod tests {
     #[test]
     fn overwrite_mode_widget_toggles_insmode() {
         let mut zle = Zle::new();
-        let initial = zle.insmode;
+        let initial = (crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst) != 0);
         widget_overwrite_mode(&mut zle);
-        assert_eq!(zle.insmode, !initial);
+        assert_eq!((crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst) != 0), !initial);
         widget_overwrite_mode(&mut zle);
-        assert_eq!(zle.insmode, initial);
+        assert_eq!((crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst) != 0), initial);
     }
 
     #[test]

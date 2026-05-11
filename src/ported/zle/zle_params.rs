@@ -149,7 +149,7 @@ impl Zle {
     /// Sub-port of `get_zle_state()` (Src/Zle/zle_params.c) which
     /// emits "insert" / "overwrite" + " " + "vicmd" / "main".
     pub fn is_insert_mode(&self) -> bool {
-        self.insmode
+        (crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst) != 0)
     }
 
     /// `$REGION_ACTIVE` accessor — non-zero when a visual selection
@@ -168,7 +168,7 @@ impl Zle {
     pub fn get_zle_state(&self) -> String {
         let mut state = String::new();
 
-        if self.insmode {
+        if (crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst) != 0) {
             state.push_str("insert");
         } else {
             state.push_str("overwrite");

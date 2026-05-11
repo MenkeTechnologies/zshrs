@@ -254,7 +254,7 @@ impl Zle {
     /// overwrite existing chars instead of pushing them right.
     pub fn vi_replace_mode(&mut self) {
         crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
-        self.insmode = false; // Overwrite mode
+        crate::ported::zle::zle_main::INSMODE.store(0, std::sync::atomic::Ordering::SeqCst); // Overwrite mode
     }
 
     /// Toggle the case of the character under the cursor and advance.
@@ -1037,7 +1037,7 @@ pub fn getvirange(zle: &mut crate::ported::zle::zle_main::Zle, _wf: i32) -> i32 
 /// recording branch leaves to a later widget tick.
 pub fn startvichange(zle: &mut crate::ported::zle::zle_main::Zle, im: i32) { // c:88
     if im > -1 {                                                             // c:90
-        zle.insmode = im != 0;                                               // c:91
+        crate::ported::zle::zle_main::INSMODE.store(if im != 0 { 1 } else { 0 }, std::sync::atomic::Ordering::SeqCst);                                               // c:91
     }
 }
 

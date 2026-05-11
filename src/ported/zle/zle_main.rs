@@ -182,9 +182,8 @@ pub struct Zle {
     // location of mark                                                      // c:81
     /// Mark position
     pub mark: usize,
-    // insert mode/overwrite mode flag                                       // c:124
-    /// Insert mode (true) or overwrite mode (false)
-    pub insmode: bool,
+    // `insmode` moved to file-scope `INSMODE` static below
+    // (matches `int insmode` from zle_main.c:124).
     // `lastchar` moved to file-scope `LASTCHAR` static in compcore.rs
     // (matches the C `int lastchar` global from zle_main.c).
     /// Last character as wide char (always used in Rust)
@@ -378,7 +377,6 @@ impl Zle {
             zlecs: 0,
             zlell: 0,
             mark: 0,
-            insmode: true,
             lastchar_wide: 0,
             lastchar_wide_valid: false,
             lbindk: None,
@@ -918,7 +916,7 @@ impl Zle {
 
     /// Self-insert character (internal, used by zlecore)
     fn do_self_insert(&mut self, c: char) {
-        if self.insmode {
+        if (crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst) != 0) {
             // Insert mode
             self.zleline.insert(self.zlecs, c);
             self.zlecs += 1;
@@ -1995,6 +1993,13 @@ pub fn zle_resetprompt() {                                                   // 
 /// without a live Zle handle here we route through this flag.
 pub static ZLE_RESET_NEEDED: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int insmode` from `Src/Zle/zle_main.c:124`. Non-zero
+/// when ZLE is in insert mode (vs overwrite). Toggled by
+/// `overwrite-mode` widget; consulted by `self-insert` /
+/// `selfinsert()` to choose insert vs replace semantics.
+pub static INSMODE: std::sync::atomic::AtomicI32 =                           // c:124
+    std::sync::atomic::AtomicI32::new(1);
 
 /// Port of `zleaftertrap()` from `Src/Zle/zle_main.c:2113`.
 /// ```c
