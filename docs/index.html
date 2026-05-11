@@ -300,8 +300,8 @@
             <h4>Auto-derived OpenAPI 3.1</h4>
             <p><code>GET /openapi</code> serves a spec-compliant OpenAPI
             doc generated on every request from the daemon&rsquo;s op
-            registry (<code>OP_NAMES</code>). 106 paths today (4 meta + 99
-            ops + 3 SSE streams). bearerAuth declared only when
+            registry (<code>OP_NAMES</code>). 108 paths today (4 meta + 101
+            ops + 3 stream routes). bearerAuth declared only when
             <code>[http.tokens]</code> is populated. Loopback bind requires
             no token; non-loopback bind refuses without one.</p>
           </div>
@@ -475,7 +475,7 @@
           <li><strong><code>src/recorder/</code> &mdash; 1 file, feature-gated.</strong> Every symbol <code>#[cfg(feature = "recorder")]</code>; deleted by rustc when the feature is off. Compiled into the separate <code>zshrs-recorder</code> binary, never the default <code>zshrs</code> build.</li>
           <li><strong><code>src/zsh/</code> &mdash; vendored upstream.</strong> Read-only reference. The C spec; never modified.</li>
         </ul>
-        <p>Workspace siblings: <code>parse/</code> (4 files &mdash; the lexer + parser port, factored into its own crate so the daemon can re-tokenize without dragging the executor in), <code>daemon/</code> (41 files, <code>zshrs-daemon</code>), <code>compsys/</code> (27 files, completion-system rkyv mmap + zstyle), <code>fish/</code> (157 files, fish-style reader/highlighter/abbreviations), <code>bins/</code> (3 entry points: <code>zshrs</code>, <code>zshrs-recorder</code> with <code>required-features = ["recorder"]</code>, <code>zd</code> with <code>required-features = ["zd"]</code>). 412 <code>.rs</code> files total &middot; 368,124 Rust LOC (with tests + <code>build.rs</code>, excluding <code>target/</code>; <code>wc</code> on 2026-05-11).</p>
+        <p>Workspace siblings: <code>parse/</code> (4 files &mdash; the lexer + parser port, factored into its own crate so the daemon can re-tokenize without dragging the executor in), <code>daemon/</code> (41 files, <code>zshrs-daemon</code>), <code>compsys/</code> (27 files, completion-system rkyv mmap + zstyle), <code>fish/</code> (157 files, fish-style reader/highlighter/abbreviations), <code>bins/</code> (3 entry points: <code>zshrs</code>, <code>zshrs-recorder</code> with <code>required-features = ["recorder"]</code>, <code>zd</code> with <code>required-features = ["zd"]</code>). 412 <code>.rs</code> files total &middot; 369,525 Rust LOC (<code>git ls-files '*.rs' | xargs wc -l</code>, 2026-05-11).</p>
       </section>
 
       <!-- ════════════════════════════════════════════════════════════ -->
@@ -724,7 +724,7 @@ uname  date  mktemp</div>
         box. Default token comes from <code>$DAEMON_TOKEN</code>. Loopback bind requires no
         token; non-loopback bind refuses to start until <code>[http.tokens]</code> is populated.
         <code>GET /openapi</code> (alias <code>/openapi.json</code>) returns an OpenAPI 3.1
-        document auto-derived from <code>OP_NAMES</code> &mdash; 106 paths today (4 meta + 99 ops
+        document auto-derived from <code>OP_NAMES</code> &mdash; 108 paths today (4 meta + 101 ops
         + 3 streams), with <code>ErrPayload</code> in components and <code>bearerAuth</code>
         declared only when tokens are configured.</p>
 
