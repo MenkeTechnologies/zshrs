@@ -1233,9 +1233,13 @@ mod tests {
                   argscount: 0, argsalloc: 0 }
     }
     fn ops_with(args: &[(u8, &str)]) -> crate::ported::zsh_h::options {
+        // ind[c] encodes "set" in low 2 bits (1 = -X, 2 = +X) plus the
+        // 1-based args[] slot shifted up by 2 (per zsh.h:1412 OPT_ARG
+        // macro `args[(ind[c]>>2) - 1]`). idx=0 → ind=4 (slot 1, set
+        // via -), idx=1 → ind=8 (slot 2), etc.
         let mut ops = empty_ops();
         for (idx, (opt, val)) in args.iter().enumerate() {
-            ops.ind[*opt as usize] = (idx + 4) as u8;
+            ops.ind[*opt as usize] = (((idx + 1) << 2) | 1) as u8;
             ops.args.push(val.to_string());
             ops.argscount = (idx + 1) as i32;
             ops.argsalloc = (idx + 1) as i32;

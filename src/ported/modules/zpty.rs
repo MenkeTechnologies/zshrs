@@ -209,10 +209,33 @@ pub struct ZptyOptions {
     pub pattern: Option<String>,
 }
 
-/// `zpty` builtin entry point.
-/// Port of `bin_zpty()` from Src/Modules/zpty.c:773 — same
-/// dispatch tree (delete / list / write / read / test / spawn).
-pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut HashMap<String, PtyCmd>) -> (i32, String) { // c:773
+/// `zpty` builtin entry point — C-faithful signature matching
+/// `static int bin_zpty(char *nam, char **args, Options ops, int func)`
+/// from Src/Modules/zpty.c:773. Reads `-d/-L/-w/-r/-t/-b/-e/-T/-m`
+/// flags via OPT_ISSET/OPT_ARG, dispatches by mode, emits output to
+/// stdout/stderr based on status, returns the i32 status.
+#[allow(non_snake_case)]
+pub fn bin_zpty(_nam: &str, args: &[String],                                 // c:773
+                ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
+    let options = ZptyOptions {
+        delete:   OPT_ISSET(ops, b'd'),
+        list:     OPT_ISSET(ops, b'L'),
+        write:    OPT_ISSET(ops, b'w'),
+        read_var: if OPT_ISSET(ops, b'r') { OPT_ARG(ops, b'r').map(String::from) } else { None },
+        test:     OPT_ISSET(ops, b't'),
+        block:    OPT_ISSET(ops, b'b'),
+        echo:     OPT_ISSET(ops, b'e'),
+        timeout:  OPT_ARG(ops, b'T').and_then(|s| s.parse().ok()),
+        pattern:  OPT_ARG(ops, b'm').map(String::from),
+    };
+    let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let args = &argv[..];
+    let options = &options;
+    let mut cmds_guard = ptycmds().lock()
+        .unwrap_or_else(|e| { e.into_inner() });
+    let cmds: &mut HashMap<String, PtyCmd> = &mut *cmds_guard;
+    let (status, output): (i32, String) = (|| {
     let mut output = String::new();
 
     if options.delete {
@@ -404,6 +427,12 @@ pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut HashMap<String,
             (1, "zpty: not supported on this platform\n".to_string())
         }
     }
+    })();
+    drop(cmds_guard);
+    if !output.is_empty() {
+        if status == 0 { print!("{}", output); } else { eprint!("{}", output); }
+    }
+    status
 }
 
 #[cfg(test)]
@@ -449,55 +478,47 @@ mod tests {
         assert!(!cmd.finished);
     }
 
+    fn ops_with_flag(c: u8) -> crate::ported::zsh_h::options {
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let mut o = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                              argscount: 0, argsalloc: 0 };
+        o.ind[c as usize] = 1;
+        o
+    }
+
+    /// Verifies `-L` (list) on an empty pty table returns 0.
+    /// Mirrors Src/Modules/zpty.c:773 -L arm.
     #[test]
     fn test_builtin_zpty_list_empty() {
-        let mut cmds = HashMap::<String, PtyCmd>::new();
-        let options = ZptyOptions {
-            list: true,
-            ..Default::default()
-        };
-
-        let (status, output) = bin_zpty(&[], &options, &mut cmds);
+        // Reset global PTYCMDS for test isolation.
+        *ptycmds().lock().unwrap() = HashMap::<String, PtyCmd>::new();
+        let status = bin_zpty("zpty", &[], &ops_with_flag(b'L'), 0);
         assert_eq!(status, 0);
-        assert!(output.is_empty());
     }
 
+    /// Verifies `-d` with no positional args clears all sessions.
+    /// Mirrors Src/Modules/zpty.c:773 -d arm.
     #[test]
     fn test_builtin_zpty_delete_all() {
-        let mut cmds = HashMap::<String, PtyCmd>::new();
-        let options = ZptyOptions {
-            delete: true,
-            ..Default::default()
-        };
-
-        let (status, _) = bin_zpty(&[], &options, &mut cmds);
+        *ptycmds().lock().unwrap() = HashMap::<String, PtyCmd>::new();
+        let status = bin_zpty("zpty", &[], &ops_with_flag(b'd'), 0);
         assert_eq!(status, 0);
     }
 
+    /// Verifies `-w` with no positional args returns 1 (needs name + data).
     #[test]
     fn test_builtin_zpty_write_no_args() {
-        let mut cmds = HashMap::<String, PtyCmd>::new();
-        let options = ZptyOptions {
-            write: true,
-            ..Default::default()
-        };
-
-        let (status, output) = bin_zpty(&[], &options, &mut cmds);
+        *ptycmds().lock().unwrap() = HashMap::<String, PtyCmd>::new();
+        let status = bin_zpty("zpty", &[], &ops_with_flag(b'w'), 0);
         assert_eq!(status, 1);
-        assert!(output.contains("requires"));
     }
 
+    /// Verifies `-t` with no positional args returns 1 (needs name).
     #[test]
     fn test_builtin_zpty_test_no_args() {
-        let mut cmds = HashMap::<String, PtyCmd>::new();
-        let options = ZptyOptions {
-            test: true,
-            ..Default::default()
-        };
-
-        let (status, output) = bin_zpty(&[], &options, &mut cmds);
+        *ptycmds().lock().unwrap() = HashMap::<String, PtyCmd>::new();
+        let status = bin_zpty("zpty", &[], &ops_with_flag(b't'), 0);
         assert_eq!(status, 1);
-        assert!(output.contains("requires"));
     }
 }
 

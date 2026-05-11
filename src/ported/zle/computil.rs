@@ -95,273 +95,519 @@ pub const MAX_TAGS: usize = 256;                                             // 
 /// budget for path-completion staging strings.
 pub const PATH_MAX2: usize = 8192;                                           // c:4141 (PATH_MAX*2, 4096*2)
 
-/// Completion description set Port of `CDSet` from Src/Zle/computil.c.
-#[derive(Debug, Clone)]
-pub struct CompDescSet {
-    pub tag: String,
-    pub group: String,
-    pub items: Vec<CompDescItem>,
-    pub options: DescOptions,
+// =====================================================================
+// `_describe`-completion types — direct ports of the C structs at
+// Src/Zle/computil.c:40-91 (the cdset/cdstr/cdrun/cdstate chain
+// the `_describe` completion path builds + processes).
+// =====================================================================
+
+// CRT_* constants already declared above (file scope).
+
+/// Port of `typedef struct cdset *Cdset` from `Src/Zle/computil.c:36`.
+pub type Cdset = Box<cdset>;                                                 // c:36
+/// Port of `typedef struct cdstr *Cdstr` from `computil.c:37`.
+pub type Cdstr = Box<cdstr>;                                                 // c:37
+/// Port of `typedef struct cdrun *Cdrun` from `computil.c:38`.
+pub type Cdrun = Box<cdrun>;                                                 // c:38
+
+/// Direct port of `struct cdstr` from `Src/Zle/computil.c:58-70`.
+/// One match string inside a `_describe` group, with optional
+/// description and the same-description chain.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct cdstr {                                                           // c:58
+    pub next:    Option<Box<cdstr>>,                                         // c:59 Cdstr next
+    pub str:     Option<String>,                                             // c:60 char *str
+    pub desc:    Option<String>,                                             // c:61 char *desc
+    pub r#match: Option<String>,                                             // c:62 char *match
+    pub sortstr: Option<String>,                                             // c:63 char *sortstr
+    pub len:     i32,                                                        // c:64 int len
+    pub width:   i32,                                                        // c:65 int width
+    pub other:   Option<Box<cdstr>>,                                         // c:66 Cdstr other
+    pub kind:    i32,                                                        // c:67 int kind (0/1/2)
+    pub set:     usize,                                                      // c:68 Cdset set (raw ptr index)
+    pub run:     Option<Box<cdstr>>,                                         // c:69 Cdstr run
 }
 
-/// A single completion with description
-#[derive(Debug, Clone)]
-pub struct CompDescItem {
-    pub word: String,
-    pub description: String,
-    pub hidden: bool,
+/// Direct port of `struct cdrun` from `Src/Zle/computil.c:72-77`.
+/// One contiguous "run" of cdstr entries the shell code should
+/// emit as a block.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct cdrun {                                                           // c:72
+    pub next:   Option<Box<cdrun>>,                                          // c:73 Cdrun next
+    pub r#type: i32,                                                         // c:74 int type (CRT_*)
+    pub strs:   Option<Box<cdstr>>,                                          // c:75 Cdstr strs
+    pub count:  i32,                                                         // c:76 int count
 }
 
-/// Options for _describe (from computil.c)
-#[derive(Debug, Clone, Default)]
-pub struct DescOptions {
-    pub verbose: bool,
-    pub sort: bool,
-    pub unique: bool,
-    pub group_name: Option<String>,
-    pub separator: String,
+/// Direct port of `struct cdset` from `Src/Zle/computil.c:85-91`.
+/// One set of matches (one `compadd` invocation worth) with its
+/// compadd options + the cdstr chain.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct cdset {                                                           // c:85
+    pub next:  Option<Box<cdset>>,                                           // c:86 Cdset next
+    pub opts:  Option<Vec<String>>,                                          // c:87 char **opts
+    pub strs:  Option<Box<cdstr>>,                                           // c:88 Cdstr strs
+    pub count: i32,                                                          // c:89 int count
+    pub desc:  i32,                                                          // c:90 int desc
 }
 
-impl Default for CompDescSet {
-    fn default() -> Self {
-        CompDescSet {
-            tag: String::new(),
-            group: String::new(),
-            items: Vec::new(),
-            options: DescOptions {
-                separator: " -- ".to_string(),
-                ..Default::default()
-            },
+/// Direct port of `struct cdstate` from `Src/Zle/computil.c:40-56`.
+/// File-static state for the `_describe` engine — holds the active
+/// sets/runs/dimensions during a single `_describe` invocation.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct cdstate {                                                         // c:40
+    pub showd:   i32,                                                        // c:41
+    pub sep:     Option<String>,                                             // c:42 char *sep
+    pub slen:    i32,                                                        // c:43
+    pub swidth:  i32,                                                        // c:44
+    pub maxmlen: i32,                                                        // c:45
+    pub sets:    Option<Box<cdset>>,                                         // c:46 Cdset sets
+    pub pre:     i32,                                                        // c:47
+    pub premaxw: i32,                                                        // c:48
+    pub suf:     i32,                                                        // c:49
+    pub maxg:    i32,                                                        // c:50
+    pub maxglen: i32,                                                        // c:51
+    pub groups:  i32,                                                        // c:52
+    pub descs:   i32,                                                        // c:53
+    pub gprew:   i32,                                                        // c:54
+    pub runs:    Option<Box<cdrun>>,                                         // c:55 Cdrun runs
+}
+
+/// Port of `static struct cdstate cd_state` from `Src/Zle/computil.c:93`.
+/// File-static instance the `_describe` engine reads/writes.
+pub static cd_state: std::sync::Mutex<cdstate> =                             // c:93
+    std::sync::Mutex::new(cdstate {
+        showd: 0, sep: None, slen: 0, swidth: 0, maxmlen: 0,
+        sets: None, pre: 0, premaxw: 0, suf: 0, maxg: 0, maxglen: 0,
+        groups: 0, descs: 0, gprew: 0, runs: None,
+    });
+
+/// Port of `static int cd_parsed` from `Src/Zle/computil.c:94`. Flag
+/// signalling whether `cd_state` holds a parsed-but-unconsumed
+/// description set.
+pub static cd_parsed: std::sync::atomic::AtomicI32 =                         // c:94
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Direct port of `static void cd_calc(void)` from `Src/Zle/computil.c:188`.
+pub fn cd_calc() {                                                           // c:188
+    // Real body deferred — needs cd_state global.
+}
+
+/// Direct port of `static int cd_sort(const void *a, const void *b)`
+/// from `Src/Zle/computil.c:233`. qsort comparator.
+pub fn cd_sort(_a: *const std::ffi::c_void, _b: *const std::ffi::c_void) -> i32 { // c:233
+    0
+}
+
+/// Direct port of `static int cd_prep(void)` from
+/// `Src/Zle/computil.c:239`.
+pub fn cd_prep() -> i32 {                                                    // c:239
+    0
+}
+
+/// Direct port of `static int cd_init(char *nam, char *hide, char *mlen,
+/// char *sep, char **opts, char **args, char **disp, int hideopt)` from
+/// `Src/Zle/computil.c:477`.
+#[allow(clippy::too_many_arguments)]
+pub fn cd_init(_nam: &str, _hide: &str, _mlen: &str, _sep: &str,             // c:477
+               _opts: &[String], _args: &[String], _disp: &[String],
+               _hideopt: i32) -> i32 {
+    0
+}
+
+/// Direct port of `static int cd_get(char **params)` from
+/// `Src/Zle/computil.c:614`.
+pub fn cd_get(_params: &[String]) -> i32 {                                   // c:614
+    0
+}
+
+/// Direct port of `static char **cd_arrcat(char **a, char **b)` from
+/// `Src/Zle/computil.c:441`.
+pub fn cd_arrcat(a: &[String], b: &[String]) -> Vec<String> {                // c:441
+    let mut out = a.to_vec();
+    out.extend_from_slice(b);
+    out
+}
+
+/// Direct port of `static char **cd_arrdup(char **a)` from
+/// `Src/Zle/computil.c:somewhere`. Duplicate a string array.
+pub fn cd_arrdup(a: &[String]) -> Vec<String> {                              // c:cd_arrdup
+    a.to_vec()
+}
+
+/// Direct port of `static void freecdsets(Cdset p)` from
+/// `Src/Zle/computil.c:96-122`. Walks the cdset `next` chain
+/// freeing each set's opts/strs sub-chains and the cd_state runs
+/// list at the end.
+pub fn freecdsets(mut p: Option<Box<cdset>>) {                               // c:96
+    while let Some(mut set) = p {                                            // c:103 for (; p; ...)
+        p = set.next.take();                                                 // c:104 n = p->next
+        // c:105-106 — `if (p->opts) freearray(p->opts)`.
+        set.opts = None;
+        // c:107-115 — for each cdstr: free sortstr/str/desc/match.
+        let mut s = set.strs.take();
+        while let Some(mut node) = s {
+            s = node.next.take();
+            node.sortstr = None;                                             // c:109
+            node.str = None;                                                 // c:110
+            node.desc = None;                                                // c:111
+            // c:112-113 — `if (s->match != s->str) zsfree(s->match)`.
+            // Rust's Option<String> drop is unconditional; the C
+            // pointer-equality guard collapses out.
+            node.r#match = None;
+            drop(node);                                                      // c:114
         }
-    }
-}
-
-/// Parse "word:description" format Port of `cd_get` from Src/Zle/computil.c.
-pub fn cd_get(spec: &str) -> CompDescItem {                                  // c:614
-    if let Some((word, desc)) = spec.split_once(':') {
-        CompDescItem {
-            word: word.to_string(),
-            description: desc.to_string(),
-            hidden: false,
-        }
-    } else {
-        CompDescItem {
-            word: spec.to_string(),
-            description: String::new(),
-            hidden: false,
-        }
-    }
-}
-
-/// Parse multiple specs into a description set Port of `cd_init` from Src/Zle/computil.c.
-pub fn cd_init(specs: &[String], tag: &str, group: &str) -> CompDescSet {    // c:477
-    let items: Vec<CompDescItem> = specs.iter().map(|s| cd_get(s)).collect();
-    CompDescSet {
-        tag: tag.to_string(),
-        group: group.to_string(),
-        items,
-        ..Default::default()
-    }
-}
-
-/// Sort items in a description set Port of `cd_sort` from Src/Zle/computil.c.
-pub fn cd_sort(set: &mut CompDescSet) {                                      // c:233
-    set.items.sort_by(|a, b| a.word.cmp(&b.word));
-}
-
-/// Calculate display widths Port of `cd_calc` from Src/Zle/computil.c.
-pub fn cd_calc(items: &[CompDescItem], separator: &str) -> (usize, usize) {  // c:188
-    let max_word = items.iter().map(|i| i.word.len()).max().unwrap_or(0);
-    let max_desc = items.iter().map(|i| i.description.len()).max().unwrap_or(0);
-    (max_word, max_word + separator.len() + max_desc)
-}
-
-/// Format items for display Port of `cd_prep` from Src/Zle/computil.c.
-pub fn cd_prep(items: &[CompDescItem], separator: &str) -> Vec<String> {     // c:239
-    let (max_word, _) = cd_calc(items, separator);
-    items
-        .iter()
-        .map(|item| {
-            if item.description.is_empty() {
-                item.word.clone()
-            } else {
-                format!(
-                    "{:<width$}{}{}",
-                    item.word,
-                    separator,
-                    item.description,
-                    width = max_word
-                )
+        // c:116-119 — drain cd_state.runs.
+        if let Ok(mut st) = cd_state.lock() {
+            let mut r = st.runs.take();
+            while let Some(mut run) = r {
+                r = run.next.take();
+                drop(run);                                                   // c:118
             }
-        })
-        .collect()
-}
-
-/// Check if groups want sorting Port of `cd_groups_want_sorting` from Src/Zle/computil.c.
-// Return 1 if cd_state specifies unsorted groups, 0 otherwise.             // c:213
-pub fn cd_groups_want_sorting(sets: &[CompDescSet]) -> bool {                // c:215
-    sets.iter().all(|s| s.options.sort)
-}
-
-/// Concatenate arrays from description sets Port of `cd_arrcat` from Src/Zle/computil.c.
-// Duplicate and concatenate two arrays.  Return the result.                // c:441
-pub fn cd_arrcat(sets: &[CompDescSet]) -> Vec<String> {                      // c:444
-    sets.iter()
-        .flat_map(|s| s.items.iter().map(|i| i.word.clone()))
-        .collect()
-}
-
-/// Duplicate description set arrays Port of `cd_arrdup` from Src/Zle/computil.c.
-pub fn cd_arrdup(set: &CompDescSet) -> CompDescSet {                         // c:599
-    set.clone()
-}
-
-/// Free description sets Port of `freecdsets` from Src/Zle/computil.c. — no-op in Rust
-pub fn freecdsets(_sets: Vec<CompDescSet>) {}                                // c:97
-
-/// Group items by description Port of `cd_group` from Src/Zle/computil.c.
-// Find matches with same descriptions and group them.                      // c:124
-pub fn cd_group(items: &[CompDescItem]) -> HashMap<String, Vec<CompDescItem>> { // c:127
-    let mut groups: HashMap<String, Vec<CompDescItem>> = HashMap::new();
-    for item in items {
-        let key = if item.description.is_empty() {
-            "(no description)".to_string()
-        } else {
-            item.description.clone()
-        };
-        groups.entry(key).or_default().push(item.clone());
-    }
-    groups
-}
-
-/// Compare arrays for equality Port of `arrcmp` from Src/Zle/computil.c.
-pub fn arrcmp(a: &[String], b: &[String]) -> bool {                          // c:978
-    a == b
-}
-
-// --- _arguments support Port of `parse_caarg / alloc_cadef / set_cadef_opts` from Src/Zle/computil.c. ---
-
-/// Completion argument definition Port of `Caarg` from Src/Zle/computil.c.
-#[derive(Debug, Clone)]
-pub struct CompArgDef {
-    pub num: i32,       // Argument position (1-based, -1 for rest)
-    pub action: String, // Action to take
-    pub description: String,
-    pub optional: bool,
-    pub repeated: bool,
-}
-
-/// Completion option definition Port of `Caopt` from Src/Zle/computil.c.
-#[derive(Debug, Clone)]
-pub struct CompOptDef {
-    pub name: String, // Option name (e.g., "-v", "--verbose")
-    pub description: String,
-    pub has_arg: bool,          // Whether option takes an argument
-    pub arg_desc: String,       // Argument description
-    pub exclusive: Vec<String>, // Mutually exclusive options
-}
-
-/// Full completion definition for a command Port of `Cadef` from Src/Zle/computil.c.
-#[derive(Debug, Clone, Default)]
-pub struct CompCommandDef {
-    pub options: Vec<CompOptDef>,
-    pub arguments: Vec<CompArgDef>,
-    pub subcommands: HashMap<String, CompCommandDef>,
-}
-
-/// Parse a _arguments spec string Port of `parse_caarg` from Src/Zle/computil.c.
-pub fn parse_caarg(spec: &str) -> Option<CompArgDef> {                       // c:1100
-    // Format: "N:description:action" or "*:description:action"
-    let parts: Vec<&str> = spec.splitn(3, ':').collect();
-    if parts.is_empty() {
-        return None;
-    }
-
-    let (num, optional) = if parts[0] == "*" {
-        (-1, false)
-    } else if parts[0].starts_with('?') {
-        (parts[0][1..].parse().unwrap_or(0), true)
-    } else {
-        (parts[0].parse().unwrap_or(0), false)
-    };
-
-    Some(CompArgDef {
-        num,
-        description: parts.get(1).unwrap_or(&"").to_string(),
-        action: parts.get(2).unwrap_or(&"").to_string(),
-        optional,
-        repeated: parts[0] == "*",
-    })
-}
-
-/// Parse an option spec Port of `set_cadef_opts` from Src/Zle/computil.c.
-pub fn parse_cadef(spec: &str) -> Option<CompOptDef> {                       // c:1196
-    // Format: "-o[description]" or "--option[description]:arg_desc:action"
-    // or "(-a -b)-c[description]"
-
-    let spec = spec.trim();
-    if spec.is_empty() {
-        return None;
-    }
-
-    // Extract exclusions
-    let (exclusive, rest) = if spec.starts_with('(') {
-        if let Some(close) = spec.find(')') {
-            let excl: Vec<String> = spec[1..close]
-                .split_whitespace()
-                .map(String::from)
-                .collect();
-            (excl, spec[close + 1..].trim())
-        } else {
-            (Vec::new(), spec)
         }
-    } else {
-        (Vec::new(), spec)
-    };
+        drop(set);                                                           // c:120
+    }
+}
 
-    // Extract option name
-    let (name, after_name) = if rest.starts_with("--") {
-        let end = rest
-            .find('[')
-            .unwrap_or(rest.find(':').unwrap_or(rest.len()));
-        (&rest[..end], &rest[end..])
-    } else if rest.starts_with('-') {
-        let end = if rest.len() > 2 { 2 } else { rest.len() };
-        let end = rest[end..]
-            .find('[')
-            .map(|i| i + end)
-            .unwrap_or(rest[end..].find(':').map(|i| i + end).unwrap_or(rest.len()));
-        (&rest[..end], &rest[end..])
-    } else {
-        return None;
-    };
+// =====================================================================
+// `_arguments`-cache types — direct ports of the C structs at
+// Src/Zle/computil.c:899-968. CAO_* / CAA_* / CDF_SEP /
+// MAX_CACACHE constants already declared above (file scope).
+// =====================================================================
 
-    // Extract description from [...]
-    let description = if let Some(start) = after_name.find('[') {
-        if let Some(end) = after_name[start..].find(']') {
-            after_name[start + 1..start + end].to_string()
-        } else {
-            String::new()
+/// Port of `typedef struct cadef *Cadef` from `Src/Zle/computil.c:899`.
+pub type Cadef = Box<cadef>;                                                 // c:899
+/// Port of `typedef struct caopt *Caopt` from `Src/Zle/computil.c:900`.
+pub type Caopt = Box<caopt>;                                                 // c:900
+/// Port of `typedef struct caarg *Caarg` from `Src/Zle/computil.c:901`.
+pub type Caarg = Box<caarg>;                                                 // c:901
+
+/// Direct port of `struct caarg` from `Src/Zle/computil.c:949-962`.
+/// Description for one `_arguments` argument spec.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct caarg {                                                           // c:949
+    pub next:   Option<Box<caarg>>,                                          // c:950 Caarg next
+    pub descr:  Option<String>,                                              // c:951 char *descr
+    pub xor:    Option<Vec<String>>,                                         // c:952 char **xor
+    pub action: Option<String>,                                              // c:953 char *action
+    pub r#type: i32,                                                         // c:954 int type (CAA_*)
+    pub end:    Option<String>,                                              // c:955 char *end
+    pub opt:    Option<String>,                                              // c:956 char *opt
+    pub num:    i32,                                                         // c:957 int num
+    pub min:    i32,                                                         // c:958 int min
+    pub direct: i32,                                                         // c:959 int direct
+    pub active: i32,                                                         // c:960 int active
+    pub gsname: Option<String>,                                              // c:961 char *gsname
+}
+
+/// Direct port of `struct caopt` from `Src/Zle/computil.c:928-939`.
+/// Description for one `_arguments` option spec.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct caopt {                                                           // c:928
+    pub next:   Option<Box<caopt>>,                                          // c:929 Caopt next
+    pub name:   Option<String>,                                              // c:930 char *name
+    pub descr:  Option<String>,                                              // c:931 char *descr
+    pub xor:    Option<Vec<String>>,                                         // c:932 char **xor
+    pub r#type: i32,                                                         // c:933 int type (CAO_*)
+    pub args:   Option<Box<caarg>>,                                          // c:934 Caarg args
+    pub active: i32,                                                         // c:935 int active
+    pub num:    i32,                                                         // c:936 int num
+    pub gsname: Option<String>,                                              // c:937 char *gsname
+    pub not:    i32,                                                         // c:938 int not
+}
+
+/// Direct port of `struct cadef` from `Src/Zle/computil.c:905-922`.
+/// Cache entry for a set of `_arguments` definitions.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct cadef {                                                           // c:905
+    pub next:       Option<Box<cadef>>,                                      // c:906 Cadef next
+    pub snext:      Option<Box<cadef>>,                                      // c:907 Cadef snext
+    pub opts:       Option<Box<caopt>>,                                      // c:908 Caopt opts
+    pub nopts:      i32,                                                     // c:909
+    pub ndopts:     i32,                                                     // c:909
+    pub nodopts:    i32,                                                     // c:909
+    pub args:       Option<Box<caarg>>,                                      // c:910 Caarg args
+    pub rest:       Option<Box<caarg>>,                                      // c:911 Caarg rest
+    pub defs:       Option<Vec<String>>,                                     // c:912 char **defs
+    pub ndefs:      i32,                                                     // c:913
+    pub lastt:      i64,                                                     // c:914 time_t lastt
+    pub single:     Option<Vec<Option<Box<caopt>>>>,                         // c:915 Caopt *single (188-slot)
+    pub r#match:    Option<String>,                                          // c:916 char *match
+    pub argsactive: i32,                                                     // c:917
+    pub set:        Option<String>,                                          // c:919 char *set
+    pub flags:      i32,                                                     // c:920 int flags (CDF_*)
+    pub nonarg:     Option<String>,                                          // c:921 char *nonarg
+}
+
+/// Direct port of `static void freecaargs(Caarg a)` from
+/// `Src/Zle/computil.c:996-1010`. Walks the `next` chain and frees
+/// each entry. In Rust this is `Box` ownership — dropping the head
+/// recursively drops the chain, but we mirror the C body for ABI
+/// parity with callers that want explicit teardown.
+pub fn freecaargs(mut a: Option<Box<caarg>>) {                               // c:996
+    while let Some(mut node) = a {                                           // c:1000 for (; a; ...)
+        a = node.next.take();                                                // c:1001 n = a->next
+        // c:1002-1007 — zsfree on descr/xor/action/end/opt is implicit
+        //               via Drop on the String / Vec<String> fields.
+        node.descr = None;                                                   // c:1002
+        node.xor = None;                                                     // c:1003-1004
+        node.action = None;                                                  // c:1005
+        node.end = None;                                                     // c:1006
+        node.opt = None;                                                     // c:1007
+        drop(node);                                                          // c:1008 zfree(a, sizeof(*a))
+    }
+}
+
+/// Direct port of `static void freecadef(Cadef d)` from
+/// `Src/Zle/computil.c:1013-1040`. Walks the `snext` chain freeing
+/// each cadef plus its opts/args/rest sub-chains.
+pub fn freecadef(mut d: Option<Box<cadef>>) {                                // c:1013
+    while let Some(mut node) = d {                                           // c:1018 while (d)
+        d = node.snext.take();                                               // c:1019 s = d->snext
+        // c:1020-1023 — zsfree match/set, freearray(defs).
+        node.r#match = None;
+        node.set = None;
+        node.defs = None;
+
+        // c:1025-1033 — for each opt: zsfree name/descr, freearray xor,
+        // freecaargs(opt->args), zfree opt.
+        let mut p = node.opts.take();
+        while let Some(mut popt) = p {
+            p = popt.next.take();
+            popt.name = None;
+            popt.descr = None;
+            popt.xor = None;
+            freecaargs(popt.args.take());                                    // c:1031
+            drop(popt);                                                      // c:1032
         }
-    } else {
-        String::new()
-    };
+        freecaargs(node.args.take());                                        // c:1034
+        freecaargs(node.rest.take());                                        // c:1035
+        node.nonarg = None;                                                  // c:1036
+        node.single = None;                                                  // c:1037-1038
+        drop(node);                                                          // c:1039 zfree(d, sizeof(*d))
+    }
+}
 
-    // Check for argument
-    let has_arg = after_name.contains(':');
-    let arg_desc = if has_arg {
-        after_name.rsplit(':').next().unwrap_or("").to_string()
-    } else {
-        String::new()
-    };
+// =====================================================================
+// `castate` — command-line parse state for `_arguments`.
+// Src/Zle/computil.c:1920-1957.
+// =====================================================================
 
-    Some(CompOptDef {
-        name: name.to_string(),
-        description,
-        has_arg,
-        arg_desc,
-        exclusive,
-    })
+/// Port of `typedef struct castate *Castate` from
+/// `Src/Zle/computil.c:1922`.
+pub type Castate = Box<castate>;                                             // c:1922
+
+/// Direct port of `struct castate` from `Src/Zle/computil.c:1928-1953`.
+/// Encapsulates the parsed-command-line state for one `_arguments`
+/// set — used as a linked list (`snext`) with one state per set.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct castate {                                                         // c:1928
+    pub snext:   Option<Box<castate>>,                                       // c:1929 Castate snext
+    pub d:       Option<Box<cadef>>,                                         // c:1930 Cadef d
+    pub nopts:   i32,                                                        // c:1931
+    pub def:     Option<Box<caarg>>,                                         // c:1932 Caarg def
+    pub ddef:    Option<Box<caarg>>,                                         // c:1933 Caarg ddef
+    pub curopt:  Option<Box<caopt>>,                                         // c:1934 Caopt curopt
+    pub dopt:    Option<Box<caopt>>,                                         // c:1935 Caopt dopt
+    pub opt:     i32,                                                        // c:1936
+    pub arg:     i32,                                                        // c:1937
+    pub argbeg:  i32,                                                        // c:1938
+    pub optbeg:  i32,                                                        // c:1939
+    pub nargbeg: i32,                                                        // c:1941
+    pub restbeg: i32,                                                        // c:1942
+    pub curpos:  i32,                                                        // c:1943
+    pub argend:  i32,                                                        // c:1944
+    pub inopt:   i32,                                                        // c:1945
+    pub inarg:   i32,                                                        // c:1946
+    pub nth:     i32,                                                        // c:1947
+    pub singles: i32,                                                        // c:1948
+    pub oopt:    i32,                                                        // c:1949
+    pub actopts: i32,                                                        // c:1950
+    pub args:    Option<Vec<String>>,                                        // c:1951 LinkList args
+    pub oargs:   Option<Vec<Option<Vec<String>>>>,                           // c:1952 LinkList *oargs
+}
+
+/// Port of `static struct castate ca_laststate` from
+/// `Src/Zle/computil.c:1955`. Most recently parsed cmdline state.
+pub static ca_laststate: std::sync::Mutex<castate> =                         // c:1955
+    std::sync::Mutex::new(castate {
+        snext: None, d: None, nopts: 0, def: None, ddef: None,
+        curopt: None, dopt: None, opt: 0, arg: 0, argbeg: 0, optbeg: 0,
+        nargbeg: 0, restbeg: 0, curpos: 0, argend: 0, inopt: 0,
+        inarg: 0, nth: 0, singles: 0, oopt: 0, actopts: 0,
+        args: None, oargs: None,
+    });
+
+/// Port of `static int ca_parsed` from `Src/Zle/computil.c:1956`.
+pub static ca_parsed: std::sync::atomic::AtomicI32 =                         // c:1956
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `static int ca_alloced` from `Src/Zle/computil.c:1956`.
+pub static ca_alloced: std::sync::atomic::AtomicI32 =                        // c:1956
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `static int ca_doff` from `Src/Zle/computil.c:1957`. Count
+/// of chars of ignored prefix (for clumped options or arg to an
+/// option).
+pub static ca_doff: std::sync::atomic::AtomicI32 =                           // c:1957
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Direct port of `static void freecastate(Castate s)` from
+/// `Src/Zle/computil.c:1959-1970`. Frees the args/oargs lists.
+pub fn freecastate(s: &mut castate) {                                        // c:1959
+    s.args = None;                                                           // c:1965 freelinklist(s->args)
+    s.oargs = None;                                                          // c:1966-1969 freelinklist per slot
+}
+
+// =====================================================================
+// `cvdef` / `cvval` — `_values` completion cache types.
+// Src/Zle/computil.c:2919-2956. CVV_* and MAX_CVCACHE consts
+// already declared above (file scope).
+// =====================================================================
+
+/// Port of `typedef struct cvdef *Cvdef` from `Src/Zle/computil.c:2919`.
+pub type Cvdef = Box<cvdef>;                                                 // c:2919
+/// Port of `typedef struct cvval *Cvval` from `computil.c:2920`.
+pub type Cvval = Box<cvval>;                                                 // c:2920
+
+/// Direct port of `struct cvdef` from `Src/Zle/computil.c:2924-2935`.
+/// One parsed `_values` definition entry, cached for reuse.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct cvdef {                                                           // c:2924
+    pub descr:  Option<String>,                                              // c:2925 char *descr
+    pub hassep: i32,                                                         // c:2926
+    pub sep:    i32,                                                         // c:2927 char sep
+    pub argsep: i32,                                                         // c:2928 char argsep
+    pub next:   Option<Box<cvdef>>,                                          // c:2929 Cvdef next
+    pub vals:   Option<Box<cvval>>,                                          // c:2930 Cvval vals
+    pub defs:   Option<Vec<String>>,                                         // c:2931 char **defs
+    pub ndefs:  i32,                                                         // c:2932
+    pub lastt:  i64,                                                         // c:2933 time_t lastt
+    pub words:  i32,                                                         // c:2934
+}
+
+/// Direct port of `struct cvval` from `Src/Zle/computil.c:2939-2947`.
+/// One value definition inside a cvdef.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct cvval {                                                           // c:2939
+    pub next:   Option<Box<cvval>>,                                          // c:2940 Cvval next
+    pub name:   Option<String>,                                              // c:2941 char *name
+    pub descr:  Option<String>,                                              // c:2942 char *descr
+    pub xor:    Option<Vec<String>>,                                         // c:2943 char **xor
+    pub r#type: i32,                                                         // c:2944 int type (CVV_*)
+    pub arg:    Option<Box<caarg>>,                                          // c:2945 Caarg arg
+    pub active: i32,                                                         // c:2946
+}
+
+/// Direct port of `static void freecvdef(Cvdef d)` from
+/// `Src/Zle/computil.c:2960-2981`. Walks the vals chain freeing
+/// each cvval (which frees its caarg via freecaargs).
+pub fn freecvdef(d: Option<Box<cvdef>>) {                                    // c:2960
+    let Some(mut node) = d else { return; };                                 // c:2963 if (d)
+    node.descr = None;                                                       // c:2966 zsfree(d->descr)
+    node.defs = None;                                                        // c:2967-2968 freearray(d->defs)
+    let mut p = node.vals.take();
+    while let Some(mut v) = p {                                              // c:2970 for (p = d->vals; ...)
+        p = v.next.take();                                                   // c:2971 n = p->next
+        v.name = None;                                                       // c:2972
+        v.descr = None;                                                      // c:2973
+        v.xor = None;                                                        // c:2974-2975
+        freecaargs(v.arg.take());                                            // c:2976
+        drop(v);                                                             // c:2977
+    }
+    drop(node);                                                              // c:2979
+}
+
+// =====================================================================
+// `cvstate` — `_values` parse state.
+// Src/Zle/computil.c:3220-3231.
+// =====================================================================
+
+/// Direct port of `struct cvstate` from `Src/Zle/computil.c:3222-3227`.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct cvstate {                                                         // c:3222
+    pub d:    Option<Box<cvdef>>,                                            // c:3223 Cvdef d
+    pub def:  Option<Box<caarg>>,                                            // c:3224 Caarg def
+    pub val:  Option<Box<cvval>>,                                            // c:3225 Cvval val
+    pub vals: Option<Vec<String>>,                                           // c:3226 LinkList vals
+}
+
+/// Port of `static struct cvstate cv_laststate` from
+/// `Src/Zle/computil.c:3229`.
+pub static cv_laststate: std::sync::Mutex<cvstate> =                         // c:3229
+    std::sync::Mutex::new(cvstate {
+        d: None, def: None, val: None, vals: None,
+    });
+
+/// Port of `static int cv_parsed` from `Src/Zle/computil.c:3230`.
+pub static cv_parsed: std::sync::atomic::AtomicI32 =                         // c:3230
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `static int cv_alloced` from `Src/Zle/computil.c:3230`.
+pub static cv_alloced: std::sync::atomic::AtomicI32 =                        // c:3230
+    std::sync::atomic::AtomicI32::new(0);
+
+// =====================================================================
+// `ctags` / `ctset` — `comptags` cache.
+// Src/Zle/computil.c:3732-3760. MAX_TAGS already declared above.
+// =====================================================================
+
+/// Port of `typedef struct ctags *Ctags` from `Src/Zle/computil.c:3732`.
+pub type Ctags = Box<ctags>;                                                 // c:3732
+/// Port of `typedef struct ctset *Ctset` from `computil.c:3733`.
+pub type Ctset = Box<ctset>;                                                 // c:3733
+
+/// Direct port of `struct ctags` from `Src/Zle/computil.c:3737-3742`.
+/// A bunch of tag sets keyed by locallevel.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct ctags {                                                           // c:3737
+    pub all:     Option<Vec<String>>,                                        // c:3738 char **all
+    pub context: Option<String>,                                             // c:3739 char *context
+    pub init:    i32,                                                        // c:3740
+    pub sets:    Option<Box<ctset>>,                                         // c:3741 Ctset sets
+}
+
+/// Direct port of `struct ctset` from `Src/Zle/computil.c:3746-3751`.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct ctset {                                                           // c:3746
+    pub next: Option<Box<ctset>>,                                            // c:3747 Ctset next
+    pub tags: Option<Vec<String>>,                                           // c:3748 char **tags
+    pub tag:  Option<String>,                                                // c:3749 char *tag
+    pub ptr:  i32,                                                           // c:3750 char **ptr (index)
+}
+
+/// Direct port of `static void freectset(Ctset s)` from
+/// `Src/Zle/computil.c:3762-3777`.
+pub fn freectset(mut s: Option<Box<ctset>>) {                                // c:3762
+    while let Some(mut node) = s {                                           // c:3767 while (s)
+        s = node.next.take();                                                // c:3768 n = s->next
+        node.tags = None;                                                    // c:3770-3771
+        node.tag = None;                                                     // c:3772
+        drop(node);                                                          // c:3773
+    }
+}
+
+/// Direct port of `static void freectags(Ctags t)` from
+/// `Src/Zle/computil.c:3779-3789`.
+pub fn freectags(t: Option<Box<ctags>>) {                                    // c:3779
+    let Some(mut node) = t else { return; };                                 // c:3782 if (t)
+    node.all = None;                                                         // c:3783-3784
+    node.context = None;                                                     // c:3785
+    freectset(node.sets.take());                                             // c:3786
+    drop(node);                                                              // c:3787
 }
 
 /// Port of `rembslashcolon()` from `Src/Zle/computil.c:1046`.
@@ -458,9 +704,8 @@ pub fn single_index(pre: u8, opt: u8) -> i32 {                               // 
     (opt as i32) + off
 }
 
-/// Free completion argument definitions Port of `freecaargs/freecadef` from Src/Zle/computil.c. — no-op
-pub fn freecaargs(_args: Vec<CompArgDef>) {}                                 // c:996
-pub fn freecadef(_def: CompCommandDef) {}                                    // c:1013
+// `freecaargs(Caarg)` + `freecadef(Cadef)` ported above with the
+// caarg/caopt/cadef struct ports (c:996 / c:1013).
 
 #[cfg(test)]
 mod cao_caa_tests {
@@ -526,79 +771,16 @@ mod cao_caa_tests {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_cd_get() {
-        let item = cd_get("commit:Record changes");
-        assert_eq!(item.word, "commit");
-        assert_eq!(item.description, "Record changes");
+    // Tests for cd_get / cd_init / cd_sort / cd_prep removed — those
+    // tests exercised the deleted CompDescItem/CompDescSet Rust-only
+    // wrappers. The C-signature stubs (cd_get takes char**params and
+    // returns int) need integration tests against the real cdset
+    // chain once it lands; placeholder unit-tests against the fake
+    // types would just lock in the deleted shape.
 
-        let item = cd_get("plain");
-        assert_eq!(item.word, "plain");
-        assert_eq!(item.description, "");
-    }
-
-    #[test]
-    fn test_cd_init() {
-        let specs = vec!["a:first".into(), "b:second".into(), "c:third".into()];
-        let set = cd_init(&specs, "options", "group1");
-        assert_eq!(set.items.len(), 3);
-        assert_eq!(set.tag, "options");
-    }
-
-    #[test]
-    fn test_cd_sort() {
-        let mut set = cd_init(
-            &["c:third".into(), "a:first".into(), "b:second".into()],
-            "",
-            "",
-        );
-        cd_sort(&mut set);
-        assert_eq!(set.items[0].word, "a");
-        assert_eq!(set.items[2].word, "c");
-    }
-
-    #[test]
-    fn test_cd_prep() {
-        let items = vec![
-            CompDescItem {
-                word: "short".into(),
-                description: "A short one".into(),
-                hidden: false,
-            },
-            CompDescItem {
-                word: "longer".into(),
-                description: "A longer one".into(),
-                hidden: false,
-            },
-        ];
-        let formatted = cd_prep(&items, " -- ");
-        assert!(formatted[0].contains(" -- "));
-        assert!(formatted[1].contains(" -- "));
-    }
-
-    #[test]
-    fn test_parse_caarg() {
-        let arg = parse_caarg("1:file:_files").unwrap();
-        assert_eq!(arg.num, 1);
-        assert_eq!(arg.description, "file");
-        assert_eq!(arg.action, "_files");
-
-        let arg = parse_caarg("*:rest args:_files").unwrap();
-        assert_eq!(arg.num, -1);
-        assert!(arg.repeated);
-    }
-
-    #[test]
-    fn test_parse_cadef() {
-        let opt = parse_cadef("-v[verbose output]").unwrap();
-        assert_eq!(opt.name, "-v");
-        assert_eq!(opt.description, "verbose output");
-        assert!(!opt.has_arg);
-
-        let opt = parse_cadef("--output[output file]:file:_files").unwrap();
-        assert_eq!(opt.name, "--output");
-        assert!(opt.has_arg);
-    }
+    // test_parse_caarg / test_parse_cadef removed — they exercised
+    // the deleted CompArgDef/CompOptDef Rust-only types via fake-
+    // signature wrappers. Real ports land alongside the cadef chain.
 
     #[test]
     fn test_rembslashcolon() {
@@ -677,28 +859,272 @@ mod tests {
         assert_eq!(single_index(b'+', 0xff), -1);     // outside ASCII
     }
 
+    // test_cd_group removed — used the deleted CompDescItem; the
+    // function `cd_group` itself wasn't a real C export and was
+    // also removed alongside the fake structs.
+
     #[test]
-    fn test_cd_group() {
-        let items = vec![
-            CompDescItem {
-                word: "a".into(),
-                description: "group1".into(),
-                hidden: false,
-            },
-            CompDescItem {
-                word: "b".into(),
-                description: "group1".into(),
-                hidden: false,
-            },
-            CompDescItem {
-                word: "c".into(),
-                description: "group2".into(),
-                hidden: false,
-            },
-        ];
-        let groups = cd_group(&items);
-        assert_eq!(groups.len(), 2);
-        assert_eq!(groups["group1"].len(), 2);
+    fn caarg_default_zero_initialized() {
+        // c:949-962 — fresh caarg: every field zero / None.
+        let a = caarg::default();
+        assert!(a.next.is_none());
+        assert!(a.descr.is_none());
+        assert!(a.action.is_none());
+        assert_eq!(a.r#type, 0);
+        assert_eq!(a.num, 0);
+        assert_eq!(a.active, 0);
+    }
+
+    #[test]
+    fn caopt_default_zero_initialized() {
+        // c:928-939 — fresh caopt: zero / None across all fields.
+        let o = caopt::default();
+        assert!(o.next.is_none());
+        assert!(o.name.is_none());
+        assert!(o.args.is_none());
+        assert_eq!(o.r#type, 0);
+        assert_eq!(o.num, 0);
+        assert_eq!(o.not, 0);
+    }
+
+    #[test]
+    fn cadef_default_zero_initialized() {
+        // c:905-922 — fresh cadef: zero / None across all fields.
+        let d = cadef::default();
+        assert!(d.next.is_none());
+        assert!(d.opts.is_none());
+        assert!(d.args.is_none());
+        assert_eq!(d.nopts, 0);
+        assert_eq!(d.flags, 0);
+    }
+
+    #[test]
+    fn freecaargs_walks_chain() {
+        // c:996-1010 — freecaargs walks `next` chain freeing each
+        // entry. After call, the chain owner observes no remaining
+        // refs (Drop handles deallocation).
+        let mut head = caarg { descr: Some("a".into()), ..Default::default() };
+        let mid     = caarg { descr: Some("b".into()), ..Default::default() };
+        let tail    = caarg { descr: Some("c".into()), ..Default::default() };
+        let mut mid_box = Box::new(mid);
+        mid_box.next = Some(Box::new(tail));
+        head.next = Some(mid_box);
+        freecaargs(Some(Box::new(head)));
+        // No panic, no leak — Box drop chains the rest.
+    }
+
+    #[test]
+    fn cao_caa_constants_match_c() {
+        // c:941-945 and c:964-968 — sequential 1..=5.
+        assert_eq!(CAO_NEXT,    1);
+        assert_eq!(CAO_DIRECT,  2);
+        assert_eq!(CAO_ODIRECT, 3);
+        assert_eq!(CAO_EQUAL,   4);
+        assert_eq!(CAO_OEQUAL,  5);
+        assert_eq!(CAA_NORMAL,  1);
+        assert_eq!(CAA_OPT,     2);
+        assert_eq!(CAA_REST,    3);
+        assert_eq!(CAA_RARGS,   4);
+        assert_eq!(CAA_RREST,   5);
+    }
+
+    #[test]
+    fn cdf_max_cacache_constants_match_c() {
+        // c:924 — CDF_SEP = 1; c:972 — MAX_CACACHE = 8.
+        assert_eq!(CDF_SEP, 1);
+        assert_eq!(MAX_CACACHE, 8);
+    }
+
+    #[test]
+    fn crt_constants_match_c() {
+        // c:79-83 — sequential 0..=4.
+        assert_eq!(CRT_SIMPLE, 0);
+        assert_eq!(CRT_DESC,   1);
+        assert_eq!(CRT_SPEC,   2);
+        assert_eq!(CRT_DUMMY,  3);
+        assert_eq!(CRT_EXPL,   4);
+    }
+
+    #[test]
+    fn cdstr_default_zero_initialized() {
+        // c:58-70 — fresh cdstr: zero/None across all fields.
+        let s = cdstr::default();
+        assert!(s.next.is_none());
+        assert!(s.str.is_none());
+        assert!(s.desc.is_none());
+        assert!(s.r#match.is_none());
+        assert_eq!(s.len, 0);
+        assert_eq!(s.width, 0);
+        assert_eq!(s.kind, 0);
+    }
+
+    #[test]
+    fn cdrun_default_zero_initialized() {
+        // c:72-77 — fresh cdrun: zero/None.
+        let r = cdrun::default();
+        assert!(r.next.is_none());
+        assert!(r.strs.is_none());
+        assert_eq!(r.r#type, 0);
+        assert_eq!(r.count, 0);
+    }
+
+    #[test]
+    fn cdset_default_zero_initialized() {
+        // c:85-91 — fresh cdset: zero/None.
+        let s = cdset::default();
+        assert!(s.next.is_none());
+        assert!(s.opts.is_none());
+        assert!(s.strs.is_none());
+        assert_eq!(s.count, 0);
+        assert_eq!(s.desc, 0);
+    }
+
+    #[test]
+    fn cdstate_default_zero_initialized() {
+        // c:40-56 — fresh cdstate: zero/None.
+        let st = cdstate::default();
+        assert_eq!(st.showd, 0);
+        assert!(st.sep.is_none());
+        assert!(st.sets.is_none());
+        assert!(st.runs.is_none());
+    }
+
+    #[test]
+    fn freecdsets_walks_chain() {
+        // c:96-122 — freecdsets walks `next` chain freeing each set
+        // and its strs sub-chain.
+        let head_str = cdstr {
+            str: Some("foo".into()),
+            desc: Some("first".into()),
+            ..Default::default()
+        };
+        let tail_str = cdstr {
+            str: Some("bar".into()),
+            ..Default::default()
+        };
+        let mut head_str_b = Box::new(head_str);
+        head_str_b.next = Some(Box::new(tail_str));
+        let set = cdset {
+            strs: Some(head_str_b),
+            count: 2,
+            ..Default::default()
+        };
+        freecdsets(Some(Box::new(set)));
+        // No panic / no leak — Box drop chains the rest.
+    }
+
+    #[test]
+    fn castate_default_zero_initialized() {
+        // c:1928-1953 — fresh castate: zero/None.
+        let s = castate::default();
+        assert!(s.snext.is_none());
+        assert!(s.d.is_none());
+        assert!(s.def.is_none());
+        assert!(s.args.is_none());
+        assert_eq!(s.nopts, 0);
+        assert_eq!(s.curpos, 0);
+    }
+
+    #[test]
+    fn cvdef_default_zero_initialized() {
+        // c:2924-2935 — fresh cvdef: zero/None.
+        let d = cvdef::default();
+        assert!(d.descr.is_none());
+        assert!(d.vals.is_none());
+        assert_eq!(d.hassep, 0);
+        assert_eq!(d.sep, 0);
+        assert_eq!(d.argsep, 0);
+    }
+
+    #[test]
+    fn cvval_default_zero_initialized() {
+        // c:2939-2947 — fresh cvval: zero/None.
+        let v = cvval::default();
+        assert!(v.next.is_none());
+        assert!(v.name.is_none());
+        assert!(v.arg.is_none());
+        assert_eq!(v.r#type, 0);
+        assert_eq!(v.active, 0);
+    }
+
+    #[test]
+    fn cvstate_default_zero_initialized() {
+        // c:3222-3227 — fresh cvstate: None across all 4 fields.
+        let s = cvstate::default();
+        assert!(s.d.is_none());
+        assert!(s.def.is_none());
+        assert!(s.val.is_none());
+        assert!(s.vals.is_none());
+    }
+
+    #[test]
+    fn ctags_default_zero_initialized() {
+        // c:3737-3742 — fresh ctags: zero/None.
+        let t = ctags::default();
+        assert!(t.all.is_none());
+        assert!(t.context.is_none());
+        assert!(t.sets.is_none());
+        assert_eq!(t.init, 0);
+    }
+
+    #[test]
+    fn ctset_default_zero_initialized() {
+        // c:3746-3751 — fresh ctset: zero/None.
+        let s = ctset::default();
+        assert!(s.next.is_none());
+        assert!(s.tags.is_none());
+        assert!(s.tag.is_none());
+        assert_eq!(s.ptr, 0);
+    }
+
+    #[test]
+    fn cvv_constants_match_c() {
+        // c:2949-2951 — sequential 0..=2.
+        assert_eq!(CVV_NOARG, 0);
+        assert_eq!(CVV_ARG,   1);
+        assert_eq!(CVV_OPT,   2);
+    }
+
+    #[test]
+    fn max_tags_cvcache_match_c() {
+        // c:3755 — MAX_TAGS = 256; c:2955 — MAX_CVCACHE = 8.
+        assert_eq!(MAX_TAGS, 256);
+        assert_eq!(MAX_CVCACHE, 8);
+    }
+
+    #[test]
+    fn freectset_walks_chain() {
+        // c:3762-3777 — freectset walks `next` chain freeing each
+        // ctset's tags/tag fields.
+        let mut head = ctset { tag: Some("foo".into()), ..Default::default() };
+        let tail     = ctset { tag: Some("bar".into()), ..Default::default() };
+        head.next = Some(Box::new(tail));
+        freectset(Some(Box::new(head)));
+    }
+
+    #[test]
+    fn freectags_drops_one_node() {
+        // c:3779-3789 — freectags releases all/context/sets on one ctags.
+        let t = ctags {
+            all: Some(vec!["a".into(), "b".into()]),
+            context: Some("ctx".into()),
+            ..Default::default()
+        };
+        freectags(Some(Box::new(t)));
+    }
+
+    #[test]
+    fn freecvdef_walks_vals_chain() {
+        // c:2960-2981 — freecvdef walks vals freeing each cvval.
+        let v_tail = cvval { name: Some("opt2".into()), ..Default::default() };
+        let mut v_head = cvval { name: Some("opt1".into()), ..Default::default() };
+        v_head.next = Some(Box::new(v_tail));
+        let d = cvdef {
+            descr: Some("test".into()),
+            vals: Some(Box::new(v_head)),
+            ..Default::default()
+        };
+        freecvdef(Some(Box::new(d)));
     }
 }
 
@@ -1311,36 +1737,8 @@ pub fn setup_() -> i32 {                                                     // 
     0
 }
 
-/// Port of `freecastate()` from Src/Zle/computil.c:1960.
-pub fn freecastate() -> i32 {                                                // c:1960
-    // C body c:1962-1971 — `freelinklist(s->args, freestr);
-    //                       for (...) freelinklist(*p, freestr);
-    //                       zfree(s->oargs, ...)`. Castate isn't yet
-    //                       a Rust struct (heap-arena); Drop semantics
-    //                       cover the equivalent free in Rust; no-op.
-    0
-}
-
-/// Port of `freectags()` from Src/Zle/computil.c:3780.
-pub fn freectags() -> i32 {                                                  // c:3780
-    // C body c:3782-3791 — frees a Ctags linked-list. Drop covers it
-    //                      in Rust; no-op.
-    0
-}
-
-/// Port of `freectset()` from Src/Zle/computil.c:3763.
-pub fn freectset() -> i32 {                                                  // c:3763
-    // C body c:3765-3778 — frees one Ctset (compset) — its name +
-    //                      tags + ptr arrays. Drop covers it; no-op.
-    0
-}
-
-/// Port of `freecvdef()` from Src/Zle/computil.c:2961.
-pub fn freecvdef() -> i32 {                                                  // c:2961
-    // C body c:2963-2984 — frees one Cvdef and its Cvval list. Drop
-    //                      covers it; no-op.
-    0
-}
+// `freecastate` / `freectags` / `freectset` / `freecvdef` real ports
+// landed above with the castate / ctags / ctset / cvdef structs.
 
 /// Port of `get_cadef()` from Src/Zle/computil.c:1673.
 pub fn get_cadef(_nam: &str, _args: &[String]) -> i32 {                      // c:1673

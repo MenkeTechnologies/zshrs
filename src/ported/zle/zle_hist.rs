@@ -1134,7 +1134,7 @@ pub fn endofhistory(zle: &mut Zle) -> i32 {                                  // 
 /// per-isearch undo stack.
 #[derive(Debug, Default, Clone, Copy)]
 #[allow(non_camel_case_types)]
-pub struct isrch_spot {
+pub struct isrch_spot {                                                       // c:948
     pub hl: i32,
     pub pos: u16,
     pub pat_hl: i32,
