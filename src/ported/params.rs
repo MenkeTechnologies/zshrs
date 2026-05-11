@@ -3538,11 +3538,11 @@ fn shtimer_lock() -> &'static Mutex<Duration> {
 
 fn pparams_lock() -> &'static Mutex<Vec<String>> {
     // Mirror of zsh's `pparams` (positional params $1, $2, ...).
-    // Used by `poundgetfn` for `$#`. Real shell sets this via the
-    // `set` builtin / argv on entry; for the callback to work in
-    // isolation we expose it as a settable static.
-    static PPARAMS_VAR: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
-    PPARAMS_VAR.get_or_init(|| Mutex::new(Vec::new()))
+    // Used by `poundgetfn` for `$#`. The canonical store is
+    // `builtin::PPARAMS` (Src/init.c `pparams`); set/shift builtins
+    // write there. Point at that single store so `$#` reads the
+    // live value instead of an isolated empty mirror.
+    &crate::ported::builtin::PPARAMS
 }
 
 fn zunderscore_lock() -> &'static Mutex<String> {
@@ -7421,6 +7421,16 @@ pub fn upscope(
 /// path. Mirrors the `Param.gsu->getfn` dispatch C zsh does
 /// inside `getsparam` / `getstrvalue` (Src/params.c:3076 / 2335).
 pub fn lookup_special_var(name: &str) -> Option<String> {
+    // All-digit positional: $1..$N from canonical PPARAMS.
+    // C zsh dispatches positional params through pparams (Src/init.c).
+    if !name.is_empty() && name.chars().all(|c| c.is_ascii_digit()) {
+        let n: usize = name.parse().ok()?;
+        if n == 0 {
+            return crate::ported::utils::argzero();
+        }
+        let pp = pparams_lock().lock().ok()?;
+        return pp.get(n - 1).cloned();
+    }
     match name {
         // libc identity callbacks.
         "UID" => Some(uidgetfn().to_string()),
@@ -7448,10 +7458,43 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         "HISTSIZE" => Some(histsizegetfn().to_string()),
         "SAVEHIST" => Some(savehistsizegetfn().to_string()),
         "#" | "ARGC" => Some(poundgetfn().to_string()),
-        // $0 routes through utils::argzero — only override when
-        // the static was explicitly set (otherwise let the shell's
-        // argv handling provide the binary path).
+        // $0 routes through utils::argzero.
         "0" => crate::ported::utils::argzero(),
+        // POSIX shell-special scalars. C dispatches these through
+        // dedicated gsu getfn callbacks (Src/params.c special_assigns).
+        "?" => Some(crate::ported::builtin::LASTVAL
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .to_string()),
+        "$" => Some(std::process::id().to_string()),
+        "!" => {
+            // Last-backgrounded job PID. Stored in paramtab `!` slot;
+            // default to 0 to match zsh fresh-shell behaviour.
+            let tab = paramtab().lock().ok()?;
+            Some(tab.get("!").and_then(|pm| pm.u_str.clone())
+                .unwrap_or_else(|| "0".to_string()))
+        }
+        // $* / $@ join positional params via IFS first char.
+        "*" | "@" => {
+            let sep = ifsgetfn().chars().next().unwrap_or(' ').to_string();
+            pparams_lock().lock().ok().map(|p| p.join(&sep))
+        }
+        // $- : current option-letter set. zsh emits baseline "569X"
+        // prefix (internal letters always on) + user-toggled flags.
+        "-" => {
+            let mut letters = String::from("569X");
+            let opt = |n: &str| {
+                crate::ported::options::opt_state_get(n).unwrap_or(false)
+            };
+            if opt("errexit")  { letters.push('e'); }
+            if !opt("rcs")     { letters.push('f'); }
+            if opt("login")    { letters.push('l'); }
+            if opt("nounset")  { letters.push('u'); }
+            if opt("xtrace")   { letters.push('x'); }
+            if opt("verbose")  { letters.push('v'); }
+            if opt("noexec")   { letters.push('n'); }
+            if opt("hashall")  { letters.push('h'); }
+            Some(letters)
+        }
         // Arrays — joined with space for scalar context.
         "pipestatus" => {
             let arr = pipestatgetfn();
