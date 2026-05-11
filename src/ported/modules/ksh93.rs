@@ -222,7 +222,7 @@ pub fn ksh93_wrapper(_prog: *const eprog, _w: *const funcwrap, name: *mut libc::
             .unwrap_or(0)
     } else { 0 };
 
-    if !EMULATION(emulation.load(Ordering::Relaxed), EMULATE_KSH) {     // c:149
+    if !EMULATION(EMULATE_KSH) {                                        // c:149
         return 1;                                                       // c:150
     }
 

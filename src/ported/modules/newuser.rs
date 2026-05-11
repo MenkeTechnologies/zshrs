@@ -89,9 +89,7 @@ pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {           // c:68
         .collect();
 
     // c:81 — `if (!EMULATION(EMULATE_ZSH)) return 0;`
-    // EMULATION macro reads `Src/options.c:emulation` global directly.
-    let emul = crate::ported::options::emulation.load(std::sync::atomic::Ordering::Relaxed);
-    if !crate::ported::zsh_h::EMULATION(emul, crate::ported::zsh_h::EMULATE_ZSH) {
+    if !crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_ZSH) {
         return 0;                                                         // c:82
     }
 
