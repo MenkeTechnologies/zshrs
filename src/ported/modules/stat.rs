@@ -394,7 +394,7 @@ pub fn bin_stat(nam: &str, args: &[String],                                  // 
         if let Some(ref name) = arrnam {                                 // c:469
             // c:472 — `setaparam(arrnam, names);` — array of element names.
             let joined: Vec<&str> = STATELTS.iter().copied().collect();
-            crate::ported::modules::ksh93::setsparam(name, &joined.join(":"));
+            crate::ported::params::setsparam(name, &joined.join(":"));
         } else {
             let joined: Vec<&str> = STATELTS.iter().copied().collect();
             println!("{}", joined.join(" "));                            // c:478 putchar
@@ -475,14 +475,14 @@ pub fn bin_stat(nam: &str, args: &[String],                                  // 
     if let Some(name) = arrnam {                                         // c:setaparam
         // c — `setaparam(name, zarrdup(array_out));` — colon-join through
         // the static-link env-var bridge until the typed array writer is wired.
-        crate::ported::modules::ksh93::setsparam(&name, &array_out.join(":"));
+        crate::ported::params::setsparam(&name, &array_out.join(":"));
     }
     if let Some(name) = hashnam {                                        // c:sethparam
         // c — `sethparam(name, ...);` — encode as `key=val` pairs joined
         // by tabs for the static-link env-var bridge.
         let pairs: Vec<String> = hash_out.into_iter()
             .map(|(k, v)| format!("{}={}", k, v)).collect();
-        crate::ported::modules::ksh93::setsparam(&name, &pairs.join("\t"));
+        crate::ported::params::setsparam(&name, &pairs.join("\t"));
     }
     0
 }

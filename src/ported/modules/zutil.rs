@@ -842,7 +842,7 @@ pub fn bin_zstyle(nam: &str, args: &[String],                                 //
         if args.len() >= 3 {
             let pname = &args[2];
             let val = vals.join(" ");
-            crate::ported::modules::ksh93::setsparam(pname, &val);
+            crate::ported::params::setsparam(pname, &val);
         }
         return 0;
     }
@@ -909,7 +909,7 @@ pub fn bin_zformat(nam: &str, args: &[String],                                //
                 specs.insert(ab[0] as char, ap[2..].to_string());             // c:987
             }
             let out = zformat_substring(&args[1], &specs, presence != 0);     // c:990
-            crate::ported::modules::ksh93::setsparam(&args[0], &out);         // c:993 setsparam
+            crate::ported::params::setsparam(&args[0], &out);         // c:993 setsparam
             return 0;                                                         // c:994
         }
         b'a' => {                                                             // c:996
@@ -973,7 +973,28 @@ pub fn bin_zformat(nam: &str, args: &[String],                                //
                     ret.push(String::from_utf8_lossy(&copy).into_owned());    // c:1082
                 }
             }
-            crate::ported::modules::ksh93::setaparam(&args[0], &ret);         // c:1083
+            // c:1083 — setaparam(args[0], ret). Direct write to paramtab
+            // since the canonical params::setaparam takes HashMap refs and
+            // the executor isn't threaded into bin_zformat.
+            if let Ok(mut tab) = crate::ported::params::paramtab().lock() {
+                use crate::ported::zsh_h::{Param, hashnode, param, PM_ARRAY};
+                let pm: Param = Box::new(param {
+                    node: hashnode {
+                        next: None,
+                        nam: args[0].clone(),
+                        flags: PM_ARRAY as i32,
+                    },
+                    u_data: 0,
+                    u_arr: Some(ret.clone()),
+                    u_str: None,
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+                    base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+                });
+                tab.insert(args[0].clone(), pm);
+            }
             let _ = sl;
             return 0;                                                         // c:1084
         }

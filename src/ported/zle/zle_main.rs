@@ -1371,7 +1371,7 @@ pub fn bin_vared(name: &str, args: &[String],                                // 
     let mut input = String::new();
     if std::io::stdin().read_line(&mut input).is_ok() {                      // c:1841 zleread fallback
         let value = input.trim_end_matches('\n').to_string();
-        crate::ported::modules::ksh93::setsparam(varname, &value);           // c:1893 setsparam
+        crate::ported::params::setsparam(varname, &value);           // c:1893 setsparam
         return 0;                                                            // c:1903
     }
     1

@@ -218,7 +218,7 @@ pub fn bin_zselect(nam: &str, args: &[String],                               // 
         // c:241 — `sethparam(hashname, ...);` — encode as key=val tab-joined.
         let pairs: Vec<String> = hash.into_iter()
             .map(|(k, v)| format!("{}={}", k, v)).collect();
-        crate::ported::modules::ksh93::setsparam(hash_name, &pairs.join("\t"));
+        crate::ported::params::setsparam(hash_name, &pairs.join("\t"));
     } else {
         // Array form: list of fds preceded by `-r`/`-w`/`-e`.
         let mut out: Vec<String> = Vec::new();
@@ -235,7 +235,7 @@ pub fn bin_zselect(nam: &str, args: &[String],                               // 
             }
         }
         // c:243 — `setaparam(outarray, out);` — colon-join through env shim.
-        crate::ported::modules::ksh93::setsparam(&outarray, &out.join(":"));
+        crate::ported::params::setsparam(&outarray, &out.join(":"));
     }
 
     0                                                                    // c:246
