@@ -146,6 +146,18 @@ pub static intrap: AtomicI32 = AtomicI32::new(0);                             //
 /// distinguish "real" exit from exit-trap-driven exit.
 pub static in_exit_trap: AtomicI32 = AtomicI32::new(0);                       // c:60
 
+/// Port of `volatile int trapisfunc` from `Src/signals.c:1062`.
+/// Set by `dotrapargs()` (signals.c:1156) when the trap body is a
+/// shell function (vs. inline command) — the `IN_EVAL_TRAP()` macro
+/// at zsh.h:2962 tests this against `intrap` + `locallevel`.
+pub static trapisfunc: AtomicI32 = AtomicI32::new(0);                         // c:1062
+
+/// Port of `volatile int traplocallevel` from `Src/signals.c:1069`.
+/// Captures `locallevel` at trap-entry so the trap body can detect
+/// whether it's running inside the same scope it was registered in
+/// (the third leg of `IN_EVAL_TRAP()` at zsh.h:2962).
+pub static traplocallevel: AtomicI32 = AtomicI32::new(0);                     // c:1069
+
 // Variables used by signal queueing                                       // c:74
 /// Enable signal queueing.
 // queue_signals / unqueue_signals live in `signals_h.rs` per the C

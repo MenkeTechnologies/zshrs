@@ -1698,25 +1698,41 @@ pub fn WCB_AUTOFN() -> wordcode {
 pub const NULLBINCMD: Option<HandlerFunc> = None; // c:1438
 
 /// Port of `#define EMULATION(X)` from `Src/zsh.h:2347`.
+/// C macro: `(emulation & (X))`. Reads the canonical `emulation`
+/// static from `crate::ported::options::emulation` directly.
 #[inline]
 #[allow(non_snake_case)]
-pub fn EMULATION(emulation: i32, x: i32) -> bool {
-    (emulation & x) != 0
+pub fn EMULATION(x: i32) -> bool {                                           // c:2347
+    let emul = crate::ported::options::emulation
+        .load(std::sync::atomic::Ordering::Relaxed);
+    (emul & x) != 0
 }
 
 /// Port of `#define SHELL_EMULATION()` from `Src/zsh.h:2350`.
+/// C macro: `(emulation & ((1<<5)-1))`. Reads the canonical
+/// `emulation` static directly.
 #[inline]
 #[allow(non_snake_case)]
-pub fn SHELL_EMULATION(emulation: i32) -> i32 {
-    emulation & ((1 << 5) - 1)
+pub fn SHELL_EMULATION() -> i32 {                                            // c:2350
+    let emul = crate::ported::options::emulation
+        .load(std::sync::atomic::Ordering::Relaxed);
+    emul & ((1 << 5) - 1)
 }
 
-/// Port of `#define IN_EVAL_TRAP()` from `Src/zsh.h:2962`. Inputs:
-/// `intrap`, `trapisfunc`, `traplocallevel`, `locallevel` globals.
+/// Port of `#define IN_EVAL_TRAP()` from `Src/zsh.h:2962`.
+/// C macro reads the four globals `intrap` / `trapisfunc` /
+/// `traplocallevel` / `locallevel` directly with no args; Rust
+/// matches by reading the canonical statics
+/// (`signals::intrap`, `signals::trapisfunc`,
+/// `signals::traplocallevel`, `params::locallevel`) inside.
 #[inline]
 #[allow(non_snake_case)]
-pub fn IN_EVAL_TRAP(intrap: i32, trapisfunc: i32, traplocallevel: i32, locallevel: i32) -> bool {
-    intrap != 0 && trapisfunc == 0 && traplocallevel == locallevel
+pub fn IN_EVAL_TRAP() -> bool {                                              // c:2962
+    use std::sync::atomic::Ordering;
+    crate::ported::signals::intrap.load(Ordering::Relaxed) != 0
+        && crate::ported::signals::trapisfunc.load(Ordering::Relaxed) == 0
+        && crate::ported::signals::traplocallevel.load(Ordering::Relaxed)
+            == crate::ported::params::locallevel.load(Ordering::Relaxed)
 }
 
 /// Port of `#define ASG_ARRAYP(asg)` from `Src/zsh.h:1288`.

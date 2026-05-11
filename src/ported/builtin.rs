@@ -368,12 +368,9 @@ pub fn freebuiltinnode(hn: *mut crate::ported::zsh_h::hashnode) {            // 
 /// ```
 pub fn init_builtins() {                                                     // c:212
     use crate::ported::zsh_h::EMULATE_ZSH;
-    // c:214 — `if (!EMULATION(EMULATE_ZSH))`. Read the live emulation
-    // bitmap from the canonical global, not the per-call ShellOptions
-    // snapshot (which lags behind `emulate -L` switches).
-    let emul = crate::ported::options::emulation
-        .load(std::sync::atomic::Ordering::Relaxed);
-    if !crate::ported::zsh_h::EMULATION(emul, EMULATE_ZSH) {                 // c:214
+    // c:214 — `if (!EMULATION(EMULATE_ZSH))`. EMULATION reads the
+    // canonical `emulation` global directly per zsh.h:2347.
+    if !crate::ported::zsh_h::EMULATION(EMULATE_ZSH) {                       // c:214
         // c:215-217 — `hn = reswdtab->getnode2(reswdtab,"repeat");
         //              if (hn) reswdtab->disablenode(hn, 0);`
         if let Ok(mut tab) = crate::ported::hashtable::reswdtab_lock().lock() {
@@ -3228,9 +3225,7 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
     // c:2748-2772 — `-p` print-mode: PRINT_POSIX_EXPORT / READONLY /
     // TYPESET, plus optional -p N for line-style.
     if OPT_ISSET(&ops, b'p') {                                               // c:2748
-        let emul_bits = crate::ported::options::emulation
-            .load(std::sync::atomic::Ordering::Relaxed);
-        if posix && !EMULATION(emul_bits, EMULATE_KSH) {                     // c:2750
+        if posix && !EMULATION(EMULATE_KSH) {                                // c:2750
             printflags |= match func {
                 BIN_EXPORT   => PRINT_POSIX_EXPORT,                          // c:2752
                 BIN_READONLY => PRINT_POSIX_READONLY,                        // c:2754
@@ -5187,9 +5182,7 @@ pub fn bin_set(nam: &str, args: &[String],                                   // 
     let mut arrayname: Option<String> = None;                                // c:604
 
     // c:608-614 — sh-compat: bare `set -` → +xv.
-    let emul_bits = crate::ported::options::emulation
-        .load(std::sync::atomic::Ordering::Relaxed);
-    if !EMULATION(emul_bits, EMULATE_ZSH)                                    // c:608
+    if !EMULATION(EMULATE_ZSH)                                               // c:608
         && !argv.is_empty() && argv[0] == "-"
     {
         // c:610-611 — `dosetopt(VERBOSE, 0, 0, opts); dosetopt(XTRACE, 0, 0, opts);`

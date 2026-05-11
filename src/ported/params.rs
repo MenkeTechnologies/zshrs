@@ -5737,10 +5737,7 @@ pub fn createparamtable() {                                                  // 
     // load special_params_sh (scalar versions). Otherwise load
     // special_params zsh-only section (the continuation past the
     // inner NULL sentinel).
-    let emul = crate::ported::options::emulation
-        .load(std::sync::atomic::Ordering::SeqCst);
     let is_sh_ksh = crate::ported::zsh_h::EMULATION(
-        emul,
         crate::ported::zsh_h::EMULATE_SH | crate::ported::zsh_h::EMULATE_KSH,
     );
     {
@@ -5890,7 +5887,6 @@ pub fn createparamtable() {                                                  // 
     // addenv(home) when not already exported; non-zsh path sets
     // PM_UNSET when `home` is empty/unset.
     let is_zsh = crate::ported::zsh_h::EMULATION(
-        emul,
         crate::ported::zsh_h::EMULATE_ZSH,
     );
     let home_val = home_lock().lock().expect("home poisoned").clone();
