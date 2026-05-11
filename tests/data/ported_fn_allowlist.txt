@@ -730,6 +730,14 @@ foundparam_lock
 foundparam
 set_foundparam
 
+# Same pattern for the rest of the params.c:626-640 scanparamvals
+# file-scope statics (numparamvals, scanprog, scanstr, paramvals)
+# after the ScanParamValsState bag-of-globals dissolution per
+# PORT.md Rule D.
+scanprog_lock
+scanstr_lock
+paramvals_lock
+
 
 # subst.rs typed wrappers around the global `errflag` AtomicI32
 # (utils.rs). C accesses the global directly as `errflag` /
