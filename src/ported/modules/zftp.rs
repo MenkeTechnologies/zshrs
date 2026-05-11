@@ -2762,11 +2762,79 @@ pub fn zftp_login(_name: &str, args: &[&str], _flags: i32) -> i32 {
 }
 
 /// Port of `zftp_params()` from `Src/Modules/zftp.c:2064`.
-pub fn zftp_params(_name: &str, args: &[&str], _flags: i32) -> i32 {
-    let mut full: Vec<String> = vec!["params".to_string()];
-    full.extend(args.iter().map(|s| s.to_string()));
-    let rc = bin_zftp("zftp", &full, &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
-    rc
+/// C: list, clear ("-"), or set the current session's `userparams` array.
+pub fn zftp_params(_name: &str, args: &[&str], _flags: i32) -> i32 {            // c:2064
+    use std::io::Write;
+    use std::sync::atomic::Ordering;
+    let prompts: [&str; 4] = ["Host: ", "User: ", "Password: ", "Account: "];   // c:2067
+    // c:2071-2083 — no args: print current userparams (mask the password slot).
+    if args.is_empty() {                                                        // c:2071 !*args
+        let state = match ZFTP_STATE.lock() {
+            Ok(s) => s,
+            Err(_) => return 1,
+        };
+        let sess = match state.get_session(None) {
+            Some(s) => s,
+            None => return 1,
+        };
+        if sess.userparams.is_empty() {                                         // c:2082 else
+            return 1;                                                           // c:2083
+        }
+        let mut out = std::io::stdout().lock();
+        for (i, p) in sess.userparams.iter().enumerate() {                      // c:2073 for aptr,i
+            if i == 2 {                                                         // c:2074 i == 2
+                let len = p.len();                                              // c:2075 strlen
+                for _ in 0..len {                                               // c:2076 for j<len
+                    let _ = out.write_all(b"*");                                // c:2077 fputc '*'
+                }
+                let _ = out.write_all(b"\n");                                   // c:2078 fputc '\n'
+            } else {
+                let _ = writeln!(out, "{}", p);                                 // c:2080 fprintf
+            }
+        }
+        return 0;                                                               // c:2081
+    }
+    // c:2084-2089 — single "-" arg: clear userparams.
+    if args[0] == "-" {                                                         // c:2084 !strcmp "-"
+        if let Ok(mut state) = ZFTP_STATE.lock() {
+            if let Some(sess) = state.get_session_mut(None) {
+                sess.userparams.clear();                                        // c:2085-2087 freearray
+            }
+        }
+        return 0;                                                               // c:2088
+    }
+    // c:2090-2103 — replace userparams with new array.
+    let len = args.len();                                                       // c:2090 arrlen
+    let mut newarr: Vec<String> = Vec::with_capacity(len);                      // c:2091 zshcalloc
+    let efl_atomic = &crate::ported::utils::errflag;
+    for (i, aptr) in args.iter().enumerate() {                                  // c:2092 for aptr,i
+        if efl_atomic.load(Ordering::Relaxed) != 0 {                            // c:2092 !errflag
+            break;
+        }
+        let str_val: String;
+        if let Some(rest) = aptr.strip_prefix('?') {                            // c:2094 **aptr == '?'
+            let prompt: &str = if !rest.is_empty() { rest } else { prompts[i.min(3)] }; // c:2095
+            match zfgetinfo(prompt, if i == 2 { 1 } else { 0 }) {                // c:2095 i == 2
+                Some(s) => str_val = s,
+                None => { return 1; }
+            }
+        } else if let Some(rest) = aptr.strip_prefix('\\') {                    // c:2097 **aptr=='\\'
+            str_val = rest.to_string();
+        } else {
+            str_val = (*aptr).to_string();
+        }
+        newarr.push(str_val);                                                   // c:2098 ztrdup
+    }
+    if efl_atomic.load(Ordering::Relaxed) != 0 {                                // c:2100 if errflag
+        // c:2101-2104 — free newarr; Rust Drop handles it.
+        return 1;                                                               // c:2105
+    }
+    if let Ok(mut state) = ZFTP_STATE.lock() {
+        if let Some(sess) = state.get_session_mut(None) {
+            sess.userparams = newarr;                                           // c:2107-2109
+        }
+    }
+    0                                                                           // c:2110
 }
 
 /// Port of `zftp_test()` from `Src/Modules/zftp.c:2251`.
