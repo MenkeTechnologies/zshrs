@@ -346,7 +346,8 @@ fn advance_past_instr(buf: &[u8], pos: usize) -> usize {
     match op {
         P_END | P_NOTHING | P_BACK | P_EXCSYNC | P_EXCEND
             | P_ISSTART | P_ISEND | P_COUNTSTART | P_ANY | P_STAR | P_NUMANY
-            | P_GFLAGS => body_start,
+            => body_start,
+        P_GFLAGS => body_start + 4,                                           // i32 flag-bits payload
         P_EXACTLY => {
             // payload: u32 len + len bytes
             if body_start + 4 > buf.len() { return 0; }
@@ -610,10 +611,38 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {                    //
         let off = patparse_off.load(Ordering::Relaxed);
         let parse = patparse.lock().unwrap();
         if off >= parse.len() { break; }
-        let c = parse.as_bytes()[off];
+        let bytes = parse.as_bytes();
+        let c = bytes[off];
         // Branch terminators: |, ), end of pattern.
         if c == b'|' || c == b')' { break; }
-        drop(parse);
+        // Mid-pattern `(#...)` glob flag specifier — emit P_GFLAGS
+        // opcode that mutates the matcher's running glob_flags var.
+        // Port of pattern.c patcompswitch's inline (#...) handling
+        // around c:850-900 (patgetglobflags integration).
+        if off + 1 < bytes.len() && bytes[off] == b'(' && bytes[off + 1] == b'#' {
+            let rest = parse[off..].to_string();
+            drop(parse);
+            if let Some((gflags, _assert, consumed)) = patgetglobflags(&rest) {
+                patparse_off.fetch_add(consumed, Ordering::Relaxed);
+                let mut bits: i32 = 0;
+                if gflags.case_insensitive { bits |= PAT_LCMATCHUC as i32; }
+                if gflags.lcmatchuc        { bits |= PAT_LCMATCHUC as i32; }
+                let gf_off = patnode(P_GFLAGS);
+                let mut buf = patout.lock().unwrap();
+                buf.extend_from_slice(&bits.to_le_bytes());
+                drop(buf);
+                if chain_start < 0 {
+                    chain_start = gf_off as i64;
+                } else {
+                    set_next(last_tail, gf_off);
+                }
+                last_tail = gf_off;
+                continue;
+            }
+            // patgetglobflags failed — treat the `(` as a literal group.
+        } else {
+            drop(parse);
+        }
 
         let mut piece_flags: i32 = 0;
         let mut piece_tail: usize = 0;
@@ -1155,6 +1184,9 @@ fn patmatch_internal(
 ) -> Option<usize> {                                                          // c:2694
     let mut scan = prog_off;
     let mut s_off = string_off;
+    // Locally-mutable copy of glob_flags so mid-pattern P_GFLAGS can
+    // toggle bits without affecting the caller's branch view.
+    let mut glob_flags = glob_flags;
 
     while scan < code.len() {
         let op = code[scan + I_OP];
@@ -1341,6 +1373,14 @@ fn patmatch_internal(
             }
             P_ISEND => {                                                      // c:P_ISEND
                 if s_off < string.len() { return None; }
+            }
+            P_GFLAGS => {                                                     // c:P_GFLAGS arm
+                let body = scan + I_BODY;
+                let bits = i32::from_le_bytes(code[body..body + 4].try_into().unwrap());
+                // C uses absolute set; for the on/off toggle pairs
+                // we currently encode only the "on" bits (i.e. (#I)
+                // emits 0 to clear). Set the running flags directly.
+                glob_flags = (glob_flags & !(PAT_LCMATCHUC as i32)) | bits;
             }
             op if op >= P_OPEN && op < P_CLOSE => {                           // c:P_OPEN_N arm
                 let n = (op - P_OPEN) as usize;
@@ -1970,6 +2010,18 @@ mod tests {
         let prog = compile("foo");
         assert!(pattry(&prog, "foo"));
         assert!(!pattry(&prog, "FOO"));
+    }
+
+    /// Mid-pattern P_GFLAGS opcode: `foo(#i)BAR` — first half exact,
+    /// second half case-insensitive.
+    #[test]
+    fn mid_pattern_gflags_switch() {
+        let prog = compile("foo(#i)bar");
+        assert!(pattry(&prog, "fooBAR"));
+        assert!(pattry(&prog, "foobar"));
+        assert!(pattry(&prog, "fooBaR"));
+        // First half still case-sensitive — "FOOBAR" should NOT match.
+        assert!(!pattry(&prog, "FOOBAR"));
     }
 
     #[test]
