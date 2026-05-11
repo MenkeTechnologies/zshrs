@@ -1236,13 +1236,9 @@ fn minfo_asked_zero() {                                                       //
 /// in `comp_h.rs::Menuinfo` (port of comp.h:284-295).
 pub static MINFO: OnceLock<Mutex<crate::ported::zle::comp_h::Menuinfo>> = OnceLock::new(); // zle_tricky.c minfo
 
-/// Helper to set MINFO.cur from outside compcore.rs. Mirrors C's
-/// direct write `minfo.cur = &m;`.
-pub fn set_minfo_cur(m: Cmatch) {                                             // zle_tricky.c minfo
-    if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
-        g.cur = Some(Box::new(m));
-    }
-}
+// `set_minfo_cur` deleted — Rust-only wrapper for the C inline
+// write `minfo.cur = &m;`. Callers should inline the
+// `MINFO.lock().cur = Some(Box::new(m))` write directly.
 fn do_ambig_menu_stub() {                                                     // compresult.c:1381
     let _ = crate::ported::zle::compresult::do_ambig_menu();
 }
