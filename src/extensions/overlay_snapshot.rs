@@ -51,7 +51,7 @@ use serde_json::{json, Value};
 pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
     let mut out: Vec<(String, Value)> = Vec::new();
 
-    crate::exec::with_executor(|exec| {
+    crate::fusevm_bridge::with_executor(|exec| {
         // Plain string maps — alias / galias / salias / setopt all
         // follow the same shape: `{key: value}` JSON object.
         if !exec.aliases.is_empty() {
