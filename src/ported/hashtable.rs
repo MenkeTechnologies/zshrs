@@ -492,55 +492,33 @@ impl Default for ShFuncTable {
     }
 }
 
-/// Reserved word token types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-/// Reserved-word token IDs.
-/// Port of the `LX1_*` reserved-word constants the C source's
-/// reserved-word table (`reswdtab` HashTable, Src/lex.c) uses to
-/// classify tokens like `if`/`while`/`function`/etc.
-pub enum ReswdToken {
-    Bang,
-    DinBrack,
-    InBrace,
-    OutBrace,
-    Case,
-    Coproc,
-    Typeset,
-    DoLoop,
-    Done,
-    Elif,
-    Else,
-    Zend,
-    Esac,
-    Fi,
-    For,
-    Foreach,
-    Func,
-    If,
-    Nocorrect,
-    Repeat,
-    Select,
-    Then,
-    Time,
-    Until,
-    While,
-}
+// `ReswdToken` enum deleted — Rust-only enum duplicating the
+// canonical `lextok` i32 token constants already in zsh_h.rs
+// (BANG_TOK/DINBRACK/INBRACE_TOK/OUTBRACE_TOK/CASE/COPROC/DOLOOP
+// /DONE/ELIF/ELSE/ZEND/ESAC/FI/FOR/FOREACH/FUNC/IF/NOCORRECT/
+// REPEAT/SELECT/THEN/TIME/UNTIL/WHILE/TYPESET at zsh.h:345-371).
+// Reswd.token now stores the raw i32 lextok matching C `struct
+// reswd { HashNode node; int token; }` at zsh.h:1246-1249.
 
-/// Reserved word entry
+/// Reserved word entry.
+///
+/// Port of `struct reswd` from `Src/zsh.h:1246-1249`. The
+/// canonical port at `crate::ported::zsh_h::reswd` carries
+/// `node: hashnode` for HashTable embedding; the table-side
+/// Reswd here stores the name as a String for HashMap-keyed
+/// lookup until the generic `HashTable` substrate is wired.
 #[derive(Debug, Clone)]
-/// Reserved-word table entry.
-/// Port of `struct reswd` from Src/zsh.h — populated via
-/// `addreswords()` (Src/lex.c) at startup and consulted on every
-/// lex.
 pub struct Reswd {
     pub name: String,
     pub flags: u32,
-    pub token: ReswdToken,
+    /// Token ID — one of `crate::ported::zsh_h::{BANG_TOK,
+    /// DINBRACK, INBRACE_TOK, ...}` from the lex-token enum
+    /// at zsh.h:345-371.
+    pub token: i32,
 }
 
 impl Reswd {
-    pub fn new(name: &str, token: ReswdToken) -> Self {
+    pub fn new(name: &str, token: i32) -> Self {
         Self {
             name: name.to_string(),
             flags: 0,
@@ -567,38 +545,47 @@ impl ReswdTable {
     pub fn new() -> Self {
         let mut table = HashMap::new();
 
-        let words = [
-            ("!", ReswdToken::Bang),
-            ("[[", ReswdToken::DinBrack),
-            ("{", ReswdToken::InBrace),
-            ("}", ReswdToken::OutBrace),
-            ("case", ReswdToken::Case),
-            ("coproc", ReswdToken::Coproc),
-            ("declare", ReswdToken::Typeset),
-            ("do", ReswdToken::DoLoop),
-            ("done", ReswdToken::Done),
-            ("elif", ReswdToken::Elif),
-            ("else", ReswdToken::Else),
-            ("end", ReswdToken::Zend),
-            ("esac", ReswdToken::Esac),
-            ("export", ReswdToken::Typeset),
-            ("fi", ReswdToken::Fi),
-            ("float", ReswdToken::Typeset),
-            ("for", ReswdToken::For),
-            ("foreach", ReswdToken::Foreach),
-            ("function", ReswdToken::Func),
-            ("if", ReswdToken::If),
-            ("integer", ReswdToken::Typeset),
-            ("local", ReswdToken::Typeset),
-            ("nocorrect", ReswdToken::Nocorrect),
-            ("readonly", ReswdToken::Typeset),
-            ("repeat", ReswdToken::Repeat),
-            ("select", ReswdToken::Select),
-            ("then", ReswdToken::Then),
-            ("time", ReswdToken::Time),
-            ("typeset", ReswdToken::Typeset),
-            ("until", ReswdToken::Until),
-            ("while", ReswdToken::While),
+        // Direct port of `static struct reswd reswds[]` at
+        // Src/hashtable.c:1076-1108. Token IDs are the lextok
+        // constants from zsh_h.rs (zsh.h:345-371).
+        use crate::ported::zsh_h::{
+            BANG_TOK, DINBRACK, INBRACE_TOK, OUTBRACE_TOK, CASE, COPROC,
+            DOLOOP, DONE, ELIF, ELSE, ZEND, ESAC, FI, FOR, FOREACH, FUNC,
+            IF, NOCORRECT, REPEAT, SELECT, THEN, TIME, UNTIL, WHILE,
+            TYPESET,
+        };
+        let words: [(&str, i32); 31] = [                                     // c:1076
+            ("!",         BANG_TOK),                                         // c:1077
+            ("[[",        DINBRACK),                                         // c:1078
+            ("{",         INBRACE_TOK),                                      // c:1079
+            ("}",         OUTBRACE_TOK),                                     // c:1080
+            ("case",      CASE),                                             // c:1081
+            ("coproc",    COPROC),                                           // c:1082
+            ("declare",   TYPESET),                                          // c:1083
+            ("do",        DOLOOP),                                           // c:1084
+            ("done",      DONE),                                             // c:1085
+            ("elif",      ELIF),                                             // c:1086
+            ("else",      ELSE),                                             // c:1087
+            ("end",       ZEND),                                             // c:1088
+            ("esac",      ESAC),                                             // c:1089
+            ("export",    TYPESET),                                          // c:1090
+            ("fi",        FI),                                               // c:1091
+            ("float",     TYPESET),                                          // c:1092
+            ("for",       FOR),                                              // c:1093
+            ("foreach",   FOREACH),                                          // c:1094
+            ("function",  FUNC),                                             // c:1095
+            ("if",        IF),                                               // c:1096
+            ("integer",   TYPESET),                                          // c:1097
+            ("local",     TYPESET),                                          // c:1098
+            ("nocorrect", NOCORRECT),                                        // c:1099
+            ("readonly",  TYPESET),                                          // c:1100
+            ("repeat",    REPEAT),                                           // c:1101
+            ("select",    SELECT),                                           // c:1102
+            ("then",      THEN),                                             // c:1103
+            ("time",      TIME),                                             // c:1104
+            ("typeset",   TYPESET),                                          // c:1105
+            ("until",     UNTIL),                                            // c:1106
+            ("while",     WHILE),                                            // c:1107
         ];
 
         for (name, token) in words {
@@ -1189,7 +1176,7 @@ mod tests {
         assert!(!table.is_reserved("notreserved"));
 
         let if_rw = table.get("if").unwrap();
-        assert_eq!(if_rw.token, ReswdToken::If);
+        assert_eq!(if_rw.token, crate::ported::zsh_h::IF);
     }
 
     #[test]
