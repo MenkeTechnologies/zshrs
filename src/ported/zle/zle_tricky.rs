@@ -507,7 +507,7 @@ pub fn docomplete(lst: i32) -> i32 {                                         // 
 /// this name; the real work happens in `do_completion`.
 pub fn docompletion() -> i32 {                                               // c:2339
     crate::ported::zle::compcore::do_completion(
-        "", 0, crate::ported::zle::compcore::COMP_LIST_COMPLETE,
+        "", 0, crate::ported::zle::zle_h::COMP_LIST_COMPLETE,
     )
 }
 
@@ -710,7 +710,7 @@ pub fn expandword() -> i32 {                                                 // 
 pub fn fixmagicspace(zle: &mut crate::ported::zle::zle_main::Zle) {          // c:2867
     // C body c:2869-2876 — `lastchar = ' '; lastchar_wide = L' ';
     //                       lastchar_wide_valid = 1`.
-    zle.lastchar = b' ' as crate::ported::zle::zle_main::ZleInt;
+    crate::ported::zle::compcore::LASTCHAR.store((b' ' as crate::ported::zle::zle_main::ZleInt) as i32, std::sync::atomic::Ordering::SeqCst);
     zle.lastchar_wide = b' ' as crate::ported::zle::zle_main::ZleInt;
     zle.lastchar_wide_valid = true;
 }
