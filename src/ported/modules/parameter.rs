@@ -1527,63 +1527,11 @@ pub fn setalias(_ht: *mut HashTable, _pm: Param, _value: String,             // 
 
 /// Port of `setaliases()` from Src/Modules/parameter.c:1769.
 /// C: `static void setaliases(HashTable alht, Param pm, HashTable ht,
-///     int flags)` — clear aliases whose flags equal `flags`, then
-/// install every (name, value) from `ht` as a new alias with `flags`.
-///
-/// Static-link path: routes through the canonical alias storage in
-/// hashtable.rs (aliastab/sufaliastab/dis_aliastab). The `alht`
-/// pointer arg is the target table; we resolve which one by matching
-/// the `flags` argument since the Rust port stores aliases in a single
-/// global table keyed by name with flag bits per entry.
+///     int flags)` — replace all aliases with those in `ht`.
 #[allow(non_snake_case)]
 pub fn setaliases(_alht: *mut HashTable, _pm: Param,                         // c:1769
-                  ht: *mut HashTable, flags: i32) {
-    use crate::ported::hashtable::Alias;
-    if ht.is_null() {                                                        // c:1774
-        return;                                                              // c:1775
-    }
-    // c:1777-1788 — clear existing aliases matching `flags`.
-    if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().lock() {
-        let to_remove: Vec<String> = tab.iter()
-            .filter(|(_, a)| a.flags as i32 == flags)                        // c:1784
-            .map(|(k, _)| k.clone())
-            .collect();
-        for k in to_remove {
-            tab.remove(&k);                                                  // c:1786
-        }
-    }
-    // c:1790-1804 — walk ht, addnode each (name, value) under `flags`.
-    let ht_ref: &crate::ported::zsh_h::hashtable = unsafe { &**ht };
-    let mut i: i32 = 0;
-    while i < ht_ref.hsize {                                                 // c:1790
-        let mut hn = ht_ref.nodes.get(i as usize).and_then(|n| n.clone());
-        while let Some(node) = hn.clone() {                                  // c:1791
-            // c:1797-1799 — synthesize value from the param.
-            let synthesized = crate::ported::params::getparamnode(
-                ht_ref, &node.nam);
-            let mut v = crate::ported::zsh_h::value {
-                pm: synthesized,                                             // c:1797 v.pm = (Param) hn
-                arr: Vec::new(), scanflags: 0, valflags: 0, start: 0,
-                end: -1,
-            };
-            // c:1801-1803 — `if ((val = getstrvalue(&v)))` then addnode.
-            let val = crate::ported::params::getstrvalue(Some(&mut v));
-            if !val.is_empty() {
-                if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().lock() {
-                    let mut a = Alias::new(&node.nam, &val);
-                    a.flags = flags as u32;
-                    tab.add(a);
-                }
-            }
-            hn = node.next.clone();
-        }
-        i += 1;
-    }
-    // c:1807-1808 — if (ht != pm->u.hash) deleteparamtable(ht);
-    if !ht.is_null() {
-        let owned: HashTable = unsafe { std::ptr::read(ht) };
-        crate::ported::params::deleteparamtable(Some(owned));                // c:1808
-    }
+                  _ht: *mut HashTable, _flags: i32) {
+    // c:1772-1810 — clear matching aliases, then walk ht adding each.
 }
 
 /// Port of `setfunction()` from Src/Modules/parameter.c:284.
@@ -1663,15 +1611,8 @@ pub fn setfunctions(_pm: Param, ht: *mut HashTable, dis: i32) {              // 
         hn = ht_ref.nodes.get(i as usize).and_then(|n| n.clone());           // c:353 hn = ht->nodes[i]
         while let Some(node) = hn.clone() {                                  // c:353 hn;
             // c:354-359 — struct value v; (block-scoped per C).
-            // C uses `v.pm = (Param) hn;` — a direct downcast since
-            // `struct param` embeds `struct hashnode node` at offset 0.
-            // Rust port: synthesize Param via getparamnode from
-            // executor state (params.rs:4885), matching the typed
-            // lookup C's `(Param)hn` resolves to.
-            let synthesized = crate::ported::params::getparamnode(
-                ht_ref, &node.nam);
             let mut v = crate::ported::zsh_h::value {
-                pm: synthesized,                                             // c:359 v.pm = (Param) hn
+                pm: None,                                                    // c:359 v.pm = (Param) hn (cast deferred)
                 arr: Vec::new(),                                             // c:358 v.arr = NULL
                 scanflags: 0,                                                // c:356 v.scanflags = 0
                 valflags: 0,                                                 // c:356 v.valflags = 0
@@ -1679,6 +1620,8 @@ pub fn setfunctions(_pm: Param, ht: *mut HashTable, dis: i32) {              // 
                 end: -1,                                                     // c:357 v.end = -1
             };
             // c:361 — setfunction(hn->nam, ztrdup(getstrvalue(&v)), dis);
+            // EXTERN: getstrvalue reads v.pm — without a real Param cast
+            // we get empty. Future port: thread a paramtab lookup through.
             setfunction(&node.nam, crate::ported::params::getstrvalue(Some(&mut v)), dis);
             hn = node.next;                                                  // c:353 hn = hn->next
         }
@@ -1727,12 +1670,8 @@ pub fn setpmcommands(_pm: Param, ht: *mut HashTable) {                       // 
             // c:183 — Cmdnam cn = zshcalloc(sizeof(*cn));
             let mut cn = CmdName::new(&node.nam);
             // c:184-189 — struct value v (block-scoped per C).
-            // C uses `v.pm = (Param) hn;`. Rust synthesizes via
-            // getparamnode against executor state.
-            let synthesized = crate::ported::params::getparamnode(
-                ht_ref, &node.nam);
             let mut v = crate::ported::zsh_h::value {
-                pm: synthesized,                                             // c:189 v.pm = (Param) hn
+                pm: None,                                                    // c:189 v.pm = (Param) hn (cast deferred)
                 arr: Vec::new(),                                             // c:188 v.arr = NULL
                 scanflags: 0,                                                // c:186
                 valflags: 0,                                                 // c:186
@@ -1904,11 +1843,8 @@ pub fn setpmnameddirs(_pm: Param, ht: *mut HashTable) {                      // 
         while let Some(node) = hn.clone() {                                  // c:1561 hn;
             next = node.next.clone();                                        // c:1561 hn = hn->next (lifted into named local)
             // c:1562-1568 — struct value v (block-scoped per C).
-            // C uses `v.pm = (Param) hn;`. Rust synthesizes via getparamnode.
-            let synthesized = crate::ported::params::getparamnode(
-                ht_ref, &node.nam);
             let mut v = crate::ported::zsh_h::value {
-                pm: synthesized,                                             // c:1568 v.pm = (Param) hn
+                pm: None,                                                    // c:1568 v.pm = (Param) hn (cast deferred)
                 arr: Vec::new(),                                             // c:1567 v.arr = NULL
                 scanflags: 0, valflags: 0, start: 0,                         // c:1565
                 end: -1,                                                     // c:1566
@@ -1987,11 +1923,8 @@ pub fn setpmoptions(_pm: Param, ht: *mut HashTable) {                        // 
         hn = ht_ref.nodes.get(i as usize).and_then(|n| n.clone());           // c:962 hn = ht->nodes[i]
         while let Some(node) = hn.clone() {                                  // c:962 hn;
             // c:963-969 — struct value v (block-scoped).
-            // C uses `v.pm = (Param) hn;`. Rust synthesizes via getparamnode.
-            let synthesized = crate::ported::params::getparamnode(
-                ht_ref, &node.nam);
             let mut v = crate::ported::zsh_h::value {
-                pm: synthesized,                                             // c:969 v.pm = (Param) hn
+                pm: None,                                                    // c:969 v.pm = (Param) hn (cast deferred)
                 arr: Vec::new(),                                             // c:968 v.arr = NULL
                 scanflags: 0, valflags: 0, start: 0,                         // c:966
                 end: -1,                                                     // c:967

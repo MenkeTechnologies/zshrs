@@ -212,13 +212,17 @@ mod tests {
 
     #[test]
     fn bindkey_returns_false_for_unknown_keymap() {
-        let mut km = KeymapManager::new();
+        crate::ported::zle::zle_keymap::createkeymapnamtab();
+        crate::ported::zle::zle_keymap::default_bindings();
+        let mut km = KeymapManager;
         assert!(!bindkey(&mut km, "no-such-keymap", "^A", "self-insert"));
     }
 
     #[test]
     fn bindkey_then_unbind_round_trips_through_emacs_keymap() {
-        let mut km = KeymapManager::new();
+        crate::ported::zle::zle_keymap::createkeymapnamtab();
+        crate::ported::zle::zle_keymap::default_bindings();
+        let mut km = KeymapManager;
         // Pick a sequence unlikely to clash with the default emacs map.
         // \M-z = ESC z = bytes 0x1B 0x7A.
         assert!(bindkey(&mut km, "emacs", "\\ez", "self-insert"));

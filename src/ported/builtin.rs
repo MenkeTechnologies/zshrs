@@ -2228,19 +2228,19 @@ pub fn bin_getopts(_name: &str, argv: &[String],                             // 
             zoptind += 1;
         }
         // c:5731 — `setsparam(var, ztrdup(p));` where p = "?"
-        crate::ported::modules::ksh93::setsparam(&var, "?");
+        crate::ported::params::setsparam(&var, "?");
         if quiet {                                                           // c:5733
-            crate::ported::modules::ksh93::setsparam("OPTARG", &optbuf);     // c:5734
+            crate::ported::params::setsparam("OPTARG", &optbuf);     // c:5734
         } else {
             let prefix = if plus { "+" } else { "-" };
             crate::ported::utils::zwarn(&format!(
                 "bad option: {}{}", prefix, opch as char));                  // c:5736
-            crate::ported::modules::ksh93::setsparam("OPTARG", "");
+            crate::ported::params::setsparam("OPTARG", "");
         }
         ZOPTIND.store(zoptind, Ordering::Relaxed);
         OPTCIND.store(optcind, Ordering::Relaxed);
         // Sync OPTIND env var so callers can read.
-        crate::ported::modules::ksh93::setiparam("OPTIND", zoptind as i64);
+        crate::ported::params::setiparam("OPTIND", zoptind as i64);
         return 0;
     }
 
@@ -2256,11 +2256,11 @@ pub fn bin_getopts(_name: &str, argv: &[String],                             // 
                     zoptind += 1;
                 }
                 if quiet {                                                   // c:5754
-                    crate::ported::modules::ksh93::setsparam(&var, ":");
-                    crate::ported::modules::ksh93::setsparam("OPTARG", &optbuf);
+                    crate::ported::params::setsparam(&var, ":");
+                    crate::ported::params::setsparam("OPTARG", &optbuf);
                 } else {
-                    crate::ported::modules::ksh93::setsparam(&var, "?");
-                    crate::ported::modules::ksh93::setsparam("OPTARG", "");
+                    crate::ported::params::setsparam(&var, "?");
+                    crate::ported::params::setsparam("OPTARG", "");
                     let prefix = if plus { "+" } else { "-" };
                     crate::ported::utils::zwarn(&format!(
                         "argument expected after {}{} option",
@@ -2268,30 +2268,30 @@ pub fn bin_getopts(_name: &str, argv: &[String],                             // 
                 }
                 ZOPTIND.store(zoptind, Ordering::Relaxed);
                 OPTCIND.store(optcind, Ordering::Relaxed);
-                crate::ported::modules::ksh93::setiparam("OPTIND", zoptind as i64);
+                crate::ported::params::setiparam("OPTIND", zoptind as i64);
                 return 0;
             }
             let p_arg = args[zoptind as usize].clone();
             zoptind += 1;
-            crate::ported::modules::ksh93::setsparam("OPTARG", &p_arg);      // c:5765
+            crate::ported::params::setsparam("OPTARG", &p_arg);      // c:5765
             optcind = 0;
         } else {
             // c:5774 — `p = metafy(str+optcind, lenstr-optcind, META_DUP);`
             let p_arg = str_buf[(optcind as usize)..].to_string();
-            crate::ported::modules::ksh93::setsparam("OPTARG", &p_arg);
+            crate::ported::params::setsparam("OPTARG", &p_arg);
             optcind = 0;
             zoptind += 1;
         }
     } else {
         // c:5784 — `zsfree(zoptarg); zoptarg = ztrdup("");`
-        crate::ported::modules::ksh93::setsparam("OPTARG", "");
+        crate::ported::params::setsparam("OPTARG", "");
     }
 
     // c:5788 — `setsparam(var, metafy(optbuf, lenoptbuf, META_DUP));`
-    crate::ported::modules::ksh93::setsparam(&var, &optbuf);
+    crate::ported::params::setsparam(&var, &optbuf);
     ZOPTIND.store(zoptind, Ordering::Relaxed);
     OPTCIND.store(optcind, Ordering::Relaxed);
-    crate::ported::modules::ksh93::setiparam("OPTIND", zoptind as i64);
+    crate::ported::params::setiparam("OPTIND", zoptind as i64);
     0                                                                        // c:5790
 }
 
@@ -2409,9 +2409,9 @@ pub fn bin_read(name: &str, args: &[String],                                 // 
     // Assign to scalar reply or split into array.
     if want_array {
         let parts: Vec<String> = buf.split_whitespace().map(String::from).collect();
-        crate::ported::modules::ksh93::setsparam(&reply, &parts.join(":"));
+        crate::ported::params::setsparam(&reply, &parts.join(":"));
     } else {
-        crate::ported::modules::ksh93::setsparam(&reply, &buf);
+        crate::ported::params::setsparam(&reply, &buf);
     }
     0
 }
@@ -2456,7 +2456,7 @@ pub fn bin_print(name: &str, args: &[String],                                // 
         let rest: &[String] = if OPT_HASARG(ops, b'f') { args } else { &args[1..] };
         let out = printf_format(&fmt, rest);
         if let Some(ref v) = dest_var {
-            crate::ported::modules::ksh93::setsparam(v, &out);
+            crate::ported::params::setsparam(v, &out);
         } else {
             print!("{}", out);
         }
@@ -2467,7 +2467,7 @@ pub fn bin_print(name: &str, args: &[String],                                // 
     let sep = if one_per_line { "\n" } else { " " };
     let body = args.join(sep);
     if let Some(ref v) = dest_var {
-        crate::ported::modules::ksh93::setsparam(v, &body);
+        crate::ported::params::setsparam(v, &body);
     } else {
         print!("{}", body);
         // c:5550 — final newline unless -n.
@@ -4958,7 +4958,7 @@ pub fn bin_set(nam: &str, args: &[String],                                   // 
             }
         }
         // c:709 — `setaparam(arrayname, x);`
-        crate::ported::modules::ksh93::setsparam(&aname, &new_arr.join(":"));
+        crate::ported::params::setsparam(&aname, &new_arr.join(":"));
     } else {
         // c:711-712 — `freearray(pparams); pparams = zarrdup(args);`
         if let Ok(mut pp) = PPARAMS.lock() {

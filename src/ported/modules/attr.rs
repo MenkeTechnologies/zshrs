@@ -481,14 +481,14 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 /// `ksh93::setsparam(name, val)` which provides the env-var-shim
 /// implementation matching the C signature.
 fn setsparam(name: &str, value: &str) {
-    crate::ported::modules::ksh93::setsparam(name, value);
+    crate::ported::params::setsparam(name, value);
 }
 
 /// Port of `setaparam()` from `Src/params.c:3357` — delegates to
 /// `ksh93::setsparam` with the value colon-joined (PATH-style array
 /// shape that the env-var bridge unpacks at read time).
 fn setaparam(name: &str, value: Vec<String>) {
-    crate::ported::modules::ksh93::setsparam(name, &value.join(":"));
+    crate::ported::params::setsparam(name, &value.join(":"));
 }
 
 /// Port of `unsetparam()` from `Src/params.c:3690` — env::remove_var

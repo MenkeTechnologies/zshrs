@@ -1014,7 +1014,7 @@ pub(crate) fn zccmd_input(nam: &str, args: &[String]) -> i32 {
         None => return 1,
     };
     let var = args.get(1).map(|v| v.as_str()).unwrap_or("REPLY");
-    crate::ported::modules::ksh93::setsparam(var, &key_str);
+    crate::ported::params::setsparam(var, &key_str);
     if want_keypad {
         if let Some(name) = args.get(2) {
             let code_str = if key_code > 0 {
@@ -1022,7 +1022,7 @@ pub(crate) fn zccmd_input(nam: &str, args: &[String]) -> i32 {
             } else {
                 String::new()
             };
-            crate::ported::modules::ksh93::setsparam(name, &code_str);
+            crate::ported::params::setsparam(name, &code_str);
         }
         if args.len() >= 4 {
             // C: KEY_MOUSE branch handled the MOUSE event array.
@@ -1030,7 +1030,7 @@ pub(crate) fn zccmd_input(nam: &str, args: &[String]) -> i32 {
             // deferred to a future port; emit empty array via the
             // env-var bridge.
             if let Some(mvar) = args.get(3) {
-                crate::ported::modules::ksh93::setsparam(mvar, "");
+                crate::ported::params::setsparam(mvar, "");
             }
         }
     }
@@ -1173,7 +1173,7 @@ pub(crate) fn zccmd_position(nam: &str, args: &[String]) -> i32 {
     ];
     drop(wins);
     // c — `setaparam(args[1], arr);`
-    crate::ported::modules::ksh93::setsparam(&args[1], &arr.join(":"));
+    crate::ported::params::setsparam(&args[1], &arr.join(":"));
     0
 }
 
@@ -1216,7 +1216,7 @@ pub(crate) fn zccmd_querychar(nam: &str, args: &[String]) -> i32 {
     }
     drop(wins);
     // c — `setaparam(var, clist);`
-    crate::ported::modules::ksh93::setsparam(&var, &clist.join(":"));
+    crate::ported::params::setsparam(&var, &clist.join(":"));
     0
 }
 
