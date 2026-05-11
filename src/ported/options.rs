@@ -186,7 +186,7 @@ impl ShellOptions {
     /// whose `optns_flags` carries the `EMULATE_ZSH` bit is set true.
     /// Replaces the hardcoded name list with a real flag-table walk.
     pub fn set_zsh_defaults(&mut self) {
-        let zsh_emu = crate::ported::zsh_h::EMULATE_ZSH;
+        let zsh_emu = EMULATE_ZSH;
         for name in ZSH_OPTIONS_SET.iter() {
             if defset(name, zsh_emu) {
                 self.options.insert((*name).to_string(), true);
@@ -392,12 +392,16 @@ mod tests {
         // interactive-shell init (init.c), not by defset. `xtrace`
         // is OPT_EMULATE (no OPT_ALL) — default off in zsh emulation.
         let opts = ShellOptions::new();
+        // These options carry OPT_ZSH in optns_flags (defset returns
+        // true for EMULATE_ZSH at startup).
         assert!(opts.is_set("glob"));
         assert!(opts.is_set("exec"));
+        assert!(!opts.is_set("xtrace"));
+        // `zle` is OPT_SPECIAL — it isn't set by defset; init.c
+        // decides based on whether stdin is a TTY (init.c:1244).
         assert!(!opts.is_set("zle"),
             "zle is OPT_SPECIAL — must NOT be set by defset; only \
              interactive-shell init turns it on");
-        assert!(!opts.is_set("xtrace"));
     }
 
     #[test]
@@ -468,12 +472,15 @@ mod tests {
 
     #[test]
     fn test_dash_string() {
-        // `interactive` is not user-settable (OPT_NOT_SETTABLE in C);
-        // it reflects shell-startup detection. Inject directly into
-        // the options map for the test rather than via set().
+        // C `setopt` rejects user-level changes to INTERACTIVE / etc.
+        // (dosetopt at options.c:746) when `force` is 0; the test
+        // writes the SPECIAL options through the low-level state map
+        // so dash_string can read them (mirrors how C init sets them).
         let mut opts = ShellOptions::new();
+        opt_state_set("interactive", true);
         opts.options.insert("interactive".to_string(), true);
-        opts.set("monitor", true).unwrap();
+        opt_state_set("monitor", true);
+        opts.options.insert("monitor".to_string(), true);
 
         let dash = opts.dash_string();
         assert!(dash.contains('i'));
@@ -518,6 +525,8 @@ mod tests {
 // BEGIN moved-from-exec-rs (statics)
 use std::collections::HashSet;
 use std::sync::LazyLock;
+use crate::zsh_h::EMULATE_ZSH;
+
 pub(crate) static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
         "aliases",

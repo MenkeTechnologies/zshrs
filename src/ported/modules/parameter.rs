@@ -1875,12 +1875,18 @@ pub fn setpmnameddirs(_pm: Param, ht: *mut HashTable) {                      // 
     // watching).
     let saved_interactive = crate::ported::zsh_h::isset(                     // c:1584
         crate::ported::zsh_h::INTERACTIVE);
-    crate::ported::options::opt_state_set("INTERACTIVE", false);             // c:1585
+    crate::ported::options::opt_state_set(
+        &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::INTERACTIVE),
+        false,
+    );                                                                       // c:1585
     if !ht.is_null() {                                                       // c:1587
         let owned: HashTable = unsafe { std::ptr::read(ht) };                // move Box out
         crate::ported::params::deleteparamtable(Some(owned));                // c:1588
     }
-    crate::ported::options::opt_state_set("INTERACTIVE", saved_interactive); // c:1589
+    crate::ported::options::opt_state_set(
+        &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::INTERACTIVE),
+        saved_interactive,
+    );                                                                       // c:1589
 }
 
 /// Port of `setpmoption()` from Src/Modules/parameter.c:926.

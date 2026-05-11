@@ -87,7 +87,7 @@ pub static compqstack: OnceLock<Mutex<String>> = OnceLock::new();
 // re-exports here so call sites stay short:
 #[doc(hidden)]
 pub use crate::ported::zle::zle_tricky::{NBRBEG as _NBRBEG, NBREND as _NBREND};
-
+use crate::zsh_h::{isset, BASHAUTOLIST, NUMERICGLOBSORT, RCQUOTES, SORTIT_IGNORING_BACKSLASHES, SORTIT_NUMERICALLY};
 // =====================================================================
 // File-scope globals — `Src/Zle/compcore.c:36-279`.
 // =====================================================================
@@ -309,8 +309,7 @@ pub fn rembslash(s: &str) -> String {                                        // 
 
 /// Port of `mod_export int remsquote(char *s)` from compcore.c:1342.
 pub fn remsquote(s: &mut String) -> i32 {                                    // c:1342
-    let rcquotes = crate::ported::options::opt_state_get("rcquotes")         // c:1345
-        .unwrap_or(false);
+    let rcquotes = isset(RCQUOTES); // c:1345
     let qa: usize = if rcquotes { 1 } else { 3 };
 
     let bytes = s.as_bytes();                                                // c:1346
@@ -512,8 +511,7 @@ pub fn before_complete(lst: &mut i32) -> i32 {                               // 
     let _ = lst;
     OLDMENUCMP.store(MENUCMP.load(Ordering::Relaxed), Ordering::Relaxed);    // c:463
     if startauto.load(Ordering::Relaxed) != 0 {                              // c:494
-        let bashauto = crate::ported::options::opt_state_get("bashautolist")
-            .unwrap_or(false);
+        let bashauto = isset(BASHAUTOLIST);
         let lastambig: i32 = 0;
         if !bashauto || lastambig == 2 {
             USEMENU.store(2, Ordering::Relaxed);
@@ -2443,11 +2441,10 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
 pub fn makearray_strings(mut rp: Vec<String>, flags: i32) -> (Vec<String>, i32) { // c:3239
     let mut n: i32 = rp.len() as i32;
     if flags != 0 && n > 0 {                                                 // c:3240
-        let numeric = crate::ported::options::opt_state_get("NUMERICGLOBSORT")
-            .unwrap_or(false);                                               // c:3243
-        let mut sf = crate::ported::zsh_h::SORTIT_IGNORING_BACKSLASHES as u32;
+        let numeric = isset(NUMERICGLOBSORT); // c:3243
+        let mut sf = SORTIT_IGNORING_BACKSLASHES as u32;
         if numeric {
-            sf |= crate::ported::zsh_h::SORTIT_NUMERICALLY as u32;
+            sf |= SORTIT_NUMERICALLY as u32;
         }
         crate::ported::sort::strmetasort(&mut rp, sf, None);                 // c:3242-3244
 

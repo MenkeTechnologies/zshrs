@@ -12,7 +12,6 @@
 
 use std::cmp::Ordering;
 use crate::ported::utils::zerr;
-use crate::ported::zsh_h::{isset, GLOBDOTS, EXTENDEDGLOB, CASEGLOB};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, Metadata};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -23,6 +22,11 @@ use crate::ported::exec::{
     self,
 };
 use crate::ported::pattern::PatternFlags;
+use crate::ported::zsh_h::{
+    isset,
+    BAREGLOBQUAL, BRACECCL, CASEGLOB, EXTENDEDGLOB, GLOBDOTS,
+    GLOBSTARSHORT, MARKDIRS, NULLGLOB, NUMERICGLOBSORT,
+};
 
 // =====================================================================
 // GS_* — sort-specifier flag bits — `Src/glob.c:77-94`. The `glob -O`
@@ -444,8 +448,7 @@ pub fn globdata_glob(state: &mut GlobData, pattern: &str) -> Vec<String> {   // 
         // per glob.c:2424 BRACECCL block; without, only `{a,b}` lists and
         // `{1..5}`/`{a..e}` ranges expand. Recurse on each variant and
         // concatenate matches.
-        let brace_ccl = crate::ported::options::opt_state_get("braceccl")
-            .unwrap_or(false);
+        let brace_ccl = crate::ported::zsh_h::isset(crate::ported::zsh_h::BRACECCL);
         if hasbraces(pattern, brace_ccl) {
             let mut all = Vec::new();
             for variant in xpandbraces(pattern, brace_ccl) {
@@ -497,9 +500,9 @@ pub fn globdata_glob(state: &mut GlobData, pattern: &str) -> Vec<String> {   // 
         // — output marker emission consults the per-glob `gf_markdirs`
         // / `gf_listtypes` flags which the qualifier parser at
         // glob.c:1557-1566 sets.
-        let mark_dirs = crate::ported::options::opt_state_get("markdirs").unwrap_or(false)
+        let mark_dirs = isset(crate::ported::zsh_h::MARKDIRS)
             || state.qualifiers.as_ref().map(|q| q.mark_dirs).unwrap_or(false);
-        let list_types = crate::ported::options::opt_state_get("listtypes").unwrap_or(false)
+        let list_types = isset(crate::ported::zsh_h::LISTTYPES)
             || state.qualifiers.as_ref().map(|q| q.list_types).unwrap_or(false);
         let colon_mods = state.qualifiers.as_ref().and_then(|q| q.colon_mods.clone());
         let mut results: Vec<String> = state
@@ -528,7 +531,7 @@ pub fn globdata_glob(state: &mut GlobData, pattern: &str) -> Vec<String> {   // 
 
         // Handle no matches
         if results.is_empty()
-            && !crate::ported::options::opt_state_get("nullglob").unwrap_or(false)
+            && !isset(crate::ported::zsh_h::NULLGLOB)
         {
             results.push(pattern.to_string());
         }
@@ -573,7 +576,7 @@ fn parse_qualifiers(pattern: &str) -> (String, Option<QualifierSet>) {       // 
         let qual_str = &pattern[start + 1..pattern.len() - 1];
         let (is_explicit, qual_content) = if let Some(after) = qual_str.strip_prefix("#q") {
             (true, after)
-        } else if crate::ported::options::opt_state_get("bareglobqual").unwrap_or(true) {
+        } else if isset(crate::ported::zsh_h::BAREGLOBQUAL) {
             (false, qual_str)
         } else {
             return (pattern.to_string(), None);
@@ -908,7 +911,7 @@ fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {           // 
                     // strict gate off so bare `**` recurses without `/`.
                     let has_slash = chars.peek() == Some(&'/');
                     let recursive = has_slash || follow
-                        || crate::ported::options::opt_state_get("globstarshort").unwrap_or(false);
+                        || isset(crate::ported::zsh_h::GLOBSTARSHORT);
                     if has_slash {
                         chars.next();
                     }
@@ -1397,7 +1400,7 @@ fn sort_matches(state: &mut GlobData) {                                      // 
             return;
         }
 
-        let numeric = crate::ported::options::opt_state_get("numericglobsort").unwrap_or(false);
+        let numeric = isset(crate::ported::zsh_h::NUMERICGLOBSORT);
         state.matches.sort_by(|a, b| gmatchcmp(a, b, &specs, numeric));
 }
 

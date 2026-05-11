@@ -13,6 +13,7 @@
 use std::sync::atomic::AtomicI32;
 
 use super::zle_main::Zle;
+use crate::ported::zsh_h::{isset, GLOBCOMPLETE, MENUCOMPLETE, RECEXACT};
 
 // =====================================================================
 // Globals — `Src/Zle/zle_tricky.c:96-106`.
@@ -404,7 +405,7 @@ pub fn checkparams(p: &str) -> i32 {                                         // 
         return if crate::ported::params::getsparam(p).is_some() { 1 } else { 0 };
     }
     let menucmp = MENUCMP.load(Ordering::SeqCst) != 0;
-    let recexact = crate::ported::options::opt_state_get("recexact").unwrap_or(false);
+    let recexact = isset(RECEXACT);
     if !menucmp && exact && recexact {
         1
     } else {
@@ -848,10 +849,10 @@ pub fn listchoices() -> i32 {                                                // 
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
     // c:253 — `usemenu = !!isset(MENUCOMPLETE)`.
-    let menu = crate::ported::options::opt_state_get("menucomplete").unwrap_or(false) as i32;
+    let menu = isset(MENUCOMPLETE) as i32;
     USEMENU.store(menu, Ordering::SeqCst);
     // c:254 — `useglob = isset(GLOBCOMPLETE)`.
-    let glob = crate::ported::options::opt_state_get("globcomplete").unwrap_or(false) as i32;
+    let glob = isset(GLOBCOMPLETE) as i32;
     USEGLOB.store(glob, Ordering::SeqCst);
     // c:255 — `wouldinstab = 0`.
     WOULDINSTAB.store(0, Ordering::SeqCst);
@@ -875,9 +876,9 @@ pub fn listchoices() -> i32 {                                                // 
 pub fn listexpand() -> i32 {                                                 // c:333
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_LIST_EXPAND;
-    let menu = crate::ported::options::opt_state_get("menucomplete").unwrap_or(false) as i32;
+    let menu = isset(MENUCOMPLETE) as i32;
     USEMENU.store(menu, Ordering::SeqCst);                                   // c:336
-    let glob = crate::ported::options::opt_state_get("globcomplete").unwrap_or(false) as i32;
+    let glob = isset(GLOBCOMPLETE) as i32;
     USEGLOB.store(glob, Ordering::SeqCst);                                   // c:337
     WOULDINSTAB.store(0, Ordering::SeqCst);                                  // c:338
     docomplete(COMP_LIST_EXPAND)                                             // c:339

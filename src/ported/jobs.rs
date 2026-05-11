@@ -596,6 +596,7 @@ pub struct JobEntry {
 // ---------------------------------------------------------------------------
 
 use std::sync::{Mutex, OnceLock};
+use crate::zsh_h::{isset, POSIXBUILTINS};
 
 // the process group of the shell at startup                                 // c:54
 /// Port of `origpgrp` from `Src/jobs.c:58`.
@@ -1120,8 +1121,8 @@ pub fn getjob(s: &str, prog: &str) -> i32 {                                  // 
         .lock().expect("prevjob poisoned");
     let thisjob = *THISJOB.get_or_init(|| Mutex::new(-1))
         .lock().expect("thisjob poisoned");
-    let posixbuiltins = crate::ported::zsh_h::isset(                         // c:isset(POSIXBUILTINS)
-        crate::ported::zsh_h::POSIXBUILTINS);
+    let posixbuiltins = isset(                         // c:isset(POSIXBUILTINS)
+        POSIXBUILTINS);
 
     let s_bytes = s.as_bytes();
     let mut idx = 0usize;
@@ -1368,8 +1369,7 @@ pub fn acquire_pgrp() -> bool {                                              // 
     }
     let oldset = signal_block(&blockset);                                     // c:3233
     let mut loop_count = 0i32;                                               // c:3234
-    let interact = crate::ported::options::opt_state_get("interactive")
-        .unwrap_or(false);
+    let interact = crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE);
     // c:3235 — `while ((ttpgrp = gettygrp()) != -1 && ttpgrp != mypgrp)`.
     loop {
         let ttpgrp = unsafe { libc::tcgetpgrp(0) };                          // c:3235 gettygrp
@@ -2406,14 +2406,16 @@ pub fn bin_fg(name: &str, argv: &[String],                                   // 
         if OPT_ISSET(ops, b'd') { lng |= 4; }                                // c:2456
     } else {
         // c:2458 — `lng = !!isset(LONGLISTJOBS);`
-        lng = if crate::ported::options::opt_state_get("longlistjobs")
-                .unwrap_or(false) { 1 } else { 0 };
+        lng = if crate::ported::zsh_h::isset(crate::ported::zsh_h::LONGLISTJOBS) {
+            1
+        } else {
+            0
+        };
     }
     let _ = lng;
 
     // c:2461-2465 — fg/bg need job control.
-    let jobbing = crate::ported::options::opt_state_get("monitor")
-        .unwrap_or(false);
+    let jobbing = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR);
     if (func == BIN_FG || func == BIN_BG) && !jobbing {                      // c:2461
         zwarnnam(name, "no job control in this shell.");                     // c:2463
         return 1;                                                            // c:2464
@@ -2703,9 +2705,8 @@ pub fn bin_suspend(name: &str, _argv: &[String],                             // 
         return 1;                                                            // c:3175
     }
     // c:3177 — `if (jobbing)`. jobbing is the job-control-enabled flag;
-    // approximate via the MONITOR option.
-    let jobbing = crate::ported::options::opt_state_get("monitor")
-        .unwrap_or(false);
+    // tracks the MONITOR option.
+    let jobbing = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR);
 
     if jobbing {                                                             // c:3177
         //stop ignoring signals

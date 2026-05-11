@@ -599,7 +599,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
     let mut node_idx = 0; // c:100
     let mut stop_idx: Option<usize> = None; // c:100
     let mut keep = false; // c:100
-    let asssub = (flags & PREFORK_TYPESET != 0) && crate::ported::options::opt_state_get("kshtypeset").unwrap_or(false); // c:100
+    let asssub = (flags & PREFORK_TYPESET != 0) && isset(crate::ported::zsh_h::KSHTYPESET); // c:100
     let mut iter_count = 0u32; // c:100
 
     while node_idx < list.nodes.len() {
@@ -627,7 +627,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
             return; // c:100
         } // c:100
 
-        if crate::ported::options::opt_state_get("shfileexpansion").unwrap_or(false) {
+        if isset(crate::ported::zsh_h::SHFILEEXPANSION) {
             // c:100
             // SHFILEEXPANSION - do file substitution first
             if let Some(data) = list.getdata(node_idx) {
@@ -662,7 +662,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
     } // c:100
 
     // Second pass for SHFILEEXPANSION
-    if crate::ported::options::opt_state_get("shfileexpansion").unwrap_or(false) {
+    if isset(crate::ported::zsh_h::SHFILEEXPANSION) {
         // c:100
         node_idx = 0; // c:100
         while node_idx < list.nodes.len() {
@@ -710,7 +710,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
                 // Routes through canonical
                 // crate::ported::glob::xpandbraces; treats >1
                 // result as a positive hasbraces hit.
-                if !crate::ported::options::opt_state_get("ignorebraces").unwrap_or(false) && (flags & PREFORK_SINGLE == 0) {
+                if !isset(crate::ported::zsh_h::IGNOREBRACES) && (flags & PREFORK_SINGLE == 0) {
                     // c:166
                     if !keep {
                         // c:168
@@ -743,7 +743,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
                 // entirely when state.skip_filesub is set — used
                 // for `${var/pat/repl}` pattern + replacement
                 // contexts where literal `~` must be preserved.
-                if !crate::ported::options::opt_state_get("shfileexpansion").unwrap_or(false) && !SKIP_FILESUB.with(|c| c.get()) {
+                if !isset(crate::ported::zsh_h::SHFILEEXPANSION) && !SKIP_FILESUB.with(|c| c.get()) {
                     // c:100
                     if let Some(data) = list.getdata(node_idx) {
                         // c:100
@@ -1311,7 +1311,7 @@ fn stringsubst(
                 // c:237
                 // Parameter substitution
                 let mut new_pf_flags = pf_flags; // c:237
-                if (crate::ported::options::opt_state_get("shwordsplit").unwrap_or(false) && (pf_flags & PREFORK_NOSHWORDSPLIT == 0)) // c:237
+                if (isset(crate::ported::zsh_h::SHWORDSPLIT) && (pf_flags & PREFORK_NOSHWORDSPLIT == 0)) // c:237
                     || (pf_flags & PREFORK_SPLIT != 0)
                 // c:237
                 {
@@ -1588,7 +1588,7 @@ pub fn paramsubst(
         let mut flag_z_keep_comments = false; // c:2450 (Zc)
         let mut flag_z_strip_comments = false; // c:2456 (ZC)
         let mut flag_z_newline_ws = false; // c:2461 (Zn)
-        let mut plan9 = crate::ported::options::opt_state_get("rcexpandparam").unwrap_or(false); // c:1663
+        let mut plan9 = isset(crate::ported::zsh_h::RCEXPANDPARAM); // c:1663
         let mut hkeys: u32 = 0; // c:1828
         let mut hvals: u32 = 0; // c:1835
         if body_chars.first() == Some(&'(') {
@@ -5468,7 +5468,7 @@ pub fn filesubstr(s: &str, assign: bool) -> Option<String> { // c:737
                     .lock()
                     .map(|d| d.clone())
                     .unwrap_or_default();
-                let pushdminus = crate::ported::options::opt_state_get("pushdminus").unwrap_or(false); // c:4906
+                let pushdminus = isset(crate::ported::zsh_h::PUSHDMINUS); // c:4906
                 let entry = dstackent(
                     // c:4902
                     if neg { '-' } else { '+' }, // c:4902
@@ -6120,7 +6120,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
             // Direct port of Src/hist.c:2336 — `if (isset(HISTSUBSTPATTERN)
             // || forcepat)` selects the pattern path; otherwise the
             // strstr-based literal replace runs.
-            let use_glob = modifier == 'S' || crate::ported::options::opt_state_get("histsubstpattern").unwrap_or(false);
+            let use_glob = modifier == 'S' || isset(crate::ported::zsh_h::HISTSUBSTPATTERN);
             let do_match = |hay: &str| -> Option<(usize, usize)> {
                 if use_glob {
                     // Sliding-window glob match — find first
@@ -7758,7 +7758,9 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
 // and `BNULLKEEP = '\u{a0}'`. Both already imported from
 // `crate::ported::zsh_h` at the top of this file (DNULL) and
 // available there (BNULLKEEP). Bringing BNULLKEEP into scope.
-use crate::ported::zsh_h::BNULLKEEP; // c:zsh.h:200
+use crate::ported::zsh_h::BNULLKEEP;
+use crate::zsh_h::isset;
+// c:zsh.h:200
 
 /// Equal substitution (=cmd)
 /// Port of equalsubstr() from subst.c lines 706-722
