@@ -95,14 +95,102 @@ pub const MAX_TAGS: usize = 256;                                             // 
 /// budget for path-completion staging strings.
 pub const PATH_MAX2: usize = 8192;                                           // c:4141 (PATH_MAX*2, 4096*2)
 
-// `CompDescSet` / `CompDescItem` / `DescOptions` deleted — Rust-
-// invented containers for `_describe`-completion state. C does NOT
-// have these struct names — it uses `struct cdset` (c:85),
-// `struct cdstr` (c:58), `struct cdstate` (c:40), `struct cdrun`
-// (c:72) with completely different field layouts. The previous
-// Rust port's bodies were placeholder text-processing helpers that
-// didn't match the C state machine at all. Real ports of those
-// structs + the cd_* functions land in a future pass.
+// =====================================================================
+// `_describe`-completion types — direct ports of the C structs at
+// Src/Zle/computil.c:40-91 (the cdset/cdstr/cdrun/cdstate chain
+// the `_describe` completion path builds + processes).
+// =====================================================================
+
+// CRT_* constants already declared above (file scope).
+
+/// Port of `typedef struct cdset *Cdset` from `Src/Zle/computil.c:36`.
+pub type Cdset = Box<cdset>;                                                 // c:36
+/// Port of `typedef struct cdstr *Cdstr` from `computil.c:37`.
+pub type Cdstr = Box<cdstr>;                                                 // c:37
+/// Port of `typedef struct cdrun *Cdrun` from `computil.c:38`.
+pub type Cdrun = Box<cdrun>;                                                 // c:38
+
+/// Direct port of `struct cdstr` from `Src/Zle/computil.c:58-70`.
+/// One match string inside a `_describe` group, with optional
+/// description and the same-description chain.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct cdstr {                                                           // c:58
+    pub next:    Option<Box<cdstr>>,                                         // c:59 Cdstr next
+    pub str:     Option<String>,                                             // c:60 char *str
+    pub desc:    Option<String>,                                             // c:61 char *desc
+    pub r#match: Option<String>,                                             // c:62 char *match
+    pub sortstr: Option<String>,                                             // c:63 char *sortstr
+    pub len:     i32,                                                        // c:64 int len
+    pub width:   i32,                                                        // c:65 int width
+    pub other:   Option<Box<cdstr>>,                                         // c:66 Cdstr other
+    pub kind:    i32,                                                        // c:67 int kind (0/1/2)
+    pub set:     usize,                                                      // c:68 Cdset set (raw ptr index)
+    pub run:     Option<Box<cdstr>>,                                         // c:69 Cdstr run
+}
+
+/// Direct port of `struct cdrun` from `Src/Zle/computil.c:72-77`.
+/// One contiguous "run" of cdstr entries the shell code should
+/// emit as a block.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct cdrun {                                                           // c:72
+    pub next:   Option<Box<cdrun>>,                                          // c:73 Cdrun next
+    pub r#type: i32,                                                         // c:74 int type (CRT_*)
+    pub strs:   Option<Box<cdstr>>,                                          // c:75 Cdstr strs
+    pub count:  i32,                                                         // c:76 int count
+}
+
+/// Direct port of `struct cdset` from `Src/Zle/computil.c:85-91`.
+/// One set of matches (one `compadd` invocation worth) with its
+/// compadd options + the cdstr chain.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct cdset {                                                           // c:85
+    pub next:  Option<Box<cdset>>,                                           // c:86 Cdset next
+    pub opts:  Option<Vec<String>>,                                          // c:87 char **opts
+    pub strs:  Option<Box<cdstr>>,                                           // c:88 Cdstr strs
+    pub count: i32,                                                          // c:89 int count
+    pub desc:  i32,                                                          // c:90 int desc
+}
+
+/// Direct port of `struct cdstate` from `Src/Zle/computil.c:40-56`.
+/// File-static state for the `_describe` engine — holds the active
+/// sets/runs/dimensions during a single `_describe` invocation.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct cdstate {                                                         // c:40
+    pub showd:   i32,                                                        // c:41
+    pub sep:     Option<String>,                                             // c:42 char *sep
+    pub slen:    i32,                                                        // c:43
+    pub swidth:  i32,                                                        // c:44
+    pub maxmlen: i32,                                                        // c:45
+    pub sets:    Option<Box<cdset>>,                                         // c:46 Cdset sets
+    pub pre:     i32,                                                        // c:47
+    pub premaxw: i32,                                                        // c:48
+    pub suf:     i32,                                                        // c:49
+    pub maxg:    i32,                                                        // c:50
+    pub maxglen: i32,                                                        // c:51
+    pub groups:  i32,                                                        // c:52
+    pub descs:   i32,                                                        // c:53
+    pub gprew:   i32,                                                        // c:54
+    pub runs:    Option<Box<cdrun>>,                                         // c:55 Cdrun runs
+}
+
+/// Port of `static struct cdstate cd_state` from `Src/Zle/computil.c:93`.
+/// File-static instance the `_describe` engine reads/writes.
+pub static cd_state: std::sync::Mutex<cdstate> =                             // c:93
+    std::sync::Mutex::new(cdstate {
+        showd: 0, sep: None, slen: 0, swidth: 0, maxmlen: 0,
+        sets: None, pre: 0, premaxw: 0, suf: 0, maxg: 0, maxglen: 0,
+        groups: 0, descs: 0, gprew: 0, runs: None,
+    });
+
+/// Port of `static int cd_parsed` from `Src/Zle/computil.c:94`. Flag
+/// signalling whether `cd_state` holds a parsed-but-unconsumed
+/// description set.
+pub static cd_parsed: std::sync::atomic::AtomicI32 =                         // c:94
+    std::sync::atomic::AtomicI32::new(0);
 
 /// Direct port of `static void cd_calc(void)` from `Src/Zle/computil.c:188`.
 pub fn cd_calc() {                                                           // c:188
@@ -152,9 +240,37 @@ pub fn cd_arrdup(a: &[String]) -> Vec<String> {                              // 
 }
 
 /// Direct port of `static void freecdsets(Cdset p)` from
-/// `Src/Zle/computil.c:97`. Frees a `struct cdset` chain.
-pub fn freecdsets() {                                                        // c:97
-    // Real body deferred — needs Cdset chain port.
+/// `Src/Zle/computil.c:96-122`. Walks the cdset `next` chain
+/// freeing each set's opts/strs sub-chains and the cd_state runs
+/// list at the end.
+pub fn freecdsets(mut p: Option<Box<cdset>>) {                               // c:96
+    while let Some(mut set) = p {                                            // c:103 for (; p; ...)
+        p = set.next.take();                                                 // c:104 n = p->next
+        // c:105-106 — `if (p->opts) freearray(p->opts)`.
+        set.opts = None;
+        // c:107-115 — for each cdstr: free sortstr/str/desc/match.
+        let mut s = set.strs.take();
+        while let Some(mut node) = s {
+            s = node.next.take();
+            node.sortstr = None;                                             // c:109
+            node.str = None;                                                 // c:110
+            node.desc = None;                                                // c:111
+            // c:112-113 — `if (s->match != s->str) zsfree(s->match)`.
+            // Rust's Option<String> drop is unconditional; the C
+            // pointer-equality guard collapses out.
+            node.r#match = None;
+            drop(node);                                                      // c:114
+        }
+        // c:116-119 — drain cd_state.runs.
+        if let Ok(mut st) = cd_state.lock() {
+            let mut r = st.runs.take();
+            while let Some(mut run) = r {
+                r = run.next.take();
+                drop(run);                                                   // c:118
+            }
+        }
+        drop(set);                                                           // c:120
+    }
 }
 
 // =====================================================================
@@ -602,6 +718,84 @@ mod tests {
         // c:924 — CDF_SEP = 1; c:972 — MAX_CACACHE = 8.
         assert_eq!(CDF_SEP, 1);
         assert_eq!(MAX_CACACHE, 8);
+    }
+
+    #[test]
+    fn crt_constants_match_c() {
+        // c:79-83 — sequential 0..=4.
+        assert_eq!(CRT_SIMPLE, 0);
+        assert_eq!(CRT_DESC,   1);
+        assert_eq!(CRT_SPEC,   2);
+        assert_eq!(CRT_DUMMY,  3);
+        assert_eq!(CRT_EXPL,   4);
+    }
+
+    #[test]
+    fn cdstr_default_zero_initialized() {
+        // c:58-70 — fresh cdstr: zero/None across all fields.
+        let s = cdstr::default();
+        assert!(s.next.is_none());
+        assert!(s.str.is_none());
+        assert!(s.desc.is_none());
+        assert!(s.r#match.is_none());
+        assert_eq!(s.len, 0);
+        assert_eq!(s.width, 0);
+        assert_eq!(s.kind, 0);
+    }
+
+    #[test]
+    fn cdrun_default_zero_initialized() {
+        // c:72-77 — fresh cdrun: zero/None.
+        let r = cdrun::default();
+        assert!(r.next.is_none());
+        assert!(r.strs.is_none());
+        assert_eq!(r.r#type, 0);
+        assert_eq!(r.count, 0);
+    }
+
+    #[test]
+    fn cdset_default_zero_initialized() {
+        // c:85-91 — fresh cdset: zero/None.
+        let s = cdset::default();
+        assert!(s.next.is_none());
+        assert!(s.opts.is_none());
+        assert!(s.strs.is_none());
+        assert_eq!(s.count, 0);
+        assert_eq!(s.desc, 0);
+    }
+
+    #[test]
+    fn cdstate_default_zero_initialized() {
+        // c:40-56 — fresh cdstate: zero/None.
+        let st = cdstate::default();
+        assert_eq!(st.showd, 0);
+        assert!(st.sep.is_none());
+        assert!(st.sets.is_none());
+        assert!(st.runs.is_none());
+    }
+
+    #[test]
+    fn freecdsets_walks_chain() {
+        // c:96-122 — freecdsets walks `next` chain freeing each set
+        // and its strs sub-chain.
+        let head_str = cdstr {
+            str: Some("foo".into()),
+            desc: Some("first".into()),
+            ..Default::default()
+        };
+        let tail_str = cdstr {
+            str: Some("bar".into()),
+            ..Default::default()
+        };
+        let mut head_str_b = Box::new(head_str);
+        head_str_b.next = Some(Box::new(tail_str));
+        let set = cdset {
+            strs: Some(head_str_b),
+            count: 2,
+            ..Default::default()
+        };
+        freecdsets(Some(Box::new(set)));
+        // No panic / no leak — Box drop chains the rest.
     }
 }
 
