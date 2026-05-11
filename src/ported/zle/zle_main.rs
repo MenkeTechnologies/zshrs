@@ -211,8 +211,6 @@ pub struct Zle {
     pub zlereadflags: i32,
     /// Context
     pub zlecontext: i32,
-    /// Status line
-    pub statusline: Option<String>,
     /// History position for buffer stack
     pub stackhist: i32,
     /// Cursor position for buffer stack
@@ -232,8 +230,6 @@ pub struct Zle {
     eofsent: bool,
     /// Key timeout in 100ths of a second
     pub keytimeout: u64,
-    /// Terminal baud rate
-    baud: u32,
     /// Watch file descriptors
     pub watch_fds: Vec<super::zle_h::watch_fd>,
     /// Completion widget
@@ -248,8 +244,6 @@ pub struct Zle {
     lprompt: String,
     /// Right prompt
     rprompt: String,
-    /// Pre-ZLE status
-    pre_zle_status: i32,
     /// Needs refresh
     pub resetneeded: bool,
     // Primary cut buffer                                                    // c:33
@@ -406,7 +400,6 @@ impl Zle {
             // C default: input.c:418 — `int flags = ZLRF_HISTORY|ZLRF_NOSETTY;`
             zlereadflags: crate::ported::zsh_h::ZLRF_HISTORY | crate::ported::zsh_h::ZLRF_NOSETTY,
             zlecontext: crate::ported::zsh_h::ZLCON_LINE_START,
-            statusline: None,
             stackhist: 0,
             stackcs: 0,
             vistartchange: 0,
@@ -416,7 +409,6 @@ impl Zle {
             eofchar: 4, // Ctrl-D
             eofsent: false,
             keytimeout: 40, // 0.4 seconds default
-            baud: 38400,
             watch_fds: Vec::new(),
             compwidget: None,
             incompctlfunc: false,
@@ -424,7 +416,6 @@ impl Zle {
             ttyfd: 0, // stdin
             lprompt: String::new(),
             rprompt: String::new(),
-            pre_zle_status: 0,
             resetneeded: false,
             vibuf: std::array::from_fn(|_| Vec::new()),
             killring: VecDeque::new(),
