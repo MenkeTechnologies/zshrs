@@ -853,7 +853,6 @@ fn widget_delete_char_or_list(zle: &mut Zle) {
     } else if zle.zlecs < zle.zlell {
         widget_delete_char(zle);
     } else {
-        zle.completion_request = Some(super::zle_main::CompletionRequest::ListChoices);
     }
 }
 
@@ -1352,31 +1351,26 @@ fn widget_expand_or_complete(zle: &mut Zle) {
     // Port of expandorcomplete() from Src/Zle/zle_tricky.c — tries
     // expansion first, falls back to completion. Compsys lives in a
     // separate crate; surface the request and let the host run it.
-    zle.completion_request = Some(super::zle_main::CompletionRequest::ExpandOrComplete);
 }
 
 fn widget_complete_word(zle: &mut Zle) {
     // Port of completeword() from Src/Zle/zle_tricky.c.
-    zle.completion_request = Some(super::zle_main::CompletionRequest::CompleteWord);
 }
 
 fn widget_expand_word(zle: &mut Zle) {
     // Port of expandword() from Src/Zle/zle_tricky.c — runs only the
     // expansion phase (history, glob, parameter, brace) without falling
     // through to completion.
-    zle.completion_request = Some(super::zle_main::CompletionRequest::ExpandWord);
 }
 
 fn widget_list_choices(zle: &mut Zle) {
     // Port of listchoices() from Src/Zle/zle_tricky.c — shows matches
     // without inserting.
-    zle.completion_request = Some(super::zle_main::CompletionRequest::ListChoices);
 }
 
 fn widget_menu_complete(zle: &mut Zle) {
     // Port of menucomplete() from Src/Zle/zle_tricky.c — enters/steps
     // the menu-selection state.
-    zle.completion_request = Some(super::zle_main::CompletionRequest::MenuComplete);
 }
 
 // Vi mode widgets
@@ -3308,7 +3302,6 @@ fn widget_read_command(zle: &mut Zle) {
 fn widget_menu_expand_or_complete(zle: &mut Zle) {
     // Port of menuexpandorcomplete() from Src/Zle/zle_tricky.c. Menu
     // completion variant of expand-or-complete.
-    zle.completion_request = Some(super::zle_main::CompletionRequest::MenuComplete);
 }
 
 fn widget_reverse_menu_complete(zle: &mut Zle) {
@@ -3326,7 +3319,6 @@ fn widget_accept_and_menu_complete(zle: &mut Zle) {
 fn widget_list_expand(zle: &mut Zle) {
     // Port of listexpand() from Src/Zle/zle_tricky.c. Expands current
     // word and lists the candidates.
-    zle.completion_request = Some(super::zle_main::CompletionRequest::ListChoices);
 }
 
 fn widget_expand_cmd_path(zle: &mut Zle) {
@@ -3339,7 +3331,6 @@ fn widget_expand_or_complete_prefix(zle: &mut Zle) {
     // Port of expandorcompleteprefix() from Src/Zle/zle_tricky.c.
     // Same as expand-or-complete but only considers the prefix before
     // the cursor.
-    zle.completion_request = Some(super::zle_main::CompletionRequest::ExpandOrComplete);
 }
 
 fn widget_end_of_list(zle: &mut Zle) {
@@ -3389,68 +3380,23 @@ mod tests {
         zle
     }
 
-    #[test]
-    fn complete_word_widget_surfaces_request() {
-        let mut zle = Zle::new();
-        widget_complete_word(&mut zle);
-        assert_eq!(
-            zle.completion_request,
-            Some(super::super::zle_main::CompletionRequest::CompleteWord)
-        );
-    }
-
-    #[test]
-    fn expand_or_complete_widget_surfaces_request() {
-        let mut zle = Zle::new();
-        widget_expand_or_complete(&mut zle);
-        assert_eq!(
-            zle.completion_request,
-            Some(super::super::zle_main::CompletionRequest::ExpandOrComplete)
-        );
-    }
-
-    #[test]
-    fn list_choices_widget_surfaces_request() {
-        let mut zle = Zle::new();
-        widget_list_choices(&mut zle);
-        assert_eq!(
-            zle.completion_request,
-            Some(super::super::zle_main::CompletionRequest::ListChoices)
-        );
-    }
-
-    #[test]
-    fn menu_complete_widget_surfaces_request() {
-        let mut zle = Zle::new();
-        widget_menu_complete(&mut zle);
-        assert_eq!(
-            zle.completion_request,
-            Some(super::super::zle_main::CompletionRequest::MenuComplete)
-        );
-    }
-
-    #[test]
-    fn delete_char_or_list_at_eol_surfaces_list_choices() {
-        let mut zle = Zle::new();
-        zle.zleline = "abc".chars().collect();
-        zle.zlell = 3;
-        zle.zlecs = 3; // at end-of-line
-        widget_delete_char_or_list(&mut zle);
-        assert_eq!(
-            zle.completion_request,
-            Some(super::super::zle_main::CompletionRequest::ListChoices)
-        );
-    }
+    // Tests `complete_word_widget_surfaces_request` /
+    // `expand_or_complete_widget_surfaces_request` /
+    // `list_choices_widget_surfaces_request` /
+    // `menu_complete_widget_surfaces_request` /
+    // `delete_char_or_list_at_eol_surfaces_list_choices` removed —
+    // they exercised the deleted `Zle.completion_request` field
+    // (Rust-only fixture surface) which has no C counterpart.
 
     #[test]
     fn delete_char_or_list_mid_line_deletes_instead() {
+        // c:zle_tricky.c:288 — `deletecharorlist` falls through to
+        // `delete-char` when not at end-of-line.
         let mut zle = Zle::new();
         zle.zleline = "abc".chars().collect();
         zle.zlell = 3;
         zle.zlecs = 1;
         widget_delete_char_or_list(&mut zle);
-        // No completion request: it should have done a delete-char.
-        assert_eq!(zle.completion_request, None);
         assert_eq!(zle.zleline.iter().collect::<String>(), "ac");
     }
 
