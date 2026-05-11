@@ -185,8 +185,6 @@ pub struct Zle {
     // insert mode/overwrite mode flag                                       // c:124
     /// Insert mode (true) or overwrite mode (false)
     pub insmode: bool,
-    /// Done editing flag
-    pub done: bool,
     /// Last character pressed
     pub lastchar: ZleInt,
     /// Last character as wide char (always used in Rust)
@@ -387,7 +385,6 @@ impl Zle {
             zlell: 0,
             mark: 0,
             insmode: true,
-            done: false,
             lastchar: 0,
             lastchar_wide: 0,
             lastchar_wide_valid: false,
@@ -732,9 +729,9 @@ impl Zle {
     /// `^X^E`) currently rely on the binding's first byte; the
     /// keymap-trie walk is a follow-up port.
     pub fn zlecore(&mut self) {                                              // c:1110
-        self.done = false;
+        crate::ported::zle::zle_misc::DONE.store(0, std::sync::atomic::Ordering::SeqCst);
 
-        while !self.done {
+        while crate::ported::zle::zle_misc::DONE.load(std::sync::atomic::Ordering::SeqCst) == 0 {
             // EOF handling: empty line + Ctrl-D (eofchar) => terminate.
             // Mirrors zle_main.c:1139-1150 (lastchar == eofchar guard).
             // We can only check this *after* reading a char, so the
@@ -748,7 +745,7 @@ impl Zle {
                 Some(t) => t,
                 None => {
                     self.eofsent = true;
-                    self.done = true;
+                    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
                     continue;
                 }
             };
@@ -760,7 +757,7 @@ impl Zle {
                 && (self.zlereadflags & crate::ported::zsh_h::ZLRF_HISTORY) != 0
             {
                 self.eofsent = true;
-                self.done = true;
+                crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
                 continue;
             }
 
@@ -982,7 +979,7 @@ impl Zle {
         self.zlecs = 0;
         self.zlell = 0;
         self.mark = 0;
-        self.done = false;
+        crate::ported::zle::zle_misc::DONE.store(0, std::sync::atomic::Ordering::SeqCst);
 
         // Set up terminal
         self.zsetterm()?;
@@ -1089,7 +1086,7 @@ impl Zle {
     /// matching the C `locerror` path at zle_main.c:1992.
     pub fn recursive_edit(&mut self) -> i32 {
         self.zle_recursive += 1;
-        let old_done = self.done;
+        let old_done = crate::ported::zle::zle_misc::DONE.load(std::sync::atomic::Ordering::SeqCst) != 0;
         let old_eofsent = self.eofsent;
 
         // Mirror zle_main.c:1984-1986 — refresh before entering the
@@ -1097,7 +1094,7 @@ impl Zle {
         self.redrawhook();
         self.zrefresh();
 
-        self.done = false;
+        crate::ported::zle::zle_misc::DONE.store(0, std::sync::atomic::Ordering::SeqCst);
         self.eofsent = false;
         self.zlecore();
 
@@ -1107,7 +1104,7 @@ impl Zle {
         // via abort_line?" — approximated by checking eofsent.
         let locerror = if self.eofsent { 1 } else { 0 };
 
-        self.done = old_done;
+        crate::ported::zle::zle_misc::DONE.store(if old_done { 1 } else { 0 }, std::sync::atomic::Ordering::SeqCst);
         self.eofsent = old_eofsent;
         self.zle_recursive -= 1;
 
@@ -1118,7 +1115,7 @@ impl Zle {
     /// Port of `acceptline()` from Src/Zle/zle_misc.c:401 — the C source
     /// just sets the global `done` flag.
     pub fn finish_line(&mut self) {
-        self.done = true;
+        crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Abort the current line edit and exit zlecore with an empty buffer.
@@ -1130,7 +1127,7 @@ impl Zle {
         self.zleline.clear();
         self.zlecs = 0;
         self.zlell = 0;
-        self.done = true;
+        crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -1212,7 +1209,7 @@ impl Zle {
     /// Break read (for signals)
     /// Port of breakread() from zle_main.c
     pub fn break_read(&mut self) {
-        self.done = true;
+        crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Handle before trap
