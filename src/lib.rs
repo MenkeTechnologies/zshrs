@@ -83,6 +83,7 @@ pub use zshrs_parse::parse;
 pub use zshrs_parse::tokens;
 #[path = "extensions/history.rs"] pub mod history;
 #[path = "extensions/zle_history.rs"] pub mod zle_history;
+#[path = "extensions/zle_refresh_state.rs"] pub mod zle_refresh_state;
 #[path = "extensions/log.rs"] pub mod log;
 // Backwards-compat flat re-exports — call sites that still write
 // `crate::datetime::…`, `crate::stat::…`, etc. resolve to the
