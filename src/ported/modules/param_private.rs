@@ -16,19 +16,20 @@
 //! `getprivatenode2`, `scopeprivate`, `wrap_private`, plus 6 module
 //! loaders. 1 struct: `gsu_closure` (c:34).
 //!
-//! **Strict status: PARTIAL — see `TODO.md`.** A faithful 1:1 port
-//! requires the entire `Param`/`HashNode`/`gsu_*`/`locallevel`/
-//! `bin_typeset`/`createparam`/`addhashnode` machinery. zshrs's
-//! executor stores parameters in plain `HashMap`s on `ShellExecutor`
-//! rather than the C linked-hashtable + level-stack design. Until
-//! that scaffolding lands, `bin_private` falls back to `builtin_local`
-//! semantics (assign to `exec.variables`/`exec.arrays`) — observably
-//! the same for non-shadowing assignments, but the c:80-178
-//! `makeprivate` promotion + rejection logic is unreachable. All 12
-//! per-type GSU callbacks (`pps_*`/`ppi_*`/`ppf_*`/`ppa_*`/`pph_*`)
-//! and `is_private`/`setfn_error`/`getprivatenode`/`scopeprivate`/
-//! `wrap_private`/`printprivatenode` remain as static-link no-op
-//! stubs with C-citing doc-comments.
+//! **Strict status: PARTIAL — see `TODO.md`.** Some wiring has
+//! landed: `bin_private` calls real `startparamscope`/`endparamscope`
+//! via params.rs, `boot_`/`finish_` manage the `emptytable` marker
+//! through `newparamtable`/`deleteparamtable`, and
+//! `printprivatenode` routes to `params::printparamnode`. What still
+//! requires substrate work outside this module: the
+//! `addwrapper(m, wrapper)` dispatch (paramtab swap-on-call in
+//! `wrap_private`), the realparamtab `getnode`/`getnode2`/`printnode`
+//! override chain that `setup_` installs at c:619-630, and the
+//! `bin_typeset` re-entry through `c:251` (which depends on the typed
+//! paramtab in zshrs's executor — currently `HashMap<String,String>`).
+//! The 12 per-type GSU callbacks (`pps_*`/`ppi_*`/`ppf_*`/`ppa_*`/
+//! `pph_*`) shape-match C's signatures but their `gsu_closure` chain
+//! lookup is no-op until `pm->gsu.s` is a real vtable pointer.
 
 use crate::ported::utils::zwarnnam;
 
