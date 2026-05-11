@@ -762,94 +762,16 @@ pub fn printtime(                                                            // 
 /// Default time format (from jobs.c DEFAULT_TIMEFMT)
 pub const DEFAULT_TIMEFMT: &str = "%J  %U user %S system %P cpu %*E total";
 
-/// Time a command's execution
-/// Per-command timer for the `time` keyword.
-/// Port of the `dtime_tv()` (Src/jobs.c:137) /
-/// `dtime_ts()` (line 152) deltas — measures real / user /
-/// system across one command body.
-pub struct CommandTimer {
-    start: std::time::Instant,
-    job_name: String,
-}
+// `CommandTimer` struct deleted — Rust-only timing aggregator with
+// no caller. C inlines `dtime_tv()` (Src/jobs.c:137) /
+// `dtime_ts()` (line 152) into printjob; the Rust port's `printtime`
+// (above) is the equivalent free-fn and any caller that needs
+// elapsed time can `Instant::now()` directly.
 
-impl CommandTimer {
-    pub fn new(job_name: &str) -> Self {
-        CommandTimer {
-            start: std::time::Instant::now(),
-            job_name: job_name.to_string(),
-        }
-    }
-
-    pub fn elapsed(&self) -> Duration {
-        self.start.elapsed()
-    }
-
-    pub fn format(
-        &self,
-        user_time: Duration,
-        sys_time: Duration,
-        format_str: Option<&str>,
-    ) -> String {
-        let elapsed = self.start.elapsed().as_secs_f64();
-        let user = user_time.as_secs_f64();
-        let sys = sys_time.as_secs_f64();
-
-        printtime(
-            elapsed,
-            user,
-            sys,
-            format_str.unwrap_or(DEFAULT_TIMEFMT),
-            &self.job_name,
-        )
-    }
-}
-
-/// Pipestats management (from jobs.c storepipestats lines 420-454)
-/// Per-pipeline stats array.
-/// Port of the `pipestats[]` cache `storepipestats()`
-/// (Src/jobs.c:420) populates so `${pipestatus[N]}` can read
-/// per-stage exit codes.
-pub struct PipeStats {
-    stats: Vec<i32>,
-}
-
-impl Default for PipeStats {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PipeStats {
-    pub fn new() -> Self {
-        PipeStats { stats: Vec::new() }
-    }
-
-    pub fn clear(&mut self) {
-        self.stats.clear();
-    }
-
-    pub fn add(&mut self, status: i32) {
-        if self.stats.len() < MAX_PIPESTATS {
-            self.stats.push(status);
-        }
-    }
-
-    pub fn get(&self) -> &[i32] {
-        &self.stats
-    }
-
-    pub fn len(&self) -> usize {
-        self.stats.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.stats.is_empty()
-    }
-
-    pub fn pipefail_status(&self) -> i32 {
-        *self.stats.iter().rev().find(|&&s| s != 0).unwrap_or(&0)
-    }
-}
+// `PipeStats` struct deleted — Rust-only wrapper that duplicated
+// the `numpipestats` (jobs.c:131) + `pipestats[]` (jobs.c:131)
+// flat C globals already ported as `NUMPIPESTATS` / `PIPESTATS` at
+// file scope above. Read/write the canonical globals directly.
 
 /// Signal message lookup (from jobs.c sigmsg lines 1106-1118)
 /// Render a signal number as a one-line description.
@@ -889,42 +811,30 @@ pub fn sigmsg(sig: i32) -> &'static str {                                    // 
     }
 }
 
-/// Background status tracking (from jobs.c bgstatus)
-/// Cached background-job status (for `wait`/$? lookup).
-/// Port of `update_bg_job()` (Src/jobs.c:677) bookkeeping.
-pub struct BgStatus {
-    statuses: std::collections::HashMap<i32, i32>,
+/// Port of `struct bgstatus` from `Src/jobs.c:2295`.
+/// One `(pid, status)` pair the bg-status tracker records when a
+/// background process exits so `wait $pid` can read its $?.
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+pub struct bgstatus {                                                        // c:2296
+    pub pid: i32,                                                            // c:2297
+    pub status: i32,                                                         // c:2298
 }
 
-impl Default for BgStatus {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// Port of `typedef struct bgstatus *Bgstatus;` (jobs.c:2300).
+pub type Bgstatus = Box<bgstatus>;                                           // c:2300
 
-impl BgStatus {
-    pub fn new() -> Self {
-        BgStatus {
-            statuses: std::collections::HashMap::new(),
-        }
-    }
+/// Port of `static LinkList bgstatus_list;` (jobs.c:2302). Insertion-
+/// ordered list so the oldest entry can be evicted when the cap is
+/// reached. Stored as `Vec<bgstatus>` since the order is the only
+/// thing we'd ever need from a linked list here.
+pub static bgstatus_list: std::sync::Mutex<Vec<bgstatus>> =                  // c:2302
+    std::sync::Mutex::new(Vec::new());
 
-    pub fn add(&mut self, pid: i32, status: i32) {
-        self.statuses.insert(pid, status);
-    }
-
-    pub fn get(&self, pid: i32) -> Option<i32> {
-        self.statuses.get(&pid).copied()
-    }
-
-    pub fn remove(&mut self, pid: i32) -> Option<i32> {
-        self.statuses.remove(&pid)
-    }
-
-    pub fn clear(&mut self) {
-        self.statuses.clear();
-    }
-}
+/// Port of `static long bgstatus_count;` (jobs.c:2304). Reaches
+/// `_SC_CHILD_MAX` and stops (addbgstatus then evicts oldest).
+pub static bgstatus_count: std::sync::atomic::AtomicI64 =                    // c:2304
+    std::sync::atomic::AtomicI64::new(0);
 
 // Wait for a particular process.                                           // c:1618
 // wait_cmd indicates this is from the interactive wait command,            // c:1620
@@ -2219,23 +2129,27 @@ pub fn clearoldjobtab() {
         .lock().expect("oldmaxjob poisoned") = 0;
 }
 
-/// Port of `addbgstatus()` from `Src/jobs.c:2325`.
-///
-/// C body caps the bgstatus list to `_SC_CHILD_MAX` (typically
-/// 1024) entries, dropping the oldest when full, and appends
-/// `(pid, status)` to `bgstatus_list`.
-///
-/// `BgStatus::add` already implements the cap + LRU eviction; the
-/// fn delegates. Returning unit matches C's `void`. The `bg`
-/// argument replaces C's global `bgstatus_list`.
-pub fn addbgstatus(bg: &mut BgStatus, pid: i32, status_val: i32) {           // c:2325
-    // We're not always robust about memory failures, but                    // c:2347
-    // this is pretty deep in the shell basics to be failing owing           // c:2348
-    // to memory, and a failure to wait is reported loudly, so test          // c:2349
-    // and fail silently here.                                               // c:2350
-    // Add an entry for the pid                                              // c:2369
-    // Overflow.  List is in order, remove first                             // c:2370-2371
-    bg.add(pid, status_val);                                                 // c:2374-2385
+/// Direct port of `void addbgstatus(pid_t pid, int status)` from
+/// `Src/jobs.c:2325`. Caps the global `bgstatus_list` at
+/// `_SC_CHILD_MAX`, evicting oldest on overflow, then appends a
+/// new `bgstatus { pid, status }` entry.
+pub fn addbgstatus(pid: i32, status_val: i32) {                              // c:2325
+    use std::sync::atomic::Ordering;
+    // c:2370 — `if (bgstatus_count == max_child)` cap + eviction.
+    let max_child = unsafe { libc::sysconf(libc::_SC_CHILD_MAX) };
+    let cap = if max_child > 0 { max_child as i64 } else { 1024 };
+    if let Ok(mut list) = bgstatus_list.lock() {
+        if bgstatus_count.load(Ordering::Relaxed) >= cap {                   // c:2370
+            // c:2371 — `rembgstatus(firstnode(bgstatus_list))`.
+            if !list.is_empty() {
+                list.remove(0);
+                bgstatus_count.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
+        // c:2376-2385 — alloc + push.
+        list.push(bgstatus { pid, status: status_val });                     // c:2381-2384
+        bgstatus_count.fetch_add(1, Ordering::Relaxed);                      // c:2386
+    }
 }
 
 // See if pid has a recorded exit status.                                   // c:2388
@@ -2244,9 +2158,20 @@ pub fn addbgstatus(bg: &mut BgStatus, pid: i32, status_val: i32) {           // 
 //                                                                          // c:2391
 // This is only used by wait, which must only work on each                  // c:2392
 // pid once, so we need to remove the entry if we find it.                  // c:2393
-/// Port of `getbgstatus()` from `Src/jobs.c:2397`.
-pub fn getbgstatus(bg: &mut BgStatus, pid: i32) -> Option<i32> {             // c:2397
-    bg.remove(pid)
+/// Direct port of `int getbgstatus(pid_t pid)` from `Src/jobs.c:2397`.
+/// Walks the global `bgstatus_list` for `pid`; if found, removes
+/// the entry and returns its status.
+pub fn getbgstatus(pid: i32) -> Option<i32> {                                // c:2397
+    use std::sync::atomic::Ordering;
+    if let Ok(mut list) = bgstatus_list.lock() {
+        if let Some(idx) = list.iter().position(|b| b.pid == pid) {          // c:2402-2406
+            let status = list[idx].status;
+            list.remove(idx);                                                // c:2407 rembgstatus
+            bgstatus_count.fetch_sub(1, Ordering::Relaxed);
+            return Some(status);
+        }
+    }
+    None
 }
 
 /// Port of `gettrapnode()` from `Src/jobs.c:3115`.
