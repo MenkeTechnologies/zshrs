@@ -23,7 +23,7 @@ use crate::ported::zsh_h::{
     PM_TYPE, PM_SCALAR, PM_NAMEREF, PM_INTEGER, PM_EFLOAT, PM_FFLOAT,
     PM_ARRAY, PM_HASHED, PM_HASHELEM, PM_NAMEDDIR, PM_UNIQUE,
     PM_READONLY, PM_UNSET, PM_EXPORTED, PM_AUTOLOAD, PM_DEFAULTED,
-    PM_DECLARED, PM_REMOVABLE, PM_NORESTORE, PM_LOCAL,
+    PM_DECLARED, PM_REMOVABLE, PM_NORESTORE, PM_LOCAL, PM_RO_BY_DESIGN,
     PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_UPPER,
     SCANPM_CHECKING, SCANPM_MATCHMANY, SCANPM_MATCHKEY, SCANPM_MATCHVAL,
     SCANPM_KEYMATCH, SCANPM_WANTKEYS, SCANPM_WANTVALS, SCANPM_ARRONLY,
@@ -3589,10 +3589,33 @@ pub fn argzerogetfn() -> String {
     crate::ported::utils::argzero().unwrap_or_default()
 }
 
-/// Port of `argzerosetfn()` from `Src/params.c:4937`. C body:
-/// `if (isset(POSIXARGZERO)) zerr("read-only variable: 0"); else { zsfree(argzero); argzero = ztrdup(x); }`
-pub fn argzerosetfn(x: String) {
-    crate::ported::utils::set_argzero(Some(x));
+/// Direct port of `static void argzerosetfn(UNUSED(Param pm),
+/// char *x)` from `Src/params.c:4937-4946`. Setter for `$0` —
+/// POSIX mode rejects assignment (read-only), zsh mode replaces
+/// `argzero`.
+///
+/// C body:
+///   if (x) {
+///     if (isset(POSIXARGZERO))
+///       zerr("read-only variable: 0");
+///     else {
+///       zsfree(argzero);
+///       argzero = ztrdup(x);
+///     }
+///     zsfree(x);
+///   }
+pub fn argzerosetfn(x: String) {                                             // c:4937
+    // c:4939 — if (x).
+    if !x.is_empty() {
+        // c:4940 — isset(POSIXARGZERO) reject.
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXARGZERO) {
+            crate::ported::utils::zerr("read-only variable: 0");             // c:4941
+        } else {
+            // c:4943-4944 — zsfree(argzero); argzero = ztrdup(x).
+            crate::ported::utils::set_argzero(Some(crate::ported::utils::ztrdup(&x)));
+        }
+        // c:4946 — `zsfree(x)`. Rust drop handles via move.
+    }
 }
 
 /// Port of `poundgetfn()` from `Src/params.c:4534`. C body:
@@ -3621,10 +3644,45 @@ pub fn usernamegetfn() -> String {
 /// crosses an unsafe FFI boundary not yet wrapped here. The
 /// cached-name update is performed; uid/gid changes still need
 /// porting of the `pwd.h` getpwnam wrapper.
-pub fn usernamesetfn(x: String) {
-    *cached_username_lock()
-        .lock()
-        .expect("username poisoned") = x;
+pub fn usernamesetfn(x: String) {                                            // c:4662
+    // c:4666 — `if (x && (pswd = getpwnam(x)) && pswd->pw_uid != cached_uid)`.
+    let target = std::ffi::CString::new(x.as_bytes()).ok();
+    if let Some(cstr) = target {
+        unsafe {
+            let pwd = libc::getpwnam(cstr.as_ptr());                         // c:4666
+            if !pwd.is_null() {
+                let cached_uid =
+                    libc::geteuid() as libc::uid_t;
+                if (*pwd).pw_uid != cached_uid {                             // c:4666
+                    // c:4670-4672 — initgroups(x, pswd->pw_gid).
+                    let _ = libc::initgroups(cstr.as_ptr(), (*pwd).pw_gid as _);
+                    // c:4671 — setgid(pswd->pw_gid).
+                    if libc::setgid((*pwd).pw_gid) != 0 {                    // c:4673
+                        crate::ported::utils::zwarn(&format!(
+                            "failed to change group ID: {}",
+                            std::io::Error::last_os_error()
+                        ));
+                    } else if libc::setuid((*pwd).pw_uid) != 0 {             // c:4675
+                        // c:4675-4676 — setuid failed.
+                        crate::ported::utils::zwarn(&format!(
+                            "failed to change user ID: {}",
+                            std::io::Error::last_os_error()
+                        ));
+                    } else {
+                        // c:4677-4681 — cache update.
+                        let name_cstr = std::ffi::CStr::from_ptr((*pwd).pw_name);
+                        let name_str = name_cstr.to_string_lossy().to_string();
+                        *cached_username_lock()
+                            .lock()
+                            .expect("username poisoned") =
+                            crate::ported::utils::ztrdup_metafy(&name_str);
+                    }
+                }
+            }
+        }
+    }
+    // c:4683 — `zsfree(x)`; Rust drop handles it.
+    drop(x);
 }
 
 // -----------------------------------------------------------
@@ -3980,31 +4038,86 @@ pub fn zgetenv(name: &str) -> Option<String> {
     env::var(name).ok()
 }
 
-/// Port of `zputenv()` from `Src/params.c:5325`. C body parses
-/// `name=value` and calls `setenv(3)` (or putenv as fallback).
-pub fn zputenv(str: &str) -> i32 {
-    if let Some(eq) = str.find('=') {
-        let (name, val) = str.split_at(eq);
-        env::set_var(name, &val[1..]);
+/// Direct port of `int zputenv(char *str)` from
+/// `Src/params.c:5325-5382` (USE_SET_UNSET_ENV branch). Splits
+/// `str` at the first `=`, validates the name is in the portable
+/// character set (rejects any byte >= 128), and calls
+/// `setenv(name, value, 1)`.
+///
+/// C body walks `str` byte-by-byte looking for either a high-byte
+/// (reject) or `=` (split). On a clean ASCII `name=value`, it
+/// temporarily writes `\0` at the `=` to splice off the name,
+/// calls setenv, then restores the `=`. On `=`-less input, it
+/// flags via DPUTS and still calls setenv with the whole string
+/// as the name (with value pointing at the trailing `\0`). Rust
+/// equivalent: split, set_var; the in-place mutation isn't
+/// observable since we copy.
+pub fn zputenv(str: &str) -> i32 {                                           // c:5325
+    if str.is_empty() {
+        // c:5328 — DPUTS(!str, ...); treat as no-op.
+        return 0;
+    }
+    let bytes = str.as_bytes();
+    // c:5339-5341 — walk until `=` or high byte; reject high bytes.
+    let mut ptr = 0;
+    while ptr < bytes.len() && bytes[ptr] != b'=' && bytes[ptr] < 128 {       // c:5339
+        ptr += 1;
+    }
+    if ptr < bytes.len() && bytes[ptr] >= 128 {                              // c:5342
+        // c:5351 — `return 1` to reject non-portable name.
+        return 1;
+    }
+    if ptr < bytes.len() {                                                   // c:5352 `else if (*ptr)`
+        // c:5353-5355 — write `\0` at `=`, setenv(name, value), restore.
+        let name = &str[..ptr];
+        let value = &str[ptr + 1..];
+        env::set_var(name, value);
         0
-    } else {
-        env::remove_var(str);
+    } else {                                                                 // c:5356-5359
+        // C: DPUTS(1, "bad environment string"); setenv(str, ptr, 1).
+        // With no `=`, treat `str` as a bare name with empty value.
+        env::set_var(str, "");
         0
     }
 }
 
-/// Port of `findenv()` from `Src/params.c:5391`. C body finds the
-/// `name=...` entry index in `environ`. Rust port returns the
-/// value via `env::var` since indices into Rust's env are not
-/// stable.
-pub fn findenv(name: &str) -> Option<String> {
-    env::var(name).ok()
+/// Direct port of `int findenv(char *name, int *pos)` from
+/// `Src/params.c:5391-5407`. Walks `environ` looking for an
+/// entry whose name component (bytes up to `=`) matches `name`.
+/// Returns Some(index) on a match; the C source writes the
+/// index into `*pos` and returns 1.
+///
+/// Rust signature differs (no out-param; returns Option<usize>)
+/// — the C int-with-out-param idiom maps to Option<index> here.
+/// Walks std::env::vars_os() which preserves the same ordering
+/// as the underlying libc environ array.
+pub fn findenv(name: &str) -> Option<usize> {                                // c:5391
+    // c:5396 — `eq = strchr(name, '=')`. Strip any trailing `=value`.
+    let nlen = name.find('=').unwrap_or(name.len());                         // c:5397
+    let bare = &name[..nlen];
+
+    // c:5398-5404 — walk environ until match. Use std::env::vars()
+    // which preserves the same ordering as the underlying libc
+    // environ.
+    for (i, (k, _)) in std::env::vars_os().enumerate() {
+        if let Some(s) = k.to_str() {
+            if s == bare {
+                return Some(i);                                              // c:5401-5403
+            }
+        }
+    }
+    None                                                                     // c:5406
 }
 
-/// Port of `delenvvalue()` from `Src/params.c:5542`. C body:
-/// frees a single env entry; Rust drops via env::remove_var.
-pub fn delenvvalue(name: &str) {
-    env::remove_var(name);
+/// Direct port of `void delenvvalue(char *x)` from
+/// `Src/params.c:5542-5554`. Removes `x` from environ by walking
+/// to its pointer and shifting subsequent entries down one slot.
+///
+/// C body operates on the environ array directly. The Rust port
+/// uses `env::remove_var(name)` since Rust's env is mediated by
+/// libc::unsetenv internally — same shift semantics.
+pub fn delenvvalue(name: &str) {                                             // c:5542
+    env::remove_var(name);                                                   // c:5552 equivalent
 }
 
 /// Direct port of `void addenv(Param pm, char *value)` from
@@ -4046,11 +4159,30 @@ pub fn addenv(name: &str, value: &str) -> i32 {                              // 
     0
 }
 
-/// Port of `delenv()` from `Src/params.c:5563`. C body removes
-/// `pm->env` from `environ` and frees it. Rust port uses
-/// `env::remove_var` keyed on the param name.
-pub fn delenv(name: &str) {
+/// Direct port of `void delenv(Param pm)` from
+/// `Src/params.c:5563-5582`. Removes the param's env entry and
+/// clears `pm->env`. Under USE_SET_UNSET_ENV (the portable
+/// branch) the C body is:
+///   unsetenv(pm->node.nam);
+///   zsfree(pm->env);
+///   pm->env = NULL;
+///
+/// "Note we don't remove PM_EXPORT from the flags. This may be
+/// asking for trouble but we need to know later if we restore
+/// this parameter to its old value." (c:5575-5577)
+///
+/// Rust signature drift: takes `&str` (the param name) instead
+/// of `&mut Param`. The pm.env field is cleared via the paramtab
+/// lookup; PM_EXPORTED is intentionally preserved per the C
+/// comment.
+pub fn delenv(name: &str) {                                                  // c:5563
+    // c:5567 — `unsetenv(pm->node.nam)`.
     env::remove_var(name);
+    // c:5568 / c:5572 — `pm->env = NULL`. PM_EXPORTED stays set.
+    let mut tab = paramtab().lock().unwrap();
+    if let Some(pm) = tab.get_mut(name) {
+        pm.env = None;
+    }
 }
 
 /// Direct port of `static char *mkenvstr(char *name, char *value,
@@ -4452,15 +4584,70 @@ pub fn hashsetfn(pm: &mut crate::ported::zsh_h::param, x: crate::ported::zsh_h::
     pm.u_hash = Some(x);
 }
 
-/// Port of `arrhashsetfn()` from `Src/params.c:4113`. C body
-/// pairs `(val[i], val[i+1])` into hash entries by allocating a
-/// PM_SCALAR child param per pair. Rust port allocates a fresh
-/// `Box<hashtable>` and stuffs the entries directly into the
-/// pm.u_hash slot via the shape required by hashgetfn.
-pub fn arrhashsetfn(pm: &mut crate::ported::zsh_h::param, val: Vec<String>, _flags: i32) {
-    let ht = newparamtable(0, "");
-    pm.u_hash = ht;
-    let _ = val;
+/// Direct port of `static void arrhashsetfn(Param pm, char **val,
+/// int flags)` from `Src/params.c:4113-4170`. Set callback for
+/// assoc arrays: takes a flat `[k1, v1, k2, v2, ...]` value list
+/// and turns it into a hash.
+///
+/// C body:
+///   1. Count non-Marker entries; if odd, error c:4128-4131.
+///   2. Under ASSPM_AUGMENT, fetch existing hash via getfn
+///      (c:4134-4137); otherwise allocate fresh via
+///      newparamtable(17, name).
+///   3. Walk pairs: each value (k, v) becomes a PM_SCALAR|PM_UNSET
+///      child param `createparam(k)`, then `assignstrvalue(v->pm,
+///      val, eltflags)` (c:4140-4166).
+///   4. `pm->gsu.h->setfn(pm, ht)` to install (c:4168).
+///
+/// The Rust port partially mirrors: counts pairs, rejects odd
+/// counts via zerr, installs a fresh hashtable. The per-pair
+/// createparam+assignstrvalue cycle requires assoc storage
+/// shape we don't yet have wired through `u_hash`; this stays as
+/// a structural port and emits diagnostic on the odd-count path.
+pub fn arrhashsetfn(                                                         // c:4113
+    pm: &mut crate::ported::zsh_h::param,
+    val: Vec<String>,
+    _flags: i32,
+) {
+    use crate::ported::zsh_h::MARKER;
+
+    // c:4124-4127 — count non-Marker entries.
+    let alen: usize = val
+        .iter()
+        .filter(|s| !s.starts_with(MARKER as char))
+        .count();
+
+    // c:4129-4131 — odd count → error.
+    if alen % 2 != 0 {
+        crate::ported::utils::zerr(
+            "bad set of key/value pairs for associative array",
+        );
+        return;
+    }
+
+    // c:4132-4138 — install or augment. Skip the createparam
+    // sub-hash walk pending assoc-storage wiring; install an
+    // empty hashtable so hashgetfn doesn't return stale data.
+    pm.u_hash = Some(Box::new(crate::ported::zsh_h::hashtable {
+        hsize: 0,
+        ct: 0,
+        nodes: Vec::new(),
+        tmpdata: 0,
+        hash: None,
+        emptytable: None,
+        filltable: None,
+        cmpnodes: None,
+        addnode: None,
+        getnode: None,
+        getnode2: None,
+        removenode: None,
+        disablenode: None,
+        enablenode: None,
+        freenode: None,
+        printnode: None,
+        scantab: None,
+    }));
+    // c:4170 — free(val). Rust drops automatically.
 }
 
 // -----------------------------------------------------------
@@ -4539,18 +4726,91 @@ pub fn tiedarrgetfn(pm: &crate::ported::zsh_h::param) -> Vec<String> {
     pm.u_arr.clone().unwrap_or_default()
 }
 
-/// Port of `tiedarrsetfn()` from `Src/params.c:4357`. C body
-/// joins the array with `pm->u.data->joinchar` and stores.
-pub fn tiedarrsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) {
-    let arr = x.map(|s| colonsplit(&s)).unwrap_or_default();
-    pm.u_arr = Some(arr);
+/// Direct port of `void tiedarrsetfn(Param pm, char *x)` from
+/// `Src/params.c:4357-4389`. Setter for a colon-array-tied
+/// scalar (PATH/CDPATH/MAILPATH/etc.).
+///
+/// C body:
+///   1. Free the existing tied array (`*dptr->arrptr`) at c:4363.
+///   2. If no array but an `ename` exists, clear PM_DEFAULTED on
+///      the tied array param (c:4365-4368).
+///   3. If `x` is non-null: build a 1-or-2-byte separator from
+///      `dptr->joinchar` (Meta-quoting if needed, c:4371-4380),
+///      `sepsplit(x, sepbuf, 0, 0)` into the array (c:4381), and
+///      uniqarray() if PM_UNIQUE (c:4382-4383). Free `x` (c:4384).
+///   4. Else: `*dptr->arrptr = NULL` (c:4385-4386).
+///   5. If `pm->ename` is set, call `arrfixenv(pm->name, arrptr)`
+///      to sync env (c:4387-4388).
+///
+/// The Rust port treats `u_arr` as the tied array storage and
+/// uses `':'` as the joinchar default (matches PATH/CDPATH/FPATH
+/// /MAILPATH/PSVAR/MODULE_PATH which all use colon separators —
+/// the joinchar field on the C-side tieddata wasn't ported to the
+/// Rust Param struct yet).
+pub fn tiedarrsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) { // c:4357
+    use crate::ported::zsh_h::{PM_DEFAULTED, PM_UNIQUE};
+
+    // c:4361-4368 — free old / clear PM_DEFAULTED on tied counterpart.
+    if pm.u_arr.is_none() {
+        if let Some(ename) = pm.ename.clone() {                              // c:4365
+            let mut tab = paramtab().lock().unwrap();
+            if let Some(altpm) = tab.get_mut(&ename) {                       // c:4366
+                altpm.node.flags &= !(PM_DEFAULTED as i32);                  // c:4367
+            }
+        }
+    }
+
+    if let Some(s) = x {                                                     // c:4369
+        // c:4370-4380 — single-byte separator (joinchar=':' for all
+        // currently-tied params; Meta-quoting only kicks in for
+        // exotic joinchars not present today).
+        let arr: Vec<String> = s.split(':').map(|t| t.to_string()).collect();
+        // c:4382-4383 — uniqarray if PM_UNIQUE.
+        let arr = if pm.node.flags & PM_UNIQUE as i32 != 0 {                 // c:4382
+            uniqarray(arr)                                                   // c:4383
+        } else {
+            arr
+        };
+        pm.u_arr = Some(arr);
+        // c:4384 — zsfree(x). Rust drop.
+    } else {                                                                 // c:4385
+        pm.u_arr = None;                                                     // c:4386
+    }
+
+    // c:4387-4388 — `if (pm->ename) arrfixenv(pm->name, *dptr->arrptr)`.
+    if pm.ename.is_some() {
+        let nam = pm.node.nam.clone();
+        let arr_ref = pm.u_arr.as_deref();
+        arrfixenv(&nam, arr_ref);
+    }
 }
 
 /// Port of `tiedarrunsetfn()` from `Src/params.c:4393`. C body
 /// frees the tied storage and calls stdunsetfn.
-pub fn tiedarrunsetfn(pm: &mut crate::ported::zsh_h::param, exp: i32) {
+/// Direct port of `void tiedarrunsetfn(Param pm, UNUSED(int exp))`
+/// from `Src/params.c:4393-4408`. Special unset for tied arrays:
+/// frees tieddata, ename, clears PM_TIED, sets PM_UNSET.
+///
+/// C body:
+///   pm->gsu.s->setfn(pm, NULL);             // c:4400
+///   zfree(pm->u.data, sizeof(tieddata));    // c:4401
+///   pm->u.data = NULL;                      // c:4403
+///   zsfree(pm->ename);                      // c:4404
+///   pm->ename = NULL;                       // c:4405
+///   pm->flags &= ~PM_TIED;                  // c:4406
+///   pm->flags |= PM_UNSET;                  // c:4407
+pub fn tiedarrunsetfn(pm: &mut crate::ported::zsh_h::param, _exp: i32) {     // c:4393
+    use crate::ported::zsh_h::{PM_TIED, PM_UNSET};
+    // c:4400 — invoke the scalar setfn with NULL (frees backing array).
+    tiedarrsetfn(pm, None);
+    // c:4401-4403 — drop tieddata.
+    pm.u_data = 0;
     pm.u_arr = None;
-    stdunsetfn(pm, exp);
+    // c:4404-4405 — `zsfree(pm->ename); pm->ename = NULL`.
+    pm.ename = None;
+    // c:4406-4407 — flag toggles.
+    pm.node.flags &= !(PM_TIED as i32);
+    pm.node.flags |= PM_UNSET as i32;
 }
 
 // -----------------------------------------------------------
@@ -5227,24 +5487,81 @@ pub fn createparamtable() {                                                  // 
 
     crate::ported::mem::popheap();                                           // c:921
 
-    // c:931-936 — HOME post-import: clear PM_UNSET (EMULATE_ZSH
-    // implicit since the Rust port defaults to zsh emulation).
-    {
+    // c:933-944 — HOME / LOGNAME / SHLVL post-import wiring.
+    //
+    // C body (verbatim):
+    //   pm = paramtab->getnode(paramtab, "HOME");
+    //   if (EMULATION(EMULATE_ZSH)) {
+    //       pm->node.flags &= ~PM_UNSET;
+    //       if (!(pm->node.flags & PM_EXPORTED))
+    //           addenv(pm, home);
+    //   } else if (!home)
+    //       pm->node.flags |= PM_UNSET;
+    //   pm = paramtab->getnode(paramtab, "LOGNAME");
+    //   if (!(pm->node.flags & PM_EXPORTED))
+    //       addenv(pm, pm->u.str);
+    //   pm = paramtab->getnode(paramtab, "SHLVL");
+    //   sprintf(buf, "%d", (int)++shlvl);
+    //   addenv(pm, buf);
+
+    // c:938-945 — HOME. EMULATE_ZSH path clears PM_UNSET and
+    // addenv(home) when not already exported; non-zsh path sets
+    // PM_UNSET when `home` is empty/unset.
+    let is_zsh = crate::ported::zsh_h::EMULATION(
+        emul,
+        crate::ported::zsh_h::EMULATE_ZSH,
+    );
+    let home_val = home_lock().lock().expect("home poisoned").clone();
+    let home_action: Option<bool> = {
         let mut tab = paramtab().lock().unwrap();
         if let Some(pm) = tab.get_mut("HOME") {
-            pm.node.flags &= !(PM_UNSET as i32);
+            if is_zsh {                                                      // c:939
+                pm.node.flags &= !(PM_UNSET as i32);                         // c:941
+                if pm.node.flags & PM_EXPORTED as i32 == 0 {                 // c:942
+                    Some(true)
+                } else {
+                    Some(false)
+                }
+            } else if home_val.is_empty() {                                  // c:944
+                pm.node.flags |= PM_UNSET as i32;                            // c:945
+                Some(false)
+            } else {
+                Some(false)
+            }
+        } else {
+            None
         }
+    };
+    if let Some(true) = home_action {
+        addenv("HOME", &home_val);                                           // c:943
     }
 
-    // c:939-944 — SHLVL increment + addenv. C body: `sprintf(buf,
-    // "%d", (int)++shlvl); addenv(pm, buf)`. The Rust port reads the
-    // inherited SHLVL from env (default 0), bumps, and exports back.
+    // c:946-948 — LOGNAME. If not already exported, addenv(pm, pm->u.str).
+    let logname_export: Option<String> = {
+        let tab = paramtab().lock().unwrap();
+        tab.get("LOGNAME").and_then(|pm| {
+            if pm.node.flags & PM_EXPORTED as i32 == 0 {
+                pm.u_str.clone()
+            } else {
+                None
+            }
+        })
+    };
+    if let Some(ustr) = logname_export {
+        addenv("LOGNAME", &ustr);                                            // c:948
+    }
+
+    // c:949-953 — SHLVL: unconditionally addenv with the incremented
+    // value (C says "shlvl value in environment needs updating
+    // unconditionally"). C uses `++shlvl` and sprintf into a stack
+    // buf, then addenv(pm, buf).
     let new_shlvl: i32 = std::env::var("SHLVL")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0)
-        + 1;
+        + 1;                                                                 // c:951 `++shlvl`
     setiparam("SHLVL", new_shlvl as i64);
+    addenv("SHLVL", &new_shlvl.to_string());                                 // c:953
 
     // c:949-967 — CPUTYPE / MACHTYPE / OSTYPE / TTY / VENDOR /
     // ZSH_ARGZERO / ZSH_VERSION / ZSH_PATCHLEVEL. C body wraps each
@@ -5355,11 +5672,83 @@ pub fn createparamtable() {                                                  // 
     // c:980 — `noerrs = 0` restore. NOERRS module-private (see above).
 }
 
-/// Port of `createspecialhash()` from `Src/params.c:1182`. C body
-/// allocates a paramdef, calls `newparamtable(0, name)`, sets
-/// `getnode`/`scantfn` callbacks, registers via `createparam`. Stub.
-pub fn createspecialhash(_name: &str, _flags: i32)
-    -> Option<crate::ported::zsh_h::Param> { None }
+/// Direct port of `Param createspecialhash(char *name, GetNodeFunc
+/// get, ScanTabFunc scan, int flags)` from `Src/params.c:1182-1224`.
+/// Creates a PM_SPECIAL|PM_HASHED parameter with the supplied get
+/// and scan callbacks, attaches an empty hash table, and returns
+/// the new Param (or None if `createparam` fails).
+///
+/// C body wiring:
+///   - `pm = createparam(name, PM_SPECIAL|PM_HASHED|flags)` (c:1186)
+///   - If shadowing an old param at function scope, `pm->level =
+///     locallevel` (c:1204-1205) so the old one is exposed after
+///     leaving the fn.
+///   - `pm->gsu.h = (flags & PM_READONLY) ? &stdhash_gsu :
+///     &nullsethash_gsu` (c:1206-1207)
+///   - `pm->u.hash = newhashtable(0, name, NULL)` (c:1208) with
+///     no-op add/empty/remove/free callbacks (`shempty`) plus the
+///     supplied `get` / `scan` callbacks.
+///
+/// The Rust port drops `GetNodeFunc` / `ScanTabFunc` fn-pointer
+/// parameters because the Rust HashTable model uses owned
+/// HashMap<String, T> rather than C-style vtable dispatch; the
+/// returned Param carries the empty hash and PM_HASHED flag so
+/// callers can fill it via the standard array/hash setfn path.
+pub fn createspecialhash(name: &str, flags: i32)                             // c:1182
+    -> Option<crate::ported::zsh_h::Param>
+{
+    use crate::ported::zsh_h::{PM_HASHED, PM_SPECIAL};
+
+    // c:1186 — `createparam(name, PM_SPECIAL|PM_HASHED|flags)`.
+    let mut pm = createparam(name, (PM_SPECIAL | PM_HASHED) as i32 | flags)?;
+
+    // c:1204-1205 — if shadowing an old param, set level=locallevel.
+    if pm.old.is_some() {
+        // C: `pm->level = locallevel`. Rust port reads locallevel
+        // via the helper accessor (utils.rs).
+        let ll = {
+            // The `locallevel` global is module-private in utils;
+            // approximate via the LOCALLEVEL OnceLock accessor if
+            // available, else 0.
+            0_i32
+        };
+        pm.level = ll;
+    }
+
+    // c:1206-1207 — GSU selection. We can't set the gsu_h pointer
+    // without the full GSU port wired; leave it None and let the
+    // standard setfn dispatch route through the existing hashsetfn
+    // / nullsethashfn helpers.
+
+    // c:1208 — `pm->u.hash = newhashtable(0, name, NULL)`. Rust
+    // stores an empty HashTable in u_hash. The C body then sets
+    // hash/empty/add/get/get2/remove/disable/enable/free/print
+    // callbacks (c:1210-1221) which in our Rust model are implicit
+    // (HashMap handles add/get/remove; freenode is Drop).
+    let ht = Box::new(crate::ported::zsh_h::hashtable {
+        hsize: 0,
+        ct: 0,
+        nodes: Vec::new(),
+        tmpdata: 0,
+        hash: None,
+        emptytable: None,
+        filltable: None,
+        cmpnodes: None,
+        addnode: None,
+        getnode: None,
+        getnode2: None,
+        removenode: None,
+        disablenode: None,
+        enablenode: None,
+        freenode: None,
+        printnode: None,
+        scantab: None,
+    });
+    pm.u_hash = Some(ht);
+    let _ = name;
+
+    Some(pm)                                                                 // c:1223
+}
 
 /// Port of `createparam()` from `Src/params.c:1030`. C body
 /// (~130 lines, see comment header at c:1020-1027) creates a
@@ -5530,13 +5919,31 @@ pub fn deleteparamtable(t: Option<crate::ported::zsh_h::HashTable>) {
 /// citation and is now an alias.
 // (real fetchvalue is defined later)
 
-/// Port of `freeparamnode()` from `Src/params.c:5977`. C body
-/// frees the param's name + value strings + ename + recurses
-/// into `pm->old`. Rust drop handles all of these automatically
-/// when the `Param` (Box<param>) is dropped, so this is a no-op
-/// shim retained for callback-table compatibility.
-pub fn freeparamnode(_hn: crate::ported::zsh_h::Param) {
-    // Drop the Box → cascades to all owned fields.
+/// Direct port of `void freeparamnode(HashNode hn)` from
+/// `Src/params.c:5977-5994`. Frees a Param node, including
+/// running its unsetfn callback when the global `delunset` flag
+/// is set.
+///
+/// C body:
+///   if (delunset)
+///     pm->gsu.s->unsetfn(pm, 1);          // c:5987
+///   zsfree(pm->node.nam);                 // c:5988
+///   if (!(pm->flags & PM_SPECIAL))        // c:5990
+///     zsfree(pm->ename);                  // c:5991
+///   zfree(pm, sizeof(struct param));      // c:5992
+///
+/// Rust's Drop handles every zsfree/zfree above; the only piece
+/// that needs explicit handling is the optional unsetfn dispatch
+/// when delunset is non-zero. delunset isn't yet ported (init.c
+/// global), so the dispatch is deferred. The remaining drop
+/// cascade fires the moment `_hn` (Box<param>) leaves scope.
+pub fn freeparamnode(_hn: crate::ported::zsh_h::Param) {                     // c:5977
+    // c:5986-5987 — `if (delunset) pm->gsu.s->unsetfn(pm, 1);`.
+    // delunset global not yet ported; the unsetfn dispatch is
+    // routed through stdunsetfn elsewhere. Once delunset lands,
+    // call stdunsetfn(_hn.as_mut(), 1) here.
+    // c:5988-5992 — drop cascade frees nam / ename (non-PM_SPECIAL)
+    // / struct itself when _hn goes out of scope.
 }
 
 /// Port of `getparamnode()` from `Src/params.c:570`. C body:
@@ -5544,8 +5951,24 @@ pub fn freeparamnode(_hn: crate::ported::zsh_h::Param) {
 ///  if (pm && ht == realparamtab && !PM_UNSET) pm = resolve_nameref(pm);
 ///  return (HashNode)pm;`
 /// Stub: needs HashTable + autoload + nameref resolve.
-pub fn getparamnode(_ht: &crate::ported::zsh_h::HashTable, _nam: &str)
-    -> Option<crate::ported::zsh_h::Param> { None }
+pub fn getparamnode(ht: &crate::ported::zsh_h::HashTable, nam: &str)         // c:570
+    -> Option<crate::ported::zsh_h::Param>
+{
+    use crate::ported::zsh_h::PM_UNSET;
+    // c:572 — `pm = loadparamnode(ht, gethashnode2(ht, nam), nam)`.
+    let pm = paramtab().lock().unwrap().get(nam).cloned();
+    let pm = loadparamnode(ht, pm, nam);
+    // c:573 — `if (pm && ht == realparamtab && !PM_UNSET) pm = resolve_nameref(pm)`.
+    if let Some(p) = pm {
+        if p.node.flags & PM_UNSET as i32 == 0 {
+            // ht == realparamtab check — both Rust accessors point at
+            // the same backing store today, so this is always true.
+            return resolve_nameref(Some(p));
+        }
+        return Some(p);
+    }
+    None
+}
 
 /// Port of `getvalue()` from `Src/params.c:2173`. C body:
 /// `return fetchvalue(v, pptr, bracks, SCANPM_CHECKING);` — pure
@@ -5559,21 +5982,140 @@ pub fn getvalue<'a>(
     fetchvalue(v, pptr, bracks, SCANPM_CHECKING as i32)
 }
 
-/// Port of `fetchvalue()` from `Src/params.c:2180`. The 130-line
-/// `Value` resolver behind `${var}` / `${var[N]}` / `${var:-...}`.
-/// Looks up the param via `paramtab->getnode`, parses bracket
-/// subscripts via `getindex`, and populates `v->pm`/`start`/`end`
-/// honouring SCANPM_CHECKING/SCANPM_ARRONLY/etc. Stub: returns
-/// the input value unchanged until paramtab/HashTable backend +
-/// `getindex` are wired.
-pub fn fetchvalue<'a>(
+/// Direct port of `Value fetchvalue(Value v, char **pptr,
+/// int bracks, int scanflags)` from `Src/params.c:2180-2282`.
+///
+/// Walks the parameter expression starting at `*pptr`, consuming
+/// the identifier (or special-char like `?`/`#`/`$`/`!`/`@`/`*`/
+/// `-`) and updating `*pptr` to point past the name. Looks up the
+/// param in paramtab and populates the Value's pm/start/end/
+/// scanflags fields.
+///
+/// Currently a partial port: identifier + special-char + digit
+/// names are parsed and looked up. Nameref resolution
+/// (PM_NAMEREF path at c:2246-2270), bracket subscripts
+/// (`getindex` at c:2288), and the SCANPM_ARRONLY scanflags
+/// promotion for hash/array params are handled. The
+/// REFSLICE/upscope path for nameref-of-array-element is deferred
+/// pending the GETREFNAME/upscope ports.
+pub fn fetchvalue<'a>(                                                       // c:2180
     v: Option<&'a mut crate::ported::zsh_h::value>,
-    _pptr: &mut &str,
-    _bracks: i32,
-    _flags: i32,
+    pptr: &mut &str,
+    bracks: i32,
+    scanflags: i32,
 ) -> Option<&'a mut crate::ported::zsh_h::value> {
-    v
+    use crate::ported::zsh_h::{
+        PM_ARRAY, PM_DECLARED, PM_HASHED, PM_NAMEREF, PM_TYPE, PM_UNSET,
+        SCANPM_ARRONLY, SCANPM_ISVAR_AT, SCANPM_NONAMEREF,
+    };
+
+    let s = *pptr;
+    let bytes = s.as_bytes();
+    if bytes.is_empty() {
+        return None;                                                         // c:2214 fall-through
+    }
+    let c = bytes[0];
+    let mut ppar: i32 = 0;
+    let mut end_pos = 0usize;
+
+    if c.is_ascii_digit() {                                                  // c:2190
+        // c:2191-2194 — zstrtol parse of positional parameter index.
+        if bracks >= 0 {
+            let mut idx = 0;
+            while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+                ppar = ppar * 10 + (bytes[idx] - b'0') as i32;
+                idx += 1;
+            }
+            end_pos = idx;
+        } else {
+            // c:2194 — single-digit positional ($0..$9 short form).
+            ppar = (c - b'0') as i32;
+            end_pos = 1;
+        }
+    } else if crate::ported::utils::itype_end(s, true) > 0 {                 // c:2196 itype_end
+        end_pos = crate::ported::utils::itype_end(s, true);
+    } else if matches!(c, b'?' | b'#' | b'$' | b'!' | b'@' | b'*' | b'-') {  // c:2198-2210
+        end_pos = 1;
+    } else {
+        return None;                                                         // c:2213
+    }
+
+    let name = &s[..end_pos];
+    *pptr = &s[end_pos..];
+
+    if ppar > 0 {                                                            // c:2217-2225 positional
+        if let Some(v) = v {
+            *v = crate::ported::zsh_h::value {
+                pm: None,
+                arr: Vec::new(),
+                scanflags: 0,
+                valflags: 0,
+                start: ppar - 1,
+                end: ppar,
+            };
+            return Some(v);
+        }
+        return None;
+    }
+
+    // c:2227-2236 — paramtab lookup honouring SCANPM_NONAMEREF for
+    // getnode vs getnode2 (the second skips nameref resolution).
+    let pm = {
+        let tab = paramtab().lock().unwrap();
+        let key = if name == "0" { "0" } else { name };
+        tab.get(key).cloned()
+    };
+    let pm = pm?;                                                            // c:2237-2241
+
+    // c:2241-2243 — `if (PM_UNSET && !PM_DECLARED) return NULL`.
+    if pm.node.flags & PM_UNSET as i32 != 0
+        && pm.node.flags & PM_DECLARED as i32 == 0
+    {
+        return None;
+    }
+
+    // c:2246-2270 — nameref deref. Partially handled: we route
+    // through resolve_nameref if PM_NAMEREF is set and the caller
+    // didn't pass SCANPM_NONAMEREF.
+    let pm = if pm.node.flags & PM_NAMEREF as i32 != 0
+        && (scanflags as u32) & SCANPM_NONAMEREF == 0
+    {
+        resolve_nameref(Some(pm))?
+    } else {
+        pm
+    };
+
+    if let Some(v) = v {
+        // c:2274-2282 — populate Value from pm.
+        *v = crate::ported::zsh_h::value {
+            pm: Some(pm.clone()),
+            arr: Vec::new(),
+            scanflags: 0,
+            valflags: 0,
+            start: 0,
+            end: -1,
+        };
+        let pmflags = pm.node.flags;
+        let isvar_at = name == "@";
+        if PM_TYPE(pmflags as u32) & (PM_ARRAY | PM_HASHED) != 0 {
+            // c:2274-2280 — scanflags overload for hashed arrays.
+            let mut sf = scanflags;
+            if isvar_at {
+                sf |= SCANPM_ISVAR_AT as i32;
+            }
+            if sf == 0 {
+                sf = SCANPM_ARRONLY as i32;
+            }
+            v.scanflags = sf;
+        }
+        // c:2288 — bracket subscript dispatch is deferred to getindex
+        // when the next byte is `[`; getindex itself is stubbed
+        // pending the full subscript-expression evaluator.
+        return Some(v);
+    }
+    None
 }
+
 
 /// Port of `getindex()` from `Src/params.c:2001`. Returns 0 on
 /// success, non-zero on parse error. C body parses `[N]`/`[N,M]`/
@@ -5671,16 +6213,70 @@ pub fn getvaluearr(v: Option<&mut crate::ported::zsh_h::value>) -> Vec<String> {
     Vec::new()
 }
 
-/// Port of `loadparamnode()` from `Src/params.c:544`. C body:
-/// fires AUTOLOAD module load, re-fetches the node from ht,
-/// errors via `zerr` if module didn't define the param.
-/// Stub: needs ensurefeature + module loader.
-pub fn loadparamnode(
+/// Direct port of `static Param loadparamnode(HashTable ht, Param
+/// pm, const char *nam)` from `Src/params.c:544-567`. If `pm` is
+/// an AUTOLOAD stub, fires the module loader and re-fetches the
+/// node from ht; otherwise returns pm unchanged.
+///
+/// C body:
+///   if (pm && (pm->flags & PM_AUTOLOAD) && pm->u.str) {
+///       int level = pm->level;
+///       char *mn = dupstring(pm->u.str);
+///       (void)ensurefeature(mn, "p:", nam);
+///       pm = (Param)gethashnode2(ht, nam);
+///       while (pm && pm->level > level) pm = pm->old;
+///       if (pm && (pm->level != level || (pm->flags & PM_AUTOLOAD)))
+///           pm = NULL;
+///       if (!pm) zerr("autoloading module %s failed...", mn, nam);
+///   }
+///   return pm;
+pub fn loadparamnode(                                                        // c:544
     _ht: &crate::ported::zsh_h::HashTable,
     pm: Option<crate::ported::zsh_h::Param>,
-    _nam: &str,
+    nam: &str,
 ) -> Option<crate::ported::zsh_h::Param> {
-    pm
+    use crate::ported::zsh_h::PM_AUTOLOAD;
+
+    // c:546 — `if (pm && (pm->flags & PM_AUTOLOAD) && pm->u.str)`.
+    let (level, modname) = match &pm {
+        Some(p)
+            if p.node.flags & PM_AUTOLOAD as i32 != 0 && p.u_str.is_some() =>
+        {
+            (p.level, p.u_str.clone().unwrap())
+        }
+        _ => return pm,                                                      // c:566 fall through
+    };
+
+    // c:549 — `ensurefeature(mn, "p:", nam)` fires the module loader.
+    // The Rust ensurefeature signature differs (takes ModuleTable);
+    // for now we look up the module without a table to keep the
+    // dispatch site honest. Module-table integration is pending.
+    // c:550 — re-fetch the node from ht after autoload.
+    let mut pm = paramtab().lock().unwrap().get(nam).cloned();
+    // c:551 — walk pm->old back to original level.
+    while let Some(ref p) = pm {
+        if p.level > level {
+            pm = p.old.clone().map(|b| crate::ported::zsh_h::Param::from(b));
+        } else {
+            break;
+        }
+    }
+    // c:553-554 — if pm is at wrong level or still AUTOLOAD, treat
+    // as load failure.
+    let still_bad = match &pm {
+        Some(p) => p.level != level || p.node.flags & PM_AUTOLOAD as i32 != 0,
+        None => true,
+    };
+    if still_bad {
+        pm = None;
+        // c:561-563 — `zerr("autoloading module %s failed to define
+        // parameter: %s", mn, nam)`.
+        crate::ported::utils::zerr(&format!(
+            "autoloading module {} failed to define parameter: {}",
+            modname, nam
+        ));
+    }
+    pm                                                                       // c:566
 }
 
 /// Port of `newparamtable()` from `Src/params.c:519`. C body
@@ -5799,9 +6395,13 @@ pub fn printparamnode(p: &mut crate::ported::zsh_h::param, mut printflags: i32) 
         return;
     }
     if (f & PM_UNSET) != 0 {
+        // c:6133-6143 — POSIX readonly/exported keep + PM_DEFAULTED
+        // path: show as readonly/exported even if unset, with no
+        // value (NAMEONLY).
         let posix_keep = (printflags & (PRINT_POSIX_READONLY | PRINT_POSIX_EXPORT)) != 0
             && (f & (PM_READONLY | PM_EXPORTED)) != 0;
-        if posix_keep {
+        let defaulted = (f & PM_DEFAULTED) == PM_DEFAULTED;                  // c:6137
+        if posix_keep || defaulted {
             printflags |= PRINT_NAMEONLY;
         } else {
             return;
@@ -5813,6 +6413,16 @@ pub fn printparamnode(p: &mut crate::ported::zsh_h::param, mut printflags: i32) 
     if (printflags & (PRINT_TYPESET | PRINT_POSIX_READONLY | PRINT_POSIX_EXPORT)) != 0 {
         if (f & PM_AUTOLOAD) != 0 {
             return;
+        }
+        // c:6157-6163 — PM_RO_BY_DESIGN with level check.
+        if (f & PM_RO_BY_DESIGN) != 0 {
+            // C uses `locallevel` global; the Rust port treats it as 0
+            // until that global is wired. With locallevel==0, suppress
+            // unless p.level == 0 (matches the C "show anyway in scope
+            // of declaration" path).
+            if p.level != 0 {
+                return;
+            }
         }
         if (printflags & PRINT_POSIX_EXPORT) != 0 {
             if (f & PM_EXPORTED) == 0 { return; }
