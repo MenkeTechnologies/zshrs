@@ -761,7 +761,7 @@ impl Zle {
             //   redrawhook()      → queue zle-line-pre-redraw
             self.handleprefixes();
             if self.in_vi_cmd_mode()
-                && self.zlecs > self.find_bol(self.zlecs)
+                && self.zlecs > self.findbol(self.zlecs)
                 && (self.zlecs == self.zlell
                     || self.zleline.get(self.zlecs).copied() == Some('\n'))
                 && self.zlecs > 0
@@ -1217,7 +1217,7 @@ impl Zle {
 
     /// ZLE reset prompt
     /// Port of zle_resetprompt() from zle_main.c  
-    pub fn zle_reset_prompt(&mut self) {
+    pub fn zle_resetprompt(&mut self) {
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
@@ -1289,7 +1289,7 @@ impl Zle {
 
 // `acceptline(&str) -> Option<Widget>` deleted — Rust-only helper
 // that just wrapped `Widget::builtin(name)` in `Some(...)`. Callers
-// (exec_immortal, exec_zle_func) inlined to use `Widget::builtin`
+// (execimmortal, execzlefunc) inlined to use `Widget::builtin`
 // directly. The real C `acceptline()` (zle_misc.c:401) takes
 // `char **args` and returns int; its Rust port lives at
 // `zle_misc.rs:708` (the legit free fn).

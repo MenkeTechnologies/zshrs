@@ -10756,7 +10756,7 @@ fn test_functions_t_no_trace_set_silent() {
 #[test]
 fn test_empty_cond_bracket_parse_error() {
     // zsh: `[[ ]]` (empty condition) is a parse error. zshrs
-    // silently accepted and returned exit 0. Now `parse_cond`
+    // silently accepted and returned exit 0. Now `par_cond`
     // detects the empty case (immediate `Doutbrack` after the
     // opening) and emits a parse error.
     let (status, _, stderr) = run_zshrs("[[ ]]; echo done");

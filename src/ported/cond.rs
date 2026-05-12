@@ -16,9 +16,8 @@
 //! here parses + evaluates inline because the wordcode + Estate
 //! plumbing isn't fully wired through this call site yet. When that
 //! lands, this file becomes a thin wrapper around the wordcode
-//! walker that mirrors cond.c:70 line-by-line. The `CondExpr` /
-//! `CondParser` types below are the intermediate scaffold — also
-//! NOT in C and slated for deletion once the wordcode path lands.
+//! walker that mirrors cond.c:70 line-by-line. (The earlier `CondExpr`
+//! / `CondParser` intermediate scaffold types have been deleted.)
 
 use std::collections::HashMap;
 use std::fs::{self, Metadata};

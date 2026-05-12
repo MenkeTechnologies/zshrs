@@ -33,8 +33,8 @@
 use serde::{Deserialize, Serialize};
 
 /// Per-heredoc state collected by the lexer during `<<EOF` parsing.
-/// Held in `ZshLexer.heredocs: Vec<HereDoc>` for later attachment to
-/// `ZshRedir` entries (via `heredoc_idx`).
+/// Held in the lexer-side `HEREDOCS: Vec<HereDoc>` thread_local for
+/// later attachment to `ZshRedir` entries (via `heredoc_idx`).
 ///
 /// Rust-only — Phase 9 wordcode port replaces this with the canonical
 /// `struct heredocs` linked list (zsh.h:1152) + `gethere()` deferred

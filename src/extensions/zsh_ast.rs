@@ -132,7 +132,7 @@ pub struct ZshRedir {
     pub name: String,
     pub heredoc: Option<HereDocInfo>,
     pub varid: Option<String>, // {var}>file
-    /// Index into ZshLexer.heredocs[] for body lookup. Filled in by
+    /// Index into the lexer-side `HEREDOCS` thread_local for body lookup. Filled in by
     /// `parse_redirection` for Heredoc/HeredocDash, then resolved into
     /// `heredoc.content` by `fill_heredoc_bodies` after process_heredocs
     /// has run for the line.

@@ -783,15 +783,15 @@ fn widget_backward_word(zle: &mut Zle) {
 
 fn widget_beginning_of_line(zle: &mut Zle) {
     // Port of beginningofline(char **args) from Src/Zle/zle_move.c. Cursor moves
-    // to the start of the current logical line — find_bol respects
+    // to the start of the current logical line — findbol respects
     // embedded newlines.
-    zle.zlecs = zle.find_bol(zle.zlecs);
+    zle.zlecs = zle.findbol(zle.zlecs);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_end_of_line(zle: &mut Zle) {
     // Port of endofline(char **args) from Src/Zle/zle_move.c.
-    zle.zlecs = zle.find_eol(zle.zlecs);
+    zle.zlecs = zle.findeol(zle.zlecs);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
@@ -1102,12 +1102,12 @@ fn widget_redo(zle: &mut Zle) {
 
 fn widget_up_line_or_history(zle: &mut Zle) {
     // Port of uplineorhistory(char **args) from Src/Zle/zle_hist.c:282.
-    let _ = zle.up_line_or_history_widget();
+    let _ = zle.uplineorhistory();
 }
 
 fn widget_down_line_or_history(zle: &mut Zle) {
     // Port of downlineorhistory(char **args) from Src/Zle/zle_hist.c:370.
-    let _ = zle.down_line_or_history_widget();
+    let _ = zle.downlineorhistory();
 }
 
 fn widget_up_history(zle: &mut Zle) {
@@ -1239,7 +1239,7 @@ fn widget_beginning_of_buffer_or_history(zle: &mut Zle) {
     // (findbol > 0), jump to absolute position 0 inside the buffer;
     // otherwise we're already at BoB → fall through to
     // beginning-of-history (load oldest entry).
-    if zle.find_bol(zle.zlecs) > 0 {
+    if zle.findbol(zle.zlecs) > 0 {
         zle.zlecs = 0;
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     } else {
@@ -1249,7 +1249,7 @@ fn widget_beginning_of_buffer_or_history(zle: &mut Zle) {
 
 fn widget_end_of_buffer_or_history(zle: &mut Zle) {
     // Port of endofbufferorhistory(char **args) from Src/Zle/zle_hist.c:593.
-    if zle.find_eol(zle.zlecs) != zle.zlell {
+    if zle.findeol(zle.zlecs) != zle.zlell {
         zle.zlecs = zle.zlell;
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     } else {
@@ -1397,7 +1397,7 @@ fn widget_vi_insert_bol(zle: &mut Zle) {
     // first-non-blank of current line, then enter insert mode.
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
     crate::ported::zle::zle_main::INSMODE.store(1, std::sync::atomic::Ordering::SeqCst);
-    let bol = zle.find_bol(zle.zlecs);
+    let bol = zle.findbol(zle.zlecs);
     let mut p = bol;
     while p < zle.zlell && zle.zleline[p].is_whitespace() && zle.zleline[p] != '\n' {
         p += 1;
@@ -1412,7 +1412,7 @@ fn widget_vi_add_next(zle: &mut Zle) {
     // the cursor's current char).
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
     crate::ported::zle::zle_main::INSMODE.store(1, std::sync::atomic::Ordering::SeqCst);
-    if zle.zlecs < zle.find_eol(zle.zlecs) {
+    if zle.zlecs < zle.findeol(zle.zlecs) {
         zle.zlecs += 1;
     }
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -1423,7 +1423,7 @@ fn widget_vi_add_eol(zle: &mut Zle) {
     // jump to end-of-line then enter insert mode.
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
     crate::ported::zle::zle_main::INSMODE.store(1, std::sync::atomic::Ordering::SeqCst);
-    zle.zlecs = zle.find_eol(zle.zlecs);
+    zle.zlecs = zle.findeol(zle.zlecs);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
@@ -1438,7 +1438,7 @@ fn widget_vi_forward_char(zle: &mut Zle) {
         zle.mult = n;
         return;
     }
-    let eol = zle.find_eol(zle.zlecs);
+    let eol = zle.findeol(zle.zlecs);
     let limit = eol.saturating_sub(1);
     while zle.zlecs < limit && n > 0 {
         zle.zlecs += 1;
@@ -1457,7 +1457,7 @@ fn widget_vi_backward_char(zle: &mut Zle) {
         zle.mult = n;
         return;
     }
-    let bol = zle.find_bol(zle.zlecs);
+    let bol = zle.findbol(zle.zlecs);
     while zle.zlecs > bol && n > 0 {
         zle.zlecs -= 1;
         n -= 1;
@@ -1595,10 +1595,10 @@ fn widget_vi_yank_whole_line(zle: &mut Zle) {
     // as a line-wise yank). C source: zle_vi.c:559 walks zlecs through
     // findeol+1 to capture each line.
     let n = zle.mult.max(1);
-    let bol = zle.find_bol(zle.zlecs);
+    let bol = zle.findbol(zle.zlecs);
     let mut end = bol;
     for _ in 0..n {
-        end = zle.find_eol(end);
+        end = zle.findeol(end);
         if end < zle.zlell {
             end += 1; // include trailing '\n'
         } else {
@@ -1630,7 +1630,7 @@ fn widget_vi_put_after(zle: &mut Zle) {
     if is_line_paste {
         // Move to end of current line, then paste (which inserts the
         // newline-prefixed content immediately).
-        zle.zlecs = zle.find_eol(zle.zlecs);
+        zle.zlecs = zle.findeol(zle.zlecs);
         if zle.zlecs < zle.zlell {
             zle.zlecs += 1;
         }
@@ -1659,7 +1659,7 @@ fn widget_vi_put_before(zle: &mut Zle) {
     if is_line_paste {
         // Move to start of current line, paste (the newline at end of
         // the kill-ring entry pushes the existing line down).
-        zle.zlecs = zle.find_bol(zle.zlecs);
+        zle.zlecs = zle.findbol(zle.zlecs);
         widget_yank(zle);
     } else {
         widget_yank(zle);
@@ -1719,7 +1719,7 @@ fn widget_vi_change_whole_line(zle: &mut Zle) {
 fn widget_vi_first_non_blank(zle: &mut Zle) {
     // Port of vifirstnonblank(UNUSED(char **args)) from Src/Zle/zle_move.c:862. Move
     // cursor to the first non-blank character on the current line.
-    let bol = zle.find_bol(zle.zlecs);
+    let bol = zle.findbol(zle.zlecs);
     let mut p = bol;
     while p < zle.zlell && zle.zleline[p].is_whitespace() && zle.zleline[p] != '\n' {
         p += 1;
@@ -1731,7 +1731,7 @@ fn widget_vi_first_non_blank(zle: &mut Zle) {
 fn widget_vi_end_of_line(zle: &mut Zle) {
     // Port of viendofline(UNUSED(char **args)) from Src/Zle/zle_move.c:708. Vim's `$`
     // semantics — cursor lands on the last char of the line, not past it.
-    let eol = zle.find_eol(zle.zlecs);
+    let eol = zle.findeol(zle.zlecs);
     if eol > 0 && (eol == zle.zlell || zle.zleline[eol] == '\n') {
         zle.zlecs = eol.saturating_sub(1);
     } else {
@@ -1754,7 +1754,7 @@ fn widget_vi_digit_or_beginning_of_line(zle: &mut Zle) {
 fn widget_vi_open_line_below(zle: &mut Zle) {
     // Port of viopenlinebelow(UNUSED(char **args)) from Src/Zle/zle_vi.c (the `o` command).
     // Move to end of line, insert newline, enter insert mode.
-    zle.zlecs = zle.find_eol(zle.zlecs);
+    zle.zlecs = zle.findeol(zle.zlecs);
     zle.self_insert('\n');
     widget_vi_insert(zle);
 }
@@ -1762,7 +1762,7 @@ fn widget_vi_open_line_below(zle: &mut Zle) {
 fn widget_vi_open_line_above(zle: &mut Zle) {
     // Port of viopenlineabove(UNUSED(char **args)) from Src/Zle/zle_vi.c (the `O` command).
     // Move to start of line, insert newline, step back, enter insert.
-    zle.zlecs = zle.find_bol(zle.zlecs);
+    zle.zlecs = zle.findbol(zle.zlecs);
     zle.self_insert('\n');
     if zle.zlecs > 0 {
         zle.zlecs -= 1;
@@ -1847,12 +1847,12 @@ fn widget_vi_find_prev_char_skip(zle: &mut Zle) {
 
 fn widget_vi_repeat_find(zle: &mut Zle) {
     // Port of virepeatfind(char **args) from Src/Zle/zle_move.c:835.
-    let _ = zle.vi_repeat_find();
+    let _ = zle.virepeatfind();
 }
 
 fn widget_vi_rev_repeat_find(zle: &mut Zle) {
     // Port of virevrepeatfind(char **args) from Src/Zle/zle_move.c:842.
-    let _ = zle.vi_rev_repeat_find();
+    let _ = zle.virevrepeatfind();
 }
 
 fn widget_vi_history_search_forward(zle: &mut Zle) {
@@ -1922,7 +1922,7 @@ fn widget_vi_repeat_search(zle: &mut Zle) {
 fn widget_vi_rev_repeat_search(zle: &mut Zle) {
     // Port of virevrepeatsearch(char **args) from Src/Zle/zle_hist.c.
     let mut hist = std::mem::take(&mut zle.history);
-    zle.vi_rev_repeat_search(&mut hist);
+    zle.virevrepeatsearch(&mut hist);
     zle.history = hist;
 }
 
@@ -1938,7 +1938,7 @@ fn widget_vi_fetch_history(zle: &mut Zle) {
     if on_live || (crate::ported::zle::zle_main::ZLEREADFLAGS.load(std::sync::atomic::Ordering::SeqCst) & crate::ported::zsh_h::ZLRF_HISTORY) == 0 {
         if !has_mult {
             zle.zlecs = zle.zlell;
-            zle.zlecs = zle.find_bol(zle.zlecs);
+            zle.zlecs = zle.findbol(zle.zlecs);
             crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
             return;
         }
@@ -1975,8 +1975,8 @@ fn widget_vi_goto_column(zle: &mut Zle) {
     // count is in zmod.mult; cursor lands at bol + (mult - 1),
     // clamped to the line's EoL.
     let col = zle.zmod.mult.saturating_sub(1) as usize;
-    let bol = zle.find_bol(zle.zlecs);
-    let eol = zle.find_eol(zle.zlecs);
+    let bol = zle.findbol(zle.zlecs);
+    let eol = zle.findeol(zle.zlecs);
     zle.zlecs = (bol + col).min(eol);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
@@ -2138,14 +2138,14 @@ fn widget_pound_insert(zle: &mut Zle) {
         // (C source: zle_misc.c:384-394).
         let mut p = 0;
         loop {
-            let bol = zle.find_bol(p);
+            let bol = zle.findbol(p);
             if zle.zleline.get(bol).copied() == Some('#') {
                 zle.zleline.remove(bol);
                 if zle.zlell > 0 {
                     zle.zlell -= 1;
                 }
             }
-            let eol = zle.find_eol(bol);
+            let eol = zle.findeol(bol);
             if eol >= zle.zlell {
                 break;
             }
@@ -2155,10 +2155,10 @@ fn widget_pound_insert(zle: &mut Zle) {
         // Insert '#' at start of every logical line (zle_misc.c:373-383).
         let mut p = 0;
         loop {
-            let bol = zle.find_bol(p);
+            let bol = zle.findbol(p);
             zle.zleline.insert(bol, '#');
             zle.zlell += 1;
-            let eol = zle.find_eol(bol);
+            let eol = zle.findeol(bol);
             if eol >= zle.zlell {
                 break;
             }
@@ -2395,7 +2395,7 @@ fn widget_beginning_of_history(zle: &mut Zle) {
 fn widget_end_of_history(zle: &mut Zle) {
     // Port of endofhistory(UNUSED(char **args)) from Src/Zle/zle_hist.c:478.
     let mut hist = std::mem::take(&mut zle.history);
-    zle.end_of_history(&mut hist);
+    zle.endofhistory(&mut hist);
     zle.history = hist;
 }
 
@@ -2514,7 +2514,7 @@ fn widget_vi_goto_mark_line_widget(zle: &mut Zle) {
     if let Some(c) = zle.getfullchar(false) {
         zle.vi_goto_mark(c);
         // Move to first non-blank of the line we landed on.
-        let bol = zle.find_bol(zle.zlecs);
+        let bol = zle.findbol(zle.zlecs);
         let mut p = bol;
         while p < zle.zlell && zle.zleline[p].is_whitespace() && zle.zleline[p] != '\n' {
             p += 1;
@@ -2541,7 +2541,7 @@ fn widget_vi_kill_line(zle: &mut Zle) {
     // Port of vikillline(UNUSED(char **args)) from Src/Zle/zle_vi.c. Kills from cursor
     // back to start of line — different from Emacs kill-line which
     // kills forward.
-    let bol = zle.find_bol(zle.zlecs);
+    let bol = zle.findbol(zle.zlecs);
     if zle.zlecs > bol {
         let killed: Vec<char> = zle.zleline.drain(bol..zle.zlecs).collect();
         zle.zlell = zle.zleline.len();
@@ -2557,7 +2557,7 @@ fn widget_vi_kill_line(zle: &mut Zle) {
 fn widget_vi_yank_eol(zle: &mut Zle) {
     // Port of viyankeol(UNUSED(char **args)) from Src/Zle/zle_vi.c:537. Copies from cursor
     // to end of line into the kill ring without removing.
-    let eol = zle.find_eol(zle.zlecs);
+    let eol = zle.findeol(zle.zlecs);
     if eol > zle.zlecs {
         let region: Vec<char> = zle.zleline[zle.zlecs..eol].to_vec();
         zle.killring.push_front(region);
@@ -2569,7 +2569,7 @@ fn widget_vi_yank_eol(zle: &mut Zle) {
 
 fn widget_vi_beginning_of_line(zle: &mut Zle) {
     // Port of vibeginningofline(UNUSED(char **args)) from Src/Zle/zle_move.c:728.
-    zle.zlecs = zle.find_bol(zle.zlecs);
+    zle.zlecs = zle.findbol(zle.zlecs);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
@@ -2691,7 +2691,7 @@ fn widget_what_cursor_position(zle: &mut Zle) {
     // Port of whatcursorposition(UNUSED(char **args)) from Src/Zle/zle_misc.c. Emits a
     // status-line message describing the cursor position. The C source
     // formats "Char: X (NNN, 0xHH, 0bBB) Point N of N (PP%) Column N".
-    // Routed to our `show_msg` so the message lands wherever the host
+    // Routed to our `showmsg` so the message lands wherever the host
     // surfaces ZLE diagnostics.
     let pos = zle.zlecs;
     let len = zle.zlell;
@@ -2705,7 +2705,7 @@ fn widget_what_cursor_position(zle: &mut Zle) {
     } else {
         format!("Point {} of {} (end of buffer)", pos, len)
     };
-    zle.show_msg(&msg);
+    zle.showmsg(&msg);
 }
 
 fn widget_set_local_history_widget(zle: &mut Zle) {
@@ -2727,14 +2727,14 @@ fn widget_history_search_backward(zle: &mut Zle) {
     // Port of historysearchbackward(char **args) from Src/Zle/zle_hist.c. Method
     // exists; this is the dispatch entry.
     let mut hist = std::mem::take(&mut zle.history);
-    zle.history_search_backward(&mut hist);
+    zle.historysearchbackward(&mut hist);
     zle.history = hist;
 }
 
 fn widget_history_search_forward(zle: &mut Zle) {
     // Port of historysearchforward(char **args) from Src/Zle/zle_hist.c.
     let mut hist = std::mem::take(&mut zle.history);
-    zle.history_search_forward(&mut hist);
+    zle.historysearchforward(&mut hist);
     zle.history = hist;
 }
 
@@ -2742,7 +2742,7 @@ fn widget_insert_last_word_widget(zle: &mut Zle) {
     // Port of insertlastword(char **args) from Src/Zle/zle_hist.c. Method exists;
     // this is the dispatch entry.
     let hist = std::mem::take(&mut zle.history);
-    zle.insert_last_word(&hist);
+    zle.insertlastword(&hist);
     zle.history = hist;
 }
 
@@ -2762,8 +2762,8 @@ fn widget_down_line(zle: &mut Zle) {
 fn widget_vi_up_line_or_history(zle: &mut Zle) {
     // Port of viuplineorhistory(char **args) from Src/Zle/zle_hist.c:302. Same as
     // up-line-or-history but lands at the first non-blank.
-    let _ = zle.up_line_or_history_widget();
-    let bol = zle.find_bol(zle.zlecs);
+    let _ = zle.uplineorhistory();
+    let bol = zle.findbol(zle.zlecs);
     let mut p = bol;
     while p < zle.zlell && zle.zleline[p].is_whitespace() && zle.zleline[p] != '\n' {
         p += 1;
@@ -2774,8 +2774,8 @@ fn widget_vi_up_line_or_history(zle: &mut Zle) {
 
 fn widget_vi_down_line_or_history(zle: &mut Zle) {
     // Port of vidownlineorhistory(char **args) from Src/Zle/zle_hist.c:390.
-    let _ = zle.down_line_or_history_widget();
-    let bol = zle.find_bol(zle.zlecs);
+    let _ = zle.downlineorhistory();
+    let bol = zle.findbol(zle.zlecs);
     let mut p = bol;
     while p < zle.zlell && zle.zleline[p].is_whitespace() && zle.zleline[p] != '\n' {
         p += 1;
@@ -2814,13 +2814,13 @@ fn widget_beginning_of_line_hist(zle: &mut Zle) {
         // beginning-of-line at top.
         return;
     }
-    zle.zlecs = zle.find_bol(zle.zlecs);
+    zle.zlecs = zle.findbol(zle.zlecs);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_end_of_line_hist(zle: &mut Zle) {
     // Port of endoflinehist(char **args) from Src/Zle/zle_move.c.
-    zle.zlecs = zle.find_eol(zle.zlecs);
+    zle.zlecs = zle.findeol(zle.zlecs);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
@@ -3019,14 +3019,14 @@ fn widget_vi_indent(zle: &mut Zle) {
     // shiftwidth comes from the SH_WORD_SPLIT family — left as a fixed
     // 4 here until the wider option store is wired.
     if let Some((start, end, _)) = zle.vi_get_range('>') {
-        let bol_start = zle.find_bol(start);
+        let bol_start = zle.findbol(start);
         let mut p = bol_start;
         while p < end && p <= zle.zlell {
             for i in 0..4 {
                 zle.zleline.insert(p + i, ' ');
             }
             zle.zlell += 4;
-            p = zle.find_eol(p) + 1;
+            p = zle.findeol(p) + 1;
         }
         zle.zlecs = bol_start;
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -3037,7 +3037,7 @@ fn widget_vi_unindent(zle: &mut Zle) {
     // Port of viunindent(UNUSED(char **args)) from Src/Zle/zle_vi.c. Removes up to 4
     // leading spaces from every logical line in the range.
     if let Some((start, end, _)) = zle.vi_get_range('<') {
-        let bol_start = zle.find_bol(start);
+        let bol_start = zle.findbol(start);
         let mut p = bol_start;
         while p < end && p <= zle.zlell {
             for _ in 0..4 {
@@ -3050,7 +3050,7 @@ fn widget_vi_unindent(zle: &mut Zle) {
                     break;
                 }
             }
-            p = zle.find_eol(p) + 1;
+            p = zle.findeol(p) + 1;
         }
         zle.zlecs = bol_start;
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
