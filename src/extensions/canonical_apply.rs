@@ -170,12 +170,21 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
         executor.set_array("fpath".to_string(), shard.fpath);
     }
 
-    // named_dir (hash -d): direct insert into executor.named_dirs.
-    // After this, `~name` expansion is a HashMap lookup on first
-    // access, no parsing of `hash -d` lines.
+    // named_dir (hash -d): insert into canonical `nameddirtab` (port
+    // of C `Src/hashnameddir.c::nameddirtab`).
     for (name, path) in shard.named_dirs {
-        executor.named_dirs.insert(name, PathBuf::from(path));
-        total += 1;
+        if let Ok(mut tab) = crate::ported::hashnameddir::nameddirtab().lock() {
+            tab.insert(name.clone(), crate::ported::zsh_h::nameddir {
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: name,
+                    flags: 0,
+                },
+                dir: path.clone(),
+                diff: 0,
+            });
+            total += 1;
+        }
     }
 
     // autoload_functions: register every name as autoload-pending

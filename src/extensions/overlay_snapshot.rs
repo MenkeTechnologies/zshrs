@@ -141,15 +141,20 @@ pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
             ));
         }
 
-        // named_dir: hash -d entries.
-        if !exec.named_dirs.is_empty() {
-            let map: serde_json::Map<String, Value> = exec
-                .named_dirs
-                .iter()
-                .map(|(k, v)| (k.clone(), Value::String(v.display().to_string())))
+        // named_dir: hash -d entries from canonical `nameddirtab`
+        // (port of `Src/hashnameddir.c`).
+        let nd_snap: Vec<(String, String)> = crate::ported::hashnameddir::nameddirtab()
+            .lock().ok()
+            .map(|g| g.iter().map(|(k, v)| (k.clone(), v.dir.clone())).collect())
+            .unwrap_or_default();
+        if !nd_snap.is_empty() {
+            let map: serde_json::Map<String, Value> = nd_snap
+                .into_iter()
+                .map(|(k, v)| (k, Value::String(v)))
                 .collect();
             out.push(("named_dir".into(), Value::Object(map)));
         }
+        let _ = exec; // keep param naming convention for symmetry
 
         // compdef: completion specs are richer than scalars; we ship
         // the source command-list mapping (which is what compdef

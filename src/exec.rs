@@ -449,8 +449,9 @@ pub struct ShellExecutor {
     pub autoload_pending: HashMap<String, AutoloadFlags>, // Functions marked for autoload
     // zsh hooks (precmd, preexec, chpwd, etc.)
     pub hook_functions: HashMap<String, Vec<String>>, // hook_name -> [function_names]
-    // Named directories (hash -d)
-    pub named_dirs: HashMap<String, PathBuf>, // name -> path
+    // `named_dirs` deleted — canonical `nameddirtab` lives in
+    // `src/ported/hashnameddir.rs:36` (port of C `nameddirtab` in
+    // `Src/hashnameddir.c`). Callers route through that Mutex.
     // bin_sysopen - file descriptor management
     pub open_fds: HashMap<i32, std::fs::File>,
     pub next_fd: i32,
@@ -1081,7 +1082,6 @@ impl ShellExecutor {
             session_history_ids: Vec::new(),
             autoload_pending: HashMap::new(),
             hook_functions: HashMap::new(),
-            named_dirs: HashMap::new(),
             open_fds: HashMap::new(),
             next_fd: 10,
             profiling_enabled: false,
@@ -3565,19 +3565,21 @@ impl crate::ported::exec::ShellExecutor {
             // ${nameddirs[@]} returns paths in sorted-name order (was
             // HashMap::values() with random iteration).
             "nameddirs" => {
+                // Canonical `nameddirtab` lives in
+                // `src/ported/hashnameddir.rs` (port of `Src/hashnameddir.c`).
+                let tab = crate::ported::hashnameddir::nameddirtab();
                 if key == "@" || key == "*" {
-                    let mut keys: Vec<&String> = self.named_dirs.keys().collect();
-                    keys.sort();
-                    let vals: Vec<String> = keys
-                        .iter()
-                        .filter_map(|k| self.named_dirs.get(*k).map(|p| p.display().to_string()))
-                        .collect();
+                    let snapshot: Vec<(String, String)> = tab.lock().ok()
+                        .map(|g| g.iter().map(|(k, v)| (k.clone(), v.dir.clone())).collect())
+                        .unwrap_or_default();
+                    let mut keys: Vec<&(String, String)> = snapshot.iter().collect();
+                    keys.sort_by(|a, b| a.0.cmp(&b.0));
+                    let vals: Vec<String> = keys.iter().map(|(_, v)| v.clone()).collect();
                     return Some(vals.join(" "));
                 }
                 Some(
-                    self.named_dirs
-                        .get(key)
-                        .map(|p| p.display().to_string())
+                    tab.lock().ok()
+                        .and_then(|g| g.get(key).map(|nd| nd.dir.clone()))
                         .unwrap_or_default(),
                 )
             }
